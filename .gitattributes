@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+# El legacy se conserva byte a byte: es un registro histórico, no código a mantener.
+alsina/** -text
+
+*.sql  -text
+*.ttf  binary
+*.png  binary
+*.woff binary
+*.woff2 binary

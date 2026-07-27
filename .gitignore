@@ -1,0 +1,45 @@
+# --- Agent / tooling state ---
+.atl/
+.claude/
+
+# --- .NET ---
+bin/
+obj/
+*.user
+*.suo
+artifacts/
+[Dd]ebug/
+[Rr]elease/
+TestResults/
+
+# --- Node / Vite ---
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# --- Entorno y secretos ---
+.env
+.env.*
+!.env.example
+appsettings.Development.json
+appsettings.Production.json
+*.pfx
+
+# --- Datos y backups ---
+*.dump
+backups/
+migracion/tmp/
+
+# --- Editores ---
+.vs/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# --- SO ---
+.DS_Store
+Thumbs.db
+desktop.ini
