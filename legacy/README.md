@@ -242,8 +242,33 @@ docker exec -i $(docker ps -qf name=mysql) mysql -uroot -p'<clave-root>' -e "SEL
 ```
 
 Si no devuelve exactamente `NO_ENGINE_SUBSTITUTION` y `SET NAMES latin1`, el `.cnf` no está
-llegando al servidor. La causa más común es la de siempre: el archivo montado quedó
-escribible por todos y MySQL lo ignoró en silencio.
+llegando al servidor. Para saber en cuál de los dos casos estás:
+
+```bash
+docker exec -i $(docker ps -qf name=mysql) ls -l /etc/mysql/conf.d/
+docker logs $(docker ps -qf name=mysql) 2>&1 | grep -i world-writable
+```
+
+- **El archivo no está** → falta el mount.
+- **Está y aparece `World-writable ... is ignored`** → `chmod 0644` sobre el archivo en el host
+  y reiniciar el servicio.
+
+Para destrabar la caja **ahora mismo**, sin reiniciar nada:
+
+```sql
+SET GLOBAL sql_mode = 'NO_ENGINE_SUBSTITUTION';
+SET GLOBAL init_connect = 'SET NAMES latin1';
+```
+
+Surte efecto en las conexiones nuevas, así que alcanza con recargar la página. **Pero se
+pierde en el próximo reinicio del servicio**, y ahí la caja se rompe de vuelta sin que nadie
+haya tocado nada. Es un parche para seguir facturando hoy, no la solución.
+
+**Si el mount se sigue ignorando, sacá el archivo del medio:** creá el servicio de base como
+tipo **App** apuntando a este repositorio, con build path `/legacy` y Dockerfile
+`mysql.Dockerfile`. Esa imagen ya trae el `.cnf` adentro con los permisos correctos, así que
+no hay nada que montar ni que se pueda ignorar. Necesita un volumen en `/var/lib/mysql` y las
+variables `MYSQL_ROOT_PASSWORD`, `MYSQL_DATABASE`, `MYSQL_USER` y `MYSQL_PASSWORD`.
 
 ## Riesgos conocidos
 
