@@ -26,7 +26,10 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       # El dump vive fuera del contexto de build a propósito: no entra en ninguna imagen.
-      - ../alsina/localhost.sql:/docker-entrypoint-initdb.d/10-dump.sql:ro
+      # Y no se monta directo en initdb.d: lo importa el script, que apaga la verificación
+      # de claves foráneas. Ver el comentario de scripts/00-importar-dump.sh.
+      - ../alsina/localhost.sql:/dump/localhost.sql:ro
+      - ./scripts/00-importar-dump.sh:/docker-entrypoint-initdb.d/00-importar-dump.sh:ro
     ports:
       # 3307 en el host para no chocar con un MySQL local.
       - "3307:3306"

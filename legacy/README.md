@@ -96,8 +96,18 @@ los permisos del archivo montado (`chmod 0644`) y reiniciar el servicio.
 Recién ahí, restaurar el dump **fresco** del hosting (no el del relevamiento):
 
 ```bash
-docker exec -i $(docker ps -qf name=mysql) mysql -uroot -p'<clave-root>' --default-character-set=utf8mb4 < localhost.sql
+{ echo "SET FOREIGN_KEY_CHECKS=0;"; cat localhost.sql; } | docker exec -i $(docker ps -qf name=mysql) mysql -uroot -p'<clave-root>' --default-character-set=utf8mb4
 ```
+
+El `SET FOREIGN_KEY_CHECKS=0` **no es opcional**. La base de producción tiene 75 cajas con
+`id_usuario` de usuarios que ya no existen (los IDs 12, 28, 107, 110 y 111). Sin desactivar
+la verificación, la sección de constraints del final del dump corta con `ERROR 1452` y la
+base queda con 5 de las 27 claves foráneas — y el import *parece* haber andado, porque los
+datos están todos. Con la verificación apagada, las constraints se crean igual y quedan
+exactamente como están hoy en producción.
+
+Si importás por phpMyAdmin, es la casilla **"Habilitar verificación de claves foráneas"**,
+que hay que **destildar**. Igual, para 97 MB phpMyAdmin no es el camino.
 
 Verificar antes de seguir:
 
@@ -163,6 +173,43 @@ docker compose -f legacy/compose.yml logs -f mysql
 
 Después: <http://localhost:8080>. Para empezar de cero,
 `docker compose -f legacy/compose.yml down -v`.
+
+## Si algo falla
+
+### `#6125 Failed to add the foreign key constraint. Missing unique key ... 'grupos'`
+
+Estás importando en **MySQL 8 o MariaDB**, no en `mysql:5.7`. La tabla `grupos` tiene sobre
+`id` un índice **no único** (`ADD KEY id (id)`, no `PRIMARY KEY`). MySQL 5.7 acepta una clave
+foránea que apunta a un índice no único; los motores más nuevos, no.
+
+No se arregla parcheando el dump: se arregla usando `mysql:5.7`, que es lo que corría el
+hosting original. Cambiar el esquema en Fase 0 es exactamente lo que la Fase 0 no hace.
+
+### `#1046 No database selected` en la primera tabla del dump
+
+El `CREATE DATABASE` / `USE` del principio no corrió. Creá la base a mano **con el charset
+correcto** y seleccionala antes de importar:
+
+```sql
+CREATE DATABASE IF NOT EXISTS `c1890978_alsina` DEFAULT CHARACTER SET latin1 COLLATE latin1_swedish_ci;
+```
+
+### "Ocurrió un error" al cerrar un ticket, cargar un gasto o editar un usuario
+
+El `sql_mode` del servicio MySQL quedó en el default estricto: **la configuración de
+`ways.cnf` no se aplicó**. El legacy guarda fechas vacías como `0000-00-00` y hace `INSERT`
+que omiten columnas `NOT NULL` sin default; con `NO_ZERO_DATE` y `STRICT_TRANS_TABLES` cada
+una de esas operaciones falla.
+
+Se comprueba en un segundo:
+
+```bash
+docker exec -i $(docker ps -qf name=mysql) mysql -uroot -p'<clave-root>' -e "SELECT @@sql_mode, @@init_connect"
+```
+
+Si no devuelve exactamente `NO_ENGINE_SUBSTITUTION` y `SET NAMES latin1`, el `.cnf` no está
+llegando al servidor. La causa más común es la de siempre: el archivo montado quedó
+escribible por todos y MySQL lo ignoró en silencio.
 
 ## Riesgos conocidos
 

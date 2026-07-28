@@ -29,8 +29,15 @@ mysql_root() {
           --password="$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 "$@"
 }
 
+# SET FOREIGN_KEY_CHECKS=0 no es opcional: la base de producción tiene filas huérfanas
+# (cajas con id_usuario de usuarios ya borrados). Sin esto, la sección de constraints del
+# final del dump falla con ERROR 1452 y el import se corta ahí, dejando la base con 5 de
+# las 27 claves foráneas.
 echo "[ways] Restaurando $DUMP en $DB_HOST:$DB_PORT (esto tarda varios minutos)"
-mysql_root < "$DUMP"
+{
+    echo "SET FOREIGN_KEY_CHECKS=0;"
+    cat "$DUMP"
+} | mysql_root
 
 echo "[ways] Verificando"
 mysql_root --table "$DB_NAME" -e "
@@ -38,6 +45,9 @@ mysql_root --table "$DB_NAME" -e "
     UNION ALL SELECT 'ventas',   COUNT(*) FROM ventas
     UNION ALL SELECT 'usuarios', COUNT(*) FROM usuarios;
     SELECT DEFAULT_CHARACTER_SET_NAME AS charset_base
-      FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$DB_NAME';"
+      FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '$DB_NAME';
+    SELECT COUNT(*) AS claves_foraneas FROM information_schema.TABLE_CONSTRAINTS
+     WHERE TABLE_SCHEMA = '$DB_NAME' AND CONSTRAINT_TYPE = 'FOREIGN KEY';
+    SELECT nombre AS acento_de_prueba FROM articulos WHERE ID = 8047;"
 
-echo "[ways] Listo. El charset de la base tiene que decir latin1."
+echo "[ways] Tiene que decir: charset latin1, 27 claves foráneas y 'Paño Valerina'."
