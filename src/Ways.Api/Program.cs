@@ -1,41 +1,165 @@
+using System.Security.Claims;
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Ways.Api.Endpoints;
+using Ways.Api.Seguridad;
+using Ways.Application;
+using Ways.Application.Abstracciones;
+using Ways.Domain.Usuarios;
+using Ways.Infrastructure;
+using Ways.Infrastructure.Persistencia;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+// --- Capas ---
+builder.Services.AgregarApplication();
+builder.Services.AgregarInfrastructure(builder.Configuration);
+
+// --- Contexto del usuario autenticado ---
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IContextoDeUsuario, ContextoDeUsuarioHttp>();
+
+// --- Detrás de un proxy inverso (EasyPanel, Traefik, nginx) ---
+// El proxy termina el TLS y habla HTTP con el contenedor. Sin esto la app cree que
+// la conexión es insegura y nunca marca la cookie de sesión como Secure.
+// Se vacían las redes y proxies conocidos porque en Docker la IP del proxy es dinámica;
+// es seguro mientras el contenedor solo sea alcanzable a través del proxy.
+builder.Services.Configure<ForwardedHeadersOptions>(opciones =>
+{
+    opciones.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    opciones.KnownIPNetworks.Clear();
+    opciones.KnownProxies.Clear();
+});
+
+// --- Autenticación por cookie ---
+// La sesión vive mientras haya actividad: expiración deslizante de 1 hora.
+// Cada request dentro de la ventana renueva la cookie; una hora de inactividad la vence.
+builder.Services
+    .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(opciones =>
+    {
+        opciones.Cookie.Name = "ways.sesion";
+        opciones.Cookie.HttpOnly = true;
+        opciones.Cookie.SameSite = SameSiteMode.Lax;
+        // SameAsRequest para que también funcione detrás de un proxy que no termina TLS.
+        opciones.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        opciones.Cookie.IsEssential = true;
+
+        opciones.ExpireTimeSpan = TimeSpan.FromHours(1);
+        opciones.SlidingExpiration = true;
+
+        // Es una API: nunca redirige a una página de login, devuelve el código y listo.
+        opciones.Events.OnRedirectToLogin = ctx =>
+        {
+            ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        };
+        opciones.Events.OnRedirectToAccessDenied = ctx =>
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        };
+
+        // Una cuenta bloqueada, inactiva o dada de baja pierde la sesión en la request
+        // siguiente, sin esperar a que venza la cookie.
+        opciones.Events.OnValidatePrincipal = async ctx =>
+        {
+            var claim = ctx.Principal?.FindFirst(ClaimTypes.NameIdentifier);
+            if (claim is null || !int.TryParse(claim.Value, out var usuarioId))
+            {
+                ctx.RejectPrincipal();
+                return;
+            }
+
+            var db = ctx.HttpContext.RequestServices.GetRequiredService<WaysDbContext>();
+            var vigente = await db.Usuarios
+                .AsNoTracking()
+                .AnyAsync(u => u.Id == usuarioId && u.Estado == EstadoUsuario.Activo);
+
+            if (!vigente)
+            {
+                ctx.RejectPrincipal();
+                await ctx.HttpContext.SignOutAsync(
+                    CookieAuthenticationDefaults.AuthenticationScheme);
+            }
+        };
+    });
+
+// No hay zonas públicas: todo pide sesión salvo lo marcado con AllowAnonymous.
+builder.Services
+    .AddAuthorizationBuilder()
+    .SetFallbackPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build())
+    .AgregarPoliticasWays();
+
+// Los enums viajan por JSON como texto ("Activo"), no como el ordinal.
+// Un número obliga al front a conocer el orden de declaración del enum de C#,
+// que es exactamente el problema de los `tipo` numéricos del sistema viejo.
+builder.Services.ConfigureHttpJsonOptions(opciones =>
+{
+    opciones.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
+
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<ManejadorDeErrores>();
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Tiene que ir primero: todo lo que sigue depende de saber el esquema real.
+app.UseForwardedHeaders();
+
+app.UseExceptionHandler();
+
+// --- Migraciones y semilla ---
+await using (var alcance = app.Services.CreateAsyncScope())
+{
+    var inicializador = alcance.ServiceProvider.GetRequiredService<InicializadorDeBaseDeDatos>();
+    var semilla = alcance.ServiceProvider.GetRequiredService<IOptions<SemillaRoot>>().Value;
+
+    await inicializador.EjecutarAsync(semilla);
+}
+
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.MapOpenApi().AllowAnonymous();
 }
 
-app.UseHttpsRedirection();
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+app.UseAuthentication();
+app.UseAuthorization();
 
-app.MapGet("/weatherforecast", () =>
+app.MapearSalud();
+app.MapearAuth();
+app.MapearUsuarios();
+
+// Cualquier ruta que no sea /api la resuelve el router de React.
+// Una /api/... inexistente tiene que dar 404, no devolver el index.html.
+app.MapFallback(async contexto =>
 {
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
+    if (contexto.Request.Path.StartsWithSegments("/api"))
+    {
+        contexto.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    var indice = Path.Combine(contexto.RequestServices
+        .GetRequiredService<IWebHostEnvironment>().WebRootPath ?? "wwwroot", "index.html");
+
+    if (!File.Exists(indice))
+    {
+        contexto.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    contexto.Response.ContentType = "text/html; charset=utf-8";
+    await contexto.Response.SendFileAsync(indice);
+}).AllowAnonymous();
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
