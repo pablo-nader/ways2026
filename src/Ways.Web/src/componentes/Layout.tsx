@@ -1,0 +1,70 @@
+import { NavLink, Outlet, useNavigate } from 'react-router'
+import { useAuth } from '../auth/useAuth'
+import { puedeGestionarUsuarios } from '../api/tipos'
+
+export function Layout() {
+  const { usuario, cerrarSesion } = useAuth()
+  const navegar = useNavigate()
+
+  async function salir() {
+    await cerrarSesion()
+    navegar('/login', { replace: true })
+  }
+
+  return (
+    <div id="wrap" className="bg-dark dk">
+      <div id="top">
+        {/* Franja de color del punto de venta. Hoy es fija; cuando exista la tabla
+            de puntos de venta vuelve a pintar según el local activo. */}
+        <nav className="ways-nav color_1" />
+
+        <nav className="navbar navbar-dark navbar-expand-lg bg-dark border-top-0">
+          <div className="container">
+            <NavLink className="navbar-brand ways-brand" to="/">
+              Ways
+            </NavLink>
+
+            <div className="collapse navbar-collapse show">
+              <ul className="navbar-nav">
+                <li className="nav-item">
+                  <NavLink className="nav-link" to="/">
+                    Inicio
+                  </NavLink>
+                </li>
+                {usuario && puedeGestionarUsuarios(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/usuarios">
+                      Usuarios
+                    </NavLink>
+                  </li>
+                )}
+              </ul>
+            </div>
+
+            <div className="d-flex align-items-center gap-3">
+              <span className="text-light small">
+                {usuario?.usuario} <span className="text-secondary">· {usuario?.rol}</span>
+              </span>
+              <button
+                type="button"
+                className="btn btn-danger rounded-0"
+                title="Salir"
+                onClick={salir}
+              >
+                Salir
+              </button>
+            </div>
+          </div>
+        </nav>
+      </div>
+
+      <div id="content">
+        <div className="outer">
+          <div className="inner bg-light lter">
+            <Outlet />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

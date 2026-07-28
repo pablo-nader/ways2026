@@ -1,0 +1,49 @@
+/*
+ * Identidad de marca de Ways. Portado del assets/css/ways.css del sistema viejo.
+ * Los colores por punto de venta son la referencia visual con la que se orienta
+ * el cajero: naranja = local 1, violeta = local 2. No cambiarlos por gusto.
+ */
+
+@font-face {
+  font-family: Ways;
+  src: url('/fonts/ways.ttf') format('truetype');
+  font-display: swap;
+}
+
+.ways-brand {
+  font-family: Ways, Tahoma, Arial, sans-serif !important;
+}
+
+.ways-nav {
+  font-family: Arial, Helvetica, sans-serif;
+  text-align: right;
+  padding-right: 20px;
+  font-size: 14px;
+  font-weight: bold;
+  height: 10px;
+}
+
+.color_1 {
+  background-color: #ff8c00;
+}
+
+.color_2 {
+  background-color: darkorchid;
+}
+
+/* Display grande del total en el POS. Todavía sin uso: llega con la pantalla de ventas. */
+.ways-total {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+}
+
+.ways-total.color_1 {
+  background-color: #ff8c00;
+  border: 3px solid #000;
+}
+
+.ways-total.color_2 {
+  background-color: darkorchid;
+  border: 3px solid #000;
+}
