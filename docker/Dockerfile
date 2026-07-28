@@ -33,40 +33,47 @@ RUN dotnet publish src/Ways.Api/Ways.Api.csproj -c Release -o /out --no-restore
 # ---------- 3. Runtime ----------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 
+# Instalar PostgreSQL adentro solo tiene sentido en el modo todo-en-uno.
+# Con una base externa son ~270 MB y un par de minutos de build que no se usan nunca,
+# así que viene apagado por defecto:  --build-arg INCLUIR_POSTGRES=true
+ARG INCLUIR_POSTGRES=false
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PGDATA=/var/lib/postgresql/data \
     PGBIN=/usr/lib/postgresql/17/bin \
-    POSTGRES_DB=ways \
-    POSTGRES_USER=ways \
-    POSTGRES_PASSWORD=ways \
     ASPNETCORE_URLS=http://+:8080 \
     ASPNETCORE_ENVIRONMENT=Production
 
-# La imagen base es Ubuntu 24.04, que solo trae PostgreSQL 16 en sus repos.
-# Se agrega el repositorio oficial PGDG para instalar la 17.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
-    && install -d -m 0755 /usr/share/postgresql-common/pgdg \
-    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-        -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+# curl lo necesita el HEALTHCHECK en los dos modos.
+# La imagen base es Ubuntu 24.04, que solo trae PostgreSQL 16 en sus repos,
+# así que para la 17 se agrega el repositorio oficial PGDG.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    if [ "$INCLUIR_POSTGRES" = "true" ]; then \
+        apt-get install -y --no-install-recommends gnupg; \
+        install -d -m 0755 /usr/share/postgresql-common/pgdg; \
+        curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc; \
+        echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
 https://apt.postgresql.org/pub/repos/apt noble-pgdg main" \
-        > /etc/apt/sources.list.d/pgdg.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends postgresql-17 postgresql-contrib-17 \
-    && apt-get purge -y gnupg && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+            > /etc/apt/sources.list.d/pgdg.list; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends postgresql-17 postgresql-contrib-17; \
+        apt-get purge -y gnupg; \
+        apt-get autoremove -y; \
+        mkdir -p /var/lib/postgresql/data /var/log/postgresql; \
+        chown -R postgres:postgres /var/lib/postgresql /var/log/postgresql; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=api /out      /app
 COPY --from=web /web/dist /app/wwwroot
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh \
-    && mkdir -p /var/lib/postgresql/data /var/log/postgresql \
-    && chown -R postgres:postgres /var/lib/postgresql /var/log/postgresql
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 WORKDIR /app
-VOLUME ["/var/lib/postgresql/data"]
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

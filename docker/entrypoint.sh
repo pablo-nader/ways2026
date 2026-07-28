@@ -21,6 +21,19 @@ if [ -n "$BASE_EXTERNA" ]; then
     exec dotnet /app/Ways.Api.dll
 fi
 
+# Credenciales del PostgreSQL embebido. Van acá y no en un ENV del Dockerfile para no
+# hornear una contraseña en los metadatos de la imagen.
+POSTGRES_DB="${POSTGRES_DB:-ways}"
+POSTGRES_USER="${POSTGRES_USER:-ways}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-ways}"
+
+if [ ! -x "$PGBIN/initdb" ]; then
+    log "ERROR: no hay base externa configurada y esta imagen se construyó sin PostgreSQL."
+    log "       Definí ConnectionStrings__Ways o DATABASE_URL apuntando a tu base,"
+    log "       o reconstruí la imagen con --build-arg INCLUIR_POSTGRES=true."
+    exit 1
+fi
+
 log "Sin base externa configurada: modo todo-en-uno."
 
 mkdir -p "$PGDATA" /var/log/postgresql

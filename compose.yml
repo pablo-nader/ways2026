@@ -6,6 +6,10 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      args:
+        # Este compose es el modo todo-en-uno, así que sí hace falta el PostgreSQL
+        # embebido. Con una base externa se deja en false y la imagen pesa 270 MB menos.
+        INCLUIR_POSTGRES: 'true'
     image: ways:latest
     container_name: ways
     restart: unless-stopped

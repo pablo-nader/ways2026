@@ -14,7 +14,14 @@ using Ways.Domain.Usuarios;
 using Ways.Infrastructure;
 using Ways.Infrastructure.Persistencia;
 
-var builder = WebApplication.CreateBuilder(args);
+// El content root se fija al directorio del ensamblado en vez de heredarlo del working
+// directory. Algunos paneles arrancan el contenedor con otro cwd, y ahí wwwroot deja de
+// resolverse y el front no se sirve.
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
 
 // --- Capas ---
 builder.Services.AgregarApplication();
@@ -149,8 +156,11 @@ app.MapFallback(async contexto =>
         return;
     }
 
-    var indice = Path.Combine(contexto.RequestServices
-        .GetRequiredService<IWebHostEnvironment>().WebRootPath ?? "wwwroot", "index.html");
+    var entorno = contexto.RequestServices.GetRequiredService<IWebHostEnvironment>();
+    var raiz = string.IsNullOrEmpty(entorno.WebRootPath)
+        ? Path.Combine(AppContext.BaseDirectory, "wwwroot")
+        : entorno.WebRootPath;
+    var indice = Path.Combine(raiz, "index.html");
 
     if (!File.Exists(indice))
     {
