@@ -34,8 +34,16 @@ Usá el **host interno** (`aipos_aipos-postgres`), no el público: el tráfico n
 | Build context | `/` (la raíz del repo, **no** `docker/`) |
 | Port | `8080` |
 
-El *build context* es lo que más se equivoca: el `Dockerfile` copia `src/` y `Ways.slnx`
-desde la raíz. Si le ponés `docker/` como contexto, el build falla en el primer `COPY`.
+Dos cosas que se equivocan siempre:
+
+- **El build context.** El `Dockerfile` copia `src/` y `Ways.slnx` desde la raíz.
+  Si le ponés `docker/` como contexto, el build falla en el primer `COPY`.
+- **El puerto.** EasyPanel asume 3000 por defecto. Si el build sale bien, el contenedor
+  loguea `Now listening on: http://[::]:8080` y aun así el dominio devuelve
+  **502 "Service is not reachable"**, es esto: el proxy está golpeando el puerto equivocado.
+
+No hace falta pasar `INCLUIR_POSTGRES`: viene apagado por defecto, que es lo que corresponde
+cuando la base es un servicio aparte. Encenderlo suma ~270 MB a la imagen sin usarse.
 
 ### 3. Variables de entorno
 
