@@ -17,12 +17,17 @@ services:
     build:
       context: .
       dockerfile: mysql.Dockerfile
+      args:
+        # Para probar contra otro motor: MYSQL_IMAGE=mysql:9 docker compose ... up -d --build
+        # Con MySQL 8.4 o 9 hace falta además PARCHE_GRUPOS=1.
+        MYSQL_IMAGE: ${MYSQL_IMAGE:-mysql:5.7}
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?falta MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${DB_NAME:-c1890978_alsina}
       MYSQL_USER: ${DB_USER:-ways}
       MYSQL_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+      PARCHE_GRUPOS: ${PARCHE_GRUPOS:-}
     volumes:
       - mysql-data:/var/lib/mysql
       # El dump vive fuera del contexto de build a propósito: no entra en ninguna imagen.

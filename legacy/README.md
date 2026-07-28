@@ -63,8 +63,9 @@ Dos servicios en el mismo proyecto.
 
 ### 1. Servicio MySQL
 
-- Tipo **MySQL**, imagen **`mysql:5.7`** (el hosting viejo corría 5.7.44; MySQL 8 también
-  funciona, ver el comentario al final de `config/mysql-ways.cnf`).
+- Tipo **MySQL**, imagen **`mysql:5.7`** — el hosting viejo corría 5.7.44. `mysql:8.4` y
+  `mysql:9` también funcionan, pero exigen un parche en el dump: ver la tabla de versiones
+  más abajo.
 - Base **`c1890978_alsina`** (ese nombre exacto), usuario `ways`, contraseñas nuevas.
   **Las viejas están en el historial de git: no se reusan.**
 
@@ -178,12 +179,45 @@ Después: <http://localhost:8080>. Para empezar de cero,
 
 ### `#6125 Failed to add the foreign key constraint. Missing unique key ... 'grupos'`
 
-Estás importando en **MySQL 8 o MariaDB**, no en `mysql:5.7`. La tabla `grupos` tiene sobre
-`id` un índice **no único** (`ADD KEY id (id)`, no `PRIMARY KEY`). MySQL 5.7 acepta una clave
-foránea que apunta a un índice no único; los motores más nuevos, no.
+De las 10 tablas referenciadas por claves foráneas, `grupos` es **la única** cuyo `id` tiene
+un índice no único (`ADD KEY id (id)`; las otras nueve tienen `PRIMARY KEY` o `UNIQUE KEY`).
+Es una anomalía del esquema original. MySQL 5.7 y 8.0 la toleran; 8.4 y 9 no.
 
-No se arregla parcheando el dump: se arregla usando `mysql:5.7`, que es lo que corría el
-hosting original. Cambiar el esquema en Fase 0 es exactamente lo que la Fase 0 no hace.
+| Imagen | ¿Entra el dump tal cual? | Probado |
+|---|---|---|
+| `mysql:5.7` | Sí. Es lo que corría el hosting. | 27/27 claves foráneas |
+| `mysql:8.0` | Sí. Sin soporte desde abril de 2026. | crea la clave foránea |
+| `mysql:8.4` | No — `#6125`. Necesita el parche. | falla sin parche |
+| `mysql:9` | No — `#6125`. Necesita el parche. | 27/27 **con** parche |
+
+El parche es una línea: convierte ese índice en único, dejando `grupos` igual que sus nueve
+hermanas. Verificado sobre los datos reales: 136 grupos, 136 ids distintos, ningún duplicado.
+No hace falta editar el archivo de 97 MB, se aplica al vuelo durante el import:
+
+```bash
+{ echo "SET FOREIGN_KEY_CHECKS=0;"; sed '/^ALTER TABLE `grupos`$/{n;s/^  ADD KEY `id` (`id`);$/  ADD UNIQUE KEY `id` (`id`);/}' dump.sql; } | docker exec -i $(docker ps -qf name=mysql) mysql -uroot -p'<clave-root>' --default-character-set=utf8mb4
+```
+
+Para la prueba local con compose, la variable `PARCHE_GRUPOS=1` hace lo mismo:
+
+```bash
+MYSQL_IMAGE=mysql:9 PARCHE_GRUPOS=1 docker compose -f legacy/compose.yml up -d --build
+```
+
+Con MySQL 9.7.2 se verificó el camino completo: config aplicada, 27 claves foráneas, 345.665
+ventas, PHP 7.4 conectando por `caching_sha2_password`, `0000-00-00` aceptado con el
+`sql_mode` laxo, `float(10,2)` aceptado y los acentos intactos.
+
+**Lo que el parche no cubre:** el legacy tiene cientos de consultas escritas a mano que nunca
+corrieron sobre MySQL 9. Lo verificable de antemano ya se verificó — ninguna columna usa
+palabras que MySQL 8 volvió reservadas, y sólo hay 4 `GROUP BY` en todo el código, 2 sin
+`ORDER BY` explícito (MySQL 8 dejó de ordenar implícitamente al agrupar, así que esos dos
+listados pueden salir en otro orden). Aun así, 5.7 sigue siendo el camino de menor riesgo
+para la Fase 0: es el motor sobre el que este código corrió durante años.
+
+**Ojo con el volumen.** MySQL no arranca sobre un directorio de datos creado por una versión
+más nueva: si el servicio ya corrió con `mysql:9`, no alcanza con cambiar la imagen a 5.7.
+Hay que borrar el volumen (o recrear el servicio) y volver a importar desde cero.
 
 ### `#1046 No database selected` en la primera tabla del dump
 
