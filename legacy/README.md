@@ -264,7 +264,17 @@ Surte efecto en las conexiones nuevas, así que alcanza con recargar la página.
 pierde en el próximo reinicio del servicio**, y ahí la caja se rompe de vuelta sin que nadie
 haya tocado nada. Es un parche para seguir facturando hoy, no la solución.
 
-**Si el mount se sigue ignorando, sacá el archivo del medio:** creá el servicio de base como
+**La forma durable más simple: no usar archivo.** Si el servicio MySQL de EasyPanel tiene
+campo de comando, la misma configuración se pasa como argumentos de `mysqld` y no hay nada
+que montar ni que se pueda ignorar por permisos:
+
+```
+mysqld --sql-mode=NO_ENGINE_SUBSTITUTION --character-set-server=latin1 --collation-server=latin1_swedish_ci --init-connect="SET NAMES latin1" --max-allowed-packet=256M
+```
+
+Verificado sobre `mysql:5.7.44`: deja el servidor exactamente igual que con el `ways.cnf`.
+
+**Si tampoco hay campo de comando, sacá el archivo del medio:** creá el servicio de base como
 tipo **App** apuntando a este repositorio, con build path `/legacy` y Dockerfile
 `mysql.Dockerfile`. Esa imagen ya trae el `.cnf` adentro con los permisos correctos, así que
 no hay nada que montar ni que se pueda ignorar. Necesita un volumen en `/var/lib/mysql` y las
