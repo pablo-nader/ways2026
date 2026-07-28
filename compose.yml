@@ -1,0 +1,30 @@
+# Despliegue del contenedor todo-en-uno.
+#   docker compose up -d --build
+#   → http://localhost:8080
+services:
+  ways:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: ways:latest
+    container_name: ways
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      POSTGRES_DB: ways
+      POSTGRES_USER: ways
+      # Cambiar en la VM. La base solo escucha en loopback dentro del contenedor,
+      # pero una contraseña por defecto en producción sigue siendo una mala idea.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ways}
+      # Cuenta root inicial. Se crea solo si todavía no existe ninguna cuenta root.
+      Semilla__Root__Usuario: ${WAYS_ROOT_USUARIO:-root}
+      Semilla__Root__Mail: ${WAYS_ROOT_MAIL:-test@test.com}
+      Semilla__Root__Password: ${WAYS_ROOT_PASSWORD:-root}
+    volumes:
+      # Sin este volumen, borrar el contenedor borra la base.
+      - ways-pgdata:/var/lib/postgresql/data
+
+volumes:
+  ways-pgdata:
