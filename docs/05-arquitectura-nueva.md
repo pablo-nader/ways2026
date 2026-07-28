@@ -208,7 +208,7 @@ GET    /api/reportes/caja-virtual
 
 | # | Bug del legacy | Corrección |
 |---|---|---|
-| 1 | Restaurar ticket **suma** stock en vez de restarlo | invertir el signo + `stock_movimientos` |
+| 1 | Restaurar ticket **suma** stock en vez de restarlo | invertir el signo + `movimientos_stock` |
 | 2 | Venta + stock + saldo sin transacción | una sola transacción |
 | 3 | Stock descontado sin validar disponibilidad | validar y avisar (o permitir negativo, pero explícito) |
 | 4 | Stock global para 2 locales | `stock` por punto de venta |

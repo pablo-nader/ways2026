@@ -139,7 +139,7 @@ No antes. Ninguna de estas entra en la paridad funcional:
 - Compras con detalle (la Fase C3 que el legacy nunca terminó) y actualización de costos masiva.
 - Stock transferido entre locales.
 - Reportes de rentabilidad por artículo / marca / proveedor — **ahora posible**, porque
-  `venta_lineas` es una tabla real.
+  `items_venta` es una tabla real.
 - Facturación electrónica AFIP/ARCA.
 - App de consulta de precios para el salón.
 - Etiquetas y carteles de góndola.

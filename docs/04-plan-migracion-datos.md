@@ -77,20 +77,20 @@ Orden obligatorio (dependencias de FK):
  3. listas_precio
  4. empleados          ← usuarios WHERE tipoUser IN (2,3,4)
  5. clientes           ← usuarios WHERE tipoUser = 1  (+ el id 1, Consumidor Final)
- 6. empleado_asignaciones ← usuario_rol_puntoventa
+ 6. asignaciones_empleado ← usuario_rol_puntoventa
  7. articulos
  8. codigos_barra
  9. precios            ← desde articulos.precio / precioEmp
 10. ofertas            ← desde articulos.Oferta* y grupos.oferta*
 11. stock              ← desde articulos.existencia / existencia_2
-12. cajas + caja_totales_area
-13. caja_general       ← cajaz
-14. caja_virtual + caja_virtual_canales ← cajav
+12. cajas + turnos_caja_totales
+13. movimientos_tesoreria       ← cajaz
+14. arqueos_recargas + arqueos_recargas_canales ← cajav
 15. ventas             ← ventas WHERE tipo IN (1,2)
-16. venta_lineas       ← PARSEO de ventas.articulos   ← el paso caro
+16. items_venta       ← PARSEO de ventas.articulos   ← el paso caro
 17. gastos
-18. cuenta_corriente_movimientos ← ventas WHERE tipo IN (3,4,5) + las de tipo 1/2 con c_corriente <> 0
-19. stock_movimientos  ← opcional, sintetizado desde venta_lineas
+18. movimientos_cuenta_corriente ← ventas WHERE tipo IN (3,4,5) + las de tipo 1/2 con c_corriente <> 0
+19. movimientos_stock  ← opcional, sintetizado desde items_venta
 ```
 
 **Preservar los IDs originales** en todas las tablas (`OVERRIDING SYSTEM VALUE` +
@@ -102,7 +102,7 @@ número; cambiar los IDs rompe la trazabilidad con los tickets impresos.
 Formato: `barra/cantidad/descripcion/precio/total` separado por `*`.
 
 ```sql
-INSERT INTO venta_lineas (venta_id, orden, codigo_barra, cantidad, descripcion,
+INSERT INTO items_venta (venta_id, orden, codigo_barra, cantidad, descripcion,
                           precio_unitario, total, articulo_id, area_id)
 SELECT
   v.id,
@@ -151,7 +151,7 @@ se revisa antes del cutover.
 
 ### Estimación de volumen
 
-345.665 ventas × ~4 líneas promedio ≈ **1,3–1,5 millones de filas** en `venta_lineas`.
+345.665 ventas × ~4 líneas promedio ≈ **1,3–1,5 millones de filas** en `items_venta`.
 Es perfectamente manejable en Postgres. Correr con índices deshabilitados y crearlos al final.
 
 ---
@@ -167,14 +167,14 @@ SELECT tipo, count(*), sum(total) FROM ventas WHERE NOT anulada GROUP BY tipo;
 -- Las líneas tienen que sumar el subtotal de la venta
 SELECT count(*) FROM (
   SELECT v.id FROM ventas v
-  JOIN venta_lineas l ON l.venta_id = v.id
+  JOIN items_venta l ON l.venta_id = v.id
   GROUP BY v.id, v.subtotal
   HAVING abs(sum(l.total) - v.subtotal) > 0.05
 ) t;   -- debe dar 0 (o una lista corta y explicada)
 
 -- Saldos de cuenta corriente
 SELECT c.id, c.saldo,
-       (SELECT sum(importe) FROM cuenta_corriente_movimientos m WHERE m.cliente_id = c.id)
+       (SELECT sum(importe) FROM movimientos_cuenta_corriente m WHERE m.cliente_id = c.id)
 FROM clientes c WHERE c.saldo <> 0;
 
 -- Stock

@@ -14,6 +14,8 @@ Reescritura del ERP/POS Ways. El sistema actual es una aplicación PHP monolíti
 | [04 — Plan de migración de datos](04-plan-migracion-datos.md) | Estrategia en dos etapas, el parser de `ventas.articulos`, validación y cutover |
 | [05 — Arquitectura nueva](05-arquitectura-nueva.md) | .NET + React/Vite/TS + Postgres, Docker, endpoints, estilos |
 | [06 — Roadmap](06-roadmap.md) | Fases, criterios de salida y qué hay que hacer hoy |
+| [07 — Despliegue](07-despliegue.md) | EasyPanel, variables de entorno, modo todo-en-uno y desarrollo local |
+| [08 — Usuarios y login](08-usuarios-y-login.md) | Primera tabla del sistema nuevo: esquema, reglas de rol y sesión |
 
 ## Estado
 
@@ -23,7 +25,13 @@ Reescritura del ERP/POS Ways. El sistema actual es una aplicación PHP monolíti
 - [x] Modelo destino
 - [x] Plan de migración
 - [ ] Fase 0 — continuidad operativa en la VM nueva
-- [ ] Fase 1 — fundaciones
+- [ ] **Fase 1 — fundaciones** (en curso)
+  - [x] Solución .NET 10 + React 19 / Vite 8 / TypeScript
+  - [x] Contenedor Docker, en modo todo-en-uno y con base externa
+  - [x] Tablas `roles` y `usuarios`
+  - [x] Login con sesión por cookie, 1 h de inactividad
+  - [x] ABM de usuarios con reglas de rol
+  - [ ] Resto del schema, tabla por tabla
 
 ## Los tres números que importan
 
