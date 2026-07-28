@@ -1,0 +1,34 @@
+# Configuración del servicio MySQL para el sistema legacy.
+#
+# Esto NO es "la configuración recomendada de MySQL": es la configuración que reproduce el
+# hosting viejo (MySQL 5.7.44). Cambiar cualquiera de estas tres primeras líneas corrompe
+# datos en silencio.
+
+[mysqld]
+
+# Las 21 tablas del dump son latin1. El servidor tiene que arrancar en latin1 para que las
+# tablas nuevas y las conexiones sin charset explícito se comporten igual que antes.
+character-set-server = latin1
+collation-server = latin1_swedish_ci
+
+# El sistema nunca llama a mysqli_set_charset(): trabajaba con la conexión en latin1 y por
+# eso guarda bytes UTF-8 crudos dentro de columnas latin1 (en el dump se ven como "CaÃ±uelas").
+# init_connect fuerza ese mismo charset en toda conexión de usuario no-SUPER, sin tocar el
+# código PHP. No aplica al usuario root, que es justamente lo que se necesita para restaurar
+# el dump (el dump trae su propio SET NAMES utf8mb4).
+init_connect = 'SET NAMES latin1'
+
+# El hosting viejo corría en modo laxo. Con el sql_mode por defecto de MySQL 5.7/8.0
+# (STRICT_TRANS_TABLES + ONLY_FULL_GROUP_BY) el legacy revienta: hay INSERTs que omiten
+# columnas NOT NULL sin default y consultas de estadísticas con GROUP BY parcial.
+sql_mode = NO_ENGINE_SUBSTITUTION
+
+# El dump pesa ~97 MB y hay INSERTs multi-fila grandes.
+max_allowed_packet = 256M
+
+# Dimensionado para una VM de 4 GB. Subir si la VM tiene más RAM.
+innodb_buffer_pool_size = 512M
+
+# Si en lugar de mysql:5.7 se usa mysql:8.0, descomentar esta línea: PHP 7.4 se conecta bien
+# con caching_sha2_password, pero varios clientes de escritorio y herramientas de backup no.
+# default-authentication-plugin = mysql_native_password

@@ -1,0 +1,57 @@
+# Compose de prueba local del sistema legacy. NO es lo que corre en EasyPanel: allá cada
+# servicio se crea por separado (ver README.md). Sirve para verificar la imagen y el dump
+# antes de tocar producción.
+#
+#   cp env.example .env   # y editar las claves
+#   docker compose -f legacy/compose.yml --env-file legacy/.env up -d --build
+#
+# La primera vez, MySQL importa el dump de 97 MB: tarda varios minutos y la app responde
+# "No se pudo conectar" hasta que termina. Seguir el avance con:
+#
+#   docker compose -f legacy/compose.yml logs -f mysql
+
+services:
+  mysql:
+    # Se construye en lugar de usar mysql:5.7 directo porque la configuración tiene que
+    # entrar con permisos 0644; ver el comentario de mysql.Dockerfile.
+    build:
+      context: .
+      dockerfile: mysql.Dockerfile
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?falta MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME:-c1890978_alsina}
+      MYSQL_USER: ${DB_USER:-ways}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # El dump vive fuera del contexto de build a propósito: no entra en ninguna imagen.
+      - ../alsina/localhost.sql:/docker-entrypoint-initdb.d/10-dump.sql:ro
+    ports:
+      # 3307 en el host para no chocar con un MySQL local.
+      - "3307:3306"
+
+  app:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-c1890978_alsina}
+      DB_USER: ${DB_USER:-ways}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+      SYNC_REMOTE_HOST: ${SYNC_REMOTE_HOST:-}
+      SYNC_REMOTE_USER: ${SYNC_REMOTE_USER:-}
+      SYNC_REMOTE_PASSWORD: ${SYNC_REMOTE_PASSWORD:-}
+      SYNC_REMOTE_DB: ${SYNC_REMOTE_DB:-ways}
+    volumes:
+      - php-sessions:/var/lib/php/sessions
+    ports:
+      - "8080:80"
+
+volumes:
+  mysql-data:
+  php-sessions:

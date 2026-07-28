@@ -1,5 +1,7 @@
-# El legacy y el dump de 92 MB no van a la imagen.
+# El legacy y el dump de 92 MB no van a la imagen. `legacy/` es la Fase 0 y se construye
+# con su propio contexto (ver legacy/README.md).
 alsina/
+legacy/
 docs/
 migracion/
 

@@ -3,6 +3,10 @@
 # El legacy se conserva byte a byte: es un registro histórico, no código a mantener.
 alsina/** -text
 
+# La copia desplegable de Fase 0 también, para que `diff -r alsina legacy/app` muestre sólo
+# los cambios reales y no un fin de línea distinto en cada archivo.
+legacy/app/** -text
+
 *.sql  -text
 *.ttf  binary
 *.png  binary

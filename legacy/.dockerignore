@@ -1,0 +1,11 @@
+# El contexto de build es legacy/. Nada de esto tiene que entrar en la imagen.
+compose.yml
+.env
+.env.*
+!.env.example
+README.md
+scripts/
+
+# Restos del legacy que nunca deberían quedar publicados en el docroot.
+app/**/*.sql
+app/**/.ht*

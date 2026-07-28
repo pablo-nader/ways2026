@@ -27,21 +27,35 @@ comprar tiempo, no para hacer las cosas bien.
       fresco de la base. El dump que tenemos es del relevamiento; hay que sacar uno del
       último minuto. Si esto no se hace hoy, se pierde.
 - [ ] Contratar la VM (2 vCPU / 4 GB / 40 GB SSD alcanza y sobra para este volumen).
-- [ ] `docker/legacy/compose.yml`: `php:8.2-apache` + `mysql:8` + volumen para la base.
-- [ ] `conexion.php` pasa a leer variables de entorno. **Sacar las credenciales del código.**
-- [ ] Restaurar el dump fresco en el MySQL del contenedor.
+- [x] `legacy/`: imagen `php:7.4-apache` + servicio `mysql:5.7` + volumen para la base.
+      Instrucciones de despliegue en EasyPanel: `legacy/README.md`.
+- [x] `conexion.php` pasa a leer variables de entorno. **Sacar las credenciales del código.**
+      También se sacaron las credenciales sueltas de `filtrarArticulo.php`, `filtrarUsuario.php`,
+      `combos.php`, `imprimirArticulos.php` y `actualizar.php`.
+- [x] Probado de punta a punta con el dump del relevamiento: 5.992 artículos y 345.665 ventas
+      restauradas, login renderizando y acentos idénticos al hosting viejo.
+- [ ] Restaurar el dump **fresco** en el MySQL del contenedor.
 - [ ] Verificar a mano: login → cargar un artículo → cerrar una venta → imprimir ticket →
       cerrar caja. Si el ticket no imprime igual, no está terminado.
 - [ ] DNS apuntando a la VM.
-- [ ] HTTPS con Caddy o nginx + Let's Encrypt.
+- [ ] HTTPS (lo resuelve EasyPanel con Let's Encrypt).
 - [ ] **Backup automático diario** de la base a un bucket externo. El sistema viejo no tenía.
 - [ ] Cambiar la password de la base y de los usuarios operativos (las viejas están en el repo).
 
 **Riesgos conocidos de la Fase 0:**
-- PHP 8.2 puede romper con este código (`@` suppression, `mysqli` deprecations, comparaciones
-  laxas). Si rompe, bajar a `php:7.4-apache` — funciona, ya no tiene soporte, y no importa
-  porque es temporal.
+- Se eligió `php:7.4-apache`, igual que el hosting original (7.4.33), en vez de 8.2: en Fase 0
+  la prioridad es reproducir, no modernizar. Está fuera de soporte y es temporal. El Dockerfile
+  acepta `--build-arg PHP_IMAGE=php:8.2-apache` para probar la migración de versión aparte.
 - El charset `latin1` tiene que quedar igual que en el hosting viejo o se rompen los acentos.
+  Confirmado contra el dump: el sistema guarda bytes UTF-8 dentro de columnas latin1 porque la
+  conexión siempre fue latin1. Se reproduce con `init_connect = 'SET NAMES latin1'` en el
+  servicio MySQL, sin tocar el PHP.
+- El `sql_mode` por defecto de MySQL 5.7/8.0 rompe el legacy (`STRICT_TRANS_TABLES` y
+  `ONLY_FULL_GROUP_BY`). El servicio MySQL arranca con `sql_mode = NO_ENGINE_SUBSTITUTION`.
+- **MySQL ignora en silencio los archivos de configuración escribibles por todos.** Si el
+  `.cnf` se monta con permisos 0777, el servidor arranca sin latin1 y en modo estricto sin
+  avisar más que una línea en el log. Verificar siempre con
+  `SELECT @@init_connect, @@sql_mode` antes de restaurar el dump.
 
 ---
 
