@@ -110,6 +110,16 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         // Usuario no hereda de EntidadTenant (ver el comentario de Usuario.IdTenant), así que
         // el loop de arriba no lo alcanza: necesita el mismo rechazo escrito a mano, igual que
         // ya tiene su propio filtro de tenant (AplicarFiltroDeTenantEnUsuario).
+        //
+        // A propósito no se valida acá el estado Added (a diferencia del loop de EntidadTenant):
+        // ServicioDeUsuarios.CrearAsync deriva IdTenant del actor de la identidad de sesión
+        // (ActorDeGestion.IdTenant, doc 09 ADR-8), que es un dato de confianza distinto —y
+        // deliberadamente separado— del TenantActual de la conexión, así que no hay un valor
+        // único contra el cual estampar o validar acá sin duplicar esa lógica de negocio. Además,
+        // NULL es un valor legítimo para Usuario.IdTenant en modo plataforma (staff de plataforma
+        // y la semilla de root, InicializadorDeBaseDeDatos.SembrarRootAsync), así que ni siquiera
+        // se puede reusar el sentinel "IdTenant == 0" del loop de EntidadTenant. RLS
+        // (WITH CHECK de usuarios_tenant) es el backstop real para un Added con id_tenant ajeno.
         foreach (var entrada in ChangeTracker.Entries<Usuario>())
         {
             if (entrada.State == EntityState.Modified && entrada.Property(e => e.IdTenant).IsModified)
