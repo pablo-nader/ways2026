@@ -104,6 +104,31 @@ public class FiltroDeUsuarioTests
         Assert.Empty(visibles);
     }
 
+    /// <summary>Espejo de <see cref="FiltroDeTenantTests.SaveChangesRechazaModificarElIdTenantDeUnaFilaExistente"/>
+    /// para <see cref="Usuario"/>: no hereda de <see cref="Ways.Domain.Common.EntidadTenant"/>,
+    /// así que el guard de <c>WaysDbContext.EstamparTenant</c> necesita su propio loop escrito
+    /// a mano para atrapar el mismo tamper.</summary>
+    [Fact]
+    public async Task SaveChangesRechazaModificarElIdTenantDeUnUsuarioExistente()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        int idUsuario;
+
+        await using (var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma))
+        {
+            var usuario = Nuevo(1, "admin", "admin@ways.test");
+            siembra.Usuarios.Add(usuario);
+            await siembra.SaveChangesAsync();
+            idUsuario = usuario.Id;
+        }
+
+        await using var tenant1 = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, 1));
+        var usuarioExistente = await tenant1.Usuarios.SingleAsync(u => u.Id == idUsuario);
+        usuarioExistente.IdTenant = 2;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => tenant1.SaveChangesAsync());
+    }
+
     [Fact]
     public async Task IgnoreQueryFiltersDeBajaLogicaNoArrastraElDeTenant()
     {

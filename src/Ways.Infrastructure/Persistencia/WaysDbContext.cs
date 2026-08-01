@@ -106,6 +106,18 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
                         "El id_tenant de una fila existente no se puede modificar.");
             }
         }
+
+        // Usuario no hereda de EntidadTenant (ver el comentario de Usuario.IdTenant), así que
+        // el loop de arriba no lo alcanza: necesita el mismo rechazo escrito a mano, igual que
+        // ya tiene su propio filtro de tenant (AplicarFiltroDeTenantEnUsuario).
+        foreach (var entrada in ChangeTracker.Entries<Usuario>())
+        {
+            if (entrada.State == EntityState.Modified && entrada.Property(e => e.IdTenant).IsModified)
+            {
+                throw new InvalidOperationException(
+                    "El id_tenant de una fila existente no se puede modificar.");
+            }
+        }
     }
 
     /// <summary>
