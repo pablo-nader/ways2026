@@ -413,3 +413,120 @@ Slice 2 is code-complete up to the gate. Once DB CHANGE GATE #2 is approved: gen
 migration 2, backfill existing `usuarios` rows (task 2.3), un-skip the 7 gated integration
 tests in `UsuariosYLoginTests.cs` and confirm they pass for real against Postgres, then
 judgment-day review before PR 2.
+
+---
+
+## Batch 7 — DB CHANGE GATE #2 approved, slice 2 runtime-verified
+
+**Trigger:** the user approved gate #2 on 2026-08-01, exactly as presented (see the gate
+summary in batch 6): `id_tenant` column + FK, per-tenant unique index with
+`NULLS NOT DISTINCT`, RLS standard policy plus the two login-mode policies on `usuarios`,
+and the backfill policy. Asked to: generate migration 2 including the backfill, un-skip and
+green the 7 gated integration tests (target: 38 domain / 28 application / 15/15 integration
+incl. slice 1's 8), remove the `PendingModelChangesWarning` suppression if no longer needed,
+commit as work units, update the SDD artifacts.
+
+**Status:** `done`. Full suite green — **38 domain / 28 application / 15/15 integration**
+(stable across 3 consecutive runs) — with three genuine, previously-latent bugs found and
+fixed along the way (none hidden, all reported below).
+
+### Completed in batch 7
+
+- **2.2** — Migration `UsuariosMultiTenant` generated
+  (`dotnet ef migrations add UsuariosMultiTenant`), then hand-added the RLS calls the
+  scaffolder can't produce (same technique as migration 1): `HabilitarRlsDeTenant("usuarios")`
+  plus `CREATE POLICY usuarios_login_lectura`/`usuarios_login_actualiza` in `Up()`; matching
+  `DROP POLICY` × 3 + `NO FORCE`/`DISABLE ROW LEVEL SECURITY` in `Down()` (the table existed
+  without RLS before this migration, so `Down()` restores exactly that). File:
+  `src/Ways.Infrastructure/Persistencia/Migraciones/20260801154718_UsuariosMultiTenant.cs`.
+- **2.3** — `InicializadorDeBaseDeDatos.BackfillDeUsuariosAsync` added: assigns the lowest-id
+  tenant to every `Usuario` row with `IdTenant == null && RolId != Root`, after
+  `SembrarOrganizacionAsync`. Idempotent by construction (a fresh install only has `root` at
+  that point, filtered out by the role check; a redeploy finds nothing left to backfill).
+- The `PendingModelChangesWarning` suppression added in batch 6 (`WaysApiFixture`, test-only)
+  is **removed** — model and migration snapshot agree again now that migration 2 exists, so
+  the warning no longer fires. Confirmed by running the full integration suite clean without it.
+- The 7 tests in `UsuariosYLoginTests.cs` are un-skipped and green against real Postgres.
+
+### Three real bugs found while getting from "compiles" to "actually green against Postgres"
+
+None of these were visible before this batch because **no test in this project had ever
+booted the real API host** (`WebApplicationFactory.CreateClient()`) against a live database —
+confirmed as a known gap in `state.yaml`'s carried-forward notes, and now closed. All three
+are genuine, all three are fixed, none were worked around silently:
+
+1. **`Database.SqlQuery<T>()` crashes with `IndexOutOfRangeException`** inside EF Core's
+   `NavigationExpandingExpressionVisitor`, for *any* raw-SQL query against this project's
+   model (proven by reproducing it identically on `main`, via a temporary `git worktree`,
+   before touching slice 2's own filter — this is a pre-existing bug, not something slice 2
+   introduced). It broke `InicializadorDeBaseDeDatos.VerificarRolSinBypassAsync` (the
+   `rolsuper`/`rolbypassrls` startup guard, ADR-5) the moment any test finally exercised real
+   app startup. Root-caused to `SqlQuery<T>()` specifically (plain LINQ queries against the
+   same model work fine) via a battery of isolated repro tests. Fixed by rewriting that one
+   method with plain ADO.NET (`db.Database.GetDbConnection()` + a raw command), which never
+   enters that LINQ pipeline at all.
+2. **`OnValidatePrincipal` checked account validity before resolving the session's tenant.**
+   Once `Usuario` got its own tenant filter (batch 6) — which fails closed under
+   `ModoDeAcceso.Ninguno`, the default before the tenant is resolved — the very first check in
+   `OnValidatePrincipal` (`db.Usuarios.AnyAsync(u => u.Id == usuarioId && ...)`) always saw
+   zero rows for *any* tenant-scoped account, silently rejecting every tenant session on the
+   request right after login. Fixed by reordering: resolve the mode/tenant from the
+   already-decrypted cookie claims **first** (`ResolverModoDeLaSesionAsync`, renamed from
+   `ResolverTenantDeLaSesionAsync`), then check account validity under the now-correct
+   context — which also makes that check tenant-scoped as a bonus defense layer (ADR-8).
+3. **The integration test fixture's connection-string override never reached `Program.cs`.**
+   `Program.cs` is minimal hosting (`WebApplication.CreateBuilder`) and reads
+   `builder.Configuration` synchronously inside its own top-level statements
+   (`AgregarInfrastructure`), before `WebApplicationFactory` gets a chance to apply
+   `ConfigureWebHost`'s `ConfigureAppConfiguration` override — confirmed with a temporary log
+   line showing the stale `appsettings.json` value (`localhost:5432`) instead of the
+   container's. Fixed by setting `ConnectionStrings__Ways` as a **process environment
+   variable** in `WaysApiFixture.InitializeAsync`, which `WebApplication.CreateBuilder` reads
+   fresh when `Program.Main` actually runs (deferred until the first `CreateClient()`). That
+   surfaced a second issue — the env var is process-global, and xUnit runs different test
+   classes' fixtures in parallel by default, so two `WaysApiFixture` instances (one per test
+   class) raced to overwrite it, and whichever class booted its host second sometimes
+   connected to the *other* class's already-destroyed container. Fixed with a new
+   `[CollectionDefinition("Ways.IntegrationTests secuencial", DisableParallelization = true)]`
+   applied to both `AislamientoDeTenantTests` and `UsuariosYLoginTests`, forcing them to run
+   sequentially. A third, smaller issue in the same area: `ways_app` lacked `CREATE` on schema
+   `public`, so `InicializadorDeBaseDeDatos`'s always-runs-on-boot `Database.MigrateAsync()`
+   failed with `42501` even though nothing was actually pending — Postgres requires `CREATE`
+   to even *attempt* `CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory"`, existing or not.
+   Granted `CREATE` alongside the existing data grants (documented as not weakening the RLS
+   proof, which depends on `NOSUPERUSER`/`NOBYPASSRLS`, and as arguably more representative of
+   production, where ADR-5 already documents the app role as the table owner).
+
+Two test-only bugs (not production) were also found and fixed while un-skipping
+`UsuariosYLoginTests.cs`: seed helpers that inserted a `Usuario` before any `Rol` row existed
+(`fk_usuarios_rol` violation — fixed by booting the host first, which seeds roles), a global
+`usuario = "admin"` count assertion made fragile by other tests in the same class sharing one
+Postgres instance (fixed by scoping the count to the test's own two tenants), and a raw-string
+`ProblemDetails` body comparison that could never match because of the per-request `traceId`
+(fixed by comparing `title`/`codigo` instead of the whole JSON body).
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 38/38, `Ways.Application.Tests` 28/28,
+  `Ways.IntegrationTests` 15/15** (8 unedited slice-1 tests + 7 slice-2 tests, all real
+  Postgres). 0 failures, 0 skipped. Re-ran `Ways.IntegrationTests` two additional times in a
+  row to confirm stability (not flaky): 15/15 both times.
+- Confirmed bug #1 (`SqlQuery<T>` crash) pre-dates this slice: reproduced identically against
+  `main` via a temporary `git worktree`, before attributing it to slice 2's own changes.
+
+### Commits (work units, branch `feat/stage1-slice2-usuarios`, no push)
+
+1. `feat(usuarios): generar la migracion UsuariosMultiTenant (gate #2 aprobada)` — migration
+   in its own commit, as requested.
+2. `feat(usuarios): backfill de id_tenant y arreglo de un bug real en el guard de rol`
+3. `fix(auth): resolver el tenant de la sesion antes de revisar la cuenta`
+4. `fix(integration-tests): arrancar el host real de la API contra el contenedor`
+5. `test(integration): habilitar las 7 pruebas de login/suspension (gate #2)`
+6. `docs(sdd): registrar el batch 7 (gate #2 aprobada, slice 2 verificado en runtime)`
+
+### Next batch
+
+Slice 2 is complete and runtime-verified. Ready for judgment-day review before PR 2 (per
+`CLAUDE.md`'s PR validation gate), stacked on PR 1 per the chosen `stacked-to-main` chain
+strategy. No open items block Slice 3 or Slice 4 from starting in parallel with judgment-day.
