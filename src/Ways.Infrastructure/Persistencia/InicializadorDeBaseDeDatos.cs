@@ -284,6 +284,18 @@ public class InicializadorDeBaseDeDatos(
     /// Idempotente: en una instalación nueva no hay ninguna cuenta huérfana (solo existe
     /// <c>root</c>, que el filtro de rol excluye) y esto es un no-op; en un redeploy sobre
     /// una base con el backfill ya corrido, tampoco encuentra nada para tocar.
+    ///
+    /// Encontrado en judgment-day (batch 9, ronda 2): esta es la ÚNICA mutación NULL→valor
+    /// legítima de <c>Usuario.IdTenant</c> en todo el sistema, y el guard de tamper de
+    /// <c>WaysDbContext.EstamparTenant</c> rechaza CUALQUIER <c>Modified</c> con
+    /// <c>IdTenant</c> tocado, sin distinguir esta asignación legítima de una reasignación
+    /// real. Por eso <c>ExecuteUpdateAsync</c> en vez de cargar las entidades y asignarles
+    /// la propiedad: es un UPDATE set-based que nunca pasa por el <c>ChangeTracker</c>, así
+    /// que nunca entra al guard — evita la excepción sin abrir un agujero en esa defensa
+    /// (mantenerla estricta para cualquier <c>Modified</c> real es justamente el punto de
+    /// defense-in-depth del comentario de <c>EstamparTenant</c>). Sigue pasando RLS: corre
+    /// en modo plataforma, y <c>WITH CHECK (app_es_plataforma() OR ...)</c> deja pasar
+    /// cualquier valor de <c>id_tenant</c> bajo ese modo.
     /// </summary>
     private async Task BackfillDeUsuariosAsync(CancellationToken ct)
     {
@@ -298,26 +310,19 @@ public class InicializadorDeBaseDeDatos(
             return;
         }
 
-        var huerfanos = await db.Usuarios
+        var actualizados = await db.Usuarios
             .IgnoreQueryFilters(["BajaLogica"])
             .Where(u => u.IdTenant == null && u.RolId != (int)RolConocido.Root)
-            .ToListAsync(ct);
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.IdTenant, idTenantPorDefecto), ct);
 
-        if (huerfanos.Count == 0)
+        if (actualizados == 0)
         {
             return;
         }
 
-        foreach (var usuario in huerfanos)
-        {
-            usuario.IdTenant = idTenantPorDefecto;
-        }
-
-        await db.SaveChangesAsync(ct);
-
         log.LogInformation(
             "Backfill: {Cantidad} usuarios existentes asignados al tenant {Tenant}.",
-            huerfanos.Count, idTenantPorDefecto);
+            actualizados, idTenantPorDefecto);
     }
 }
 
