@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -50,9 +51,22 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
         AppConnectionString = await CrearRolDeAplicacionAsync();
     }
 
-    /// <summary>Corre la migración 1 directamente contra el contenedor, con el rol
-    /// dueño — igual que <c>InicializadorDeBaseDeDatos</c> en producción, pero antes de
-    /// que exista el host de la API (que va a conectarse como <c>ways_app</c>).</summary>
+    /// <summary>Corre las migraciones existentes directamente contra el contenedor, con el
+    /// rol dueño — igual que <c>InicializadorDeBaseDeDatos</c> en producción, pero antes de
+    /// que exista el host de la API (que va a conectarse como <c>ways_app</c>).
+    ///
+    /// <c>PendingModelChangesWarning</c> silenciado a propósito, SOLO ACÁ: mientras stage-1
+    /// slice 2 está detenido en la DB CHANGE GATE #2 (`usuarios.id_tenant` ya existe en el
+    /// modelo de <c>Usuario</c>/<c>UsuarioConfiguration</c>, la migración todavía no —
+    /// `CLAUDE.md` prohíbe generarla sin aprobación explícita), el modelo en memoria y el
+    /// snapshot de la última migración difieren de verdad, y EF Core 8+ lo trata como error
+    /// fatal por default. Es exactamente el escenario documentado para este flag (ver el
+    /// mensaje de la propia excepción). Ninguna prueba de este proyecto toca `usuarios`
+    /// contra Postgres real todavía (las que sí lo hacen están con <c>Skip</c> hasta que la
+    /// migración exista), así que aplicar las tres migraciones existentes con el esquema
+    /// viejo de <c>usuarios</c> es seguro. Sacar este silenciado en el mismo batch que
+    /// genere la migración 2 — a partir de ahí modelo y snapshot vuelven a coincidir y el
+    /// warning no se dispara más.</summary>
     private async Task MigrarComoOwnerAsync()
     {
         var opciones = new DbContextOptionsBuilder<WaysDbContext>()
@@ -61,6 +75,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<EstadoUsuario>("estado_usuario");
                 npgsql.MapEnum<EstadoTenant>("estado_tenant");
             })
+            .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
 
         await using var db = new WaysDbContext(opciones, TenantActualFijo.Plataforma);
