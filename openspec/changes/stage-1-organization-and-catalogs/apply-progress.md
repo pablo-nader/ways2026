@@ -1026,3 +1026,101 @@ approved. Then, once approved: generate migration 4, present gate #5 (`Parametro
 migration 5 once approved, seed data (3.14), Application/API (3D), tests (3E), then 3F
 (tenant provisioning) at the end of the slice, followed by judgment-day review before PR
 3(a)/3(b).
+
+---
+
+## Batch 3 — gate #4 approved with modifications, migration 4 generated, delivery decision
+
+**Trigger:** the coordinator relayed the user's gate #4 approval **with two modifications**
+(apply before generating): (1) restore write-protection RLS on the 3 global tables — override
+of ADR-11's original "API-surface-only, no RLS" design — read-all/write-plataforma-only; (2)
+`alicuotas_iva.nombre` gets a unique index. Plus a delivery decision: Slice 3 ships as **one
+PR with `size:exception`**, not the 3a/3b split offered in batch 2.
+
+### Completed in batch 3
+
+- **`design.md` ADR-11 updated** with an explicit override note (user decision, 2026-08-01):
+  the three fiscal catalogs now get `ENABLE`/`FORCE ROW LEVEL SECURITY` too — permissive
+  `FOR SELECT USING (true)` (readable in every access mode) plus `FOR ALL USING/WITH CHECK
+  (app_es_plataforma())` (every write command restricted to platform mode). The API surface
+  is unchanged (still read-only `GET` for tenants) — RLS is a second, independent layer behind
+  it, same two-layer pattern as every scoped table in this document. Also updated the *Data
+  model shape* table and the migration-sequencing table (gate #4 row) to stop saying "no RLS."
+- **`RlsMigrationBuilderExtensions.HabilitarRlsDeCatalogoGlobal(tabla)` added** — reuses the
+  existing identifier guard (`ValidarIdentificadorDeTabla`, closed in batch 1). 6 new unit
+  tests in `RlsMigrationBuilderExtensionsTests.cs` (3 valid identifiers, 3 invalid).
+- **`AlicuotaIvaConfiguration`**: added `ux_alicuotas_iva_nombre UNIQUE(nombre) WHERE
+  deleted_at IS NULL` (user decision — doc 10 didn't ask for it, but two alícuotas both named
+  "21%" has no business meaning and would break any selector).
+- **Migration 4 (`CatalogosGlobales`) generated and hand-finished.** Same `Ignore<T>()`
+  scaffold-isolation technique as migration 3 (documented in batch 2), this time excluding
+  only `Ways.Domain.Catalogos.Parametro` (gate #5, still unapproved) — confirmed clean: exactly
+  3 `CreateTable` calls (`alicuotas_iva`, `condiciones_fiscales`, `tipos_comprobante`), no
+  `parametros` leakage, and this time `clase_comprobante`'s enum annotation is **correctly**
+  present (it's genuinely created here, unlike migration 3's stray registration). Hand-added
+  `HabilitarRlsDeCatalogoGlobal` on the 3 tables at the end of `Up()`. File:
+  `20260801233937_CatalogosGlobales.cs`. Removed the temporary `Ignore<T>()` immediately after
+  generation — confirmed zero net diff on `WaysDbContext.cs` (same verification as batch 2).
+- **Integration coverage added**: `CatalogosGlobalesRlsTests.cs`, 6 tests, real Postgres, raw
+  SQL (no EF) as `ways_app`:
+  - `UnaSesionDeTenantPuedeLeerUnCatalogoGlobal` — SELECT succeeds in tenant mode.
+  - `UnaSesionDeTenantNoPuedeInsertarEnUnCatalogoGlobal` — INSERT throws `PostgresException`,
+    `SqlState == "42501"`.
+  - `LaPlataformaPuedeEscribirEnUnCatalogoGlobal` — INSERT succeeds in platform mode.
+  - `SinContextoResueltoNoSePuedeEscribirEnUnCatalogoGlobal` — no GUC set ⇒ INSERT also
+    rejected with 42501 (fails closed, ADR-4).
+  - `UnaSesionDeTenantNoPuedeActualizarUnCatalogoGlobal` / `...NoPuedeBorrarDeUnCatalogoGlobal`
+    — **see the correction below**, these assert `0` rows affected, not a thrown exception.
+
+### A precise correction to the literal request (reported, not silently "fixed")
+
+The coordinator's instruction said to expect `42501` for tenant-mode INSERT **and**
+UPDATE/DELETE. The first attempt at the UPDATE/DELETE tests wrote exactly that and both
+failed — `ExecuteNonQueryAsync()` returned `0` with no exception thrown. This is correct
+Postgres RLS behavior, not a bug in the policy: `FOR ALL` policies (like
+`{tabla}_escritura_plataforma`) supply **both** the `USING` clause (governs which existing
+rows a command can even see/target) and the `WITH CHECK` clause (governs the resulting row).
+For `UPDATE`/`DELETE`, only `USING` matters for row selection — `WITH CHECK` only fires for
+rows that already passed `USING` (and only for `INSERT`/`UPDATE`, `DELETE` has no `WITH
+CHECK` in Postgres at all). Since `condiciones_fiscales_lectura` is `FOR SELECT` only, it does
+**not** extend row-visibility to `UPDATE`/`DELETE` targeting — only the write policy's
+`USING (app_es_plataforma())` does, and that's false in tenant mode, so the row is invisible
+to the `UPDATE`/`DELETE` before `WITH CHECK` is ever reached. Result: `0` rows affected, same
+mechanism and same security guarantee as the pre-existing cross-tenant `UPDATE` case in
+`AislamientoDeTenantTests` (already documented there as "0 filas, no una excepción"). The only
+way to make `UPDATE` genuinely throw `42501` would be to give the write policy a permissive
+`USING (true)` — but that would ALSO make `DELETE` succeed for a tenant (Postgres `DELETE`
+has no `WITH CHECK` gate at all), which is a real hole, not a cosmetic one. Kept the policy as
+designed (secure) and fixed the two test assertions to match reality — added a verification
+read after the UPDATE case confirming the row's `nombre` is genuinely untouched, for extra
+confidence beyond the `0`-rows return value.
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 57/57, `Ways.Application.Tests` 69/69** (63
+  previous + 6 `HabilitarRlsDeCatalogoGlobal` tests), **`Ways.IntegrationTests` 30/30** (24
+  previous, unedited + 6 new `CatalogosGlobalesRlsTests`). Stable across 2 consecutive
+  integration-suite runs. Docker daemon reachable throughout.
+
+### Delivery decision recorded (user, 2026-08-01)
+
+Slice 3 ships as **one PR (PR 3)**, not the 3a/3b split offered in batch 2 —
+**`size:exception`** recorded against the 400-line reviewable budget. `tasks.md`'s Review
+Workload Forecast updated accordingly. Work-unit commits inside the branch stay granular
+regardless (per `work-unit-commits` skill), so the diff is still reviewable commit-by-commit
+even though it isn't split across separate PRs.
+
+### Deferred items (reported, not silent)
+
+- **3.12–3.13** — gate #5 (`Parametros`) is next; its summary is the centerpiece of this
+  batch's return to the coordinator/user, per instructions (hard stop, not batched with this
+  approval).
+- **3.14–3.27** (seed, Application/API, tests, 3F provisioning) — not started.
+
+### Next batch
+
+Present gate #5 (`Parametros`) summary and STOP — no migration generated until approved. Then,
+once approved: generate migration 5 (same `Ignore<T>()` pattern won't be needed — it's the
+last gated table), seed data (3.14), Application/API (3D), tests (3E), then 3F (tenant
+provisioning) at the end of the slice, followed by judgment-day review before the single PR 3.

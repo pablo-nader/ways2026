@@ -34,12 +34,14 @@ Each slice above satisfies the "independently mergeable, clear start/finish/veri
 platform-only endpoint + tests). Estimated addition: **~350–500 lines** (impersonation scope,
 provisioning service, one endpoint, unit + integration tests including the rollback-atomicity
 proof). Revised Unit 3 estimate: **~1,250–1,800 lines total**, pushing further past the
-400-line reviewable budget per PR. Recommendation: split Unit 3 into two work units under the
-same `stacked-to-main` chain strategy already in effect — **3a) catalogs + parametros** (3A–3E,
-this batch's scope through gate #5) and **3b) tenant provisioning** (3F) — each independently
-mergeable (3b's start state is 3a merged; 3b touches no catalog code, only adds the
-provisioning service/endpoint/tests). If the user prefers a single PR 3, record `size:exception`
-before opening it.
+400-line reviewable budget per PR. Recommendation offered: split Unit 3 into two work units
+(3a catalogs+parametros / 3b provisioning) under `stacked-to-main`.
+
+**Delivery decision (user, 2026-08-01, at DB CHANGE GATE #4 approval):** rejected the 3a/3b
+split — **Slice 3 ships as a single PR 3, with `size:exception` recorded** against the
+400-line budget. Work-unit commits inside the branch stay granular (per `work-unit-commits`
+skill) so the PR is still reviewable commit-by-commit even though it isn't split into
+separate PRs; judgment-day review still applies to the whole diff before merge.
 
 ---
 
@@ -131,8 +133,8 @@ before opening it.
 ### 3C. Migrations 3–5 (each gated)
 
 - [x] 3.9 Generate migration 3 (`CatalogosDeTenant`): `areas`, `categorias`, `marcas`, `grupos`, `medios_pago` + enum, index pairs, policies — only after 3.8 approved. — Generated with `dotnet ef migrations add CatalogosDeTenant`, then hand-added the RLS calls (same technique as migrations 1-2): `HabilitarRlsDeTenant` on all 5 tables in `Up()`. EF's scaffold initially swept in the gate #4/#5 tables too (it diffs the *whole* pending model, not per-gate); excluded them via temporary `Ignore<T>()` during scaffold generation only, and hand-stripped the resulting stray `clase_comprobante` enum registration from `Up()`/`Down()` and both snapshot files (Designer.cs + `WaysDbContextModelSnapshot.cs`) so migration 3 is exactly what gate #3 approved — nothing from gates #4/#5 leaked in. File: `20260801231600_CatalogosDeTenant.cs`. Verified against real Postgres: the existing generic ADR-15 policy-coverage test (`AislamientoDeTenantTests.LaCoberturaDePoliciesEsCompleta`, queries `pg_class`/`pg_policies` for ANY table with `id_tenant`, not hardcoded) passed with the 5 new tables included, real proof RLS landed correctly — no new integration tests needed yet for that proof (3.19 still pending).
-- [ ] 3.10 **STOP — DB CHANGE GATE #4.** Present migration 4 (`CatalogosGlobales`) model summary — `[global]`, no `id_tenant`, no RLS — and wait for explicit approval.
-- [ ] 3.11 Generate migration 4 (`CatalogosGlobales`): `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante` — only after 3.10 approved.
+- [x] 3.10 **STOP — DB CHANGE GATE #4.** Present migration 4 (`CatalogosGlobales`) model summary — `[global]`, no `id_tenant`, no RLS — and wait for explicit approval. — **Approved by the user, 2026-08-01, WITH two modifications**: (1) write-protection RLS restored on all 3 global tables (override of ADR-11 — read-all `FOR SELECT USING (true)` + write-restricted-to-plataforma `FOR ALL`), new `RlsMigrationBuilderExtensions.HabilitarRlsDeCatalogoGlobal` helper; (2) `alicuotas_iva.nombre` gets a unique partial index. Both applied before generating the migration; `design.md` ADR-11 updated with the override note.
+- [x] 3.11 Generate migration 4 (`CatalogosGlobales`): `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante` — only after 3.10 approved. — Generated with `dotnet ef migrations add CatalogosGlobales` (same `Ignore<T>()` isolation technique as migration 3, this time excluding only `Parametro`/gate #5); hand-added `HabilitarRlsDeCatalogoGlobal` on the 3 tables in `Up()`. File: `20260801233937_CatalogosGlobales.cs`. Integration coverage added: `CatalogosGlobalesRlsTests.cs` (6 tests) — tenant SELECT ok, tenant INSERT rejected (42501, `WITH CHECK` always evaluates), tenant UPDATE/DELETE return 0 rows affected (not an exception — Postgres RLS mechanics: `USING` gates row-visibility for UPDATE/DELETE, only `WITH CHECK` gates INSERT; same mechanism and same security guarantee as the existing cross-tenant UPDATE precedent in `AislamientoDeTenantTests`, just a different SQLSTATE outcome than literally requested — reported, not silently changed), platform mode writes successfully, unresolved context (no GUC) also rejected on write.
 - [ ] 3.12 **STOP — DB CHANGE GATE #5.** Present migration 5 (`Parametros`) model summary — table, two partial unique indexes, NULL-uniqueness reasoning (ADR-13) — and wait for explicit approval.
 - [ ] 3.13 Generate migration 5 (`Parametros`): table + `ux_parametros_punto_venta`/`ux_parametros_empresa` + policy — only after 3.12 approved.
 - [ ] 3.14 Seed three fiscal catalogs in `InicializadorDeBaseDeDatos`, platform mode.
