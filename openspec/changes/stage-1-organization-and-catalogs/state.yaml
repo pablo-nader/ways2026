@@ -1,6 +1,6 @@
 change: stage-1-organization-and-catalogs
 phase: apply
-status: slice2-ready-for-judgment-day-slice3-batch1-domain-and-persistence-machine-at-gate3
+status: slice1-2-merged-to-main-slice3-batch1-domain-and-persistence-machine-at-gate3
 artifact_store: openspec
 phases:
   explore:
@@ -20,7 +20,7 @@ phases:
   apply:
     status: in-progress
     artifact: apply-progress.md
-    notes: "Slice 1 (PR 1): APPROVED after judgment-day (3 rounds, 2026-07-31), merged to main as PR 1. Slice 2 (PR 2, branch feat/stage1-slice2-usuarios): APPROVED after judgment-day (3 rounds, 2026-08-01), ready for PR 2 (stacked on PR 1, stacked-to-main), not yet merged. Slice 3 (PR 3, branch feat/stage1-slice3-catalogos, off main): batch 1 done — tasks 3.1-3.7 (domain + persistence machine: CatalogoSimple/Area/Marca/Grupo/MedioPago/Categoria/ReglaDeCategorias + global fiscal CondicionFiscal/AlicuotaIva/TipoComprobante + Parametro/ResolucionDeParametros/ParametroConocido, ConfiguracionDeCatalogo<T> generic EF machine), stopped at DB CHANGE GATE #3 (task 3.8) per instructions — no migration generated. RLS identifier guard (carried INFO, see below) closed this batch, ahead of its first new use. Full suite: 57 domain / 63 application / 24 integration (unedited slice 1-2 tests), stable across 2 consecutive runs. Awaiting gate #3 approval before generating migration 3; gates #4/#5 follow in later continuations."
+    notes: "Slice 1: APPROVED after judgment-day (3 rounds, 2026-07-31), merged to main as PR #2. Slice 2 (branch feat/stage1-slice2-usuarios): APPROVED after judgment-day (3 rounds, 2026-08-01), merged to main as PR #4. Slice 3 (PR 3, branch feat/stage1-slice3-catalogos, cut off up-to-date main which already includes PRs #2 and #4): batch 1 done — tasks 3.1-3.7 (domain + persistence machine: CatalogoSimple/Area/Marca/Grupo/MedioPago/Categoria/ReglaDeCategorias + global fiscal CondicionFiscal/AlicuotaIva/TipoComprobante + Parametro/ResolucionDeParametros/ParametroConocido, ConfiguracionDeCatalogo<T> generic EF machine), stopped at DB CHANGE GATE #3 (task 3.8) per instructions — no migration generated. RLS identifier guard (carried INFO, see below) closed this batch, ahead of its first new use. Full suite: 57 domain / 63 application / 24 integration (unedited slice 1-2 tests), stable across 2 consecutive runs. Awaiting gate #3 approval before generating migration 3; gates #4/#5 follow in later continuations."
   verify:
     status: pending
   archive:
