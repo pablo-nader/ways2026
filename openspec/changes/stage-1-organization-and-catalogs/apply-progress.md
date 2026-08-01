@@ -183,3 +183,67 @@ plus a comment explaining why this specific helper needed it explicitly.
 Slice 1 is functionally complete and verified end-to-end against real Postgres, including
 RLS on all three tables. Nothing left gated on user decisions or on the environment. Ready
 for judgment-day review before PR (per `CLAUDE.md`'s PR validation gate), then Slice 2.
+
+---
+
+## Batch 4 — judgment-day round 1 fixes
+
+**Trigger:** first judgment-day round (dual blind review) over the batch 1–3 diff surfaced
+2 confirmed WARNINGs and 7 approved hardening items. All 9 approved by the user
+2026-07-31; this batch applies them.
+
+### Completed in batch 4
+
+1. **`SaveChanges` coverage** — `WaysDbContext` now overrides all four public save entry
+   points (`SaveChanges()`, `SaveChanges(bool)`, `SaveChangesAsync(CancellationToken)`,
+   `SaveChangesAsync(bool, CancellationToken)`); all four call `EstamparTenant()` before
+   delegating to `base`. New sync test
+   `FiltroDeTenantTests.SaveChangesSyncEstampaElIdTenantYRechazaElTamper` proves the sync
+   path stamps and rejects tamper the same as the async one.
+2. **Connection invariants guard (ADR-3)** — new `InvariantesDeConexion` static helper
+   (`Ways.Infrastructure/Persistencia/InvariantesDeConexion.cs`) inspects a connection
+   string via `NpgsqlConnectionStringBuilder` for `Multiplexing`/`NoResetOnClose`.
+   `InicializadorDeBaseDeDatos.VerificarInvariantesDeConexion` calls it alongside the
+   existing role guard: throws in Production, warns otherwise. 3 new unit tests
+   (`InvariantesDeConexionTests`) cover the pure function directly.
+3. **Seeder keyed filter** — the three bare `IgnoreQueryFilters()` calls in
+   `InicializadorDeBaseDeDatos` (roles, root user, tenants) now use
+   `IgnoreQueryFilters(["BajaLogica"])` explicitly, so a future named filter can't be
+   silently skipped.
+4. **Platform-mode stamping validation** — `WaysDbContext.EstamparTenant()` now throws if
+   an `Added` `EntidadTenant` row in platform mode still carries `IdTenant == 0`
+   (unset), instead of relying on the FK shape to catch it downstream.
+5. **`TenantActualFijo` guard** — its constructor now validates `Tenant` mode requires a
+   non-null id, mirroring `TenantActualDeSesion.Establecer`.
+6. **UPDATE reassignment RLS test** — new
+   `AislamientoDeTenantTests.WithCheckRechazaUnUpdateQueReasignaIdTenant` proves
+   `WITH CHECK` also rejects a raw-SQL `UPDATE ... SET id_tenant = <otro tenant>`, not
+   just the already-covered `INSERT` case.
+7. **Seeder uses `TenantActualFijo`** — `InicializadorDeBaseDeDatos` no longer depends on
+   the mutable `TenantActualDeSesion`/`.Establecer(...)`. `DependencyInjection` now
+   registers a keyed (`ClaveContextoPlataforma = "plataforma"`) scoped `WaysDbContext`
+   bound to the immutable `TenantActualFijo.Plataforma`, resolved via
+   `[FromKeyedServices(...)]` in the initializer's constructor — the DI wiring change
+   ADR-2 asked for, without touching the request-scoped registration used everywhere
+   else.
+8. **Sync interceptor path** — `InterceptorDeContextoDeTenant.ConnectionOpened` now runs
+   Npgsql's synchronous `ExecuteNonQuery()` directly instead of
+   `.GetAwaiter().GetResult()` over the async path.
+9. **403 → 404 for platform targets** — `PoliticaDeRoles.ValidarAlcanceDeTenant` now
+   throws `NoEncontrado` (404), not `Prohibido` (403), when a tenant actor targets a
+   platform-scoped account, unifying with the cross-tenant rule (ADR-8).
+   `PoliticaDeRolesTenantTests.UnAdminNoPuedeGestionarUnaCuentaDePlataforma` updated to
+   assert 404. `design.md`'s ADR-8 got a one-line note extending the rule to
+   platform-scoped targets.
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → `Ways.Domain.Tests` 30/30, `Ways.Application.Tests` 18/18
+  (14 + 4 new: 1 sync `SaveChanges` test + 3 `InvariantesDeConexion` tests),
+  `Ways.IntegrationTests` 8/8 (7 + 1 new UPDATE-reassignment test). 0 failures, Docker
+  daemon reachable throughout.
+
+### Next batch
+
+Ready for a re-judged clean round, then PR per `CLAUDE.md`'s PR validation gate.

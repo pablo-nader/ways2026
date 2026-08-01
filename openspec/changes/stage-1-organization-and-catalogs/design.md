@@ -329,7 +329,9 @@ discriminator or a subdomain. The product owner overrode the original decision o
 ### ADR-8 — Cross-tenant access answers 404, never 403
 
 **Decision.** A request for a row belonging to another tenant returns `no_encontrado` (404).
-`PoliticaDeRoles` never raises `Prohibido` for a cross-tenant target.
+`PoliticaDeRoles` never raises `Prohibido` for a cross-tenant target. This includes a
+tenant actor targeting a platform-scoped account (`idTenantObjetivo is null`): it also
+answers 404, unified under the same rule instead of a separate `Prohibido`.
 
 **Why.** 403 confirms the row exists; 404 does not. This is the same reasoning that already
 makes `ServicioDeAutenticacion` return one message for "user does not exist" and "wrong
