@@ -12,7 +12,7 @@ export function Login() {
   const navegar = useNavigate()
   const ubicacion = useLocation()
 
-  const [nombre, setNombre] = useState('')
+  const [mail, setMail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [enviando, setEnviando] = useState(false)
@@ -35,7 +35,7 @@ export function Login() {
     setEnviando(true)
 
     try {
-      await iniciarSesion(nombre, password)
+      await iniciarSesion(mail, password)
       navegar(destino, { replace: true })
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo iniciar sesión.')
@@ -56,15 +56,15 @@ export function Login() {
         <hr />
 
         <form onSubmit={enviar} autoComplete="off" noValidate>
-          <p className="text-muted text-center">Ingresá tu usuario y contraseña</p>
+          <p className="text-muted text-center">Ingresá tu correo y contraseña</p>
 
           <input
-            type="text"
-            name="usuario"
+            type="email"
+            name="mail"
             className="form-control mb-3 rounded-0"
-            placeholder="Usuario"
-            value={nombre}
-            onChange={(e) => setNombre(e.target.value)}
+            placeholder="Correo electrónico"
+            value={mail}
+            onChange={(e) => setMail(e.target.value)}
             autoFocus
             required
           />
