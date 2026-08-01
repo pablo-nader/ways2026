@@ -29,6 +29,12 @@ public class ManejadorDeErrores(
             DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: "ux_usuarios_mail" } } =>
                 (StatusCodes.Status409Conflict, "El mail ya está en uso.", "mail_duplicado"),
 
+            // Mismo backstop que el de arriba, para la otra unicidad de `usuarios`
+            // (`usuario` por tenant, ADR-7): la misma carrera entre el chequeo previo de
+            // `ServicioDeUsuarios` y el `SaveChangesAsync` puede chocar acá.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: "ux_usuarios_usuario" } } =>
+                (StatusCodes.Status409Conflict, "El usuario ya existe.", "usuario_duplicado"),
+
             _ => (StatusCodes.Status500InternalServerError,
                   "Ocurrió un error inesperado.",
                   "error_interno")
