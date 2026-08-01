@@ -1,3 +1,4 @@
+using System.Threading;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -20,24 +21,21 @@ public class ServicioDeAutenticacion(
     /// y reusar el resultado. Hashearlo de nuevo en cada intento de mail inexistente sumaría
     /// un <c>Hashear</c> (mucho más caro que un <c>Verificar</c>) al costo del camino "mail
     /// desconocido", rompiendo la simetría de tiempos con el camino "mail conocido" (que hace
-    /// un único <c>Verificar</c>) en vez de preservarla.</summary>
-    private static string? _hashDescartable;
-    private static readonly object CandadoHashDescartable = new();
+    /// un único <c>Verificar</c>) en vez de preservarla.
+    ///
+    /// <c>Lazy&lt;T&gt;</c> con <see cref="LazyThreadSafetyMode.ExecutionAndPublication"/> (su
+    /// modo default) da la misma garantía que el double-checked locking a mano, sin escribirlo:
+    /// como mucho un hilo ejecuta el factory, y todos ven el mismo resultado publicado. El
+    /// <c>Lazy&lt;string&gt;</c> en sí no puede ser un campo estático construido inline porque
+    /// su factory necesita <c>hasheador</c> (dependencia de instancia, no estática) — por eso
+    /// se publica una única vez, en frío, con <see cref="LazyInitializer.EnsureInitialized{T}(ref T?, Func{T})"/>
+    /// sobre un campo estático: <c>hasheador</c> siempre resuelve al mismo singleton sin
+    /// importar qué instancia de <see cref="ServicioDeAutenticacion"/> gana la carrera.</summary>
+    private static Lazy<string>? _hashDescartable;
 
-    private string ObtenerHashDescartable()
-    {
-        if (_hashDescartable is not null)
-        {
-            return _hashDescartable;
-        }
-
-        lock (CandadoHashDescartable)
-        {
-            _hashDescartable ??= hasheador.Hashear("usuario-inexistente");
-        }
-
-        return _hashDescartable;
-    }
+    private string ObtenerHashDescartable() =>
+        LazyInitializer.EnsureInitialized(
+            ref _hashDescartable, () => new Lazy<string>(() => hasheador.Hashear("usuario-inexistente"))).Value;
 
     /// <summary>
     /// Valida las credenciales. Devuelve el usuario autenticado o lanza <see cref="ErrorDominio"/>.
@@ -77,6 +75,15 @@ public class ServicioDeAutenticacion(
             // ObtenerHashDescartable) para que el tiempo de respuesta no delate si el mail
             // existe: acá también hay que pagar exactamente un Verificar, ni uno más.
             hasheador.Verificar(ObtenerHashDescartable(), solicitud.Password);
+
+            // Judgment-day (batch 9, ronda 2): el camino "mail conocido, contraseña
+            // incorrecta" persiste RegistrarIntentoFallido (un round trip extra de UPDATE).
+            // Sin un round trip equivalente acá, la ausencia de esa segunda ida a la base
+            // delataría por temporización que el mail no existe, aunque el hasheo ya esté
+            // nivelado. Una consulta descartable sobre un id inexistente paga el mismo costo
+            // de ida y vuelta sin escribir ni filtrar nada real.
+            await db.Usuarios.AsNoTracking().AnyAsync(u => u.Id == -1, ct);
+
             throw credencialesInvalidas;
         }
 
