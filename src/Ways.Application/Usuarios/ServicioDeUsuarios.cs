@@ -263,7 +263,13 @@ public class ServicioDeUsuarios(
             throw ErrorDominio.Conflicto("usuario_duplicado", $"El usuario '{usuario}' ya existe.");
         }
 
-        var tomadoMail = await db.Usuarios.AnyAsync(
+        // A diferencia de `usuario`, el mail es único GLOBAL, no por tenant (`ux_usuarios_mail`
+        // no lleva id_tenant). `IgnoreQueryFilters(["Tenant"])` es obligatorio acá: sin él, un
+        // actor de tenant solo ve su propio alcance y una colisión con otro tenant pasaría este
+        // chequeo para reventar recién en el `SaveChangesAsync` (23505) — el backstop de
+        // `ManejadorDeErrores` cubre esa carrera, pero el chequeo previo tiene que intentar
+        // atajarla igual para devolver el 409 de negocio en el camino feliz.
+        var tomadoMail = await db.Usuarios.IgnoreQueryFilters(["Tenant"]).AnyAsync(
             u => u.Mail == mail && u.Id != excluirId, ct);
 
         if (tomadoMail)
