@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
@@ -16,6 +17,20 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Empresa> Empresas => Set<Empresa>();
     public DbSet<PuntoVenta> PuntosVenta => Set<PuntoVenta>();
+
+    // Catálogos de tenant (ADR-11) y globales (ADR-11, gate #4) — sin DbSet en
+    // IWaysDbContext todavía: Application los consume recién en la capa de servicios
+    // (ServicioDeCatalogo<T>/ServicioDeParametros, tareas 3.15-3.18), que no es parte de
+    // este lote (domain + persistence machine, hasta el gate #3).
+    public DbSet<Area> Areas => Set<Area>();
+    public DbSet<Categoria> Categorias => Set<Categoria>();
+    public DbSet<Marca> Marcas => Set<Marca>();
+    public DbSet<Grupo> Grupos => Set<Grupo>();
+    public DbSet<MedioPago> MediosPago => Set<MedioPago>();
+    public DbSet<CondicionFiscal> CondicionesFiscales => Set<CondicionFiscal>();
+    public DbSet<AlicuotaIva> AlicuotasIva => Set<AlicuotaIva>();
+    public DbSet<TipoComprobante> TiposComprobante => Set<TipoComprobante>();
+    public DbSet<Parametro> Parametros => Set<Parametro>();
 
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
