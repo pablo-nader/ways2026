@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
+using Ways.Infrastructure.Multitenancy;
 
 namespace Ways.Infrastructure.Persistencia;
 
@@ -17,9 +19,14 @@ public class WaysDbContextFactory : IDesignTimeDbContextFactory<WaysDbContext>
             ?? "Host=localhost;Port=5432;Database=ways;Username=ways;Password=ways";
 
         var opciones = new DbContextOptionsBuilder<WaysDbContext>()
-            .UseNpgsql(cadena, npgsql => npgsql.MapEnum<EstadoUsuario>("estado_usuario"))
+            .UseNpgsql(cadena, npgsql =>
+            {
+                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
+            })
             .Options;
 
-        return new WaysDbContext(opciones);
+        // Las herramientas de diseño no son un request HTTP: operan en modo plataforma.
+        return new WaysDbContext(opciones, TenantActualFijo.Plataforma);
     }
 }

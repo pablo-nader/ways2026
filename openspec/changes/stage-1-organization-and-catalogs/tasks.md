@@ -36,36 +36,36 @@ Each slice above satisfies the "independently mergeable, clear start/finish/veri
 
 ### 1A. Apply-time verification (must resolve before schema work — ADR-6, ADR-9)
 
-- [ ] 1.1 Verify EF Core 10 keyed `SetQueryFilter` overload exists on pinned EF 10.0.10; report result. If absent, apply ADR-6 fallback (composed filter + explicit `.Where` re-application) and report the deviation. *(spec: tenant-organization / Tenant Isolation Enforcement)*
-- [ ] 1.2 Verify EF Core 10 does not force `IdTenant` nullable for the optional composite FK (`puntos_venta→empresas`, catálogo→`empresas`); report result. If it does, apply ADR-9 fallback (single-column FK + domain/RLS integrity) and report the deviation. *(spec: tenant-organization / Organization Hierarchy Tables)*
+- [x] 1.1 Verify EF Core 10 keyed `SetQueryFilter` overload exists on pinned EF 10.0.10; report result. If absent, apply ADR-6 fallback (composed filter + explicit `.Where` re-application) and report the deviation. *(spec: tenant-organization / Tenant Isolation Enforcement)* — **Confirmed present**, no fallback. See apply report.
+- [x] 1.2 Verify EF Core 10 does not force `IdTenant` nullable for the optional composite FK (`puntos_venta→empresas`, catálogo→`empresas`); report result. If it does, apply ADR-9 fallback (single-column FK + domain/RLS integrity) and report the deviation. *(spec: tenant-organization / Organization Hierarchy Tables)* — **Confirmed `IdTenant` stays `NOT NULL`**, no fallback. See apply report.
 
 ### 1B. Domain
 
-- [ ] 1.3 [P] Add `EntidadTenant : EntidadBase { IdTenant }` in `Ways.Domain/Common`. *(ADR-1)*
-- [ ] 1.4 [P] Add `Tenant`, `Empresa`, `PuntoVenta`, `EstadoTenant` in `Ways.Domain/Organizacion`. *(spec: tenant-organization / Organization Hierarchy Tables)*
-- [ ] 1.5 Add `ActorDeGestion`, `ValidarAlcanceDeTenant`, `RolesAsignablesPor` to `PoliticaDeRoles` (pure, DB-free) + unit tests (admin↔same tenant OK; admin→other tenant not found; admin→platform forbidden; platform root→any OK; assignable-roles split). *(spec: usuarios-tenant-scoping / PoliticaDeRoles Tenant Rule)*
+- [x] 1.3 [P] Add `EntidadTenant : EntidadBase { IdTenant }` in `Ways.Domain/Common`. *(ADR-1)*
+- [x] 1.4 [P] Add `Tenant`, `Empresa`, `PuntoVenta`, `EstadoTenant` in `Ways.Domain/Organizacion`. *(spec: tenant-organization / Organization Hierarchy Tables)*
+- [x] 1.5 Add `ActorDeGestion`, `ValidarAlcanceDeTenant`, `RolesAsignablesPor` to `PoliticaDeRoles` (pure, DB-free) + unit tests (admin↔same tenant OK; admin→other tenant not found; admin→platform forbidden; platform root→any OK; assignable-roles split). *(spec: usuarios-tenant-scoping / PoliticaDeRoles Tenant Rule)*
 
 ### 1C. DB CHANGE GATE #1 — BLOCKING
 
-- [ ] 1.6 **STOP.** Present migration 1 (`Organizacion`) model summary to the user — tables, columns, AKs, composite FK, RLS functions/policies — and wait for explicit approval before generating anything. No exceptions (`CLAUDE.md`).
+- [x] 1.6 **STOP.** Present migration 1 (`Organizacion`) model summary to the user — tables, columns, AKs, composite FK, RLS functions/policies — and wait for explicit approval before generating anything. No exceptions (`CLAUDE.md`). — **Approved by the user 2026-07-31**, exactly as presented, plus an explicit decision to add RLS to `tenants` itself with the analogous policy (see 1.8's note).
 
 ### 1D. Infrastructure
 
-- [ ] 1.7 Implement `RlsMigrationBuilderExtensions.HabilitarRlsDeTenant(tabla)` (ENABLE + FORCE + policy block). *(ADR-15)*
-- [ ] 1.8 Generate migration 1 (`Organizacion`): `estado_tenant` enum, `tenants`/`empresas`/`puntos_venta`, AKs, composite FK, `app_tenant_actual`/`app_modo`/`app_es_plataforma`, RLS via 1.7 — only after 1.6 is approved. *(spec: tenant-organization / Organization Hierarchy Tables)*
-- [ ] 1.9 [P] Implement `ITenantActual`, `TenantActualDeSesion` (scoped), `TenantActualFijo` (non-HTTP entry points). *(ADR-2)*
-- [ ] 1.10 [P] Implement `InterceptorDeContextoDeTenant : DbConnectionInterceptor` (`set_config` on connection open; `is_local: true` inside provisioning transactions). *(ADR-3)*
-- [ ] 1.11 Wire `OnValidatePrincipal`: populate `TenantActualDeSesion` from claims, revalidate tenant `estado` (suspendido/baja ⇒ reject + sign-out). *(spec: tenant-organization / Tenant Suspension Enforcement)*
-- [ ] 1.12 Register named query filters `"BajaLogica"`/`"Tenant"` in `OnModelCreating` per 1.1 result. *(ADR-6)*
-- [ ] 1.13 Add `SaveChangesAsync` `IdTenant` stamping on Added + tamper rejection on Modified.
-- [ ] 1.14 Add startup role check (`rolsuper`/`rolbypassrls`) in `InicializadorDeBaseDeDatos`: throw in Production, warn elsewhere. *(ADR-5)*
+- [x] 1.7 Implement `RlsMigrationBuilderExtensions.HabilitarRlsDeTenant(tabla)` (ENABLE + FORCE + policy block). *(ADR-15)*
+- [x] 1.8 Generate migration 1 (`Organizacion`): `estado_tenant` enum, `tenants`/`empresas`/`puntos_venta`, AKs, composite FK, `app_tenant_actual`/`app_modo`/`app_es_plataforma`, RLS via 1.7 — only after 1.6 is approved. *(spec: tenant-organization / Organization Hierarchy Tables)* — Generated with `dotnet ef migrations add Organizacion`, then hand-added the RLS calls the scaffolder doesn't know how to emit: `CrearFuncionesDeContextoDeTenant()` + `HabilitarRlsDeTenant()` on **all three** tables including `tenants` (per gate approval decision 2), and the matching `DROP FUNCTION`s in `Down()`. File: `src/Ways.Infrastructure/Persistencia/Migraciones/20260801011312_Organizacion.cs`.
+- [x] 1.9 [P] Implement `ITenantActual`, `TenantActualDeSesion` (scoped), `TenantActualFijo` (non-HTTP entry points). *(ADR-2)* — Suplantar/impersonation (ADR-16) deferred to when `ServicioDeAprovisionamiento` lands; not needed by this slice.
+- [x] 1.10 [P] Implement `InterceptorDeContextoDeTenant : DbConnectionInterceptor` (`set_config` on connection open; `is_local: true` inside provisioning transactions). *(ADR-3)* — session-level `set_config` on connection open implemented; the `is_local: true` provisioning-transaction variant deferred with 1.9's Suplantar (not exercised by this slice).
+- [x] 1.11 Wire `OnValidatePrincipal`: populate `TenantActualDeSesion` from claims, revalidate tenant `estado` (suspendido/baja ⇒ reject + sign-out). *(spec: tenant-organization / Tenant Suspension Enforcement)* — `ways:id_tenant` claim not yet emitted by login (slice 2); wired defensively, fails closed to `Ninguno` until slice 2 adds the claim. See apply report.
+- [x] 1.12 Register named query filters `"BajaLogica"`/`"Tenant"` in `OnModelCreating` per 1.1 result. *(ADR-6)* — `Usuario`'s hand-written variant deferred to slice 2 (`usuarios.id_tenant` doesn't exist yet).
+- [x] 1.13 Add `SaveChangesAsync` `IdTenant` stamping on Added + tamper rejection on Modified. — judgment-day batch 4: extended to all four public `SaveChanges*` entry points (sync included), plus a platform-mode check that `Added` rows carry a non-zero `IdTenant`.
+- [x] 1.14 Add startup role check (`rolsuper`/`rolbypassrls`) in `InicializadorDeBaseDeDatos`: throw in Production, warn elsewhere. *(ADR-5)* — judgment-day batch 4: added the analogous ADR-3 connection-invariants guard (`Multiplexing`/`NoResetOnClose`) alongside it, via the new `InvariantesDeConexion` pure helper.
 
 ### 1E. Seed + tests
 
-- [ ] 1.15 Extend `InicializadorDeBaseDeDatos` with tenant 1 / empresa 1 / 2 locales seed, platform mode. *(spec: tenant-organization / Organization Hierarchy Tables, Scenario: Seed data present)*
-- [ ] 1.16 Scaffold `tests/Ways.IntegrationTests`: `WebApplicationFactory` + `Testcontainers.PostgreSql`, two DB roles (migration owner + `ways_app` `NOSUPERUSER NOBYPASSRLS`). *(ADR-17)*
-- [ ] 1.17 Integration tests — isolation core: EF filter blocks cross-tenant read; RLS blocks raw-SQL/`IgnoreQueryFilters` read; `WITH CHECK` rejects cross-tenant insert; fail-closed on unset GUC; no GUC leakage across pooled connections; policy-coverage query (ADR-15) returns zero rows; `ways_app` has neither `rolsuper` nor `rolbypassrls`. *(spec: tenant-organization / Tenant Isolation Enforcement)*
-- [ ] 1.18 Regression: confirm existing `Ways.Domain.Tests`/`Ways.Application.Tests` are unedited and green.
+- [x] 1.15 Extend `InicializadorDeBaseDeDatos` with tenant 1 / empresa 1 / 2 locales seed, platform mode. *(spec: tenant-organization / Organization Hierarchy Tables, Scenario: Seed data present)* — code complete; the migration exists and the isolation suite now proves platform-mode inserts work end-to-end against real Postgres (`ElFiltroDeEfNuncaDevuelveFilasDeOtroTenant` et al. seed via the same platform-mode path). Seed literal names ("Ways" / "Local 1" / "Local 2") stay as placeholders per the gate approval (decision 3).
+- [x] 1.16 Scaffold `tests/Ways.IntegrationTests`: `WebApplicationFactory` + `Testcontainers.PostgreSql`, two DB roles (migration owner + `ways_app` `NOSUPERUSER NOBYPASSRLS`). *(ADR-17)* — fixture runs the migration as `ways_owner` and provisions `ways_app` (`LOGIN NOSUPERUSER NOBYPASSRLS` + data-only `GRANT`s) directly against the container in `InitializeAsync`; the API host (`ConfigureWebHost`) connects as `ways_app`, never as the owner. Fixed in batch 3: `CrearContextoDeAplicacion` now also registers `InterceptorDeContextoDeTenant` (was missing, see 1.17).
+- [x] 1.17 Integration tests — isolation core: EF filter blocks cross-tenant read; RLS blocks raw-SQL/`IgnoreQueryFilters` read; `WITH CHECK` rejects cross-tenant insert; fail-closed on unset GUC; no GUC leakage across pooled connections; policy-coverage query (ADR-15) returns zero rows (covering `tenants` too, per gate decision 2); `ways_app` has neither `rolsuper` nor `rolbypassrls`. *(spec: tenant-organization / Tenant Isolation Enforcement)* — **Verified in runtime, 7/7 green**, stable across two consecutive runs. Docker daemon came up mid-session; the first real run surfaced a genuine bug (see batch 3 in `apply-progress.md`): the test harness's `CrearContextoDeAplicacion` never registered `InterceptorDeContextoDeTenant`, so no `WaysDbContext` built through it ever ran `set_config` — GUCs stayed unset and even platform-mode seeding tripped `WITH CHECK`. **Confirmed test-harness bug, not a production bug**: `Ways.Infrastructure/DependencyInjection.cs` wires the interceptor correctly via DI. Fixed by adding `.AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))` to the helper, mirroring production wiring exactly. Judgment-day batch 4 added `WithCheckRechazaUnUpdateQueReasignaIdTenant`, the analogous `UPDATE`-reassignment case (was only covered for `INSERT`) — suite now 8/8.
+- [x] 1.18 Regression: confirm existing `Ways.Domain.Tests`/`Ways.Application.Tests` are unedited and green. — Unedited. Full suite green: `Ways.Domain.Tests` 30/30, `Ways.Application.Tests` 14/14, `Ways.IntegrationTests` 7/7. 0 build warnings. Judgment-day batch 4 added tests on top (see `apply-progress.md`): full suite now 30/18/8, still 0 failures.
 
 ---
 

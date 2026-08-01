@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 
 namespace Ways.Application.Abstracciones;
@@ -11,6 +12,9 @@ public interface IWaysDbContext
 {
     DbSet<Usuario> Usuarios { get; }
     DbSet<Rol> Roles { get; }
+    DbSet<Tenant> Tenants { get; }
+    DbSet<Empresa> Empresas { get; }
+    DbSet<PuntoVenta> PuntosVenta { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
