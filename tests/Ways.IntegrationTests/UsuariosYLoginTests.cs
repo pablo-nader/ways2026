@@ -159,6 +159,44 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.Unauthorized, luegoDeSuspender.StatusCode);
     }
 
+    /// <summary>Cierra la brecha de ADR-3 (documentada en <c>TenantActualDeSesion</c>): loguearse
+    /// con una cookie de sesión ya activa (de otro tenant) tiene que reemplazar el contexto por
+    /// completo, no mezclarlo con el anterior. <c>AuthEndpoints</c> pone el contexto en modo
+    /// <c>ModoDeAcceso.Login</c> ANTES de llamar a <c>ServicioDeAutenticacion</c>, así
+    /// que el segundo login nunca debería filtrar `usuarios` por el tenant de la cookie vieja.</summary>
+    [Fact]
+    public async Task LoguearseConUnaCookieDeOtroTenantYaActivaReemplazaLaSesionPorCompleto()
+    {
+        var (idTenantA, mailA) = await SembrarTenantConUsuarioAsync(
+            nameof(LoguearseConUnaCookieDeOtroTenantYaActivaReemplazaLaSesionPorCompleto) + "A", EstadoTenant.Activo);
+        var (idTenantB, mailB) = await SembrarTenantConUsuarioAsync(
+            nameof(LoguearseConUnaCookieDeOtroTenantYaActivaReemplazaLaSesionPorCompleto) + "B", EstadoTenant.Activo);
+
+        using var cliente = fixture.CreateClient();
+
+        var loginA = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailA, Password));
+        Assert.Equal(HttpStatusCode.OK, loginA.StatusCode);
+        var autenticadoA = await loginA.Content.ReadFromJsonAsync<UsuarioAutenticado>();
+        Assert.NotNull(autenticadoA);
+        Assert.Equal(idTenantA, autenticadoA.IdTenant);
+
+        // Mismo HttpClient (misma cookie de sesión de tenant A) — logueamos otra cuenta encima,
+        // sin desloguear antes.
+        var loginB = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailB, Password));
+        Assert.Equal(HttpStatusCode.OK, loginB.StatusCode);
+        var autenticadoB = await loginB.Content.ReadFromJsonAsync<UsuarioAutenticado>();
+        Assert.NotNull(autenticadoB);
+        Assert.Equal(idTenantB, autenticadoB.IdTenant);
+
+        // La sesión activa ahora es la de B: /me tiene que devolver la cuenta de B, no la de A.
+        var me = await cliente.GetAsync("/api/auth/me");
+        Assert.Equal(HttpStatusCode.OK, me.StatusCode);
+        var actual = await me.Content.ReadFromJsonAsync<UsuarioAutenticado>();
+        Assert.NotNull(actual);
+        Assert.Equal(autenticadoB.Id, actual.Id);
+        Assert.Equal(idTenantB, actual.IdTenant);
+    }
+
     [Fact]
     public async Task DosTenantsPuedenTenerCadaUnoUnUsuarioLlamadoAdminSinColision()
     {
@@ -201,6 +239,43 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         Assert.True(enTenantA);
         Assert.True(enTenantB);
+    }
+
+    /// <summary>Contra Postgres real, a través de la API completa (no del servicio en
+    /// memoria): confirma el fix CRITICAL de judgment-day — antes, el chequeo previo de
+    /// <c>ExigirDisponibilidadAsync</c> corría sobre <c>db.Usuarios</c> filtrado por tenant, así
+    /// que un admin de tenant B nunca veía la colisión con el mail de un usuario de tenant A y
+    /// el conflicto recién explotaba en el <c>SaveChangesAsync</c> como un 23505 sin traducir
+    /// (500 genérico, y un oráculo de enumeración cross-tenant: 409 en el mismo tenant contra
+    /// 500 en otro tenant delataba en qué tenant vivía el mail).</summary>
+    [Fact]
+    public async Task CrearUnUsuarioConElMailDeOtroTenantDevuelve409NoUnError500()
+    {
+        var (_, mailAdminA) = await SembrarTenantConUsuarioAsync(
+            nameof(CrearUnUsuarioConElMailDeOtroTenantDevuelve409NoUnError500) + "A", EstadoTenant.Activo);
+        var (_, mailAdminB) = await SembrarTenantConUsuarioAsync(
+            nameof(CrearUnUsuarioConElMailDeOtroTenantDevuelve409NoUnError500) + "B", EstadoTenant.Activo);
+
+        var mailCompartido = $"{nameof(CrearUnUsuarioConElMailDeOtroTenantDevuelve409NoUnError500)}@ways.test";
+
+        using var clienteA = fixture.CreateClient();
+        var loginA = await clienteA.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdminA, Password));
+        Assert.Equal(HttpStatusCode.OK, loginA.StatusCode);
+
+        var creacionEnA = await clienteA.PostAsJsonAsync("/api/usuarios", new CrearUsuario(
+            "vendedor-a", mailCompartido, (int)RolConocido.Vendedor, Password));
+        Assert.Equal(HttpStatusCode.Created, creacionEnA.StatusCode);
+
+        using var clienteB = fixture.CreateClient();
+        var loginB = await clienteB.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdminB, Password));
+        Assert.Equal(HttpStatusCode.OK, loginB.StatusCode);
+
+        var creacionEnB = await clienteB.PostAsJsonAsync("/api/usuarios", new CrearUsuario(
+            "vendedor-b", mailCompartido, (int)RolConocido.Vendedor, Password));
+
+        Assert.Equal(HttpStatusCode.Conflict, creacionEnB.StatusCode);
+        var problema = await creacionEnB.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("mail_duplicado", problema.GetProperty("codigo").GetString());
     }
 
     [Fact]
