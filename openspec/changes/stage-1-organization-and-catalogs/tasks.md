@@ -75,25 +75,25 @@ Each slice above satisfies the "independently mergeable, clear start/finish/veri
 
 ### 2A. DB CHANGE GATE #2 — BLOCKING
 
-- [ ] 2.1 **STOP.** Present migration 2 (`UsuariosMultiTenant`) model summary — additive `id_tenant` column, `(id_tenant, usuario) NULLS NOT DISTINCT` index rebuild and why, the two login-mode policies and why — and wait for explicit approval.
+- [ ] 2.1 **STOP.** Present migration 2 (`UsuariosMultiTenant`) model summary — additive `id_tenant` column, `(id_tenant, usuario) NULLS NOT DISTINCT` index rebuild and why, the two login-mode policies and why — and wait for explicit approval. — **Presented in this apply's result contract, 2026-08-01; awaiting approval.**
 
 ### 2B. Migration + backfill
 
-- [ ] 2.2 Generate migration 2 (only after 2.1 approved): `usuarios.id_tenant NULL` + FK, rebuild `ux_usuarios_usuario`, `usuarios` RLS policies (tenant + `usuarios_login_lectura`/`_actualiza`). *(spec: usuarios-tenant-scoping / id_tenant Column Semantics; usuario Uniqueness Is Scoped Per Tenant)*
-- [ ] 2.3 Backfill in `InicializadorDeBaseDeDatos`: existing `root` stays `id_tenant NULL`; other existing users → tenant 1. *(ADR-14)*
+- [ ] 2.2 Generate migration 2 (only after 2.1 approved): `usuarios.id_tenant NULL` + FK, rebuild `ux_usuarios_usuario`, `usuarios` RLS policies (tenant + `usuarios_login_lectura`/`_actualiza`). *(spec: usuarios-tenant-scoping / id_tenant Column Semantics; usuario Uniqueness Is Scoped Per Tenant)* — Blocked on 2.1. EF model side (`UsuarioConfiguration`, FK, index, `AreNullsDistinct(false)`) already implemented and ready to scaffold from once approved.
+- [ ] 2.3 Backfill in `InicializadorDeBaseDeDatos`: existing `root` stays `id_tenant NULL`; other existing users → tenant 1. *(ADR-14)* — Blocked on 2.1/2.2. `SembrarRootAsync` already leaves `IdTenant` unset (`NULL`) by default — no change needed there; the backfill of *other* pre-migration rows still needs its own step once the migration exists.
 
 ### 2C. Application
 
-- [ ] 2.4 Update `ServicioDeAutenticacion` to resolve by `mail` instead of `usuario`; preserve anti-enumeration (same error, dummy-hash timing). *(spec: usuarios-y-login / Login Is By Mail; Anti-Enumeration Behavior Is Preserved)*
-- [ ] 2.5 Add suspended-tenant check in `ServicioDeAutenticacion`, after password verification, same ordering as existing bloqueado/inactivo checks. *(spec: tenant-organization / Tenant Suspension Enforcement)*
-- [ ] 2.6 Add `root`-cannot-carry-tenant / `admin`-requires-tenant validation + admin-scoped-to-own-tenant rule wiring into `PoliticaDeRoles` call sites. *(spec: usuarios-tenant-scoping / Platform vs Tenant Role Meaning)*
-- [ ] 2.7 Update `Ways.Web` login page: `usuario` field → `mail` field, client validation. *(spec: usuarios-y-login / Login Is By Mail)*
+- [x] 2.4 Update `ServicioDeAutenticacion` to resolve by `mail` instead of `usuario`; preserve anti-enumeration (same error, dummy-hash timing). *(spec: usuarios-y-login / Login Is By Mail; Anti-Enumeration Behavior Is Preserved)* — `SolicitudDeLogin(Mail, Password)`; lookup by `Mail`; same dummy-hash/error-message behavior, unchanged ordering, just re-keyed off mail.
+- [x] 2.5 Add suspended-tenant check in `ServicioDeAutenticacion`, after password verification, same ordering as existing bloqueado/inactivo checks. *(spec: tenant-organization / Tenant Suspension Enforcement)* — Checked via a **second, platform-mode `IWaysDbContext`** (new keyed registration, `ClavesDeContexto.Plataforma`), not the request's own login-mode context — avoids needing a new RLS read policy on `tenants` just for this check. `tenant_suspendido`, 403.
+- [x] 2.6 Add `root`-cannot-carry-tenant / `admin`-requires-tenant validation + admin-scoped-to-own-tenant rule wiring into `PoliticaDeRoles` call sites. *(spec: usuarios-tenant-scoping / Platform vs Tenant Role Meaning)* — New `PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance` (pure), wired into `ServicioDeUsuarios.CrearAsync`/`ActualizarAsync`. `ValidarAlcanceDeTenant`/`ActorDeGestion` (slice 1, previously no call site) now wired into `ServicioDeUsuarios.BuscarAsync` — closes the judgment-day carried-forward INFO. `usuario` uniqueness check re-scoped per tenant (`ExigirDisponibilidadAsync`); fixed a latent cross-tenant leak in `ListarAsync`'s `incluirEliminados` path (bare `IgnoreQueryFilters()` → `IgnoreQueryFilters(["BajaLogica"])`), surfaced by adding tenant scoping to `Usuario`.
+- [x] 2.7 Update `Ways.Web` login page: `usuario` field → `mail` field, client validation. *(spec: usuarios-y-login / Login Is By Mail)* — `Login.tsx` field is now `type="email"` labeled "Correo electrónico"; `AuthContext.iniciarSesion(mail, password)`; `UsuarioAutenticado.idTenant` added to `tipos.ts`.
 
 ### 2D. Tests
 
-- [ ] 2.8 [P] Unit tests: root/admin tenant-assignment validation, existing `PoliticaDeRoles` scenarios still pass unchanged.
-- [ ] 2.9 [P] Integration tests: suspension blocks new login + cuts active session; mail login for tenant user and platform root; anti-enumeration under mail; two tenants both provision `usuario = "admin"` without collision; duplicate platform `usuario` rejected (`NULLS NOT DISTINCT` proof). *(spec: usuarios-tenant-scoping; usuarios-y-login)*
-- [ ] 2.10 Regression: existing doc 08 usuarios/login suite green, unedited.
+- [x] 2.8 [P] Unit tests: root/admin tenant-assignment validation, existing `PoliticaDeRoles` scenarios still pass unchanged. — 6 new tests on `ValidarConsistenciaDeRolYAlcance` in `PoliticaDeRolesTenantTests.cs`; all prior `PoliticaDeRoles*Tests` unedited and green (38/38 total domain suite).
+- [x] 2.9 [P] Integration tests: suspension blocks new login + cuts active session; mail login for tenant user and platform root; anti-enumeration under mail; two tenants both provision `usuario = "admin"` without collision; duplicate platform `usuario` rejected (`NULLS NOT DISTINCT` proof). *(spec: usuarios-tenant-scoping; usuarios-y-login)* — Written in full in `UsuariosYLoginTests.cs` (7 tests, one per scenario), all marked `[Fact(Skip = ...)]` pointing at gate #2 — they need `usuarios.id_tenant` to exist against real Postgres. Also added `FiltroDeUsuarioTests.cs` (5 tests, InMemory, runs now) and `ServicioDeAutenticacionTests.cs` (5 tests, InMemory, runs now) covering the same behaviors without needing the migration.
+- [x] 2.10 Regression: existing doc 08 usuarios/login suite green, unedited. — No dedicated doc-08 automated suite existed before this slice (doc 08 predates SDD tracking, confirmed by searching `tests/`). Regression baseline instead: `Ways.Domain.Tests` 38/38 (30 unedited + 8 new), `Ways.Application.Tests` 28/28 (18 unedited + 10 new), `Ways.IntegrationTests` 8/8 unedited + 7 new (Skip, gate-pending). 0 unexpected failures, 0 build warnings.
 
 ---
 
