@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Common;
 using Ways.Domain.Usuarios;
@@ -11,6 +12,7 @@ namespace Ways.Application.Usuarios;
 /// </summary>
 public class ServicioDeUsuarios(
     IWaysDbContext db,
+    [FromKeyedServices(ClavesDeContexto.Plataforma)] IWaysDbContext dbPlataforma,
     IHasheadorDeContrasenas hasheador,
     IRelojDelSistema reloj,
     IContextoDeUsuario contexto)
@@ -264,12 +266,16 @@ public class ServicioDeUsuarios(
         }
 
         // A diferencia de `usuario`, el mail es único GLOBAL, no por tenant (`ux_usuarios_mail`
-        // no lleva id_tenant). `IgnoreQueryFilters(["Tenant"])` es obligatorio acá: sin él, un
-        // actor de tenant solo ve su propio alcance y una colisión con otro tenant pasaría este
-        // chequeo para reventar recién en el `SaveChangesAsync` (23505) — el backstop de
-        // `ManejadorDeErrores` cubre esa carrera, pero el chequeo previo tiene que intentar
-        // atajarla igual para devolver el 409 de negocio en el camino feliz.
-        var tomadoMail = await db.Usuarios.IgnoreQueryFilters(["Tenant"]).AnyAsync(
+        // no lleva id_tenant). `IgnoreQueryFilters(["Tenant"])` NO alcanza acá: solo apaga el
+        // filtro de EF, pero la policy `usuarios_tenant` de RLS sigue activa por debajo bajo
+        // `app.acceso='tenant'` y le sigue ocultando a un actor de tenant las filas de otro
+        // tenant (judgment-day, batch 9, ronda 2) — con eso, la colisión cross-tenant nunca la
+        // atrapaba este chequeo, siempre reventaba recién en el `SaveChangesAsync` (23505),
+        // que el backstop de `ManejadorDeErrores` traduce igual, pero sin pasar por acá. Por
+        // eso el chequeo de mail corre contra `dbPlataforma` (el mismo patrón que el chequeo
+        // de suspensión de tenant en `ServicioDeAutenticacion`): esa conexión abre en modo
+        // plataforma, así que RLS la deja ver cualquier tenant.
+        var tomadoMail = await dbPlataforma.Usuarios.AnyAsync(
             u => u.Mail == mail && u.Id != excluirId, ct);
 
         if (tomadoMail)

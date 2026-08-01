@@ -14,7 +14,9 @@ namespace Ways.Application.Tests.Usuarios;
 /// tenant (doc 09, ADR-8), consistencia rol/alcance, y las dos unicidades del ABM (`usuario`
 /// por tenant, `mail` global). Incluye el caso que motivó el batch de judgment-day: una
 /// colisión de mail entre tenants tiene que devolver 409 desde el chequeo previo, no colarse
-/// por el filtro de tenant y reventar recién en el <c>SaveChangesAsync</c>.
+/// por el filtro de tenant y reventar recién en el <c>SaveChangesAsync</c>. El chequeo de mail
+/// corre sobre un <c>dbPlataforma</c> separado del <c>db</c> de sesión — acá comparten
+/// InMemory, la separación real (RLS bajo Postgres) se prueba en <c>UsuariosYLoginTests</c>.
 /// </summary>
 public class ServicioDeUsuariosTests
 {
@@ -43,7 +45,12 @@ public class ServicioDeUsuariosTests
 
     private static ServicioDeUsuarios CrearServicio(
         string nombreDeBase, ITenantActual tenantActual, IContextoDeUsuario contexto) =>
-        new(CrearContexto(nombreDeBase, tenantActual), new HasheadorPbkdf2(), new RelojFijo(Ahora), contexto);
+        new(
+            CrearContexto(nombreDeBase, tenantActual),
+            CrearContexto(nombreDeBase, TenantActualFijo.Plataforma),
+            new HasheadorPbkdf2(),
+            new RelojFijo(Ahora),
+            contexto);
 
     private static async Task SembrarRolesAsync(string nombreDeBase)
     {
@@ -190,9 +197,11 @@ public class ServicioDeUsuariosTests
     /// <summary>El caso CRITICAL de judgment-day: antes del fix, <c>ExigirDisponibilidadAsync</c>
     /// chequeaba el mail sobre <c>db.Usuarios</c> filtrado por tenant, así que un admin de
     /// tenant B nunca veía la cuenta de tenant A y la colisión pasaba el chequeo — para
-    /// reventar recién en el <c>SaveChangesAsync</c> con un 23505 sin traducir. Con
-    /// <c>IgnoreQueryFilters(["Tenant"])</c> en el chequeo de mail, la colisión se atrapa acá,
-    /// como el mismo 409 de negocio que el duplicado dentro de un mismo tenant.</summary>
+    /// reventar recién en el <c>SaveChangesAsync</c> con un 23505 sin traducir. El chequeo de
+    /// mail ahora corre contra un contexto de plataforma dedicado (<c>dbPlataforma</c>), así
+    /// que la colisión se atrapa acá, como el mismo 409 de negocio que el duplicado dentro de
+    /// un mismo tenant — con el proveedor InMemory esto ya alcanzaba antes también (no aplica
+    /// RLS), la brecha real solo se veía contra Postgres (ver <c>UsuariosYLoginTests</c>).</summary>
     [Fact]
     public async Task UnMailUsadoEnOtroTenantEsRechazadoConConflicto409()
     {
