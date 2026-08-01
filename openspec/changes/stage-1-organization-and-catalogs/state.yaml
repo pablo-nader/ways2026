@@ -1,6 +1,6 @@
 change: stage-1-organization-and-catalogs
-phase: tasks
-status: planning-complete-awaiting-apply
+phase: apply
+status: apply-in-progress-db-change-gate-pending
 artifact_store: openspec
 phases:
   explore:
@@ -18,7 +18,9 @@ phases:
     status: done
     artifact: tasks.md
   apply:
-    status: pending
+    status: in-progress
+    artifact: apply-progress.md
+    notes: "Slice 1 (PR 1) implemented up to the DB CHANGE GATE. Blocked on user approval of the migration 1 (Organizacion) model summary before task 1.8 (generate migration) can run."
   verify:
     status: pending
   archive:
