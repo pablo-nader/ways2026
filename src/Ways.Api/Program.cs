@@ -86,6 +86,19 @@ builder.Services
             }
 
             var db = ctx.HttpContext.RequestServices.GetRequiredService<WaysDbContext>();
+
+            // El modo/tenant de la sesión se resuelve ANTES de tocar `usuarios` a propósito
+            // (slice 2): el filtro de tenant de `Usuario` (ADR-1) falla cerrado en modo
+            // `Ninguno`, así que revisar la cuenta propia con el contexto todavía sin
+            // resolver la dejaría siempre invisible, para cualquier cuenta de tenant.
+            // Resolver el modo primero, a partir de los claims ya decodificados de la
+            // cookie, evita el problema de origen y de paso deja el chequeo de vigencia
+            // scopeado por tenant como una capa más (ADR-8).
+            if (!await ResolverModoDeLaSesionAsync(ctx, db))
+            {
+                return;
+            }
+
             var vigente = await db.Usuarios
                 .AsNoTracking()
                 .AnyAsync(u => u.Id == usuarioId && u.Estado == EstadoUsuario.Activo);
@@ -95,10 +108,7 @@ builder.Services
                 ctx.RejectPrincipal();
                 await ctx.HttpContext.SignOutAsync(
                     CookieAuthenticationDefaults.AuthenticationScheme);
-                return;
             }
-
-            await ResolverTenantDeLaSesionAsync(ctx, db);
         };
     });
 
@@ -179,10 +189,14 @@ app.MapFallback(async contexto =>
 
 app.Run();
 
-// --- Resolución del tenant de la sesión (ADR-2) ---
+// --- Resolución del modo/tenant de la sesión (ADR-2) ---
 // Vive acá y no en un método de instancia porque necesita los mismos servicios de
-// request que OnValidatePrincipal ya tiene resueltos (db, HttpContext).
-static async Task ResolverTenantDeLaSesionAsync(CookieValidatePrincipalContext ctx, WaysDbContext db)
+// request que OnValidatePrincipal ya tiene resueltos (db, HttpContext). Corre ANTES que
+// cualquier lectura de `usuarios` — ver el comentario en OnValidatePrincipal.
+//
+// Devuelve `false` cuando ya rechazó la sesión (tenant inexistente/suspendido/de baja): el
+// llamador no debe seguir revisando la cuenta.
+static async Task<bool> ResolverModoDeLaSesionAsync(CookieValidatePrincipalContext ctx, WaysDbContext db)
 {
     var tenantActual = ctx.HttpContext.RequestServices.GetRequiredService<TenantActualDeSesion>();
 
@@ -193,7 +207,7 @@ static async Task ResolverTenantDeLaSesionAsync(CookieValidatePrincipalContext c
     if (esRoot)
     {
         tenantActual.Establecer(ModoDeAcceso.Plataforma, idTenant: null);
-        return;
+        return true;
     }
 
     // El claim ways:id_tenant está ausente para staff de plataforma (ya cubierto arriba,
@@ -202,7 +216,7 @@ static async Task ResolverTenantDeLaSesionAsync(CookieValidatePrincipalContext c
     if (!int.TryParse(ctx.Principal?.FindFirstValue(ClaimsWays.IdTenant), out var idTenant))
     {
         tenantActual.Establecer(ModoDeAcceso.Ninguno, idTenant: null);
-        return;
+        return true;
     }
 
     tenantActual.Establecer(ModoDeAcceso.Tenant, idTenant);
@@ -220,7 +234,10 @@ static async Task ResolverTenantDeLaSesionAsync(CookieValidatePrincipalContext c
     {
         ctx.RejectPrincipal();
         await ctx.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return false;
     }
+
+    return true;
 }
 
 /// <summary>Hace público el <c>Program</c> implícito de top-level statements para que
