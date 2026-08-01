@@ -327,6 +327,51 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal("mail_duplicado", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>Mismo mecanismo que <see cref="DosAltasConcurrentesConElMismoMailDisparanElBackstopDelSaveChanges"/>,
+    /// pero contra el otro índice único: <c>usuario</c> (nombre de cuenta) es único POR TENANT,
+    /// no global (<c>ux_usuarios_usuario</c>, doc 09 ADR-7), así que la carrera se arma con dos
+    /// altas del MISMO tenant, mismo <c>NombreUsuario</c>, mails distintos (el mail no puede
+    /// chocar acá, o el backstop atraparía el 23505 de <c>ux_usuarios_mail</c> en su lugar y la
+    /// prueba dejaría de ejercitar la rama que le interesa). El chequeo previo en memoria
+    /// (<c>ExigirDisponibilidadAsync</c>) no alcanza a ver la fila de la otra request porque
+    /// ninguna de las dos hizo commit todavía, así que el 23505 de <c>ux_usuarios_usuario</c>
+    /// recién aparece en el <c>SaveChangesAsync</c> de la que pierde la carrera — es la rama
+    /// <c>usuario_duplicado</c> de <c>ManejadorDeErrores</c>, nunca ejercitada por un choque en
+    /// memoria porque ese siempre pasa por el chequeo previo, no por el backstop.</summary>
+    [Fact]
+    public async Task DosAltasConcurrentesConElMismoUsuarioEnElMismoTenantDisparanElBackstopDelSaveChanges()
+    {
+        var (_, mailAdmin) = await SembrarTenantConUsuarioAsync(
+            nameof(DosAltasConcurrentesConElMismoUsuarioEnElMismoTenantDisparanElBackstopDelSaveChanges),
+            EstadoTenant.Activo);
+
+        // Nombre corto a propósito: `usuario` tiene un tope de 40 caracteres
+        // (ServicioDeUsuarios.Normalizar) y el nombre del método de test no entra.
+        const string usuarioCompartido = "vendedor-concurrente-usuario";
+
+        using var cliente = fixture.CreateClient();
+        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdmin, Password));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tareaA = cliente.PostAsJsonAsync("/api/usuarios", new CrearUsuario(
+            usuarioCompartido, $"{usuarioCompartido}-a@ways.test", (int)RolConocido.Vendedor, Password));
+        var tareaB = cliente.PostAsJsonAsync("/api/usuarios", new CrearUsuario(
+            usuarioCompartido, $"{usuarioCompartido}-b@ways.test", (int)RolConocido.Vendedor, Password));
+
+        var respuestas = await Task.WhenAll(tareaA, tareaB);
+
+        var estados = respuestas.Select(r => r.StatusCode).ToArray();
+
+        // Misma garantía que en el caso del mail: exactamente una gana (201) y la otra choca
+        // (409), sin importar cuál de las dos ganó la carrera.
+        Assert.Contains(HttpStatusCode.Created, estados);
+        Assert.Contains(HttpStatusCode.Conflict, estados);
+
+        var respuestaConflicto = respuestas.Single(r => r.StatusCode == HttpStatusCode.Conflict);
+        var problema = await respuestaConflicto.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("usuario_duplicado", problema.GetProperty("codigo").GetString());
+    }
+
     /// <summary>Approved hardening de judgment-day (batch 9, ronda 2): prueba HTTP de punta a
     /// punta de lo que <c>ServicioDeUsuarios.BuscarAsync</c> ya cubre a nivel de servicio
     /// (<c>UnAdminNoVeUnUsuarioDeOtroTenant</c> en <c>ServicioDeUsuariosTests</c>) — acá contra
