@@ -776,3 +776,169 @@ Slice 2's judgment-day round 3 findings are all fixed and verified; round 3 was 
 iteration approved by the user. Next: open PR 2 (per `CLAUDE.md`'s PR validation gate),
 stacked on PR 1 per the chosen `stacked-to-main` chain strategy. No open items block Slice 3
 or Slice 4 from starting in parallel.
+
+---
+
+## Slice 3: Catalogs + parametros (PR 3)
+
+## Batch 1
+
+**Scope:** Slice 3 § 3A (`tasks.md` 3.1–3.7: domain + persistence machine) and 3.8's summary,
+branch `feat/stage1-slice3-catalogos` off `main` (slice 1 / PR 1 merged; slice 2 / PR 2 not
+yet merged at branch-cut time, but this slice only depends on slice 1's tenant plumbing per
+`tasks.md`'s dependency graph, so branching off `main` is correct). Stopped at **DB CHANGE
+GATE #3** (task 3.8) as instructed. No EF Core migration was generated or applied — the gate
+summary is in the coordinator's return report, not duplicated here.
+
+### Completed in batch 1
+
+- **3.1** — `CatalogoSimple : EntidadTenant { Id, Nombre, Activo, IdEmpresa? }` in
+  `Ways.Domain/Catalogos`.
+- **3.2** — `ConfiguracionDeCatalogo<T>` (`Ways.Infrastructure/Persistencia/Configuraciones`):
+  maps table/PK/audit/tenant FK/optional composite empresa FK (ADR-9)/the catalog index pair
+  (ADR-11's `ux_*_nombre_compartido` / `ux_*_nombre_empresa`), abstract `Tabla`/`ColumnaId`/
+  `ConfigurarPropio`. Also added `ix_{tabla}_empresa` (explicit FK-order index) to match the
+  existing `PuntoVentaConfiguration` convention — not in the design pseudocode, needed so EF
+  doesn't fall back to an auto-named index for the FK.
+- **3.3** — `Area` (+`Orden`), `Marca` (no extra columns), `Grupo` (+`Margen`), `MedioPago`
+  (+`Orden`/`Comportamiento`/`AdmiteVuelto`/`RequiereReferencia`/`RecargoPorcentaje`) +
+  `ComportamientoMedioPago` enum (`efectivo`/`electronico`/`cuenta_corriente`) + their 4 thin
+  `ConfiguracionDeCatalogo<T>` subclasses.
+- **3.4** — `Categoria` (+`Orden`/`IdCategoriaPadre`) + `CategoriaConfiguration` (adds the
+  `(Id, IdTenant)` alternate key and the self composite FK, ADR-9) + `ReglaDeCategorias`
+  (`ValidarProfundidad`, `ValidarSinCiclo`, pure, ADR-12) + 7 unit tests in
+  `ReglaDeCategoriasTests.cs` (depth 1/2/3 accepted, depth-4 rejected, re-parent-overflow
+  rejected, cycle rejected via `ValidarSinCiclo`, no-cycle accepted).
+- **3.5** — `CondicionFiscal`, `AlicuotaIva`, `TipoComprobante` (+`ClaseComprobante` enum:
+  `venta`/`compra`) — all extend `EntidadBase`, **not** `EntidadTenant`: no `id_tenant`
+  column, so `WaysDbContext`'s generic tenant-filter loop never touches them (only the
+  `BajaLogica` soft-delete filter applies, same as every other `EntidadBase`). Verified by
+  `ModeloDeCatalogosTests.LosCatalogosGlobalesNoTienenColumnaIdTenantNiFiltroDeTenant`.
+- **3.6** — `Parametro : EntidadTenant` (+`IdEmpresa` required, `IdPuntoVenta?`, `Clave`,
+  `Valor` jsonb-as-string) + `ResolucionDeParametros.Resolver` (pure: punto_venta ?? empresa
+  ?? default declarado) + 5 unit tests in `ResolucionDeParametrosTests.cs`.
+- **3.7** — `ParametroConocido` (record: `Clave`, `TipoClr`, `ValorPorDefecto`) with the 4
+  keys doc 10 §9 names (`tolerancia_pago`, `vuelto_maximo`, `importe_adicional_recarga`,
+  `slots_tickets_espera`); `Buscar(clave)` throws `parametro_desconocido` (400) on an unknown
+  key, case-insensitive lookup; 6 unit tests in `ParametroConocidoTests.cs`.
+- **3.8 (summary only)** — gate summary prepared and returned to the coordinator/user; **no
+  migration generated**, per instructions. Also included, for context, a preview of what
+  gates #4 (`CatalogosGlobales`) and #5 (`Parametros`) will look like — those will each get
+  their own gate request in a later continuation, per `tasks.md`'s own sequencing (3.10,
+  3.12).
+- **Infrastructure plumbing needed to make the above compile/test cleanly** (not separate
+  `tasks.md` items, same precedent as slice 1/2 folding "EF configurations" into adjacent
+  domain/infra tasks):
+  - `WaysDbContext`: 9 new `DbSet<T>` properties (5 tenant catalogs + 3 global + `Parametro`).
+    **Deliberately not added to `IWaysDbContext`** (`Ways.Application.Abstracciones`) in this
+    batch — that interface is Application-layer surface, consumed by `ServicioDeCatalogo<T>`/
+    `ServicioDeParametros` (tasks 3.15–3.18, section 3D, which `tasks.md` sequences *after*
+    all three remaining gates). Extending it now with no consumer would be scope creep past
+    "domain + persistence machine, up to gate #3."
+  - `DependencyInjection.ConfigurarNpgsql` and `WaysDbContextFactory`: added
+    `MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago")` and
+    `MapEnum<ClaseComprobante>("clase_comprobante")`, mirroring the existing
+    `EstadoUsuario`/`EstadoTenant` pattern — needed for the EF model to build at all once
+    `MedioPago`/`TipoComprobante` reference those column types.
+
+### RLS identifier guard (carried judgment-day INFO, closed this batch)
+
+`state.yaml` carried forward: *"`RlsMigrationBuilderExtensions.HabilitarRlsDeTenant` interpolates
+the table name; add an identifier guard when it starts being called for the catalog tables."*
+Added proactively in this batch, ahead of the helper's first new call site (migration 3 isn't
+generated yet, but the guard needs to exist before it is): `HabilitarRlsDeTenant` now validates
+`tabla` against `^[a-z_][a-z0-9_]*$` before interpolating it into any raw SQL, throwing
+`ArgumentException` on anything else (empty, uppercase, leading digit, or an actual injection
+attempt). 12 new tests in `RlsMigrationBuilderExtensionsTests.cs` (4 valid identifiers accepted,
+7 invalid rejected, `null` rejected). Existing callers (`tenants`, `empresas`, `puntos_venta`,
+`usuarios` — all migrations 1–2) are unaffected: all four are literal lowercase snake_case
+strings already, so the guard is a no-op for them and only starts mattering once the catalog
+tables (migration 3) call it in the same fashion.
+
+### Tests added this batch
+
+- `Ways.Domain.Tests/Catalogos/`: `ReglaDeCategoriasTests.cs` (8), `ResolucionDeParametrosTests.cs`
+  (5), `ParametroConocidoTests.cs` (6) — 19 new domain tests, no database.
+- `Ways.Application.Tests/Persistencia/ModeloDeCatalogosTests.cs` (15 tests) — the
+  "generic-service" proof for the persistence machine (ADR-11), same technique as slice 1's
+  `ModeloDeOrganizacionTests.cs`: builds the real `WaysDbContext` model against the Npgsql
+  provider without connecting to a database, and asserts, once per catalog via `[Theory]`
+  instead of by hand five times: the shared index pair exists with the right partial
+  filters, the optional composite empresa FK doesn't force `IdTenant` nullable (ADR-9,
+  re-confirmed for the catalog machine specifically), `Categoria`'s alternate key + self FK,
+  the three global catalogs have no `id_tenant`/no `Tenant` filter, and `parametros`' two
+  ADR-13 partial unique indexes.
+- `Ways.Application.Tests/Persistencia/RlsMigrationBuilderExtensionsTests.cs` (12 tests) — the
+  RLS identifier guard, see below.
+
+### A real EF Core 9+ DI trap found while getting the integration suite to run with the new
+### model (not a production bug — a test-fixture bug, fixed before this batch closes)
+
+Adding the two new `MapEnum` calls made every existing host-booting integration test
+(`UsuariosYLoginTests`, `UsuariosRlsTests`, `InicializadorDeBaseDeDatosTests`, etc. — added in
+slice 2 batches 7–10) fail two different ways in sequence:
+
+1. **`PendingModelChangesWarning`** (expected, documented): the C# model now knows about the
+   catalog entities, migration 3 doesn't exist yet — exactly the mid-gate state the DB CHANGE
+   GATE protocol produces on purpose (same trap as slice 2 batch 6, `usuarios.id_tenant`).
+   Fixed the same way, but this time in **two** places instead of one: `WaysApiFixture.
+   MigrarComoOwnerAsync` (as before) **and**, newly, the actual API host's own
+   `InicializadorDeBaseDeDatos.EjecutarAsync` → `Database.MigrateAsync()`, because — unlike
+   slice 2 batch 6 — the integration suite by this point already has tests that boot the real
+   host via `CreateClient()` (closed in slice 2 batch 7). Rather than suppress the warning in
+   *production* `DependencyInjection.ConfigurarNpgsql` (which would leave it disabled in real
+   deploys, not just this dev-time window), `WaysApiFixture.ConfigureWebHost` now replaces the
+   test host's `WaysDbContext`/keyed-platform-`WaysDbContext` DI registrations with copies
+   that add `ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))` —
+   production code untouched.
+2. **[CRITICAL, test-fixture-only] Replacing `AddDbContext<WaysDbContext>` a second time
+   doesn't replace the first registration — it *adds* to it.** Since EF Core 9, `AddDbContext`
+   records its options delegate as an `IDbContextOptionsConfiguration<TContext>` service,
+   which is designed to be **cumulative** (multiple `AddDbContext`/`ConfigureDbContext` calls
+   compose). `RemoveAll<DbContextOptions<WaysDbContext>>()` (which looked sufficient by
+   analogy with the "replace the DbContext for testing" pattern) does **not** remove this
+   service — it's a different type. The result: production's `AgregarInfrastructure`
+   registration (already applied before `ConfigureWebHost` runs) and the fixture's new one
+   both got applied to the same final options, so `MapEnum<ComportamientoMedioPago>(...)` (and
+   the other three) ran **twice** — Npgsql's `NpgsqlTypeMappingSource.FindEnumMapping` then
+   throws `InvalidOperationException: Sequence contains more than one matching element` the
+   first time any query touches a property of that enum type, surfacing as a bare 500 on
+   `POST /api/auth/login` and everywhere else. Root-caused by bisecting: the exact same
+   duplicate-mapping pattern for `EstadoUsuario`/`EstadoTenant` across 3+ call sites (owner
+   migration context, per-request context, keyed-platform context, `CrearContextoDeAplicacion`)
+   had existed since slice 1/2 without ever tripping this — the difference here was the
+   **second, competing `AddDbContext<WaysDbContext>` registration** added in this batch's
+   first fix attempt, not the enum count itself. Fixed by also removing
+   `IDbContextOptionsConfiguration<WaysDbContext>` before re-adding. Confirmed: 24/24 green,
+   twice in a row (not flaky).
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 57/57** (38 unedited + 19 new, the domain
+  tests above), **`Ways.Application.Tests` 63/63** (36 unedited + 15 `ModeloDeCatalogosTests`
+  + 12 `RlsMigrationBuilderExtensionsTests`), **`Ways.IntegrationTests` 24/24** (all 24
+  pre-existing slice 1/2 tests, unedited except for the fixture fix above), stable across two
+  consecutive full runs. 0 failures, 0 skipped, Docker daemon reachable throughout.
+- Slices 1–2 regression: unedited, still green (confirms the fixture fix didn't touch any
+  test *behavior*, only DI plumbing needed for the new model to coexist pre-migration).
+
+### Deferred items (reported, not silent)
+
+- **3.9–3.14** — blocked on DB CHANGE GATE #3/#4/#5 approvals, per instructions. Gate #3's
+  summary is the centerpiece of this batch's return to the user; gates #4/#5 get their own
+  requests in later continuations.
+- **3.15–3.18 (Application + API)** and **3.19–3.20 (integration tests)** — not started this
+  batch. `tasks.md` sequences section 3D *after* 3C (all three migrations), and this batch's
+  instructed scope was "domain + persistence machine, stop at the first DB CHANGE GATE."
+  `IWaysDbContext` is untouched for the same reason (see above).
+- Seed data (task 3.14: three fiscal catalogs + tenant provisioning template) — described in
+  the gate summary as a preview (seed *shape*, not seed *code*); `InicializadorDeBaseDeDatos`
+  wiring is deferred to when the migrations that back it exist.
+
+### Next batch
+
+Once gate #3 (`CatalogosDeTenant`) is approved: generate migration 3, present gate #4
+(`CatalogosGlobales`), then gate #5 (`Parametros`), generating each migration only after its
+own approval — `tasks.md` 3.9–3.13. Then section 3D (Application + API) and 3E (tests),
+followed by judgment-day review before PR 3.

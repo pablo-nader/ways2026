@@ -103,17 +103,17 @@ Each slice above satisfies the "independently mergeable, clear start/finish/veri
 
 ### 3A. Domain + persistence machine
 
-- [ ] 3.1 Add `CatalogoSimple : EntidadTenant { Nombre, Activo, IdEmpresa? }` in `Ways.Domain/Catalogos`. *(ADR-11)*
-- [ ] 3.2 Add `ConfiguracionDeCatalogo<T>` shared EF config (table/columns/audit/index-pair) + abstract `ConfigurarPropio`. *(ADR-11, catalog index pair)*
-- [ ] 3.3 [P] Add `Area`, `Marca`, `Grupo`, `MedioPago` (+ `comportamiento_medio_pago` enum) entities + thin configs. *(spec: auxiliary-catalogs / Catalog ABM Lifecycle)*
-- [ ] 3.4 Add `Categoria` (self composite FK) + `ReglaDeCategorias.ValidarProfundidad`/`ValidarSinCiclo` + unit tests (depth 1-3 OK, 4 rejected, re-parent overflow rejected, cycle rejected, root OK). *(ADR-12; spec: auxiliary-catalogs / Categoria Depth Limit)*
-- [ ] 3.5 [P] Add global fiscal entities: `CondicionFiscal`, `AlicuotaIva`, `TipoComprobante` (+ `clase_comprobante` enum), no `id_tenant`. *(spec: auxiliary-catalogs / Fiscal Catalogs Are Platform-Managed and Read-Only)*
-- [ ] 3.6 Add `Parametro` entity + `ResolucionDeParametros` pure function (punto_venta ?? empresa ?? default) + unit tests. *(ADR-13; spec: parametros-operativos / Parameter Scope and Fallback)*
-- [ ] 3.7 Add `ParametroConocido` typed key registry (key, CLR type, default, validation). *(ADR-13)*
+- [x] 3.1 Add `CatalogoSimple : EntidadTenant { Nombre, Activo, IdEmpresa? }` in `Ways.Domain/Catalogos`. *(ADR-11)*
+- [x] 3.2 Add `ConfiguracionDeCatalogo<T>` shared EF config (table/columns/audit/index-pair) + abstract `ConfigurarPropio`. *(ADR-11, catalog index pair)* — also gained `ix_{tabla}_empresa` (explicit FK-order index, matching `PuntoVentaConfiguration`'s existing pattern) beyond what the design pseudocode showed.
+- [x] 3.3 [P] Add `Area`, `Marca`, `Grupo`, `MedioPago` (+ `comportamiento_medio_pago` enum) entities + thin configs. *(spec: auxiliary-catalogs / Catalog ABM Lifecycle)*
+- [x] 3.4 Add `Categoria` (self composite FK) + `ReglaDeCategorias.ValidarProfundidad`/`ValidarSinCiclo` + unit tests (depth 1-3 OK, 4 rejected, re-parent overflow rejected, cycle rejected, root OK). *(ADR-12; spec: auxiliary-catalogs / Categoria Depth Limit)* — 8 tests in `ReglaDeCategoriasTests.cs`.
+- [x] 3.5 [P] Add global fiscal entities: `CondicionFiscal`, `AlicuotaIva`, `TipoComprobante` (+ `clase_comprobante` enum), no `id_tenant`. *(spec: auxiliary-catalogs / Fiscal Catalogs Are Platform-Managed and Read-Only)* — extend `EntidadBase`, not `EntidadTenant`: no tenant filter, no RLS (verified by `ModeloDeCatalogosTests.LosCatalogosGlobalesNoTienenColumnaIdTenantNiFiltroDeTenant`).
+- [x] 3.6 Add `Parametro` entity + `ResolucionDeParametros` pure function (punto_venta ?? empresa ?? default) + unit tests. *(ADR-13; spec: parametros-operativos / Parameter Scope and Fallback)* — 5 tests in `ResolucionDeParametrosTests.cs`.
+- [x] 3.7 Add `ParametroConocido` typed key registry (key, CLR type, default, validation). *(ADR-13)* — 4 keys from doc 10 §9 (`tolerancia_pago`, `vuelto_maximo`, `importe_adicional_recarga`, `slots_tickets_espera`); 6 tests in `ParametroConocidoTests.cs`.
 
 ### 3B. DB CHANGE GATE #3 — BLOCKING
 
-- [ ] 3.8 **STOP.** Present migration 3 (`CatalogosDeTenant`) model summary — per-table columns, index pairs, self composite FK — and wait for explicit approval.
+- [ ] 3.8 **STOP.** Present migration 3 (`CatalogosDeTenant`) model summary — per-table columns, index pairs, self composite FK — and wait for explicit approval. — **Summary presented to the user** (apply-progress.md, Slice 3 batch 1); awaiting approval. No migration generated.
 
 ### 3C. Migrations 3–5 (each gated)
 
