@@ -1,0 +1,42 @@
+change: stage-1-organization-and-catalogs
+phase: tasks
+status: planning-complete-awaiting-apply
+artifact_store: openspec
+phases:
+  explore:
+    status: skipped
+  propose:
+    status: done
+    artifact: proposal.md
+  spec:
+    status: done
+    artifact: specs/
+  design:
+    status: done
+    artifact: design.md
+  tasks:
+    status: done
+    artifact: tasks.md
+  apply:
+    status: pending
+  verify:
+    status: pending
+  archive:
+    status: pending
+dependencies:
+  spec: [propose]
+  design: [propose]
+  tasks: [spec, design]
+  apply: [tasks]
+  verify: [apply]
+  archive: [verify]
+notes:
+  - "Proposal question round resolved with the user (2026-07-31); decisions recorded in proposal.md '## Resolved product decisions' and binding for all phases."
+  - "No baseline spec existed for usuarios-y-login (doc 08 predates SDD tracking): its delta spec is ADDED-only and sdd-archive must treat it as first-baseline creation, not a merge."
+  - "DB Change Gate (CLAUDE.md) applies before any EF Core migration is generated during apply."
+  - "Delivery decision (user, 2026-07-31): chained PRs, chain_strategy = stacked-to-main. One PR per slice (4), further split within a slice if reviewable lines exceed ~400."
+  - "PR validation gate (CLAUDE.md): every PR must pass a clean judgment-day round (dual blind review, fix confirmed issues, re-judge) before merge. No human reviewer exists."
+  - "Apply is parked: planning-only session. User will trigger implementation explicitly later."
+  - "design.md defines 4 natural PR cut points: (1) tenancy plumbing + org tables + RLS, (2) usuarios retrofit + suspension, (3) catalogs + parametros, (4) web ABM."
+  - "design.md ADR-6 and ADR-9 carry apply-time verification items (EF Core 10 keyed query filters; optional composite FK nullability). Fallbacks are defined and must be reported, not applied silently."
+  - "ADR-7 overridden by user: usuario unique per tenant, mail unique global; stage 1 login is mail-based (flow B); subdomain login (flow A) deferred as designed extension point."

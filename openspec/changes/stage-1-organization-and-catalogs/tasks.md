@@ -1,0 +1,167 @@
+# Tasks: Stage 1 — Organization and Catalogs
+
+## Review Workload Forecast
+
+| Field | Value |
+|-------|-------|
+| Estimated changed lines | ~2,900–4,200 total (incl. EF migration boilerplate) |
+| 400-line budget risk | High |
+| Chained PRs recommended | Yes |
+| Suggested split | PR 1 → PR 2 → PR 3 → PR 4 (design's 4 cut points) |
+| Delivery strategy | chained PRs (user decision, 2026-07-31) |
+| Chain strategy | stacked-to-main |
+
+Decision needed before apply: No — resolved: chained PRs, stacked-to-main.
+Chained PRs recommended: Yes (accepted)
+Chain strategy: stacked-to-main — each slice PR merges to main in order; split further within a slice if reviewable lines exceed ~400.
+PR validation gate: every PR must pass a clean judgment-day round (dual blind review, fix, re-judge) before merge — see CLAUDE.md.
+400-line budget risk: High (mitigated by the split above)
+
+### Suggested Work Units
+
+| Unit | Goal | Likely PR | Notes |
+|------|------|-----------|-------|
+| 1 | Tenancy plumbing + org tables + RLS | PR 1 | ~900–1,300 lines. Base: `main`. Gate #1+#2 of migration sequencing land here. Independently mergeable: adds new tables/infra, touches nothing existing except `PoliticaDeRoles` additively. |
+| 2 | usuarios retrofit + suspension + mail login | PR 2 | ~500–700 lines. Depends on PR 1 (`usuarios.id_tenant` FK → `tenants`). Base per chosen chain strategy. |
+| 3 | Catalogs + parametros | PR 3 | ~900–1,300 lines. Depends on PR 1 (tenant plumbing); does not require PR 2. Gates #3, #4, #5. |
+| 4 | Web ABMs | PR 4 | ~600–900 lines. Depends on PR 1–3 (consumes the API surface they expose). |
+
+Each slice above satisfies the "independently mergeable, clear start/finish/verification/rollback" requirement: start = base branch state, finish = its own migration(s) + tests green, verification = its own unit/integration tests, rollback = its own down-migration(s) and route removal (proposal.md § Rollback Plan).
+
+---
+
+## Slice 1: Tenancy plumbing + org tables + RLS (PR 1)
+
+**Start**: `main`. **Finish**: migration 1 applied, RLS proven, org tables seeded, isolation integration tests green. **Rollback**: down-migration 1 (additive only, nothing pre-existing touched).
+
+### 1A. Apply-time verification (must resolve before schema work — ADR-6, ADR-9)
+
+- [ ] 1.1 Verify EF Core 10 keyed `SetQueryFilter` overload exists on pinned EF 10.0.10; report result. If absent, apply ADR-6 fallback (composed filter + explicit `.Where` re-application) and report the deviation. *(spec: tenant-organization / Tenant Isolation Enforcement)*
+- [ ] 1.2 Verify EF Core 10 does not force `IdTenant` nullable for the optional composite FK (`puntos_venta→empresas`, catálogo→`empresas`); report result. If it does, apply ADR-9 fallback (single-column FK + domain/RLS integrity) and report the deviation. *(spec: tenant-organization / Organization Hierarchy Tables)*
+
+### 1B. Domain
+
+- [ ] 1.3 [P] Add `EntidadTenant : EntidadBase { IdTenant }` in `Ways.Domain/Common`. *(ADR-1)*
+- [ ] 1.4 [P] Add `Tenant`, `Empresa`, `PuntoVenta`, `EstadoTenant` in `Ways.Domain/Organizacion`. *(spec: tenant-organization / Organization Hierarchy Tables)*
+- [ ] 1.5 Add `ActorDeGestion`, `ValidarAlcanceDeTenant`, `RolesAsignablesPor` to `PoliticaDeRoles` (pure, DB-free) + unit tests (admin↔same tenant OK; admin→other tenant not found; admin→platform forbidden; platform root→any OK; assignable-roles split). *(spec: usuarios-tenant-scoping / PoliticaDeRoles Tenant Rule)*
+
+### 1C. DB CHANGE GATE #1 — BLOCKING
+
+- [ ] 1.6 **STOP.** Present migration 1 (`Organizacion`) model summary to the user — tables, columns, AKs, composite FK, RLS functions/policies — and wait for explicit approval before generating anything. No exceptions (`CLAUDE.md`).
+
+### 1D. Infrastructure
+
+- [ ] 1.7 Implement `RlsMigrationBuilderExtensions.HabilitarRlsDeTenant(tabla)` (ENABLE + FORCE + policy block). *(ADR-15)*
+- [ ] 1.8 Generate migration 1 (`Organizacion`): `estado_tenant` enum, `tenants`/`empresas`/`puntos_venta`, AKs, composite FK, `app_tenant_actual`/`app_modo`/`app_es_plataforma`, RLS via 1.7 — only after 1.6 is approved. *(spec: tenant-organization / Organization Hierarchy Tables)*
+- [ ] 1.9 [P] Implement `ITenantActual`, `TenantActualDeSesion` (scoped), `TenantActualFijo` (non-HTTP entry points). *(ADR-2)*
+- [ ] 1.10 [P] Implement `InterceptorDeContextoDeTenant : DbConnectionInterceptor` (`set_config` on connection open; `is_local: true` inside provisioning transactions). *(ADR-3)*
+- [ ] 1.11 Wire `OnValidatePrincipal`: populate `TenantActualDeSesion` from claims, revalidate tenant `estado` (suspendido/baja ⇒ reject + sign-out). *(spec: tenant-organization / Tenant Suspension Enforcement)*
+- [ ] 1.12 Register named query filters `"BajaLogica"`/`"Tenant"` in `OnModelCreating` per 1.1 result. *(ADR-6)*
+- [ ] 1.13 Add `SaveChangesAsync` `IdTenant` stamping on Added + tamper rejection on Modified.
+- [ ] 1.14 Add startup role check (`rolsuper`/`rolbypassrls`) in `InicializadorDeBaseDeDatos`: throw in Production, warn elsewhere. *(ADR-5)*
+
+### 1E. Seed + tests
+
+- [ ] 1.15 Extend `InicializadorDeBaseDeDatos` with tenant 1 / empresa 1 / 2 locales seed, platform mode. *(spec: tenant-organization / Organization Hierarchy Tables, Scenario: Seed data present)*
+- [ ] 1.16 Scaffold `tests/Ways.IntegrationTests`: `WebApplicationFactory` + `Testcontainers.PostgreSql`, two DB roles (migration owner + `ways_app` `NOSUPERUSER NOBYPASSRLS`). *(ADR-17)*
+- [ ] 1.17 Integration tests — isolation core: EF filter blocks cross-tenant read; RLS blocks raw-SQL/`IgnoreQueryFilters` read; `WITH CHECK` rejects cross-tenant insert; fail-closed on unset GUC; no GUC leakage across pooled connections; policy-coverage query (ADR-15) returns zero rows; `ways_app` has neither `rolsuper` nor `rolbypassrls`. *(spec: tenant-organization / Tenant Isolation Enforcement)*
+- [ ] 1.18 Regression: confirm existing `Ways.Domain.Tests`/`Ways.Application.Tests` are unedited and green.
+
+---
+
+## Slice 2: usuarios retrofit + suspension + mail login (PR 2)
+
+**Depends on**: Slice 1 (`usuarios.id_tenant` FK → `tenants`). **Start**: PR 1 merged/branch. **Finish**: migration 2 applied, mail login live, suspension enforced, tests green. **Rollback**: down-migration 2; login contract revert is a route-body change only.
+
+### 2A. DB CHANGE GATE #2 — BLOCKING
+
+- [ ] 2.1 **STOP.** Present migration 2 (`UsuariosMultiTenant`) model summary — additive `id_tenant` column, `(id_tenant, usuario) NULLS NOT DISTINCT` index rebuild and why, the two login-mode policies and why — and wait for explicit approval.
+
+### 2B. Migration + backfill
+
+- [ ] 2.2 Generate migration 2 (only after 2.1 approved): `usuarios.id_tenant NULL` + FK, rebuild `ux_usuarios_usuario`, `usuarios` RLS policies (tenant + `usuarios_login_lectura`/`_actualiza`). *(spec: usuarios-tenant-scoping / id_tenant Column Semantics; usuario Uniqueness Is Scoped Per Tenant)*
+- [ ] 2.3 Backfill in `InicializadorDeBaseDeDatos`: existing `root` stays `id_tenant NULL`; other existing users → tenant 1. *(ADR-14)*
+
+### 2C. Application
+
+- [ ] 2.4 Update `ServicioDeAutenticacion` to resolve by `mail` instead of `usuario`; preserve anti-enumeration (same error, dummy-hash timing). *(spec: usuarios-y-login / Login Is By Mail; Anti-Enumeration Behavior Is Preserved)*
+- [ ] 2.5 Add suspended-tenant check in `ServicioDeAutenticacion`, after password verification, same ordering as existing bloqueado/inactivo checks. *(spec: tenant-organization / Tenant Suspension Enforcement)*
+- [ ] 2.6 Add `root`-cannot-carry-tenant / `admin`-requires-tenant validation + admin-scoped-to-own-tenant rule wiring into `PoliticaDeRoles` call sites. *(spec: usuarios-tenant-scoping / Platform vs Tenant Role Meaning)*
+- [ ] 2.7 Update `Ways.Web` login page: `usuario` field → `mail` field, client validation. *(spec: usuarios-y-login / Login Is By Mail)*
+
+### 2D. Tests
+
+- [ ] 2.8 [P] Unit tests: root/admin tenant-assignment validation, existing `PoliticaDeRoles` scenarios still pass unchanged.
+- [ ] 2.9 [P] Integration tests: suspension blocks new login + cuts active session; mail login for tenant user and platform root; anti-enumeration under mail; two tenants both provision `usuario = "admin"` without collision; duplicate platform `usuario` rejected (`NULLS NOT DISTINCT` proof). *(spec: usuarios-tenant-scoping; usuarios-y-login)*
+- [ ] 2.10 Regression: existing doc 08 usuarios/login suite green, unedited.
+
+---
+
+## Slice 3: Catalogs + parametros (PR 3)
+
+**Depends on**: Slice 1 (tenant plumbing). **Start**: PR 1 (or PR 2 chain, per chosen strategy). **Finish**: migrations 3–5 applied, catalog machine + parametros resolution live, tests green. **Rollback**: down-migrations 3–5; new endpoints only.
+
+### 3A. Domain + persistence machine
+
+- [ ] 3.1 Add `CatalogoSimple : EntidadTenant { Nombre, Activo, IdEmpresa? }` in `Ways.Domain/Catalogos`. *(ADR-11)*
+- [ ] 3.2 Add `ConfiguracionDeCatalogo<T>` shared EF config (table/columns/audit/index-pair) + abstract `ConfigurarPropio`. *(ADR-11, catalog index pair)*
+- [ ] 3.3 [P] Add `Area`, `Marca`, `Grupo`, `MedioPago` (+ `comportamiento_medio_pago` enum) entities + thin configs. *(spec: auxiliary-catalogs / Catalog ABM Lifecycle)*
+- [ ] 3.4 Add `Categoria` (self composite FK) + `ReglaDeCategorias.ValidarProfundidad`/`ValidarSinCiclo` + unit tests (depth 1-3 OK, 4 rejected, re-parent overflow rejected, cycle rejected, root OK). *(ADR-12; spec: auxiliary-catalogs / Categoria Depth Limit)*
+- [ ] 3.5 [P] Add global fiscal entities: `CondicionFiscal`, `AlicuotaIva`, `TipoComprobante` (+ `clase_comprobante` enum), no `id_tenant`. *(spec: auxiliary-catalogs / Fiscal Catalogs Are Platform-Managed and Read-Only)*
+- [ ] 3.6 Add `Parametro` entity + `ResolucionDeParametros` pure function (punto_venta ?? empresa ?? default) + unit tests. *(ADR-13; spec: parametros-operativos / Parameter Scope and Fallback)*
+- [ ] 3.7 Add `ParametroConocido` typed key registry (key, CLR type, default, validation). *(ADR-13)*
+
+### 3B. DB CHANGE GATE #3 — BLOCKING
+
+- [ ] 3.8 **STOP.** Present migration 3 (`CatalogosDeTenant`) model summary — per-table columns, index pairs, self composite FK — and wait for explicit approval.
+
+### 3C. Migrations 3–5 (each gated)
+
+- [ ] 3.9 Generate migration 3 (`CatalogosDeTenant`): `areas`, `categorias`, `marcas`, `grupos`, `medios_pago` + enum, index pairs, policies — only after 3.8 approved.
+- [ ] 3.10 **STOP — DB CHANGE GATE #4.** Present migration 4 (`CatalogosGlobales`) model summary — `[global]`, no `id_tenant`, no RLS — and wait for explicit approval.
+- [ ] 3.11 Generate migration 4 (`CatalogosGlobales`): `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante` — only after 3.10 approved.
+- [ ] 3.12 **STOP — DB CHANGE GATE #5.** Present migration 5 (`Parametros`) model summary — table, two partial unique indexes, NULL-uniqueness reasoning (ADR-13) — and wait for explicit approval.
+- [ ] 3.13 Generate migration 5 (`Parametros`): table + `ux_parametros_punto_venta`/`ux_parametros_empresa` + policy — only after 3.12 approved.
+- [ ] 3.14 Seed three fiscal catalogs in `InicializadorDeBaseDeDatos`, platform mode.
+
+### 3D. Application + API
+
+- [ ] 3.15 Add `ServicioDeCatalogo<T, TListado, TAlta>` generic service (list/create/edit/soft-delete/get) + `virtual AplicarPropios`. *(ADR-11)*
+- [ ] 3.16 [P] Add 4 thin subclasses (Area, Marca, Grupo, MedioPago) + Categoria's own subclass (escape hatch: depth/cycle validation via 3.4). *(ADR-11 escape hatch)*
+- [ ] 3.17 Add `ServicioDeParametros` (resolution query + typed-key validation, documented default on miss). *(spec: parametros-operativos / all requirements)*
+- [ ] 3.18 Add `MapearCatalogo<T>` endpoint helper; wire 5 catalog route groups, fiscal read-only `GET` endpoints, parametros endpoints. *(spec: auxiliary-catalogs; parametros-operativos)*
+
+### 3E. Tests
+
+- [ ] 3.19 [P] Integration tests: CRUD once per catalog through the shared route map; cross-tenant catalog id ⇒ 404; fiscal catalogs GET 200 / write 403; categoria depth 4 ⇒ 400. *(spec: auxiliary-catalogs)*
+- [ ] 3.20 [P] Integration tests: `parametros` resolution end to end (punto_venta wins, empresa fallback, documented default on miss). *(spec: parametros-operativos)*
+
+---
+
+## Slice 4: Web ABMs (PR 4)
+
+**Depends on**: Slices 1–3 (consumes their API surface). **Start**: prior slice branch/main per chosen chain strategy. **Finish**: all ABM screens functional against the API, smoke-verified. **Rollback**: new routes only, no existing screen touched.
+
+- [ ] 4.1 [P] Add `catalogos.ts` field-descriptor API client + `tipos.ts` type additions.
+- [ ] 4.2 Add generic `PaginaCatalogo` component driven by a field descriptor. *(ADR-11)*
+- [ ] 4.3 Wire `/catalogos/:recurso` route + descriptors for `areas`, `marcas`, `grupos`, `medios_pago`; read-only views for the 3 fiscal catalogs. *(spec: auxiliary-catalogs)*
+- [ ] 4.4 Add Categorias tree page (own service subclass, escape hatch — not the generic descriptor). *(ADR-11 escape hatch)*
+- [ ] 4.5 [P] Add Tenants page: platform-only list/create/suspend. *(spec: tenant-organization / Platform-Only Creation, Tenant Suspension Enforcement)*
+- [ ] 4.6 [P] Add Empresas page: platform creates, tenant admin edits descriptive fields only. *(spec: tenant-organization / Platform-Only Creation)*
+- [ ] 4.7 [P] Add PuntosVenta page: same platform-create/tenant-edit pattern. *(spec: tenant-organization / Platform-Only Creation)*
+- [ ] 4.8 Add tenant provisioning UI (platform-only form; shows generated admin password once, never persisted in plain text). *(spec: tenant-organization / Tenant Provisioning With Template Seed; ADR-16)*
+- [ ] 4.9 Smoke-verify each ABM screen against its integration test expectations (no e2e harness this stage — ADR-17; flagged as follow-up).
+- [ ] 4.10 Update `docs/10-modelo-de-datos.md` §1/§9 status notes and record the flow-A (subdomain login) extension point as still deferred.
+
+---
+
+## Dependency Summary
+
+```
+Slice 1 (tenancy + org + RLS)
+   ├─▶ Slice 2 (usuarios + suspension + mail login)
+   └─▶ Slice 3 (catalogs + parametros)
+            Slice 2, Slice 3 ─▶ Slice 4 (web ABMs)
+```
+
+Within each slice, `[P]`-tagged tasks are parallelizable; all others are sequential (schema → infra → application → tests, gates always block the following migration task).
