@@ -32,7 +32,7 @@ public class PoliticaDeRolesTenantTests
         var error = Assert.Throws<ErrorDominio>(() =>
             PoliticaDeRoles.ValidarAlcanceDeTenant(actor, idTenantObjetivo: null));
 
-        Assert.Equal(403, error.EstadoHttp);
+        Assert.Equal(404, error.EstadoHttp);
     }
 
     [Theory]

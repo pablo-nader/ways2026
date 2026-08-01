@@ -52,12 +52,36 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     /// <summary>
     /// Estampa <c>IdTenant</c> en cada fila nueva y rechaza que se modifique en una
     /// existente: ningún caso de uso lee ni escribe <c>IdTenant</c> a mano (doc 09).
-    /// En modo plataforma no se pisa: quien siembra o aprovisiona ya lo setea explícito.
+    /// En modo plataforma no se pisa: quien siembra o aprovisiona ya lo setea explícito,
+    /// pero se valida que lo haya hecho.
+    ///
+    /// Los cuatro puntos de entrada públicos de <c>SaveChanges</c> pasan por acá: ninguno
+    /// puede saltear el estampado llamando a la variante sync o a la sobrecarga con
+    /// <c>acceptAllChangesOnSuccess</c>.
     /// </summary>
+    public override int SaveChanges()
+    {
+        EstamparTenant();
+        return base.SaveChanges();
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        EstamparTenant();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         EstamparTenant();
         return base.SaveChangesAsync(cancellationToken);
+    }
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        EstamparTenant();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
     private void EstamparTenant()
@@ -71,6 +95,10 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
                         ?? throw new InvalidOperationException(
                             "No hay tenant en contexto: no se puede insertar una fila scopeada.");
                     break;
+
+                case EntityState.Added when entrada.Entity.IdTenant == 0:
+                    throw new InvalidOperationException(
+                        "En modo plataforma hay que setear id_tenant explícito antes de insertar.");
 
                 case EntityState.Modified when entrada.Property(e => e.IdTenant).IsModified:
                     throw new InvalidOperationException(

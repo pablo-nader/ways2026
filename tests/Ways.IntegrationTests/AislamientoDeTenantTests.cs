@@ -155,6 +155,24 @@ public class AislamientoDeTenantTests(WaysApiFixture fixture) : IClassFixture<Wa
     }
 
     [Fact]
+    public async Task WithCheckRechazaUnUpdateQueReasignaIdTenant()
+    {
+        var (idA, idEmpresaA) = await CrearTenantConEmpresaAsync(
+            nameof(WithCheckRechazaUnUpdateQueReasignaIdTenant) + "-A");
+        var (idB, _) = await CrearTenantConEmpresaAsync(
+            nameof(WithCheckRechazaUnUpdateQueReasignaIdTenant) + "-B");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idA);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText = "UPDATE empresas SET id_tenant = $1 WHERE id = $2";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idB });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idEmpresaA });
+
+        await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+    }
+
+    [Fact]
     public async Task SinGucElResultadoEsCeroFilasNoUnError()
     {
         await CrearTenantConEmpresaAsync(nameof(SinGucElResultadoEsCeroFilasNoUnError));

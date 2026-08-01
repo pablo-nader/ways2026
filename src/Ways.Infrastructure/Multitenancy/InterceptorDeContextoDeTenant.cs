@@ -17,22 +17,39 @@ namespace Ways.Infrastructure.Multitenancy;
 /// </summary>
 public sealed class InterceptorDeContextoDeTenant(ITenantActual tenantActual) : DbConnectionInterceptor
 {
+    private const string Sql =
+        "SELECT set_config('app.acceso', $1, false), set_config('app.tenant_id', $2, false)";
+
     public override async Task ConnectionOpenedAsync(
         DbConnection connection,
         ConnectionEndEventData eventData,
         CancellationToken cancellationToken = default)
     {
-        await AplicarContextoAsync(connection, cancellationToken);
+        var (modo, idTenant) = ObtenerContexto();
+
+        await using var comando = new NpgsqlCommand(Sql, (NpgsqlConnection)connection);
+        comando.Parameters.Add(new NpgsqlParameter { Value = modo });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+
+        await comando.ExecuteNonQueryAsync(cancellationToken);
         await base.ConnectionOpenedAsync(connection, eventData, cancellationToken);
     }
 
+    /// <summary>Variante sync: usa <c>ExecuteNonQuery</c> de Npgsql en vez de bloquear
+    /// sobre la tarea async con <c>GetAwaiter().GetResult()</c>.</summary>
     public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
     {
-        AplicarContextoAsync(connection, CancellationToken.None).GetAwaiter().GetResult();
+        var (modo, idTenant) = ObtenerContexto();
+
+        using var comando = new NpgsqlCommand(Sql, (NpgsqlConnection)connection);
+        comando.Parameters.Add(new NpgsqlParameter { Value = modo });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+
+        comando.ExecuteNonQuery();
         base.ConnectionOpened(connection, eventData);
     }
 
-    private async Task AplicarContextoAsync(DbConnection connection, CancellationToken ct)
+    private (string Modo, string IdTenant) ObtenerContexto()
     {
         var modo = tenantActual.Modo switch
         {
@@ -42,15 +59,6 @@ public sealed class InterceptorDeContextoDeTenant(ITenantActual tenantActual) : 
             _ => string.Empty
         };
 
-        var idTenant = tenantActual.Id?.ToString() ?? string.Empty;
-
-        await using var comando = new NpgsqlCommand(
-            "SELECT set_config('app.acceso', $1, false), set_config('app.tenant_id', $2, false)",
-            (NpgsqlConnection)connection);
-
-        comando.Parameters.Add(new NpgsqlParameter { Value = modo });
-        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
-
-        await comando.ExecuteNonQueryAsync(ct);
+        return (modo, tenantActual.Id?.ToString() ?? string.Empty);
     }
 }

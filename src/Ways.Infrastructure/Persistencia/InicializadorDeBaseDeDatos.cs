@@ -1,10 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
-using Ways.Infrastructure.Multitenancy;
 
 namespace Ways.Infrastructure.Persistencia;
 
@@ -13,8 +13,7 @@ namespace Ways.Infrastructure.Persistencia;
 /// Es idempotente: se puede correr en cada arranque del contenedor.
 /// </summary>
 public class InicializadorDeBaseDeDatos(
-    WaysDbContext db,
-    TenantActualDeSesion tenantActual,
+    [FromKeyedServices(DependencyInjection.ClaveContextoPlataforma)] WaysDbContext db,
     IHasheadorDeContrasenas hasheador,
     IRelojDelSistema reloj,
     IHostEnvironment entorno,
@@ -32,10 +31,11 @@ public class InicializadorDeBaseDeDatos(
     {
         // Todo lo que sigue en este scope corre en modo plataforma: migraciones, RLS y
         // semilla no tienen un tenant "actual", siembran para el tenant que corresponda
-        // de forma explícita (ADR-14).
-        tenantActual.Establecer(ModoDeAcceso.Plataforma, idTenant: null);
-
+        // de forma explícita (ADR-14). El `db` inyectado ya está atado a la instancia
+        // inmutable `TenantActualFijo.Plataforma` (ADR-2): no hace falta, y no se puede,
+        // mutarlo.
         await VerificarRolSinBypassAsync(ct);
+        VerificarInvariantesDeConexion();
 
         log.LogInformation("Aplicando migraciones pendientes.");
         await db.Database.MigrateAsync(ct);
@@ -79,10 +79,40 @@ public class InicializadorDeBaseDeDatos(
         log.LogWarning("{Mensaje}", mensaje);
     }
 
+    /// <summary>
+    /// ADR-3: <c>Multiplexing</c> y <c>No Reset On Close</c> tienen que quedar
+    /// deshabilitados (default de Npgsql) — cualquiera de los dos activado rompe el
+    /// aislamiento de <c>set_config(..., false)</c> entre conexiones reutilizadas del
+    /// pool. Misma política de entorno que <see cref="VerificarRolSinBypassAsync"/>.
+    /// </summary>
+    private void VerificarInvariantesDeConexion()
+    {
+        var cadena = db.Database.GetConnectionString()
+            ?? throw new InvalidOperationException(
+                "No se pudo resolver la cadena de conexión para verificar sus invariantes.");
+
+        if (!InvariantesDeConexion.ViolaMultiplexingOResetOnClose(cadena))
+        {
+            return;
+        }
+
+        const string mensaje =
+            "La cadena de conexión tiene Multiplexing o No Reset On Close activados: " +
+            "los GUC de tenant pueden filtrarse entre conexiones reutilizadas del pool " +
+            "(ADR-3).";
+
+        if (entorno.IsProduction())
+        {
+            throw new InvalidOperationException(mensaje);
+        }
+
+        log.LogWarning("{Mensaje}", mensaje);
+    }
+
     private async Task SembrarRolesAsync(CancellationToken ct)
     {
         var existentes = await db.Roles
-            .IgnoreQueryFilters()
+            .IgnoreQueryFilters(["BajaLogica"])
             .Select(r => r.Id)
             .ToListAsync(ct);
 
@@ -116,7 +146,7 @@ public class InicializadorDeBaseDeDatos(
     private async Task SembrarRootAsync(SemillaRoot semilla, CancellationToken ct)
     {
         var hayRoot = await db.Usuarios
-            .IgnoreQueryFilters()
+            .IgnoreQueryFilters(["BajaLogica"])
             .AnyAsync(u => u.RolId == (int)RolConocido.Root, ct);
 
         if (hayRoot)
@@ -153,7 +183,7 @@ public class InicializadorDeBaseDeDatos(
     /// </summary>
     private async Task SembrarOrganizacionAsync(CancellationToken ct)
     {
-        var hayTenants = await db.Tenants.IgnoreQueryFilters().AnyAsync(ct);
+        var hayTenants = await db.Tenants.IgnoreQueryFilters(["BajaLogica"]).AnyAsync(ct);
         if (hayTenants)
         {
             return;

@@ -82,8 +82,9 @@ public static class PoliticaDeRoles
     /// cualquier tenant o cuenta de plataforma; un actor de tenant solo sobre su propio
     /// tenant, y nunca sobre una cuenta de plataforma.
     ///
-    /// Cruzar de tenant devuelve <c>NoEncontrado</c>, no <c>Prohibido</c> (ADR-8): no hay
-    /// que confirmarle a nadie que el recurso existe en otro tenant.</summary>
+    /// Cruzar de tenant, y apuntar a una cuenta de plataforma, devuelven las dos
+    /// <c>NoEncontrado</c>, no <c>Prohibido</c> (ADR-8): no hay que confirmarle a nadie
+    /// que el recurso existe en otro alcance.</summary>
     public static void ValidarAlcanceDeTenant(ActorDeGestion actor, int? idTenantObjetivo)
     {
         if (actor.EsDePlataforma)
@@ -93,7 +94,7 @@ public static class PoliticaDeRoles
 
         if (idTenantObjetivo is null)
         {
-            throw ErrorDominio.Prohibido("No podés gestionar cuentas de plataforma.");
+            throw ErrorDominio.NoEncontrado("No existe el recurso solicitado.");
         }
 
         if (idTenantObjetivo != actor.IdTenant)

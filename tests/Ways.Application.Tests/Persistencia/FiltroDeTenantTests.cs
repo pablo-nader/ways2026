@@ -118,4 +118,35 @@ public class FiltroDeTenantTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => sinContexto.SaveChangesAsync());
     }
+
+    /// <summary>
+    /// El <c>SaveChanges()</c> sync tiene que pasar por el mismo estampado/rechazo que la
+    /// variante async — los cuatro puntos de entrada públicos de <c>SaveChanges</c> lo
+    /// invocan por igual (ver <see cref="WaysDbContext"/>).
+    /// </summary>
+    [Fact]
+    public void SaveChangesSyncEstampaElIdTenantYRechazaElTamper()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        int idEmpresa;
+
+        using (var tenant1 = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, 1)))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var empresa = new Empresa { IdTenant = 999, RazonSocial = "Ignorado", CreatedAt = ahora, UpdatedAt = ahora };
+            tenant1.Empresas.Add(empresa);
+
+            tenant1.SaveChanges();
+
+            // El caso de uso nunca decide el id_tenant: SaveChanges lo pisa con el de la sesión.
+            Assert.Equal(1, empresa.IdTenant);
+            idEmpresa = empresa.Id;
+        }
+
+        using var tenant1Otra = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, 1));
+        var empresaExistente = tenant1Otra.Empresas.Single(e => e.Id == idEmpresa);
+        empresaExistente.IdTenant = 2;
+
+        Assert.Throws<InvalidOperationException>(() => tenant1Otra.SaveChanges());
+    }
 }
