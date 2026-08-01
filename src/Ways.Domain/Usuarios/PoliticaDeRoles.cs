@@ -12,6 +12,12 @@ namespace Ways.Domain.Usuarios;
 ///   - Solo root puede crear o asignar el rol admin.
 ///   - Un admin no puede tocar la cuenta de un root.
 ///   - Nadie puede eliminarse a sí mismo.
+///   - root es siempre de plataforma (id_tenant NULL); cualquier otro rol siempre
+///     pertenece a un tenant (<see cref="ValidarConsistenciaDeRolYAlcance"/>).
+///   - Un actor de tenant solo puede operar sobre cuentas de su propio tenant; nunca
+///     sobre una cuenta de plataforma (<see cref="ValidarAlcanceDeTenant"/>, doc 09, ADR-8).
+///   - Cruzar de tenant o apuntar a una cuenta de plataforma devuelve 404 (no encontrado),
+///     no 403 (prohibido): no se le confirma a nadie que el recurso existe en otro alcance.
 /// </summary>
 public static class PoliticaDeRoles
 {
