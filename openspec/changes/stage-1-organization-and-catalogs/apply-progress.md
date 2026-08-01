@@ -525,8 +525,83 @@ Postgres instance (fixed by scoping the count to the test's own two tenants), an
 5. `test(integration): habilitar las 7 pruebas de login/suspension (gate #2)`
 6. `docs(sdd): registrar el batch 7 (gate #2 aprobada, slice 2 verificado en runtime)`
 
+### Batch 8 — judgment-day round 1 on Slice 2 (branch `feat/stage1-slice2-usuarios`)
+
+All 7 items approved by the user on 2026-08-01 after the blind dual-review round were fixed:
+
+1. **[CRITICAL] Mail-uniqueness check broken by tenant filter.** `ExigirDisponibilidadAsync`
+   ran the `tomadoMail` query on tenant-filtered `db.Usuarios`: a tenant admin creating/editing
+   a user could never see a mail collision belonging to another tenant, so the check silently
+   passed and the real conflict only surfaced at `SaveChangesAsync` as an untranslated `23505`
+   — a generic 500, and a cross-tenant enumeration oracle (409 same-tenant vs 500 other-tenant
+   distinguished where the mail lived). Fixed at both layers: (a) the mail check now runs with
+   `IgnoreQueryFilters(["Tenant"])` — `usuario` stays per-tenant, only `mail` (globally unique
+   per `ux_usuarios_mail`) goes global; (b) `ManejadorDeErrores` now has a backstop case that
+   translates `DbUpdateException { InnerException: PostgresException { SqlState: "23505",
+   ConstraintName: "ux_usuarios_mail" } }` into the same domain 409 (`mail_duplicado`), so a
+   genuine race between two concurrent creates can never surface a 500/oracle either.
+2. **`ServicioDeUsuariosTests` added** (`Ways.Application.Tests`, InMemory, mirrors
+   `ServicioDeAutenticacionTests`): own-tenant management OK, cross-tenant target → 404,
+   platform-account target → 404, `ValidarConsistenciaDeRolYAlcance` rejection on create,
+   per-tenant `usuario` duplicate rejected, same `usuario` across two tenants OK, and the
+   CRITICAL regression case — cross-tenant mail duplicate → 409. Plus a real-Postgres
+   integration test (`UsuariosYLoginTests.CrearUnUsuarioConElMailDeOtroTenantDevuelve409NoUnError500`)
+   that creates a user in tenant A, then tries the same mail from an admin logged into tenant B
+   through the full HTTP API, asserting 409/`mail_duplicado`.
+3. **Login timing symmetry.** `ServicioDeAutenticacion` no longer calls
+   `hasheador.Hashear("usuario-inexistente")` on every unknown-mail attempt (a second,
+   expensive `Hashear` on top of the `Verificar`, breaking the timing symmetry with the
+   known-mail path). It now lazily computes that discardable hash once (thread-safe,
+   `static` field — `IHasheadorDeContrasenas` is a singleton) and reuses it, so the
+   unknown-mail path costs exactly one `Verificar` after warm-up, same as the known-mail path.
+4. **Login-with-existing-cookie integration test added**
+   (`UsuariosYLoginTests.LoguearseConUnaCookieDeOtroTenantYaActivaReemplazaLaSesionPorCompleto`):
+   logs in as tenant A, then — same `HttpClient`/cookie, no logout — logs in as tenant B;
+   asserts the second login succeeds and `/api/auth/me` reflects the new session, not the old
+   one. Locks in the ADR-3 GUC-reapplication assumption at runtime.
+5. **`Usuario.IdTenant` tamper guard.** `Usuario` doesn't derive from `EntidadTenant` (its
+   `IdTenant` is nullable = platform), so it fell outside `WaysDbContext.EstamparTenant`'s
+   `ChangeTracker.Entries<EntidadTenant>()` loop. Added an explicit second loop over
+   `ChangeTracker.Entries<Usuario>()` that rejects a `Modified` entry whose `IdTenant` changed,
+   mirroring the `EntidadTenant` check exactly (same exception, same message). Unit-tested in
+   `FiltroDeUsuarioTests.SaveChangesRechazaModificarElIdTenantDeUnUsuarioExistente`.
+6. **Keyed-DI constant unification.** `DependencyInjection.ClaveContextoPlataforma` now reads
+   `= ClavesDeContexto.Plataforma` instead of repeating the `"plataforma"` literal
+   independently (Infrastructure can reference Application, not the other way around) — a typo
+   in either constant is now a compile error, not a silent keyed-DI resolution mismatch.
+7. **Stale comments fixed.** `PoliticaDeRoles`'s class-level "Reglas vigentes" doc now lists
+   the tenant-scoping rule and the 404-not-403 rule (ADR-8), previously undocumented there.
+   `TenantActualDeSesion`'s doc comment now names both mutators (`OnValidatePrincipal` *and*
+   `AuthEndpoints`, the login endpoint) and explains why re-applying tenant impersonation on an
+   already-open connection isn't needed yet: both mutators run before any connection opens,
+   and each EF query opens its own (no ambient transaction crossing them).
+
+#### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 38/38, `Ways.Application.Tests` 36/36**
+  (28 previous + 8 new: 7 in `ServicioDeUsuariosTests` + 1 tamper-guard test in
+  `FiltroDeUsuarioTests`), **`Ways.IntegrationTests` 17/17** (15 previous + 2 new: the
+  existing-cookie login test and the cross-tenant mail 409 test), all against a real Postgres
+  container (Docker daemon confirmed up before running). 0 failures, 0 skipped.
+
+#### Commits (work units, branch `feat/stage1-slice2-usuarios`, no push)
+
+1. `fix(usuarios): chequear la unicidad del mail sin el filtro de tenant`
+2. `fix(api): traducir el 23505 de ux_usuarios_mail al 409 de negocio`
+3. `test(usuarios): cubrir ServicioDeUsuarios con InMemory y el 409 cross-tenant` — bundles
+   `ServicioDeUsuariosTests.cs` (item 2) with both new cases added to `UsuariosYLoginTests.cs`
+   in the same file edit: the cross-tenant-mail 409 integration test (item 2's Postgres case)
+   and the existing-cookie re-login test (item 4).
+4. `fix(auth): precalcular el hash descartable del login para simetria de tiempos`
+5. `fix(tenancy): rechazar el tamper de id_tenant en Usuario`
+6. `fix(di): unificar la clave de contexto de plataforma en una sola constante`
+7. `docs: actualizar comentarios desactualizados de PoliticaDeRoles y TenantActualDeSesion`
+8. `docs(sdd): registrar el batch 8 de judgment-day (ronda 1) en el slice 2`
+
 ### Next batch
 
-Slice 2 is complete and runtime-verified. Ready for judgment-day review before PR 2 (per
+Slice 2's judgment-day round 1 findings are all fixed and verified. Next: re-run judgment-day
+(round 2) over the accumulated diff to confirm a clean round before opening PR 2 (per
 `CLAUDE.md`'s PR validation gate), stacked on PR 1 per the chosen `stacked-to-main` chain
-strategy. No open items block Slice 3 or Slice 4 from starting in parallel with judgment-day.
+strategy. No open items block Slice 3 or Slice 4 from starting in parallel.
