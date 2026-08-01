@@ -9,10 +9,9 @@ public static class ClaimsWays
 {
     public const string RolId = "ways:id_rol";
 
-    /// <summary>Ausente todavía para toda cuenta: <c>usuarios.id_tenant</c> lo agrega el
-    /// retrofit del stage 1 slice 2. Se lee de forma defensiva desde ya (ver
-    /// <c>Program.cs</c>, <c>OnValidatePrincipal</c>) para no tener que retocar el pipeline
-    /// de autenticación cuando el claim empiece a emitirse.</summary>
+    /// <summary>Presente solo cuando la cuenta pertenece a un tenant (doc 09): ausente para
+    /// staff de plataforma. Lo emite <c>POST /api/auth/login</c> (stage 1 slice 2) y lo lee
+    /// <c>Program.cs</c>, <c>OnValidatePrincipal</c>.</summary>
     public const string IdTenant = "ways:id_tenant";
 }
 
@@ -31,4 +30,9 @@ public class ContextoDeUsuarioHttp(IHttpContextAccessor accessor) : IContextoDeU
         int.TryParse(Principal?.FindFirstValue(ClaimsWays.RolId), out var rol)
             ? (RolConocido)rol
             : default;
+
+    public int? IdTenant =>
+        int.TryParse(Principal?.FindFirstValue(ClaimsWays.IdTenant), out var idTenant)
+            ? idTenant
+            : null;
 }
