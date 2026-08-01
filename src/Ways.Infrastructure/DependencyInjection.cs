@@ -3,7 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
+using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
 
@@ -23,12 +25,18 @@ public static class DependencyInjection
 
         var cadena = CadenaDeConexion.Normalizar(cruda);
 
-        services.AddDbContext<WaysDbContext>(options =>
+        services.AddScoped<TenantActualDeSesion>();
+        services.AddScoped<ITenantActual>(sp => sp.GetRequiredService<TenantActualDeSesion>());
+        services.AddScoped<InterceptorDeContextoDeTenant>();
+
+        services.AddDbContext<WaysDbContext>((sp, options) =>
             options.UseNpgsql(cadena, npgsql =>
             {
                 npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
                 npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
-            }));
+            })
+            .AddInterceptors(sp.GetRequiredService<InterceptorDeContextoDeTenant>()));
 
         services.AddScoped<IWaysDbContext>(sp => sp.GetRequiredService<WaysDbContext>());
         services.AddSingleton<IHasheadorDeContrasenas, HasheadorPbkdf2>();
