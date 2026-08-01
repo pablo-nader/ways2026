@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Ways.Domain.Common;
 
 namespace Ways.Api.Seguridad;
@@ -18,6 +20,15 @@ public class ManejadorDeErrores(
         var (estado, titulo, codigo) = excepcion switch
         {
             ErrorDominio e => (e.EstadoHttp, e.Message, e.Codigo),
+
+            // Backstop de la carrera entre el chequeo previo de `ServicioDeUsuarios` y el
+            // `SaveChangesAsync`: dos requests concurrentes pueden pasar el chequeo y chocar
+            // recién acá. Traduce el mismo 409 de negocio en vez de dejar pasar un 500 genérico
+            // (que además sería un oráculo de enumeración cross-tenant: 409 vs 500 delataría si
+            // el mail ya existe en otro tenant).
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: "ux_usuarios_mail" } } =>
+                (StatusCodes.Status409Conflict, "El mail ya está en uso.", "mail_duplicado"),
+
             _ => (StatusCodes.Status500InternalServerError,
                   "Ocurrió un error inesperado.",
                   "error_interno")
