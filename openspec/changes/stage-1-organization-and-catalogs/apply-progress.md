@@ -261,3 +261,518 @@ for judgment-day review before PR (per `CLAUDE.md`'s PR validation gate), then S
 ### Next batch
 
 Ready for a re-judged clean round, then PR per `CLAUDE.md`'s PR validation gate.
+
+---
+
+## Slice 2: usuarios retrofit + suspension + mail login (PR 2)
+
+## Batch 6
+
+**Scope:** Slice 2 only (`tasks.md` § Slice 2), branch `feat/stage1-slice2-usuarios` off
+`main` (slice 1 / PR 1 already merged). Stopped at **DB CHANGE GATE #2** (task 2.1) as
+instructed. No EF Core migration was generated or applied — `usuarios.id_tenant` exists in
+the C# model (`Usuario`, `UsuarioConfiguration`) but not yet in any migration file.
+
+### Completed in batch 6
+
+- **2.4** — `ServicioDeAutenticacion.IniciarSesionAsync` now resolves by `Mail` instead of
+  `Usuario` (`SolicitudDeLogin(Mail, Password)`). Anti-enumeration behavior preserved
+  byte-for-byte: same error message/code for unknown mail and wrong password, dummy-hash
+  verification runs either way, account-state checks stay strictly after password
+  verification.
+- **2.5** — Suspended/baja-tenant check added right after the `DeletedAt` check, before
+  `Bloqueado`/`Inactivo`. Resolved via a **second, platform-mode `IWaysDbContext`**
+  (`[FromKeyedServices(ClavesDeContexto.Plataforma)]`, new keyed registration in
+  `Ways.Infrastructure.DependencyInjection`) instead of the request's own login-mode
+  context — this was a genuine design gap found at apply time: `ModoDeAcceso.Login`'s RLS
+  policies (design.md) only grant `usuarios` SELECT/UPDATE, nothing on `tenants`, so reading
+  the tenant's `Estado` during login needs a session that's actually allowed to see it.
+  Chose the existing platform-mode keyed context (already used by
+  `InicializadorDeBaseDeDatos`) over adding a new `tenants_login_lectura` RLS policy — no
+  new anonymous-reachable read surface, reuses an already-trusted internal path. New shared
+  constant `Ways.Application.Abstracciones.ClavesDeContexto.Plataforma` (Application can't
+  reference `Infrastructure.DependencyInjection`'s existing constant, so both sides declare
+  the same literal `"plataforma"` on purpose — documented in both places). Error code
+  `tenant_suspendido`, 403, covers both `Suspendido` and `Baja` (via `Tenant.PuedeOperar`,
+  reused from slice 1).
+- **2.6** — `PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance(rolDestino, idTenantDestino)`
+  added (pure, domain-only): root must have `idTenant == null`, every other role must have
+  it non-null. Wired into `ServicioDeUsuarios.CrearAsync` (computes the target tenant: the
+  actor's own tenant if tenant-scoped, an explicit `CrearUsuario.IdTenant` if the actor is
+  platform — client-supplied tenant is only ever trusted from a platform actor, never from a
+  tenant one) and `ActualizarAsync` (when the role changes). Closed the judgment-day
+  carried-forward INFO from slice 1: `PoliticaDeRoles.ValidarAlcanceDeTenant`/
+  `ActorDeGestion` had no production call site — now wired into
+  `ServicioDeUsuarios.BuscarAsync`, the single choke point behind
+  `ObtenerAsync`/`ActualizarAsync`/`CambiarPasswordAsync`/`DesbloquearAsync`/`EliminarAsync`.
+  In practice this call is defense-in-depth (the EF "Tenant" filter + RLS already make a
+  cross-tenant row invisible before the domain check even runs), which is the point: three
+  independent layers, not one.
+  **Bug caught while wiring this**: `ListarAsync`'s `incluirEliminados` branch called bare
+  `IgnoreQueryFilters()` (no filter keys) — harmless before this slice (`Usuario` had no
+  tenant filter), but a real cross-tenant leak the moment `Usuario` gets one. Fixed to
+  `IgnoreQueryFilters(["BajaLogica"])`, same pattern already used elsewhere in the codebase
+  (`InicializadorDeBaseDeDatos`, judgment-day batch 4).
+  `ExigirDisponibilidadAsync`'s `usuario`-uniqueness pre-check was also re-scoped to
+  `IdTenant` (was a global check, which would have wrongly rejected the "two tenants both
+  have an `admin`" case the spec requires to work).
+- **2.7** — `Ways.Web`: `Login.tsx`'s field is now `type="email"`, `name="mail"`, labeled
+  "Correo electrónico"; `AuthContext.iniciarSesion(mail, password)` posts `{ mail, password
+  }`; `tipos.ts`'s `UsuarioAutenticado` gained `idTenant: number | null`. `npx tsc -b` and
+  `npx oxlint` both clean (the one oxlint warning on `AuthContext.tsx`,
+  `only-export-components`, pre-dates this change — same file shape as before, not
+  introduced here).
+- **Domain** — `Usuario.IdTenant` (`int?`, `NULL` = plataforma, doc 09/ADR-1). Explicitly
+  does **not** inherit `EntidadTenant` (unchanged design decision from design.md).
+- **Infrastructure (EF model, no migration yet)** —
+  `UsuarioConfiguration`: `id_tenant` column mapping, FK to `tenants` (`Restrict`),
+  `ux_usuarios_usuario` rebuilt as `(id_tenant, usuario)` with `.AreNullsDistinct(false)`
+  (confirmed this Npgsql EF Core provider fluent method exists and compiles — Postgres 15+
+  `NULLS NOT DISTINCT`, pinned Postgres 17), new `ix_usuarios_tenant` index.
+  `WaysDbContext`: new hand-written `"Tenant"` named query filter for `Usuario`
+  (`AplicarFiltroDeTenantEnUsuario`) — three-way OR: platform sees everything, **login
+  mode sees everything** (the whole reason mail-based login can resolve *any* tenant's
+  account without a tenant in context yet), a tenant session sees only same-`IdTenant` rows.
+  New keyed `IWaysDbContext` registration (`ClavesDeContexto.Plataforma`) alongside the
+  existing keyed `WaysDbContext` one.
+
+### A real bug the new tests caught (not a production bug — a filter bug, fixed before merge)
+
+While writing `FiltroDeUsuarioTests`/`ServicioDeAutenticacionTests` (InMemory), a genuine
+issue turned up in `AplicarFiltroDeTenantEnUsuario`: under `ModoDeAcceso.Ninguno` (no
+context resolved — the fail-closed state), `TenantActual.Id` is `null`. A platform user's
+`Usuario.IdTenant` is also `null`. The raw comparison `IdTenant == TenantActual.Id` is then
+`null == null` → **true** in C#'s lifted equality — so an unresolved session would have seen
+every platform-staff account instead of nothing, breaking the documented fail-closed
+guarantee ("unset GUC ⇒ zero rows, not everything"). Fixed by gating the comparison branch
+on `TenantActual.Modo == ModoDeAcceso.Tenant` explicitly:
+`esTenant && (IdTenant == TenantActual.Id)`. `Tenant`/`Empresa`/`PuntoVenta`'s existing
+filters were never at risk of this — their compared column is never itself `NULL` (a real
+tenant always has an id), so this collision is specific to `Usuario`'s nullable `IdTenant`.
+New regression test `FiltroDeUsuarioTests.SinContextoResueltoNoVeNingunaCuenta` pins it down.
+
+Also chased down (and ruled out as a real bug) an EF Core InMemory-provider red herring
+while debugging the above: `.Include(u => u.Rol)` on a `Usuario` whose `RolId` doesn't
+match any seeded `Rol` row silently drops the whole result row under InMemory (non-nullable
+FK treated as effectively required for `Include` purposes, unlike a real LEFT JOIN in
+Postgres). Cost real time to isolate; not a change to production code — the fix was seeding
+a `Rol` row in the test setup, same as production always has via
+`InicializadorDeBaseDeDatos.SembrarRolesAsync` before any `Usuario` exists.
+
+### A real EF Core 8+ gate interaction, handled explicitly (not silently)
+
+Running the *existing* (slice 1) `Ways.IntegrationTests` suite against real Postgres with
+this batch's Infrastructure changes applied — but no migration — surfaced
+`PendingModelChangesWarning`: EF Core 8+'s `Database.MigrateAsync()` compares the live model
+against the last migration's snapshot and **throws by default** if they differ, which they
+now genuinely do (`usuarios.id_tenant` is in the model, not in any migration). This is the
+documented, expected interaction for "model ahead of migrations mid-development," and
+exactly the state the DB CHANGE GATE puts a slice in on purpose. Fixed by suppressing that
+specific warning **only** in `WaysApiFixture.MigrarComoOwnerAsync` (test fixture, not
+production) via `ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))`,
+with a comment explaining why and that it must come out once migration 2 lands (at that
+point model and snapshot agree again and the warning stops firing on its own — nothing to
+remember to revert by hand). Confirmed safe: none of the 8 existing tests touch `usuarios`
+against real Postgres (they only exercise `Tenants`/`Empresas`), so applying migrations 1–3
+with the pre-slice-2 `usuarios` shape and running those 8 tests unmodified is exactly as
+safe as it was before this batch.
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → `Ways.Domain.Tests` **38/38** (30 unedited + 8 new:
+  `ValidarConsistenciaDeRolYAlcance` scenarios), `Ways.Application.Tests` **28/28** (18
+  unedited + 10 new: 5 `FiltroDeUsuarioTests` + 5 `ServicioDeAutenticacionTests`, both
+  InMemory, exercise the mail-login/suspension/tenant-filter logic without needing the
+  pending migration), `Ways.IntegrationTests` **8/8 unedited, green** + **7 new tests,
+  `Skip`**, all pointing at gate #2 (`UsuariosYLoginTests.cs` — mail login for tenant/root,
+  anti-enumeration, suspension blocks login, suspension cuts an active session,
+  cross-tenant `usuario = "admin"` collision-free proof, platform `NULLS NOT DISTINCT`
+  duplicate-rejection proof). Docker daemon reachable throughout
+  (`docker version` confirmed, Testcontainers ran against it). 0 unexpected failures.
+- `npx tsc -b` (Ways.Web) → clean. `npx oxlint` → 1 pre-existing warning, unrelated to this
+  batch's changes (file export shape, not touched here).
+
+### Deferred items (reported, not silent)
+
+- **2.1–2.3** — blocked on DB CHANGE GATE #2 approval, per instructions. The gate summary is
+  the centerpiece of this batch's return to the user.
+- Backfill of *existing* pre-migration `usuarios` rows (task 2.3) is not yet written — only
+  possible to design concretely once the migration exists (needs the real column to write
+  into). `SembrarRootAsync` already leaves new roots at `IdTenant = null` by construction, so
+  no change was needed there.
+- `CrearUsuario.IdTenant` (root selecting a target tenant when creating a non-root user) has
+  no `Ways.Web` UI yet — by design: tenant provisioning (`ServicioDeAprovisionamiento`, ADR-16)
+  is still deferred to a later slice, and building a tenant-picker for an ABM whose
+  provisioning flow doesn't exist yet would be dead UI. The API contract is ready for when
+  it lands.
+
+### Next batch
+
+Slice 2 is code-complete up to the gate. Once DB CHANGE GATE #2 is approved: generate
+migration 2, backfill existing `usuarios` rows (task 2.3), un-skip the 7 gated integration
+tests in `UsuariosYLoginTests.cs` and confirm they pass for real against Postgres, then
+judgment-day review before PR 2.
+
+---
+
+## Batch 7 — DB CHANGE GATE #2 approved, slice 2 runtime-verified
+
+**Trigger:** the user approved gate #2 on 2026-08-01, exactly as presented (see the gate
+summary in batch 6): `id_tenant` column + FK, per-tenant unique index with
+`NULLS NOT DISTINCT`, RLS standard policy plus the two login-mode policies on `usuarios`,
+and the backfill policy. Asked to: generate migration 2 including the backfill, un-skip and
+green the 7 gated integration tests (target: 38 domain / 28 application / 15/15 integration
+incl. slice 1's 8), remove the `PendingModelChangesWarning` suppression if no longer needed,
+commit as work units, update the SDD artifacts.
+
+**Status:** `done`. Full suite green — **38 domain / 28 application / 15/15 integration**
+(stable across 3 consecutive runs) — with three genuine, previously-latent bugs found and
+fixed along the way (none hidden, all reported below).
+
+### Completed in batch 7
+
+- **2.2** — Migration `UsuariosMultiTenant` generated
+  (`dotnet ef migrations add UsuariosMultiTenant`), then hand-added the RLS calls the
+  scaffolder can't produce (same technique as migration 1): `HabilitarRlsDeTenant("usuarios")`
+  plus `CREATE POLICY usuarios_login_lectura`/`usuarios_login_actualiza` in `Up()`; matching
+  `DROP POLICY` × 3 + `NO FORCE`/`DISABLE ROW LEVEL SECURITY` in `Down()` (the table existed
+  without RLS before this migration, so `Down()` restores exactly that). File:
+  `src/Ways.Infrastructure/Persistencia/Migraciones/20260801154718_UsuariosMultiTenant.cs`.
+- **2.3** — `InicializadorDeBaseDeDatos.BackfillDeUsuariosAsync` added: assigns the lowest-id
+  tenant to every `Usuario` row with `IdTenant == null && RolId != Root`, after
+  `SembrarOrganizacionAsync`. Idempotent by construction (a fresh install only has `root` at
+  that point, filtered out by the role check; a redeploy finds nothing left to backfill).
+- The `PendingModelChangesWarning` suppression added in batch 6 (`WaysApiFixture`, test-only)
+  is **removed** — model and migration snapshot agree again now that migration 2 exists, so
+  the warning no longer fires. Confirmed by running the full integration suite clean without it.
+- The 7 tests in `UsuariosYLoginTests.cs` are un-skipped and green against real Postgres.
+
+### Three real bugs found while getting from "compiles" to "actually green against Postgres"
+
+None of these were visible before this batch because **no test in this project had ever
+booted the real API host** (`WebApplicationFactory.CreateClient()`) against a live database —
+confirmed as a known gap in `state.yaml`'s carried-forward notes, and now closed. All three
+are genuine, all three are fixed, none were worked around silently:
+
+1. **`Database.SqlQuery<T>()` crashes with `IndexOutOfRangeException`** inside EF Core's
+   `NavigationExpandingExpressionVisitor`, for *any* raw-SQL query against this project's
+   model (proven by reproducing it identically on `main`, via a temporary `git worktree`,
+   before touching slice 2's own filter — this is a pre-existing bug, not something slice 2
+   introduced). It broke `InicializadorDeBaseDeDatos.VerificarRolSinBypassAsync` (the
+   `rolsuper`/`rolbypassrls` startup guard, ADR-5) the moment any test finally exercised real
+   app startup. Root-caused to `SqlQuery<T>()` specifically (plain LINQ queries against the
+   same model work fine) via a battery of isolated repro tests. Fixed by rewriting that one
+   method with plain ADO.NET (`db.Database.GetDbConnection()` + a raw command), which never
+   enters that LINQ pipeline at all.
+2. **`OnValidatePrincipal` checked account validity before resolving the session's tenant.**
+   Once `Usuario` got its own tenant filter (batch 6) — which fails closed under
+   `ModoDeAcceso.Ninguno`, the default before the tenant is resolved — the very first check in
+   `OnValidatePrincipal` (`db.Usuarios.AnyAsync(u => u.Id == usuarioId && ...)`) always saw
+   zero rows for *any* tenant-scoped account, silently rejecting every tenant session on the
+   request right after login. Fixed by reordering: resolve the mode/tenant from the
+   already-decrypted cookie claims **first** (`ResolverModoDeLaSesionAsync`, renamed from
+   `ResolverTenantDeLaSesionAsync`), then check account validity under the now-correct
+   context — which also makes that check tenant-scoped as a bonus defense layer (ADR-8).
+3. **The integration test fixture's connection-string override never reached `Program.cs`.**
+   `Program.cs` is minimal hosting (`WebApplication.CreateBuilder`) and reads
+   `builder.Configuration` synchronously inside its own top-level statements
+   (`AgregarInfrastructure`), before `WebApplicationFactory` gets a chance to apply
+   `ConfigureWebHost`'s `ConfigureAppConfiguration` override — confirmed with a temporary log
+   line showing the stale `appsettings.json` value (`localhost:5432`) instead of the
+   container's. Fixed by setting `ConnectionStrings__Ways` as a **process environment
+   variable** in `WaysApiFixture.InitializeAsync`, which `WebApplication.CreateBuilder` reads
+   fresh when `Program.Main` actually runs (deferred until the first `CreateClient()`). That
+   surfaced a second issue — the env var is process-global, and xUnit runs different test
+   classes' fixtures in parallel by default, so two `WaysApiFixture` instances (one per test
+   class) raced to overwrite it, and whichever class booted its host second sometimes
+   connected to the *other* class's already-destroyed container. Fixed with a new
+   `[CollectionDefinition("Ways.IntegrationTests secuencial", DisableParallelization = true)]`
+   applied to both `AislamientoDeTenantTests` and `UsuariosYLoginTests`, forcing them to run
+   sequentially. A third, smaller issue in the same area: `ways_app` lacked `CREATE` on schema
+   `public`, so `InicializadorDeBaseDeDatos`'s always-runs-on-boot `Database.MigrateAsync()`
+   failed with `42501` even though nothing was actually pending — Postgres requires `CREATE`
+   to even *attempt* `CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory"`, existing or not.
+   Granted `CREATE` alongside the existing data grants (documented as not weakening the RLS
+   proof, which depends on `NOSUPERUSER`/`NOBYPASSRLS`, and as arguably more representative of
+   production, where ADR-5 already documents the app role as the table owner).
+
+Two test-only bugs (not production) were also found and fixed while un-skipping
+`UsuariosYLoginTests.cs`: seed helpers that inserted a `Usuario` before any `Rol` row existed
+(`fk_usuarios_rol` violation — fixed by booting the host first, which seeds roles), a global
+`usuario = "admin"` count assertion made fragile by other tests in the same class sharing one
+Postgres instance (fixed by scoping the count to the test's own two tenants), and a raw-string
+`ProblemDetails` body comparison that could never match because of the per-request `traceId`
+(fixed by comparing `title`/`codigo` instead of the whole JSON body).
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 38/38, `Ways.Application.Tests` 28/28,
+  `Ways.IntegrationTests` 15/15** (8 unedited slice-1 tests + 7 slice-2 tests, all real
+  Postgres). 0 failures, 0 skipped. Re-ran `Ways.IntegrationTests` two additional times in a
+  row to confirm stability (not flaky): 15/15 both times.
+- Confirmed bug #1 (`SqlQuery<T>` crash) pre-dates this slice: reproduced identically against
+  `main` via a temporary `git worktree`, before attributing it to slice 2's own changes.
+
+### Commits (work units, branch `feat/stage1-slice2-usuarios`, no push)
+
+1. `feat(usuarios): generar la migracion UsuariosMultiTenant (gate #2 aprobada)` — migration
+   in its own commit, as requested.
+2. `feat(usuarios): backfill de id_tenant y arreglo de un bug real en el guard de rol`
+3. `fix(auth): resolver el tenant de la sesion antes de revisar la cuenta`
+4. `fix(integration-tests): arrancar el host real de la API contra el contenedor`
+5. `test(integration): habilitar las 7 pruebas de login/suspension (gate #2)`
+6. `docs(sdd): registrar el batch 7 (gate #2 aprobada, slice 2 verificado en runtime)`
+
+### Batch 8 — judgment-day round 1 on Slice 2 (branch `feat/stage1-slice2-usuarios`)
+
+All 7 items approved by the user on 2026-08-01 after the blind dual-review round were fixed:
+
+1. **[CRITICAL] Mail-uniqueness check broken by tenant filter.** `ExigirDisponibilidadAsync`
+   ran the `tomadoMail` query on tenant-filtered `db.Usuarios`: a tenant admin creating/editing
+   a user could never see a mail collision belonging to another tenant, so the check silently
+   passed and the real conflict only surfaced at `SaveChangesAsync` as an untranslated `23505`
+   — a generic 500, and a cross-tenant enumeration oracle (409 same-tenant vs 500 other-tenant
+   distinguished where the mail lived). Fixed at both layers: (a) the mail check now runs with
+   `IgnoreQueryFilters(["Tenant"])` — `usuario` stays per-tenant, only `mail` (globally unique
+   per `ux_usuarios_mail`) goes global; (b) `ManejadorDeErrores` now has a backstop case that
+   translates `DbUpdateException { InnerException: PostgresException { SqlState: "23505",
+   ConstraintName: "ux_usuarios_mail" } }` into the same domain 409 (`mail_duplicado`), so a
+   genuine race between two concurrent creates can never surface a 500/oracle either.
+2. **`ServicioDeUsuariosTests` added** (`Ways.Application.Tests`, InMemory, mirrors
+   `ServicioDeAutenticacionTests`): own-tenant management OK, cross-tenant target → 404,
+   platform-account target → 404, `ValidarConsistenciaDeRolYAlcance` rejection on create,
+   per-tenant `usuario` duplicate rejected, same `usuario` across two tenants OK, and the
+   CRITICAL regression case — cross-tenant mail duplicate → 409. Plus a real-Postgres
+   integration test (`UsuariosYLoginTests.CrearUnUsuarioConElMailDeOtroTenantDevuelve409NoUnError500`)
+   that creates a user in tenant A, then tries the same mail from an admin logged into tenant B
+   through the full HTTP API, asserting 409/`mail_duplicado`.
+3. **Login timing symmetry.** `ServicioDeAutenticacion` no longer calls
+   `hasheador.Hashear("usuario-inexistente")` on every unknown-mail attempt (a second,
+   expensive `Hashear` on top of the `Verificar`, breaking the timing symmetry with the
+   known-mail path). It now lazily computes that discardable hash once (thread-safe,
+   `static` field — `IHasheadorDeContrasenas` is a singleton) and reuses it, so the
+   unknown-mail path costs exactly one `Verificar` after warm-up, same as the known-mail path.
+4. **Login-with-existing-cookie integration test added**
+   (`UsuariosYLoginTests.LoguearseConUnaCookieDeOtroTenantYaActivaReemplazaLaSesionPorCompleto`):
+   logs in as tenant A, then — same `HttpClient`/cookie, no logout — logs in as tenant B;
+   asserts the second login succeeds and `/api/auth/me` reflects the new session, not the old
+   one. Locks in the ADR-3 GUC-reapplication assumption at runtime.
+5. **`Usuario.IdTenant` tamper guard.** `Usuario` doesn't derive from `EntidadTenant` (its
+   `IdTenant` is nullable = platform), so it fell outside `WaysDbContext.EstamparTenant`'s
+   `ChangeTracker.Entries<EntidadTenant>()` loop. Added an explicit second loop over
+   `ChangeTracker.Entries<Usuario>()` that rejects a `Modified` entry whose `IdTenant` changed,
+   mirroring the `EntidadTenant` check exactly (same exception, same message). Unit-tested in
+   `FiltroDeUsuarioTests.SaveChangesRechazaModificarElIdTenantDeUnUsuarioExistente`.
+6. **Keyed-DI constant unification.** `DependencyInjection.ClaveContextoPlataforma` now reads
+   `= ClavesDeContexto.Plataforma` instead of repeating the `"plataforma"` literal
+   independently (Infrastructure can reference Application, not the other way around) — a typo
+   in either constant is now a compile error, not a silent keyed-DI resolution mismatch.
+7. **Stale comments fixed.** `PoliticaDeRoles`'s class-level "Reglas vigentes" doc now lists
+   the tenant-scoping rule and the 404-not-403 rule (ADR-8), previously undocumented there.
+   `TenantActualDeSesion`'s doc comment now names both mutators (`OnValidatePrincipal` *and*
+   `AuthEndpoints`, the login endpoint) and explains why re-applying tenant impersonation on an
+   already-open connection isn't needed yet: both mutators run before any connection opens,
+   and each EF query opens its own (no ambient transaction crossing them).
+
+#### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 38/38, `Ways.Application.Tests` 36/36**
+  (28 previous + 8 new: 7 in `ServicioDeUsuariosTests` + 1 tamper-guard test in
+  `FiltroDeUsuarioTests`), **`Ways.IntegrationTests` 17/17** (15 previous + 2 new: the
+  existing-cookie login test and the cross-tenant mail 409 test), all against a real Postgres
+  container (Docker daemon confirmed up before running). 0 failures, 0 skipped.
+
+#### Commits (work units, branch `feat/stage1-slice2-usuarios`, no push)
+
+1. `fix(usuarios): chequear la unicidad del mail sin el filtro de tenant`
+2. `fix(api): traducir el 23505 de ux_usuarios_mail al 409 de negocio`
+3. `test(usuarios): cubrir ServicioDeUsuarios con InMemory y el 409 cross-tenant` — bundles
+   `ServicioDeUsuariosTests.cs` (item 2) with both new cases added to `UsuariosYLoginTests.cs`
+   in the same file edit: the cross-tenant-mail 409 integration test (item 2's Postgres case)
+   and the existing-cookie re-login test (item 4).
+4. `fix(auth): precalcular el hash descartable del login para simetria de tiempos`
+5. `fix(tenancy): rechazar el tamper de id_tenant en Usuario`
+6. `fix(di): unificar la clave de contexto de plataforma en una sola constante`
+7. `docs: actualizar comentarios desactualizados de PoliticaDeRoles y TenantActualDeSesion`
+8. `docs(sdd): registrar el batch 8 de judgment-day (ronda 1) en el slice 2`
+
+### Batch 9 — judgment-day round 2 on Slice 2 (branch `feat/stage1-slice2-usuarios`)
+
+Two independent blind review agents re-judged the round-1 diff; the orchestrator triaged
+contradictions with direct code verification. 9 items confirmed/approved:
+
+1. **[CRITICAL] Tamper guard broke the backfill.** `WaysDbContext.EstamparTenant` rejected
+   ANY `Modified` `Usuario` whose `IdTenant` changed, no matter the reason — but
+   `InicializadorDeBaseDeDatos.BackfillDeUsuariosAsync` is the one legitimate NULL→value
+   mutation of that column in the whole system, and it made that mutation by loading the rows
+   and assigning the property through the `ChangeTracker`. Every real upgrade with a
+   pre-existing non-root account crashed the host on boot; a fresh install escaped the bug
+   because `huerfanos.Count == 0`, which is why nothing had caught it. Fixed by rewriting the
+   backfill as a set-based `ExecuteUpdateAsync` — chosen over narrowing the guard to
+   `OriginalValue != null` because it never touches the `ChangeTracker` at all, so it can't
+   trip the guard without opening a loophole in it; the guard stays maximally strict for every
+   other `Modified` path, consistent with `EstamparTenant`'s defense-in-depth intent. Still
+   passes RLS: it runs in platform mode, and `usuarios_tenant`'s `WITH CHECK (app_es_plataforma()
+   OR ...)` lets any `id_tenant` value through under that mode. Regression test added:
+   `InicializadorDeBaseDeDatosTests.ElBackfillNoRompeElArranqueYAsignaElTenant1AUnaCuentaHuerfana`
+   (real Postgres) — seeds a non-root `Usuario` with `IdTenant == null` via EF *before* the
+   host's first boot (the only moment `EjecutarAsync`, and so the backfill, runs), asserts the
+   host boots without throwing and the account ends up in tenant 1.
+2. **DB-write timing asymmetry in login.** `ServicioDeAutenticacion.IniciarSesionAsync`:
+   known-mail-wrong-password persists `RegistrarIntentoFallido` (an extra UPDATE round trip);
+   unknown-mail did no DB write at all, on top of already sharing the same hashing cost since
+   batch 8. Fixed by adding an equivalent no-op round trip on the unknown-mail path —
+   `db.Usuarios.AsNoTracking().AnyAsync(u => u.Id == -1, ct)`, a single cheap SELECT that pays
+   the same network round-trip cost without writing or filtering anything real. Preserves
+   lockout semantics exactly (no change to `RegistrarIntentoFallido`/threshold logic).
+3. **Missing 23505 backstop for the `usuario` index.** `ManejadorDeErrores` only had the
+   backstop case for `ux_usuarios_mail`. Added the symmetric case for
+   `ConstraintName == "ux_usuarios_usuario"` → 409 `usuario_duplicado`, same shape as the
+   existing mail case.
+4. **[Triaged real] Mail pre-check was a no-op under RLS for tenant actors.**
+   `ServicioDeUsuarios.ExigirDisponibilidadAsync` used `IgnoreQueryFilters(["Tenant"])` for the
+   mail-availability check, but that only disables the EF query filter — the `usuarios_tenant`
+   RLS policy still hides other tenants' rows under `app.acceso='tenant'`, so a tenant actor's
+   cross-tenant mail collision was ALWAYS caught by the `ManejadorDeErrores` exception backstop,
+   never by the pre-check, contradicting the inline comment (and the batch-8 fix, which
+   addressed the symptom — cross-tenant collisions returning 409 instead of 500 — without
+   actually making the pre-check see the row). Fixed by running the mail check through a new
+   platform-keyed `IWaysDbContext dbPlataforma` constructor parameter on `ServicioDeUsuarios`
+   (same pattern as the tenant-suspension check in `ServicioDeAutenticacion`), which RLS lets
+   see any tenant. Comment corrected to explain why `IgnoreQueryFilters` alone doesn't cut it.
+   The per-tenant `usuario` uniqueness check is untouched (still scoped to the request's own
+   tenant context, correctly).
+5. **[Approved hardening] Backstop race coverage.** The existing cross-tenant-mail 409 test
+   seeds the colliding account *before* creating the second one, so after item 4's fix it
+   always goes through the pre-check, never the exception backstop. Added
+   `UsuariosYLoginTests.DosAltasConcurrentesConElMismoMailDisparanElBackstopDelSaveChanges`:
+   two `POST /api/usuarios` with the same mail fired concurrently (`Task.WhenAll`) from two
+   different tenant admins — both pre-checks race before either commits, so both pass, and the
+   real `ux_usuarios_mail` 23505 surfaces on whichever `SaveChangesAsync` loses, which
+   `ManejadorDeErrores` translates. Asserted the DB-level invariant (exactly one 201, one 409
+   `mail_duplicado`) rather than which code path caught it, since that invariant holds
+   regardless of the exact interleaving — confirmed stable across two full suite re-runs, and
+   the EF `DbUpdateException`/`PostgresException 23505` trace is visible in the test log,
+   confirming the backstop path does fire in practice.
+6. **[Approved hardening] `usuarios` RLS raw-SQL isolation tests.** New
+   `UsuariosRlsTests.cs`, mirroring `AislamientoDeTenantTests.RlsBloqueaUnaLecturaQueSalteaElFiltroDeEf`
+   for the one table with the extra login-mode policies: tenant-mode raw connection can't
+   read or update another tenant's `usuarios` row (`RlsBloqueaLeerYActualizarUnUsuarioDeOtroTenant`,
+   update case asserts 0 rows affected, not an exception — RLS filters the row out of the
+   UPDATE's visible set, it doesn't reject a `WITH CHECK` on a row it could see); can't read a
+   platform account (`id_tenant IS NULL`) either (`RlsBloqueaLeerUnaCuentaDePlataformaDesdeUnaSesionDeTenant`);
+   and the two login-mode policies (`app_modo() = 'login'`) don't leak visibility outside
+   login mode — with no GUC set at all, `usuarios_tenant` fails closed and neither login policy
+   applies, so the count is exactly 0 (`LasPoliciesDeLoginNoAplicanFueraDeModoLogin`). Plus one
+   HTTP-level test in `UsuariosYLoginTests.cs`:
+   `UnAdminDeUnTenantRecibe404AlConsultarUnUsuarioDeOtroTenant` — tenant-A admin gets 404 on
+   `GET /api/usuarios/{tenant-B-user-id}` through the full stack (EF filter + RLS +
+   `PoliticaDeRoles.ValidarAlcanceDeTenant` all engaged at once).
+7. **[Approved hardening] Doc 08 alignment.** `docs/08-usuarios-y-login.md` still documented
+   `{ usuario, password }` login and the pre-tenant schema (no `id_tenant`, global
+   `ux_usuarios_usuario`). Updated: login section now describes `{ mail, password }` and links
+   to the `usuarios-y-login` openspec spec for the full contract; schema snippet now has
+   `id_tenant integer NULL REFERENCES tenants(id_tenant)`, the composite
+   `(id_tenant, usuario) NULLS NOT DISTINCT` unique index (with a short why-comment), and
+   `ix_usuarios_tenant`, plus a pointer to the `usuarios-tenant-scoping` spec for the full
+   rationale and a short paragraph on the RLS/login-mode policies.
+8. **[Approved hardening] Lazy hash.** Replaced the hand-rolled double-checked locking
+   (`_hashDescartable` + `lock`) with `LazyInitializer.EnsureInitialized` over a
+   `Lazy<string>?` field, `Lazy<T>`'s default `ExecutionAndPublication` mode giving the same
+   thread-safety guarantee without hand-writing it. The `Lazy<string>` itself can't be a plain
+   static field constructed inline because its factory needs the instance-scoped `hasheador`
+   dependency (not static) — so it's published once, cold, via `LazyInitializer` on a static
+   field; `hasheador` always resolves to the same DI singleton no matter which
+   `ServicioDeAutenticacion` instance wins the race to initialize it (unchanged assumption from
+   batch 8, now just documented explicitly in the new doc comment).
+9. **[Approved hardening] Added-state `Usuario` clarity.** Between extending the
+   `EstamparTenant` `Usuario` loop to validate `Added` entries or documenting why it's exempt,
+   chose the comment: unlike `EntidadTenant`, `Usuario`'s `Added` `IdTenant` is derived from
+   `ActorDeGestion.IdTenant` (`ServicioDeUsuarios.CrearAsync`, doc 09 ADR-8) — a trusted
+   identity value deliberately kept separate from the connection's `TenantActual` — so there's
+   no single connection-scoped value to stamp or validate against without duplicating that
+   business rule in the persistence layer. Validating would also need to special-case `NULL`
+   as always-legal (root/platform accounts), unlike `EntidadTenant`'s `IdTenant == 0` sentinel,
+   which isn't reusable here. RLS's `WITH CHECK` on `usuarios_tenant` remains the real backstop
+   for an `Added` row with a mismatched `id_tenant`.
+
+#### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 38/38, `Ways.Application.Tests` 36/36**
+  (unchanged from batch 8 — the `ServicioDeUsuarios` fix (item 4) only changes which context
+  the InMemory tests already exercised), **`Ways.IntegrationTests` 23/23** (17 previous + 6
+  new: the backfill boot regression, 3 `usuarios` RLS isolation tests, the concurrent-creates
+  backstop test, and the cross-tenant 404 HTTP test), all against a real Postgres container
+  (Docker daemon confirmed up before running). 0 failures, 0 skipped. Re-ran the full suite a
+  second time to confirm stability (not flaky, in particular the concurrent-creates race
+  test): 38/36/23 both times.
+
+#### Commits (work units, branch `feat/stage1-slice2-usuarios`, no push)
+
+1. `fix(tenancy): reescribir el backfill de usuarios como ExecuteUpdateAsync`
+2. `docs(tenancy): documentar por que Added de Usuario no valida id_tenant en EstamparTenant`
+3. `fix(auth): nivelar el timing del login por mail desconocido y usar Lazy para el hash descartable`
+4. `fix(api): traducir el 23505 de ux_usuarios_usuario al 409 de negocio`
+5. `fix(usuarios): chequear la disponibilidad del mail contra un contexto de plataforma`
+6. `test(integration): cubrir el backfill, el RLS de usuarios, la carrera del backstop y el 404 cross-tenant`
+7. `docs(usuarios): actualizar el login por mail y el esquema en el doc 08`
+8. `docs(sdd): registrar el batch 9 de judgment-day (ronda 2) en el slice 2`
+
+### Batch 10 — judgment-day round 3 (final iteration) on Slice 2 (branch `feat/stage1-slice2-usuarios`)
+
+3 items approved by the user, all surgical fixes (no refactors):
+
+1. **Mirrored race test for the `usuario` backstop.** The round-2 hardening
+   (`DosAltasConcurrentesConElMismoMailDisparanElBackstopDelSaveChanges`) only exercised the
+   `ux_usuarios_mail` 23505→409 branch of `ManejadorDeErrores`; the symmetric
+   `ux_usuarios_usuario` branch (added in batch 9, item 3) had no equivalent race test. Added
+   `DosAltasConcurrentesConElMismoUsuarioEnElMismoTenantDisparanElBackstopDelSaveChanges`
+   (`UsuariosYLoginTests.cs`): same tenant, same `NombreUsuario`, distinct mails, two
+   `Task.WhenAll` concurrent `POST /api/usuarios` from the same logged-in admin — asserts
+   exactly one 201 and one 409 `usuario_duplicado`. Used a short literal
+   (`"vendedor-concurrente-usuario"`) instead of `nameof(...)` for the shared `NombreUsuario`:
+   the test method's own name is 86 characters, well past `ServicioDeUsuarios.Normalizar`'s
+   40-char cap on `usuario`, which the first run caught as two `BadRequest`s instead of the
+   expected 201/409 split.
+2. **Eager warm-up of the discardable hash.** `ServicioDeAutenticacion`'s lazy
+   `_hashDescartable` (batch 8/9) meant the FIRST unknown-mail login after process start still
+   paid Hashear+Verificar (2 derivations) vs. 1 for every later request — the timing symmetry
+   only held after that first request warmed the cache. Added
+   `ServicioDeAutenticacion.PrecalentarHashDescartable(IHasheadorDeContrasenas)`, a public
+   static method that runs the same `LazyInitializer.EnsureInitialized` as the existing lazy
+   path; `ObtenerHashDescartable` now calls it and reads the field, so there's one code path,
+   not two. Wired into `InicializadorDeBaseDeDatos.EjecutarAsync` (Infrastructure already
+   references `Ways.Application.Abstracciones`, so referencing `Ways.Application.Usuarios` too
+   is consistent) — called first, before migrations, since it doesn't depend on the database.
+   Runs exactly once per process, on the same request-independent path that already seeds
+   roles/root/org.
+3. **Comment precision.** The `_hashDescartable` doc comment claimed "Hashear es mucho más
+   caro que Verificar" — false, both cost exactly one PBKDF2 derivation. Reworded to state the
+   real asymmetry precisely: without the cache, the unknown-mail path pays TWO derivations
+   (Hashear + Verificar) against the ONE the known-mail path pays (Verificar only).
+
+#### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 38/38, `Ways.Application.Tests` 36/36**
+  (unchanged — this batch only touched Infrastructure startup wiring and one integration
+  test), **`Ways.IntegrationTests` 24/24** (23 previous + 1 new race test). 0 failures, 0
+  skipped. Docker daemon confirmed up throughout. Ran the new race test in isolation 4 times
+  in a row to confirm stability (not flaky) before the full-suite run.
+
+#### Commits (work units, branch `feat/stage1-slice2-usuarios`, no push)
+
+1. `fix(auth): precalentar el hash descartable del login al arrancar el proceso`
+2. `test(integration): agregar la carrera concurrente del backstop de ux_usuarios_usuario`
+3. `docs(sdd): registrar el batch 10 de judgment-day (ronda 3, iteracion final) en el slice 2`
+
+### Next batch
+
+Slice 2's judgment-day round 3 findings are all fixed and verified; round 3 was the final
+iteration approved by the user. Next: open PR 2 (per `CLAUDE.md`'s PR validation gate),
+stacked on PR 1 per the chosen `stacked-to-main` chain strategy. No open items block Slice 3
+or Slice 4 from starting in parallel.

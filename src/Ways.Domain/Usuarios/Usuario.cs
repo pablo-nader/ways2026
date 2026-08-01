@@ -13,7 +13,15 @@ public class Usuario : EntidadBase
 {
     public int Id { get; set; }
 
-    /// <summary>Nombre de usuario para iniciar sesión. Único entre los no eliminados.</summary>
+    /// <summary>
+    /// Tenant al que pertenece la cuenta. <c>NULL</c> significa staff de plataforma
+    /// (doc 09): no hereda de <see cref="Ways.Domain.Common.EntidadTenant"/> a propósito,
+    /// ver el comentario de esa clase.
+    /// </summary>
+    public int? IdTenant { get; set; }
+
+    /// <summary>Nombre de usuario para iniciar sesión. Único por tenant (incluida la
+    /// agrupación de plataforma) entre los no eliminados — ver <c>ux_usuarios_usuario</c>.</summary>
     public required string NombreUsuario { get; set; }
 
     /// <summary>Correo. Único entre los no eliminados.</summary>

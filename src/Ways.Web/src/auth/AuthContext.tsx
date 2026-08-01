@@ -6,7 +6,7 @@ import type { UsuarioAutenticado } from '../api/tipos'
 type EstadoAuth = {
   usuario: UsuarioAutenticado | null
   cargando: boolean
-  iniciarSesion: (usuario: string, password: string) => Promise<void>
+  iniciarSesion: (mail: string, password: string) => Promise<void>
   cerrarSesion: () => Promise<void>
 }
 
@@ -35,9 +35,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Cualquier 401 en cualquier llamada tira la sesión abajo.
   useEffect(() => alPerderLaSesion(() => setUsuario(null)), [])
 
-  const iniciarSesion = useCallback(async (nombre: string, password: string) => {
+  const iniciarSesion = useCallback(async (mail: string, password: string) => {
     const autenticado = await api.post<UsuarioAutenticado>('/auth/login', {
-      usuario: nombre,
+      mail,
       password,
     })
     setUsuario(autenticado)

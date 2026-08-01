@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Ways.Application.Abstracciones;
+using Ways.Application.Usuarios;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 
@@ -29,6 +30,11 @@ public class InicializadorDeBaseDeDatos(
 
     public async Task EjecutarAsync(SemillaRoot semilla, CancellationToken ct = default)
     {
+        // Warm-up del hash descartable de ServicioDeAutenticacion (ver
+        // PrecalentarHashDescartable): así el primer login con un mail inexistente después
+        // de arrancar el proceso ya lo encuentra calculado, en vez de pagar el costo extra acá.
+        ServicioDeAutenticacion.PrecalentarHashDescartable(hasheador);
+
         // Todo lo que sigue en este scope corre en modo plataforma: migraciones, RLS y
         // semilla no tienen un tenant "actual", siembran para el tenant que corresponda
         // de forma explícita (ADR-14). El `db` inyectado ya está atado a la instancia
@@ -43,6 +49,7 @@ public class InicializadorDeBaseDeDatos(
         await SembrarRolesAsync(ct);
         await SembrarRootAsync(semilla, ct);
         await SembrarOrganizacionAsync(ct);
+        await BackfillDeUsuariosAsync(ct);
     }
 
     /// <summary>
@@ -50,18 +57,56 @@ public class InicializadorDeBaseDeDatos(
     /// superusuario o tiene <c>BYPASSRLS</c> — Postgres ignora las policies igual, y el
     /// aislamiento entre tenants quedaría solo en manos del filtro de EF. Frena el
     /// arranque en Production; en el resto de los entornos solo avisa.
+    ///
+    /// ADO.NET crudo sobre <c>db.Database.GetDbConnection()</c> en vez de
+    /// <c>Database.SqlQuery&lt;T&gt;()</c>: encontrado en batch 7 (slice 2) — con el modelo
+    /// completo de este proyecto (varios tipos con query filters "this"-scoped, ADR-1/ADR-6),
+    /// <c>SqlQuery&lt;T&gt;()</c> hace explotar a
+    /// <c>NavigationExpandingExpressionVisitor.CreateNavigationExpansionExpression</c> con
+    /// <c>IndexOutOfRangeException</c> — confirmado que el bug es previo a este slice
+    /// (reproduce igual en `main`, no algo que el retrofit de <c>usuarios</c> haya
+    /// introducido) y que ninguna prueba lo había disparado nunca porque, hasta este batch,
+    /// ningún test arrancaba el host real (<c>WebApplicationFactory.CreateClient()</c>) —
+    /// que es lo único que ejecuta este método. Una consulta ADO.NET simple no pasa por esa
+    /// canalización de LINQ en absoluto.
     /// </summary>
     private async Task VerificarRolSinBypassAsync(CancellationToken ct)
     {
-        var fila = await db.Database
-            .SqlQuery<EstadoDelRolConectado>(
-                $"""
-                SELECT rolsuper AS "RolSuper", rolbypassrls AS "RolBypassRls"
-                FROM pg_roles WHERE rolname = current_user
-                """)
-            .FirstOrDefaultAsync(ct);
+        var conexion = db.Database.GetDbConnection();
+        var laAbrimosAca = conexion.State != System.Data.ConnectionState.Open;
 
-        if (fila is null || (!fila.RolSuper && !fila.RolBypassRls))
+        if (laAbrimosAca)
+        {
+            await conexion.OpenAsync(ct);
+        }
+
+        bool rolSuper;
+        bool rolBypassRls;
+
+        try
+        {
+            await using var comando = conexion.CreateCommand();
+            comando.CommandText = "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user";
+
+            await using var lector = await comando.ExecuteReaderAsync(ct);
+
+            if (!await lector.ReadAsync(ct))
+            {
+                return;
+            }
+
+            rolSuper = lector.GetBoolean(0);
+            rolBypassRls = lector.GetBoolean(1);
+        }
+        finally
+        {
+            if (laAbrimosAca)
+            {
+                await conexion.CloseAsync();
+            }
+        }
+
+        if (!rolSuper && !rolBypassRls)
         {
             return;
         }
@@ -235,6 +280,56 @@ public class InicializadorDeBaseDeDatos(
             "Sembrado el tenant inicial '{Tenant}' con su empresa y 2 puntos de venta.",
             tenant.Nombre);
     }
+
+    /// <summary>
+    /// Backfill de <c>usuarios.id_tenant</c> (task 2.3, ADR-14): la cuenta <c>root</c>
+    /// existente se queda con <c>id_tenant NULL</c> (plataforma, sin tocar), y cualquier
+    /// otra cuenta preexistente se asigna al tenant 1. Corre después de
+    /// <see cref="SembrarOrganizacionAsync"/> — necesita que el tenant 1 ya exista.
+    ///
+    /// Idempotente: en una instalación nueva no hay ninguna cuenta huérfana (solo existe
+    /// <c>root</c>, que el filtro de rol excluye) y esto es un no-op; en un redeploy sobre
+    /// una base con el backfill ya corrido, tampoco encuentra nada para tocar.
+    ///
+    /// Encontrado en judgment-day (batch 9, ronda 2): esta es la ÚNICA mutación NULL→valor
+    /// legítima de <c>Usuario.IdTenant</c> en todo el sistema, y el guard de tamper de
+    /// <c>WaysDbContext.EstamparTenant</c> rechaza CUALQUIER <c>Modified</c> con
+    /// <c>IdTenant</c> tocado, sin distinguir esta asignación legítima de una reasignación
+    /// real. Por eso <c>ExecuteUpdateAsync</c> en vez de cargar las entidades y asignarles
+    /// la propiedad: es un UPDATE set-based que nunca pasa por el <c>ChangeTracker</c>, así
+    /// que nunca entra al guard — evita la excepción sin abrir un agujero en esa defensa
+    /// (mantenerla estricta para cualquier <c>Modified</c> real es justamente el punto de
+    /// defense-in-depth del comentario de <c>EstamparTenant</c>). Sigue pasando RLS: corre
+    /// en modo plataforma, y <c>WITH CHECK (app_es_plataforma() OR ...)</c> deja pasar
+    /// cualquier valor de <c>id_tenant</c> bajo ese modo.
+    /// </summary>
+    private async Task BackfillDeUsuariosAsync(CancellationToken ct)
+    {
+        var idTenantPorDefecto = await db.Tenants
+            .IgnoreQueryFilters(["BajaLogica"])
+            .OrderBy(t => t.Id)
+            .Select(t => (int?)t.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (idTenantPorDefecto is null)
+        {
+            return;
+        }
+
+        var actualizados = await db.Usuarios
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(u => u.IdTenant == null && u.RolId != (int)RolConocido.Root)
+            .ExecuteUpdateAsync(s => s.SetProperty(u => u.IdTenant, idTenantPorDefecto), ct);
+
+        if (actualizados == 0)
+        {
+            return;
+        }
+
+        log.LogInformation(
+            "Backfill: {Cantidad} usuarios existentes asignados al tenant {Tenant}.",
+            actualizados, idTenantPorDefecto);
+    }
 }
 
 /// <summary>Credenciales de la cuenta root inicial. Se configuran por variables de entorno.</summary>
@@ -246,5 +341,3 @@ public class SemillaRoot
     public string Mail { get; set; } = "test@test.com";
     public string Password { get; set; } = "root";
 }
-
-file sealed record EstadoDelRolConectado(bool RolSuper, bool RolBypassRls);

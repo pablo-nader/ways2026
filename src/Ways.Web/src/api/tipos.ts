@@ -16,6 +16,8 @@ export type UsuarioAutenticado = {
   rolId: number
   rol: string
   ultimaConexion: string | null
+  /** null para staff de plataforma (root); el tenant de la cuenta en cualquier otro caso. */
+  idTenant: number | null
 }
 
 export type UsuarioListado = {

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Common;
 using Ways.Domain.Usuarios;
@@ -11,11 +12,16 @@ namespace Ways.Application.Usuarios;
 /// </summary>
 public class ServicioDeUsuarios(
     IWaysDbContext db,
+    [FromKeyedServices(ClavesDeContexto.Plataforma)] IWaysDbContext dbPlataforma,
     IHasheadorDeContrasenas hasheador,
     IRelojDelSistema reloj,
     IContextoDeUsuario contexto)
 {
     private const int LargoMinimoPassword = 8;
+
+    /// <summary>Identidad tenant-aware del actor en curso, para <see cref="PoliticaDeRoles"/>
+    /// (doc 09, ADR-8).</summary>
+    private ActorDeGestion Actor => new(contexto.Rol, contexto.UsuarioId, contexto.IdTenant);
 
     public async Task<PaginaDe<UsuarioListado>> ListarAsync(
         string? busqueda = null,
@@ -33,7 +39,9 @@ public class ServicioDeUsuarios(
 
         if (incluirEliminados)
         {
-            query = query.IgnoreQueryFilters();
+            // Solo la baja lógica: ignorar todos los filtros de un tirón también saltearía
+            // el de tenant (ADR-6) y filtraría cuentas de otros tenants al admin.
+            query = query.IgnoreQueryFilters(["BajaLogica"]);
         }
 
         if (!string.IsNullOrWhiteSpace(busqueda))
@@ -74,11 +82,18 @@ public class ServicioDeUsuarios(
     {
         PoliticaDeRoles.ValidarPuedeAsignarRol(contexto.Rol, (RolConocido)datos.RolId);
 
+        // Un actor de tenant siempre crea dentro de su propio tenant — el valor que haya
+        // llegado en `datos.IdTenant` se ignora, no se confía en lo que mande el cliente
+        // (doc 09: el tenant nunca viaja como parámetro editable). Solo un actor de
+        // plataforma puede (y tiene que) elegir el tenant destino explícitamente.
+        var idTenantDestino = Actor.EsDePlataforma ? datos.IdTenant : Actor.IdTenant;
+        PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance((RolConocido)datos.RolId, idTenantDestino);
+
         var nombre = Normalizar(datos.Usuario, "usuario", 40);
         var mail = Normalizar(datos.Mail, "mail", 255);
         ValidarPassword(datos.Password);
         await ExigirRolExistenteAsync(datos.RolId, ct);
-        await ExigirDisponibilidadAsync(nombre, mail, null, ct);
+        await ExigirDisponibilidadAsync(nombre, mail, idTenantDestino, null, ct);
 
         var ahora = reloj.Ahora;
         var usuario = new Usuario
@@ -86,6 +101,7 @@ public class ServicioDeUsuarios(
             NombreUsuario = nombre,
             Mail = mail,
             RolId = datos.RolId,
+            IdTenant = idTenantDestino,
             Estado = datos.Estado,
             PasswordHash = hasheador.Hashear(datos.Password),
             PasswordAlgoritmo = hasheador.Algoritmo,
@@ -109,16 +125,19 @@ public class ServicioDeUsuarios(
             contexto.Rol, contexto.UsuarioId, (RolConocido)usuario.RolId, usuario.Id, esBaja: false);
 
         // Cambiar el rol se valida aparte: podés editar el mail de un supervisor
-        // sin tener permiso para convertirlo en admin.
+        // sin tener permiso para convertirlo en admin. El tenant de la cuenta no se toca
+        // acá (es inmutable una vez creada), solo se revalida que el rol nuevo siga siendo
+        // consistente con él.
         if (usuario.RolId != datos.RolId)
         {
             PoliticaDeRoles.ValidarPuedeAsignarRol(contexto.Rol, (RolConocido)datos.RolId);
+            PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance((RolConocido)datos.RolId, usuario.IdTenant);
             await ExigirRolExistenteAsync(datos.RolId, ct);
         }
 
         var nombre = Normalizar(datos.Usuario, "usuario", 40);
         var mail = Normalizar(datos.Mail, "mail", 255);
-        await ExigirDisponibilidadAsync(nombre, mail, id, ct);
+        await ExigirDisponibilidadAsync(nombre, mail, usuario.IdTenant, id, ct);
 
         var estabaBloqueado = usuario.Estado == EstadoUsuario.Bloqueado;
 
@@ -209,8 +228,16 @@ public class ServicioDeUsuarios(
 
     private async Task<Usuario> BuscarAsync(int id, CancellationToken ct)
     {
-        return await db.Usuarios.Include(u => u.Rol).FirstOrDefaultAsync(u => u.Id == id, ct)
+        var usuario = await db.Usuarios.Include(u => u.Rol).FirstOrDefaultAsync(u => u.Id == id, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el usuario {id}.");
+
+        // El filtro de EF (más RLS por debajo) ya deja invisible una cuenta de otro
+        // alcance, así que en la práctica esto nunca dispara sobre una fila que sí llegó a
+        // `usuario` — es la capa de defensa explícita del dominio (doc 09, ADR-8), no un
+        // sustituto de las otras dos.
+        PoliticaDeRoles.ValidarAlcanceDeTenant(Actor, usuario.IdTenant);
+
+        return usuario;
     }
 
     private async Task ExigirRolExistenteAsync(int rolId, CancellationToken ct)
@@ -222,18 +249,33 @@ public class ServicioDeUsuarios(
     }
 
     private async Task ExigirDisponibilidadAsync(
-        string usuario, string mail, int? excluirId, CancellationToken ct)
+        string usuario, string mail, int? idTenantScope, int? excluirId, CancellationToken ct)
     {
+        // `usuario` es único por tenant, no global (doc 09, ADR-7): dos tenants pueden
+        // tener cada uno un "admin" sin choque. La agrupación de plataforma
+        // (`id_tenant IS NULL`) es un tenant más a este efecto — `NULLS NOT DISTINCT` en el
+        // índice hace que este `== idTenantScope` con `idTenantScope: null` también
+        // funcione una vez que exista la columna (gate #2 pendiente).
         // citext: la comparación ya es case-insensitive en el motor.
         var tomadoUsuario = await db.Usuarios.AnyAsync(
-            u => u.NombreUsuario == usuario && u.Id != excluirId, ct);
+            u => u.NombreUsuario == usuario && u.IdTenant == idTenantScope && u.Id != excluirId, ct);
 
         if (tomadoUsuario)
         {
             throw ErrorDominio.Conflicto("usuario_duplicado", $"El usuario '{usuario}' ya existe.");
         }
 
-        var tomadoMail = await db.Usuarios.AnyAsync(
+        // A diferencia de `usuario`, el mail es único GLOBAL, no por tenant (`ux_usuarios_mail`
+        // no lleva id_tenant). `IgnoreQueryFilters(["Tenant"])` NO alcanza acá: solo apaga el
+        // filtro de EF, pero la policy `usuarios_tenant` de RLS sigue activa por debajo bajo
+        // `app.acceso='tenant'` y le sigue ocultando a un actor de tenant las filas de otro
+        // tenant (judgment-day, batch 9, ronda 2) — con eso, la colisión cross-tenant nunca la
+        // atrapaba este chequeo, siempre reventaba recién en el `SaveChangesAsync` (23505),
+        // que el backstop de `ManejadorDeErrores` traduce igual, pero sin pasar por acá. Por
+        // eso el chequeo de mail corre contra `dbPlataforma` (el mismo patrón que el chequeo
+        // de suspensión de tenant en `ServicioDeAutenticacion`): esa conexión abre en modo
+        // plataforma, así que RLS la deja ver cualquier tenant.
+        var tomadoMail = await dbPlataforma.Usuarios.AnyAsync(
             u => u.Mail == mail && u.Id != excluirId, ct);
 
         if (tomadoMail)

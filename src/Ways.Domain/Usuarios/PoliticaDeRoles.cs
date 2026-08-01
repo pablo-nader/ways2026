@@ -12,6 +12,12 @@ namespace Ways.Domain.Usuarios;
 ///   - Solo root puede crear o asignar el rol admin.
 ///   - Un admin no puede tocar la cuenta de un root.
 ///   - Nadie puede eliminarse a sí mismo.
+///   - root es siempre de plataforma (id_tenant NULL); cualquier otro rol siempre
+///     pertenece a un tenant (<see cref="ValidarConsistenciaDeRolYAlcance"/>).
+///   - Un actor de tenant solo puede operar sobre cuentas de su propio tenant; nunca
+///     sobre una cuenta de plataforma (<see cref="ValidarAlcanceDeTenant"/>, doc 09, ADR-8).
+///   - Cruzar de tenant o apuntar a una cuenta de plataforma devuelve 404 (no encontrado),
+///     no 403 (prohibido): no se le confirma a nadie que el recurso existe en otro alcance.
 /// </summary>
 public static class PoliticaDeRoles
 {
@@ -111,6 +117,33 @@ public static class PoliticaDeRoles
     {
         var esConsistente = (actor == RolConocido.Root) == esDePlataforma;
         return esConsistente ? RolesAsignablesPor(actor) : [];
+    }
+
+    /// <summary>Valida que el rol destino y el alcance de tenant destino sean consistentes
+    /// (doc 09: <c>root</c> SIEMPRE de plataforma — <c>id_tenant NULL</c> —, cualquier otro
+    /// rol SIEMPRE de un tenant). Pensada para correr sobre la cuenta que se está creando o
+    /// editando, no sobre el actor.
+    ///
+    /// En la práctica <see cref="ValidarPuedeAsignarRol"/> ya bloquea asignar <c>root</c>
+    /// desde la aplicación, así que la mitad "root no puede llevar tenant" de esta regla
+    /// queda como defensa en profundidad; la mitad "todo lo demás requiere tenant" sí se
+    /// ejerce de verdad cuando la plataforma crea un admin/supervisor/vendedor para un
+    /// tenant específico.</summary>
+    public static void ValidarConsistenciaDeRolYAlcance(RolConocido rolDestino, int? idTenantDestino)
+    {
+        var debeSerDePlataforma = rolDestino == RolConocido.Root;
+        var esDePlataforma = idTenantDestino is null;
+
+        if (debeSerDePlataforma && !esDePlataforma)
+        {
+            throw ErrorDominio.Prohibido("El rol root no puede tener un tenant asignado.");
+        }
+
+        if (!debeSerDePlataforma && esDePlataforma)
+        {
+            throw new ErrorDominio(
+                "tenant_requerido", $"El rol {rolDestino} requiere un tenant.", 400);
+        }
     }
 }
 

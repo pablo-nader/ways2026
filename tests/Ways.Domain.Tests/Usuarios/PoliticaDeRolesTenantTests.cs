@@ -74,4 +74,41 @@ public class PoliticaDeRolesTenantTests
             PoliticaDeRoles.RolesAsignablesPor(RolConocido.Admin),
             PoliticaDeRoles.RolesAsignablesPor(RolConocido.Admin, esDePlataforma: false));
     }
+
+    [Fact]
+    public void RootNoPuedeCrearseConUnTenant()
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance(RolConocido.Root, idTenantDestino: 1));
+
+        Assert.Equal(403, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void RootEsConsistenteSinTenant()
+    {
+        PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance(RolConocido.Root, idTenantDestino: null);
+    }
+
+    [Theory]
+    [InlineData(RolConocido.Admin)]
+    [InlineData(RolConocido.Supervisor)]
+    [InlineData(RolConocido.Vendedor)]
+    public void UnRolNoRootRequiereUnTenant(RolConocido rolDestino)
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance(rolDestino, idTenantDestino: null));
+
+        Assert.Equal(400, error.EstadoHttp);
+        Assert.Equal("tenant_requerido", error.Codigo);
+    }
+
+    [Theory]
+    [InlineData(RolConocido.Admin)]
+    [InlineData(RolConocido.Supervisor)]
+    [InlineData(RolConocido.Vendedor)]
+    public void UnRolNoRootEsConsistenteConUnTenant(RolConocido rolDestino)
+    {
+        PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance(rolDestino, idTenantDestino: 1);
+    }
 }

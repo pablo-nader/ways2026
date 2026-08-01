@@ -15,8 +15,11 @@ public static class DependencyInjection
 {
     /// <summary>Clave del <see cref="WaysDbContext"/> atado a <see cref="TenantActualFijo.Plataforma"/>
     /// que usa <see cref="InicializadorDeBaseDeDatos"/> (ADR-2): migraciones y semilla nunca
-    /// corren sobre la sesión HTTP mutable.</summary>
-    public const string ClaveContextoPlataforma = "plataforma";
+    /// corren sobre la sesión HTTP mutable. Referencia a <see cref="ClavesDeContexto.Plataforma"/>
+    /// en vez de repetir el literal (Infrastructure sí puede referenciar Application): así un
+    /// typo en cualquiera de las dos constantes es un error de compilación, no un mismatch
+    /// silencioso en runtime al resolver el servicio keyed.</summary>
+    public const string ClaveContextoPlataforma = ClavesDeContexto.Plataforma;
 
     public static IServiceCollection AgregarInfrastructure(
         this IServiceCollection services,
@@ -53,6 +56,15 @@ public static class DependencyInjection
             options.AddInterceptors(new InterceptorDeContextoDeTenant(TenantActualFijo.Plataforma));
             return new WaysDbContext(options.Options, TenantActualFijo.Plataforma);
         });
+
+        // ClaveContextoPlataforma ES ClavesDeContexto.Plataforma (Ways.Application.Abstracciones):
+        // Application no puede referenciar este proyecto para resolver el servicio keyed acá,
+        // así que expone su propia constante — ver el comentario de ClavesDeContexto para
+        // quién la consume del lado de Application (p. ej. la verificación de suspensión de
+        // tenant en el login).
+        services.AddKeyedScoped<IWaysDbContext>(ClaveContextoPlataforma, (sp, clave) =>
+            sp.GetRequiredKeyedService<WaysDbContext>(clave));
+
         services.AddScoped<InicializadorDeBaseDeDatos>();
 
         // Las claves que firman la cookie de sesión van a la base, no al disco del

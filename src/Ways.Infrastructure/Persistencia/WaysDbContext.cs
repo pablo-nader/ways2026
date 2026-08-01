@@ -47,6 +47,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeBajaLogica(modelBuilder);
         AplicarFiltroDeTenant(modelBuilder);
         AplicarFiltroDeTenantEnTenant(modelBuilder);
+        AplicarFiltroDeTenantEnUsuario(modelBuilder);
     }
 
     /// <summary>
@@ -103,6 +104,28 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
                 case EntityState.Modified when entrada.Property(e => e.IdTenant).IsModified:
                     throw new InvalidOperationException(
                         "El id_tenant de una fila existente no se puede modificar.");
+            }
+        }
+
+        // Usuario no hereda de EntidadTenant (ver el comentario de Usuario.IdTenant), así que
+        // el loop de arriba no lo alcanza: necesita el mismo rechazo escrito a mano, igual que
+        // ya tiene su propio filtro de tenant (AplicarFiltroDeTenantEnUsuario).
+        //
+        // A propósito no se valida acá el estado Added (a diferencia del loop de EntidadTenant):
+        // ServicioDeUsuarios.CrearAsync deriva IdTenant del actor de la identidad de sesión
+        // (ActorDeGestion.IdTenant, doc 09 ADR-8), que es un dato de confianza distinto —y
+        // deliberadamente separado— del TenantActual de la conexión, así que no hay un valor
+        // único contra el cual estampar o validar acá sin duplicar esa lógica de negocio. Además,
+        // NULL es un valor legítimo para Usuario.IdTenant en modo plataforma (staff de plataforma
+        // y la semilla de root, InicializadorDeBaseDeDatos.SembrarRootAsync), así que ni siquiera
+        // se puede reusar el sentinel "IdTenant == 0" del loop de EntidadTenant. RLS
+        // (WITH CHECK de usuarios_tenant) es el backstop real para un Added con id_tenant ajeno.
+        foreach (var entrada in ChangeTracker.Entries<Usuario>())
+        {
+            if (entrada.State == EntityState.Modified && entrada.Property(e => e.IdTenant).IsModified)
+            {
+                throw new InvalidOperationException(
+                    "El id_tenant de una fila existente no se puede modificar.");
             }
         }
     }
@@ -173,6 +196,46 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadId);
 
         entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="Usuario"/> no hereda de <see cref="EntidadTenant"/> (su <c>IdTenant</c> es
+    /// nullable = plataforma, ADR-1), así que necesita su propia variante en vez de la del
+    /// loop de <see cref="AplicarFiltroDeTenant"/>: además de "plataforma o mismo tenant",
+    /// también deja pasar todo en modo <see cref="ModoDeAcceso.Login"/> — el único momento
+    /// en que se busca una cuenta por <c>mail</c> sin tenant resuelto todavía, exactamente
+    /// lo que permiten las policies <c>usuarios_login_lectura</c>/<c>_actualiza</c> del lado
+    /// de RLS (gate #2 pendiente). Sin esa rama, un login de un usuario de tenant nunca
+    /// encontraría la fila: el filtro compararía <c>IdTenant</c> contra un
+    /// <see cref="ITenantActual.Id"/> que en modo login es <c>null</c>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnUsuario(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(Usuario))!;
+
+        var parametro = Expression.Parameter(typeof(Usuario), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(Usuario.IdTenant));
+
+        var contexto = Expression.Constant(this, typeof(WaysDbContext));
+        var tenantActualDelContexto = Expression.Property(contexto, nameof(TenantActual));
+
+        var esPlataforma = Expression.Property(tenantActualDelContexto, nameof(ITenantActual.EsPlataforma));
+        var modo = Expression.Property(tenantActualDelContexto, nameof(ITenantActual.Modo));
+        var esLogin = Expression.Equal(modo, Expression.Constant(ModoDeAcceso.Login));
+        var esTenant = Expression.Equal(modo, Expression.Constant(ModoDeAcceso.Tenant));
+        var idDelContexto = Expression.Property(tenantActualDelContexto, nameof(ITenantActual.Id));
+
+        // `esTenant &&` es obligatorio acá y no en ConstruirFiltroDeTenant: ahí el lado
+        // de la comparación nunca es NULL (id de un tenant real), así que un
+        // TenantActual.Id nulo (modo Ninguno, fail-closed) jamás iguala por accidente. Acá
+        // sí puede — Usuario.IdTenant también es NULL para plataforma — así que sin este
+        // guard, modo Ninguno (Id nulo) terminaría viendo las cuentas de plataforma
+        // (NULL == NULL) en vez de fallar cerrado.
+        var comparacion = Expression.AndAlso(esTenant, Expression.Equal(propiedadIdTenant, idDelContexto));
+
+        var filtro = Expression.OrElse(Expression.OrElse(esPlataforma, esLogin), comparacion);
+
+        entidad.SetQueryFilter("Tenant", Expression.Lambda(filtro, parametro));
     }
 
     /// <summary><c>e => this.TenantActual.EsPlataforma || propiedadDeAlcance == this.TenantActual.Id</c>.
