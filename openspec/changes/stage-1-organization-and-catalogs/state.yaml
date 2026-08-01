@@ -1,6 +1,6 @@
 change: stage-1-organization-and-catalogs
 phase: apply
-status: apply-in-progress-db-change-gate-pending
+status: apply-in-progress-slice1-db-change-gate-approved-docker-daemon-unreachable
 artifact_store: openspec
 phases:
   explore:
@@ -20,7 +20,7 @@ phases:
   apply:
     status: in-progress
     artifact: apply-progress.md
-    notes: "Slice 1 (PR 1) implemented up to the DB CHANGE GATE. Blocked on user approval of the migration 1 (Organizacion) model summary before task 1.8 (generate migration) can run."
+    notes: "Slice 1 (PR 1): DB CHANGE GATE #1 approved 2026-07-31, migration 1 (Organizacion) generated with RLS on tenants/empresas/puntos_venta, isolation integration tests implemented in full. Not yet runtime-verified: Docker daemon unreachable in this environment, gating tests/Ways.IntegrationTests only (not a code blocker)."
   verify:
     status: pending
   archive:
@@ -42,3 +42,5 @@ notes:
   - "design.md defines 4 natural PR cut points: (1) tenancy plumbing + org tables + RLS, (2) usuarios retrofit + suspension, (3) catalogs + parametros, (4) web ABM."
   - "design.md ADR-6 and ADR-9 carry apply-time verification items (EF Core 10 keyed query filters; optional composite FK nullability). Fallbacks are defined and must be reported, not applied silently."
   - "ADR-7 overridden by user: usuario unique per tenant, mail unique global; stage 1 login is mail-based (flow B); subdomain login (flow A) deferred as designed extension point."
+  - "DB CHANGE GATE #1 approved by the user 2026-07-31: (1) migration 1 (Organizacion) approved exactly as presented; (2) tenants table also gets RLS with the analogous policy (ENABLE + FORCE + USING/WITH CHECK (app_es_plataforma() OR id_tenant = app_tenant_actual())), included in migration 1; (3) seed placeholder names (\"Ways\"/\"Ways\"/\"Local 1\"/\"Local 2\") stay as-is, RolesAsignablesPor(actor, esDePlataforma) interpretation accepted as documented."
+  - "Docker daemon unreachable in this environment (confirmed via 'docker version' in both apply batches): tests/Ways.IntegrationTests is fully implemented (no Skip) but not runtime-verified. Run it first thing once a daemon is reachable, before Slice 1's PR goes through judgment-day review."
