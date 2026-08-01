@@ -108,11 +108,78 @@ this environment — confirmed with `docker version` both before batch 1 and aga
 - The RLS policy shape for `tenants` was an open question in batch 1's report; **resolved**
   by gate decision 2 and implemented in 1.8. No longer open.
 
+---
+
+## Batch 3 (this apply)
+
+**Trigger:** coordinator reported the Docker daemon came up and ran
+`dotnet test tests/Ways.IntegrationTests` directly: **5 failed / 2 passed**, all real
+runtime failures (not the environment failure of batch 2). Asked to reproduce, diagnose
+root cause (test harness vs. production bug), fix, and get to a stable 7/7.
+
+**Status:** `done`. Root cause confirmed as a **test-harness bug**, fixed, suite green and
+stable across two consecutive runs.
+
+### Reproduction
+
+`docker version` now shows a reachable server (Docker Desktop 4.77.0). Ran
+`dotnet test tests/Ways.IntegrationTests/Ways.IntegrationTests.csproj
+--logger "console;verbosity=detailed"` myself and captured the full output (the
+coordinator's earlier run had truncated the exception message). All 5 failures shared the
+identical exception, thrown from `SaveChangesAsync` inside
+`AislamientoDeTenantTests.CrearTenantConEmpresaAsync`:
+
+```
+Microsoft.EntityFrameworkCore.DbUpdateException : An error occurred while saving the
+entity changes. See the inner exception for details.
+---- Npgsql.PostgresException : 42501: new row violates row-level security policy for
+table "tenants"
+```
+
+The 2 tests that passed (`WaysAppNoTieneRolsuperNiRolbypassrls`,
+`LaCoberturaDePoliciesEsCompleta`) are exactly the two that never call
+`CrearTenantConEmpresaAsync` — they only use `AbrirConexionCrudaAsync`, which sets the
+GUC by hand via raw SQL rather than through a `WaysDbContext`.
+
+### Root cause — confirmed test-harness bug, NOT a production bug
+
+`WaysApiFixture.CrearContextoDeAplicacion` built a `WaysDbContext` against
+`AppConnectionString` with `DbContextOptionsBuilder<WaysDbContext>().UseNpgsql(...)` but
+**never called `.AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))`**.
+Without the interceptor, `ConnectionOpened(Async)` never fires the `set_config` calls, so
+`app.acceso` / `app.tenant_id` stay unset on every connection this helper opens — including
+the ones used by the *platform-mode* seeding helper. `app_es_plataforma()` then evaluates
+to `false` (GUC unset ⇒ `app_modo()` falls back to `'ninguno'`), so
+`WITH CHECK (app_es_plataforma() OR id_tenant = app_tenant_actual())` rejects even the
+"platform seeds its own fixture data" inserts — exactly the `42501` observed.
+
+Checked `Ways.Infrastructure/DependencyInjection.cs` (production wiring) side by side:
+line 39 does `.AddInterceptors(sp.GetRequiredService<InterceptorDeContextoDeTenant>())`
+correctly, resolved from DI. **Production is not broken** — the coordinator's stated
+hypothesis ("platform mode broken in production too") does not hold; the gap was isolated
+to the one place in the test project that builds a `WaysDbContext` by hand instead of
+through DI, and forgot to replicate that one line of wiring.
+
+### Fix
+
+`WaysApiFixture.CrearContextoDeAplicacion` now adds
+`.AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))` to the options builder,
+mirroring `DependencyInjection.AgregarInfrastructure` exactly. One-line functional change
+plus a comment explaining why this specific helper needed it explicitly.
+
+### Verification
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test tests/Ways.IntegrationTests` → **7/7 green**, run twice in a row (not
+  flaky): `WaysAppNoTieneRolsuperNiRolbypassrls`, `ElFiltroDeEfNuncaDevuelveFilasDeOtroTenant`,
+  `NoHayFugaDeGucEntreConexionesDelPool`, `SinGucElResultadoEsCeroFilasNoUnError`,
+  `RlsBloqueaUnaLecturaQueSalteaElFiltroDeEf`, `WithCheckRechazaUnInsertConIdTenantAjeno`,
+  `LaCoberturaDePoliciesEsCompleta`.
+- `dotnet test Ways.slnx` (full suite) → `Ways.Domain.Tests` 30/30,
+  `Ways.Application.Tests` 14/14, `Ways.IntegrationTests` 7/7. **No regression, 0 failures.**
+
 ### Next batch
 
-Nothing left gated on user decisions for Slice 1 itself. What remains is purely
-environmental: get a reachable Docker daemon and run
-`dotnet test tests/Ways.IntegrationTests` to get real pass/fail signal on the 7 isolation
-cases (including the new `tenants`-table coverage) before this slice's PR goes through
-judgment-day review. If they pass, Slice 1 is functionally complete; if any fail, fix and
-re-run before proceeding to Slice 2.
+Slice 1 is functionally complete and verified end-to-end against real Postgres, including
+RLS on all three tables. Nothing left gated on user decisions or on the environment. Ready
+for judgment-day review before PR (per `CLAUDE.md`'s PR validation gate), then Slice 2.
