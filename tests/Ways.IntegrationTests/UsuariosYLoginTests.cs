@@ -278,6 +278,83 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal("mail_duplicado", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>Approved hardening de judgment-day (batch 9, ronda 2): la prueba CRITICAL de
+    /// arriba siembra la cuenta colisionante ANTES de crear la segunda, así que después del
+    /// fix del gate #4 (el chequeo de mail ahora corre contra un <c>dbPlataforma</c> dedicado,
+    /// no <c>IgnoreQueryFilters(["Tenant"])</c>, que RLS igual le hubiese vaciado a un actor de
+    /// tenant) esa prueba pasa siempre por el chequeo previo, nunca por el backstop de
+    /// <c>ManejadorDeErrores</c>. Esta prueba fuerza la carrera real: dos altas con el mismo
+    /// mail disparadas a la vez, cada una desde su propio admin de tenant — las dos preguntas
+    /// "¿el mail ya existe?" corren antes de que cualquiera de las dos haya hecho commit, así
+    /// que las dos pasan el chequeo previo y el 23505 de <c>ux_usuarios_mail</c> recién aparece
+    /// en el <c>SaveChangesAsync</c> de la que pierde la carrera — es el único de los dos
+    /// caminos posibles que puede dar 500 si <c>ManejadorDeErrores</c> no lo tradujera.</summary>
+    [Fact]
+    public async Task DosAltasConcurrentesConElMismoMailDisparanElBackstopDelSaveChanges()
+    {
+        var (_, mailAdminA) = await SembrarTenantConUsuarioAsync(
+            nameof(DosAltasConcurrentesConElMismoMailDisparanElBackstopDelSaveChanges) + "A", EstadoTenant.Activo);
+        var (_, mailAdminB) = await SembrarTenantConUsuarioAsync(
+            nameof(DosAltasConcurrentesConElMismoMailDisparanElBackstopDelSaveChanges) + "B", EstadoTenant.Activo);
+
+        var mailCompartido = $"{nameof(DosAltasConcurrentesConElMismoMailDisparanElBackstopDelSaveChanges)}@ways.test";
+
+        using var clienteA = fixture.CreateClient();
+        var loginA = await clienteA.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdminA, Password));
+        Assert.Equal(HttpStatusCode.OK, loginA.StatusCode);
+
+        using var clienteB = fixture.CreateClient();
+        var loginB = await clienteB.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdminB, Password));
+        Assert.Equal(HttpStatusCode.OK, loginB.StatusCode);
+
+        var tareaA = clienteA.PostAsJsonAsync("/api/usuarios", new CrearUsuario(
+            "vendedor-concurrente-a", mailCompartido, (int)RolConocido.Vendedor, Password));
+        var tareaB = clienteB.PostAsJsonAsync("/api/usuarios", new CrearUsuario(
+            "vendedor-concurrente-b", mailCompartido, (int)RolConocido.Vendedor, Password));
+
+        var respuestas = await Task.WhenAll(tareaA, tareaB);
+
+        var estados = respuestas.Select(r => r.StatusCode).ToArray();
+
+        // Exactamente una gana (201) y la otra choca (409): la garantía real es del unique
+        // index de Postgres, no de ninguno de los dos chequeos en memoria — por eso este
+        // invariante se cumple sin importar cuál de las dos ganó la carrera.
+        Assert.Contains(HttpStatusCode.Created, estados);
+        Assert.Contains(HttpStatusCode.Conflict, estados);
+
+        var respuestaConflicto = respuestas.Single(r => r.StatusCode == HttpStatusCode.Conflict);
+        var problema = await respuestaConflicto.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("mail_duplicado", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Approved hardening de judgment-day (batch 9, ronda 2): prueba HTTP de punta a
+    /// punta de lo que <c>ServicioDeUsuarios.BuscarAsync</c> ya cubre a nivel de servicio
+    /// (<c>UnAdminNoVeUnUsuarioDeOtroTenant</c> en <c>ServicioDeUsuariosTests</c>) — acá contra
+    /// Postgres real y a través del endpoint completo, con las tres capas (EF + RLS +
+    /// <c>PoliticaDeRoles.ValidarAlcanceDeTenant</c>) puestas en juego a la vez.</summary>
+    [Fact]
+    public async Task UnAdminDeUnTenantRecibe404AlConsultarUnUsuarioDeOtroTenant()
+    {
+        var (_, mailAdminA) = await SembrarTenantConUsuarioAsync(
+            nameof(UnAdminDeUnTenantRecibe404AlConsultarUnUsuarioDeOtroTenant) + "A", EstadoTenant.Activo);
+        var (_, mailAdminB) = await SembrarTenantConUsuarioAsync(
+            nameof(UnAdminDeUnTenantRecibe404AlConsultarUnUsuarioDeOtroTenant) + "B", EstadoTenant.Activo);
+
+        using var clienteB = fixture.CreateClient();
+        var loginB = await clienteB.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdminB, Password));
+        Assert.Equal(HttpStatusCode.OK, loginB.StatusCode);
+        var autenticadoB = await loginB.Content.ReadFromJsonAsync<UsuarioAutenticado>();
+        Assert.NotNull(autenticadoB);
+
+        using var clienteA = fixture.CreateClient();
+        var loginA = await clienteA.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdminA, Password));
+        Assert.Equal(HttpStatusCode.OK, loginA.StatusCode);
+
+        var respuesta = await clienteA.GetAsync($"/api/usuarios/{autenticadoB.Id}");
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
     [Fact]
     public async Task UnSegundoUsuarioDePlataformaConElMismoNombreEsRechazado()
     {
