@@ -722,9 +722,57 @@ contradictions with direct code verification. 9 items confirmed/approved:
 7. `docs(usuarios): actualizar el login por mail y el esquema en el doc 08`
 8. `docs(sdd): registrar el batch 9 de judgment-day (ronda 2) en el slice 2`
 
+### Batch 10 — judgment-day round 3 (final iteration) on Slice 2 (branch `feat/stage1-slice2-usuarios`)
+
+3 items approved by the user, all surgical fixes (no refactors):
+
+1. **Mirrored race test for the `usuario` backstop.** The round-2 hardening
+   (`DosAltasConcurrentesConElMismoMailDisparanElBackstopDelSaveChanges`) only exercised the
+   `ux_usuarios_mail` 23505→409 branch of `ManejadorDeErrores`; the symmetric
+   `ux_usuarios_usuario` branch (added in batch 9, item 3) had no equivalent race test. Added
+   `DosAltasConcurrentesConElMismoUsuarioEnElMismoTenantDisparanElBackstopDelSaveChanges`
+   (`UsuariosYLoginTests.cs`): same tenant, same `NombreUsuario`, distinct mails, two
+   `Task.WhenAll` concurrent `POST /api/usuarios` from the same logged-in admin — asserts
+   exactly one 201 and one 409 `usuario_duplicado`. Used a short literal
+   (`"vendedor-concurrente-usuario"`) instead of `nameof(...)` for the shared `NombreUsuario`:
+   the test method's own name is 86 characters, well past `ServicioDeUsuarios.Normalizar`'s
+   40-char cap on `usuario`, which the first run caught as two `BadRequest`s instead of the
+   expected 201/409 split.
+2. **Eager warm-up of the discardable hash.** `ServicioDeAutenticacion`'s lazy
+   `_hashDescartable` (batch 8/9) meant the FIRST unknown-mail login after process start still
+   paid Hashear+Verificar (2 derivations) vs. 1 for every later request — the timing symmetry
+   only held after that first request warmed the cache. Added
+   `ServicioDeAutenticacion.PrecalentarHashDescartable(IHasheadorDeContrasenas)`, a public
+   static method that runs the same `LazyInitializer.EnsureInitialized` as the existing lazy
+   path; `ObtenerHashDescartable` now calls it and reads the field, so there's one code path,
+   not two. Wired into `InicializadorDeBaseDeDatos.EjecutarAsync` (Infrastructure already
+   references `Ways.Application.Abstracciones`, so referencing `Ways.Application.Usuarios` too
+   is consistent) — called first, before migrations, since it doesn't depend on the database.
+   Runs exactly once per process, on the same request-independent path that already seeds
+   roles/root/org.
+3. **Comment precision.** The `_hashDescartable` doc comment claimed "Hashear es mucho más
+   caro que Verificar" — false, both cost exactly one PBKDF2 derivation. Reworded to state the
+   real asymmetry precisely: without the cache, the unknown-mail path pays TWO derivations
+   (Hashear + Verificar) against the ONE the known-mail path pays (Verificar only).
+
+#### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 38/38, `Ways.Application.Tests` 36/36**
+  (unchanged — this batch only touched Infrastructure startup wiring and one integration
+  test), **`Ways.IntegrationTests` 24/24** (23 previous + 1 new race test). 0 failures, 0
+  skipped. Docker daemon confirmed up throughout. Ran the new race test in isolation 4 times
+  in a row to confirm stability (not flaky) before the full-suite run.
+
+#### Commits (work units, branch `feat/stage1-slice2-usuarios`, no push)
+
+1. `fix(auth): precalentar el hash descartable del login al arrancar el proceso`
+2. `test(integration): agregar la carrera concurrente del backstop de ux_usuarios_usuario`
+3. `docs(sdd): registrar el batch 10 de judgment-day (ronda 3, iteracion final) en el slice 2`
+
 ### Next batch
 
-Slice 2's judgment-day round 2 findings are all fixed and verified, and round 2 came back
-clean on the confirmed-issues list (no further CRITICAL/Confirmed items). Next: open PR 2 (per
-`CLAUDE.md`'s PR validation gate), stacked on PR 1 per the chosen `stacked-to-main` chain
-strategy. No open items block Slice 3 or Slice 4 from starting in parallel.
+Slice 2's judgment-day round 3 findings are all fixed and verified; round 3 was the final
+iteration approved by the user. Next: open PR 2 (per `CLAUDE.md`'s PR validation gate),
+stacked on PR 1 per the chosen `stacked-to-main` chain strategy. No open items block Slice 3
+or Slice 4 from starting in parallel.
