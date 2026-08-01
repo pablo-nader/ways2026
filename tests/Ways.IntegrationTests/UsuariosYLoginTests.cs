@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Ways.Application.Usuarios;
@@ -13,28 +14,26 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// Slice 2 (tasks.md § "usuarios retrofit + suspension + mail login"): login por mail,
 /// suspensión de tenant, y la prueba <c>NULLS NOT DISTINCT</c> del índice
-/// <c>ux_usuarios_usuario</c> (design.md, ADR-7).
-///
-/// Todas las pruebas de esta clase dependen de la migración 2 (<c>UsuariosMultiTenant</c>:
-/// <c>usuarios.id_tenant</c>, el índice rearmado, las policies de <c>usuarios</c>), que
-/// todavía no existe — está detrás de la DB CHANGE GATE #2 (<c>CLAUDE.md</c>). Quedan
-/// escritas y listas para correr, marcadas <see cref="FactAttribute.Skip"/> hasta que la
-/// migración se genere y apruebe; no se implementa un doble/mock de la migración porque eso
-/// probaría el doble, no RLS real (mismo criterio que ADR-17).
+/// <c>ux_usuarios_usuario</c> (design.md, ADR-7). Corren contra Postgres real, con la
+/// migración <c>UsuariosMultiTenant</c> (gate #2, aprobada 2026-08-01) ya aplicada.
 /// </summary>
+[Collection("Ways.IntegrationTests secuencial")]
 public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
-    private const string GatePendiente =
-        "Gate #2 pendiente: requiere la migración UsuariosMultiTenant (usuarios.id_tenant, " +
-        "índice ux_usuarios_usuario, policies de login) aprobada y generada.";
-
     private const string Password = "una-contraseña-larga";
 
     /// <summary>Siembra un tenant y un usuario propio en modo plataforma, con un hash real
-    /// (no una API pública) — la API bajo prueba es la de login, no la de alta.</summary>
+    /// (no una API pública) — la API bajo prueba es la de login, no la de alta.
+    ///
+    /// Arranca el host primero (<see cref="WaysApiFixture.CreateClient"/>, idempotente:
+    /// una vez levantado lo reutiliza) — necesario para que <c>InicializadorDeBaseDeDatos</c>
+    /// ya haya sembrado los <c>roles</c> antes de insertar un <c>Usuario</c> propio: la FK
+    /// <c>fk_usuarios_rol</c> no perdona una cuenta con un rol que todavía no existe.</summary>
     private async Task<(int IdTenant, string Mail)> SembrarTenantConUsuarioAsync(
         string nombre, EstadoTenant estadoTenant, RolConocido rol = RolConocido.Admin)
     {
+        using var _ = fixture.CreateClient();
+
         var hasheador = new HasheadorPbkdf2();
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
 
@@ -61,7 +60,7 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         return (tenant.Id, mail);
     }
 
-    [Fact(Skip = GatePendiente)]
+    [Fact]
     public async Task UnUsuarioDeTenantIniciaSesionConSuMail()
     {
         var (_, mail) = await SembrarTenantConUsuarioAsync(
@@ -77,7 +76,7 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.NotNull(autenticado.IdTenant);
     }
 
-    [Fact(Skip = GatePendiente)]
+    [Fact]
     public async Task ElRootDePlataformaIniciaSesionConSuMailSeed()
     {
         // El seed de InicializadorDeBaseDeDatos ya crea el root con la semilla por defecto
@@ -92,7 +91,7 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Null(autenticado.IdTenant);
     }
 
-    [Fact(Skip = GatePendiente)]
+    [Fact]
     public async Task UnMailInexistenteYUnaPasswordIncorrectaDevuelvenElMismoError()
     {
         var (_, mail) = await SembrarTenantConUsuarioAsync(
@@ -108,12 +107,21 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.Unauthorized, respuestaMailInexistente.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, respuestaPasswordIncorrecta.StatusCode);
 
-        var cuerpoMailInexistente = await respuestaMailInexistente.Content.ReadAsStringAsync();
-        var cuerpoPasswordIncorrecta = await respuestaPasswordIncorrecta.Content.ReadAsStringAsync();
-        Assert.Equal(cuerpoMailInexistente, cuerpoPasswordIncorrecta);
+        // ProblemDetails trae un `traceId` propio por request — comparar el cuerpo entero
+        // como string siempre daría distinto. Lo que tiene que ser idéntico es el mensaje y
+        // el código de error (ManejadorDeErrores), no el sobre completo.
+        var problemaMailInexistente = await respuestaMailInexistente.Content.ReadFromJsonAsync<JsonElement>();
+        var problemaPasswordIncorrecta = await respuestaPasswordIncorrecta.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(
+            problemaMailInexistente.GetProperty("title").GetString(),
+            problemaPasswordIncorrecta.GetProperty("title").GetString());
+        Assert.Equal(
+            problemaMailInexistente.GetProperty("codigo").GetString(),
+            problemaPasswordIncorrecta.GetProperty("codigo").GetString());
     }
 
-    [Fact(Skip = GatePendiente)]
+    [Fact]
     public async Task UnTenantSuspendidoBloqueaElLoginDeSuUsuario()
     {
         var (_, mail) = await SembrarTenantConUsuarioAsync(
@@ -125,7 +133,7 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
-    [Fact(Skip = GatePendiente)]
+    [Fact]
     public async Task SuspenderElTenantCortaLaSesionActivaEnLaProximaRequest()
     {
         var (idTenant, mail) = await SembrarTenantConUsuarioAsync(
@@ -151,9 +159,11 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.Unauthorized, luegoDeSuspender.StatusCode);
     }
 
-    [Fact(Skip = GatePendiente)]
+    [Fact]
     public async Task DosTenantsPuedenTenerCadaUnoUnUsuarioLlamadoAdminSinColision()
     {
+        using var _ = fixture.CreateClient(); // arranca el host: siembra los roles primero
+
         var hasheador = new HasheadorPbkdf2();
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
 
@@ -183,13 +193,21 @@ public class UsuariosYLoginTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         // id_tenant (design.md, ADR-7).
         await db.SaveChangesAsync();
 
-        var total = await db.Usuarios.CountAsync(u => u.NombreUsuario == "admin");
-        Assert.Equal(2, total);
+        // Scopeado a los dos tenants de esta prueba, no un conteo global: la clase comparte
+        // un solo Postgres (IClassFixture) entre todos sus métodos, y varios otros también
+        // siembran una cuenta "admin" en su propio tenant.
+        var enTenantA = await db.Usuarios.AnyAsync(u => u.NombreUsuario == "admin" && u.IdTenant == tenantA.Id);
+        var enTenantB = await db.Usuarios.AnyAsync(u => u.NombreUsuario == "admin" && u.IdTenant == tenantB.Id);
+
+        Assert.True(enTenantA);
+        Assert.True(enTenantB);
     }
 
-    [Fact(Skip = GatePendiente)]
+    [Fact]
     public async Task UnSegundoUsuarioDePlataformaConElMismoNombreEsRechazado()
     {
+        using var _ = fixture.CreateClient(); // arranca el host: siembra el root primero
+
         await using var cruda = await fixture.AbrirConexionCrudaAsync("plataforma", null);
 
         // root (id_tenant NULL, sembrado al levantar el host) ya ocupa "root" en el grupo
