@@ -216,9 +216,10 @@ for judgment-day review before PR (per `CLAUDE.md`'s PR validation gate), then S
 5. **`TenantActualFijo` guard** — its constructor now validates `Tenant` mode requires a
    non-null id, mirroring `TenantActualDeSesion.Establecer`.
 6. **UPDATE reassignment RLS test** — new
-   `AislamientoDeTenantTests.WithCheckRechazaUnUpdateQueReasignaIdTenant` proves
-   `WITH CHECK` also rejects a raw-SQL `UPDATE ... SET id_tenant = <otro tenant>`, not
-   just the already-covered `INSERT` case.
+   `AislamientoDeTenantTests.WithCheckRechazaUnUpdateQueReasignaIdTenant` targets a
+   raw-SQL `UPDATE ... SET id_tenant = <otro tenant>` and asserts a `PostgresException`.
+   (Correction in batch 5: this initial version used the wrong PK column, so it passed
+   vacuously on a 42703 error before RLS ever evaluated — see batch 5.)
 7. **Seeder uses `TenantActualFijo`** — `InicializadorDeBaseDeDatos` no longer depends on
    the mutable `TenantActualDeSesion`/`.Establecer(...)`. `DependencyInjection` now
    registers a keyed (`ClaveContextoPlataforma = "plataforma"`) scoped `WaysDbContext`
@@ -243,6 +244,19 @@ for judgment-day review before PR (per `CLAUDE.md`'s PR validation gate), then S
   (14 + 4 new: 1 sync `SaveChanges` test + 3 `InvariantesDeConexion` tests),
   `Ways.IntegrationTests` 8/8 (7 + 1 new UPDATE-reassignment test). 0 failures, Docker
   daemon reachable throughout.
+
+### Completed in batch 5 (judgment-day round 2 fix)
+
+1. **Vacuously-green RLS UPDATE test, fixed** — round 2 of judgment-day found that
+   `WithCheckRechazaUnUpdateQueReasignaIdTenant`'s SQL targeted `WHERE id = $2`, but the
+   `empresas` PK column is `id_empresa`. The statement died with `42703` (undefined
+   column) before RLS ever evaluated, so the test asserted only `PostgresException` and
+   passed for the wrong reason — it did not actually prove `WITH CHECK` rejects the
+   `UPDATE`. Fixed to `WHERE id_empresa = $2`, and both this test and
+   `WithCheckRechazaUnInsertConIdTenantAjeno` now assert `PostgresException.SqlState ==
+   "42501"` (insufficient_privilege), so no future schema typo can make either test pass
+   vacuously again. Re-run against real Postgres confirms both now fail with `42501` —
+   `WITH CHECK` genuinely rejects the raw-SQL `UPDATE`.
 
 ### Next batch
 

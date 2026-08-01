@@ -155,6 +155,11 @@ the pool, so the GUC cannot leak to the next tenant. Same guarantee, working mec
 - `TenantActualDeSesion.Establecer/Suplantar` re-applies the settings if a connection is
   already open on that context, so a mid-scope change never runs against a stale GUC.
 
+**Slice-1 scoping.** `Suplantar`/impersonation (ADR-16) is deferred to when
+`ServicioDeAprovisionamiento` lands and does not exist yet in this slice; `Establecer`
+itself has no re-apply-on-open-connection logic today. The re-apply invariant above is the
+target design, not yet an asserted current behavior — same deferral as tasks.md 1.9/1.10.
+
 **Rejected.** (a) Wrapping every request in an explicit transaction to make `SET LOCAL` legal —
 turns every read into a transaction and fights EF's execution strategy. (b) A separate
 `NpgsqlDataSource` per tenant — unbounded pool growth on a multi-tenant SaaS.

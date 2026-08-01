@@ -151,7 +151,10 @@ public class AislamientoDeTenantTests(WaysApiFixture fixture) : IClassFixture<Wa
             "VALUES ($1, 'intrusa', now(), now())";
         comando.Parameters.Add(new NpgsqlParameter { Value = idB });
 
-        await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        // 42501 = insufficient_privilege (violación de RLS/WITH CHECK): así distinguimos
+        // el rechazo genuino de RLS de cualquier otro PostgresException incidental.
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("42501", excepcion.SqlState);
     }
 
     [Fact]
@@ -165,11 +168,14 @@ public class AislamientoDeTenantTests(WaysApiFixture fixture) : IClassFixture<Wa
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idA);
 
         await using var comando = cruda.CreateCommand();
-        comando.CommandText = "UPDATE empresas SET id_tenant = $1 WHERE id = $2";
+        comando.CommandText = "UPDATE empresas SET id_tenant = $1 WHERE id_empresa = $2";
         comando.Parameters.Add(new NpgsqlParameter { Value = idB });
         comando.Parameters.Add(new NpgsqlParameter { Value = idEmpresaA });
 
-        await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        // 42501 = insufficient_privilege (violación de RLS/WITH CHECK): confirma que es
+        // RLS quien rechaza el UPDATE, no un error de columna previo a la evaluación de RLS.
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("42501", excepcion.SqlState);
     }
 
     [Fact]
