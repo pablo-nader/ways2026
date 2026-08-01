@@ -53,6 +53,15 @@ public static class DependencyInjection
             options.AddInterceptors(new InterceptorDeContextoDeTenant(TenantActualFijo.Plataforma));
             return new WaysDbContext(options.Options, TenantActualFijo.Plataforma);
         });
+
+        // Misma clave que ClavesDeContexto.Plataforma (Ways.Application.Abstracciones):
+        // Application no puede referenciar este proyecto para usar la constante de acá, así
+        // que ambas declaran el mismo literal ("plataforma") a propósito — ver el
+        // comentario de ClavesDeContexto para quién la consume del lado de Application
+        // (p. ej. la verificación de suspensión de tenant en el login).
+        services.AddKeyedScoped<IWaysDbContext>(ClaveContextoPlataforma, (sp, clave) =>
+            sp.GetRequiredKeyedService<WaysDbContext>(clave));
+
         services.AddScoped<InicializadorDeBaseDeDatos>();
 
         // Las claves que firman la cookie de sesión van a la base, no al disco del

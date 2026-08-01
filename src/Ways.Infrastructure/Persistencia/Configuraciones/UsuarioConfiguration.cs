@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
@@ -15,6 +16,17 @@ public class UsuarioConfiguration : IEntityTypeConfiguration<Usuario>
         builder.Property(u => u.Id)
             .HasColumnName("id_usuario")
             .UseIdentityByDefaultColumn();
+
+        // NULL = staff de plataforma (doc 09, ADR-1). Usuario no hereda de EntidadTenant
+        // a propósito: su IdTenant es opcional, el de EntidadTenant no.
+        builder.Property(u => u.IdTenant)
+            .HasColumnName("id_tenant");
+
+        builder.HasOne<Tenant>()
+            .WithMany()
+            .HasForeignKey(u => u.IdTenant)
+            .HasConstraintName("fk_usuarios_tenant")
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.Property(u => u.NombreUsuario)
             .HasColumnName("usuario")
@@ -75,10 +87,18 @@ public class UsuarioConfiguration : IEntityTypeConfiguration<Usuario>
 
         // Unique parcial: un usuario dado de baja libera el nombre y el mail.
         // Con un unique común, reusar un alias exigiría purgar la fila.
-        builder.HasIndex(u => u.NombreUsuario)
+        //
+        // `usuario` es único POR TENANT, no global (doc 09, ADR-7): dos tenants pueden
+        // tener cada uno un "admin". `AreNullsDistinct(false)` (Postgres 15+
+        // `NULLS NOT DISTINCT`, este proyecto pina Postgres 17) hace que todas las filas de
+        // plataforma (`id_tenant IS NULL`) caigan en un único grupo de unicidad en vez de
+        // que cada NULL cuente como distinto — así dos cuentas de plataforma no pueden
+        // llamarse igual, sin un segundo índice ni un trigger.
+        builder.HasIndex(u => new { u.IdTenant, u.NombreUsuario })
             .HasDatabaseName("ux_usuarios_usuario")
             .HasFilter("deleted_at IS NULL")
-            .IsUnique();
+            .IsUnique()
+            .AreNullsDistinct(false);
 
         builder.HasIndex(u => u.Mail)
             .HasDatabaseName("ux_usuarios_mail")
@@ -86,5 +106,6 @@ public class UsuarioConfiguration : IEntityTypeConfiguration<Usuario>
             .IsUnique();
 
         builder.HasIndex(u => u.RolId).HasDatabaseName("ix_usuarios_rol");
+        builder.HasIndex(u => u.IdTenant).HasDatabaseName("ix_usuarios_tenant");
     }
 }
