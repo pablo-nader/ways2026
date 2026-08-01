@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Ways.Domain.Catalogos;
@@ -14,9 +15,11 @@ using Ways.Infrastructure.Persistencia;
 namespace Ways.Infrastructure.Persistencia.Migraciones
 {
     [DbContext(typeof(WaysDbContext))]
-    partial class WaysDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260801231600_CatalogosDeTenant")]
+    partial class CatalogosDeTenant
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
