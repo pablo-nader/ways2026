@@ -942,3 +942,87 @@ Once gate #3 (`CatalogosDeTenant`) is approved: generate migration 3, present ga
 (`CatalogosGlobales`), then gate #5 (`Parametros`), generating each migration only after its
 own approval — `tasks.md` 3.9–3.13. Then section 3D (Application + API) and 3E (tests),
 followed by judgment-day review before PR 3.
+
+---
+
+## Batch 2 — gate #3 approved, migration 3 generated, scope addition (3F provisioning)
+
+**Trigger:** the coordinator relayed two user decisions: (1) DB CHANGE GATE #3 approved
+exactly as presented — generate migration 3 and continue per `tasks.md`, gates #4/#5 remain
+hard stops each with their own summary; (2) `ServicioDeAprovisionamiento` (ADR-16) added to
+Slice 3 as new section 3F (tenant provisioning), landing at the end of the slice, with the
+visual ABM staying in slice 4.
+
+### Completed in batch 2
+
+- **`tasks.md` § 3F added** — 7 new tasks (3.21–3.27): `TenantActualDeSesion.Suplantar`
+  (ADR-2/ADR-3 deferred impersonation scope), the `is_local: true` `set_config` variant
+  (ADR-3), `PlantillaDeAprovisionamiento.V1` (ADR-16, área General + Efectivo + Transferencia),
+  `ServicioDeAprovisionamiento.CrearTenantAsync` (execution-strategy-wrapped transaction,
+  ADR-16's documented `BeginTransaction`/`EnableRetryOnFailure` trap), the platform-only
+  `POST /api/plataforma/tenants` endpoint, unit tests, and integration tests (end-to-end
+  provisioning + rollback-atomicity proof + 403 for a tenant actor). **Not implemented yet**
+  — this batch only added the task breakdown, per the user's own sequencing ("lands at the
+  end of Slice 3"); 3.9 (migration 3) was the only implementation task between this approval
+  and gate #4.
+- **Review Workload Forecast revised** — flagged the ~350–500 line addition from 3F, revised
+  Unit 3 estimate to ~1,250–1,800 lines, and recommended splitting Unit 3 into **3a (catalogs
+  + parametros, 3A–3E)** and **3b (tenant provisioning, 3F)** as two independently mergeable
+  work units under the existing `stacked-to-main` chain strategy, or recording
+  `size:exception` if the user prefers a single PR 3.
+- **3.9 — migration 3 (`CatalogosDeTenant`) generated and hand-finished.** `dotnet ef
+  migrations add CatalogosDeTenant` scaffolds by diffing the **entire** pending model against
+  the last migration snapshot — it doesn't know about gate boundaries. The first attempt swept
+  in gate #4's three global fiscal tables (`condiciones_fiscales`/`alicuotas_iva`/
+  `tipos_comprobante` + the `clase_comprobante` enum) **and** gate #5's `parametros` table,
+  none of which gate #3 approved. Fixed by temporarily excluding those 4 entities via
+  `modelBuilder.Ignore<T>()` in `WaysDbContext.OnModelCreating` **only during scaffold
+  generation** (removed immediately after, confirmed by rebuilding — the model is "ahead of
+  migrations" again for gates #4/#5, same documented mid-gate state as everywhere else in this
+  project). Regenerated cleanly to exactly 5 tables. One residual leak survived even with the
+  `Ignore<T>()`s: the scaffolder still emitted a `Npgsql:Enum:clase_comprobante` annotation in
+  `Up()`/`Down()` **and** both snapshot files (`*.Designer.cs` and
+  `WaysDbContextModelSnapshot.cs`), because `WaysDbContextFactory`'s design-time `MapEnum<T>()`
+  calls register enum types at the Npgsql-options level regardless of whether any entity in
+  the current diff actually uses them. Hand-stripped all four occurrences — leaving a stray
+  `CREATE TYPE clase_comprobante` in migration 3's snapshot would have made EF think that enum
+  already existed when gate #4's migration is generated later, silently skipping the real
+  `CREATE TYPE` there and breaking at runtime the first time `tipos_comprobante.clase` is
+  touched against a real database. Then hand-added the RLS calls (same technique as migrations
+  1–2): `HabilitarRlsDeTenant("areas"/"categorias"/"marcas"/"grupos"/"medios_pago")` in `Up()`;
+  `Down()` needs no explicit `DROP POLICY` since `DropTable` cascades the policies with it
+  (same as migration 1, unlike migration 2 which added RLS to a pre-existing table). File:
+  `src/Ways.Infrastructure/Persistencia/Migraciones/20260801231600_CatalogosDeTenant.cs`.
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 57/57, `Ways.Application.Tests` 63/63,
+  `Ways.IntegrationTests` 24/24** — all pre-existing slice 1/2 tests, unedited, all against
+  real Postgres with migration 3 now part of the applied chain (`Database.MigrateAsync()` ran
+  it during `WaysApiFixture`/`InicializadorDeBaseDeDatos` boot for every test in the suite).
+  Stable across 2 consecutive integration-suite runs.
+- **Real proof RLS landed correctly on the 5 new tables**, without writing new integration
+  tests yet (3.19 is still pending, deferred with the rest of 3D/3E): the existing, fully
+  generic ADR-15 policy-coverage test
+  (`AislamientoDeTenantTests.LaCoberturaDePoliciesEsCompleta`) queries `pg_class`/
+  `pg_attribute`/`pg_policies` for **any** table with an `id_tenant` column — not hardcoded to
+  specific table names — and asserts zero rows lack `ENABLE`+`FORCE`+a policy. It passed with
+  `areas`/`categorias`/`marcas`/`grupos`/`medios_pago` now included in that query's scope,
+  confirming the hand-added `HabilitarRlsDeTenant` calls actually took effect against a real
+  database, not just that the migration ran without throwing.
+
+### Deferred items (reported, not silent)
+
+- **3.10–3.13** — gate #4 (`CatalogosGlobales`) is next; its summary is the centerpiece of
+  this batch's return to the coordinator/user. Gate #5 (`Parametros`) follows in a later
+  continuation, per instructions — not batched together.
+- **3.14–3.27** (seed, Application/API, tests, 3F provisioning) — not started.
+
+### Next batch
+
+Present gate #4 (`CatalogosGlobales`) summary and STOP — no migration generated until
+approved. Then, once approved: generate migration 4, present gate #5 (`Parametros`), generate
+migration 5 once approved, seed data (3.14), Application/API (3D), tests (3E), then 3F
+(tenant provisioning) at the end of the slice, followed by judgment-day review before PR
+3(a)/3(b).

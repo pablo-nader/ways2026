@@ -23,10 +23,23 @@ PR validation gate: every PR must pass a clean judgment-day round (dual blind re
 |------|------|-----------|-------|
 | 1 | Tenancy plumbing + org tables + RLS | PR 1 | ~900–1,300 lines. Base: `main`. Gate #1+#2 of migration sequencing land here. Independently mergeable: adds new tables/infra, touches nothing existing except `PoliticaDeRoles` additively. |
 | 2 | usuarios retrofit + suspension + mail login | PR 2 | ~500–700 lines. Depends on PR 1 (`usuarios.id_tenant` FK → `tenants`). Base per chosen chain strategy. |
-| 3 | Catalogs + parametros | PR 3 | ~900–1,300 lines. Depends on PR 1 (tenant plumbing); does not require PR 2. Gates #3, #4, #5. |
+| 3 | Catalogs + parametros | PR 3 | ~900–1,300 lines *(revised, see note below)*. Depends on PR 1 (tenant plumbing); does not require PR 2. Gates #3, #4, #5. |
 | 4 | Web ABMs | PR 4 | ~600–900 lines. Depends on PR 1–3 (consumes the API surface they expose). |
 
 Each slice above satisfies the "independently mergeable, clear start/finish/verification/rollback" requirement: start = base branch state, finish = its own migration(s) + tests green, verification = its own unit/integration tests, rollback = its own down-migration(s) and route removal (proposal.md § Rollback Plan).
+
+**Revision (user decision, 2026-08-01):** `ServicioDeAprovisionamiento` (ADR-16) moved from
+"deferred, no task" into Slice 3 as new section 3F (tenant provisioning: `Suplantar` +
+`is_local` GUC variant + the execution-strategy-wrapped provisioning transaction + the
+platform-only endpoint + tests). Estimated addition: **~350–500 lines** (impersonation scope,
+provisioning service, one endpoint, unit + integration tests including the rollback-atomicity
+proof). Revised Unit 3 estimate: **~1,250–1,800 lines total**, pushing further past the
+400-line reviewable budget per PR. Recommendation: split Unit 3 into two work units under the
+same `stacked-to-main` chain strategy already in effect — **3a) catalogs + parametros** (3A–3E,
+this batch's scope through gate #5) and **3b) tenant provisioning** (3F) — each independently
+mergeable (3b's start state is 3a merged; 3b touches no catalog code, only adds the
+provisioning service/endpoint/tests). If the user prefers a single PR 3, record `size:exception`
+before opening it.
 
 ---
 
@@ -97,9 +110,9 @@ Each slice above satisfies the "independently mergeable, clear start/finish/veri
 
 ---
 
-## Slice 3: Catalogs + parametros (PR 3)
+## Slice 3: Catalogs + parametros + tenant provisioning (PR 3, or PR 3a/3b — see revised forecast)
 
-**Depends on**: Slice 1 (tenant plumbing). **Start**: PR 1 (or PR 2 chain, per chosen strategy). **Finish**: migrations 3–5 applied, catalog machine + parametros resolution live, tests green. **Rollback**: down-migrations 3–5; new endpoints only.
+**Depends on**: Slice 1 (tenant plumbing). **Start**: PR 1 (or PR 2 chain, per chosen strategy). **Finish**: migrations 3–5 applied, catalog machine + parametros resolution live, `ServicioDeAprovisionamiento` (3F) live, tests green. **Rollback**: down-migrations 3–5; new endpoints only.
 
 ### 3A. Domain + persistence machine
 
@@ -113,11 +126,11 @@ Each slice above satisfies the "independently mergeable, clear start/finish/veri
 
 ### 3B. DB CHANGE GATE #3 — BLOCKING
 
-- [ ] 3.8 **STOP.** Present migration 3 (`CatalogosDeTenant`) model summary — per-table columns, index pairs, self composite FK — and wait for explicit approval. — **Summary presented to the user** (apply-progress.md, Slice 3 batch 1); awaiting approval. No migration generated.
+- [x] 3.8 **STOP.** Present migration 3 (`CatalogosDeTenant`) model summary — per-table columns, index pairs, self composite FK — and wait for explicit approval. — **Approved by the user, 2026-08-01, exactly as presented**: 5 tables + `comportamiento_medio_pago` enum, dual partial unique indexes, recursive composite FK on `categorias`, standard RLS.
 
 ### 3C. Migrations 3–5 (each gated)
 
-- [ ] 3.9 Generate migration 3 (`CatalogosDeTenant`): `areas`, `categorias`, `marcas`, `grupos`, `medios_pago` + enum, index pairs, policies — only after 3.8 approved.
+- [x] 3.9 Generate migration 3 (`CatalogosDeTenant`): `areas`, `categorias`, `marcas`, `grupos`, `medios_pago` + enum, index pairs, policies — only after 3.8 approved. — Generated with `dotnet ef migrations add CatalogosDeTenant`, then hand-added the RLS calls (same technique as migrations 1-2): `HabilitarRlsDeTenant` on all 5 tables in `Up()`. EF's scaffold initially swept in the gate #4/#5 tables too (it diffs the *whole* pending model, not per-gate); excluded them via temporary `Ignore<T>()` during scaffold generation only, and hand-stripped the resulting stray `clase_comprobante` enum registration from `Up()`/`Down()` and both snapshot files (Designer.cs + `WaysDbContextModelSnapshot.cs`) so migration 3 is exactly what gate #3 approved — nothing from gates #4/#5 leaked in. File: `20260801231600_CatalogosDeTenant.cs`. Verified against real Postgres: the existing generic ADR-15 policy-coverage test (`AislamientoDeTenantTests.LaCoberturaDePoliciesEsCompleta`, queries `pg_class`/`pg_policies` for ANY table with `id_tenant`, not hardcoded) passed with the 5 new tables included, real proof RLS landed correctly — no new integration tests needed yet for that proof (3.19 still pending).
 - [ ] 3.10 **STOP — DB CHANGE GATE #4.** Present migration 4 (`CatalogosGlobales`) model summary — `[global]`, no `id_tenant`, no RLS — and wait for explicit approval.
 - [ ] 3.11 Generate migration 4 (`CatalogosGlobales`): `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante` — only after 3.10 approved.
 - [ ] 3.12 **STOP — DB CHANGE GATE #5.** Present migration 5 (`Parametros`) model summary — table, two partial unique indexes, NULL-uniqueness reasoning (ADR-13) — and wait for explicit approval.
@@ -135,6 +148,50 @@ Each slice above satisfies the "independently mergeable, clear start/finish/veri
 
 - [ ] 3.19 [P] Integration tests: CRUD once per catalog through the shared route map; cross-tenant catalog id ⇒ 404; fiscal catalogs GET 200 / write 403; categoria depth 4 ⇒ 400. *(spec: auxiliary-catalogs)*
 - [ ] 3.20 [P] Integration tests: `parametros` resolution end to end (punto_venta wins, empresa fallback, documented default on miss). *(spec: parametros-operativos)*
+
+### 3F. Tenant provisioning (ADR-16) — lands at the end of Slice 3 (user decision, 2026-08-01)
+
+**Why here, not slice 4.** The visual ABM (`tasks.md` 4.8) needs a real endpoint to call. This
+section builds that endpoint and its transactional guarantees; slice 4 only adds the form.
+Depends on 3A–3E (catalog machine + the seeded fiscal data aren't required by provisioning
+itself, but `PlantillaDeAprovisionamiento` reuses the `Area`/`MedioPago` shapes from 3A).
+
+- [ ] 3.21 Implement `TenantActualDeSesion.Suplantar(idTenant)`: an `IDisposable` impersonation
+  scope (ADR-2/ADR-3 deferred item, carried since slice 1) that switches the EF filter/stamping
+  value to `idTenant` for the scope's lifetime and restores the previous value on `Dispose()`.
+  *(ADR-16)*
+- [ ] 3.22 Add the `is_local: true` `set_config` variant (ADR-3's deferred piece) — re-applied on
+  the transaction's already-open connection when `Suplantar` is entered inside an explicit
+  transaction, instead of the session-level `is_local: false` `InterceptorDeContextoDeTenant`
+  path used everywhere else. *(ADR-3, ADR-16)*
+- [ ] 3.23 Add `PlantillaDeAprovisionamiento.V1` (ADR-16): área "General", medios de pago
+  "Efectivo" (`comportamiento = efectivo`) and "Transferencia" (`comportamiento = electronico`,
+  `requiere_referencia = true`) + unit test — V1 contains exactly that área and those two
+  medios; the deferred template items (generic price-list placeholder, "Consumidor Final"
+  customer — `listas_precio`/`clientes` don't exist yet) are asserted as explicitly flagged
+  extension points, not silently dropped. *(ADR-16)*
+- [ ] 3.24 Implement `ServicioDeAprovisionamiento.CrearTenantAsync`:
+  `db.Database.CreateExecutionStrategy().ExecuteAsync(...)` wrapping `BeginTransactionAsync`
+  (documented trap — `EnableRetryOnFailure` makes EF throw on a user-initiated
+  `BeginTransaction` outside this wrapper) → create `tenants` row (platform mode) →
+  `Suplantar(tenant.Id)` → `empresas` + `puntos_venta` + the template (3.23) → tenant admin
+  `Usuario` (temp password, hashed with the existing `IHasheadorDeContrasenas`, returned once
+  in the response, never persisted in plain text) → `CommitAsync`. *(ADR-16)*
+- [ ] 3.25 Add `POST /api/plataforma/tenants`: platform-role-only (403 for any tenant-scoped
+  actor — reuse `PoliticaDeRoles`/existing platform-only policy pattern), request contract
+  (tenant nombre, empresa razón social, punto de venta nombre), response contract (created
+  ids + the one-time admin password). *(spec: tenant-organization / Tenant Provisioning With
+  Template Seed; ADR-16)*
+- [ ] 3.26 [P] Unit tests: `PlantillaDeAprovisionamiento` (folded into 3.23 if not already
+  separate), any DB-free orchestration logic extracted from `ServicioDeAprovisionamiento`
+  (e.g. the temp-password generation policy, if it's a pure function).
+- [ ] 3.27 [P] Integration tests: provision a tenant end to end (tenant + empresa + punto de
+  venta + the template's área + 2 medios de pago + the admin `Usuario` all exist after the
+  call; the returned password logs the new admin in for real); a forced mid-provisioning
+  failure (e.g. a duplicate/invalid row injected on purpose) leaves **nothing** behind — the
+  transaction-atomicity proof design.md's Test Strategy already calls out; `403` for a
+  tenant-role actor hitting the endpoint. *(spec: tenant-organization / Tenant Provisioning
+  With Template Seed)*
 
 ---
 
