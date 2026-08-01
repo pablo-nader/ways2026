@@ -112,7 +112,14 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
 
     /// <summary>Un <see cref="WaysDbContext"/> nuevo contra <c>ways_app</c>, con el
     /// <see cref="ITenantActual"/> que pida la prueba — para ejercer la capa 1 (filtro de
-    /// EF) igual que lo hace la API, sin pasar por HTTP.</summary>
+    /// EF) igual que lo hace la API, sin pasar por HTTP.
+    ///
+    /// Tiene que registrar <see cref="InterceptorDeContextoDeTenant"/> a mano, igual que
+    /// <c>DependencyInjection.AgregarInfrastructure</c> lo hace vía DI en producción: sin
+    /// el interceptor nunca corre el <c>set_config</c> de conexión, el GUC queda sin
+    /// setear y hasta un contexto en modo plataforma se topa con <c>WITH CHECK</c> — este
+    /// helper es el único lugar donde ese cableado se arma a mano, así que es el único
+    /// lugar donde se puede (y se pudo) olvidar.</summary>
     public WaysDbContext CrearContextoDeAplicacion(ITenantActual tenantActual)
     {
         var opciones = new DbContextOptionsBuilder<WaysDbContext>()
@@ -121,6 +128,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<EstadoUsuario>("estado_usuario");
                 npgsql.MapEnum<EstadoTenant>("estado_tenant");
             })
+            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;
 
         return new WaysDbContext(opciones, tenantActual);
