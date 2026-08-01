@@ -196,9 +196,9 @@ static async Task ResolverTenantDeLaSesionAsync(CookieValidatePrincipalContext c
         return;
     }
 
-    // El claim ways:id_tenant todavía no lo emite ningún login (lo agrega el retrofit
-    // de usuarios del slice 2). Sin claim, el contexto queda "Ninguno": no ve nada
-    // scopeado. No rompe nada en este slice — no hay endpoints tenant-scoped todavía.
+    // El claim ways:id_tenant está ausente para staff de plataforma (ya cubierto arriba,
+    // esRoot) y para cualquier cuenta creada antes del backfill de la migración 2
+    // (gate #2 pendiente). Sin claim el contexto queda "Ninguno": no ve nada scopeado.
     if (!int.TryParse(ctx.Principal?.FindFirstValue(ClaimsWays.IdTenant), out var idTenant))
     {
         tenantActual.Establecer(ModoDeAcceso.Ninguno, idTenant: null);
