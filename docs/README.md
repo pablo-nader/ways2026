@@ -16,6 +16,8 @@ Reescritura del ERP/POS Ways. El sistema actual es una aplicación PHP monolíti
 | [06 — Roadmap](06-roadmap.md) | Fases, criterios de salida y qué hay que hacer hoy |
 | [07 — Despliegue](07-despliegue.md) | EasyPanel, variables de entorno, modo todo-en-uno y desarrollo local |
 | [08 — Usuarios y login](08-usuarios-y-login.md) | Primera tabla del sistema nuevo: esquema, reglas de rol y sesión |
+| [09 — Multi-tenancy](09-multi-tenancy.md) | Tenants, empresas y puntos de venta: jerarquía, scoping, compartición de catálogo y numeración |
+| [10 — Modelo de datos](10-modelo-de-datos.md) | El schema definitivo del producto: comprobantes de venta y compra, medios de pago, fiscal, caja, listas de precio y ofertas. **Reemplaza el schema del doc 03** |
 
 ## Estado
 

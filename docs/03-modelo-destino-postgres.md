@@ -1,5 +1,10 @@
 # 03 — Modelo destino (PostgreSQL)
 
+> ⚠ **Superado en su parte de schema por el [doc 10](10-modelo-de-datos.md)**, que define
+> el modelo normalizado definitivo (multi-tenant, comprobantes, medios de pago, fiscal).
+> Este documento sigue vigente como referencia del **mapeo legacy → destino** para la
+> migración de datos.
+
 > Objetivo: paridad funcional con el legacy, pero con el modelo que el legacy ya había
 > empezado a construir (`listas_precio`, `precios`, `articulos_oferta`, `stock`) y nunca terminó.
 
