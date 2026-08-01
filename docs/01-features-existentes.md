@@ -10,7 +10,7 @@
 
 ### A1. Login
 - **Ruta:** `index.php?menu=login`
-- Combo con todos los usuarios `tipoUser IN (2,3,4)` ordenados por nombre + campo password.
+- Combo con todos los usuarios `tipoUser IN (2,3,4)` ordenados por `user` (no por nombre) + campo password.
 - Valida contra `usuarios.pass` en texto plano.
 - Mensajes: usuario inexistente / contraseña incorrecta / sin locales habilitados.
 - Si el usuario tiene 1 punto de venta entra directo a Ventas; si tiene varios, va a A2.
@@ -65,6 +65,8 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 
 - La oferta por cantidad también se evalúa en negativo (`$cantidad2 = cantidad * -1`) para **devoluciones**.
 - ⚠ Redondeo raro: los centavos del descuento se fuerzan a `.00` salvo que sean exactamente `.50`.
+  Esto solo aplica al bloque de **Oferta por Cantidad** (`funciones.php:41-45,59-63`); la
+  **Oferta por Fecha** usa `number_format` normal, sin este forzado.
 - El descuento entra como una **línea propia** del ticket con barra `OF<codigo>`, cantidad `-`, precio `-`.
 - Etiqueta: `articulos.nombreOferta`, o `"DESCUENTO POR CANTIDAD"` si está vacío.
 
@@ -103,6 +105,10 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 - Si hay un ticket en curso al recuperar, hace **swap** (el actual pasa al slot); si no, recupera y libera el slot.
 - ⚠ Todo esto está triplicado literalmente en el código (≈250 líneas duplicadas).
 - ⚠ Se pierde al vencer la sesión PHP.
+- ⚠ **Asimetría del slot 3:** en `facturacion.php:97`, al guardar en el slot 3 el código hace
+  `$_SESSION['guardado'][3]['direccion']=$_SESSION['direccion']="";` — borra el domicilio de
+  entrega **antes** de copiarlo al slot, a diferencia de los slots 1 y 2 (que preservan el valor
+  con `?? ""`). El domicilio siempre se pierde al usar el slot 3.
 
 ### B6. Cierre de la venta (F9 → F9)
 
@@ -161,7 +167,7 @@ calculado, la diferencia se guarda en `ventas.saldo` (positiva = sobrante, negat
 | `reTicket.php` | Reimpresión de un ticket ya guardado, por ID. |
 | `ticketCC.php` | Comprobante de cierre de caja. |
 | `ticketRetiro.php` | Comprobante de retiro de efectivo. |
-| `imprimirArticulos.php` | Lista de reposición (sin stock / bajo mínimo) por proveedor. |
+| `imprimirArticulos.php` | Lista de reposición (sin stock / bajo mínimo) por proveedor. ⚠ Abre su propia conexión hardcodeada `mysqli_connect('127.0.0.1','root','','ways')` en vez de usar `conexion.php` — mismo patrón que `combos.php` — por lo que probablemente falla en el hosting de producción. |
 
 - **Comanda de rotisería:** si alguna línea tiene `id_area == 8`, se imprime un bloque extra
   "COMANDA" con ticket, domicilio, hora y los ítems. ⚠ `areas` solo llega hasta el id 6 —
@@ -277,6 +283,8 @@ Tabla con filtro por proveedor. Columnas: ID (4 dígitos), nombre, unidades por 
 **costo sin IVA** (`lista / 1.21`), costo final, bulto sin IVA, bulto final, precio de venta.
 ⚠ El 21% de IVA está hardcodeado. Los inactivos se muestran en naranja.
 Acciones: editar, eliminar (soft `activo=0`) / restaurar (`activo=1`).
+⚠ Los inputs ocultos apuntando a `opc=editarMasivo` no tienen ningún handler en `articulos.php`
+(el router no tiene `case 'editarMasivo'`) — vestigio no funcional.
 
 ### E2. Crear artículo (`opc=nuevo`)
 Solo pide **código de barras + nombre**. Si el código ya existe redirige a la edición.
@@ -299,11 +307,17 @@ Resultado: cuando el checkbox está tildado guarda el string `"on"` (→ `1` al 
 está destildado guarda `0`. Funciona por accidente, pero es frágil.
 
 ### E4. Códigos de barra (`cargarCodigo.php`)
-Modal que agrega un EAN adicional al artículo. Valida largo entre 7 y 13 dígitos y unicidad global.
-Un artículo puede tener **N códigos de barra** (tabla `codigos_barra`).
+Modal que agrega un EAN adicional al artículo. Un artículo puede tener **N códigos de barra**
+(tabla `codigos_barra`).
+⚠ El backend solo valida **unicidad** del código. La validación de largo (7–13 dígitos) es
+solo del lado del cliente (`articulos.php`, función JS `validateCodigo`) y se puede saltear
+haciendo un POST directo a `cargarCodigo.php`.
 
 ### E5. Cambiar código (`cambiarCodigo.php`, 510 líneas)
-Herramienta de reasignación masiva de códigos.
+⚠ **Código muerto / inalcanzable.** El router `articulos.php` no tiene ningún `case 'cambiarCodigo'`
+(cae al `default`) y nada del frontend enlaza a esta pantalla. Además consulta columnas viejas
+(`caja`, `proveedor`, `marca`, `grupo`) que ya no existen en `articulos` (el schema actual usa
+`id_area`, `id_proveedor`, `id_marca`, `id_grupo`). No es una herramienta operativa hoy.
 
 ### E6. Marcas (`opc=marcas`)
 ABM simple: id, nombre, grupo, proveedor.
@@ -312,9 +326,17 @@ ABM simple: id, nombre, grupo, proveedor.
 ABM con nombre y **margen %**, más la configuración de oferta de grupo
 (por cantidad / directa, con restricción de días y horas).
 
+Dos acciones adicionales, no documentadas en el menú pero presentes en el código:
+- `&eliminarGrupo=<id>` — `DELETE FROM grupos` y luego `UPDATE articulos SET grupo='0' WHERE grupo=<id>`.
+  ⚠ La columna `grupo` ya no existe en `articulos` (el schema actual usa `id_grupo`), así que ese
+  `UPDATE` falla silenciosamente y los artículos del grupo eliminado quedan con un `id_grupo` huérfano.
+- `&eliminarOfertaGrupo=<id>` — resetea a `0` todos los campos de oferta del grupo
+  (`ofertaCantidad`, `ofertaDirecta`, `dias`, `horas`, `cantidad`, `precio`, `descuento`, etc.).
+
 ### E8. Proveedores (`opc=proveedores`)
-ABM: nombre, razón social, CUIT, domicilio, teléfono, vendedor, celular, supervisor,
-celular del supervisor, margen.
+ABM: el formulario real solo lee/escribe **nombre, razón social y CUIT**. El resto de las
+columnas de la tabla (`domicilio`, `tel`, `vendedor`, `cel`, `supervisor`, `celSupervisor`,
+`margen`) existen en el schema pero no están expuestas en ningún formulario.
 
 ### E9. Stock (`opc=stock`)
 Tablero de inventario:
@@ -340,12 +362,20 @@ Nombre, apellido, DNI, fecha de nacimiento, domicilio, teléfono, celular, e-mai
 Se crea con `tipoUser = 1` y `lista = 1`. El campo `user` se arma como `"Nombre Apellido"`.
 
 ### F3. Editar (`opc=editar&usuario=`)
-Todo lo anterior más `tipoUser`, `user`, `pass` (⚠ en claro), `lista` (1 = normal, 2 = empleado) y **saldo editable a mano**.
+Todo lo anterior más `tipoUser`, `user`, `pass` (⚠ en claro), `lista` y **saldo editable a mano**.
+
+El combo `lista` tiene **4 opciones**, no 2: `1` Normal, `2` Descuento Especial, `3` "5% Descuento",
+`4` "10% Descuento".
+
+`tipoUser` tiene además una 4ª variante, **"Super Administrador"** (`tipoUser=4`), que en este
+formulario aparece bloqueada (input oculto de solo lectura): no es reasignable desde la UI de edición.
 
 ### F4. Cuenta corriente (`opc=cc&usuario=`)
 Cabecera con datos del cliente, saldo, acuerdo y **disponibilidad** (`acuerdo − saldo`).
 Movimientos del último mes por defecto, con filtro desde/hasta o "Ver Histórico".
 El saldo se muestra corriendo hacia atrás desde el saldo actual.
+⚠ `echo $listaCliente;` de depuración (`cuenta-corriente.php:51`) imprime un valor crudo
+directo en el HTML de la página.
 
 Tipos de movimiento (`ventas.tipo`):
 
@@ -370,6 +400,11 @@ Tipos de movimiento (`ventas.tipo`):
   - Graba una `venta` de `tipo = 4` con el detalle y ajusta el saldo.
   - **Efecto de negocio:** el fiado se indexa al precio del día de pago, no al de la compra.
     Es un mecanismo anti-inflación.
+  - ⚠ **Alcance de `usuarios.lista`:** esta distinción `precio`/`precioEmp` según `lista` **solo
+    existe acá**, dentro de "Actualizar precios" (`cuenta-corriente.php:64-87`). El motor de venta
+    del POS (`facturacion.php:560-620`) siempre usa `articulos.precio` y nunca consulta
+    `usuarios.lista` — un cliente "empleado" paga el precio de mostrador normal al cobrar. No hay
+    pricing diferenciado en el checkout hoy.
 
 ---
 
@@ -417,10 +452,16 @@ Control del negocio de recargas y servicios. Tres canales:
 | `mostrarClientes.php` | `valorBusqueda` | tabla HTML con link `&cambiarUser=` |
 | `mostrarClientesCC.php` | `valorBusqueda` | ídem apuntando a cuenta corriente |
 | `cargarCodigo.php` | `barcode`, `id` | `"EXITO:mensaje"` o `"ERROR:mensaje"` |
-| `filtrarArticulo.php` / `filtrarUsuario.php` | — | filtros de listado |
+| `filtrarArticulo.php` / `filtrarUsuario.php` | — | ⚠ código muerto (ver abajo) |
 | `combos.php` | `valorBusqueda` | ⚠ roto |
 
 ⚠ Ninguno valida sesión. `buscar.php` y `cargarCodigo.php` son accesibles sin login.
+
+⚠ **`filtrarArticulo.php` / `filtrarUsuario.php` son código muerto.** Ningún `$.post`/`$.get` del
+frontend los invoca. Abren su propia conexión hardcodeada (`c1890978_ways` / `naGOfi35me`),
+distinta de la de `conexion.php`, y consultan columnas viejas de `articulos` (`caja`, `proveedor`,
+`marca`, `grupo`) que ya no existen. `filtrarUsuario.php` ni siquiera toca la tabla `usuarios`: es
+un clon mal copiado que consulta `articulos` igual que `filtrarArticulo.php`.
 
 ---
 
@@ -429,7 +470,10 @@ Control del negocio de recargas y servicios. Tres canales:
 1. Un artículo tiene **N códigos de barra** + un código interno corto.
 2. Códigos de menos de 7 dígitos son ID interno; de 7 o más, EAN.
 3. **5 precios por artículo:** lista, oferta, por cantidad, empleado, y costo (lista/nominal/oferta).
-4. La lista de precios del cliente (`usuarios.lista`) decide entre `precio` y `precioEmp`.
+4. ⚠ La lista de precios del cliente (`usuarios.lista`) decide entre `precio` y `precioEmp`
+   **solo** dentro de "Actualizar precios" de cuenta corriente (`cuenta-corriente.php:64-87`).
+   El motor de venta del POS (`facturacion.php:560-620`) siempre cobra `articulos.precio` y no
+   consulta `usuarios.lista` — no hay pricing diferenciado por cliente en el checkout.
 5. Ofertas por horario, por rango de fechas y por cantidad, a nivel artículo y a nivel grupo.
 6. La caja se cierra manualmente y congela ventas y gastos del período (`cerrada = 1`, `id_caja`).
 7. La caja Z arrastra el saldo del fondo entre cierres.

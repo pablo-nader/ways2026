@@ -110,9 +110,13 @@ index.php?menu=<modulo>&opc=<seccion>&<accion>=<valor>
 |---|---|
 | `actualizar.php` | Sincroniza contra `152.171.159.179` con `root2/ePn35376189w`. Usa columnas del schema pre-2.0 (`caja`, `proveedor`, `marca`, `grupo`) que ya no existen. Falla siempre. |
 | `combos.php` | Conecta a `127.0.0.1 root` sin password, base `ways`. Consulta columnas viejas. Falla siempre. |
+| `modulos/articulos/cambiarCodigo.php` | Inalcanzable: `articulos.php` no tiene `case 'cambiarCodigo'` (cae al `default`) y nada del frontend enlaza a esta pantalla. Además consulta columnas del schema viejo (`caja`, `proveedor`, `marca`, `grupo`) que ya no existen. |
+| `filtrarArticulo.php` / `filtrarUsuario.php` | Huérfanos: ningún `$.post`/`$.get` del frontend los invoca. Consultan columnas del schema viejo. `filtrarUsuario.php` ni siquiera toca `usuarios`: es un clon mal copiado que consulta `articulos`. |
+| `imprimirArticulos.php` | Abre su propia conexión hardcodeada `mysqli_connect('127.0.0.1','root','','ways')` en vez de `conexion.php` — probablemente falla en el hosting de producción. |
 | `mostrarArticulos2.php` | Referenciado desde `index.php`, **el archivo no existe**. |
 | `sorteo.php` | Referenciado desde `index.php`, **no existe**. |
 | `sistema.php` | Referenciado en el `switch` de `body.php`, **no existe**. |
+| `errores/{403,404,405,500,503,countdown}.php`, `404.php` (raíz) | Nunca referenciados: no existe `.htaccess` que los dispare. El único de `errores/` que se usa es `offline.php`, incluido explícitamente desde `index.php:422`. |
 | `facturacion.php:876` | Rama `if(isset($_GET['proveedor']))` del alta de compras: consulta `WHERE proveedor='...'` (columna renombrada a `id_proveedor`). Rota. |
 | `combos` (tabla) | 0 filas. Feature abandonado. |
 | `articulos_oferta`, `precios`, `listas_precio`, `stock` | Tablas creadas para una refactorización de precios/stock multi-local que **nunca se cableó al código**. Ver `03-modelo-destino-postgres.md`. |
@@ -122,7 +126,9 @@ index.php?menu=<modulo>&opc=<seccion>&<accion>=<valor>
 ## 7. Deuda técnica crítica (para no repetirla)
 
 1. **SQL injection en todas partes.** Cada query es interpolación de string con `$_GET`/`$_POST`.
-2. **Credenciales de producción versionadas** en `conexion.php` y `actualizar.php`.
+2. **Credenciales de producción versionadas** en `conexion.php` y `actualizar.php`. `filtrarArticulo.php`
+   y `filtrarUsuario.php` suman una tercera fuente: abren su propia conexión con credenciales
+   distintas a las de `conexion.php`, también versionadas en el repo.
 3. **Contraseñas en texto plano** en la tabla `usuarios`.
 4. **Dinero en `float(10,2)`.** Todos los importes. Errores de redondeo acumulativos garantizados.
 5. **El detalle de venta es un string.** `ventas.articulos` guarda
