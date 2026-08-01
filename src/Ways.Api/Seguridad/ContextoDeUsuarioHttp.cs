@@ -8,6 +8,12 @@ namespace Ways.Api.Seguridad;
 public static class ClaimsWays
 {
     public const string RolId = "ways:id_rol";
+
+    /// <summary>Ausente todavía para toda cuenta: <c>usuarios.id_tenant</c> lo agrega el
+    /// retrofit del stage 1 slice 2. Se lee de forma defensiva desde ya (ver
+    /// <c>Program.cs</c>, <c>OnValidatePrincipal</c>) para no tener que retocar el pipeline
+    /// de autenticación cuando el claim empiece a emitirse.</summary>
+    public const string IdTenant = "ways:id_tenant";
 }
 
 public class ContextoDeUsuarioHttp(IHttpContextAccessor accessor) : IContextoDeUsuario

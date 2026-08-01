@@ -10,8 +10,10 @@ using Ways.Api.Endpoints;
 using Ways.Api.Seguridad;
 using Ways.Application;
 using Ways.Application.Abstracciones;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure;
+using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
 
 // El content root se fija al directorio del ensamblado en vez de heredarlo del working
@@ -93,7 +95,10 @@ builder.Services
                 ctx.RejectPrincipal();
                 await ctx.HttpContext.SignOutAsync(
                     CookieAuthenticationDefaults.AuthenticationScheme);
+                return;
             }
+
+            await ResolverTenantDeLaSesionAsync(ctx, db);
         };
     });
 
@@ -173,3 +178,51 @@ app.MapFallback(async contexto =>
 }).AllowAnonymous();
 
 app.Run();
+
+// --- Resolución del tenant de la sesión (ADR-2) ---
+// Vive acá y no en un método de instancia porque necesita los mismos servicios de
+// request que OnValidatePrincipal ya tiene resueltos (db, HttpContext).
+static async Task ResolverTenantDeLaSesionAsync(CookieValidatePrincipalContext ctx, WaysDbContext db)
+{
+    var tenantActual = ctx.HttpContext.RequestServices.GetRequiredService<TenantActualDeSesion>();
+
+    var esRoot =
+        int.TryParse(ctx.Principal?.FindFirstValue(ClaimsWays.RolId), out var rolId)
+        && (RolConocido)rolId == RolConocido.Root;
+
+    if (esRoot)
+    {
+        tenantActual.Establecer(ModoDeAcceso.Plataforma, idTenant: null);
+        return;
+    }
+
+    // El claim ways:id_tenant todavía no lo emite ningún login (lo agrega el retrofit
+    // de usuarios del slice 2). Sin claim, el contexto queda "Ninguno": no ve nada
+    // scopeado. No rompe nada en este slice — no hay endpoints tenant-scoped todavía.
+    if (!int.TryParse(ctx.Principal?.FindFirstValue(ClaimsWays.IdTenant), out var idTenant))
+    {
+        tenantActual.Establecer(ModoDeAcceso.Ninguno, idTenant: null);
+        return;
+    }
+
+    tenantActual.Establecer(ModoDeAcceso.Tenant, idTenant);
+
+    // IgnoreQueryFilters(["BajaLogica"]) para distinguir "el tenant no existe" (bug) de
+    // "está dado de baja" (estado de negocio) — las dos rechazan la sesión igual, pero
+    // sin ignorar la baja lógica un tenant borrado devolvería null y se confundiría con
+    // el default(EstadoTenant) = Activo si se seleccionara solo el campo.
+    var tenant = await db.Tenants
+        .AsNoTracking()
+        .IgnoreQueryFilters(["BajaLogica"])
+        .FirstOrDefaultAsync(t => t.Id == idTenant);
+
+    if (tenant is null || tenant.Estado != EstadoTenant.Activo || tenant.DeletedAt is not null)
+    {
+        ctx.RejectPrincipal();
+        await ctx.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    }
+}
+
+/// <summary>Hace público el <c>Program</c> implícito de top-level statements para que
+/// <c>WebApplicationFactory&lt;Program&gt;</c> lo vea desde <c>Ways.IntegrationTests</c>.</summary>
+public partial class Program;

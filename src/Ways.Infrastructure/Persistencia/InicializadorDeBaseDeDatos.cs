@@ -1,7 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Ways.Application.Abstracciones;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
+using Ways.Infrastructure.Multitenancy;
 
 namespace Ways.Infrastructure.Persistencia;
 
@@ -11,8 +14,10 @@ namespace Ways.Infrastructure.Persistencia;
 /// </summary>
 public class InicializadorDeBaseDeDatos(
     WaysDbContext db,
+    TenantActualDeSesion tenantActual,
     IHasheadorDeContrasenas hasheador,
     IRelojDelSistema reloj,
+    IHostEnvironment entorno,
     ILogger<InicializadorDeBaseDeDatos> log)
 {
     private static readonly (RolConocido Rol, string Nombre, string Descripcion)[] RolesBase =
@@ -25,11 +30,53 @@ public class InicializadorDeBaseDeDatos(
 
     public async Task EjecutarAsync(SemillaRoot semilla, CancellationToken ct = default)
     {
+        // Todo lo que sigue en este scope corre en modo plataforma: migraciones, RLS y
+        // semilla no tienen un tenant "actual", siembran para el tenant que corresponda
+        // de forma explícita (ADR-14).
+        tenantActual.Establecer(ModoDeAcceso.Plataforma, idTenant: null);
+
+        await VerificarRolSinBypassAsync(ct);
+
         log.LogInformation("Aplicando migraciones pendientes.");
         await db.Database.MigrateAsync(ct);
 
         await SembrarRolesAsync(ct);
         await SembrarRootAsync(semilla, ct);
+        await SembrarOrganizacionAsync(ct);
+    }
+
+    /// <summary>
+    /// ADR-5: <c>FORCE ROW LEVEL SECURITY</c> no alcanza si el rol conectado es
+    /// superusuario o tiene <c>BYPASSRLS</c> — Postgres ignora las policies igual, y el
+    /// aislamiento entre tenants quedaría solo en manos del filtro de EF. Frena el
+    /// arranque en Production; en el resto de los entornos solo avisa.
+    /// </summary>
+    private async Task VerificarRolSinBypassAsync(CancellationToken ct)
+    {
+        var fila = await db.Database
+            .SqlQuery<EstadoDelRolConectado>(
+                $"""
+                SELECT rolsuper AS "RolSuper", rolbypassrls AS "RolBypassRls"
+                FROM pg_roles WHERE rolname = current_user
+                """)
+            .FirstOrDefaultAsync(ct);
+
+        if (fila is null || (!fila.RolSuper && !fila.RolBypassRls))
+        {
+            return;
+        }
+
+        const string mensaje =
+            "El rol de conexión tiene rolsuper o rolbypassrls: Postgres ignora " +
+            "FORCE ROW LEVEL SECURITY y el aislamiento entre tenants queda solo en " +
+            "manos del filtro de EF Core.";
+
+        if (entorno.IsProduction())
+        {
+            throw new InvalidOperationException(mensaje);
+        }
+
+        log.LogWarning("{Mensaje}", mensaje);
     }
 
     private async Task SembrarRolesAsync(CancellationToken ct)
@@ -98,6 +145,66 @@ public class InicializadorDeBaseDeDatos(
             "Cambiala antes de poner el sistema en producción.",
             semilla.Usuario);
     }
+
+    /// <summary>
+    /// Siembra el tenant 1 / empresa 1 / los 2 puntos de venta actuales (doc 09: "el
+    /// negocio actual es el tenant 1, una empresa, dos puntos de venta"). Solo corre una
+    /// vez: si ya existe algún tenant, no vuelve a tocar nada.
+    /// </summary>
+    private async Task SembrarOrganizacionAsync(CancellationToken ct)
+    {
+        var hayTenants = await db.Tenants.IgnoreQueryFilters().AnyAsync(ct);
+        if (hayTenants)
+        {
+            return;
+        }
+
+        var ahora = reloj.Ahora;
+
+        var tenant = new Tenant
+        {
+            Nombre = "Ways",
+            Estado = EstadoTenant.Activo,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.Tenants.Add(tenant);
+        await db.SaveChangesAsync(ct);
+
+        var empresa = new Empresa
+        {
+            IdTenant = tenant.Id,
+            RazonSocial = "Ways",
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.Empresas.Add(empresa);
+        await db.SaveChangesAsync(ct);
+
+        db.PuntosVenta.AddRange(
+            new PuntoVenta
+            {
+                IdTenant = tenant.Id,
+                IdEmpresa = empresa.Id,
+                Nombre = "Local 1",
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            },
+            new PuntoVenta
+            {
+                IdTenant = tenant.Id,
+                IdEmpresa = empresa.Id,
+                Nombre = "Local 2",
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            });
+
+        await db.SaveChangesAsync(ct);
+
+        log.LogInformation(
+            "Sembrado el tenant inicial '{Tenant}' con su empresa y 2 puntos de venta.",
+            tenant.Nombre);
+    }
 }
 
 /// <summary>Credenciales de la cuenta root inicial. Se configuran por variables de entorno.</summary>
@@ -109,3 +216,5 @@ public class SemillaRoot
     public string Mail { get; set; } = "test@test.com";
     public string Password { get; set; } = "root";
 }
+
+file sealed record EstadoDelRolConectado(bool RolSuper, bool RolBypassRls);
