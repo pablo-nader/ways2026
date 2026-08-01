@@ -16,6 +16,7 @@ namespace Ways.IntegrationTests;
 /// clase falla en el fixture, no en cada aserción individual — esa es la gate real
 /// (el daemon), no algo que se resuelva con un <c>Skip</c> en el código.
 /// </summary>
+[Collection("Ways.IntegrationTests secuencial")]
 public class AislamientoDeTenantTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private async Task<(int TenantId, int EmpresaId)> CrearTenantConEmpresaAsync(string nombre)

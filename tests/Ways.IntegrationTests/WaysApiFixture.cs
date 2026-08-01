@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -49,24 +48,15 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
         await _contenedor.StartAsync();
         await MigrarComoOwnerAsync();
         AppConnectionString = await CrearRolDeAplicacionAsync();
+
+        // Ver el comentario de ConfigureWebHost: esto (no el override de configuración de
+        // ahí) es lo que de verdad hace que Program.cs se conecte al contenedor.
+        Environment.SetEnvironmentVariable("ConnectionStrings__Ways", AppConnectionString);
     }
 
     /// <summary>Corre las migraciones existentes directamente contra el contenedor, con el
     /// rol dueño — igual que <c>InicializadorDeBaseDeDatos</c> en producción, pero antes de
-    /// que exista el host de la API (que va a conectarse como <c>ways_app</c>).
-    ///
-    /// <c>PendingModelChangesWarning</c> silenciado a propósito, SOLO ACÁ: mientras stage-1
-    /// slice 2 está detenido en la DB CHANGE GATE #2 (`usuarios.id_tenant` ya existe en el
-    /// modelo de <c>Usuario</c>/<c>UsuarioConfiguration</c>, la migración todavía no —
-    /// `CLAUDE.md` prohíbe generarla sin aprobación explícita), el modelo en memoria y el
-    /// snapshot de la última migración difieren de verdad, y EF Core 8+ lo trata como error
-    /// fatal por default. Es exactamente el escenario documentado para este flag (ver el
-    /// mensaje de la propia excepción). Ninguna prueba de este proyecto toca `usuarios`
-    /// contra Postgres real todavía (las que sí lo hacen están con <c>Skip</c> hasta que la
-    /// migración exista), así que aplicar las tres migraciones existentes con el esquema
-    /// viejo de <c>usuarios</c> es seguro. Sacar este silenciado en el mismo batch que
-    /// genere la migración 2 — a partir de ahí modelo y snapshot vuelven a coincidir y el
-    /// warning no se dispara más.</summary>
+    /// que exista el host de la API (que va a conectarse como <c>ways_app</c>).</summary>
     private async Task MigrarComoOwnerAsync()
     {
         var opciones = new DbContextOptionsBuilder<WaysDbContext>()
@@ -75,7 +65,6 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<EstadoUsuario>("estado_usuario");
                 npgsql.MapEnum<EstadoTenant>("estado_tenant");
             })
-            .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
             .Options;
 
         await using var db = new WaysDbContext(opciones, TenantActualFijo.Plataforma);
@@ -84,7 +73,18 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
 
     /// <summary>ADR-5 / ADR-17: <c>ways_app</c> tiene los GRANTs de datos sobre lo que la
     /// migración creó, pero ni <c>SUPERUSER</c> ni <c>BYPASSRLS</c> — así <c>FORCE ROW
-    /// LEVEL SECURITY</c> se prueba de verdad.</summary>
+    /// LEVEL SECURITY</c> se prueba de verdad.
+    ///
+    /// El <c>CREATE</c> sobre el schema (agregado en batch 7, slice 2) hace falta porque
+    /// <c>InicializadorDeBaseDeDatos.EjecutarAsync</c> llama a <c>Database.MigrateAsync()</c>
+    /// en CADA arranque del host — también cuando arranca como <c>ways_app</c>, más allá de
+    /// que <see cref="MigrarComoOwnerAsync"/> ya haya dejado el esquema al día como dueño.
+    /// Postgres exige <c>CREATE</c> en el schema para siquiera intentar el
+    /// <c>CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory"</c> con el que EF verifica si
+    /// hay migraciones pendientes, sin importar que la tabla ya exista. Esto no debilita la
+    /// prueba de RLS (que depende de <c>NOSUPERUSER</c>/<c>NOBYPASSRLS</c>, no de los
+    /// permisos de schema) y en los hechos representa mejor a producción: ADR-5 documenta
+    /// que ahí el rol de la aplicación ES el dueño de las tablas.</summary>
     private async Task<string> CrearRolDeAplicacionAsync()
     {
         await using (var conexion = new NpgsqlConnection(OwnerConnectionString))
@@ -95,7 +95,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
             comando.CommandText =
                 $"""
                 CREATE ROLE {RolApp} LOGIN PASSWORD '{PasswordApp}' NOSUPERUSER NOBYPASSRLS;
-                GRANT USAGE ON SCHEMA public TO {RolApp};
+                GRANT USAGE, CREATE ON SCHEMA public TO {RolApp};
                 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {RolApp};
                 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {RolApp};
                 """;
@@ -113,7 +113,20 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
 
     /// <summary>La API bajo prueba corre con <c>ways_app</c>, no con el dueño de las
     /// tablas — igual que en producción, donde un rol sin <c>BYPASSRLS</c> es la única
-    /// conexión que la aplicación usa.</summary>
+    /// conexión que la aplicación usa.
+    ///
+    /// El <c>ConfigureAppConfiguration</c> de acá solo, encontrado en batch 7 (slice 2), NO
+    /// alcanza: <c>Program.cs</c> es hosting mínimo (<c>WebApplication.CreateBuilder</c>) y
+    /// lee <c>builder.Configuration</c> de forma síncrona dentro de sus propios
+    /// top-level statements (<c>AgregarInfrastructure</c>), antes de que
+    /// <c>WebApplicationFactory</c> tenga la oportunidad de inyectar este override — se
+    /// confirmó agregando un log temporal, que mostró la cadena de conexión de
+    /// <c>appsettings.json</c> (<c>localhost:5432</c>), no la del contenedor. La variable de
+    /// entorno que fija <see cref="InitializeAsync"/> SÍ funciona: la lee
+    /// <c>WebApplication.CreateBuilder</c> recién cuando <c>Program.Main</c> corre de verdad
+    /// (al primer <c>CreateClient()</c>/acceso a <c>Server</c>), momento en el que la
+    /// variable ya está seteada en el proceso. Se deja este override igual, como red
+    /// adicional sin costo — no hace daño, y documenta la intención.</summary>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.ConfigureAppConfiguration((_, config) =>
