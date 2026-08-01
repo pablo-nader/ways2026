@@ -14,6 +14,31 @@ public class ServicioDeAutenticacion(
     IRelojDelSistema reloj,
     ILogger<ServicioDeAutenticacion> log)
 {
+    /// <summary>Hash descartable precalculado una sola vez para todo el proceso, no por
+    /// request: <see cref="IHasheadorDeContrasenas"/> es singleton (misma instancia para
+    /// todas las requests), así que alcanza con hashear "usuario-inexistente" la primera vez
+    /// y reusar el resultado. Hashearlo de nuevo en cada intento de mail inexistente sumaría
+    /// un <c>Hashear</c> (mucho más caro que un <c>Verificar</c>) al costo del camino "mail
+    /// desconocido", rompiendo la simetría de tiempos con el camino "mail conocido" (que hace
+    /// un único <c>Verificar</c>) en vez de preservarla.</summary>
+    private static string? _hashDescartable;
+    private static readonly object CandadoHashDescartable = new();
+
+    private string ObtenerHashDescartable()
+    {
+        if (_hashDescartable is not null)
+        {
+            return _hashDescartable;
+        }
+
+        lock (CandadoHashDescartable)
+        {
+            _hashDescartable ??= hasheador.Hashear("usuario-inexistente");
+        }
+
+        return _hashDescartable;
+    }
+
     /// <summary>
     /// Valida las credenciales. Devuelve el usuario autenticado o lanza <see cref="ErrorDominio"/>.
     ///
@@ -48,9 +73,10 @@ public class ServicioDeAutenticacion(
 
         if (usuario is null)
         {
-            // Se verifica igual contra un hash descartable para que el tiempo de respuesta
-            // no delate si el mail existe.
-            hasheador.Verificar(hasheador.Hashear("usuario-inexistente"), solicitud.Password);
+            // Se verifica igual contra un hash descartable precalculado (ver
+            // ObtenerHashDescartable) para que el tiempo de respuesta no delate si el mail
+            // existe: acá también hay que pagar exactamente un Verificar, ni uno más.
+            hasheador.Verificar(ObtenerHashDescartable(), solicitud.Password);
             throw credencialesInvalidas;
         }
 
