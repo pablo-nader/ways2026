@@ -75,4 +75,33 @@ public static partial class RlsMigrationBuilderExtensions
                 WITH CHECK (app_es_plataforma() OR id_tenant = app_tenant_actual());
             """);
     }
+
+    /// <summary>
+    /// Activa RLS en un catálogo <c>[global]</c> (sin <c>id_tenant</c>) con el patrón
+    /// "lectura para todos, escritura solo para la plataforma" — override de ADR-11
+    /// (design.md, decisión del usuario 2026-08-01, DB CHANGE GATE #4): el dato de referencia
+    /// global es legible en cualquier modo de acceso, incluido <c>tenant</c>, pero solo la
+    /// plataforma puede escribirlo. La superficie de API sigue siendo de solo lectura para un
+    /// tenant (sin cambios); esto agrega una segunda capa independiente detrás, igual que el
+    /// resto de las tablas scopeadas de este documento.
+    /// </summary>
+    public static void HabilitarRlsDeCatalogoGlobal(this MigrationBuilder migrationBuilder, string tabla)
+    {
+        ValidarIdentificadorDeTabla(tabla);
+
+        migrationBuilder.Sql($"ALTER TABLE {tabla} ENABLE ROW LEVEL SECURITY;");
+        migrationBuilder.Sql($"ALTER TABLE {tabla} FORCE ROW LEVEL SECURITY;");
+        migrationBuilder.Sql(
+            $"""
+            CREATE POLICY {tabla}_lectura ON {tabla}
+                FOR SELECT USING (true);
+            """);
+        migrationBuilder.Sql(
+            $"""
+            CREATE POLICY {tabla}_escritura_plataforma ON {tabla}
+                FOR ALL
+                USING      (app_es_plataforma())
+                WITH CHECK (app_es_plataforma());
+            """);
+    }
 }

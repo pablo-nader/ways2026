@@ -5,8 +5,9 @@ using Ways.Domain.Catalogos;
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
 /// <summary>
-/// <c>[global]</c> (ADR-11, gate #4): sin <c>id_tenant</c>, sin RLS — la protección es de
-/// superficie de API (solo <c>GET</c> para un tenant, la plataforma escribe).
+/// <c>[global]</c> (ADR-11, gate #4): sin <c>id_tenant</c>; RLS lectura-todos/escritura-plataforma
+/// (override de ADR-11, decisión del usuario 2026-08-01) además del filtro de superficie de
+/// API (solo <c>GET</c> para un tenant).
 /// </summary>
 public class CondicionFiscalConfiguration : IEntityTypeConfiguration<CondicionFiscal>
 {

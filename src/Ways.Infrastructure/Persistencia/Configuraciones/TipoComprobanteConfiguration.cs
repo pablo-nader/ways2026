@@ -5,7 +5,8 @@ using Ways.Domain.Catalogos;
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
 /// <summary>
-/// <c>[global]</c> (ADR-11, gate #4): sin <c>id_tenant</c>, sin RLS.
+/// <c>[global]</c> (ADR-11, gate #4): sin <c>id_tenant</c>; RLS lectura-todos/escritura-plataforma
+/// (override de ADR-11, decisión del usuario 2026-08-01).
 /// </summary>
 public class TipoComprobanteConfiguration : IEntityTypeConfiguration<TipoComprobante>
 {

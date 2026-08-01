@@ -5,7 +5,8 @@ using Ways.Domain.Catalogos;
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
 /// <summary>
-/// <c>[global]</c> (ADR-11, gate #4): sin <c>id_tenant</c>, sin RLS.
+/// <c>[global]</c> (ADR-11, gate #4): sin <c>id_tenant</c>; RLS lectura-todos/escritura-plataforma
+/// (override de ADR-11, decisión del usuario 2026-08-01).
 /// </summary>
 public class AlicuotaIvaConfiguration : IEntityTypeConfiguration<AlicuotaIva>
 {
@@ -38,5 +39,13 @@ public class AlicuotaIvaConfiguration : IEntityTypeConfiguration<AlicuotaIva>
         builder.Property(a => a.DeletedAt).HasColumnName("deleted_at");
 
         builder.Ignore(a => a.EstaEliminada);
+
+        // Decisión del usuario (2026-08-01, DB CHANGE GATE #4): doc 10 no pedía unicidad acá,
+        // pero dos alícuotas con el mismo nombre visible ("21%" repetido) no tiene sentido de
+        // negocio y confundiría cualquier selector.
+        builder.HasIndex(a => a.Nombre)
+            .HasDatabaseName("ux_alicuotas_iva_nombre")
+            .HasFilter("deleted_at IS NULL")
+            .IsUnique();
     }
 }

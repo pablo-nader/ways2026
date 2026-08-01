@@ -49,4 +49,28 @@ public class RlsMigrationBuilderExtensionsTests
 
         Assert.Throws<ArgumentException>(() => builder.HabilitarRlsDeTenant(null!));
     }
+
+    [Theory]
+    [InlineData("condiciones_fiscales")]
+    [InlineData("alicuotas_iva")]
+    [InlineData("tipos_comprobante")]
+    public void HabilitarRlsDeCatalogoGlobalAceptaIdentificadoresValidos(string tabla)
+    {
+        var builder = CrearMigrationBuilder();
+
+        builder.HabilitarRlsDeCatalogoGlobal(tabla);
+
+        Assert.Equal(4, builder.Operations.Count);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("condiciones_fiscales; DROP TABLE tenants;--")]
+    [InlineData("CondicionesFiscales")]
+    public void HabilitarRlsDeCatalogoGlobalRechazaIdentificadoresInvalidos(string tabla)
+    {
+        var builder = CrearMigrationBuilder();
+
+        Assert.Throws<ArgumentException>(() => builder.HabilitarRlsDeCatalogoGlobal(tabla));
+    }
 }
