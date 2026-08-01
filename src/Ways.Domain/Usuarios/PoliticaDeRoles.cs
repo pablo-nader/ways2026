@@ -112,6 +112,33 @@ public static class PoliticaDeRoles
         var esConsistente = (actor == RolConocido.Root) == esDePlataforma;
         return esConsistente ? RolesAsignablesPor(actor) : [];
     }
+
+    /// <summary>Valida que el rol destino y el alcance de tenant destino sean consistentes
+    /// (doc 09: <c>root</c> SIEMPRE de plataforma — <c>id_tenant NULL</c> —, cualquier otro
+    /// rol SIEMPRE de un tenant). Pensada para correr sobre la cuenta que se está creando o
+    /// editando, no sobre el actor.
+    ///
+    /// En la práctica <see cref="ValidarPuedeAsignarRol"/> ya bloquea asignar <c>root</c>
+    /// desde la aplicación, así que la mitad "root no puede llevar tenant" de esta regla
+    /// queda como defensa en profundidad; la mitad "todo lo demás requiere tenant" sí se
+    /// ejerce de verdad cuando la plataforma crea un admin/supervisor/vendedor para un
+    /// tenant específico.</summary>
+    public static void ValidarConsistenciaDeRolYAlcance(RolConocido rolDestino, int? idTenantDestino)
+    {
+        var debeSerDePlataforma = rolDestino == RolConocido.Root;
+        var esDePlataforma = idTenantDestino is null;
+
+        if (debeSerDePlataforma && !esDePlataforma)
+        {
+            throw ErrorDominio.Prohibido("El rol root no puede tener un tenant asignado.");
+        }
+
+        if (!debeSerDePlataforma && esDePlataforma)
+        {
+            throw new ErrorDominio(
+                "tenant_requerido", $"El rol {rolDestino} requiere un tenant.", 400);
+        }
+    }
 }
 
 /// <summary>Identidad tenant-aware del actor que ejecuta una acción de gestión.
