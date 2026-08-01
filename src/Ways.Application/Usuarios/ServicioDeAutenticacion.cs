@@ -18,10 +18,12 @@ public class ServicioDeAutenticacion(
     /// <summary>Hash descartable precalculado una sola vez para todo el proceso, no por
     /// request: <see cref="IHasheadorDeContrasenas"/> es singleton (misma instancia para
     /// todas las requests), así que alcanza con hashear "usuario-inexistente" la primera vez
-    /// y reusar el resultado. Hashearlo de nuevo en cada intento de mail inexistente sumaría
-    /// un <c>Hashear</c> (mucho más caro que un <c>Verificar</c>) al costo del camino "mail
-    /// desconocido", rompiendo la simetría de tiempos con el camino "mail conocido" (que hace
-    /// un único <c>Verificar</c>) en vez de preservarla.
+    /// y reusar el resultado. La asimetría que este cacheo evita no es que <c>Hashear</c> sea
+    /// más caro que <c>Verificar</c> (los dos pagan exactamente una derivación PBKDF2): es que
+    /// sin cachear, el camino "mail desconocido" pagaría DOS derivaciones por request (un
+    /// <c>Hashear</c> del hash descartable más el <c>Verificar</c> de siempre) contra la UNA
+    /// sola que paga el camino "mail conocido" (solo <c>Verificar</c>), rompiendo la simetría
+    /// de tiempos entre ambos caminos en vez de preservarla.
     ///
     /// <c>Lazy&lt;T&gt;</c> con <see cref="LazyThreadSafetyMode.ExecutionAndPublication"/> (su
     /// modo default) da la misma garantía que el double-checked locking a mano, sin escribirlo:
@@ -33,9 +35,24 @@ public class ServicioDeAutenticacion(
     /// importar qué instancia de <see cref="ServicioDeAutenticacion"/> gana la carrera.</summary>
     private static Lazy<string>? _hashDescartable;
 
-    private string ObtenerHashDescartable() =>
+    /// <summary>
+    /// Fuerza el cálculo del hash descartable (ver <see cref="_hashDescartable"/>) al arrancar
+    /// el proceso, en vez de dejarlo pendiente hasta el primer login con un mail inexistente:
+    /// sin este warm-up, ese primer intento pagaría las dos derivaciones (Hashear + Verificar)
+    /// que el cacheo existe justamente para evitar en el resto de los requests. Pensado para
+    /// invocarse una única vez desde el arranque de la aplicación (<c>InicializadorDeBaseDeDatos.EjecutarAsync</c>),
+    /// con el mismo singleton <see cref="IHasheadorDeContrasenas"/> que después usan las
+    /// requests reales.
+    /// </summary>
+    public static void PrecalentarHashDescartable(IHasheadorDeContrasenas hasheador) =>
         LazyInitializer.EnsureInitialized(
-            ref _hashDescartable, () => new Lazy<string>(() => hasheador.Hashear("usuario-inexistente"))).Value;
+            ref _hashDescartable, () => new Lazy<string>(() => hasheador.Hashear("usuario-inexistente")));
+
+    private string ObtenerHashDescartable()
+    {
+        PrecalentarHashDescartable(hasheador);
+        return _hashDescartable!.Value;
+    }
 
     /// <summary>
     /// Valida las credenciales. Devuelve el usuario autenticado o lanza <see cref="ErrorDominio"/>.

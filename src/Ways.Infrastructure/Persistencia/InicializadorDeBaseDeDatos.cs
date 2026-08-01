@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Ways.Application.Abstracciones;
+using Ways.Application.Usuarios;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 
@@ -29,6 +30,11 @@ public class InicializadorDeBaseDeDatos(
 
     public async Task EjecutarAsync(SemillaRoot semilla, CancellationToken ct = default)
     {
+        // Warm-up del hash descartable de ServicioDeAutenticacion (ver
+        // PrecalentarHashDescartable): así el primer login con un mail inexistente después
+        // de arrancar el proceso ya lo encuentra calculado, en vez de pagar el costo extra acá.
+        ServicioDeAutenticacion.PrecalentarHashDescartable(hasheador);
+
         // Todo lo que sigue en este scope corre en modo plataforma: migraciones, RLS y
         // semilla no tienen un tenant "actual", siembran para el tenant que corresponda
         // de forma explícita (ADR-14). El `db` inyectado ya está atado a la instancia
