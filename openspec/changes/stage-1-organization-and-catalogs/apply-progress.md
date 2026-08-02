@@ -1258,3 +1258,86 @@ route to exist just to produce a specific status code.
 Slice 3 is code-complete. Ready for judgment-day review (dual blind review, per `CLAUDE.md`'s
 PR validation gate) before opening the single PR 3 (`size:exception`, per the batch 3 delivery
 decision).
+
+## Judgment-day slice 3, round 1 — 8 confirmed issues fixed (2026-08-02)
+
+Dual blind review found 8 confirmed issues (1 CRITICAL, 6 confirmed/triaged, 1 record-only user
+decision). All fixed in the same branch (`feat/stage1-slice3-catalogos`, unpushed).
+
+1. **CRITICAL — `categorias` self-parent → unbounded recursive CTE.** A PUT with
+   `IdCategoriaPadre == id` passed `ReglaDeCategorias.ValidarSinCiclo` because that check only
+   ever looked at `descendientes` (a list that, by construction, never contains the node
+   itself) — a cycle of length 1 persisted silently, and the next `WITH RECURSIVE` walk over
+   that row looped forever. Fixed in two layers: (a) domain — `ValidarSinCiclo` now takes
+   `idPropio` and rejects `idDestino == idPropio` explicitly, before ever consulting
+   `descendientes`; (b) schema — `ck_categorias_padre_no_self` CHECK constraint
+   (`id_categoria_padre IS DISTINCT FROM id_categoria`) added to `CategoriaConfiguration` and
+   merged **in place** into migration `CatalogosDeTenant` (unpushed branch, model already
+   gate-approved — no new migration file; `table.CheckConstraint(...)` added inside the
+   existing `CreateTable` call, Designer.cs and `WaysDbContextModelSnapshot.cs` hand-updated to
+   match, confirmed via a throwaway `dotnet ef migrations add` used only to generate the exact
+   diff and then discarded). `dotnet ef migrations has-pending-model-changes` → clean.
+2. **`ManejadorDeErrores` 23505/23503 backstops generalized.** Replaced two more one-off
+   `ConstraintName` cases with `ClasificarUnicidad(string)`, a suffix/prefix classifier over
+   the ~10 new unique indexes (catalogs' `ux_*_nombre_*`, fiscal catalogs' `ux_*_nombre`/`ux_*_codigo`,
+   `parametros`' two `ux_parametros_*`) grouped into 3 codes (`nombre_duplicado` /
+   `codigo_duplicado` / `parametro_duplicado`) — same 409 code the app-level pre-check already
+   throws, so the client sees the same response whether the race resolved before or after
+   `SaveChangesAsync`. Added a generic 23503 → 400 `referencia_invalida` mapping for any
+   `fk_*` constraint. The two pre-existing `usuarios` cases are untouched (already specific,
+   matched first in the switch).
+3. **Root removed from `GestionDeCatalogo`.** "Root administra tenants, no opera ninguno" (doc
+   09/design.md) — the same criterion `SoloPlataforma` already encodes. `Politicas.cs` updated;
+   new integration test asserts a Root session gets 403 on a tenant catalog endpoint. No
+   existing test assumed Root access to catalogs (they all log in as `Admin`), so nothing else
+   changed.
+4. **Soft-deleted rows visible to the `categorias` CTEs.** Added `deleted_at IS NULL` to the
+   anchor and recursive branches of all three CTEs (`SqlNivel`/`SqlAltura`/`SqlDescendientes`),
+   and a new explicit existence check (`ExistePadreAsync`, a 4th tiny CTE-free query) that
+   rejects an `IdCategoriaPadre` resolving to nothing visible for this tenant (nonexistent,
+   another tenant's row, or soft-deleted) with a domain 400 (`categoria_padre_invalido`)
+   **before** the depth/cycle validation runs — without it, a missing padre silently resolved
+   `nivelDelPadre = 0`, indistinguishable from "no padre".
+5. **`parametros` cross-validation (user decision, no schema change).** `ServicioDeParametros`
+   now validates that a given `idPuntoVenta` belongs to the declared `idEmpresa` (tenant-scoped
+   `db.PuntosVenta.AnyAsync`) before both `ResolverAsync` and `EstablecerAsync`, domain 400
+   (`punto_venta_no_pertenece_a_la_empresa`) otherwise — `parametros.id_punto_venta` has no FK
+   to `empresas` in the schema (only to `puntos_venta`), so nothing in the DB previously caught
+   a real-but-wrong-empresa point of venta. This also fixed a latent gap in the existing
+   `ParametrosTests` scenario ("otro punto de venta sin fila propia cae al de empresa"), which
+   used a made-up id (`999999`) that never corresponded to a real row — replaced with a second,
+   genuinely-seeded `PuntoVenta` of the same empresa.
+6. **18 new raw-SQL RLS tests for the 6 tenant tables.** New
+   `CatalogosDeTenantRlsTests.cs`, `[Theory]`-parametrized over `areas`/`categorias`/`marcas`/
+   `grupos`/`medios_pago`/`parametros` (3 theories × 6 tables): cross-tenant SELECT → 0 rows,
+   cross-tenant UPDATE → 0 rows affected, INSERT with a foreign `id_tenant` → 42501 — same
+   conventions as `CatalogosGlobalesRlsTests` and `AislamientoDeTenantTests`, generalized
+   instead of repeated by hand once per table. `AislamientoDeTenantTests.LaCoberturaDePoliciesEsCompleta`
+   already proved every `id_tenant` table *has* a policy; this proves the policy actually
+   isolates rows.
+7. **`ix_parametros_punto_venta` named explicitly.** The FK-backing index on
+   `(id_punto_venta, id_tenant)` had no explicit `HasDatabaseName`, so EF fell back to its
+   convention name (`IX_parametros_id_punto_venta_id_tenant`) — inconsistent with every other
+   `ix_<tabla>_<columna>` index in the project. Named in `ParametroConfiguration`; the unmerged
+   `Parametros` migration (and its Designer.cs / the model snapshot) edited in place to match —
+   no new migration file, same reasoning as item 1.
+8. **ADR-10 `DeLaEmpresa` deferral recorded (user decision, no implementation).** The
+   `query.DeLaEmpresa(idEmpresa)` extension design.md already describes stays unimplemented —
+   deferred to slice 4's ABM or the first multi-empresa tenant, whichever comes first. One-line
+   note added to design.md's ADR-10 and to this change's `state.yaml`.
+
+### Verification performed this round
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet ef migrations has-pending-model-changes` → clean (both in-place migration edits —
+  `CatalogosDeTenant`'s CHECK constraint and `Parametros`' renamed index — reconciled against
+  the model).
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 61/61** (+1: self-parent rejected),
+  **`Ways.Application.Tests` 72/72** (+3: `ServicioDeParametrosTests`, InMemory provider),
+  **`Ways.IntegrationTests` 64/64** (+25: 7 new `CatalogosTests`/`ParametrosTests` cases + 18
+  `CatalogosDeTenantRlsTests` theory cases). Stable across 2 consecutive full-solution
+  `dotnet test Ways.slnx` runs, 0 skipped, 0 failures. Docker daemon reachable throughout.
+
+### Next batch
+
+Ready for judgment-day round 2 (re-judge the fixed diff) before opening the single PR 3.

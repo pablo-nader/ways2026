@@ -384,6 +384,10 @@ born with `id_empresa NULL`. `ITenantActual` carries only the tenant; the empres
 selection (legacy A2, `asignaciones_empleado`) is out of scope and lands with the operational
 stages. `parametros` resolution therefore takes `idPuntoVenta` as an explicit argument today.
 
+**Deferred (user decision, judgment-day slice 3 round 1, 2026-08-02).** The `query.DeLaEmpresa(idEmpresa)`
+extension itself is not implemented yet — deferred until slice 4's ABM needs it or the first
+multi-empresa tenant shows up, whichever comes first. Recorded, not implemented.
+
 ### ADR-11 — One catalog machine, three layers, with an escape hatch
 
 **Decision.** Eight catalogs must not become eight copies. Factor at three levels:
