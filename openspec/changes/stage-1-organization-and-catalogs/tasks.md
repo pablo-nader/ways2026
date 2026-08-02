@@ -135,21 +135,21 @@ separate PRs; judgment-day review still applies to the whole diff before merge.
 - [x] 3.9 Generate migration 3 (`CatalogosDeTenant`): `areas`, `categorias`, `marcas`, `grupos`, `medios_pago` + enum, index pairs, policies — only after 3.8 approved. — Generated with `dotnet ef migrations add CatalogosDeTenant`, then hand-added the RLS calls (same technique as migrations 1-2): `HabilitarRlsDeTenant` on all 5 tables in `Up()`. EF's scaffold initially swept in the gate #4/#5 tables too (it diffs the *whole* pending model, not per-gate); excluded them via temporary `Ignore<T>()` during scaffold generation only, and hand-stripped the resulting stray `clase_comprobante` enum registration from `Up()`/`Down()` and both snapshot files (Designer.cs + `WaysDbContextModelSnapshot.cs`) so migration 3 is exactly what gate #3 approved — nothing from gates #4/#5 leaked in. File: `20260801231600_CatalogosDeTenant.cs`. Verified against real Postgres: the existing generic ADR-15 policy-coverage test (`AislamientoDeTenantTests.LaCoberturaDePoliciesEsCompleta`, queries `pg_class`/`pg_policies` for ANY table with `id_tenant`, not hardcoded) passed with the 5 new tables included, real proof RLS landed correctly — no new integration tests needed yet for that proof (3.19 still pending).
 - [x] 3.10 **STOP — DB CHANGE GATE #4.** Present migration 4 (`CatalogosGlobales`) model summary — `[global]`, no `id_tenant`, no RLS — and wait for explicit approval. — **Approved by the user, 2026-08-01, WITH two modifications**: (1) write-protection RLS restored on all 3 global tables (override of ADR-11 — read-all `FOR SELECT USING (true)` + write-restricted-to-plataforma `FOR ALL`), new `RlsMigrationBuilderExtensions.HabilitarRlsDeCatalogoGlobal` helper; (2) `alicuotas_iva.nombre` gets a unique partial index. Both applied before generating the migration; `design.md` ADR-11 updated with the override note.
 - [x] 3.11 Generate migration 4 (`CatalogosGlobales`): `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante` — only after 3.10 approved. — Generated with `dotnet ef migrations add CatalogosGlobales` (same `Ignore<T>()` isolation technique as migration 3, this time excluding only `Parametro`/gate #5); hand-added `HabilitarRlsDeCatalogoGlobal` on the 3 tables in `Up()`. File: `20260801233937_CatalogosGlobales.cs`. Integration coverage added: `CatalogosGlobalesRlsTests.cs` (6 tests) — tenant SELECT ok, tenant INSERT rejected (42501, `WITH CHECK` always evaluates), tenant UPDATE/DELETE return 0 rows affected (not an exception — Postgres RLS mechanics: `USING` gates row-visibility for UPDATE/DELETE, only `WITH CHECK` gates INSERT; same mechanism and same security guarantee as the existing cross-tenant UPDATE precedent in `AislamientoDeTenantTests`, just a different SQLSTATE outcome than literally requested — reported, not silently changed), platform mode writes successfully, unresolved context (no GUC) also rejected on write.
-- [ ] 3.12 **STOP — DB CHANGE GATE #5.** Present migration 5 (`Parametros`) model summary — table, two partial unique indexes, NULL-uniqueness reasoning (ADR-13) — and wait for explicit approval.
-- [ ] 3.13 Generate migration 5 (`Parametros`): table + `ux_parametros_punto_venta`/`ux_parametros_empresa` + policy — only after 3.12 approved.
-- [ ] 3.14 Seed three fiscal catalogs in `InicializadorDeBaseDeDatos`, platform mode.
+- [x] 3.12 **STOP — DB CHANGE GATE #5.** Present migration 5 (`Parametros`) model summary — table, two partial unique indexes, NULL-uniqueness reasoning (ADR-13) — and wait for explicit approval. — **Approved by the user, 2026-08-01, exactly as presented**: table, both partial unique indexes, empresa-mandatory + punto_venta-optional composite FKs, standard tenant RLS. Coordinator noted this was the last DB gate of the stage — no more approval stops.
+- [x] 3.13 Generate migration 5 (`Parametros`): table + `ux_parametros_punto_venta`/`ux_parametros_empresa` + policy — only after 3.12 approved. — Generated with `dotnet ef migrations add Parametros`; no `Ignore<T>()` isolation needed this time (last gated table, nothing left to leak). Hand-added `HabilitarRlsDeTenant("parametros")` (standard tenant RLS, not the gate #4 global pattern). File: `20260801235736_Parametros.cs`.
+- [x] 3.14 Seed three fiscal catalogs in `InicializadorDeBaseDeDatos`, platform mode. — `SembrarCatalogosFiscalesAsync`: 5 condiciones fiscales (RI/MONOTRIBUTO/EXENTO/CF/NO_RESP), 6 alícuotas IVA (21/10.5/27/0%/Exento/No gravado), 10 tipos de comprobante venta-side (FA/FB/FC/NCA/NCB/NCC/NDA/TX/NCX/PRE per doc 10 §1 — comprobantes de compra are out of this stage's scope per doc 10's own "Etapas sugeridas"). `CodigoAfip` left `NULL` throughout — real AFIP codes are an electronic-invoicing concern, out of scope here; inventing plausible-looking codes would be worse than an honest gap. Idempotent per-table (same pattern as `SembrarRolesAsync`): never overwrites an existing row, so an operator's edit survives a redeploy.
 
 ### 3D. Application + API
 
-- [ ] 3.15 Add `ServicioDeCatalogo<T, TListado, TAlta>` generic service (list/create/edit/soft-delete/get) + `virtual AplicarPropios`. *(ADR-11)*
-- [ ] 3.16 [P] Add 4 thin subclasses (Area, Marca, Grupo, MedioPago) + Categoria's own subclass (escape hatch: depth/cycle validation via 3.4). *(ADR-11 escape hatch)*
-- [ ] 3.17 Add `ServicioDeParametros` (resolution query + typed-key validation, documented default on miss). *(spec: parametros-operativos / all requirements)*
-- [ ] 3.18 Add `MapearCatalogo<T>` endpoint helper; wire 5 catalog route groups, fiscal read-only `GET` endpoints, parametros endpoints. *(spec: auxiliary-catalogs; parametros-operativos)*
+- [x] 3.15 Add `ServicioDeCatalogo<T, TListado, TAlta>` generic service (list/create/edit/soft-delete/get) + `virtual AplicarPropios`. *(ADR-11)* — Deviation from the design pseudocode's bare `new()` constraint: `CatalogoSimple.Nombre` is `required`, and C# can't verify `required` through a generic `new T()` (CS9040), so the base uses an abstract `Instanciar(...)` factory instead, implemented once per concrete catalog with its own object initializer.
+- [x] 3.16 [P] Add 4 thin subclasses (Area, Marca, Grupo, MedioPago) + Categoria's own subclass (escape hatch: depth/cycle validation via 3.4). *(ADR-11 escape hatch)* — `ServicioDeCategorias` overrides `CrearAsync`/`ActualizarAsync` to run the depth/cycle check (recursive CTEs) before delegating to the base 5 operations.
+- [x] 3.17 Add `ServicioDeParametros` (resolution query + typed-key validation, documented default on miss). *(spec: parametros-operativos / all requirements)* — Typed-key validation via `JsonSerializer.Deserialize(valor, conocido.TipoClr)`, rejects with `parametro_tipo_invalido` (400) on a type mismatch.
+- [x] 3.18 Add `MapearCatalogo<T>` endpoint helper; wire 5 catalog route groups, fiscal read-only `GET` endpoints, parametros endpoints. *(spec: auxiliary-catalogs; parametros-operativos)* — `MapearCatalogo<T,TListado,TAlta,TServicio>` (1 line per catalog, incl. `categorias`, which reuses the same 5-route shape since its override is transparent to the caller). Hit a real ASP.NET Core analyzer bug (AD0001: `RouteHandlerAnalyzer` throws `NullReferenceException` on open-generic route-mapping methods) — confirmed benign (no diagnostic ever produced, build succeeds without the generic helper) and suppressed via `<NoWarn>` in `Ways.Api.csproj` with a documented justification, kept the generic helper per ADR-11's design.
 
 ### 3E. Tests
 
-- [ ] 3.19 [P] Integration tests: CRUD once per catalog through the shared route map; cross-tenant catalog id ⇒ 404; fiscal catalogs GET 200 / write 403; categoria depth 4 ⇒ 400. *(spec: auxiliary-catalogs)*
-- [ ] 3.20 [P] Integration tests: `parametros` resolution end to end (punto_venta wins, empresa fallback, documented default on miss). *(spec: parametros-operativos)*
+- [x] 3.19 [P] Integration tests: CRUD once per catalog through the shared route map; cross-tenant catalog id ⇒ 404; fiscal catalogs GET 200 / write 403; categoria depth 4 ⇒ 400. *(spec: auxiliary-catalogs)* — `CatalogosTests.cs`, 4 tests. Deviation from the literal "write 403": the fiscal catalogs have **no write route mapped at all** (ADR-11's own design — API-surface-only read access, RLS is the real backstop), so a write attempt is `404` (route doesn't exist), not `403` (route exists, policy denies). Reported, not silently changed.
+- [x] 3.20 [P] Integration tests: `parametros` resolution end to end (punto_venta wins, empresa fallback, documented default on miss). *(spec: parametros-operativos)* — `ParametrosTests.cs`, 2 tests.
 
 ### 3F. Tenant provisioning (ADR-16) — lands at the end of Slice 3 (user decision, 2026-08-01)
 
@@ -158,42 +158,57 @@ section builds that endpoint and its transactional guarantees; slice 4 only adds
 Depends on 3A–3E (catalog machine + the seeded fiscal data aren't required by provisioning
 itself, but `PlantillaDeAprovisionamiento` reuses the `Area`/`MedioPago` shapes from 3A).
 
-- [ ] 3.21 Implement `TenantActualDeSesion.Suplantar(idTenant)`: an `IDisposable` impersonation
+- [x] 3.21 Implement `TenantActualDeSesion.Suplantar(idTenant)`: an `IDisposable` impersonation
   scope (ADR-2/ADR-3 deferred item, carried since slice 1) that switches the EF filter/stamping
   value to `idTenant` for the scope's lifetime and restores the previous value on `Dispose()`.
-  *(ADR-16)*
-- [ ] 3.22 Add the `is_local: true` `set_config` variant (ADR-3's deferred piece) — re-applied on
+  *(ADR-16)* — Exposed through `ITenantActual` (Application abstraction, not the Infrastructure
+  concrete type — `ServicioDeAprovisionamiento` lives in Application and can't reference
+  Infrastructure directly). `TenantActualFijo` throws `NotSupportedException` (immutable
+  contexts never provision tenants).
+- [x] 3.22 Add the `is_local: true` `set_config` variant (ADR-3's deferred piece) — re-applied on
   the transaction's already-open connection when `Suplantar` is entered inside an explicit
   transaction, instead of the session-level `is_local: false` `InterceptorDeContextoDeTenant`
-  path used everywhere else. *(ADR-3, ADR-16)*
-- [ ] 3.23 Add `PlantillaDeAprovisionamiento.V1` (ADR-16): área "General", medios de pago
+  path used everywhere else. *(ADR-3, ADR-16)* — `ITenantActual.ReaplicarSobreConexionAsync(DbConnection, ct)`;
+  shared modo→GUC mapping factored into `ModoDeAccesoExtensions` (used by both this and the
+  interceptor, was duplicated inline before).
+- [x] 3.23 Add `PlantillaDeAprovisionamiento.V1` (ADR-16): área "General", medios de pago
   "Efectivo" (`comportamiento = efectivo`) and "Transferencia" (`comportamiento = electronico`,
   `requiere_referencia = true`) + unit test — V1 contains exactly that área and those two
   medios; the deferred template items (generic price-list placeholder, "Consumidor Final"
   customer — `listas_precio`/`clientes` don't exist yet) are asserted as explicitly flagged
-  extension points, not silently dropped. *(ADR-16)*
-- [ ] 3.24 Implement `ServicioDeAprovisionamiento.CrearTenantAsync`:
+  extension points, not silently dropped. *(ADR-16)* — `Ways.Domain.Organizacion` (Domain, per
+  design's Test Strategy table listing it under `tests/Ways.Domain.Tests`, no database); 3 tests
+  in `PlantillaDeAprovisionamientoTests.cs`.
+- [x] 3.24 Implement `ServicioDeAprovisionamiento.CrearTenantAsync`:
   `db.Database.CreateExecutionStrategy().ExecuteAsync(...)` wrapping `BeginTransactionAsync`
   (documented trap — `EnableRetryOnFailure` makes EF throw on a user-initiated
   `BeginTransaction` outside this wrapper) → create `tenants` row (platform mode) →
   `Suplantar(tenant.Id)` → `empresas` + `puntos_venta` + the template (3.23) → tenant admin
   `Usuario` (temp password, hashed with the existing `IHasheadorDeContrasenas`, returned once
-  in the response, never persisted in plain text) → `CommitAsync`. *(ADR-16)*
-- [ ] 3.25 Add `POST /api/plataforma/tenants`: platform-role-only (403 for any tenant-scoped
+  in the response, never persisted in plain text) → `CommitAsync`. *(ADR-16)* — `Ways.Application.csproj`
+  gained a `Microsoft.EntityFrameworkCore.Relational` package reference: `CreateExecutionStrategy`/
+  `BeginTransactionAsync`/`GetDbConnection` are relational-specific `DatabaseFacade` extensions,
+  not available through plain `Microsoft.EntityFrameworkCore` — needed to honor ADR-16's own
+  design as written from the Application layer, without coupling to Npgsql specifically.
+- [x] 3.25 Add `POST /api/plataforma/tenants`: platform-role-only (403 for any tenant-scoped
   actor — reuse `PoliticaDeRoles`/existing platform-only policy pattern), request contract
   (tenant nombre, empresa razón social, punto de venta nombre), response contract (created
   ids + the one-time admin password). *(spec: tenant-organization / Tenant Provisioning With
-  Template Seed; ADR-16)*
-- [ ] 3.26 [P] Unit tests: `PlantillaDeAprovisionamiento` (folded into 3.23 if not already
+  Template Seed; ADR-16)* — New `Politicas.SoloPlataforma` (root-only claim requirement).
+- [x] 3.26 [P] Unit tests: `PlantillaDeAprovisionamiento` (folded into 3.23 if not already
   separate), any DB-free orchestration logic extracted from `ServicioDeAprovisionamiento`
-  (e.g. the temp-password generation policy, if it's a pure function).
-- [ ] 3.27 [P] Integration tests: provision a tenant end to end (tenant + empresa + punto de
+  (e.g. the temp-password generation policy, if it's a pure function). — Folded into 3.23;
+  no DB-free orchestration logic was extracted (the temp-password generator is a one-line
+  `RandomNumberGenerator.GetString` call, not worth its own pure-function seam).
+- [x] 3.27 [P] Integration tests: provision a tenant end to end (tenant + empresa + punto de
   venta + the template's área + 2 medios de pago + the admin `Usuario` all exist after the
   call; the returned password logs the new admin in for real); a forced mid-provisioning
   failure (e.g. a duplicate/invalid row injected on purpose) leaves **nothing** behind — the
   transaction-atomicity proof design.md's Test Strategy already calls out; `403` for a
   tenant-role actor hitting the endpoint. *(spec: tenant-organization / Tenant Provisioning
-  With Template Seed)*
+  With Template Seed)* — `AprovisionamientoTests.cs`, 3 tests. The forced failure reuses a
+  duplicate `mail` (globally unique, ADR-7) on the admin-user insert — the transaction's
+  *last* step — and asserts the tenant row from that same attempt does not survive.
 
 ---
 

@@ -1124,3 +1124,137 @@ Present gate #5 (`Parametros`) summary and STOP — no migration generated until
 once approved: generate migration 5 (same `Ignore<T>()` pattern won't be needed — it's the
 last gated table), seed data (3.14), Application/API (3D), tests (3E), then 3F (tenant
 provisioning) at the end of the slice, followed by judgment-day review before the single PR 3.
+
+---
+
+## Batch 4 — gate #5 approved (last DB gate), Slice 3 finished end to end (3.13–3.27)
+
+**Trigger:** the coordinator relayed the user's approval of gate #5 exactly as presented —
+the last DB gate of the stage, no more approval stops — and asked to finish the entire rest
+of the slice in one batch: migration 5, seed, the full catalog/parametros Application+API
+layer, section 3F (tenant provisioning), and integration tests for everything gated until
+now, with the full suite green (exact counts, run twice).
+
+**Status:** done. Full suite: **`Ways.Domain.Tests` 60/60, `Ways.Application.Tests` 69/69,
+`Ways.IntegrationTests` 39/39**, stable across 2 consecutive integration-suite runs. Slice 3
+is code-complete.
+
+### Completed in batch 4
+
+**3.13 — migration 5 (`Parametros`).** Generated with `dotnet ef migrations add Parametros`;
+no `Ignore<T>()` isolation needed this time — it's the last gated table, nothing left to leak
+into it. Hand-added `HabilitarRlsDeTenant("parametros")` (standard tenant RLS — `parametros`
+is a tenant table, not a gate #4 global one). File: `20260801235736_Parametros.cs`.
+
+**3.14 — seed.** `InicializadorDeBaseDeDatos.SembrarCatalogosFiscalesAsync`: 5 condiciones
+fiscales, 6 alícuotas IVA, 10 tipos de comprobante (venta-side only — doc 10's own "Etapas
+sugeridas" puts comprobantes de compra behind clientes/proveedores, a later stage).
+`CodigoAfip` left `NULL` throughout (real AFIP codes are an electronic-invoicing concern, out
+of scope; a made-up code would be worse than an honest gap). Idempotent per table, same
+pattern as `SembrarRolesAsync` — never overwrites an existing row.
+
+**3.15–3.18 — Application + API for the 5 tenant catalogs + 3 fiscal catalogs.**
+`ServicioDeCatalogo<T,TListado,TAlta>` (list/get/create/edit/soft-delete + `Instanciar`/
+`AplicarPropios`/`Proyectar` hooks), 4 thin subclasses (`ServicioDeAreas`/`Marcas`/`Grupos`/
+`MediosPago`), the `ServicioDeCategorias` escape hatch (depth/cycle validation via raw-SQL
+recursive CTEs, see the real bug below), `ServicioDeCatalogosFiscales` (read-only projection
+for the 3 global tables), `CatalogosEndpoints.MapearCatalogo<T,TListado,TAlta,TServicio>` (1
+line per catalog) wired for all 5 tenant catalogs + the 3 fiscal `GET`s. `IWaysDbContext`
+extended with the 9 new `DbSet<T>` properties (deferred since batch 1) plus a `DatabaseFacade
+Database { get; }` — needed for ADR-16's `CreateExecutionStrategy`/`BeginTransactionAsync`/
+`GetDbConnection` from the Application layer, which required adding a
+`Microsoft.EntityFrameworkCore.Relational` package reference to `Ways.Application.csproj`
+(still provider-agnostic — "relational" is the DB category, not Npgsql specifically).
+
+**3.17 — `ServicioDeParametros`.** Resolution (`ResolucionDeParametros`, pure, from batch 1)
++ typed-key validation via `JsonSerializer.Deserialize(valor, conocido.TipoClr)`, rejecting a
+type mismatch with `parametro_tipo_invalido` (400). `idEmpresa`/`idPuntoVenta` travel
+explicit in every call (ADR-10 — no "current empresa" in session yet).
+
+**3.21–3.22 — `Suplantar`/`ReaplicarSobreConexionAsync` (ADR-16 deferred pieces).** Added to
+`ITenantActual` (Application abstraction — `ServicioDeAprovisionamiento` can't reference
+Infrastructure's concrete `TenantActualDeSesion` directly), implemented by
+`TenantActualDeSesion` (real impersonation scope + `is_local: true` GUC reapply on the
+transaction's already-open connection) and `TenantActualFijo` (`NotSupportedException` — no
+immutable context ever provisions a tenant). Shared modo→GUC string mapping factored out of
+`InterceptorDeContextoDeTenant` into `ModoDeAccesoExtensions` to avoid duplicating it.
+
+**3.23 — `PlantillaDeAprovisionamiento.V1`.** `Ways.Domain.Organizacion` (Domain — design's
+own Test Strategy table lists it under `Ways.Domain.Tests`, no database): área "General",
+medios "Efectivo"/"Transferencia" exactly as approved, plus `ItemsDiferidos` declaring the
+stage-2/3 gaps (lista de precios, Consumidor Final) instead of silently omitting them.
+
+**3.24–3.25 — `ServicioDeAprovisionamiento.CrearTenantAsync` + `POST /api/plataforma/tenants`.**
+`CreateExecutionStrategy().ExecuteAsync(...)` wrapping `BeginTransactionAsync` (the documented
+trap: `EnableRetryOnFailure` makes EF throw on a bare `BeginTransaction` outside this
+wrapper) → `tenants` row (platform mode) → `Suplantar(tenant.Id)` + `ReaplicarSobreConexionAsync`
+→ `empresas`/`puntos_venta`/plantilla (auto-stamped `IdTenant` via the now-impersonated
+`TenantActual`, proving `Suplantar` actually works end to end) → tenant admin `Usuario`
+(`IdTenant` set explicitly — `Usuario` doesn't inherit `EntidadTenant`, no auto-stamp) →
+commit. New `Politicas.SoloPlataforma` (root-only) guards the endpoint.
+
+### Two real bugs found while wiring `ServicioDeCategorias` against real Postgres (fixed,
+### not worked around)
+
+1. **[CRITICAL] Opening the raw ADO.NET connection directly bypasses EF's interceptor
+   pipeline entirely — RLS then blocks the query from seeing anything, silently.** The
+   depth/cycle CTEs run over raw ADO.NET (same reason as `InicializadorDeBaseDeDatos.
+   VerificarRolSinBypassAsync`: `Database.SqlQuery<T>()` crashes against this project's
+   model). The first version opened the connection with `Db.Database.GetDbConnection().OpenAsync()`
+   — mirroring `VerificarRolSinBypassAsync`'s pattern exactly, which is safe *there* because
+   that query (`pg_roles`) isn't RLS-scoped. `categorias` **is** RLS-scoped, and
+   `GetDbConnection().OpenAsync()` opens the connection **without ever going through EF's
+   `RelationalConnection` wrapper**, so `InterceptorDeContextoDeTenant` — an EF
+   `DbConnectionInterceptor` — never fires, the tenant GUC never gets set, and RLS fails
+   closed (ADR-4): the CTE always saw zero rows, not an error, which is what made this hard
+   to notice at first (an integration test failed with a wrong *value*, not an exception).
+   Root-caused with a temporary debug log showing `nivelDelPadre=0` for every parent
+   regardless of its real depth. Fixed by using `Database.OpenConnectionAsync()`/
+   `CloseConnectionAsync()` (EF's own connection-lifecycle methods, which DO invoke
+   interceptors) instead of the raw connection's own `OpenAsync()`/`CloseAsync()`.
+2. **A pre-existing documentation bug in `ReglaDeCategorias.ValidarProfundidad`'s XML doc
+   (batch 1), only surfaced once real SQL fed it real numbers.** The doc comment said
+   `nivelDelPadre` was "la cantidad de ancestros del padre elegido" (0-indexed ancestor
+   count). The batch-1 unit tests (still correct, still passing, never touched) actually
+   exercise a *different* convention: `nivelDelPadre` = the padre's own 1-indexed depth (1
+   for a root, 2 for a root's child, etc.) — the two conventions agree only in the "no padre"
+   case (both 0), which is exactly why 19 passing pure-function tests never caught the
+   mismatch. Writing `NivelDeAsync`'s CTE against the *documented* convention
+   (`count(*) - 1`, ancestor count) made a real 4-level category tree get accepted instead of
+   rejected. Fixed the CTE to `count(*)` (matching the tests' actual, correct convention) and
+   corrected the misleading XML doc on `ReglaDeCategorias.ValidarProfundidad` itself so the
+   next reader doesn't get misled the same way.
+
+### A precise correction to the literal task wording (reported, not silently changed)
+
+3.19 asks for "fiscal catalogs GET 200 / write 403." ADR-11's own design has **no write route
+mapped at all** for the 3 fiscal catalogs — the API surface itself is read-only, RLS
+(`HabilitarRlsDeCatalogoGlobal`, gate #4) is the real backstop behind it. A write attempt
+therefore gets `404` (route doesn't exist), not `403` (route exists, a policy denies it).
+Tested and documented as `404`, matching the actual, approved design instead of forcing a
+route to exist just to produce a specific status code.
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings (including one legitimate suppression:
+  `AD0001` in `Ways.Api.csproj`, a confirmed ASP.NET Core analyzer crash on the generic
+  `MapearCatalogo<T,TListado,TAlta,TServicio>` helper — no diagnostic is ever produced, the
+  build succeeds identically without the generic helper present; documented inline).
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 60/60** (57 previous + 3
+  `PlantillaDeAprovisionamientoTests`), **`Ways.Application.Tests` 69/69** (unchanged from
+  batch 3 — no new Application-layer unit tests this batch; `ServicioDeCategorias`'s CTE
+  logic can only be proven against real Postgres, InMemory doesn't support raw ADO commands),
+  **`Ways.IntegrationTests` 39/39** (30 previous, unedited + 9 new: `CatalogosTests.cs` (4),
+  `ParametrosTests.cs` (2), `AprovisionamientoTests.cs` (3)). Stable across 2 consecutive
+  full runs of the integration suite. Docker daemon reachable throughout.
+
+### Deferred items (reported, not silent)
+
+- None outstanding for Slice 3's own scope. Slice 4 (Web ABMs) remains a separate slice, per
+  `tasks.md`.
+
+### Next batch
+
+Slice 3 is code-complete. Ready for judgment-day review (dual blind review, per `CLAUDE.md`'s
+PR validation gate) before opening the single PR 3 (`size:exception`, per the batch 3 delivery
+decision).
