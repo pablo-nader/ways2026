@@ -10,6 +10,17 @@ namespace Ways.Domain.Clientes;
 /// tocar la fila. La constraint <c>ck_clientes_cf_protegido</c> es el backstop de esquema
 /// para la baja (design decision 4) — esta regla cubre además la edición, que la constraint
 /// no alcanza a bloquear.
+///
+/// Gap conocido, fuera de alcance de esta slice (judgment-day ronda 1, item de comentario):
+/// <c>ck_clientes_cf_protegido</c> solo lee <c>numero</c> en el momento del UPDATE/DELETE —
+/// un bypass de dos pasos (1: UPDATE que cambia <c>numero</c> de 1 a otro valor libre, 2:
+/// DELETE de esa misma fila ya renumerada) esquiva tanto la constraint como esta regla, que
+/// tampoco corre sobre un SQL directo. Ninguna de las dos escrituras de esa secuencia es en sí
+/// misma la operación que la constraint prohíbe. El guard real contra ese bypass es el que va
+/// a vivir en <c>ServicioDeClientes</c> (Slice 2, tasks.md 2A) — <see cref="ValidarNoConsumidorFinal"/>
+/// ya se llama antes de cualquier UPDATE que la Slice 2 emita, así que el camino de servicio
+/// nunca llega a habilitar el primer paso del bypass. Cerrarlo a nivel de esquema (p.ej. un
+/// trigger que también valide el valor ANTERIOR de <c>numero</c>) queda fuera de esta slice.
 /// </summary>
 public static class ReglaDeClientes
 {

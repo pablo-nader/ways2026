@@ -114,7 +114,12 @@ public class ManejadorDeErrores(
         }
 
         // stage-2-clientes-proveedores (task 1.12, backstop map): ux_proveedores_cuit —
-        // spec "cuit Uniqueness Is Scoped Per Tenant".
+        // spec "cuit Uniqueness Is Scoped Per Tenant". Exención de la prueba de carrera
+        // exigida por el skill db-error-backstops (judgment-day ronda 1, item de comentario):
+        // el endpoint de alta de proveedores (ServicioDeProveedores.CrearAsync) todavía no
+        // existe, esta etapa solo llega hasta el esquema/backstop map — la prueba de carrera
+        // queda para la Slice 3 (tasks.md, task 3.5), que sí tiene el camino de escritura real
+        // para ejercerla.
         if (nombreDeIndice.Contains("_cuit", StringComparison.Ordinal))
         {
             return ("cuit_duplicado", "Ya existe un proveedor con ese CUIT en este tenant.");
@@ -122,7 +127,10 @@ public class ManejadorDeErrores(
 
         // stage-2-clientes-proveedores (task 1.12, backstop map): ux_clientes_numero —
         // backstop del contador atómico de ClienteAsignadorDeNumero (spec: Atomic Per-Tenant
-        // Numero Assignment); nunca debería chocar acá bajo operación normal.
+        // Numero Assignment); nunca debería chocar acá bajo operación normal. Misma exención
+        // que ux_proveedores_cuit arriba: sin ServicioDeClientes.CrearAsync todavía (esta
+        // etapa no lo incluye), la prueba de carrera queda para la Slice 2 (tasks.md, task
+        // 2.5), que reusa el rendezvous endurecido en el batch 1.13/1F de esta slice.
         if (nombreDeIndice.Contains("_numero", StringComparison.Ordinal))
         {
             return ("numero_duplicado", "Ya existe un cliente con ese número en este tenant.");
