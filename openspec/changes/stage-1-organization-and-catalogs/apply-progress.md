@@ -1341,3 +1341,53 @@ decision). All fixed in the same branch (`feat/stage1-slice3-catalogos`, unpushe
 ### Next batch
 
 Ready for judgment-day round 2 (re-judge the fixed diff) before opening the single PR 3.
+
+## Judgment-day slice 3 round 2 — confirmed-item fixes
+
+One confirmed issue (flagged by both blind judges): the `db-error-backstops` skill's Hard
+Rule #5 requires a race test per new backstop family, and `parametros` (`parametro_duplicado`)
+had a 23505 mapping (round 1) but no race test.
+
+1. **Race test for `parametro_duplicado`.** New `ParametrosTests.
+   DosEstablecimientosConcurrentesConLaMismaClaveYElMismoAlcanceDisparanElBackstopDelSaveChanges`.
+   `EstablecerAsync` is an upsert (`existente is null` check, then insert-or-update), unlike
+   `ServicioDeCatalogo.CrearAsync` (unconditional insert + a pre-check that already throws a
+   409 domain error on its own, so `CatalogosTests`' analogous race test passes even without
+   genuine concurrency). Two plain `Task.WhenAll`-fired `PUT`s on a fresh key were empirically
+   flaky: with a warm connection pool (e.g. inside the full suite) the winner's SELECT+INSERT+
+   commit can finish before the loser's own SELECT runs, so the loser sees the row already
+   committed and does a legitimate UPDATE (200) instead of racing the INSERT — reproduced
+   reliably (3/3 full-suite runs failed with `[OK, OK]`, no 409) before the fix. Fixed with a
+   deterministic rendezvous: a `WithWebHostBuilder`-derived factory (isolated to this test only,
+   doesn't touch the shared fixture) registers a test-only `DbCommandInterceptor`
+   (`InterceptorDeRendezVous`) that retains the first two `parametros`-reading `SELECT`s behind
+   a `CountdownEvent(2)` until both arrive, guaranteeing both requests see "no existe" and both
+   attempt the INSERT — the 23505 backstop then fires deterministically for the loser,
+   regardless of pool warmth. Stable across 6+ consecutive full-solution `dotnet test Ways.slnx`
+   runs after the fix (0 failures).
+2. **`ClasificarUnicidad` scope documented.** XML doc on `ManejadorDeErrores.cs` now states the
+   suffix match is deliberately schema-wide (any `_nombre`/`_codigo` unique index), that it
+   harmlessly also covers seed-only indexes like `ux_roles_nombre` (never hit by a client write
+   path), and that the fiscal `codigo_duplicado` family has no client write path today — exempt
+   from race-testing per the skill's decision gates until an alta/edición endpoint exists.
+3. **`fk_*` → 400 tradeoff documented + observability preserved.** Comment on the generic
+   `fk_*` branch acknowledges it also catches system-managed FKs (turning would-be logged 500s
+   into unlogged 400s) as a deliberate tradeoff (a closed FK list would need manual upkeep per
+   migration). Added `log.LogWarning` with the constraint name (new private
+   `LogYClasificarReferenciaInvalida` helper) so that tradeoff doesn't cost observability.
+4. **TOCTOU residual risk recorded.** `state.yaml` now documents the accepted residual risk: a
+   narrow race between `ExistePadreAsync`'s pre-check and the `categoria` write if the parent is
+   concurrently soft-deleted — the row would reference a soft-deleted parent, but the
+   `deleted_at`-filtered CTEs still prevent the infinite-recursion class. Revisit if cascading
+   soft-delete lands.
+
+### Verification performed this round
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 61/61**, **`Ways.Application.Tests` 72/72**,
+  **`Ways.IntegrationTests` 65/65** (+1: the new race test). Stable across 6+ consecutive
+  full-solution runs, 0 skipped, 0 failures. Docker daemon reachable throughout.
+
+### Next batch
+
+Ready for judgment-day round 3 (re-judge the fixed diff) before opening the single PR 3.
