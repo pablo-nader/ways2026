@@ -3,8 +3,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Ways.Application.Abstracciones;
+using Ways.Application.Clientes;
 using Ways.Application.Usuarios;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 
@@ -93,6 +95,7 @@ public class InicializadorDeBaseDeDatos(
         await SembrarOrganizacionAsync(ct);
         await BackfillDeUsuariosAsync(ct);
         await SembrarCatalogosFiscalesAsync(ct);
+        await BackfillDeClientesYListasPrecioAsync(ct);
     }
 
     /// <summary>
@@ -429,6 +432,107 @@ public class InicializadorDeBaseDeDatos(
             await db.SaveChangesAsync(ct);
             log.LogInformation("Sembrados {Cantidad} tipos de comprobante.", TiposComprobanteBase.Length);
         }
+    }
+
+    /// <summary>
+    /// Backfill de Consumidor Final + lista de precios General para tenants preexistentes
+    /// (task 1.11, stage-2-clientes-proveedores, spec: Backfill for Pre-Existing Tenants):
+    /// mismo patrón que <see cref="BackfillDeUsuariosAsync"/> (ADR-14) — corre después de
+    /// las migraciones, y solo toca un tenant que todavía no tiene ninguna de las dos filas.
+    ///
+    /// Corre en modo plataforma: a diferencia de <c>ServicioDeAprovisionamiento</c> (que
+    /// suplanta la sesión HTTP mutable, ADR-16), acá alcanza con setear <c>IdTenant</c>
+    /// explícito en cada entidad antes de <c>SaveChangesAsync</c> — mismo criterio que
+    /// <see cref="SembrarOrganizacionAsync"/>: <c>EstamparTenant</c> lo exige bajo modo
+    /// plataforma, y RLS lo deja pasar (<c>WITH CHECK app_es_plataforma()</c>).
+    /// <c>TenantActualFijo</c> ni siquiera soporta suplantación.
+    ///
+    /// Idempotente por tenant: si ya tiene un cliente <c>numero = 1</c> (Consumidor Final) O
+    /// una lista <c>es_default</c>, no se toca — un tenant aprovisionado con
+    /// <c>ServicioDeAprovisionamiento</c> (que crea las dos filas juntas) nunca se duplica
+    /// acá, y un tenant a mitad de backfill (una fila sin la otra, por un fallo previo del
+    /// proceso) no vuelve a intentar la parte que ya tiene.
+    /// </summary>
+    private async Task BackfillDeClientesYListasPrecioAsync(CancellationToken ct)
+    {
+        var tenantsConCf = await db.Clientes
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(c => c.Numero == ReglaDeClientes.NumeroConsumidorFinal)
+            .Select(c => c.IdTenant)
+            .ToListAsync(ct);
+
+        var tenantsConListaDefault = await db.ListasPrecio
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(l => l.EsDefault)
+            .Select(l => l.IdTenant)
+            .ToListAsync(ct);
+
+        var tenantsYaCubiertos = new HashSet<int>(tenantsConCf);
+        tenantsYaCubiertos.UnionWith(tenantsConListaDefault);
+
+        var tenantsPendientes = await db.Tenants
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(t => !tenantsYaCubiertos.Contains(t.Id))
+            .OrderBy(t => t.Id)
+            .ToListAsync(ct);
+
+        if (tenantsPendientes.Count == 0)
+        {
+            return;
+        }
+
+        var condicionFiscalCf = await db.CondicionesFiscales
+            .IgnoreQueryFilters(["BajaLogica"])
+            .SingleAsync(
+                c => c.Codigo == PlantillaDeAprovisionamiento.V1.ClienteConsumidorFinal.CodigoCondicionFiscal, ct);
+
+        var ahora = reloj.Ahora;
+        var estrategia = db.Database.CreateExecutionStrategy();
+
+        foreach (var tenant in tenantsPendientes)
+        {
+            await estrategia.ExecuteAsync(async () =>
+            {
+                await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+                var listaPrecioGeneral = new ListaPrecio
+                {
+                    IdTenant = tenant.Id,
+                    Nombre = PlantillaDeAprovisionamiento.V1.ListaPrecioGeneral.Nombre,
+                    EsDefault = true,
+                    Modo = ModoLista.Fija,
+                    Activo = true,
+                    CreatedAt = ahora,
+                    UpdatedAt = ahora
+                };
+                db.ListasPrecio.Add(listaPrecioGeneral);
+
+                // SaveChanges antes de asignar el numero: listaPrecioGeneral.Id todavía no
+                // existe (identity), y clientes.id_lista_precio lo necesita.
+                await db.SaveChangesAsync(ct);
+
+                await AsignadorDeNumeroCliente.AsegurarContadorAsync(db, tenant.Id, ct);
+                var numeroConsumidorFinal = await AsignadorDeNumeroCliente.AsignarSiguienteAsync(db, tenant.Id, ct);
+
+                db.Clientes.Add(new Cliente
+                {
+                    IdTenant = tenant.Id,
+                    Numero = numeroConsumidorFinal,
+                    Nombre = PlantillaDeAprovisionamiento.V1.ClienteConsumidorFinal.Nombre,
+                    IdCondicionFiscal = condicionFiscalCf.Id,
+                    IdListaPrecio = listaPrecioGeneral.Id,
+                    CreatedAt = ahora,
+                    UpdatedAt = ahora
+                });
+
+                await db.SaveChangesAsync(ct);
+                await transaccion.CommitAsync(ct);
+            });
+        }
+
+        log.LogInformation(
+            "Backfill: Consumidor Final + lista General creados para {Cantidad} tenants preexistentes.",
+            tenantsPendientes.Count);
     }
 }
 

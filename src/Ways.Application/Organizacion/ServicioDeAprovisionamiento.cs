@@ -1,7 +1,9 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Clientes;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
@@ -103,6 +105,43 @@ public class ServicioDeAprovisionamiento(
                     UpdatedAt = ahora
                 });
             }
+
+            await db.SaveChangesAsync(ct);
+
+            // 3.5. lista de precios General (es_default) + cliente Consumidor Final
+            // (design decision 5, stage-2-clientes-proveedores): misma transacción atómica
+            // que el resto — si cualquiera de los dos falla, no queda ni el tenant ni la
+            // empresa a medio crear (spec: Tenant Provisioning With Template Seed).
+            var listaPrecioGeneral = new ListaPrecio
+            {
+                Nombre = PlantillaDeAprovisionamiento.V1.ListaPrecioGeneral.Nombre,
+                EsDefault = true,
+                Modo = ModoLista.Fija,
+                Activo = true,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            };
+            db.ListasPrecio.Add(listaPrecioGeneral);
+
+            var condicionFiscalCf = await db.CondicionesFiscales.SingleAsync(
+                c => c.Codigo == PlantillaDeAprovisionamiento.V1.ClienteConsumidorFinal.CodigoCondicionFiscal, ct);
+
+            // SaveChanges antes de asignar el numero: listaPrecioGeneral.Id todavía no
+            // existe (identity), y clientes.id_lista_precio lo necesita.
+            await db.SaveChangesAsync(ct);
+
+            await AsignadorDeNumeroCliente.AsegurarContadorAsync(db, tenant.Id, ct);
+            var numeroConsumidorFinal = await AsignadorDeNumeroCliente.AsignarSiguienteAsync(db, tenant.Id, ct);
+
+            db.Clientes.Add(new Cliente
+            {
+                Numero = numeroConsumidorFinal,
+                Nombre = PlantillaDeAprovisionamiento.V1.ClienteConsumidorFinal.Nombre,
+                IdCondicionFiscal = condicionFiscalCf.Id,
+                IdListaPrecio = listaPrecioGeneral.Id,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            });
 
             await db.SaveChangesAsync(ct);
 
