@@ -4,7 +4,7 @@
 # against that baseline.
 change: stage-2-clientes-proveedores
 phase: apply
-status: slice-1-batch-1-applied-awaiting-db-change-gate-approval
+status: slice-1-complete-runtime-verified-ready-for-judgment-day
 artifact_store: openspec
 phases:
   explore:
@@ -22,16 +22,17 @@ phases:
     status: done
     artifact: tasks.md
   apply:
-    status: in-progress
+    status: slice-1-done
     artifact: apply-progress.md
     note: >-
-      Slice 1 batch 1 applied: domain entities, EF configs, ReglaDeClientes,
-      AsignadorDeNumeroCliente, PlantillaDeAprovisionamiento extension,
-      ManejadorDeErrores backstop mappings, ParametrosTests hygiene fix, and
-      gated (Skip) integration tests for RLS/backstops/provisioning-backfill are
-      done. Blocked on DB CHANGE GATE (task 1.1) approval before generating the
-      migration (task 1.7); tasks 1.10/1.11 (provisioning/backfill wiring)
-      deferred to the same batch as the migration, per apply-progress.md.
+      Slice 1 complete (batches 1+2). DB CHANGE GATE (task 1.1) approved by the
+      user 2026-08-02, exactly as presented. Migration ClientesYProveedoresEtapa2
+      generated and applied (task 1.7); tasks 1.10/1.11 (provisioning/backfill
+      wiring) landed in the same batch. All 18 Slice 1 tasks done. Full suite
+      runtime-verified twice for stability: Domain 69/69, Application 91/91,
+      IntegrationTests 91/91 (0 skipped, 0 regressions). Branch
+      feat/stage2-slice1-fundacion, work-unit commits, no push/PR yet — awaiting
+      judgment-day (orchestrated separately) before PR.
   verify:
     status: pending
   archive:

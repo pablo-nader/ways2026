@@ -42,12 +42,15 @@ list backfilled + provisioned, tests green. **Rollback**: down-migration (additi
 
 ### 1A. DB CHANGE GATE — BLOCKING
 
-- [ ] 1.1 **STOP.** Present the migration model summary (tables/columns/indexes/
+- [x] 1.1 **STOP.** Present the migration model summary (tables/columns/indexes/
   constraints/RLS for `clientes`, `proveedores`, `listas_precio`,
   `numeraciones_clientes`) **together with** the full backfill section (which
   pre-existing tenants get a CF cliente + General list) and wait for explicit
   approval before generating anything. *(resolved decision #3; CLAUDE.md)*
-  — Presented in apply batch 1; awaiting explicit approval.
+  — Presented in apply batch 1; **APPROVED by the user 2026-08-02**, exactly as
+  presented (all 4 tables, enums, RLS, partial unique indexes incl. the two
+  single-default guarantees on `listas_precio` and the tenant-wide `cuit`
+  index, `ck_clientes_cf_protegido`, and the full backfill plan).
 
 ### 1B. Domain
 
@@ -67,12 +70,15 @@ list backfilled + provisioned, tests green. **Rollback**: down-migration (additi
 
 ### 1C. Migration (only after 1.1 approved)
 
-- [ ] 1.7 Generate migration `ClientesYProveedoresEtapa2`: 4 tables,
+- [x] 1.7 Generate migration `ClientesYProveedoresEtapa2`: 4 tables,
   `tipo_documento`/`modo_lista` enums, `ux_clientes_numero`,
   `ux_proveedores_cuit`, `ux_listas_precio_default_compartido/empresa`,
   `ck_clientes_cf_protegido`, all FKs, `HabilitarRlsDeTenant` on all 4 tables,
   enum registration in `WaysDbContextFactory` + prod DI (per `comportamiento_medio_pago`
-  precedent). *(design: Migration Sequencing)*
+  precedent). *(design: Migration Sequencing)* — generated exactly as approved;
+  also hand-named 4 FK-support indexes in snake_case (EF's default naming would
+  have produced `IX_*` PascalCase, breaking the doc-10 convention) before
+  generating. `dotnet ef migrations has-pending-model-changes` confirms clean.
 
 ### 1D. Numero counter + provisioning + backfill
 
@@ -83,19 +89,18 @@ list backfilled + provisioned, tests green. **Rollback**: down-migration (additi
 - [x] 1.9 Extend `PlantillaDeAprovisionamiento.V1` in place: add the Consumidor
   Final cliente item + General `listas_precio` item (closes the `ItemsDiferidos`
   gap) + unit tests. *(design decision 5)*
-- [ ] 1.10 Wire `ServicioDeAprovisionamiento.CrearTenantAsync`: ensure counter →
+- [x] 1.10 Wire `ServicioDeAprovisionamiento.CrearTenantAsync`: ensure counter →
   assign `numero = 1` → insert CF cliente + General lista_precio inside the
   provisioning transaction. *(spec: tenant-organization / Tenant Provisioning With
   Template Seed)*
-  — DEFERRED to the migration batch: written and confirmed compiling in apply
-  batch 1, then reverted (`clientes`/`listas_precio` don't exist yet; wiring this
-  broke `AprovisionamientoTests`' 2 existing tests). See apply-progress.md.
-- [ ] 1.11 Add `InicializadorDeBaseDeDatos.BackfillDeClientesYListasPrecioAsync`:
+  — Wired in apply batch 2, after the migration landed (deferred from batch 1
+  for the reason recorded there and in apply-progress.md).
+- [x] 1.11 Add `InicializadorDeBaseDeDatos.BackfillDeClientesYListasPrecioAsync`:
   idempotent, skips a tenant that already has its CF/General row, runs after
   migrations. *(spec: tenant-organization / Backfill for Pre-Existing Tenants)*
-  — DEFERRED to the migration batch: same reason as 1.10, but higher blast
-  radius (wiring it broke 63/74 integration tests — `EjecutarAsync` runs on every
-  test's first `CreateClient()`). See apply-progress.md.
+  — Wired in apply batch 2. Runtime-verified: exercised for real by
+  `ClientesProvisioningYBackfillTests` against Postgres real (Docker), including
+  the idempotent-second-run assertion.
 
 ### 1E. db-error-backstops mapping
 
@@ -116,23 +121,28 @@ list backfilled + provisioned, tests green. **Rollback**: down-migration (additi
 - [x] 1.14 [P] Integration: RLS proofs for all 4 new tables (EF filter blocks
   cross-tenant read; raw-SQL/`IgnoreQueryFilters` blocked), mirroring
   `AislamientoDeTenantTests`. *(spec: clientes/proveedores/listas-precio-minimal /
-  Tenant Isolation)* — implemented, `[Skip]`-gated on the migration (task 1.7).
+  Tenant Isolation)* — **runtime-verified**: `[Skip]` removed in apply batch 2,
+  green against Postgres real (Docker), run twice for stability.
 - [x] 1.15 [P] Integration: provisioning creates CF cliente (`numero = 1`, CF
   condición fiscal) + General lista_precio; backfill on a pre-existing tenant
   creates the same; backfill run twice is a no-op. *(spec: tenant-organization /
   Backfill for Pre-Existing Tenants; listas-precio-minimal / One Default List)*
-  — implemented, `[Skip]`-gated on the migration AND on 1.10/1.11's wiring
-  (same batch as the migration).
+  — **runtime-verified** in apply batch 2, after 1.10/1.11 were wired.
 - [x] 1.16 Integration: direct raw-SQL `UPDATE clientes SET deleted_at = now()
   WHERE numero = 1` bypassing the service asserts 23514 → 409
-  `consumidor_final_protegido`. *(backstop map)* — implemented, `[Skip]`-gated on
-  the migration.
+  `consumidor_final_protegido`. *(backstop map)* — **runtime-verified** in apply
+  batch 2.
 - [x] 1.17 [P] Integration: one FK smoke test per new FK (`fk_clientes_*`,
   `fk_proveedores_*`), cross-tenant/nonexistent id → 23503/400. *(backstop map)*
-  — implemented, `[Skip]`-gated on the migration.
+  — **runtime-verified** in apply batch 2.
 - [x] 1.18 Regression: existing Domain/Application/IntegrationTests suites
-  unedited and green. — 69/69 Domain, 91/91 Application, 74 passed + 10 skipped
-  Integration (0 regressions).
+  unedited and green. — Final (apply batch 2): 69/69 Domain, 91/91 Application,
+  91/91 Integration (baseline 74 + 17 newly-active test cases from the 10
+  un-skipped `[Fact]`/`[Theory]` methods — theories with `MemberData`/`InlineData`
+  expand to one result per row once active). Run twice, identical both times.
+  One incidental pre-existing test-order fragility found and fixed in
+  `CatalogosGlobalesRlsTests` (see apply-progress.md) — no production behavior
+  changed by that fix, test-only.
 
 ---
 
