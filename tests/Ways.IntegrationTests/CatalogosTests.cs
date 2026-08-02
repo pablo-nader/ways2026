@@ -28,8 +28,16 @@ public class CatalogosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
     // El servidor serializa enums como texto (Program.cs, JsonStringEnumConverter) — el
     // HttpClient de prueba, a diferencia del servidor, no hereda esa configuración: hay que
     // repetirla acá para los DTOs que llevan un enum (TipoComprobanteListado.Clase).
+    // PropertyNameCaseInsensitive = true es igual de necesario y faltaba (etapa 4B, batch 11):
+    // un `new JsonSerializerOptions()` no lo trae en true por default, a diferencia del
+    // `ReadFromJsonAsync<T>()` sin opciones que sí usa este archivo para el resto de los DTOs
+    // (sin enums) — sin esto, cada propiedad de TipoComprobanteListado quedaba en su default
+    // (`Clase` = `Venta`, el primer valor del enum; `Nombre`/`Codigo` = `null`) en vez de
+    // tirar un error, invisible acá porque `LosCatalogosFiscalesSonDeSoloLecturaParaUnTenant`
+    // solo hacía `Assert.NotEmpty(tipos!)` (cuenta de la lista, no contenido de cada fila).
     private static readonly JsonSerializerOptions OpcionesJson = new()
     {
+        PropertyNameCaseInsensitive = true,
         Converters = { new JsonStringEnumConverter() }
     };
 
