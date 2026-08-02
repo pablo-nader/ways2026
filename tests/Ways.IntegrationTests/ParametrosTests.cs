@@ -1,11 +1,17 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Parametros;
 using Ways.Application.Usuarios;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
 
 namespace Ways.IntegrationTests;
@@ -164,5 +170,98 @@ public class ParametrosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
         var respuesta = await cliente.GetAsync($"/api/parametros/clave_inventada?idEmpresa={idEmpresa}");
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+    }
+
+    [Fact]
+    public async Task DosEstablecimientosConcurrentesConLaMismaClaveYElMismoAlcanceDisparanElBackstopDelSaveChanges()
+    {
+        // Mismo mecanismo que el análogo de CatalogosTests (judgment-day, slice 3 ronda 2), con
+        // un matiz importante: a diferencia de ServicioDeCatalogo.CrearAsync (INSERT
+        // incondicional, y con un chequeo previo que YA tira 409 de dominio si el nombre está
+        // tomado — la carrera "de verdad" es opcional para que ese test pase), EstablecerAsync
+        // es un upsert: primero busca "existente" y solo inserta si no lo encuentra, sin
+        // chequeo previo equivalente (un duplicado es una actualización legítima). Sin forzar
+        // la concurrencia, dos PUT lanzados con Task.WhenAll no garantizan que las dos SELECT
+        // "existente" corran antes de que cualquiera haga commit — confirmado empíricamente:
+        // con el pool de conexiones caliente (p.ej. corriendo dentro de la suite completa) el
+        // ganador puede terminar su SELECT + INSERT + commit antes de que el segundo arranque
+        // su propia SELECT, que entonces ve la fila ya confirmada y hace un UPDATE legítimo
+        // (200), sin pasar nunca por el 23505. Por eso este test arma un rendezvous real con
+        // <see cref="InterceptorDeRendezVous"/>: intercepta las dos primeras SELECT de
+        // <c>parametros</c> (la "existente" de cada PUT) y las retiene hasta que ambas
+        // llegaron, así las dos ven "no existe" y las dos intentan el INSERT — recién ahí el
+        // 23505 de <c>ux_parametros_empresa</c> aparece en el <c>SaveChangesAsync</c> de la
+        // que pierde la carrera, sin importar qué tan caliente esté el pool.
+        var (idEmpresa, _, _, mail) = await SembrarTenantConAdminAsync(
+            nameof(DosEstablecimientosConcurrentesConLaMismaClaveYElMismoAlcanceDisparanElBackstopDelSaveChanges));
+
+        using var gate = new CountdownEvent(2);
+        var interceptor = new InterceptorDeRendezVous(gate);
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) =>
+                    options.AddInterceptors(interceptor))));
+
+        using var cliente = factory.CreateClient();
+        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mail, Password));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tareaA = cliente.PutAsJsonAsync($"/api/parametros?idEmpresa={idEmpresa}", new ParametroAlta("tolerancia_pago", "15", null));
+        var tareaB = cliente.PutAsJsonAsync($"/api/parametros?idEmpresa={idEmpresa}", new ParametroAlta("tolerancia_pago", "25", null));
+
+        var respuestas = await Task.WhenAll(tareaA, tareaB);
+        var estados = respuestas.Select(r => r.StatusCode).ToList();
+
+        Assert.True(interceptor.Participantes >= 2, $"participantes={interceptor.Participantes}");
+        Assert.Contains(HttpStatusCode.OK, estados);
+        Assert.Contains(HttpStatusCode.Conflict, estados);
+
+        var respuestaConflicto = respuestas.Single(r => r.StatusCode == HttpStatusCode.Conflict);
+        var problema = await respuestaConflicto.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("parametro_duplicado", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Retiene las dos primeras consultas que leen <c>parametros</c> (la "existente"
+    /// de <see cref="Ways.Application.Parametros.ServicioDeParametros.EstablecerAsync"/> de
+    /// cada request) hasta que ambas llegaron — un rendezvous de dos participantes que fuerza
+    /// la carrera genuina en el INSERT, en vez de depender del timing real del pool de
+    /// conexiones. Cualquier consulta posterior a <c>parametros</c> (p.ej. el listado final de
+    /// otro test) pasa de largo sin tocar el gate, ya usado.</summary>
+    private sealed class InterceptorDeRendezVous(CountdownEvent gate) : DbCommandInterceptor
+    {
+        private int _participantes;
+
+        public int Participantes => _participantes;
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            EsperarSiCorresponde(command);
+            return base.ReaderExecuting(command, eventData, result);
+        }
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            EsperarSiCorresponde(command);
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void EsperarSiCorresponde(DbCommand command)
+        {
+            if (!command.CommandText.Contains("parametros", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (Interlocked.Increment(ref _participantes) > 2)
+            {
+                return;
+            }
+
+            gate.Signal();
+            gate.Wait();
+        }
     }
 }
