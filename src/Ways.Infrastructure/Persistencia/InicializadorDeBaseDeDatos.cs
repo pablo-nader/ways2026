@@ -487,9 +487,13 @@ public class InicializadorDeBaseDeDatos(
             .ToListAsync(ct))
             .ToHashSet();
 
+        // Se filtra a IdEmpresa == null (lista default compartida) porque es el único caso que
+        // este backfill necesita cubrir; además evita que ToDictionaryAsync explote con clave
+        // duplicada si algún tenant llegara a tener una default compartida y otra por empresa a
+        // la vez (estado que hoy no debería darse, pero degrada mejor así que con un crash).
         var idListaDefaultPorTenant = await db.ListasPrecio
             .IgnoreQueryFilters(["BajaLogica"])
-            .Where(l => l.EsDefault)
+            .Where(l => l.EsDefault && l.IdEmpresa == null)
             .ToDictionaryAsync(l => l.IdTenant, l => l.Id, ct);
 
         var tenantsPendientes = todosLosTenants
