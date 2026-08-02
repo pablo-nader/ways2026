@@ -216,16 +216,16 @@ itself, but `PlantillaDeAprovisionamiento` reuses the `Area`/`MedioPago` shapes 
 
 **Depends on**: Slices 1–3 (consumes their API surface). **Start**: prior slice branch/main per chosen chain strategy. **Finish**: all ABM screens functional against the API, smoke-verified. **Rollback**: new routes only, no existing screen touched.
 
-- [ ] 4.1 [P] Add `catalogos.ts` field-descriptor API client + `tipos.ts` type additions.
-- [ ] 4.2 Add generic `PaginaCatalogo` component driven by a field descriptor. *(ADR-11)*
-- [ ] 4.3 Wire `/catalogos/:recurso` route + descriptors for `areas`, `marcas`, `grupos`, `medios_pago`; read-only views for the 3 fiscal catalogs. *(spec: auxiliary-catalogs)*
-- [ ] 4.4 Add Categorias tree page (own service subclass, escape hatch — not the generic descriptor). *(ADR-11 escape hatch)*
-- [ ] 4.5 [P] Add Tenants page: platform-only list/create/suspend. *(spec: tenant-organization / Platform-Only Creation, Tenant Suspension Enforcement)*
-- [ ] 4.6 [P] Add Empresas page: platform creates, tenant admin edits descriptive fields only. *(spec: tenant-organization / Platform-Only Creation)*
-- [ ] 4.7 [P] Add PuntosVenta page: same platform-create/tenant-edit pattern. *(spec: tenant-organization / Platform-Only Creation)*
-- [ ] 4.8 Add tenant provisioning UI (platform-only form; shows generated admin password once, never persisted in plain text). *(spec: tenant-organization / Tenant Provisioning With Template Seed; ADR-16)*
-- [ ] 4.9 Smoke-verify each ABM screen against its integration test expectations (no e2e harness this stage — ADR-17; flagged as follow-up).
-- [ ] 4.10 Update `docs/10-modelo-de-datos.md` §1/§9 status notes and record the flow-A (subdomain login) extension point as still deferred.
+- [x] 4.1 [P] Add `catalogos.ts` field-descriptor API client + `tipos.ts` type additions. — Also added a `Parametros`/`Aprovisionamiento` slice of types (out of literal scope of this task but required by the "Scope" section of the apply request); see batch report.
+- [x] 4.2 Add generic `PaginaCatalogo` component driven by a field descriptor. *(ADR-11)*
+- [x] 4.3 Wire `/catalogos/:recurso` route + descriptors for `areas`, `marcas`, `grupos`, `medios_pago`; read-only views for the 3 fiscal catalogs. *(spec: auxiliary-catalogs)* — dynamic route resolves to a concrete descriptor via a `switch` (`RutaCatalogo.tsx`), not a runtime generic lookup, to keep TS type-safety across the 4 different `TListado`/`TAlta` pairs.
+- [x] 4.4 Add Categorias tree page (own service subclass, escape hatch — not the generic descriptor). *(ADR-11 escape hatch)*
+- [ ] 4.5 **BLOCKED — no backend endpoint.** Tenants page: platform-only list/create/suspend. *(spec: tenant-organization / Platform-Only Creation, Tenant Suspension Enforcement)* — "create" is covered by 4.8's provisioning screen. "List" and "suspend" have **no API surface**: `AprovisionamientoEndpoints.cs` only maps `POST /api/plataforma/tenants`; no `GET`/`PUT` for tenants exists anywhere, and no Slice 1-3 task ever planned one (`ServicioDeOrganizacion`, named in `design.md`'s component map, was never actually built — a gap between `design.md`'s component map and this file's task breakdown). Per the apply's hard execution rule #2 ("no backend changes expected — if you need a backend change, STOP and report"), no endpoint was added. Needs a follow-up slice/change.
+- [ ] 4.6 **BLOCKED — no backend endpoint.** Empresas page: platform creates, tenant admin edits descriptive fields only. *(spec: tenant-organization / Platform-Only Creation)* — same gap as 4.5: no `GET`/`PUT` for `empresas` exists.
+- [ ] 4.7 **BLOCKED — no backend endpoint.** PuntosVenta page: same platform-create/tenant-edit pattern. *(spec: tenant-organization / Platform-Only Creation)* — same gap: no `GET`/`PUT` for `puntos_venta` exists.
+- [x] 4.8 Add tenant provisioning UI (platform-only form; shows generated admin password once, never persisted in plain text). *(spec: tenant-organization / Tenant Provisioning With Template Seed; ADR-16)*
+- [x] 4.9 Smoke-verify each ABM screen against its integration test expectations (no e2e harness this stage — ADR-17; flagged as follow-up). — No browser/e2e tool available in this environment (confirms ADR-17's gap). Verified instead via `tsc -b`/`oxlint`/`vite build` (all clean) plus a real end-to-end contract smoke test: brought up `compose.dev.yml` + `dotnet run` against a live Postgres, logged in as root and as a freshly-provisioned tenant admin, and exercised every new route with real HTTP calls (login, fiscal catalog GETs, root 403 on tenant catalogs, tenant provisioning 201, area create/duplicate 409 `nombre_duplicado`, medio de pago create with a UTF-8 accented name, categoria create, parametro upsert + resolve) — every JSON shape matched the TS contracts field-for-field. Full detail in `apply-progress.md`.
+- [x] 4.10 Update `docs/10-modelo-de-datos.md` §1/§9 status notes and record the flow-A (subdomain login) extension point as still deferred.
 
 ---
 
