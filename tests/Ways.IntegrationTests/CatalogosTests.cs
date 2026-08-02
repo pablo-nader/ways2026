@@ -279,6 +279,26 @@ public class CatalogosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>db-error-backstops (judgment-day ronda 1, Slice 3): <c>ServicioDeGrupos</c> no
+    /// tiene un pre-chequeo de rango para <c>Margen</c> (a diferencia de
+    /// <c>ServicioDeProveedores.ExigirMargenValido</c>) — este es el camino HTTP más barato
+    /// para llegar de verdad al mapeo genérico 22003 → 400 <c>valor_fuera_de_rango</c> de
+    /// <c>ManejadorDeErrores</c>, sin ningún chequeo de aplicación de por medio.</summary>
+    [Fact]
+    public async Task CrearUnGrupoConMargenQueDesbordaNumericDevuelve400ViaElBackstopDe22003()
+    {
+        var (_, mail) = await SembrarTenantConAdminAsync(
+            nameof(CrearUnGrupoConMargenQueDesbordaNumericDevuelve400ViaElBackstopDe22003));
+        using var cliente = await ClienteLogueadoAsync(mail);
+
+        var respuesta = await cliente.PostAsJsonAsync(
+            "/api/catalogos/grupos", new GrupoAlta("Desbordado", IdEmpresa: null, Margen: 9999.99m));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("valor_fuera_de_rango", problema.GetProperty("codigo").GetString());
+    }
+
     [Fact]
     public async Task UnaSesionDeRootRecibe403EnUnCatalogoDeTenant()
     {

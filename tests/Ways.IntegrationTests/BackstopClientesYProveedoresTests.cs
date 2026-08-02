@@ -300,6 +300,30 @@ public class BackstopClientesYProveedoresTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("fk_listas_precio_lista_base", excepcion.ConstraintName);
     }
 
+    /// <summary>db-error-backstops (judgment-day ronda 1, Slice 3): prueba de humo cruda para
+    /// el mapeo genérico 22003 → 400 <c>valor_fuera_de_rango</c> — un INSERT directo por SQL
+    /// bypasea por completo <c>ServicioDeProveedores.ExigirMargenValido</c> (el pre-chequeo de
+    /// aplicación) y fuerza a Postgres a rechazar el valor por desbordar
+    /// <c>numeric(5,2)</c>.</summary>
+    [Fact]
+    public async Task UnProveedorConMargenQueDesbordaNumericViolaElRangoEnPostgres()
+    {
+        var (idTenant, idCondicionFiscal, _) =
+            await SembrarTenantConCatalogosAsync(nameof(UnProveedorConMargenQueDesbordaNumericViolaElRangoEnPostgres));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO proveedores (id_tenant, razon_social, id_condicion_fiscal, margen, created_at, updated_at) " +
+            "VALUES ($1, 'intruso', $2, 9999.99, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idCondicionFiscal });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("22003", excepcion.SqlState);
+    }
+
     [Theory]
     [InlineData("clientes", "fk_clientes_tenant")]
     [InlineData("proveedores", "fk_proveedores_tenant")]

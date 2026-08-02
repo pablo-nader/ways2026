@@ -64,6 +64,14 @@ public class ManejadorDeErrores(
                 when fk.StartsWith("fk_", StringComparison.Ordinal) =>
                 LogYClasificarReferenciaInvalida(fk, log),
 
+            // Backstop genérico (db-error-backstops, judgment-day slice 3 ronda 1): cualquier
+            // valor numérico que desborda la precisión/escala de su columna (p.ej. un margen o
+            // un límite de crédito por encima de lo que valida la capa de servicio) llega acá
+            // como 22003 en vez de dejar pasar un 500 — no está atado a una constraint puntual
+            // porque numeric_value_out_of_range aplica por igual a cualquier columna numeric(p,s).
+            DbUpdateException { InnerException: PostgresException { SqlState: "22003" } } =>
+                (StatusCodes.Status400BadRequest, "El valor numérico está fuera de rango.", "valor_fuera_de_rango"),
+
             _ => (StatusCodes.Status500InternalServerError,
                   "Ocurrió un error inesperado.",
                   "error_interno")
