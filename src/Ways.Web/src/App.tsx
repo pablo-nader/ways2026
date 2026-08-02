@@ -4,6 +4,7 @@ import { RutaProtegida } from './auth/RutaProtegida'
 import { Layout } from './componentes/Layout'
 import { Categorias } from './paginas/Categorias'
 import { CatalogosFiscales } from './paginas/CatalogosFiscales'
+import { Clientes } from './paginas/Clientes'
 import { Empresas } from './paginas/Empresas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
@@ -36,6 +37,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Root, ROL.Admin]}>
                   <Usuarios />
+                </RutaProtegida>
+              }
+            />
+
+            {/* Entidad dedicada (stage-2-clientes-proveedores, design decision 1): árbol
+                propio, no la máquina genérica de catálogos. */}
+            <Route
+              path="/clientes"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Clientes />
                 </RutaProtegida>
               }
             />

@@ -126,11 +126,19 @@ public class ManejadorDeErrores(
         }
 
         // stage-2-clientes-proveedores (task 1.12, backstop map): ux_clientes_numero —
-        // backstop del contador atómico de ClienteAsignadorDeNumero (spec: Atomic Per-Tenant
-        // Numero Assignment); nunca debería chocar acá bajo operación normal. Misma exención
-        // que ux_proveedores_cuit arriba: sin ServicioDeClientes.CrearAsync todavía (esta
-        // etapa no lo incluye), la prueba de carrera queda para la Slice 2 (tasks.md, task
-        // 2.5), que reusa el rendezvous endurecido en el batch 1.13/1F de esta slice.
+        // backstop del contador atómico de AsignadorDeNumeroCliente (spec: Atomic Per-Tenant
+        // Numero Assignment); nunca debería chocar acá bajo operación normal.
+        //
+        // Ojo: la prueba de atomicidad y la prueba de backstop son cosas DISTINTAS (corregido,
+        // judgment-day ronda 1). ClientesEndpointsTests.LaCreacionConcurrenteAsignaNumerosSecuencialesSinExponerElBackstop
+        // (Slice 2, task 2.5) prueba que dos altas concurrentes NUNCA disparan esta rama — el
+        // lock de fila de `UPDATE ... RETURNING` sobre `numeraciones_clientes` ya serializa las
+        // dos transacciones (mismo hallazgo que AsignadorDeNumeroClienteConcurrenciaTests,
+        // Slice 1 batch 3), así que esa prueba demuestra la AUSENCIA de esta rama en operación
+        // normal, no su backstop. El backstop en sí — que esta rama SÍ traduce el 23505 a 409
+        // cuando algo bypassea el contador — lo prueba
+        // BackstopClientesYProveedoresTests.UnaFilaConNumeroDuplicadoInsertadaPorFueraDelContadorViolaLaUnicidad
+        // (INSERT crudo por SQL que fuerza el duplicado, sin pasar por el contador atómico).
         if (nombreDeIndice.Contains("_numero", StringComparison.Ordinal))
         {
             return ("numero_duplicado", "Ya existe un cliente con ese número en este tenant.");
