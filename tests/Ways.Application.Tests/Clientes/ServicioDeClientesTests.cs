@@ -4,6 +4,7 @@ using Ways.Application.Clientes;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -99,6 +100,20 @@ public class ServicioDeClientesTests
         siembra.Clientes.Add(cliente);
         await siembra.SaveChangesAsync();
         return cliente;
+    }
+
+    private static async Task<int> SembrarEmpresaAsync(string nombreDeBase, int idTenant)
+    {
+        await using var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma);
+
+        var empresa = new Empresa
+        {
+            IdTenant = idTenant, RazonSocial = "Empresa de prueba", CreatedAt = Ahora, UpdatedAt = Ahora
+        };
+        siembra.Empresas.Add(empresa);
+
+        await siembra.SaveChangesAsync();
+        return empresa.Id;
     }
 
     private static AltaCliente AltaValida(int idCondicionFiscal, int idListaPrecio, string nombre = "Juan Pérez") =>
@@ -241,6 +256,27 @@ public class ServicioDeClientesTests
         var servicio = CrearServicio(nombreDeBase, idTenant: 1);
 
         var datos = AltaValida(idCondicionFiscal, idListaPrecio) with { IdEmpresa = 999_999 };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
+
+        Assert.Equal("referencia_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    /// <summary>Slice 2 INFO carried into Slice 3 (state.yaml, closed here for symmetry): mismo
+    /// criterio que <see cref="CrearConIdEmpresaInexistenteEsRechazado"/>, pero con una empresa
+    /// que EXISTE de verdad y pertenece a OTRO tenant — el filtro de EF ya la deja afuera de
+    /// <c>db.Empresas</c> para el tenant actual, así que da el mismo 400 (correcto por
+    /// construcción, misma paridad que <see cref="CrearConIdListaPrecioDeOtroTenantEsRechazado"/>).</summary>
+    [Fact]
+    public async Task CrearConIdEmpresaDeOtroTenantEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idCondicionFiscal, idListaPrecio) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var idEmpresaDeOtroTenant = await SembrarEmpresaAsync(nombreDeBase, idTenant: 2);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = AltaValida(idCondicionFiscal, idListaPrecio) with { IdEmpresa = idEmpresaDeOtroTenant };
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
 
