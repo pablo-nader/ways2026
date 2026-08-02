@@ -1,22 +1,23 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ErrorApi } from '../api/cliente'
+import { clienteDeOrganizacion } from '../api/organizacion'
 import { PARAMETROS_CONOCIDOS } from '../api/tipos'
-import type { ParametroAlta, ParametroListado, ParametroResuelto } from '../api/tipos'
+import type { EmpresaListado, ParametroAlta, ParametroListado, ParametroResuelto, PuntoVentaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 
 /**
  * Editor de `parametros` (ADR-13): punto de venta gana sobre empresa, empresa gana sobre el
- * default declarado. `ITenantActual` todavía no carga una "empresa actual" en la sesión (ADR-10
- * — la selección de empresa/punto de venta es una etapa operativa posterior), así que esta
- * pantalla pide el id de empresa a mano en vez de un selector: en esta etapa cada tenant tiene
- * una sola empresa (la que crea el aprovisionamiento), así que sigue siendo una UX razonable
- * sin depender de un endpoint de listado que todavía no existe.
+ * default declarado. `ITenantActual` todavía no carga una "empresa actual" en la sesión
+ * (ADR-10 — la selección de empresa/punto de venta es una etapa operativa posterior), así que
+ * la empresa se elige acá de un desplegable poblado por `GET /api/empresas` (etapa 4B): antes
+ * de que ese endpoint existiera, esta pantalla pedía el id a mano — ya no hace falta.
  */
 export function Parametros() {
-  const [idEmpresa, setIdEmpresa] = useState('')
-  const [empresaConsultada, setEmpresaConsultada] = useState<number | null>(null)
+  const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
+  const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[]>([])
+  const [idEmpresa, setIdEmpresa] = useState<number | null>(null)
   const [items, setItems] = useState<ParametroListado[]>([])
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
@@ -30,12 +31,36 @@ export function Parametros() {
   const [resuelto, setResuelto] = useState<ParametroResuelto | null>(null)
   const [resolviendo, setResolviendo] = useState(false)
 
+  // Al entrar, trae las empresas visibles (la propia, si sos admin de tenant; todas, si sos
+  // plataforma) y los puntos de venta, para poblar los dos desplegables sin pedir ningún id
+  // a mano.
+  useEffect(() => {
+    let vigente = true
+
+    Promise.all([clienteDeOrganizacion.listarEmpresas(), clienteDeOrganizacion.listarPuntosVenta()])
+      .then(([listadoEmpresas, listadoPuntosVenta]) => {
+        if (!vigente) return
+        setEmpresas(listadoEmpresas)
+        setPuntosVenta(listadoPuntosVenta)
+        if (listadoEmpresas.length > 0) {
+          setIdEmpresa(listadoEmpresas[0].id)
+        }
+      })
+      .catch((e) => {
+        if (!vigente) return
+        setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar las empresas.')
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [])
+
   const cargarListado = useCallback(async (empresa: number) => {
     setCargando(true)
     setError('')
     try {
       setItems(await api.get<ParametroListado[]>(`/parametros?idEmpresa=${empresa}`))
-      setEmpresaConsultada(empresa)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los parámetros.')
     } finally {
@@ -43,19 +68,17 @@ export function Parametros() {
     }
   }, [])
 
-  async function buscar(evento: FormEvent) {
-    evento.preventDefault()
-    const empresa = Number(idEmpresa)
-    if (!Number.isFinite(empresa) || empresa <= 0) {
-      setError('Ingresá un id de empresa válido.')
-      return
+  useEffect(() => {
+    if (idEmpresa !== null) {
+      void cargarListado(idEmpresa)
     }
-    await cargarListado(empresa)
-  }
+  }, [idEmpresa, cargarListado])
+
+  const puntosVentaDeLaEmpresa = puntosVenta.filter((p) => p.idEmpresa === idEmpresa)
 
   async function establecer(evento: FormEvent) {
     evento.preventDefault()
-    if (empresaConsultada === null) return
+    if (idEmpresa === null) return
 
     setGuardando(true)
     setError('')
@@ -70,10 +93,10 @@ export function Parametros() {
         idPuntoVenta: idPuntoVenta === '' ? null : Number(idPuntoVenta),
       }
 
-      await api.put(`/parametros?idEmpresa=${empresaConsultada}`, datos)
+      await api.put(`/parametros?idEmpresa=${idEmpresa}`, datos)
       setAviso(`Se guardó "${clave}".`)
       setValorTexto('')
-      await cargarListado(empresaConsultada)
+      await cargarListado(idEmpresa)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar el parámetro.')
     } finally {
@@ -83,7 +106,7 @@ export function Parametros() {
 
   async function probarResolucion(evento: FormEvent) {
     evento.preventDefault()
-    if (empresaConsultada === null) return
+    if (idEmpresa === null) return
 
     setResolviendo(true)
     setError('')
@@ -91,9 +114,7 @@ export function Parametros() {
 
     try {
       const parametros = idPuntoVenta === '' ? '' : `&idPuntoVenta=${idPuntoVenta}`
-      setResuelto(
-        await api.get<ParametroResuelto>(`/parametros/${clave}?idEmpresa=${empresaConsultada}${parametros}`),
-      )
+      setResuelto(await api.get<ParametroResuelto>(`/parametros/${clave}?idEmpresa=${idEmpresa}${parametros}`))
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo resolver el parámetro.')
     } finally {
@@ -109,35 +130,38 @@ export function Parametros() {
           es el default de la empresa; uno con punto de venta lo pisa solo para ese local.
         </p>
 
-        <form className="row g-3 align-items-end mb-4" onSubmit={buscar}>
-          <div className="col-auto">
-            <label className="form-label" htmlFor="p-idempresa">
-              Id de empresa
-            </label>
-            <input
-              id="p-idempresa"
-              type="number"
-              className="form-control rounded-0"
-              value={idEmpresa}
-              onChange={(e) => setIdEmpresa(e.target.value)}
-              required
-            />
-          </div>
-          <div className="col-auto">
-            <button type="submit" className="btn btn-outline-primary rounded-0">
-              Ver parámetros
-            </button>
-          </div>
-        </form>
-
         {error && <div className="alert alert-danger rounded-0">{error}</div>}
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
 
-        {empresaConsultada !== null && (
+        {empresas === null ? (
+          <Cargando />
+        ) : empresas.length === 0 ? (
+          <p className="text-muted text-center py-4">No hay empresas visibles para configurar parámetros.</p>
+        ) : (
           <>
+            <div className="row g-3 align-items-end mb-4">
+              <div className="col-auto">
+                <label className="form-label" htmlFor="p-empresa">
+                  Empresa
+                </label>
+                <select
+                  id="p-empresa"
+                  className="form-select rounded-0"
+                  value={idEmpresa ?? ''}
+                  onChange={(e) => setIdEmpresa(Number(e.target.value))}
+                >
+                  {empresas.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.razonSocial}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <form className="row g-3 border p-3 mb-4 bg-white" onSubmit={establecer}>
               <div className="col-12">
-                <strong>Crear o editar un parámetro de la empresa {empresaConsultada}</strong>
+                <strong>Crear o editar un parámetro</strong>
               </div>
 
               <div className="col-md-4">
@@ -176,16 +200,21 @@ export function Parametros() {
 
               <div className="col-md-3">
                 <label className="form-label" htmlFor="p-puntoventa">
-                  Punto de venta (opcional)
+                  Punto de venta
                 </label>
-                <input
+                <select
                   id="p-puntoventa"
-                  type="number"
-                  className="form-control rounded-0"
-                  placeholder="Vacío = default de la empresa"
+                  className="form-select rounded-0"
                   value={idPuntoVenta}
                   onChange={(e) => setIdPuntoVenta(e.target.value)}
-                />
+                >
+                  <option value="">Toda la empresa (default)</option>
+                  {puntosVentaDeLaEmpresa.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="col-md-2 d-flex align-items-end gap-2">
@@ -222,13 +251,16 @@ export function Parametros() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((p) => (
-                      <tr key={p.id}>
-                        <td>{p.clave}</td>
-                        <td>{p.valor}</td>
-                        <td>{p.idPuntoVenta === null ? 'Toda la empresa' : `Punto de venta ${p.idPuntoVenta}`}</td>
-                      </tr>
-                    ))}
+                    {items.map((p) => {
+                      const puntoVenta = puntosVenta.find((pv) => pv.id === p.idPuntoVenta)
+                      return (
+                        <tr key={p.id}>
+                          <td>{p.clave}</td>
+                          <td>{p.valor}</td>
+                          <td>{puntoVenta ? puntoVenta.nombre : 'Toda la empresa'}</td>
+                        </tr>
+                      )
+                    })}
                     {items.length === 0 && (
                       <tr>
                         <td colSpan={3} className="text-center text-muted py-4">
