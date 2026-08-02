@@ -35,6 +35,22 @@ public class ManejadorDeErrores(
             DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: "ux_usuarios_usuario" } } =>
                 (StatusCodes.Status409Conflict, "El usuario ya existe.", "usuario_duplicado"),
 
+            // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
+            // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
+            // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
+            // que ya codifica qué se duplicó) en vez de repetir un caso por índice.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string ux } }
+                when ClasificarUnicidad(ux) is { } familia =>
+                (StatusCodes.Status409Conflict, familia.Titulo, familia.Codigo),
+
+            // Backstop genérico para las FKs compuestas nuevas (fk_*_empresa, fk_categorias_padre,
+            // fk_parametros_punto_venta, …): una referencia a una fila que no existe (o que
+            // pertenece a otro tenant, invisible bajo RLS) llega acá como 23503 en vez de
+            // dejar pasar un 500 — p.ej. un IdCategoriaPadre de otro tenant.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23503", ConstraintName: string fk } }
+                when fk.StartsWith("fk_", StringComparison.Ordinal) =>
+                (StatusCodes.Status400BadRequest, "La referencia indicada no existe.", "referencia_invalida"),
+
             _ => (StatusCodes.Status500InternalServerError,
                   "Ocurrió un error inesperado.",
                   "error_interno")
@@ -58,5 +74,32 @@ public class ManejadorDeErrores(
                 Extensions = { ["codigo"] = codigo }
             }
         });
+    }
+
+    /// <summary>Agrupa los índices únicos nuevos por familia a partir del sufijo de su
+    /// nombre — evita repetir un caso por índice para <c>ux_areas_nombre_*</c>,
+    /// <c>ux_marcas_nombre_*</c>, <c>ux_grupos_nombre_*</c>, <c>ux_medios_pago_nombre_*</c>,
+    /// <c>ux_categorias_nombre_*</c>, <c>ux_alicuotas_iva_nombre</c>,
+    /// <c>ux_condiciones_fiscales_codigo</c>, <c>ux_tipos_comprobante_codigo</c> y las dos de
+    /// <c>parametros</c>. <c>ux_parametros_*</c> se resuelve antes que el resto porque no
+    /// sigue el patrón "_nombre"/"_codigo".</summary>
+    private static (string Codigo, string Titulo)? ClasificarUnicidad(string nombreDeIndice)
+    {
+        if (nombreDeIndice is "ux_parametros_empresa" or "ux_parametros_punto_venta")
+        {
+            return ("parametro_duplicado", "Ya existe un parámetro con esa clave en este alcance.");
+        }
+
+        if (nombreDeIndice.Contains("_nombre", StringComparison.Ordinal))
+        {
+            return ("nombre_duplicado", "Ya existe un registro con ese nombre en este alcance.");
+        }
+
+        if (nombreDeIndice.Contains("_codigo", StringComparison.Ordinal))
+        {
+            return ("codigo_duplicado", "Ya existe un registro con ese código.");
+        }
+
+        return null;
     }
 }
