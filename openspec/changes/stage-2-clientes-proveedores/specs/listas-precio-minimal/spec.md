@@ -33,10 +33,17 @@ key to `listas_precio`.
 - WHEN its `listas_precio` are queried
 - THEN exactly one row exists with `es_default = true`
 
-#### Scenario: Cliente creation defaults to the General list
+#### Scenario: Cliente creation requires an explicit lista
+
+> Superseded wording (verify, 2026-08-02): an earlier draft had cliente creation
+> defaulting to the General list when `id_lista_precio` was omitted. That conflicted
+> with `specs/clientes/spec.md` ("id_lista_precio and id_condicion_fiscal are
+> required"), which won as the acceptance contract — see design.md:29 and
+> apply-progress.md batch 4/5. This scenario now states the implemented behavior.
+
 - GIVEN a tenant admin creates a cliente without specifying `id_lista_precio`
-- WHEN the row is persisted
-- THEN `id_lista_precio` resolves to the tenant's `es_default` list
+- WHEN the request is validated
+- THEN it is rejected with 400 `id_lista_precio_requerido` (no defaulting occurs)
 
 #### Scenario: Invalid id_lista_precio reference maps to 400
 - GIVEN a create request references a non-existent `id_lista_precio`
