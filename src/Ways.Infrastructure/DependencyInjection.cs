@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -86,6 +87,8 @@ public static class DependencyInjection
             npgsql.MapEnum<EstadoTenant>("estado_tenant");
             npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
             npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+            npgsql.MapEnum<TipoDocumento>("tipo_documento");
+            npgsql.MapEnum<ModoLista>("modo_lista");
             npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
         });
 }

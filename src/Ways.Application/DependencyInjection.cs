@@ -12,6 +12,10 @@ public static class DependencyInjection
     public static IServiceCollection AgregarApplication(this IServiceCollection services)
     {
         services.AddSingleton<IRelojDelSistema, RelojDelSistema>();
+
+        // AsignadorDeNumeroCliente (Ways.Application.Clientes) es estática, sin ciclo de
+        // vida de DI que registrar — el IWaysDbContext llega por parámetro en cada llamada.
+
         services.AddScoped<ServicioDeAutenticacion>();
         services.AddScoped<ServicioDeUsuarios>();
 

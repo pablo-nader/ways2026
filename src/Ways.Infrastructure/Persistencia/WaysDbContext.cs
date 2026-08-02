@@ -3,8 +3,10 @@ using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 
 namespace Ways.Infrastructure.Persistencia;
@@ -31,6 +33,17 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<AlicuotaIva> AlicuotasIva => Set<AlicuotaIva>();
     public DbSet<TipoComprobante> TiposComprobante => Set<TipoComprobante>();
     public DbSet<Parametro> Parametros => Set<Parametro>();
+
+    // Stage 2 (clientes-proveedores, DB CHANGE GATE pendiente): modelo adelantado a la
+    // migración, mismo trámite que las 5 catálogos de tenant en stage 1 (ver el comentario
+    // de WaysApiFixture.ConfigureWebHost). Los 4 sí están en IWaysDbContext desde este lote:
+    // AsignadorDeNumeroCliente/ServicioDeAprovisionamiento/InicializadorDeBaseDeDatos ya los
+    // consumen acá (a diferencia de los catálogos de tenant, que no tenían consumidor de
+    // Application en su propio lote).
+    public DbSet<Cliente> Clientes => Set<Cliente>();
+    public DbSet<Proveedor> Proveedores => Set<Proveedor>();
+    public DbSet<ListaPrecio> ListasPrecio => Set<ListaPrecio>();
+    public DbSet<NumeracionCliente> NumeracionesClientes => Set<NumeracionCliente>();
 
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
@@ -63,6 +76,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenant(modelBuilder);
         AplicarFiltroDeTenantEnTenant(modelBuilder);
         AplicarFiltroDeTenantEnUsuario(modelBuilder);
+        AplicarFiltroDeTenantEnNumeracionCliente(modelBuilder);
     }
 
     /// <summary>
@@ -251,6 +265,23 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         var filtro = Expression.OrElse(Expression.OrElse(esPlataforma, esLogin), comparacion);
 
         entidad.SetQueryFilter("Tenant", Expression.Lambda(filtro, parametro));
+    }
+
+    /// <summary>
+    /// <see cref="NumeracionCliente"/> no hereda de <see cref="EntidadTenant"/> (su
+    /// <c>IdTenant</c> ES la PK, no una FK opcional — mismo motivo que <see cref="Tenant"/>),
+    /// así que necesita la variante escrita a mano en vez de la del loop de
+    /// <see cref="AplicarFiltroDeTenant"/>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnNumeracionCliente(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(NumeracionCliente))!;
+
+        var parametro = Expression.Parameter(typeof(NumeracionCliente), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(NumeracionCliente.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
     }
 
     /// <summary><c>e => this.TenantActual.EsPlataforma || propiedadDeAlcance == this.TenantActual.Id</c>.
