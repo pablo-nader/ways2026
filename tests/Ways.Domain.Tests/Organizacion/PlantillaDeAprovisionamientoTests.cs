@@ -30,10 +30,17 @@ public class PlantillaDeAprovisionamientoTests
     }
 
     [Fact]
-    public void LosItemsDiferidosEstanDeclaradosNoDescartadosEnSilencio()
+    public void V1TieneLaListaDePreciosGeneralComoDefault()
     {
-        Assert.Equal(2, PlantillaV1.ItemsDiferidos.Count);
-        Assert.Contains(PlantillaV1.ItemsDiferidos, i => i.Contains("lista_precio_general"));
-        Assert.Contains(PlantillaV1.ItemsDiferidos, i => i.Contains("cliente_consumidor_final"));
+        Assert.Equal("General", PlantillaDeAprovisionamiento.V1.ListaPrecioGeneral.Nombre);
+    }
+
+    [Fact]
+    public void V1TieneElConsumidorFinalConCondicionFiscalCf()
+    {
+        var cf = PlantillaDeAprovisionamiento.V1.ClienteConsumidorFinal;
+
+        Assert.Equal("Consumidor Final", cf.Nombre);
+        Assert.Equal("CF", cf.CodigoCondicionFiscal);
     }
 }
