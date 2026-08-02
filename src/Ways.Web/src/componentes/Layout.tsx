@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router'
 import { useAuth } from '../auth/useAuth'
-import { puedeGestionarUsuarios } from '../api/tipos'
+import { DESCRIPTORES_DE_CATALOGO } from '../api/catalogos'
+import { ROL, puedeAprovisionarTenants, puedeGestionarCatalogos, puedeGestionarUsuarios } from '../api/tipos'
 
 export function Layout() {
   const { usuario, cerrarSesion } = useAuth()
@@ -35,6 +36,41 @@ export function Layout() {
                   <li className="nav-item">
                     <NavLink className="nav-link" to="/usuarios">
                       Usuarios
+                    </NavLink>
+                  </li>
+                )}
+                {usuario && puedeGestionarCatalogos(usuario.rolId) && (
+                  <>
+                    {Object.values(DESCRIPTORES_DE_CATALOGO).map((d) => (
+                      <li className="nav-item" key={d.recurso}>
+                        <NavLink className="nav-link" to={`/catalogos/${d.recurso}`}>
+                          {d.titulo}
+                        </NavLink>
+                      </li>
+                    ))}
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/catalogos/categorias">
+                        Categorías
+                      </NavLink>
+                    </li>
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/parametros">
+                        Parámetros
+                      </NavLink>
+                    </li>
+                  </>
+                )}
+                {usuario && (usuario.rolId === ROL.Root || usuario.rolId === ROL.Admin) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/catalogos-fiscales">
+                      Catálogos fiscales
+                    </NavLink>
+                  </li>
+                )}
+                {usuario && puedeAprovisionarTenants(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/organizacion/nuevo-tenant">
+                      Nuevo tenant
                     </NavLink>
                   </li>
                 )}
