@@ -165,6 +165,7 @@ app.MapearParametros();
 app.MapearAprovisionamiento();
 app.MapearOrganizacion();
 app.MapearClientes();
+app.MapearProveedores();
 
 // Cualquier ruta que no sea /api la resuelve el router de React.
 // Una /api/... inexistente tiene que dar 404, no devolver el index.html.

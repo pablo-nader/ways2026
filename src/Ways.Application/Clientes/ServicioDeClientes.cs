@@ -250,13 +250,18 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
     /// 0)</c> en la tabla <c>clientes</c>, pero eso exigiría una migración nueva y esta ronda
     /// está bajo el gate "NO schema changes" (la migración de la Slice 2 ya está mergeada);
     /// queda como mejora futura si se decide blindar también contra un bypass directo por
-    /// SQL, igual que <c>ck_clientes_cf_protegido</c>.</summary>
+    /// SQL, igual que <c>ck_clientes_cf_protegido</c>.
+    /// Judgment-day ronda 1 de Slice 3: también rechaza valores que desbordan la columna
+    /// <c>numeric(14,2)</c> (mayores o iguales a 1_000_000_000_000) — mismo defecto de clase
+    /// que <c>ServicioDeProveedores.ExigirMargenValido</c>.</summary>
     private static void ExigirLimiteCreditoValido(decimal limiteCredito)
     {
-        if (limiteCredito < 0)
+        if (limiteCredito < 0 || limiteCredito >= 1_000_000_000_000m)
         {
             throw new ErrorDominio(
-                "limite_credito_invalido", "El límite de crédito no puede ser negativo.", 400);
+                "limite_credito_invalido",
+                "El límite de crédito debe estar entre 0 y 999999999999.99.",
+                400);
         }
     }
 

@@ -303,6 +303,49 @@ export type EdicionCliente = AltaCliente
  * (design decision 1, spec: listas_precio ABM Is Out of Scope This Stage). */
 export type ListaPrecioAsignable = { id: number; nombre: string; esDefault: boolean }
 
+// --- Proveedores (stage-2-clientes-proveedores) ---
+// Entidad dedicada, no la máquina genérica de catálogos (design decision 1): dedupe por `cuit`
+// tenant-wide (partial index, NULL permitido y no comparado), no por nombre/empresa-par.
+
+export type ProveedorListado = {
+  id: number
+  razonSocial: string
+  nombreFantasia: string | null
+  cuit: string | null
+  idCondicionFiscal: number
+  domicilio: string | null
+  telefono: string | null
+  email: string | null
+  vendedor: string | null
+  celularVendedor: string | null
+  supervisor: string | null
+  celularSupervisor: string | null
+  margen: number | null
+  observaciones: string | null
+  activo: boolean
+  idEmpresa: number | null
+}
+
+export type AltaProveedor = {
+  razonSocial: string
+  nombreFantasia: string | null
+  cuit: string | null
+  idCondicionFiscal: number
+  domicilio: string | null
+  telefono: string | null
+  email: string | null
+  vendedor: string | null
+  celularVendedor: string | null
+  supervisor: string | null
+  celularSupervisor: string | null
+  margen: number | null
+  observaciones: string | null
+  idEmpresa: number | null
+  activo: boolean
+}
+
+export type EdicionProveedor = AltaProveedor
+
 // --- Aprovisionamiento de tenants (ADR-16, plataforma) ---
 
 export type SolicitudDeAprovisionamiento = {

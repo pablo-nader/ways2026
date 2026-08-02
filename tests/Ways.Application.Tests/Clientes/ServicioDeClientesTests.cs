@@ -4,6 +4,7 @@ using Ways.Application.Clientes;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -101,6 +102,20 @@ public class ServicioDeClientesTests
         return cliente;
     }
 
+    private static async Task<int> SembrarEmpresaAsync(string nombreDeBase, int idTenant)
+    {
+        await using var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma);
+
+        var empresa = new Empresa
+        {
+            IdTenant = idTenant, RazonSocial = "Empresa de prueba", CreatedAt = Ahora, UpdatedAt = Ahora
+        };
+        siembra.Empresas.Add(empresa);
+
+        await siembra.SaveChangesAsync();
+        return empresa.Id;
+    }
+
     private static AltaCliente AltaValida(int idCondicionFiscal, int idListaPrecio, string nombre = "Juan Pérez") =>
         new(
             nombre, null, null, null, null, idCondicionFiscal, null, null, null, null, null, null,
@@ -193,6 +208,25 @@ public class ServicioDeClientesTests
         Assert.Equal(400, error.EstadoHttp);
     }
 
+    /// <summary>Judgment-day ronda 1 (Slice 3): un <c>LimiteCredito</c> que desborda
+    /// <c>numeric(14,2)</c> (mayor o igual a 1_000_000_000_000) también se rechaza con 400 a
+    /// nivel de servicio, en vez de dejar que Postgres lo rechace con 22003 en el
+    /// <c>SaveChangesAsync</c>.</summary>
+    [Fact]
+    public async Task CrearConLimiteCreditoQueDesbordaNumericEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idCondicionFiscal, idListaPrecio) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = AltaValida(idCondicionFiscal, idListaPrecio) with { LimiteCredito = 1_000_000_000_000m };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
+
+        Assert.Equal("limite_credito_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
     /// <summary>Spec: "Invalid FK reference maps to 400" — el pre-chequeo de
     /// <see cref="ServicioDeClientes"/> adelanta el mismo código/estado que el backstop de
     /// <c>fk_clientes_condicion_fiscal</c> (23503), sin esperar la carrera con Postgres.</summary>
@@ -241,6 +275,27 @@ public class ServicioDeClientesTests
         var servicio = CrearServicio(nombreDeBase, idTenant: 1);
 
         var datos = AltaValida(idCondicionFiscal, idListaPrecio) with { IdEmpresa = 999_999 };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
+
+        Assert.Equal("referencia_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    /// <summary>Slice 2 INFO carried into Slice 3 (state.yaml, closed here for symmetry): mismo
+    /// criterio que <see cref="CrearConIdEmpresaInexistenteEsRechazado"/>, pero con una empresa
+    /// que EXISTE de verdad y pertenece a OTRO tenant — el filtro de EF ya la deja afuera de
+    /// <c>db.Empresas</c> para el tenant actual, así que da el mismo 400 (correcto por
+    /// construcción, misma paridad que <see cref="CrearConIdListaPrecioDeOtroTenantEsRechazado"/>).</summary>
+    [Fact]
+    public async Task CrearConIdEmpresaDeOtroTenantEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idCondicionFiscal, idListaPrecio) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var idEmpresaDeOtroTenant = await SembrarEmpresaAsync(nombreDeBase, idTenant: 2);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = AltaValida(idCondicionFiscal, idListaPrecio) with { IdEmpresa = idEmpresaDeOtroTenant };
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
 

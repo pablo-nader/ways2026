@@ -218,27 +218,53 @@ concurrency, tests green. **Rollback**: new routes/screen only.
 **Finish**: proveedor CRUD live, cuit uniqueness proven under concurrency, tests
 green. **Rollback**: new routes only.
 
+> **Re-scoping note (apply batch 6)**: same precedent as clientes in Slice 2 — this
+> apply batch delivered proveedores as one complete vertical slice (service + API +
+> web ABM together), absorbing the proveedores-only portions of the original Slice 4
+> (tasks 4.1b/4.3b/4.4b below). Slice 4 as a standalone unit is now fully closed: both
+> clientes (Slice 2) and proveedores (this batch) web ABMs are done.
+
 ### 3A. Application
 
-- [ ] 3.1 Add `ServicioDeProveedores` (list/create/edit/soft-delete),
+- [x] 3.1 Add `ServicioDeProveedores` (list/create/edit/soft-delete),
   `GestionDeCatalogo` policy. *(spec: proveedores / Proveedor ABM Lifecycle and
-  Authorization)*
-- [ ] 3.2 Add proveedor contracts.
+  Authorization)* — no atomic counter/transaction needed (unlike
+  `ServicioDeClientes`): unconditional INSERT + `SaveChangesAsync`, same shape as
+  `ServicioDeCatalogo.CrearAsync`.
+- [x] 3.2 Add proveedor contracts (`AltaProveedor`/`EdicionProveedor`/
+  `ProveedorListado`).
 
 ### 3B. API
 
-- [ ] 3.3 Add `ProveedoresEndpoints`.
+- [x] 3.3 Add `ProveedoresEndpoints`.
 
 ### 3C. Tests
 
-- [ ] 3.4 [P] Unit (InMemory): create without `cuit` succeeds, required
-  `id_condicion_fiscal` validation, vendedor blocked.
-- [ ] 3.5 [P] Integration: db-error-backstops race test for `ux_proveedores_cuit`
+- [x] 3.4 [P] Unit (InMemory): create without `cuit` succeeds, required
+  `id_condicion_fiscal` validation, vendedor blocked. — 17 facts, InMemory,
+  `ServicioDeProveedoresTests`. **Deviation from the literal "vendedor blocked"
+  wording** (documented, same precedent as `ServicioDeClientesTests` 2.4):
+  authorization is endpoint-policy-only (`GestionDeCatalogo`), not a
+  service-level concern — covered at HTTP level in 3.5 instead
+  (`UnVendedorNoPuedeCrearProveedores`). Unlike `ServicioDeClientesTests`,
+  `CrearAsync` itself IS fully covered here (no transaction/raw-ADO blocker).
+- [x] 3.5 [P] Integration: db-error-backstops race test for `ux_proveedores_cuit`
   (2 concurrent same-cuit creates → 1×201 + 1×409 via translated domain code, not
   exception type — reuse 1.13's hardened rendezvous); same cuit across 2 tenants
   allowed; `NULL` cuit never collides; soft-deleted cuit reusable; cross-tenant id
-  → 404. *(spec: proveedores / cuit Uniqueness Is Scoped Per Tenant)*
-- [ ] 3.6 Regression: Slice 1 suites unedited and green.
+  → 404. *(spec: proveedores / cuit Uniqueness Is Scoped Per Tenant)* —
+  `ProveedoresEndpointsTests`, 9 facts. **Deviation from the literal "reuse 1.13's
+  hardened rendezvous" wording** (documented, technical justification): NOT
+  reused. `ServicioDeProveedores.CrearAsync` is an unconditional INSERT with a
+  pre-check (no atomic counter, unlike `AsignadorDeNumeroCliente`) — same shape as
+  `ServicioDeCatalogo.CrearAsync`, whose own race test
+  (`CatalogosTests.DosAltasConcurrentesConElMismoNombreEnElMismoAlcanceDisparanElBackstopDelSaveChanges`)
+  already proves this shape races for real with a plain `Task.WhenAll`, no forced
+  rendezvous — confirmed here too, run 3x with no flakiness. Also covers
+  cross-tenant write 404 (PUT/DELETE), not just GET, same as clientes 2.5's
+  judgment-day fix applied proactively from the start. The `_cuit` exemption
+  comment in `ManejadorDeErrores` updated to record the race path now exists.
+- [x] 3.6 Regression: Slice 1 suites unedited and green. — see Verification.
 
 ---
 
@@ -255,15 +281,18 @@ strategy. **Finish**: both screens functional against the API, smoke-verified.
   row (`numero = 1`) rendered read-only with edit/delete disabled (defense in
   depth on top of the domain guard). *(spec: clientes / Cliente ABM Lifecycle;
   Consumidor Final Protected Row)* — done in Slice 2 (apply batch 4, re-scoped).
-- [ ] 4.1b Add dedicated `Proveedores.tsx` ABM: list/create/edit/soft-delete.
-  *(spec: proveedores / Proveedor ABM Lifecycle)* — pending, Slice 3/4.
+- [x] 4.1b Add dedicated `Proveedores.tsx` ABM: list/create/edit/soft-delete.
+  *(spec: proveedores / Proveedor ABM Lifecycle)* — done in Slice 3 (apply batch
+  6, re-scoped, same precedent as clientes/Slice 2). Fiscal/contact/margin
+  sections, no protected-row equivalent to the Consumidor Final (proveedores has
+  none).
 
 ### 4B. Wiring + smoke
 
 - [x] 4.3a Wire clientes route (`/clientes`) + nav entry; add `tipos.ts`
   additions and `clientes.ts` API client. Done in Slice 2 (apply batch 4).
-- [ ] 4.3b Wire proveedores route + nav entry; add `proveedores.ts` API client.
-  Pending, Slice 3/4.
+- [x] 4.3b Wire proveedores route + nav entry; add `proveedores.ts` API client.
+  Done in Slice 3 (apply batch 6).
 - [x] 4.4a Smoke-verify the clientes screen (`tsc -b`/`oxlint`/`vite build`
   clean). Done in Slice 2 (apply batch 4) — no live-host contract smoke this
   batch (no dev server/API host was started); relies on the backend
@@ -271,7 +300,12 @@ strategy. **Finish**: both screens functional against the API, smoke-verified.
   consumes (`ClienteListado`/`AltaCliente`/`EdicionCliente`/
   `ListaPrecioAsignable` shapes match `Ways.Application.Clientes.Contratos`
   field-for-field).
-- [ ] 4.4b Smoke-verify the proveedores screen. Pending, Slice 3/4.
+- [x] 4.4b Smoke-verify the proveedores screen (`tsc -b`/`oxlint`/`vite build`
+  clean). Done in Slice 3 (apply batch 6) — same criterion as clientes 4.4a: no
+  live-host contract smoke this batch, relies on `ProveedoresEndpointsTests`
+  (task 3.5) proving the exact contract the screen consumes
+  (`ProveedorListado`/`AltaProveedor`/`EdicionProveedor` shapes match
+  `Ways.Application.Proveedores.Contratos` field-for-field).
 
 ---
 

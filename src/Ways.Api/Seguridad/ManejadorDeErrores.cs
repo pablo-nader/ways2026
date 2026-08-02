@@ -64,6 +64,14 @@ public class ManejadorDeErrores(
                 when fk.StartsWith("fk_", StringComparison.Ordinal) =>
                 LogYClasificarReferenciaInvalida(fk, log),
 
+            // Backstop genérico (db-error-backstops, judgment-day slice 3 ronda 1): cualquier
+            // valor numérico que desborda la precisión/escala de su columna (p.ej. un margen o
+            // un límite de crédito por encima de lo que valida la capa de servicio) llega acá
+            // como 22003 en vez de dejar pasar un 500 — no está atado a una constraint puntual
+            // porque numeric_value_out_of_range aplica por igual a cualquier columna numeric(p,s).
+            DbUpdateException { InnerException: PostgresException { SqlState: "22003" } } =>
+                (StatusCodes.Status400BadRequest, "El valor numérico está fuera de rango.", "valor_fuera_de_rango"),
+
             _ => (StatusCodes.Status500InternalServerError,
                   "Ocurrió un error inesperado.",
                   "error_interno")
@@ -114,12 +122,17 @@ public class ManejadorDeErrores(
         }
 
         // stage-2-clientes-proveedores (task 1.12, backstop map): ux_proveedores_cuit —
-        // spec "cuit Uniqueness Is Scoped Per Tenant". Exención de la prueba de carrera
-        // exigida por el skill db-error-backstops (judgment-day ronda 1, item de comentario):
-        // el endpoint de alta de proveedores (ServicioDeProveedores.CrearAsync) todavía no
-        // existe, esta etapa solo llega hasta el esquema/backstop map — la prueba de carrera
-        // queda para la Slice 3 (tasks.md, task 3.5), que sí tiene el camino de escritura real
-        // para ejercerla.
+        // spec "cuit Uniqueness Is Scoped Per Tenant". La exención de la prueba de carrera
+        // (documentada en Slice 1/batch 4) cierra en la Slice 3: ServicioDeProveedores.
+        // CrearAsync ya existe y ExigirCuitDisponibleAsync es un pre-chequeo best-effort, no
+        // el backstop real — dos altas concurrentes con el mismo cuit pueden pasar las dos ese
+        // chequeo y competir recién acá, en el SaveChangesAsync de la que pierde. La prueba de
+        // carrera vive en ProveedoresEndpointsTests (task 3.5): a diferencia de
+        // ux_clientes_numero, cuit es un valor provisto por el cliente HTTP (no asignado por
+        // un contador atómico), así que no hay ningún lock de fila que serialice la carrera
+        // por construcción — dos POST concurrentes con Task.WhenAll alcanzan (mismo patrón sin
+        // rendezvous forzado que CatalogosTests, no el de ParametrosTests: acá el alta es un
+        // INSERT incondicional con pre-chequeo, no un upsert).
         if (nombreDeIndice.Contains("_cuit", StringComparison.Ordinal))
         {
             return ("cuit_duplicado", "Ya existe un proveedor con ese CUIT en este tenant.");
