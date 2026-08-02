@@ -49,16 +49,6 @@ public sealed class InterceptorDeContextoDeTenant(ITenantActual tenantActual) : 
         base.ConnectionOpened(connection, eventData);
     }
 
-    private (string Modo, string IdTenant) ObtenerContexto()
-    {
-        var modo = tenantActual.Modo switch
-        {
-            ModoDeAcceso.Tenant => "tenant",
-            ModoDeAcceso.Plataforma => "plataforma",
-            ModoDeAcceso.Login => "login",
-            _ => string.Empty
-        };
-
-        return (modo, tenantActual.Id?.ToString() ?? string.Empty);
-    }
+    private (string Modo, string IdTenant) ObtenerContexto() =>
+        (tenantActual.Modo.ComoGuc(), tenantActual.Id?.ToString() ?? string.Empty);
 }

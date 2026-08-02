@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -83,6 +84,8 @@ public static class DependencyInjection
         {
             npgsql.MapEnum<EstadoUsuario>("estado_usuario");
             npgsql.MapEnum<EstadoTenant>("estado_tenant");
+            npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+            npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
             npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
         });
 }

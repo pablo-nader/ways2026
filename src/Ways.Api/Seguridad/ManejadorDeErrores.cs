@@ -35,6 +35,28 @@ public class ManejadorDeErrores(
             DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: "ux_usuarios_usuario" } } =>
                 (StatusCodes.Status409Conflict, "El usuario ya existe.", "usuario_duplicado"),
 
+            // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
+            // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
+            // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
+            // que ya codifica qué se duplicó) en vez de repetir un caso por índice.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string ux } }
+                when ClasificarUnicidad(ux) is { } familia =>
+                (StatusCodes.Status409Conflict, familia.Titulo, familia.Codigo),
+
+            // Backstop genérico para las FKs compuestas nuevas (fk_*_empresa, fk_categorias_padre,
+            // fk_parametros_punto_venta, …): una referencia a una fila que no existe (o que
+            // pertenece a otro tenant, invisible bajo RLS) llega acá como 23503 en vez de
+            // dejar pasar un 500 — p.ej. un IdCategoriaPadre de otro tenant.
+            //
+            // El match por prefijo también atrapa FKs administradas por la plataforma (no solo
+            // las alimentadas por input de cliente) — tradeoff deliberado (judgment-day, slice 3
+            // ronda 2): preferimos convertir un eventual 500 no logueado en un 400 logueado
+            // (ver el LogWarning de abajo) antes que mantener una lista cerrada de FKs que hay
+            // que actualizar a mano en cada migración nueva.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23503", ConstraintName: string fk } }
+                when fk.StartsWith("fk_", StringComparison.Ordinal) =>
+                LogYClasificarReferenciaInvalida(fk, log),
+
             _ => (StatusCodes.Status500InternalServerError,
                   "Ocurrió un error inesperado.",
                   "error_interno")
@@ -58,5 +80,53 @@ public class ManejadorDeErrores(
                 Extensions = { ["codigo"] = codigo }
             }
         });
+    }
+
+    /// <summary>Agrupa los índices únicos nuevos por familia a partir del sufijo de su
+    /// nombre — evita repetir un caso por índice para <c>ux_areas_nombre_*</c>,
+    /// <c>ux_marcas_nombre_*</c>, <c>ux_grupos_nombre_*</c>, <c>ux_medios_pago_nombre_*</c>,
+    /// <c>ux_categorias_nombre_*</c>, <c>ux_alicuotas_iva_nombre</c>,
+    /// <c>ux_condiciones_fiscales_codigo</c>, <c>ux_tipos_comprobante_codigo</c> y las dos de
+    /// <c>parametros</c>. <c>ux_parametros_*</c> se resuelve antes que el resto porque no
+    /// sigue el patrón "_nombre"/"_codigo".
+    ///
+    /// El match por sufijo es deliberadamente amplio a todo el esquema (judgment-day, slice 3
+    /// ronda 2): no se restringe a una lista cerrada de índices, así que también cubre
+    /// unicidades preexistentes solo de seed (p.ej. <c>ux_roles_nombre</c>) de forma inocua,
+    /// porque esos índices nunca reciben un INSERT/UPDATE desde un camino de escritura de
+    /// cliente. La familia <c>codigo_duplicado</c> de catálogos fiscales (alícuotas de IVA,
+    /// condiciones fiscales, tipos de comprobante) hoy no tiene camino de escritura de cliente
+    /// (son de solo lectura para un tenant), así que queda exenta de la prueba de carrera
+    /// exigida por el punto de decisión del skill `db-error-backstops` — solo aplica el mapeo
+    /// 23505, sin race test, hasta que exista un endpoint de alta/edición.</summary>
+    private static (string Codigo, string Titulo)? ClasificarUnicidad(string nombreDeIndice)
+    {
+        if (nombreDeIndice is "ux_parametros_empresa" or "ux_parametros_punto_venta")
+        {
+            return ("parametro_duplicado", "Ya existe un parámetro con esa clave en este alcance.");
+        }
+
+        if (nombreDeIndice.Contains("_nombre", StringComparison.Ordinal))
+        {
+            return ("nombre_duplicado", "Ya existe un registro con ese nombre en este alcance.");
+        }
+
+        if (nombreDeIndice.Contains("_codigo", StringComparison.Ordinal))
+        {
+            return ("codigo_duplicado", "Ya existe un registro con ese código.");
+        }
+
+        return null;
+    }
+
+    /// <summary>Deja constancia en el log de qué FK disparó el backstop antes de traducirla a
+    /// 400 (judgment-day, slice 3 ronda 2): como el match por prefijo también cubre FKs
+    /// administradas por la plataforma, este warning es lo único que preserva observabilidad
+    /// para ese caso — de otro modo pasaría de un 500 logueado a un 400 silencioso.</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo) LogYClasificarReferenciaInvalida(
+        string nombreDeFk, ILogger log)
+    {
+        log.LogWarning("Referencia inválida por la restricción {NombreDeFk}.", nombreDeFk);
+        return (StatusCodes.Status400BadRequest, "La referencia indicada no existe.", "referencia_invalida");
     }
 }

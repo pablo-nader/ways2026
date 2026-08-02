@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Ways.Infrastructure.Multitenancy;
@@ -7,8 +8,29 @@ namespace Ways.Infrastructure.Multitenancy;
 /// aislamiento la activa en la misma migración que la crea, nunca en una migración
 /// separada — eso dejaría una ventana con la tabla scopeada y sin policy.
 /// </summary>
-public static class RlsMigrationBuilderExtensions
+public static partial class RlsMigrationBuilderExtensions
 {
+    /// <summary>
+    /// Guard de identificador (INFO cargada de judgment-day, slice 1→3): <see cref="HabilitarRlsDeTenant"/>
+    /// interpola <paramref name="identificador"/> directo en SQL crudo (Postgres no permite
+    /// parametrizar un nombre de tabla). Todos los llamadores de hoy pasan un literal fijo en
+    /// código, pero el helper se reusa para cada catálogo de tenant a partir de esta migración
+    /// — así que valida antes de interpolar en vez de confiar en que ningún llamador futuro le
+    /// pase un valor derivado de datos.
+    /// </summary>
+    [GeneratedRegex("^[a-z_][a-z0-9_]*$")]
+    private static partial Regex IdentificadorDeTablaValido();
+
+    private static void ValidarIdentificadorDeTabla(string tabla)
+    {
+        if (string.IsNullOrWhiteSpace(tabla) || !IdentificadorDeTablaValido().IsMatch(tabla))
+        {
+            throw new ArgumentException(
+                $"'{tabla}' no es un nombre de tabla válido para interpolar en una migración RLS.",
+                nameof(tabla));
+        }
+    }
+
     /// <summary>
     /// Crea las funciones SQL que las policies usan para leer el contexto de tenant
     /// (ADR-4). Se llama una sola vez, en la primera migración que activa RLS.
@@ -42,6 +64,8 @@ public static class RlsMigrationBuilderExtensions
     /// </summary>
     public static void HabilitarRlsDeTenant(this MigrationBuilder migrationBuilder, string tabla)
     {
+        ValidarIdentificadorDeTabla(tabla);
+
         migrationBuilder.Sql($"ALTER TABLE {tabla} ENABLE ROW LEVEL SECURITY;");
         migrationBuilder.Sql($"ALTER TABLE {tabla} FORCE ROW LEVEL SECURITY;");
         migrationBuilder.Sql(
@@ -49,6 +73,35 @@ public static class RlsMigrationBuilderExtensions
             CREATE POLICY {tabla}_tenant ON {tabla}
                 USING      (app_es_plataforma() OR id_tenant = app_tenant_actual())
                 WITH CHECK (app_es_plataforma() OR id_tenant = app_tenant_actual());
+            """);
+    }
+
+    /// <summary>
+    /// Activa RLS en un catálogo <c>[global]</c> (sin <c>id_tenant</c>) con el patrón
+    /// "lectura para todos, escritura solo para la plataforma" — override de ADR-11
+    /// (design.md, decisión del usuario 2026-08-01, DB CHANGE GATE #4): el dato de referencia
+    /// global es legible en cualquier modo de acceso, incluido <c>tenant</c>, pero solo la
+    /// plataforma puede escribirlo. La superficie de API sigue siendo de solo lectura para un
+    /// tenant (sin cambios); esto agrega una segunda capa independiente detrás, igual que el
+    /// resto de las tablas scopeadas de este documento.
+    /// </summary>
+    public static void HabilitarRlsDeCatalogoGlobal(this MigrationBuilder migrationBuilder, string tabla)
+    {
+        ValidarIdentificadorDeTabla(tabla);
+
+        migrationBuilder.Sql($"ALTER TABLE {tabla} ENABLE ROW LEVEL SECURITY;");
+        migrationBuilder.Sql($"ALTER TABLE {tabla} FORCE ROW LEVEL SECURITY;");
+        migrationBuilder.Sql(
+            $"""
+            CREATE POLICY {tabla}_lectura ON {tabla}
+                FOR SELECT USING (true);
+            """);
+        migrationBuilder.Sql(
+            $"""
+            CREATE POLICY {tabla}_escritura_plataforma ON {tabla}
+                FOR ALL
+                USING      (app_es_plataforma())
+                WITH CHECK (app_es_plataforma());
             """);
     }
 }

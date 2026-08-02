@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -23,6 +24,8 @@ public class WaysDbContextFactory : IDesignTimeDbContextFactory<WaysDbContext>
             {
                 npgsql.MapEnum<EstadoUsuario>("estado_usuario");
                 npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
             })
             .Options;
 

@@ -384,6 +384,10 @@ born with `id_empresa NULL`. `ITenantActual` carries only the tenant; the empres
 selection (legacy A2, `asignaciones_empleado`) is out of scope and lands with the operational
 stages. `parametros` resolution therefore takes `idPuntoVenta` as an explicit argument today.
 
+**Deferred (user decision, judgment-day slice 3 round 1, 2026-08-02).** The `query.DeLaEmpresa(idEmpresa)`
+extension itself is not implemented yet — deferred until slice 4's ABM needs it or the first
+multi-empresa tenant shows up, whichever comes first. Recorded, not implemented.
+
 ### ADR-11 — One catalog machine, three layers, with an escape hatch
 
 **Decision.** Eight catalogs must not become eight copies. Factor at three levels:
@@ -411,6 +415,18 @@ metamodel that also generates the schema — over-engineering; the schema is fix
 writes) get explicit pages that reuse the form primitives but not the descriptor engine. The
 three fiscal catalogs are `[global]`, platform-maintained, and expose read-only `GET` endpoints
 only (resolved decision 3) — no ABM in this stage.
+
+> **Overridden by user decision (2026-08-01, DB CHANGE GATE #4).** This ADR originally left the
+> three fiscal catalogs with **no RLS at all** — protection by omission of write endpoints only
+> (API-surface-only). The user restored defense-in-depth: `condiciones_fiscales`,
+> `alicuotas_iva` and `tipos_comprobante` now get `ENABLE`/`FORCE ROW LEVEL SECURITY` too, with a
+> permissive `FOR SELECT USING (true)` policy (global reference data — readable in every access
+> mode, including `tenant`) plus a `FOR ALL` policy restricting every write command to
+> `app_es_plataforma()`. The API surface stays exactly as designed above — read-only `GET` for
+> tenants, no ABM — RLS is now a second, independent layer behind it, consistent with the
+> two-layer isolation model the rest of this document uses for scoped tables. `RlsMigrationBuilderExtensions`
+> gained `HabilitarRlsDeCatalogoGlobal(tabla)` for this pattern (migration 4,
+> `CatalogosGlobales`), reusing the same identifier guard as `HabilitarRlsDeTenant`.
 
 ### ADR-12 — `categorias`: depth is a domain rule, computed, not stored
 
@@ -579,9 +595,9 @@ DB CHANGE GATE summary.**
 | `marcas` | catálogo | `id_tenant`, `id_empresa NULL` | — |
 | `grupos` | catálogo | `id_tenant`, `id_empresa NULL` | `margen numeric(5,2) NULL` |
 | `medios_pago` | catálogo | `id_tenant`, `id_empresa NULL` | `comportamiento_medio_pago` enum |
-| `condiciones_fiscales` | **global** | — | platform-maintained, seeded |
-| `alicuotas_iva` | **global** | — | platform-maintained, seeded |
-| `tipos_comprobante` | **global** | — | `clase_comprobante` enum; seeded |
+| `condiciones_fiscales` | **global** | — | platform-maintained, seeded; RLS read-all/write-plataforma (ADR-11 override, gate #4) |
+| `alicuotas_iva` | **global** | — | platform-maintained, seeded; `nombre` unique (gate #4 decision); RLS read-all/write-plataforma |
+| `tipos_comprobante` | **global** | — | `clase_comprobante` enum; seeded; RLS read-all/write-plataforma |
 | `parametros` | operativa c/ fallback | `id_tenant`, `id_empresa`, `id_punto_venta NULL` | see ADR-13 |
 
 ### The catalog index pair (shared by `ConfiguracionDeCatalogo<T>`)
@@ -648,7 +664,7 @@ Five gates, each small enough to actually review:
 | 1 | `Organizacion` | `estado_tenant` enum, `tenants`, `empresas`, `puntos_venta`, AKs, composite FK, RLS functions + policies | tables, columns, AKs, composite FK, policies |
 | 2 | `UsuariosMultiTenant` | `usuarios.id_tenant NULL` + FK, `ux_usuarios_usuario` rebuilt as `(id_tenant, usuario) NULLS NOT DISTINCT`, `usuarios` policies (tenant + login) | the additive column, the per-tenant `usuario` index and the `NULLS NOT DISTINCT` reasoning (ADR-7), the two login policies and why |
 | 3 | `CatalogosDeTenant` | `areas`, `categorias`, `marcas`, `grupos`, `medios_pago` (+ enum), index pairs, policies | per-table columns, index pairs, the self composite FK |
-| 4 | `CatalogosGlobales` | `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante` (+ `clase_comprobante`) | that these are `[global]` — no `id_tenant`, no RLS |
+| 4 | `CatalogosGlobales` | `condiciones_fiscales`, `alicuotas_iva`, `tipos_comprobante` (+ `clase_comprobante`) | that these are `[global]` — no `id_tenant`, but **do** get RLS (ADR-11 override, gate #4): read-all, write-plataforma-only |
 | 5 | `Parametros` | `parametros`, the two partial unique indexes, policy | the NULL-uniqueness reasoning of ADR-13 |
 
 Ordering constraints:

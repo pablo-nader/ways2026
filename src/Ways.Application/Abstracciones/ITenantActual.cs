@@ -1,3 +1,5 @@
+using System.Data.Common;
+
 namespace Ways.Application.Abstracciones;
 
 /// <summary>
@@ -32,4 +34,22 @@ public interface ITenantActual
     ModoDeAcceso Modo { get; }
 
     bool EsPlataforma => Modo == ModoDeAcceso.Plataforma;
+
+    /// <summary>Suplanta temporalmente el contexto a <see cref="ModoDeAcceso.Tenant"/> /
+    /// <paramref name="idTenant"/> (ADR-16, aprovisionamiento): mientras el scope devuelto
+    /// no se libera, el filtro/estampado de EF de <c>WaysDbContext</c> ve ese tenant en vez
+    /// del modo anterior. Al liberarse (<c>Dispose</c>), restaura el modo/id previos. Solo
+    /// tiene sentido en un contexto HTTP mutable (<c>TenantActualDeSesion</c>); un contexto
+    /// inmutable (<c>TenantActualFijo</c>, usado por semilla/design-time/tests) no lo
+    /// soporta — nada en esos puntos de entrada aprovisiona tenants.</summary>
+    IDisposable Suplantar(int idTenant);
+
+    /// <summary>Reaplica el GUC de tenant sobre una conexión ya abierta (ADR-3, pieza
+    /// diferida hasta ADR-16): dentro de la transacción explícita de aprovisionamiento,
+    /// <c>InterceptorDeContextoDeTenant</c> no vuelve a dispararse porque la conexión ya
+    /// estaba abierta antes de <see cref="Suplantar"/> — sin este reaplicado, RLS seguiría
+    /// evaluando el modo con el que la conexión se abrió originalmente. El GUC se aplica con
+    /// <c>is_local = true</c>: vuelve solo al valor de sesión cuando la transacción termina
+    /// (commit o rollback), sin dejar nada que revertir a mano.</summary>
+    Task ReaplicarSobreConexionAsync(DbConnection conexion, CancellationToken ct = default);
 }

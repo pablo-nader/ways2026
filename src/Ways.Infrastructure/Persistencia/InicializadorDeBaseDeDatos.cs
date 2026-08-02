@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Ways.Application.Abstracciones;
 using Ways.Application.Usuarios;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 
@@ -28,6 +29,47 @@ public class InicializadorDeBaseDeDatos(
         (RolConocido.Vendedor,   "vendedor",   "Opera el punto de venta.")
     ];
 
+    /// <summary>Doc 10 §1. <c>CodigoAfip</c> queda <c>NULL</c> a propósito: los códigos AFIP
+    /// reales son un requisito de la facturación electrónica, todavía fuera de esta etapa —
+    /// completar acá con un valor inventado sería peor que dejarlo pendiente y visible.</summary>
+    private static readonly (string Codigo, string Nombre)[] CondicionesFiscalesBase =
+    [
+        ("RI", "Responsable Inscripto"),
+        ("MONOTRIBUTO", "Monotributista"),
+        ("EXENTO", "Exento"),
+        ("CF", "Consumidor Final"),
+        ("NO_RESP", "No Responsable")
+    ];
+
+    private static readonly (string Nombre, decimal Porcentaje)[] AlicuotasIvaBase =
+    [
+        ("21%", 21.00m),
+        ("10.5%", 10.50m),
+        ("27%", 27.00m),
+        ("0%", 0.00m),
+        ("Exento", 0.00m),
+        ("No gravado", 0.00m)
+    ];
+
+    /// <summary>Doc 10 §1: "FA, FB, FC, NCA, NCB, NCC, NDA…, TX, NCX, PRE". Solo el lado
+    /// venta — comprobantes de compra (proveedores) no son parte de esta etapa (doc 10,
+    /// "Etapas sugeridas": clientes/proveedores desbloquean comprobantes recién en la etapa
+    /// 2). <c>CodigoAfip</c> queda <c>NULL</c> por la misma razón que en las condiciones
+    /// fiscales.</summary>
+    private static readonly (string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock)[] TiposComprobanteBase =
+    [
+        ("FA", "Factura A", 'A', 1, true, true, true),
+        ("FB", "Factura B", 'B', 1, false, true, true),
+        ("FC", "Factura C", 'C', 1, false, true, true),
+        ("NCA", "Nota de Crédito A", 'A', -1, true, true, true),
+        ("NCB", "Nota de Crédito B", 'B', -1, false, true, true),
+        ("NCC", "Nota de Crédito C", 'C', -1, false, true, true),
+        ("NDA", "Nota de Débito A", 'A', 1, true, true, true),
+        ("TX", "Ticket X", 'X', 1, false, false, true),
+        ("NCX", "Nota de Crédito X", 'X', -1, false, false, true),
+        ("PRE", "Presupuesto", null, 1, false, false, false)
+    ];
+
     public async Task EjecutarAsync(SemillaRoot semilla, CancellationToken ct = default)
     {
         // Warm-up del hash descartable de ServicioDeAutenticacion (ver
@@ -50,6 +92,7 @@ public class InicializadorDeBaseDeDatos(
         await SembrarRootAsync(semilla, ct);
         await SembrarOrganizacionAsync(ct);
         await BackfillDeUsuariosAsync(ct);
+        await SembrarCatalogosFiscalesAsync(ct);
     }
 
     /// <summary>
@@ -329,6 +372,63 @@ public class InicializadorDeBaseDeDatos(
         log.LogInformation(
             "Backfill: {Cantidad} usuarios existentes asignados al tenant {Tenant}.",
             actualizados, idTenantPorDefecto);
+    }
+
+    /// <summary>
+    /// Siembra los 3 catálogos fiscales globales (task 3.14, ADR-11/ADR-14): platform-owned,
+    /// sin <c>id_tenant</c>. Cada tabla se siembra independiente e idempotente — si ya tiene
+    /// filas, no se toca (mismo criterio que <see cref="SembrarRolesAsync"/>: nunca pisa una
+    /// fila existente, así que un operador puede editar el <c>nombre</c>/<c>activo</c> de una
+    /// fila sembrada sin que el próximo arranque se lo revierta).
+    /// </summary>
+    private async Task SembrarCatalogosFiscalesAsync(CancellationToken ct)
+    {
+        var ahora = reloj.Ahora;
+
+        if (!await db.CondicionesFiscales.IgnoreQueryFilters(["BajaLogica"]).AnyAsync(ct))
+        {
+            db.CondicionesFiscales.AddRange(CondicionesFiscalesBase.Select(c => new CondicionFiscal
+            {
+                Codigo = c.Codigo,
+                Nombre = c.Nombre,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            }));
+            await db.SaveChangesAsync(ct);
+            log.LogInformation("Sembradas {Cantidad} condiciones fiscales.", CondicionesFiscalesBase.Length);
+        }
+
+        if (!await db.AlicuotasIva.IgnoreQueryFilters(["BajaLogica"]).AnyAsync(ct))
+        {
+            db.AlicuotasIva.AddRange(AlicuotasIvaBase.Select(a => new AlicuotaIva
+            {
+                Nombre = a.Nombre,
+                Porcentaje = a.Porcentaje,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            }));
+            await db.SaveChangesAsync(ct);
+            log.LogInformation("Sembradas {Cantidad} alícuotas de IVA.", AlicuotasIvaBase.Length);
+        }
+
+        if (!await db.TiposComprobante.IgnoreQueryFilters(["BajaLogica"]).AnyAsync(ct))
+        {
+            db.TiposComprobante.AddRange(TiposComprobanteBase.Select(t => new TipoComprobante
+            {
+                Clase = ClaseComprobante.Venta,
+                Codigo = t.Codigo,
+                Nombre = t.Nombre,
+                Letra = t.Letra,
+                Signo = t.Signo,
+                DiscriminaIva = t.DiscriminaIva,
+                EsFiscal = t.EsFiscal,
+                AfectaStock = t.AfectaStock,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            }));
+            await db.SaveChangesAsync(ct);
+            log.LogInformation("Sembrados {Cantidad} tipos de comprobante.", TiposComprobanteBase.Length);
+        }
     }
 }
 

@@ -4,6 +4,15 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- AD0001: Microsoft.AspNetCore.Analyzers.RouteHandlers.RouteHandlerAnalyzer crashes
+         with a NullReferenceException on its own analysis of the generic route-mapping
+         helper in CatalogosEndpoints.MapearCatalogo<T,TListado,TAlta,TServicio> (ADR-11
+         asks for exactly this generic helper — 1 line per catalog instead of 5 hand-written
+         pages of endpoints). This is the analyzer failing to analyze, not a diagnostic about
+         our code — it never produces a real finding here, confirmed by building without the
+         generic helper (no AD0001). Tracked as a known ASP.NET Core Minimal API analyzer
+         limitation with open generic route-mapping methods. -->
+    <NoWarn>$(NoWarn);AD0001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

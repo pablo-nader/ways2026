@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Persistencia;
@@ -22,6 +23,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 .HasAnnotation("ProductVersion", "10.0.10")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "clase_comprobante", new[] { "compra", "venta" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "comportamiento_medio_pago", new[] { "cuenta_corriente", "efectivo", "electronico" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_tenant", new[] { "activo", "baja", "suspendido" });
             NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "estado_usuario", new[] { "activo", "bloqueado", "inactivo" });
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "citext");
@@ -44,6 +47,610 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasKey("Id");
 
                     b.ToTable("DataProtectionKeys");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.AlicuotaIva", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_alicuota_iva");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<short?>("CodigoAfip")
+                        .HasColumnType("smallint")
+                        .HasColumnName("codigo_afip");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<decimal>("Porcentaje")
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("porcentaje");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_alicuotas_iva_nombre")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.ToTable("alicuotas_iva", (string)null);
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.Area", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_area");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int?>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<int>("Orden")
+                        .HasColumnType("integer")
+                        .HasColumnName("orden");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_areas_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_areas_empresa");
+
+                    b.HasIndex("IdTenant", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_areas_nombre_compartido")
+                        .HasFilter("id_empresa IS NULL AND deleted_at IS NULL");
+
+                    b.HasIndex("IdTenant", "IdEmpresa", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_areas_nombre_empresa")
+                        .HasFilter("id_empresa IS NOT NULL AND deleted_at IS NULL");
+
+                    b.ToTable("areas", (string)null);
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.Categoria", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_categoria");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int?>("IdCategoriaPadre")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_categoria_padre");
+
+                    b.Property<int?>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<int>("Orden")
+                        .HasColumnType("integer")
+                        .HasColumnName("orden");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("Id", "IdTenant")
+                        .HasName("ak_categorias_id_categoria_id_tenant");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_categorias_tenant");
+
+                    b.HasIndex("IdCategoriaPadre", "IdTenant")
+                        .HasDatabaseName("ix_categorias_padre");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_categorias_empresa");
+
+                    b.HasIndex("IdTenant", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_categorias_nombre_compartido")
+                        .HasFilter("id_empresa IS NULL AND deleted_at IS NULL");
+
+                    b.HasIndex("IdTenant", "IdEmpresa", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_categorias_nombre_empresa")
+                        .HasFilter("id_empresa IS NOT NULL AND deleted_at IS NULL");
+
+                    b.ToTable("categorias", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_categorias_padre_no_self", "id_categoria_padre IS DISTINCT FROM id_categoria");
+                        });
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.CondicionFiscal", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_condicion_fiscal");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<string>("Codigo")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("citext")
+                        .HasColumnName("codigo");
+
+                    b.Property<short?>("CodigoAfip")
+                        .HasColumnType("smallint")
+                        .HasColumnName("codigo_afip");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Codigo")
+                        .IsUnique()
+                        .HasDatabaseName("ux_condiciones_fiscales_codigo")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.ToTable("condiciones_fiscales", (string)null);
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.Grupo", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_grupo");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int?>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<decimal?>("Margen")
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("margen");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_grupos_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_grupos_empresa");
+
+                    b.HasIndex("IdTenant", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_grupos_nombre_compartido")
+                        .HasFilter("id_empresa IS NULL AND deleted_at IS NULL");
+
+                    b.HasIndex("IdTenant", "IdEmpresa", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_grupos_nombre_empresa")
+                        .HasFilter("id_empresa IS NOT NULL AND deleted_at IS NULL");
+
+                    b.ToTable("grupos", (string)null);
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.Marca", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_marca");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int?>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_marcas_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_marcas_empresa");
+
+                    b.HasIndex("IdTenant", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_marcas_nombre_compartido")
+                        .HasFilter("id_empresa IS NULL AND deleted_at IS NULL");
+
+                    b.HasIndex("IdTenant", "IdEmpresa", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_marcas_nombre_empresa")
+                        .HasFilter("id_empresa IS NOT NULL AND deleted_at IS NULL");
+
+                    b.ToTable("marcas", (string)null);
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.MedioPago", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_medio_pago");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<bool>("AdmiteVuelto")
+                        .HasColumnType("boolean")
+                        .HasColumnName("admite_vuelto");
+
+                    b.Property<ComportamientoMedioPago>("Comportamiento")
+                        .HasColumnType("comportamiento_medio_pago")
+                        .HasColumnName("comportamiento");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int?>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<int>("Orden")
+                        .HasColumnType("integer")
+                        .HasColumnName("orden");
+
+                    b.Property<decimal?>("RecargoPorcentaje")
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("recargo_porcentaje");
+
+                    b.Property<bool>("RequiereReferencia")
+                        .HasColumnType("boolean")
+                        .HasColumnName("requiere_referencia");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_medios_pago_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_medios_pago_empresa");
+
+                    b.HasIndex("IdTenant", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_medios_pago_nombre_compartido")
+                        .HasFilter("id_empresa IS NULL AND deleted_at IS NULL");
+
+                    b.HasIndex("IdTenant", "IdEmpresa", "Nombre")
+                        .IsUnique()
+                        .HasDatabaseName("ux_medios_pago_nombre_empresa")
+                        .HasFilter("id_empresa IS NOT NULL AND deleted_at IS NULL");
+
+                    b.ToTable("medios_pago", (string)null);
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.Parametro", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_parametro");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Clave")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("citext")
+                        .HasColumnName("clave");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<int>("IdEmpresa")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_empresa");
+
+                    b.Property<int?>("IdPuntoVenta")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_punto_venta");
+
+                    b.Property<int>("IdTenant")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tenant");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("Valor")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("valor");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_parametros_tenant");
+
+                    b.HasIndex("IdEmpresa", "IdTenant")
+                        .HasDatabaseName("ix_parametros_empresa");
+
+                    b.HasIndex("IdPuntoVenta", "IdTenant")
+                        .HasDatabaseName("ix_parametros_punto_venta");
+
+                    b.HasIndex("IdTenant", "IdEmpresa", "Clave")
+                        .IsUnique()
+                        .HasDatabaseName("ux_parametros_empresa")
+                        .HasFilter("id_punto_venta IS NULL AND deleted_at IS NULL");
+
+                    b.HasIndex("IdTenant", "IdEmpresa", "IdPuntoVenta", "Clave")
+                        .IsUnique()
+                        .HasDatabaseName("ux_parametros_punto_venta")
+                        .HasFilter("id_punto_venta IS NOT NULL AND deleted_at IS NULL");
+
+                    b.ToTable("parametros", (string)null);
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.TipoComprobante", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id_tipo_comprobante");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Activo")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("activo");
+
+                    b.Property<bool>("AfectaStock")
+                        .HasColumnType("boolean")
+                        .HasColumnName("afecta_stock");
+
+                    b.Property<ClaseComprobante>("Clase")
+                        .HasColumnType("clase_comprobante")
+                        .HasColumnName("clase");
+
+                    b.Property<string>("Codigo")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("citext")
+                        .HasColumnName("codigo");
+
+                    b.Property<short?>("CodigoAfip")
+                        .HasColumnType("smallint")
+                        .HasColumnName("codigo_afip");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<bool>("DiscriminaIva")
+                        .HasColumnType("boolean")
+                        .HasColumnName("discrimina_iva");
+
+                    b.Property<bool>("EsFiscal")
+                        .HasColumnType("boolean")
+                        .HasColumnName("es_fiscal");
+
+                    b.Property<char?>("Letra")
+                        .HasColumnType("char(1)")
+                        .HasColumnName("letra");
+
+                    b.Property<string>("Nombre")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("citext")
+                        .HasColumnName("nombre");
+
+                    b.Property<short>("Signo")
+                        .HasColumnType("smallint")
+                        .HasColumnName("signo");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Codigo")
+                        .IsUnique()
+                        .HasDatabaseName("ux_tipos_comprobante_codigo")
+                        .HasFilter("deleted_at IS NULL");
+
+                    b.ToTable("tipos_comprobante", (string)null);
                 });
 
             modelBuilder.Entity("Ways.Domain.Organizacion.Empresa", b =>
@@ -352,6 +959,123 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("IdTenant", "NombreUsuario"), false);
 
                     b.ToTable("usuarios", (string)null);
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.Area", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_areas_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_areas_empresa");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.Categoria", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_categorias_tenant");
+
+                    b.HasOne("Ways.Domain.Catalogos.Categoria", null)
+                        .WithMany()
+                        .HasForeignKey("IdCategoriaPadre", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_categorias_padre");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_categorias_empresa");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.Grupo", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_grupos_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_grupos_empresa");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.Marca", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_marcas_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_marcas_empresa");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.MedioPago", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_medios_pago_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_medios_pago_empresa");
+                });
+
+            modelBuilder.Entity("Ways.Domain.Catalogos.Parametro", b =>
+                {
+                    b.HasOne("Ways.Domain.Organizacion.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_parametros_tenant");
+
+                    b.HasOne("Ways.Domain.Organizacion.Empresa", null)
+                        .WithMany()
+                        .HasForeignKey("IdEmpresa", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_parametros_empresa");
+
+                    b.HasOne("Ways.Domain.Organizacion.PuntoVenta", null)
+                        .WithMany()
+                        .HasForeignKey("IdPuntoVenta", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_parametros_punto_venta");
                 });
 
             modelBuilder.Entity("Ways.Domain.Organizacion.Empresa", b =>

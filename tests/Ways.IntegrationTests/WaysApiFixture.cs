@@ -1,12 +1,18 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Ways.Application.Abstracciones;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
+using Ways.Infrastructure;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
 
@@ -59,15 +65,12 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
     /// que exista el host de la API (que va a conectarse como <c>ways_app</c>).</summary>
     private async Task MigrarComoOwnerAsync()
     {
-        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
-            .UseNpgsql(OwnerConnectionString, npgsql =>
-            {
-                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
-                npgsql.MapEnum<EstadoTenant>("estado_tenant");
-            })
-            .Options;
+        // Ver el comentario de ConfigureWebHost: el mismo trámite de "modelo adelantado a
+        // las migraciones" del gate #3 pendiente aplica acá, así que reusa el mismo helper.
+        var opciones = new DbContextOptionsBuilder<WaysDbContext>();
+        ConfigurarNpgsqlDePrueba(opciones, OwnerConnectionString);
 
-        await using var db = new WaysDbContext(opciones, TenantActualFijo.Plataforma);
+        await using var db = new WaysDbContext(opciones.Options, TenantActualFijo.Plataforma);
         await db.Database.MigrateAsync();
     }
 
@@ -136,7 +139,65 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 new("ConnectionStrings:Ways", AppConnectionString)
             ]);
         });
+
+        // Slice 3 (stage-1-organization-and-catalogs) agregó el modelo de catálogos
+        // (Ways.Domain.Catalogos) antes del gate #3: el modelo en C# ya conoce esas tablas,
+        // la migración 3 (CatalogosDeTenant) todavía no existe — es el estado "modelo
+        // adelantado a las migraciones" que el DB CHANGE GATE deja a propósito a mitad de
+        // desarrollo (mismo trámite documentado en el batch 6 de slice 2, ver
+        // MigrarComoOwnerAsync). InicializadorDeBaseDeDatos llama Database.MigrateAsync()
+        // en cada arranque del host — también con este DbContext, no solo con el de
+        // MigrarComoOwnerAsync — y EF Core 8+ tira PendingModelChangesWarning en ese caso.
+        //
+        // En vez de suprimirlo en DependencyInjection.ConfigurarNpgsql (código de
+        // producción, que NO se toca), acá se reemplazan los dos registros de DI que arma
+        // AgregarInfrastructure para este host de prueba únicamente — mismas dos piezas,
+        // con la supresión agregada. Se saca solo cuando la migración 3 aterrice y el
+        // snapshot vuelva a coincidir con el modelo.
+        builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<DbContextOptions<WaysDbContext>>();
+            services.RemoveAll<WaysDbContext>();
+
+            // AddDbContext no reemplaza la configuración anterior: desde EF Core 9 registra
+            // el delegate de opciones como IDbContextOptionsConfiguration<TContext>, un
+            // servicio ACUMULATIVO (pensado para composición modular). Sin sacar también
+            // esto, el MapEnum de AgregarInfrastructure (producción) y el de acá se aplican
+            // los dos sobre el mismo DbContextOptions final — cada enum queda mapeado dos
+            // veces y Npgsql tira "Sequence contains more than one matching element" al
+            // buscar la mapping. RemoveAll<DbContextOptions<WaysDbContext>>() por sí solo no
+            // alcanza porque ese es un servicio distinto.
+            services.RemoveAll<IDbContextOptionsConfiguration<WaysDbContext>>();
+
+            services.AddDbContext<WaysDbContext>((sp, options) =>
+            {
+                ConfigurarNpgsqlDePrueba(options, AppConnectionString);
+                options.AddInterceptors(sp.GetRequiredService<InterceptorDeContextoDeTenant>());
+            });
+
+            services.AddKeyedScoped<WaysDbContext>(
+                DependencyInjection.ClaveContextoPlataforma,
+                (_, _) =>
+                {
+                    var options = new DbContextOptionsBuilder<WaysDbContext>();
+                    ConfigurarNpgsqlDePrueba(options, AppConnectionString);
+                    options.AddInterceptors(new InterceptorDeContextoDeTenant(TenantActualFijo.Plataforma));
+                    return new WaysDbContext(options.Options, TenantActualFijo.Plataforma);
+                });
+        });
     }
+
+    private static void ConfigurarNpgsqlDePrueba(DbContextOptionsBuilder options, string cadena) =>
+        options
+            .UseNpgsql(cadena, npgsql =>
+            {
+                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
+            })
+            .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
 
     /// <summary>Un <see cref="WaysDbContext"/> nuevo contra <c>ways_app</c>, con el
     /// <see cref="ITenantActual"/> que pida la prueba — para ejercer la capa 1 (filtro de
@@ -155,6 +216,8 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
             {
                 npgsql.MapEnum<EstadoUsuario>("estado_usuario");
                 npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

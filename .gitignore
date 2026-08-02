@@ -1,6 +1,7 @@
 # --- Agent / tooling state ---
 .atl/
-.claude/
+.claude/*
+!.claude/skills/
 
 # --- .NET ---
 bin/
