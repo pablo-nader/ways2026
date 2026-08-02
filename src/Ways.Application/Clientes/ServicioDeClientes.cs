@@ -86,19 +86,21 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
     public async Task<ClienteListado> CrearAsync(AltaCliente datos, CancellationToken ct = default)
     {
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
-        var apellido = NormalizarOpcional(datos.Apellido, 150);
-        var razonSocial = NormalizarOpcional(datos.RazonSocial, 150);
-        var numeroDocumento = NormalizarOpcional(datos.NumeroDocumento, 30);
-        var domicilio = NormalizarOpcional(datos.Domicilio, 255);
-        var telefono = NormalizarOpcional(datos.Telefono, 50);
-        var celular = NormalizarOpcional(datos.Celular, 50);
-        var email = NormalizarOpcional(datos.Email, 255);
-        var observaciones = NormalizarOpcional(datos.Observaciones, null);
+        var apellido = NormalizarOpcional(datos.Apellido, "apellido", 150);
+        var razonSocial = NormalizarOpcional(datos.RazonSocial, "razon_social", 150);
+        var numeroDocumento = NormalizarOpcional(datos.NumeroDocumento, "numero_documento", 30);
+        var domicilio = NormalizarOpcional(datos.Domicilio, "domicilio", 255);
+        var telefono = NormalizarOpcional(datos.Telefono, "telefono", 50);
+        var celular = NormalizarOpcional(datos.Celular, "celular", 50);
+        var email = NormalizarOpcional(datos.Email, "email", 255);
+        var observaciones = NormalizarOpcional(datos.Observaciones, "observaciones", null);
 
         ExigirIdRequerido(datos.IdCondicionFiscal, "id_condicion_fiscal");
         ExigirIdRequerido(datos.IdListaPrecio, "id_lista_precio");
+        ExigirLimiteCreditoValido(datos.LimiteCredito);
         await ExigirCondicionFiscalValidaAsync(datos.IdCondicionFiscal, ct);
         await ExigirListaPrecioValidaAsync(datos.IdListaPrecio, ct);
+        await ExigirEmpresaValidaAsync(datos.IdEmpresa, ct);
 
         var idTenant = ExigirTenantDeLaSesion();
 
@@ -155,19 +157,21 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
         ReglaDeClientes.ValidarNoConsumidorFinal(cliente.Numero);
 
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
-        var apellido = NormalizarOpcional(datos.Apellido, 150);
-        var razonSocial = NormalizarOpcional(datos.RazonSocial, 150);
-        var numeroDocumento = NormalizarOpcional(datos.NumeroDocumento, 30);
-        var domicilio = NormalizarOpcional(datos.Domicilio, 255);
-        var telefono = NormalizarOpcional(datos.Telefono, 50);
-        var celular = NormalizarOpcional(datos.Celular, 50);
-        var email = NormalizarOpcional(datos.Email, 255);
-        var observaciones = NormalizarOpcional(datos.Observaciones, null);
+        var apellido = NormalizarOpcional(datos.Apellido, "apellido", 150);
+        var razonSocial = NormalizarOpcional(datos.RazonSocial, "razon_social", 150);
+        var numeroDocumento = NormalizarOpcional(datos.NumeroDocumento, "numero_documento", 30);
+        var domicilio = NormalizarOpcional(datos.Domicilio, "domicilio", 255);
+        var telefono = NormalizarOpcional(datos.Telefono, "telefono", 50);
+        var celular = NormalizarOpcional(datos.Celular, "celular", 50);
+        var email = NormalizarOpcional(datos.Email, "email", 255);
+        var observaciones = NormalizarOpcional(datos.Observaciones, "observaciones", null);
 
         ExigirIdRequerido(datos.IdCondicionFiscal, "id_condicion_fiscal");
         ExigirIdRequerido(datos.IdListaPrecio, "id_lista_precio");
+        ExigirLimiteCreditoValido(datos.LimiteCredito);
         await ExigirCondicionFiscalValidaAsync(datos.IdCondicionFiscal, ct);
         await ExigirListaPrecioValidaAsync(datos.IdListaPrecio, ct);
+        await ExigirEmpresaValidaAsync(datos.IdEmpresa, ct);
 
         cliente.Nombre = nombre;
         cliente.Apellido = apellido;
@@ -241,6 +245,21 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
         }
     }
 
+    /// <summary>Judgment-day ronda 1 (item 2): validación de negocio, solo a nivel de
+    /// servicio — sin CHECK de esquema. Una opción sería un <c>CHECK (limite_credito &gt;=
+    /// 0)</c> en la tabla <c>clientes</c>, pero eso exigiría una migración nueva y esta ronda
+    /// está bajo el gate "NO schema changes" (la migración de la Slice 2 ya está mergeada);
+    /// queda como mejora futura si se decide blindar también contra un bypass directo por
+    /// SQL, igual que <c>ck_clientes_cf_protegido</c>.</summary>
+    private static void ExigirLimiteCreditoValido(decimal limiteCredito)
+    {
+        if (limiteCredito < 0)
+        {
+            throw new ErrorDominio(
+                "limite_credito_invalido", "El límite de crédito no puede ser negativo.", 400);
+        }
+    }
+
     /// <summary>db-error-backstops: pre-chequeo de existencia antes del INSERT — el backstop
     /// real sigue siendo la FK (23503 → 400 <c>referencia_invalida</c>, ya genérico desde la
     /// Slice 1), esto solo adelanta el mismo código/estado sin esperar la carrera con
@@ -266,7 +285,30 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
         }
     }
 
-    private static string? NormalizarOpcional(string? valor, int? largoMaximo)
+    /// <summary>Judgment-day ronda 1 (item 8): mismo criterio que
+    /// <see cref="ExigirCondicionFiscalValidaAsync"/>/<see cref="ExigirListaPrecioValidaAsync"/>,
+    /// para <c>fk_clientes_empresa</c> — pre-chequeo de existencia tenant-scoped antes del
+    /// INSERT/UPDATE, sin reemplazar el backstop de la FK compuesta (23503 →
+    /// <c>referencia_invalida</c>, sin cambios). <c>IdEmpresa</c> es nullable (<c>NULL</c> ⇒
+    /// compartido por todas las empresas del tenant, ADR-10): sin chequeo cuando se omite.</summary>
+    private async Task ExigirEmpresaValidaAsync(int? id, CancellationToken ct)
+    {
+        if (id is null)
+        {
+            return;
+        }
+
+        if (!await db.Empresas.AnyAsync(e => e.Id == id, ct))
+        {
+            throw new ErrorDominio("referencia_invalida", $"No existe la empresa {id}.", 400);
+        }
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 6): <paramref name="campo"/> identifica el código
+    /// de error específico, igual que <see cref="NormalizarRequerido"/> — antes tiraban todos
+    /// el mismo <c>campo_muy_largo</c> genérico, sin decir cuál de los ocho campos opcionales
+    /// era el culpable.</summary>
+    private static string? NormalizarOpcional(string? valor, string campo, int? largoMaximo)
     {
         var limpio = valor?.Trim();
 
@@ -278,7 +320,7 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
         if (largoMaximo is { } maximo && limpio.Length > maximo)
         {
             throw new ErrorDominio(
-                "campo_muy_largo", $"El valor no puede superar los {maximo} caracteres.", 400);
+                $"{campo}_muy_largo", $"El campo {campo} no puede superar los {maximo} caracteres.", 400);
         }
 
         return limpio;

@@ -24,7 +24,7 @@ namespace Ways.Application.Tests.Clientes;
 /// <see cref="AsignadorDeNumeroCliente"/>) tampoco tiene batería de Application.Tests, solo
 /// integración. Los chequeos de validación de este archivo corren ANTES de abrir esa
 /// transacción, así que sí son alcanzables acá; el alta de punta a punta (incl. defaults de
-/// crédito 0/false/0) se prueba contra Postgres real en <c>ClientesRaceTests</c>
+/// crédito 0/false/0) se prueba contra Postgres real en <c>ClientesEndpointsTests</c>
 /// (Ways.IntegrationTests, task 2.5).
 /// </summary>
 public class ServicioDeClientesTests
@@ -156,6 +156,43 @@ public class ServicioDeClientesTests
         Assert.Equal(400, error.EstadoHttp);
     }
 
+    /// <summary>Judgment-day ronda 1 (item 6): el código de error de un campo opcional
+    /// demasiado largo identifica el campo específico (<c>email_muy_largo</c>), no un
+    /// <c>campo_muy_largo</c> genérico compartido entre los ocho campos opcionales.</summary>
+    [Fact]
+    public async Task CrearConEmailDemasiadoLargoEsRechazadoConElCodigoDelCampo()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idCondicionFiscal, idListaPrecio) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var emailDemasiadoLargo = new string('a', 256) + "@ways.test";
+        var datos = AltaValida(idCondicionFiscal, idListaPrecio) with { Email = emailDemasiadoLargo };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
+
+        Assert.Equal("email_muy_largo", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 2): <c>LimiteCredito</c> negativo se rechaza a
+    /// nivel de servicio (sin CHECK de esquema, ver el comentario de
+    /// <see cref="ServicioDeClientes"/> junto a <c>ExigirLimiteCreditoValido</c>).</summary>
+    [Fact]
+    public async Task CrearConLimiteCreditoNegativoEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idCondicionFiscal, idListaPrecio) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = AltaValida(idCondicionFiscal, idListaPrecio) with { LimiteCredito = -1 };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
+
+        Assert.Equal("limite_credito_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
     /// <summary>Spec: "Invalid FK reference maps to 400" — el pre-chequeo de
     /// <see cref="ServicioDeClientes"/> adelanta el mismo código/estado que el backstop de
     /// <c>fk_clientes_condicion_fiscal</c> (23503), sin esperar la carrera con Postgres.</summary>
@@ -186,6 +223,24 @@ public class ServicioDeClientesTests
         var servicio = CrearServicio(nombreDeBase, idTenant: 1);
 
         var datos = AltaValida(idCondicionFiscal, idListaPrecioDeOtroTenant);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
+
+        Assert.Equal("referencia_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 8): mismo criterio que
+    /// <see cref="CrearConIdCondicionFiscalInexistenteEsRechazado"/>, para
+    /// <c>fk_clientes_empresa</c> — pre-chequeo de servicio, sin esperar el backstop 23503.</summary>
+    [Fact]
+    public async Task CrearConIdEmpresaInexistenteEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idCondicionFiscal, idListaPrecio) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = AltaValida(idCondicionFiscal, idListaPrecio) with { IdEmpresa = 999_999 };
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
 
