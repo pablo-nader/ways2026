@@ -191,6 +191,57 @@ export const PARAMETROS_CONOCIDOS: {
   { clave: 'slots_tickets_espera', etiqueta: 'Tickets en espera (cantidad)', tipo: 'entero', porDefecto: '10' },
 ]
 
+// --- Organización: lectura/edición (ServicioDeOrganizacion) ---
+// Alta y baja de tenants/empresas/puntos_venta siguen siendo plataforma-only vía
+// aprovisionamiento (ver NuevoTenant.tsx); estos tipos son solo listado/detalle/edición de
+// datos descriptivos + suspensión de tenants.
+
+export type EstadoTenant = 'Activo' | 'Suspendido' | 'Baja'
+
+export type TenantListado = {
+  id: number
+  nombre: string
+  estado: EstadoTenant
+  createdAt: string
+}
+
+export type TenantEdicion = { nombre: string }
+
+export type EmpresaListado = {
+  id: number
+  idTenant: number
+  razonSocial: string
+  nombreFantasia: string | null
+  cuit: string | null
+}
+
+export type EmpresaEdicion = { razonSocial: string; nombreFantasia: string | null; cuit: string | null }
+
+export type PuntoVentaListado = {
+  id: number
+  idTenant: number
+  idEmpresa: number
+  nombre: string
+  domicilio: string | null
+  horario: string | null
+  whatsapp: string | null
+  instagram: string | null
+  facebook: string | null
+  web: string | null
+}
+
+/** `idEmpresa` no es editable acá: es estructural, no descriptivo (misma razón que en el
+ * backend, `Ways.Application.Organizacion.PuntoVentaEdicion`). */
+export type PuntoVentaEdicion = {
+  nombre: string
+  domicilio: string | null
+  horario: string | null
+  whatsapp: string | null
+  instagram: string | null
+  facebook: string | null
+  web: string | null
+}
+
 // --- Aprovisionamiento de tenants (ADR-16, plataforma) ---
 
 export type SolicitudDeAprovisionamiento = {
