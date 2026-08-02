@@ -597,3 +597,148 @@ None.
 
 Same as prior batches — Standard Mode, no strict-TDD signal from the orchestrator for this run;
 surgical fix batch driven by judgment-day findings rather than a task list.
+
+---
+
+## Batch 6 — Slice 3: Proveedores service + API + Web ABM (branch `feat/stage2-slice3-proveedores`)
+
+**Trigger:** Slice 1 merged to `main` (PR #10), Slice 2 (clientes) merged to `main` (PR #12).
+Orchestrator directed this batch to deliver proveedores as one vertical slice — service + API +
+web ABM together — instead of the original layer split (tasks.md Slice 3 = service/API only,
+Slice 4 = proveedores' screen after Slices 2+3), same re-scoping precedent as Slice 2's clientes
+batch. tasks.md updated in-place: Slice 3 fully checked, Slice 4's proveedores-only portions
+(4.1b/4.3b/4.4b) pulled forward and marked done here — Slice 4 as a standalone unit is now
+closed, since clientes (Slice 2) already closed its own half.
+
+No database changes: schema from Slice 1 (`proveedores`, `condiciones_fiscales`, `empresas`)
+already covers everything this batch needed — no migration touched, confirmed before starting
+(the DB CHANGE GATE was not re-triggered).
+
+### Completed in batch 6
+
+- **3.1–3.2** — `ServicioDeProveedores` (`Ways.Application/Proveedores/ServicioDeProveedores.cs`):
+  list (search by razón social/nombre de fantasía/cuit + pagination + `incluirEliminados`), get,
+  create, edit, soft-delete. Unlike `ServicioDeClientes`, `CrearAsync` needs no atomic counter or
+  explicit transaction — `proveedores` has no server-assigned sequential field, so it's an
+  unconditional INSERT + `SaveChangesAsync`, the exact same shape as
+  `ServicioDeCatalogo<T,..>.CrearAsync` (pre-check + INSERT). No `IContextoDeUsuario` dependency
+  either (unlike `ServicioDeClientes`, which needed `contexto.IdTenant` for
+  `AsignadorDeNumeroCliente`'s raw SQL call before `SaveChanges`) — `EstamparTenant` already
+  auto-stamps `IdTenant` on `Added` entities. No in-service role check (mirrors
+  `ServicioDeClientes`/`ServicioDeCatalogo`): `GestionDeCatalogo` is a single fixed role
+  (admin), enforced entirely at the endpoint. Contracts
+  (`Ways.Application/Proveedores/Contratos.cs`): `AltaProveedor`/`EdicionProveedor`/
+  `ProveedorListado`, full doc 10 §2 shape (fiscal + contact + `margen` fields).
+  **Proactive addition beyond the literal task list** (documented, same precedent as clientes'
+  `limite_credito` judgment-day fix in Slice 2 batch 5, applied here from the start instead of
+  waiting for a review round): `ExigirMargenValido` rejects a negative `Margen` with 400
+  `margen_invalido` — service-level only, no DB `CHECK` (same NO-schema-changes gate as
+  `limite_credito`'s comment explains).
+- **3.3** — `ProveedoresEndpoints` (`Ways.Api/Endpoints/ProveedoresEndpoints.cs`):
+  `GET /api/proveedores` (list), `GET /api/proveedores/{id}`, `POST /api/proveedores`,
+  `PUT /api/proveedores/{id}`, `DELETE /api/proveedores/{id}`, all under
+  `Politicas.GestionDeCatalogo` (admin-only, mirrors `ClientesEndpoints`). Wired in `Program.cs`
+  (`app.MapearProveedores()`) and `Ways.Application/DependencyInjection.cs`
+  (`services.AddScoped<ServicioDeProveedores>()`).
+- **`ManejadorDeErrores`** — updated the `_cuit` suffix exemption comment (`ClasificarUnicidad`):
+  no longer claims the race test is deferred to this slice — it now exists
+  (`ProveedoresEndpointsTests`), and the comment explains WHY no forced rendezvous was needed
+  (unconditional INSERT with pre-check, cuit is client-supplied — qualitatively different from
+  `ux_clientes_numero`, which is only reachable via a raw-SQL bypass since `numero` is never
+  client input).
+- **3.4** — `ServicioDeProveedoresTests.cs` (`Ways.Application.Tests/Proveedores/`, InMemory
+  provider, 17 facts): create without `cuit` succeeds; required `razon_social`/
+  `id_condicion_fiscal` validation; duplicate cuit in the same tenant rejected (pre-check,
+  `cuit_duplicado`/409); same cuit across two tenants allowed; two `NULL`-cuit proveedores in the
+  same tenant allowed; a soft-deleted proveedor's cuit is reusable; `cuit`/`email` too-long
+  rejected with field-specific codes; negative `margen` rejected; invalid `id_condicion_fiscal`/
+  `id_empresa` references → 400 `referencia_invalida`; edit preserving one's own cuit doesn't
+  self-collide (`excluirId`); edit colliding with another proveedor's cuit rejected; soft-delete
+  round trip; cross-tenant `ObtenerAsync` → 404 (ADR-8).
+  **Deviation from tasks.md 3.4's literal "vendedor blocked" wording** (documented, same
+  precedent as `ServicioDeClientesTests` 2.4's deviation): NOT covered here — authorization is
+  endpoint-policy-only (`GestionDeCatalogo`, `RequireAuthorization` at the endpoint), never a
+  `ServicioDeProveedores`-level concern, same as `ServicioDeClientes`/`ServicioDeCatalogo`.
+  Covered instead at HTTP level in 3.5 (`UnVendedorNoPuedeCrearProveedores`). Unlike
+  `ServicioDeClientesTests`, this file DOES fully cover `CrearAsync` (including the actual
+  INSERT) — no transaction/raw-ADO blocker exists for proveedores, so nothing needed to be
+  pushed to integration tests for that reason (only the auth check, for the reason above).
+- **3.5** — `ProveedoresEndpointsTests.cs` (`Ways.IntegrationTests/`, real Postgres via
+  `WaysApiFixture`, 9 facts): concurrent-create race with the same `cuit` (2 `Task.WhenAll` POSTs,
+  tenant admin) → exactly one `201` + one `409 cuit_duplicado` (translated domain code asserted,
+  not just status); same cuit across two tenants both succeed; two cuit-less creates in the same
+  tenant both succeed; a soft-deleted proveedor's cuit is reusable by a new create; admin
+  create→soft-delete round trip; vendedor → 403; cross-tenant proveedor id → 404 on GET, PUT, AND
+  DELETE (ADR-8 — covering all three write/read verbs from the start, not just GET, applying
+  clientes' Slice 2 judgment-day finding #3 proactively).
+  **Deviation from tasks.md 3.5's literal "reuse 1.13's hardened rendezvous"** (documented,
+  technical justification): NOT reused. `ServicioDeProveedores.CrearAsync` is an unconditional
+  INSERT with a pre-check — no atomic counter serializes anything, unlike
+  `AsignadorDeNumeroCliente`'s `UPDATE ... RETURNING` (the reason clientes' own race test in
+  Slice 2 didn't need a rendezvous either, for the OPPOSITE reason — there, the counter's row
+  lock already forces the race deterministically without help). Proveedores' shape instead
+  matches `ServicioDeCatalogo.CrearAsync` (pre-check + unconditional INSERT), whose own race test
+  (`CatalogosTests.DosAltasConcurrentesConElMismoNombreEnElMismoAlcanceDisparanElBackstopDelSaveChanges`)
+  already establishes, in this exact codebase, that two `Task.WhenAll`-launched requests race for
+  real against that shape without a forced rendezvous — confirmed again here, the race test run 3
+  times in isolation with zero flakiness before folding it into the full suite.
+- **3.6** — Regression confirmed green: see Verification.
+- **Web (re-scoped from Slice 4, proveedores-only portion)** — `Ways.Web/src/api/tipos.ts`:
+  `ProveedorListado`/`AltaProveedor`/`EdicionProveedor`, field-for-field mirrors of the C#
+  contracts. `Ways.Web/src/api/proveedores.ts`: `clienteDeProveedores` (listar/crear/actualizar/
+  eliminar), same shape as `clienteDeClientes`. `Ways.Web/src/paginas/Proveedores.tsx`: dedicated
+  screen (not `PaginaCatalogo`/the generic machine, design decision 1) — search + paginated list,
+  create/edit form with three sections (datos fiscales: razón social/nombre de fantasía/cuit/
+  condición fiscal selector via the existing `clienteDeCatalogosFiscales.condicionesFiscales()`;
+  contacto: domicilio/teléfono/email/vendedor+celular/supervisor+celular; margen). No protected-row
+  UI treatment (unlike `Clientes.tsx`'s Consumidor Final badge/disabled buttons) — proveedores has
+  no equivalent business rule. Route `/proveedores` wired in `App.tsx`
+  (`RutaProtegida rolesPermitidos={[ROL.Admin]}`, matches `Politicas.GestionDeCatalogo`) + nav
+  entry in `Layout.tsx` (gated by the existing `puedeGestionarCatalogos`, same role set as
+  `GestionDeCatalogo`, right next to the Clientes nav entry).
+
+### Deviations summary (all documented above, repeated here for visibility)
+
+1. `ExigirMargenValido` added proactively (not in the literal task list) — same precedent as
+   clientes' `limite_credito` judgment-day fix, applied here from the start instead of waiting
+   for a review round.
+2. Application.Tests (3.4) don't cover "vendedor blocked" — endpoint-policy-only, not a
+   service-level concern (same precedent as `ServicioDeClientesTests` 2.4); covered by 3.5's
+   integration tests instead. `CrearAsync` itself IS fully unit-tested here, unlike clientes.
+3. 3.5's race test doesn't use the 1.13 rendezvous interceptor — `ServicioDeProveedores.CrearAsync`
+   is an unconditional INSERT + pre-check (no atomic counter), same shape as
+   `ServicioDeCatalogo.CrearAsync`, whose own precedent in `CatalogosTests` already proves this
+   shape races for real without forcing anything.
+4. Slice boundaries re-scoped per orchestrator instruction, same precedent as Slice 2: proveedores
+   web ABM pulled forward from Slice 4 into this Slice 3 batch. Slice 4 as a standalone unit is
+   now fully closed (both clientes and proveedores screens done).
+5. Cross-tenant write 404 (PUT/DELETE, not just GET) covered from the start in 3.5, applying
+   clientes' Slice 2 judgment-day finding #3 proactively instead of waiting for a review round.
+
+### Blocked
+
+None.
+
+## Verification (batch 6)
+
+- `dotnet build Ways.slnx` — 0 warnings, 0 errors.
+- `dotnet test Ways.slnx`, run **twice** for stability, identical results both times:
+  - `Ways.Domain.Tests`: **69/69** (unchanged).
+  - `Ways.Application.Tests`: **124/124** (107 + 17 new `ServicioDeProveedoresTests`).
+  - `Ways.IntegrationTests`: **126/126** (117 + 9 new `ProveedoresEndpointsTests`). Docker up
+    (Testcontainers-backed real Postgres) both times. The cuit race test
+    (`LaCreacionConcurrenteConElMismoCuitDaExactamenteUnGanador`) was additionally run 3 times in
+    isolation before folding it into the full suite — no flakiness.
+- `Ways.Web`: `npx tsc -b` clean; `npx oxlint` clean (same pre-existing unrelated warning on
+  `AuthContext.tsx` as prior batches, not touched this batch); `npx vite build` succeeds (310 kB
+  JS / 232 kB CSS bundle, in line with the existing app).
+
+## TDD Cycle Evidence (batch 6)
+
+Same as prior batches — Standard Mode, no strict-TDD signal from the orchestrator for this run.
+
+## Slices 3–4 closure check
+
+After this batch, `tasks.md` has zero unchecked (`- [ ]`) items across Slices 1–4 (grepped, 0
+matches) — Stage 2 (clientes y proveedores) is fully implemented per its own task list, pending
+judgment-day review and PR for this slice, then `sdd-verify`/`sdd-archive`.

@@ -4,7 +4,7 @@
 # against that baseline.
 change: stage-2-clientes-proveedores
 phase: apply
-status: slice-2-done-ready-for-judgment-day
+status: slice-3-done-ready-for-judgment-day
 artifact_store: openspec
 phases:
   explore:
@@ -22,26 +22,28 @@ phases:
     status: done
     artifact: tasks.md
   apply:
-    status: slice-2-done
+    status: slice-3-done
     artifact: apply-progress.md
     note: >-
-      Slice 1 complete and merged to main (PR #10). Slice 2 (apply batch 4,
-      branch feat/stage2-slice2-clientes off main) done: ServicioDeClientes +
-      ClientesEndpoints (list/create/edit/soft-delete, GestionDeCatalogo
-      policy), atomic numero proven under real concurrency (no forced
-      rendezvous needed — row lock on numeraciones_clientes already
-      serializes), CF guard closes the renumber-then-delete bypass by
-      construction (Numero never client-editable), GET /api/listas-precio
-      read-only reference listing for the form selector (not a listas_precio
-      ABM), dedicated Clientes.tsx web screen wired (route + nav). Re-scoped
-      per orchestrator instruction: clientes web ABM pulled forward from the
-      original Slice 4 into this Slice 2 batch; proveedores stays split across
-      Slices 3/4. Two documented deviations from tasks.md's literal wording
-      (id_lista_precio/id_condicion_fiscal required, not defaulted-when-omitted
-      — spec.md wins over a tasks.md phrase design.md never stated; no forced
-      rendezvous in the race test) — see apply-progress.md batch 4 for full
-      justification. Full suite runtime-verified twice for stability: Domain
-      69/69, Application 104/104, IntegrationTests 109/109 (0 regressions).
+      Slice 1 complete and merged to main (PR #10). Slice 2 (clientes) complete
+      and merged to main (PR #12), judgment-day APPROVED after 2 rounds. Slice
+      3 (apply batch 6, branch feat/stage2-slice3-proveedores off main) done:
+      ServicioDeProveedores + ProveedoresEndpoints (list/create/edit/
+      soft-delete, GestionDeCatalogo policy), cuit uniqueness proven under
+      real concurrency (unconditional INSERT + pre-check, same shape as
+      ServicioDeCatalogo — no atomic counter needed, unlike clientes' numero;
+      race test needs no forced rendezvous either, same CatalogosTests
+      precedent), dedicated Proveedores.tsx web screen wired (route + nav).
+      Re-scoped per same precedent as Slice 2: proveedores web ABM pulled
+      forward from the original Slice 4 into this Slice 3 batch — Slice 4 as
+      a standalone unit is now fully closed (both clientes and proveedores
+      screens done). tasks.md has zero unchecked items across Slices 1-4.
+      Closed the Slice-2-carried INFO (cross-tenant IdEmpresa pre-check
+      symmetry) for BOTH services. One proactive addition beyond the literal
+      task list: margen server-side validation (ExigirMargenValido), same
+      precedent as clientes' limite_credito judgment-day fix, applied from
+      the start here. Full suite runtime-verified twice for stability: Domain
+      69/69, Application 126/126, IntegrationTests 126/126 (0 regressions).
       Web: tsc/oxlint/vite build all clean. No DB changes this slice (schema
       from Slice 1 covers everything). Work-unit commits, no push/PR yet —
       awaiting judgment-day (orchestrated separately) before PR.
@@ -66,4 +68,5 @@ notes:
   - "design.md (2026-08-02): clientes/proveedores do NOT reuse ServicioDeCatalogo<T>/ConfiguracionDeCatalogo<T> (dedicated entity+EF config+service+screen each) -- proveedores' cuit-based tenant-wide uniqueness and clientes' multi-field identity/service-assigned numero break the generic base's hardcoded nombre-pair uniqueness; only listas_precio genuinely fits the generic EF base (no service/API this stage, no ABM in scope). numero assigned via numeraciones_clientes counter table (UPDATE...RETURNING, doc-09 pattern family, keyed by id_tenant) through a shared AsignadorDeNumeroCliente helper reused by CrearAsync, provisioning CF bootstrap, and backfill -- raw ADO.NET, not Database.SqlQuery<T>()/FromSqlRaw<T>() (stage-1 slice-2 confirmed SqlQuery<T>() throws IndexOutOfRangeException against this model). Consumidor Final protected by a domain guard (ServicioDeClientes blocks edit/delete when Numero==1) plus a DB CHECK ck_clientes_cf_protegido (numero<>1 OR deleted_at IS NULL) as the irreversible-delete backstop -- no trigger (no precedent in this codebase). PlantillaDeAprovisionamiento extended in place (fills its own documented ItemsDiferidos gap) rather than bumped to V2 -- ADR-16 versioning is for a different vertical template, not staged completion; flagged as a deviation from the proposal's literal 'versioned bump' wording, not from a resolved binding decision. ADR-10 DeLaEmpresa reconfirmed deferred, no new gap found. One combined migration + one DB CHANGE GATE for all 4 tables (schema + backfill plan together, per resolved decision #3)."
   - "Slice 2 apply batch (2026-08-02): orchestrator prompt re-scoped delivery to a vertical clientes slice (service + API + web ABM together) instead of tasks.md's original layer split (Slice 2 = service/API only, Slice 4 = both screens after Slices 2+3) -- tasks.md updated in place to record this; proveedores stays on its original Slice 3/4 split. Two deviations from tasks.md's literal task wording, both documented with justification in apply-progress.md batch 4: (1) id_lista_precio/id_condicion_fiscal implemented as REQUIRED, not defaulted-when-omitted -- specs/clientes/spec.md's own acceptance scenario contradicted tasks.md 2.1's one-line 'defaults when omitted' phrasing, which design.md never stated either; spec.md treated as the higher-authority contract. (2) task 2.5's race test does not reuse task 1.13's forced rendezvous interceptor -- AsignadorDeNumeroCliente's UPDATE...RETURNING already serializes on Postgres's own row lock (confirmed without forcing anything in Slice 1 batch 3's AsignadorDeNumeroClienteConcurrenciaTests), so two Task.WhenAll-launched POSTs already race for real. Also added a GET /api/listas-precio read-only reference listing (ServicioDeClientes/ClientesEndpoints, not a dedicated listas_precio Servicio/Endpoints) to back the web form's lista-precio selector -- same precedent as /api/roles inside UsuariosEndpoints; listas_precio ABM itself (create/edit/delete) stays out of scope, unchanged from design decision 1."
   - "Judgment-day verdict: Slice 2 (clientes) APPROVED after 2 rounds (2026-08-02). R1: 3 confirmed (untestable-by-design race test replaced with raw-SQL 23505 proof; limite_credito server validation; cross-tenant write 404 parity) + coverage/doc fixes incl. correcting a false deviation rationale. R2: CLEAN x2. Final suite: 69+107+117/117."
-  - "Slice 2 INFO carried to slice 3: add the cross-tenant IdEmpresa pre-check test for symmetry (correct by construction, EntidadTenant filter applies; parity with the lista-precio pair)."
+  - "Slice 2 INFO carried to slice 3: add the cross-tenant IdEmpresa pre-check test for symmetry (correct by construction, EntidadTenant filter applies; parity with the lista-precio pair). CLOSED in Slice 3 apply batch 6, for both ServicioDeClientesTests and ServicioDeProveedoresTests."
+  - "Slice 3 apply batch 6 (proveedores, 2026-08-02): re-scoped delivery to a vertical proveedores slice (service + API + web ABM together), same precedent as Slice 2's clientes re-scoping -- absorbed the proveedores-only portions of the original Slice 4 (tasks 4.1b/4.3b/4.4b). ServicioDeProveedores.CrearAsync needs no atomic counter/transaction (proveedores has no server-assigned sequential field like clientes' numero): unconditional INSERT + pre-check, same shape as ServicioDeCatalogo.CrearAsync -- this also means, unlike ServicioDeClientesTests, ServicioDeProveedoresTests DOES cover CrearAsync fully at the InMemory level (no transaction/raw-ADO blocker). The ux_proveedores_cuit race test (task 3.5) does NOT reuse task 1.13's rendezvous interceptor -- cuit is client-supplied with no atomic counter serializing anything, but the unconditional-INSERT-with-pre-check shape already races for real with a plain Task.WhenAll, confirmed via the exact same precedent CatalogosTests already established in this codebase (run 3x with no flakiness). tasks.md's Slices 1-4 have zero unchecked items after this batch. Full suite runtime-verified twice for stability: 69/126/126, 0 regressions."
