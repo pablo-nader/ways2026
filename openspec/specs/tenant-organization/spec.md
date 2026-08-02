@@ -55,8 +55,10 @@ or delete them.
 ### Requirement: Tenant Provisioning With Template Seed
 
 When the platform provisions a new tenant, the system MUST create, in a
-single transaction, the tenant, its first empresa, and the generic template
-seed: area "General" and medios_pago Efectivo and Transferencia.
+single transaction, the tenant, its first empresa, the generic template seed
+(area "General" and medios_pago Efectivo and Transferencia), the Consumidor
+Final cliente (`numero = 1`, condición fiscal CF), and the General
+`listas_precio` row (`es_default = true`).
 
 > Deviation recorded (2026-08-02, verify): the originally-planned "inactive general
 > price-list placeholder" was deliberately deferred because `listas_precio` does not
@@ -64,20 +66,30 @@ seed: area "General" and medios_pago Efectivo and Transferencia.
 > user's stage-2 decision: `stage-2-clientes-proveedores` creates the real minimal
 > `listas_precio` (General list) and adds it to this template, which fulfils the
 > original intent with a real row instead of a placeholder.
+>
+> Fulfilled (2026-08-02, archive of stage-2-clientes-proveedores): this requirement now
+> reflects the stage-2 implementation directly (Consumidor Final cliente + General
+> listas_precio row seeded by provisioning, and backfilled for pre-existing tenants — see
+> the Backfill requirement below). Per apply-progress.md and design.md decision 5,
+> `PlantillaDeAprovisionamiento` was extended in place (`V1`), not bumped to a new version —
+> the stage-2 change proposal's original plan to add a versioned bump (ADR-16) was
+> superseded by that design decision once implementation started; the prior version's
+> fields were not removed either way.
 
 #### Scenario: Successful provisioning
 
 - GIVEN a platform user submits a new tenant name and empresa razón social
 - WHEN provisioning completes
-- THEN the tenant, empresa, area "General", and medios_pago Efectivo/Transferencia
-  all exist
+- THEN the tenant, empresa, area "General", medios_pago Efectivo/Transferencia,
+  Consumidor Final cliente, and General listas_precio row all exist
 - AND all seeded rows carry the new tenant's `id_tenant`
 
 #### Scenario: Provisioning failure rolls back
 
-- GIVEN the template seed step fails partway
+- GIVEN the template seed step fails partway (including the Consumidor Final
+  or General list step)
 - WHEN the transaction is rolled back
-- THEN no tenant, empresa, or partial catalog rows remain
+- THEN no tenant, empresa, or partial catalog/cliente/lista rows remain
 
 ### Requirement: Tenant Suspension Enforcement
 
@@ -116,3 +128,32 @@ Row Level Security using an app DB role without `BYPASSRLS`.
 - WHEN a raw SQL query or an `IgnoreQueryFilters()` call attempts to read
   tenant 2 data while `app.tenant_id` is set to 1
 - THEN Postgres RLS returns zero rows
+
+### Requirement: Backfill for Pre-Existing Tenants
+
+Tenants provisioned before `stage-2-clientes-proveedores` MUST receive their
+Consumidor Final cliente and General `listas_precio` row via an idempotent
+backfill step in `InicializadorDeBaseDeDatos` (same pattern as stage 1's
+`usuarios` backfill, ADR-14), run after migrations. The migration's DB Change
+Gate summary MUST explicitly include which rows get created for which
+existing tenants, and the user approves schema and backfill together in the
+same gate — not as two separate approvals.
+
+#### Scenario: Existing tenant gains Consumidor Final and General list
+- GIVEN a tenant provisioned under stage 1, with no `clientes` or
+  `listas_precio` rows
+- WHEN the backfill runs
+- THEN the tenant has exactly one Consumidor Final cliente (`numero = 1`)
+  and exactly one `es_default` listas_precio row
+
+#### Scenario: Backfill is idempotent
+- GIVEN a tenant that already has its Consumidor Final and General list
+  (either from provisioning or a prior backfill run)
+- WHEN the backfill runs again
+- THEN no duplicate rows are created
+
+#### Scenario: Backfill is approved inside the DB Change Gate
+- GIVEN the clientes/listas_precio migration is ready to apply
+- WHEN the gate summary is presented to the user
+- THEN it names the affected pre-existing tenants and the rows to be created,
+  and proceeds only after explicit approval covering both schema and backfill

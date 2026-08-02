@@ -1,10 +1,11 @@
-# NOTE (2026-08-02): the tenant-organization delta spec in this change was written against
-# stage 1's change-dir spec BEFORE stage 1 was archived. The baseline now exists at
-# openspec/specs/tenant-organization/spec.md — this change's future archive must merge
-# against that baseline.
+# NOTE (2026-08-02, resolved at archive): the tenant-organization delta spec in this change
+# was written against stage 1's change-dir spec BEFORE stage 1 was archived. The delta has
+# now been merged into openspec/specs/tenant-organization/spec.md (MODIFIED provisioning
+# requirement + ADDED backfill requirement), preserving the stage-1 deviation note. See
+# archive-report.md for the full merge record.
 change: stage-2-clientes-proveedores
-phase: apply
-status: slice-3-done-ready-for-judgment-day
+phase: archive
+status: archived
 artifact_store: openspec
 phases:
   explore:
@@ -22,7 +23,7 @@ phases:
     status: done
     artifact: tasks.md
   apply:
-    status: slice-3-done
+    status: done
     artifact: apply-progress.md
     note: >-
       Slice 1 complete and merged to main (PR #10). Slice 2 (clientes) complete
@@ -48,9 +49,21 @@ phases:
       from Slice 1 covers everything). Work-unit commits, no push/PR yet —
       awaiting judgment-day (orchestrated separately) before PR.
   verify:
-    status: pending
+    status: done
+    artifact: verify-report.md
+    note: >-
+      Verdict PASS (2026-08-02, post-fix). 326/326 tests (Domain 69/69, Application 128/128,
+      IntegrationTests 129/129), 33/33 spec scenarios compliant. The one CRITICAL finding
+      (specs/listas-precio-minimal/spec.md's contradicting "defaults to General list"
+      scenario) was fixed in place before archive.
   archive:
-    status: pending
+    status: done
+    artifact: archive-report.md
+    note: >-
+      Archived to openspec/changes/archive/2026-08-02-stage-2-clientes-proveedores/. Delta
+      specs merged into openspec/specs/{clientes,proveedores,listas-precio-minimal}/ (new
+      baselines) and openspec/specs/tenant-organization/spec.md (merged delta, stage-1
+      deviation note preserved).
 dependencies:
   spec: [propose]
   design: [propose]

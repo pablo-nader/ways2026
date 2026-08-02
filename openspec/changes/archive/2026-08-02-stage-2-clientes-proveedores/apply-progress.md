@@ -458,10 +458,10 @@ No database changes: schema from Slice 1 (`clientes`, `listas_precio`, `numeraci
   `Ways.Web/src/paginas/Clientes.tsx`: dedicated screen (not `PaginaCatalogo`/the generic
   machine, design decision 1) — search + paginated list, create/edit form (identity, documento,
   condición fiscal selector via the existing `clienteDeCatalogosFiscales.condicionesFiscales()`,
-  lista-precio selector via the new `/api/listas-precio`, contact fields, crédito section with
+  lista-precio selector via the new `/api/listas-precio`, contact fields, crédito section con
   `limiteCredito`/`creditoIlimitado`), CF row rendered with a "Protegido" badge and its
-  Editar/Baja buttons `disabled` (defense in depth on top of the domain guard — the real
-  protection is `ReglaDeClientes`/`ck_clientes_cf_protegido`, this is UX only). Route `/clientes`
+  Editar/Baja buttons `disabled` (defense in depth on top of the domain guard — la protección
+  real es `ReglaDeClientes`/`ck_clientes_cf_protegido`, this is UX only). Route `/clientes`
   wired in `App.tsx` (`RutaProtegida rolesPermitidos={[ROL.Admin]}`, matches
   `Politicas.GestionDeCatalogo`) + nav entry in `Layout.tsx` (gated by the existing
   `puedeGestionarCatalogos`, no new helper needed — same role set as `GestionDeCatalogo`).
