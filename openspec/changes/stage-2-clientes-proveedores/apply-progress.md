@@ -724,7 +724,11 @@ None.
 - `dotnet build Ways.slnx` — 0 warnings, 0 errors.
 - `dotnet test Ways.slnx`, run **twice** for stability, identical results both times:
   - `Ways.Domain.Tests`: **69/69** (unchanged).
-  - `Ways.Application.Tests`: **124/124** (107 + 17 new `ServicioDeProveedoresTests`).
+  - `Ways.Application.Tests`: **126/126** (108 + 18 new `ServicioDeProveedoresTests` —
+    corrected from the originally-recorded 107 + 17: the cross-tenant IdEmpresa parity fix
+    closed in this batch (state.yaml note) added one test to *each* of
+    `ServicioDeClientesTests` and `ServicioDeProveedoresTests`, so the baseline moves to 108
+    and the new-test count to 18, accounting for the +2 the original count missed).
   - `Ways.IntegrationTests`: **126/126** (117 + 9 new `ProveedoresEndpointsTests`). Docker up
     (Testcontainers-backed real Postgres) both times. The cuit race test
     (`LaCreacionConcurrenteConElMismoCuitDaExactamenteUnGanador`) was additionally run 3 times in
@@ -736,6 +740,55 @@ None.
 ## TDD Cycle Evidence (batch 6)
 
 Same as prior batches — Standard Mode, no strict-TDD signal from the orchestrator for this run.
+
+## Judgment-day round 1 fixes (Slice 3, 2026-08-02)
+
+Confirmed-by-both-judges fixes applied on `feat/stage2-slice3-proveedores`, work-unit commits,
+no push/PR (judgment-day round continues before PR).
+
+1. **Numeric precision bounds** —
+   `ServicioDeProveedores.ExigirMargenValido` (`Ways.Application/Proveedores/ServicioDeProveedores.cs`)
+   now also rejects `margen >= 1000` (overflows `numeric(5,2)`), same 400 `margen_invalido`.
+   `ServicioDeClientes.ExigirLimiteCreditoValido` (`Ways.Application/Clientes/ServicioDeClientes.cs`)
+   now also rejects `limite_credito >= 1_000_000_000_000` (overflows `numeric(14,2)`), same 400
+   `limite_credito_invalido`. Added unit boundary tests for both
+   (`ServicioDeProveedoresTests.CrearConMargenQueDesbordaNumericEsRechazado`,
+   `ServicioDeClientesTests.CrearConLimiteCreditoQueDesbordaNumericEsRechazado`) plus an HTTP 400
+   test (`ClientesEndpointsTests.CrearConLimiteCreditoQueDesbordaNumericDevuelve400`).
+2. **22003 mapping (db-error-backstops skill-spirit backstop)** — `ManejadorDeErrores`
+   (`Ways.Api/Seguridad/ManejadorDeErrores.cs`) now maps any `PostgresException` with
+   `SqlState == "22003"` (numeric_value_out_of_range) to a generic 400
+   `valor_fuera_de_rango`, so any future numeric overflow degrades to a client 400 instead of a
+   500. Tested two ways: a raw-SQL insert directly against Postgres, bypassing
+   `ExigirMargenValido` entirely, proves Postgres does throw 22003 for this class of overflow
+   (`BackstopClientesYProveedoresTests.UnProveedorConMargenQueDesbordaNumericViolaElRangoEnPostgres`);
+   and an HTTP-level test through `POST /api/catalogos/grupos` (`ServicioDeGrupos` has no
+   app-level bound on `Margen`, unlike proveedores/clientes) exercises the mapping end-to-end,
+   confirming 400 `valor_fuera_de_rango`
+   (`CatalogosTests.CrearUnGrupoConMargenQueDesbordaNumericDevuelve400ViaElBackstopDe22003`).
+3. **Count bookkeeping** — corrected batch 6's `Ways.Application.Tests` count above from the
+   originally-recorded 124/124 (107 + 17 new `ServicioDeProveedoresTests`) to the accurate
+   126/126 (108 + 18 new `ServicioDeProveedoresTests`): the cross-tenant IdEmpresa parity fix
+   closed in batch 6 (state.yaml note) added one test to *each* of `ServicioDeClientesTests`
+   and `ServicioDeProveedoresTests`, so the clientes baseline moves from 107 to 108 and the
+   proveedores new-test count from 17 to 18, accounting for the +2 the original count missed.
+   `state.yaml` already had the correct 126/126 figures — no change needed there.
+4. **CUIT normalization INFO (recorded, no code change)** — `state.yaml` now documents the
+   accepted limitation that cuit dedupe is format-sensitive (`"20-12345678-9"` and
+   `"20123456789"` are distinct strings and never collide), consistent with the existing
+   `numero_documento` convention; digit-only canonicalization is left as a possible future
+   product decision, out of scope for this slice (NO schema changes gate).
+
+### Verification (round 1 fixes)
+
+- `dotnet build Ways.slnx` — 0 warnings, 0 errors.
+- `dotnet test Ways.slnx`, run twice for stability, identical results both times:
+  - `Ways.Domain.Tests`: **69/69** (unchanged).
+  - `Ways.Application.Tests`: **128/128** (126 + 2 new boundary unit tests).
+  - `Ways.IntegrationTests`: **129/129** (126 + 3 new: 1 HTTP 400 boundary test on clientes,
+    1 raw-SQL 22003 proof, 1 HTTP-level 22003-mapping test on grupos). Docker up
+    (Testcontainers-backed real Postgres) both runs.
+- Web untouched this round — `Ways.Web` not touched, tsc/oxlint/vite not re-run.
 
 ## Slices 3–4 closure check
 
