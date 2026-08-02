@@ -171,10 +171,19 @@ proveedores (                 -- [catálogo]
 
 ### Artículo: solo información intrínseca
 
+> **Modelo de disponibilidad (decisión de producto, 2026-08-02):** los artículos son
+> **del tenant** — no usan el patrón `id_empresa NULL` de los padrones. Un artículo tiene
+> un código interno único por tenant y N códigos de barra (cada código pertenece a UN solo
+> artículo del tenant, sin overrides). Lo que varía por empresa es la **disponibilidad**:
+> `disponible_para_todas = true` (default) significa todas las empresas del tenant,
+> incluidas las que se creen después — automáticamente, porque no hay filas que backfillear;
+> `false` acota a las empresas listadas en `articulos_empresas`.
+
 ```sql
-articulos (                   -- [catálogo]
+articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     id_articulo,
     codigo_interno   citext NULL,            -- el código corto tipeable (< 7 dígitos)
+                                             -- UNIQUE (id_tenant, codigo_interno) WHERE deleted_at IS NULL
     nombre           citext,
     descripcion      text NULL,
     id_area, id_categoria NULL, id_marca NULL, id_grupo NULL,
@@ -186,11 +195,19 @@ articulos (                   -- [catálogo]
     costo_lista      numeric(14,2) NULL,     -- lista del proveedor
     descuento_proveedor numeric(5,2) NULL,
     costo_nominal    numeric(14,2) NULL,     -- costo real de reposición (lo actualiza la compra)
+    disponible_para_todas boolean NOT NULL DEFAULT true,
     activo
 );
 
-codigos_barra (id_codigo_barra, id_articulo, codigo citext, activo)   -- [catálogo]
--- UNIQUE (codigo, id_tenant) WHERE deleted_at IS NULL — N códigos por artículo.
+articulos_empresas (          -- solo tiene filas cuando disponible_para_todas = false
+    id_articulo, id_empresa, id_tenant,
+    PRIMARY KEY (id_articulo, id_empresa),
+    -- FKs compuestas con id_tenant a articulos y empresas
+);
+
+codigos_barra (id_codigo_barra, id_articulo, codigo citext, activo)   -- [tenant-wide]
+-- UNIQUE (codigo, id_tenant) WHERE deleted_at IS NULL — N códigos por artículo,
+-- cada código pertenece a exactamente un artículo del tenant.
 ```
 
 El artículo **no tiene precio de venta**: el precio vive en las listas. Se acabaron
