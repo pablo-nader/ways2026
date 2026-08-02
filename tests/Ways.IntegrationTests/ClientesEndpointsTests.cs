@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Clientes;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios; // PaginaDe<T>, SolicitudDeLogin
+using Ways.Domain.Clientes;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Seguridad;
@@ -158,6 +160,24 @@ public class ClientesEndpointsTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(0m, creado.Saldo);
     }
 
+    /// <summary>Judgment-day ronda 1 (item 2): <c>LimiteCredito</c> negativo se rechaza con
+    /// 400 <c>limite_credito_invalido</c> a través del pipeline HTTP completo.</summary>
+    [Fact]
+    public async Task CrearConLimiteCreditoNegativoDevuelve400()
+    {
+        var (_, idCondicionFiscalCf, idListaPrecioGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(CrearConLimiteCreditoNegativoDevuelve400));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var alta = new AltaCliente(
+            "Crédito inválido", null, null, null, null, idCondicionFiscalCf, null, null, null, null, null, null,
+            idListaPrecioGeneral, LimiteCredito: -100);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/clientes", alta);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+    }
+
     /// <summary>Spec: Admin creates and soft-deletes a cliente.</summary>
     [Fact]
     public async Task UnAdminCreaYDaDeBajaUnCliente()
@@ -218,5 +238,132 @@ public class ClientesEndpointsTests(WaysApiFixture fixture) : IClassFixture<Ways
         var respuesta = await adminB.GetAsync($"/api/clientes/{clienteDeA!.Id}");
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 3): ADR-8 aplica igual a los caminos de
+    /// escritura — mismo 404 uniforme, no solo en el GET de arriba.</summary>
+    [Fact]
+    public async Task UnPutSobreUnClienteDeOtroTenantDevuelve404()
+    {
+        var (_, idCondicionFiscalCfA, idListaPrecioGeneralA, mailAdminA, passwordAdminA) =
+            await AprovisionarTenantAsync(nameof(UnPutSobreUnClienteDeOtroTenantDevuelve404) + "-A");
+        var (_, idCondicionFiscalCfB, idListaPrecioGeneralB, mailAdminB, passwordAdminB) =
+            await AprovisionarTenantAsync(nameof(UnPutSobreUnClienteDeOtroTenantDevuelve404) + "-B");
+
+        using var adminA = await ClienteLogueadoAsync(mailAdminA, passwordAdminA);
+        var alta = new AltaCliente(
+            "De tenant A", null, null, null, null, idCondicionFiscalCfA, null, null, null, null, null, null,
+            idListaPrecioGeneralA);
+        var respuestaAlta = await adminA.PostAsJsonAsync("/api/clientes", alta);
+        var clienteDeA = await respuestaAlta.Content.ReadFromJsonAsync<ClienteListado>();
+
+        using var adminB = await ClienteLogueadoAsync(mailAdminB, passwordAdminB);
+        var edicion = new EdicionCliente(
+            "Intento de edición", null, null, null, null, idCondicionFiscalCfB, null, null, null, null, null, null,
+            idListaPrecioGeneralB, 0, false, null, true);
+        var respuesta = await adminB.PutAsJsonAsync($"/api/clientes/{clienteDeA!.Id}", edicion);
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 3): mismo criterio que el PUT de arriba, para el
+    /// DELETE.</summary>
+    [Fact]
+    public async Task UnDeleteSobreUnClienteDeOtroTenantDevuelve404()
+    {
+        var (_, idCondicionFiscalCfA, idListaPrecioGeneralA, mailAdminA, passwordAdminA) =
+            await AprovisionarTenantAsync(nameof(UnDeleteSobreUnClienteDeOtroTenantDevuelve404) + "-A");
+        var (_, _, _, mailAdminB, passwordAdminB) =
+            await AprovisionarTenantAsync(nameof(UnDeleteSobreUnClienteDeOtroTenantDevuelve404) + "-B");
+
+        using var adminA = await ClienteLogueadoAsync(mailAdminA, passwordAdminA);
+        var alta = new AltaCliente(
+            "De tenant A", null, null, null, null, idCondicionFiscalCfA, null, null, null, null, null, null,
+            idListaPrecioGeneralA);
+        var respuestaAlta = await adminA.PostAsJsonAsync("/api/clientes", alta);
+        var clienteDeA = await respuestaAlta.Content.ReadFromJsonAsync<ClienteListado>();
+
+        using var adminB = await ClienteLogueadoAsync(mailAdminB, passwordAdminB);
+        var respuesta = await adminB.DeleteAsync($"/api/clientes/{clienteDeA!.Id}");
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 5): cobertura faltante de <c>GET /api/listas-precio</c>
+    /// (design decision 1, spec: listas_precio ABM Is Out of Scope This Stage) — un admin solo
+    /// ve las listas de SU tenant, nunca las de otro (aislamiento cross-tenant, ADR-6/ADR-17).</summary>
+    [Fact]
+    public async Task UnAdminSoloVeLasListasDePrecioDeSuPropioTenant()
+    {
+        var (_, _, idListaPrecioGeneralA, mailAdminA, passwordAdminA) =
+            await AprovisionarTenantAsync(nameof(UnAdminSoloVeLasListasDePrecioDeSuPropioTenant) + "-A");
+        await AprovisionarTenantAsync(nameof(UnAdminSoloVeLasListasDePrecioDeSuPropioTenant) + "-B");
+
+        using var adminA = await ClienteLogueadoAsync(mailAdminA, passwordAdminA);
+        var respuesta = await adminA.GetAsync("/api/listas-precio");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var listas = await respuesta.Content.ReadFromJsonAsync<List<ListaPrecioAsignable>>();
+
+        Assert.NotNull(listas);
+        Assert.Single(listas!);
+        Assert.Equal(idListaPrecioGeneralA, listas![0].Id);
+    }
+
+    [Fact]
+    public async Task UnVendedorNoPuedeListarListasDePrecio()
+    {
+        var (idTenant, _, _, _, _) =
+            await AprovisionarTenantAsync(nameof(UnVendedorNoPuedeListarListasDePrecio));
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorNoPuedeListarListasDePrecio));
+        using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
+
+        var respuesta = await vendedor.GetAsync("/api/listas-precio");
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 4): <see cref="Ways.Domain.Clientes.ReglaDeClientes.ValidarNoConsumidorFinal"/>
+    /// de punta a punta, a través del pipeline HTTP real — no solo a nivel de
+    /// <c>ServicioDeClientesTests</c> (InMemory).</summary>
+    [Fact]
+    public async Task UnPutSobreElConsumidorFinalDevuelve409()
+    {
+        var (idTenant, idCondicionFiscalCf, idListaPrecioGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnPutSobreElConsumidorFinalDevuelve409));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var consumidorFinal = await db.Clientes.SingleAsync(
+            c => c.IdTenant == idTenant && c.Numero == ReglaDeClientes.NumeroConsumidorFinal);
+
+        var edicion = new EdicionCliente(
+            "Intento de edición del CF", null, null, null, null, idCondicionFiscalCf, null, null, null, null, null,
+            null, idListaPrecioGeneral, 0, false, null, true);
+
+        var respuesta = await admin.PutAsJsonAsync($"/api/clientes/{consumidorFinal.Id}", edicion);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("consumidor_final_protegido", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Mismo criterio que el PUT de arriba, para el DELETE.</summary>
+    [Fact]
+    public async Task UnDeleteSobreElConsumidorFinalDevuelve409()
+    {
+        var (idTenant, _, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnDeleteSobreElConsumidorFinalDevuelve409));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var consumidorFinal = await db.Clientes.SingleAsync(
+            c => c.IdTenant == idTenant && c.Numero == ReglaDeClientes.NumeroConsumidorFinal);
+
+        var respuesta = await admin.DeleteAsync($"/api/clientes/{consumidorFinal.Id}");
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("consumidor_final_protegido", problema.GetProperty("codigo").GetString());
     }
 }
