@@ -146,38 +146,66 @@ list backfilled + provisioned, tests green. **Rollback**: down-migration (additi
 
 ---
 
-## Slice 2: Clientes service + API (PR 2)
+## Slice 2: Clientes service + API + Web ABM (PR 2)
 
-**Depends on**: Slice 1. **Start**: PR 1 merged/branch. **Finish**: cliente CRUD live
-through the API, atomic numero proven under concurrency, tests green. **Rollback**:
-new routes only.
+**Depends on**: Slice 1. **Start**: PR 1 merged/branch (`main`, PR #10). **Finish**: cliente
+CRUD live through the API AND through a dedicated web screen, atomic numero proven under
+concurrency, tests green. **Rollback**: new routes/screen only.
+
+> **Re-scoping note (apply batch 4)**: the orchestrator directed this apply batch to deliver
+> clientes as one vertical slice (service + API + web ABM together), not split by layer as
+> originally planned (Slice 2 = service/API only, Slice 4 = both screens after both Slices 2
+> and 3). The clientes-only portions of section 4A/4B below (`Clientes.tsx`, its routes/nav,
+> `clientes.ts`/`tipos.ts` additions) were pulled forward and completed in this batch; the
+> proveedores-only portions of Slice 4 remain pending until Slice 3 lands.
 
 ### 2A. Application
 
-- [ ] 2.1 Add `ServicioDeClientes` (list/create/edit/soft-delete): create calls
-  `AsignadorDeNumeroCliente`, defaults `id_lista_precio` to the tenant's
-  `es_default` list when omitted, enforces `ReglaDeClientes.ValidarNoConsumidorFinal`
+- [x] 2.1 Add `ServicioDeClientes` (list/create/edit/soft-delete): create calls
+  `AsignadorDeNumeroCliente`, enforces `ReglaDeClientes.ValidarNoConsumidorFinal`
   on edit/delete, `GestionDeCatalogo` policy. *(spec: clientes / Cliente ABM
-  Lifecycle and Authorization)*
-- [ ] 2.2 Add cliente contracts (`ClienteListado`/`Alta`/`Edicion`).
+  Lifecycle and Authorization)* — `id_lista_precio` implemented as REQUIRED
+  (not defaulted-when-omitted): spec.md's literal "id_lista_precio and
+  id_condicion_fiscal are required... rejected before reaching the database"
+  scenario was found to conflict with this task's original "defaults when
+  omitted" wording (which only ever appeared here, not in design.md) —
+  resolved in favor of spec.md as the higher-authority acceptance contract.
+  See apply-progress.md batch 4 for the full resolution.
+- [x] 2.2 Add cliente contracts (`AltaCliente`/`EdicionCliente`/`ClienteListado`
+  + `ListaPrecioAsignable` reference type for the lista-precio selector).
 
 ### 2B. API
 
-- [ ] 2.3 Add `ClientesEndpoints`: list/create/edit/soft-delete,
-  `GestionDeCatalogo` policy (tenant admin only).
+- [x] 2.3 Add `ClientesEndpoints`: list/create/edit/soft-delete,
+  `GestionDeCatalogo` policy (tenant admin only). Also adds `GET
+  /api/listas-precio` (read-only reference listing for the form's selector,
+  same criterion as `/api/roles` in `UsuariosEndpoints` — not a `listas_precio`
+  ABM, which stays out of scope this stage).
 
 ### 2C. Tests
 
-- [ ] 2.4 [P] Unit (InMemory): default credit fields (0/false/0), required
-  `id_lista_precio`/`id_condicion_fiscal` validation, CF guard blocks edit/delete
-  of `numero = 1`, vendedor blocked, admin allowed.
-- [ ] 2.5 [P] Integration: concurrent create race (2 requests, tenant 1) →
-  sequential distinct `numero`, no 23505 surfaced (db-error-backstops race test
-  for the atomic `ux_clientes_numero` path — reuse 1.13's hardened rendezvous);
-  duplicate/NULL `numero_documento` accepted; admin create→soft-delete round
-  trip; vendedor 403; cross-tenant cliente id → 404. *(spec: clientes / Atomic
-  Per-Tenant Numero Assignment; numero_documento Has No Uniqueness Constraint)*
-- [ ] 2.6 Regression: Slice 1 suites unedited and green.
+- [x] 2.4 [P] Unit (InMemory): required `id_lista_precio`/`id_condicion_fiscal`
+  validation, invalid-reference 400, CF guard blocks edit/delete of `numero = 1`,
+  non-CF edit/delete allowed, cross-tenant 404. Default credit fields
+  (0/false/0) and "vendedor blocked/admin allowed" moved to 2.5's integration
+  tests — `CrearAsync` wraps `AsignadorDeNumeroCliente` + `BeginTransactionAsync`,
+  neither supported by the InMemory provider (same reason
+  `ServicioDeAprovisionamiento` has zero Application.Tests); authorization is
+  endpoint-policy-only (`GestionDeCatalogo`), same as `ServicioDeCatalogo`, so
+  it's not a service-level unit-test concern either.
+- [x] 2.5 [P] Integration: concurrent create race (2 requests, tenant 1) →
+  sequential distinct `numero`, no 23505 surfaced; duplicate/NULL
+  `numero_documento` accepted; admin create→soft-delete round trip; vendedor
+  403; cross-tenant cliente id → 404; default credit fields on create.
+  *(spec: clientes / Atomic Per-Tenant Numero Assignment; numero_documento Has
+  No Uniqueness Constraint)* — race test does NOT reuse 1.13's rendezvous
+  interceptor: `AsignadorDeNumeroCliente`'s `UPDATE ... RETURNING` already
+  serializes on Postgres's own row lock (confirmed without forcing anything in
+  Slice 1 batch 3's `AsignadorDeNumeroClienteConcurrenciaTests`), so two
+  `Task.WhenAll`-launched POSTs already race for real without needing a forced
+  rendezvous. `ManejadorDeErrores`'s `_numero` exemption comment updated to
+  reflect the race test now existing.
+- [x] 2.6 Regression: Slice 1 suites unedited and green.
 
 ---
 
@@ -219,21 +247,28 @@ strategy. **Finish**: both screens functional against the API, smoke-verified.
 
 ### 4A. Screens
 
-- [ ] 4.1 Add dedicated `Clientes.tsx` ABM (not the generic catalog machine, per
+- [x] 4.1a Add dedicated `Clientes.tsx` ABM (not the generic catalog machine, per
   design decision 1): list/create/edit/soft-delete, credit fields in the form; CF
   row (`numero = 1`) rendered read-only with edit/delete disabled (defense in
   depth on top of the domain guard). *(spec: clientes / Cliente ABM Lifecycle;
-  Consumidor Final Protected Row)*
-- [ ] 4.2 Add dedicated `Proveedores.tsx` ABM: list/create/edit/soft-delete.
-  *(spec: proveedores / Proveedor ABM Lifecycle)*
+  Consumidor Final Protected Row)* — done in Slice 2 (apply batch 4, re-scoped).
+- [ ] 4.1b Add dedicated `Proveedores.tsx` ABM: list/create/edit/soft-delete.
+  *(spec: proveedores / Proveedor ABM Lifecycle)* — pending, Slice 3/4.
 
 ### 4B. Wiring + smoke
 
-- [ ] 4.3 Wire routes + nav entries; add `tipos.ts` additions and API clients
-  (`clientes.ts`, `proveedores.ts`).
-- [ ] 4.4 Smoke-verify both screens against integration test expectations
-  (`tsc -b`/`oxlint`/`vite build` clean + contract smoke against a real API host,
-  per ADR-17's no-e2e-harness gap, same approach as stage 1's 4.9).
+- [x] 4.3a Wire clientes route (`/clientes`) + nav entry; add `tipos.ts`
+  additions and `clientes.ts` API client. Done in Slice 2 (apply batch 4).
+- [ ] 4.3b Wire proveedores route + nav entry; add `proveedores.ts` API client.
+  Pending, Slice 3/4.
+- [x] 4.4a Smoke-verify the clientes screen (`tsc -b`/`oxlint`/`vite build`
+  clean). Done in Slice 2 (apply batch 4) — no live-host contract smoke this
+  batch (no dev server/API host was started); relies on the backend
+  integration-test coverage (task 2.5) proving the exact contract the screen
+  consumes (`ClienteListado`/`AltaCliente`/`EdicionCliente`/
+  `ListaPrecioAsignable` shapes match `Ways.Application.Clientes.Contratos`
+  field-for-field).
+- [ ] 4.4b Smoke-verify the proveedores screen. Pending, Slice 3/4.
 
 ---
 

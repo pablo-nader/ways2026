@@ -4,7 +4,7 @@
 # against that baseline.
 change: stage-2-clientes-proveedores
 phase: apply
-status: slice-1-approved-ready-for-pr
+status: slice-2-done-ready-for-judgment-day
 artifact_store: openspec
 phases:
   explore:
@@ -22,17 +22,29 @@ phases:
     status: done
     artifact: tasks.md
   apply:
-    status: slice-1-done
+    status: slice-2-done
     artifact: apply-progress.md
     note: >-
-      Slice 1 complete (batches 1+2). DB CHANGE GATE (task 1.1) approved by the
-      user 2026-08-02, exactly as presented. Migration ClientesYProveedoresEtapa2
-      generated and applied (task 1.7); tasks 1.10/1.11 (provisioning/backfill
-      wiring) landed in the same batch. All 18 Slice 1 tasks done. Full suite
-      runtime-verified twice for stability: Domain 69/69, Application 91/91,
-      IntegrationTests 91/91 (0 skipped, 0 regressions). Branch
-      feat/stage2-slice1-fundacion, work-unit commits, no push/PR yet — awaiting
-      judgment-day (orchestrated separately) before PR.
+      Slice 1 complete and merged to main (PR #10). Slice 2 (apply batch 4,
+      branch feat/stage2-slice2-clientes off main) done: ServicioDeClientes +
+      ClientesEndpoints (list/create/edit/soft-delete, GestionDeCatalogo
+      policy), atomic numero proven under real concurrency (no forced
+      rendezvous needed — row lock on numeraciones_clientes already
+      serializes), CF guard closes the renumber-then-delete bypass by
+      construction (Numero never client-editable), GET /api/listas-precio
+      read-only reference listing for the form selector (not a listas_precio
+      ABM), dedicated Clientes.tsx web screen wired (route + nav). Re-scoped
+      per orchestrator instruction: clientes web ABM pulled forward from the
+      original Slice 4 into this Slice 2 batch; proveedores stays split across
+      Slices 3/4. Two documented deviations from tasks.md's literal wording
+      (id_lista_precio/id_condicion_fiscal required, not defaulted-when-omitted
+      — spec.md wins over a tasks.md phrase design.md never stated; no forced
+      rendezvous in the race test) — see apply-progress.md batch 4 for full
+      justification. Full suite runtime-verified twice for stability: Domain
+      69/69, Application 104/104, IntegrationTests 109/109 (0 regressions).
+      Web: tsc/oxlint/vite build all clean. No DB changes this slice (schema
+      from Slice 1 covers everything). Work-unit commits, no push/PR yet —
+      awaiting judgment-day (orchestrated separately) before PR.
   verify:
     status: pending
   archive:
@@ -52,3 +64,4 @@ notes:
   - "Delivery: chained PRs, stacked-to-main (session decision, per protocolo-pr-solo-dev). Exact slicing deferred to sdd-tasks Review Workload Forecast."
   - "Proposal question round written into proposal.md ('## Proposal question round') per sdd-propose Step 0 -- not blocking artifact creation since this is a single-shot delegated write, but explicitly flagged for user review before spec/design lock in the resulting assumptions: (1) proveedores.cuit uniqueness undecided by doc 10, (2) clientes.numero_documento uniqueness undecided by doc 10, (3) Consumidor Final backfill-on-existing-tenants timing/approval, (4) ADR-10 DeLaEmpresa re-flagged per scope note. Default assumptions stated in the proposal if no correction arrives."
   - "design.md (2026-08-02): clientes/proveedores do NOT reuse ServicioDeCatalogo<T>/ConfiguracionDeCatalogo<T> (dedicated entity+EF config+service+screen each) -- proveedores' cuit-based tenant-wide uniqueness and clientes' multi-field identity/service-assigned numero break the generic base's hardcoded nombre-pair uniqueness; only listas_precio genuinely fits the generic EF base (no service/API this stage, no ABM in scope). numero assigned via numeraciones_clientes counter table (UPDATE...RETURNING, doc-09 pattern family, keyed by id_tenant) through a shared AsignadorDeNumeroCliente helper reused by CrearAsync, provisioning CF bootstrap, and backfill -- raw ADO.NET, not Database.SqlQuery<T>()/FromSqlRaw<T>() (stage-1 slice-2 confirmed SqlQuery<T>() throws IndexOutOfRangeException against this model). Consumidor Final protected by a domain guard (ServicioDeClientes blocks edit/delete when Numero==1) plus a DB CHECK ck_clientes_cf_protegido (numero<>1 OR deleted_at IS NULL) as the irreversible-delete backstop -- no trigger (no precedent in this codebase). PlantillaDeAprovisionamiento extended in place (fills its own documented ItemsDiferidos gap) rather than bumped to V2 -- ADR-16 versioning is for a different vertical template, not staged completion; flagged as a deviation from the proposal's literal 'versioned bump' wording, not from a resolved binding decision. ADR-10 DeLaEmpresa reconfirmed deferred, no new gap found. One combined migration + one DB CHANGE GATE for all 4 tables (schema + backfill plan together, per resolved decision #3)."
+  - "Slice 2 apply batch (2026-08-02): orchestrator prompt re-scoped delivery to a vertical clientes slice (service + API + web ABM together) instead of tasks.md's original layer split (Slice 2 = service/API only, Slice 4 = both screens after Slices 2+3) -- tasks.md updated in place to record this; proveedores stays on its original Slice 3/4 split. Two deviations from tasks.md's literal task wording, both documented with justification in apply-progress.md batch 4: (1) id_lista_precio/id_condicion_fiscal implemented as REQUIRED, not defaulted-when-omitted -- specs/clientes/spec.md's own acceptance scenario contradicted tasks.md 2.1's one-line 'defaults when omitted' phrasing, which design.md never stated either; spec.md treated as the higher-authority contract. (2) task 2.5's race test does not reuse task 1.13's forced rendezvous interceptor -- AsignadorDeNumeroCliente's UPDATE...RETURNING already serializes on Postgres's own row lock (confirmed without forcing anything in Slice 1 batch 3's AsignadorDeNumeroClienteConcurrenciaTests), so two Task.WhenAll-launched POSTs already race for real. Also added a GET /api/listas-precio read-only reference listing (ServicioDeClientes/ClientesEndpoints, not a dedicated listas_precio Servicio/Endpoints) to back the web form's lista-precio selector -- same precedent as /api/roles inside UsuariosEndpoints; listas_precio ABM itself (create/edit/delete) stays out of scope, unchanged from design decision 1."

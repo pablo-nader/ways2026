@@ -334,3 +334,165 @@ Two INFO-level (non-blocking) items applied after the APPROVED judgment-day verd
   - `Ways.Application.Tests`: **94/94**.
   - `Ways.IntegrationTests`: **103/103**.
   - Baseline unchanged (69/94/103), all green.
+
+---
+
+## Batch 4 — Slice 2: Clientes service + API + Web ABM (branch `feat/stage2-slice2-clientes`)
+
+**Trigger:** Slice 1 merged to `main` (PR #10). Orchestrator directed this batch to deliver
+clientes as one vertical slice — service + API + web ABM together — instead of the original
+layer split (tasks.md Slice 2 = service/API only, Slice 4 = both screens after Slices 2+3).
+tasks.md updated in-place to reflect this re-scoping (see its "Re-scoping note"); the
+clientes-only portions of section 4A/4B were pulled forward and marked done here, proveedores
+portions left pending for Slice 3/4.
+
+No database changes: schema from Slice 1 (`clientes`, `listas_precio`, `numeraciones_clientes`,
+`condiciones_fiscales`) already covers everything this batch needed — no migration touched.
+
+### Completed in batch 4
+
+- **2.1–2.2** — `ServicioDeClientes` (`Ways.Application/Clientes/ServicioDeClientes.cs`):
+  list (search + pagination + `incluirEliminados`), get, create, edit, soft-delete.
+  `CrearAsync` wraps `AsignadorDeNumeroCliente.AsegurarContadorAsync`/`AsignarSiguienteAsync`
+  + the `Cliente` insert in one `CreateExecutionStrategy().ExecuteAsync(BeginTransactionAsync)`
+  block — same pattern as `ServicioDeAprovisionamiento.CrearTenantAsync` — so a failure between
+  taking the number and persisting the row rolls back both (numero gaps stay a rollback-only
+  edge case, design decision 2's own stated precedent, not a guaranteed outcome of every failed
+  create). `ActualizarAsync`/`EliminarAsync` call `ReglaDeClientes.ValidarNoConsumidorFinal`
+  with the row's CURRENT `numero` before touching anything; since `Numero` is never a field of
+  `AltaCliente`/`EdicionCliente` (server-assigned only), there is no service-level path to
+  renumber a row away from 1 before deleting it — the two-step bypass `ReglaDeClientes`'s doc
+  comment flags as this slice's job to close is closed by construction, not by an extra check.
+  No in-service role check (mirrors `ServicioDeCatalogo`, not `ServicioDeUsuarios`):
+  `GestionDeCatalogo` is a single fixed role (admin), nothing to differentiate internally.
+  Contracts (`Ways.Application/Clientes/Contratos.cs`): `AltaCliente`/`EdicionCliente`/
+  `ClienteListado` (no `Numero` field on the alta/edicion side; `Saldo` excluded from
+  `EdicionCliente` — no CC engine yet, doc 10 §2) + `ListaPrecioAsignable` (id/nombre/esDefault
+  reference type, not a `listas_precio` ABM contract).
+  **Deviation from tasks.md 2.1's literal wording** (documented, not silent): task 2.1 said
+  "defaults `id_lista_precio` to the tenant's `es_default` list when omitted" — this phrase
+  only ever existed in tasks.md, never in design.md. `specs/clientes/spec.md`'s own scenario
+  ("id_lista_precio and id_condicion_fiscal are required... GIVEN a tenant admin submits a
+  cliente missing id_lista_precio... THEN it is rejected before reaching the database")
+  directly contradicts default-on-omit. Resolved in favor of spec.md (the acceptance contract,
+  higher authority than a tasks.md one-liner): both fields are REQUIRED, `<= 0`/omitted is
+  rejected with 400 `{campo}_requerido` before any DB call. The web form still only ever shows
+  one selectable list this stage (the tenant's `es_default`, pre-selected) since
+  `listas_precio` has no ABM yet — functionally equivalent UX, simpler/more deterministic
+  contract.
+- **Referencia de solo lectura para `listas_precio`** — `ServicioDeClientes.ListasDePrecioAsignablesAsync`
+  + `GET /api/listas-precio` (`ClientesEndpoints`), `GestionDeCatalogo` policy. **Deviation from
+  design.md's literal "no service/API this stage" for `listas_precio`** (documented): design
+  decision 1 says `listas_precio` gets no dedicated `Servicio`/`Endpoints` this stage (no ABM —
+  create/edit/delete stay out of scope, confirmed unchanged). This is NOT that: it's a
+  read-only reference listing exposed from `ServicioDeClientes`/`ClientesEndpoints` (not a
+  `ServicioDeListasPrecio`/`ListasPrecioEndpoints`), same precedent as `RolListado`/
+  `RolesAsignablesAsync`/`GET /api/roles` living inside `ServicioDeUsuarios`/`UsuariosEndpoints`
+  to populate a foreign-key selector for a DIFFERENT entity's form. Needed because the web
+  cliente form has a lista-precio selector (explicit scope instruction) and there is, as of
+  this stage, exactly one selectable list per tenant (the `es_default` General list) — the
+  selector still needs a way to fetch it (id + display name), which nothing else in the API
+  surface provides.
+- **2.3** — `ClientesEndpoints` (`Ways.Api/Endpoints/ClientesEndpoints.cs`): `GET /api/clientes`
+  (list), `GET /api/clientes/{id}`, `POST /api/clientes`, `PUT /api/clientes/{id}`,
+  `DELETE /api/clientes/{id}`, all under `Politicas.GestionDeCatalogo` (admin-only, mirrors
+  `UsuariosEndpoints`/`CatalogosEndpoints` shape) + `GET /api/listas-precio` (see above). Wired
+  in `Program.cs` (`app.MapearClientes()`) and `Ways.Application/DependencyInjection.cs`
+  (`services.AddScoped<ServicioDeClientes>()`).
+- **`ManejadorDeErrores`** — updated the `_numero` suffix exemption comment
+  (`ClasificarUnicidad`): no longer claims the race test is deferred to a future slice, since
+  `ServicioDeClientes.CrearAsync` and its race test both exist as of this batch. New wording
+  explains the 23505 branch stays mapped as a backstop for a direct-bypass scenario, since
+  normal operation never reaches it (Postgres's own row lock on `numeraciones_clientes`
+  already serializes concurrent creates before either transaction reaches the `clientes`
+  insert). The `_cuit` exemption comment is untouched — still accurate, `ServicioDeProveedores`
+  doesn't exist yet (Slice 3).
+- **2.4** — `ServicioDeClientesTests.cs` (`Ways.Application.Tests/Clientes/`, InMemory
+  provider, 10 facts): required-field validation (`id_condicion_fiscal`/`id_lista_precio`/
+  `nombre`), invalid-FK-reference 400 (`id_condicion_fiscal`, and `id_lista_precio` of another
+  tenant — EF's tenant filter already makes "exists but wrong tenant" indistinguishable from
+  "doesn't exist", same 400 either way), CF guard blocks edit AND delete of `numero = 1`,
+  non-CF edit/delete succeeds, cross-tenant `ObtenerAsync` → 404 (ADR-8).
+  **Deviation from tasks.md 2.4's literal wording** (documented, with technical justification):
+  "default credit fields (0/false/0)" and "vendedor blocked, admin allowed" are NOT covered
+  here. `CrearAsync` unconditionally calls `AsignadorDeNumeroCliente` (`Database.GetDbConnection()`)
+  and `Database.BeginTransactionAsync()` — both throw under the InMemory provider (confirmed:
+  same reason `ServicioDeAprovisionamiento`, the only other `AsignadorDeNumeroCliente`
+  consumer, has zero `Application.Tests`, only `IntegrationTests`). Every validation check that
+  runs BEFORE the transaction opens (all of the above) is InMemory-testable; the actual insert
+  is not. "vendedor blocked/admin allowed" was never a `ServicioDeClientes`-level concern in
+  this design either way — `GestionDeCatalogo` is enforced entirely at the endpoint
+  (`RequireAuthorization`), the same as `ServicioDeCatalogo`'s catalogs (unlike
+  `ServicioDeUsuarios`, which has its own `ExigirPermisoDeGestion` because `GestionDeUsuarios`
+  covers two roles with different sub-permissions). Both moved to task 2.5's integration
+  coverage, where they're testable for real (default credit fields via a real POST + DB
+  round-trip; vendedor/admin via real HTTP + the real auth pipeline).
+- **2.5** — `ClientesEndpointsTests.cs` (`Ways.IntegrationTests/`, real Postgres via
+  `WaysApiFixture`, 6 facts): concurrent create race (2 `Task.WhenAll` POSTs, tenant admin) →
+  both `201`, numeros `[2, 3]` (the tenant's Consumidor Final already holds `1` from
+  provisioning) — no rendezvous interceptor (see deviation note below); duplicate + `NULL`
+  `numero_documento` all accepted; default credit fields (`0`/`false`/`0`) on a create that
+  omits them; admin create→soft-delete round trip (soft-deleted row disappears from the default
+  list); vendedor → 403; cross-tenant cliente id → 404 (ADR-8). Tenants set up via the REAL
+  `/api/plataforma/tenants` provisioning endpoint (not hand-seeded), so each test tenant already
+  has its Consumidor Final cliente + General lista_precio + admin user exactly like production —
+  matches `AprovisionamientoTests`'s own pattern, reused rather than re-invented.
+  **Deviation from tasks.md 2.5's literal "reuse 1.13's hardened rendezvous"** (documented, with
+  technical justification): NOT reused. `AsignadorDeNumeroCliente.AsignarSiguienteAsync` is an
+  unconditional `UPDATE ... RETURNING` on the counter row — Postgres's own row lock already
+  serializes two concurrent transactions without any interceptor forcing it, confirmed without
+  a rendezvous in Slice 1 batch 3's `AsignadorDeNumeroClienteConcurrenciaTests`. That's
+  qualitatively different from `ParametrosTests`'s upsert (`SELECT` "existing" then
+  conditionally `INSERT`), where an unforced race can close before both `SELECT`s run — the
+  reason that test needs a forced rendezvous in the first place. Two `Task.WhenAll`-launched
+  POSTs against the real API already race for real; no gap in coverage.
+- **2.6** — Regression confirmed green: see Verification.
+- **Web (re-scoped from Slice 4, clientes-only portion)** — `Ways.Web/src/api/tipos.ts`:
+  `TipoDocumento`/`TIPOS_DOCUMENTO`, `ClienteListado`/`AltaCliente`/`EdicionCliente`/
+  `ListaPrecioAsignable`, field-for-field mirrors of the C# contracts.
+  `Ways.Web/src/api/clientes.ts`: `clienteDeClientes` (listar/crear/actualizar/eliminar/
+  listasDePrecioAsignables), same shape as `clienteDeOrganizacion`/`clienteDeCatalogosFiscales`.
+  `Ways.Web/src/paginas/Clientes.tsx`: dedicated screen (not `PaginaCatalogo`/the generic
+  machine, design decision 1) — search + paginated list, create/edit form (identity, documento,
+  condición fiscal selector via the existing `clienteDeCatalogosFiscales.condicionesFiscales()`,
+  lista-precio selector via the new `/api/listas-precio`, contact fields, crédito section with
+  `limiteCredito`/`creditoIlimitado`), CF row rendered with a "Protegido" badge and its
+  Editar/Baja buttons `disabled` (defense in depth on top of the domain guard — the real
+  protection is `ReglaDeClientes`/`ck_clientes_cf_protegido`, this is UX only). Route `/clientes`
+  wired in `App.tsx` (`RutaProtegida rolesPermitidos={[ROL.Admin]}`, matches
+  `Politicas.GestionDeCatalogo`) + nav entry in `Layout.tsx` (gated by the existing
+  `puedeGestionarCatalogos`, no new helper needed — same role set as `GestionDeCatalogo`).
+
+### Deviations summary (all documented above, repeated here for visibility)
+
+1. `id_lista_precio`/`id_condicion_fiscal` are REQUIRED, not defaulted-when-omitted
+   (spec.md wins over a tasks.md one-liner that design.md never stated).
+2. `GET /api/listas-precio` reference listing added (not a `listas_precio` ABM — read-only,
+   same precedent as `/api/roles`).
+3. Application.Tests (2.4) don't cover "default credit fields"/"vendedor blocked, admin
+   allowed" — both untestable/not-applicable at the InMemory service-unit level, covered by
+   2.5's integration tests instead.
+4. 2.5's race test doesn't use a forced rendezvous interceptor — the counter's own row lock
+   already proves the race deterministically, confirmed precedent from Slice 1 batch 3.
+5. Slice boundaries re-scoped per orchestrator instruction: clientes web ABM pulled forward
+   from Slice 4 into this Slice 2 batch; proveedores remains split across Slices 3/4.
+
+### Blocked
+
+None.
+
+## Verification (batch 4)
+
+- `dotnet build Ways.slnx` — 0 warnings, 0 errors.
+- `dotnet test Ways.slnx`, run **twice** for stability, identical results both times:
+  - `Ways.Domain.Tests`: **69/69** (unchanged).
+  - `Ways.Application.Tests`: **104/104** (94 + 10 new `ServicioDeClientesTests`).
+  - `Ways.IntegrationTests`: **109/109** (103 + 6 new `ClientesEndpointsTests`). Docker up
+    (Testcontainers-backed real Postgres) both times.
+- `Ways.Web`: `npx tsc -b` clean; `npx oxlint` clean (one pre-existing unrelated warning on
+  `AuthContext.tsx`, not touched this batch); `npx vite build` succeeds (300 kB JS / 232 kB CSS
+  bundle, in line with the existing app).
+
+## TDD Cycle Evidence (batch 4)
+
+Same as prior batches — Standard Mode, no strict-TDD signal from the orchestrator for this run.
