@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Ways.Application.Abstracciones;
 
 namespace Ways.Infrastructure.Multitenancy;
@@ -27,4 +28,15 @@ public sealed class TenantActualFijo : ITenantActual
     /// <summary>La semilla de arranque y las herramientas de diseño operan siempre en
     /// modo plataforma: siembran filas de cualquier tenant explícitamente.</summary>
     public static TenantActualFijo Plataforma { get; } = new(ModoDeAcceso.Plataforma, null);
+
+    /// <summary>La suplantación de ADR-16 es un mecanismo de sesión HTTP mutable
+    /// (<see cref="TenantActualDeSesion"/>); ningún punto de entrada que use esta
+    /// implementación inmutable (semilla, design-time, tests) aprovisiona tenants.</summary>
+    public IDisposable Suplantar(int idTenant) =>
+        throw new NotSupportedException(
+            $"{nameof(TenantActualFijo)} no soporta suplantación de tenant (ADR-16).");
+
+    public Task ReaplicarSobreConexionAsync(DbConnection conexion, CancellationToken ct = default) =>
+        throw new NotSupportedException(
+            $"{nameof(TenantActualFijo)} no soporta suplantación de tenant (ADR-16).");
 }
