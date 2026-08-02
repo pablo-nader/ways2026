@@ -179,6 +179,24 @@ public class ServicioDeOrganizacionTests
     }
 
     [Fact]
+    public async Task UnAdminNoPuedeEditarUnPuntoDeVentaDeOtroTenant()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (tenantA, _, _) = await SembrarAsync(nombreDeBase, "TenantA-PV-Editar");
+        var (_, _, puntoVentaB) = await SembrarAsync(nombreDeBase, "TenantB-PV-Editar");
+
+        var contexto = new ContextoFijo(RolConocido.Admin, usuarioId: 1, idTenant: tenantA.Id);
+        var servicio = CrearServicio(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, tenantA.Id), contexto);
+
+        var datos = new PuntoVentaEdicion("Intento ajeno", null, null, null, null, null, null);
+        var error = await Assert.ThrowsAsync<ErrorDominio>(
+            () => servicio.ActualizarPuntoVentaAsync(puntoVentaB.Id, datos));
+
+        Assert.Equal("no_encontrado", error.Codigo);
+        Assert.Equal(404, error.EstadoHttp);
+    }
+
+    [Fact]
     public async Task UnAdminEditaSuPropioPuntoDeVenta()
     {
         var nombreDeBase = Guid.NewGuid().ToString();
@@ -273,5 +291,6 @@ public class ServicioDeOrganizacionTests
             () => servicio.ActualizarEmpresaAsync(empresa.Id, new EmpresaEdicion("   ", null, null)));
 
         Assert.Equal(400, error.EstadoHttp);
+        Assert.Equal("razon_social_requerido", error.Codigo);
     }
 }

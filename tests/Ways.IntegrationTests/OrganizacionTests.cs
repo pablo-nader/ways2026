@@ -149,6 +149,23 @@ public class OrganizacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
     }
 
     [Fact]
+    public async Task UnAdminRecibe404AlEditarElPuntoDeVentaDeOtroTenant()
+    {
+        var (_, _, _, mailAdminA) = await SembrarTenantAsync(
+            nameof(UnAdminRecibe404AlEditarElPuntoDeVentaDeOtroTenant) + "-A");
+        var (_, _, puntoVentaB, _) = await SembrarTenantAsync(
+            nameof(UnAdminRecibe404AlEditarElPuntoDeVentaDeOtroTenant) + "-B");
+
+        using var cliente = await ClienteComoAdminAsync(mailAdminA);
+
+        var respuesta = await cliente.PutAsJsonAsync(
+            $"/api/puntos-venta/{puntoVentaB.Id}",
+            new PuntoVentaEdicion("Intento ajeno", null, null, null, null, null, null));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    [Fact]
     public async Task UnAdminRecibe403AlIntentarSuspenderUnTenant()
     {
         var (tenant, _, _, mailAdmin) = await SembrarTenantAsync(

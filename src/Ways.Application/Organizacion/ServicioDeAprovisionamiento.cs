@@ -26,10 +26,10 @@ public class ServicioDeAprovisionamiento(
     public async Task<ResultadoAprovisionamiento> CrearTenantAsync(
         SolicitudDeAprovisionamiento solicitud, CancellationToken ct = default)
     {
-        var nombreTenant = Normalizar(solicitud.NombreTenant, "nombre del tenant", 150);
-        var razonSocial = Normalizar(solicitud.RazonSocialEmpresa, "razón social", 150);
-        var nombrePuntoVenta = Normalizar(solicitud.NombrePuntoVenta, "punto de venta", 150);
-        var mailAdmin = Normalizar(solicitud.MailAdmin, "mail del admin", 255);
+        var nombreTenant = Normalizar(solicitud.NombreTenant, "nombre_tenant", "nombre del tenant", 150);
+        var razonSocial = Normalizar(solicitud.RazonSocialEmpresa, "razon_social", "razón social", 150);
+        var nombrePuntoVenta = Normalizar(solicitud.NombrePuntoVenta, "punto_venta", "punto de venta", 150);
+        var mailAdmin = Normalizar(solicitud.MailAdmin, "mail_admin", "mail del admin", 255);
 
         // ADR-16: EnableRetryOnFailure ya está configurado (DependencyInjection); con una
         // estrategia de reintento, EF tira si se abre una transacción por fuera de
@@ -133,19 +133,19 @@ public class ServicioDeAprovisionamiento(
     private static string GenerarPasswordTemporal() =>
         RandomNumberGenerator.GetString(CaracteresPassword, LargoPassword);
 
-    private static string Normalizar(string? valor, string campo, int largoMaximo)
+    private static string Normalizar(string? valor, string codigo, string campo, int largoMaximo)
     {
         var limpio = valor?.Trim() ?? string.Empty;
 
         if (limpio.Length == 0)
         {
-            throw new ErrorDominio($"{campo}_requerido", $"El campo {campo} es obligatorio.", 400);
+            throw new ErrorDominio($"{codigo}_requerido", $"El campo {campo} es obligatorio.", 400);
         }
 
         if (limpio.Length > largoMaximo)
         {
             throw new ErrorDominio(
-                $"{campo}_muy_largo", $"El campo {campo} no puede superar los {largoMaximo} caracteres.", 400);
+                $"{codigo}_muy_largo", $"El campo {campo} no puede superar los {largoMaximo} caracteres.", 400);
         }
 
         return limpio;

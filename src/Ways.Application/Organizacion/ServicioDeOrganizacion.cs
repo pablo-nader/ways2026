@@ -42,7 +42,7 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
     {
         var tenant = await BuscarTenantAsync(id, ct);
 
-        tenant.Nombre = Normalizar(datos.Nombre, "nombre del tenant", 150);
+        tenant.Nombre = Normalizar(datos.Nombre, "nombre_tenant", "nombre del tenant", 150);
         tenant.UpdatedAt = reloj.Ahora;
 
         await db.SaveChangesAsync(ct);
@@ -106,9 +106,9 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
     {
         var empresa = await BuscarEmpresaAsync(id, ct);
 
-        empresa.RazonSocial = Normalizar(datos.RazonSocial, "razón social", 150);
-        empresa.NombreFantasia = NormalizarOpcional(datos.NombreFantasia, "nombre de fantasía", 150);
-        empresa.Cuit = NormalizarOpcional(datos.Cuit, "CUIT", 13);
+        empresa.RazonSocial = Normalizar(datos.RazonSocial, "razon_social", "razón social", 150);
+        empresa.NombreFantasia = NormalizarOpcional(datos.NombreFantasia, "nombre_fantasia", "nombre de fantasía", 150);
+        empresa.Cuit = NormalizarOpcional(datos.Cuit, "cuit", "CUIT", 13);
         empresa.UpdatedAt = reloj.Ahora;
 
         await db.SaveChangesAsync(ct);
@@ -149,13 +149,13 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
     {
         var puntoVenta = await BuscarPuntoVentaAsync(id, ct);
 
-        puntoVenta.Nombre = Normalizar(datos.Nombre, "nombre del punto de venta", 150);
-        puntoVenta.Domicilio = NormalizarOpcional(datos.Domicilio, "domicilio", 255);
-        puntoVenta.Horario = NormalizarOpcional(datos.Horario, "horario", 255);
-        puntoVenta.Whatsapp = NormalizarOpcional(datos.Whatsapp, "WhatsApp", 30);
-        puntoVenta.Instagram = NormalizarOpcional(datos.Instagram, "Instagram", 150);
-        puntoVenta.Facebook = NormalizarOpcional(datos.Facebook, "Facebook", 150);
-        puntoVenta.Web = NormalizarOpcional(datos.Web, "sitio web", 255);
+        puntoVenta.Nombre = Normalizar(datos.Nombre, "nombre_punto_venta", "nombre del punto de venta", 150);
+        puntoVenta.Domicilio = NormalizarOpcional(datos.Domicilio, "domicilio", "domicilio", 255);
+        puntoVenta.Horario = NormalizarOpcional(datos.Horario, "horario", "horario", 255);
+        puntoVenta.Whatsapp = NormalizarOpcional(datos.Whatsapp, "whatsapp", "WhatsApp", 30);
+        puntoVenta.Instagram = NormalizarOpcional(datos.Instagram, "instagram", "Instagram", 150);
+        puntoVenta.Facebook = NormalizarOpcional(datos.Facebook, "facebook", "Facebook", 150);
+        puntoVenta.Web = NormalizarOpcional(datos.Web, "sitio_web", "sitio web", 255);
         puntoVenta.UpdatedAt = reloj.Ahora;
 
         await db.SaveChangesAsync(ct);
@@ -177,25 +177,25 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
 
     // --- Común ---
 
-    private static string Normalizar(string? valor, string campo, int largoMaximo)
+    private static string Normalizar(string? valor, string codigo, string campo, int largoMaximo)
     {
         var limpio = valor?.Trim() ?? string.Empty;
 
         if (limpio.Length == 0)
         {
-            throw new ErrorDominio($"{campo}_requerido", $"El campo {campo} es obligatorio.", 400);
+            throw new ErrorDominio($"{codigo}_requerido", $"El campo {campo} es obligatorio.", 400);
         }
 
         if (limpio.Length > largoMaximo)
         {
             throw new ErrorDominio(
-                $"{campo}_muy_largo", $"El campo {campo} no puede superar los {largoMaximo} caracteres.", 400);
+                $"{codigo}_muy_largo", $"El campo {campo} no puede superar los {largoMaximo} caracteres.", 400);
         }
 
         return limpio;
     }
 
-    private static string? NormalizarOpcional(string? valor, string campo, int largoMaximo)
+    private static string? NormalizarOpcional(string? valor, string codigo, string campo, int largoMaximo)
     {
         if (string.IsNullOrWhiteSpace(valor))
         {
@@ -207,7 +207,7 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
         if (limpio.Length > largoMaximo)
         {
             throw new ErrorDominio(
-                $"{campo}_muy_largo", $"El campo {campo} no puede superar los {largoMaximo} caracteres.", 400);
+                $"{codigo}_muy_largo", $"El campo {campo} no puede superar los {largoMaximo} caracteres.", 400);
         }
 
         return limpio;

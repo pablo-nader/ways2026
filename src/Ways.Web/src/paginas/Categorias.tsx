@@ -42,6 +42,38 @@ function armarArbol(items: CategoriaListado[]): Nodo[] {
   return construir(null, 1)
 }
 
+/** IDs de los descendientes (hijos, nietos, etc.) de un nodo dentro del árbol, para excluirlos
+ * de las opciones de "categoría padre" — reasignar una categoría a su propio subárbol formaría
+ * un ciclo, y el backend lo rechaza igual, pero no tiene sentido ofrecerlo en el select. */
+function idsDeSubarbol(arbol: Nodo[], id: number): Set<number> {
+  const ids = new Set<number>()
+
+  function recorrer(nodo: Nodo) {
+    for (const hijo of nodo.hijos) {
+      ids.add(hijo.id)
+      recorrer(hijo)
+    }
+  }
+
+  function buscar(nodos: Nodo[]): Nodo | undefined {
+    for (const nodo of nodos) {
+      if (nodo.id === id) return nodo
+      const encontrado = buscar(nodo.hijos)
+      if (encontrado) return encontrado
+    }
+    return undefined
+  }
+
+  const objetivo = buscar(arbol)
+  if (objetivo) recorrer(objetivo)
+
+  return ids
+}
+
+function aplanar(arbol: Nodo[]): Nodo[] {
+  return arbol.flatMap((nodo) => [nodo, ...aplanar(nodo.hijos)])
+}
+
 export function Categorias() {
   const [items, setItems] = useState<CategoriaListado[]>([])
   const [incluirInactivos, setIncluirInactivos] = useState(false)
@@ -169,7 +201,7 @@ export function Categorias() {
         {formulario && (
           <FormularioCategoria
             valor={formulario}
-            items={items}
+            arbol={arbol}
             guardando={guardando}
             onCambio={setFormulario}
             onGuardar={guardar}
@@ -257,20 +289,24 @@ function NodoCategoria({
 
 function FormularioCategoria({
   valor,
-  items,
+  arbol,
   guardando,
   onCambio,
   onGuardar,
   onCancelar,
 }: {
   valor: Formulario
-  items: CategoriaListado[]
+  arbol: Nodo[]
   guardando: boolean
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
 }) {
   const esNueva = valor.id === null
+  const excluidos = valor.id !== null ? idsDeSubarbol(arbol, valor.id) : new Set<number>()
+  const opcionesPadre = aplanar(arbol).filter(
+    (nodo) => nodo.id !== valor.id && !excluidos.has(nodo.id) && nodo.nivel < PROFUNDIDAD_MAXIMA,
+  )
 
   return (
     <form
@@ -312,13 +348,11 @@ function FormularioCategoria({
           }
         >
           <option value="">— Ninguna (raíz) —</option>
-          {items
-            .filter((c) => c.id !== valor.id)
-            .map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.nombre}
-              </option>
-            ))}
+          {opcionesPadre.map((nodo) => (
+            <option key={nodo.id} value={nodo.id}>
+              {'—'.repeat(nodo.nivel - 1)} {nodo.nombre}
+            </option>
+          ))}
         </select>
       </div>
 

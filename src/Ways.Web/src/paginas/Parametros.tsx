@@ -31,9 +31,8 @@ export function Parametros() {
   const [resuelto, setResuelto] = useState<ParametroResuelto | null>(null)
   const [resolviendo, setResolviendo] = useState(false)
 
-  // Al entrar, trae las empresas visibles (la propia, si sos admin de tenant; todas, si sos
-  // plataforma) y los puntos de venta, para poblar los dos desplegables sin pedir ningún id
-  // a mano.
+  // Al entrar, trae las empresas del propio tenant (esta pantalla es admin-only, ver App.tsx)
+  // y los puntos de venta, para poblar los dos desplegables sin pedir ningún id a mano.
   useEffect(() => {
     let vigente = true
 

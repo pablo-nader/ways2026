@@ -17,9 +17,8 @@ const FORMULARIO_VACIO: SolicitudDeAprovisionamiento = {
  * todo en una transacción atómica del lado del servidor. Solo lo ve `root`
  * (`Politicas.SoloPlataforma`) — root administra tenants, no opera ninguno.
  *
- * Esta pantalla también cubre la parte de "alta" del ABM de tenants: no hay todavía un
- * endpoint para listar o suspender tenants existentes (ninguna tarea de los slices 1-3 lo
- * construyó), así que esa parte queda fuera de esta etapa — ver el reporte de la etapa 4.
+ * Esta pantalla cubre la parte de "alta" del ABM de tenants; listar y suspender tenants
+ * existentes vive en `Tenants.tsx`.
  */
 export function NuevoTenant() {
   const [formulario, setFormulario] = useState<SolicitudDeAprovisionamiento>({ ...FORMULARIO_VACIO })
