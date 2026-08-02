@@ -39,14 +39,28 @@ public class ReglaDeCategoriasTests
     [Fact]
     public void ValidarSinCicloAceptaUnDestinoQueNoEsDescendiente()
     {
-        ReglaDeCategorias.ValidarSinCiclo(idDestino: 5, descendientes: [10, 11, 12]);
+        ReglaDeCategorias.ValidarSinCiclo(idPropio: 1, idDestino: 5, descendientes: [10, 11, 12]);
     }
 
     [Fact]
     public void ValidarSinCicloRechazaMoverUnaCategoriaDentroDeSuPropioSubarbol()
     {
         var error = Assert.Throws<ErrorDominio>(() =>
-            ReglaDeCategorias.ValidarSinCiclo(idDestino: 11, descendientes: [10, 11, 12]));
+            ReglaDeCategorias.ValidarSinCiclo(idPropio: 1, idDestino: 11, descendientes: [10, 11, 12]));
+
+        Assert.Equal("categoria_ciclo", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void ValidarSinCicloRechazaQueUnaCategoriaSeaSuPropioPadre()
+    {
+        // Bug crítico de judgment-day: "descendientes" nunca incluye al propio nodo, así que
+        // sin este chequeo explícito un PUT con IdCategoriaPadre == id propio pasaba la
+        // validación y dejaba un ciclo de longitud 1 persistido — el próximo WITH RECURSIVE
+        // sobre esa fila entra en loop infinito.
+        var error = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeCategorias.ValidarSinCiclo(idPropio: 7, idDestino: 7, descendientes: []));
 
         Assert.Equal("categoria_ciclo", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);

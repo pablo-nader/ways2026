@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Common;
 
 namespace Ways.Application.Catalogos;
 
@@ -32,14 +33,18 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
     // no la cantidad de sus ancestros (0-indexada) — por eso acá es count(*) sin "- 1": la
     // cadena ya incluye al propio padre. Confirmado contra los casos ya aprobados de
     // ReglaDeCategoriasTests (batch 1): "hijo de una raíz" espera nivelDelPadre = 1.
+    // "deleted_at IS NULL" en cada rama (ancla y recursiva): una baja lógica no participa
+    // del árbol para ninguna de las tres CTEs — ni como ancestro/altura/descendiente ni,
+    // vía ExistePadreAsync más abajo, como padre elegible para un alta o un PUT.
     private const string SqlNivel =
         """
         WITH RECURSIVE cadena AS (
             SELECT id_categoria, id_categoria_padre FROM categorias
-            WHERE id_categoria = $1 AND id_tenant = $2
+            WHERE id_categoria = $1 AND id_tenant = $2 AND deleted_at IS NULL
             UNION ALL
             SELECT c.id_categoria, c.id_categoria_padre
             FROM categorias c JOIN cadena ON c.id_categoria = cadena.id_categoria_padre
+            WHERE c.deleted_at IS NULL
         )
         SELECT count(*) FROM cadena
         """;
@@ -48,10 +53,11 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
         """
         WITH RECURSIVE descendientes AS (
             SELECT id_categoria, 0 AS profundidad FROM categorias
-            WHERE id_categoria_padre = $1 AND id_tenant = $2
+            WHERE id_categoria_padre = $1 AND id_tenant = $2 AND deleted_at IS NULL
             UNION ALL
             SELECT c.id_categoria, d.profundidad + 1
             FROM categorias c JOIN descendientes d ON c.id_categoria_padre = d.id_categoria
+            WHERE c.deleted_at IS NULL
         )
         SELECT COALESCE(MAX(profundidad), -1) + 1 FROM descendientes
         """;
@@ -60,12 +66,21 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
         """
         WITH RECURSIVE descendientes AS (
             SELECT id_categoria FROM categorias
-            WHERE id_categoria_padre = $1 AND id_tenant = $2
+            WHERE id_categoria_padre = $1 AND id_tenant = $2 AND deleted_at IS NULL
             UNION ALL
             SELECT c.id_categoria
             FROM categorias c JOIN descendientes d ON c.id_categoria_padre = d.id_categoria
+            WHERE c.deleted_at IS NULL
         )
         SELECT id_categoria FROM descendientes
+        """;
+
+    private const string SqlExistePadre =
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM categorias
+            WHERE id_categoria = $1 AND id_tenant = $2 AND deleted_at IS NULL
+        )
         """;
 
     protected override DbSet<Categoria> Conjunto => Db.Categorias;
@@ -94,7 +109,7 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
         if (datos.IdCategoriaPadre is not null)
         {
             var descendientes = await DescendientesAsync(id, ct);
-            ReglaDeCategorias.ValidarSinCiclo(datos.IdCategoriaPadre.Value, descendientes);
+            ReglaDeCategorias.ValidarSinCiclo(id, datos.IdCategoriaPadre.Value, descendientes);
         }
 
         await ValidarProfundidadAsync(datos.IdCategoriaPadre, idPropio: id, ct);
@@ -103,6 +118,18 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
 
     private async Task ValidarProfundidadAsync(int? idCategoriaPadre, int? idPropio, CancellationToken ct)
     {
+        if (idCategoriaPadre is not null && !await ExistePadreAsync(idCategoriaPadre.Value, ct))
+        {
+            // Sin este chequeo, un padre inexistente o dado de baja resolvía "nivel 0" en
+            // SqlNivel (la CTE simplemente no encuentra filas) y quedaba indistinguible de
+            // "sin padre" — la fila se creaba/movía igual, colgada de un id que no existe
+            // para este tenant.
+            throw new ErrorDominio(
+                "categoria_padre_invalido",
+                "La categoría padre no existe o fue eliminada.",
+                400);
+        }
+
         var alturaDelSubarbol = idPropio is null ? 0 : await AlturaDelSubarbolAsync(idPropio.Value, ct);
         var nivelDelPadre = idCategoriaPadre is null ? 0 : await NivelDeAsync(idCategoriaPadre.Value, ct);
 
@@ -114,6 +141,30 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
 
     private Task<int> AlturaDelSubarbolAsync(int idCategoria, CancellationToken ct) =>
         EjecutarEscalarAsync(SqlAltura, idCategoria, ct);
+
+    private async Task<bool> ExistePadreAsync(int idCategoria, CancellationToken ct)
+    {
+        var laAbrimosAca = await AbrirSiHaceFaltaAsync(ct);
+
+        try
+        {
+            var conexion = Db.Database.GetDbConnection();
+            await using var comando = conexion.CreateCommand();
+            comando.CommandText = SqlExistePadre;
+            AgregarParametro(comando, idCategoria);
+            AgregarParametro(comando, tenantActual.Id);
+
+            var resultado = await comando.ExecuteScalarAsync(ct);
+            return resultado is bool existe && existe;
+        }
+        finally
+        {
+            if (laAbrimosAca)
+            {
+                await Db.Database.CloseConnectionAsync();
+            }
+        }
+    }
 
     private async Task<IReadOnlyCollection<int>> DescendientesAsync(int idCategoria, CancellationToken ct)
     {

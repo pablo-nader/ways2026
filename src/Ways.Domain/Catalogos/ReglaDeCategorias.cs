@@ -37,11 +37,13 @@ public static class ReglaDeCategorias
     }
 
     /// <summary>Valida que mover una categoría bajo <paramref name="idDestino"/> no cree un
-    /// ciclo: el destino no puede ser ni la propia categoría ni ninguno de sus
+    /// ciclo: el destino no puede ser ni la propia categoría (<paramref name="idPropio"/>,
+    /// un ciclo de longitud 1 que <paramref name="descendientes"/> nunca contiene — ese
+    /// listado son los descendientes reales, no incluye al propio nodo) ni ninguno de sus
     /// descendientes.</summary>
-    public static void ValidarSinCiclo(int idDestino, IReadOnlyCollection<int> descendientes)
+    public static void ValidarSinCiclo(int idPropio, int idDestino, IReadOnlyCollection<int> descendientes)
     {
-        if (descendientes.Contains(idDestino))
+        if (idDestino == idPropio || descendientes.Contains(idDestino))
         {
             throw new ErrorDominio(
                 "categoria_ciclo",
