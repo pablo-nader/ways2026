@@ -61,18 +61,37 @@ export function Layout() {
                   </>
                 )}
                 {usuario && (usuario.rolId === ROL.Root || usuario.rolId === ROL.Admin) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/catalogos-fiscales">
-                      Catálogos fiscales
-                    </NavLink>
-                  </li>
+                  <>
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/catalogos-fiscales">
+                        Catálogos fiscales
+                      </NavLink>
+                    </li>
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/organizacion/empresas">
+                        Empresas
+                      </NavLink>
+                    </li>
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/organizacion/puntos-venta">
+                        Puntos de venta
+                      </NavLink>
+                    </li>
+                  </>
                 )}
                 {usuario && puedeAprovisionarTenants(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/organizacion/nuevo-tenant">
-                      Nuevo tenant
-                    </NavLink>
-                  </li>
+                  <>
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/organizacion/tenants">
+                        Tenants
+                      </NavLink>
+                    </li>
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/organizacion/nuevo-tenant">
+                        Nuevo tenant
+                      </NavLink>
+                    </li>
+                  </>
                 )}
               </ul>
             </div>

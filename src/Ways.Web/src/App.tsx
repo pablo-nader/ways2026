@@ -4,11 +4,14 @@ import { RutaProtegida } from './auth/RutaProtegida'
 import { Layout } from './componentes/Layout'
 import { Categorias } from './paginas/Categorias'
 import { CatalogosFiscales } from './paginas/CatalogosFiscales'
+import { Empresas } from './paginas/Empresas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
 import { NuevoTenant } from './paginas/NuevoTenant'
 import { Parametros } from './paginas/Parametros'
+import { PuntosVenta } from './paginas/PuntosVenta'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
+import { Tenants } from './paginas/Tenants'
 import { Usuarios } from './paginas/Usuarios'
 import { ROL } from './api/tipos'
 
@@ -74,10 +77,34 @@ export function App() {
               }
             />
             <Route
+              path="/organizacion/tenants"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Root]}>
+                  <Tenants />
+                </RutaProtegida>
+              }
+            />
+            <Route
               path="/organizacion/nuevo-tenant"
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Root]}>
                   <NuevoTenant />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/organizacion/empresas"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Root, ROL.Admin]}>
+                  <Empresas />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/organizacion/puntos-venta"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Root, ROL.Admin]}>
+                  <PuntosVenta />
                 </RutaProtegida>
               }
             />
