@@ -145,7 +145,11 @@ public class ClienteConfiguration : IEntityTypeConfiguration<Cliente>
         // convención que el resto del esquema mantiene sin excepciones (p.ej.
         // ix_categorias_padre para id_categoria_padre).
         builder.HasIndex(c => c.IdCondicionFiscal).HasDatabaseName("ix_clientes_condicion_fiscal");
-        builder.HasIndex(c => c.IdListaPrecio).HasDatabaseName("ix_clientes_lista_precio");
+
+        // (IdListaPrecio, IdTenant), no solo IdListaPrecio: mismo criterio que
+        // ix_clientes_empresa, columnas en el mismo orden que la FK compuesta de abajo, para
+        // que EF no genere un segundo índice de soporte con su propia convención de nombre.
+        builder.HasIndex(c => new { c.IdListaPrecio, c.IdTenant }).HasDatabaseName("ix_clientes_lista_precio");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -166,9 +170,14 @@ public class ClienteConfiguration : IEntityTypeConfiguration<Cliente>
             .HasConstraintName("fk_clientes_condicion_fiscal")
             .OnDelete(DeleteBehavior.Restrict);
 
+        // DB CHANGE GATE aprobado 2026-08-02 (judgment-day ronda 1, hardening de esquema):
+        // FK compuesta (IdListaPrecio, IdTenant) contra la clave alterna de ListaPrecioConfiguration
+        // -- una FK simple sobre id_lista_precio (PK global, única entre tenants) dejaba pasar el
+        // id de una lista de OTRO tenant sin violar la constraint, y solo RLS lo frenaba en runtime.
         builder.HasOne<ListaPrecio>()
             .WithMany()
-            .HasForeignKey(c => c.IdListaPrecio)
+            .HasForeignKey(c => new { c.IdListaPrecio, c.IdTenant })
+            .HasPrincipalKey(l => new { l.Id, l.IdTenant })
             .HasConstraintName("fk_clientes_lista_precio")
             .OnDelete(DeleteBehavior.Restrict);
     }

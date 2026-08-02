@@ -428,6 +428,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("Id", "IdTenant")
+                        .HasName("ak_listas_precio_id_tenant");
+
                     b.HasIndex("IdListaBase")
                         .HasDatabaseName("ix_listas_precio_lista_base");
 
@@ -872,7 +875,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdCondicionFiscal")
                         .HasDatabaseName("ix_clientes_condicion_fiscal");
 
-                    b.HasIndex("IdListaPrecio")
+                    b.HasIndex("IdListaPrecio", "IdTenant")
                         .HasDatabaseName("ix_clientes_lista_precio");
 
                     b.HasIndex("IdTenant")
@@ -1485,7 +1488,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
 
                     b.HasOne("Ways.Domain.Catalogos.ListaPrecio", null)
                         .WithMany()
-                        .HasForeignKey("IdListaPrecio")
+                        .HasForeignKey("IdListaPrecio", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_clientes_lista_precio");

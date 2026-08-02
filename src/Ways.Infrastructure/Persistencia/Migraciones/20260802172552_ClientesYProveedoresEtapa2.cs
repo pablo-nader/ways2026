@@ -50,6 +50,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_listas_precio", x => x.id_lista_precio);
+                    table.UniqueConstraint("ak_listas_precio_id_tenant", x => new { x.id_lista_precio, x.id_tenant });
                     table.ForeignKey(
                         name: "fk_listas_precio_empresa",
                         columns: x => new { x.id_empresa, x.id_tenant },
@@ -185,9 +186,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         onDelete: ReferentialAction.Restrict);
                     table.ForeignKey(
                         name: "fk_clientes_lista_precio",
-                        column: x => x.id_lista_precio,
+                        columns: x => new { x.id_lista_precio, x.id_tenant },
                         principalTable: "listas_precio",
-                        principalColumn: "id_lista_precio",
+                        principalColumns: new[] { "id_lista_precio", "id_tenant" },
                         onDelete: ReferentialAction.Restrict);
                     table.ForeignKey(
                         name: "fk_clientes_tenant",
@@ -210,7 +211,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             migrationBuilder.CreateIndex(
                 name: "ix_clientes_lista_precio",
                 table: "clientes",
-                column: "id_lista_precio");
+                columns: new[] { "id_lista_precio", "id_tenant" });
 
             migrationBuilder.CreateIndex(
                 name: "ix_clientes_tenant",

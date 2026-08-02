@@ -34,6 +34,15 @@ public class ListaPrecioConfiguration : ConfiguracionDeCatalogo<ListaPrecio>
             .HasColumnName("porcentaje")
             .HasColumnType("numeric(5,2)");
 
+        // DB CHANGE GATE aprobado 2026-08-02 (judgment-day ronda 1, hardening de esquema):
+        // clave alterna (Id, IdTenant) para que fk_clientes_lista_precio pueda ser compuesta
+        // -- mismo patrón que Empresa.HasAlternateKey/fk_clientes_empresa, fk_proveedores_empresa
+        // y fk_listas_precio_empresa. Sin esto, un id_lista_precio de OTRO tenant pasaba la FK
+        // simple (la columna referenciada, id_lista_precio, es única globalmente por ser PK) y
+        // solo RLS lo frenaba -- con la clave compuesta, la propia FK ya lo rechaza (23503).
+        builder.HasAlternateKey(l => new { l.Id, l.IdTenant })
+            .HasName("ak_listas_precio_id_tenant");
+
         builder.HasOne<ListaPrecio>()
             .WithMany()
             .HasForeignKey(l => l.IdListaBase)
