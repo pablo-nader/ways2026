@@ -10,6 +10,7 @@ import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
 import { NuevoTenant } from './paginas/NuevoTenant'
 import { Parametros } from './paginas/Parametros'
+import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
 import { Tenants } from './paginas/Tenants'
@@ -48,6 +49,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Clientes />
+                </RutaProtegida>
+              }
+            />
+
+            {/* Entidad dedicada (stage-2-clientes-proveedores, design decision 1): árbol
+                propio, no la máquina genérica de catálogos — mismo criterio que /clientes. */}
+            <Route
+              path="/proveedores"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Proveedores />
                 </RutaProtegida>
               }
             />

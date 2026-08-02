@@ -46,6 +46,11 @@ export function Layout() {
                         Clientes
                       </NavLink>
                     </li>
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/proveedores">
+                        Proveedores
+                      </NavLink>
+                    </li>
                     {Object.values(DESCRIPTORES_DE_CATALOGO).map((d) => (
                       <li className="nav-item" key={d.recurso}>
                         <NavLink className="nav-link" to={`/catalogos/${d.recurso}`}>
