@@ -205,3 +205,103 @@ None. Slice 1 is fully done.
 ## TDD Cycle Evidence (batch 2)
 
 Same as batch 1 — Standard Mode, no strict-TDD signal from the orchestrator for this run.
+
+---
+
+## Batch 3 — judgment-day round 1 fixes (branch `feat/stage2-slice1-fundacion`)
+
+**Trigger:** first judgment-day round (dual blind review) over the batch 1–2 diff surfaced 1
+CRITICAL, 1 GATE-APPROVED schema hardening item (approved by the user 2026-08-02, same
+session as the original DB CHANGE GATE), 2 confirmed items, and 3 hardening items, plus 3
+comment-only items. All applied this batch.
+
+### Completed in batch 3
+
+1. **Per-artifact backfill idempotency (CRITICAL)** — `BackfillDeClientesYListasPrecioAsync`'s
+   coverage check was a UNION of tenants-with-CF and tenants-with-default-lista: a tenant with
+   only ONE of the two rows (partial backfill from an earlier failed run, or hand-migrated
+   data) was permanently skipped. Rewritten to evaluate each artifact independently — the
+   default lista is created if the tenant has none, the CF cliente is created if the tenant
+   has none — still one transaction per tenant. New test
+   `BackfillPorArtefactoTests.UnTenantConSoloListaYOtroConSoloClienteCfGananLaMitadFaltantePorBackfill`
+   (own `WaysApiFixture`, to avoid the "seed before first `CreateClient()`" trick depending on
+   test-method execution order within a shared fixture) seeds one tenant with only the lista
+   and another with only the CF cliente, and asserts each gains exactly its missing half
+   without duplicating the half it already had.
+2. **Composite `fk_clientes_lista_precio` (GATE-APPROVED schema hardening)** — the FK was a
+   single column against `listas_precio.id_lista_precio` (PK, globally unique across tenants):
+   an `id_lista_precio` belonging to ANOTHER tenant was a row that genuinely exists, so the FK
+   never rejected it — only RLS did, at runtime. Added alternate key `(Id, IdTenant)` on
+   `ListaPrecio` (`ak_listas_precio_id_tenant`) and changed the FK to composite
+   `(IdListaPrecio, IdTenant) → listas_precio(Id, IdTenant)`. The unmerged migration
+   `20260802172552_ClientesYProveedoresEtapa2` was edited in place (Up/Down, `.Designer.cs`,
+   `WaysDbContextModelSnapshot.cs`) rather than regenerated wholesale — a `migrations remove` +
+   `migrations add` cycle was tried first and discarded: it picked up an unrelated spurious
+   `AddCheckConstraint`/`DropCheckConstraint` pair for `ck_categorias_padre_no_self` (already
+   present since the `CatalogosDeTenant` migration) as an EF diffing artifact of reverting and
+   rescaffolding, and it also dropped the hand-written `HabilitarRlsDeTenant(...)` calls that
+   aren't part of the model and only exist because a human added them to the original
+   migration. Hand-editing avoided both regressions. `dotnet ef migrations
+   has-pending-model-changes` confirmed clean after the edit. New smoke test
+   `BackstopClientesYProveedoresTests.UnClienteConIdListaPrecioDeOtroTenantViolaLaFkCompuesta`
+   inserts a cliente whose `id_lista_precio` is a real row of a DIFFERENT tenant → 23503.
+3. **42501 INSERT proofs (confirmed)** — `ClientesYProveedoresRlsTests` only had SELECT/UPDATE
+   cross-tenant proofs; added `UnInsertConIdTenantAjenoSeRechaza` (mirrors
+   `CatalogosDeTenantRlsTests`'s method of the same name) as a `[Theory]` over
+   clientes/proveedores/listas_precio/numeraciones_clientes → 42501, plus one EF-level (LINQ)
+   cross-tenant-read proof,
+   `ElFiltroDeEfNuncaDevuelveFilasDeOtroTenantParaLasEntidadesNuevas`, mirroring
+   `AislamientoDeTenantTests.ElFiltroDeEfNuncaDevuelveFilasDeOtroTenant` for the 3 new
+   EF-tracked entities (`NumeracionCliente` is SQL-crudo-only by design, out of this proof).
+   Class docstring updated to describe what the class now actually covers.
+4. **Composite-FK smoke tests (triaged real)** — added the 4 missing cases to
+   `BackstopClientesYProveedoresTests`: `fk_clientes_empresa`, `fk_proveedores_empresa`,
+   `fk_listas_precio_empresa` (all composite, nullable `id_empresa` with a non-null-but-bogus
+   value to force MATCH SIMPLE to evaluate) and `fk_listas_precio_lista_base` (simple,
+   self-referencing) — all 23503, `ConstraintName` asserted on each.
+5. **Counter concurrency test (hardening)** — new
+   `AsignadorDeNumeroClienteConcurrenciaTests.DosAsignacionesConcurrentesDelMismoTenantDanNumerosDistintosYConsecutivos`:
+   3 rounds of 2 concurrent `AsignadorDeNumeroCliente.AsignarSiguienteAsync` calls against the
+   same tenant's counter, against real Postgres. No rendezvous interceptor needed (unlike
+   `ParametrosTests`'s race test) — the `UPDATE ... RETURNING` on the counter row is
+   unconditional, so Postgres's own row lock serializes the two transactions. All 6 assigned
+   numbers collected across the 3 rounds and asserted to be exactly consecutive, no gaps or
+   duplicates.
+6. **`NumeracionCliente` ChangeTracker guard (hardening)** — `NumeracionCliente`'s doc comment
+   already claimed `AsignadorDeNumeroCliente` (raw SQL) is its only legitimate writer, but
+   nothing enforced it: an `Added`/`Modified` entry reaching `SaveChanges` via the
+   `ChangeTracker` went through silently. New `WaysDbContext.RechazarEscriturasDeNumeracionCliente`
+   (called first inside `EstamparTenant`) throws `InvalidOperationException` for any such
+   entry — same defense-in-depth pattern as the `IdTenant` tamper guard. 3 new unit tests
+   (`GuardDeNumeracionClienteTests`, InMemory provider, no Postgres needed since the guard
+   throws before `base.SaveChanges()` ever runs) cover Added-rejected, Modified-rejected, and
+   Unchanged-passes-through. `ClientesYProveedoresRlsTests.NumeracionesClientesEsInvisibleParaOtroTenant`
+   (the one existing test that wrote a `NumeracionCliente` via `db.NumeracionesClientes.Add`)
+   was migrated to `AsignadorDeNumeroCliente.AsegurarContadorAsync`, the now-only-legal path.
+7. **Spanish comments (3 items)** — exemption notes on the `_cuit`/`_numero` branches of
+   `ManejadorDeErrores.ClasificarUnicidad` explaining why they're exempt from the
+   `db-error-backstops` race-test requirement until Slice 2/3's create endpoints exist (tasks
+   2.5/3.5 will add the race tests then); a note on `ReglaDeClientes` documenting the known
+   renumber-then-delete two-step bypass of `ck_clientes_cf_protegido` and why closing it is
+   explicitly out of scope for this slice (closed by `ServicioDeClientes`'s service-level guard
+   in Slice 2); a note on `BackfillDeClientesYListasPrecioAsync`'s doc comment listing the two
+   invariants its per-artifact coverage check depends on.
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet ef migrations has-pending-model-changes` → clean, after the in-place composite-FK
+  edit.
+- `dotnet test Ways.slnx`, run **twice** for stability, identical results both times:
+  - `Ways.Domain.Tests`: **69/69** (unchanged — no Domain-layer tests touched this batch).
+  - `Ways.Application.Tests`: **94/94** (91 + 3 new `GuardDeNumeracionClienteTests`).
+  - `Ways.IntegrationTests`: **103/103** (91 + 12 new: 5 `BackstopClientesYProveedoresTests` +
+    5 `ClientesYProveedoresRlsTests` (4-case `UnInsertConIdTenantAjenoSeRechaza` theory + 1
+    EF-level fact) + 1 `BackfillPorArtefactoTests` + 1
+    `AsignadorDeNumeroClienteConcurrenciaTests`). The pre-existing `ParametrosTests`
+    rendezvous-flake risk documented in batch 1F/1.13 did not surface in either run. Docker up
+    (Testcontainers-backed real Postgres) both times.
+
+### Blocked
+
+None.
