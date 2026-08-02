@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Clientes;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
@@ -116,6 +117,8 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
     private void EstamparTenant()
     {
+        RechazarEscriturasDeNumeracionCliente();
+
         foreach (var entrada in ChangeTracker.Entries<EntidadTenant>())
         {
             switch (entrada.State)
@@ -155,6 +158,31 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
             {
                 throw new InvalidOperationException(
                     "El id_tenant de una fila existente no se puede modificar.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Judgment-day (ronda 1, item de hardening): <see cref="NumeracionCliente"/> documenta
+    /// que <see cref="AsignadorDeNumeroCliente"/> es su único punto de
+    /// escritura legítimo, y que lo hace con SQL crudo dentro de la transacción del llamador
+    /// — nunca vía <c>SaveChangesAsync</c> (design decision 3). Ese contrato dependía
+    /// enteramente de que nadie escribiera la entidad por el <c>ChangeTracker</c> por error;
+    /// este guard lo convierte en un rechazo explícito, mismo patrón defense-in-depth que
+    /// <see cref="EstamparTenant"/> aplica sobre <c>IdTenant</c>: un <c>Added</c>/<c>Modified</c>
+    /// de <see cref="NumeracionCliente"/> que llega hasta acá solo puede ser un bypass del
+    /// contador atómico (una carrera lo corrompería), así que se frena antes de tocar la base.
+    /// </summary>
+    private void RechazarEscriturasDeNumeracionCliente()
+    {
+        foreach (var entrada in ChangeTracker.Entries<NumeracionCliente>())
+        {
+            if (entrada.State is EntityState.Added or EntityState.Modified)
+            {
+                throw new InvalidOperationException(
+                    "numeraciones_clientes solo se escribe con SQL crudo, vía " +
+                    $"{nameof(AsignadorDeNumeroCliente)} — nunca por " +
+                    $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
             }
         }
     }
