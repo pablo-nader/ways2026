@@ -239,7 +239,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ux_categorias_nombre_empresa")
                         .HasFilter("id_empresa IS NOT NULL AND deleted_at IS NULL");
 
-                    b.ToTable("categorias", (string)null);
+                    b.ToTable("categorias", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_categorias_padre_no_self", "id_categoria_padre IS DISTINCT FROM id_categoria");
+                        });
                 });
 
             modelBuilder.Entity("Ways.Domain.Catalogos.CondicionFiscal", b =>
@@ -557,7 +560,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_parametros_empresa");
 
-                    b.HasIndex("IdPuntoVenta", "IdTenant");
+                    b.HasIndex("IdPuntoVenta", "IdTenant")
+                        .HasDatabaseName("ix_parametros_punto_venta");
 
                     b.HasIndex("IdTenant", "IdEmpresa", "Clave")
                         .IsUnique()

@@ -57,7 +57,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 columns: new[] { "id_empresa", "id_tenant" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_parametros_id_punto_venta_id_tenant",
+                name: "ix_parametros_punto_venta",
                 table: "parametros",
                 columns: new[] { "id_punto_venta", "id_tenant" });
 

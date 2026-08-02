@@ -83,6 +83,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 {
                     table.PrimaryKey("PK_categorias", x => x.id_categoria);
                     table.UniqueConstraint("ak_categorias_id_categoria_id_tenant", x => new { x.id_categoria, x.id_tenant });
+                    table.CheckConstraint("ck_categorias_padre_no_self", "id_categoria_padre IS DISTINCT FROM id_categoria");
                     table.ForeignKey(
                         name: "fk_categorias_empresa",
                         columns: x => new { x.id_empresa, x.id_tenant },

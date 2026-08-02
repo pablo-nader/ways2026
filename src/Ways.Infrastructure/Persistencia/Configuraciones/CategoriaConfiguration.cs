@@ -14,6 +14,14 @@ public class CategoriaConfiguration : ConfiguracionDeCatalogo<Categoria>
         builder.Property(c => c.Orden).HasColumnName("orden").IsRequired();
         builder.Property(c => c.IdCategoriaPadre).HasColumnName("id_categoria_padre");
 
+        // Defensa en profundidad de judgment-day (slice 3, ronda 1): ReglaDeCategorias.
+        // ValidarSinCiclo ya rechaza el auto-padre en dominio, pero esta constraint cierra
+        // la misma puerta a nivel de esquema — un ciclo de longitud 1 escrito por fuera del
+        // servicio (SQL directo, otro bug futuro) haría entrar en loop infinito al próximo
+        // WITH RECURSIVE de ServicioDeCategorias.
+        builder.ToTable(t => t.HasCheckConstraint(
+            "ck_categorias_padre_no_self", "id_categoria_padre IS DISTINCT FROM id_categoria"));
+
         // Habilita la FK compuesta a sí misma (ADR-9): una categoría de un tenant no puede
         // colgar de la de otro tenant ni por bug. Sin restricción de profundidad acá — eso
         // lo valida ReglaDeCategorias en dominio (ADR-12), no una constraint de SQL.

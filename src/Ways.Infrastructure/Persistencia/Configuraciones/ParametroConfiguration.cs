@@ -67,6 +67,11 @@ public class ParametroConfiguration : IEntityTypeConfiguration<Parametro>
         builder.HasIndex(p => p.IdTenant).HasDatabaseName("ix_parametros_tenant");
         builder.HasIndex(p => new { p.IdEmpresa, p.IdTenant }).HasDatabaseName("ix_parametros_empresa");
 
+        // Sin esto, EF nombra por convención el índice que respalda la FK a puntos_venta
+        // ("IX_parametros_id_punto_venta_id_tenant") — inconsistente con la convención
+        // ix_<tabla>_<columna> del resto (judgment-day, slice 3 ronda 1).
+        builder.HasIndex(p => new { p.IdPuntoVenta, p.IdTenant }).HasDatabaseName("ix_parametros_punto_venta");
+
         builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.IdPuntoVenta, p.Clave })
             .HasDatabaseName("ux_parametros_punto_venta")
             .HasFilter("id_punto_venta IS NOT NULL AND deleted_at IS NULL")

@@ -560,7 +560,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdEmpresa", "IdTenant")
                         .HasDatabaseName("ix_parametros_empresa");
 
-                    b.HasIndex("IdPuntoVenta", "IdTenant");
+                    b.HasIndex("IdPuntoVenta", "IdTenant")
+                        .HasDatabaseName("ix_parametros_punto_venta");
 
                     b.HasIndex("IdTenant", "IdEmpresa", "Clave")
                         .IsUnique()
