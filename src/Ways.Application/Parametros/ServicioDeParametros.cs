@@ -25,6 +25,11 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj)
         // disparar la query.
         ParametroConocido.Buscar(clave);
 
+        if (idPuntoVenta is not null)
+        {
+            await ValidarPuntoVentaDeLaEmpresaAsync(idEmpresa, idPuntoVenta.Value, ct);
+        }
+
         var candidatos = await db.Parametros
             .Where(p => p.Clave == clave && p.IdEmpresa == idEmpresa
                 && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
@@ -49,6 +54,11 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj)
     {
         var conocido = ParametroConocido.Buscar(datos.Clave);
         ValidarTipo(conocido, datos.Valor);
+
+        if (datos.IdPuntoVenta is not null)
+        {
+            await ValidarPuntoVentaDeLaEmpresaAsync(idEmpresa, datos.IdPuntoVenta.Value, ct);
+        }
 
         var existente = await db.Parametros.FirstOrDefaultAsync(
             p => p.IdEmpresa == idEmpresa && p.Clave == datos.Clave && p.IdPuntoVenta == datos.IdPuntoVenta, ct);
@@ -77,6 +87,24 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj)
         await db.SaveChangesAsync(ct);
 
         return new ParametroListado(existente.Id, existente.Clave, existente.Valor, existente.IdPuntoVenta);
+    }
+
+    /// <summary>Sin cambio de esquema (decisión del usuario, judgment-day slice 3 ronda 1):
+    /// <c>id_punto_venta</c> no tiene FK a <c>empresas</c> — solo a <c>puntos_venta</c> — así
+    /// que nada en el esquema impide un punto de venta real pero de otra empresa del mismo
+    /// tenant. Esta consulta, scopeada por tenant vía el filtro de EF, es el único lugar que
+    /// lo valida.</summary>
+    private async Task ValidarPuntoVentaDeLaEmpresaAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    {
+        var pertenece = await db.PuntosVenta.AnyAsync(pv => pv.Id == idPuntoVenta && pv.IdEmpresa == idEmpresa, ct);
+
+        if (!pertenece)
+        {
+            throw new ErrorDominio(
+                "punto_venta_no_pertenece_a_la_empresa",
+                "El punto de venta indicado no pertenece a la empresa declarada.",
+                400);
+        }
     }
 
     private static void ValidarTipo(ParametroConocido conocido, string valorJson)
