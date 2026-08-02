@@ -4,7 +4,7 @@
 # against that baseline.
 change: stage-2-clientes-proveedores
 phase: apply
-status: slice-1-complete-runtime-verified-ready-for-judgment-day
+status: slice-1-approved-ready-for-pr
 artifact_store: openspec
 phases:
   explore:
