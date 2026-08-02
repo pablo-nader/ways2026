@@ -1814,12 +1814,11 @@ suggestion accepted. All approved by the user 2026-08-02; this batch applies the
 
 ### Commits (work units, branch `feat/stage1-slice4-abm-web`, no push, no PR)
 
-18. `fix(organizacion): separar el codigo snake_case del label humano en los errores de validacion`
-19. `fix(web): filtrar el subarbol y el nivel 3 del selector de categoria padre`
-20. `docs(web): corregir comentarios desactualizados en NuevoTenant y Parametros`
-21. `test(organizacion): agregar la cobertura simetrica de punto de venta cross-tenant`
-22. `docs(sdd): registrar el batch 12 — polish de judgment-day ronda 1 en el slice 4` (this
-    commit, next)
+18. `012e627` `fix(organizacion): pulir el slice 4 tras la ronda 1 de judgment-day` — the four
+    fix categories above landed squashed in this single commit (traceability correction noted
+    by judgment-day round 2: an earlier version of this list described them as four separate
+    work units).
+19. `5d2bc5e` `docs(sdd): registrar el batch 12 — polish de judgment-day ronda 1 en el slice 4`
 
 ### Next batch
 
