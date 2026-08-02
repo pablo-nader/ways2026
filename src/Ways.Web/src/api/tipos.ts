@@ -242,6 +242,67 @@ export type PuntoVentaEdicion = {
   web: string | null
 }
 
+// --- Clientes (stage-2-clientes-proveedores, ADR-8) ---
+// Entidad dedicada, no la máquina genérica de catálogos (design decision 1): `numero` lo
+// asigna el servidor (contador atómico por tenant), nunca es un campo editable acá.
+
+export type TipoDocumento = 'Dni' | 'Cuit' | 'Cuil' | 'Pasaporte' | 'Otro'
+
+export const TIPOS_DOCUMENTO: TipoDocumento[] = ['Dni', 'Cuit', 'Cuil', 'Pasaporte', 'Otro']
+
+export type ClienteListado = {
+  id: number
+  numero: number
+  nombre: string
+  apellido: string | null
+  razonSocial: string | null
+  tipoDocumento: TipoDocumento | null
+  numeroDocumento: string | null
+  idCondicionFiscal: number
+  nacimiento: string | null
+  domicilio: string | null
+  telefono: string | null
+  celular: string | null
+  email: string | null
+  observaciones: string | null
+  idListaPrecio: number
+  limiteCredito: number
+  creditoIlimitado: boolean
+  saldo: number
+  activo: boolean
+  idEmpresa: number | null
+  esConsumidorFinal: boolean
+}
+
+/** `idLista Precio`/`idCondicionFiscal` son requeridos (spec: "id_lista_precio and
+ * id_condicion_fiscal are required") — sin default automático cuando se omiten. */
+export type AltaCliente = {
+  nombre: string
+  apellido: string | null
+  razonSocial: string | null
+  tipoDocumento: TipoDocumento | null
+  numeroDocumento: string | null
+  idCondicionFiscal: number
+  nacimiento: string | null
+  domicilio: string | null
+  telefono: string | null
+  celular: string | null
+  email: string | null
+  observaciones: string | null
+  idListaPrecio: number
+  limiteCredito: number
+  creditoIlimitado: boolean
+  idEmpresa: number | null
+  activo: boolean
+}
+
+/** Sin `saldo`: no hay motor de cuenta corriente todavía (etapa 7) — no es editable acá. */
+export type EdicionCliente = AltaCliente
+
+/** Referencia mínima para el selector de lista de precios — no un ABM de `listas_precio`
+ * (design decision 1, spec: listas_precio ABM Is Out of Scope This Stage). */
+export type ListaPrecioAsignable = { id: number; nombre: string; esDefault: boolean }
+
 // --- Aprovisionamiento de tenants (ADR-16, plataforma) ---
 
 export type SolicitudDeAprovisionamiento = {
