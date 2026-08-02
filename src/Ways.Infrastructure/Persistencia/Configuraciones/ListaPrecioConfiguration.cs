@@ -41,7 +41,7 @@ public class ListaPrecioConfiguration : ConfiguracionDeCatalogo<ListaPrecio>
         // simple (la columna referenciada, id_lista_precio, es única globalmente por ser PK) y
         // solo RLS lo frenaba -- con la clave compuesta, la propia FK ya lo rechaza (23503).
         builder.HasAlternateKey(l => new { l.Id, l.IdTenant })
-            .HasName("ak_listas_precio_id_tenant");
+            .HasName("ak_listas_precio_id_lista_precio_id_tenant");
 
         builder.HasOne<ListaPrecio>()
             .WithMany()

@@ -50,7 +50,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_listas_precio", x => x.id_lista_precio);
-                    table.UniqueConstraint("ak_listas_precio_id_tenant", x => new { x.id_lista_precio, x.id_tenant });
+                    table.UniqueConstraint("ak_listas_precio_id_lista_precio_id_tenant", x => new { x.id_lista_precio, x.id_tenant });
                     table.ForeignKey(
                         name: "fk_listas_precio_empresa",
                         columns: x => new { x.id_empresa, x.id_tenant },

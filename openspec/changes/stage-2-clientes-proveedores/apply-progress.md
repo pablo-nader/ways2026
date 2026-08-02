@@ -305,3 +305,32 @@ comment-only items. All applied this batch.
 ### Blocked
 
 None.
+
+## Post-verdict INFO fixes (judgment-day, feat/stage2-slice1-fundacion)
+
+Two INFO-level (non-blocking) items applied after the APPROVED judgment-day verdict on the
+`feat/stage2-slice1-fundacion` slice:
+
+1. **Tolerant default-list lookup** —
+   `InicializadorDeBaseDeDatos.BackfillDeClientesYListasPrecioAsync`'s
+   `idListaDefaultPorTenant` lookup now filters `l.EsDefault && l.IdEmpresa == null` instead of
+   just `l.EsDefault`. The unfiltered `ToDictionaryAsync(l => l.IdTenant, l => l.Id)` would throw
+   on a duplicate key if a tenant ever ended up with both a shared default and a per-empresa
+   default lista at once; scoping to the documented "compartida" invariant makes that future
+   state degrade gracefully instead of crashing startup. Comment above the query updated to
+   explain the filter and the degrade-not-crash rationale.
+2. **AK naming convention** — renamed `ak_listas_precio_id_tenant` to
+   `ak_listas_precio_id_lista_precio_id_tenant` (matching `ak_empresas_id_empresa_id_tenant` and
+   siblings) in all four locations: `ListaPrecioConfiguration.cs`,
+   `20260802172552_ClientesYProveedoresEtapa2.cs`, its `.Designer.cs`, and
+   `WaysDbContextModelSnapshot.cs`.
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet ef migrations has-pending-model-changes` → clean.
+- `dotnet test Ways.slnx`:
+  - `Ways.Domain.Tests`: **69/69**.
+  - `Ways.Application.Tests`: **94/94**.
+  - `Ways.IntegrationTests`: **103/103**.
+  - Baseline unchanged (69/94/103), all green.

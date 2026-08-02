@@ -429,7 +429,7 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasKey("Id");
 
                     b.HasAlternateKey("Id", "IdTenant")
-                        .HasName("ak_listas_precio_id_tenant");
+                        .HasName("ak_listas_precio_id_lista_precio_id_tenant");
 
                     b.HasIndex("IdListaBase")
                         .HasDatabaseName("ix_listas_precio_lista_base");
