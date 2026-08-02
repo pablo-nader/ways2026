@@ -369,17 +369,20 @@ No database changes: schema from Slice 1 (`clientes`, `listas_precio`, `numeraci
   `ClienteListado` (no `Numero` field on the alta/edicion side; `Saldo` excluded from
   `EdicionCliente` — no CC engine yet, doc 10 §2) + `ListaPrecioAsignable` (id/nombre/esDefault
   reference type, not a `listas_precio` ABM contract).
-  **Deviation from tasks.md 2.1's literal wording** (documented, not silent): task 2.1 said
-  "defaults `id_lista_precio` to the tenant's `es_default` list when omitted" — this phrase
-  only ever existed in tasks.md, never in design.md. `specs/clientes/spec.md`'s own scenario
-  ("id_lista_precio and id_condicion_fiscal are required... GIVEN a tenant admin submits a
-  cliente missing id_lista_precio... THEN it is rejected before reaching the database")
-  directly contradicts default-on-omit. Resolved in favor of spec.md (the acceptance contract,
-  higher authority than a tasks.md one-liner): both fields are REQUIRED, `<= 0`/omitted is
-  rejected with 400 `{campo}_requerido` before any DB call. The web form still only ever shows
-  one selectable list this stage (the tenant's `es_default`, pre-selected) since
-  `listas_precio` has no ABM yet — functionally equivalent UX, simpler/more deterministic
-  contract.
+  **Deviation from tasks.md 2.1's literal wording, corrected (judgment-day round 1 batch)**:
+  task 2.1 said "defaults `id_lista_precio` to the tenant's `es_default` list when omitted" —
+  that phrase only ever existed in tasks.md, never in design.md. But design.md:29 DID state a
+  default for the *other* field: `id_condicion_fiscal` "app defaults to seeded CF row when
+  omitted". `specs/clientes/spec.md`'s own scenario ("id_lista_precio and id_condicion_fiscal
+  are required... GIVEN a tenant admin submits a cliente missing id_lista_precio... THEN it is
+  rejected before reaching the database") contradicts default-on-omit for BOTH fields. The
+  override made here is therefore of BOTH tasks.md's wording (`id_lista_precio`) AND
+  design.md:29's wording (`id_condicion_fiscal`), resolved in favor of spec.md as the
+  higher-authority acceptance contract for both: both fields are REQUIRED, `<= 0`/omitted is
+  rejected with 400 `{campo}_requerido` before any DB call. design.md:29 now carries a
+  superseded note pointing back here. The web form still only ever shows one selectable list
+  this stage (the tenant's `es_default`, pre-selected) since `listas_precio` has no ABM yet —
+  functionally equivalent UX, simpler/more deterministic contract.
 - **Referencia de solo lectura para `listas_precio`** — `ServicioDeClientes.ListasDePrecioAsignablesAsync`
   + `GET /api/listas-precio` (`ClientesEndpoints`), `GestionDeCatalogo` policy. **Deviation from
   design.md's literal "no service/API this stage" for `listas_precio`** (documented): design
@@ -496,3 +499,101 @@ None.
 ## TDD Cycle Evidence (batch 4)
 
 Same as prior batches — Standard Mode, no strict-TDD signal from the orchestrator for this run.
+
+## Batch 5 — judgment-day round 1 fixes (Slice 2, branch `feat/stage2-slice2-clientes`)
+
+Surgical fixes to the 9 confirmed findings of judgment-day round 1 on Slice 2 (dual blind
+review). NO schema changes this batch (gate: the `ClientesYProveedoresEtapa2` migration is
+already merged).
+
+### Completed in batch 5
+
+1. **numero_duplicado backstop proof** — added
+   `BackstopClientesYProveedoresTests.UnaFilaConNumeroDuplicadoInsertadaPorFueraDelContadorViolaLaUnicidad`:
+   two raw-SQL INSERTs with the same `(id_tenant, numero)`, bypassing
+   `AsignadorDeNumeroCliente` entirely; asserts SQLSTATE `23505` +
+   `ConstraintName: ux_clientes_numero`. HTTP-level 409 translation documented as unreachable
+   through `POST /api/clientes` (the endpoint never accepts a client-supplied `numero`) —
+   noted in the test's doc comment instead of a fake HTTP test. Corrected the misleading
+   comment in `ManejadorDeErrores.ClasificarUnicidad` (`_numero` branch): the atomicity proof
+   (`ClientesEndpointsTests.LaCreacionConcurrenteAsignaNumerosSecuencialesSinExponerElBackstop`)
+   and the backstop proof (this new raw-SQL test) are two different assertions, not one. Fixed
+   the stale `ClientesRaceTests` pointer in `ServicioDeClientesTests`'s class doc comment — the
+   actual end-to-end create test lives in `ClientesEndpointsTests`.
+2. **limite_credito server validation** — `ServicioDeClientes.CrearAsync`/`ActualizarAsync`
+   now call `ExigirLimiteCreditoValido`, rejecting `LimiteCredito < 0` with 400
+   `limite_credito_invalido`. Service-level only, per the NO-schema-changes gate — a DB
+   `CHECK (limite_credito >= 0)` would need a new migration; documented as a future option in
+   the method's doc comment, same precedent as `ck_clientes_cf_protegido`. Unit test
+   (`CrearConLimiteCreditoNegativoEsRechazado`) + HTTP test
+   (`CrearConLimiteCreditoNegativoDevuelve400`).
+3. **Cross-tenant write 404 parity (ADR-8)** — added
+   `UnPutSobreUnClienteDeOtroTenantDevuelve404`/`UnDeleteSobreUnClienteDeOtroTenantDevuelve404`
+   to `ClientesEndpointsTests`: PUT/DELETE against another tenant's cliente id now has explicit
+   coverage (previously only GET was covered).
+4. **CF guard end-to-end HTTP tests** — added
+   `UnPutSobreElConsumidorFinalDevuelve409`/`UnDeleteSobreElConsumidorFinalDevuelve409` to
+   `ClientesEndpointsTests`: provisions a tenant, locates its CF row (`numero == 1`) via the
+   platform-keyed context, asserts 409 `consumidor_final_protegido` through the live HTTP
+   pipeline (not just the InMemory-backed `ServicioDeClientesTests`).
+5. **listas-precio endpoint coverage** — added
+   `UnAdminSoloVeLasListasDePrecioDeSuPropioTenant` (asserts the admin's list is the only one
+   returned, cross-tenant isolation) and `UnVendedorNoPuedeListarListasDePrecio` (403) to
+   `ClientesEndpointsTests`.
+6. **Field-specific length codes** — `NormalizarOpcional` now takes a `campo` parameter (same
+   shape as `NormalizarRequerido`) and throws `{campo}_muy_largo` instead of a generic
+   `campo_muy_largo` shared across the eight optional fields. Added
+   `CrearConEmailDemasiadoLargoEsRechazadoConElCodigoDelCampo` asserting `email_muy_largo`.
+7. **Deviation note correction** — `tasks.md` 2.1's note and `apply-progress.md` batch 4's
+   deviation note both claimed the omitted-default wording "only ever existed in tasks.md,
+   never in design.md" — true for `id_lista_precio`, but **false** for `id_condicion_fiscal`:
+   `design.md:29` did state "(app defaults to seeded `CF` row when omitted)" for that field.
+   Corrected both notes: the override made by task 2.1 is of BOTH tasks.md's wording
+   (`id_lista_precio`) AND design.md:29's wording (`id_condicion_fiscal`), resolved in favor of
+   `spec.md`'s "id_lista_precio and id_condicion_fiscal are required" scenario as the
+   higher-authority acceptance contract for both fields. Added a superseded-note directly on
+   `design.md:29` pointing back to this resolution.
+8. **IdEmpresa pre-check** — added `ExigirEmpresaValidaAsync` (tenant-scoped, same shape as
+   `ExigirCondicionFiscalValidaAsync`/`ExigirListaPrecioValidaAsync`) before insert/update, for
+   consistency with the other two reference checks. The `fk_clientes_empresa` 23503 backstop is
+   unchanged. Unit test `CrearConIdEmpresaInexistenteEsRechazado` asserts the friendly 400
+   `referencia_invalida`.
+9. **Typo** — `src/Ways.Web/src/api/tipos.ts`: fixed `idLista Precio` → `idListaPrecio` in the
+   `AltaCliente` doc comment.
+
+### Files changed
+
+- `src/Ways.Application/Clientes/ServicioDeClientes.cs` — items 2, 6, 8.
+- `src/Ways.Api/Seguridad/ManejadorDeErrores.cs` — item 1 (comment only).
+- `tests/Ways.IntegrationTests/BackstopClientesYProveedoresTests.cs` — item 1 (new test).
+- `tests/Ways.IntegrationTests/ClientesEndpointsTests.cs` — items 2, 3, 4, 5 (new tests).
+- `tests/Ways.Application.Tests/Clientes/ServicioDeClientesTests.cs` — items 1 (stale pointer
+  fix), 2, 6, 8 (new tests).
+- `src/Ways.Web/src/api/tipos.ts` — item 9 (typo).
+- `openspec/changes/stage-2-clientes-proveedores/tasks.md` — item 7 (note correction).
+- `openspec/changes/stage-2-clientes-proveedores/design.md` — item 7 (superseded note).
+- `openspec/changes/stage-2-clientes-proveedores/apply-progress.md` — item 7 (this entry +
+  batch 4's deviation note corrected in place).
+
+### Blocked
+
+None.
+
+## Verification (batch 5)
+
+- `dotnet build Ways.slnx` — 0 warnings, 0 errors.
+- `dotnet test Ways.slnx`, run **twice** for stability, identical results both times:
+  - `Ways.Domain.Tests`: **69/69** (unchanged).
+  - `Ways.Application.Tests`: **107/107** (104 + 3 new: `CrearConLimiteCreditoNegativoEsRechazado`,
+    `CrearConEmailDemasiadoLargoEsRechazadoConElCodigoDelCampo`,
+    `CrearConIdEmpresaInexistenteEsRechazado`).
+  - `Ways.IntegrationTests`: **117/117** (109 + 8 new: 1 backstop raw-SQL test, 2 cross-tenant
+    write 404 tests, 2 CF-guard HTTP tests, 2 listas-precio tests, 1 limite_credito HTTP test).
+    Docker up (Testcontainers-backed real Postgres) both times.
+- `Ways.Web`: `npx tsc -b` clean; `npx oxlint` clean (same pre-existing unrelated warning on
+  `AuthContext.tsx` as batch 4, not touched this batch).
+
+## TDD Cycle Evidence (batch 5)
+
+Same as prior batches — Standard Mode, no strict-TDD signal from the orchestrator for this run;
+surgical fix batch driven by judgment-day findings rather than a task list.

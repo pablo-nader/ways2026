@@ -164,12 +164,15 @@ concurrency, tests green. **Rollback**: new routes/screen only.
 - [x] 2.1 Add `ServicioDeClientes` (list/create/edit/soft-delete): create calls
   `AsignadorDeNumeroCliente`, enforces `ReglaDeClientes.ValidarNoConsumidorFinal`
   on edit/delete, `GestionDeCatalogo` policy. *(spec: clientes / Cliente ABM
-  Lifecycle and Authorization)* — `id_lista_precio` implemented as REQUIRED
-  (not defaulted-when-omitted): spec.md's literal "id_lista_precio and
-  id_condicion_fiscal are required... rejected before reaching the database"
-  scenario was found to conflict with this task's original "defaults when
-  omitted" wording (which only ever appeared here, not in design.md) —
-  resolved in favor of spec.md as the higher-authority acceptance contract.
+  Lifecycle and Authorization)* — `id_lista_precio` and `id_condicion_fiscal`
+  implemented as REQUIRED (not defaulted-when-omitted): spec.md's literal
+  "id_lista_precio and id_condicion_fiscal are required... rejected before
+  reaching the database" scenario was found to conflict with this task's
+  original "defaults `id_lista_precio` when omitted" wording (which only ever
+  appeared here, not in design.md) AND with design.md:29's own statement that
+  `id_condicion_fiscal` "defaults to seeded CF row when omitted" — resolved
+  in favor of spec.md as the higher-authority acceptance contract for both
+  fields; design.md:29 now carries a superseded note.
   See apply-progress.md batch 4 for the full resolution.
 - [x] 2.2 Add cliente contracts (`AltaCliente`/`EdicionCliente`/`ClienteListado`
   + `ListaPrecioAsignable` reference type for the lista-precio selector).
