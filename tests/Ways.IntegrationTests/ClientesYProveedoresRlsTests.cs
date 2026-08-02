@@ -13,18 +13,12 @@ namespace Ways.IntegrationTests;
 /// SQL crudo, independiente de EF, 0 filas para SELECT/UPDATE cross-tenant, 42501 para el
 /// INSERT que viola <c>WITH CHECK</c>.
 ///
-/// GATED: <c>clientes</c>/<c>proveedores</c>/<c>listas_precio</c>/<c>numeraciones_clientes</c>
-/// no existen todavía — la migración <c>ClientesYProveedoresEtapa2</c> está bloqueada por el
-/// DB CHANGE GATE (task 1.7). <c>Skip</c> se saca en el mismo lote que genera y aplica esa
-/// migración.
+/// DB CHANGE GATE aprobado 2026-08-02 y migración <c>ClientesYProveedoresEtapa2</c> aplicada:
+/// pruebas activas contra Postgres real.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ClientesYProveedoresRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
-    private const string RazonDeGate =
-        "Gated: clientes/proveedores/listas_precio/numeraciones_clientes no existen hasta que " +
-        "la migración ClientesYProveedoresEtapa2 se genere y apruebe (DB CHANGE GATE, task 1.7).";
-
     public static TheoryData<string, string> TablasDeTenant => new()
     {
         { "clientes", "id_cliente" },
@@ -92,7 +86,7 @@ public class ClientesYProveedoresRlsTests(WaysApiFixture fixture) : IClassFixtur
         return (tenantA.Id, idFila, tenantB.Id);
     }
 
-    [Theory(Skip = RazonDeGate)]
+    [Theory]
     [MemberData(nameof(TablasDeTenant))]
     public async Task UnaSesionDeOtroTenantNoVeLaFilaPorSelect(string tabla, string columnaId)
     {
@@ -110,7 +104,7 @@ public class ClientesYProveedoresRlsTests(WaysApiFixture fixture) : IClassFixtur
         Assert.NotEqual(idTenantA, idTenantB);
     }
 
-    [Theory(Skip = RazonDeGate)]
+    [Theory]
     [MemberData(nameof(TablasDeTenant))]
     public async Task UnaSesionDeOtroTenantNoPuedeActualizarLaFila(string tabla, string columnaId)
     {
@@ -126,7 +120,7 @@ public class ClientesYProveedoresRlsTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal(0, filas);
     }
 
-    [Fact(Skip = RazonDeGate)]
+    [Fact]
     public async Task NumeracionesClientesEsInvisibleParaOtroTenant()
     {
         using var _ = fixture.CreateClient();

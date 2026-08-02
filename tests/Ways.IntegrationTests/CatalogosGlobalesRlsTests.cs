@@ -11,6 +11,16 @@ namespace Ways.IntegrationTests;
 /// (<see cref="RlsMigrationBuilderExtensions.HabilitarRlsDeCatalogoGlobal"/>). La superficie de
 /// API sigue siendo de solo lectura para un tenant, sin cambios — esto prueba la segunda capa
 /// independiente detrás. Todo con conexión cruda como <c>ways_app</c>, sin pasar por EF.
+///
+/// TODOS los métodos de esta clase arrancan el host (<c>fixture.CreateClient()</c>) antes de
+/// tocar <c>condiciones_fiscales</c> por SQL crudo, aunque no siempre lo necesiten para su
+/// propia aserción (encontrado en stage-2-clientes-proveedores, Slice 1 batch 2): si un test
+/// que NO arranca el host corre primero y siembra una fila cruda en esa tabla,
+/// <c>InicializadorDeBaseDeDatos.SembrarCatalogosFiscalesAsync</c> (que arranca recién con el
+/// primer test que sí llama <c>CreateClient()</c>) ve la tabla no-vacía y se salta sembrar la
+/// condición fiscal <c>CF</c> — que <c>BackfillDeClientesYListasPrecioAsync</c> necesita para
+/// existir siempre. Arrancar el host primero, en todos los métodos, cierra esa ventana de
+/// orden sin importar en qué orden xUnit corra los tests de esta clase.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class CatalogosGlobalesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -51,6 +61,8 @@ public class CatalogosGlobalesRlsTests(WaysApiFixture fixture) : IClassFixture<W
     [Fact]
     public async Task UnaSesionDeTenantNoPuedeInsertarEnUnCatalogoGlobal()
     {
+        using var _ = fixture.CreateClient(); // arranca el host (idempotencia del seed, ver SembrarCondicionFiscalAsync)
+
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", 1);
 
         await using var comando = cruda.CreateCommand();
@@ -117,6 +129,8 @@ public class CatalogosGlobalesRlsTests(WaysApiFixture fixture) : IClassFixture<W
     [Fact]
     public async Task LaPlataformaPuedeEscribirEnUnCatalogoGlobal()
     {
+        using var _ = fixture.CreateClient(); // arranca el host (idempotencia del seed, ver SembrarCondicionFiscalAsync)
+
         await using var cruda = await fixture.AbrirConexionCrudaAsync("plataforma", null);
 
         await using var comando = cruda.CreateCommand();
@@ -137,6 +151,8 @@ public class CatalogosGlobalesRlsTests(WaysApiFixture fixture) : IClassFixture<W
         // Falla cerrado (ADR-4): un GUC sin setear hace que app_es_plataforma() sea falso, lo
         // mismo que en modo tenant — la lectura sigue abierta (USING (true) no depende del
         // GUC), pero la escritura se rechaza igual.
+        using var _ = fixture.CreateClient(); // arranca el host (idempotencia del seed, ver SembrarCondicionFiscalAsync)
+
         await using var cruda = await fixture.AbrirConexionCrudaAsync(string.Empty, null);
 
         await using var comando = cruda.CreateCommand();

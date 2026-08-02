@@ -16,22 +16,15 @@ namespace Ways.IntegrationTests;
 /// Consumidor Final + la lista General nacen con el tenant (provisioning) o se completan para
 /// un tenant preexistente (backfill), y el backfill es idempotente.
 ///
-/// GATED — doble motivo: (1) la migración <c>ClientesYProveedoresEtapa2</c> está bloqueada por
-/// el DB CHANGE GATE (task 1.7); (2) el cableado de <c>ServicioDeAprovisionamiento</c> (task
-/// 1.10) e <c>InicializadorDeBaseDeDatos.BackfillDeClientesYListasPrecioAsync</c> (task 1.11)
-/// queda comentado hasta ese mismo lote — cablearlos ahora rompe el arranque del host en TODAS
-/// las pruebas de integración (las tablas todavía no existen). <c>Skip</c> se saca junto con
-/// la migración y el cableado, en el mismo lote.
+/// DB CHANGE GATE aprobado 2026-08-02, migración <c>ClientesYProveedoresEtapa2</c> aplicada, y
+/// <c>ServicioDeAprovisionamiento</c>/<c>InicializadorDeBaseDeDatos.BackfillDeClientesYListasPrecioAsync</c>
+/// cableados (tasks 1.10/1.11): pruebas activas contra Postgres real.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ClientesProvisioningYBackfillTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
-
-    private const string RazonDeGate =
-        "Gated: clientes/listas_precio no existen (DB CHANGE GATE, task 1.7) y el cableado de " +
-        "ServicioDeAprovisionamiento/InicializadorDeBaseDeDatos queda comentado hasta ese lote (tasks 1.10/1.11).";
 
     private async Task<HttpClient> ClienteComoRootAsync()
     {
@@ -41,7 +34,7 @@ public class ClientesProvisioningYBackfillTests(WaysApiFixture fixture) : IClass
         return cliente;
     }
 
-    [Fact(Skip = RazonDeGate)]
+    [Fact]
     public async Task ProvisionarUnTenantCreaElConsumidorFinalYLaListaGeneral()
     {
         using var cliente = await ClienteComoRootAsync();
@@ -69,7 +62,7 @@ public class ClientesProvisioningYBackfillTests(WaysApiFixture fixture) : IClass
         Assert.Equal(listaGeneral.Id, consumidorFinal.IdListaPrecio);
     }
 
-    [Fact(Skip = RazonDeGate)]
+    [Fact]
     public async Task UnTenantPreexistenteSinClientesNiListasGanaAmbosPorBackfillYElBackfillEsIdempotente()
     {
         // Sembrado ANTES del primer CreateClient() de este fixture (mismo trámite que

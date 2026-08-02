@@ -12,16 +12,12 @@ namespace Ways.IntegrationTests;
 /// backstop map de <c>ManejadorDeErrores</c> — la constraint <c>ck_clientes_cf_protegido</c>
 /// (23514) y una prueba de humo por cada FK nueva (23503).
 ///
-/// GATED: mismo motivo que <c>ClientesYProveedoresRlsTests</c> — bloqueado hasta que la
-/// migración <c>ClientesYProveedoresEtapa2</c> se genere y apruebe (DB CHANGE GATE, task 1.7).
+/// DB CHANGE GATE aprobado 2026-08-02 y migración <c>ClientesYProveedoresEtapa2</c> aplicada:
+/// pruebas activas contra Postgres real.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class BackstopClientesYProveedoresTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
-    private const string RazonDeGate =
-        "Gated: clientes/proveedores no existen hasta que la migración " +
-        "ClientesYProveedoresEtapa2 se genere y apruebe (DB CHANGE GATE, task 1.7).";
-
     private async Task<(int IdTenant, int IdCondicionFiscal, int IdListaPrecio)> SembrarTenantConCatalogosAsync(string nombre)
     {
         using var _ = fixture.CreateClient();
@@ -49,7 +45,7 @@ public class BackstopClientesYProveedoresTests(WaysApiFixture fixture) : IClassF
 
     /// <summary>Spec: Consumidor Final Protected Row — bypass directo del servicio (raw SQL,
     /// no <c>ServicioDeClientes</c>) sobre la fila Consumidor Final asserts 23514.</summary>
-    [Fact(Skip = RazonDeGate)]
+    [Fact]
     public async Task UnUpdateDirectoPorSqlSobreElConsumidorFinalViolaLaCheckConstraint()
     {
         var (idTenant, idCondicionFiscal, idListaPrecio) =
@@ -81,7 +77,7 @@ public class BackstopClientesYProveedoresTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("ck_clientes_cf_protegido", excepcion.ConstraintName);
     }
 
-    [Fact(Skip = RazonDeGate)]
+    [Fact]
     public async Task UnClienteConIdListaPrecioInexistenteViolaLaFk()
     {
         var (idTenant, idCondicionFiscal, _) =
@@ -101,7 +97,7 @@ public class BackstopClientesYProveedoresTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("fk_clientes_lista_precio", excepcion.ConstraintName);
     }
 
-    [Fact(Skip = RazonDeGate)]
+    [Fact]
     public async Task UnClienteConIdCondicionFiscalInexistenteViolaLaFk()
     {
         var (idTenant, _, idListaPrecio) =
@@ -121,7 +117,7 @@ public class BackstopClientesYProveedoresTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("fk_clientes_condicion_fiscal", excepcion.ConstraintName);
     }
 
-    [Fact(Skip = RazonDeGate)]
+    [Fact]
     public async Task UnProveedorConIdCondicionFiscalInexistenteViolaLaFk()
     {
         var (idTenant, _, _) =
@@ -140,7 +136,7 @@ public class BackstopClientesYProveedoresTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("fk_proveedores_condicion_fiscal", excepcion.ConstraintName);
     }
 
-    [Theory(Skip = RazonDeGate)]
+    [Theory]
     [InlineData("clientes", "fk_clientes_tenant")]
     [InlineData("proveedores", "fk_proveedores_tenant")]
     [InlineData("listas_precio", "fk_listas_precio_tenant")]
