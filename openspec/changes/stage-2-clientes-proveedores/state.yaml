@@ -1,0 +1,40 @@
+# NOTE (2026-08-02): the tenant-organization delta spec in this change was written against
+# stage 1's change-dir spec BEFORE stage 1 was archived. The baseline now exists at
+# openspec/specs/tenant-organization/spec.md — this change's future archive must merge
+# against that baseline.
+change: stage-2-clientes-proveedores
+phase: propose
+status: proposal-drafted-awaiting-question-round-review
+artifact_store: openspec
+phases:
+  explore:
+    status: skipped
+  propose:
+    status: done
+    artifact: proposal.md
+  spec:
+    status: pending
+  design:
+    status: pending
+  tasks:
+    status: pending
+  apply:
+    status: pending
+  verify:
+    status: pending
+  archive:
+    status: pending
+dependencies:
+  spec: [propose]
+  design: [propose]
+  tasks: [spec, design]
+  apply: [tasks]
+  verify: [apply]
+  archive: [verify]
+notes:
+  - "Scope pre-negotiated with the user (2026-08-02) and marked binding by the orchestrator prompt: full clientes schema (doc 10 §2) including complete credit fields at rest (limite_credito/credito_ilimitado/saldo, no CC movement engine — stage 7), atomic per-tenant numero (numeraciones_comprobante pattern family), protected Consumidor Final row seeded for new + existing tenants, full proveedores schema, listas_precio MINIMAL (table + General/es_default list + provisioning template only, no precios/derived lists — stage 3), clientes.id_lista_precio NOT NULL from day one, both tables catalog-scoped (id_tenant + id_empresa NULL), db-error-backstops compliance planned per constraint."
+  - "Explicit reuse directive: stage 2 sits on stage-1 machinery (EntidadTenant, generic catalog machine, RLS helpers, keyed platform context, error-code contract) — proposal.md's Approach says reuse, not redesign; design.md must not re-litigate stage-1 ADRs unless a genuine new gap appears."
+  - "Out of scope, explicit: precios/ofertas (stage 3), movimientos_cuenta_corriente (stage 7), legacy migration, ADR-10 DeLaEmpresa (stays deferred per stage 1 unless design finds it now necessary for empresa-scoped clientes -- if so, flag as open question, do not silently decide)."
+  - "DB CHANGE GATE (CLAUDE.md) applies before any EF Core migration is generated during apply -- same unconditional rule as stage 1."
+  - "Delivery: chained PRs, stacked-to-main (session decision, per protocolo-pr-solo-dev). Exact slicing deferred to sdd-tasks Review Workload Forecast."
+  - "Proposal question round written into proposal.md ('## Proposal question round') per sdd-propose Step 0 -- not blocking artifact creation since this is a single-shot delegated write, but explicitly flagged for user review before spec/design lock in the resulting assumptions: (1) proveedores.cuit uniqueness undecided by doc 10, (2) clientes.numero_documento uniqueness undecided by doc 10, (3) Consumidor Final backfill-on-existing-tenants timing/approval, (4) ADR-10 DeLaEmpresa re-flagged per scope note. Default assumptions stated in the proposal if no correction arrives."
