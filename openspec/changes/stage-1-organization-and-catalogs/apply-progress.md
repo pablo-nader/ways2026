@@ -1753,3 +1753,75 @@ batch 10 found missing. Nothing left gated on user decisions, backend gaps, or t
 Ready for judgment-day review (dual blind review, per `CLAUDE.md`'s PR validation gate) before
 opening the single PR 4 (`size:exception`, per the batch 11 delivery decision, tasks.md) —
 closing the entire `stage-1-organization-and-catalogs` change.
+
+---
+
+## Batch 12 — judgment-day round 1 polish on Slice 4 (branch `feat/stage1-slice4-abm-web`)
+
+**Trigger:** first judgment-day round (dual blind review) over the batch 10–11 diff. One
+triaged-real item, three confirmed-minor items, one suggestion accepted, one symmetric-test
+suggestion accepted. All approved by the user 2026-08-02; this batch applies them.
+
+### Completed in batch 12
+
+1. **[Triaged real] Snake_case error-code keys.** `ServicioDeOrganizacion.Normalizar`/
+   `NormalizarOpcional` and `ServicioDeAprovisionamiento.Normalizar` both interpolated the
+   human-readable field label directly into the machine `codigo` (e.g. `"razón social"` →
+   `"razón social_requerido"`), the same pattern already fixed once before in
+   `ServicioDeUsuarios.Normalizar` at the time it was written — this one just never got the
+   memo. Both private helpers now take a separate stable snake_case `codigo` parameter
+   (`razon_social`, `cuit`, `nombre_punto_venta`, `nombre_tenant`, `nombre_fantasia`,
+   `domicilio`, `horario`, `whatsapp`, `instagram`, `facebook`, `sitio_web`, `punto_venta`,
+   `mail_admin`) independent from the human `campo` label used only in the message text.
+   `ServicioDeUsuarios.Normalizar` was checked and confirmed already safe (its `campo`
+   arguments — `"usuario"`, `"mail"` — are already snake_case-safe single words), so it needed
+   no change; documented here so the scope-rule check is traceable. Test:
+   `ServicioDeOrganizacionTests.ActualizarUnaEmpresaConRazonSocialVaciaEsRechazada` now also
+   asserts `error.Codigo == "razon_social_requerido"` (previously only asserted the 400
+   status).
+2. **[Confirmed minor] Categoria parent dropdown filter.** `Categorias.tsx`'s
+   `FormularioCategoria` only excluded the node itself from the "categoría padre" `<select>`,
+   letting a user pick one of the node's own descendants (a cycle the backend rejects, ADR-12)
+   or a level-3 node (which can never have children under `PROFUNDIDAD_MAXIMA`). Now takes the
+   already-computed `arbol: Nodo[]` (was the flat `items` list) and filters through two new
+   helpers, `idsDeSubarbol` (walks the tree to collect a node's descendant ids) and `aplanar`
+   (flattens the tree depth-first, preserving hierarchy order) — the select now excludes self,
+   the full descendant subtree, and any `nivel === PROFUNDIDAD_MAXIMA` node, with a light
+   indent (`—` repeated by depth) in the option label as a readability bonus.
+3. **[Confirmed minor] Stale comment in `NuevoTenant.tsx`.** The doc comment still said "no
+   endpoint exists yet to list/suspend tenants" — false since batch 11 shipped `Tenants.tsx`
+   in this same branch. Updated to point at `Tenants.tsx` instead.
+4. **[Suggestion] Dead-branch comment in `Parametros.tsx`.** The comment described fetching
+   "the caller's own empresa if tenant admin, all of them if platform," but the route is
+   Admin-only (`App.tsx`, `rolesPermitidos={[ROL.Admin]}`) — the platform branch is
+   unreachable from this screen. Corrected to describe only the reachable admin-only path.
+5. **[Suggestion] Symmetric PV test.** Added
+   `ServicioDeOrganizacionTests.UnAdminNoPuedeEditarUnPuntoDeVentaDeOtroTenant` (unit,
+   mirrors the existing `UnAdminNoPuedeEditarUnaEmpresaDeOtroTenant`) and
+   `OrganizacionTests.UnAdminRecibe404AlEditarElPuntoDeVentaDeOtroTenant` (HTTP-level, mirrors
+   `UnAdminRecibe404AlEditarLaEmpresaDeOtroTenant`) — both assert 404 per ADR-8, closing the
+   one asymmetry left between the empresa and punto-de-venta cross-tenant-edit coverage.
+
+### Verification performed this batch
+
+- `npx tsc -b` (Ways.Web) → clean, 0 errors.
+- `npx oxlint` → 1 warning, pre-existing (`AuthContext.tsx`, unrelated to this batch), 0 new,
+  exit code 0.
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 61/61**, **`Ways.Application.Tests` 85/85**
+  (84 + 1 new: the PV cross-tenant-edit unit test), **`Ways.IntegrationTests` 74/74** (73 + 1
+  new: the PV cross-tenant-edit HTTP test). 0 failures, 0 skipped.
+
+### Commits (work units, branch `feat/stage1-slice4-abm-web`, no push, no PR)
+
+18. `fix(organizacion): separar el codigo snake_case del label humano en los errores de validacion`
+19. `fix(web): filtrar el subarbol y el nivel 3 del selector de categoria padre`
+20. `docs(web): corregir comentarios desactualizados en NuevoTenant y Parametros`
+21. `test(organizacion): agregar la cobertura simetrica de punto de venta cross-tenant`
+22. `docs(sdd): registrar el batch 12 — polish de judgment-day ronda 1 en el slice 4` (this
+    commit, next)
+
+### Next batch
+
+Ready for a re-judged clean round over the batch 10–12 diff, then the single PR 4 per the
+batch 11 delivery decision.
