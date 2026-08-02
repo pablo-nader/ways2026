@@ -1391,3 +1391,436 @@ had a 23505 mapping (round 1) but no race test.
 ### Next batch
 
 Ready for judgment-day round 3 (re-judge the fixed diff) before opening the single PR 3.
+
+---
+
+## Slice 4: Web ABMs (PR 4)
+
+## Batch 10
+
+**Scope:** Slice 4 only (`tasks.md` § Slice 4), branch `feat/stage1-slice4-abm-web` off
+up-to-date `main` (PRs #2/#4/#6 — slices 1-3 — already merged). No database changes in this
+slice; no backend files touched at all (verified with `git status --short` against
+`src/Ways.Api`/`Ways.Application`/`Ways.Domain`/`Ways.Infrastructure`/`tests` before
+committing anything).
+
+### A real scope gap found before writing any UI code
+
+Before building the "organización" screens (tasks 4.5-4.7), the actual mapped API surface was
+audited end to end (`grep` over `src/Ways.Api/Endpoints`, `Program.cs`, and
+`Ways.Application/Organizacion`). Result: **there is no `GET`/`PUT` endpoint anywhere for
+`tenants`, `empresas`, or `puntos_venta`** — only `POST /api/plataforma/tenants`
+(`AprovisionamientoEndpoints.cs`, the provisioning transaction from Slice 3 §3F) exists.
+`design.md`'s component map names a `ServicioDeOrganizacion` (`Ways.Application/Organizacion/`)
+that was never actually built by any task in `tasks.md` Slices 1-3 — a real gap between the
+design's component map and the task breakdown that planned the work, not something this batch
+could have silently worked around. Per the apply's hard execution rule #2 ("no backend changes
+expected — if you need a backend change, STOP and report instead of making it"), no endpoint
+was added.
+
+**Consequence:** tasks 4.5 (Tenants: list/create/suspend), 4.6 (Empresas: list/edit) and 4.7
+(PuntosVenta: list/edit) are only partially buildable:
+- 4.5's "create" is fully covered by 4.8's provisioning screen (`POST /api/plataforma/tenants`
+  does exist and works end to end — see the smoke test below).
+- 4.5's "list"/"suspend" and all of 4.6/4.7 have **zero API surface** to build against. Marked
+  `[ ]` **BLOCKED** in `tasks.md` with the specific missing endpoints named, not silently
+  skipped or faked with dead UI calling routes that don't exist.
+
+This also surfaced a second-order consequence for the parámetros editor (task not numbered in
+`tasks.md` but required by the apply's "Scope" section): `ServicioDeParametros.ResolverAsync`/
+`ListarAsync`/`EstablecerAsync` all take `idEmpresa` as an explicit argument (ADR-10: no
+"empresa actual" in the session yet), and with no endpoint to list a tenant's empresas, the
+`Ways.Web` editor has no way to offer a dropdown — it takes the empresa id as a plain number
+input, documented inline in the component and in `docs/10-modelo-de-datos.md` §9, not hidden.
+
+### Completed in batch 10
+
+- **4.1** — `src/Ways.Web/src/api/tipos.ts`: types for the 5 tenant catalogs (`AreaListado`/
+  `Alta`, `MarcaListado`/`Alta`, `GrupoListado`/`Alta`, `MedioPagoListado`/`Alta`,
+  `CategoriaListado`/`Alta`), the 3 fiscal catalogs (read-only), `ParametroListado`/`Alta`/
+  `Resuelto` + the `PARAMETROS_CONOCIDOS` registry (mirrors `ParametroConocido`), and
+  `SolicitudDeAprovisionamiento`/`ResultadoAprovisionamiento`. Plus `puedeGestionarCatalogos`
+  (admin-only, mirrors `Politicas.GestionDeCatalogo`) and `puedeAprovisionarTenants`
+  (root-only, mirrors `Politicas.SoloPlataforma`). `src/Ways.Web/src/api/catalogos.ts`: the
+  field-descriptor type (`DescriptorDeCatalogo<TListado, TAlta>`, `CampoDescriptor`) and one
+  concrete descriptor per catalog (`descriptorAreas`/`Marcas`/`Grupos`/`MediosPago`/
+  `Categorias`), each declaring only its own columns beyond `nombre`/`activo` — `idEmpresa`
+  never appears in a descriptor (ADR-10 deferred, single-empresa UX is fine per the apply's
+  scope).
+- **4.2** — `PaginaCatalogo.tsx`: one generic component (list + incluir-inactivos toggle +
+  create/edit form + baja lógica), same shape as the existing `Usuarios.tsx` (Box/Cargando/
+  ErrorApi conventions, `rounded-0` Bootstrap classes). Renders extra columns/fields purely
+  from the descriptor (`campos`), including a `select` type for `MedioPago.Comportamiento`.
+- **4.3** — `RutaCatalogo.tsx` resolves `/catalogos/:recurso` to a concrete descriptor via a
+  `switch`, not a runtime `Record<string, Descriptor>` lookup: a heterogeneous registry
+  indexed by string loses the `TListado`/`TAlta` pairing per catalog under TS's contravariant
+  function-parameter checking (tried first, reverted — documented in the file's own comment).
+  `CatalogosFiscales.tsx`: read-only lists for the 3 global catalogs (no form, matches the API
+  — no POST/PUT/DELETE mapped for them at all, ADR-11 gate #4).
+- **4.4** — `Categorias.tsx`: builds the tree client-side from the flat listing
+  (`idCategoriaPadre`), shows the computed level per node (1-3), "+ Subcategoría" only offered
+  below level 3 (soft UX guardrail — the server's `categoria_profundidad_excedida`/
+  `categoria_ciclo`/`categoria_padre_invalido` remain the real backstop, surfaced via
+  `ErrorApi.message`).
+- **4.8** — `NuevoTenant.tsx`: root-only form for `POST /api/plataforma/tenants`; shows
+  `passwordTemporal` once with a "Copiar" button (`navigator.clipboard`, falls back silently
+  to on-screen text if permission is denied) and an explicit "no se vuelve a mostrar" warning.
+- **Parámetros editor** (scope-required, no `tasks.md` number): `Parametros.tsx` — manual
+  `idEmpresa` entry (documented gap above), upsert form restricted to
+  `PARAMETROS_CONOCIDOS` (matches `ParametroConocido.Buscar`'s closed-list rejection), a
+  "Probar" button hitting `GET /api/parametros/{clave}` to show the resolved value live, and
+  the configured-parameters table. No delete: `ParametrosEndpoints.cs` never mapped a
+  `DELETE`, so the editor doesn't offer one either.
+- **Routing/nav** — `App.tsx`: 5 new routes, each gated by the exact role the API's own policy
+  requires (`GestionDeCatalogo` = admin-only ⇒ `rolesPermitidos={[ROL.Admin]}` for the 4
+  catalog routes + categorías + parámetros; `SoloPlataforma` = root-only ⇒
+  `rolesPermitidos={[ROL.Root]}` for `/organizacion/nuevo-tenant`). One product-level
+  narrowing, not a security change: `/catalogos-fiscales`'s real API policy is "any
+  authenticated session" (no `RequireAuthorization` policy attached, just the global
+  fallback), but the nav/route both restrict it to `[ROL.Root, ROL.Admin]` — POS staff
+  (vendedor/supervisor) have no current use for browsing fiscal reference tables, and
+  narrowing the *menu* doesn't weaken the API's own authorization if that assumption changes
+  later. `Layout.tsx`: catalog nav links generated from `DESCRIPTORES_DE_CATALOGO` (the same
+  registry `RutaCatalogo` would have used) instead of hardcoded, so adding a 5th catalog to
+  the machine only touches `catalogos.ts`.
+- **4.10** — `docs/10-modelo-de-datos.md`: status callouts in §1 (padrones — which catalogs
+  have full ABM vs. read-only) and §9 (parámetros — why the empresa id is manual), plus a new
+  row in the "Etapas sugeridas" table recording flow-A (subdomain login, ADR-7) as still
+  deferred with the reason (needs pre-session tenant resolution + wildcard DNS/TLS at the
+  hosting layer).
+
+### 4.9 — smoke verification (honest account)
+
+No browser/e2e automation tool is available in this environment (confirms `design.md`
+ADR-17's own gap — `Ways.Web` has no Playwright harness, flagged there as a follow-up, not
+something this batch could add without inflating an already-large slice). What **was** run,
+real:
+
+1. `npx tsc -b` (Ways.Web) → clean, 0 errors.
+2. `npx oxlint` → 1 warning, pre-existing (`AuthContext.tsx`, `only-export-components`,
+   unrelated to this batch — same file, not touched here). 0 new warnings.
+3. `npx vite build` → succeeds, 273 KB JS / 232 KB CSS bundle, no errors.
+4. **Real end-to-end contract smoke test** (not a browser click-through, but a genuine
+   integration proof, since a live host + Postgres were available): `docker compose -f
+   compose.dev.yml up -d`, `dotnet run --project src/Ways.Api`, then `curl` against the real
+   running API with cookie-jar sessions:
+   - Logged in as the seeded root (`test@test.com`) → `POST /api/plataforma/tenants` → 201,
+     exact `ResultadoAprovisionamiento` shape (`idTenant`/`idEmpresa`/`idPuntoVenta`/
+     `idUsuarioAdmin`/`passwordTemporal`) matching `NuevoTenant.tsx`'s type.
+   - Root → `GET /api/catalogos/areas` → 403, confirming the nav's admin-only gating for
+     catalog routes is correct (root really is locked out at the API, not just hidden in the
+     menu).
+   - `GET /api/catalogos-fiscales/condiciones-fiscales`/`alicuotas-iva` → exact field-for-field
+     match against `CondicionFiscalListado`/`AlicuotaIvaListado` (camelCase confirmed:
+     `codigoAfip`, not `codigo_afip`).
+   - Logged in as the freshly-provisioned tenant admin → `GET /api/catalogos/medios-pago` →
+     the 2 template rows (`Efectivo`/`Transferencia`) with the exact shape
+     `MedioPagoListado` expects.
+   - `POST /api/catalogos/areas` → 201 with the exact `AreaListado` shape; a duplicate → 409
+     `nombre_duplicado` with the same friendly `title` text `PaginaCatalogo.tsx` displays via
+     `ErrorApi.message` (no code-to-message mapping needed client-side — the server's
+     `ProblemDetails.title` is already the user-facing text, same convention `Usuarios.tsx`
+     already uses).
+   - `POST /api/catalogos/medios-pago` with an accented name (`"Crédito"`, sent as a real
+     UTF-8 file payload) → 201, confirming the JSON round-trips non-ASCII correctly (a first
+     attempt sending accents as a raw shell argument hit a `500`/`error_interno` — root-caused
+     to Git Bash on Windows mis-encoding the argument as CP-1252 before curl ever sent it, an
+     artifact of the terminal, not the API; a real browser's `JSON.stringify` always emits
+     valid UTF-8, confirmed by retrying with a proper UTF-8 file and getting 201).
+   - `POST /api/catalogos/categorias` (root category) → 201, exact `CategoriaListado` shape.
+   - `PUT /api/parametros?idEmpresa=2` (upsert `tolerancia_pago`) → 200, then
+     `GET /api/parametros/tolerancia_pago?idEmpresa=2` → resolved value matches, exact
+     `ParametroResuelto` shape.
+   - Torn down after: `kill` on the API process, `docker compose -f compose.dev.yml down -v`
+     (removes the throwaway dev Postgres volume — no smoke-test data left behind).
+
+### Verification performed this batch
+
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings (no backend files changed; run to confirm
+  the "no backend changes expected" constraint held).
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 61/61**, **`Ways.Application.Tests` 72/72**,
+  **`Ways.IntegrationTests` 65/65** — identical to the state at the end of Slice 3's judgment-day
+  round 2, confirming zero regression from a slice that touched no backend code. Docker
+  daemon reachable throughout.
+- Frontend: see "4.9 — smoke verification" above.
+
+### Deferred items (reported, not silent)
+
+- Tasks 4.5 (list/suspend part)/4.6/4.7 — blocked on missing backend endpoints, see above and
+  `tasks.md`. Needs a follow-up slice/change to add `ServicioDeOrganizacion` +
+  `OrganizacionEndpoints` (list/edit empresas and puntos de venta, list/suspend tenants) before
+  those screens can be built.
+- The empresa-scoped catalog filter (ADR-10 `DeLaEmpresa`) stays unimplemented per the apply's
+  explicit instruction — single-empresa UX is fine for this stage.
+- Flow-A subdomain login (ADR-7) stays unimplemented — recorded in `docs/10-modelo-de-datos.md`
+  this batch, no functional change.
+- No Playwright/e2e harness (ADR-17) — the smoke test above is the closest available proxy in
+  this environment.
+
+### Commits (work units, branch `feat/stage1-slice4-abm-web`, no push, no PR)
+
+1. `feat(web): agregar tipos y cliente de catalogos/parametros/aprovisionamiento`
+2. `feat(web): agregar el componente generico PaginaCatalogo (ADR-11)`
+3. `feat(web): agregar la pantalla de arbol de categorias (escape hatch)`
+4. `feat(web): agregar la vista de catalogos fiscales de solo lectura`
+5. `feat(web): agregar el editor de parametros operativos (ADR-13)`
+6. `feat(web): agregar el alta de tenants (aprovisionamiento, ADR-16)`
+7. `feat(web): conectar las rutas y el menu de la etapa 4`
+8. `docs: actualizar doc 10 con el estado de la etapa 4 y el gap de organizacion`
+9. `docs(sdd): registrar el batch 10 (etapa 4) — tasks.md + apply-progress.md` (this commit)
+
+### Next batch
+
+Slice 4 is functionally complete for everything the merged API surface supports, verified
+build-clean and contract-clean end to end. Ready for judgment-day review before PR 4 — but PR 4
+as originally scoped (`tasks.md`'s "Suggested Work Units" table) cannot close 4.5/4.6/4.7
+without a prior backend change; recommend the coordinator decide whether to (a) open PR 4 now
+covering only the buildable ABM surface and file a follow-up change for organization
+list/edit/suspend, or (b) hold PR 4 and add the missing endpoints first. Not decided by this
+batch — reported for the coordinator per the apply's hard execution rule.
+
+---
+
+## Batch 11 — close the organization gap inside Slice 4 (user decision, 2026-08-02)
+
+**Trigger:** the coordinator authorized closing batch 10's organization gap NOW, inside this
+same slice, as an explicit scope extension — "one judgment-day + one PR closes the whole
+stage." Explicitly gated on no schema change being needed; none was (`tenants`/`empresas`/
+`puntos_venta` and their `DbSet`s already existed from Slice 1 / Slice 3F). No DB CHANGE GATE
+applies to this batch.
+
+**Status:** `done`. Backend (`ServicioDeOrganizacion` + `OrganizacionEndpoints`, new tasks.md
+section 4B) implemented with unit + integration tests, then 4.5-4.7 unblocked and the
+`Parametros.tsx` manual-`idEmpresa` limitation fixed. Full suite green (61/84/73, +12
+application / +8 integration vs. batch 10), stable across 2 consecutive runs. Extended smoke
+test proved every new endpoint end to end against a live Postgres + the real API host.
+
+### Backend: `ServicioDeOrganizacion` + `OrganizacionEndpoints`
+
+- **Contracts** (`Ways.Application/Organizacion/Contratos.cs`): `TenantListado`/`TenantEdicion`
+  (only `Nombre` is editable here — `Estado` changes through the dedicated
+  suspend/reactivate actions, not this general edit), `EmpresaListado`/`EmpresaEdicion`,
+  `PuntoVentaListado`/`PuntoVentaEdicion` (`IdEmpresa` deliberately not editable — structural,
+  not descriptive).
+- **`ServicioDeOrganizacion`**: list/detail/edit for the three entities, plus
+  suspend/reactivate for tenants. Empresas/puntos de venta reuse the exact
+  `ServicioDeUsuarios.BuscarAsync` pattern: the EF tenant filter (+ RLS underneath) already
+  makes a cross-tenant row invisible, and `PoliticaDeRoles.ValidarAlcanceDeTenant` is the
+  explicit domain-layer defense-in-depth on top (ADR-8, same 404-not-403 rule). Listing needed
+  **zero** extra scoping code: the existing `WaysDbContext` tenant filter already resolves
+  "platform sees everything, a tenant session sees only its own" via the same `esPlataforma ||
+  id_tenant == tenantActual.Id` predicate every other `EntidadTenant`/`Tenant` query already
+  uses — `db.Empresas.OrderBy(...).ToListAsync()` is correct for both a root session and a
+  tenant admin session, no `IgnoreQueryFilters` anywhere in this service.
+  `CambiarEstadoTenantAsync` (backing both `SuspenderTenantAsync`/`ReactivarTenantAsync`) is
+  idempotent (repeating the same action is a no-op, not an error) and rejects any transition
+  once a tenant is `EstadoTenant.Baja` (409 `tenant_dado_de_baja`) — alternating
+  Activo/Suspendido must never accidentally reactivate a tenant that was properly decommissioned.
+  The three tenant-scoped methods (`ActualizarTenantAsync`/`Suspender`/`Reactivar`) trust the
+  API's own `Politicas.SoloPlataforma` for authorization, with no duplicate in-service role
+  check — same style choice as the existing `ServicioDeAprovisionamiento` (the closest analog:
+  another platform-only service), not the `ServicioDeUsuarios` style (which layers an internal
+  `ExigirPermisoDeGestion()` on top of its own API policy). Documented explicitly in the
+  class's XML doc so the asymmetry with `ServicioDeUsuarios` reads as a deliberate choice, not
+  an oversight.
+- **`OrganizacionEndpoints`**: `MapearOrganizacion()` maps a *second* `MapGroup` onto
+  `/api/plataforma/tenants` (`AprovisionamientoEndpoints` already owns `POST /` there) —
+  confirmed this is a supported ASP.NET Core pattern (different verb+template combinations
+  don't conflict) via the passing test suite, not just by inspection. New
+  `Politicas.GestionDeOrganizacion` (root or admin — identical claim shape to
+  `GestionDeUsuarios`, kept as its own named policy rather than reused, matching the existing
+  one-named-policy-per-concern convention even where claim sets overlap).
+- **No new `db-error-backstops` work needed.** No new unique index or FK was introduced (the
+  schema is unchanged) — the existing generic backstops (`fk_*` → 400 `referencia_invalida`,
+  the `_nombre`/`_codigo` family classifier) already cover anything this surface could trigger,
+  and neither `TenantEdicion`/`EmpresaEdicion`/`PuntoVentaEdicion` write a column that
+  participates in any unique constraint.
+- **DI**: `ServicioDeOrganizacion` registered scoped in `Ways.Application.DependencyInjection`,
+  same lifetime as every other application service.
+
+### Tests
+
+- **Unit** (`ServicioDeOrganizacionTests.cs`, InMemory, 12 cases): own-empresa edit OK,
+  cross-tenant empresa/punto-de-venta → 404 (both `Obtener`/`Actualizar`), platform full
+  access (list + edit any empresa), tenant-scoped listing only returns the caller's own rows,
+  tenant name edit, suspend→reactivate alternation, idempotent re-suspend, `Baja` rejects both
+  actions (409), and a validation case (empty `RazonSocial` → 400). Reused the exact
+  `ContextoFijo`/`RelojFijo`/`CrearContexto` helper shapes from `ServicioDeUsuariosTests.cs`
+  for consistency.
+- **Integration** (`OrganizacionTests.cs`, real Postgres, 8 cases): admin edits own empresa OK
+  via real HTTP; admin gets 404 editing another tenant's empresa; admin gets 403 both
+  suspending a tenant and listing tenants (platform-only routes); platform lists **and**
+  edits any empresa/punto de venta (proves the cross-tenant read AND write both work for a
+  root session, not just read); the tenant-name edit; and the big one —
+  `PlataformaSuspendeUnTenantYSuUsuarioPierdeLaSesionEnLaProximaRequest` extends Slice 2's
+  `SuspenderElTenantCortaLaSesionActivaEnLaProximaRequest` (which suspended by writing
+  `tenant.Estado` directly via a throwaway `WaysDbContext`) to suspend through the **real**
+  `POST .../suspender` endpoint instead, then proves the same three things end to end: the
+  admin's already-open session gets cut on its next request (`OnValidatePrincipal`
+  revalidation, ADR-2), a fresh login attempt is blocked (403 `tenant_suspendido`), and — new
+  compared to Slice 2's version — `ReactivarUnTenantSuspendidoPermiteVolverAIniciarSesion`
+  proves the reverse: reactivating through the endpoint lets a previously-blocked login
+  succeed again.
+- **A real, if previously invisible, test-only bug found and fixed while writing the
+  integration tests**: `TenantListado` carries an `EstadoTenant` enum, and reading it back
+  with a fresh `new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } }`
+  (the same pattern `CatalogosTests.OpcionesJson` already used for
+  `TipoComprobanteListado.Clase`) silently deserialized every property to its C# default
+  (`Nombre = null`, `Estado = Activo` — the enum's first member) instead of throwing, because
+  a freshly-constructed `JsonSerializerOptions` does **not** default
+  `PropertyNameCaseInsensitive` to `true` — unlike the zero-argument
+  `HttpContent.ReadFromJsonAsync<T>()` overload this file's *other* DTOs (without an enum
+  field) already relied on, which does. Confirmed empirically with a small throwaway console
+  probe before touching any test code, to avoid guessing. Two tests failed with exactly this
+  signature (`Nombre` read back as `null`, `Estado` read back as `Activo` regardless of the
+  real value) until `PropertyNameCaseInsensitive = true` was added explicitly. **The same bug
+  already existed, latent, in `CatalogosTests.OpcionesJson`** — invisible there because
+  `LosCatalogosFiscalesSonDeSoloLecturaParaUnTenant` only asserts `Assert.NotEmpty(tipos!)`
+  (list count, not field content) on the one DTO that uses those options. Fixed in both files
+  in the same commit, with a comment on each explaining why the bare `ReadFromJsonAsync<T>()`
+  calls elsewhere in the same files never needed this.
+
+### Frontend: unblocking 4.5-4.7 and fixing the parametros gap
+
+- **`api/organizacion.ts`** + `tipos.ts` additions: `TenantListado`/`Edicion`,
+  `EmpresaListado`/`Edicion`, `PuntoVentaListado`/`Edicion`, `clienteDeOrganizacion`.
+- **`Tenants.tsx`** (root-only): list + inline nombre edit + suspender/reactivar buttons
+  (only the applicable one shown per row, based on `estado`), a "Nuevo tenant" link to the
+  existing provisioning screen. No baja action — `EstadoTenant.Baja` has no dedicated action
+  in this batch's scope (matches the backend, which also doesn't expose one).
+- **`Empresas.tsx`**/**`PuntosVenta.tsx`** (root or admin): list + edit descriptive fields,
+  no alta/baja (both stay platform-only via provisioning). Show a "Tenant" column only for a
+  root session (`usuario.rolId === ROL.Root`) — a tenant admin's own list is implicitly
+  single-tenant, showing the column would be noise.
+- **`Parametros.tsx`**: replaced the manual "Id de empresa" number input (documented
+  limitation from batch 10) with a `<select>` populated by `GET /api/empresas` — auto-selects
+  the first (only, in this stage) empresa on load. Also upgraded the "punto de venta" field
+  from a manual id input to a `<select>` populated by `GET /api/puntos-venta`, filtered
+  client-side to the selected empresa's own points — a small UX bonus beyond what was strictly
+  asked, made possible by the same new endpoint.
+- **Routing/nav**: `/organizacion/tenants` (root), `/organizacion/empresas` and
+  `/organizacion/puntos-venta` (root or admin) — each gated by the exact role its backend
+  policy requires, same convention as every other Slice 4 route.
+
+### Verification performed this batch
+
+- `npx tsc -b` (Ways.Web) → clean, 0 errors.
+- `npx oxlint` → 1 warning, pre-existing (`AuthContext.tsx`), 0 new.
+- `npx vite build` → succeeds, 287 KB JS / 232 KB CSS.
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 61/61**, **`Ways.Application.Tests` 84/84**
+  (72 + 12 new), **`Ways.IntegrationTests` 73/73** (65 + 8 new). Stable across 2 consecutive
+  full-solution runs, 0 skipped, 0 failures. Docker daemon reachable throughout.
+- **Extended real end-to-end smoke test** against a live Postgres + the real API host (a
+  throwaway container on a free port, `-p 5555:5432` — the repo's default dev port 5432 was
+  occupied by an unrelated project's container on this machine; not a code change, an
+  environment accommodation, torn down after): logged in as the seeded root, listed/edited a
+  tenant/empresa/punto de venta, provisioned a second tenant, then as that tenant's admin
+  confirmed `GET /api/empresas` scopes to the caller's own tenant, a cross-tenant `PUT` on
+  another tenant's empresa returns 404, `GET /api/plataforma/tenants` returns 403 for a
+  non-root actor, and the full `suspender` (root) → login blocked (403) →
+  `reactivar` (root) → login succeeds cycle, all through real HTTP against a real database.
+  Every JSON shape matched the TS contracts exactly (camelCase field names confirmed:
+  `nombreFantasia`, `idPuntoVenta`, etc.).
+
+### Deferred items (reported, not silent)
+
+- None outstanding for the organization surface this batch added. `Baja` (hard decommission,
+  as opposed to `Suspendido`) has no dedicated UI action — not asked for, and the backend
+  doesn't expose one either; a tenant that's `Baja` simply can't be suspended/reactivated
+  through the existing actions (409), by design.
+- The empresa-scoped catalog filter (ADR-10 `DeLaEmpresa`) remains deferred, unchanged from
+  batch 10 — still out of this stage's scope.
+- Flow-A subdomain login (ADR-7) remains deferred, unchanged from batch 10.
+- No Playwright/e2e harness (ADR-17) — unchanged; the extended smoke test above is still the
+  closest available proxy in this environment.
+
+### Commits (work units, branch `feat/stage1-slice4-abm-web`, no push, no PR)
+
+10. `feat(organizacion): agregar ServicioDeOrganizacion + endpoints de tenants/empresas/puntos_venta`
+11. `test(integration): cubrir organizacion punta a punta y corregir un bug latente de deserializacion`
+12. `feat(web): agregar tipos y cliente de organizacion (tenants/empresas/puntos_venta)`
+13. `feat(web): agregar la pantalla de tenants (listar/editar/suspender/reactivar)`
+14. `feat(web): agregar las pantallas de empresas y puntos de venta`
+15. `fix(web): resolver la empresa del editor de parametros con un selector real`
+16. `feat(web): conectar las rutas y el menu de organizacion`
+17. `docs(sdd): registrar el batch 11 — cierre del gap de organizacion` (this commit, next)
+
+### Next batch
+
+Slice 4 is now code-complete for the **entire** stage, including the organization surface that
+batch 10 found missing. Nothing left gated on user decisions, backend gaps, or the environment.
+Ready for judgment-day review (dual blind review, per `CLAUDE.md`'s PR validation gate) before
+opening the single PR 4 (`size:exception`, per the batch 11 delivery decision, tasks.md) —
+closing the entire `stage-1-organization-and-catalogs` change.
+
+---
+
+## Batch 12 — judgment-day round 1 polish on Slice 4 (branch `feat/stage1-slice4-abm-web`)
+
+**Trigger:** first judgment-day round (dual blind review) over the batch 10–11 diff. One
+triaged-real item, three confirmed-minor items, one suggestion accepted, one symmetric-test
+suggestion accepted. All approved by the user 2026-08-02; this batch applies them.
+
+### Completed in batch 12
+
+1. **[Triaged real] Snake_case error-code keys.** `ServicioDeOrganizacion.Normalizar`/
+   `NormalizarOpcional` and `ServicioDeAprovisionamiento.Normalizar` both interpolated the
+   human-readable field label directly into the machine `codigo` (e.g. `"razón social"` →
+   `"razón social_requerido"`), the same pattern already fixed once before in
+   `ServicioDeUsuarios.Normalizar` at the time it was written — this one just never got the
+   memo. Both private helpers now take a separate stable snake_case `codigo` parameter
+   (`razon_social`, `cuit`, `nombre_punto_venta`, `nombre_tenant`, `nombre_fantasia`,
+   `domicilio`, `horario`, `whatsapp`, `instagram`, `facebook`, `sitio_web`, `punto_venta`,
+   `mail_admin`) independent from the human `campo` label used only in the message text.
+   `ServicioDeUsuarios.Normalizar` was checked and confirmed already safe (its `campo`
+   arguments — `"usuario"`, `"mail"` — are already snake_case-safe single words), so it needed
+   no change; documented here so the scope-rule check is traceable. Test:
+   `ServicioDeOrganizacionTests.ActualizarUnaEmpresaConRazonSocialVaciaEsRechazada` now also
+   asserts `error.Codigo == "razon_social_requerido"` (previously only asserted the 400
+   status).
+2. **[Confirmed minor] Categoria parent dropdown filter.** `Categorias.tsx`'s
+   `FormularioCategoria` only excluded the node itself from the "categoría padre" `<select>`,
+   letting a user pick one of the node's own descendants (a cycle the backend rejects, ADR-12)
+   or a level-3 node (which can never have children under `PROFUNDIDAD_MAXIMA`). Now takes the
+   already-computed `arbol: Nodo[]` (was the flat `items` list) and filters through two new
+   helpers, `idsDeSubarbol` (walks the tree to collect a node's descendant ids) and `aplanar`
+   (flattens the tree depth-first, preserving hierarchy order) — the select now excludes self,
+   the full descendant subtree, and any `nivel === PROFUNDIDAD_MAXIMA` node, with a light
+   indent (`—` repeated by depth) in the option label as a readability bonus.
+3. **[Confirmed minor] Stale comment in `NuevoTenant.tsx`.** The doc comment still said "no
+   endpoint exists yet to list/suspend tenants" — false since batch 11 shipped `Tenants.tsx`
+   in this same branch. Updated to point at `Tenants.tsx` instead.
+4. **[Suggestion] Dead-branch comment in `Parametros.tsx`.** The comment described fetching
+   "the caller's own empresa if tenant admin, all of them if platform," but the route is
+   Admin-only (`App.tsx`, `rolesPermitidos={[ROL.Admin]}`) — the platform branch is
+   unreachable from this screen. Corrected to describe only the reachable admin-only path.
+5. **[Suggestion] Symmetric PV test.** Added
+   `ServicioDeOrganizacionTests.UnAdminNoPuedeEditarUnPuntoDeVentaDeOtroTenant` (unit,
+   mirrors the existing `UnAdminNoPuedeEditarUnaEmpresaDeOtroTenant`) and
+   `OrganizacionTests.UnAdminRecibe404AlEditarElPuntoDeVentaDeOtroTenant` (HTTP-level, mirrors
+   `UnAdminRecibe404AlEditarLaEmpresaDeOtroTenant`) — both assert 404 per ADR-8, closing the
+   one asymmetry left between the empresa and punto-de-venta cross-tenant-edit coverage.
+
+### Verification performed this batch
+
+- `npx tsc -b` (Ways.Web) → clean, 0 errors.
+- `npx oxlint` → 1 warning, pre-existing (`AuthContext.tsx`, unrelated to this batch), 0 new,
+  exit code 0.
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 61/61**, **`Ways.Application.Tests` 85/85**
+  (84 + 1 new: the PV cross-tenant-edit unit test), **`Ways.IntegrationTests` 74/74** (73 + 1
+  new: the PV cross-tenant-edit HTTP test). 0 failures, 0 skipped.
+
+### Commits (work units, branch `feat/stage1-slice4-abm-web`, no push, no PR)
+
+18. `012e627` `fix(organizacion): pulir el slice 4 tras la ronda 1 de judgment-day` — the four
+    fix categories above landed squashed in this single commit (traceability correction noted
+    by judgment-day round 2: an earlier version of this list described them as four separate
+    work units).
+19. `5d2bc5e` `docs(sdd): registrar el batch 12 — polish de judgment-day ronda 1 en el slice 4`
+
+### Next batch
+
+Ready for a re-judged clean round over the batch 10–12 diff, then the single PR 4 per the
+batch 11 delivery decision.

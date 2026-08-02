@@ -31,6 +31,21 @@
 
 ## 1. Padrones auxiliares
 
+> **Estado (Etapa 1, stage-1-organization-and-catalogs):** `areas`, `categorias`, `marcas`,
+> `grupos` y `medios_pago` tienen tabla, RLS y ABM completo (React, máquina genérica de
+> catálogo — ADR-11 de `openspec/changes/stage-1-organization-and-catalogs/design.md`).
+> `condiciones_fiscales`, `alicuotas_iva` y `tipos_comprobante` tienen tabla y RLS, pero son
+> de solo lectura para el tenant en esta etapa: la API solo expone `GET`, sin ABM — las
+> mantiene la plataforma. La organización (`tenants`/`empresas`/`puntos_venta`) también quedó
+> completa en Etapa 1: alta vía aprovisionamiento (`POST /api/plataforma/tenants`, un tenant +
+> empresa + punto de venta + plantilla + admin en una transacción) y, desde el batch 11 de la
+> etapa 4 (`ServicioDeOrganizacion`/`OrganizacionEndpoints`), lectura/edición de datos
+> descriptivos + suspender/reactivar un tenant: `GET`/`PUT` de tenants (plataforma-only),
+> `GET`/`PUT` de empresas y puntos de venta (plataforma ve/edita cualquiera, un admin de
+> tenant solo los propios) y `POST .../suspender`/`.../reactivar`. La asimetría que existió
+> entre el batch 10 y el 11 de la etapa 4 (alta sin listado/edición) está resuelta — el gap
+> se cerró como extensión de alcance autorizada de la misma etapa, no en una etapa aparte.
+
 ### Clasificación de artículos
 
 ```sql
@@ -463,6 +478,14 @@ que hoy, pero auditable.
 
 ## 9. Parámetros operativos
 
+> **Estado (Etapa 1):** tabla, RLS y API (`GET`/`PUT`, resolución punto de venta > empresa >
+> default) implementadas — ver ADR-13 de `design.md`. El editor de `Ways.Web` pide el id de
+> empresa a mano en lugar de un selector: `ITenantActual` todavía no carga una "empresa
+> actual" en la sesión (ADR-10, deferred) y no existe un endpoint para listar las empresas del
+> tenant — en esta etapa cada tenant tiene una sola empresa (la que crea el aprovisionamiento),
+> así que sigue siendo una UX razonable hasta que la selección de empresa/punto de venta
+> llegue con las etapas operativas.
+
 Los números mágicos del legacy ($10 de tolerancia, $20 de vuelto máximo, $5 por
 operación de recarga) se vuelven configuración:
 
@@ -516,6 +539,7 @@ erDiagram
 | Etapa | Alcance | Desbloquea |
 |---|---|---|
 | 1 | Organización (doc 09) + padrones: áreas, categorías, marcas, grupos, condiciones fiscales, alícuotas, tipos de comprobante, medios de pago | Todo lo demás |
+| — | **Extension point deferido (doc 09, `design.md` ADR-7):** el login por subdominio (`usuario@tenant.dominio.com`, flow A) sigue sin implementar — Etapa 1 solo entrega el login por `mail` (flow B, tenant-agnóstico). Flow A necesita una resolución de tenant *antes* de la sesión (`Host` header) y depende de wildcard DNS/TLS a nivel de hosting, un problema de despliegue ortogonal al modelo de datos. | — |
 | 2 | Clientes y proveedores | Comprobantes |
 | 3 | Artículos + códigos de barra + listas de precio + precios con historia | POS |
 | 4 | Ofertas | POS completo |

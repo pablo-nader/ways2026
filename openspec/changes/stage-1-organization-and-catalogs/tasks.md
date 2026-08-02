@@ -43,6 +43,19 @@ split — **Slice 3 ships as a single PR 3, with `size:exception` recorded** aga
 skill) so the PR is still reviewable commit-by-commit even though it isn't split into
 separate PRs; judgment-day review still applies to the whole diff before merge.
 
+**Revision 2 (user decision, 2026-08-02):** Slice 4 grew a full backend surface mid-apply —
+section 4B, `ServicioDeOrganizacion`/`OrganizacionEndpoints` (~910 lines: service, endpoints,
+contracts, 12 unit + 8 integration tests), authorized as an explicit scope extension after
+batch 10 found tasks 4.5-4.7 blocked with no backend to build against. Original Unit 4
+estimate (~600–900 lines) is now **~3,450 lines total** for the branch
+(`git diff --stat main..HEAD`), far past the 400-line reviewable budget per PR.
+
+**Delivery decision (user, 2026-08-02):** same call as Slice 3 — **Slice 4 ships as the single
+PR 4, with `size:exception` recorded**, closing the whole stage in one PR after one
+judgment-day round. Work-unit commits stay granular (11 commits as of batch 11, one behavior
+per commit) so the PR is reviewable commit-by-commit; judgment-day review applies to the
+whole diff before merge.
+
 ---
 
 ## Slice 1: Tenancy plumbing + org tables + RLS (PR 1)
@@ -216,16 +229,56 @@ itself, but `PlantillaDeAprovisionamiento` reuses the `Area`/`MedioPago` shapes 
 
 **Depends on**: Slices 1–3 (consumes their API surface). **Start**: prior slice branch/main per chosen chain strategy. **Finish**: all ABM screens functional against the API, smoke-verified. **Rollback**: new routes only, no existing screen touched.
 
-- [ ] 4.1 [P] Add `catalogos.ts` field-descriptor API client + `tipos.ts` type additions.
-- [ ] 4.2 Add generic `PaginaCatalogo` component driven by a field descriptor. *(ADR-11)*
-- [ ] 4.3 Wire `/catalogos/:recurso` route + descriptors for `areas`, `marcas`, `grupos`, `medios_pago`; read-only views for the 3 fiscal catalogs. *(spec: auxiliary-catalogs)*
-- [ ] 4.4 Add Categorias tree page (own service subclass, escape hatch — not the generic descriptor). *(ADR-11 escape hatch)*
-- [ ] 4.5 [P] Add Tenants page: platform-only list/create/suspend. *(spec: tenant-organization / Platform-Only Creation, Tenant Suspension Enforcement)*
-- [ ] 4.6 [P] Add Empresas page: platform creates, tenant admin edits descriptive fields only. *(spec: tenant-organization / Platform-Only Creation)*
-- [ ] 4.7 [P] Add PuntosVenta page: same platform-create/tenant-edit pattern. *(spec: tenant-organization / Platform-Only Creation)*
-- [ ] 4.8 Add tenant provisioning UI (platform-only form; shows generated admin password once, never persisted in plain text). *(spec: tenant-organization / Tenant Provisioning With Template Seed; ADR-16)*
-- [ ] 4.9 Smoke-verify each ABM screen against its integration test expectations (no e2e harness this stage — ADR-17; flagged as follow-up).
-- [ ] 4.10 Update `docs/10-modelo-de-datos.md` §1/§9 status notes and record the flow-A (subdomain login) extension point as still deferred.
+- [x] 4.1 [P] Add `catalogos.ts` field-descriptor API client + `tipos.ts` type additions. — Also added a `Parametros`/`Aprovisionamiento` slice of types (out of literal scope of this task but required by the "Scope" section of the apply request); see batch report.
+- [x] 4.2 Add generic `PaginaCatalogo` component driven by a field descriptor. *(ADR-11)*
+- [x] 4.3 Wire `/catalogos/:recurso` route + descriptors for `areas`, `marcas`, `grupos`, `medios_pago`; read-only views for the 3 fiscal catalogs. *(spec: auxiliary-catalogs)* — dynamic route resolves to a concrete descriptor via a `switch` (`RutaCatalogo.tsx`), not a runtime generic lookup, to keep TS type-safety across the 4 different `TListado`/`TAlta` pairs.
+- [x] 4.4 Add Categorias tree page (own service subclass, escape hatch — not the generic descriptor). *(ADR-11 escape hatch)*
+- [x] 4.5 Tenants page: platform-only list/create/suspend. *(spec: tenant-organization / Platform-Only Creation, Tenant Suspension Enforcement)* — "create" via 4.8's provisioning screen; "list"/"suspend"/"reactivate" via `Tenants.tsx` against the new 4B endpoints. Originally blocked (batch 10, no backend endpoint existed); unblocked in batch 11 after the user authorized closing the gap inside this slice — see section 4B.
+- [x] 4.6 Empresas page: platform creates, tenant admin edits descriptive fields only. *(spec: tenant-organization / Platform-Only Creation)* — `Empresas.tsx`, batch 11. Unblocked, see 4.5's note.
+- [x] 4.7 PuntosVenta page: same platform-create/tenant-edit pattern. *(spec: tenant-organization / Platform-Only Creation)* — `PuntosVenta.tsx`, batch 11. Unblocked, see 4.5's note.
+- [x] 4.8 Add tenant provisioning UI (platform-only form; shows generated admin password once, never persisted in plain text). *(spec: tenant-organization / Tenant Provisioning With Template Seed; ADR-16)*
+- [x] 4.9 Smoke-verify each ABM screen against its integration test expectations (no e2e harness this stage — ADR-17; flagged as follow-up). — No browser/e2e tool available in this environment (confirms ADR-17's gap). Verified instead via `tsc -b`/`oxlint`/`vite build` (all clean) plus real end-to-end contract smoke tests against a live Postgres + the real API host (batch 10: catalogs/categorias/fiscal/aprovisionamiento; batch 11: the full 4B organization surface — list/edit tenants/empresas/puntos_venta, cross-tenant 404, admin 403 on platform-only routes, suspend→login-blocked→reactivate→login-works). Every JSON shape matched the TS contracts field-for-field. Full detail in `apply-progress.md`.
+- [x] 4.10 Update `docs/10-modelo-de-datos.md` §1/§9 status notes and record the flow-A (subdomain login) extension point as still deferred. — Batch 11: the §1 asymmetry paragraph (org alta exists, no list/edit/suspend) rewritten to describe the resolved state.
+
+### 4B. Organization backend (user-authorized scope extension, 2026-08-02, batch 11)
+
+**Why here, not a follow-up change.** Batch 10 found that `design.md`'s component map named
+`ServicioDeOrganizacion`/`OrganizacionEndpoints`, but no task in Slices 1-3 ever built them —
+only tenant provisioning (`POST /api/plataforma/tenants`) existed, blocking 4.5-4.7. The user
+authorized closing this gap inside Slice 4 instead of opening a follow-up change: "one
+judgment-day + one PR closes the whole stage." No schema change was needed — `tenants`,
+`empresas`, `puntos_venta` and their `DbSet`s already existed from Slice 1 / Slice 3F — so no
+DB CHANGE GATE applies here.
+
+- [x] 4B.1 Add `ServicioDeOrganizacion` (`Ways.Application/Organizacion`): list/detail/edit for
+  tenants (platform-only), empresas and puntos de venta (platform full access; tenant admin
+  own-tenant only via `PoliticaDeRoles.ValidarAlcanceDeTenant`, same 404-not-403 pattern as
+  `ServicioDeUsuarios`, ADR-8); suspend/reactivate a tenant (`EstadoTenant` transitions,
+  idempotent, rejected once `Baja`). New contracts in `Organizacion/Contratos.cs`
+  (`TenantListado`/`Edicion`, `EmpresaListado`/`Edicion`, `PuntoVentaListado`/`Edicion`). No
+  alta/baja here — those stay platform-only via `ServicioDeAprovisionamiento` (ADR-16).
+- [x] 4B.2 Add `OrganizacionEndpoints` (`Ways.Api/Endpoints`): `GET`/`PUT` `/api/plataforma/tenants`
+  (+ `POST .../suspender`, `POST .../reactivar`, `Politicas.SoloPlataforma`), `GET`/`PUT`
+  `/api/empresas`, `GET`/`PUT` `/api/puntos-venta` (new `Politicas.GestionDeOrganizacion`,
+  root or admin — same claim shape as `GestionDeUsuarios`). Wired in `Program.cs`.
+- [x] 4B.3 Unit tests (InMemory, `ServicioDeOrganizacionTests.cs`, 12 cases): tenant-scoped
+  empresa/punto-de-venta access (own OK, cross-tenant 404), platform full access, tenant
+  state transitions (suspend/reactivate alternates, idempotent on repeat, rejected on `Baja`),
+  validation errors.
+- [x] 4B.4 Integration tests (real Postgres, `OrganizacionTests.cs`, 8 cases): admin edits own
+  empresa OK, 404 cross-tenant, 403 for a tenant admin hitting platform-only routes
+  (list/suspend tenants), platform lists/edits any empresa/punto de venta, and — extending
+  Slice 2's DB-write-based suspension test to go through the real HTTP action end to end —
+  suspending via the new endpoint cuts the tenant's active session on its next request, and
+  reactivating lets its admin log in again. Found and fixed a test-only latent bug along the
+  way: `CatalogosTests.OpcionesJson` (a fresh `new JsonSerializerOptions()`) never set
+  `PropertyNameCaseInsensitive = true`, silently defaulting every field of an enum-bearing
+  DTO instead of throwing — invisible there because that test only asserted list
+  non-emptiness. Fixed in both files.
+- [x] 4B.5 Unblock 4.5-4.7's web screens against the new endpoints; fix the `Parametros.tsx`
+  manual-`idEmpresa` limitation (documented in batch 10) with a real `GET /api/empresas`-backed
+  `<select>`, and give the punto-de-venta field of that same editor a `<select>` too (was a
+  manual id).
 
 ---
 
