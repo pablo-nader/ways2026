@@ -2,9 +2,12 @@ using System.Linq.Expressions;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Clientes;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 
 namespace Ways.Infrastructure.Persistencia;
@@ -31,6 +34,17 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<AlicuotaIva> AlicuotasIva => Set<AlicuotaIva>();
     public DbSet<TipoComprobante> TiposComprobante => Set<TipoComprobante>();
     public DbSet<Parametro> Parametros => Set<Parametro>();
+
+    // Stage 2 (clientes-proveedores, DB CHANGE GATE pendiente): modelo adelantado a la
+    // migración, mismo trámite que las 5 catálogos de tenant en stage 1 (ver el comentario
+    // de WaysApiFixture.ConfigureWebHost). Los 4 sí están en IWaysDbContext desde este lote:
+    // AsignadorDeNumeroCliente/ServicioDeAprovisionamiento/InicializadorDeBaseDeDatos ya los
+    // consumen acá (a diferencia de los catálogos de tenant, que no tenían consumidor de
+    // Application en su propio lote).
+    public DbSet<Cliente> Clientes => Set<Cliente>();
+    public DbSet<Proveedor> Proveedores => Set<Proveedor>();
+    public DbSet<ListaPrecio> ListasPrecio => Set<ListaPrecio>();
+    public DbSet<NumeracionCliente> NumeracionesClientes => Set<NumeracionCliente>();
 
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
@@ -63,6 +77,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenant(modelBuilder);
         AplicarFiltroDeTenantEnTenant(modelBuilder);
         AplicarFiltroDeTenantEnUsuario(modelBuilder);
+        AplicarFiltroDeTenantEnNumeracionCliente(modelBuilder);
     }
 
     /// <summary>
@@ -102,6 +117,8 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
     private void EstamparTenant()
     {
+        RechazarEscriturasDeNumeracionCliente();
+
         foreach (var entrada in ChangeTracker.Entries<EntidadTenant>())
         {
             switch (entrada.State)
@@ -141,6 +158,31 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
             {
                 throw new InvalidOperationException(
                     "El id_tenant de una fila existente no se puede modificar.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Judgment-day (ronda 1, item de hardening): <see cref="NumeracionCliente"/> documenta
+    /// que <see cref="AsignadorDeNumeroCliente"/> es su único punto de
+    /// escritura legítimo, y que lo hace con SQL crudo dentro de la transacción del llamador
+    /// — nunca vía <c>SaveChangesAsync</c> (design decision 3). Ese contrato dependía
+    /// enteramente de que nadie escribiera la entidad por el <c>ChangeTracker</c> por error;
+    /// este guard lo convierte en un rechazo explícito, mismo patrón defense-in-depth que
+    /// <see cref="EstamparTenant"/> aplica sobre <c>IdTenant</c>: un <c>Added</c>/<c>Modified</c>
+    /// de <see cref="NumeracionCliente"/> que llega hasta acá solo puede ser un bypass del
+    /// contador atómico (una carrera lo corrompería), así que se frena antes de tocar la base.
+    /// </summary>
+    private void RechazarEscriturasDeNumeracionCliente()
+    {
+        foreach (var entrada in ChangeTracker.Entries<NumeracionCliente>())
+        {
+            if (entrada.State is EntityState.Added or EntityState.Modified)
+            {
+                throw new InvalidOperationException(
+                    "numeraciones_clientes solo se escribe con SQL crudo, vía " +
+                    $"{nameof(AsignadorDeNumeroCliente)} — nunca por " +
+                    $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
             }
         }
     }
@@ -251,6 +293,23 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         var filtro = Expression.OrElse(Expression.OrElse(esPlataforma, esLogin), comparacion);
 
         entidad.SetQueryFilter("Tenant", Expression.Lambda(filtro, parametro));
+    }
+
+    /// <summary>
+    /// <see cref="NumeracionCliente"/> no hereda de <see cref="EntidadTenant"/> (su
+    /// <c>IdTenant</c> ES la PK, no una FK opcional — mismo motivo que <see cref="Tenant"/>),
+    /// así que necesita la variante escrita a mano en vez de la del loop de
+    /// <see cref="AplicarFiltroDeTenant"/>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnNumeracionCliente(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(NumeracionCliente))!;
+
+        var parametro = Expression.Parameter(typeof(NumeracionCliente), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(NumeracionCliente.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
     }
 
     /// <summary><c>e => this.TenantActual.EsPlataforma || propiedadDeAlcance == this.TenantActual.Id</c>.

@@ -10,6 +10,7 @@ using Npgsql;
 using Testcontainers.PostgreSql;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure;
@@ -195,6 +196,8 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<EstadoTenant>("estado_tenant");
                 npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
                 npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                npgsql.MapEnum<ModoLista>("modo_lista");
                 npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
             })
             .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
@@ -218,6 +221,8 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<EstadoTenant>("estado_tenant");
                 npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
                 npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                npgsql.MapEnum<ModoLista>("modo_lista");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

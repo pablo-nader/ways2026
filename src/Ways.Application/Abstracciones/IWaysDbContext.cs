@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 
 namespace Ways.Application.Abstracciones;
@@ -27,6 +29,14 @@ public interface IWaysDbContext
     DbSet<AlicuotaIva> AlicuotasIva { get; }
     DbSet<TipoComprobante> TiposComprobante { get; }
     DbSet<Parametro> Parametros { get; }
+
+    // Stage 2 (clientes-proveedores): AsignadorDeNumeroCliente/ServicioDeAprovisionamiento
+    // consumen estos 4 desde este mismo lote (a diferencia de los catálogos de tenant de
+    // arriba, sin consumidor de Application todavía).
+    DbSet<Cliente> Clientes { get; }
+    DbSet<Proveedor> Proveedores { get; }
+    DbSet<ListaPrecio> ListasPrecio { get; }
+    DbSet<NumeracionCliente> NumeracionesClientes { get; }
 
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>

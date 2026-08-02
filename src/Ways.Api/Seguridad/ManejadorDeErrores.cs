@@ -43,6 +43,13 @@ public class ManejadorDeErrores(
                 when ClasificarUnicidad(ux) is { } familia =>
                 (StatusCodes.Status409Conflict, familia.Titulo, familia.Codigo),
 
+            // Backstop de la constraint que cierra la baja irreversible del Consumidor Final
+            // (stage-2-clientes-proveedores, design decision 4, task 1.12): ReglaDeClientes.
+            // ValidarNoConsumidorFinal ya bloquea el camino normal de ServicioDeClientes —
+            // esto es el backstop ante un UPDATE/DELETE que la esquive directamente.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: "ck_clientes_cf_protegido" } } =>
+                (StatusCodes.Status409Conflict, "El cliente Consumidor Final no se puede editar ni eliminar.", "consumidor_final_protegido"),
+
             // Backstop genérico para las FKs compuestas nuevas (fk_*_empresa, fk_categorias_padre,
             // fk_parametros_punto_venta, …): una referencia a una fila que no existe (o que
             // pertenece a otro tenant, invisible bajo RLS) llega acá como 23503 en vez de
@@ -106,6 +113,29 @@ public class ManejadorDeErrores(
             return ("parametro_duplicado", "Ya existe un parámetro con esa clave en este alcance.");
         }
 
+        // stage-2-clientes-proveedores (task 1.12, backstop map): ux_proveedores_cuit —
+        // spec "cuit Uniqueness Is Scoped Per Tenant". Exención de la prueba de carrera
+        // exigida por el skill db-error-backstops (judgment-day ronda 1, item de comentario):
+        // el endpoint de alta de proveedores (ServicioDeProveedores.CrearAsync) todavía no
+        // existe, esta etapa solo llega hasta el esquema/backstop map — la prueba de carrera
+        // queda para la Slice 3 (tasks.md, task 3.5), que sí tiene el camino de escritura real
+        // para ejercerla.
+        if (nombreDeIndice.Contains("_cuit", StringComparison.Ordinal))
+        {
+            return ("cuit_duplicado", "Ya existe un proveedor con ese CUIT en este tenant.");
+        }
+
+        // stage-2-clientes-proveedores (task 1.12, backstop map): ux_clientes_numero —
+        // backstop del contador atómico de ClienteAsignadorDeNumero (spec: Atomic Per-Tenant
+        // Numero Assignment); nunca debería chocar acá bajo operación normal. Misma exención
+        // que ux_proveedores_cuit arriba: sin ServicioDeClientes.CrearAsync todavía (esta
+        // etapa no lo incluye), la prueba de carrera queda para la Slice 2 (tasks.md, task
+        // 2.5), que reusa el rendezvous endurecido en el batch 1.13/1F de esta slice.
+        if (nombreDeIndice.Contains("_numero", StringComparison.Ordinal))
+        {
+            return ("numero_duplicado", "Ya existe un cliente con ese número en este tenant.");
+        }
+
         if (nombreDeIndice.Contains("_nombre", StringComparison.Ordinal))
         {
             return ("nombre_duplicado", "Ya existe un registro con ese nombre en este alcance.");
@@ -114,6 +144,15 @@ public class ManejadorDeErrores(
         if (nombreDeIndice.Contains("_codigo", StringComparison.Ordinal))
         {
             return ("codigo_duplicado", "Ya existe un registro con ese código.");
+        }
+
+        // ux_listas_precio_default_compartido/empresa (stage-2-clientes-proveedores, backstop
+        // map): sin camino de escritura de cliente esta etapa (spec: listas_precio ABM Is Out
+        // of Scope This Stage) — sembrado solo por provisioning/backfill, exento de race test
+        // por el mismo motivo que la familia codigo_duplicado de los catálogos fiscales.
+        if (nombreDeIndice.Contains("_default", StringComparison.Ordinal))
+        {
+            return ("default_duplicado", "Ya existe una lista de precios default en este alcance.");
         }
 
         return null;

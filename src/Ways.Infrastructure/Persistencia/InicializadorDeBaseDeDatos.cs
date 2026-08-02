@@ -3,8 +3,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Ways.Application.Abstracciones;
+using Ways.Application.Clientes;
 using Ways.Application.Usuarios;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 
@@ -93,6 +95,7 @@ public class InicializadorDeBaseDeDatos(
         await SembrarOrganizacionAsync(ct);
         await BackfillDeUsuariosAsync(ct);
         await SembrarCatalogosFiscalesAsync(ct);
+        await BackfillDeClientesYListasPrecioAsync(ct);
     }
 
     /// <summary>
@@ -429,6 +432,147 @@ public class InicializadorDeBaseDeDatos(
             await db.SaveChangesAsync(ct);
             log.LogInformation("Sembrados {Cantidad} tipos de comprobante.", TiposComprobanteBase.Length);
         }
+    }
+
+    /// <summary>
+    /// Backfill de Consumidor Final + lista de precios General para tenants preexistentes
+    /// (task 1.11, stage-2-clientes-proveedores, spec: Backfill for Pre-Existing Tenants):
+    /// mismo patrón que <see cref="BackfillDeUsuariosAsync"/> (ADR-14) — corre después de
+    /// las migraciones.
+    ///
+    /// Corre en modo plataforma: a diferencia de <c>ServicioDeAprovisionamiento</c> (que
+    /// suplanta la sesión HTTP mutable, ADR-16), acá alcanza con setear <c>IdTenant</c>
+    /// explícito en cada entidad antes de <c>SaveChangesAsync</c> — mismo criterio que
+    /// <see cref="SembrarOrganizacionAsync"/>: <c>EstamparTenant</c> lo exige bajo modo
+    /// plataforma, y RLS lo deja pasar (<c>WITH CHECK app_es_plataforma()</c>).
+    /// <c>TenantActualFijo</c> ni siquiera soporta suplantación.
+    ///
+    /// Idempotente POR ARTEFACTO, no por par (judgment-day, ronda 1, item CRITICAL): la
+    /// versión anterior calculaba "cubierto" como la UNIÓN de tenants-con-CF y
+    /// tenants-con-lista-default, así que un tenant con solo UNA de las dos filas (por un
+    /// fallo previo del proceso a mitad de camino, o un dato migrado a mano) quedaba
+    /// "cubierto" y el backfill nunca completaba la mitad faltante. Acá cada artefacto se
+    /// evalúa por separado: la lista General se crea si el tenant no tiene ninguna
+    /// <c>es_default</c>, y el cliente Consumidor Final se crea si el tenant no tiene ningún
+    /// <c>numero = 1</c> — independiente uno del otro, pero siguen viviendo en la misma
+    /// transacción por tenant (si hay que crear los dos, los dos se confirman juntos o
+    /// ninguno). Un tenant aprovisionado con <c>ServicioDeAprovisionamiento</c> (que crea las
+    /// dos filas juntas) nunca se toca acá; un tenant con las dos filas ya presentes tampoco.
+    ///
+    /// Supuestos de los que depende el chequeo de cobertura (judgment-day ronda 1, item de
+    /// comentario): (1) <c>Cliente.Numero == 1</c> identifica al Consumidor Final de forma
+    /// unívoca por tenant — invariante de <see cref="ReglaDeClientes"/>, nunca asignado por el
+    /// flujo normal de alta; (2) a lo sumo una <c>ListaPrecio.EsDefault</c> compartida (sin
+    /// <c>IdEmpresa</c>) existe por tenant — invariante de esquema, <c>ux_listas_precio_default_compartido</c>.
+    /// Si cualquiera de las dos deja de sostenerse (p.ej. una lista default por EMPRESA en vez
+    /// de compartida, una vez que <c>listas_precio</c> ABM salga de scope en una etapa futura),
+    /// este chequeo de "no tiene ninguna" deja de ser suficiente y hay que revisarlo.
+    /// </summary>
+    private async Task BackfillDeClientesYListasPrecioAsync(CancellationToken ct)
+    {
+        var todosLosTenants = await db.Tenants
+            .IgnoreQueryFilters(["BajaLogica"])
+            .OrderBy(t => t.Id)
+            .ToListAsync(ct);
+
+        if (todosLosTenants.Count == 0)
+        {
+            return;
+        }
+
+        var tenantsConCf = (await db.Clientes
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(c => c.Numero == ReglaDeClientes.NumeroConsumidorFinal)
+            .Select(c => c.IdTenant)
+            .ToListAsync(ct))
+            .ToHashSet();
+
+        // Se filtra a IdEmpresa == null (lista default compartida) porque es el único caso que
+        // este backfill necesita cubrir; además evita que ToDictionaryAsync explote con clave
+        // duplicada si algún tenant llegara a tener una default compartida y otra por empresa a
+        // la vez (estado que hoy no debería darse, pero degrada mejor así que con un crash).
+        var idListaDefaultPorTenant = await db.ListasPrecio
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(l => l.EsDefault && l.IdEmpresa == null)
+            .ToDictionaryAsync(l => l.IdTenant, l => l.Id, ct);
+
+        var tenantsPendientes = todosLosTenants
+            .Where(t => !tenantsConCf.Contains(t.Id) || !idListaDefaultPorTenant.ContainsKey(t.Id))
+            .ToList();
+
+        if (tenantsPendientes.Count == 0)
+        {
+            return;
+        }
+
+        var condicionFiscalCf = await db.CondicionesFiscales
+            .IgnoreQueryFilters(["BajaLogica"])
+            .SingleAsync(
+                c => c.Codigo == PlantillaDeAprovisionamiento.V1.ClienteConsumidorFinal.CodigoCondicionFiscal, ct);
+
+        var ahora = reloj.Ahora;
+        var estrategia = db.Database.CreateExecutionStrategy();
+        var listasCreadas = 0;
+        var clientesCreados = 0;
+
+        foreach (var tenant in tenantsPendientes)
+        {
+            await estrategia.ExecuteAsync(async () =>
+            {
+                await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+                var idListaPrecio = idListaDefaultPorTenant.GetValueOrDefault(tenant.Id);
+
+                if (idListaPrecio == default)
+                {
+                    var listaPrecioGeneral = new ListaPrecio
+                    {
+                        IdTenant = tenant.Id,
+                        Nombre = PlantillaDeAprovisionamiento.V1.ListaPrecioGeneral.Nombre,
+                        EsDefault = true,
+                        Modo = ModoLista.Fija,
+                        Activo = true,
+                        CreatedAt = ahora,
+                        UpdatedAt = ahora
+                    };
+                    db.ListasPrecio.Add(listaPrecioGeneral);
+
+                    // SaveChanges antes de asignar el numero: listaPrecioGeneral.Id todavía
+                    // no existe (identity), y clientes.id_lista_precio lo necesita.
+                    await db.SaveChangesAsync(ct);
+
+                    idListaPrecio = listaPrecioGeneral.Id;
+                    listasCreadas++;
+                }
+
+                if (!tenantsConCf.Contains(tenant.Id))
+                {
+                    await AsignadorDeNumeroCliente.AsegurarContadorAsync(db, tenant.Id, ct);
+                    var numeroConsumidorFinal = await AsignadorDeNumeroCliente.AsignarSiguienteAsync(db, tenant.Id, ct);
+
+                    db.Clientes.Add(new Cliente
+                    {
+                        IdTenant = tenant.Id,
+                        Numero = numeroConsumidorFinal,
+                        Nombre = PlantillaDeAprovisionamiento.V1.ClienteConsumidorFinal.Nombre,
+                        IdCondicionFiscal = condicionFiscalCf.Id,
+                        IdListaPrecio = idListaPrecio,
+                        CreatedAt = ahora,
+                        UpdatedAt = ahora
+                    });
+
+                    await db.SaveChangesAsync(ct);
+                    clientesCreados++;
+                }
+
+                await transaccion.CommitAsync(ct);
+            });
+        }
+
+        log.LogInformation(
+            "Backfill: {Listas} listas General y {Clientes} clientes Consumidor Final " +
+            "creados para completar {Cantidad} tenants preexistentes.",
+            listasCreadas, clientesCreados, tenantsPendientes.Count);
     }
 }
 

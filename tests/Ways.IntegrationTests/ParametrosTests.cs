@@ -261,7 +261,15 @@ public class ParametrosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
             }
 
             gate.Signal();
-            gate.Wait();
+
+            // stage-1 INFO carried into stage-2 (task 1.13): sin timeout, un bug futuro que
+            // rompa el rendezvous (p.ej. una sola query llega a matchear en vez de dos)
+            // cuelga la prueba en vez de fallarla — la sesión de test corre para siempre en
+            // vez de reportar el problema. El timeout convierte ese cuelgue en un Assert.True
+            // con mensaje, endureciendo el patrón antes de que las pruebas de carrera de
+            // numero/cuit de las Slices 2-3 lo reusen.
+            var senializo = gate.Wait(TimeSpan.FromSeconds(10));
+            Assert.True(senializo, "El rendezvous de InterceptorDeRendezVous no llegó a los 2 participantes a tiempo.");
         }
     }
 }
