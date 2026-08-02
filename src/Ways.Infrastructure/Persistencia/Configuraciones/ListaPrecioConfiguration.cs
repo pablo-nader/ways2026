@@ -40,6 +40,9 @@ public class ListaPrecioConfiguration : ConfiguracionDeCatalogo<ListaPrecio>
             .HasConstraintName("fk_listas_precio_lista_base")
             .OnDelete(DeleteBehavior.Restrict);
 
+        // Nombre explícito en snake_case (doc 10), mismo motivo que ClienteConfiguration.
+        builder.HasIndex(l => l.IdListaBase).HasDatabaseName("ix_listas_precio_lista_base");
+
         builder.HasIndex(l => new { l.IdTenant, l.EsDefault })
             .HasDatabaseName("ux_listas_precio_default_compartido")
             .HasFilter("id_empresa IS NULL AND deleted_at IS NULL AND es_default = true")

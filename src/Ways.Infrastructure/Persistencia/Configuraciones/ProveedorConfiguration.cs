@@ -117,6 +117,9 @@ public class ProveedorConfiguration : IEntityTypeConfiguration<Proveedor>
         builder.HasIndex(p => p.IdTenant).HasDatabaseName("ix_proveedores_tenant");
         builder.HasIndex(p => new { p.IdEmpresa, p.IdTenant }).HasDatabaseName("ix_proveedores_empresa");
 
+        // Nombre explícito en snake_case (doc 10), mismo motivo que ClienteConfiguration.
+        builder.HasIndex(p => p.IdCondicionFiscal).HasDatabaseName("ix_proveedores_condicion_fiscal");
+
         builder.HasOne<Tenant>()
             .WithMany()
             .HasForeignKey(p => p.IdTenant)

@@ -140,6 +140,13 @@ public class ClienteConfiguration : IEntityTypeConfiguration<Cliente>
         builder.HasIndex(c => c.IdTenant).HasDatabaseName("ix_clientes_tenant");
         builder.HasIndex(c => new { c.IdEmpresa, c.IdTenant }).HasDatabaseName("ix_clientes_empresa");
 
+        // Nombre explícito en snake_case (doc 10): sin esto, EF nombra el índice de soporte
+        // de la FK con su convención propia (IX_clientes_id_condicion_fiscal), rompiendo la
+        // convención que el resto del esquema mantiene sin excepciones (p.ej.
+        // ix_categorias_padre para id_categoria_padre).
+        builder.HasIndex(c => c.IdCondicionFiscal).HasDatabaseName("ix_clientes_condicion_fiscal");
+        builder.HasIndex(c => c.IdListaPrecio).HasDatabaseName("ix_clientes_lista_precio");
+
         builder.HasOne<Tenant>()
             .WithMany()
             .HasForeignKey(c => c.IdTenant)
