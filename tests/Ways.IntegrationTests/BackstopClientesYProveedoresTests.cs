@@ -136,6 +136,125 @@ public class BackstopClientesYProveedoresTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("fk_proveedores_condicion_fiscal", excepcion.ConstraintName);
     }
 
+    /// <summary>Judgment-day ronda 1 (item 2, GATE-APPROVED 2026-08-02): prueba de humo de la
+    /// FK compuesta <c>fk_clientes_lista_precio</c> — antes del hardening, un <c>id_lista_precio</c>
+    /// de OTRO tenant era una fila EXISTENTE (pasaba la FK simple, que solo exige que el id
+    /// exista en algún lado) y únicamente RLS lo frenaba en runtime. Con la FK compuesta
+    /// <c>(id_lista_precio, id_tenant) → listas_precio(id_lista_precio, id_tenant)</c>, la
+    /// propia constraint la rechaza.</summary>
+    [Fact]
+    public async Task UnClienteConIdListaPrecioDeOtroTenantViolaLaFkCompuesta()
+    {
+        var (idTenantA, idCondicionFiscalA, _) =
+            await SembrarTenantConCatalogosAsync(nameof(UnClienteConIdListaPrecioDeOtroTenantViolaLaFkCompuesta) + "-A");
+        var (_, _, idListaPrecioB) =
+            await SembrarTenantConCatalogosAsync(nameof(UnClienteConIdListaPrecioDeOtroTenantViolaLaFkCompuesta) + "-B");
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenantA);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO clientes (id_tenant, numero, nombre, id_condicion_fiscal, id_lista_precio, created_at, updated_at) " +
+            "VALUES ($1, 2, 'intruso', $2, $3, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenantA });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idCondicionFiscalA });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idListaPrecioB });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23503", excepcion.SqlState);
+        Assert.Equal("fk_clientes_lista_precio", excepcion.ConstraintName);
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 4): prueba de humo faltante para
+    /// <c>fk_clientes_empresa</c> — <c>id_empresa</c> es nullable (MATCH SIMPLE), así que la
+    /// prueba tiene que mandar un valor no nulo pero inexistente para disparar la FK.</summary>
+    [Fact]
+    public async Task UnClienteConIdEmpresaInexistenteViolaLaFkCompuesta()
+    {
+        var (idTenant, idCondicionFiscal, idListaPrecio) =
+            await SembrarTenantConCatalogosAsync(nameof(UnClienteConIdEmpresaInexistenteViolaLaFkCompuesta));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO clientes (id_tenant, id_empresa, numero, nombre, id_condicion_fiscal, id_lista_precio, created_at, updated_at) " +
+            "VALUES ($1, 999999, 2, 'intruso', $2, $3, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idCondicionFiscal });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idListaPrecio });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23503", excepcion.SqlState);
+        Assert.Equal("fk_clientes_empresa", excepcion.ConstraintName);
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 4): prueba de humo faltante para
+    /// <c>fk_proveedores_empresa</c>.</summary>
+    [Fact]
+    public async Task UnProveedorConIdEmpresaInexistenteViolaLaFkCompuesta()
+    {
+        var (idTenant, idCondicionFiscal, _) =
+            await SembrarTenantConCatalogosAsync(nameof(UnProveedorConIdEmpresaInexistenteViolaLaFkCompuesta));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO proveedores (id_tenant, id_empresa, razon_social, id_condicion_fiscal, created_at, updated_at) " +
+            "VALUES ($1, 999999, 'intruso', $2, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idCondicionFiscal });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23503", excepcion.SqlState);
+        Assert.Equal("fk_proveedores_empresa", excepcion.ConstraintName);
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 4): prueba de humo faltante para
+    /// <c>fk_listas_precio_empresa</c>.</summary>
+    [Fact]
+    public async Task UnaListaDePrecioConIdEmpresaInexistenteViolaLaFkCompuesta()
+    {
+        var (idTenant, _, _) =
+            await SembrarTenantConCatalogosAsync(nameof(UnaListaDePrecioConIdEmpresaInexistenteViolaLaFkCompuesta));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO listas_precio (id_tenant, id_empresa, nombre, es_default, modo, activo, created_at, updated_at) " +
+            "VALUES ($1, 999999, 'intrusa', false, 'fija', true, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23503", excepcion.SqlState);
+        Assert.Equal("fk_listas_precio_empresa", excepcion.ConstraintName);
+    }
+
+    /// <summary>Judgment-day ronda 1 (item 4): prueba de humo faltante para
+    /// <c>fk_listas_precio_lista_base</c> — FK simple (no compuesta, self-referencing por
+    /// <c>id_lista_precio</c>): un <c>id_lista_base</c> inexistente la viola sin importar el
+    /// tenant.</summary>
+    [Fact]
+    public async Task UnaListaDePrecioConIdListaBaseInexistenteViolaLaFk()
+    {
+        var (idTenant, _, _) =
+            await SembrarTenantConCatalogosAsync(nameof(UnaListaDePrecioConIdListaBaseInexistenteViolaLaFk));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO listas_precio (id_tenant, id_lista_base, nombre, es_default, modo, activo, created_at, updated_at) " +
+            "VALUES ($1, 999999, 'intrusa', false, 'fija', true, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23503", excepcion.SqlState);
+        Assert.Equal("fk_listas_precio_lista_base", excepcion.ConstraintName);
+    }
+
     [Theory]
     [InlineData("clientes", "fk_clientes_tenant")]
     [InlineData("proveedores", "fk_proveedores_tenant")]
