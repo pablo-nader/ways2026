@@ -274,7 +274,7 @@ export type ClienteListado = {
   esConsumidorFinal: boolean
 }
 
-/** `idLista Precio`/`idCondicionFiscal` son requeridos (spec: "id_lista_precio and
+/** `idListaPrecio`/`idCondicionFiscal` son requeridos (spec: "id_lista_precio and
  * id_condicion_fiscal are required") — sin default automático cuando se omiten. */
 export type AltaCliente = {
   nombre: string
