@@ -178,6 +178,25 @@ public class ClientesEndpointsTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
     }
 
+    /// <summary>Judgment-day ronda 1 (Slice 3): un <c>LimiteCredito</c> que desborda
+    /// <c>numeric(14,2)</c> también se rechaza con 400 a través del pipeline HTTP completo, sin
+    /// llegar nunca a Postgres.</summary>
+    [Fact]
+    public async Task CrearConLimiteCreditoQueDesbordaNumericDevuelve400()
+    {
+        var (_, idCondicionFiscalCf, idListaPrecioGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(CrearConLimiteCreditoQueDesbordaNumericDevuelve400));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var alta = new AltaCliente(
+            "Crédito desbordado", null, null, null, null, idCondicionFiscalCf, null, null, null, null, null, null,
+            idListaPrecioGeneral, LimiteCredito: 1_000_000_000_000m);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/clientes", alta);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+    }
+
     /// <summary>Spec: Admin creates and soft-deletes a cliente.</summary>
     [Fact]
     public async Task UnAdminCreaYDaDeBajaUnCliente()

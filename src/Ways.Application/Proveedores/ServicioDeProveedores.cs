@@ -199,12 +199,20 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj)
 
     /// <summary>Mismo criterio que <c>ServicioDeClientes.ExigirLimiteCreditoValido</c>
     /// (judgment-day ronda 1 de Slice 2) aplicado proactivamente acá: sin CHECK de esquema
-    /// (fuera del gate NO-schema-changes de esta slice), solo validación de servicio.</summary>
+    /// (fuera del gate NO-schema-changes de esta slice), solo validación de servicio.
+    /// Judgment-day ronda 1 de Slice 3: también rechaza valores que desbordan la columna
+    /// <c>numeric(5,2)</c> (mayores o iguales a 1000) — sin este chequeo, Postgres respondería
+    /// con <c>22003</c> y, sin el backstop del item 2, terminaba en un 500.</summary>
     private static void ExigirMargenValido(decimal? margen)
     {
-        if (margen is { } valor && valor < 0)
+        if (margen is not { } valor)
         {
-            throw new ErrorDominio("margen_invalido", "El margen no puede ser negativo.", 400);
+            return;
+        }
+
+        if (valor < 0 || valor >= 1000)
+        {
+            throw new ErrorDominio("margen_invalido", "El margen debe estar entre 0 y 999.99.", 400);
         }
     }
 

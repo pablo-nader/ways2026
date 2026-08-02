@@ -245,6 +245,24 @@ public class ServicioDeProveedoresTests
         Assert.Equal(400, error.EstadoHttp);
     }
 
+    /// <summary>Judgment-day ronda 1 (Slice 3): un margen que desborda <c>numeric(5,2)</c>
+    /// (mayor o igual a 1000) también se rechaza con 400 a nivel de servicio, en vez de dejar
+    /// que Postgres lo rechace con 22003 en el <c>SaveChangesAsync</c>.</summary>
+    [Fact]
+    public async Task CrearConMargenQueDesbordaNumericEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idCondicionFiscal = await SembrarCondicionFiscalAsync(nombreDeBase);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = AltaValida(idCondicionFiscal) with { Margen = 1000 };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
+
+        Assert.Equal("margen_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
     /// <summary>Spec: Invalid condicion fiscal reference maps to 400 (pre-chequeo de
     /// servicio, adelanta el mismo código que el backstop 23503).</summary>
     [Fact]

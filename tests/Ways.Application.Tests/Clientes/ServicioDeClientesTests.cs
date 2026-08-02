@@ -208,6 +208,25 @@ public class ServicioDeClientesTests
         Assert.Equal(400, error.EstadoHttp);
     }
 
+    /// <summary>Judgment-day ronda 1 (Slice 3): un <c>LimiteCredito</c> que desborda
+    /// <c>numeric(14,2)</c> (mayor o igual a 1_000_000_000_000) también se rechaza con 400 a
+    /// nivel de servicio, en vez de dejar que Postgres lo rechace con 22003 en el
+    /// <c>SaveChangesAsync</c>.</summary>
+    [Fact]
+    public async Task CrearConLimiteCreditoQueDesbordaNumericEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idCondicionFiscal, idListaPrecio) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = AltaValida(idCondicionFiscal, idListaPrecio) with { LimiteCredito = 1_000_000_000_000m };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
+
+        Assert.Equal("limite_credito_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
     /// <summary>Spec: "Invalid FK reference maps to 400" — el pre-chequeo de
     /// <see cref="ServicioDeClientes"/> adelanta el mismo código/estado que el backstop de
     /// <c>fk_clientes_condicion_fiscal</c> (23503), sin esperar la carrera con Postgres.</summary>
