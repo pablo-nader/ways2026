@@ -37,12 +37,14 @@
 > `condiciones_fiscales`, `alicuotas_iva` y `tipos_comprobante` tienen tabla y RLS, pero son
 > de solo lectura para el tenant en esta etapa: la API solo expone `GET`, sin ABM — las
 > mantiene la plataforma. La organización (`tenants`/`empresas`/`puntos_venta`) también quedó
-> de Etapa 1, pero con una asimetría a resolver en una próxima etapa: existe el alta completa
-> vía aprovisionamiento (`POST /api/plataforma/tenants`, un tenant + empresa + punto de venta +
-> plantilla + admin en una transacción), pero no hay todavía ningún endpoint para listar o
-> editar tenants/empresas/puntos de venta existentes, ni para suspender un tenant desde la UI
-> — ninguna tarea de los slices 1-3 lo planificó. Queda registrado como gap de alcance, no
-> como bug: ver el reporte de la etapa 4 (`apply-progress.md`).
+> completa en Etapa 1: alta vía aprovisionamiento (`POST /api/plataforma/tenants`, un tenant +
+> empresa + punto de venta + plantilla + admin en una transacción) y, desde el batch 11 de la
+> etapa 4 (`ServicioDeOrganizacion`/`OrganizacionEndpoints`), lectura/edición de datos
+> descriptivos + suspender/reactivar un tenant: `GET`/`PUT` de tenants (plataforma-only),
+> `GET`/`PUT` de empresas y puntos de venta (plataforma ve/edita cualquiera, un admin de
+> tenant solo los propios) y `POST .../suspender`/`.../reactivar`. La asimetría que existió
+> entre el batch 10 y el 11 de la etapa 4 (alta sin listado/edición) está resuelta — el gap
+> se cerró como extensión de alcance autorizada de la misma etapa, no en una etapa aparte.
 
 ### Clasificación de artículos
 

@@ -1578,3 +1578,178 @@ without a prior backend change; recommend the coordinator decide whether to (a) 
 covering only the buildable ABM surface and file a follow-up change for organization
 list/edit/suspend, or (b) hold PR 4 and add the missing endpoints first. Not decided by this
 batch — reported for the coordinator per the apply's hard execution rule.
+
+---
+
+## Batch 11 — close the organization gap inside Slice 4 (user decision, 2026-08-02)
+
+**Trigger:** the coordinator authorized closing batch 10's organization gap NOW, inside this
+same slice, as an explicit scope extension — "one judgment-day + one PR closes the whole
+stage." Explicitly gated on no schema change being needed; none was (`tenants`/`empresas`/
+`puntos_venta` and their `DbSet`s already existed from Slice 1 / Slice 3F). No DB CHANGE GATE
+applies to this batch.
+
+**Status:** `done`. Backend (`ServicioDeOrganizacion` + `OrganizacionEndpoints`, new tasks.md
+section 4B) implemented with unit + integration tests, then 4.5-4.7 unblocked and the
+`Parametros.tsx` manual-`idEmpresa` limitation fixed. Full suite green (61/84/73, +12
+application / +8 integration vs. batch 10), stable across 2 consecutive runs. Extended smoke
+test proved every new endpoint end to end against a live Postgres + the real API host.
+
+### Backend: `ServicioDeOrganizacion` + `OrganizacionEndpoints`
+
+- **Contracts** (`Ways.Application/Organizacion/Contratos.cs`): `TenantListado`/`TenantEdicion`
+  (only `Nombre` is editable here — `Estado` changes through the dedicated
+  suspend/reactivate actions, not this general edit), `EmpresaListado`/`EmpresaEdicion`,
+  `PuntoVentaListado`/`PuntoVentaEdicion` (`IdEmpresa` deliberately not editable — structural,
+  not descriptive).
+- **`ServicioDeOrganizacion`**: list/detail/edit for the three entities, plus
+  suspend/reactivate for tenants. Empresas/puntos de venta reuse the exact
+  `ServicioDeUsuarios.BuscarAsync` pattern: the EF tenant filter (+ RLS underneath) already
+  makes a cross-tenant row invisible, and `PoliticaDeRoles.ValidarAlcanceDeTenant` is the
+  explicit domain-layer defense-in-depth on top (ADR-8, same 404-not-403 rule). Listing needed
+  **zero** extra scoping code: the existing `WaysDbContext` tenant filter already resolves
+  "platform sees everything, a tenant session sees only its own" via the same `esPlataforma ||
+  id_tenant == tenantActual.Id` predicate every other `EntidadTenant`/`Tenant` query already
+  uses — `db.Empresas.OrderBy(...).ToListAsync()` is correct for both a root session and a
+  tenant admin session, no `IgnoreQueryFilters` anywhere in this service.
+  `CambiarEstadoTenantAsync` (backing both `SuspenderTenantAsync`/`ReactivarTenantAsync`) is
+  idempotent (repeating the same action is a no-op, not an error) and rejects any transition
+  once a tenant is `EstadoTenant.Baja` (409 `tenant_dado_de_baja`) — alternating
+  Activo/Suspendido must never accidentally reactivate a tenant that was properly decommissioned.
+  The three tenant-scoped methods (`ActualizarTenantAsync`/`Suspender`/`Reactivar`) trust the
+  API's own `Politicas.SoloPlataforma` for authorization, with no duplicate in-service role
+  check — same style choice as the existing `ServicioDeAprovisionamiento` (the closest analog:
+  another platform-only service), not the `ServicioDeUsuarios` style (which layers an internal
+  `ExigirPermisoDeGestion()` on top of its own API policy). Documented explicitly in the
+  class's XML doc so the asymmetry with `ServicioDeUsuarios` reads as a deliberate choice, not
+  an oversight.
+- **`OrganizacionEndpoints`**: `MapearOrganizacion()` maps a *second* `MapGroup` onto
+  `/api/plataforma/tenants` (`AprovisionamientoEndpoints` already owns `POST /` there) —
+  confirmed this is a supported ASP.NET Core pattern (different verb+template combinations
+  don't conflict) via the passing test suite, not just by inspection. New
+  `Politicas.GestionDeOrganizacion` (root or admin — identical claim shape to
+  `GestionDeUsuarios`, kept as its own named policy rather than reused, matching the existing
+  one-named-policy-per-concern convention even where claim sets overlap).
+- **No new `db-error-backstops` work needed.** No new unique index or FK was introduced (the
+  schema is unchanged) — the existing generic backstops (`fk_*` → 400 `referencia_invalida`,
+  the `_nombre`/`_codigo` family classifier) already cover anything this surface could trigger,
+  and neither `TenantEdicion`/`EmpresaEdicion`/`PuntoVentaEdicion` write a column that
+  participates in any unique constraint.
+- **DI**: `ServicioDeOrganizacion` registered scoped in `Ways.Application.DependencyInjection`,
+  same lifetime as every other application service.
+
+### Tests
+
+- **Unit** (`ServicioDeOrganizacionTests.cs`, InMemory, 12 cases): own-empresa edit OK,
+  cross-tenant empresa/punto-de-venta → 404 (both `Obtener`/`Actualizar`), platform full
+  access (list + edit any empresa), tenant-scoped listing only returns the caller's own rows,
+  tenant name edit, suspend→reactivate alternation, idempotent re-suspend, `Baja` rejects both
+  actions (409), and a validation case (empty `RazonSocial` → 400). Reused the exact
+  `ContextoFijo`/`RelojFijo`/`CrearContexto` helper shapes from `ServicioDeUsuariosTests.cs`
+  for consistency.
+- **Integration** (`OrganizacionTests.cs`, real Postgres, 8 cases): admin edits own empresa OK
+  via real HTTP; admin gets 404 editing another tenant's empresa; admin gets 403 both
+  suspending a tenant and listing tenants (platform-only routes); platform lists **and**
+  edits any empresa/punto de venta (proves the cross-tenant read AND write both work for a
+  root session, not just read); the tenant-name edit; and the big one —
+  `PlataformaSuspendeUnTenantYSuUsuarioPierdeLaSesionEnLaProximaRequest` extends Slice 2's
+  `SuspenderElTenantCortaLaSesionActivaEnLaProximaRequest` (which suspended by writing
+  `tenant.Estado` directly via a throwaway `WaysDbContext`) to suspend through the **real**
+  `POST .../suspender` endpoint instead, then proves the same three things end to end: the
+  admin's already-open session gets cut on its next request (`OnValidatePrincipal`
+  revalidation, ADR-2), a fresh login attempt is blocked (403 `tenant_suspendido`), and — new
+  compared to Slice 2's version — `ReactivarUnTenantSuspendidoPermiteVolverAIniciarSesion`
+  proves the reverse: reactivating through the endpoint lets a previously-blocked login
+  succeed again.
+- **A real, if previously invisible, test-only bug found and fixed while writing the
+  integration tests**: `TenantListado` carries an `EstadoTenant` enum, and reading it back
+  with a fresh `new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } }`
+  (the same pattern `CatalogosTests.OpcionesJson` already used for
+  `TipoComprobanteListado.Clase`) silently deserialized every property to its C# default
+  (`Nombre = null`, `Estado = Activo` — the enum's first member) instead of throwing, because
+  a freshly-constructed `JsonSerializerOptions` does **not** default
+  `PropertyNameCaseInsensitive` to `true` — unlike the zero-argument
+  `HttpContent.ReadFromJsonAsync<T>()` overload this file's *other* DTOs (without an enum
+  field) already relied on, which does. Confirmed empirically with a small throwaway console
+  probe before touching any test code, to avoid guessing. Two tests failed with exactly this
+  signature (`Nombre` read back as `null`, `Estado` read back as `Activo` regardless of the
+  real value) until `PropertyNameCaseInsensitive = true` was added explicitly. **The same bug
+  already existed, latent, in `CatalogosTests.OpcionesJson`** — invisible there because
+  `LosCatalogosFiscalesSonDeSoloLecturaParaUnTenant` only asserts `Assert.NotEmpty(tipos!)`
+  (list count, not field content) on the one DTO that uses those options. Fixed in both files
+  in the same commit, with a comment on each explaining why the bare `ReadFromJsonAsync<T>()`
+  calls elsewhere in the same files never needed this.
+
+### Frontend: unblocking 4.5-4.7 and fixing the parametros gap
+
+- **`api/organizacion.ts`** + `tipos.ts` additions: `TenantListado`/`Edicion`,
+  `EmpresaListado`/`Edicion`, `PuntoVentaListado`/`Edicion`, `clienteDeOrganizacion`.
+- **`Tenants.tsx`** (root-only): list + inline nombre edit + suspender/reactivar buttons
+  (only the applicable one shown per row, based on `estado`), a "Nuevo tenant" link to the
+  existing provisioning screen. No baja action — `EstadoTenant.Baja` has no dedicated action
+  in this batch's scope (matches the backend, which also doesn't expose one).
+- **`Empresas.tsx`**/**`PuntosVenta.tsx`** (root or admin): list + edit descriptive fields,
+  no alta/baja (both stay platform-only via provisioning). Show a "Tenant" column only for a
+  root session (`usuario.rolId === ROL.Root`) — a tenant admin's own list is implicitly
+  single-tenant, showing the column would be noise.
+- **`Parametros.tsx`**: replaced the manual "Id de empresa" number input (documented
+  limitation from batch 10) with a `<select>` populated by `GET /api/empresas` — auto-selects
+  the first (only, in this stage) empresa on load. Also upgraded the "punto de venta" field
+  from a manual id input to a `<select>` populated by `GET /api/puntos-venta`, filtered
+  client-side to the selected empresa's own points — a small UX bonus beyond what was strictly
+  asked, made possible by the same new endpoint.
+- **Routing/nav**: `/organizacion/tenants` (root), `/organizacion/empresas` and
+  `/organizacion/puntos-venta` (root or admin) — each gated by the exact role its backend
+  policy requires, same convention as every other Slice 4 route.
+
+### Verification performed this batch
+
+- `npx tsc -b` (Ways.Web) → clean, 0 errors.
+- `npx oxlint` → 1 warning, pre-existing (`AuthContext.tsx`), 0 new.
+- `npx vite build` → succeeds, 287 KB JS / 232 KB CSS.
+- `dotnet build Ways.slnx` → 0 errors, 0 warnings.
+- `dotnet test Ways.slnx` → **`Ways.Domain.Tests` 61/61**, **`Ways.Application.Tests` 84/84**
+  (72 + 12 new), **`Ways.IntegrationTests` 73/73** (65 + 8 new). Stable across 2 consecutive
+  full-solution runs, 0 skipped, 0 failures. Docker daemon reachable throughout.
+- **Extended real end-to-end smoke test** against a live Postgres + the real API host (a
+  throwaway container on a free port, `-p 5555:5432` — the repo's default dev port 5432 was
+  occupied by an unrelated project's container on this machine; not a code change, an
+  environment accommodation, torn down after): logged in as the seeded root, listed/edited a
+  tenant/empresa/punto de venta, provisioned a second tenant, then as that tenant's admin
+  confirmed `GET /api/empresas` scopes to the caller's own tenant, a cross-tenant `PUT` on
+  another tenant's empresa returns 404, `GET /api/plataforma/tenants` returns 403 for a
+  non-root actor, and the full `suspender` (root) → login blocked (403) →
+  `reactivar` (root) → login succeeds cycle, all through real HTTP against a real database.
+  Every JSON shape matched the TS contracts exactly (camelCase field names confirmed:
+  `nombreFantasia`, `idPuntoVenta`, etc.).
+
+### Deferred items (reported, not silent)
+
+- None outstanding for the organization surface this batch added. `Baja` (hard decommission,
+  as opposed to `Suspendido`) has no dedicated UI action — not asked for, and the backend
+  doesn't expose one either; a tenant that's `Baja` simply can't be suspended/reactivated
+  through the existing actions (409), by design.
+- The empresa-scoped catalog filter (ADR-10 `DeLaEmpresa`) remains deferred, unchanged from
+  batch 10 — still out of this stage's scope.
+- Flow-A subdomain login (ADR-7) remains deferred, unchanged from batch 10.
+- No Playwright/e2e harness (ADR-17) — unchanged; the extended smoke test above is still the
+  closest available proxy in this environment.
+
+### Commits (work units, branch `feat/stage1-slice4-abm-web`, no push, no PR)
+
+10. `feat(organizacion): agregar ServicioDeOrganizacion + endpoints de tenants/empresas/puntos_venta`
+11. `test(integration): cubrir organizacion punta a punta y corregir un bug latente de deserializacion`
+12. `feat(web): agregar tipos y cliente de organizacion (tenants/empresas/puntos_venta)`
+13. `feat(web): agregar la pantalla de tenants (listar/editar/suspender/reactivar)`
+14. `feat(web): agregar las pantallas de empresas y puntos de venta`
+15. `fix(web): resolver la empresa del editor de parametros con un selector real`
+16. `feat(web): conectar las rutas y el menu de organizacion`
+17. `docs(sdd): registrar el batch 11 — cierre del gap de organizacion` (this commit, next)
+
+### Next batch
+
+Slice 4 is now code-complete for the **entire** stage, including the organization surface that
+batch 10 found missing. Nothing left gated on user decisions, backend gaps, or the environment.
+Ready for judgment-day review (dual blind review, per `CLAUDE.md`'s PR validation gate) before
+opening the single PR 4 (`size:exception`, per the batch 11 delivery decision, tasks.md) —
+closing the entire `stage-1-organization-and-catalogs` change.
