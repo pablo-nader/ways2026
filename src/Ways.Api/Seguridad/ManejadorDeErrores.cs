@@ -127,14 +127,18 @@ public class ManejadorDeErrores(
 
         // stage-2-clientes-proveedores (task 1.12, backstop map): ux_clientes_numero —
         // backstop del contador atómico de AsignadorDeNumeroCliente (spec: Atomic Per-Tenant
-        // Numero Assignment); nunca debería chocar acá bajo operación normal. Ya no está
-        // exenta de prueba de carrera (Slice 2, task 2.5): ServicioDeClientes.CrearAsync
-        // existe desde esta slice y ClientesRaceTests prueba la concurrencia real contra
-        // este mismo camino — sin necesidad de forzar un rendezvous, el lock de fila de
-        // `UPDATE ... RETURNING` sobre `numeraciones_clientes` ya serializa las dos
-        // transacciones (mismo hallazgo que AsignadorDeNumeroClienteConcurrenciaTests,
-        // Slice 1 batch 3), así que esta rama de 23505 sigue sin ejercerse en operación
-        // normal — queda mapeada igual, como backstop de un bypass directo del contador.
+        // Numero Assignment); nunca debería chocar acá bajo operación normal.
+        //
+        // Ojo: la prueba de atomicidad y la prueba de backstop son cosas DISTINTAS (corregido,
+        // judgment-day ronda 1). ClientesEndpointsTests.LaCreacionConcurrenteAsignaNumerosSecuencialesSinExponerElBackstop
+        // (Slice 2, task 2.5) prueba que dos altas concurrentes NUNCA disparan esta rama — el
+        // lock de fila de `UPDATE ... RETURNING` sobre `numeraciones_clientes` ya serializa las
+        // dos transacciones (mismo hallazgo que AsignadorDeNumeroClienteConcurrenciaTests,
+        // Slice 1 batch 3), así que esa prueba demuestra la AUSENCIA de esta rama en operación
+        // normal, no su backstop. El backstop en sí — que esta rama SÍ traduce el 23505 a 409
+        // cuando algo bypassea el contador — lo prueba
+        // BackstopClientesYProveedoresTests.UnaFilaConNumeroDuplicadoInsertadaPorFueraDelContadorViolaLaUnicidad
+        // (INSERT crudo por SQL que fuerza el duplicado, sin pasar por el contador atómico).
         if (nombreDeIndice.Contains("_numero", StringComparison.Ordinal))
         {
             return ("numero_duplicado", "Ya existe un cliente con ese número en este tenant.");

@@ -77,6 +77,51 @@ public class BackstopClientesYProveedoresTests(WaysApiFixture fixture) : IClassF
         Assert.Equal("ck_clientes_cf_protegido", excepcion.ConstraintName);
     }
 
+    /// <summary>Judgment-day ronda 1 (item 1, db-error-backstops skill): prueba de backstop
+    /// propiamente dicha para <c>ux_clientes_numero</c> — dos INSERTs crudos por SQL con el
+    /// mismo <c>(id_tenant, numero)</c>, bypasseando <c>AsignadorDeNumeroCliente</c> por
+    /// completo (nunca tocan <c>numeraciones_clientes</c>). Complementa, no reemplaza, a
+    /// <c>ClientesEndpointsTests.LaCreacionConcurrenteAsignaNumerosSecuencialesSinExponerElBackstop</c>
+    /// (Slice 2, task 2.5), que prueba la AUSENCIA de esta rama bajo concurrencia real vía el
+    /// contador atómico — dos pruebas distintas para dos afirmaciones distintas (ver el
+    /// comentario corregido en <c>ManejadorDeErrores.ClasificarUnicidad</c>).
+    ///
+    /// Nivel HTTP: no hay forma de ejercer este 409 a través de <c>POST /api/clientes</c> —
+    /// <c>ServicioDeClientes.CrearAsync</c> siempre asigna <c>numero</c> vía el contador
+    /// atómico, nunca acepta un <c>numero</c> de request; el bypass solo es alcanzable con SQL
+    /// directo, como hace esta prueba.</summary>
+    [Fact]
+    public async Task UnaFilaConNumeroDuplicadoInsertadaPorFueraDelContadorViolaLaUnicidad()
+    {
+        var (idTenant, idCondicionFiscal, idListaPrecio) =
+            await SembrarTenantConCatalogosAsync(nameof(UnaFilaConNumeroDuplicadoInsertadaPorFueraDelContadorViolaLaUnicidad));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using (var primero = cruda.CreateCommand())
+        {
+            primero.CommandText =
+                "INSERT INTO clientes (id_tenant, numero, nombre, id_condicion_fiscal, id_lista_precio, created_at, updated_at) " +
+                "VALUES ($1, 2, 'primero', $2, $3, now(), now())";
+            primero.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+            primero.Parameters.Add(new NpgsqlParameter { Value = idCondicionFiscal });
+            primero.Parameters.Add(new NpgsqlParameter { Value = idListaPrecio });
+            await primero.ExecuteNonQueryAsync();
+        }
+
+        await using var segundo = cruda.CreateCommand();
+        segundo.CommandText =
+            "INSERT INTO clientes (id_tenant, numero, nombre, id_condicion_fiscal, id_lista_precio, created_at, updated_at) " +
+            "VALUES ($1, 2, 'duplicado', $2, $3, now(), now())";
+        segundo.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        segundo.Parameters.Add(new NpgsqlParameter { Value = idCondicionFiscal });
+        segundo.Parameters.Add(new NpgsqlParameter { Value = idListaPrecio });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => segundo.ExecuteNonQueryAsync());
+        Assert.Equal("23505", excepcion.SqlState);
+        Assert.Equal("ux_clientes_numero", excepcion.ConstraintName);
+    }
+
     [Fact]
     public async Task UnClienteConIdListaPrecioInexistenteViolaLaFk()
     {
