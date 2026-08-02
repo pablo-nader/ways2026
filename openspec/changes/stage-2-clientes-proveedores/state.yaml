@@ -3,8 +3,8 @@
 # openspec/specs/tenant-organization/spec.md — this change's future archive must merge
 # against that baseline.
 change: stage-2-clientes-proveedores
-phase: propose
-status: proposal-drafted-awaiting-question-round-review
+phase: apply
+status: slice-1-batch-1-applied-awaiting-db-change-gate-approval
 artifact_store: openspec
 phases:
   explore:
@@ -13,13 +13,25 @@ phases:
     status: done
     artifact: proposal.md
   spec:
-    status: pending
+    status: done
+    artifact: specs/
   design:
-    status: pending
+    status: done
+    artifact: design.md
   tasks:
-    status: pending
+    status: done
+    artifact: tasks.md
   apply:
-    status: pending
+    status: in-progress
+    artifact: apply-progress.md
+    note: >-
+      Slice 1 batch 1 applied: domain entities, EF configs, ReglaDeClientes,
+      AsignadorDeNumeroCliente, PlantillaDeAprovisionamiento extension,
+      ManejadorDeErrores backstop mappings, ParametrosTests hygiene fix, and
+      gated (Skip) integration tests for RLS/backstops/provisioning-backfill are
+      done. Blocked on DB CHANGE GATE (task 1.1) approval before generating the
+      migration (task 1.7); tasks 1.10/1.11 (provisioning/backfill wiring)
+      deferred to the same batch as the migration, per apply-progress.md.
   verify:
     status: pending
   archive:
@@ -38,3 +50,4 @@ notes:
   - "DB CHANGE GATE (CLAUDE.md) applies before any EF Core migration is generated during apply -- same unconditional rule as stage 1."
   - "Delivery: chained PRs, stacked-to-main (session decision, per protocolo-pr-solo-dev). Exact slicing deferred to sdd-tasks Review Workload Forecast."
   - "Proposal question round written into proposal.md ('## Proposal question round') per sdd-propose Step 0 -- not blocking artifact creation since this is a single-shot delegated write, but explicitly flagged for user review before spec/design lock in the resulting assumptions: (1) proveedores.cuit uniqueness undecided by doc 10, (2) clientes.numero_documento uniqueness undecided by doc 10, (3) Consumidor Final backfill-on-existing-tenants timing/approval, (4) ADR-10 DeLaEmpresa re-flagged per scope note. Default assumptions stated in the proposal if no correction arrives."
+  - "design.md (2026-08-02): clientes/proveedores do NOT reuse ServicioDeCatalogo<T>/ConfiguracionDeCatalogo<T> (dedicated entity+EF config+service+screen each) -- proveedores' cuit-based tenant-wide uniqueness and clientes' multi-field identity/service-assigned numero break the generic base's hardcoded nombre-pair uniqueness; only listas_precio genuinely fits the generic EF base (no service/API this stage, no ABM in scope). numero assigned via numeraciones_clientes counter table (UPDATE...RETURNING, doc-09 pattern family, keyed by id_tenant) through a shared AsignadorDeNumeroCliente helper reused by CrearAsync, provisioning CF bootstrap, and backfill -- raw ADO.NET, not Database.SqlQuery<T>()/FromSqlRaw<T>() (stage-1 slice-2 confirmed SqlQuery<T>() throws IndexOutOfRangeException against this model). Consumidor Final protected by a domain guard (ServicioDeClientes blocks edit/delete when Numero==1) plus a DB CHECK ck_clientes_cf_protegido (numero<>1 OR deleted_at IS NULL) as the irreversible-delete backstop -- no trigger (no precedent in this codebase). PlantillaDeAprovisionamiento extended in place (fills its own documented ItemsDiferidos gap) rather than bumped to V2 -- ADR-16 versioning is for a different vertical template, not staged completion; flagged as a deviation from the proposal's literal 'versioned bump' wording, not from a resolved binding decision. ADR-10 DeLaEmpresa reconfirmed deferred, no new gap found. One combined migration + one DB CHANGE GATE for all 4 tables (schema + backfill plan together, per resolved decision #3)."
