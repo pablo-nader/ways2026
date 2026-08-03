@@ -1,5 +1,152 @@
 # Apply Progress: Stage 3 — Artículos y Precios
 
+## Slice 3 — judgment-day ronda 1: fixes aplicados
+
+Dos jueces ciegos convergieron (money-path code, motor de precios) — 1 CRITICAL con 2 modos de
+falla, 1 confirmado (serialización real), 1 confirmado (timestamp post-lock), 1 defensivo
+(resolución derivada), 1 batch de sugerencias. Todo corregido en el mismo ciclo, SIN cambios de
+esquema.
+
+### Item 1 — Predecessor re-close on pending replacement (CRITICAL, 2 modos de falla)
+
+`AbrirNuevoPrecioAsync`: cuando una fila PENDIENTE se reemplaza (`confirmarReemplazo`), el
+PREDECESOR (la fila cuyo `vigente_hasta` == el `vigente_desde` original de la pendiente
+reemplazada) quedaba con un límite viejo — fecha nueva ANTERIOR a la original producía
+SOLAPAMIENTO (dos filas satisfacían el predicado "vigente" en el rango entre ambas); fecha nueva
+POSTERIOR producía un HUECO (ningún precio vigente en ese rango).
+
+**Fix**: `ServicioDePrecios.ReabrirLimiteDelPredecesorAsync` localiza el predecesor por
+`vigente_hasta = <vigente_desde original de la pendiente>` y lo re-cierra en el `vigente_desde`
+EFECTIVO de la fila nueva, en la MISMA transacción.
+
+**Bug real encontrado y corregido mientras se probaba este mismo fix**: la búsqueda del
+predecesor tenía que EXCLUIR explícitamente el id de la fila pendiente recién cerrada — cuando el
+reemplazo cierra la pendiente en su ventana muerta (`vigente_hasta == vigente_desde ==
+limiteOriginal`), esa MISMA fila también matchea `vigente_hasta = limiteOriginal`, así que sin la
+exclusión la pendiente se reabría a sí misma en el nuevo límite. Detectado porque hizo
+REGRESIONAR un test YA EXISTENTE (`ProgramarUnSegundoPrecioPendienteSinConfirmarDevuelve409YConConfirmarReemplaza`,
+task 3.8) antes de agregar `id_precio != $5` a la query. Corregido antes del commit — nunca llegó
+código malo a main.
+
+**Tests nuevos** (`PreciosEndpointsTests.cs`):
+- `ReemplazarUnPendienteConUnaFechaAnteriorALaOriginalRecierraElPredecesorSinSolapar` (secuencia
+  a: inmediato → programado → inmediato-con-reemplazo, fecha nueva ANTERIOR): verifica que el
+  predecesor se re-cierra en la fecha del reemplazo, no en t+3d, y que exactamente una fila
+  satisface el predicado "vigente" en cada instante sondeado (el probe crítico es el punto medio
+  del solapamiento viejo, donde ANTES coincidían dos filas).
+- `ReemplazarUnPendienteConUnaFechaPosteriorALaOriginalNoDejaUnHueco` (secuencia b: inmediato →
+  programado(t+3d) → programado(t+10d)-con-reemplazo, fecha nueva POSTERIOR): verifica que la
+  consulta en el punto medio de la ventana [t+3d, t+10d) devuelve el precio ORIGINAL (no `null`),
+  y que el predecesor cierra en t+10d.
+
+### Item 2 — True serialization of concurrent writes (CONFIRMED, ambos jueces)
+
+`SELECT ... FOR UPDATE` sobre la fila mutable solo podía lockear una fila YA EXISTENTE — para el
+primer precio de un par no había nada que bloquear, así que dos altas concurrentes competían
+directo contra `ux_precios_vigente` en el `INSERT` (task 3.11's "un ganador + un 409").
+
+**Fix**: `AbrirNuevoPrecioAsync` toma un `pg_advisory_xact_lock` determinístico por par
+(`idTenant`, `idArticulo`, `idListaPrecio`) PRIMERO en la transacción
+(`TomarLockDelParAsync`/`ClaveDeLockDePar`), y recién ahí lee la fila abierta con un SELECT plano
+(`BuscarFilaAbiertaAsync`, sin `FOR UPDATE` — ya no hace falta, el advisory lock ya serializa).
+Esto da la semántica real de "esperar y actuar sobre el estado actual" que el doc-comment del
+método siempre prometió, para CUALQUIER escritura sobre el mismo par (exista o no una fila
+abierta todavía).
+
+**Derivación de la clave** (`ClaveDeLockDePar`): `clave1 = idTenant` (cada tenant ocupa su propio
+subespacio, sin motivo de colisión entre tenants); `clave2 = unchecked((idArticulo * 397) ^
+idListaPrecio)` — combinación aritmética simple, DELIBERADAMENTE no `HashCode.Combine`: ese
+incorpora una semilla aleatoria por PROCESO, así que dos instancias de la app (o la misma tras un
+reinicio) calcularían claves DISTINTAS para el MISMO par, y el lock dejaría de serializarlas entre
+sí — exactamente lo opuesto de lo que se busca. Una colisión de `clave2` entre dos pares
+DISTINTOS del mismo tenant es tolerable: el peor caso es serializar de más (dos pares no
+relacionados se esperan entre sí sin necesidad) — nunca una lectura incorrecta, porque el estado
+real siempre se lee de la fila DESPUÉS de tomar el lock, nunca del hash en sí.
+
+**Consecuencia honesta**: con el advisory lock, la carrera de `ux_precios_vigente` YA NO es
+alcanzable por el camino de servicio — el backstop de esquema se mantiene igual, pero solo queda
+alcanzable por una escritura cruda/fuera de banda (misma familia que `PK_articulos_empresas`,
+Slice 2 judgment-day ronda 2). Comentarios actualizados en
+`ManejadorDeErrores.ClasificarUnicidad` (rama `_vigente`) y en el doc-comment de
+`AbrirNuevoPrecioAsync` reflejando esto.
+
+**Tests** (`PreciosEndpointsTests.cs`):
+- (a) adaptado: `LaCreacionConcurrenteDeDosPrimerosPreciosDaExactamenteUnGanador` →
+  `LaCreacionConcurrenteDeDosPrimerosPreciosSeSerializaYAmbosSuceden` — ahora afirma 2×201 (no
+  1×201+1×409), historial de 2 filas con la cadena correcta. El rendezvous determinístico
+  (`InterceptorDeRendezVousListasPrecio`) se mantiene para forzar overlap real de transacciones.
+- (b) NUEVO: `LaModificacionConcurrenteDeUnPrecioYaExistenteSeSerializaYAmbosSuceden` — dos
+  cambios inmediatos concurrentes sobre un par YA priceado: ambos 201, historial de 3 filas con
+  cadena consistente (una cierra a la otra, ninguna con 409).
+- Ambos verificados estables en 3 corridas aisladas adicionales.
+
+### Item 3 — Post-lock timestamp (CONFIRMED)
+
+`EstablecerPrecioAsync` capturaba `reloj.Ahora` ANTES de entrar a la transacción/lock y lo pasaba
+como `vigenteDesde`. Bajo contención, un llamador que esperaba el lock podía terminar con un
+`vigente_desde` MÁS VIEJO que el de la fila que ya ganó la carrera y confirmó, disparando un
+`vigente_desde_invalido` espurio.
+
+**Fix**: `AbrirNuevoPrecioAsync.vigenteDesde` pasó a `DateTimeOffset?` — `null` (caso inmediato)
+se resuelve con `reloj.Ahora` capturado DESPUÉS del `TomarLockDelParAsync`; un valor (caso
+programado) se sigue honrando tal cual. La misma `ahora` post-lock se usa para el cierre del
+predecesor/fila actual y para `CreatedAt`/`UpdatedAt`. Cubierto indirectamente por la estabilidad
+de las 3 corridas aisladas del test de carrera del item 2(b) — no se armó un rendezvous dedicado
+adicional (habría duplicado el mismo mecanismo).
+
+### Item 4 — Derived resolution hardening (DEFENSIVE)
+
+`ResolvedorDePrecios.ResolverPrecioDerivado` ahora rechaza un resultado negativo (p.ej.
+`porcentaje` menor a -100%) con `ErrorDominio("precio_derivado_invalido", ..., 422)` en vez de
+devolver un número negativo silencioso. `ServicioDePrecios.ResolverPrecioAsync` reemplazó
+`lista.Porcentaje!.Value` por un `??` explícito que lanza el MISMO código de dominio en vez de un
+`NullReferenceException` crudo.
+
+**Obligación hacia adelante (Slice 4)**: `ServicioDeListasPrecio` tiene que rechazar `porcentaje
+<= -100` al ESCRIBIR la lista — registrado en `state.yaml`. Esta guarda de lectura queda como
+defensa en profundidad, mismo criterio que la guarda de profundidad-1 de listas derivadas.
+
+**Tests nuevos**:
+- `ResolvedorDePreciosTests.UnPorcentajeMenorAMenos100DaUnPrecioNegativoYSeRechaza` (Domain).
+- `ServicioDePreciosResolucionTests` (Application, InMemory, archivo nuevo) —
+  `UnaListaDerivadaSinPorcentajeConfiguradoDaUnErrorDeDominioLimpio` y
+  `UnPorcentajeMenorAMenos100PropagaElErrorDeDominioDelPrecioDerivado`.
+
+### Item 5 — Cobertura y consistencia (SUGGESTIONS)
+
+- (a) `ConsultarPreciosDeUnArticuloRealDeOtroTenantDevuelve404EnLasTresRutasDeGet` — cross-tenant
+  con un id de artículo REAL de otro tenant (no inexistente) en las tres rutas GET de precios.
+- (b) La divergencia entre `PrecioVigenteAsync` (resuelve cualquier lista por id explícito,
+  activa o no) y `PreciosVigentesAsync` (filtra `Activo`) se mantuvo DELIBERADA y se documentó en
+  ambos doc-comments; `UnaListaInactivaResuelvePorIdExplicitoPeroNoApareceEnElListadoDeTodas`
+  prueba el comportamiento explícitamente.
+- (c) El N+1 de `PreciosVigentesAsync` ganó un comentario INFO marcándolo para la etapa POS
+  (etapa 5) — no se refactorizó.
+
+### Build/test results (judgment-day ronda 1 batch, run twice)
+
+| Suite | Run 1 | Run 2 |
+|---|---|---|
+| `Ways.Domain.Tests` | 86/86 | 86/86 |
+| `Ways.Application.Tests` | 170/170 | 170/170 |
+| `Ways.IntegrationTests` (real Postgres) | 193/193 | 193/193 |
+
+86 = baseline 85 + 1 nuevo (`ResolvedorDePreciosTests`). 170 = baseline 168 + 2 nuevos
+(`ServicioDePreciosResolucionTests`). 193 = baseline 188 + 5 netos (2 secuencias temporales + 1
+test de carrera nuevo + 2 de cobertura del item 5; el test de carrera del item 2a se ADAPTÓ, no
+sumó). Build clean (0 warnings, 0 errors), ambas corridas idénticas, sin flakes — los 4
+tests nuevos/adaptados de temporal-sequence/carrera además verificados estables en 3 corridas
+aisladas adicionales.
+
+### Commit (work-unit, pendiente de listar acá tras crearlo)
+
+`fix(precios): re-cerrar el predecesor en reemplazos pendientes y serializar con advisory lock` —
+la ronda 1 completa de judgment-day sobre Slice 3 (items 1-5), en un solo work unit porque los
+items 1-3 comparten el mismo método (`AbrirNuevoPrecioAsync`) y los items 4-5 son cambios
+acotados sobre el mismo archivo de servicio/tests.
+
+---
+
 ## Slice 3: Precios (PR 3) — DONE, ready for judgment-day
 
 **Branch**: `feat/stage3-slice3-precios` (off `main`, PR 1 y PR 2 ya mergeados — no push/PR
