@@ -237,6 +237,23 @@ public class ServicioDeListasPrecioTests
         Assert.Equal(400, error.EstadoHttp);
     }
 
+    [Theory]
+    [InlineData(1000)]
+    [InlineData(1500)]
+    public async Task CrearDerivadaConPorcentajeMayorOIgualA1000EsRechazada(decimal porcentaje)
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var idBase = await SembrarListaFijaAsync(nombreDeBase, idTenant: 1);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = AltaDerivadaValida(idBase, porcentaje);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
+
+        Assert.Equal("porcentaje_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
     [Fact]
     public async Task CrearDerivadaConPorcentajeValidoEsAceptada()
     {

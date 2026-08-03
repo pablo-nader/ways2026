@@ -109,8 +109,21 @@ public class ListasPrecioEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         return mail;
     }
 
-    private static ListaPrecioAlta AltaFijaValida(string nombre, bool esDefault = false, bool activo = true) =>
-        new(nombre, IdEmpresa: null, EsDefault: esDefault, Modo: ModoLista.Fija, IdListaBase: null, Porcentaje: null, Activo: activo);
+    private static ListaPrecioAlta AltaFijaValida(
+        string nombre, bool esDefault = false, bool activo = true, int? idEmpresa = null) =>
+        new(nombre, IdEmpresa: idEmpresa, EsDefault: esDefault, Modo: ModoLista.Fija, IdListaBase: null, Porcentaje: null, Activo: activo);
+
+    private async Task<int> SembrarEmpresaAsync(int idTenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var empresa = new Empresa { IdTenant = idTenant, RazonSocial = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Empresas.Add(empresa);
+        await db.SaveChangesAsync();
+
+        return empresa.Id;
+    }
 
     private static ListaPrecioAlta AltaDerivadaValida(string nombre, int idListaBase, decimal porcentaje = -10m) =>
         new(nombre, IdEmpresa: null, EsDefault: false, Modo: ModoLista.Derivada, IdListaBase: idListaBase, Porcentaje: porcentaje);
@@ -304,6 +317,90 @@ public class ListasPrecioEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal("lista_default_requiere_reemplazo", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>judgment-day ronda 1 (CRITICAL confirmado por ambos jueces): mover
+    /// <c>IdEmpresa</c> de una fila que hoy es default (compartida -> empresa) tiene que
+    /// rechazarse — de lo contrario el alcance compartido queda sin ninguna lista default
+    /// (nadie desmarca ahí) y el alcance destino puede terminar con la fila "prestada" sin
+    /// pasar por el intercambio. Cubre las tres direcciones: compartida->empresa,
+    /// empresa->compartida y empresa A->empresa B.</summary>
+    [Fact]
+    public async Task MoverDeAlcanceCompartidoAEmpresaManteniendoEsDefaultEsRechazado()
+    {
+        var (idTenant, _, _, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(MoverDeAlcanceCompartidoAEmpresaManteniendoEsDefaultEsRechazado));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idEmpresa = await SembrarEmpresaAsync(
+            idTenant, nameof(MoverDeAlcanceCompartidoAEmpresaManteniendoEsDefaultEsRechazado));
+
+        var respuesta = await admin.PutAsJsonAsync(
+            $"/api/catalogos/listas-precio/{idListaGeneral}",
+            AltaFijaValida("General", esDefault: true, idEmpresa: idEmpresa));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("lista_default_requiere_reemplazo", problema.GetProperty("codigo").GetString());
+
+        var general = await admin.GetFromJsonAsync<ListaPrecioListado>(
+            $"/api/catalogos/listas-precio/{idListaGeneral}", OpcionesJson);
+        Assert.Null(general!.IdEmpresa);
+        Assert.True(general.EsDefault);
+    }
+
+    [Fact]
+    public async Task MoverDeAlcanceEmpresaACompartidoManteniendoEsDefaultEsRechazado()
+    {
+        var (idTenant, _, _, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(MoverDeAlcanceEmpresaACompartidoManteniendoEsDefaultEsRechazado));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idEmpresa = await SembrarEmpresaAsync(
+            idTenant, nameof(MoverDeAlcanceEmpresaACompartidoManteniendoEsDefaultEsRechazado));
+        var defaultDeEmpresa = await CrearListaAsync(
+            admin, AltaFijaValida("Default de empresa", esDefault: true, idEmpresa: idEmpresa));
+
+        var respuesta = await admin.PutAsJsonAsync(
+            $"/api/catalogos/listas-precio/{defaultDeEmpresa.Id}",
+            AltaFijaValida("Default de empresa", esDefault: true, idEmpresa: null));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("lista_default_requiere_reemplazo", problema.GetProperty("codigo").GetString());
+
+        var actual = await admin.GetFromJsonAsync<ListaPrecioListado>(
+            $"/api/catalogos/listas-precio/{defaultDeEmpresa.Id}", OpcionesJson);
+        Assert.Equal(idEmpresa, actual!.IdEmpresa);
+        Assert.True(actual.EsDefault);
+    }
+
+    [Fact]
+    public async Task MoverDeAlcanceDeUnaEmpresaAOtraManteniendoEsDefaultEsRechazado()
+    {
+        var (idTenant, _, _, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(MoverDeAlcanceDeUnaEmpresaAOtraManteniendoEsDefaultEsRechazado));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idEmpresaA = await SembrarEmpresaAsync(
+            idTenant, nameof(MoverDeAlcanceDeUnaEmpresaAOtraManteniendoEsDefaultEsRechazado) + "A");
+        var idEmpresaB = await SembrarEmpresaAsync(
+            idTenant, nameof(MoverDeAlcanceDeUnaEmpresaAOtraManteniendoEsDefaultEsRechazado) + "B");
+        var defaultDeA = await CrearListaAsync(
+            admin, AltaFijaValida("Default de A", esDefault: true, idEmpresa: idEmpresaA));
+
+        var respuesta = await admin.PutAsJsonAsync(
+            $"/api/catalogos/listas-precio/{defaultDeA.Id}",
+            AltaFijaValida("Default de A", esDefault: true, idEmpresa: idEmpresaB));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("lista_default_requiere_reemplazo", problema.GetProperty("codigo").GetString());
+
+        var actual = await admin.GetFromJsonAsync<ListaPrecioListado>(
+            $"/api/catalogos/listas-precio/{defaultDeA.Id}", OpcionesJson);
+        Assert.Equal(idEmpresaA, actual!.IdEmpresa);
+        Assert.True(actual.EsDefault);
+    }
+
     [Fact]
     public async Task EliminarLaListaDefaultEsRechazado()
     {
@@ -371,6 +468,59 @@ public class ListasPrecioEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         var listado = await admin.GetFromJsonAsync<List<ListaPrecioListado>>(
             "/api/catalogos/listas-precio", OpcionesJson);
         Assert.Single(listado!.Where(l => l.IdEmpresa is null), l => l.EsDefault);
+    }
+
+    /// <summary>db-error-backstops (item 3, suggestion): mismo mecanismo que
+    /// <see cref="LaAsignacionConcurrenteDeEsDefaultAOtrasDosListasDaExactamenteUnGanador"/>
+    /// pero contra <c>ux_listas_precio_default_empresa</c> en vez de
+    /// <c>ux_listas_precio_default_compartido</c> — dos listas DISTINTAS del MISMO alcance
+    /// <c>id_empresa</c> compitiendo por la misma fila default de esa empresa al mismo
+    /// tiempo. Exactamente una gana, nunca cero ni dos.</summary>
+    [Fact]
+    public async Task LaAsignacionConcurrenteDeEsDefaultDeEmpresaAOtrasDosListasDaExactamenteUnGanador()
+    {
+        var (idTenant, _, _, _, mailAdmin, passwordAdmin) = await AprovisionarTenantAsync(
+            nameof(LaAsignacionConcurrenteDeEsDefaultDeEmpresaAOtrasDosListasDaExactamenteUnGanador));
+
+        using var admin0 = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var idEmpresa = await SembrarEmpresaAsync(
+            idTenant, nameof(LaAsignacionConcurrenteDeEsDefaultDeEmpresaAOtrasDosListasDaExactamenteUnGanador));
+        await CrearListaAsync(admin0, AltaFijaValida("Default de empresa", esDefault: true, idEmpresa: idEmpresa));
+        var listaB = await CrearListaAsync(admin0, AltaFijaValida("Candidata B", idEmpresa: idEmpresa));
+        var listaC = await CrearListaAsync(admin0, AltaFijaValida("Candidata C", idEmpresa: idEmpresa));
+
+        using var gate = new CountdownEvent(2);
+        var interceptor = new InterceptorDeRendezVousListasPrecio(gate);
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) =>
+                    options.AddInterceptors(interceptor))));
+
+        using var admin = factory.CreateClient();
+        var login = await admin.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdmin, passwordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tareaB = admin.PutAsJsonAsync(
+            $"/api/catalogos/listas-precio/{listaB.Id}",
+            AltaFijaValida("Candidata B", esDefault: true, idEmpresa: idEmpresa));
+        var tareaC = admin.PutAsJsonAsync(
+            $"/api/catalogos/listas-precio/{listaC.Id}",
+            AltaFijaValida("Candidata C", esDefault: true, idEmpresa: idEmpresa));
+
+        var respuestas = await Task.WhenAll(tareaB, tareaC);
+        var estados = respuestas.Select(r => r.StatusCode).ToList();
+
+        Assert.True(interceptor.Participantes >= 2, $"participantes={interceptor.Participantes}");
+        Assert.Contains(HttpStatusCode.OK, estados);
+        Assert.Contains(HttpStatusCode.Conflict, estados);
+
+        var perdedora = respuestas.Single(r => r.StatusCode == HttpStatusCode.Conflict);
+        var problema = await perdedora.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("default_duplicado", problema.GetProperty("codigo").GetString());
+
+        var listado = await admin.GetFromJsonAsync<List<ListaPrecioListado>>(
+            "/api/catalogos/listas-precio", OpcionesJson);
+        Assert.Single(listado!.Where(l => l.IdEmpresa == idEmpresa), l => l.EsDefault);
     }
 
     /// <summary>Retiene la primera consulta EF a <c>listas_precio</c> de cada request (la que
