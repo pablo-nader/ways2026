@@ -1,5 +1,141 @@
 # Apply Progress: Stage 3 — Artículos y Precios
 
+## Slice 3: Precios (PR 3) — DONE, ready for judgment-day
+
+**Branch**: `feat/stage3-slice3-precios` (off `main`, PR 1 y PR 2 ya mergeados — no push/PR
+todavía).
+
+All 14 Slice 3 tasks (3.1–3.14) complete. NO database changes — schema ya existía desde Slice 1
+(`ArticulosYPreciosEtapa3`), confirmado antes de empezar.
+
+### What shipped this slice
+
+**Domain** (`Ways.Domain.Precios`):
+- `ResolvedorDePrecios.ResolverPrecioDerivado(precioBase, porcentaje)` (task 3.1) — función pura,
+  `Math.Round(precioBase * (1 + porcentaje / 100m), 2, MidpointRounding.AwayFromZero)`, mismo
+  criterio de redondeo que `SugeridorDePrecio` (Slice 2).
+
+**Application** (`Ways.Application.Precios`, paquete nuevo):
+- `ServicioDePrecios` (tasks 3.2/3.3): `AbrirNuevoPrecioAsync` es el ÚNICO punto de escritura de
+  `precios` (design decision 3) — una sola transacción (`CreateExecutionStrategy` +
+  `BeginTransactionAsync`, mismo patrón que `ServicioDeArticulos.CrearAsync`): bloquea la fila
+  actualmente abierta del par `(articulo, lista)` con `SELECT ... FOR UPDATE` vía ADO.NET crudo
+  (EF Core/Npgsql no tiene un equivalente mapeado — nunca `FromSqlRaw<T>()`, mismo motivo
+  histórico que `AsignadorDeNumeroCliente`), decide si hace falta `confirmarReemplazo` (fila
+  pendiente, `vigente_desde > ahora`), la cierra, e inserta la fila nueva. `EstablecerPrecioAsync`
+  (inmediato, `vigente_desde = reloj.Ahora`) y `ProgramarPrecioAsync` (futuro, valida tolerancia
+  de reloj) son envoltorios delgados sobre el mismo método.
+  - **Corrección de diseño encontrada y aplicada ANTES del primer commit**: al reemplazar una fila
+    PENDIENTE (`confirmarReemplazo: true`), la fila reemplazada se cierra en su PROPIO
+    `vigente_desde` (ventana vacía, `vigente_hasta == vigente_desde`), NO en el `vigente_desde` de
+    la fila nueva. Cerrarla ahí habría dejado el precio "reemplazado" brevemente VISIBLE entre su
+    fecha original y la fecha nueva si esta última es posterior — exactamente lo que el spec dice
+    que NO tiene que pasar ("the $150 pending row is REPLACED by the $160 one", no "vigente hasta
+    que el nuevo empiece"). Para la fila ACTIVA (no pendiente) el criterio es el opuesto y
+    correcto: se cierra en el `vigente_desde` de la fila nueva, porque esa fila SÍ estuvo vigente
+    hasta ese momento. Cubierto por
+    `PreciosEndpointsTests.ProgramarUnSegundoPrecioPendienteSinConfirmarDevuelve409YConConfirmarReemplaza`
+    (verifica explícitamente que la ventana intermedia da `null`).
+  - `PrecioVigenteAsync`/`PreciosVigentesAsync`/`HistorialDePrecioAsync` (lectura): `fija` resuelve
+    por consulta filtrada por fecha; `derivada` resuelve la base y aplica
+    `ResolvedorDePrecios.ResolverPrecioDerivado` — guarda de profundidad 1 (orchestrator decision
+    2) aplicada acá TAMBIÉN en lectura como defensa en profundidad (la escritura la bloquea
+    `ServicioDeListasPrecio` recién en la Slice 4).
+  - Contratos (task 3.4): `AltaPrecio`/`ProgramarPrecio` (sin `Id` — nunca hay edición de una fila
+    existente) / `PrecioVigente` / `HistorialDePrecio`.
+
+**API** (`Ways.Api.Endpoints.ArticulosEndpoints`):
+- Precios nidificados bajo `/api/articulos/{id}/precios*` (task 3.5, folded in, no recurso
+  top-level): `POST /precios` (inmediato), `POST /precios/programados` (futuro),
+  `GET /precios` (todas las listas activas a una fecha), `GET /precios/{idListaPrecio}` (una
+  lista), `GET /precios/{idListaPrecio}/historial`. Mismo grupo/policy `GestionDeCatalogo` que el
+  resto de `ArticulosEndpoints`.
+- `ManejadorDeErrores.ClasificarUnicidad`: la exención de la prueba de carrera de
+  `precio_vigente_duplicado` (`_vigente`, desde Slice 1 task 1.10) CIERRA acá — ver el hallazgo de
+  alcanzabilidad honesto abajo.
+
+### Hallazgo honesto de alcanzabilidad de la carrera (task 3.11, db-error-backstops)
+
+La carrera de `ux_precios_vigente` (dos primeros precios concurrentes para el mismo par, sin fila
+que lockear) es GENUINA por construcción — pero un `Task.WhenAll` desnudo sobre 2 `POST` NO la
+reproduce de forma confiable. Probado empíricamente: 5/5 corridas AISLADAS (un solo test por
+corrida) exponen el 409 esperado, pero 3/3 corridas de la CLASE COMPLETA (14 tests) dieron 2×201
+sin ninguna excepción. Causa: con el pool de conexiones/JIT ya "calientes" (el caso real de
+`dotnet test` sobre la suite completa, nunca un test aislado), el segundo request tiende a
+completar su `BEGIN` + `SELECT ... FOR UPDATE` DESPUÉS de que el primero ya hizo `COMMIT` — en ese
+caso el segundo ve la fila recién confirmada y hace un cierre-y-apertura LEGÍTIMO en vez de
+chocar contra el índice. Mismo mecanismo de fondo que el hallazgo de `ParametrosTests`
+(judgment-day, slice 3 ronda 2 — el "ganador" puede terminar su `SELECT+INSERT+commit` antes de
+que el segundo arranque su propia `SELECT`).
+
+**Resuelto con el mismo fix que `ParametrosTests`**: un rendezvous determinístico vía
+`DbCommandInterceptor` (`PreciosEndpointsTests.InterceptorDeRendezVousListasPrecio`, mismo
+mecanismo que `ParametrosTests.InterceptorDeRendezVous`) que retiene las dos primeras consultas EF
+a `listas_precio` — la ÚLTIMA consulta interceptable por EF antes de que `AbrirNuevoPrecioAsync`
+abra su transacción y haga el `SELECT ... FOR UPDATE` crudo (que por ser ADO.NET puro, fuera del
+pipeline de comandos de EF Core, NO es interceptable directamente) — hasta que ambas llegaron,
+forzando que las dos transacciones arranquen al mismo tiempo. Verificado estable en 3 corridas de
+la clase completa tras el fix (14/14 las tres veces).
+
+### Tests
+
+- `tests/Ways.Domain.Tests/Precios/ResolvedorDePreciosTests.cs` — 4 casos (task 3.6): descuento
+  negativo, recargo positivo, recálculo tras cambio de base, empate de redondeo AwayFromZero.
+- `tests/Ways.Application.Tests/Precios/ServicioDePreciosSuperficieTests.cs` — 3 casos (task 3.13,
+  reflexión pura, sin DB): ningún método público con nombre de edición
+  (Actualizar/Editar/Modificar), ningún método de escritura recibe un `idPrecio`/`IdPrecio`
+  existente, ningún contrato de alta expone un `Id`/`IdPrecio` — la única forma de escribir es
+  ABRIR una fila nueva.
+- `tests/Ways.IntegrationTests/PreciosEndpointsTests.cs` — 14 casos (tasks 3.7–3.12, real
+  Postgres):
+  - 3.7: un cambio de precio cierra la fila vieja y abre una nueva (`vigente_hasta` de la vieja ==
+    `vigente_desde` de la nueva); el historial completo queda consultable tras varios cambios.
+  - 3.8: programar sin pendiente previo sucede sin afectar el precio vigente; programar un segundo
+    pendiente sin confirmar → 409; con `confirmarReemplazo: true` reemplaza, y el precio
+    reemplazado NUNCA se vuelve visible (ni en la ventana intermedia entre las dos fechas — la
+    prueba directa de la corrección de diseño de arriba).
+  - 3.9: consulta por fecha resuelve el precio vigente (hoy) o uno histórico (fecha pasada).
+  - 3.10: una lista derivada resuelve su precio desde la base y sigue propagando cambios sin
+    ningún write adicional (`db.Precios.CountAsync` de la derivada == 0); establecer un precio
+    sobre una derivada → 400 `lista_no_es_fija`.
+  - 3.11: la carrera genuina (rendezvous determinístico) → exactamente 1×201 + 1×409
+    `precio_vigente_duplicado`.
+  - 3.12: FK smoke — artículo inexistente → 404 (ADR-8); lista inexistente/de otro tenant → 400
+    `referencia_invalida`.
+  - Adicionales de scope (bounds, tolerancia de reloj, autorización): precio negativo → 400
+    `precio_invalido`; `vigente_desde` en el pasado más allá de la tolerancia → 400
+    `vigente_desde_en_el_pasado`; vendedor no puede establecer un precio → 403.
+
+### Build/test results (this slice, run twice)
+
+| Suite | Run 1 | Run 2 |
+|---|---|---|
+| `Ways.Domain.Tests` | 85/85 | 85/85 |
+| `Ways.Application.Tests` | 168/168 | 168/168 |
+| `Ways.IntegrationTests` (real Postgres, Testcontainers) | 188/188 | 188/188 |
+
+85 = 81 baseline (Slice 1+2 + judgment-day) + 4 nuevos (`ResolvedorDePreciosTests`). 168 = 165
+baseline + 3 nuevos (`ServicioDePreciosSuperficieTests`). 188 = 174 baseline + 14 nuevos
+(`PreciosEndpointsTests`). Idéntico en ambas corridas, sin flakes — el test de carrera además
+verificado estable en 3 corridas adicionales de la clase completa tras el fix del rendezvous (ver
+arriba).
+
+### Commits (work-unit style, on `feat/stage3-slice3-precios`)
+
+1. `feat(precios): agregar ResolvedorDePrecios (resolucion pura de precio derivado)` — función de
+   dominio + sus tests unitarios.
+2. `feat(precios): agregar ServicioDePrecios (motor de historial, precios programables, resolucion derivada)` —
+   contratos, servicio, DI, tests de superficie por reflexión (task 3.13).
+3. `feat(precios): exponer los endpoints de precios y cerrar el backstop de ux_precios_vigente` —
+   endpoints, actualización de `ManejadorDeErrores`, tests de integración (incluye el rendezvous
+   determinístico para la carrera).
+
+### Next
+
+Slice 3 está completa y verificada en runtime. Judgment-day (revisión dual ciega) corre a
+continuación, según el protocolo de PR solo-dev, antes de crear este PR. Slice 4 (`listas_precio`
+ABM) arranca recién cuando el PR de Slice 3 mergea.
+
 ## Slice 2: Artículos + codigos_barra + articulos_empresas + Margin Suggestion (PR 2) — DONE, ready for judgment-day
 
 **Branch**: `feat/stage3-slice2-articulos` (off `main`, PR 1 already merged — no push/PR yet).
