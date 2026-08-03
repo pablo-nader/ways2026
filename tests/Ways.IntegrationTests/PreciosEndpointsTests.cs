@@ -291,6 +291,139 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(160m, enDiezDias!.Precio);
     }
 
+    // ---- judgment-day ronda 1, item 1: predecessor re-close on pending replacement ----------
+
+    /// <summary>Secuencia (a) del hallazgo CRITICAL: inmediato → programado → inmediato con
+    /// reemplazo, donde el reemplazo cae ANTES de la fecha del pendiente original. Sin el fix
+    /// del predecesor, el inmediato original (100) quedaría abierto hasta la fecha vieja del
+    /// pendiente (t+3d), SOLAPANDO con la fila nueva (160) — dos filas satisfarían el predicado
+    /// "vigente" en ese rango. Este test prueba el re-cierre del predecesor y que exactamente una
+    /// fila esté vigente en cada instante sondeado.</summary>
+    [Fact]
+    public async Task ReemplazarUnPendienteConUnaFechaAnteriorALaOriginalRecierraElPredecesorSinSolapar()
+    {
+        var (_, idArea, idAlicuotaIva, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ReemplazarUnPendienteConUnaFechaAnteriorALaOriginalRecierraElPredecesorSinSolapar));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+
+        var inmediato = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios", new AltaPrecio(idListaGeneral, 100m));
+        Assert.Equal(HttpStatusCode.Created, inmediato.StatusCode);
+
+        var vigenteEnTresDias = DateTimeOffset.UtcNow.AddDays(3);
+        var programado = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios/programados",
+            new ProgramarPrecio(idListaGeneral, 150m, vigenteEnTresDias));
+        Assert.Equal(HttpStatusCode.Created, programado.StatusCode);
+
+        await Task.Delay(TimeSpan.FromMilliseconds(50));
+
+        // Reemplazo INMEDIATO del pendiente ($150 a t+3d) -- "ahora" es muy anterior a t+3d.
+        var reemplazo = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios",
+            new AltaPrecio(idListaGeneral, 160m, ConfirmarReemplazo: true));
+        Assert.Equal(HttpStatusCode.Created, reemplazo.StatusCode);
+        var vigenteDesdeDelReemplazo = (await reemplazo.Content.ReadFromJsonAsync<PrecioVigente>())!.Fecha;
+
+        var historial = await admin.GetFromJsonAsync<List<HistorialDePrecio>>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}/historial");
+        Assert.NotNull(historial);
+        Assert.Equal(3, historial!.Count);
+
+        var filaInmediataOriginal = historial.Single(h => h.Precio == 100m);
+        var filaPendienteReemplazada = historial.Single(h => h.Precio == 150m);
+        var filaFinal = historial.Single(h => h.Precio == 160m);
+
+        // El predecesor (100) se re-cierra en la fecha del reemplazo -- NO se queda en t+3d.
+        // Comparado contra filaFinal.VigenteDesde (no contra vigenteDesdeDelReemplazo, tomado
+        // de la respuesta del POST): ambos lados de esta igualdad tienen que venir del MISMO
+        // round-trip por Postgres (timestamptz trunca a microsegundos, 1 dígito menos que los
+        // ticks de .NET) para no comparar valores con distinta precisión.
+        Assert.Equal(filaFinal.VigenteDesde, filaInmediataOriginal.VigenteHasta);
+        // La pendiente reemplazada sigue con ventana vacía (nunca visible).
+        Assert.Equal(filaPendienteReemplazada.VigenteDesde, filaPendienteReemplazada.VigenteHasta);
+        Assert.Null(filaFinal.VigenteHasta);
+
+        // Exactamente una fila satisface el predicado "vigente" en cada instante sondeado --
+        // el probe crítico es el punto medio entre el reemplazo y t+3d: sin el fix, ahí
+        // coincidían DOS filas (la original, todavía abierta hasta t+3d, y la nueva).
+        var puntoMedioAntesDelReemplazo = filaInmediataOriginal.VigenteDesde
+            + TimeSpan.FromTicks((vigenteDesdeDelReemplazo - filaInmediataOriginal.VigenteDesde).Ticks / 2);
+        var puntoMedioSolapamiento = vigenteDesdeDelReemplazo
+            + TimeSpan.FromTicks((vigenteEnTresDias - vigenteDesdeDelReemplazo).Ticks / 2);
+
+        foreach (var instante in new[]
+                 {
+                     puntoMedioAntesDelReemplazo,
+                     vigenteDesdeDelReemplazo,
+                     puntoMedioSolapamiento,
+                     vigenteEnTresDias.AddSeconds(1)
+                 })
+        {
+            var cantidadVigente = historial.Count(h =>
+                h.VigenteDesde <= instante && (h.VigenteHasta is null || h.VigenteHasta > instante));
+            Assert.True(cantidadVigente == 1, $"instante={instante:O} dio {cantidadVigente} filas vigentes");
+        }
+    }
+
+    /// <summary>Secuencia (b) del hallazgo CRITICAL: inmediato → programado(t+3d) →
+    /// programado(t+10d) con reemplazo, donde el reemplazo cae DESPUÉS de la fecha del
+    /// pendiente original. Sin el fix del predecesor, el inmediato original (100) quedaría
+    /// cerrado en t+3d mientras la fila nueva recién abre en t+10d — un HUECO sin ningún precio
+    /// vigente entre esas dos fechas.</summary>
+    [Fact]
+    public async Task ReemplazarUnPendienteConUnaFechaPosteriorALaOriginalNoDejaUnHueco()
+    {
+        var (_, idArea, idAlicuotaIva, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ReemplazarUnPendienteConUnaFechaPosteriorALaOriginalNoDejaUnHueco));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+
+        var inmediato = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios", new AltaPrecio(idListaGeneral, 100m));
+        Assert.Equal(HttpStatusCode.Created, inmediato.StatusCode);
+
+        var vigenteEnTresDias = DateTimeOffset.UtcNow.AddDays(3);
+        var programado = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios/programados",
+            new ProgramarPrecio(idListaGeneral, 150m, vigenteEnTresDias));
+        Assert.Equal(HttpStatusCode.Created, programado.StatusCode);
+
+        var vigenteEnDiezDias = DateTimeOffset.UtcNow.AddDays(10);
+        var reemplazo = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios/programados",
+            new ProgramarPrecio(idListaGeneral, 160m, vigenteEnDiezDias, ConfirmarReemplazo: true));
+        Assert.Equal(HttpStatusCode.Created, reemplazo.StatusCode);
+
+        var historial = await admin.GetFromJsonAsync<List<HistorialDePrecio>>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}/historial");
+        Assert.NotNull(historial);
+        Assert.Equal(3, historial!.Count);
+
+        var filaInmediataOriginal = historial.Single(h => h.Precio == 100m);
+        var filaPendienteReemplazada = historial.Single(h => h.Precio == 150m);
+        var filaFinal = historial.Single(h => h.Precio == 160m);
+
+        // El predecesor (100) se re-cierra en t+10d -- NO se queda en t+3d (eso dejaría hueco).
+        // Comparado contra filaFinal.VigenteDesde (mismo round-trip por Postgres que
+        // filaInmediataOriginal.VigenteHasta -- timestamptz trunca a microsegundos), no contra
+        // vigenteEnDiezDias directo (ticks de .NET, un dígito más de precisión).
+        Assert.Equal(filaFinal.VigenteDesde, filaInmediataOriginal.VigenteHasta);
+        Assert.Equal(filaPendienteReemplazada.VigenteDesde, filaPendienteReemplazada.VigenteHasta);
+        Assert.Null(filaFinal.VigenteHasta);
+
+        // Consulta en el punto medio de la ventana [t+3d, t+10d): sin el fix acá NO había
+        // ningún precio vigente (null); con el fix devuelve el precio original.
+        var enElMedio = await admin.GetFromJsonAsync<PrecioVigente>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}?fecha={Uri.EscapeDataString(vigenteEnTresDias.AddDays(2).ToString("O"))}");
+        Assert.Equal(100m, enElMedio!.Precio);
+
+        var enDiezDias = await admin.GetFromJsonAsync<PrecioVigente>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}?fecha={Uri.EscapeDataString(vigenteEnDiezDias.AddMinutes(1).ToString("O"))}");
+        Assert.Equal(160m, enDiezDias!.Precio);
+    }
+
     // ---- task 3.9: point-in-time query -------------------------------------------------------
 
     /// <summary>Spec: "Query at present date returns the active row" / "Point-in-time query
@@ -386,32 +519,33 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal("lista_no_es_fija", problema.GetProperty("codigo").GetString());
     }
 
-    // ---- task 3.11: ux_precios_vigente race (db-error-backstops) ----------------------------
+    // ---- task 3.11 / judgment-day ronda 1 item 2: serialización real de escrituras --------
 
     /// <summary>Spec + design: Backstop Map — dos primeros precios concurrentes para el MISMO
-    /// par (articulo, lista): no hay ninguna fila que <c>SELECT ... FOR UPDATE</c> pueda
-    /// lockear todavía, así que las dos transacciones compiten recién en el <c>INSERT</c>.
+    /// par (articulo, lista).
     ///
-    /// <b>Hallazgo honesto (db-error-backstops: "determine honestly whether the race is
-    /// genuinely reachable"):</b> un <c>Task.WhenAll</c> desnudo sobre 2 <c>POST</c> NO alcanza
-    /// la carrera de forma confiable — probado empíricamente (5/5 corridas aisladas exponen el
-    /// 409, pero 3/3 corridas dentro de la clase completa dan 2×201 sin excepción). Con el pool
-    /// de conexiones/JIT ya "caliente" (el caso real de <c>dotnet test</c>, nunca un test
-    /// aislado), el segundo request tiende a completar su <c>BEGIN + SELECT ... FOR UPDATE</c>
-    /// DESPUÉS de que el primero ya hizo <c>COMMIT</c> — en ese caso el segundo SÍ ve la fila
-    /// recién confirmada, y hace un cierre-y-apertura legítimo (200 lógico, sin 23505) en lugar
-    /// de chocar. Mismo mecanismo, mismo hallazgo de fondo que
-    /// <c>ParametrosTests.DosEstablecimientosConcurrentesConLaMismaClaveYElMismoAlcanceDisparanElBackstopDelSaveChanges</c>
-    /// (judgment-day, slice 3 ronda 2) — así que se resuelve con el mismo <c>InterceptorDeRendezVous</c>:
-    /// retiene las dos primeras consultas a <c>listas_precio</c> (la última consulta EF antes de
-    /// abrir la transacción — el <c>SELECT ... FOR UPDATE</c> en sí es ADO.NET crudo, fuera del
-    /// pipeline de comandos de EF Core, así que NO es interceptable directamente) hasta que
-    /// ambas llegaron, forzando que las dos entren a la transacción al mismo tiempo.</summary>
+    /// <b>Reescrito en judgment-day ronda 1 (item 2):</b> antes de este fix, el
+    /// <c>SELECT ... FOR UPDATE</c> solo podía lockear una fila YA EXISTENTE, así que el primer
+    /// precio de un par competía directo contra <c>ux_precios_vigente</c> en el <c>INSERT</c>
+    /// (un 201 + un 409). Ahora <c>AbrirNuevoPrecioAsync</c> toma un
+    /// <c>pg_advisory_xact_lock</c> determinístico por par ANTES de leer nada — el segundo
+    /// llamador espera el lock y, al retomarlo, ve la fila recién comiteada por el primero, así
+    /// que hace un cierre-y-apertura LEGÍTIMO en vez de chocar contra el índice: las dos
+    /// escrituras se serializan de verdad y las DOS suceden (2×201), no una gana y la otra
+    /// choca. El backstop de esquema sigue existiendo (ver el comentario de
+    /// <c>ManejadorDeErrores.ClasificarUnicidad</c> junto a la rama <c>_vigente</c>) pero ya no
+    /// es alcanzable por este camino HTTP.
+    ///
+    /// El rendezvous con <c>InterceptorDeRendezVousListasPrecio</c> se mantiene para forzar que
+    /// las dos transacciones arranquen genuinamente solapadas (si no, el pool/JIT ya calientes
+    /// dejan que la primera termine antes de que la segunda arranque, y el lock nunca llega a
+    /// contenderse de verdad) — mismo mecanismo que <c>ParametrosTests.InterceptorDeRendezVous</c>
+    /// (judgment-day, slice 3 ronda 2).</summary>
     [Fact]
-    public async Task LaCreacionConcurrenteDeDosPrimerosPreciosDaExactamenteUnGanador()
+    public async Task LaCreacionConcurrenteDeDosPrimerosPreciosSeSerializaYAmbosSuceden()
     {
         var (_, idArea, idAlicuotaIva, idListaGeneral, mailAdmin, passwordAdmin) =
-            await AprovisionarTenantAsync(nameof(LaCreacionConcurrenteDeDosPrimerosPreciosDaExactamenteUnGanador));
+            await AprovisionarTenantAsync(nameof(LaCreacionConcurrenteDeDosPrimerosPreciosSeSerializaYAmbosSuceden));
 
         using var admin0 = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
         var articulo = await CrearArticuloAsync(admin0, idArea, idAlicuotaIva);
@@ -434,18 +568,76 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var estados = respuestas.Select(r => r.StatusCode).ToList();
 
         Assert.True(interceptor.Participantes >= 2, $"participantes={interceptor.Participantes}");
-        Assert.Contains(HttpStatusCode.Created, estados);
-        Assert.Contains(HttpStatusCode.Conflict, estados);
+        Assert.All(estados, e => Assert.Equal(HttpStatusCode.Created, e));
 
-        var respuestaConflicto = respuestas.Single(r => r.StatusCode == HttpStatusCode.Conflict);
-        var problema = await respuestaConflicto.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("precio_vigente_duplicado", problema.GetProperty("codigo").GetString());
+        var historial = await admin.GetFromJsonAsync<List<HistorialDePrecio>>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}/historial");
+        Assert.NotNull(historial);
+        Assert.Equal(2, historial!.Count);
+        Assert.Equal([100m, 105m], historial.Select(h => h.Precio).OrderBy(p => p));
+
+        var abierta = Assert.Single(historial, h => h.VigenteHasta == null);
+        var cerrada = historial.Single(h => h.VigenteHasta != null);
+        Assert.Equal(abierta.VigenteDesde, cerrada.VigenteHasta);
+    }
+
+    /// <summary>NUEVO (judgment-day ronda 1, item 2b): dos cambios inmediatos concurrentes sobre
+    /// un par que YA tiene un precio vigente (a diferencia del test anterior, acá el
+    /// <c>SELECT ... FOR UPDATE</c> viejo SÍ tenía una fila que lockear — este caso ya estaba
+    /// protegido de una colisión de <c>ux_precios_vigente</c> antes del fix). Lo que prueba este
+    /// test es la semántica de "esperar y actuar sobre el estado ACTUAL" del advisory lock: las
+    /// dos escrituras se serializan, NINGUNA da 409, y el resultado final es una cadena
+    /// consistente de 3 filas (la original + las dos nuevas, una cerrando a la otra).</summary>
+    [Fact]
+    public async Task LaModificacionConcurrenteDeUnPrecioYaExistenteSeSerializaYAmbosSuceden()
+    {
+        var (_, idArea, idAlicuotaIva, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(LaModificacionConcurrenteDeUnPrecioYaExistenteSeSerializaYAmbosSuceden));
+
+        using var admin0 = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var articulo = await CrearArticuloAsync(admin0, idArea, idAlicuotaIva);
+
+        var primero = await admin0.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios", new AltaPrecio(idListaGeneral, 100m));
+        Assert.Equal(HttpStatusCode.Created, primero.StatusCode);
+
+        using var gate = new CountdownEvent(2);
+        var interceptor = new InterceptorDeRendezVousListasPrecio(gate);
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) =>
+                    options.AddInterceptors(interceptor))));
+
+        using var admin = factory.CreateClient();
+        var login = await admin.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdmin, passwordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tareaA = admin.PostAsJsonAsync($"/api/articulos/{articulo.Id}/precios", new AltaPrecio(idListaGeneral, 150m));
+        var tareaB = admin.PostAsJsonAsync($"/api/articulos/{articulo.Id}/precios", new AltaPrecio(idListaGeneral, 200m));
+
+        var respuestas = await Task.WhenAll(tareaA, tareaB);
+        var estados = respuestas.Select(r => r.StatusCode).ToList();
+
+        Assert.True(interceptor.Participantes >= 2, $"participantes={interceptor.Participantes}");
+        Assert.All(estados, e => Assert.Equal(HttpStatusCode.Created, e));
+
+        var historial = await admin.GetFromJsonAsync<List<HistorialDePrecio>>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}/historial");
+        Assert.NotNull(historial);
+        Assert.Equal(3, historial!.Count);
+        Assert.Equal([100m, 150m, 200m], historial.Select(h => h.Precio).OrderBy(p => p));
+
+        var ordenada = historial.OrderBy(h => h.VigenteDesde).ToList();
+        Assert.Null(ordenada[2].VigenteHasta);
+        Assert.Equal(ordenada[1].VigenteDesde, ordenada[0].VigenteHasta);
+        Assert.Equal(ordenada[2].VigenteDesde, ordenada[1].VigenteHasta);
     }
 
     /// <summary>Retiene las dos primeras consultas EF a <c>listas_precio</c> (la última
     /// consulta EF-interceptable antes de que <c>AbrirNuevoPrecioAsync</c> abra su transacción
-    /// y haga el <c>SELECT ... FOR UPDATE</c> crudo) hasta que ambas llegaron — mismo mecanismo
-    /// que <c>ParametrosTests.InterceptorDeRendezVous</c>.</summary>
+    /// y tome el <c>pg_advisory_xact_lock</c>/lea la fila abierta) hasta que ambas llegaron —
+    /// mismo mecanismo que <c>ParametrosTests.InterceptorDeRendezVous</c>. Reusado por los dos
+    /// tests de serialización de arriba.</summary>
     private sealed class InterceptorDeRendezVousListasPrecio(CountdownEvent gate) : DbCommandInterceptor
     {
         private int _participantes;
@@ -542,6 +734,71 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- judgment-day ronda 1, item 5: cobertura y consistencia ------------------------------
+
+    /// <summary>(item 5a) Cross-tenant con un id de artículo REAL de OTRO tenant (no un id
+    /// inexistente) en las TRES rutas GET de precios — el filtro de EF (+ RLS por debajo) lo
+    /// deja invisible, mismo 404 que "no existe en absoluto" (ADR-8).</summary>
+    [Fact]
+    public async Task ConsultarPreciosDeUnArticuloRealDeOtroTenantDevuelve404EnLasTresRutasDeGet()
+    {
+        var (_, _, _, _, mailAdminA, passwordAdminA) =
+            await AprovisionarTenantAsync(nameof(ConsultarPreciosDeUnArticuloRealDeOtroTenantDevuelve404EnLasTresRutasDeGet) + "-A");
+        var (_, idAreaB, idAlicuotaIvaB, idListaGeneralB, mailAdminB, passwordAdminB) =
+            await AprovisionarTenantAsync(nameof(ConsultarPreciosDeUnArticuloRealDeOtroTenantDevuelve404EnLasTresRutasDeGet) + "-B");
+
+        using var adminB = await ClienteLogueadoAsync(mailAdminB, passwordAdminB);
+        var articuloB = await CrearArticuloAsync(adminB, idAreaB, idAlicuotaIvaB);
+        var alta = await adminB.PostAsJsonAsync(
+            $"/api/articulos/{articuloB.Id}/precios", new AltaPrecio(idListaGeneralB, 100m));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+
+        using var adminA = await ClienteLogueadoAsync(mailAdminA, passwordAdminA);
+
+        var todasLasListas = await adminA.GetAsync($"/api/articulos/{articuloB.Id}/precios");
+        Assert.Equal(HttpStatusCode.NotFound, todasLasListas.StatusCode);
+
+        var unaLista = await adminA.GetAsync($"/api/articulos/{articuloB.Id}/precios/{idListaGeneralB}");
+        Assert.Equal(HttpStatusCode.NotFound, unaLista.StatusCode);
+
+        var historial = await adminA.GetAsync($"/api/articulos/{articuloB.Id}/precios/{idListaGeneralB}/historial");
+        Assert.Equal(HttpStatusCode.NotFound, historial.StatusCode);
+    }
+
+    /// <summary>(item 5b) Prueba explícita de la divergencia documentada en
+    /// <c>ServicioDePrecios.PrecioVigenteAsync</c>/<c>PreciosVigentesAsync</c>: una lista
+    /// desactivada SIGUE resolviendo por id explícito, pero desaparece del listado de "todas
+    /// las listas activas".</summary>
+    [Fact]
+    public async Task UnaListaInactivaResuelvePorIdExplicitoPeroNoApareceEnElListadoDeTodas()
+    {
+        var (idTenant, idArea, idAlicuotaIva, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnaListaInactivaResuelvePorIdExplicitoPeroNoApareceEnElListadoDeTodas));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+
+        var idListaInactiva = await SembrarListaPrecioAsync(idTenant, "Lista inactiva");
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma))
+        {
+            var lista = await db.ListasPrecio.SingleAsync(l => l.Id == idListaInactiva);
+            lista.Activo = false;
+            await db.SaveChangesAsync();
+        }
+
+        var alta = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios", new AltaPrecio(idListaInactiva, 55m));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+
+        var porId = await admin.GetFromJsonAsync<PrecioVigente>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaInactiva}");
+        Assert.Equal(55m, porId!.Precio);
+
+        var todas = await admin.GetFromJsonAsync<List<PrecioVigente>>(
+            $"/api/articulos/{articulo.Id}/precios");
+        Assert.NotNull(todas);
+        Assert.DoesNotContain(todas!, p => p.IdListaPrecio == idListaInactiva);
     }
 
     // ---- Validaciones adicionales de scope (bounds, tolerancia de reloj, autorización) -------

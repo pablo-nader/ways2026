@@ -33,9 +33,14 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
 
     /// <summary>Establece el precio vigente AHORA (spec: Price History Never Overwrites,
     /// "Changing a price closes the old row and opens a new one") — <c>vigente_desde</c> siempre
-    /// es <c>reloj.Ahora</c>, nunca provisto por el cliente.</summary>
+    /// es "ahora", nunca provisto por el cliente. <c>vigenteDesde: null</c> le indica a
+    /// <see cref="AbrirNuevoPrecioAsync"/> que resuelva "ahora" DESPUÉS de tomar el advisory
+    /// lock (judgment-day, item 3) — capturarlo acá, antes de entrar a la transacción, es
+    /// exactamente el bug que ese fix corrige: un llamador que espera el lock bajo contención
+    /// terminaría con un <c>vigente_desde</c> más viejo que el de la fila que ya ganó la carrera
+    /// y confirmó, disparando un <c>vigente_desde_invalido</c> espurio.</summary>
     public Task<PrecioVigente> EstablecerPrecioAsync(int idArticulo, AltaPrecio datos, CancellationToken ct = default) =>
-        AbrirNuevoPrecioAsync(idArticulo, datos.IdListaPrecio, datos.Precio, reloj.Ahora, datos.ConfirmarReemplazo, ct);
+        AbrirNuevoPrecioAsync(idArticulo, datos.IdListaPrecio, datos.Precio, vigenteDesde: null, datos.ConfirmarReemplazo, ct);
 
     /// <summary>Programa un precio a futuro (spec: Programmable Future Prices) —
     /// <see cref="ProgramarPrecio.VigenteDesde"/> tiene que ser una fecha futura antes de entrar
@@ -47,22 +52,31 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
     }
 
     /// <summary>
-    /// Design decision 3/4 — única fila de escritura de <c>precios</c>. Dentro de una única
-    /// transacción: bloquea (<c>SELECT ... FOR UPDATE</c>, vía ADO.NET crudo — EF Core/Npgsql no
-    /// tiene un equivalente mapeado) la fila actualmente abierta del par
-    /// <c>(idArticulo, idListaPrecio)</c> si existe, decide si hace falta confirmación (fila
-    /// pendiente — <c>vigente_desde &gt; ahora</c> — sin <paramref name="confirmarReemplazo"/>),
-    /// la cierra, e inserta la nueva fila abierta.
+    /// Design decision 3/4 (revisado en judgment-day, items 1-3) — única fila de escritura de
+    /// <c>precios</c>. Dentro de una única transacción: toma un <c>pg_advisory_xact_lock</c>
+    /// determinístico sobre el par <c>(idArticulo, idListaPrecio)</c> de este tenant PRIMERO
+    /// (<see cref="TomarLockDelParAsync"/>) — serializa CUALQUIER escritura concurrente sobre el
+    /// mismo par, exista o no una fila abierta todavía (a diferencia del viejo <c>SELECT ... FOR
+    /// UPDATE</c>, que solo podía lockear una fila YA EXISTENTE) — y recién ahí resuelve "ahora"
+    /// y lee la fila actualmente abierta con un SELECT plano (<see
+    /// cref="BuscarFilaAbiertaAsync"/>; seguro porque el lock ya garantiza que ningún otro
+    /// escritor está tocando este par), decide si hace falta confirmación (fila pendiente —
+    /// <c>vigente_desde &gt; ahora</c> — sin <paramref name="confirmarReemplazo"/>), la cierra
+    /// (y, si era pendiente, re-cierra también su PREDECESOR — <see
+    /// cref="ReabrirLimiteDelPredecesorAsync"/>), e inserta la nueva fila abierta.
     ///
-    /// Cuando NO hay fila abierta (primer precio del par) no hay nada que bloquear — dos altas
-    /// concurrentes compiten recién en el <c>INSERT</c>, contra <c>ux_precios_vigente</c>
-    /// (backstop real, <c>ManejadorDeErrores</c> → 409 <c>precio_vigente_duplicado</c>, task
-    /// 3.11). Esa es la carrera GENUINA de este backstop — a diferencia de
-    /// <c>ux_articulos_codigo_interno</c>'s camino autogenerado, acá no hay ningún contador ni
-    /// lock de fila que la evite por construcción.
+    /// Con el advisory lock, la carrera de <c>ux_precios_vigente</c> (dos primeros precios
+    /// concurrentes para el mismo par) YA NO es alcanzable por este camino de servicio: el
+    /// segundo llamador espera el lock, y al retomarlo lee el estado YA COMITEADO por el
+    /// primero, así que hace un cierre-y-apertura legítimo en vez de chocar contra el índice
+    /// único (task 3.11, test adaptado en judgment-day: ambas altas concurrentes terminan en
+    /// 201). El backstop (<c>ux_precios_vigente</c>, <c>ManejadorDeErrores</c> → 409
+    /// <c>precio_vigente_duplicado</c>) se mantiene igual como defensa de esquema — solo queda
+    /// alcanzable por una escritura cruda/fuera de banda que bypasee este servicio (misma
+    /// familia que <c>PK_articulos_empresas</c>, Slice 2 judgment-day ronda 2).
     /// </summary>
     public async Task<PrecioVigente> AbrirNuevoPrecioAsync(
-        int idArticulo, int idListaPrecio, decimal precio, DateTimeOffset vigenteDesde, bool confirmarReemplazo,
+        int idArticulo, int idListaPrecio, decimal precio, DateTimeOffset? vigenteDesde, bool confirmarReemplazo,
         CancellationToken ct = default)
     {
         await BuscarArticuloAsync(idArticulo, ct);
@@ -77,8 +91,15 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-            var filaAbierta = await BloquearFilaVigenteAsync(idArticulo, idListaPrecio, idTenant, ct);
+            await TomarLockDelParAsync(idTenant, idArticulo, idListaPrecio, ct);
+
+            // "ahora" se captura DESPUÉS del lock (judgment-day, item 3) — nunca antes de entrar
+            // a la transacción. vigenteDesde == null (caso inmediato, EstablecerPrecioAsync)
+            // también se resuelve acá, con el mismo "ahora" post-lock.
             var ahora = reloj.Ahora;
+            var vigenteDesdeEfectivo = vigenteDesde ?? ahora;
+
+            var filaAbierta = await BuscarFilaAbiertaAsync(idArticulo, idListaPrecio, idTenant, ct);
 
             if (filaAbierta is { } fila)
             {
@@ -91,7 +112,7 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
                         "Ya existe un precio pendiente para este artículo en esta lista; confirmá el reemplazo.");
                 }
 
-                if (!esPendiente && vigenteDesde < fila.VigenteDesde)
+                if (!esPendiente && vigenteDesdeEfectivo < fila.VigenteDesde)
                 {
                     throw new ErrorDominio(
                         "vigente_desde_invalido",
@@ -109,9 +130,23 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
                 // criterio es el opuesto y correcto: se cierra en el vigente_desde de la fila
                 // nueva, porque esa fila SÍ estuvo vigente hasta ese momento (spec: "the $100
                 // row's vigente_hasta is set to the new row's vigente_desde").
-                var vigenteHastaDeLaFilaCerrada = esPendiente ? fila.VigenteDesde : vigenteDesde;
+                var vigenteHastaDeLaFilaCerrada = esPendiente ? fila.VigenteDesde : vigenteDesdeEfectivo;
 
                 await CerrarFilaAsync(fila.Id, vigenteHastaDeLaFilaCerrada, ahora, ct);
+
+                if (esPendiente)
+                {
+                    // (judgment-day, item 1) El PREDECESOR — la fila que se cerró originalmente
+                    // al abrirse `fila` (su vigente_hasta == fila.VigenteDesde) — queda con un
+                    // límite VIEJO si no se corrige acá. Sin esto: una fecha nueva ANTERIOR a la
+                    // original produce SOLAPAMIENTO (dos filas satisfacen el predicado "vigente"
+                    // en el rango entre ambas fechas — el historial miente); una fecha nueva
+                    // POSTERIOR produce un HUECO (ningún precio vigente en ese rango). Se
+                    // re-cierra al vigente_desde EFECTIVO de la fila nueva — mismo criterio que
+                    // la fila ACTIVA usa arriba para su propio cierre.
+                    await ReabrirLimiteDelPredecesorAsync(
+                        idArticulo, idListaPrecio, idTenant, fila.Id, fila.VigenteDesde, vigenteDesdeEfectivo, ahora, ct);
+                }
             }
 
             db.Precios.Add(new Precio
@@ -119,7 +154,7 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
                 IdArticulo = idArticulo,
                 IdListaPrecio = idListaPrecio,
                 Monto = precio,
-                VigenteDesde = vigenteDesde,
+                VigenteDesde = vigenteDesdeEfectivo,
                 VigenteHasta = null,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
@@ -128,13 +163,22 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
             await db.SaveChangesAsync(ct);
             await transaccion.CommitAsync(ct);
 
-            return new PrecioVigente(idArticulo, idListaPrecio, precio, vigenteDesde);
+            return new PrecioVigente(idArticulo, idListaPrecio, precio, vigenteDesdeEfectivo);
         });
     }
 
     /// <summary>Precio vigente de UN artículo en UNA lista a una fecha (spec: Current-Price
     /// Query Semantics By Date; Derived List Price Resolution At Read Time). <paramref
-    /// name="fecha"/> por defecto es <c>reloj.Ahora</c>.</summary>
+    /// name="fecha"/> por defecto es <c>reloj.Ahora</c>.
+    ///
+    /// <para>(judgment-day, item 5b) Divergencia DELIBERADA con <see cref="PreciosVigentesAsync"/>:
+    /// acá NO se filtra por <c>lista.Activo</c> — una búsqueda puntual por id explícito puede
+    /// resolver una lista inactiva (el llamador ya sabe qué lista quiere; una lista
+    /// desactivada no deja de tener historial de precios válido). <see
+    /// cref="PreciosVigentesAsync"/> sí filtra por <c>Activo</c> porque ahí el criterio es "qué
+    /// listas mostrar por default", no "resolvé esta lista puntual". Documentado acá y en el
+    /// otro método para que la próxima persona que lo lea no lo confunda con un bug.</para>
+    /// </summary>
     public async Task<PrecioVigente> PrecioVigenteAsync(
         int idArticulo, int idListaPrecio, DateTimeOffset? fecha, CancellationToken ct = default)
     {
@@ -145,7 +189,20 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
     }
 
     /// <summary>Precio vigente de un artículo en TODAS las listas activas del tenant a una fecha
-    /// — endpoint "single artículo across listas" (scope de esta slice).</summary>
+    /// — endpoint "single artículo across listas" (scope de esta slice).
+    ///
+    /// <para>(judgment-day, item 5b) Filtra por <c>Activo</c> a propósito, a diferencia de <see
+    /// cref="PrecioVigenteAsync"/> (que resuelve cualquier lista por id explícito, activa o no)
+    /// — ver el doc-comment de ese método para el criterio completo.</para>
+    ///
+    /// <para>(judgment-day, item 5c, INFO para la etapa POS) <c>N+1</c> deliberado: una consulta
+    /// por lista dentro del <c>foreach</c>, sin batchear. Aceptable para este endpoint
+    /// "single artículo" (pocas listas por tenant), pero el catálogo del POS (etapa 5) va a
+    /// necesitar resolver precios de MUCHOS artículos a la vez — ahí sí va a hacer falta
+    /// batchear esta resolución (probablemente una consulta por lista sobre TODOS los artículos
+    /// del catálogo, no una por artículo). No se refactoriza acá porque está fuera del alcance
+    /// de esta slice.</para>
+    /// </summary>
     public async Task<IReadOnlyList<PrecioVigente>> PreciosVigentesAsync(
         int idArticulo, DateTimeOffset? fecha, CancellationToken ct = default)
     {
@@ -210,8 +267,18 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
 
         var montoBase = await ObtenerPrecioFijaAsync(idArticulo, listaBase.Id, fecha, ct);
 
+        // (judgment-day, item 4) explícito en lugar de `lista.Porcentaje!.Value`: una lista
+        // derivada sin porcentaje configurado es un invariante violado (ServicioDeListasPrecio,
+        // Slice 4, lo exige al escribir) — mismo código de dominio que un precio derivado
+        // negativo (ResolvedorDePrecios.ResolverPrecioDerivado), nunca un NRE crudo.
+        var porcentaje = lista.Porcentaje
+            ?? throw new ErrorDominio(
+                "precio_derivado_invalido",
+                $"La lista derivada {lista.Id} no tiene porcentaje configurado.",
+                422);
+
         var monto = montoBase is { } b
-            ? ResolvedorDePrecios.ResolverPrecioDerivado(b, lista.Porcentaje!.Value)
+            ? ResolvedorDePrecios.ResolverPrecioDerivado(b, porcentaje)
             : (decimal?)null;
 
         return new PrecioVigente(idArticulo, lista.Id, monto, fecha);
@@ -284,15 +351,54 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         }
     }
 
-    /// <summary><c>SELECT ... FOR UPDATE</c> vía ADO.NET crudo sobre la conexión/transacción
-    /// activa del <see cref="IWaysDbContext"/> inyectado — mismo criterio de "nunca
-    /// <c>FromSqlRaw&lt;T&gt;()</c>"
-    /// que <c>AsignadorDeCodigoInternoArticulo</c>/<c>AsignadorDeNumeroCliente</c>, pero acá el
-    /// motivo es distinto: EF Core/Npgsql no tiene una API mapeada para <c>FOR UPDATE</c> sobre
-    /// una entidad, así que la única forma de tomar el lock de fila es SQL crudo. <c>id_tenant</c>
-    /// se filtra explícitamente (defensa en profundidad) aunque RLS ya lo garantiza — mismo
-    /// criterio dual-capa que el resto del código de escritura.</summary>
-    private async Task<FilaVigente?> BloquearFilaVigenteAsync(
+    /// <summary>Deriva la clave determinística de <c>pg_advisory_xact_lock(int, int)</c> para el
+    /// par <c>(idArticulo, idListaPrecio)</c> de este tenant (judgment-day, item 2). Primer
+    /// argumento: <c>idTenant</c> — no hace falta mezclarlo con nada más, cada tenant ocupa su
+    /// propio subespacio de claves. Segundo argumento: combinación aritmética simple de
+    /// <c>idArticulo</c>/<c>idListaPrecio</c> — DELIBERADAMENTE no <c>HashCode.Combine</c>, que
+    /// incorpora una semilla aleatoria por proceso (dos instancias de la app, o la misma tras un
+    /// reinicio, calcularían claves DISTINTAS para el MISMO par, y el lock dejaría de
+    /// serializarlas entre sí — justo lo opuesto de lo que se busca). Una colisión de la clave 2
+    /// entre dos pares DISTINTOS del mismo tenant es tolerable y no compromete la corrección:
+    /// el peor caso es serializar de más (dos pares no relacionados se esperan entre sí sin
+    /// necesidad) — nunca una lectura incorrecta, porque el estado real siempre se lee de la
+    /// fila (<see cref="BuscarFilaAbiertaAsync"/>) DESPUÉS de tomar el lock, nunca del hash en
+    /// sí.</summary>
+    private static (int Clave1, int Clave2) ClaveDeLockDePar(int idTenant, int idArticulo, int idListaPrecio) =>
+        (idTenant, unchecked((idArticulo * 397) ^ idListaPrecio));
+
+    /// <summary><c>pg_advisory_xact_lock</c> con alcance de TRANSACCIÓN (se libera solo al
+    /// COMMIT/ROLLBACK) tomado ANTES de leer nada (judgment-day, item 2) — a diferencia del
+    /// viejo <c>SELECT ... FOR UPDATE</c> sobre la fila mutable (que no existía para lockear
+    /// cuando el par no tenía ninguna fila abierta todavía), esto serializa CUALQUIER escritura
+    /// concurrente sobre el mismo par, exista o no una fila abierta: el segundo llamador espera
+    /// acá hasta que el primero comitee o revierta, y recién ahí lee el estado ACTUAL — la
+    /// semántica de "esperar y actuar sobre el estado actual" que el doc-comment de
+    /// <see cref="AbrirNuevoPrecioAsync"/> promete.</summary>
+    private async Task TomarLockDelParAsync(int idTenant, int idArticulo, int idListaPrecio, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var (clave1, clave2) = ClaveDeLockDePar(idTenant, idArticulo, idListaPrecio);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText = "SELECT pg_advisory_xact_lock($1, $2)";
+
+        AgregarParametro(comando, clave1);
+        AgregarParametro(comando, clave2);
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>SELECT plano (sin <c>FOR UPDATE</c>) vía ADO.NET crudo sobre la
+    /// conexión/transacción activa del <see cref="IWaysDbContext"/> inyectado — mismo criterio
+    /// de "nunca <c>FromSqlRaw&lt;T&gt;()</c>" que <c>AsignadorDeCodigoInternoArticulo</c>/
+    /// <c>AsignadorDeNumeroCliente</c>. Seguro sin lock de fila propio porque
+    /// <see cref="TomarLockDelParAsync"/> ya se tomó ANTES en la misma transacción — ningún otro
+    /// escritor puede estar tocando este par en simultáneo. <c>id_tenant</c> se filtra
+    /// explícitamente (defensa en profundidad) aunque RLS ya lo garantiza — mismo criterio
+    /// dual-capa que el resto del código de escritura.</summary>
+    private async Task<FilaVigente?> BuscarFilaAbiertaAsync(
         int idArticulo, int idListaPrecio, int idTenant, CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
@@ -302,8 +408,7 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         comando.CommandText =
             "SELECT id_precio, vigente_desde FROM precios " +
             "WHERE id_articulo = $1 AND id_lista_precio = $2 AND id_tenant = $3 " +
-            "AND vigente_hasta IS NULL AND deleted_at IS NULL " +
-            "FOR UPDATE";
+            "AND vigente_hasta IS NULL AND deleted_at IS NULL";
 
         AgregarParametro(comando, idArticulo);
         AgregarParametro(comando, idListaPrecio);
@@ -317,6 +422,48 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         }
 
         return new FilaVigente(lector.GetInt32(0), lector.GetFieldValue<DateTimeOffset>(1));
+    }
+
+    /// <summary>(judgment-day, item 1) Localiza el PREDECESOR de una fila pendiente reemplazada
+    /// — la fila cuyo <c>vigente_hasta</c> coincide EXACTO con <paramref name="limiteOriginal"/>
+    /// (el <c>vigente_desde</c> original de la pendiente, antes del reemplazo) — y la re-cierra
+    /// en <paramref name="nuevoLimite"/> (el <c>vigente_desde</c> efectivo de la fila nueva). Si
+    /// no hay predecesor (la pendiente reemplazada era el primer precio del par) no hay nada que
+    /// corregir.
+    ///
+    /// <paramref name="idFilaPendienteCerrada"/> se EXCLUYE explícitamente de la búsqueda —
+    /// cuando el reemplazo cierra la pendiente en su ventana muerta (<c>vigente_hasta ==
+    /// vigente_desde == limiteOriginal</c>, ver el caller), esa MISMA fila también matchea
+    /// <c>vigente_hasta = limiteOriginal</c>. Sin esta exclusión, la pendiente recién cerrada se
+    /// re-abre a sí misma en <paramref name="nuevoLimite"/> — el bug encontrado corriendo el
+    /// caso "primer precio del par es directamente un programado, sin predecesor real": la
+    /// pendiente reemplazada se volvía visible en la ventana intermedia en vez de quedar
+    /// muerta.</summary>
+    private async Task ReabrirLimiteDelPredecesorAsync(
+        int idArticulo, int idListaPrecio, int idTenant, int idFilaPendienteCerrada, DateTimeOffset limiteOriginal,
+        DateTimeOffset nuevoLimite, DateTimeOffset ahora, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText =
+            "SELECT id_precio FROM precios " +
+            "WHERE id_articulo = $1 AND id_lista_precio = $2 AND id_tenant = $3 " +
+            "AND vigente_hasta = $4 AND id_precio != $5 AND deleted_at IS NULL";
+
+        AgregarParametro(comando, idArticulo);
+        AgregarParametro(comando, idListaPrecio);
+        AgregarParametro(comando, idTenant);
+        AgregarParametro(comando, limiteOriginal);
+        AgregarParametro(comando, idFilaPendienteCerrada);
+
+        var idPredecesor = (int?)await comando.ExecuteScalarAsync(ct);
+
+        if (idPredecesor is { } id)
+        {
+            await CerrarFilaAsync(id, nuevoLimite, ahora, ct);
+        }
     }
 
     private async Task CerrarFilaAsync(int idPrecio, DateTimeOffset vigenteHasta, DateTimeOffset ahora, CancellationToken ct)

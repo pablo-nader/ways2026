@@ -222,19 +222,20 @@ public class ManejadorDeErrores(
         // one pending future price" (design decisions 3/4). Sin colisión con ninguna otra
         // familia: "_vigente" no aparece en ningún otro nombre de índice del esquema.
         //
-        // Slice 3 (task 3.11): la exención de la prueba de carrera CIERRA acá —
-        // ServicioDePrecios.AbrirNuevoPrecioAsync es el camino de escritura real. La carrera es
-        // GENUINA por construcción y no por omisión de un pre-chequeo (el `SELECT ... FOR
-        // UPDATE` solo bloquea una fila que YA EXISTE — para el PRIMER precio de un par
-        // (articulo, lista) no hay ninguna fila que lockear) pero NO es reproducible con un
-        // `Task.WhenAll` desnudo sobre 2 POST (probado empíricamente: confiable en corridas
-        // aisladas, pero con el pool de conexiones/JIT ya calientes — el caso real de `dotnet
-        // test` con la suite completa — el segundo request tiende a ver la fila del primero ya
-        // confirmada y hace un cierre-y-apertura legítimo en vez de chocar). Mismo mecanismo que
-        // el hallazgo de `ParametrosTests` (judgment-day, slice 3 ronda 2): la prueba fuerza un
-        // rendezvous real con un `DbCommandInterceptor` para garantizar la carrera en vez de
-        // depender del timing del pool. Probada en
-        // PreciosEndpointsTests.LaCreacionConcurrenteDeDosPrimerosPreciosDaExactamenteUnGanador.
+        // Slice 3 judgment-day ronda 1 (item 2), REEMPLAZA el comentario anterior sobre task
+        // 3.11: ServicioDePrecios.AbrirNuevoPrecioAsync ahora toma un pg_advisory_xact_lock
+        // determinístico por par (idArticulo, idListaPrecio) ANTES de leer nada, así que
+        // CUALQUIER escritura concurrente sobre el mismo par se serializa de verdad — el segundo
+        // llamador espera el lock y, al retomarlo, ve el estado YA COMITEADO por el primero
+        // (incluida la fila recién insertada si el primero fue el primer precio del par), y hace
+        // un cierre-y-apertura legítimo en vez de chocar contra este índice. Por eso esta carrera
+        // YA NO es alcanzable por el camino de servicio: el backstop sigue existiendo como
+        // defensa de esquema, pero solo queda alcanzable por una escritura cruda/fuera de banda
+        // que bypasee el servicio (misma familia que PK_articulos_empresas, Slice 2 judgment-day
+        // ronda 2 — ver ArticulosEndpointsTests.UnaFilaDeSubsetDuplicadaInsertadaPorFueraDelServicioViolaLaPk).
+        // La prueba HTTP de este par (antes "un ganador + un 409") se adaptó para probar la
+        // serialización real en su lugar: PreciosEndpointsTests.
+        // LaCreacionConcurrenteDeDosPrimerosPreciosSeSerializaYAmbosSuceden.
         if (nombreDeIndice.Contains("_vigente", StringComparison.Ordinal))
         {
             return ("precio_vigente_duplicado", "Ya existe un precio vigente para este artículo en esta lista.");

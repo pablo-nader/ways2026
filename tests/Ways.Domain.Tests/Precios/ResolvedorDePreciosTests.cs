@@ -1,3 +1,4 @@
+using Ways.Domain.Common;
 using Ways.Domain.Precios;
 
 namespace Ways.Domain.Tests.Precios;
@@ -48,5 +49,18 @@ public class ResolvedorDePreciosTests
         var resuelto = ResolvedorDePrecios.ResolverPrecioDerivado(precioBase: 0.125m, porcentaje: 0m);
 
         Assert.Equal(0.13m, resuelto);
+    }
+
+    /// <summary>(judgment-day, item 4) Un descuento mayor a -100% da un precio derivado
+    /// negativo, sin sentido de negocio — se rechaza con un error de dominio limpio en lugar de
+    /// devolver un número negativo silencioso.</summary>
+    [Fact]
+    public void UnPorcentajeMenorAMenos100DaUnPrecioNegativoYSeRechaza()
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            ResolvedorDePrecios.ResolverPrecioDerivado(precioBase: 100m, porcentaje: -150m));
+
+        Assert.Equal("precio_derivado_invalido", error.Codigo);
+        Assert.Equal(422, error.EstadoHttp);
     }
 }
