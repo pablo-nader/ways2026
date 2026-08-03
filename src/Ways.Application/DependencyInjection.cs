@@ -5,6 +5,7 @@ using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
 using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
+using Ways.Application.Precios;
 using Ways.Application.Proveedores;
 using Ways.Application.Usuarios;
 
@@ -34,6 +35,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeClientes>();
         services.AddScoped<ServicioDeProveedores>();
         services.AddScoped<ServicioDeArticulos>();
+        services.AddScoped<ServicioDePrecios>();
 
         services.AddScoped<ServicioDeAprovisionamiento>();
         services.AddScoped<ServicioDeOrganizacion>();
