@@ -18,7 +18,21 @@ public class PrecioConfiguration : IEntityTypeConfiguration<Precio>
 {
     public void Configure(EntityTypeBuilder<Precio> builder)
     {
-        builder.ToTable("precios");
+        // ck_precios_ventana_valida (judgment-day, slice 3 ronda 2, GATE-APROBADO 2026-08-03):
+        // backstop de esquema contra un intervalo INVERTIDO (<c>vigente_hasta &lt;
+        // vigente_desde</c>) — ServicioDePrecios.AbrirNuevoPrecioAsync ya lo garantiza en el
+        // camino de servicio (validación simétrica contra la fila activa y contra el predecesor
+        // de una pendiente reemplazada), esto cubre una escritura cruda/fuera de banda que lo
+        // bypasee (misma familia que ck_clientes_cf_protegido).
+        //
+        // `>=`, NO `>` estricto: una pendiente reemplazada se cierra deliberadamente con
+        // <c>vigente_hasta == vigente_desde</c> (ventana VACÍA, no invertida — ver el
+        // doc-comment de AbrirNuevoPrecioAsync) para que nunca se vuelva visible sin necesidad de
+        // borrar la fila. Un `>` estricto rechazaría ese estado legítimo y ya probado
+        // (ReemplazarUnPendienteConUnaFechaPosteriorALaOriginalNoDejaUnHueco); `>=` sigue
+        // atrapando el bug real (una fila con vigente_hasta ANTERIOR a su propio vigente_desde).
+        builder.ToTable("precios", t => t.HasCheckConstraint(
+            "ck_precios_ventana_valida", "vigente_hasta IS NULL OR vigente_hasta >= vigente_desde"));
 
         builder.HasKey(p => p.Id);
 

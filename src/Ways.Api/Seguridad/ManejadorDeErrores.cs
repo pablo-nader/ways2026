@@ -61,6 +61,15 @@ public class ManejadorDeErrores(
             DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: "ck_clientes_cf_protegido" } } =>
                 (StatusCodes.Status409Conflict, "El cliente Consumidor Final no se puede editar ni eliminar.", "consumidor_final_protegido"),
 
+            // Backstop de esquema (judgment-day, slice 3 ronda 2, item 2; GATE-APROBADO
+            // 2026-08-03) para "vigente_hasta > vigente_desde" en precios — ServicioDePrecios.
+            // AbrirNuevoPrecioAsync ya lo garantiza en el camino de servicio (mismo código de
+            // dominio, ver el chequeo simétrico contra la fila activa/el predecesor); esto cubre
+            // una escritura cruda/fuera de banda que lo bypasee (misma familia que
+            // ck_clientes_cf_protegido).
+            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: "ck_precios_ventana_valida" } } =>
+                (StatusCodes.Status400BadRequest, "vigente_hasta no puede ser anterior a vigente_desde.", "vigente_desde_invalido"),
+
             // Backstop genérico para las FKs compuestas nuevas (fk_*_empresa, fk_categorias_padre,
             // fk_parametros_punto_venta, …): una referencia a una fila que no existe (o que
             // pertenece a otro tenant, invisible bajo RLS) llega acá como 23503 en vez de
@@ -220,9 +229,22 @@ public class ManejadorDeErrores(
 
         // stage-3-articulos-y-precios (task 1.10): ux_precios_vigente — backstop de "at most
         // one pending future price" (design decisions 3/4). Sin colisión con ninguna otra
-        // familia: "_vigente" no aparece en ningún otro nombre de índice del esquema. Exenta de
-        // la prueba de carrera exigida por `db-error-backstops` hasta la Slice 3
-        // (ServicioDePrecios, task 3.11), que es donde aterriza el camino de escritura.
+        // familia: "_vigente" no aparece en ningún otro nombre de índice del esquema.
+        //
+        // Slice 3 judgment-day ronda 1 (item 2), REEMPLAZA el comentario anterior sobre task
+        // 3.11: ServicioDePrecios.AbrirNuevoPrecioAsync ahora toma un pg_advisory_xact_lock
+        // determinístico por par (idArticulo, idListaPrecio) ANTES de leer nada de precios, así que
+        // CUALQUIER escritura concurrente sobre el mismo par se serializa de verdad — el segundo
+        // llamador espera el lock y, al retomarlo, ve el estado YA COMITEADO por el primero
+        // (incluida la fila recién insertada si el primero fue el primer precio del par), y hace
+        // un cierre-y-apertura legítimo en vez de chocar contra este índice. Por eso esta carrera
+        // YA NO es alcanzable por el camino de servicio: el backstop sigue existiendo como
+        // defensa de esquema, pero solo queda alcanzable por una escritura cruda/fuera de banda
+        // que bypasee el servicio (misma familia que PK_articulos_empresas, Slice 2 judgment-day
+        // ronda 2 — ver ArticulosEndpointsTests.UnaFilaDeSubsetDuplicadaInsertadaPorFueraDelServicioViolaLaPk).
+        // La prueba HTTP de este par (antes "un ganador + un 409") se adaptó para probar la
+        // serialización real en su lugar: PreciosEndpointsTests.
+        // LaCreacionConcurrenteDeDosPrimerosPreciosSeSerializaYAmbosSuceden.
         if (nombreDeIndice.Contains("_vigente", StringComparison.Ordinal))
         {
             return ("precio_vigente_duplicado", "Ya existe un precio vigente para este artículo en esta lista.");

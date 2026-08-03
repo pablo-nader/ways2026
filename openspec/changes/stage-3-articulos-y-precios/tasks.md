@@ -330,7 +330,7 @@ routes only.
 
 ### 3A. Domain
 
-- [ ] 3.1 [P] Add `ResolverPrecioDerivado(precioBase, porcentaje)` pure
+- [x] 3.1 [P] Add `ResolverPrecioDerivado(precioBase, porcentaje)` pure
   function in `Ways.Domain.Precios`: `Math.Round(precioBase * (1 +
   porcentaje / 100m), 2, MidpointRounding.AwayFromZero)`. *(design: Price
   Resolution & Rounding; spec: precios / Derived List Price Resolution At
@@ -338,7 +338,7 @@ routes only.
 
 ### 3B. Application
 
-- [ ] 3.2 Add `ServicioDePrecios.AbrirNuevoPrecioAsync(idArticulo,
+- [x] 3.2 Add `ServicioDePrecios.AbrirNuevoPrecioAsync(idArticulo,
   idListaPrecio, precio, vigenteDesde, confirmarReemplazo)`: single
   transaction — `SELECT ... FOR UPDATE` the currently open row (if any),
   close it (`vigente_hasta = vigenteDesde` of the new row, or `now()` for an
@@ -347,7 +347,7 @@ routes only.
   future price) and `confirmarReemplazo` is not `true`. *(design decisions 3,
   4; Protection Rules; spec: precios / Price History Never Overwrites,
   Programmable Future Prices At Most One Pending)*
-- [ ] 3.3 Add `ServicioDePrecios.PrecioVigenteAsync(idArticulo,
+- [x] 3.3 Add `ServicioDePrecios.PrecioVigenteAsync(idArticulo,
   idListaPrecio, fecha)`: `Modo == Fija` → date-filtered `precios` query
   (`vigente_desde <= fecha AND (vigente_hasta IS NULL OR vigente_hasta >
   fecha)`); `Modo == Derivada` → resolve `id_lista_base` (reject if the base
@@ -355,47 +355,47 @@ routes only.
   then call `ResolverPrecioDerivado`. *(design: Price Resolution & Rounding,
   Table Shapes; spec: precios / Current-Price Query Semantics By Date,
   Derived List Price Resolution At Read Time)*
-- [ ] 3.4 Add contracts: `AltaPrecio`/`ProgramarPrecio`/`PrecioVigente`/
+- [x] 3.4 Add contracts: `AltaPrecio`/`ProgramarPrecio`/`PrecioVigente`/
   `HistorialDePrecio`.
 
 ### 3C. API
 
-- [ ] 3.5 Add precio endpoints nested under `/api/articulos/{id}/precios`
+- [x] 3.5 Add precio endpoints nested under `/api/articulos/{id}/precios`
   (folded into `ArticulosEndpoints`, not a standalone top-level resource —
   proposal's Affected Areas note), `GestionDeCatalogo` policy: set/schedule
   price, current-price read, history read.
 
 ### 3D. Tests
 
-- [ ] 3.6 [P] Unit: `ResolverPrecioDerivado` rounding (AwayFromZero on a tie),
+- [x] 3.6 [P] Unit: `ResolverPrecioDerivado` rounding (AwayFromZero on a tie),
   positive and negative `porcentaje`. *(spec: precios / Derived List Price
   Resolution At Read Time)*
-- [ ] 3.7 [P] Integration: close-and-open transaction — changing a price
+- [x] 3.7 [P] Integration: close-and-open transaction — changing a price
   closes the old row's `vigente_hasta` and opens a new one; historical rows
   remain queryable. *(spec: precios / Price History Never Overwrites, both
   scenarios)*
-- [ ] 3.8 [P] Integration: pending-future — schedule with none pending
+- [x] 3.8 [P] Integration: pending-future — schedule with none pending
   succeeds; scheduling again without `confirmarReemplazo` → 409
   `precio_pendiente_existe`; with `confirmarReemplazo: true` → replaces.
   *(spec: precios / Programmable Future Prices, At Most One Pending, both
   scenarios)*
-- [ ] 3.9 [P] Integration: point-in-time query — present date returns active
+- [x] 3.9 [P] Integration: point-in-time query — present date returns active
   row, past date resolves historical row. *(spec: precios / Current-Price
   Query Semantics By Date, both scenarios)*
-- [ ] 3.10 [P] Integration: derivada resolution — resolved price follows the
+- [x] 3.10 [P] Integration: derivada resolution — resolved price follows the
   base automatically; base change propagates without a derivada write; no
   `precios` row ever persisted for a derivada lista. *(spec: precios /
   Derived List Price Resolution At Read Time, both scenarios)*
-- [ ] 3.11 Integration: `ux_precios_vigente` race — 2 concurrent first-price
+- [x] 3.11 Integration: `ux_precios_vigente` race — 2 concurrent first-price
   creates for the same `(articulo, lista)` (no row to lock yet) → exactly
   1×201 + 1×409 via `precio_vigente_duplicado`, SQLSTATE-asserted.
   *(db-error-backstops; design: Backstop Map)*
-- [ ] 3.12 [P] Integration: FK smoke tests for `fk_precios_*` (cross-
+- [x] 3.12 [P] Integration: FK smoke tests for `fk_precios_*` (cross-
   tenant/nonexistent id → 23503/400). *(backstop map)*
-- [ ] 3.13 Integration: history immutability — no code path exposes
+- [x] 3.13 Integration: history immutability — no code path exposes
   `Precio.Precio` as settable (assert via reflection/public-API surface, not
   a DB trigger — documented exemption, design: Testing Strategy).
-- [ ] 3.14 Regression: Slice 1 + Slice 2 suites unedited and green.
+- [x] 3.14 Regression: Slice 1 + Slice 2 suites unedited and green.
 
 ---
 
