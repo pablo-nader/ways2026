@@ -177,17 +177,26 @@ public class ManejadorDeErrores(
         // "_codigos_barra") y el match por Contains es de arriba hacia abajo: sin este orden,
         // los dos caerían en silencio en la familia genérica codigo_duplicado en vez de su
         // propio código de dominio.
-        // stage-3-articulos-y-precios (task 1.10): exenta de la prueba de carrera exigida por
-        // `db-error-backstops` — el camino de escritura (ServicioDeArticulos) recién aterriza en
-        // Slice 2 (tasks 2.8/2.9); hasta entonces solo aplica el mapeo 23505, sin race test.
+        //
+        // stage-3-articulos-y-precios (Slice 2, task 2.8): la prueba de carrera de este
+        // backstop ya no está exenta — ServicioDeArticulos.CrearAsync es el camino de
+        // escritura real. A diferencia de `ux_clientes_numero` (contador atómico con lock de
+        // fila) pero IGUAL que `ux_proveedores_cuit`, el valor autogenerado SÍ tiene un lock de
+        // fila que serializa la carrera (numeraciones_articulos, design decision 6) — la
+        // carrera GENUINA es la del `codigo_interno` provisto por el cliente HTTP (sin ningún
+        // contador de por medio), probada en
+        // ArticulosEndpointsTests.LaCreacionConcurrenteConElMismoCodigoInternoProvistoDaExactamenteUnGanador.
         if (nombreDeIndice.Contains("_codigo_interno", StringComparison.Ordinal))
         {
             return ("codigo_interno_duplicado", "Ya existe un artículo con ese código interno en este tenant.");
         }
 
-        // stage-3-articulos-y-precios (task 1.10): misma exención que la de arriba —
-        // ServicioDeArticulos (Slice 2, tasks 2.8/2.9) todavía no existe, así que la prueba de
-        // carrera de este backstop queda diferida hasta ese camino de escritura.
+        // stage-3-articulos-y-precios (Slice 2, task 2.9): la prueba de carrera de este
+        // backstop ya no está exenta — ServicioDeArticulos.AgregarCodigoBarraAsync es el camino
+        // de escritura real. `codigo` es siempre un valor provisto por el cliente HTTP, sin
+        // contador ni lock de fila que serialice nada por construcción (misma familia que
+        // `ux_proveedores_cuit`, no la de `ux_clientes_numero`), probada en
+        // ArticulosEndpointsTests.LaCreacionConcurrenteConElMismoCodigoDeBarraDaExactamenteUnGanador.
         if (nombreDeIndice.Contains("codigos_barra", StringComparison.Ordinal))
         {
             return ("codigo_barra_duplicado", "Ya existe ese código de barras en este tenant.");
