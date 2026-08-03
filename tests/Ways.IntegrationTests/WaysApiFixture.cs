@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Ways.Application.Abstracciones;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
@@ -198,6 +199,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
                 npgsql.MapEnum<TipoDocumento>("tipo_documento");
                 npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<UnidadVenta>("unidad_venta");
                 npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
             })
             .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
@@ -223,6 +225,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
                 npgsql.MapEnum<TipoDocumento>("tipo_documento");
                 npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<UnidadVenta>("unidad_venta");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;
