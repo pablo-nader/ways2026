@@ -10,6 +10,11 @@ namespace Ways.Domain.Articulos;
 /// filtro de aislamiento (query filter manual en <c>WaysDbContext</c>, ver
 /// <c>AplicarFiltroDeTenantEnArticuloEmpresa</c> — esta clase no hereda de
 /// <see cref="Common.EntidadTenant"/>, así que el loop por convención no la alcanza).
+///
+/// <para><see cref="IdTenant"/> NO se auto-estampa (no hereda <see cref="Common.EntidadTenant"/>)
+/// — quien la construya DEBE asignarlo a mano; el RLS <c>WITH CHECK</c> rechaza el INSERT con
+/// SQLSTATE 42501 si falta. Pendiente para Slice 2: el camino de escritura real
+/// (ServicioDeArticulos) tiene que asignarlo explícitamente al armar la fila.</para>
 /// </summary>
 public class ArticuloEmpresa
 {

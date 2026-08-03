@@ -81,9 +81,18 @@ lo primero es decidir en cuál está:
 
 | Categoría | Scope | Tablas |
 |---|---|---|
-| **Catálogo** | `id_tenant` + `id_empresa NULL` | `articulos`, `codigos_barra`, `proveedores`, `clientes`, `marcas`, `grupos`, `areas`, `listas_precio`, `precios`, `ofertas` |
+| **Catálogo** | `id_tenant` + `id_empresa NULL` | `proveedores`, `clientes`, `marcas`, `grupos`, `areas`, `listas_precio`, `ofertas` |
+| **Tenant-wide (disponibilidad por empresa)** | `id_tenant`, SIN `id_empresa` | `articulos`, `codigos_barra`, `precios` |
 | **Operativa** | `id_tenant` + `id_punto_venta` | `ventas`, `items_venta`, `gastos`, `stock`, `movimientos_stock`, `turnos_caja`, `movimientos_tesoreria`, `arqueos_recargas`, `numeraciones_comprobante` |
 | **Global** | sin tenant | `roles`, `permisos`, planes/facturación del SaaS |
+
+La categoría **Tenant-wide** resuelve la misma pregunta de negocio ("¿comparten empresas
+un mismo artículo?") con un modelo distinto al de `id_empresa NULL`: en vez de una columna
+nullable en la fila del artículo, `disponible_para_todas` (default `true`) más una tabla
+puente `articulos_empresas` acotan el subconjunto de empresas cuando hace falta — sin
+backfill al crear una empresa nueva, porque la ausencia de fila en la puente ya significa
+"disponible". `precios` sigue al artículo: es `id_tenant` sin `id_empresa`, igual que
+`articulos`. Detalle completo del modelo en doc 10 §3.
 
 ### Catálogo: compartir o no compartir entre empresas
 

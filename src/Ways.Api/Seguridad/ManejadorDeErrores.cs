@@ -62,7 +62,7 @@ public class ManejadorDeErrores(
             // que actualizar a mano en cada migración nueva.
             //
             // stage-3-articulos-y-precios (task 1.10, db-error-backstops): confirmado sin
-            // cambio de código — el match por prefijo "fk_" de abajo ya cubre las 8 FKs nuevas
+            // cambio de código — el match por prefijo "fk_" de abajo ya cubre las 16 FKs nuevas
             // de esta etapa (fk_articulos_tenant/area/categoria/marca/grupo/proveedor_habitual/
             // alicuota_iva, fk_articulos_empresas_tenant/articulo/empresa,
             // fk_codigos_barra_tenant/articulo, fk_precios_tenant/articulo/lista_precio,
@@ -177,11 +177,17 @@ public class ManejadorDeErrores(
         // "_codigos_barra") y el match por Contains es de arriba hacia abajo: sin este orden,
         // los dos caerían en silencio en la familia genérica codigo_duplicado en vez de su
         // propio código de dominio.
+        // stage-3-articulos-y-precios (task 1.10): exenta de la prueba de carrera exigida por
+        // `db-error-backstops` — el camino de escritura (ServicioDeArticulos) recién aterriza en
+        // Slice 2 (tasks 2.8/2.9); hasta entonces solo aplica el mapeo 23505, sin race test.
         if (nombreDeIndice.Contains("_codigo_interno", StringComparison.Ordinal))
         {
             return ("codigo_interno_duplicado", "Ya existe un artículo con ese código interno en este tenant.");
         }
 
+        // stage-3-articulos-y-precios (task 1.10): misma exención que la de arriba —
+        // ServicioDeArticulos (Slice 2, tasks 2.8/2.9) todavía no existe, así que la prueba de
+        // carrera de este backstop queda diferida hasta ese camino de escritura.
         if (nombreDeIndice.Contains("codigos_barra", StringComparison.Ordinal))
         {
             return ("codigo_barra_duplicado", "Ya existe ese código de barras en este tenant.");
@@ -194,7 +200,9 @@ public class ManejadorDeErrores(
 
         // stage-3-articulos-y-precios (task 1.10): ux_precios_vigente — backstop de "at most
         // one pending future price" (design decisions 3/4). Sin colisión con ninguna otra
-        // familia: "_vigente" no aparece en ningún otro nombre de índice del esquema.
+        // familia: "_vigente" no aparece en ningún otro nombre de índice del esquema. Exenta de
+        // la prueba de carrera exigida por `db-error-backstops` hasta la Slice 3
+        // (ServicioDePrecios, task 3.11), que es donde aterriza el camino de escritura.
         if (nombreDeIndice.Contains("_vigente", StringComparison.Ordinal))
         {
             return ("precio_vigente_duplicado", "Ya existe un precio vigente para este artículo en esta lista.");

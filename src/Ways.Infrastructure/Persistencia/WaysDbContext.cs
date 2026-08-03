@@ -372,6 +372,12 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     /// <see cref="AplicarFiltroDeTenantEnNumeracionArticulo"/>, con la diferencia de que acá SÍ
     /// se escribe por <c>SaveChangesAsync</c> normal (no hay guard de rechazo: a diferencia de
     /// los contadores, esta tabla no tiene un asignador atómico que proteger).
+    ///
+    /// <see cref="ArticuloEmpresa.IdTenant"/> tampoco se auto-estampa acá — al no heredar de
+    /// <see cref="EntidadTenant"/>, queda fuera del interceptor que completa <c>IdTenant</c> por
+    /// convención; quien construya la fila DEBE asignarlo, y el RLS <c>WITH CHECK</c> rechaza el
+    /// INSERT con SQLSTATE 42501 si falta. Pendiente para Slice 2 cuando aterrice el camino de
+    /// escritura real (ServicioDeArticulos).
     /// </summary>
     private void AplicarFiltroDeTenantEnArticuloEmpresa(ModelBuilder modelBuilder)
     {
