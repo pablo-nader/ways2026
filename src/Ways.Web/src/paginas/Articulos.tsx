@@ -170,6 +170,7 @@ export function Articulos() {
   const [eliminando, setEliminando] = useState(false)
   const [erroresCatalogosRequeridos, setErroresCatalogosRequeridos] = useState<string[]>([])
   const tokenEdicionRef = useRef(0)
+  const generacionCargaRef = useRef(0)
   const ocupado = guardando || eliminando
 
   // Token del fetch de edición en curso: solo protege contra la staleness del fetch de "Editar"
@@ -184,15 +185,23 @@ export function Articulos() {
     setErroresCatalogosRequeridos((prev) => (prev.includes(mensaje) ? prev : [...prev, mensaje]))
   }
 
-  const cargar = useCallback(async (termino: string) => {
+  const cargar = useCallback(async (termino: string, opciones?: { relanzarError?: boolean }) => {
+    // Generación: mount, búsqueda y los refrescos post-guardado/post-baja pueden solaparse — sin
+    // esto, la respuesta que llega tarde pisa el estado con datos desactualizados.
+    const generacion = (generacionCargaRef.current += 1)
     setCargando(true)
     setError('')
     try {
-      setPagina(await clienteDeArticulos.listar(termino, false))
+      const p = await clienteDeArticulos.listar(termino, false)
+      if (generacionCargaRef.current !== generacion) return
+      setPagina(p)
     } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los artículos.')
+      if (generacionCargaRef.current === generacion) {
+        setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los artículos.')
+      }
+      if (opciones?.relanzarError && generacionCargaRef.current === generacion) throw e
     } finally {
-      setCargando(false)
+      if (generacionCargaRef.current === generacion) setCargando(false)
     }
   }, [])
 
@@ -247,6 +256,7 @@ export function Articulos() {
   }
 
   function cancelarEdicion() {
+    if (guardando) return
     invalidarEdicionEnCurso()
     setGuardando(false)
     setFormulario(null)
@@ -270,7 +280,7 @@ export function Articulos() {
   }
 
   async function guardar() {
-    if (guardando) return
+    if (ocupado) return
     if (!formulario) return
 
     const token = invalidarEdicionEnCurso()
@@ -294,8 +304,15 @@ export function Articulos() {
       }
 
       // El refresco de la tabla no pertenece al token de edición: la fila afectada debe
-      // quedar al día sin importar si el formulario abierto ahora es otro.
-      await cargar(busqueda)
+      // quedar al día sin importar si el formulario abierto ahora es otro. El guardado ya tuvo
+      // éxito acá, así que un fallo de este refresco es solo de vista, no de guardado.
+      try {
+        await cargar(busqueda, { relanzarError: true })
+      } catch {
+        if (tokenEdicionRef.current === token) {
+          setError('El artículo se guardó, pero no se pudo actualizar el listado. Volvé a buscar para verlo.')
+        }
+      }
     } catch (e) {
       if (tokenEdicionRef.current === token) {
         setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
@@ -306,7 +323,7 @@ export function Articulos() {
   }
 
   async function eliminar(a: ArticuloListado) {
-    if (guardando || eliminando) return
+    if (ocupado) return
     if (!confirm(`¿Dar de baja el artículo "${a.nombre}"?`)) return
 
     invalidarEdicionEnCurso()
@@ -317,7 +334,11 @@ export function Articulos() {
       await clienteDeArticulos.eliminar(a.id)
       setAviso(`Artículo "${a.nombre}" dado de baja.`)
       if (formulario?.id === a.id) setFormulario(null)
-      await cargar(busqueda)
+      try {
+        await cargar(busqueda, { relanzarError: true })
+      } catch {
+        setError('El artículo se dio de baja, pero no se pudo actualizar el listado. Volvé a buscar para verlo.')
+      }
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja.')
     } finally {
@@ -383,6 +404,7 @@ export function Articulos() {
             empresas={empresas}
             listasPrecio={listasPrecio}
             guardando={guardando}
+            ocupado={ocupado}
             bloqueadoPorCatalogos={erroresCatalogosRequeridos.length > 0}
             onCambio={setFormulario}
             onGuardar={guardar}
@@ -467,6 +489,7 @@ function FormularioArticulo({
   empresas,
   listasPrecio,
   guardando,
+  ocupado,
   bloqueadoPorCatalogos,
   onCambio,
   onGuardar,
@@ -483,6 +506,7 @@ function FormularioArticulo({
   empresas: EmpresaListado[]
   listasPrecio: ListaPrecioListado[]
   guardando: boolean
+  ocupado: boolean
   bloqueadoPorCatalogos: boolean
   onCambio: (f: Formulario) => void
   onGuardar: () => void
@@ -505,7 +529,7 @@ function FormularioArticulo({
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
-          if (bloqueadoPorCatalogos || guardando) return
+          if (bloqueadoPorCatalogos || ocupado) return
           onGuardar()
         }}
       >
@@ -848,10 +872,10 @@ function FormularioArticulo({
         </div>
 
         <div className="col-12 d-flex gap-2">
-          <button type="submit" className="btn btn-success rounded-0" disabled={guardando || bloqueadoPorCatalogos}>
+          <button type="submit" className="btn btn-success rounded-0" disabled={ocupado || bloqueadoPorCatalogos}>
             {guardando ? 'Guardando…' : 'Guardar'}
           </button>
-          <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCancelar} disabled={guardando}>
+          <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCancelar} disabled={ocupado}>
             Cancelar
           </button>
         </div>
@@ -863,9 +887,13 @@ function FormularioArticulo({
         <p className="text-muted mb-0">Guardá el artículo para poder cargar códigos de barra y precios.</p>
       ) : (
         <>
-          <GestorDeCodigosBarra idArticulo={valor.id} />
+          <GestorDeCodigosBarra idArticulo={valor.id} bloqueadoPorPadre={ocupado} />
           <hr />
-          <EditorDePrecios idArticulo={valor.id} listasPrecio={listasPrecio.filter((l) => l.activo)} />
+          <EditorDePrecios
+            idArticulo={valor.id}
+            listasPrecio={listasPrecio.filter((l) => l.activo)}
+            bloqueadoPorPadre={ocupado}
+          />
         </>
       )}
     </div>
@@ -877,7 +905,13 @@ function FormularioArticulo({
  * Add/Remove Management). Hidrata desde `GET /api/articulos/{id}/codigos-barra` al montar, así
  * que también refleja los códigos cargados en altas anteriores, no solo los de esta sesión.
  */
-function GestorDeCodigosBarra({ idArticulo }: { idArticulo: number }) {
+function GestorDeCodigosBarra({
+  idArticulo,
+  bloqueadoPorPadre,
+}: {
+  idArticulo: number
+  bloqueadoPorPadre: boolean
+}) {
   const [codigos, setCodigos] = useState<CodigoBarraListado[]>([])
   const [nuevoCodigo, setNuevoCodigo] = useState('')
   const [error, setError] = useState('')
@@ -904,6 +938,7 @@ function GestorDeCodigosBarra({ idArticulo }: { idArticulo: number }) {
   }, [idArticulo])
 
   async function agregar() {
+    if (ocupado || bloqueadoPorPadre) return
     const codigo = nuevoCodigo.trim()
     if (!codigo) return
 
@@ -921,6 +956,7 @@ function GestorDeCodigosBarra({ idArticulo }: { idArticulo: number }) {
   }
 
   async function quitar(codigoBarra: CodigoBarraListado) {
+    if (ocupado || bloqueadoPorPadre) return
     setOcupado(true)
     setError('')
     try {
@@ -948,7 +984,7 @@ function GestorDeCodigosBarra({ idArticulo }: { idArticulo: number }) {
               <button
                 type="button"
                 className="btn btn-sm btn-outline-danger rounded-0 py-0 px-1"
-                disabled={ocupado}
+                disabled={ocupado || bloqueadoPorPadre}
                 onClick={() => quitar(c)}
               >
                 ×
@@ -966,11 +1002,16 @@ function GestorDeCodigosBarra({ idArticulo }: { idArticulo: number }) {
           maxLength={50}
           placeholder="Código de barras"
           value={nuevoCodigo}
-          disabled={ocupado}
+          disabled={ocupado || bloqueadoPorPadre}
           onChange={(e) => setNuevoCodigo(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), agregar())}
         />
-        <button type="button" className="btn btn-outline-primary rounded-0" disabled={ocupado} onClick={agregar}>
+        <button
+          type="button"
+          className="btn btn-outline-primary rounded-0"
+          disabled={ocupado || bloqueadoPorPadre}
+          onClick={agregar}
+        >
           Agregar
         </button>
       </div>
@@ -1008,7 +1049,15 @@ function estadoDeListaVacio(): EstadoDeLista {
  * historial. Las listas `derivada` no admiten alta propia (se resuelven en lectura): solo
  * muestran el precio vigente resuelto.
  */
-function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; listasPrecio: ListaPrecioListado[] }) {
+function EditorDePrecios({
+  idArticulo,
+  listasPrecio,
+  bloqueadoPorPadre,
+}: {
+  idArticulo: number
+  listasPrecio: ListaPrecioListado[]
+  bloqueadoPorPadre: boolean
+}) {
   const [vigentes, setVigentes] = useState<Record<number, PrecioVigente>>({})
   const [cargandoVigentes, setCargandoVigentes] = useState(true)
   const [errorVigentes, setErrorVigentes] = useState('')
@@ -1232,6 +1281,7 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
                           estado={estadoDe(lista.id)}
                           historial={historiales[lista.id] ?? []}
                           sugerencia={sugerencia}
+                          bloqueadoPorPadre={bloqueadoPorPadre}
                           onCambio={(parcial) => actualizarEstado(lista.id, parcial)}
                           onGuardar={(confirmarReemplazo) => guardarPrecio(lista.id, confirmarReemplazo)}
                         />
@@ -1260,6 +1310,7 @@ function PanelDeLista({
   estado,
   historial,
   sugerencia,
+  bloqueadoPorPadre,
   onCambio,
   onGuardar,
 }: {
@@ -1267,13 +1318,14 @@ function PanelDeLista({
   estado: EstadoDeLista
   historial: HistorialDePrecio[]
   sugerencia: number | null
+  bloqueadoPorPadre: boolean
   onCambio: (parcial: Partial<EstadoDeLista>) => void
   onGuardar: (confirmarReemplazo: boolean) => void
 }) {
   const ahora = new Date()
   const filaAbierta = historial.find((h) => h.vigenteHasta === null)
   const pendiente = filaAbierta && new Date(filaAbierta.vigenteDesde) > ahora ? filaAbierta : null
-  const bloqueado = estado.guardando || estado.refrescando
+  const bloqueado = estado.guardando || estado.refrescando || bloqueadoPorPadre
 
   if (lista.modo !== 'Fija') {
     return (
@@ -1302,6 +1354,7 @@ function PanelDeLista({
             <button
               type="button"
               className="btn btn-sm btn-warning rounded-0"
+              disabled={bloqueado}
               onClick={() => onGuardar(true)}
             >
               Reemplazar
@@ -1337,6 +1390,7 @@ function PanelDeLista({
             <button
               type="button"
               className="btn btn-sm btn-outline-info rounded-0"
+              disabled={bloqueado}
               onClick={() => onCambio({ monto: String(sugerencia) })}
             >
               Usar sugerencia (${sugerencia.toFixed(2)})
