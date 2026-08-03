@@ -169,6 +169,7 @@ export function Articulos() {
   const [guardando, setGuardando] = useState(false)
   const [eliminando, setEliminando] = useState(false)
   const [erroresCatalogosRequeridos, setErroresCatalogosRequeridos] = useState<string[]>([])
+  const [avisoListasPrecio, setAvisoListasPrecio] = useState('')
   const [escriturasHijas, setEscriturasHijas] = useState(0)
   const tokenEdicionRef = useRef(0)
   const generacionCargaRef = useRef(0)
@@ -258,7 +259,9 @@ export function Articulos() {
       .then(setListasPrecio)
       .catch(() => {
         setListasPrecio([])
-        agregarErrorCatalogoRequerido('No se pudieron cargar las listas de precio.')
+        setAvisoListasPrecio(
+          'No se pudieron cargar las listas de precio: el editor de precios no está disponible. Recargá la página para reintentar.',
+        )
       })
   }, [cargar])
 
@@ -405,6 +408,7 @@ export function Articulos() {
             hasta que se puedan cargar — recargá la página para reintentar.
           </div>
         )}
+        {avisoListasPrecio && <div className="alert alert-warning rounded-0">{avisoListasPrecio}</div>}
 
         {formulario && (
           <FormularioArticulo
@@ -1101,6 +1105,10 @@ function EditorDePrecios({
   const cargaInicialHechaRef = useRef(false)
   const generacionVigentesRef = useRef(0)
   const generacionSugerenciaRef = useRef(0)
+  // Generación por lista: la carga inicial de `alternarExpandida` y el refresco post-guardado
+  // de `guardarPrecio` compiten por la misma lista — sin esto, la que resuelve primero pero
+  // arrancó antes puede pisar el historial ya actualizado por la otra.
+  const generacionHistorialRef = useRef<Record<number, number>>({})
   const [listaExpandida, setListaExpandida] = useState<number | null>(null)
   const [historiales, setHistoriales] = useState<Record<number, HistorialDePrecio[]>>({})
   const [estados, setEstados] = useState<Record<number, EstadoDeLista>>({})
@@ -1155,10 +1163,13 @@ function EditorDePrecios({
     setListaExpandida(abrir ? lista.id : null)
 
     if (abrir && lista.modo === 'Fija' && !historiales[lista.id]) {
+      const generacion = (generacionHistorialRef.current[lista.id] = (generacionHistorialRef.current[lista.id] ?? 0) + 1)
       try {
         const historial = await clienteDePrecios.historial(idArticulo, lista.id)
+        if (generacionHistorialRef.current[lista.id] !== generacion) return
         setHistoriales((prev) => ({ ...prev, [lista.id]: historial }))
       } catch (e) {
+        if (generacionHistorialRef.current[lista.id] !== generacion) return
         actualizarEstado(lista.id, { error: e instanceof ErrorApi ? e.message : 'No se pudo cargar el historial.' })
       }
     }
@@ -1236,8 +1247,11 @@ function EditorDePrecios({
 
       try {
         await cargarVigentes({ relanzarError: true })
+        const generacion = (generacionHistorialRef.current[idLista] = (generacionHistorialRef.current[idLista] ?? 0) + 1)
         const historial = await clienteDePrecios.historial(idArticulo, idLista)
-        setHistoriales((prev) => ({ ...prev, [idLista]: historial }))
+        if (generacionHistorialRef.current[idLista] === generacion) {
+          setHistoriales((prev) => ({ ...prev, [idLista]: historial }))
+        }
         actualizarEstado(idLista, { refrescando: false })
       } catch {
         actualizarEstado(idLista, {
