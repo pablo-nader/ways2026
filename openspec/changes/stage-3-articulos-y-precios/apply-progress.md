@@ -1,5 +1,80 @@
 # Apply Progress: Stage 3 — Artículos y Precios
 
+## Slice 3 — judgment-day ronda 3: fixes aplicados
+
+Un CRITICAL triaged y verificado por el orquestador contra la query real (`BuscarPredecesorAsync`)
+y dos sugerencias de higiene/documentación. Todo corregido en el mismo ciclo, SIN cambios de
+esquema.
+
+### Item 1 — Predecessor query determinístico y libre de filas muertas (CRITICAL triaged)
+
+`ServicioDePrecios.BuscarPredecesorAsync`: el predicado `WHERE vigente_hasta = $limite AND
+id_precio != $excluded` es AMBIGUO cuando un reemplazo mismo-fecha previo ("corregir el importe
+manteniendo la fecha", camino legítimo de la rama `esPendiente`) dejó una fila MUERTA
+(`vigente_desde == vigente_hasta`) compartiendo el mismo límite que el predecesor REAL. Postgres
+no garantiza cuál de las dos filas devuelve sin `ORDER BY`; si devuelve la muerta, el cierre
+subsiguiente la REABRE (le pisa `vigente_hasta`), resucitando un precio que el usuario ya había
+reemplazado — invisible en la cobertura de las rondas 1/2 porque ninguna de esas secuencias
+encadenaba un reemplazo mismo-fecha con un segundo reemplazo de fecha distinta.
+
+**Fix**: dos defensas en la misma query — `AND vigente_desde <> vigente_hasta` (excluye TODA fila
+muerta; el predecesor real siempre tiene una ventana con contenido) + `ORDER BY vigente_desde ASC
+LIMIT 1` (determinístico incluso si llegara a haber más de un candidato con contenido — el
+predecesor real siempre es el de menor `vigente_desde`).
+
+**Test nuevo** (`PreciosEndpointsTests.cs`):
+`ReemplazarUnaPendienteMismaFechaYLuegoConFechaDistintaNoResucitaLaFilaMuerta` — inmediato (100) →
+programado(150, D) → programado(160, D, MISMA fecha, `confirmarReemplazo`) → programado(170, D2 >
+D, `confirmarReemplazo`); verifica que el predecesor REAL (100) es el que se extiende a D2 (no la
+fila muerta), que la fila muerta del reemplazo mismo-fecha (150) queda con la ventana vacía
+intacta, que exactamente una fila satisface el predicado "vigente" en cada instante sondeado, y
+que ninguno de los dos precios reemplazados (150, 160) se vuelve visible en ningún instante
+sondeado. Verificado estable en 3 corridas aisladas adicionales.
+
+**Nota de metodología**: se validó por sanity-check revirtiendo temporalmente el fix — la
+ambigüedad de Postgres es PROBABILÍSTICA (depende del layout físico de la tabla, no reproducible
+de forma determinística en cada corrida), así que el test no puede garantizar que el código sin
+fix falle en toda corrida; el fix (exclusión de filas muertas + orden determinístico) es correcto
+por construcción de la query, independientemente de si una corrida puntual expone la ambigüedad.
+El test SÍ verifica, de forma determinística, que el código CON el fix mantiene los invariantes de
+integridad del historial en la secuencia que dispara el camino ambiguo.
+
+### Item 2 — Comentario de intención de reuso mismo-fecha (SUGGESTION)
+
+`AbrirNuevoPrecioAsync`, rama `esPendiente`: comentario nuevo aclarando que reemplazar una
+pendiente con la MISMA fecha es una operación legítima ("corregir el importe manteniendo la
+fecha") y que es exactamente por eso que `BuscarPredecesorAsync` tiene que ser determinístico y
+excluir filas muertas.
+
+### Item 3 — Cref obsoleto (SUGGESTION)
+
+Doc-comment de `AbrirNuevoPrecioAsync`: `ReabrirLimiteDelPredecesorAsync` ya no existe (renombrado
+a `BuscarPredecesorAsync` en la ronda 1/2) — actualizado para referenciar `BuscarPredecesorAsync`
+(localiza) + el `CerrarFilaAsync` inline que reabre (cierra), reflejando el shape actual del
+método.
+
+### Build/test results (judgment-day ronda 3 batch, run twice)
+
+| Suite | Run 1 | Run 2 |
+|---|---|---|
+| `Ways.Domain.Tests` | 86/86 | 86/86 |
+| `Ways.Application.Tests` | 170/170 | 170/170 |
+| `Ways.IntegrationTests` (real Postgres, Testcontainers) | 196/196 | 196/196 |
+
+196 = baseline 195 (ronda 2) + 1 nuevo
+(`ReemplazarUnaPendienteMismaFechaYLuegoConFechaDistintaNoResucitaLaFilaMuerta`). Build clean (0
+warnings, 0 errors), ambas corridas idénticas, sin flakes. El test nuevo además verificado estable
+en 3 corridas aisladas adicionales (2 veces: con el fix restaurado, y como sanity-check con el fix
+revertido temporalmente — ver nota de metodología del item 1).
+
+### Commits (work-unit)
+
+1. `fix(precios): excluir filas muertas y ordenar deterministicamente la busqueda del predecesor` —
+   `ServicioDePrecios.BuscarPredecesorAsync`/`AbrirNuevoPrecioAsync` (items 1-3), test de
+   integración nuevo.
+
+---
+
 ## Slice 3 — judgment-day ronda 2: fixes aplicados
 
 Dos jueces ciegos independientes convergieron en el MISMO gap CRITICAL sobre el motor de
