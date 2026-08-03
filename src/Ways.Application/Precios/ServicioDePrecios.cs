@@ -134,7 +134,8 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
                 // con el vigente_desde original de `fila`) y rechazamos si la fecha nueva cae en
                 // o antes del inicio de ESE predecesor — mismo criterio de "no anterior al inicio
                 // de la fila que se está por afectar" que el chequeo de la fila activa, aplicado
-                // un nivel más atrás. Sin esto, ReabrirLimiteDelPredecesorAsync re-cerraba el
+                // un nivel más atrás. Sin esto, la búsqueda del predecesor (BuscarPredecesorAsync
+                // + CerrarFilaAsync) re-cerraba el
                 // predecesor con un límite ANTERIOR a su propio inicio, invirtiendo su intervalo
                 // (vigente_hasta < vigente_desde) — silencioso hasta la constraint de esquema
                 // (ck_precios_ventana_valida), que acá se adelanta con un 400 claro y sin tocar

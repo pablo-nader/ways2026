@@ -440,7 +440,7 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
     /// programado(T+20s) → programado(T-1s, dentro de la tolerancia de reloj, con
     /// <c>confirmarReemplazo</c>). La tercera llamada intenta reemplazar la pendiente (150, a
     /// T+20s) con una fecha ANTERIOR al inicio de su PREDECESOR (100, a T) — sin el chequeo
-    /// simétrico, <c>ReabrirLimiteDelPredecesorAsync</c> re-cerraba ese predecesor en T-1s,
+    /// simétrico, <c>BuscarPredecesorAsync</c> + <c>CerrarFilaAsync</c> re-cerraban ese predecesor en T-1s,
     /// produciendo un intervalo INVERTIDO (<c>vigente_hasta &lt; vigente_desde</c>, exactamente
     /// lo que <c>ck_precios_ventana_valida</c> prohíbe a nivel de esquema). Con el fix, la
     /// tercera llamada rechaza con 400 <c>vigente_desde_invalido</c> ANTES de tocar ninguna fila:
