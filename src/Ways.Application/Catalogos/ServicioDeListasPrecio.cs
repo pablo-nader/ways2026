@@ -100,6 +100,20 @@ public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj)
             await ExigirSinDependientesActivosAsync(id, ct);
         }
 
+        if (actual.EsDefault && datos.IdEmpresa != actual.IdEmpresa)
+        {
+            // Protección de la FUENTE (judgment-day ronda 1, stage-3 slice 4): si se
+            // permitiera mover IdEmpresa de una fila que hoy es default, el alcance de
+            // ORIGEN se quedaría sin ninguna lista default (el intercambio de abajo solo
+            // desmarca en el alcance DESTINO). Se elige la opción simple del veredicto:
+            // prohibir el cambio de alcance mientras EsDefault=true — primero hay que
+            // desmarcarla (lo que ya exige asignar el default a otra lista del mismo
+            // alcance, guarda de abajo) y recién en un PUT posterior mover IdEmpresa.
+            throw ErrorDominio.Conflicto(
+                "lista_default_requiere_reemplazo",
+                "No se puede quitar el estado default sin asignarlo a otra lista en el mismo alcance primero.");
+        }
+
         if (actual.EsDefault && !datos.EsDefault)
         {
             // Spec heredado de stage 2 ("One Default List Per Tenant"): sin esta guarda, un
@@ -110,8 +124,14 @@ public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj)
                 "No se puede quitar el estado default sin asignarlo a otra lista en el mismo alcance primero.");
         }
 
-        if (!actual.EsDefault && datos.EsDefault)
+        if (datos.EsDefault && (!actual.EsDefault || datos.IdEmpresa != actual.IdEmpresa))
         {
+            // El INTERCAMBIO se dispara al ASIGNAR EsDefault por primera vez Y al MOVER de
+            // alcance manteniéndose default (compartida -> empresa, empresa -> compartida,
+            // empresa A -> empresa B) — la guarda de arriba ya garantiza que si hay cambio
+            // de alcance con EsDefault=true de por medio, es porque actual.EsDefault era
+            // false (si fuera true, ya se rechazó antes de llegar acá). El alcance a
+            // desmarcar es siempre el DESTINO (datos.IdEmpresa), nunca el de origen.
             var estrategia = Db.Database.CreateExecutionStrategy();
             return await estrategia.ExecuteAsync(async () =>
             {
