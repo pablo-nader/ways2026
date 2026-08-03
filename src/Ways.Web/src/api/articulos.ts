@@ -28,6 +28,7 @@ export const clienteDeArticulos = {
   crear: (datos: AltaArticulo) => api.post<ArticuloListado>('/articulos', datos),
   actualizar: (id: number, datos: EdicionArticulo) => api.put<ArticuloListado>(`/articulos/${id}`, datos),
   eliminar: (id: number) => api.delete(`/articulos/${id}`),
+  codigosBarra: (id: number) => api.get<CodigoBarraListado[]>(`/articulos/${id}/codigos-barra`),
   agregarCodigoBarra: (id: number, datos: AltaCodigoBarra) =>
     api.post<CodigoBarraListado>(`/articulos/${id}/codigos-barra`, datos),
   eliminarCodigoBarra: (id: number, idCodigoBarra: number) =>

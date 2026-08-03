@@ -157,6 +157,7 @@ export function Articulos() {
   const [marcas, setMarcas] = useState<MarcaListado[]>([])
   const [grupos, setGrupos] = useState<GrupoListado[]>([])
   const [proveedores, setProveedores] = useState<ProveedorListado[]>([])
+  const [proveedoresTruncados, setProveedoresTruncados] = useState(false)
   const [alicuotasIva, setAlicuotasIva] = useState<AlicuotaIvaListado[]>([])
   const [empresas, setEmpresas] = useState<EmpresaListado[]>([])
   const [listasPrecio, setListasPrecio] = useState<ListaPrecioListado[]>([])
@@ -185,10 +186,15 @@ export function Articulos() {
     api.get<CategoriaListado[]>('/catalogos/categorias').then(setCategorias).catch(() => setCategorias([]))
     clienteMarcas.listar(false).then(setMarcas).catch(() => setMarcas([]))
     clienteGrupos.listar(false).then(setGrupos).catch(() => setGrupos([]))
-    // tamanio grande a propósito: es un selector de referencia, no un listado paginado.
+    // tamanio grande a propósito: es un selector de referencia, no un listado paginado. Si el
+    // tenant tiene más proveedores que el clamp del servidor, avisamos que la lista quedó
+    // truncada en vez de esconder el resto en silencio.
     api
       .get<PaginaDe<ProveedorListado>>('/proveedores?tamanio=200')
-      .then((p) => setProveedores(p.items))
+      .then((p) => {
+        setProveedores(p.items)
+        setProveedoresTruncados(p.total > p.items.length)
+      })
       .catch(() => setProveedores([]))
     clienteDeCatalogosFiscales.alicuotasIva().then(setAlicuotasIva).catch(() => setAlicuotasIva([]))
     clienteDeOrganizacion.listarEmpresas().then(setEmpresas).catch(() => setEmpresas([]))
@@ -288,12 +294,18 @@ export function Articulos() {
 
         {formulario && (
           <FormularioArticulo
+            // Clave por artículo (id, o 'nuevo' para el alta): sin esto React reutiliza la
+            // misma instancia del subárbol al pasar de "Editar" en una fila a otra sin
+            // cancelar, y filtra estado por-artículo entre medio (historial de precios,
+            // sugerencia de margen, códigos de barra cargados).
+            key={formulario.id ?? 'nuevo'}
             valor={formulario}
             areas={areas}
             categorias={categorias}
             marcas={marcas}
             grupos={grupos}
             proveedores={proveedores}
+            proveedoresTruncados={proveedoresTruncados}
             alicuotasIva={alicuotasIva}
             empresas={empresas}
             listasPrecio={listasPrecio}
@@ -374,6 +386,7 @@ function FormularioArticulo({
   marcas,
   grupos,
   proveedores,
+  proveedoresTruncados,
   alicuotasIva,
   empresas,
   listasPrecio,
@@ -388,6 +401,7 @@ function FormularioArticulo({
   marcas: MarcaListado[]
   grupos: GrupoListado[]
   proveedores: ProveedorListado[]
+  proveedoresTruncados: boolean
   alicuotasIva: AlicuotaIvaListado[]
   empresas: EmpresaListado[]
   listasPrecio: ListaPrecioListado[]
@@ -618,6 +632,9 @@ function FormularioArticulo({
               </option>
             ))}
           </select>
+          {proveedoresTruncados && (
+            <div className="form-text">Se muestran solo los primeros 200 proveedores.</div>
+          )}
         </div>
 
         <div className="col-md-4">
@@ -778,15 +795,34 @@ function FormularioArticulo({
 
 /**
  * Códigos de barra: alta/baja independientes de editar el resto del artículo (spec: Barcode
- * Add/Remove Management). GAP de backend (reportado, no resuelto acá — front-end only): no
- * existe `GET /api/articulos/{id}/codigos-barra`, así que esta lista solo puede reflejar lo
- * agregado/quitado en la sesión actual, no los códigos ya cargados en altas anteriores.
+ * Add/Remove Management). Hidrata desde `GET /api/articulos/{id}/codigos-barra` al montar, así
+ * que también refleja los códigos cargados en altas anteriores, no solo los de esta sesión.
  */
 function GestorDeCodigosBarra({ idArticulo }: { idArticulo: number }) {
   const [codigos, setCodigos] = useState<CodigoBarraListado[]>([])
   const [nuevoCodigo, setNuevoCodigo] = useState('')
   const [error, setError] = useState('')
   const [ocupado, setOcupado] = useState(false)
+  const [cargando, setCargando] = useState(true)
+
+  useEffect(() => {
+    let cancelado = false
+    setCargando(true)
+    clienteDeArticulos
+      .codigosBarra(idArticulo)
+      .then((lista) => {
+        if (!cancelado) setCodigos(lista)
+      })
+      .catch((e) => {
+        if (!cancelado) setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los códigos de barra.')
+      })
+      .finally(() => {
+        if (!cancelado) setCargando(false)
+      })
+    return () => {
+      cancelado = true
+    }
+  }, [idArticulo])
 
   async function agregar() {
     const codigo = nuevoCodigo.trim()
@@ -821,28 +857,28 @@ function GestorDeCodigosBarra({ idArticulo }: { idArticulo: number }) {
   return (
     <div>
       <strong className="text-muted small text-uppercase">Códigos de barra</strong>
-      <div className="form-text mb-2">
-        Esta lista solo muestra lo agregado/quitado en esta sesión — la API todavía no expone un listado de los
-        códigos ya cargados en altas anteriores.
-      </div>
-      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small mt-2">{error}</div>}
 
-      <div className="d-flex flex-wrap gap-2 mb-2">
-        {codigos.map((c) => (
-          <span key={c.id} className="badge rounded-0 text-bg-light border d-flex align-items-center gap-2 py-2 px-2">
-            {c.codigo}
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-danger rounded-0 py-0 px-1"
-              disabled={ocupado}
-              onClick={() => quitar(c)}
-            >
-              ×
-            </button>
-          </span>
-        ))}
-        {codigos.length === 0 && <span className="text-muted small">Sin códigos agregados en esta sesión.</span>}
-      </div>
+      {cargando ? (
+        <Cargando texto="Cargando códigos de barra…" />
+      ) : (
+        <div className="d-flex flex-wrap gap-2 mb-2 mt-2">
+          {codigos.map((c) => (
+            <span key={c.id} className="badge rounded-0 text-bg-light border d-flex align-items-center gap-2 py-2 px-2">
+              {c.codigo}
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-danger rounded-0 py-0 px-1"
+                disabled={ocupado}
+                onClick={() => quitar(c)}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          {codigos.length === 0 && <span className="text-muted small">Sin códigos de barra cargados.</span>}
+        </div>
+      )}
 
       <div className="input-group" style={{ maxWidth: 320 }}>
         <input
@@ -893,6 +929,7 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
   const [estados, setEstados] = useState<Record<number, EstadoDeLista>>({})
   const [sugerencia, setSugerencia] = useState<number | null>(null)
   const [cargandoSugerencia, setCargandoSugerencia] = useState(false)
+  const [errorSugerencia, setErrorSugerencia] = useState('')
 
   const cargarVigentes = useCallback(async () => {
     setCargandoVigentes(true)
@@ -937,11 +974,13 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
 
   async function pedirSugerencia() {
     setCargandoSugerencia(true)
+    setErrorSugerencia('')
     try {
       const { precioSugerido } = await clienteDeArticulos.sugerenciaDePrecio(idArticulo)
       setSugerencia(precioSugerido)
-    } catch {
+    } catch (e) {
       setSugerencia(null)
+      setErrorSugerencia(e instanceof ErrorApi ? e.message : 'No se pudo calcular la sugerencia de precio.')
     } finally {
       setCargandoSugerencia(false)
     }
@@ -1011,6 +1050,8 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
           en la lista que corresponda — nunca se aplica sola.
         </div>
       )}
+
+      {errorSugerencia && <div className="alert alert-danger rounded-0 py-2 px-2 small mt-2">{errorSugerencia}</div>}
 
       {errorVigentes && <div className="alert alert-danger rounded-0 mt-2">{errorVigentes}</div>}
 
