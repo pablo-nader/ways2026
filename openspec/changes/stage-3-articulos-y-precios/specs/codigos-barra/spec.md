@@ -54,11 +54,14 @@ duplicate-code write path MUST map Postgres 23505 to a domain 409.
 - THEN exactly one receives 201 and the other receives 409, asserted via the
   translated domain code, not just an exception type
 
-### Requirement: Barcode Add/Remove Management
+### Requirement: Barcode Add/Remove/List Management
 
-Tenant admins MUST be able to add and remove barcodes on an artículo
-independently of editing the artículo's other fields, gated by
-`GestionDeCatalogo`.
+Tenant admins MUST be able to add, remove, and list the barcodes of an
+artículo independently of editing the artículo's other fields, gated by
+`GestionDeCatalogo`. Listing MUST return only active barcodes — the same
+`BajaLogica`/global soft-delete filter used across the rest of the ABM —
+and a listing request against a nonexistent or cross-tenant `id_articulo`
+MUST return the same uniform 404 (ADR-8) used by the add/remove paths.
 
 #### Scenario: Admin removes a barcode without affecting the articulo
 
@@ -67,10 +70,25 @@ independently of editing the artículo's other fields, gated by
 - THEN the artículo persists unchanged and the remaining barcode still
   resolves it
 
-#### Scenario: Vendedor blocked from managing barcodes
+#### Scenario: Listing returns only active barcodes
+
+- GIVEN an artículo with two barcodes, one of which is later removed
+- WHEN a tenant admin lists the artículo's barcodes
+- THEN only the remaining barcode is returned, with its persisted `codigo`;
+  the removed one is excluded
+
+#### Scenario: Listing barcodes of a nonexistent or cross-tenant articulo returns 404
+
+- GIVEN an `id_articulo` that does not exist, or that belongs to another
+  tenant
+- WHEN a tenant admin requests that artículo's barcode listing
+- THEN the response is 404, the same uniform ADR-8 result the add/remove
+  endpoints return for a nonexistent or cross-tenant `id_articulo`
+
+#### Scenario: Vendedor blocked from managing or listing barcodes
 
 - GIVEN a user with the `vendedor` role
-- WHEN they call the barcode add/remove endpoint
+- WHEN they call the barcode add, remove, or list endpoint
 - THEN the request is rejected with an authorization error
 
 ### Requirement: Tenant Isolation for codigos_barra
