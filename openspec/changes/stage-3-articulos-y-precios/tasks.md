@@ -409,7 +409,7 @@ stage 2).
 
 ### 4A. Application
 
-- [ ] 4.1 Add `ServicioDeListasPrecio` (create/edit/soft-delete):
+- [x] 4.1 Add `ServicioDeListasPrecio` (create/edit/soft-delete):
   `derivada` create/edit requires `id_lista_base NOT NULL` +
   `porcentaje NOT NULL` (service-level validation before the DB); rejects a
   `derivada` lista whose `id_lista_base` is itself `Derivada`
@@ -420,35 +420,82 @@ stage 2).
   shape; `GestionDeCatalogo` policy. *(spec: listas-precio-minimal /
   Derivada Mode Resolution And Validation, Blocked Mode Switch Once History
   Exists, Blocked Deactivation While Referenced As Base, Lista ABM Lifecycle
-  and Authorization; design: Protection Rules)*
-- [ ] 4.2 Add contracts: `AltaListaPrecio`/`EdicionListaPrecio`/
-  `ListaPrecioListado`.
+  and Authorization; design: Protection Rules)* — **deviation from the
+  task's plan, documented in code** (`Contratos.cs` doc-comment on
+  `ListaPrecioAlta`): reused a SINGLE contract for create+edit (ADR-11
+  convention, same as `CategoriaAlta`), not the split
+  `AltaListaPrecio`/`EdicionListaPrecio` named below, because
+  `ServicioDeListasPrecio` extends `ServicioDeCatalogo<T,TListado,TAlta>`
+  (design decision 2's "on top" wording, same escape-hatch shape as
+  `ServicioDeCategorias`) and that base binds one `TAlta` to both
+  `CrearAsync`/`ActualizarAsync`. Also implements, confirmed against
+  spec/design/state.yaml before building: `porcentaje` bounds (`> -100` per
+  the Slice 3 forward obligation, `< 1000` per the `numeric(5,2)` column);
+  `EsDefault` SWAP semantics (assigning `true` atomically unsets whichever
+  lista held it in the same `IdEmpresa` scope — two sequential
+  `SaveChangesAsync` inside one transaction, old row first, so the unique
+  partial index never sees two `true` rows in the same snapshot); a lista
+  holding `EsDefault: true` cannot be edited to `false` without a
+  replacement in the same request (409 `lista_default_requiere_reemplazo`),
+  cannot be saved `EsDefault: true` + `Activo: false` (400
+  `lista_default_debe_estar_activa`), and cannot be soft-deleted while
+  default (409 `lista_default_no_se_puede_eliminar` — decided because the
+  spec is silent on protecting the default row but the unmodified stage-2
+  requirement "One Default List Per Tenant" would otherwise break; not
+  hardcoded to "General", any lista currently `EsDefault: true` is
+  protected, mirroring `ReglaDeClientes.ValidarNoConsumidorFinal`'s shape
+  applied to a predicate instead of a fixed id).
+- [x] 4.2 Add contracts: `ListaPrecioAlta`/`ListaPrecioListado` (naming
+  deviation from the originally planned `AltaListaPrecio`/`EdicionListaPrecio`
+  — see 4.1).
 
 ### 4B. API
 
-- [ ] 4.3 Add `ListasPrecioEndpoints`: list/create/edit/soft-delete,
-  `GestionDeCatalogo` policy. (This is a NEW authenticated tenant-facing ABM
-  surface — the stage 2 `GET /api/listas-precio` read-only reference listing
-  used by the clientes form's selector stays as-is; this adds the write
-  paths that were explicitly out of scope in stage 2.)
+- [x] 4.3 Routes added via the existing generic `MapearCatalogo<T, TListado,
+  TAlta, TServicio>` helper (`CatalogosEndpoints.cs`:
+  `app.MapearCatalogo<ListaPrecio, ListaPrecioListado, ListaPrecioAlta,
+  ServicioDeListasPrecio>("listas-precio")`) instead of a dedicated
+  `ListasPrecioEndpoints` file — same precedent as `categorias`, `Politicas.
+  GestionDeCatalogo` inherited from the shared mapper. Routes live under
+  `/api/catalogos/listas-precio*`. The stage 2 `GET /api/listas-precio`
+  read-only reference listing (different path prefix, `ClientesEndpoints`)
+  stays as-is, no collision — verified with a regression test (task 4.8).
 
 ### 4C. Tests
 
-- [ ] 4.4 [P] Unit: `derivada` create without `id_lista_base`/`porcentaje` →
+- [x] 4.4 [P] Unit: `derivada` create without `id_lista_base`/`porcentaje` →
   rejected before DB; depth-1 guard rejects a `derivada`-based-on-`derivada`.
-  *(spec: Derivada Mode Resolution And Validation)*
-- [ ] 4.5 [P] Integration: `id_lista_base` referencing a non-existent lista →
-  23503 → 400 `referencia_invalida`; admin creates a `fija` and a `derivada`
+  *(spec: Derivada Mode Resolution And Validation)* —
+  `tests/Ways.Application.Tests/Catalogos/ServicioDeListasPrecioTests.cs`
+  (18 cases on the InMemory provider, incl. the deviation-driven extras:
+  porcentaje bounds, es_default consistency/swap-rejection, mode-switch/
+  deactivation guards, protected-default delete guard). The `EsDefault:
+  true` swap path (opens a real DB transaction) is NOT covered here — same
+  "transaction-blocked-provider caveat" as `ServicioDeArticulosTests`/
+  `ServicioDeClientesTests`; covered end-to-end against real Postgres below.
+- [x] 4.5 [P] Integration: `id_lista_base` referencing a non-existent lista →
+  400 `referencia_invalida` (via the service's tenant-scoped pre-check, same
+  observable behavior the spec's 23503 scenario describes — the raw FK
+  backstop is the existing generic `fk_` mapping, no dedicated race test
+  needed per the Backstop Map); admin creates a `fija` and a `derivada`
   lista; vendedor 403 on create/edit. *(spec: listas-precio-minimal, all
   scenarios under Derivada Mode Resolution And Validation, Lista ABM
   Lifecycle and Authorization)*
-- [ ] 4.6 [P] Integration: mode-switch blocked once a `precios` row exists,
+- [x] 4.6 [P] Integration: mode-switch blocked once a `precios` row exists,
   allowed before any exists. *(spec: Blocked Mode Switch Once History
   Exists, both scenarios)*
-- [ ] 4.7 [P] Integration: deactivation blocked while an active `derivada`
+- [x] 4.7 [P] Integration: deactivation blocked while an active `derivada`
   lista depends on it as base, allowed once no dependent remains. *(spec:
   Blocked Deactivation While Referenced As Base, both scenarios)*
-- [ ] 4.8 Regression: Slice 1 + Slice 3 suites unedited and green.
+- [x] 4.8 Regression: Slice 1 + Slice 3 suites unedited and green — plus the
+  `es_default` swap (non-concurrent + genuine two-lista race, db-error-
+  backstops: `ux_listas_precio_default_compartido`'s race-test exemption
+  closes here, 1×200 + 1×409 `default_duplicado`, stable across 1 full run +
+  3 isolated reruns), the protected-default-row guards (edit/deactivate/
+  delete), and ADR-8 cross-tenant 404 uniformity (GET/PUT/DELETE) — all in
+  `tests/Ways.IntegrationTests/ListasPrecioEndpointsTests.cs` (13 cases).
+  Final suite: 86/188/209 (Domain/Application/IntegrationTests), stable
+  across 2 full runs.
 
 ---
 
