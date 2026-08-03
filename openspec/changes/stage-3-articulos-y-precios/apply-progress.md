@@ -1,19 +1,97 @@
 # Apply Progress: Stage 3 — Artículos y Precios
 
-## Slice 1: Schema, Domain Foundation & Counter (PR 1) — IN PROGRESS, gate pending
+## Slice 1: Schema, Domain Foundation & Counter (PR 1) — DONE, ready for judgment-day
 
 **Branch**: `feat/stage3-slice1-schema` (off `main`, no push/PR yet).
+
+## Batch 2 — Post-gate: migration, RLS proofs, counter concurrency
+
+DB CHANGE GATE (task 1.1) was approved 2026-08-02 exactly as presented in batch 1: 5 new
+tables, `unidad_venta` enum, standard RLS on all 5, the 4 additive alternate keys on existing
+tables, the AK naming convention call, `Precio.Monto`, no seed/backfill. The deferred
+price-resolution functions (`SugeridorDePrecio`/`ResolverPrecioDerivado`) staying in Slices
+2/3 per tasks.md was also confirmed correct — no change to that call.
+
+### What shipped this batch
+
+**Migration** (task 1.8):
+- `UnidadVenta` registered in the three enum-mapping surfaces the gate summary called for:
+  `WaysDbContextFactory` (design-time), `DependencyInjection.ConfigurarNpgsql` (production),
+  and all three enum-list spots in `WaysApiFixture` (owner/app/`CrearContextoDeAplicacion`).
+- First scaffold caught a real convention violation before it shipped: `dotnet ef migrations
+  add` produced an auto-named PascalCase support index,
+  `IX_articulos_empresas_id_articulo_id_tenant`, because `ArticuloEmpresaConfiguration` was
+  missing an explicit `HasIndex` for `fk_articulos_empresas_articulo`'s `(IdArticulo,
+  IdTenant)` columns — every *other* composite FK in this batch already had one. Fixed the
+  config (added `ix_articulos_empresas_articulo`), deleted the bad scaffold by hand (no local
+  Postgres for `ef migrations remove` — its own connection-string fallback isn't a live
+  server), and regenerated cleanly. No `Ignore<T>()` isolation was needed: nothing beyond
+  this gate's approved model exists in code yet (unlike stage 1, which had 3 gates' worth of
+  entities modeled simultaneously), so the scaffold diff was exactly the 5 tables + 4 alternate
+  keys + enum, nothing more.
+- `HabilitarRlsDeTenant` hand-added at the end of `Up()` for the 5 new tables (`articulos`,
+  `articulos_empresas`, `codigos_barra`, `numeraciones_articulos`, `precios`), same placement
+  precedent as stage 2's migration (ADR-15 — same migration that creates the table enables its
+  policy).
+- `dotnet ef migrations has-pending-model-changes` — clean after the manual RLS addition.
+- Migration file: `src/Ways.Infrastructure/Persistencia/Migraciones/20260803001552_ArticulosYPreciosEtapa3.cs`.
+
+**Tests** (tasks 1.11, 1.13 — unblocked by the migration):
+- `tests/Ways.IntegrationTests/ArticulosYPreciosRlsTests.cs` — parametrized theory over
+  `articulos`/`articulos_empresas`/`codigos_barra`/`precios` (SELECT/UPDATE cross-tenant → 0
+  rows via `USING`; INSERT with a foreign `id_tenant` → 42501 via `WITH CHECK`), plus an
+  EF/LINQ filter proof for the 4 ORM-reachable entities (including `ArticuloEmpresa`'s manual
+  filter) and 2 dedicated `numeraciones_articulos` tests (PK IS `id_tenant`, doesn't fit the
+  parametrized shape — mirrors `ClientesYProveedoresRlsTests.NumeracionesClientesEsInvisibleParaOtroTenant`).
+- `tests/Ways.IntegrationTests/AsignadorDeCodigoInternoArticuloConcurrenciaTests.cs` — mirrors
+  `AsignadorDeNumeroClienteConcurrenciaTests`: 3 rounds × 2 concurrent
+  `AsignarSiguienteAsync` calls, asserts exactly-consecutive-no-duplicates. Verified stable
+  across 5 runs total (2 full-suite runs + 3 additional isolated runs) — the row lock on
+  `numeraciones_articulos` serializes the race by construction, same mechanism already proven
+  for `numeraciones_clientes`.
+
+### Build/test results (batch 2, run twice)
+
+| Suite | Run 1 | Run 2 |
+|---|---|---|
+| `Ways.Domain.Tests` | 74/74 | 74/74 |
+| `Ways.Application.Tests` | 142/142 | 142/142 |
+| `Ways.IntegrationTests` (real Postgres, Testcontainers) | 145/145 | 145/145 |
+
+145 = 129 baseline + 16 new (12 parametrized RLS cases + 2 `numeraciones_articulos` proofs + 1
+EF/LINQ filter proof + 1 concurrency test). Identical counts both runs, no flakes.
+
+### Commits (batch 2, work-unit style, migration in its own commit)
+
+5. `feat(persistencia): registrar el enum unidad_venta en las fabricas de contexto` —
+   `WaysDbContextFactory`, `DependencyInjection.cs`, `WaysApiFixture.cs`.
+6. `fix(persistencia): nombrar en snake_case el indice de soporte de fk_articulos_empresas_articulo` —
+   the missed `HasIndex` on `ArticuloEmpresaConfiguration`, found via the first scaffold.
+7. `feat(persistencia): generar la migracion ArticulosYPreciosEtapa3 con RLS` — the migration
+   itself + designer + model snapshot.
+8. `test(articulos): agregar las pruebas de integracion de RLS y concurrencia del contador` —
+   tasks 1.11/1.13.
+
+### Next
+
+Slice 1 is complete and runtime-verified. Judgment-day (dual blind review) runs next, per the
+solo-dev PR protocol, before this PR is created. Slice 2 (`articulos` + `codigos_barra` +
+`articulos_empresas` + margin suggestion, per the chained-PR plan) starts only after Slice 1's
+PR merges.
 
 ### Status summary
 
 | Bucket | Status |
 |---|---|
-| 1A — DB CHANGE GATE (1.1) | Presented, **awaiting explicit approval** |
+| 1A — DB CHANGE GATE (1.1) | **Approved 2026-08-02**, exactly as presented |
 | 1B — Domain (1.2–1.7) | Done |
-| 1C — Migration (1.8) | Blocked on gate approval |
+| 1C — Migration (1.8) | Done |
 | 1D — codigo_interno counter (1.9) | Done |
 | 1E — db-error-backstops mapping (1.10) | Done |
-| 1F — Tests (1.11–1.14) | 1.12 done, 1.14 done (regression green), 1.11/1.13 blocked on 1.8 |
+| 1F — Tests (1.11–1.14) | Done — all 4 |
+
+All 14 Slice 1 tasks complete. Slice 1 is runtime-verified end to end and ready for the
+judgment-day review round.
 
 ### What shipped this batch
 
@@ -74,9 +152,9 @@
   `GuardDeNumeracionClienteTests` (InMemory, no DB).
 - `tests/Ways.Application.Tests/Persistencia/FiltroDeTenantEnArticuloEmpresaTests.cs` — proves
   the manual tenant filter on `ArticuloEmpresa` (InMemory, no DB).
-- 1.11 (RLS integration proofs) and 1.13 (counter concurrency integration) are **not**
-  implemented yet — both require the physical tables from the still-pending migration (1.8),
-  which is blocked on gate approval. They're the very next batch after approval + migration.
+- 1.11 (RLS integration proofs) and 1.13 (counter concurrency integration) were deferred to
+  batch 2 (see below) — both require the physical tables from the migration, blocked on gate
+  approval at the time of this batch.
 
 ### Regression-hunting note (real bug found and fixed, not scope creep)
 
@@ -126,13 +204,9 @@ created shape) would have hit again if left unfixed.
 4. `test(articulos): agregar las pruebas independientes de la migracion` — domain unit tests,
    model-shape tests, guard test, manual-filter test.
 
-### Next batch (after gate approval)
+### Batch 1 next-steps — superseded, see "Batch 2" above
 
-1. `dotnet ef migrations add ArticulosYPreciosEtapa3` (task 1.8) — hand-name every FK/index in
-   snake_case, `HabilitarRlsDeTenant` on the 5 new tables, register `UnidadVenta` in
-   `WaysDbContextFactory` + `DependencyInjection.cs` + `WaysApiFixture.cs`. Confirm
-   `dotnet ef migrations has-pending-model-changes` is clean.
-2. Apply the migration, then implement 1.11 (RLS proofs, 5 tables) and 1.13 (counter
-   concurrency race) — both currently blocked on the physical schema.
-3. Proceed to Slice 2 (`articulos` + `codigos_barra` + `articulos_empresas` + margin
-   suggestion) per the chained-PR plan.
+Everything listed here (migration generation, RLS proofs, counter concurrency) was completed
+in batch 2 after gate approval. Left in place for the historical record of what batch 1 hadn't
+done yet; see the "Batch 2" section above for what actually happened and the final "Next"
+section for what comes after Slice 1.

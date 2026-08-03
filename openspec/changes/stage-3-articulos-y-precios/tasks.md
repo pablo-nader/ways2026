@@ -94,7 +94,10 @@ tenant-scoped new/changed tables, tests green. **Rollback**: down-migration
 
 ### 1A. DB CHANGE GATE — BLOCKING
 
-- [~] 1.1 **STOP.** Present the migration model summary and wait for explicit
+- [x] 1.1 **APPROVED 2026-08-02**, exactly as presented (5 new tables,
+  `unidad_venta` enum, standard RLS on all 5, the 4 additive alternate keys,
+  the AK naming convention call, `Precio.Monto`, no seed/backfill). **STOP.**
+  Present the migration model summary and wait for explicit
   approval before generating anything (CLAUDE.md gate). The summary MUST
   group:
   - **New enum**: `unidad_venta` (`unidad` | `peso`).
@@ -172,7 +175,7 @@ tenant-scoped new/changed tables, tests green. **Rollback**: down-migration
 
 ### 1C. Migration (only after 1.1 approved)
 
-- [ ] 1.8 **BLOCKED on gate approval.** Generate migration `ArticulosYPreciosEtapa3`: `unidad_venta` enum,
+- [x] 1.8 Generate migration `ArticulosYPreciosEtapa3`: `unidad_venta` enum,
   5 new tables, 4 new alternate keys on existing tables, all FKs/indexes
   hand-named in snake_case (EF default naming would produce PascalCase `IX_*`,
   breaking the doc-10 convention — same fix stage 2 applied before
@@ -216,25 +219,29 @@ tenant-scoped new/changed tables, tests green. **Rollback**: down-migration
 
 ### 1F. Tests
 
-- [ ] 1.11 **BLOCKED on gate approval + 1.8.** Integration: RLS proofs for
-  all 5 new tables (EF filter blocks cross-tenant read; raw-SQL/
-  `IgnoreQueryFilters` blocked), mirroring `AislamientoDeTenantTests`. *(spec:
-  articulos/codigos-barra/precios / Tenant Isolation)*
+- [x] 1.11 Integration: RLS proofs for all 5 new tables (EF filter blocks
+  cross-tenant read; raw-SQL/`IgnoreQueryFilters` blocked), mirroring
+  `AislamientoDeTenantTests`. *(spec: articulos/codigos-barra/precios /
+  Tenant Isolation)* — `tests/Ways.IntegrationTests/ArticulosYPreciosRlsTests.cs`
+  (SELECT/UPDATE cross-tenant → 0 rows via `USING`; INSERT with foreign
+  `id_tenant` → 42501 via `WITH CHECK`; EF/LINQ filter proof for the 4
+  ORM-reachable entities) + 2 dedicated `numeraciones_articulos` tests (its
+  PK IS `id_tenant`, doesn't fit the parametrized table).
 - [x] 1.12 [P] Unit: `ReglaDeArticulos.ValidarRestriccionDeDisponibilidad`
   (blocks toggle-to-false without subset row, allows with one). *(spec:
   articulos / Availability Model)* — `tests/Ways.Domain.Tests/Articulos/ReglaDeArticulosTests.cs`
   (5 cases: block, allow-with-subset, true→true, false→false, false→true).
-- [ ] 1.13 **BLOCKED on gate approval + 1.8.** Integration:
-  `AsignadorDeCodigoInternoArticulo` atomicity under concurrency (2 concurrent
-  assigns for the same tenant → distinct values, no gap, no duplicate),
-  mirroring `AsignadorDeNumeroClienteConcurrenciaTests`. *(design: Backstop
-  Map — "numeraciones_articulos counter race")*
+- [x] 1.13 Integration: `AsignadorDeCodigoInternoArticulo` atomicity under
+  concurrency (2 concurrent assigns for the same tenant → distinct values, no
+  gap, no duplicate), mirroring `AsignadorDeNumeroClienteConcurrenciaTests`.
+  *(design: Backstop Map — "numeraciones_articulos counter race")* —
+  `tests/Ways.IntegrationTests/AsignadorDeCodigoInternoArticuloConcurrenciaTests.cs`,
+  3 rounds × 2 concurrent assigns, stable across 5 runs (2 full-suite + 3
+  isolated).
 - [x] 1.14 Regression: existing Domain/Application/IntegrationTests suites
   unedited and green — 74/74 Domain (+5 new), 142/142 Application (+14 new
-  migration-independent: `ModeloDeArticulosYPreciosTests`,
-  `GuardDeNumeracionArticuloTests`, `FiltroDeTenantEnArticuloEmpresaTests`),
-  129/129 IntegrationTests (unchanged, no new integration tests yet —
-  gated on 1.8).
+  migration-independent), 145/145 IntegrationTests (129 baseline + 16 new:
+  RLS proofs + counter concurrency), all green twice in a row.
 
 ---
 
