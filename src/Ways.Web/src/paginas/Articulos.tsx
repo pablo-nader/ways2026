@@ -222,7 +222,13 @@ export function Articulos() {
         setAlicuotasIva([])
         agregarErrorCatalogoRequerido('No se pudieron cargar las alícuotas de IVA.')
       })
-    clienteDeOrganizacion.listarEmpresas().then(setEmpresas).catch(() => setEmpresas([]))
+    clienteDeOrganizacion
+      .listarEmpresas()
+      .then(setEmpresas)
+      .catch(() => {
+        setEmpresas([])
+        agregarErrorCatalogoRequerido('No se pudieron cargar las empresas.')
+      })
     clienteDePrecios.listasDePrecio().then(setListasPrecio).catch(() => setListasPrecio([]))
   }, [cargar])
 
@@ -231,6 +237,7 @@ export function Articulos() {
 
   async function abrirNuevo() {
     invalidarEdicionEnCurso()
+    setGuardando(false)
     setFormulario({ ...formularioVacio(), idArea: areaPorDefecto, idAlicuotaIva: alicuotaPorDefecto })
     setAviso('')
     setError('')
@@ -238,12 +245,14 @@ export function Articulos() {
 
   function cancelarEdicion() {
     invalidarEdicionEnCurso()
+    setGuardando(false)
     setFormulario(null)
   }
 
   async function abrirEdicion(a: ArticuloListado) {
     setError('')
     const token = invalidarEdicionEnCurso()
+    setGuardando(false)
     try {
       // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
       const detalle = await clienteDeArticulos.obtener(a.id)
@@ -259,7 +268,7 @@ export function Articulos() {
   async function guardar() {
     if (!formulario) return
 
-    invalidarEdicionEnCurso()
+    const token = invalidarEdicionEnCurso()
     setGuardando(true)
     setError('')
     setAviso('')
@@ -267,17 +276,25 @@ export function Articulos() {
     try {
       if (formulario.id === null) {
         const creado = await clienteDeArticulos.crear(aAlta(formulario))
-        setAviso(`Artículo "${formulario.nombre}" creado con código interno ${creado.codigoInterno}.`)
-        setFormulario(aFormulario(creado))
+        if (tokenEdicionRef.current === token) {
+          setAviso(`Artículo "${formulario.nombre}" creado con código interno ${creado.codigoInterno}.`)
+          setFormulario(aFormulario(creado))
+        }
       } else {
         const actualizado = await clienteDeArticulos.actualizar(formulario.id, aEdicion(formulario))
-        setAviso(`Artículo "${formulario.nombre}" actualizado.`)
-        setFormulario(aFormulario(actualizado))
+        if (tokenEdicionRef.current === token) {
+          setAviso(`Artículo "${formulario.nombre}" actualizado.`)
+          setFormulario(aFormulario(actualizado))
+        }
       }
 
+      // El refresco de la tabla no pertenece al token de edición: la fila afectada debe
+      // quedar al día sin importar si el formulario abierto ahora es otro.
       await cargar(busqueda)
     } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+      if (tokenEdicionRef.current === token) {
+        setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+      }
     } finally {
       setGuardando(false)
     }
@@ -945,12 +962,21 @@ type EstadoDeLista = {
   programado: boolean
   vigenteDesde: string
   guardando: boolean
+  refrescando: boolean
   error: string
   confirmarPendiente: boolean
 }
 
 function estadoDeListaVacio(): EstadoDeLista {
-  return { monto: '', programado: false, vigenteDesde: '', guardando: false, error: '', confirmarPendiente: false }
+  return {
+    monto: '',
+    programado: false,
+    vigenteDesde: '',
+    guardando: false,
+    refrescando: false,
+    error: '',
+    confirmarPendiente: false,
+  }
 }
 
 /**
@@ -974,21 +1000,25 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
   const [cargandoSugerencia, setCargandoSugerencia] = useState(false)
   const [errorSugerencia, setErrorSugerencia] = useState('')
 
-  const cargarVigentes = useCallback(async () => {
-    setCargandoVigentes(true)
-    setErrorVigentes('')
-    try {
-      const lista = await clienteDePrecios.vigentes(idArticulo)
-      const mapa: Record<number, PrecioVigente> = {}
-      for (const p of lista) mapa[p.idListaPrecio] = p
-      setVigentes(mapa)
-    } catch (e) {
-      setErrorVigentes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los precios vigentes.')
-    } finally {
-      setCargandoVigentes(false)
-      cargaInicialHechaRef.current = true
-    }
-  }, [idArticulo])
+  const cargarVigentes = useCallback(
+    async (opciones?: { relanzarError?: boolean }) => {
+      setCargandoVigentes(true)
+      setErrorVigentes('')
+      try {
+        const lista = await clienteDePrecios.vigentes(idArticulo)
+        const mapa: Record<number, PrecioVigente> = {}
+        for (const p of lista) mapa[p.idListaPrecio] = p
+        setVigentes(mapa)
+      } catch (e) {
+        setErrorVigentes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los precios vigentes.')
+        if (opciones?.relanzarError) throw e
+      } finally {
+        setCargandoVigentes(false)
+        cargaInicialHechaRef.current = true
+      }
+    },
+    [idArticulo],
+  )
 
   useEffect(() => {
     void cargarVigentes()
@@ -1072,14 +1102,18 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
 
     // El precio ya quedó confirmado en el servidor: a partir de acá un fallo es solo de refresco
     // de vista, nunca "no se guardó" — evita que el usuario reintente un guardado que ya se aplicó.
-    setEstados((prev) => ({ ...prev, [idLista]: estadoDeListaVacio() }))
+    // `refrescando` mantiene el panel inerte hasta que el refresco termine, para no habilitar un
+    // segundo guardado que corra en paralelo con este refresco.
+    setEstados((prev) => ({ ...prev, [idLista]: { ...estadoDeListaVacio(), refrescando: true } }))
 
     try {
-      await cargarVigentes()
+      await cargarVigentes({ relanzarError: true })
       const historial = await clienteDePrecios.historial(idArticulo, idLista)
       setHistoriales((prev) => ({ ...prev, [idLista]: historial }))
+      actualizarEstado(idLista, { refrescando: false })
     } catch {
       actualizarEstado(idLista, {
+        refrescando: false,
         error: 'El precio se guardó, pero no se pudo actualizar la vista. Cerrá y volvé a abrir la lista para verlo.',
       })
     }
@@ -1209,6 +1243,7 @@ function PanelDeLista({
   const ahora = new Date()
   const filaAbierta = historial.find((h) => h.vigenteHasta === null)
   const pendiente = filaAbierta && new Date(filaAbierta.vigenteDesde) > ahora ? filaAbierta : null
+  const bloqueado = estado.guardando || estado.refrescando
 
   if (lista.modo !== 'Fija') {
     return (
@@ -1262,6 +1297,7 @@ function PanelDeLista({
             className="form-control form-control-sm rounded-0"
             style={{ width: 140 }}
             value={estado.monto}
+            disabled={bloqueado}
             onChange={(e) => onCambio({ monto: e.target.value })}
           />
         </div>
@@ -1285,6 +1321,7 @@ function PanelDeLista({
               type="checkbox"
               className="form-check-input rounded-0"
               checked={estado.programado}
+              disabled={bloqueado}
               onChange={(e) => onCambio({ programado: e.target.checked })}
             />
             <label className="form-check-label small" htmlFor={`lp-programado-${lista.id}`}>
@@ -1300,6 +1337,7 @@ function PanelDeLista({
               type="datetime-local"
               className="form-control form-control-sm rounded-0"
               value={estado.vigenteDesde}
+              disabled={bloqueado}
               onChange={(e) => onCambio({ vigenteDesde: e.target.value })}
             />
           </div>
@@ -1309,10 +1347,10 @@ function PanelDeLista({
           <button
             type="button"
             className="btn btn-sm btn-success rounded-0"
-            disabled={estado.guardando}
+            disabled={bloqueado}
             onClick={() => onGuardar(false)}
           >
-            {estado.guardando ? 'Guardando…' : estado.programado ? 'Programar' : 'Establecer ahora'}
+            {estado.guardando ? 'Guardando…' : estado.refrescando ? 'Actualizando…' : estado.programado ? 'Programar' : 'Establecer ahora'}
           </button>
         </div>
       </div>
