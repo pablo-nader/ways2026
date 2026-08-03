@@ -1,0 +1,1244 @@
+import { Fragment, useCallback, useEffect, useState } from 'react'
+import { clienteDeArticulos } from '../api/articulos'
+import { clienteDeCatalogo, clienteDeCatalogosFiscales } from '../api/catalogos'
+import { api, ErrorApi } from '../api/cliente'
+import { clienteDeOrganizacion } from '../api/organizacion'
+import { clienteDePrecios } from '../api/precios'
+import { UNIDADES_VENTA } from '../api/tipos'
+import type {
+  AlicuotaIvaListado,
+  AltaArticulo,
+  AreaAlta,
+  AreaListado,
+  ArticuloListado,
+  CategoriaListado,
+  CodigoBarraListado,
+  EdicionArticulo,
+  EmpresaListado,
+  GrupoAlta,
+  GrupoListado,
+  HistorialDePrecio,
+  ListaPrecioListado,
+  MarcaAlta,
+  MarcaListado,
+  PaginaDe,
+  PrecioVigente,
+  ProveedorListado,
+  UnidadVenta,
+} from '../api/tipos'
+import { Box } from '../componentes/Box'
+import { Cargando } from '../componentes/Cargando'
+
+type Formulario = {
+  id: number | null
+  codigoInterno: string
+  nombre: string
+  descripcion: string
+  idArea: number | ''
+  idCategoria: number | ''
+  idMarca: number | ''
+  idGrupo: number | ''
+  idProveedorHabitual: number | ''
+  idAlicuotaIva: number | ''
+  unidadVenta: UnidadVenta
+  unidadesPorBulto: string
+  esProducto: boolean
+  costoLista: string
+  descuentoProveedor: string
+  costoNominal: string
+  disponibleParaTodas: boolean
+  idsEmpresas: number[]
+  activo: boolean
+}
+
+function formularioVacio(): Formulario {
+  return {
+    id: null,
+    codigoInterno: '',
+    nombre: '',
+    descripcion: '',
+    idArea: '',
+    idCategoria: '',
+    idMarca: '',
+    idGrupo: '',
+    idProveedorHabitual: '',
+    idAlicuotaIva: '',
+    unidadVenta: 'Unidad',
+    unidadesPorBulto: '',
+    esProducto: true,
+    costoLista: '',
+    descuentoProveedor: '',
+    costoNominal: '',
+    disponibleParaTodas: true,
+    idsEmpresas: [],
+    activo: true,
+  }
+}
+
+function aFormulario(a: ArticuloListado): Formulario {
+  return {
+    id: a.id,
+    codigoInterno: a.codigoInterno,
+    nombre: a.nombre,
+    descripcion: a.descripcion ?? '',
+    idArea: a.idArea,
+    idCategoria: a.idCategoria ?? '',
+    idMarca: a.idMarca ?? '',
+    idGrupo: a.idGrupo ?? '',
+    idProveedorHabitual: a.idProveedorHabitual ?? '',
+    idAlicuotaIva: a.idAlicuotaIva,
+    unidadVenta: a.unidadVenta,
+    unidadesPorBulto: a.unidadesPorBulto === null ? '' : String(a.unidadesPorBulto),
+    esProducto: a.esProducto,
+    costoLista: a.costoLista === null ? '' : String(a.costoLista),
+    descuentoProveedor: a.descuentoProveedor === null ? '' : String(a.descuentoProveedor),
+    costoNominal: a.costoNominal === null ? '' : String(a.costoNominal),
+    disponibleParaTodas: a.disponibleParaTodas,
+    idsEmpresas: a.idsEmpresas,
+    activo: a.activo,
+  }
+}
+
+function aVacioNulo(valor: string): string | null {
+  const limpio = valor.trim()
+  return limpio === '' ? null : limpio
+}
+
+function numeroOpcional(valor: string): number | null {
+  const limpio = valor.trim()
+  return limpio === '' ? null : Number(limpio)
+}
+
+function camposComunes(f: Formulario) {
+  return {
+    nombre: f.nombre.trim(),
+    descripcion: aVacioNulo(f.descripcion),
+    idArea: f.idArea === '' ? 0 : f.idArea,
+    idCategoria: f.idCategoria === '' ? null : f.idCategoria,
+    idMarca: f.idMarca === '' ? null : f.idMarca,
+    idGrupo: f.idGrupo === '' ? null : f.idGrupo,
+    idProveedorHabitual: f.idProveedorHabitual === '' ? null : f.idProveedorHabitual,
+    idAlicuotaIva: f.idAlicuotaIva === '' ? 0 : f.idAlicuotaIva,
+    unidadVenta: f.unidadVenta,
+    unidadesPorBulto: numeroOpcional(f.unidadesPorBulto),
+    esProducto: f.esProducto,
+    costoLista: numeroOpcional(f.costoLista),
+    descuentoProveedor: numeroOpcional(f.descuentoProveedor),
+    costoNominal: numeroOpcional(f.costoNominal),
+    disponibleParaTodas: f.disponibleParaTodas,
+    idsEmpresas: f.disponibleParaTodas ? null : f.idsEmpresas,
+    activo: f.activo,
+  }
+}
+
+function aAlta(f: Formulario): AltaArticulo {
+  return { codigoInterno: aVacioNulo(f.codigoInterno), ...camposComunes(f) }
+}
+
+function aEdicion(f: Formulario): EdicionArticulo {
+  return camposComunes(f)
+}
+
+const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
+const clienteMarcas = clienteDeCatalogo<MarcaListado, MarcaAlta>('marcas')
+const clienteGrupos = clienteDeCatalogo<GrupoListado, GrupoAlta>('grupos')
+
+/**
+ * ABM dedicado de artículos (design decision 1: no la máquina genérica de catálogos) — la
+ * pantalla más pesada a la fecha (identificación + códigos de barra + clasificación + costos +
+ * disponibilidad por empresa + precios por lista). El código de barras y el editor de precios
+ * solo se habilitan una vez que el artículo tiene `id` persistido: ambos endpoints cuelgan de
+ * `/api/articulos/{id}/...`, no existen antes del alta.
+ */
+export function Articulos() {
+  const [pagina, setPagina] = useState<PaginaDe<ArticuloListado> | null>(null)
+  const [areas, setAreas] = useState<AreaListado[]>([])
+  const [categorias, setCategorias] = useState<CategoriaListado[]>([])
+  const [marcas, setMarcas] = useState<MarcaListado[]>([])
+  const [grupos, setGrupos] = useState<GrupoListado[]>([])
+  const [proveedores, setProveedores] = useState<ProveedorListado[]>([])
+  const [alicuotasIva, setAlicuotasIva] = useState<AlicuotaIvaListado[]>([])
+  const [empresas, setEmpresas] = useState<EmpresaListado[]>([])
+  const [listasPrecio, setListasPrecio] = useState<ListaPrecioListado[]>([])
+  const [busqueda, setBusqueda] = useState('')
+  const [cargando, setCargando] = useState(true)
+  const [error, setError] = useState('')
+  const [aviso, setAviso] = useState('')
+  const [formulario, setFormulario] = useState<Formulario | null>(null)
+  const [guardando, setGuardando] = useState(false)
+
+  const cargar = useCallback(async (termino: string) => {
+    setCargando(true)
+    setError('')
+    try {
+      setPagina(await clienteDeArticulos.listar(termino, false))
+    } catch (e) {
+      setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los artículos.')
+    } finally {
+      setCargando(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void cargar('')
+    clienteAreas.listar(false).then(setAreas).catch(() => setAreas([]))
+    api.get<CategoriaListado[]>('/catalogos/categorias').then(setCategorias).catch(() => setCategorias([]))
+    clienteMarcas.listar(false).then(setMarcas).catch(() => setMarcas([]))
+    clienteGrupos.listar(false).then(setGrupos).catch(() => setGrupos([]))
+    // tamanio grande a propósito: es un selector de referencia, no un listado paginado.
+    api
+      .get<PaginaDe<ProveedorListado>>('/proveedores?tamanio=200')
+      .then((p) => setProveedores(p.items))
+      .catch(() => setProveedores([]))
+    clienteDeCatalogosFiscales.alicuotasIva().then(setAlicuotasIva).catch(() => setAlicuotasIva([]))
+    clienteDeOrganizacion.listarEmpresas().then(setEmpresas).catch(() => setEmpresas([]))
+    clienteDePrecios.listasDePrecio().then(setListasPrecio).catch(() => setListasPrecio([]))
+  }, [cargar])
+
+  const areaPorDefecto = areas[0]?.id ?? ''
+  const alicuotaPorDefecto = alicuotasIva[0]?.id ?? ''
+
+  async function abrirNuevo() {
+    setFormulario({ ...formularioVacio(), idArea: areaPorDefecto, idAlicuotaIva: alicuotaPorDefecto })
+    setAviso('')
+    setError('')
+  }
+
+  async function abrirEdicion(a: ArticuloListado) {
+    setError('')
+    try {
+      // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
+      const detalle = await clienteDeArticulos.obtener(a.id)
+      setFormulario(aFormulario(detalle))
+      setAviso('')
+    } catch (e) {
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir el artículo.')
+    }
+  }
+
+  async function guardar() {
+    if (!formulario) return
+
+    setGuardando(true)
+    setError('')
+    setAviso('')
+
+    try {
+      if (formulario.id === null) {
+        const creado = await clienteDeArticulos.crear(aAlta(formulario))
+        setAviso(`Artículo "${formulario.nombre}" creado con código interno ${creado.codigoInterno}.`)
+        setFormulario(aFormulario(creado))
+      } else {
+        const actualizado = await clienteDeArticulos.actualizar(formulario.id, aEdicion(formulario))
+        setAviso(`Artículo "${formulario.nombre}" actualizado.`)
+        setFormulario(aFormulario(actualizado))
+      }
+
+      await cargar(busqueda)
+    } catch (e) {
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  async function eliminar(a: ArticuloListado) {
+    if (!confirm(`¿Dar de baja el artículo "${a.nombre}"?`)) return
+
+    setError('')
+    setAviso('')
+    try {
+      await clienteDeArticulos.eliminar(a.id)
+      setAviso(`Artículo "${a.nombre}" dado de baja.`)
+      if (formulario?.id === a.id) setFormulario(null)
+      await cargar(busqueda)
+    } catch (e) {
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja.')
+    }
+  }
+
+  function nombreDe(lista: { id: number; nombre: string }[], id: number | null) {
+    return lista.find((x) => x.id === id)?.nombre ?? '—'
+  }
+
+  const herramientas = (
+    <nav className="p-2 d-flex gap-2">
+      <input
+        type="search"
+        className="form-control form-control-sm rounded-0"
+        placeholder="Buscar por nombre, código interno o código de barras…"
+        value={busqueda}
+        onChange={(e) => setBusqueda(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && cargar(busqueda)}
+      />
+      <button type="button" className="btn btn-sm btn-outline-light rounded-0" onClick={() => cargar(busqueda)}>
+        Buscar
+      </button>
+      <button type="button" className="btn btn-sm btn-success rounded-0 text-nowrap" onClick={abrirNuevo}>
+        Nuevo
+      </button>
+    </nav>
+  )
+
+  return (
+    <div className="container-fluid py-4">
+      <Box titulo="Artículos" variante="inverse" herramientas={herramientas}>
+        {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+
+        {formulario && (
+          <FormularioArticulo
+            valor={formulario}
+            areas={areas}
+            categorias={categorias}
+            marcas={marcas}
+            grupos={grupos}
+            proveedores={proveedores}
+            alicuotasIva={alicuotasIva}
+            empresas={empresas}
+            listasPrecio={listasPrecio}
+            guardando={guardando}
+            onCambio={setFormulario}
+            onGuardar={guardar}
+            onCancelar={() => setFormulario(null)}
+          />
+        )}
+
+        {cargando ? (
+          <Cargando />
+        ) : (
+          <div className="table-responsive">
+            <table className="table table-striped table-hover table-bordered align-middle">
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Nombre</th>
+                  <th>Área</th>
+                  <th>Unidad de venta</th>
+                  <th>Disponibilidad</th>
+                  <th>Estado</th>
+                  <th className="text-end">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagina?.items.map((a) => (
+                  <tr key={a.id}>
+                    <td>{a.codigoInterno}</td>
+                    <td>{a.nombre}</td>
+                    <td>{nombreDe(areas, a.idArea)}</td>
+                    <td>{UNIDADES_VENTA.find((u) => u.valor === a.unidadVenta)?.etiqueta ?? a.unidadVenta}</td>
+                    <td>{a.disponibleParaTodas ? 'Todas las empresas' : 'Subconjunto'}</td>
+                    <td>
+                      <span className={`badge rounded-0 ${a.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
+                        {a.activo ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </td>
+                    <td className="text-end text-nowrap">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                        onClick={() => abrirEdicion(a)}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-danger rounded-0"
+                        onClick={() => eliminar(a)}
+                      >
+                        Baja
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {pagina?.items.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="text-center text-muted py-4">
+                      No hay artículos que coincidan con la búsqueda.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Box>
+    </div>
+  )
+}
+
+function FormularioArticulo({
+  valor,
+  areas,
+  categorias,
+  marcas,
+  grupos,
+  proveedores,
+  alicuotasIva,
+  empresas,
+  listasPrecio,
+  guardando,
+  onCambio,
+  onGuardar,
+  onCancelar,
+}: {
+  valor: Formulario
+  areas: AreaListado[]
+  categorias: CategoriaListado[]
+  marcas: MarcaListado[]
+  grupos: GrupoListado[]
+  proveedores: ProveedorListado[]
+  alicuotasIva: AlicuotaIvaListado[]
+  empresas: EmpresaListado[]
+  listasPrecio: ListaPrecioListado[]
+  guardando: boolean
+  onCambio: (f: Formulario) => void
+  onGuardar: () => void
+  onCancelar: () => void
+}) {
+  const esNuevo = valor.id === null
+
+  function alternarEmpresa(id: number) {
+    const yaEsta = valor.idsEmpresas.includes(id)
+    onCambio({
+      ...valor,
+      idsEmpresas: yaEsta ? valor.idsEmpresas.filter((x) => x !== id) : [...valor.idsEmpresas, id],
+    })
+  }
+
+  return (
+    <div className="border p-3 mb-4 bg-white">
+      <form
+        className="row g-3"
+        autoComplete="off"
+        onSubmit={(e) => {
+          e.preventDefault()
+          onGuardar()
+        }}
+      >
+        <div className="col-12">
+          <strong>{esNuevo ? 'Nuevo artículo' : `Editando artículo ${valor.codigoInterno}`}</strong>
+        </div>
+
+        <div className="col-12">
+          <strong className="text-muted small text-uppercase">Identificación</strong>
+        </div>
+
+        <div className="col-md-2">
+          <label className="form-label" htmlFor="art-codigo-interno">
+            Código interno
+          </label>
+          <input
+            id="art-codigo-interno"
+            className="form-control rounded-0"
+            maxLength={30}
+            placeholder={esNuevo ? 'Se autogenera si se omite' : undefined}
+            value={valor.codigoInterno}
+            disabled={!esNuevo}
+            onChange={(e) => onCambio({ ...valor, codigoInterno: e.target.value })}
+          />
+        </div>
+
+        <div className="col-md-4">
+          <label className="form-label" htmlFor="art-nombre">
+            Nombre
+          </label>
+          <input
+            id="art-nombre"
+            className="form-control rounded-0"
+            maxLength={150}
+            value={valor.nombre}
+            onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
+            required
+          />
+        </div>
+
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="art-unidad-venta">
+            Unidad de venta
+          </label>
+          <select
+            id="art-unidad-venta"
+            className="form-select rounded-0"
+            value={valor.unidadVenta}
+            onChange={(e) => onCambio({ ...valor, unidadVenta: e.target.value as UnidadVenta })}
+          >
+            {UNIDADES_VENTA.map((u) => (
+              <option key={u.valor} value={u.valor}>
+                {u.etiqueta}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="art-unidades-por-bulto">
+            Unidades por bulto
+          </label>
+          <input
+            id="art-unidades-por-bulto"
+            type="number"
+            step="0.01"
+            min="0"
+            className="form-control rounded-0"
+            value={valor.unidadesPorBulto}
+            onChange={(e) => onCambio({ ...valor, unidadesPorBulto: e.target.value })}
+          />
+        </div>
+
+        <div className="col-md-6 d-flex align-items-end">
+          <div className="form-check">
+            <input
+              id="art-es-producto"
+              type="checkbox"
+              className="form-check-input rounded-0"
+              checked={valor.esProducto}
+              onChange={(e) => onCambio({ ...valor, esProducto: e.target.checked })}
+            />
+            <label className="form-check-label" htmlFor="art-es-producto">
+              Es producto (desmarcar si es un servicio)
+            </label>
+          </div>
+        </div>
+
+        <div className="col-12">
+          <label className="form-label" htmlFor="art-descripcion">
+            Descripción
+          </label>
+          <textarea
+            id="art-descripcion"
+            className="form-control rounded-0"
+            rows={2}
+            value={valor.descripcion}
+            onChange={(e) => onCambio({ ...valor, descripcion: e.target.value })}
+          />
+        </div>
+
+        <div className="col-12">
+          <strong className="text-muted small text-uppercase">Clasificación</strong>
+        </div>
+
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="art-area">
+            Área
+          </label>
+          <select
+            id="art-area"
+            className="form-select rounded-0"
+            value={valor.idArea}
+            onChange={(e) => onCambio({ ...valor, idArea: Number(e.target.value) })}
+            required
+          >
+            <option value="" disabled>
+              Elegir…
+            </option>
+            {areas.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="art-categoria">
+            Categoría
+          </label>
+          <select
+            id="art-categoria"
+            className="form-select rounded-0"
+            value={valor.idCategoria}
+            onChange={(e) => onCambio({ ...valor, idCategoria: e.target.value === '' ? '' : Number(e.target.value) })}
+          >
+            <option value="">Sin especificar</option>
+            {categorias.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="art-marca">
+            Marca
+          </label>
+          <select
+            id="art-marca"
+            className="form-select rounded-0"
+            value={valor.idMarca}
+            onChange={(e) => onCambio({ ...valor, idMarca: e.target.value === '' ? '' : Number(e.target.value) })}
+          >
+            <option value="">Sin especificar</option>
+            {marcas.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="art-grupo">
+            Grupo
+          </label>
+          <select
+            id="art-grupo"
+            className="form-select rounded-0"
+            value={valor.idGrupo}
+            onChange={(e) => onCambio({ ...valor, idGrupo: e.target.value === '' ? '' : Number(e.target.value) })}
+          >
+            <option value="">Sin especificar</option>
+            {grupos.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.nombre}
+                {g.margen !== null ? ` (margen ${g.margen}%)` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-md-4">
+          <label className="form-label" htmlFor="art-proveedor-habitual">
+            Proveedor habitual
+          </label>
+          <select
+            id="art-proveedor-habitual"
+            className="form-select rounded-0"
+            value={valor.idProveedorHabitual}
+            onChange={(e) =>
+              onCambio({ ...valor, idProveedorHabitual: e.target.value === '' ? '' : Number(e.target.value) })
+            }
+          >
+            <option value="">Sin especificar</option>
+            {proveedores.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.razonSocial}
+                {p.nombreFantasia ? ` (${p.nombreFantasia})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-md-4">
+          <label className="form-label" htmlFor="art-alicuota-iva">
+            Alícuota de IVA
+          </label>
+          <select
+            id="art-alicuota-iva"
+            className="form-select rounded-0"
+            value={valor.idAlicuotaIva}
+            onChange={(e) => onCambio({ ...valor, idAlicuotaIva: Number(e.target.value) })}
+            required
+          >
+            <option value="" disabled>
+              Elegir…
+            </option>
+            {alicuotasIva.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.nombre} ({a.porcentaje}%)
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-12">
+          <strong className="text-muted small text-uppercase">Costos</strong>
+        </div>
+
+        <div className="col-md-4">
+          <label className="form-label" htmlFor="art-costo-lista">
+            Costo de lista
+          </label>
+          <input
+            id="art-costo-lista"
+            type="number"
+            step="0.01"
+            min="0"
+            className="form-control rounded-0"
+            value={valor.costoLista}
+            onChange={(e) => onCambio({ ...valor, costoLista: e.target.value })}
+          />
+        </div>
+
+        <div className="col-md-4">
+          <label className="form-label" htmlFor="art-descuento-proveedor">
+            Descuento de proveedor (%)
+          </label>
+          <input
+            id="art-descuento-proveedor"
+            type="number"
+            step="0.01"
+            min="0"
+            className="form-control rounded-0"
+            value={valor.descuentoProveedor}
+            onChange={(e) => onCambio({ ...valor, descuentoProveedor: e.target.value })}
+          />
+        </div>
+
+        <div className="col-md-4">
+          <label className="form-label" htmlFor="art-costo-nominal">
+            Costo nominal
+          </label>
+          <input
+            id="art-costo-nominal"
+            type="number"
+            step="0.01"
+            min="0"
+            className="form-control rounded-0"
+            value={valor.costoNominal}
+            onChange={(e) => onCambio({ ...valor, costoNominal: e.target.value })}
+          />
+          <div className="form-text">Si se completa, tiene prioridad sobre costo de lista − descuento.</div>
+        </div>
+
+        <div className="col-12">
+          <strong className="text-muted small text-uppercase">Disponibilidad</strong>
+        </div>
+
+        <div className="col-12">
+          <div className="form-check form-switch">
+            <input
+              id="art-disponible-para-todas"
+              type="checkbox"
+              className="form-check-input"
+              checked={valor.disponibleParaTodas}
+              onChange={(e) => onCambio({ ...valor, disponibleParaTodas: e.target.checked })}
+            />
+            <label className="form-check-label" htmlFor="art-disponible-para-todas">
+              Disponible para todas las empresas del tenant
+            </label>
+          </div>
+        </div>
+
+        {!valor.disponibleParaTodas && (
+          <div className="col-12">
+            <div className="form-text mb-1">
+              Elegí al menos una empresa: sin ninguna marcada, el servidor rechaza el guardado.
+            </div>
+            <div className="d-flex flex-wrap gap-3">
+              {empresas.map((e) => (
+                <div className="form-check" key={e.id}>
+                  <input
+                    id={`art-empresa-${e.id}`}
+                    type="checkbox"
+                    className="form-check-input rounded-0"
+                    checked={valor.idsEmpresas.includes(e.id)}
+                    onChange={() => alternarEmpresa(e.id)}
+                  />
+                  <label className="form-check-label" htmlFor={`art-empresa-${e.id}`}>
+                    {e.razonSocial}
+                    {e.nombreFantasia ? ` (${e.nombreFantasia})` : ''}
+                  </label>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="col-md-3 d-flex align-items-end">
+          <div className="form-check">
+            <input
+              id="art-activo"
+              type="checkbox"
+              className="form-check-input rounded-0"
+              checked={valor.activo}
+              onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
+            />
+            <label className="form-check-label" htmlFor="art-activo">
+              Activo
+            </label>
+          </div>
+        </div>
+
+        <div className="col-12 d-flex gap-2">
+          <button type="submit" className="btn btn-success rounded-0" disabled={guardando}>
+            {guardando ? 'Guardando…' : 'Guardar'}
+          </button>
+          <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCancelar} disabled={guardando}>
+            Cancelar
+          </button>
+        </div>
+      </form>
+
+      <hr />
+
+      {valor.id === null ? (
+        <p className="text-muted mb-0">Guardá el artículo para poder cargar códigos de barra y precios.</p>
+      ) : (
+        <>
+          <GestorDeCodigosBarra idArticulo={valor.id} />
+          <hr />
+          <EditorDePrecios idArticulo={valor.id} listasPrecio={listasPrecio.filter((l) => l.activo)} />
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Códigos de barra: alta/baja independientes de editar el resto del artículo (spec: Barcode
+ * Add/Remove Management). GAP de backend (reportado, no resuelto acá — front-end only): no
+ * existe `GET /api/articulos/{id}/codigos-barra`, así que esta lista solo puede reflejar lo
+ * agregado/quitado en la sesión actual, no los códigos ya cargados en altas anteriores.
+ */
+function GestorDeCodigosBarra({ idArticulo }: { idArticulo: number }) {
+  const [codigos, setCodigos] = useState<CodigoBarraListado[]>([])
+  const [nuevoCodigo, setNuevoCodigo] = useState('')
+  const [error, setError] = useState('')
+  const [ocupado, setOcupado] = useState(false)
+
+  async function agregar() {
+    const codigo = nuevoCodigo.trim()
+    if (!codigo) return
+
+    setOcupado(true)
+    setError('')
+    try {
+      const creado = await clienteDeArticulos.agregarCodigoBarra(idArticulo, { codigo })
+      setCodigos((prev) => [...prev, creado])
+      setNuevoCodigo('')
+    } catch (e) {
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo agregar el código de barras.')
+    } finally {
+      setOcupado(false)
+    }
+  }
+
+  async function quitar(codigoBarra: CodigoBarraListado) {
+    setOcupado(true)
+    setError('')
+    try {
+      await clienteDeArticulos.eliminarCodigoBarra(idArticulo, codigoBarra.id)
+      setCodigos((prev) => prev.filter((c) => c.id !== codigoBarra.id))
+    } catch (e) {
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo quitar el código de barras.')
+    } finally {
+      setOcupado(false)
+    }
+  }
+
+  return (
+    <div>
+      <strong className="text-muted small text-uppercase">Códigos de barra</strong>
+      <div className="form-text mb-2">
+        Esta lista solo muestra lo agregado/quitado en esta sesión — la API todavía no expone un listado de los
+        códigos ya cargados en altas anteriores.
+      </div>
+      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+
+      <div className="d-flex flex-wrap gap-2 mb-2">
+        {codigos.map((c) => (
+          <span key={c.id} className="badge rounded-0 text-bg-light border d-flex align-items-center gap-2 py-2 px-2">
+            {c.codigo}
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-danger rounded-0 py-0 px-1"
+              disabled={ocupado}
+              onClick={() => quitar(c)}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        {codigos.length === 0 && <span className="text-muted small">Sin códigos agregados en esta sesión.</span>}
+      </div>
+
+      <div className="input-group" style={{ maxWidth: 320 }}>
+        <input
+          type="text"
+          className="form-control rounded-0"
+          maxLength={50}
+          placeholder="Código de barras"
+          value={nuevoCodigo}
+          disabled={ocupado}
+          onChange={(e) => setNuevoCodigo(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), agregar())}
+        />
+        <button type="button" className="btn btn-outline-primary rounded-0" disabled={ocupado} onClick={agregar}>
+          Agregar
+        </button>
+      </div>
+    </div>
+  )
+}
+
+type EstadoDeLista = {
+  monto: string
+  programado: boolean
+  vigenteDesde: string
+  guardando: boolean
+  error: string
+  confirmarPendiente: boolean
+}
+
+function estadoDeListaVacio(): EstadoDeLista {
+  return { monto: '', programado: false, vigenteDesde: '', guardando: false, error: '', confirmarPendiente: false }
+}
+
+/**
+ * Precio por lista (design: ABM Composition) — precio vigente + badge de pendiente (dentro del
+ * panel expandido, no en la fila colapsada, para no multiplicar el N+1 de historial por cada
+ * lista al cargar la pantalla) + sugerencia de margen (propone, nunca aplica sola) + alta/
+ * programación con el flujo de `confirmarReemplazo` en el 409 `precio_pendiente_existe` +
+ * historial. Las listas `derivada` no admiten alta propia (se resuelven en lectura): solo
+ * muestran el precio vigente resuelto.
+ */
+function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; listasPrecio: ListaPrecioListado[] }) {
+  const [vigentes, setVigentes] = useState<Record<number, PrecioVigente>>({})
+  const [cargandoVigentes, setCargandoVigentes] = useState(true)
+  const [errorVigentes, setErrorVigentes] = useState('')
+  const [listaExpandida, setListaExpandida] = useState<number | null>(null)
+  const [historiales, setHistoriales] = useState<Record<number, HistorialDePrecio[]>>({})
+  const [estados, setEstados] = useState<Record<number, EstadoDeLista>>({})
+  const [sugerencia, setSugerencia] = useState<number | null>(null)
+  const [cargandoSugerencia, setCargandoSugerencia] = useState(false)
+
+  const cargarVigentes = useCallback(async () => {
+    setCargandoVigentes(true)
+    setErrorVigentes('')
+    try {
+      const lista = await clienteDePrecios.vigentes(idArticulo)
+      const mapa: Record<number, PrecioVigente> = {}
+      for (const p of lista) mapa[p.idListaPrecio] = p
+      setVigentes(mapa)
+    } catch (e) {
+      setErrorVigentes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los precios vigentes.')
+    } finally {
+      setCargandoVigentes(false)
+    }
+  }, [idArticulo])
+
+  useEffect(() => {
+    void cargarVigentes()
+  }, [cargarVigentes])
+
+  function estadoDe(idLista: number): EstadoDeLista {
+    return estados[idLista] ?? estadoDeListaVacio()
+  }
+
+  function actualizarEstado(idLista: number, parcial: Partial<EstadoDeLista>) {
+    setEstados((prev) => ({ ...prev, [idLista]: { ...estadoDe(idLista), ...parcial } }))
+  }
+
+  async function alternarExpandida(lista: ListaPrecioListado) {
+    const abrir = listaExpandida !== lista.id
+    setListaExpandida(abrir ? lista.id : null)
+
+    if (abrir && lista.modo === 'Fija' && !historiales[lista.id]) {
+      try {
+        const historial = await clienteDePrecios.historial(idArticulo, lista.id)
+        setHistoriales((prev) => ({ ...prev, [lista.id]: historial }))
+      } catch (e) {
+        actualizarEstado(lista.id, { error: e instanceof ErrorApi ? e.message : 'No se pudo cargar el historial.' })
+      }
+    }
+  }
+
+  async function pedirSugerencia() {
+    setCargandoSugerencia(true)
+    try {
+      const { precioSugerido } = await clienteDeArticulos.sugerenciaDePrecio(idArticulo)
+      setSugerencia(precioSugerido)
+    } catch {
+      setSugerencia(null)
+    } finally {
+      setCargandoSugerencia(false)
+    }
+  }
+
+  async function guardarPrecio(idLista: number, confirmarReemplazo: boolean) {
+    const estado = estadoDe(idLista)
+    const monto = Number(estado.monto)
+
+    if (!estado.monto.trim() || Number.isNaN(monto)) {
+      actualizarEstado(idLista, { error: 'Ingresá un precio válido.' })
+      return
+    }
+
+    actualizarEstado(idLista, { guardando: true, error: '', confirmarPendiente: false })
+
+    try {
+      if (estado.programado) {
+        if (!estado.vigenteDesde) {
+          actualizarEstado(idLista, { guardando: false, error: 'Elegí la fecha de vigencia.' })
+          return
+        }
+        await clienteDePrecios.programar(idArticulo, {
+          idListaPrecio: idLista,
+          precio: monto,
+          vigenteDesde: new Date(estado.vigenteDesde).toISOString(),
+          confirmarReemplazo,
+        })
+      } else {
+        await clienteDePrecios.establecer(idArticulo, { idListaPrecio: idLista, precio: monto, confirmarReemplazo })
+      }
+
+      setEstados((prev) => ({ ...prev, [idLista]: estadoDeListaVacio() }))
+      await cargarVigentes()
+      const historial = await clienteDePrecios.historial(idArticulo, idLista)
+      setHistoriales((prev) => ({ ...prev, [idLista]: historial }))
+    } catch (e) {
+      if (e instanceof ErrorApi && e.codigo === 'precio_pendiente_existe') {
+        actualizarEstado(idLista, { guardando: false, confirmarPendiente: true })
+        return
+      }
+      actualizarEstado(idLista, { error: e instanceof ErrorApi ? e.message : 'No se pudo guardar el precio.' })
+    } finally {
+      actualizarEstado(idLista, { guardando: false })
+    }
+  }
+
+  if (cargandoVigentes) return <Cargando texto="Cargando precios…" />
+
+  return (
+    <div>
+      <div className="d-flex align-items-center justify-content-between">
+        <strong className="text-muted small text-uppercase">Precios por lista</strong>
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-secondary rounded-0"
+          disabled={cargandoSugerencia}
+          onClick={pedirSugerencia}
+        >
+          {cargandoSugerencia ? 'Calculando…' : 'Calcular sugerencia de precio'}
+        </button>
+      </div>
+
+      {sugerencia !== null && (
+        <div className="alert alert-info rounded-0 py-2 px-2 small mt-2">
+          Precio sugerido a partir de costo y margen: <strong>${sugerencia.toFixed(2)}</strong>. Usá "Usar sugerencia"
+          en la lista que corresponda — nunca se aplica sola.
+        </div>
+      )}
+
+      {errorVigentes && <div className="alert alert-danger rounded-0 mt-2">{errorVigentes}</div>}
+
+      <div className="table-responsive mt-2">
+        <table className="table table-sm table-bordered align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Lista</th>
+              <th>Precio vigente</th>
+              <th className="text-end">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {listasPrecio.map((lista) => {
+              const vigente = vigentes[lista.id]
+              const expandida = listaExpandida === lista.id
+              const listaBase = lista.idListaBase !== null ? listasPrecio.find((l) => l.id === lista.idListaBase) : null
+
+              return (
+                <Fragment key={lista.id}>
+                  <tr>
+                    <td>
+                      {lista.nombre}
+                      {lista.esDefault && <span className="badge rounded-0 text-bg-secondary ms-1">Default</span>}
+                      {lista.modo === 'Derivada' && (
+                        <div className="text-muted small">
+                          Derivada de {listaBase?.nombre ?? lista.idListaBase} (
+                          {(lista.porcentaje ?? 0) >= 0 ? '+' : ''}
+                          {lista.porcentaje}%)
+                        </div>
+                      )}
+                    </td>
+                    <td>{vigente?.precio !== null && vigente?.precio !== undefined ? `$${vigente.precio.toFixed(2)}` : '—'}</td>
+                    <td className="text-end">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-primary rounded-0"
+                        onClick={() => alternarExpandida(lista)}
+                      >
+                        {expandida ? 'Cerrar' : lista.modo === 'Fija' ? 'Gestionar' : 'Ver detalle'}
+                      </button>
+                    </td>
+                  </tr>
+                  {expandida && (
+                    <tr>
+                      <td colSpan={3} className="bg-light">
+                        <PanelDeLista
+                          lista={lista}
+                          estado={estadoDe(lista.id)}
+                          historial={historiales[lista.id] ?? []}
+                          sugerencia={sugerencia}
+                          onCambio={(parcial) => actualizarEstado(lista.id, parcial)}
+                          onGuardar={(confirmarReemplazo) => guardarPrecio(lista.id, confirmarReemplazo)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
+            {listasPrecio.length === 0 && (
+              <tr>
+                <td colSpan={3} className="text-center text-muted py-3">
+                  No hay listas de precio activas.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function PanelDeLista({
+  lista,
+  estado,
+  historial,
+  sugerencia,
+  onCambio,
+  onGuardar,
+}: {
+  lista: ListaPrecioListado
+  estado: EstadoDeLista
+  historial: HistorialDePrecio[]
+  sugerencia: number | null
+  onCambio: (parcial: Partial<EstadoDeLista>) => void
+  onGuardar: (confirmarReemplazo: boolean) => void
+}) {
+  const ahora = new Date()
+  const filaAbierta = historial.find((h) => h.vigenteHasta === null)
+  const pendiente = filaAbierta && new Date(filaAbierta.vigenteDesde) > ahora ? filaAbierta : null
+
+  if (lista.modo !== 'Fija') {
+    return (
+      <div className="p-2">
+        <p className="mb-0 text-muted">
+          Lista derivada: el precio se resuelve solo a partir de la lista base, sin historial propio.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-2">
+      {pendiente && (
+        <div className="alert alert-warning rounded-0 py-1 px-2 small">
+          Precio programado: ${pendiente.precio.toFixed(2)} desde {new Date(pendiente.vigenteDesde).toLocaleString()}
+        </div>
+      )}
+
+      {estado.error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{estado.error}</div>}
+
+      {estado.confirmarPendiente && (
+        <div className="alert alert-warning rounded-0 py-2 px-2 small d-flex align-items-center justify-content-between">
+          <span>Ya existe un precio programado para esta lista. ¿Confirmás el reemplazo?</span>
+          <div className="d-flex gap-2">
+            <button
+              type="button"
+              className="btn btn-sm btn-warning rounded-0"
+              onClick={() => onGuardar(true)}
+            >
+              Reemplazar
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-secondary rounded-0"
+              onClick={() => onCambio({ confirmarPendiente: false })}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="row g-2 align-items-end">
+        <div className="col-auto">
+          <label className="form-label mb-0 small">Precio</label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            className="form-control form-control-sm rounded-0"
+            style={{ width: 140 }}
+            value={estado.monto}
+            onChange={(e) => onCambio({ monto: e.target.value })}
+          />
+        </div>
+
+        {sugerencia !== null && (
+          <div className="col-auto">
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-info rounded-0"
+              onClick={() => onCambio({ monto: String(sugerencia) })}
+            >
+              Usar sugerencia (${sugerencia.toFixed(2)})
+            </button>
+          </div>
+        )}
+
+        <div className="col-auto">
+          <div className="form-check">
+            <input
+              id={`lp-programado-${lista.id}`}
+              type="checkbox"
+              className="form-check-input rounded-0"
+              checked={estado.programado}
+              onChange={(e) => onCambio({ programado: e.target.checked })}
+            />
+            <label className="form-check-label small" htmlFor={`lp-programado-${lista.id}`}>
+              Programar a futuro
+            </label>
+          </div>
+        </div>
+
+        {estado.programado && (
+          <div className="col-auto">
+            <label className="form-label mb-0 small">Vigente desde</label>
+            <input
+              type="datetime-local"
+              className="form-control form-control-sm rounded-0"
+              value={estado.vigenteDesde}
+              onChange={(e) => onCambio({ vigenteDesde: e.target.value })}
+            />
+          </div>
+        )}
+
+        <div className="col-auto">
+          <button
+            type="button"
+            className="btn btn-sm btn-success rounded-0"
+            disabled={estado.guardando}
+            onClick={() => onGuardar(false)}
+          >
+            {estado.guardando ? 'Guardando…' : estado.programado ? 'Programar' : 'Establecer ahora'}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <strong className="small text-uppercase text-muted">Historial</strong>
+        <table className="table table-sm mb-0 mt-1">
+          <thead>
+            <tr>
+              <th>Precio</th>
+              <th>Vigente desde</th>
+              <th>Vigente hasta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {historial.map((h) => (
+              <tr key={h.id}>
+                <td>${h.precio.toFixed(2)}</td>
+                <td>{new Date(h.vigenteDesde).toLocaleString()}</td>
+                <td>{h.vigenteHasta ? new Date(h.vigenteHasta).toLocaleString() : '—'}</td>
+              </tr>
+            ))}
+            {historial.length === 0 && (
+              <tr>
+                <td colSpan={3} className="text-center text-muted py-2">
+                  Sin historial todavía.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
