@@ -169,9 +169,11 @@ export function Articulos() {
   const [guardando, setGuardando] = useState(false)
   const [eliminando, setEliminando] = useState(false)
   const [erroresCatalogosRequeridos, setErroresCatalogosRequeridos] = useState<string[]>([])
+  const [escriturasHijas, setEscriturasHijas] = useState(0)
   const tokenEdicionRef = useRef(0)
   const generacionCargaRef = useRef(0)
-  const ocupado = guardando || eliminando
+  const cargaInicialHechaRef = useRef(false)
+  const ocupado = guardando || eliminando || escriturasHijas > 0
 
   // Token del fetch de edición en curso: solo protege contra la staleness del fetch de "Editar"
   // (abrir otra fila mientras el detalle anterior sigue en vuelo). El "supersede" de una edición
@@ -180,6 +182,13 @@ export function Articulos() {
   function invalidarEdicionEnCurso(): number {
     return (tokenEdicionRef.current += 1)
   }
+
+  // Cuenta escrituras hijas en vuelo (códigos de barra, precios): mientras haya al menos una,
+  // `ocupado` se mantiene true para que Nuevo/Editar/Baja no puedan borrar o cambiar de artículo
+  // en medio de un POST de un componente hijo.
+  const alDeEscribir = useCallback((enCurso: boolean) => {
+    setEscriturasHijas((n) => (enCurso ? n + 1 : Math.max(0, n - 1)))
+  }, [])
 
   function agregarErrorCatalogoRequerido(mensaje: string) {
     setErroresCatalogosRequeridos((prev) => (prev.includes(mensaje) ? prev : [...prev, mensaje]))
@@ -202,6 +211,7 @@ export function Articulos() {
       if (opciones?.relanzarError && generacionCargaRef.current === generacion) throw e
     } finally {
       if (generacionCargaRef.current === generacion) setCargando(false)
+      cargaInicialHechaRef.current = true
     }
   }, [])
 
@@ -248,6 +258,7 @@ export function Articulos() {
   const alicuotaPorDefecto = alicuotasIva[0]?.id ?? ''
 
   async function abrirNuevo() {
+    if (ocupado) return
     invalidarEdicionEnCurso()
     setGuardando(false)
     setFormulario({ ...formularioVacio(), idArea: areaPorDefecto, idAlicuotaIva: alicuotaPorDefecto })
@@ -256,13 +267,14 @@ export function Articulos() {
   }
 
   function cancelarEdicion() {
-    if (guardando) return
+    if (ocupado) return
     invalidarEdicionEnCurso()
     setGuardando(false)
     setFormulario(null)
   }
 
   async function abrirEdicion(a: ArticuloListado) {
+    if (ocupado) return
     setError('')
     const token = invalidarEdicionEnCurso()
     try {
@@ -409,10 +421,11 @@ export function Articulos() {
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={cancelarEdicion}
+            alDeEscribir={alDeEscribir}
           />
         )}
 
-        {cargando ? (
+        {cargando && !cargaInicialHechaRef.current ? (
           <Cargando />
         ) : (
           <div className="table-responsive">
@@ -494,6 +507,7 @@ function FormularioArticulo({
   onCambio,
   onGuardar,
   onCancelar,
+  alDeEscribir,
 }: {
   valor: Formulario
   areas: AreaListado[]
@@ -511,6 +525,7 @@ function FormularioArticulo({
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
+  alDeEscribir: (enCurso: boolean) => void
 }) {
   const esNuevo = valor.id === null
 
@@ -525,7 +540,6 @@ function FormularioArticulo({
   return (
     <div className="border p-3 mb-4 bg-white">
       <form
-        className="row g-3"
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
@@ -533,352 +547,358 @@ function FormularioArticulo({
           onGuardar()
         }}
       >
-        <div className="col-12">
-          <strong>{esNuevo ? 'Nuevo artículo' : `Editando artículo ${valor.codigoInterno}`}</strong>
-        </div>
-
-        <div className="col-12">
-          <strong className="text-muted small text-uppercase">Identificación</strong>
-        </div>
-
-        <div className="col-md-2">
-          <label className="form-label" htmlFor="art-codigo-interno">
-            Código interno
-          </label>
-          <input
-            id="art-codigo-interno"
-            className="form-control rounded-0"
-            maxLength={30}
-            placeholder={esNuevo ? 'Se autogenera si se omite' : undefined}
-            value={valor.codigoInterno}
-            disabled={!esNuevo}
-            onChange={(e) => onCambio({ ...valor, codigoInterno: e.target.value })}
-          />
-        </div>
-
-        <div className="col-md-4">
-          <label className="form-label" htmlFor="art-nombre">
-            Nombre
-          </label>
-          <input
-            id="art-nombre"
-            className="form-control rounded-0"
-            maxLength={150}
-            value={valor.nombre}
-            onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
-            required
-          />
-        </div>
-
-        <div className="col-md-3">
-          <label className="form-label" htmlFor="art-unidad-venta">
-            Unidad de venta
-          </label>
-          <select
-            id="art-unidad-venta"
-            className="form-select rounded-0"
-            value={valor.unidadVenta}
-            onChange={(e) => onCambio({ ...valor, unidadVenta: e.target.value as UnidadVenta })}
-          >
-            {UNIDADES_VENTA.map((u) => (
-              <option key={u.valor} value={u.valor}>
-                {u.etiqueta}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="col-md-3">
-          <label className="form-label" htmlFor="art-unidades-por-bulto">
-            Unidades por bulto
-          </label>
-          <input
-            id="art-unidades-por-bulto"
-            type="number"
-            step="0.01"
-            min="0"
-            className="form-control rounded-0"
-            value={valor.unidadesPorBulto}
-            onChange={(e) => onCambio({ ...valor, unidadesPorBulto: e.target.value })}
-          />
-        </div>
-
-        <div className="col-md-6 d-flex align-items-end">
-          <div className="form-check">
-            <input
-              id="art-es-producto"
-              type="checkbox"
-              className="form-check-input rounded-0"
-              checked={valor.esProducto}
-              onChange={(e) => onCambio({ ...valor, esProducto: e.target.checked })}
-            />
-            <label className="form-check-label" htmlFor="art-es-producto">
-              Es producto (desmarcar si es un servicio)
-            </label>
-          </div>
-        </div>
-
-        <div className="col-12">
-          <label className="form-label" htmlFor="art-descripcion">
-            Descripción
-          </label>
-          <textarea
-            id="art-descripcion"
-            className="form-control rounded-0"
-            rows={2}
-            value={valor.descripcion}
-            onChange={(e) => onCambio({ ...valor, descripcion: e.target.value })}
-          />
-        </div>
-
-        <div className="col-12">
-          <strong className="text-muted small text-uppercase">Clasificación</strong>
-        </div>
-
-        <div className="col-md-3">
-          <label className="form-label" htmlFor="art-area">
-            Área
-          </label>
-          <select
-            id="art-area"
-            className="form-select rounded-0"
-            value={valor.idArea}
-            onChange={(e) => onCambio({ ...valor, idArea: Number(e.target.value) })}
-            required
-          >
-            <option value="" disabled>
-              Elegir…
-            </option>
-            {areas.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.nombre}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="col-md-3">
-          <label className="form-label" htmlFor="art-categoria">
-            Categoría
-          </label>
-          <select
-            id="art-categoria"
-            className="form-select rounded-0"
-            value={valor.idCategoria}
-            onChange={(e) => onCambio({ ...valor, idCategoria: e.target.value === '' ? '' : Number(e.target.value) })}
-          >
-            <option value="">Sin especificar</option>
-            {categorias.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.nombre}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="col-md-3">
-          <label className="form-label" htmlFor="art-marca">
-            Marca
-          </label>
-          <select
-            id="art-marca"
-            className="form-select rounded-0"
-            value={valor.idMarca}
-            onChange={(e) => onCambio({ ...valor, idMarca: e.target.value === '' ? '' : Number(e.target.value) })}
-          >
-            <option value="">Sin especificar</option>
-            {marcas.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.nombre}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="col-md-3">
-          <label className="form-label" htmlFor="art-grupo">
-            Grupo
-          </label>
-          <select
-            id="art-grupo"
-            className="form-select rounded-0"
-            value={valor.idGrupo}
-            onChange={(e) => onCambio({ ...valor, idGrupo: e.target.value === '' ? '' : Number(e.target.value) })}
-          >
-            <option value="">Sin especificar</option>
-            {grupos.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.nombre}
-                {g.margen !== null ? ` (margen ${g.margen}%)` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="col-md-4">
-          <label className="form-label" htmlFor="art-proveedor-habitual">
-            Proveedor habitual
-          </label>
-          <select
-            id="art-proveedor-habitual"
-            className="form-select rounded-0"
-            value={valor.idProveedorHabitual}
-            onChange={(e) =>
-              onCambio({ ...valor, idProveedorHabitual: e.target.value === '' ? '' : Number(e.target.value) })
-            }
-          >
-            <option value="">Sin especificar</option>
-            {proveedores.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.razonSocial}
-                {p.nombreFantasia ? ` (${p.nombreFantasia})` : ''}
-              </option>
-            ))}
-          </select>
-          {proveedoresTruncados && (
-            <div className="form-text">Se muestran solo los primeros 200 proveedores.</div>
-          )}
-        </div>
-
-        <div className="col-md-4">
-          <label className="form-label" htmlFor="art-alicuota-iva">
-            Alícuota de IVA
-          </label>
-          <select
-            id="art-alicuota-iva"
-            className="form-select rounded-0"
-            value={valor.idAlicuotaIva}
-            onChange={(e) => onCambio({ ...valor, idAlicuotaIva: Number(e.target.value) })}
-            required
-          >
-            <option value="" disabled>
-              Elegir…
-            </option>
-            {alicuotasIva.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.nombre} ({a.porcentaje}%)
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="col-12">
-          <strong className="text-muted small text-uppercase">Costos</strong>
-        </div>
-
-        <div className="col-md-4">
-          <label className="form-label" htmlFor="art-costo-lista">
-            Costo de lista
-          </label>
-          <input
-            id="art-costo-lista"
-            type="number"
-            step="0.01"
-            min="0"
-            className="form-control rounded-0"
-            value={valor.costoLista}
-            onChange={(e) => onCambio({ ...valor, costoLista: e.target.value })}
-          />
-        </div>
-
-        <div className="col-md-4">
-          <label className="form-label" htmlFor="art-descuento-proveedor">
-            Descuento de proveedor (%)
-          </label>
-          <input
-            id="art-descuento-proveedor"
-            type="number"
-            step="0.01"
-            min="0"
-            className="form-control rounded-0"
-            value={valor.descuentoProveedor}
-            onChange={(e) => onCambio({ ...valor, descuentoProveedor: e.target.value })}
-          />
-        </div>
-
-        <div className="col-md-4">
-          <label className="form-label" htmlFor="art-costo-nominal">
-            Costo nominal
-          </label>
-          <input
-            id="art-costo-nominal"
-            type="number"
-            step="0.01"
-            min="0"
-            className="form-control rounded-0"
-            value={valor.costoNominal}
-            onChange={(e) => onCambio({ ...valor, costoNominal: e.target.value })}
-          />
-          <div className="form-text">Si se completa, tiene prioridad sobre costo de lista − descuento.</div>
-        </div>
-
-        <div className="col-12">
-          <strong className="text-muted small text-uppercase">Disponibilidad</strong>
-        </div>
-
-        <div className="col-12">
-          <div className="form-check form-switch">
-            <input
-              id="art-disponible-para-todas"
-              type="checkbox"
-              className="form-check-input"
-              checked={valor.disponibleParaTodas}
-              onChange={(e) => onCambio({ ...valor, disponibleParaTodas: e.target.checked })}
-            />
-            <label className="form-check-label" htmlFor="art-disponible-para-todas">
-              Disponible para todas las empresas del tenant
-            </label>
-          </div>
-        </div>
-
-        {!valor.disponibleParaTodas && (
+        {/* fieldset disabled: cascada nativa a todos los controles anidados mientras hay un guardado
+            en vuelo, para que lo tipeado en la ventana de la request no se pise con la respuesta.
+            Se le mueve acá la clase de grilla de Bootstrap (antes en el form) para no romper el
+            layout de columnas; border-0/p-0/m-0 neutralizan el estilo por defecto del fieldset. */}
+        <fieldset disabled={ocupado} className="row g-3 border-0 p-0 m-0">
           <div className="col-12">
-            <div className="form-text mb-1">
-              Elegí al menos una empresa: sin ninguna marcada, el servidor rechaza el guardado.
-            </div>
-            <div className="d-flex flex-wrap gap-3">
-              {empresas.map((e) => (
-                <div className="form-check" key={e.id}>
-                  <input
-                    id={`art-empresa-${e.id}`}
-                    type="checkbox"
-                    className="form-check-input rounded-0"
-                    checked={valor.idsEmpresas.includes(e.id)}
-                    onChange={() => alternarEmpresa(e.id)}
-                  />
-                  <label className="form-check-label" htmlFor={`art-empresa-${e.id}`}>
-                    {e.razonSocial}
-                    {e.nombreFantasia ? ` (${e.nombreFantasia})` : ''}
-                  </label>
-                </div>
-              ))}
-            </div>
+            <strong>{esNuevo ? 'Nuevo artículo' : `Editando artículo ${valor.codigoInterno}`}</strong>
           </div>
-        )}
 
-        <div className="col-md-3 d-flex align-items-end">
-          <div className="form-check">
-            <input
-              id="art-activo"
-              type="checkbox"
-              className="form-check-input rounded-0"
-              checked={valor.activo}
-              onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
-            />
-            <label className="form-check-label" htmlFor="art-activo">
-              Activo
+          <div className="col-12">
+            <strong className="text-muted small text-uppercase">Identificación</strong>
+          </div>
+
+          <div className="col-md-2">
+            <label className="form-label" htmlFor="art-codigo-interno">
+              Código interno
             </label>
+            <input
+              id="art-codigo-interno"
+              className="form-control rounded-0"
+              maxLength={30}
+              placeholder={esNuevo ? 'Se autogenera si se omite' : undefined}
+              value={valor.codigoInterno}
+              disabled={!esNuevo}
+              onChange={(e) => onCambio({ ...valor, codigoInterno: e.target.value })}
+            />
           </div>
-        </div>
 
-        <div className="col-12 d-flex gap-2">
-          <button type="submit" className="btn btn-success rounded-0" disabled={ocupado || bloqueadoPorCatalogos}>
-            {guardando ? 'Guardando…' : 'Guardar'}
-          </button>
-          <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCancelar} disabled={ocupado}>
-            Cancelar
-          </button>
-        </div>
+          <div className="col-md-4">
+            <label className="form-label" htmlFor="art-nombre">
+              Nombre
+            </label>
+            <input
+              id="art-nombre"
+              className="form-control rounded-0"
+              maxLength={150}
+              value={valor.nombre}
+              onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
+              required
+            />
+          </div>
+
+          <div className="col-md-3">
+            <label className="form-label" htmlFor="art-unidad-venta">
+              Unidad de venta
+            </label>
+            <select
+              id="art-unidad-venta"
+              className="form-select rounded-0"
+              value={valor.unidadVenta}
+              onChange={(e) => onCambio({ ...valor, unidadVenta: e.target.value as UnidadVenta })}
+            >
+              {UNIDADES_VENTA.map((u) => (
+                <option key={u.valor} value={u.valor}>
+                  {u.etiqueta}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="col-md-3">
+            <label className="form-label" htmlFor="art-unidades-por-bulto">
+              Unidades por bulto
+            </label>
+            <input
+              id="art-unidades-por-bulto"
+              type="number"
+              step="0.01"
+              min="0"
+              className="form-control rounded-0"
+              value={valor.unidadesPorBulto}
+              onChange={(e) => onCambio({ ...valor, unidadesPorBulto: e.target.value })}
+            />
+          </div>
+
+          <div className="col-md-6 d-flex align-items-end">
+            <div className="form-check">
+              <input
+                id="art-es-producto"
+                type="checkbox"
+                className="form-check-input rounded-0"
+                checked={valor.esProducto}
+                onChange={(e) => onCambio({ ...valor, esProducto: e.target.checked })}
+              />
+              <label className="form-check-label" htmlFor="art-es-producto">
+                Es producto (desmarcar si es un servicio)
+              </label>
+            </div>
+          </div>
+
+          <div className="col-12">
+            <label className="form-label" htmlFor="art-descripcion">
+              Descripción
+            </label>
+            <textarea
+              id="art-descripcion"
+              className="form-control rounded-0"
+              rows={2}
+              value={valor.descripcion}
+              onChange={(e) => onCambio({ ...valor, descripcion: e.target.value })}
+            />
+          </div>
+
+          <div className="col-12">
+            <strong className="text-muted small text-uppercase">Clasificación</strong>
+          </div>
+
+          <div className="col-md-3">
+            <label className="form-label" htmlFor="art-area">
+              Área
+            </label>
+            <select
+              id="art-area"
+              className="form-select rounded-0"
+              value={valor.idArea}
+              onChange={(e) => onCambio({ ...valor, idArea: Number(e.target.value) })}
+              required
+            >
+              <option value="" disabled>
+                Elegir…
+              </option>
+              {areas.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="col-md-3">
+            <label className="form-label" htmlFor="art-categoria">
+              Categoría
+            </label>
+            <select
+              id="art-categoria"
+              className="form-select rounded-0"
+              value={valor.idCategoria}
+              onChange={(e) => onCambio({ ...valor, idCategoria: e.target.value === '' ? '' : Number(e.target.value) })}
+            >
+              <option value="">Sin especificar</option>
+              {categorias.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="col-md-3">
+            <label className="form-label" htmlFor="art-marca">
+              Marca
+            </label>
+            <select
+              id="art-marca"
+              className="form-select rounded-0"
+              value={valor.idMarca}
+              onChange={(e) => onCambio({ ...valor, idMarca: e.target.value === '' ? '' : Number(e.target.value) })}
+            >
+              <option value="">Sin especificar</option>
+              {marcas.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="col-md-3">
+            <label className="form-label" htmlFor="art-grupo">
+              Grupo
+            </label>
+            <select
+              id="art-grupo"
+              className="form-select rounded-0"
+              value={valor.idGrupo}
+              onChange={(e) => onCambio({ ...valor, idGrupo: e.target.value === '' ? '' : Number(e.target.value) })}
+            >
+              <option value="">Sin especificar</option>
+              {grupos.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.nombre}
+                  {g.margen !== null ? ` (margen ${g.margen}%)` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="col-md-4">
+            <label className="form-label" htmlFor="art-proveedor-habitual">
+              Proveedor habitual
+            </label>
+            <select
+              id="art-proveedor-habitual"
+              className="form-select rounded-0"
+              value={valor.idProveedorHabitual}
+              onChange={(e) =>
+                onCambio({ ...valor, idProveedorHabitual: e.target.value === '' ? '' : Number(e.target.value) })
+              }
+            >
+              <option value="">Sin especificar</option>
+              {proveedores.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.razonSocial}
+                  {p.nombreFantasia ? ` (${p.nombreFantasia})` : ''}
+                </option>
+              ))}
+            </select>
+            {proveedoresTruncados && (
+              <div className="form-text">Se muestran solo los primeros 200 proveedores.</div>
+            )}
+          </div>
+
+          <div className="col-md-4">
+            <label className="form-label" htmlFor="art-alicuota-iva">
+              Alícuota de IVA
+            </label>
+            <select
+              id="art-alicuota-iva"
+              className="form-select rounded-0"
+              value={valor.idAlicuotaIva}
+              onChange={(e) => onCambio({ ...valor, idAlicuotaIva: Number(e.target.value) })}
+              required
+            >
+              <option value="" disabled>
+                Elegir…
+              </option>
+              {alicuotasIva.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.nombre} ({a.porcentaje}%)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="col-12">
+            <strong className="text-muted small text-uppercase">Costos</strong>
+          </div>
+
+          <div className="col-md-4">
+            <label className="form-label" htmlFor="art-costo-lista">
+              Costo de lista
+            </label>
+            <input
+              id="art-costo-lista"
+              type="number"
+              step="0.01"
+              min="0"
+              className="form-control rounded-0"
+              value={valor.costoLista}
+              onChange={(e) => onCambio({ ...valor, costoLista: e.target.value })}
+            />
+          </div>
+
+          <div className="col-md-4">
+            <label className="form-label" htmlFor="art-descuento-proveedor">
+              Descuento de proveedor (%)
+            </label>
+            <input
+              id="art-descuento-proveedor"
+              type="number"
+              step="0.01"
+              min="0"
+              className="form-control rounded-0"
+              value={valor.descuentoProveedor}
+              onChange={(e) => onCambio({ ...valor, descuentoProveedor: e.target.value })}
+            />
+          </div>
+
+          <div className="col-md-4">
+            <label className="form-label" htmlFor="art-costo-nominal">
+              Costo nominal
+            </label>
+            <input
+              id="art-costo-nominal"
+              type="number"
+              step="0.01"
+              min="0"
+              className="form-control rounded-0"
+              value={valor.costoNominal}
+              onChange={(e) => onCambio({ ...valor, costoNominal: e.target.value })}
+            />
+            <div className="form-text">Si se completa, tiene prioridad sobre costo de lista − descuento.</div>
+          </div>
+
+          <div className="col-12">
+            <strong className="text-muted small text-uppercase">Disponibilidad</strong>
+          </div>
+
+          <div className="col-12">
+            <div className="form-check form-switch">
+              <input
+                id="art-disponible-para-todas"
+                type="checkbox"
+                className="form-check-input"
+                checked={valor.disponibleParaTodas}
+                onChange={(e) => onCambio({ ...valor, disponibleParaTodas: e.target.checked })}
+              />
+              <label className="form-check-label" htmlFor="art-disponible-para-todas">
+                Disponible para todas las empresas del tenant
+              </label>
+            </div>
+          </div>
+
+          {!valor.disponibleParaTodas && (
+            <div className="col-12">
+              <div className="form-text mb-1">
+                Elegí al menos una empresa: sin ninguna marcada, el servidor rechaza el guardado.
+              </div>
+              <div className="d-flex flex-wrap gap-3">
+                {empresas.map((e) => (
+                  <div className="form-check" key={e.id}>
+                    <input
+                      id={`art-empresa-${e.id}`}
+                      type="checkbox"
+                      className="form-check-input rounded-0"
+                      checked={valor.idsEmpresas.includes(e.id)}
+                      onChange={() => alternarEmpresa(e.id)}
+                    />
+                    <label className="form-check-label" htmlFor={`art-empresa-${e.id}`}>
+                      {e.razonSocial}
+                      {e.nombreFantasia ? ` (${e.nombreFantasia})` : ''}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="col-md-3 d-flex align-items-end">
+            <div className="form-check">
+              <input
+                id="art-activo"
+                type="checkbox"
+                className="form-check-input rounded-0"
+                checked={valor.activo}
+                onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
+              />
+              <label className="form-check-label" htmlFor="art-activo">
+                Activo
+              </label>
+            </div>
+          </div>
+
+          <div className="col-12 d-flex gap-2">
+            <button type="submit" className="btn btn-success rounded-0" disabled={ocupado || bloqueadoPorCatalogos}>
+              {guardando ? 'Guardando…' : 'Guardar'}
+            </button>
+            <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCancelar} disabled={ocupado}>
+              Cancelar
+            </button>
+          </div>
+        </fieldset>
       </form>
 
       <hr />
@@ -887,12 +907,13 @@ function FormularioArticulo({
         <p className="text-muted mb-0">Guardá el artículo para poder cargar códigos de barra y precios.</p>
       ) : (
         <>
-          <GestorDeCodigosBarra idArticulo={valor.id} bloqueadoPorPadre={ocupado} />
+          <GestorDeCodigosBarra idArticulo={valor.id} bloqueadoPorPadre={ocupado} alDeEscribir={alDeEscribir} />
           <hr />
           <EditorDePrecios
             idArticulo={valor.id}
             listasPrecio={listasPrecio.filter((l) => l.activo)}
             bloqueadoPorPadre={ocupado}
+            alDeEscribir={alDeEscribir}
           />
         </>
       )}
@@ -908,9 +929,11 @@ function FormularioArticulo({
 function GestorDeCodigosBarra({
   idArticulo,
   bloqueadoPorPadre,
+  alDeEscribir,
 }: {
   idArticulo: number
   bloqueadoPorPadre: boolean
+  alDeEscribir: (enCurso: boolean) => void
 }) {
   const [codigos, setCodigos] = useState<CodigoBarraListado[]>([])
   const [nuevoCodigo, setNuevoCodigo] = useState('')
@@ -944,6 +967,7 @@ function GestorDeCodigosBarra({
 
     setOcupado(true)
     setError('')
+    alDeEscribir(true)
     try {
       const creado = await clienteDeArticulos.agregarCodigoBarra(idArticulo, { codigo })
       setCodigos((prev) => [...prev, creado])
@@ -952,6 +976,7 @@ function GestorDeCodigosBarra({
       setError(e instanceof ErrorApi ? e.message : 'No se pudo agregar el código de barras.')
     } finally {
       setOcupado(false)
+      alDeEscribir(false)
     }
   }
 
@@ -959,6 +984,7 @@ function GestorDeCodigosBarra({
     if (ocupado || bloqueadoPorPadre) return
     setOcupado(true)
     setError('')
+    alDeEscribir(true)
     try {
       await clienteDeArticulos.eliminarCodigoBarra(idArticulo, codigoBarra.id)
       setCodigos((prev) => prev.filter((c) => c.id !== codigoBarra.id))
@@ -966,6 +992,7 @@ function GestorDeCodigosBarra({
       setError(e instanceof ErrorApi ? e.message : 'No se pudo quitar el código de barras.')
     } finally {
       setOcupado(false)
+      alDeEscribir(false)
     }
   }
 
@@ -1053,10 +1080,12 @@ function EditorDePrecios({
   idArticulo,
   listasPrecio,
   bloqueadoPorPadre,
+  alDeEscribir,
 }: {
   idArticulo: number
   listasPrecio: ListaPrecioListado[]
   bloqueadoPorPadre: boolean
+  alDeEscribir: (enCurso: boolean) => void
 }) {
   const [vigentes, setVigentes] = useState<Record<number, PrecioVigente>>({})
   const [cargandoVigentes, setCargandoVigentes] = useState(true)
@@ -1142,7 +1171,7 @@ function EditorDePrecios({
 
   async function guardarPrecio(idLista: number, confirmarReemplazo: boolean) {
     const estado = estadoDe(idLista)
-    if (estado.guardando || estado.refrescando) return
+    if (estado.guardando || estado.refrescando || bloqueadoPorPadre) return
     const monto = Number(estado.monto)
 
     if (!estado.monto.trim() || Number.isNaN(monto)) {
@@ -1151,50 +1180,55 @@ function EditorDePrecios({
     }
 
     actualizarEstado(idLista, { guardando: true, error: '', confirmarPendiente: false })
+    alDeEscribir(true)
 
     try {
-      if (estado.programado) {
-        if (!estado.vigenteDesde) {
-          actualizarEstado(idLista, { guardando: false, error: 'Elegí la fecha de vigencia.' })
+      try {
+        if (estado.programado) {
+          if (!estado.vigenteDesde) {
+            actualizarEstado(idLista, { guardando: false, error: 'Elegí la fecha de vigencia.' })
+            return
+          }
+          await clienteDePrecios.programar(idArticulo, {
+            idListaPrecio: idLista,
+            precio: monto,
+            vigenteDesde: new Date(estado.vigenteDesde).toISOString(),
+            confirmarReemplazo,
+          })
+        } else {
+          await clienteDePrecios.establecer(idArticulo, { idListaPrecio: idLista, precio: monto, confirmarReemplazo })
+        }
+      } catch (e) {
+        if (e instanceof ErrorApi && e.codigo === 'precio_pendiente_existe') {
+          actualizarEstado(idLista, { guardando: false, confirmarPendiente: true })
           return
         }
-        await clienteDePrecios.programar(idArticulo, {
-          idListaPrecio: idLista,
-          precio: monto,
-          vigenteDesde: new Date(estado.vigenteDesde).toISOString(),
-          confirmarReemplazo,
+        actualizarEstado(idLista, {
+          guardando: false,
+          error: e instanceof ErrorApi ? e.message : 'No se pudo guardar el precio.',
         })
-      } else {
-        await clienteDePrecios.establecer(idArticulo, { idListaPrecio: idLista, precio: monto, confirmarReemplazo })
-      }
-    } catch (e) {
-      if (e instanceof ErrorApi && e.codigo === 'precio_pendiente_existe') {
-        actualizarEstado(idLista, { guardando: false, confirmarPendiente: true })
         return
       }
-      actualizarEstado(idLista, {
-        guardando: false,
-        error: e instanceof ErrorApi ? e.message : 'No se pudo guardar el precio.',
-      })
-      return
-    }
 
-    // El precio ya quedó confirmado en el servidor: a partir de acá un fallo es solo de refresco
-    // de vista, nunca "no se guardó" — evita que el usuario reintente un guardado que ya se aplicó.
-    // `refrescando` mantiene el panel inerte hasta que el refresco termine, para no habilitar un
-    // segundo guardado que corra en paralelo con este refresco.
-    setEstados((prev) => ({ ...prev, [idLista]: { ...estadoDeListaVacio(), refrescando: true } }))
+      // El precio ya quedó confirmado en el servidor: a partir de acá un fallo es solo de refresco
+      // de vista, nunca "no se guardó" — evita que el usuario reintente un guardado que ya se aplicó.
+      // `refrescando` mantiene el panel inerte hasta que el refresco termine, para no habilitar un
+      // segundo guardado que corra en paralelo con este refresco.
+      setEstados((prev) => ({ ...prev, [idLista]: { ...estadoDeListaVacio(), refrescando: true } }))
 
-    try {
-      await cargarVigentes({ relanzarError: true })
-      const historial = await clienteDePrecios.historial(idArticulo, idLista)
-      setHistoriales((prev) => ({ ...prev, [idLista]: historial }))
-      actualizarEstado(idLista, { refrescando: false })
-    } catch {
-      actualizarEstado(idLista, {
-        refrescando: false,
-        error: 'El precio se guardó, pero no se pudo actualizar la vista. Cerrá y volvé a abrir la lista para verlo.',
-      })
+      try {
+        await cargarVigentes({ relanzarError: true })
+        const historial = await clienteDePrecios.historial(idArticulo, idLista)
+        setHistoriales((prev) => ({ ...prev, [idLista]: historial }))
+        actualizarEstado(idLista, { refrescando: false })
+      } catch {
+        actualizarEstado(idLista, {
+          refrescando: false,
+          error: 'El precio se guardó, pero no se pudo actualizar la vista. Cerrá y volvé a abrir la lista para verlo.',
+        })
+      }
+    } finally {
+      alDeEscribir(false)
     }
   }
 
