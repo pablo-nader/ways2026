@@ -215,6 +215,16 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   )
 }
 
+/** Resuelve la etiqueta de un valor seleccionado que ya no está entre las opciones vigentes
+ * del select (p. ej. la lista base de una `Derivada` fue desactivada después, o quedó fuera
+ * de `items` porque "Incluir inactivos" está apagado). Evita que el `<select>` controlado
+ * quede con un valor sin `<option>` que lo respalde. */
+function etiquetaParaValorFaltante(valorActual: string, items: unknown[]): string {
+  const item = (items as CatalogoListado[]).find((i) => String(i.id) === valorActual)
+  if (!item) return `Opción no disponible (${valorActual})`
+  return item.activo ? item.nombre : `${item.nombre} (inactiva)`
+}
+
 function formatearValorDeColumna(campo: CampoDescriptor, valor: ValorDeCampo | undefined) {
   if (campo.tipo === 'booleano') return valor ? 'Sí' : 'No'
   if (campo.tipo === 'select') {
@@ -279,6 +289,10 @@ function FormularioCatalogo({
       {camposVisibles.map((campo) => {
         const opciones = campo.opcionesDesdeListado ? campo.opcionesDesdeListado(items, valor.id) : (campo.opciones ?? [])
         const valorActual = String(valor.valores[campo.clave] ?? '')
+        const opcionFaltante =
+          campo.tipo === 'select' && valorActual !== '' && !opciones.some((o) => o.valor === valorActual)
+            ? { valor: valorActual, etiqueta: etiquetaParaValorFaltante(valorActual, items) }
+            : null
 
         return (
           <div className="col-md-3" key={campo.clave}>
@@ -304,6 +318,9 @@ function FormularioCatalogo({
                 required={campo.requerido}
               >
                 {valorActual === '' && <option value="">— Elegí una opción —</option>}
+                {opcionFaltante && (
+                  <option value={opcionFaltante.valor}>{opcionFaltante.etiqueta}</option>
+                )}
                 {opciones.map((o) => (
                   <option key={o.valor} value={o.valor}>
                     {o.etiqueta}

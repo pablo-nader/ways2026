@@ -238,7 +238,7 @@ export const descriptorListasPrecio: DescriptorDeCatalogo<ListaPrecioListado, Li
       visibleSi: (valores) => valores.modo === 'Derivada',
       opcionesDesdeListado: (items, idActual) =>
         (items as ListaPrecioListado[])
-          .filter((item) => item.modo === 'Fija' && item.id !== idActual)
+          .filter((item) => item.activo && item.modo === 'Fija' && item.id !== idActual)
           .map((item) => ({ valor: String(item.id), etiqueta: item.nombre })),
     },
     {
