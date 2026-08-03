@@ -167,7 +167,19 @@ export function Articulos() {
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const [erroresCatalogosRequeridos, setErroresCatalogosRequeridos] = useState<string[]>([])
   const tokenEdicionRef = useRef(0)
+
+  // Token del fetch de edición en curso: cualquier acción que supere ese fetch (abrir otra fila,
+  // abrir "Nuevo", cancelar o guardar) invalida el token antes de que la respuesta tardía pueda
+  // pisar el estado más reciente del formulario.
+  function invalidarEdicionEnCurso(): number {
+    return (tokenEdicionRef.current += 1)
+  }
+
+  function agregarErrorCatalogoRequerido(mensaje: string) {
+    setErroresCatalogosRequeridos((prev) => (prev.includes(mensaje) ? prev : [...prev, mensaje]))
+  }
 
   const cargar = useCallback(async (termino: string) => {
     setCargando(true)
@@ -183,7 +195,13 @@ export function Articulos() {
 
   useEffect(() => {
     void cargar('')
-    clienteAreas.listar(false).then(setAreas).catch(() => setAreas([]))
+    clienteAreas
+      .listar(false)
+      .then(setAreas)
+      .catch(() => {
+        setAreas([])
+        agregarErrorCatalogoRequerido('No se pudieron cargar las áreas.')
+      })
     api.get<CategoriaListado[]>('/catalogos/categorias').then(setCategorias).catch(() => setCategorias([]))
     clienteMarcas.listar(false).then(setMarcas).catch(() => setMarcas([]))
     clienteGrupos.listar(false).then(setGrupos).catch(() => setGrupos([]))
@@ -197,7 +215,13 @@ export function Articulos() {
         setProveedoresTruncados(p.total > p.items.length)
       })
       .catch(() => setProveedores([]))
-    clienteDeCatalogosFiscales.alicuotasIva().then(setAlicuotasIva).catch(() => setAlicuotasIva([]))
+    clienteDeCatalogosFiscales
+      .alicuotasIva()
+      .then(setAlicuotasIva)
+      .catch(() => {
+        setAlicuotasIva([])
+        agregarErrorCatalogoRequerido('No se pudieron cargar las alícuotas de IVA.')
+      })
     clienteDeOrganizacion.listarEmpresas().then(setEmpresas).catch(() => setEmpresas([]))
     clienteDePrecios.listasDePrecio().then(setListasPrecio).catch(() => setListasPrecio([]))
   }, [cargar])
@@ -206,16 +230,20 @@ export function Articulos() {
   const alicuotaPorDefecto = alicuotasIva[0]?.id ?? ''
 
   async function abrirNuevo() {
+    invalidarEdicionEnCurso()
     setFormulario({ ...formularioVacio(), idArea: areaPorDefecto, idAlicuotaIva: alicuotaPorDefecto })
     setAviso('')
     setError('')
   }
 
+  function cancelarEdicion() {
+    invalidarEdicionEnCurso()
+    setFormulario(null)
+  }
+
   async function abrirEdicion(a: ArticuloListado) {
     setError('')
-    // Token de request para descartar respuestas fuera de orden: dos clics rápidos en filas
-    // distintas no deben dejar que la respuesta más lenta pise a la más reciente.
-    const token = ++tokenEdicionRef.current
+    const token = invalidarEdicionEnCurso()
     try {
       // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
       const detalle = await clienteDeArticulos.obtener(a.id)
@@ -231,6 +259,7 @@ export function Articulos() {
   async function guardar() {
     if (!formulario) return
 
+    invalidarEdicionEnCurso()
     setGuardando(true)
     setError('')
     setAviso('')
@@ -297,6 +326,12 @@ export function Articulos() {
       <Box titulo="Artículos" variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger rounded-0">{error}</div>}
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+        {erroresCatalogosRequeridos.length > 0 && (
+          <div className="alert alert-warning rounded-0">
+            {erroresCatalogosRequeridos.join(' ')} El alta y la edición de artículos van a quedar bloqueadas hasta
+            que se puedan cargar — recargá la página para reintentar.
+          </div>
+        )}
 
         {formulario && (
           <FormularioArticulo
@@ -318,7 +353,7 @@ export function Articulos() {
             guardando={guardando}
             onCambio={setFormulario}
             onGuardar={guardar}
-            onCancelar={() => setFormulario(null)}
+            onCancelar={cancelarEdicion}
           />
         )}
 
@@ -930,6 +965,7 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
   const [vigentes, setVigentes] = useState<Record<number, PrecioVigente>>({})
   const [cargandoVigentes, setCargandoVigentes] = useState(true)
   const [errorVigentes, setErrorVigentes] = useState('')
+  const cargaInicialHechaRef = useRef(false)
   const [listaExpandida, setListaExpandida] = useState<number | null>(null)
   const [historiales, setHistoriales] = useState<Record<number, HistorialDePrecio[]>>({})
   const [estados, setEstados] = useState<Record<number, EstadoDeLista>>({})
@@ -950,6 +986,7 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
       setErrorVigentes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los precios vigentes.')
     } finally {
       setCargandoVigentes(false)
+      cargaInicialHechaRef.current = true
     }
   }, [idArticulo])
 
@@ -1021,23 +1058,36 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
       } else {
         await clienteDePrecios.establecer(idArticulo, { idListaPrecio: idLista, precio: monto, confirmarReemplazo })
       }
-
-      setEstados((prev) => ({ ...prev, [idLista]: estadoDeListaVacio() }))
-      await cargarVigentes()
-      const historial = await clienteDePrecios.historial(idArticulo, idLista)
-      setHistoriales((prev) => ({ ...prev, [idLista]: historial }))
     } catch (e) {
       if (e instanceof ErrorApi && e.codigo === 'precio_pendiente_existe') {
         actualizarEstado(idLista, { guardando: false, confirmarPendiente: true })
         return
       }
-      actualizarEstado(idLista, { error: e instanceof ErrorApi ? e.message : 'No se pudo guardar el precio.' })
-    } finally {
-      actualizarEstado(idLista, { guardando: false })
+      actualizarEstado(idLista, {
+        guardando: false,
+        error: e instanceof ErrorApi ? e.message : 'No se pudo guardar el precio.',
+      })
+      return
+    }
+
+    // El precio ya quedó confirmado en el servidor: a partir de acá un fallo es solo de refresco
+    // de vista, nunca "no se guardó" — evita que el usuario reintente un guardado que ya se aplicó.
+    setEstados((prev) => ({ ...prev, [idLista]: estadoDeListaVacio() }))
+
+    try {
+      await cargarVigentes()
+      const historial = await clienteDePrecios.historial(idArticulo, idLista)
+      setHistoriales((prev) => ({ ...prev, [idLista]: historial }))
+    } catch {
+      actualizarEstado(idLista, {
+        error: 'El precio se guardó, pero no se pudo actualizar la vista. Cerrá y volvé a abrir la lista para verlo.',
+      })
     }
   }
 
-  if (cargandoVigentes) return <Cargando texto="Cargando precios…" />
+  // Solo la carga inicial gatea todo el panel: los refrescos posteriores (p.ej. tras guardar un
+  // precio) mantienen el panel montado para no perder el foco ni parpadear en el camino feliz.
+  if (cargandoVigentes && !cargaInicialHechaRef.current) return <Cargando texto="Cargando precios…" />
 
   return (
     <div>
