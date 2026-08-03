@@ -1334,6 +1334,7 @@ function EditorDePrecios({
                         type="button"
                         className="btn btn-sm btn-outline-primary rounded-0"
                         onClick={() => alternarExpandida(lista)}
+                        disabled={bloqueadoPorPadre || estadoDe(lista.id).guardando || estadoDe(lista.id).refrescando}
                       >
                         {expandida ? 'Cerrar' : lista.modo === 'Fija' ? 'Gestionar' : 'Ver detalle'}
                       </button>
