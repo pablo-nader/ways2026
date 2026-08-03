@@ -167,12 +167,15 @@ export function Articulos() {
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const [eliminando, setEliminando] = useState(false)
   const [erroresCatalogosRequeridos, setErroresCatalogosRequeridos] = useState<string[]>([])
   const tokenEdicionRef = useRef(0)
+  const ocupado = guardando || eliminando
 
-  // Token del fetch de edición en curso: cualquier acción que supere ese fetch (abrir otra fila,
-  // abrir "Nuevo", cancelar o guardar) invalida el token antes de que la respuesta tardía pueda
-  // pisar el estado más reciente del formulario.
+  // Token del fetch de edición en curso: solo protege contra la staleness del fetch de "Editar"
+  // (abrir otra fila mientras el detalle anterior sigue en vuelo). El "supersede" de una edición
+  // por otra acción durante un guardado ya no depende del token — mientras `ocupado` es true, los
+  // controles que podrían dispararlo (Nuevo, Editar, Baja) quedan deshabilitados.
   function invalidarEdicionEnCurso(): number {
     return (tokenEdicionRef.current += 1)
   }
@@ -267,6 +270,7 @@ export function Articulos() {
   }
 
   async function guardar() {
+    if (guardando) return
     if (!formulario) return
 
     const token = invalidarEdicionEnCurso()
@@ -302,10 +306,13 @@ export function Articulos() {
   }
 
   async function eliminar(a: ArticuloListado) {
+    if (guardando || eliminando) return
     if (!confirm(`¿Dar de baja el artículo "${a.nombre}"?`)) return
 
+    invalidarEdicionEnCurso()
     setError('')
     setAviso('')
+    setEliminando(true)
     try {
       await clienteDeArticulos.eliminar(a.id)
       setAviso(`Artículo "${a.nombre}" dado de baja.`)
@@ -313,6 +320,8 @@ export function Articulos() {
       await cargar(busqueda)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja.')
+    } finally {
+      setEliminando(false)
     }
   }
 
@@ -333,7 +342,12 @@ export function Articulos() {
       <button type="button" className="btn btn-sm btn-outline-light rounded-0" onClick={() => cargar(busqueda)}>
         Buscar
       </button>
-      <button type="button" className="btn btn-sm btn-success rounded-0 text-nowrap" onClick={abrirNuevo}>
+      <button
+        type="button"
+        className="btn btn-sm btn-success rounded-0 text-nowrap"
+        disabled={ocupado}
+        onClick={abrirNuevo}
+      >
         Nuevo
       </button>
     </nav>
@@ -409,6 +423,7 @@ export function Articulos() {
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                        disabled={ocupado}
                         onClick={() => abrirEdicion(a)}
                       >
                         Editar
@@ -416,6 +431,7 @@ export function Articulos() {
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-danger rounded-0"
+                        disabled={ocupado}
                         onClick={() => eliminar(a)}
                       >
                         Baja
@@ -489,6 +505,7 @@ function FormularioArticulo({
         autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault()
+          if (bloqueadoPorCatalogos || guardando) return
           onGuardar()
         }}
       >
@@ -1023,7 +1040,7 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
         if (generacionVigentesRef.current === generacion) {
           setErrorVigentes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los precios vigentes.')
         }
-        if (opciones?.relanzarError) throw e
+        if (opciones?.relanzarError && generacionVigentesRef.current === generacion) throw e
       } finally {
         if (generacionVigentesRef.current === generacion) setCargandoVigentes(false)
         cargaInicialHechaRef.current = true
@@ -1076,6 +1093,7 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
 
   async function guardarPrecio(idLista: number, confirmarReemplazo: boolean) {
     const estado = estadoDe(idLista)
+    if (estado.guardando || estado.refrescando) return
     const monto = Number(estado.monto)
 
     if (!estado.monto.trim() || Number.isNaN(monto)) {
