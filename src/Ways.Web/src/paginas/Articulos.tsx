@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCatalogo, clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
@@ -167,6 +167,7 @@ export function Articulos() {
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const tokenEdicionRef = useRef(0)
 
   const cargar = useCallback(async (termino: string) => {
     setCargando(true)
@@ -212,12 +213,17 @@ export function Articulos() {
 
   async function abrirEdicion(a: ArticuloListado) {
     setError('')
+    // Token de request para descartar respuestas fuera de orden: dos clics rápidos en filas
+    // distintas no deben dejar que la respuesta más lenta pise a la más reciente.
+    const token = ++tokenEdicionRef.current
     try {
       // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
       const detalle = await clienteDeArticulos.obtener(a.id)
+      if (tokenEdicionRef.current !== token) return
       setFormulario(aFormulario(detalle))
       setAviso('')
     } catch (e) {
+      if (tokenEdicionRef.current !== token) return
       setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir el artículo.')
     }
   }
@@ -928,6 +934,7 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
   const [historiales, setHistoriales] = useState<Record<number, HistorialDePrecio[]>>({})
   const [estados, setEstados] = useState<Record<number, EstadoDeLista>>({})
   const [sugerencia, setSugerencia] = useState<number | null>(null)
+  const [sinSugerencia, setSinSugerencia] = useState(false)
   const [cargandoSugerencia, setCargandoSugerencia] = useState(false)
   const [errorSugerencia, setErrorSugerencia] = useState('')
 
@@ -955,7 +962,7 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
   }
 
   function actualizarEstado(idLista: number, parcial: Partial<EstadoDeLista>) {
-    setEstados((prev) => ({ ...prev, [idLista]: { ...estadoDe(idLista), ...parcial } }))
+    setEstados((prev) => ({ ...prev, [idLista]: { ...(prev[idLista] ?? estadoDeListaVacio()), ...parcial } }))
   }
 
   async function alternarExpandida(lista: ListaPrecioListado) {
@@ -975,9 +982,11 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
   async function pedirSugerencia() {
     setCargandoSugerencia(true)
     setErrorSugerencia('')
+    setSinSugerencia(false)
     try {
       const { precioSugerido } = await clienteDeArticulos.sugerenciaDePrecio(idArticulo)
       setSugerencia(precioSugerido)
+      setSinSugerencia(precioSugerido === null)
     } catch (e) {
       setSugerencia(null)
       setErrorSugerencia(e instanceof ErrorApi ? e.message : 'No se pudo calcular la sugerencia de precio.')
@@ -1048,6 +1057,12 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
         <div className="alert alert-info rounded-0 py-2 px-2 small mt-2">
           Precio sugerido a partir de costo y margen: <strong>${sugerencia.toFixed(2)}</strong>. Usá "Usar sugerencia"
           en la lista que corresponda — nunca se aplica sola.
+        </div>
+      )}
+
+      {sinSugerencia && (
+        <div className="alert alert-info rounded-0 py-2 px-2 small mt-2">
+          No hay costo o margen suficientes para sugerir un precio.
         </div>
       )}
 
