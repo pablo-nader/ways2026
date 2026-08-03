@@ -62,8 +62,10 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
     /// cref="BuscarFilaAbiertaAsync"/>; seguro porque el lock ya garantiza que ningún otro
     /// escritor está tocando este par), decide si hace falta confirmación (fila pendiente —
     /// <c>vigente_desde &gt; ahora</c> — sin <paramref name="confirmarReemplazo"/>), la cierra
-    /// (y, si era pendiente, re-cierra también su PREDECESOR — <see
-    /// cref="ReabrirLimiteDelPredecesorAsync"/>), e inserta la nueva fila abierta.
+    /// (y, si era pendiente, re-cierra también su PREDECESOR — localizado con <see
+    /// cref="BuscarPredecesorAsync"/> y re-cerrado con el mismo <see
+    /// cref="CerrarFilaAsync"/> inline que usa el resto del método), e inserta la nueva fila
+    /// abierta.
     ///
     /// Con el advisory lock, la carrera de <c>ux_precios_vigente</c> (dos primeros precios
     /// concurrentes para el mismo par) YA NO es alcanzable por este camino de servicio: el
@@ -103,6 +105,12 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
 
             if (filaAbierta is { } fila)
             {
+                // Reemplazar una fila pendiente con la MISMA fecha ("corregir el importe
+                // manteniendo la fecha") es una operación legítima — exactamente por eso
+                // BuscarPredecesorAsync tiene que ser determinístico y excluir filas muertas
+                // (judgment-day ronda 3, item 1): un reemplazo mismo-fecha deja una fila muerta
+                // (vigente_desde == vigente_hasta) que puede compartir límite con el predecesor
+                // real si esa fila, a su vez, se vuelve a reemplazar.
                 var esPendiente = fila.VigenteDesde > ahora;
 
                 if (esPendiente && !confirmarReemplazo)
@@ -465,7 +473,22 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
     /// vigente_desde == limiteOriginal</c>, ver el caller), esa MISMA fila también matchea
     /// <c>vigente_hasta = limiteOriginal</c>. Sin esta exclusión, la pendiente recién cerrada
     /// aparecería como su propio predecesor — el bug encontrado corriendo el caso "primer precio
-    /// del par es directamente un programado, sin predecesor real".</summary>
+    /// del par es directamente un programado, sin predecesor real".
+    ///
+    /// (judgment-day ronda 3, item 1) DOS defensas más, necesarias porque un reemplazo con la
+    /// MISMA fecha ("corregir el importe manteniendo la fecha", ver el caller) deja una fila
+    /// MUERTA (<c>vigente_desde == vigente_hasta</c>) que comparte el mismo límite que el
+    /// predecesor REAL cuando ese reemplazo mismo-fecha, a su vez, se vuelve a reemplazar con una
+    /// fecha nueva: <c>vigente_hasta = limiteOriginal</c> por sí solo es AMBIGUO entre la fila
+    /// muerta y el predecesor real, y Postgres no garantiza cuál de las dos filas devuelve. Si
+    /// devuelve la muerta, el cierre subsiguiente la REABRE (le pisa el <c>vigente_hasta</c>),
+    /// resucitando un precio que el usuario ya había reemplazado — invisible en los tests que no
+    /// prueban el camino "reemplazo mismo-fecha seguido de un reemplazo con fecha distinta".
+    /// <c>vigente_desde &lt;&gt; vigente_hasta</c> excluye toda fila muerta (nunca es el
+    /// predecesor real, que siempre tiene una ventana con contenido); <c>ORDER BY vigente_desde
+    /// ASC LIMIT 1</c> hace el resultado determinístico incluso si llegara a haber más de una
+    /// fila con contenido compartiendo el límite — el predecesor real siempre es el de menor
+    /// <c>vigente_desde</c>.</summary>
     private async Task<FilaVigente?> BuscarPredecesorAsync(
         int idArticulo, int idListaPrecio, int idTenant, int idFilaPendienteCerrada, DateTimeOffset limiteOriginal,
         CancellationToken ct)
@@ -477,7 +500,9 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         comando.CommandText =
             "SELECT id_precio, vigente_desde FROM precios " +
             "WHERE id_articulo = $1 AND id_lista_precio = $2 AND id_tenant = $3 " +
-            "AND vigente_hasta = $4 AND id_precio != $5 AND deleted_at IS NULL";
+            "AND vigente_hasta = $4 AND id_precio != $5 AND deleted_at IS NULL " +
+            "AND vigente_desde <> vigente_hasta " +
+            "ORDER BY vigente_desde ASC LIMIT 1";
 
         AgregarParametro(comando, idArticulo);
         AgregarParametro(comando, idListaPrecio);

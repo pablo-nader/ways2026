@@ -491,6 +491,98 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Null(filaPendiente.VigenteHasta);
     }
 
+    // ---- judgment-day ronda 3, item 1: predecessor determinístico y libre de filas muertas --
+
+    /// <summary>Repro del hallazgo CRITICAL confirmado en ronda 3: inmediato → programado(D) →
+    /// programado(D, MISMA fecha, confirmarReemplazo — el reemplazo ordinario "corregir el
+    /// importe manteniendo la fecha") → programado(D2 &gt; D, confirmarReemplazo). El segundo
+    /// reemplazo busca el predecesor de la pendiente vigente filtrando por <c>vigente_hasta =
+    /// D</c> — y esa fecha la comparten DOS filas: el predecesor REAL (el inmediato original,
+    /// cerrado en D) y la fila MUERTA que dejó el reemplazo mismo-fecha anterior
+    /// (<c>vigente_desde == vigente_hasta == D</c>). Sin <c>vigente_desde &lt;&gt;
+    /// vigente_hasta</c> + <c>ORDER BY vigente_desde ASC LIMIT 1</c> (<see
+    /// cref="ServicioDePrecios.BuscarPredecesorAsync"/>), Postgres puede devolver la fila muerta,
+    /// y el cierre subsiguiente la REABRE — resucitando un precio que el usuario ya había
+    /// reemplazado.</summary>
+    [Fact]
+    public async Task ReemplazarUnaPendienteMismaFechaYLuegoConFechaDistintaNoResucitaLaFilaMuerta()
+    {
+        var (_, idArea, idAlicuotaIva, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ReemplazarUnaPendienteMismaFechaYLuegoConFechaDistintaNoResucitaLaFilaMuerta));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+
+        var inmediato = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios", new AltaPrecio(idListaGeneral, 100m));
+        Assert.Equal(HttpStatusCode.Created, inmediato.StatusCode);
+
+        var d = DateTimeOffset.UtcNow.AddDays(3);
+        var programado = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios/programados",
+            new ProgramarPrecio(idListaGeneral, 150m, d));
+        Assert.Equal(HttpStatusCode.Created, programado.StatusCode);
+
+        // Reemplazo MISMA fecha ("corregir el importe manteniendo la fecha") -- deja una fila
+        // muerta (150, vigente_desde == vigente_hasta == d) que comparte vigente_hasta = d con
+        // el predecesor real (100).
+        var reemplazoMismaFecha = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios/programados",
+            new ProgramarPrecio(idListaGeneral, 160m, d, ConfirmarReemplazo: true));
+        Assert.Equal(HttpStatusCode.Created, reemplazoMismaFecha.StatusCode);
+
+        // Segundo reemplazo, con una fecha POSTERIOR -- este es el que busca el predecesor
+        // filtrando por vigente_hasta = d, ambiguo entre la fila muerta y el predecesor real.
+        var d2 = DateTimeOffset.UtcNow.AddDays(10);
+        var reemplazoFechaDistinta = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios/programados",
+            new ProgramarPrecio(idListaGeneral, 170m, d2, ConfirmarReemplazo: true));
+        Assert.Equal(HttpStatusCode.Created, reemplazoFechaDistinta.StatusCode);
+
+        var historial = await admin.GetFromJsonAsync<List<HistorialDePrecio>>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}/historial");
+        Assert.NotNull(historial);
+        Assert.Equal(4, historial!.Count);
+
+        var filaInmediataOriginal = historial.Single(h => h.Precio == 100m);
+        var filaMuertaMismaFecha = historial.Single(h => h.Precio == 150m);
+        var filaPendienteReemplazada = historial.Single(h => h.Precio == 160m);
+        var filaFinal = historial.Single(h => h.Precio == 170m);
+
+        // El predecesor REAL (100) es el que se extiende a d2 -- NO la fila muerta.
+        Assert.Equal(filaFinal.VigenteDesde, filaInmediataOriginal.VigenteHasta);
+        // La fila muerta del reemplazo mismo-fecha queda con la ventana vacía intacta -- si el
+        // bug estuviera presente, esta fila terminaría resucitada (vigente_hasta ==
+        // filaFinal.VigenteDesde) en lugar de vigente_desde == vigente_hasta.
+        Assert.Equal(filaMuertaMismaFecha.VigenteDesde, filaMuertaMismaFecha.VigenteHasta);
+        // La pendiente reemplazada por el segundo reemplazo también queda con ventana vacía.
+        Assert.Equal(filaPendienteReemplazada.VigenteDesde, filaPendienteReemplazada.VigenteHasta);
+        Assert.Null(filaFinal.VigenteHasta);
+
+        // Exactamente una fila vigente en cada instante sondeado, y el precio resucitado (150 o
+        // 160, ambos reemplazados) nunca es visible -- el probe crítico es el punto medio entre
+        // d y d2, donde sin el fix podía no haber ninguna fila vigente (predecesor real sin
+        // re-cerrar) o la fila muerta resucitada quedaba visible.
+        var puntoMedioAntesDeD = filaInmediataOriginal.VigenteDesde
+            + TimeSpan.FromTicks((d - filaInmediataOriginal.VigenteDesde).Ticks / 2);
+        var puntoMedioEntreDYD2 = d + TimeSpan.FromTicks((d2 - d).Ticks / 2);
+
+        foreach (var instante in new[] { puntoMedioAntesDeD, d, puntoMedioEntreDYD2, d2.AddSeconds(1) })
+        {
+            var cantidadVigente = historial.Count(h =>
+                h.VigenteDesde <= instante && (h.VigenteHasta is null || h.VigenteHasta > instante));
+            Assert.True(cantidadVigente == 1, $"instante={instante:O} dio {cantidadVigente} filas vigentes");
+
+            var vigente = await admin.GetFromJsonAsync<PrecioVigente>(
+                $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}?fecha={Uri.EscapeDataString(instante.ToString("O"))}");
+            Assert.NotEqual(150m, vigente!.Precio);
+            Assert.NotEqual(160m, vigente.Precio);
+        }
+
+        var vigenteHoy = await admin.GetFromJsonAsync<PrecioVigente>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}");
+        Assert.Equal(100m, vigenteHoy!.Precio);
+    }
+
     // ---- task 3.9: point-in-time query -------------------------------------------------------
 
     /// <summary>Spec: "Query at present date returns the active row" / "Point-in-time query
