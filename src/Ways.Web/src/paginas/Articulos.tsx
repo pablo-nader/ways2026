@@ -252,15 +252,16 @@ export function Articulos() {
   async function abrirEdicion(a: ArticuloListado) {
     setError('')
     const token = invalidarEdicionEnCurso()
-    setGuardando(false)
     try {
       // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
       const detalle = await clienteDeArticulos.obtener(a.id)
       if (tokenEdicionRef.current !== token) return
       setFormulario(aFormulario(detalle))
+      setGuardando(false)
       setAviso('')
     } catch (e) {
       if (tokenEdicionRef.current !== token) return
+      setGuardando(false)
       setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir el artículo.')
     }
   }
@@ -296,7 +297,7 @@ export function Articulos() {
         setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
       }
     } finally {
-      setGuardando(false)
+      if (tokenEdicionRef.current === token) setGuardando(false)
     }
   }
 
@@ -345,8 +346,8 @@ export function Articulos() {
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
         {erroresCatalogosRequeridos.length > 0 && (
           <div className="alert alert-warning rounded-0">
-            {erroresCatalogosRequeridos.join(' ')} El alta y la edición de artículos van a quedar bloqueadas hasta
-            que se puedan cargar — recargá la página para reintentar.
+            {erroresCatalogosRequeridos.join(' ')} El guardado (alta o edición) de artículos va a quedar bloqueado
+            hasta que se puedan cargar — recargá la página para reintentar.
           </div>
         )}
 
@@ -368,6 +369,7 @@ export function Articulos() {
             empresas={empresas}
             listasPrecio={listasPrecio}
             guardando={guardando}
+            bloqueadoPorCatalogos={erroresCatalogosRequeridos.length > 0}
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={cancelarEdicion}
@@ -449,6 +451,7 @@ function FormularioArticulo({
   empresas,
   listasPrecio,
   guardando,
+  bloqueadoPorCatalogos,
   onCambio,
   onGuardar,
   onCancelar,
@@ -464,6 +467,7 @@ function FormularioArticulo({
   empresas: EmpresaListado[]
   listasPrecio: ListaPrecioListado[]
   guardando: boolean
+  bloqueadoPorCatalogos: boolean
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
@@ -827,7 +831,7 @@ function FormularioArticulo({
         </div>
 
         <div className="col-12 d-flex gap-2">
-          <button type="submit" className="btn btn-success rounded-0" disabled={guardando}>
+          <button type="submit" className="btn btn-success rounded-0" disabled={guardando || bloqueadoPorCatalogos}>
             {guardando ? 'Guardando…' : 'Guardar'}
           </button>
           <button type="button" className="btn btn-outline-secondary rounded-0" onClick={onCancelar} disabled={guardando}>
@@ -992,6 +996,7 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
   const [cargandoVigentes, setCargandoVigentes] = useState(true)
   const [errorVigentes, setErrorVigentes] = useState('')
   const cargaInicialHechaRef = useRef(false)
+  const generacionVigentesRef = useRef(0)
   const [listaExpandida, setListaExpandida] = useState<number | null>(null)
   const [historiales, setHistoriales] = useState<Record<number, HistorialDePrecio[]>>({})
   const [estados, setEstados] = useState<Record<number, EstadoDeLista>>({})
@@ -1002,18 +1007,25 @@ function EditorDePrecios({ idArticulo, listasPrecio }: { idArticulo: number; lis
 
   const cargarVigentes = useCallback(
     async (opciones?: { relanzarError?: boolean }) => {
+      // Generación: si mientras esta llamada está en vuelo se dispara otra (dos paneles
+      // abriéndose/refrescando en simultáneo), la que llega tarde no debe pisar el estado
+      // compartido con una respuesta desactualizada — solo aplica la más reciente en curso.
+      const generacion = (generacionVigentesRef.current += 1)
       setCargandoVigentes(true)
       setErrorVigentes('')
       try {
         const lista = await clienteDePrecios.vigentes(idArticulo)
+        if (generacionVigentesRef.current !== generacion) return
         const mapa: Record<number, PrecioVigente> = {}
         for (const p of lista) mapa[p.idListaPrecio] = p
         setVigentes(mapa)
       } catch (e) {
-        setErrorVigentes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los precios vigentes.')
+        if (generacionVigentesRef.current === generacion) {
+          setErrorVigentes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los precios vigentes.')
+        }
         if (opciones?.relanzarError) throw e
       } finally {
-        setCargandoVigentes(false)
+        if (generacionVigentesRef.current === generacion) setCargandoVigentes(false)
         cargaInicialHechaRef.current = true
       }
     },
