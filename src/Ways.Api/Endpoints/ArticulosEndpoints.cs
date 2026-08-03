@@ -1,5 +1,6 @@
 using Ways.Api.Seguridad;
 using Ways.Application.Articulos;
+using Ways.Application.Precios;
 
 namespace Ways.Api.Endpoints;
 
@@ -67,6 +68,41 @@ public static class ArticulosEndpoints
             ServicioDeArticulos servicio, int id, CancellationToken ct) =>
             servicio.SugerirPrecioAsync(id, ct))
         .WithSummary("Sugiere un precio a partir del costo y margen del artículo (nunca se aplica solo).");
+
+        // Slice 3 (stage-3-articulos-y-precios, task 3.5): precios nidificados bajo
+        // /api/articulos/{id}/precios, no un recurso top-level propio (proposal's Affected
+        // Areas note) — mismo grupo/policy que el resto de ArticulosEndpoints.
+
+        grupo.MapPost("/{id:int}/precios", async (
+            ServicioDePrecios servicio, int id, AltaPrecio datos, CancellationToken ct) =>
+        {
+            var creado = await servicio.EstablecerPrecioAsync(id, datos, ct);
+            return Results.Created($"/api/articulos/{id}/precios/{datos.IdListaPrecio}", creado);
+        })
+        .WithSummary("Establece el precio vigente de un artículo en una lista fija, efectivo ahora.");
+
+        grupo.MapPost("/{id:int}/precios/programados", async (
+            ServicioDePrecios servicio, int id, ProgramarPrecio datos, CancellationToken ct) =>
+        {
+            var creado = await servicio.ProgramarPrecioAsync(id, datos, ct);
+            return Results.Created($"/api/articulos/{id}/precios/{datos.IdListaPrecio}", creado);
+        })
+        .WithSummary("Programa un precio a futuro; reemplaza el pendiente existente solo con confirmarReemplazo.");
+
+        grupo.MapGet("/{id:int}/precios", (
+            ServicioDePrecios servicio, int id, DateTimeOffset? fecha, CancellationToken ct) =>
+            servicio.PreciosVigentesAsync(id, fecha, ct))
+        .WithSummary("Precio vigente del artículo en todas las listas activas, a una fecha dada (default: ahora).");
+
+        grupo.MapGet("/{id:int}/precios/{idListaPrecio:int}", (
+            ServicioDePrecios servicio, int id, int idListaPrecio, DateTimeOffset? fecha, CancellationToken ct) =>
+            servicio.PrecioVigenteAsync(id, idListaPrecio, fecha, ct))
+        .WithSummary("Precio vigente del artículo en una lista puntual, a una fecha dada (default: ahora).");
+
+        grupo.MapGet("/{id:int}/precios/{idListaPrecio:int}/historial", (
+            ServicioDePrecios servicio, int id, int idListaPrecio, CancellationToken ct) =>
+            servicio.HistorialDePrecioAsync(id, idListaPrecio, ct))
+        .WithSummary("Historial completo de precios del artículo en una lista fija.");
 
         return app;
     }

@@ -220,9 +220,21 @@ public class ManejadorDeErrores(
 
         // stage-3-articulos-y-precios (task 1.10): ux_precios_vigente — backstop de "at most
         // one pending future price" (design decisions 3/4). Sin colisión con ninguna otra
-        // familia: "_vigente" no aparece en ningún otro nombre de índice del esquema. Exenta de
-        // la prueba de carrera exigida por `db-error-backstops` hasta la Slice 3
-        // (ServicioDePrecios, task 3.11), que es donde aterriza el camino de escritura.
+        // familia: "_vigente" no aparece en ningún otro nombre de índice del esquema.
+        //
+        // Slice 3 (task 3.11): la exención de la prueba de carrera CIERRA acá —
+        // ServicioDePrecios.AbrirNuevoPrecioAsync es el camino de escritura real. La carrera es
+        // GENUINA por construcción y no por omisión de un pre-chequeo (el `SELECT ... FOR
+        // UPDATE` solo bloquea una fila que YA EXISTE — para el PRIMER precio de un par
+        // (articulo, lista) no hay ninguna fila que lockear) pero NO es reproducible con un
+        // `Task.WhenAll` desnudo sobre 2 POST (probado empíricamente: confiable en corridas
+        // aisladas, pero con el pool de conexiones/JIT ya calientes — el caso real de `dotnet
+        // test` con la suite completa — el segundo request tiende a ver la fila del primero ya
+        // confirmada y hace un cierre-y-apertura legítimo en vez de chocar). Mismo mecanismo que
+        // el hallazgo de `ParametrosTests` (judgment-day, slice 3 ronda 2): la prueba fuerza un
+        // rendezvous real con un `DbCommandInterceptor` para garantizar la carrera en vez de
+        // depender del timing del pool. Probada en
+        // PreciosEndpointsTests.LaCreacionConcurrenteDeDosPrimerosPreciosDaExactamenteUnGanador.
         if (nombreDeIndice.Contains("_vigente", StringComparison.Ordinal))
         {
             return ("precio_vigente_duplicado", "Ya existe un precio vigente para este artículo en esta lista.");
