@@ -64,6 +64,11 @@ public static class ArticulosEndpoints
         })
         .WithSummary("Quita un código de barras del artículo.");
 
+        grupo.MapGet("/{id:int}/codigos-barra", (
+            ServicioDeArticulos servicio, int id, CancellationToken ct) =>
+            servicio.ListarCodigosBarraAsync(id, ct))
+        .WithSummary("Lista los códigos de barra activos del artículo.");
+
         grupo.MapGet("/{id:int}/sugerencia-precio", (
             ServicioDeArticulos servicio, int id, CancellationToken ct) =>
             servicio.SugerirPrecioAsync(id, ct))

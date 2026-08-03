@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import { AuthProvider } from './auth/AuthContext'
 import { RutaProtegida } from './auth/RutaProtegida'
 import { Layout } from './componentes/Layout'
+import { Articulos } from './paginas/Articulos'
 import { Categorias } from './paginas/Categorias'
 import { CatalogosFiscales } from './paginas/CatalogosFiscales'
 import { Clientes } from './paginas/Clientes'
@@ -66,6 +67,17 @@ export function App() {
               }
             />
 
+            {/* Entidad dedicada (stage-3-articulos-y-precios, design decision 1): árbol
+                propio, no la máquina genérica de catálogos — mismo criterio que /clientes. */}
+            <Route
+              path="/articulos"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Articulos />
+                </RutaProtegida>
+              }
+            />
+
             {/* stage-3-articulos-y-precios (Slice 6, design: ABM Composition): ruta propia
                 (no /catalogos/:recurso) — reusa la máquina genérica directamente, mismo
                 criterio que /catalogos/categorias, para no competir con el switch de
@@ -78,6 +90,7 @@ export function App() {
                 </RutaProtegida>
               }
             />
+
             {/* Escape hatch de ADR-11: árbol propio, no la máquina genérica. react-router
                 prioriza segmentos literales sobre ":recurso" sin importar el orden de
                 declaración, pero queda declarada antes por legibilidad. */}

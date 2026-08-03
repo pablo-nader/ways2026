@@ -507,7 +507,7 @@ functional against the API, smoke-verified. **Rollback**: new route only.
 
 ### 5A. Screen
 
-- [ ] 5.1 Add dedicated `Articulos.tsx` ABM (not the generic catalog
+- [x] 5.1 Add dedicated `Articulos.tsx` ABM (not the generic catalog
   machine, per design decision 1): identification + inline barcode manager
   (add/remove) + classification (4 selectors) + costs + availability picker
   (toggle + empresa multiselect, shown only when `false`) + per-lista price
@@ -518,11 +518,15 @@ functional against the API, smoke-verified. **Rollback**: new route only.
 
 ### 5B. Wiring + smoke
 
-- [ ] 5.2 Wire `/articulos` route + nav entry; add `articulos.ts`/`precios.ts`
+- [x] 5.2 Wire `/articulos` route + nav entry; add `articulos.ts`/`precios.ts`
   API clients and `tipos.ts` additions.
-- [ ] 5.3 Smoke-verify (`tsc -b`/`oxlint`/`vite build` clean); relies on
+- [x] 5.3 Smoke-verify (`tsc -b`/`oxlint`/`vite build` clean); relies on
   Slice 2/3's integration coverage proving the exact contract shapes the
-  screen consumes, same criterion as stage 2's 4.4a/4.4b.
+  screen consumes, same criterion as stage 2's 4.4a/4.4b — plus, beyond the
+  planned scope: `GET /api/articulos/{id}/codigos-barra` added at
+  judgment-day's demand (backend read endpoint + 4 integration tests,
+  218/218 total) because the barcode manager could not hydrate persisted
+  codes without it (spec codigos-barra updated in the same slice).
 
 ---
 
@@ -534,18 +538,21 @@ functional against the API, smoke-verified. **Rollback**: new route only.
 
 ### 6A. Screen
 
-- [ ] 6.1 Extend `Ways.Web/api/catalogos.ts`'s generic descriptor pattern
+- [x] 6.1 Extend `Ways.Web/api/catalogos.ts`'s generic descriptor pattern
   with two extra fields (`modo`, conditionally `id_lista_base`/`porcentaje`)
   — the list shape still fits the generic table/form, unlike `articulos`.
   *(design: ABM Composition)*
 
 ### 6B. Wiring + smoke
 
-- [ ] 6.2 Wire `/listas-precio` route + nav entry; add `listasPrecio.ts` API
-  client additions.
-- [ ] 6.3 Smoke-verify (`tsc -b`/`oxlint`/`vite build` clean); relies on
+- [x] 6.2 Wire `/listas-precio` route + nav entry — no dedicated
+  `listasPrecio.ts` client file (documented deviation: the 4 pre-existing
+  generic-machine catalogs have none either; `PaginaCatalogo` fetches by
+  `recurso` string).
+- [x] 6.3 Smoke-verify (`tsc -b`/`oxlint`/`vite build` clean); relies on
   Slice 4's integration coverage proving the exact contract shapes the screen
-  consumes.
+  consumes. Merged to main via PR #24 (judgment-day: R1 one confirmed
+  CRITICAL cluster fixed, R2 clean).
 
 ---
 
