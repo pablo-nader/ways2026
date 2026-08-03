@@ -111,7 +111,8 @@ public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj)
             // alcance, guarda de abajo) y recién en un PUT posterior mover IdEmpresa.
             throw ErrorDominio.Conflicto(
                 "lista_default_requiere_reemplazo",
-                "No se puede quitar el estado default sin asignarlo a otra lista en el mismo alcance primero.");
+                "No se puede cambiar el alcance de una lista default; primero asigná el default a otra lista del "
+                + "alcance de origen.");
         }
 
         if (actual.EsDefault && !datos.EsDefault)
@@ -124,14 +125,16 @@ public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj)
                 "No se puede quitar el estado default sin asignarlo a otra lista en el mismo alcance primero.");
         }
 
-        if (datos.EsDefault && (!actual.EsDefault || datos.IdEmpresa != actual.IdEmpresa))
+        if (!actual.EsDefault && datos.EsDefault)
         {
-            // El INTERCAMBIO se dispara al ASIGNAR EsDefault por primera vez Y al MOVER de
-            // alcance manteniéndose default (compartida -> empresa, empresa -> compartida,
-            // empresa A -> empresa B) — la guarda de arriba ya garantiza que si hay cambio
-            // de alcance con EsDefault=true de por medio, es porque actual.EsDefault era
-            // false (si fuera true, ya se rechazó antes de llegar acá). El alcance a
-            // desmarcar es siempre el DESTINO (datos.IdEmpresa), nunca el de origen.
+            // El INTERCAMBIO se dispara al PROMOVER a default una fila que hoy no lo es —
+            // esto cubre tanto la promoción simple (mismo alcance) como la promoción
+            // combinada con un cambio de alcance (compartida -> empresa, empresa ->
+            // compartida, empresa A -> empresa B), porque la guarda de arriba ya rechazó
+            // cualquier cambio de alcance de una fila que HOY es default: si se llegó
+            // hasta acá con datos.IdEmpresa != actual.IdEmpresa, es porque actual.EsDefault
+            // era false. El alcance a desmarcar es siempre el DESTINO (datos.IdEmpresa,
+            // el alcance donde la fila va a terminar), nunca el de origen.
             var estrategia = Db.Database.CreateExecutionStrategy();
             return await estrategia.ExecuteAsync(async () =>
             {

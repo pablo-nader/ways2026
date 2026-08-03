@@ -1,5 +1,86 @@
 # Apply Progress: Stage 3 — Artículos y Precios
 
+## Slice 4 — judgment-day ronda 2: fixes aplicados
+
+Ronda de simplificación/docs/cobertura — NO hay defecto de comportamiento. Un REAL (condición
+muerta simplificada + doc-comment reescrito, Judge A), un test de cobertura del happy path que
+el REAL anterior dejó sin caso dedicado (Judge A) y una SUGGESTION de wording (Judge B). Todo
+corregido en el mismo ciclo, SIN cambios de esquema.
+
+### Item 1 — Simplificar el disparador del intercambio + corregir la narrativa (REAL, Judge A)
+
+`ServicioDeListasPrecio.ActualizarAsync`: el disparador del intercambio que la ronda 1 dejó como
+`datos.EsDefault && (!actual.EsDefault || datos.IdEmpresa != actual.IdEmpresa)` tiene un
+disyunto muerto por construcción — `|| datos.IdEmpresa != actual.IdEmpresa` nunca aporta nada:
+cuando `actual.EsDefault` es `false`, `!actual.EsDefault` solo ya es `true` y corta el OR por
+cortocircuito; cuando `actual.EsDefault` es `true`, la guarda de la fuente (unas líneas arriba)
+ya lanzó para cualquier cambio de `IdEmpresa` antes de llegar a esta línea. El doc-comment de la
+ronda 1 además sobrevendía ese disyunto como si hiciera trabajo real ("el intercambio se dispara
+al... MOVER de alcance manteniéndose default").
+
+**Fix**: condición simplificada a `!actual.EsDefault && datos.EsDefault` (sin cambio de
+comportamiento — el disyunto eliminado nunca era alcanzable). `DesmarcarDefaultActualAsync`
+sigue apuntando a `datos.IdEmpresa` (el DESTINO), que es lo que realmente maneja la promoción +
+el movimiento de alcance a la vez. Doc-comment reescrito para describir la realidad: la guarda
+de la fuente bloquea mover de alcance una fila que hoy es default; el intercambio maneja las
+promociones (incluida la promoción combinada con un movimiento de alcance), siempre desmarcando
+el destino.
+
+- `src/Ways.Application/Catalogos/ServicioDeListasPrecio.cs` (`ActualizarAsync`, ~línea 127) —
+  condición simplificada + doc-comment reescrito.
+- `openspec/changes/stage-3-articulos-y-precios/state.yaml` — nota de corrección de ronda 2
+  agregada AL FINAL de la lista de notas (no se reescribe la nota de ronda 1, se corrige con una
+  nota nueva que la referencia).
+
+### Item 2 — Test del happy path de promoción + movimiento de alcance (REAL, Judge A)
+
+La ronda 1 solo cubrió los tres casos RECHAZADOS (mover de alcance una fila que YA es default).
+Faltaba el caso PERMITIDO simétrico: una fila que NO es default, en el alcance A, promovida a
+default Y movida al alcance B en la misma operación, cuando B ya tiene su propia default.
+
+**Test nuevo**: `PromoverAEsDefaultMoviendoDeAlcanceDeEmpresaAOtraConDefaultExistenteEsPermitido`
+— empresa A con una default propia + una lista NO default; empresa B con una default propia; PUT
+sobre la lista no-default de A con `IdEmpresa: B, EsDefault: true` → 200; la fila termina default
+en B; la ex-default de B queda `EsDefault: false`; la default de A queda intacta (mismo
+`IdEmpresa`, `EsDefault: true` sin tocar).
+
+- `tests/Ways.IntegrationTests/ListasPrecioEndpointsTests.cs` —
+  `PromoverAEsDefaultMoviendoDeAlcanceDeEmpresaAOtraConDefaultExistenteEsPermitido`.
+
+### Item 3 — Mensaje específico para el bloqueo de movimiento de alcance (SUGGESTION, Judge B)
+
+La guarda de la fuente (`actual.EsDefault && datos.IdEmpresa != actual.IdEmpresa`) reusaba el
+mismo texto que la guarda de "quitar el default sin reemplazo" — mismo código de dominio
+(`lista_default_requiere_reemplazo`, sin cambios, ambos casos son la misma familia de problema),
+pero el mensaje no distinguía el escenario para el usuario.
+
+**Fix**: mensaje propio para el bloqueo de movimiento de alcance: "No se puede cambiar el
+alcance de una lista default; primero asigná el default a otra lista del alcance de origen."
+
+- `src/Ways.Application/Catalogos/ServicioDeListasPrecio.cs` (`ActualizarAsync`, ~línea 112) —
+  mensaje específico, mismo código `lista_default_requiere_reemplazo`.
+
+### Build/test results (judgment-day ronda 2 batch, run twice)
+
+| Suite | Run 1 | Run 2 |
+|---|---|---|
+| `Ways.Domain.Tests` | 86/86 | 86/86 |
+| `Ways.Application.Tests` | 190/190 | 190/190 |
+| `Ways.IntegrationTests` (real Postgres) | 214/214 | 214/214 |
+
+214 = baseline 213 (ronda 1) + 1 nuevo
+(`PromoverAEsDefaultMoviendoDeAlcanceDeEmpresaAOtraConDefaultExistenteEsPermitido`). Build clean
+(0 warnings, 0 errors), ambas corridas idénticas, sin flakes. El test nuevo verificado estable en
+3 corridas aisladas adicionales.
+
+### Commit (work-unit, uno solo — simplificación + docs + test, mismo hallazgo)
+
+`fix(catalogos): simplificar el disparador del intercambio de es_default y su narrativa` —
+`ServicioDeListasPrecio.cs` (items 1/3), `ListasPrecioEndpointsTests.cs` (item 2),
+`state.yaml`/`apply-progress.md` (docs).
+
+---
+
 ## Slice 4 — judgment-day ronda 1: fixes aplicados
 
 Un CRITICAL confirmado por AMBOS jueces ciegos, un REAL de cobertura de tests, una SUGGESTION

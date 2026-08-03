@@ -401,6 +401,50 @@ public class ListasPrecioEndpointsTests(WaysApiFixture fixture) : IClassFixture<
         Assert.True(actual.EsDefault);
     }
 
+    /// <summary>judgment-day ronda 2 (item 2, real): la promoción HAPPY PATH combinada con un
+    /// cambio de alcance — a diferencia de los tres tests de arriba (que mueven una fila que HOY
+    /// ya es default, y por eso la guarda de la fuente los rechaza), acá la fila de origen NO es
+    /// default: la guarda de la fuente no aplica y el PUT sí puede promoverla Y moverla de
+    /// alcance en la misma operación. El intercambio desmarca la fila que hoy es default en el
+    /// alcance DESTINO (empresa B) — la fila default de la empresa de ORIGEN (A) es un alcance
+    /// distinto y queda intacta.</summary>
+    [Fact]
+    public async Task PromoverAEsDefaultMoviendoDeAlcanceDeEmpresaAOtraConDefaultExistenteEsPermitido()
+    {
+        var (idTenant, _, _, _, mailAdmin, passwordAdmin) = await AprovisionarTenantAsync(
+            nameof(PromoverAEsDefaultMoviendoDeAlcanceDeEmpresaAOtraConDefaultExistenteEsPermitido));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idEmpresaA = await SembrarEmpresaAsync(
+            idTenant, nameof(PromoverAEsDefaultMoviendoDeAlcanceDeEmpresaAOtraConDefaultExistenteEsPermitido) + "A");
+        var idEmpresaB = await SembrarEmpresaAsync(
+            idTenant, nameof(PromoverAEsDefaultMoviendoDeAlcanceDeEmpresaAOtraConDefaultExistenteEsPermitido) + "B");
+
+        var defaultDeA = await CrearListaAsync(
+            admin, AltaFijaValida("Default de A", esDefault: true, idEmpresa: idEmpresaA));
+        var noDefaultDeA = await CrearListaAsync(admin, AltaFijaValida("No default de A", idEmpresa: idEmpresaA));
+        var defaultDeB = await CrearListaAsync(
+            admin, AltaFijaValida("Default de B", esDefault: true, idEmpresa: idEmpresaB));
+
+        var respuesta = await admin.PutAsJsonAsync(
+            $"/api/catalogos/listas-precio/{noDefaultDeA.Id}",
+            AltaFijaValida("No default de A", esDefault: true, idEmpresa: idEmpresaB));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var actualizada = await respuesta.Content.ReadFromJsonAsync<ListaPrecioListado>(OpcionesJson);
+        Assert.Equal(idEmpresaB, actualizada!.IdEmpresa);
+        Assert.True(actualizada.EsDefault);
+
+        var exDefaultDeB = await admin.GetFromJsonAsync<ListaPrecioListado>(
+            $"/api/catalogos/listas-precio/{defaultDeB.Id}", OpcionesJson);
+        Assert.False(exDefaultDeB!.EsDefault);
+
+        var defaultDeAIntacta = await admin.GetFromJsonAsync<ListaPrecioListado>(
+            $"/api/catalogos/listas-precio/{defaultDeA.Id}", OpcionesJson);
+        Assert.Equal(idEmpresaA, defaultDeAIntacta!.IdEmpresa);
+        Assert.True(defaultDeAIntacta.EsDefault);
+    }
+
     [Fact]
     public async Task EliminarLaListaDefaultEsRechazado()
     {
