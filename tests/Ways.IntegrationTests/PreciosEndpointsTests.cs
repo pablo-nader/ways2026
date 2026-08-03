@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Ways.Application.Articulos;
 using Ways.Application.Organizacion;
 using Ways.Application.Precios;
@@ -250,7 +251,16 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
     /// <summary>Spec: "Scheduling replaces the existing pending price" — sin confirmación
     /// rechaza con 409 <c>precio_pendiente_existe</c>; con <c>confirmarReemplazo: true</c>
     /// reemplaza, y el precio reemplazado NUNCA se vuelve visible (ni siquiera en la ventana
-    /// entre las dos fechas programadas).</summary>
+    /// entre las dos fechas programadas).
+    ///
+    /// También es la guarda de regresión de la exclusión por id en
+    /// <see cref="ServicioDePrecios.BuscarPredecesorAsync"/> (judgment-day, item 1): acá
+    /// "primero" es directamente el PRIMER precio del par (no hay una fila activa previa), así
+    /// que al reemplazarlo no existe un predecesor real. Sin excluir
+    /// <c>idFilaPendienteCerrada</c> de la búsqueda, la propia "primero" recién cerrada matchearía
+    /// como su propio predecesor (<c>vigente_hasta == limiteOriginal</c>) y se re-abriría a sí
+    /// misma en la ventana intermedia — exactamente lo que la aserción de la línea de abajo
+    /// prueba que NO pasa.</summary>
     [Fact]
     public async Task ProgramarUnSegundoPrecioPendienteSinConfirmarDevuelve409YConConfirmarReemplaza()
     {
@@ -422,6 +432,63 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var enDiezDias = await admin.GetFromJsonAsync<PrecioVigente>(
             $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}?fecha={Uri.EscapeDataString(vigenteEnDiezDias.AddMinutes(1).ToString("O"))}");
         Assert.Equal(160m, enDiezDias!.Precio);
+    }
+
+    // ---- judgment-day ronda 2, item 1: validación simétrica contra el predecesor ------------
+
+    /// <summary>Repro exacto del hallazgo CRITICAL confirmado por los dos jueces: inmediato →
+    /// programado(T+20s) → programado(T-1s, dentro de la tolerancia de reloj, con
+    /// <c>confirmarReemplazo</c>). La tercera llamada intenta reemplazar la pendiente (150, a
+    /// T+20s) con una fecha ANTERIOR al inicio de su PREDECESOR (100, a T) — sin el chequeo
+    /// simétrico, <c>ReabrirLimiteDelPredecesorAsync</c> re-cerraba ese predecesor en T-1s,
+    /// produciendo un intervalo INVERTIDO (<c>vigente_hasta &lt; vigente_desde</c>, exactamente
+    /// lo que <c>ck_precios_ventana_valida</c> prohíbe a nivel de esquema). Con el fix, la
+    /// tercera llamada rechaza con 400 <c>vigente_desde_invalido</c> ANTES de tocar ninguna fila:
+    /// el predecesor queda intacto y la pendiente reemplazada sigue abierta.</summary>
+    [Fact]
+    public async Task ReemplazarUnaPendienteConUnaFechaAnteriorAlPredecesorRechazaCon400SinTocarNada()
+    {
+        var (_, idArea, idAlicuotaIva, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ReemplazarUnaPendienteConUnaFechaAnteriorAlPredecesorRechazaCon400SinTocarNada));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+
+        var t = DateTimeOffset.UtcNow;
+
+        var inmediato = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios", new AltaPrecio(idListaGeneral, 100m));
+        Assert.Equal(HttpStatusCode.Created, inmediato.StatusCode);
+
+        var vigenteEnVeinteSegundos = t.AddSeconds(20);
+        var programado = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios/programados",
+            new ProgramarPrecio(idListaGeneral, 150m, vigenteEnVeinteSegundos));
+        Assert.Equal(HttpStatusCode.Created, programado.StatusCode);
+
+        // Un segundo ANTES de T (el "ahora" del alta inmediata) — dentro de la tolerancia de
+        // reloj de 30s (no dispara vigente_desde_en_el_pasado) pero anterior al inicio del
+        // predecesor real (100, a T).
+        var unSegundoAntesDeT = t.AddSeconds(-1);
+        var reemplazoInvalido = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios/programados",
+            new ProgramarPrecio(idListaGeneral, 999m, unSegundoAntesDeT, ConfirmarReemplazo: true));
+
+        Assert.Equal(HttpStatusCode.BadRequest, reemplazoInvalido.StatusCode);
+        var problema = await reemplazoInvalido.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("vigente_desde_invalido", problema.GetProperty("codigo").GetString());
+
+        // Nada se tocó: exactamente 2 filas (100 y 150), el predecesor sigue cerrado en el
+        // vigente_desde original de la pendiente, y la pendiente sigue abierta.
+        var historial = await admin.GetFromJsonAsync<List<HistorialDePrecio>>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}/historial");
+        Assert.NotNull(historial);
+        Assert.Equal(2, historial!.Count);
+
+        var filaInmediata = historial.Single(h => h.Precio == 100m);
+        var filaPendiente = historial.Single(h => h.Precio == 150m);
+
+        Assert.Equal(filaPendiente.VigenteDesde, filaInmediata.VigenteHasta);
+        Assert.Null(filaPendiente.VigenteHasta);
     }
 
     // ---- task 3.9: point-in-time query -------------------------------------------------------
@@ -858,5 +925,34 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             $"/api/articulos/{articulo.Id}/precios", new AltaPrecio(idListaGeneral, 100m));
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    // ---- judgment-day ronda 2, item 2: ck_precios_ventana_valida (GATE-APROBADO 2026-08-03) --
+
+    /// <summary>db-error-backstops: prueba de humo cruda para <c>ck_precios_ventana_valida</c> —
+    /// un INSERT directo por SQL con <c>vigente_hasta</c> ANTERIOR a <c>vigente_desde</c>
+    /// bypasea por completo <c>ServicioDePrecios</c> (el chequeo simétrico del item 1 de esta
+    /// misma ronda) y fuerza a Postgres a rechazar el intervalo invertido.</summary>
+    [Fact]
+    public async Task UnPrecioConVigenteHastaAnteriorAVigenteDesdeViolaLaCheckConstraint()
+    {
+        var (idTenant, idArea, idAlicuotaIva, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnPrecioConVigenteHastaAnteriorAVigenteDesdeViolaLaCheckConstraint));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO precios (id_tenant, id_articulo, id_lista_precio, precio, vigente_desde, vigente_hasta, created_at, updated_at) " +
+            "VALUES ($1, $2, $3, 100, now(), now() - interval '1 day', now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = articulo.Id });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idListaGeneral });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_precios_ventana_valida", excepcion.ConstraintName);
     }
 }

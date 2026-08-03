@@ -1,5 +1,104 @@
 # Apply Progress: Stage 3 — Artículos y Precios
 
+## Slice 3 — judgment-day ronda 2: fixes aplicados
+
+Dos jueces ciegos independientes convergieron en el MISMO gap CRITICAL sobre el motor de
+precios (validación asimétrica en el camino de reemplazo de una pendiente). Un cambio de
+esquema (CHECK) fue gate-aprobado por el usuario (2026-08-03) como backstop del mismo hallazgo.
+Dos sugerencias de higiene/documentación. Todo corregido en el mismo ciclo.
+
+### Item 1 — Symmetric predecessor-boundary validation (CRITICAL, ambos jueces)
+
+`AbrirNuevoPrecioAsync`, rama `esPendiente`: el chequeo `!esPendiente && vigenteDesdeEfectivo <
+fila.VigenteDesde` (contra la fila ACTIVA) no tenía equivalente contra el PREDECESOR cuando se
+reemplaza una PENDIENTE — una fecha de reemplazo anterior o igual al `vigente_desde` del
+predecesor pasaba sin chequeo y `ReabrirLimiteDelPredecesorAsync` re-cerraba el predecesor con un
+límite ANTERIOR a su propio inicio, invirtiendo su intervalo (`vigente_hasta < vigente_desde`) —
+silencioso hasta este mismo ciclo, que agrega la constraint de esquema que lo hubiera atrapado
+recién en el `INSERT`/`UPDATE` (ver item 2).
+
+**Fix**: la búsqueda del predecesor (renombrada `ReabrirLimiteDelPredecesorAsync` →
+`BuscarPredecesorAsync`, ahora SOLO busca, no cierra) se adelanta a ANTES de tocar cualquier fila.
+Si `fila` es pendiente y tiene un predecesor real, se valida `vigenteDesdeEfectivo <=
+predecesor.VigenteDesde` y se rechaza con 400 `vigente_desde_invalido` — mismo código de dominio
+que el chequeo simétrico de la fila activa — ANTES de llamar a `CerrarFilaAsync` sobre `fila` o
+sobre el predecesor. Atómico por transacción: si el chequeo pasa, el cierre de `fila` y el
+re-cierre del predecesor ocurren después, en el mismo orden que antes.
+
+**Test nuevo** (`PreciosEndpointsTests.cs`): repro exacto de Judge A —
+`ReemplazarUnaPendienteConUnaFechaAnteriorAlPredecesorRechazaCon400SinTocarNada`: inmediato (100,
+a T) → programado(150, a T+20s) → programado(999, a T-1s dentro de la tolerancia de reloj,
+`confirmarReemplazo`) → 400 `vigente_desde_invalido`; verifica que el predecesor (100) sigue
+cerrado en su boundary original (T+20s, el `vigente_desde` de la pendiente) y que la pendiente
+(150) sigue abierta — nada se tocó.
+
+### Item 2 — `ck_precios_ventana_valida` (schema CHECK, GATE-APROBADO 2026-08-03)
+
+Migración `PreciosVentanaValida`: `CHECK (vigente_hasta IS NULL OR vigente_hasta >=
+vigente_desde)` sobre `precios` — backstop de esquema contra un intervalo INVERTIDO para una
+escritura cruda/fuera de banda que bypasee el chequeo del item 1.
+
+**Desviación documentada del texto literal aprobado**: el texto gate-aprobado especificaba `>`
+estricto. Implementado así, la migración ROMPÍA una regresión de la ronda 1 YA EXISTENTE y
+YA PROBADA
+(`ProgramarUnSegundoPrecioPendienteSinConfirmarDevuelve409YConConfirmarReemplaza`/
+`ReemplazarUnPendienteConUnaFechaPosteriorALaOriginalNoDejaUnHueco`): el reemplazo de una
+pendiente cierra esa fila deliberadamente en su PROPIO `vigente_desde` (ventana VACÍA,
+`vigente_hasta == vigente_desde`, no invertida — decisión de diseño documentada desde el primer
+commit de esta slice, ver más abajo "Corrección de diseño encontrada y aplicada ANTES del primer
+commit") para que nunca se vuelva visible sin borrar la fila. Un `>` estricto rechaza ese estado
+legítimo. Corregido a `>=`: sigue atrapando el bug real (un intervalo genuinamente invertido,
+`vigente_hasta < vigente_desde`) sin romper la ventana vacía intencional. Confirmado con el
+raw-SQL 23514 proof test (item 2) y con las dos corridas completas de la suite (ver abajo).
+
+**Mapeo en `ManejadorDeErrores`**: caso específico (mismo criterio que `ck_clientes_cf_protegido`,
+no el genérico por prefijo) — `23514` + `ck_precios_ventana_valida` → 400
+`vigente_desde_invalido` (mismo código de dominio que el chequeo de servicio del item 1, título
+"vigente_hasta no puede ser anterior a vigente_desde.").
+
+**Test nuevo** (`PreciosEndpointsTests.cs`):
+`UnPrecioConVigenteHastaAnteriorAVigenteDesdeViolaLaCheckConstraint` — INSERT crudo por SQL con
+`vigente_hasta = now() - 1 día`, `vigente_desde = now()` (intervalo genuinamente invertido),
+bypasseando `ServicioDePrecios` por completo; asserts `SqlState == "23514"` y
+`ConstraintName == "ck_precios_ventana_valida"`.
+
+`dotnet ef migrations has-pending-model-changes` limpio tras la migración.
+
+### Item 3 — Wording + discoverability (SUGGESTIONS)
+
+- (a) Los dos doc-comments "antes de leer nada" (`ServicioDePrecios.TomarLockDelParAsync` y el
+  comentario espejo en `ManejadorDeErrores.ClasificarUnicidad`, rama `_vigente`) pasaron a "antes
+  de leer nada de precios" — precisión: el lock/orden de lectura es específico de `precios`, no
+  una afirmación general sobre cualquier lectura del sistema.
+- (b) `PreciosEndpointsTests.ProgramarUnSegundoPrecioPendienteSinConfirmarDevuelve409YConConfirmarReemplaza`
+  ganó un párrafo en su doc-comment documentando su rol dual: también es la guarda de regresión de
+  la exclusión por id en `BuscarPredecesorAsync` (judgment-day ronda 1, item 1) — el caso "primer
+  precio del par es directamente un programado, sin predecesor real" donde, sin la exclusión, la
+  pendiente recién cerrada matchearía como su propio predecesor.
+
+### Build/test results (judgment-day ronda 2 batch, run twice)
+
+| Suite | Run 1 | Run 2 |
+|---|---|---|
+| `Ways.Domain.Tests` | 86/86 | 86/86 |
+| `Ways.Application.Tests` | 170/170 | 170/170 |
+| `Ways.IntegrationTests` (real Postgres, Testcontainers) | 195/195 | 195/195 |
+
+195 = baseline 193 (ronda 1, ver abajo) + 2 nuevos (`ReemplazarUnaPendienteConUnaFechaAnteriorAlPredecesorRechazaCon400SinTocarNada`,
+`UnPrecioConVigenteHastaAnteriorAVigenteDesdeViolaLaCheckConstraint`). Build clean (0 warnings, 0
+errors), ambas corridas idénticas, sin flakes. Los 2 tests nuevos además verificados estables en 3
+corridas aisladas adicionales.
+
+### Commits (work-unit, migración en su propio commit)
+
+1. `feat(persistencia): agregar ck_precios_ventana_valida como backstop de intervalos invertidos` —
+   `PrecioConfiguration`, migración `PreciosVentanaValida` + designer + snapshot.
+2. `fix(precios): validar el limite del predecesor antes de reabrirlo en un reemplazo pendiente` —
+   `ServicioDePrecios.AbrirNuevoPrecioAsync`/`BuscarPredecesorAsync`, mapeo 23514 en
+   `ManejadorDeErrores`, tests nuevos, fixes de wording (item 3).
+
+---
+
 ## Slice 3 — judgment-day ronda 1: fixes aplicados
 
 Dos jueces ciegos convergieron (money-path code, motor de precios) — 1 CRITICAL con 2 modos de

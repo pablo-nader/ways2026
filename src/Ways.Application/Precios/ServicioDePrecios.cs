@@ -120,6 +120,29 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
                         400);
                 }
 
+                // (judgment-day ronda 2, item 1) Chequeo SIMÉTRICO al de arriba, pero contra el
+                // PREDECESOR en vez de contra la fila activa: si `fila` es pendiente, buscamos
+                // ANTES de tocar nada quién es su predecesor (la fila cuyo vigente_hasta coincide
+                // con el vigente_desde original de `fila`) y rechazamos si la fecha nueva cae en
+                // o antes del inicio de ESE predecesor — mismo criterio de "no anterior al inicio
+                // de la fila que se está por afectar" que el chequeo de la fila activa, aplicado
+                // un nivel más atrás. Sin esto, ReabrirLimiteDelPredecesorAsync re-cerraba el
+                // predecesor con un límite ANTERIOR a su propio inicio, invirtiendo su intervalo
+                // (vigente_hasta < vigente_desde) — silencioso hasta la constraint de esquema
+                // (ck_precios_ventana_valida), que acá se adelanta con un 400 claro y sin tocar
+                // ninguna fila.
+                FilaVigente? predecesor = esPendiente
+                    ? await BuscarPredecesorAsync(idArticulo, idListaPrecio, idTenant, fila.Id, fila.VigenteDesde, ct)
+                    : null;
+
+                if (predecesor is { } pred && vigenteDesdeEfectivo <= pred.VigenteDesde)
+                {
+                    throw new ErrorDominio(
+                        "vigente_desde_invalido",
+                        "vigente_desde no puede ser anterior o igual al del precio predecesor.",
+                        400);
+                }
+
                 // Reemplazo de una fila PENDIENTE: se cierra en su PROPIO vigente_desde (ventana
                 // vacía, vigente_hasta == vigente_desde), no en el vigente_desde de la fila
                 // nueva. Si se cerrara ahí, un reemplazo con una fecha nueva POSTERIOR a la
@@ -134,7 +157,7 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
 
                 await CerrarFilaAsync(fila.Id, vigenteHastaDeLaFilaCerrada, ahora, ct);
 
-                if (esPendiente)
+                if (predecesor is { } predecesorAReabrir)
                 {
                     // (judgment-day, item 1) El PREDECESOR — la fila que se cerró originalmente
                     // al abrirse `fila` (su vigente_hasta == fila.VigenteDesde) — queda con un
@@ -143,9 +166,11 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
                     // en el rango entre ambas fechas — el historial miente); una fecha nueva
                     // POSTERIOR produce un HUECO (ningún precio vigente en ese rango). Se
                     // re-cierra al vigente_desde EFECTIVO de la fila nueva — mismo criterio que
-                    // la fila ACTIVA usa arriba para su propio cierre.
-                    await ReabrirLimiteDelPredecesorAsync(
-                        idArticulo, idListaPrecio, idTenant, fila.Id, fila.VigenteDesde, vigenteDesdeEfectivo, ahora, ct);
+                    // la fila ACTIVA usa arriba para su propio cierre. El chequeo simétrico de
+                    // arriba ya garantizó que `vigenteDesdeEfectivo` es estrictamente posterior
+                    // al inicio de este predecesor, así que el intervalo resultante nunca se
+                    // invierte.
+                    await CerrarFilaAsync(predecesorAReabrir.Id, vigenteDesdeEfectivo, ahora, ct);
                 }
             }
 
@@ -368,7 +393,7 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         (idTenant, unchecked((idArticulo * 397) ^ idListaPrecio));
 
     /// <summary><c>pg_advisory_xact_lock</c> con alcance de TRANSACCIÓN (se libera solo al
-    /// COMMIT/ROLLBACK) tomado ANTES de leer nada (judgment-day, item 2) — a diferencia del
+    /// COMMIT/ROLLBACK) tomado ANTES de leer nada de precios (judgment-day, item 2) — a diferencia del
     /// viejo <c>SELECT ... FOR UPDATE</c> sobre la fila mutable (que no existía para lockear
     /// cuando el par no tenía ninguna fila abierta todavía), esto serializa CUALQUIER escritura
     /// concurrente sobre el mismo par, exista o no una fila abierta: el segundo llamador espera
@@ -424,31 +449,33 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         return new FilaVigente(lector.GetInt32(0), lector.GetFieldValue<DateTimeOffset>(1));
     }
 
-    /// <summary>(judgment-day, item 1) Localiza el PREDECESOR de una fila pendiente reemplazada
-    /// — la fila cuyo <c>vigente_hasta</c> coincide EXACTO con <paramref name="limiteOriginal"/>
-    /// (el <c>vigente_desde</c> original de la pendiente, antes del reemplazo) — y la re-cierra
-    /// en <paramref name="nuevoLimite"/> (el <c>vigente_desde</c> efectivo de la fila nueva). Si
-    /// no hay predecesor (la pendiente reemplazada era el primer precio del par) no hay nada que
-    /// corregir.
+    /// <summary>(judgment-day, item 1; ronda 2, item 1) Localiza el PREDECESOR de una fila
+    /// pendiente que está por reemplazarse — la fila cuyo <c>vigente_hasta</c> coincide EXACTO
+    /// con <paramref name="limiteOriginal"/> (el <c>vigente_desde</c> original de la pendiente,
+    /// antes del reemplazo). Devuelve <c>null</c> si no hay predecesor (la pendiente reemplazada
+    /// era el primer precio del par) — nada que validar ni re-cerrar.
+    ///
+    /// Solo BUSCA: el caller (<see cref="AbrirNuevoPrecioAsync"/>) valida el límite nuevo contra
+    /// <see cref="FilaVigente.VigenteDesde"/> ANTES de cerrar cualquier fila (ronda 2, item 1) —
+    /// separar la búsqueda del cierre es lo que permite ese orden: sin esto, el cierre del
+    /// predecesor ocurría a ciegas, sin chance de rechazar un límite inválido antes de escribir.
     ///
     /// <paramref name="idFilaPendienteCerrada"/> se EXCLUYE explícitamente de la búsqueda —
     /// cuando el reemplazo cierra la pendiente en su ventana muerta (<c>vigente_hasta ==
     /// vigente_desde == limiteOriginal</c>, ver el caller), esa MISMA fila también matchea
-    /// <c>vigente_hasta = limiteOriginal</c>. Sin esta exclusión, la pendiente recién cerrada se
-    /// re-abre a sí misma en <paramref name="nuevoLimite"/> — el bug encontrado corriendo el
-    /// caso "primer precio del par es directamente un programado, sin predecesor real": la
-    /// pendiente reemplazada se volvía visible en la ventana intermedia en vez de quedar
-    /// muerta.</summary>
-    private async Task ReabrirLimiteDelPredecesorAsync(
+    /// <c>vigente_hasta = limiteOriginal</c>. Sin esta exclusión, la pendiente recién cerrada
+    /// aparecería como su propio predecesor — el bug encontrado corriendo el caso "primer precio
+    /// del par es directamente un programado, sin predecesor real".</summary>
+    private async Task<FilaVigente?> BuscarPredecesorAsync(
         int idArticulo, int idListaPrecio, int idTenant, int idFilaPendienteCerrada, DateTimeOffset limiteOriginal,
-        DateTimeOffset nuevoLimite, DateTimeOffset ahora, CancellationToken ct)
+        CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
         comando.CommandText =
-            "SELECT id_precio FROM precios " +
+            "SELECT id_precio, vigente_desde FROM precios " +
             "WHERE id_articulo = $1 AND id_lista_precio = $2 AND id_tenant = $3 " +
             "AND vigente_hasta = $4 AND id_precio != $5 AND deleted_at IS NULL";
 
@@ -458,12 +485,14 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         AgregarParametro(comando, limiteOriginal);
         AgregarParametro(comando, idFilaPendienteCerrada);
 
-        var idPredecesor = (int?)await comando.ExecuteScalarAsync(ct);
+        await using var lector = await comando.ExecuteReaderAsync(ct);
 
-        if (idPredecesor is { } id)
+        if (!await lector.ReadAsync(ct))
         {
-            await CerrarFilaAsync(id, nuevoLimite, ahora, ct);
+            return null;
         }
+
+        return new FilaVigente(lector.GetInt32(0), lector.GetFieldValue<DateTimeOffset>(1));
     }
 
     private async Task CerrarFilaAsync(int idPrecio, DateTimeOffset vigenteHasta, DateTimeOffset ahora, CancellationToken ct)
