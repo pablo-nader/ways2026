@@ -29,6 +29,12 @@ public class ArticuloEmpresaConfiguration : IEntityTypeConfiguration<ArticuloEmp
         builder.HasIndex(ae => ae.IdTenant).HasDatabaseName("ix_articulos_empresas_tenant");
         builder.HasIndex(ae => new { ae.IdEmpresa, ae.IdTenant }).HasDatabaseName("ix_articulos_empresas_empresa");
 
+        // Nombre explícito en snake_case (doc 10): sin esto, EF nombra el índice de soporte
+        // de fk_articulos_empresas_articulo con su convención propia
+        // (IX_articulos_empresas_id_articulo_id_tenant, PascalCase) — mismo fix que el resto
+        // de las FKs compuestas de esta etapa (ver ArticuloConfiguration).
+        builder.HasIndex(ae => new { ae.IdArticulo, ae.IdTenant }).HasDatabaseName("ix_articulos_empresas_articulo");
+
         builder.HasOne<Tenant>()
             .WithMany()
             .HasForeignKey(ae => ae.IdTenant)
