@@ -52,6 +52,11 @@ export function Layout() {
                       </NavLink>
                     </li>
                     <li className="nav-item">
+                      <NavLink className="nav-link" to="/articulos">
+                        Artículos
+                      </NavLink>
+                    </li>
+                    <li className="nav-item">
                       <NavLink className="nav-link" to="/listas-precio">
                         Listas de precio
                       </NavLink>
