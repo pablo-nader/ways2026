@@ -320,6 +320,23 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
         return new CodigoBarraListado(codigoBarra.Id, codigoBarra.IdArticulo, codigoBarra.Codigo, codigoBarra.Activo);
     }
 
+    /// <summary>Lista los códigos de barra activos del artículo (spec: Barcode Add/Remove
+    /// Management) — el filtro global <c>BajaLogica</c> ya deja afuera los dados de baja, sin
+    /// necesitar un <c>Where</c> explícito por <c>Activo</c>/<c>DeletedAt</c>. ADR-8: mismo 404
+    /// uniforme que <see cref="AgregarCodigoBarraAsync"/>/<see cref="EliminarCodigoBarraAsync"/>
+    /// si el artículo no existe o es de otro tenant.</summary>
+    public async Task<IReadOnlyList<CodigoBarraListado>> ListarCodigosBarraAsync(
+        int idArticulo, CancellationToken ct = default)
+    {
+        await BuscarAsync(idArticulo, ct);
+
+        return await db.CodigosBarra
+            .Where(c => c.IdArticulo == idArticulo)
+            .OrderBy(c => c.Id)
+            .Select(c => new CodigoBarraListado(c.Id, c.IdArticulo, c.Codigo, c.Activo))
+            .ToListAsync(ct);
+    }
+
     /// <summary>Baja lógica del código de barras — deja el código reutilizable después
     /// (índice parcial <c>WHERE deleted_at IS NULL</c>), mismo criterio que la baja de
     /// <c>cuit</c> en <see cref="Proveedores.ServicioDeProveedores"/>.</summary>

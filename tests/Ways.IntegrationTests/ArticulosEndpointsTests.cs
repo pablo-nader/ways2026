@@ -325,6 +325,31 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(articulo.Nombre, articuloTrasBaja!.Nombre);
     }
 
+    /// <summary>Spec: Barcode Add/Remove Management — el GET expone los códigos activos
+    /// persistidos (incluidos los cargados en un request anterior, no solo en la sesión de
+    /// cliente actual) y excluye los dados de baja, mismo filtro <c>BajaLogica</c> que el
+    /// resto del ABM.</summary>
+    [Fact]
+    public async Task ListarCodigosDeBarraDevuelveLosActivosYExcluyeLosDadosDeBaja()
+    {
+        var (_, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ListarCodigosDeBarraDevuelveLosActivosYExcluyeLosDadosDeBaja));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+        var codigoUno = await AgregarCodigoBarraAsync(admin, articulo.Id, "7791111111111");
+        var codigoDos = await AgregarCodigoBarraAsync(admin, articulo.Id, "7792222222222");
+
+        var baja = await admin.DeleteAsync($"/api/articulos/{articulo.Id}/codigos-barra/{codigoUno.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+
+        var listado = await admin.GetFromJsonAsync<List<CodigoBarraListado>>($"/api/articulos/{articulo.Id}/codigos-barra");
+
+        Assert.NotNull(listado);
+        Assert.DoesNotContain(listado!, c => c.Id == codigoUno.Id);
+        Assert.Contains(listado, c => c.Id == codigoDos.Id && c.Codigo == "7792222222222");
+    }
+
     // ---- task 2.10: disponibilidad ---------------------------------------------------------
 
     /// <summary>Spec: Default-true articulo is visible to a later empresa.</summary>
@@ -635,6 +660,39 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
+    /// <summary>ADR-8: mismo 404 uniforme que <see cref="AgregarCodigoBarraAUnArticuloInexistenteDevuelve404"/>,
+    /// para el GET de listado.</summary>
+    [Fact]
+    public async Task ListarCodigosDeBarraDeUnArticuloInexistenteDevuelve404()
+    {
+        var (_, _, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ListarCodigosDeBarraDeUnArticuloInexistenteDevuelve404));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var respuesta = await admin.GetAsync("/api/articulos/999999/codigos-barra");
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    /// <summary>ADR-8: mismo 404 uniforme que <see cref="AgregarCodigoBarraAUnArticuloDeOtroTenantDevuelve404"/>,
+    /// para el GET de listado.</summary>
+    [Fact]
+    public async Task ListarCodigosDeBarraDeUnArticuloDeOtroTenantDevuelve404()
+    {
+        var (_, idAreaA, idAlicuotaIvaA, mailAdminA, passwordAdminA) =
+            await AprovisionarTenantAsync(nameof(ListarCodigosDeBarraDeUnArticuloDeOtroTenantDevuelve404) + "-A");
+        var (_, _, _, mailAdminB, passwordAdminB) =
+            await AprovisionarTenantAsync(nameof(ListarCodigosDeBarraDeUnArticuloDeOtroTenantDevuelve404) + "-B");
+
+        using var adminA = await ClienteLogueadoAsync(mailAdminA, passwordAdminA);
+        var articuloDeA = await CrearArticuloAsync(adminA, idAreaA, idAlicuotaIvaA);
+
+        using var adminB = await ClienteLogueadoAsync(mailAdminB, passwordAdminB);
+        var respuesta = await adminB.GetAsync($"/api/articulos/{articuloDeA.Id}/codigos-barra");
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
     // ---- task 2.12: ABM round trip + autorización ------------------------------------------
 
     [Fact]
@@ -679,6 +737,25 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
 
         var respuesta = await vendedor.PostAsJsonAsync(
             $"/api/articulos/{articulo.Id}/codigos-barra", new AltaCodigoBarra("7791234567890"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    /// <summary>Mismo criterio que <see cref="UnVendedorNoPuedeAgregarCodigosDeBarra"/>, para
+    /// el GET de listado: toda la ruta cuelga del mismo grupo con la policy
+    /// <c>GestionDeCatalogo</c> (admin-only).</summary>
+    [Fact]
+    public async Task UnVendedorNoPuedeListarCodigosDeBarra()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnVendedorNoPuedeListarCodigosDeBarra));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorNoPuedeListarCodigosDeBarra));
+        using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
+
+        var respuesta = await vendedor.GetAsync($"/api/articulos/{articulo.Id}/codigos-barra");
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
