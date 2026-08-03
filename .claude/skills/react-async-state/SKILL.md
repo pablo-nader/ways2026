@@ -61,6 +61,17 @@ where five judgment-day rounds each found a new variant of the same defect class
    remounts and resets caches, drafts and suggestions. Caches keyed by a shared
    dimension (e.g. lista id) leak across entities without this.
 
+9. **Block supersede-during-write; don't token-reconcile it.**
+   While a WRITE is outstanding, disable every action that could supersede it
+   (open-other-row, new, delete — not just the submit button). Trying to make
+   supersede-during-save safe via token reconciliation mutated the bug across
+   four consecutive review rounds (stale finally, same-row re-open, failed
+   supersede leaving a resubmittable create, delete resurrection). Blocking the
+   window kills the whole class; tokens remain for READ staleness only.
+   Handlers also get a first-line re-entrancy guard (`if (ocupado) return`) —
+   a same-tick double click beats the `disabled` attribute re-render.
+   Rethrows that signal failure to a caller are generation-gated like setters.
+
 ## Decision Gates
 
 | Situation | Action |
