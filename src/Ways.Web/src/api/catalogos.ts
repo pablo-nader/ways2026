@@ -19,10 +19,13 @@ import type {
   CondicionFiscalListado,
   GrupoAlta,
   GrupoListado,
+  ListaPrecioAlta,
+  ListaPrecioListado,
   MarcaAlta,
   MarcaListado,
   MedioPagoAlta,
   MedioPagoListado,
+  ModoLista,
   TipoComprobanteListado,
 } from './tipos'
 import { COMPORTAMIENTOS_MEDIO_PAGO } from './tipos'
@@ -41,6 +44,16 @@ export type CampoDescriptor = {
   /** Se muestra también como columna extra en la tabla de listado, no solo en el formulario. */
   columnaEnListado?: boolean
   formatearListado?: (item: unknown) => string
+  /** stage-3-articulos-y-precios (Slice 6): campo condicional a otro campo del mismo
+   * formulario — se oculta (no solo se deshabilita) cuando el predicado da `false`, así un
+   * campo `requerido` oculto no bloquea el envío. Único uso hoy: `idListaBase`/`porcentaje`
+   * solo aplican cuando `modo = Derivada`. */
+  visibleSi?: (valores: Record<string, ValorDeCampo>) => boolean
+  /** stage-3-articulos-y-precios (Slice 6): alternativa a `opciones` estáticas — arma las
+   * opciones del select a partir del listado que la pantalla ya tiene cargado (el selector de
+   * lista base ofrece las demás listas de la misma pantalla, no un catálogo aparte). El
+   * descriptor concreto hace el cast desde `unknown[]` a su propio `TListado`. */
+  opcionesDesdeListado?: (items: unknown[], idActual: number | null) => { valor: string; etiqueta: string }[]
 }
 
 export type DescriptorDeCatalogo<TListado extends CatalogoListado, TAlta> = {
@@ -190,6 +203,71 @@ export const descriptorCategorias: DescriptorDeCatalogo<CategoriaListado, Catego
   valoresPorDefecto: {},
   aValores: () => ({}),
   aAlta: (nombre, activo) => ({ nombre, idEmpresa: null, activo, orden: 1, idCategoriaPadre: null }),
+}
+
+/**
+ * stage-3-articulos-y-precios (Slice 6, design: ABM Composition): `listas_precio` reusa la
+ * máquina genérica igual que `descriptorCategorias`, con ruta propia (`/listas-precio`, no
+ * `/catalogos/:recurso`) — mismo criterio que `categorias`, no se agrega a
+ * `DESCRIPTORES_DE_CATALOGO`. `idListaBase`/`porcentaje` solo aplican en modo `Derivada`
+ * (`visibleSi`); el swap de `esDefault` y las guardas de modo/desactivación las valida el
+ * servidor — esta pantalla solo muestra el mensaje que devuelve (`ErrorApi.message`).
+ */
+export const descriptorListasPrecio: DescriptorDeCatalogo<ListaPrecioListado, ListaPrecioAlta> = {
+  recurso: 'listas-precio',
+  titulo: 'Listas de precio',
+  tituloSingular: 'lista de precio',
+  campos: [
+    { clave: 'esDefault', etiqueta: 'Lista default', tipo: 'booleano', columnaEnListado: true },
+    {
+      clave: 'modo',
+      etiqueta: 'Modo',
+      tipo: 'select',
+      requerido: true,
+      columnaEnListado: true,
+      opciones: [
+        { valor: 'Fija', etiqueta: 'Fija' },
+        { valor: 'Derivada', etiqueta: 'Derivada (calculada sobre otra lista)' },
+      ],
+    },
+    {
+      clave: 'idListaBase',
+      etiqueta: 'Lista base',
+      tipo: 'select',
+      requerido: true,
+      visibleSi: (valores) => valores.modo === 'Derivada',
+      opcionesDesdeListado: (items, idActual) =>
+        (items as ListaPrecioListado[])
+          .filter((item) => item.activo && item.modo === 'Fija' && item.id !== idActual)
+          .map((item) => ({ valor: String(item.id), etiqueta: item.nombre })),
+    },
+    {
+      clave: 'porcentaje',
+      etiqueta: 'Porcentaje sobre la base (%)',
+      tipo: 'numeroDecimal',
+      requerido: true,
+      visibleSi: (valores) => valores.modo === 'Derivada',
+    },
+  ],
+  valoresPorDefecto: { esDefault: false, modo: 'Fija', idListaBase: '', porcentaje: '' },
+  aValores: (item) => ({
+    esDefault: item.esDefault,
+    modo: item.modo,
+    idListaBase: item.idListaBase === null ? '' : String(item.idListaBase),
+    porcentaje: item.porcentaje === null ? '' : String(item.porcentaje),
+  }),
+  aAlta: (nombre, activo, valores) => {
+    const esDerivada = valores.modo === 'Derivada'
+    return {
+      nombre,
+      idEmpresa: null,
+      activo,
+      esDefault: Boolean(valores.esDefault),
+      modo: (valores.modo as ModoLista) ?? 'Fija',
+      idListaBase: esDerivada ? numeroOVacio(valores.idListaBase) : null,
+      porcentaje: esDerivada ? numeroOVacio(valores.porcentaje) : null,
+    }
+  },
 }
 
 // --- Catálogos fiscales (globales, solo lectura — ADR-11, gate #4) ---

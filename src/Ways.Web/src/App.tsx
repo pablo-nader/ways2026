@@ -9,12 +9,14 @@ import { Empresas } from './paginas/Empresas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
 import { NuevoTenant } from './paginas/NuevoTenant'
+import { PaginaCatalogo } from './paginas/PaginaCatalogo'
 import { Parametros } from './paginas/Parametros'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
 import { Tenants } from './paginas/Tenants'
 import { Usuarios } from './paginas/Usuarios'
+import { descriptorListasPrecio } from './api/catalogos'
 import { ROL } from './api/tipos'
 
 export function App() {
@@ -64,6 +66,18 @@ export function App() {
               }
             />
 
+            {/* stage-3-articulos-y-precios (Slice 6, design: ABM Composition): ruta propia
+                (no /catalogos/:recurso) — reusa la máquina genérica directamente, mismo
+                criterio que /catalogos/categorias, para no competir con el switch de
+                RutaCatalogo ni con GET /api/listas-precio (selector de solo lectura, stage 2). */}
+            <Route
+              path="/listas-precio"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <PaginaCatalogo definicion={descriptorListasPrecio} />
+                </RutaProtegida>
+              }
+            />
             {/* Escape hatch de ADR-11: árbol propio, no la máquina genérica. react-router
                 prioriza segmentos literales sobre ":recurso" sin importar el orden de
                 declaración, pero queda declarada antes por legibilidad. */}

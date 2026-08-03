@@ -303,6 +303,27 @@ export type EdicionCliente = AltaCliente
  * (design decision 1, spec: listas_precio ABM Is Out of Scope This Stage). */
 export type ListaPrecioAsignable = { id: number; nombre: string; esDefault: boolean }
 
+// --- Listas de precio (stage-3-articulos-y-precios, Slice 4/6): ABM completo, ambos modos ---
+
+export type ModoLista = 'Fija' | 'Derivada'
+
+export type ListaPrecioListado = CatalogoListado & {
+  esDefault: boolean
+  modo: ModoLista
+  idListaBase: number | null
+  porcentaje: number | null
+}
+
+export type ListaPrecioAlta = {
+  nombre: string
+  idEmpresa: number | null
+  esDefault: boolean
+  modo: ModoLista
+  idListaBase: number | null
+  porcentaje: number | null
+  activo: boolean
+}
+
 // --- Proveedores (stage-2-clientes-proveedores) ---
 // Entidad dedicada, no la máquina genérica de catálogos (design decision 1): dedupe por `cuit`
 // tenant-wide (partial index, NULL permitido y no comparado), no por nombre/empresa-par.

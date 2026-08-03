@@ -140,6 +140,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
             campos={campos}
             tituloSingular={tituloSingular}
             guardando={guardando}
+            items={items}
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={() => setFormulario(null)}
@@ -214,6 +215,16 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   )
 }
 
+/** Resuelve la etiqueta de un valor seleccionado que ya no está entre las opciones vigentes
+ * del select (p. ej. la lista base de una `Derivada` fue desactivada después, o quedó fuera
+ * de `items` porque "Incluir inactivos" está apagado). Evita que el `<select>` controlado
+ * quede con un valor sin `<option>` que lo respalde. */
+function etiquetaParaValorFaltante(valorActual: string, items: unknown[]): string {
+  const item = (items as CatalogoListado[]).find((i) => String(i.id) === valorActual)
+  if (!item) return `Opción no disponible (${valorActual})`
+  return item.activo ? item.nombre : `${item.nombre} (inactiva)`
+}
+
 function formatearValorDeColumna(campo: CampoDescriptor, valor: ValorDeCampo | undefined) {
   if (campo.tipo === 'booleano') return valor ? 'Sí' : 'No'
   if (campo.tipo === 'select') {
@@ -227,6 +238,7 @@ function FormularioCatalogo({
   campos,
   tituloSingular,
   guardando,
+  items,
   onCambio,
   onGuardar,
   onCancelar,
@@ -235,11 +247,13 @@ function FormularioCatalogo({
   campos: CampoDescriptor[]
   tituloSingular: string
   guardando: boolean
+  items: unknown[]
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
 }) {
   const esNuevo = valor.id === null
+  const camposVisibles = campos.filter((campo) => !campo.visibleSi || campo.visibleSi(valor.valores))
 
   function cambiarValorPropio(clave: string, nuevo: ValorDeCampo) {
     onCambio({ ...valor, valores: { ...valor.valores, [clave]: nuevo } })
@@ -272,48 +286,61 @@ function FormularioCatalogo({
         />
       </div>
 
-      {campos.map((campo) => (
-        <div className="col-md-3" key={campo.clave}>
-          <label className="form-label" htmlFor={`f-${campo.clave}`}>
-            {campo.etiqueta}
-          </label>
-          {campo.tipo === 'booleano' ? (
-            <div className="form-check pt-2">
+      {camposVisibles.map((campo) => {
+        const opciones = campo.opcionesDesdeListado ? campo.opcionesDesdeListado(items, valor.id) : (campo.opciones ?? [])
+        const valorActual = String(valor.valores[campo.clave] ?? '')
+        const opcionFaltante =
+          campo.tipo === 'select' && valorActual !== '' && !opciones.some((o) => o.valor === valorActual)
+            ? { valor: valorActual, etiqueta: etiquetaParaValorFaltante(valorActual, items) }
+            : null
+
+        return (
+          <div className="col-md-3" key={campo.clave}>
+            <label className="form-label" htmlFor={`f-${campo.clave}`}>
+              {campo.etiqueta}
+            </label>
+            {campo.tipo === 'booleano' ? (
+              <div className="form-check pt-2">
+                <input
+                  id={`f-${campo.clave}`}
+                  type="checkbox"
+                  className="form-check-input"
+                  checked={Boolean(valor.valores[campo.clave])}
+                  onChange={(e) => cambiarValorPropio(campo.clave, e.target.checked)}
+                />
+              </div>
+            ) : campo.tipo === 'select' ? (
+              <select
+                id={`f-${campo.clave}`}
+                className="form-select rounded-0"
+                value={valorActual}
+                onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
+                required={campo.requerido}
+              >
+                {valorActual === '' && <option value="">— Elegí una opción —</option>}
+                {opcionFaltante && (
+                  <option value={opcionFaltante.valor}>{opcionFaltante.etiqueta}</option>
+                )}
+                {opciones.map((o) => (
+                  <option key={o.valor} value={o.valor}>
+                    {o.etiqueta}
+                  </option>
+                ))}
+              </select>
+            ) : (
               <input
                 id={`f-${campo.clave}`}
-                type="checkbox"
-                className="form-check-input"
-                checked={Boolean(valor.valores[campo.clave])}
-                onChange={(e) => cambiarValorPropio(campo.clave, e.target.checked)}
+                type="number"
+                step={campo.tipo === 'numeroDecimal' ? '0.01' : '1'}
+                className="form-control rounded-0"
+                value={valorActual}
+                onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
+                required={campo.requerido}
               />
-            </div>
-          ) : campo.tipo === 'select' ? (
-            <select
-              id={`f-${campo.clave}`}
-              className="form-select rounded-0"
-              value={String(valor.valores[campo.clave] ?? '')}
-              onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
-              required={campo.requerido}
-            >
-              {(campo.opciones ?? []).map((o) => (
-                <option key={o.valor} value={o.valor}>
-                  {o.etiqueta}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              id={`f-${campo.clave}`}
-              type="number"
-              step={campo.tipo === 'numeroDecimal' ? '0.01' : '1'}
-              className="form-control rounded-0"
-              value={String(valor.valores[campo.clave] ?? '')}
-              onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
-              required={campo.requerido}
-            />
-          )}
-        </div>
-      ))}
+            )}
+          </div>
+        )
+      })}
 
       <div className="col-md-2">
         <label className="form-label" htmlFor="f-activo">
