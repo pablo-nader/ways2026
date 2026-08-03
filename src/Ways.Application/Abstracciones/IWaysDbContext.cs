@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 
@@ -37,6 +39,19 @@ public interface IWaysDbContext
     DbSet<Proveedor> Proveedores { get; }
     DbSet<ListaPrecio> ListasPrecio { get; }
     DbSet<NumeracionCliente> NumeracionesClientes { get; }
+
+    // stage-3-articulos-y-precios, Slice 2: primer consumidor de Application de estos 5 —
+    // ServicioDeArticulos (articulos/codigos_barra/articulos_empresas) y
+    // ServicioDeArticulos.SugerirPrecioAsync (precios, solo lectura esta slice; el alta real
+    // vive en ServicioDePrecios, Slice 3). NumeracionesArticulos NO se expone: su único
+    // escritor legítimo (AsignadorDeCodigoInternoArticulo) recibe el WaysDbContext concreto
+    // por parámetro, no a través de esta interfaz — mismo criterio que NumeracionesClientes
+    // arriba, que sí está expuesto porque InicializadorDeBaseDeDatos lo consume vía esta
+    // interfaz para su backfill (caso que Articulo no tiene, al ser additive-only).
+    DbSet<Articulo> Articulos { get; }
+    DbSet<CodigoBarra> CodigosBarra { get; }
+    DbSet<ArticuloEmpresa> ArticulosEmpresas { get; }
+    DbSet<Precio> Precios { get; }
 
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>
