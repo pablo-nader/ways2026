@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Articulos } from './Articulos'
@@ -106,6 +106,8 @@ describe('Articulos — reseteo de estado por artículo (key de FormularioArticu
     await userEvent.click(within(filaDos).getByRole('button', { name: 'Editar' }))
     await screen.findByText('Editando artículo A0002')
 
-    expect(screen.queryByText(/Precio sugerido a partir de costo y margen/)).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByText(/Precio sugerido a partir de costo y margen/)).not.toBeInTheDocument()
+    })
   })
 })
