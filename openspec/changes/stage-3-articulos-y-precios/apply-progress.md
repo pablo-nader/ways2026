@@ -149,6 +149,96 @@ Slice 2 is complete and runtime-verified. Judgment-day (dual blind review) runs 
 solo-dev PR protocol, before this PR is created. Slice 3 (`precios` — history engine) starts
 only after Slice 2's PR merges.
 
+## Slice 2 — judgment-day ronda 1: fixes aplicados
+
+Dos CRITICAL confirmados por AMBOS jueces ciegos, con la MISMA causa raíz. Un tercer hallazgo
+confirmado (dedup) y un batch de sugerencias de higiene. Todo corregido en el mismo ciclo, sin
+cambios de esquema.
+
+### Root cause (items 1+2, un solo fix)
+
+`ReglaDeArticulos.ValidarRestriccionDeDisponibilidad` validaba la TRANSICIÓN
+(`disponibleParaTodasActual && !disponibleParaTodasNuevo`), no el ESTADO RESULTANTE. Un
+artículo YA restringido (`disponible_para_todas = false`) que se volvía a guardar con
+`IdsEmpresas` en `null` (edición false -> false, sin cambiar el flag) esquivaba el guard —
+`pasaDeDisponibleATodasARestringido` daba `false && true = false` — y reventaba más abajo, en
+`ServicioDeArticulos.ExigirEmpresasValidasAsync`, con un `NullReferenceException` sin traducir
+(500 crudo) al iterar `datos.IdsEmpresas!` nulo.
+
+**Fix**: `ValidarRestriccionDeDisponibilidad(bool disponibleParaTodasNuevo, int
+cantidadDeFilasSubset)` — perdió el parámetro `disponibleParaTodasActual` y ahora dispara
+siempre que el estado NUEVO sea `false` con `cantidadDeFilasSubset == 0`, sin importar el
+estado anterior. Código de dominio renombrado de `disponibilidad_restriccion_sin_subset` a
+`subset_de_empresas_requerido` (más específico sobre qué falta). `IdsEmpresas: null` y
+`IdsEmpresas: []` ahora dan el mismo 400 — ninguno de los dos casos llega a
+`ExigirEmpresasValidasAsync`/al `RemoveRange` del subset existente, porque la excepción se
+dispara ANTES en el método (ni siquiera se llega a tocar `ArticulosEmpresas`), así que un PUT
+rechazado nunca borra el subset vigente.
+
+- `src/Ways.Domain/Articulos/ReglaDeArticulos.cs` — firma nueva, doc-comment reescrito
+  documentando la causa raíz.
+- `src/Ways.Application/Articulos/ServicioDeArticulos.cs` (`CrearAsync`/`ActualizarAsync`) —
+  llamadas actualizadas al nuevo shape.
+- Item 2 (companion): `ObtenerAsync` ahora expone el subset actual en el DTO
+  (`ArticuloListado.IdsEmpresas`, vacío cuando `DisponibleParaTodas = true`) — un cliente HTTP
+  puede releer el detalle y reenviarlo tal cual sin perder el subset. `ListarAsync` deja el
+  campo vacío por fila a propósito (evita un N+1 de una query por artículo listado);
+  `CrearAsync`/`ActualizarAsync` también lo completan porque ya conocen el subset resuelto de
+  la operación.
+
+### Item 3 — Dedup de `IdsEmpresas`
+
+`.Distinct()` sobre la lista entrante ANTES de validar/insertar, en `CrearAsync` y
+`ActualizarAsync` — un payload `[5,5]` ahora inserta UNA sola fila, sin error. Defensa en
+profundidad: `ManejadorDeErrores` gana un mapeo `PK_articulos_empresas` (match
+case-insensitive, por la convención PascalCase por default de EF vs. el resto del esquema en
+snake_case) → 409 `empresa_duplicada_en_subset`, para cualquier duplicado que esquive el
+`.Distinct()` (p.ej. una carrera entre dos PUT concurrentes).
+
+### Item 4 — Higiene (sugerencias)
+
+- (a) `ExigirCodigoInternoDisponibleAsync` perdió el parámetro muerto `excluirId` —
+  `codigo_interno` es inmutable, el único llamador (`CrearAsync`) nunca lo necesitaba.
+- (b) Nuevo test HTTP: vendedor 403 en el DELETE de `codigos-barra` (ya existía para el POST).
+- (c) Nuevos tests HTTP: 404 cross-tenant (ADR-8) en POST y DELETE de `codigos-barra` con un
+  artículo padre de otro tenant (antes solo había un caso "no existe en absoluto", no
+  "existe pero es de otro tenant").
+
+### Tests nuevos (todos verdes)
+
+- `tests/Ways.Domain.Tests/Articulos/ReglaDeArticulosTests.cs` — reescrito a la firma nueva;
+  ganó `MantenerRestringidoSinFilasDeSubsetEsRechazado` documentando el caso que antes NO
+  lanzaba (el bug).
+- `tests/Ways.Application.Tests/Articulos/ServicioDeArticulosTests.cs` — 4 casos nuevos:
+  `EditarUnArticuloYaRestringidoConIdsEmpresasNuloEsRechazado`,
+  `EditarUnArticuloYaRestringidoConIdsEmpresasVacioEsRechazadoYNoBorraElSubset`,
+  `EditarConIdsEmpresasDuplicadosInsertaUnaSolaFila`,
+  `ObtenerUnArticuloRestringidoDevuelveSuSubsetDeEmpresas`.
+- `tests/Ways.IntegrationTests/ArticulosEndpointsTests.cs` — 4 casos nuevos:
+  `UnPutSobreUnArticuloYaRestringidoConIdsEmpresasNuloDevuelve400`,
+  `UnVendedorNoPuedeEliminarCodigosDeBarra`, `AgregarCodigoBarraAUnArticuloDeOtroTenantDevuelve404`,
+  `EliminarCodigoBarraDeUnArticuloDeOtroTenantDevuelve404`.
+
+### Build/test results (judgment-day ronda 1 batch, run twice)
+
+| Suite | Run 1 | Run 2 |
+|---|---|---|
+| `Ways.Domain.Tests` | 81/81 | 81/81 |
+| `Ways.Application.Tests` | 165/165 | 165/165 |
+| `Ways.IntegrationTests` (real Postgres) | 172/172 | 172/172 |
+
+81 = baseline 82 - 1 (`ReglaDeArticulosTests` perdió un caso redundante al perder el parámetro
+`disponibleParaTodasActual`: la vieja `AmpliarDeRestringidoATodasNuncaExigeSubset` quedó
+idéntica a `MantenerDisponibleParaTodasSinSubsetEsPermitido` sin ese parámetro, así que se
+retiró en vez de duplicarla). 165 = baseline 161 + 4 nuevos. 172 = baseline 168 + 4 nuevos.
+Build clean (0 warnings, 0 errors), ambas corridas idénticas, sin flakes.
+
+### Commit (work-unit, pendiente de listar acá tras crearlo)
+
+`fix(articulos): validar el estado resultante de disponibilidad y deduplicar el subset de
+empresas` — la ronda 1 completa de judgment-day sobre Slice 2 (items 1-4), en un solo work
+unit porque los items 1 y 2 comparten la misma causa raíz y el mismo archivo de servicio.
+
 ---
 
 ## Slice 1: Schema, Domain Foundation & Counter (PR 1) — DONE, judgment-day round 1 clean
