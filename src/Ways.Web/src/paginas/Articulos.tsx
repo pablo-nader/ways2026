@@ -210,8 +210,10 @@ export function Articulos() {
       }
       if (opciones?.relanzarError && generacionCargaRef.current === generacion) throw e
     } finally {
-      if (generacionCargaRef.current === generacion) setCargando(false)
-      cargaInicialHechaRef.current = true
+      if (generacionCargaRef.current === generacion) {
+        setCargando(false)
+        cargaInicialHechaRef.current = true
+      }
     }
   }, [])
 
@@ -474,7 +476,7 @@ export function Articulos() {
                     </td>
                   </tr>
                 ))}
-                {pagina?.items.length === 0 && (
+                {(!pagina || pagina.items.length === 0) && (
                   <tr>
                     <td colSpan={7} className="text-center text-muted py-4">
                       No hay artículos que coincidan con la búsqueda.
@@ -1092,6 +1094,7 @@ function EditorDePrecios({
   const [errorVigentes, setErrorVigentes] = useState('')
   const cargaInicialHechaRef = useRef(false)
   const generacionVigentesRef = useRef(0)
+  const generacionSugerenciaRef = useRef(0)
   const [listaExpandida, setListaExpandida] = useState<number | null>(null)
   const [historiales, setHistoriales] = useState<Record<number, HistorialDePrecio[]>>({})
   const [estados, setEstados] = useState<Record<number, EstadoDeLista>>({})
@@ -1120,8 +1123,10 @@ function EditorDePrecios({
         }
         if (opciones?.relanzarError && generacionVigentesRef.current === generacion) throw e
       } finally {
-        if (generacionVigentesRef.current === generacion) setCargandoVigentes(false)
-        cargaInicialHechaRef.current = true
+        if (generacionVigentesRef.current === generacion) {
+          setCargandoVigentes(false)
+          cargaInicialHechaRef.current = true
+        }
       }
     },
     [idArticulo],
@@ -1154,18 +1159,25 @@ function EditorDePrecios({
   }
 
   async function pedirSugerencia() {
+    if (cargandoSugerencia) return
+    // Generación: protege contra una respuesta tardía de un pedido anterior pisando una
+    // sugerencia más reciente que el usuario ya podría haber aplicado al borrador de precio.
+    const generacion = (generacionSugerenciaRef.current += 1)
     setCargandoSugerencia(true)
     setErrorSugerencia('')
     setSinSugerencia(false)
     try {
       const { precioSugerido } = await clienteDeArticulos.sugerenciaDePrecio(idArticulo)
+      if (generacionSugerenciaRef.current !== generacion) return
       setSugerencia(precioSugerido)
       setSinSugerencia(precioSugerido === null)
     } catch (e) {
-      setSugerencia(null)
-      setErrorSugerencia(e instanceof ErrorApi ? e.message : 'No se pudo calcular la sugerencia de precio.')
+      if (generacionSugerenciaRef.current === generacion) {
+        setSugerencia(null)
+        setErrorSugerencia(e instanceof ErrorApi ? e.message : 'No se pudo calcular la sugerencia de precio.')
+      }
     } finally {
-      setCargandoSugerencia(false)
+      if (generacionSugerenciaRef.current === generacion) setCargandoSugerencia(false)
     }
   }
 
@@ -1243,7 +1255,7 @@ function EditorDePrecios({
         <button
           type="button"
           className="btn btn-sm btn-outline-secondary rounded-0"
-          disabled={cargandoSugerencia}
+          disabled={cargandoSugerencia || bloqueadoPorPadre}
           onClick={pedirSugerencia}
         >
           {cargandoSugerencia ? 'Calculando…' : 'Calcular sugerencia de precio'}
