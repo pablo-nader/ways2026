@@ -2,11 +2,14 @@ using System.Linq.Expressions;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Articulos;
 using Ways.Application.Clientes;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 
@@ -46,6 +49,17 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<ListaPrecio> ListasPrecio => Set<ListaPrecio>();
     public DbSet<NumeracionCliente> NumeracionesClientes => Set<NumeracionCliente>();
 
+    // stage-3-articulos-y-precios, Slice 1 (schema/domain foundation, DB CHANGE GATE
+    // pendiente): modelo adelantado a la migración, mismo trámite que las catálogos de tenant
+    // en stage 1 — sin DbSet en IWaysDbContext todavía, ningún caso de uso de Application los
+    // consume en este lote (AsignadorDeCodigoInternoArticulo solo necesita Database/SQL crudo
+    // sobre numeraciones_articulos, no un DbSet).
+    public DbSet<Articulo> Articulos => Set<Articulo>();
+    public DbSet<CodigoBarra> CodigosBarra => Set<CodigoBarra>();
+    public DbSet<ArticuloEmpresa> ArticulosEmpresas => Set<ArticuloEmpresa>();
+    public DbSet<NumeracionArticulo> NumeracionesArticulos => Set<NumeracionArticulo>();
+    public DbSet<Precio> Precios => Set<Precio>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>
@@ -78,6 +92,8 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnTenant(modelBuilder);
         AplicarFiltroDeTenantEnUsuario(modelBuilder);
         AplicarFiltroDeTenantEnNumeracionCliente(modelBuilder);
+        AplicarFiltroDeTenantEnNumeracionArticulo(modelBuilder);
+        AplicarFiltroDeTenantEnArticuloEmpresa(modelBuilder);
     }
 
     /// <summary>
@@ -118,13 +134,14 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     private void EstamparTenant()
     {
         RechazarEscriturasDeNumeracionCliente();
+        RechazarEscriturasDeNumeracionArticulo();
 
         foreach (var entrada in ChangeTracker.Entries<EntidadTenant>())
         {
             switch (entrada.State)
             {
                 case EntityState.Added when !TenantActual.EsPlataforma:
-                    entrada.Entity.IdTenant = TenantActual.Id
+                    entrada.Property(e => e.IdTenant).CurrentValue = TenantActual.Id
                         ?? throw new InvalidOperationException(
                             "No hay tenant en contexto: no se puede insertar una fila scopeada.");
                     break;
@@ -182,6 +199,26 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
                 throw new InvalidOperationException(
                     "numeraciones_clientes solo se escribe con SQL crudo, vía " +
                     $"{nameof(AsignadorDeNumeroCliente)} — nunca por " +
+                    $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// stage-3-articulos-y-precios (design decision 6): mismo guard que
+    /// <see cref="RechazarEscriturasDeNumeracionCliente"/>, acá para
+    /// <see cref="NumeracionArticulo"/> — <see cref="AsignadorDeCodigoInternoArticulo"/> es su
+    /// único punto de escritura legítimo, con SQL crudo.
+    /// </summary>
+    private void RechazarEscriturasDeNumeracionArticulo()
+    {
+        foreach (var entrada in ChangeTracker.Entries<NumeracionArticulo>())
+        {
+            if (entrada.State is EntityState.Added or EntityState.Modified)
+            {
+                throw new InvalidOperationException(
+                    "numeraciones_articulos solo se escribe con SQL crudo, vía " +
+                    $"{nameof(AsignadorDeCodigoInternoArticulo)} — nunca por " +
                     $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
             }
         }
@@ -307,6 +344,41 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(NumeracionCliente), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(NumeracionCliente.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="NumeracionArticulo"/> no hereda de <see cref="EntidadTenant"/> (mismo motivo
+    /// que <see cref="NumeracionCliente"/>), así que necesita la variante escrita a mano.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnNumeracionArticulo(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(NumeracionArticulo))!;
+
+        var parametro = Expression.Parameter(typeof(NumeracionArticulo), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(NumeracionArticulo.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="ArticuloEmpresa"/> no hereda de <see cref="EntidadTenant"/> (task 1.4:
+    /// junction PK-only, sin baja lógica), así que el loop por convención de
+    /// <see cref="AplicarFiltroDeTenant"/> no la alcanza — necesita la misma variante escrita
+    /// a mano que <see cref="AplicarFiltroDeTenantEnNumeracionCliente"/>/
+    /// <see cref="AplicarFiltroDeTenantEnNumeracionArticulo"/>, con la diferencia de que acá SÍ
+    /// se escribe por <c>SaveChangesAsync</c> normal (no hay guard de rechazo: a diferencia de
+    /// los contadores, esta tabla no tiene un asignador atómico que proteger).
+    /// </summary>
+    private void AplicarFiltroDeTenantEnArticuloEmpresa(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(ArticuloEmpresa))!;
+
+        var parametro = Expression.Parameter(typeof(ArticuloEmpresa), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(ArticuloEmpresa.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);
