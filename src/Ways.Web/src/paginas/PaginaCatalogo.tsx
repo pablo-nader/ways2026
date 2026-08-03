@@ -4,6 +4,7 @@ import type { CampoDescriptor, DescriptorDeCatalogo, ValorDeCampo } from '../api
 import type { CatalogoListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
 
 type Formulario = {
   id: number | null
@@ -215,16 +216,6 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   )
 }
 
-/** Resuelve la etiqueta de un valor seleccionado que ya no está entre las opciones vigentes
- * del select (p. ej. la lista base de una `Derivada` fue desactivada después, o quedó fuera
- * de `items` porque "Incluir inactivos" está apagado). Evita que el `<select>` controlado
- * quede con un valor sin `<option>` que lo respalde. */
-function etiquetaParaValorFaltante(valorActual: string, items: unknown[]): string {
-  const item = (items as CatalogoListado[]).find((i) => String(i.id) === valorActual)
-  if (!item) return `Opción no disponible (${valorActual})`
-  return item.activo ? item.nombre : `${item.nombre} (inactiva)`
-}
-
 function formatearValorDeColumna(campo: CampoDescriptor, valor: ValorDeCampo | undefined) {
   if (campo.tipo === 'booleano') return valor ? 'Sí' : 'No'
   if (campo.tipo === 'select') {
@@ -289,8 +280,11 @@ function FormularioCatalogo({
       {camposVisibles.map((campo) => {
         const opciones = campo.opcionesDesdeListado ? campo.opcionesDesdeListado(items, valor.id) : (campo.opciones ?? [])
         const valorActual = String(valor.valores[campo.clave] ?? '')
+        // Solo tiene sentido buscar la opción faltante en `items` cuando las opciones vienen del
+        // listado: para selects de opciones estáticas (p. ej. comportamiento de medio de pago),
+        // buscar el valor por id en `items` podría matchear con un item no relacionado.
         const opcionFaltante =
-          campo.tipo === 'select' && valorActual !== '' && !opciones.some((o) => o.valor === valorActual)
+          campo.opcionesDesdeListado && valorActual !== '' && !opciones.some((o) => o.valor === valorActual)
             ? { valor: valorActual, etiqueta: etiquetaParaValorFaltante(valorActual, items) }
             : null
 
