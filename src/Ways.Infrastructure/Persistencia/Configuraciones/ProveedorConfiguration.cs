@@ -138,5 +138,17 @@ public class ProveedorConfiguration : IEntityTypeConfiguration<Proveedor>
             .HasForeignKey(p => p.IdCondicionFiscal)
             .HasConstraintName("fk_proveedores_condicion_fiscal")
             .OnDelete(DeleteBehavior.Restrict);
+
+        // stage-3-articulos-y-precios (DB CHANGE GATE, design decision 7): habilita la FK
+        // compuesta fk_articulos_proveedor_habitual — mismo motivo que Area/Marca/Grupo.
+        // Declarada DESPUÉS de las relaciones de arriba (mismo orden que
+        // ListaPrecioConfiguration/CategoriaConfiguration, vía ConfigurarPropio corriendo
+        // después del Configure() base): declararla ANTES de fk_proveedores_empresa (que
+        // también usa IdTenant en su FK compuesta) confunde al proveedor InMemory de EF Core
+        // ("Proveedor.IdTenant is unknown... principal entity in the relationship is not
+        // known") al guardar un Proveedor nuevo — no reproduce contra Npgsql, pero rompía los
+        // tests unitarios de ServicioDeProveedoresTests.
+        builder.HasAlternateKey(p => new { p.Id, p.IdTenant })
+            .HasName("ak_proveedores_id_proveedor_id_tenant");
     }
 }

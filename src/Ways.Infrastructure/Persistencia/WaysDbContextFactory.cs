@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
@@ -29,6 +30,7 @@ public class WaysDbContextFactory : IDesignTimeDbContextFactory<WaysDbContext>
                 npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
                 npgsql.MapEnum<TipoDocumento>("tipo_documento");
                 npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<UnidadVenta>("unidad_venta");
             })
             .Options;
 

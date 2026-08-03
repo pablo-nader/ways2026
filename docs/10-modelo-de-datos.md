@@ -182,7 +182,10 @@ proveedores (                 -- [catálogo]
 ```sql
 articulos (                   -- [tenant-wide: id_tenant, SIN id_empresa]
     id_articulo,
-    codigo_interno   citext NULL,            -- el código corto tipeable (< 7 dígitos)
+    codigo_interno   citext NOT NULL,        -- el código corto tipeable (< 7 dígitos);
+                                             -- decisión resuelta: obligatorio, autogenerado
+                                             -- desde el contador por tenant cuando se omite
+                                             -- en el alta (supersede la marca NULL anterior)
                                              -- UNIQUE (id_tenant, codigo_interno) WHERE deleted_at IS NULL
     nombre           citext,
     descripcion      text NULL,

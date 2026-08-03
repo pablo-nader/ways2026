@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Ways.Domain.Catalogos;
 
@@ -10,6 +11,9 @@ public class MarcaConfiguration : ConfiguracionDeCatalogo<Marca>
 
     protected override void ConfigurarPropio(EntityTypeBuilder<Marca> builder)
     {
-        // Sin columnas propias: marcas no tiene nada más allá de lo que ya mapea la base.
+        // stage-3-articulos-y-precios (DB CHANGE GATE, design decision 7): habilita la FK
+        // compuesta fk_articulos_marca, mismo motivo que AreaConfiguration.
+        builder.HasAlternateKey(m => new { m.Id, m.IdTenant })
+            .HasName("ak_marcas_id_marca_id_tenant");
     }
 }
