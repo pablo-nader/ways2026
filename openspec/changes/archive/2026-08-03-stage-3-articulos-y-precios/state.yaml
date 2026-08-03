@@ -1,6 +1,6 @@
 change: stage-3-articulos-y-precios
-phase: tasks
-status: in_progress
+phase: archive
+status: done
 artifact_store: openspec
 phases:
   explore:
@@ -31,7 +31,9 @@ phases:
     artifact: verify-report.md
     notes: "PASS (2026-08-03, HEAD 0a80fb0): 6/6 slices, 86/190/218 exact, migrations clean, front smoke clean, all spec requirements evidenced, all 5 deviations confirmed documented, no out-of-scope leakage. Only suggestion: Ways.Web test infra (already a spawned follow-up task)."
   archive:
-    status: not_started
+    status: done
+    artifact: archive-report.md
+    notes: "Archived 2026-08-03: delta specs merged into openspec/specs/ (articulos, codigos-barra, precios new; listas-precio-minimal merged and retitled 'Listas de Precio'), change folder moved to openspec/changes/archive/2026-08-03-stage-3-articulos-y-precios/."
 dependencies:
   spec: [propose]
   design: [propose]
