@@ -78,7 +78,7 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
                 a.Id, a.CodigoInterno, a.Nombre, a.Descripcion, a.IdArea, a.IdCategoria, a.IdMarca,
                 a.IdGrupo, a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto,
                 a.EsProducto, a.CostoLista, a.DescuentoProveedor, a.CostoNominal, a.DisponibleParaTodas,
-                a.Activo))
+                Array.Empty<int>(), a.Activo))
             .ToListAsync(ct);
 
         return new PaginaDe<ArticuloListado>(items, total, pagina, tamanio);
@@ -87,7 +87,17 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
     public async Task<ArticuloListado> ObtenerAsync(int id, CancellationToken ct = default)
     {
         var articulo = await BuscarAsync(id, ct);
-        return Proyectar(articulo);
+
+        // judgment-day ronda 1 (item 2): el detalle expone el subset actual — un cliente HTTP
+        // necesita esto para armar un PUT de no-op sin perder las filas de articulos_empresas.
+        IReadOnlyList<int> idsEmpresas = articulo.DisponibleParaTodas
+            ? Array.Empty<int>()
+            : await db.ArticulosEmpresas
+                .Where(ae => ae.IdArticulo == articulo.Id)
+                .Select(ae => ae.IdEmpresa)
+                .ToListAsync(ct);
+
+        return Proyectar(articulo, idsEmpresas);
     }
 
     /// <summary>Asigna <c>codigo_interno</c> de forma atómica (design decision 6) cuando se
@@ -115,21 +125,26 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
         await ExigirProveedorHabitualValidoAsync(datos.IdProveedorHabitual, ct);
         await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
 
-        // El artículo todavía no existe: "actual" es el default del dominio (true, Articulo.cs)
-        // — crear directamente con disponible_para_todas=false sin subconjunto cae bajo la
-        // misma regla que restringirlo después de creado (spec: "Restricting availability
-        // requires at least one subset row").
-        ReglaDeArticulos.ValidarRestriccionDeDisponibilidad(
-            disponibleParaTodasActual: true, datos.DisponibleParaTodas, datos.IdsEmpresas?.Count ?? 0);
+        // judgment-day ronda 1 (item 3): .Distinct() ANTES de validar/insertar — un duplicado
+        // en el payload no debe inflar el conteo de "subset presente" ni generar dos INSERT
+        // que choquen contra la PK compuesta (defensa en profundidad, ver el mapeo de
+        // PK_articulos_empresas en ManejadorDeErrores).
+        var idsEmpresas = datos.IdsEmpresas?.Distinct().ToList();
+
+        // El artículo todavía no existe: crear directamente con disponible_para_todas=false
+        // sin subconjunto cae bajo la misma regla que restringirlo después de creado (spec:
+        // "Restricting availability requires at least one subset row") — la regla valida el
+        // ESTADO RESULTANTE, no una transición (ver ReglaDeArticulos).
+        ReglaDeArticulos.ValidarRestriccionDeDisponibilidad(datos.DisponibleParaTodas, idsEmpresas?.Count ?? 0);
 
         if (!datos.DisponibleParaTodas)
         {
-            await ExigirEmpresasValidasAsync(datos.IdsEmpresas!, ct);
+            await ExigirEmpresasValidasAsync(idsEmpresas!, ct);
         }
 
         if (codigoInterno is not null)
         {
-            await ExigirCodigoInternoDisponibleAsync(codigoInterno, excluirId: null, ct);
+            await ExigirCodigoInternoDisponibleAsync(codigoInterno, ct);
         }
 
         var idTenant = ExigirTenantDeLaSesion();
@@ -175,15 +190,15 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
             db.Articulos.Add(articulo);
             await db.SaveChangesAsync(ct);
 
-            if (!datos.DisponibleParaTodas && datos.IdsEmpresas is { Count: > 0 })
+            if (!datos.DisponibleParaTodas && idsEmpresas is { Count: > 0 })
             {
-                AgregarFilasDeSubset(articulo.Id, idTenant, datos.IdsEmpresas);
+                AgregarFilasDeSubset(articulo.Id, idTenant, idsEmpresas);
                 await db.SaveChangesAsync(ct);
             }
 
             await transaccion.CommitAsync(ct);
 
-            return Proyectar(articulo);
+            return Proyectar(articulo, datos.DisponibleParaTodas ? Array.Empty<int>() : (IReadOnlyList<int>?)idsEmpresas ?? Array.Empty<int>());
         });
     }
 
@@ -208,12 +223,19 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
         await ExigirProveedorHabitualValidoAsync(datos.IdProveedorHabitual, ct);
         await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
 
-        ReglaDeArticulos.ValidarRestriccionDeDisponibilidad(
-            articulo.DisponibleParaTodas, datos.DisponibleParaTodas, datos.IdsEmpresas?.Count ?? 0);
+        // judgment-day ronda 1 (item 3): mismo dedup que CrearAsync, antes de validar/insertar.
+        var idsEmpresas = datos.IdsEmpresas?.Distinct().ToList();
+
+        // judgment-day ronda 1 (root cause de los dos CRITICAL): la regla valida el ESTADO
+        // RESULTANTE, no la transición — dispara igual si el artículo YA estaba restringido y
+        // se vuelve a guardar sin ninguna fila de subset (false -> false), no solo en el pasaje
+        // true -> false. Antes de este fix, un PUT así esquivaba el guard y reventaba con NRE
+        // en ExigirEmpresasValidasAsync al iterar datos.IdsEmpresas nulo.
+        ReglaDeArticulos.ValidarRestriccionDeDisponibilidad(datos.DisponibleParaTodas, idsEmpresas?.Count ?? 0);
 
         if (!datos.DisponibleParaTodas)
         {
-            await ExigirEmpresasValidasAsync(datos.IdsEmpresas!, ct);
+            await ExigirEmpresasValidasAsync(idsEmpresas!, ct);
         }
 
         var idTenant = ExigirTenantDeLaSesion();
@@ -242,14 +264,14 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
         var filasActuales = await db.ArticulosEmpresas.Where(ae => ae.IdArticulo == id).ToListAsync(ct);
         db.ArticulosEmpresas.RemoveRange(filasActuales);
 
-        if (!datos.DisponibleParaTodas && datos.IdsEmpresas is { Count: > 0 })
+        if (!datos.DisponibleParaTodas && idsEmpresas is { Count: > 0 })
         {
-            AgregarFilasDeSubset(id, idTenant, datos.IdsEmpresas);
+            AgregarFilasDeSubset(id, idTenant, idsEmpresas);
         }
 
         await db.SaveChangesAsync(ct);
 
-        return Proyectar(articulo);
+        return Proyectar(articulo, datos.DisponibleParaTodas ? Array.Empty<int>() : (IReadOnlyList<int>?)idsEmpresas ?? Array.Empty<int>());
     }
 
     /// <summary>Baja lógica: escribe <c>deleted_at</c>, no borra la fila. Los
@@ -543,10 +565,13 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
     /// <c>SaveChangesAsync</c> de la que pierde (spec: "Concurrent autogeneration yields no
     /// gaps or duplicates" cubre el camino autogenerado — acá es el camino de un valor
     /// provisto por el cliente HTTP, sin ningún lock de fila que serialice la carrera por
-    /// construcción, task 2.8).</summary>
-    private async Task ExigirCodigoInternoDisponibleAsync(string codigoInterno, int? excluirId, CancellationToken ct)
+    /// construcción, task 2.8). Sin parámetro <c>excluirId</c> (judgment-day ronda 1, item 4a,
+    /// dead code removido): <c>codigo_interno</c> es inmutable (ver <see cref="EdicionArticulo"/>),
+    /// así que el único llamador es <see cref="CrearAsync"/>, que nunca necesita excluir su
+    /// propio id porque todavía no existe.</summary>
+    private async Task ExigirCodigoInternoDisponibleAsync(string codigoInterno, CancellationToken ct)
     {
-        var tomado = await db.Articulos.AnyAsync(a => a.CodigoInterno == codigoInterno && a.Id != excluirId, ct);
+        var tomado = await db.Articulos.AnyAsync(a => a.CodigoInterno == codigoInterno, ct);
 
         if (tomado)
         {
@@ -624,8 +649,8 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
         return limpio;
     }
 
-    private static ArticuloListado Proyectar(Articulo a) => new(
+    private static ArticuloListado Proyectar(Articulo a, IReadOnlyList<int> idsEmpresas) => new(
         a.Id, a.CodigoInterno, a.Nombre, a.Descripcion, a.IdArea, a.IdCategoria, a.IdMarca, a.IdGrupo,
         a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto, a.EsProducto,
-        a.CostoLista, a.DescuentoProveedor, a.CostoNominal, a.DisponibleParaTodas, a.Activo);
+        a.CostoLista, a.DescuentoProveedor, a.CostoNominal, a.DisponibleParaTodas, idsEmpresas, a.Activo);
 }

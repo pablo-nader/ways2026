@@ -252,7 +252,7 @@ public class ServicioDeArticulosTests
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
 
-        Assert.Equal("disponibilidad_restriccion_sin_subset", error.Codigo);
+        Assert.Equal("subset_de_empresas_requerido", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);
     }
 
@@ -342,8 +342,75 @@ public class ServicioDeArticulosTests
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(articulo.Id, datos));
 
-        Assert.Equal("disponibilidad_restriccion_sin_subset", error.Codigo);
+        Assert.Equal("subset_de_empresas_requerido", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);
+    }
+
+    /// <summary>judgment-day ronda 1 (root cause, item 1a): un artículo YA restringido que se
+    /// vuelve a guardar con <c>IdsEmpresas</c> en <c>null</c> (false -&gt; false, sin
+    /// transición) tiene que rechazarse igual que una restricción nueva — antes de este fix
+    /// esquivaba el guard de <c>ReglaDeArticulos</c> y reventaba con un
+    /// <see cref="NullReferenceException"/> en <c>ExigirEmpresasValidasAsync</c>.</summary>
+    [Fact]
+    public async Task EditarUnArticuloYaRestringidoConIdsEmpresasNuloEsRechazado()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idArea, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var idEmpresa = await SembrarEmpresaAsync(nombreDeBase, idTenant: 1);
+        var articulo = await SembrarArticuloAsync(
+            nombreDeBase, idTenant: 1, idArea, idAlicuotaIva, disponibleParaTodas: false);
+
+        await using (var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma))
+        {
+            siembra.ArticulosEmpresas.Add(new ArticuloEmpresa { IdArticulo = articulo.Id, IdEmpresa = idEmpresa, IdTenant = 1 });
+            await siembra.SaveChangesAsync();
+        }
+
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = EdicionValida(idArea, idAlicuotaIva) with { DisponibleParaTodas = false, IdsEmpresas = null };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(articulo.Id, datos));
+
+        Assert.Equal("subset_de_empresas_requerido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+
+        await using var lectura = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, 1));
+        var filas = await lectura.ArticulosEmpresas.Where(ae => ae.IdArticulo == articulo.Id).ToListAsync();
+        Assert.Single(filas);
+    }
+
+    /// <summary>judgment-day ronda 1 (item 1b): mismo caso que el anterior, pero con
+    /// <c>IdsEmpresas = []</c> en vez de <c>null</c> — mismo 400, y el subset existente NO se
+    /// borra (la excepción se dispara antes de tocar <c>ArticulosEmpresas</c>).</summary>
+    [Fact]
+    public async Task EditarUnArticuloYaRestringidoConIdsEmpresasVacioEsRechazadoYNoBorraElSubset()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idArea, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var idEmpresa = await SembrarEmpresaAsync(nombreDeBase, idTenant: 1);
+        var articulo = await SembrarArticuloAsync(
+            nombreDeBase, idTenant: 1, idArea, idAlicuotaIva, disponibleParaTodas: false);
+
+        await using (var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma))
+        {
+            siembra.ArticulosEmpresas.Add(new ArticuloEmpresa { IdArticulo = articulo.Id, IdEmpresa = idEmpresa, IdTenant = 1 });
+            await siembra.SaveChangesAsync();
+        }
+
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = EdicionValida(idArea, idAlicuotaIva) with { DisponibleParaTodas = false, IdsEmpresas = [] };
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ActualizarAsync(articulo.Id, datos));
+
+        Assert.Equal("subset_de_empresas_requerido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+
+        await using var lectura = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, 1));
+        var filas = await lectura.ArticulosEmpresas.Where(ae => ae.IdArticulo == articulo.Id).ToListAsync();
+        Assert.Single(filas);
+        Assert.Equal(idEmpresa, filas[0].IdEmpresa);
     }
 
     /// <summary>Spec: Explicit subset excludes other empresas — la edición sí persiste el
@@ -363,11 +430,65 @@ public class ServicioDeArticulosTests
         var editado = await servicio.ActualizarAsync(articulo.Id, datos);
 
         Assert.False(editado.DisponibleParaTodas);
+        Assert.Equal([idEmpresa], editado.IdsEmpresas);
 
         await using var lectura = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, 1));
         var filas = await lectura.ArticulosEmpresas.Where(ae => ae.IdArticulo == articulo.Id).ToListAsync();
         Assert.Single(filas);
         Assert.Equal(idEmpresa, filas[0].IdEmpresa);
+    }
+
+    /// <summary>judgment-day ronda 1 (item 3): un payload con un id repetido no debe generar
+    /// dos filas de subset ni ningún error — <c>.Distinct()</c> corre antes de validar/
+    /// insertar.</summary>
+    [Fact]
+    public async Task EditarConIdsEmpresasDuplicadosInsertaUnaSolaFila()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idArea, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var idEmpresa = await SembrarEmpresaAsync(nombreDeBase, idTenant: 1);
+        var articulo = await SembrarArticuloAsync(
+            nombreDeBase, idTenant: 1, idArea, idAlicuotaIva, disponibleParaTodas: true);
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var datos = EdicionValida(idArea, idAlicuotaIva) with
+        {
+            DisponibleParaTodas = false,
+            IdsEmpresas = [idEmpresa, idEmpresa]
+        };
+
+        var editado = await servicio.ActualizarAsync(articulo.Id, datos);
+
+        Assert.Equal([idEmpresa], editado.IdsEmpresas);
+
+        await using var lectura = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, 1));
+        var filas = await lectura.ArticulosEmpresas.Where(ae => ae.IdArticulo == articulo.Id).ToListAsync();
+        Assert.Single(filas);
+    }
+
+    /// <summary>judgment-day ronda 1 (item 2): el detalle de un artículo restringido expone su
+    /// subset actual, para que un cliente pueda armar un PUT de no-op sin perder las filas.</summary>
+    [Fact]
+    public async Task ObtenerUnArticuloRestringidoDevuelveSuSubsetDeEmpresas()
+    {
+        var nombreDeBase = Guid.NewGuid().ToString();
+        var (idArea, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
+        var idEmpresa = await SembrarEmpresaAsync(nombreDeBase, idTenant: 1);
+        var articulo = await SembrarArticuloAsync(
+            nombreDeBase, idTenant: 1, idArea, idAlicuotaIva, disponibleParaTodas: false);
+
+        await using (var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma))
+        {
+            siembra.ArticulosEmpresas.Add(new ArticuloEmpresa { IdArticulo = articulo.Id, IdEmpresa = idEmpresa, IdTenant = 1 });
+            await siembra.SaveChangesAsync();
+        }
+
+        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+
+        var detalle = await servicio.ObtenerAsync(articulo.Id);
+
+        Assert.False(detalle.DisponibleParaTodas);
+        Assert.Equal([idEmpresa], detalle.IdsEmpresas);
     }
 
     [Fact]

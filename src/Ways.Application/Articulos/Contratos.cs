@@ -2,6 +2,13 @@ using Ways.Domain.Articulos;
 
 namespace Ways.Application.Articulos;
 
+/// <summary><see cref="IdsEmpresas"/> (judgment-day ronda 1, item 2) expone el subconjunto
+/// ACTUAL de empresas del artículo — vacío cuando <see cref="DisponibleParaTodas"/> es
+/// <c>true</c> — para que un cliente HTTP pueda armar un PUT de no-op (releer el detalle y
+/// reenviarlo tal cual) sin perder el subset por mandar <c>null</c>. <c>ListarAsync</c> lo deja
+/// vacío por fila (evita el N+1 de una query por artículo listado); el valor real solo se
+/// completa en <c>ObtenerAsync</c>/<c>CrearAsync</c>/<c>ActualizarAsync</c>, que ya conocen o
+/// resuelven el subset como parte de la operación.</summary>
 public record ArticuloListado(
     int Id,
     string CodigoInterno,
@@ -20,6 +27,7 @@ public record ArticuloListado(
     decimal? DescuentoProveedor,
     decimal? CostoNominal,
     bool DisponibleParaTodas,
+    IReadOnlyList<int> IdsEmpresas,
     bool Activo);
 
 /// <summary><see cref="CodigoInterno"/> es opcional a propósito (spec: codigo_interno

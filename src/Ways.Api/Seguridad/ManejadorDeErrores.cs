@@ -43,6 +43,17 @@ public class ManejadorDeErrores(
                 when ClasificarUnicidad(ux) is { } familia =>
                 (StatusCodes.Status409Conflict, familia.Titulo, familia.Codigo),
 
+            // Backstop de defensa en profundidad (judgment-day ronda 1, item 3, stage-3-slice-2):
+            // el .Distinct() del servicio ya evita el duplicado en el camino normal, pero esta
+            // es la constraint real ante cualquier duplicado que lo esquive (p.ej. una carrera
+            // entre dos PUT concurrentes sobre el mismo artículo). PK_articulos_empresas usa la
+            // convención por default de EF (PascalCase, "PK_"), a diferencia del resto del
+            // esquema (snake_case, doc 10) — match case-insensitive para no depender de esa
+            // inconsistencia de nombre.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string pk } }
+                when string.Equals(pk, "pk_articulos_empresas", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "La empresa ya está en el subconjunto de disponibilidad del artículo.", "empresa_duplicada_en_subset"),
+
             // Backstop de la constraint que cierra la baja irreversible del Consumidor Final
             // (stage-2-clientes-proveedores, design decision 4, task 1.12): ReglaDeClientes.
             // ValidarNoConsumidorFinal ya bloquea el camino normal de ServicioDeClientes —

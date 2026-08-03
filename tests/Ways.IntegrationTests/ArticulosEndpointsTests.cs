@@ -371,6 +371,33 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.DoesNotContain(listadoExcluida!.Items, a => a.Id == creado!.Id);
     }
 
+    /// <summary>judgment-day ronda 1 (item 1d, companion HTTP del root cause CRITICAL): un
+    /// artículo YA restringido que se edita con <c>IdsEmpresas</c> en <c>null</c> (sin cambiar
+    /// <c>DisponibleParaTodas</c>) tiene que rechazarse con 400 — antes de este fix reventaba
+    /// con un 500 (<see cref="NullReferenceException"/> sin traducir) porque
+    /// <c>ReglaDeArticulos</c> solo validaba la transición <c>true -&gt; false</c>, no el
+    /// estado resultante.</summary>
+    [Fact]
+    public async Task UnPutSobreUnArticuloYaRestringidoConIdsEmpresasNuloDevuelve400()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnPutSobreUnArticuloYaRestringidoConIdsEmpresasNuloDevuelve400));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var idEmpresa = await SembrarEmpresaAsync(idTenant, nameof(UnPutSobreUnArticuloYaRestringidoConIdsEmpresasNuloDevuelve400));
+
+        var alta = AltaValida(idArea, idAlicuotaIva) with { DisponibleParaTodas = false, IdsEmpresas = [idEmpresa] };
+        var respuestaAlta = await admin.PostAsJsonAsync("/api/articulos", alta);
+        Assert.Equal(HttpStatusCode.Created, respuestaAlta.StatusCode);
+        var creado = await respuestaAlta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson);
+
+        var edicion = EdicionDesde(creado!) with { DisponibleParaTodas = false, IdsEmpresas = null };
+        var respuesta = await admin.PutAsJsonAsync($"/api/articulos/{creado!.Id}", edicion);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("subset_de_empresas_requerido", problema.GetProperty("codigo").GetString());
+    }
+
     /// <summary>Spec: Cross-tenant empresa reference is blocked.</summary>
     [Fact]
     public async Task CrearConEmpresaDeOtroTenantEnElSubsetDevuelve400()
@@ -393,6 +420,25 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>judgment-day ronda 1 (item 4b): mismo criterio que
+    /// <c>UnVendedorNoPuedeAgregarCodigosDeBarra</c>, para el sub-route DELETE.</summary>
+    [Fact]
+    public async Task UnVendedorNoPuedeEliminarCodigosDeBarra()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnVendedorNoPuedeEliminarCodigosDeBarra));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+        var codigoBarra = await AgregarCodigoBarraAsync(admin, articulo.Id, "7791234567890");
+
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorNoPuedeEliminarCodigosDeBarra));
+        using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
+
+        var respuesta = await vendedor.DeleteAsync($"/api/articulos/{articulo.Id}/codigos-barra/{codigoBarra.Id}");
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
     // ---- task 2.11: FK smoke tests ---------------------------------------------------------
@@ -459,6 +505,47 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
 
         var respuesta = await admin.PostAsJsonAsync("/api/articulos/999999/codigos-barra", new AltaCodigoBarra("7791234567890"));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    /// <summary>judgment-day ronda 1 (item 4c): ADR-8 — agregar un código de barras a un
+    /// artículo de OTRO tenant da el mismo 404 uniforme que "no existe" (el filtro de EF/RLS
+    /// deja la fila invisible antes de que <c>BuscarAsync</c> decida nada).</summary>
+    [Fact]
+    public async Task AgregarCodigoBarraAUnArticuloDeOtroTenantDevuelve404()
+    {
+        var (_, idAreaA, idAlicuotaIvaA, mailAdminA, passwordAdminA) =
+            await AprovisionarTenantAsync(nameof(AgregarCodigoBarraAUnArticuloDeOtroTenantDevuelve404) + "-A");
+        var (_, _, _, mailAdminB, passwordAdminB) =
+            await AprovisionarTenantAsync(nameof(AgregarCodigoBarraAUnArticuloDeOtroTenantDevuelve404) + "-B");
+
+        using var adminA = await ClienteLogueadoAsync(mailAdminA, passwordAdminA);
+        var articuloDeA = await CrearArticuloAsync(adminA, idAreaA, idAlicuotaIvaA);
+
+        using var adminB = await ClienteLogueadoAsync(mailAdminB, passwordAdminB);
+        var respuesta = await adminB.PostAsJsonAsync(
+            $"/api/articulos/{articuloDeA.Id}/codigos-barra", new AltaCodigoBarra("7791234567890"));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    /// <summary>judgment-day ronda 1 (item 4c): mismo criterio que
+    /// <c>AgregarCodigoBarraAUnArticuloDeOtroTenantDevuelve404</c>, para el DELETE.</summary>
+    [Fact]
+    public async Task EliminarCodigoBarraDeUnArticuloDeOtroTenantDevuelve404()
+    {
+        var (_, idAreaA, idAlicuotaIvaA, mailAdminA, passwordAdminA) =
+            await AprovisionarTenantAsync(nameof(EliminarCodigoBarraDeUnArticuloDeOtroTenantDevuelve404) + "-A");
+        var (_, _, _, mailAdminB, passwordAdminB) =
+            await AprovisionarTenantAsync(nameof(EliminarCodigoBarraDeUnArticuloDeOtroTenantDevuelve404) + "-B");
+
+        using var adminA = await ClienteLogueadoAsync(mailAdminA, passwordAdminA);
+        var articuloDeA = await CrearArticuloAsync(adminA, idAreaA, idAlicuotaIvaA);
+        var codigoBarraDeA = await AgregarCodigoBarraAsync(adminA, articuloDeA.Id, "7791234567890");
+
+        using var adminB = await ClienteLogueadoAsync(mailAdminB, passwordAdminB);
+        var respuesta = await adminB.DeleteAsync($"/api/articulos/{articuloDeA.Id}/codigos-barra/{codigoBarraDeA.Id}");
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
