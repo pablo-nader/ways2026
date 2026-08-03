@@ -1,5 +1,122 @@
 # Apply Progress: Stage 3 — Artículos y Precios
 
+## Slice 4 — judgment-day ronda 1: fixes aplicados
+
+Un CRITICAL confirmado por AMBOS jueces ciegos, un REAL de cobertura de tests, una SUGGESTION
+de cobertura de carrera y un RESOLVED de deriva de spec. Todo corregido en el mismo ciclo, SIN
+cambios de esquema.
+
+### Item 1 — Intercambio de `es_default` sensible al alcance (CRITICAL confirmado por ambos jueces)
+
+`ServicioDeListasPrecio.ActualizarAsync` solo disparaba el intercambio (INTERCAMBIO
+transaccional que desmarca la fila default actual del alcance ANTES de guardar la nueva) con
+`!actual.EsDefault && datos.EsDefault`. Eso dejaba un camino silencioso: una fila que YA era
+default podía cambiar de `IdEmpresa` (p.ej. compartida -> empresa) manteniendo
+`EsDefault: true` sin pasar por ninguna de las dos guardas existentes (`actual.EsDefault &&
+!datos.EsDefault` no aplica porque `datos.EsDefault` sigue en `true`; `!actual.EsDefault &&
+datos.EsDefault` tampoco porque `actual.EsDefault` ya era `true`) — el `PUT` caía directo a
+`base.ActualizarAsync`, que solo actualiza la fila. Resultado: el alcance de ORIGEN se quedaba
+sin ninguna lista default (invariante rota, "One Default List Per Tenant" heredado de stage 2)
+y, si el alcance DESTINO no tenía todavía una fila default, el `PUT` sucedía en silencio sin
+haber pasado nunca por `DesmarcarDefaultActualAsync`.
+
+**Fix** (opción simple elegida por el veredicto, en vez de construir reasignación completa de
+la fuente): se agrega una guarda que PROHÍBE cambiar `IdEmpresa` en una fila que hoy tiene
+`EsDefault: true` — mismo código/mensaje de dominio que "quitar el default sin reemplazo"
+(`lista_default_requiere_reemplazo`, 409), porque es el mismo problema de fondo (el alcance de
+origen se quedaría sin default). El disparador del intercambio se amplía a `datos.EsDefault &&
+(!actual.EsDefault || datos.IdEmpresa != actual.IdEmpresa)`: con la guarda de arriba ya en
+vigor, la segunda condición del OR solo es alcanzable cuando `actual.EsDefault` era `false`
+(un alta de default en un alcance nuevo/distinto), así que el intercambio sigue desmarcando
+siempre el alcance DESTINO (`datos.IdEmpresa`), nunca el de origen — se deja la condición
+explícita (en vez de simplificarla a solo `!actual.EsDefault`) porque documenta la intención
+completa que pedía el veredicto y sirve de defensa en profundidad si la guarda de arriba
+cambiara en el futuro.
+
+- `src/Ways.Application/Catalogos/ServicioDeListasPrecio.cs` (`ActualizarAsync`, ~línea 103) —
+  guarda nueva de protección de la fuente + disparador del intercambio ampliado, con
+  doc-comments explicando ambas decisiones inline.
+
+### Item 2 — Cobertura del límite superior de `porcentaje` (REAL)
+
+`ExigirPorcentajeValido` ya rechazaba `porcentaje >= 1000` en producción, pero solo el piso
+(`<= -100`) tenía tests — el techo no tenía ningún caso cubriéndolo.
+
+- `tests/Ways.Application.Tests/Catalogos/ServicioDeListasPrecioTests.cs` —
+  `CrearDerivadaConPorcentajeMayorOIgualA1000EsRechazada` (`[Theory]`, casos 1000 y 1500),
+  mismo shape que el test existente del piso.
+
+### Item 3 — Carrera de default por empresa (SUGGESTION)
+
+Mirror del test de carrera de alcance compartido (`LaAsignacionConcurrenteDeEsDefaultA...`)
+contra `ux_listas_precio_default_empresa` en vez de `ux_listas_precio_default_compartido`: dos
+listas del MISMO `id_empresa` reciben `PUT EsDefault: true` concurrentemente (mismo
+rendezvous con `InterceptorDeRendezVousListasPrecio`) — exactamente una gana (200), la otra
+choca contra el índice único parcial (409 `default_duplicado`).
+
+- `tests/Ways.IntegrationTests/ListasPrecioEndpointsTests.cs` —
+  `LaAsignacionConcurrenteDeEsDefaultDeEmpresaAOtrasDosListasDaExactamenteUnGanador`.
+
+### Item 1 — Tests del intercambio sensible al alcance (las tres direcciones)
+
+- `tests/Ways.IntegrationTests/ListasPrecioEndpointsTests.cs` — tres tests nuevos, uno por
+  dirección, todos aserting 409 `lista_default_requiere_reemplazo` + que la fila NO se movió
+  de alcance y sigue siendo default (sin éxito silencioso, ningún alcance queda en cero):
+  `MoverDeAlcanceCompartidoAEmpresaManteniendoEsDefaultEsRechazado` (compartida -> empresa,
+  usa la lista General ya-default de la aprovisión), `MoverDeAlcanceEmpresaACompartidoManteniendoEsDefaultEsRechazado`
+  (empresa -> compartida) y `MoverDeAlcanceDeUnaEmpresaAOtraManteniendoEsDefaultEsRechazado`
+  (empresa A -> empresa B). Nuevo helper `SembrarEmpresaAsync` (mismo patrón que
+  `ArticulosEndpointsTests.SembrarEmpresaAsync`) y overload de `AltaFijaValida` con parámetro
+  `idEmpresa`.
+
+### Item 4 — Deriva de spec resuelta (RESOLVED)
+
+`specs/listas-precio-minimal/spec.md`, requirement "Blocked Mode Switch Once History Exists":
+la cláusula "(for derivada) has ever been read-resolved" nunca se diseñó ni se implementó —
+la tabla de Protection Rules de `design.md` y la tarea 4.1 siempre acotaron la guarda a
+historial de `precios`, que una lista `derivada` nunca acumula por diseño (no se crean filas
+`precios` para ella). Se reescribió el requirement para reflejar el comportamiento
+implementado (guarda acotada a historial de `precios`, `derivada -> fija` siempre permitido)
+con una nota de superseded (decisión del orquestador, 2026-08-03) documentando el motivo.
+
+- `openspec/changes/stage-3-articulos-y-precios/specs/listas-precio-minimal/spec.md` (~líneas
+  54-58) — requirement reescrito + nota de superseded.
+
+### Item 5 — INFO registrado en state.yaml (sin acción de código)
+
+- (a) las referencias a una `id_lista_base` inactiva siguen permitidas para derivadas NUEVAS
+  (comportamiento consistente de lectura/escritura); decisión de producto explícita pendiente
+  si alguna vez importa.
+- (b) `fk_listas_precio_lista_base` sigue siendo una FK simple (no compuesta) — el pre-check
+  del servicio es la protección real; el hardening compuesto necesitaría una migración con DB
+  CHANGE GATE aprobado (opción futura).
+
+### Build/test results (judgment-day ronda 1 batch, run twice)
+
+| Suite | Run 1 | Run 2 |
+|---|---|---|
+| `Ways.Domain.Tests` | 86/86 | 86/86 |
+| `Ways.Application.Tests` | 190/190 | 190/190 |
+| `Ways.IntegrationTests` (real Postgres) | 213/213 | 213/213 |
+
+Baseline 86/188/209 + 2 nuevos en Application (item 2) + 4 nuevos en IntegrationTests (3 del
+item 1 + 1 del item 3) = 86/190/213. Build clean (0 warnings, 0 errors), ambas corridas
+idénticas, sin flakes. Los 5 tests nuevos también corridos aislados 3 veces cada uno (vía la
+clase completa `ListasPrecioEndpointsTests`, 17/17 estable x3, y el `[Theory]` de porcentaje,
+2/2 estable x3) antes de la corrida completa.
+
+### Commits (work-unit, uno por naturaleza del cambio)
+
+- `fix(catalogos): proteger el alcance de origen del intercambio de es_default en listas de
+  precio` — item 1, solo `ServicioDeListasPrecio.cs`.
+- `test(catalogos): cubrir el intercambio de es_default entre alcances y la carrera de
+  empresa` — items 1 (tests)/2/3, `ServicioDeListasPrecioTests.cs` +
+  `ListasPrecioEndpointsTests.cs`.
+- `docs(sdd): corregir el spec de cambio de modo y registrar la ronda 1 de judgment-day del
+  slice 4` — item 4/5, `spec.md` + `state.yaml` + `apply-progress.md`.
+
+---
+
 ## Slice 3 — judgment-day ronda 3: fixes aplicados
 
 Un CRITICAL triaged y verificado por el orquestador contra la query real (`BuscarPredecesorAsync`)
