@@ -253,7 +253,13 @@ export function Articulos() {
         setEmpresas([])
         agregarErrorCatalogoRequerido('No se pudieron cargar las empresas.')
       })
-    clienteDePrecios.listasDePrecio().then(setListasPrecio).catch(() => setListasPrecio([]))
+    clienteDePrecios
+      .listasDePrecio()
+      .then(setListasPrecio)
+      .catch(() => {
+        setListasPrecio([])
+        agregarErrorCatalogoRequerido('No se pudieron cargar las listas de precio.')
+      })
   }, [cargar])
 
   const areaPorDefecto = areas[0]?.id ?? ''
@@ -476,7 +482,7 @@ export function Articulos() {
                     </td>
                   </tr>
                 ))}
-                {(!pagina || pagina.items.length === 0) && (
+                {pagina !== null && pagina.items.length === 0 && (
                   <tr>
                     <td colSpan={7} className="text-center text-muted py-4">
                       No hay artículos que coincidan con la búsqueda.
@@ -1159,7 +1165,7 @@ function EditorDePrecios({
   }
 
   async function pedirSugerencia() {
-    if (cargandoSugerencia) return
+    if (cargandoSugerencia || bloqueadoPorPadre) return
     // Generación: protege contra una respuesta tardía de un pedido anterior pisando una
     // sugerencia más reciente que el usuario ya podría haber aplicado al borrador de precio.
     const generacion = (generacionSugerenciaRef.current += 1)
@@ -1327,6 +1333,7 @@ function EditorDePrecios({
                           estado={estadoDe(lista.id)}
                           historial={historiales[lista.id] ?? []}
                           sugerencia={sugerencia}
+                          cargandoSugerencia={cargandoSugerencia}
                           bloqueadoPorPadre={bloqueadoPorPadre}
                           onCambio={(parcial) => actualizarEstado(lista.id, parcial)}
                           onGuardar={(confirmarReemplazo) => guardarPrecio(lista.id, confirmarReemplazo)}
@@ -1356,6 +1363,7 @@ function PanelDeLista({
   estado,
   historial,
   sugerencia,
+  cargandoSugerencia,
   bloqueadoPorPadre,
   onCambio,
   onGuardar,
@@ -1364,6 +1372,7 @@ function PanelDeLista({
   estado: EstadoDeLista
   historial: HistorialDePrecio[]
   sugerencia: number | null
+  cargandoSugerencia: boolean
   bloqueadoPorPadre: boolean
   onCambio: (parcial: Partial<EstadoDeLista>) => void
   onGuardar: (confirmarReemplazo: boolean) => void
@@ -1436,7 +1445,7 @@ function PanelDeLista({
             <button
               type="button"
               className="btn btn-sm btn-outline-info rounded-0"
-              disabled={bloqueado}
+              disabled={bloqueado || cargandoSugerencia}
               onClick={() => onCambio({ monto: String(sugerencia) })}
             >
               Usar sugerencia (${sugerencia.toFixed(2)})
