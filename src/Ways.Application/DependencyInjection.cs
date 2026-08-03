@@ -29,6 +29,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeMediosPago>();
         services.AddScoped<ServicioDeCategorias>();
         services.AddScoped<ServicioDeCatalogosFiscales>();
+        services.AddScoped<ServicioDeListasPrecio>();
 
         services.AddScoped<ServicioDeParametros>();
 
