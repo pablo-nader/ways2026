@@ -63,6 +63,11 @@ public static class CatalogosEndpoints
         // profundidad/ciclo por encima antes de delegar en la base.
         app.MapearCatalogo<Categoria, CategoriaListado, CategoriaAlta, ServicioDeCategorias>("categorias");
 
+        // stage-3-articulos-y-precios (Slice 4, task 4.3): ABM completo nuevo — la ruta
+        // GET /api/listas-precio de solo lectura (ClientesEndpoints, stage 2, selector del
+        // formulario de cliente) queda intacta, prefijo distinto, sin colisión.
+        app.MapearCatalogo<ListaPrecio, ListaPrecioListado, ListaPrecioAlta, ServicioDeListasPrecio>("listas-precio");
+
         // Los 3 catálogos globales (ADR-11, gate #4) son de solo lectura en esta etapa — no
         // hay POST/PUT/DELETE mapeados a propósito, ni siquiera detrás de una policy: la
         // ausencia de ruta es la superficie de API, RLS (HabilitarRlsDeCatalogoGlobal) es la

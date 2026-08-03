@@ -251,9 +251,13 @@ public class ManejadorDeErrores(
         }
 
         // ux_listas_precio_default_compartido/empresa (stage-2-clientes-proveedores, backstop
-        // map): sin camino de escritura de cliente esta etapa (spec: listas_precio ABM Is Out
-        // of Scope This Stage) — sembrado solo por provisioning/backfill, exento de race test
-        // por el mismo motivo que la familia codigo_duplicado de los catálogos fiscales.
+        // map): sembrado originalmente solo por provisioning/backfill (exento de race test en
+        // esa etapa, sin camino de escritura de cliente). stage-3-articulos-y-precios (Slice 4,
+        // task 4.1/db-error-backstops) cierra la exención: ServicioDeListasPrecio.
+        // DesmarcarDefaultActualAsync es ahora el camino de escritura real del intercambio de
+        // es_default — la carrera GENUINA (dos listas del mismo alcance compitiendo por
+        // convertirse en la nueva default) queda probada en
+        // ListasPrecioEndpointsTests.LaAsignacionConcurrenteDeEsDefaultAOtrasDosListasDaExactamenteUnGanador.
         if (nombreDeIndice.Contains("_default", StringComparison.Ordinal))
         {
             return ("default_duplicado", "Ya existe una lista de precios default en este alcance.");

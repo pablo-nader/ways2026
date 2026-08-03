@@ -53,9 +53,22 @@ deactivation guard below.
 
 ### Requirement: Blocked Mode Switch Once History Exists
 
+> Superseded wording (orchestrator decision, 2026-08-03, judgment-day round 1
+> on stage-3 slice 4): an earlier draft also blocked the switch once a
+> `derivada` lista "has ever been read-resolved" at a derived price. That
+> clause was never designed nor implemented — design.md's Protection Rules
+> table and tasks 4.1 scope the guard to `precios` history only, which a
+> `derivada` lista never has by design (no `precios` rows are ever created
+> for it, per "Derivada Mode Resolution And Validation" above). Tracking
+> read-resolution was judged to carry no product value; this requirement now
+> states the implemented behavior: `derivada` → `fija` switching is allowed
+> unconditionally (only `fija` rows can accumulate `precios` history).
+
 Switching a lista's `modo` (`fija` ↔ `derivada`) MUST be blocked once the
-lista has any `precios` history (for `fija`) or has ever been read-resolved
-at a derived price (for `derivada`). Tenants MUST create a new lista instead.
+lista has any `precios` history. Only `fija` listas can have `precios`
+history, so this guard is only ever reachable when switching away from
+`fija`; switching `derivada` → `fija` is always allowed. Tenants MUST create
+a new lista instead of switching a `fija` lista with history.
 
 #### Scenario: Mode switch blocked after a price exists
 

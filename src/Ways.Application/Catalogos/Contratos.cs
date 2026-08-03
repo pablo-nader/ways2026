@@ -56,6 +56,34 @@ public sealed record CategoriaListado(
     int Id, string Nombre, bool Activo, int? IdEmpresa, int Orden, int? IdCategoriaPadre)
     : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
 
+/// <summary>stage-3-articulos-y-precios, Slice 4: un solo contrato para alta Y edición
+/// (ADR-11, mismo criterio que <see cref="CategoriaAlta"/>) — deliberadamente NO
+/// <c>AltaListaPrecio</c>/<c>EdicionListaPrecio</c> separados (tasks.md 4.2 los nombraba así,
+/// pero <see cref="ServicioDeListasPrecio"/> extiende <see cref="ServicioDeCatalogo{T,TL,TA}"/>,
+/// design decision 2 — ese genérico exige un único <c>TAlta</c> para
+/// <c>CrearAsync</c>/<c>ActualizarAsync</c>; partir el contrato en dos hubiera forzado a
+/// abandonar la reutilización del genérico, que es justamente lo que la design pide reusar).
+/// <see cref="EsDefault"/>/<see cref="Modo"/>/<see cref="IdListaBase"/>/<see cref="Porcentaje"/>
+/// son las cuatro columnas propias que <c>CatalogoSimple</c> no cubre.</summary>
+public sealed record ListaPrecioAlta(
+    string Nombre,
+    int? IdEmpresa,
+    bool EsDefault,
+    ModoLista Modo,
+    int? IdListaBase,
+    decimal? Porcentaje,
+    bool Activo = true) : AltaDeCatalogo(Nombre, IdEmpresa, Activo);
+
+public sealed record ListaPrecioListado(
+    int Id,
+    string Nombre,
+    bool Activo,
+    int? IdEmpresa,
+    bool EsDefault,
+    ModoLista Modo,
+    int? IdListaBase,
+    decimal? Porcentaje) : ListadoDeCatalogo(Id, Nombre, Activo, IdEmpresa);
+
 /// <summary>Los 3 catálogos globales (ADR-11, gate #4) son de solo lectura para la API en
 /// esta etapa — sin ABM, sin alta/edición — así que solo llevan un listado, no un alta.</summary>
 public sealed record CondicionFiscalListado(int Id, string Codigo, string Nombre, short? CodigoAfip, bool Activo);

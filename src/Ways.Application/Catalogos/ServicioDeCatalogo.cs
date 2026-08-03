@@ -25,6 +25,13 @@ public abstract class ServicioDeCatalogo<T, TListado, TAlta>(IWaysDbContext db, 
     /// base).</summary>
     protected IWaysDbContext Db => db;
 
+    /// <summary>Mismo motivo que <see cref="Db"/> (evita CS9107 en una subclase que necesite
+    /// el reloj fuera de <see cref="Instanciar"/>/<see cref="AplicarPropios"/> — p.ej.
+    /// <c>ServicioDeListasPrecio</c>, stage-3-articulos-y-precios Slice 4, para estampar
+    /// <c>UpdatedAt</c> en una fila que edita por fuera del flujo estándar de
+    /// <see cref="ActualizarAsync"/>).</summary>
+    protected IRelojDelSistema Reloj => reloj;
+
     protected abstract DbSet<T> Conjunto { get; }
 
     protected abstract TListado Proyectar(T entidad);
