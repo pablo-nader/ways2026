@@ -10,9 +10,9 @@ public class ReglaDeArticulosTests
     {
         var error = Assert.Throws<ErrorDominio>(() =>
             ReglaDeArticulos.ValidarRestriccionDeDisponibilidad(
-                disponibleParaTodasActual: true, disponibleParaTodasNuevo: false, cantidadDeFilasSubset: 0));
+                disponibleParaTodasNuevo: false, cantidadDeFilasSubset: 0));
 
-        Assert.Equal("disponibilidad_restriccion_sin_subset", error.Codigo);
+        Assert.Equal("subset_de_empresas_requerido", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);
     }
 
@@ -21,40 +21,37 @@ public class ReglaDeArticulosTests
     {
         var excepcion = Record.Exception(() =>
             ReglaDeArticulos.ValidarRestriccionDeDisponibilidad(
-                disponibleParaTodasActual: true, disponibleParaTodasNuevo: false, cantidadDeFilasSubset: 1));
+                disponibleParaTodasNuevo: false, cantidadDeFilasSubset: 1));
 
         Assert.Null(excepcion);
     }
 
     [Fact]
-    public void MantenerDisponibleParaTodasSinCambiarNuncaExigeSubset()
+    public void MantenerDisponibleParaTodasSinSubsetEsPermitido()
     {
         var excepcion = Record.Exception(() =>
             ReglaDeArticulos.ValidarRestriccionDeDisponibilidad(
-                disponibleParaTodasActual: true, disponibleParaTodasNuevo: true, cantidadDeFilasSubset: 0));
+                disponibleParaTodasNuevo: true, cantidadDeFilasSubset: 0));
 
         Assert.Null(excepcion);
     }
 
+    /// <summary>judgment-day ronda 1 (root cause de un par de CRITICAL): la regla valida el
+    /// ESTADO RESULTANTE, no la transición. Antes de este fix, esta misma llamada (con el
+    /// parámetro <c>disponibleParaTodasActual: false</c> que ya no existe) NO lanzaba —
+    /// "mantener restringido sin cambiar nunca exige subset de nuevo" era el comportamiento
+    /// viejo, y era exactamente el bug: un artículo ya restringido que se guarda otra vez sin
+    /// ninguna fila de subset (false -&gt; false, count 0) tiene que rechazarse igual que una
+    /// restricción nueva, porque el estado resultante sigue siendo "restringido sin ninguna
+    /// empresa visible".</summary>
     [Fact]
-    public void MantenerRestringidoSinCambiarNuncaExigeSubsetDeNuevo()
+    public void MantenerRestringidoSinFilasDeSubsetEsRechazado()
     {
-        // El pasaje true -> false es lo único que dispara la regla; una fila ya restringida
-        // que se guarda de nuevo (false -> false) no es una "restricción" nueva.
-        var excepcion = Record.Exception(() =>
+        var error = Assert.Throws<ErrorDominio>(() =>
             ReglaDeArticulos.ValidarRestriccionDeDisponibilidad(
-                disponibleParaTodasActual: false, disponibleParaTodasNuevo: false, cantidadDeFilasSubset: 0));
+                disponibleParaTodasNuevo: false, cantidadDeFilasSubset: 0));
 
-        Assert.Null(excepcion);
-    }
-
-    [Fact]
-    public void AmpliarDeRestringidoATodasNuncaExigeSubset()
-    {
-        var excepcion = Record.Exception(() =>
-            ReglaDeArticulos.ValidarRestriccionDeDisponibilidad(
-                disponibleParaTodasActual: false, disponibleParaTodasNuevo: true, cantidadDeFilasSubset: 0));
-
-        Assert.Null(excepcion);
+        Assert.Equal("subset_de_empresas_requerido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
     }
 }
