@@ -485,3 +485,62 @@ as smoke).
   Forward instruction left for Slice 2, when `ServicioDeArticulos` becomes the real write path.
 
 No test-affecting change was made — this round was documentation/comments only.
+
+## Slice 2 — judgment-day ronda 2 batch: 2 pruebas nuevas (sin cambios de producción)
+
+Ronda 2 confirmó (ambos jueces ciegos) el gap de cobertura de carrera para
+`PK_articulos_empresas`/`empresa_duplicada_en_subset` (item 1, CONFIRMED) y sugirió un test de
+round-trip end-to-end del escenario de no-op documentado en `ObtenerAsync` (item 2,
+SUGGESTION). Ambos se resuelven agregando pruebas — **no se tocó código de producción**.
+
+### Item 1 — Race test para `empresa_duplicada_en_subset`
+
+Se intentó primero la forma preferida (dos PUT concurrentes restringiendo el MISMO artículo a
+la MISMA empresa, arrancando sin subset previo) y **no fue reproducible tras intentos
+honestos**: `ActualizarAsync` también hace `UPDATE` sobre la fila del propio `articulo` antes
+del DELETE+INSERT del subset, así que esa fila actúa como mutex de facto entre las dos
+transacciones — la segunda bloquea en el `UPDATE`, y cuando retoma (tras el commit de la
+primera) su `DELETE` ya ve y borra la fila recién comiteada por la otra, evitando la colisión
+de la PK por completo. Se corrió manualmente ~18 veces (6 corridas × loop interno de 3): solo
+una mostró un mismatch de aserción (200/200 sin 409, sin excepción) y otra mostró un deadlock
+retryable absorbido en silencio por `EnableRetryOnFailure` (`DependencyInjection.cs`) — nunca
+un 23505 expuesto de forma confiable. Documentado en el propio doc-comment del test.
+
+**Fallback aplicado** (según el contrato de la skill `db-error-backstops`): duplicar la fila de
+`articulos_empresas` por SQL directo, bypasseando `ServicioDeArticulos` por completo — mismo
+criterio que `BackstopClientesYProveedoresTests.UnaFilaConNumeroDuplicadoInsertadaPorFueraDelContadorViolaLaUnicidad`.
+Se confirmó que tampoco hay forma de ejercer este 409 vía HTTP: `ActualizarAsync` siempre borra
+el subset completo del artículo (scoped por `IdArticulo`) ANTES de reinsertarlo, así que ninguna
+secuencia de requests HTTP puede dejar dos filas con la misma PK compuesta para el mismo
+artículo — el bypass solo es alcanzable con SQL directo.
+
+- `tests/Ways.IntegrationTests/ArticulosEndpointsTests.cs` —
+  `UnaFilaDeSubsetDuplicadaInsertadaPorFueraDelServicioViolaLaPk`: dos INSERT crudos por SQL con
+  el mismo `(id_articulo, id_empresa)`, asertando `PostgresException.SqlState == "23505"` y
+  `ConstraintName == "PK_articulos_empresas"`. Corrida 3 veces de forma aislada, sin flakes.
+
+### Item 2 — Round-trip de no-op (sugerencia)
+
+- `tests/Ways.IntegrationTests/ArticulosEndpointsTests.cs` —
+  `UnPutDeNoOpConLosIdsEmpresasDelGetPreservaElSubset`: crea un artículo restringido, hace GET
+  del detalle, toma `IdsEmpresas` verbatim, arma el PUT de no-op y verifica 200 + subset intacto
+  (antes y después del PUT), cubriendo end-to-end el escenario documentado en
+  `ServicioDeArticulos.ObtenerAsync`. Corrida 3 veces de forma aislada, sin flakes.
+
+### Build/test results (judgment-day ronda 2 batch, run twice)
+
+| Suite | Run 1 | Run 2 |
+|---|---|---|
+| `Ways.Domain.Tests` | 81/81 | 81/81 |
+| `Ways.Application.Tests` | 165/165 | 165/165 |
+| `Ways.IntegrationTests` (real Postgres) | 174/174 | 174/174 |
+
+174 = baseline 172 + 2 nuevos. Build clean (0 warnings, 0 errors), ambas corridas idénticas, sin
+flakes. Ambas pruebas nuevas también corridas de forma aislada 3 veces cada una antes de la
+corrida completa.
+
+### Commit (work-unit, pendiente de listar acá tras crearlo)
+
+`test(articulos): cerrar el gap de carrera de PK_articulos_empresas y sumar el round-trip de
+no-op` — la ronda 2 de judgment-day sobre Slice 2 (items 1-2), solo tests, sin cambios de
+producción.

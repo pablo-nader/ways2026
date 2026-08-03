@@ -398,6 +398,91 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal("subset_de_empresas_requerido", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>db-error-backstops (judgment-day ronda 2, item 1): la forma "preferida" (dos PUT
+    /// concurrentes restringiendo el MISMO artículo a la MISMA empresa, arrancando sin subset
+    /// previo) se probó honestamente primero y resultó NO reproducible: <c>ActualizarAsync</c>
+    /// también hace <c>UPDATE</c> sobre la fila del propio <c>articulo</c> (mismo <c>id</c>) antes
+    /// del DELETE+INSERT del subset, así que esa fila actúa como mutex de facto — la segunda
+    /// transacción bloquea en el <c>UPDATE</c>, y cuando retoma (tras el commit de la primera) su
+    /// DELETE ya ve —y borra— la fila recién comiteada por la otra, evitando la colisión de la PK
+    /// por completo (~17/18 corridas manuales: 200/200 sin 409). Cuando sí hubo colisión, fue un
+    /// deadlock retryable (<c>EnableRetryOnFailure</c>, <c>DependencyInjection.cs</c>) que EF
+    /// reintentó transparentemente hasta converger — nunca un 23505 expuesto. Fallback (según
+    /// contrato de la skill): duplicar la fila de <c>articulos_empresas</c> por SQL directo,
+    /// bypasseando <c>ServicioDeArticulos</c> por completo (mismo criterio que
+    /// <c>BackstopClientesYProveedoresTests.UnaFilaConNumeroDuplicadoInsertadaPorFueraDelContadorViolaLaUnicidad</c>):
+    /// no hay forma de ejercer este 409 a través de <c>PUT /api/articulos/{id}</c> —
+    /// <c>ActualizarAsync</c> siempre borra el subset completo del artículo ANTES de reinsertarlo
+    /// (scoped por <c>IdArticulo</c>), así que ninguna secuencia de requests HTTP puede dejar dos
+    /// filas con la misma PK compuesta para el mismo artículo; el bypass solo es alcanzable con
+    /// SQL directo, como hace esta prueba.</summary>
+    [Fact]
+    public async Task UnaFilaDeSubsetDuplicadaInsertadaPorFueraDelServicioViolaLaPk()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnaFilaDeSubsetDuplicadaInsertadaPorFueraDelServicioViolaLaPk));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+        var idEmpresa = await SembrarEmpresaAsync(idTenant, nameof(UnaFilaDeSubsetDuplicadaInsertadaPorFueraDelServicioViolaLaPk));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using (var primero = cruda.CreateCommand())
+        {
+            primero.CommandText =
+                "INSERT INTO articulos_empresas (id_articulo, id_empresa, id_tenant) VALUES ($1, $2, $3)";
+            primero.Parameters.Add(new NpgsqlParameter { Value = articulo.Id });
+            primero.Parameters.Add(new NpgsqlParameter { Value = idEmpresa });
+            primero.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+            await primero.ExecuteNonQueryAsync();
+        }
+
+        await using var segundo = cruda.CreateCommand();
+        segundo.CommandText =
+            "INSERT INTO articulos_empresas (id_articulo, id_empresa, id_tenant) VALUES ($1, $2, $3)";
+        segundo.Parameters.Add(new NpgsqlParameter { Value = articulo.Id });
+        segundo.Parameters.Add(new NpgsqlParameter { Value = idEmpresa });
+        segundo.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => segundo.ExecuteNonQueryAsync());
+        Assert.Equal("23505", excepcion.SqlState);
+        Assert.Equal("PK_articulos_empresas", excepcion.ConstraintName);
+    }
+
+    /// <summary>judgment-day ronda 2 (item 2, sugerencia): recorrido end-to-end del escenario
+    /// documentado en <c>ServicioDeArticulos.ObtenerAsync</c> — un cliente HTTP arma el PUT de
+    /// no-op tomando <c>IdsEmpresas</c> verbatim del detalle GET, sin perder ni duplicar el
+    /// subset.</summary>
+    [Fact]
+    public async Task UnPutDeNoOpConLosIdsEmpresasDelGetPreservaElSubset()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnPutDeNoOpConLosIdsEmpresasDelGetPreservaElSubset));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idEmpresa = await SembrarEmpresaAsync(idTenant, nameof(UnPutDeNoOpConLosIdsEmpresasDelGetPreservaElSubset));
+
+        var alta = AltaValida(idArea, idAlicuotaIva) with { DisponibleParaTodas = false, IdsEmpresas = [idEmpresa] };
+        var respuestaAlta = await admin.PostAsJsonAsync("/api/articulos", alta);
+        Assert.Equal(HttpStatusCode.Created, respuestaAlta.StatusCode);
+        var creado = await respuestaAlta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson);
+
+        var detalle = await admin.GetFromJsonAsync<ArticuloListado>($"/api/articulos/{creado!.Id}", OpcionesJson);
+        Assert.NotNull(detalle);
+        Assert.Equal([idEmpresa], detalle!.IdsEmpresas);
+
+        var edicion = EdicionDesde(detalle) with { IdsEmpresas = detalle.IdsEmpresas };
+        var respuestaPut = await admin.PutAsJsonAsync($"/api/articulos/{detalle.Id}", edicion);
+
+        Assert.Equal(HttpStatusCode.OK, respuestaPut.StatusCode);
+        var actualizado = await respuestaPut.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson);
+        Assert.Equal([idEmpresa], actualizado!.IdsEmpresas);
+
+        var detalleTrasPut = await admin.GetFromJsonAsync<ArticuloListado>($"/api/articulos/{detalle.Id}", OpcionesJson);
+        Assert.Equal([idEmpresa], detalleTrasPut!.IdsEmpresas);
+    }
+
     /// <summary>Spec: Cross-tenant empresa reference is blocked.</summary>
     [Fact]
     public async Task CrearConEmpresaDeOtroTenantEnElSubsetDevuelve400()
