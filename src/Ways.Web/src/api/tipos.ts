@@ -452,22 +452,6 @@ export type ProgramarPrecio = {
 export type PrecioVigente = { idArticulo: number; idListaPrecio: number; precio: number | null; fecha: string }
 export type HistorialDePrecio = { id: number; precio: number; vigenteDesde: string; vigenteHasta: string | null }
 
-/** Referencia de listas de precio con `modo` (a diferencia de `ListaPrecioAsignable`, que solo
- * trae id/nombre/esDefault) — el editor de precios del artículo necesita distinguir `Fija`
- * (admite alta/programación propia) de `Derivada` (se resuelve en lectura, sin ABM propio de
- * precios; el ABM de `listas_precio` en sí llega en la Slice 6, todavía no construida). */
-export type ModoLista = 'Fija' | 'Derivada'
-export type ListaPrecioListado = {
-  id: number
-  nombre: string
-  activo: boolean
-  idEmpresa: number | null
-  esDefault: boolean
-  modo: ModoLista
-  idListaBase: number | null
-  porcentaje: number | null
-}
-
 // --- Aprovisionamiento de tenants (ADR-16, plataforma) ---
 
 export type SolicitudDeAprovisionamiento = {
