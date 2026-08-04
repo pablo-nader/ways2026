@@ -63,6 +63,23 @@ public class ValidadorDePagosTests
         Validar(100m, [Efectivo(100m), CuentaCorriente(0m)], esConsumidorFinal: true);
     }
 
+    // ---- 0b: vuelto_negativo ----------------------------------------------------------------
+
+    [Fact]
+    public void UnPagoConVueltoNegativoSeRechaza()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            Validar(100m, [Efectivo(100m, vuelto: -1m)], vueltoMaximo: 50m));
+        Assert.Equal("vuelto_negativo", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void UnPagoConVueltoExactamenteCeroNoDisparaLaRegla0b()
+    {
+        // Boundary: 0 no es negativo, así que la regla 0b lo deja pasar.
+        Validar(100m, [Efectivo(100m, vuelto: 0m)]);
+    }
+
     // ---- 1: pago_no_ingresado -------------------------------------------------------------
 
     [Fact]

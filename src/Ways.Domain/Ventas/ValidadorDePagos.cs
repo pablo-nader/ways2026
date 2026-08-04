@@ -71,6 +71,18 @@ public static class ValidadorDePagos
             }
         }
 
+        // 0b (mismo criterio que la regla 0, mismo lugar en el orden — corta ANTES que
+        // cualquier otra regla): un Vuelto negativo, igual que un Importe negativo, no tiene
+        // significado de negocio y podría manipular Σ vuelto sin que las reglas 3/8 lo noten.
+        foreach (var pago in pagos)
+        {
+            if (pago.Vuelto < 0m)
+            {
+                throw new ErrorDominio(
+                    "vuelto_negativo", "El vuelto de un pago no puede ser negativo.", 400);
+            }
+        }
+
         var sumaImportes = pagos.Sum(p => p.Importe);
         var sumaVueltos = pagos.Sum(p => p.Vuelto);
 
