@@ -67,6 +67,8 @@ export function Pos() {
   const [resolviendo, setResolviendo] = useState(false)
   const [avisoPrecios, setAvisoPrecios] = useState('')
   const generacionResolucionRef = useRef(0)
+  const ultimaAccionEsEdicionRef = useRef(false)
+  const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>({})
 
   const [entradaEscaneo, setEntradaEscaneo] = useState('')
   const [escaneando, setEscaneando] = useState(false)
@@ -99,16 +101,18 @@ export function Pos() {
         )
       })
 
+    const generacionClientes = (generacionClientesRef.current += 1)
+
     clienteDeClientes
       .listar('', false)
       .then((pagina) => {
-        if (!vigente) return
+        if (!vigente || generacionClientesRef.current !== generacionClientes) return
         setOpcionesClientes(pagina.items)
         const consumidorFinal = pagina.items.find((c) => c.esConsumidorFinal) ?? null
         setClienteSeleccionado(consumidorFinal)
       })
       .catch((e) => {
-        if (!vigente) return
+        if (!vigente || generacionClientesRef.current !== generacionClientes) return
         setErrorClientes(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los clientes.')
       })
 
@@ -134,29 +138,59 @@ export function Pos() {
     setResolviendo(true)
     setAvisoPrecios('')
 
-    clienteDeOfertas
-      .resolver(aLineasDeResolucion(lineas, clienteSeleccionado.idListaPrecio, puntoVentaSeleccionada.idEmpresa))
-      .then((resultados) => {
-        if (!vigente || generacionResolucionRef.current !== generacion) return
-        setPrecios(indexarResolucionPorArticulo(resultados))
-      })
-      .catch(() => {
-        if (!vigente || generacionResolucionRef.current !== generacion) return
-        setAvisoPrecios('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')
-      })
-      .finally(() => {
-        if (!vigente || generacionResolucionRef.current !== generacion) return
-        setResolviendo(false)
-      })
+    // Una edición de cantidad se debounce (el usuario suele seguir tipeando); un escaneo
+    // dispara la resolución de inmediato, es una única mutación discreta.
+    const demora = ultimaAccionEsEdicionRef.current ? 250 : 0
+    const idTimeout = setTimeout(() => {
+      clienteDeOfertas
+        .resolver(aLineasDeResolucion(lineas, clienteSeleccionado.idListaPrecio, puntoVentaSeleccionada.idEmpresa))
+        .then((resultados) => {
+          if (!vigente || generacionResolucionRef.current !== generacion) return
+          setPrecios(indexarResolucionPorArticulo(resultados))
+        })
+        .catch(() => {
+          if (!vigente || generacionResolucionRef.current !== generacion) return
+          setAvisoPrecios('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')
+        })
+        .finally(() => {
+          if (!vigente || generacionResolucionRef.current !== generacion) return
+          setResolviendo(false)
+        })
+    }, demora)
 
     return () => {
       vigente = false
+      clearTimeout(idTimeout)
     }
   }, [lineas, clienteSeleccionado, puntoVentaSeleccionada])
 
   const mutarCarrito = useCallback((accion: AccionCarrito) => {
+    ultimaAccionEsEdicionRef.current = accion.tipo === 'editarCantidad'
     setLineas((prev) => reducirCarrito(prev, accion))
   }, [])
+
+  /** Texto crudo del input de cantidad de una línea: mientras el usuario está editando (input
+   * en `cantidadesEnEdicion`) se muestra tal cual se tipeó, incluso si todavía no es un número
+   * completo (ej. "1." antes del dígito decimal) — spec: no perder el punto decimal a mitad de
+   * tipeo. */
+  function textoCantidad(l: LineaCarrito): string {
+    return cantidadesEnEdicion[l.idArticulo] ?? String(l.cantidad)
+  }
+
+  function cambiarCantidad(idArticulo: number, texto: string) {
+    setCantidadesEnEdicion((prev) => ({ ...prev, [idArticulo]: texto }))
+    const cantidad = Number(texto)
+    if (texto.trim() !== '' && Number.isFinite(cantidad) && cantidad > 0) {
+      mutarCarrito({ tipo: 'editarCantidad', idArticulo, cantidad })
+    }
+  }
+
+  function confirmarCantidad(idArticulo: number) {
+    setCantidadesEnEdicion((prev) => {
+      const { [idArticulo]: _omitido, ...resto } = prev
+      return resto
+    })
+  }
 
   async function escanear() {
     if (escaneando) return
@@ -244,7 +278,9 @@ export function Pos() {
                 </thead>
                 <tbody>
                   {lineas.map((l) => {
-                    const previa = previaDeLinea(l, precios[l.idArticulo])
+                    const resultado = precios[l.idArticulo]
+                    const previa = previaDeLinea(l, resultado)
+                    const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
                     return (
                       <tr key={l.idArticulo}>
                         <td>{l.codigoBarra ?? l.codigoInterno}</td>
@@ -253,15 +289,38 @@ export function Pos() {
                           <input
                             type="number"
                             step="0.001"
+                            min="0.001"
                             className="form-control form-control-sm rounded-0"
                             aria-label={`Cantidad de ${l.nombre}`}
-                            value={l.cantidad}
-                            onChange={(e) =>
-                              mutarCarrito({ tipo: 'editarCantidad', idArticulo: l.idArticulo, cantidad: Number(e.target.value) })
-                            }
+                            value={textoCantidad(l)}
+                            onChange={(e) => cambiarCantidad(l.idArticulo, e.target.value)}
+                            onBlur={() => confirmarCantidad(l.idArticulo)}
                           />
                         </td>
-                        <td className="text-end">{previa.precioUnitario === null ? '—' : `$${formatearMoneda(previa.precioUnitario)}`}</td>
+                        <td className="text-end">
+                          {previa.precioUnitario === null ? (
+                            '—'
+                          ) : (
+                            <>
+                              {tieneDescuento && (
+                                <div className="text-decoration-line-through text-muted small">
+                                  ${formatearMoneda(resultado.precioOriginal as number)}
+                                </div>
+                              )}
+                              <div>
+                                ${formatearMoneda(previa.precioUnitario)}
+                                {tieneDescuento && resultado.aplicadas.length > 0 && (
+                                  <span
+                                    className="badge bg-success ms-1"
+                                    title={resultado.aplicadas.map((a) => a.nombre).join(', ')}
+                                  >
+                                    {resultado.aplicadas[0].nombre}
+                                  </span>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </td>
                         <td className="text-end">{previa.total === null ? '—' : `$${formatearMoneda(previa.total)}`}</td>
                         <td className="text-end">
                           <button
