@@ -8,6 +8,7 @@ using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
 using Ways.Application.Precios;
 using Ways.Application.Proveedores;
+using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
 
@@ -43,6 +44,7 @@ public static class DependencyInjection
 
         services.AddScoped<ServicioDeEscaneo>();
         services.AddScoped<ServicioDeVentas>();
+        services.AddScoped<ServicioDeStock>();
 
         services.AddScoped<ServicioDeAprovisionamiento>();
         services.AddScoped<ServicioDeOrganizacion>();
