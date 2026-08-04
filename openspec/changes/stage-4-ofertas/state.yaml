@@ -24,7 +24,8 @@ phases:
     status: done
     artifact: tasks.md
   apply:
-    status: not_started
+    status: in_progress
+    notes: "Slice 1 (schema + domain foundation) COMPLETE, merged to main via PR #30. Judgment-day: R1 confirmed 1 real WARNING (window-order validation missing from ReglaDeOfertas, falsifying the four-CHECKs-unreachable claim) -> fixed the strong way (ValidarVentana added, 9 unit tests, error code parity ventana_de_oferta_invalida) + safe nullable fallback in ClasificarCheckDeOfertas (orchestrator-triaged); R2 B CLEAN, A docs-only (doc-10 CHECK listing completed inline, trivial-docs exemption, stage-3 precedent). Suite: 121/190/232. Migration OfertasEtapa4 clean. Forward for Slice 2: ServicioDeOfertas wires all four ReglaDeOfertas invariants; ofertas_listas replace-set needs the pk_ofertas_listas race test; spec-pinned CHECK codes in use (oferta_alcance_invalido / oferta_beneficio_invalido)."
   verify:
     status: not_started
   archive:

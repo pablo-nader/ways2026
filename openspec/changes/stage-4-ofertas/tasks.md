@@ -119,13 +119,13 @@ tables).
 
 ### 1B. Domain
 
-- [ ] 1.2 [P] Add `Oferta : EntidadTenant` (raw nullable columns per the
+- [x] 1.2 [P] Add `Oferta : EntidadTenant` (raw nullable columns per the
   gate summary) in `Ways.Domain/Ofertas`. *(spec: ofertas / Ofertas Schema
   At Rest)*
-- [ ] 1.3 [P] Add `OfertaLista` junction entity (no soft-delete, PK-only
+- [x] 1.3 [P] Add `OfertaLista` junction entity (no soft-delete, PK-only
   row) in `Ways.Domain/Ofertas`. *(spec: ofertas / Multi-Lista Targeting
   via ofertas_listas)*
-- [ ] 1.4 Add pure `ReglaDeOfertas.LeerAlcance`/`LeerBeneficio` (total
+- [x] 1.4 Add pure `ReglaDeOfertas.LeerAlcance`/`LeerBeneficio` (total
   functions projecting an `Oferta` row into `AlcanceDeOferta`/
   `BeneficioDeOferta` record structs, or throw `ErrorDominio`) plus range
   validation (`porcentaje ∈ (0,100]`, `importe_fijo ≥ 0`, `precio_unitario ≥
@@ -136,18 +136,18 @@ tables).
 
 ### 1C. Migration (only after 1.1 approved)
 
-- [ ] 1.5 Generate migration `OfertasEtapa4`: both tables, the four CHECKs,
+- [x] 1.5 Generate migration `OfertasEtapa4`: both tables, the four CHECKs,
   composite FKs, hand-named snake_case indexes, `HabilitarRlsDeTenant` on
   both tables. Confirm `dotnet ef migrations has-pending-model-changes` is
   clean before committing. *(design: Migration Sequencing)*
-- [ ] 1.6 Update `docs/10-modelo-de-datos.md` in the same PR: record the
+- [x] 1.6 Update `docs/10-modelo-de-datos.md` in the same PR: record the
   `ofertas_listas` junction replacing the single `id_lista_precio NULL`
   column, stating the deviation explicitly. *(proposal: docs/10 update in
   scope; design: Migration Sequencing)*
 
 ### 1D. db-error-backstops mapping groundwork
 
-- [ ] 1.7 Add a `ClasificarCheck` classifier matched by **exact name**
+- [x] 1.7 Add a `ClasificarCheck` classifier matched by **exact name**
   behind a `ck_ofertas_` prefix guard, appended **after** the two existing
   exact-name 23514 branches (`ck_clientes_cf_protegido`,
   `ck_precios_ventana_valida`): `ck_ofertas_alcance_exclusivo` → 400
@@ -162,24 +162,24 @@ tables).
 
 ### 1E. Tests
 
-- [ ] 1.8 Integration: RLS proofs for both new tables (EF filter blocks
+- [x] 1.8 Integration: RLS proofs for both new tables (EF filter blocks
   cross-tenant read; raw-SQL/`IgnoreQueryFilters` blocked), mirroring
   `AislamientoDeTenantTests`. *(spec: ofertas / Tenant Isolation for
   ofertas and ofertas_listas, both scenarios)* —
   `tests/Ways.IntegrationTests/OfertasRlsTests.cs`.
-- [ ] 1.9 [P] Unit: `ReglaDeOfertas` — scope/benefit exclusivity (zero and
+- [x] 1.9 [P] Unit: `ReglaDeOfertas` — scope/benefit exclusivity (zero and
   multiple → rejected), range validation for all four numeric fields,
   `dias_semana` subset + no-duplicates. *(spec: ofertas / Domain guard
   rejects invalid shapes before the database)* —
   `tests/Ways.Domain.Tests/Ofertas/ReglaDeOfertasTests.cs`.
-- [ ] 1.10 Integration: raw-SQL backstop tests for the four 23514 CHECKs
+- [x] 1.10 Integration: raw-SQL backstop tests for the four 23514 CHECKs
   (SQLSTATE-asserted + translated code — honest defense-in-depth
   reachability per design's Backstop Map note, since `ReglaDeOfertas`
   pre-validates every normal write path). *(spec: ofertas / Scope CHECK
   rejects zero or multiple scope columns, Benefit CHECK rejects zero or
   multiple benefit columns; design: Backstop Map reachability note)* —
   `tests/Ways.IntegrationTests/OfertasCheckBackstopTests.cs`.
-- [ ] 1.11 Regression: existing Domain/Application/IntegrationTests suites
+- [x] 1.11 Regression: existing Domain/Application/IntegrationTests suites
   unedited and green.
 
 ---
