@@ -636,26 +636,3 @@ export type ComprobanteEmitido = {
   items: ItemEmitido[]
   pagos: PagoEmitido[]
 }
-
-export type ItemComprobanteVenta = {
-  idArticulo: number | null
-  descripcion: string
-  codigoBarra: string | null
-  cantidad: number
-  precioUnitario: number
-  descuento: number
-  total: number
-}
-
-/** TODO(slice-7): shape inferido del Checkout Orchestration Contract + Table Shapes A de
- * design.md — no existe todavía un DTO real de `POST /api/ventas` en main (Slice 4 en review).
- * Confirmar/ajustar contra ese contrato definitivo antes de wirear el fetch. */
-export type ComprobanteVenta = {
-  id: number
-  numeroVisible: string
-  estado: 'emitido' | 'anulado'
-  subtotal: number
-  descuentoTotal: number
-  total: number
-  items: ItemComprobanteVenta[]
-}
