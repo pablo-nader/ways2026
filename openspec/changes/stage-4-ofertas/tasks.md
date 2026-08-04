@@ -77,9 +77,12 @@ tables).
 
 ### 1A. DB CHANGE GATE — BLOCKING
 
-- [ ] 1.1 **STOP.** Present the migration model summary and wait for
-  explicit approval before generating anything (CLAUDE.md gate). The summary
-  MUST group:
+- [x] 1.1 **APPROVED 2026-08-03**, exactly as presented (both tables, the 4
+  CHECKs, composite FKs, hand-named indexes, `pk_ofertas_listas`, RLS on both,
+  no-unique-index-on-nombre exemption, docs/10 update for the junction
+  deviation, no seed/backfill). **STOP.** Present the migration model summary
+  and wait for explicit approval before generating anything (CLAUDE.md gate).
+  The summary MUST group:
   - **New table `ofertas`** (catálogo scope, `id_tenant` NOT NULL,
     `id_empresa NULL` = tenant-wide, doc 09 §84): `nombre citext(150)`,
     `id_articulo`/`id_grupo`/`id_categoria int NULL`, `fecha_desde`/`hasta
