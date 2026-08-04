@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pos } from './Pos'
@@ -71,6 +71,20 @@ function clienteFixture(sobrescribir: Partial<ClienteListado> = {}): ClienteList
 
 function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {}): ArticuloEscaneado {
   return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, ...sobrescribir }
+}
+
+/**
+ * jsdom sanea el `value` de un `<input type="number">` a `""` apenas se le asigna un número
+ * incompleto (ej. "1."), a diferencia de un navegador real que preserva el texto tipeado
+ * mientras el usuario sigue escribiendo. Este helper sobrescribe la propiedad `value` de la
+ * instancia (que blindea al getter del prototipo) antes de disparar el evento, para poder
+ * reproducir en el test el mismo estado intermedio que ve un navegador real.
+ */
+function escribirValorCrudo(input: HTMLInputElement, valor: string) {
+  Object.defineProperty(input, 'value', { value: valor, configurable: true })
+  act(() => {
+    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
+  })
 }
 
 const consumidorFinal = clienteFixture()
@@ -350,5 +364,213 @@ describe('Pos — checkout stubbed', () => {
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+  })
+})
+
+describe('Pos — badge de ofertas apiladas', () => {
+  it('con dos ofertas aplicadas muestra el primer nombre y un contador de las restantes', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          {
+            idArticulo: 1,
+            idListaPrecio: 1,
+            precioOriginal: 150,
+            precioFinal: 100,
+            descuentoUnitario: 50,
+            aplicadas: [
+              { idOferta: 9, nombre: '2x1 Gaseosas', descuentoUnitario: 30 },
+              { idOferta: 10, nombre: 'Descuento Efectivo', descuentoUnitario: 20 },
+            ],
+          },
+        ]
+        return Promise.resolve(resultados)
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+    const badge = await within(fila).findByText('2x1 Gaseosas +1')
+    expect(badge).toHaveAttribute('title', '2x1 Gaseosas, Descuento Efectivo')
+  })
+})
+
+describe('Pos — edición de cantidad', () => {
+  async function agregarLineaCocaCola() {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    return screen.getByLabelText('Cantidad de Coca Cola 1L') as HTMLInputElement
+  }
+
+  it('tipear "1." conserva el punto decimal visible y no dispara ninguna mutación de cantidad', async () => {
+    const input = await agregarLineaCocaCola()
+    const llamadasPrevias = apiPostMock.mock.calls.length
+
+    escribirValorCrudo(input, '1.')
+
+    expect(input.value).toBe('1.')
+    expect(apiPostMock.mock.calls.length).toBe(llamadasPrevias)
+  })
+
+  it('poner la cantidad en "0" y perder el foco hace que el input vuelva a mostrar la cantidad confirmada', async () => {
+    const input = await agregarLineaCocaCola()
+
+    fireEvent.change(input, { target: { value: '0' } })
+    expect(input.value).toBe('0')
+
+    fireEvent.blur(input)
+
+    expect(input.value).toBe('1')
+  })
+
+  it('el guard de cantidad mínima rechaza valores por debajo de 0.001, el mismo piso declarado en min/step', async () => {
+    const input = await agregarLineaCocaCola()
+    expect(input).toHaveAttribute('min', '0.001')
+    expect(input).toHaveAttribute('step', '0.001')
+
+    fireEvent.change(input, { target: { value: '0.0001' } })
+    expect(input.value).toBe('0.0001')
+
+    fireEvent.blur(input)
+
+    expect(input.value).toBe('1')
+  })
+})
+
+describe('Pos — debounce de la resolución de precios', () => {
+  it('una edición debounce ~250ms y una segunda edición dentro de la ventana reemplaza a la primera; un escaneo resuelve sin demora', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+
+    vi.useFakeTimers()
+    try {
+      const input = screen.getByLabelText('Cantidad de Coca Cola 1L')
+
+      fireEvent.change(input, { target: { value: '2' } })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+
+      fireEvent.change(input, { target: { value: '3' } })
+      await vi.advanceTimersByTimeAsync(200)
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(100)
+      expect(apiPostMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('un cambio de cliente inmediatamente después de una edición de cantidad no hereda la demora de esa edición', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    await screen.findByRole('option', { name: /Juan Pérez/ })
+
+    vi.useFakeTimers()
+    try {
+      const input = screen.getByLabelText('Cantidad de Coca Cola 1L')
+      fireEvent.change(input, { target: { value: '2' } })
+
+      fireEvent.change(screen.getByLabelText('Cliente'), { target: { value: String(otroCliente.id) } })
+      await vi.advanceTimersByTimeAsync(50)
+
+      expect(apiPostMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('Pos — limpieza de ediciones en curso', () => {
+  it('quitar una línea con una edición pendiente no deja un override fantasma para un artículo agregado de nuevo', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    const boton = screen.getByRole('button', { name: 'Agregar' })
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await screen.findByText('Coca Cola 1L')
+
+    const input = screen.getByLabelText('Cantidad de Coca Cola 1L') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '0.0001' } })
+    expect(input.value).toBe('0.0001')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await screen.findByText('Coca Cola 1L')
+
+    expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(1)
+  })
+
+  it('vaciar el carrito con una edición pendiente no deja overrides fantasma para las líneas siguientes', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    const boton = screen.getByRole('button', { name: 'Agregar' })
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await screen.findByText('Coca Cola 1L')
+
+    const input = screen.getByLabelText('Cantidad de Coca Cola 1L') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '0.0001' } })
+    expect(input.value).toBe('0.0001')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Vaciar carrito' }))
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await screen.findByText('Coca Cola 1L')
+
+    expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(1)
+  })
+
+  it('un escaneo que suma sobre una línea existente descarta el override de edición pendiente de esa fila', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    const boton = screen.getByRole('button', { name: 'Agregar' })
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await screen.findByText('Coca Cola 1L')
+
+    const input = screen.getByLabelText('Cantidad de Coca Cola 1L') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '0.0001' } })
+    expect(input.value).toBe('0.0001')
+
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
   })
 })
