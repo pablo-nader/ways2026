@@ -35,6 +35,7 @@ function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoLi
 
 function pagoFixture(sobrescribir: Partial<PagoParaCalculo> = {}): PagoParaCalculo {
   return {
+    idFila: 1,
     idMedioPago: 1,
     comportamiento: 'Efectivo',
     admiteVuelto: true,
@@ -137,8 +138,9 @@ describe('pagos — filasAPagosParaCalculo', () => {
       { id: 2, idMedioPago: 2, importe: '20', referencia: 'auth-123', vueltoManual: '' },
     ]
     expect(filasAPagosParaCalculo(filas, medioPorId)).toEqual([
-      { idMedioPago: 1, comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false, importe: 80, referencia: null },
+      { idFila: 1, idMedioPago: 1, comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false, importe: 80, referencia: null },
       {
+        idFila: 2,
         idMedioPago: 2,
         comportamiento: 'Electronico',
         admiteVuelto: false,
@@ -327,7 +329,7 @@ describe('pagos — filasAPagosConVuelto', () => {
     const filas: FilaPago[] = [{ id: 1, idMedioPago: 1, importe: '120', referencia: '', vueltoManual: '' }]
     const resultado = filasAPagosConVuelto(filas, medioPorId, 100)
     expect(resultado).toEqual([
-      { idMedioPago: 1, comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false, importe: 120, referencia: null, vuelto: 20 },
+      { idFila: 1, idMedioPago: 1, comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false, importe: 120, referencia: null, vuelto: 20 },
     ])
   })
 
@@ -341,6 +343,22 @@ describe('pagos — filasAPagosConVuelto', () => {
     const filas: FilaPago[] = [{ id: 1, idMedioPago: 2, importe: '100', referencia: 'auth', vueltoManual: '10' }]
     const resultado = filasAPagosConVuelto(filas, medioPorId, 100)
     expect(resultado[0].vuelto).toBe(0)
+  })
+
+  it('regresión: dos filas con el MISMO medio (split de pago) no colapsan — cada una conserva su propio vuelto', () => {
+    // Fila 1: sin sobreescritura, se queda con el vuelto sugerido (todo el excedente, por ser
+    // la primera fila que admite vuelto). Fila 2: mismo medio, con sobreescritura manual propia.
+    // Antes de la corrección, un Map keyed por `idMedioPago` colapsaba ambas filas y las dos
+    // terminaban resolviendo al `vueltoManual` de la ÚLTIMA fila registrada.
+    const filas: FilaPago[] = [
+      { id: 1, idMedioPago: 1, importe: '80', referencia: '', vueltoManual: '' },
+      { id: 2, idMedioPago: 1, importe: '50', referencia: '', vueltoManual: '5' },
+    ]
+    const resultado = filasAPagosConVuelto(filas, medioPorId, 100)
+
+    expect(resultado).toHaveLength(2)
+    expect(resultado[0]).toMatchObject({ idFila: 1, importe: 80, vuelto: 30 })
+    expect(resultado[1]).toMatchObject({ idFila: 2, importe: 50, vuelto: 5 })
   })
 })
 

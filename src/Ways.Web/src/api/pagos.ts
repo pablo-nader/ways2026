@@ -8,8 +8,12 @@
  */
 import type { ComportamientoMedioPago, MedioPagoListado, PagoDeVenta } from './tipos'
 
-/** Un pago ya resuelto contra su medio de pago — espejo de `PagoAValidar` (Ways.Domain.Ventas). */
+/** Un pago ya resuelto contra su medio de pago — espejo de `PagoAValidar` (Ways.Domain.Ventas).
+ * `idFila` identifica la fila de origen del panel (`FilaPago.id`): dos filas pueden compartir
+ * el mismo `idMedioPago` (split de pago con el mismo medio), así que solo `idFila` es una clave
+ * unívoca para reasociar cada pago con su fila. */
 export type PagoParaCalculo = {
+  idFila: number
   idMedioPago: number
   comportamiento: ComportamientoMedioPago
   admiteVuelto: boolean
@@ -85,6 +89,7 @@ export function filasAPagosParaCalculo(filas: FilaPago[], medioPorId: Record<num
     const importe = Number(fila.importe)
     if (fila.importe.trim() === '' || !Number.isFinite(importe) || importe <= 0) continue
     pagos.push({
+      idFila: fila.id,
       idMedioPago: medio.id,
       comportamiento: medio.comportamiento,
       admiteVuelto: medio.admiteVuelto,
@@ -123,7 +128,9 @@ export function vueltoDeFila(fila: FilaPago, admiteVuelto: boolean, sugerido: nu
  * Filas del panel → pagos de cálculo con vuelto final ya resuelto (design decisión 12): combina
  * `filasAPagosParaCalculo` + `calcularPagosConVuelto` (la sugerencia) y aplica la sobreescritura
  * manual de cada fila (`vueltoDeFila`) — es la función que arma el número que después ve
- * `validarPagosLocal` y `aPagosDeVenta`.
+ * `validarPagosLocal` y `aPagosDeVenta`. La reasociación con la fila de origen se hace por
+ * `idFila`, nunca por `idMedioPago` — dos filas con el mismo medio (split de pago) tienen que
+ * conservar cada una su propio `vueltoManual`.
  */
 export function filasAPagosConVuelto(
   filas: FilaPago[],
@@ -132,10 +139,10 @@ export function filasAPagosConVuelto(
 ): (PagoParaCalculo & { vuelto: number })[] {
   const pagos = filasAPagosParaCalculo(filas, medioPorId)
   const sugeridos = calcularPagosConVuelto(pagos, total)
-  const filaPorMedio = new Map(filas.filter((f) => f.idMedioPago !== '').map((f) => [f.idMedioPago, f]))
+  const filaPorId = new Map(filas.map((f) => [f.id, f]))
 
   return sugeridos.map((p) => {
-    const fila = filaPorMedio.get(p.idMedioPago)
+    const fila = filaPorId.get(p.idFila)
     return { ...p, vuelto: fila ? vueltoDeFila(fila, p.admiteVuelto, p.vuelto) : p.vuelto }
   })
 }

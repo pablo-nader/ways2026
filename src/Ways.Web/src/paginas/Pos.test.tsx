@@ -213,7 +213,7 @@ async function armarVentaLista() {
   await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
 
   await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
-  const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre}`)
+  const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
   await userEvent.type(importe, '100')
 
   await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
@@ -515,7 +515,7 @@ describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioTarjeta.nombre)
 
-    expect(screen.getByLabelText(`Vuelto de ${medioTarjeta.nombre}`)).toBeDisabled()
+    expect(screen.getByLabelText(`Vuelto de ${medioTarjeta.nombre} (fila 1)`)).toBeDisabled()
   })
 
   it('el input de vuelto queda habilitado para un medio con AdmiteVuelto', async () => {
@@ -525,7 +525,7 @@ describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
 
-    expect(screen.getByLabelText(`Vuelto de ${medioEfectivo.nombre}`)).toBeEnabled()
+    expect(screen.getByLabelText(`Vuelto de ${medioEfectivo.nombre} (fila 1)`)).toBeEnabled()
   })
 })
 
@@ -613,6 +613,48 @@ describe('Pos — checkout', () => {
     expect(await screen.findByText('El pago ingresado no cubre el total, ni siquiera con la tolerancia.')).toBeInTheDocument()
     expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
     expect(screen.queryByText(/^Venta /)).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — checkout: split de pago con el mismo medio', () => {
+  it('dos filas de Efectivo (split de pago) no colapsan: cada una envía su propio importe y vuelto', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '60')
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Agregar medio de pago' }))
+    await userEvent.selectOptions(screen.getAllByLabelText('Medio de pago')[1], medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 2)'), '50')
+
+    // Con ambos importes cargados (60 + 50 = 110 sobre un total de 100), el excedente es 10 y el
+    // sugerido por defecto se lo lleva íntegro la fila 1 (la primera que admite vuelto) — recién
+    // acá, contra un valor sugerido ya no-cero, la sobreescritura manual de la fila 1 a "0" es un
+    // cambio real de valor (dispara el evento); si se sobrescribiera antes, con el sugerido
+    // todavía en 0, el input ya mostraría "0" y React no dispararía `onChange` por no detectar
+    // una diferencia real.
+    fireEvent.change(screen.getByLabelText('Vuelto de Efectivo (fila 1)'), { target: { value: '0' } })
+    fireEvent.change(screen.getByLabelText('Vuelto de Efectivo (fila 2)'), { target: { value: '10' } })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')).toBe(true))
+    const llamadaVentas = apiPostMock.mock.calls.find((llamada) => llamada[0] === '/ventas')
+    const solicitud = llamadaVentas?.[1] as {
+      pagos: { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }[]
+    }
+
+    expect(solicitud.pagos).toEqual([
+      { idMedioPago: medioEfectivo.id, importe: 60, referencia: null, vuelto: 0 },
+      { idMedioPago: medioEfectivo.id, importe: 50, referencia: null, vuelto: 10 },
+    ])
   })
 })
 

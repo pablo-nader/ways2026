@@ -73,6 +73,13 @@ function formatearFechaHora(iso: string): string {
   return new Date(iso).toLocaleString('es-AR')
 }
 
+/** Etiqueta de un campo de una fila de pago: el nombre del medio solo no alcanza (dos filas
+ * pueden compartir medio, ej. un split de efectivo) — se le suma `idFila` para que cada input
+ * tenga un `aria-label` unívoco en pantalla. */
+function etiquetaDeCampoFila(prefijo: string, medioDeFila: MedioPagoListado | null, idFila: number): string {
+  return `${prefijo} de ${medioDeFila?.nombre ?? 'medio de pago'} (fila ${idFila})`
+}
+
 /**
  * Pantalla del POS (stage-5-pos-ventas, Slice 7, design: POS Screen Composition) — escaneo +
  * carrito + selección de punto de venta/cliente (Slice 6) + panel de pagos, checkout (`POST
@@ -809,7 +816,7 @@ export function Pos() {
             <h6>Pagos</h6>
             {filasPago.map((fila) => {
               const medioDeFila = fila.idMedioPago === '' ? null : (medioPorId[fila.idMedioPago] ?? null)
-              const pagoDeFila = medioDeFila ? pagosConVuelto.find((p) => p.idMedioPago === medioDeFila.id) ?? null : null
+              const pagoDeFila = pagosConVuelto.find((p) => p.idFila === fila.id) ?? null
               const vueltoMostrado = fila.vueltoManual !== '' ? fila.vueltoManual : String(pagoDeFila?.vuelto ?? 0)
 
               return (
@@ -838,7 +845,7 @@ export function Pos() {
                       step="0.01"
                       min="0"
                       className="form-control form-control-sm rounded-0"
-                      aria-label={`Importe de ${medioDeFila?.nombre ?? 'medio de pago'}`}
+                      aria-label={etiquetaDeCampoFila('Importe', medioDeFila, fila.id)}
                       value={fila.importe}
                       disabled={cobrando}
                       onChange={(e) => cambiarImporteDeFila(fila.id, e.target.value)}
@@ -848,7 +855,7 @@ export function Pos() {
                     <input
                       type="text"
                       className="form-control form-control-sm rounded-0"
-                      aria-label={`Referencia de ${medioDeFila?.nombre ?? 'medio de pago'}`}
+                      aria-label={etiquetaDeCampoFila('Referencia', medioDeFila, fila.id)}
                       placeholder={medioDeFila?.requiereReferencia ? 'Referencia (requerida)' : 'Referencia'}
                       value={fila.referencia}
                       disabled={cobrando || !medioDeFila?.requiereReferencia}
@@ -861,7 +868,7 @@ export function Pos() {
                       step="0.01"
                       min="0"
                       className="form-control form-control-sm rounded-0"
-                      aria-label={`Vuelto de ${medioDeFila?.nombre ?? 'medio de pago'}`}
+                      aria-label={etiquetaDeCampoFila('Vuelto', medioDeFila, fila.id)}
                       value={vueltoMostrado}
                       disabled={cobrando || !medioDeFila?.admiteVuelto}
                       onChange={(e) => cambiarVueltoDeFila(fila.id, e.target.value)}
