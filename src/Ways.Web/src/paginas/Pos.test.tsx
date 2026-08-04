@@ -485,6 +485,72 @@ describe('Pos — panel de pagos: precondiciones', () => {
     expect(await screen.findByText('No se pudieron cargar los medios de pago.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
   })
+
+  it('Cobrar permanece deshabilitado mientras la primera resolución de precios está pendiente, aunque el resto de las precondiciones ya esté listo', async () => {
+    let resolverPrimera: (resultados: ResultadoDeResolucion[]) => void = () => {}
+    const primeraPendiente = new Promise<ResultadoDeResolucion[]>((resolve) => {
+      resolverPrimera = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') return primeraPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '100')
+
+    expect(screen.getByText('Calculando…')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+
+    await act(async () => {
+      resolverPrimera([
+        { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+      ])
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+  })
+})
+
+describe('Pos — regresión: "resolviendo" no queda huérfano en `true`', () => {
+  it('vaciar el carrito mientras una resolución de precios está en vuelo no deja "Calculando…" para siempre, ni aunque la fetch huérfana se asiente después', async () => {
+    let resolverPrimera: (resultados: ResultadoDeResolucion[]) => void = () => {}
+    const primeraPendiente = new Promise<ResultadoDeResolucion[]>((resolve) => {
+      resolverPrimera = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') return primeraPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    expect(screen.getByText('Calculando…')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+    expect(screen.queryByText('Calculando…')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolverPrimera([
+        { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+      ])
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByText('Calculando…')).not.toBeInTheDocument()
+  })
 })
 
 describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {

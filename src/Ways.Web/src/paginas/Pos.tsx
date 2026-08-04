@@ -255,6 +255,11 @@ export function Pos() {
     if (lineas.length === 0 || !clienteSeleccionado || !puntoVentaSeleccionada) {
       setPrecios({})
       setAvisoPrecios('')
+      // El bump de generación que hace `cobrar()` al terminar puede huerfanar una resolución
+      // en vuelo (su `finally` se salta porque la generación ya no coincide): sin este reset,
+      // esta corrida temprana (ej. tras vaciar el carrito post-cobro) deja `resolviendo` en
+      // `true` para siempre.
+      setResolviendo(false)
       return
     }
 
@@ -489,7 +494,9 @@ export function Pos() {
     medios !== null &&
     errorMedios === '' &&
     parametros !== null &&
-    errorParametros === ''
+    errorParametros === '' &&
+    subtotalPrevia !== null &&
+    !resolviendo
 
   const puedeCobrar = precondicionesListas && !cobrando && rechazoLocal === null
 
