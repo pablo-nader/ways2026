@@ -7,6 +7,7 @@ import { api } from './cliente'
 import type {
   AltaArticulo,
   AltaCodigoBarra,
+  ArticuloEscaneado,
   ArticuloListado,
   CodigoBarraListado,
   EdicionArticulo,
@@ -36,4 +37,8 @@ export const clienteDeArticulos = {
   /** Solo lectura: propone, nunca persiste un precio por sí sola (spec: Margin-Based Price
    * Suggestion, "Suggestion requires explicit apply"). */
   sugerenciaDePrecio: (id: number) => api.get<SugerenciaDePrecio>(`/articulos/${id}/sugerencia-precio`),
+  /** Resolución de escaneo del POS (stage-5-pos-ventas, Slice 2/6): identidad únicamente, nunca
+   * precio (design decisión 7). `entrada` viaja tal cual la tipeó/leyó el lector — el parseo de
+   * `N*codigo` es responsabilidad del servidor (`ParserDeEscaneo`). */
+  escanear: (entrada: string) => api.get<ArticuloEscaneado>(`/articulos/escaneo?entrada=${encodeURIComponent(entrada)}`),
 }

@@ -7,7 +7,7 @@
  * descriptor literal).
  */
 import { api } from './cliente'
-import type { AltaOferta, EdicionOferta, ListaPrecioListado, OfertaListado } from './tipos'
+import type { AltaOferta, EdicionOferta, LineaDeResolucion, ListaPrecioListado, OfertaListado, ResultadoDeResolucion } from './tipos'
 
 export const clienteDeOfertas = {
   listar: (incluirEliminados: boolean) =>
@@ -18,6 +18,10 @@ export const clienteDeOfertas = {
   crear: (datos: AltaOferta) => api.post<OfertaListado>('/ofertas', datos),
   actualizar: (id: number, datos: EdicionOferta) => api.put<OfertaListado>(`/ofertas/${id}`, datos),
   eliminar: (id: number) => api.delete(`/ofertas/${id}`),
+  /** `POST /api/ofertas/resolver` (stage-4, re-gateado a `OperacionDePos` en stage-5): único
+   * camino de precio del carrito del POS (spec: operacion-de-pos / "Cart Pricing Has Exactly
+   * One Path") — no muta nada, solo reporta precio final y ofertas aplicadas por línea. */
+  resolver: (lineas: LineaDeResolucion[]) => api.post<ResultadoDeResolucion[]>('/ofertas/resolver', { lineas }),
 }
 
 export type AlcanceOferta = 'Articulo' | 'Grupo' | 'Categoria'
