@@ -11,9 +11,18 @@ phases:
     status: done
     artifact: proposal.md
   spec:
-    status: not_started
+    status: done
+    artifact: specs/
+    domains:
+      - comprobantes-venta (new, 9 req / 24 scenarios; numeracion + pagos folded in)
+      - stock (new, 6 req / 12 scenarios)
+      - consumo-cuenta-corriente (new, 6 req / 8 scenarios)
+      - operacion-de-pos (new, 4 req / 10 scenarios)
+      - codigos-barra, clientes, articulos, parametros-operativos, resolucion-de-ofertas (deltas)
   design:
-    status: not_started
+    status: done
+    artifact: design.md
+    notes: "12 decisions. KEY DEVIATION for the gate: NO advisory locks in checkout (decide-then-commit, atomic UPDATE...RETURNING, pinned statement order numeracion -> stock asc id_articulo -> cliente). Auth mechanism: group gate becomes OperacionDePos, catalog writes stack GestionDeCatalogo (AND composition) -- two shipped Vendedor-403 tests must invert. Backstop trap caught: ux_comprobantes_venta_numero contains _numero, new branch must precede the cliente family branch. 3 enums (estado_comprobante, motivo_stock, tipo_movimiento_cc). movimientos_stock.id_comprobante_compra FK deferred to stage 8 (table missing). Two migrations under one gate approval (400-line budget)."
   tasks:
     status: not_started
   apply:
