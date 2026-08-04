@@ -126,7 +126,7 @@ export function App() {
             <Route
               path="/catalogos-fiscales"
               element={
-                <RutaProtegida rolesPermitidos={[ROL.Root, ROL.Admin]}>
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <CatalogosFiscales />
                 </RutaProtegida>
               }

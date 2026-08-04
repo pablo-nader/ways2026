@@ -83,15 +83,15 @@ export function Layout() {
                         Parámetros
                       </NavLink>
                     </li>
-                  </>
-                )}
-                {usuario && (usuario.rolId === ROL.Root || usuario.rolId === ROL.Admin) && (
-                  <>
                     <li className="nav-item">
                       <NavLink className="nav-link" to="/catalogos-fiscales">
                         Catálogos fiscales
                       </NavLink>
                     </li>
+                  </>
+                )}
+                {usuario && (usuario.rolId === ROL.Root || usuario.rolId === ROL.Admin) && (
+                  <>
                     <li className="nav-item">
                       <NavLink className="nav-link" to="/organizacion/empresas">
                         Empresas
