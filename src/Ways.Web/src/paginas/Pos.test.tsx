@@ -219,6 +219,30 @@ async function armarVentaLista() {
   await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
 }
 
+describe('Pos — formato de moneda negativa (regresión, INFO recurrente desde slice 6)', () => {
+  it('un total negativo en el ticket antepone el signo al símbolo ($): "-$50,00", nunca "$-50,00"', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/ventas') {
+        return Promise.resolve(
+          comprobanteEmitidoFixture({ subtotal: -50, descuentoTotal: 0, total: -50 }),
+        )
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText(/Total: -\$50,00/)).toBeInTheDocument()
+  })
+})
+
 describe('Pos — carga inicial', () => {
   it('selecciona el Consumidor Final por defecto y el único punto de venta disponible', async () => {
     render(<Pos />)

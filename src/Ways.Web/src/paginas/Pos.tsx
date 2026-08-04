@@ -65,8 +65,12 @@ function etiquetaDeCliente(c: ClienteListado): string {
   return `#${c.numero} — ${nombreCompleto}`
 }
 
+/** Formato monetario con signo correcto para negativos (`-$50,00`, nunca `$-50,00`) — incluye el
+ * símbolo `$` para que ningún call-site tenga que prefijarlo a mano y arriesgarse a mal-ubicar
+ * el signo. */
 function formatearMoneda(valor: number): string {
-  return valor.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const signo = valor < 0 ? '-' : ''
+  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function formatearFechaHora(iso: string): string {
@@ -574,15 +578,15 @@ export function Pos() {
                       <tr key={item.orden}>
                         <td>{item.descripcion}</td>
                         <td>{item.cantidad}</td>
-                        <td className="text-end">${formatearMoneda(item.precioUnitario)}</td>
+                        <td className="text-end">{formatearMoneda(item.precioUnitario)}</td>
                         <td className="text-end">
                           {item.descuento > 0 ? (
-                            <span className="badge bg-success">-${formatearMoneda(item.descuento)}</span>
+                            <span className="badge bg-success">-{formatearMoneda(item.descuento)}</span>
                           ) : (
                             '—'
                           )}
                         </td>
-                        <td className="text-end">${formatearMoneda(item.total)}</td>
+                        <td className="text-end">{formatearMoneda(item.total)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -595,19 +599,19 @@ export function Pos() {
                   <ul className="list-unstyled mb-0">
                     {comprobante.pagos.map((pago, indice) => (
                       <li key={indice}>
-                        {medioPorId[pago.idMedioPago]?.nombre ?? `Medio #${pago.idMedioPago}`}: $
+                        {medioPorId[pago.idMedioPago]?.nombre ?? `Medio #${pago.idMedioPago}`}:{' '}
                         {formatearMoneda(pago.importe)}
                         {pago.referencia && ` (ref. ${pago.referencia})`}
-                        {pago.vuelto > 0 && ` — vuelto $${formatearMoneda(pago.vuelto)}`}
+                        {pago.vuelto > 0 && ` — vuelto ${formatearMoneda(pago.vuelto)}`}
                       </li>
                     ))}
                   </ul>
                 </div>
                 <div className="col-md-6 text-md-end">
-                  <div>Subtotal: ${formatearMoneda(comprobante.subtotal)}</div>
-                  <div>Descuento: ${formatearMoneda(comprobante.descuentoTotal)}</div>
+                  <div>Subtotal: {formatearMoneda(comprobante.subtotal)}</div>
+                  <div>Descuento: {formatearMoneda(comprobante.descuentoTotal)}</div>
                   <div className="fs-5">
-                    <strong>Total: ${formatearMoneda(comprobante.total)}</strong>
+                    <strong>Total: {formatearMoneda(comprobante.total)}</strong>
                   </div>
                 </div>
               </div>
@@ -688,11 +692,11 @@ export function Pos() {
                             <>
                               {tieneDescuento && (
                                 <div className="text-decoration-line-through text-muted small">
-                                  ${formatearMoneda(resultado.precioOriginal as number)}
+                                  {formatearMoneda(resultado.precioOriginal as number)}
                                 </div>
                               )}
                               <div>
-                                ${formatearMoneda(previa.precioUnitario)}
+                                {formatearMoneda(previa.precioUnitario)}
                                 {tieneDescuento && resultado.aplicadas.length > 0 && (
                                   <span
                                     className="badge bg-success ms-1"
@@ -707,7 +711,7 @@ export function Pos() {
                             </>
                           )}
                         </td>
-                        <td className="text-end">{previa.total === null ? '—' : `$${formatearMoneda(previa.total)}`}</td>
+                        <td className="text-end">{previa.total === null ? '—' : formatearMoneda(previa.total)}</td>
                         <td className="text-end">
                           <button
                             type="button"
@@ -817,7 +821,7 @@ export function Pos() {
             <div className="d-flex justify-content-between mb-3">
               <strong>Total previo</strong>
               <strong>
-                {resolviendo ? 'Calculando…' : subtotalPrevia === null ? '—' : `$${formatearMoneda(subtotalPrevia)}`}
+                {resolviendo ? 'Calculando…' : subtotalPrevia === null ? '—' : formatearMoneda(subtotalPrevia)}
               </strong>
             </div>
 
@@ -912,11 +916,11 @@ export function Pos() {
 
             <div className="d-flex justify-content-between small">
               <span>Falta</span>
-              <span>${formatearMoneda(faltante)}</span>
+              <span>{formatearMoneda(faltante)}</span>
             </div>
             <div className="d-flex justify-content-between small mb-2">
               <span>Vuelto</span>
-              <span>${formatearMoneda(excedente)}</span>
+              <span>{formatearMoneda(excedente)}</span>
             </div>
 
             {rechazoLocal && <div className="alert alert-warning rounded-0 py-1 px-2 small">{rechazoLocal.mensaje}</div>}
