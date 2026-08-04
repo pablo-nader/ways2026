@@ -123,7 +123,7 @@ built in memory from one `id_categoria`/`id_categoria_padre` projection of the t
 | `ck_ofertas_beneficio_exclusivo` | 23514 → 400 `oferta_beneficio_invalido` (idem) | idem |
 | `ck_ofertas_ventana_valida` | 23514 → 400 `ventana_de_oferta_invalida` | idem |
 | `ck_ofertas_dias_semana` | 23514 → 400 `dias_semana_invalidos` | idem |
-| `pk_ofertas_listas` | 23505 → 409 `oferta_lista_duplicada` (same family as `pk_articulos_empresas`) | **race test**: two concurrent PUTs replacing the same oferta's lista set → exactly one winner, the loser a translated 409/serialization outcome, never a 500 |
+| `pk_ofertas_listas` | 23505 → 409 `oferta_lista_duplicada` (same family as `pk_articulos_empresas`) | **superseded at judgment-day R1/R2**: the replace-set (and the soft-delete) are now FULLY SERIALIZED via pg_advisory_xact_lock(idTenant, idOferta) — concurrent PUTs both succeed (strict 2×200, last commit wins, never a union), PUT↔DELETE cannot ghost-edit, and the 23505 is only reachable via raw/out-of-band writes (raw-SQL SQLSTATE-asserted test). DbUpdateConcurrencyException → 409 `edicion_concurrente` added as generic defense in depth. |
 | `fk_ofertas_*`, `fk_ofertas_listas_*` | existing generic `fk_` prefix → 400 `referencia_invalida` (no code change) | integration test: lista id of another tenant → 400, never 500 |
 | `ofertas` uniqueness | **none — documented exemption**: `nombre` is a ticket label, intentionally non-unique | n/a |
 
