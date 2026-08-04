@@ -61,10 +61,9 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<NumeracionArticulo> NumeracionesArticulos => Set<NumeracionArticulo>();
     public DbSet<Precio> Precios => Set<Precio>();
 
-    // stage-4-ofertas, Slice 1 (schema/domain foundation, DB CHANGE GATE aprobado
-    // 2026-08-03): mismo trámite que articulos/precios en stage-3 Slice 1 — modelo adelantado
-    // a la migración, sin DbSet en IWaysDbContext todavía (ningún caso de uso de Application
-    // los consume en este lote; ServicioDeOfertas llega en la Slice 2).
+    // stage-4-ofertas, Slice 2: ServicioDeOfertas es el primer consumidor de Application —
+    // los dos DbSet ya están expuestos en IWaysDbContext (Slice 1 solo adelantaba el modelo a
+    // la migración, sin consumidor todavía).
     public DbSet<Oferta> Ofertas => Set<Oferta>();
     public DbSet<OfertaLista> OfertasListas => Set<OfertaLista>();
 
