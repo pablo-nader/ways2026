@@ -287,6 +287,157 @@ public class ServicioDeVentas(
         return new PaginaDeVentas(items, total, pagina, tamanio);
     }
 
+    // ---- Anulación (Slice 5, design: Protection Rules — "A comprobante is anulado at most
+    // once"; spec: comprobantes-venta / Anulación Reverses Stock and CC, Never Restores by
+    // Editing) --------------------------------------------------------------------------------
+
+    /// <summary>Anula un comprobante emitido: revierte stock y cuenta corriente en LA MISMA
+    /// transacción que la transición de estado — nunca un <c>restaurar</c> (doc 10 principio 6,
+    /// ese endpoint no existe ni existirá). A diferencia de <see cref="EmitirAsync"/>, acá no hay
+    /// nada que decidir por fuera de la transacción (ni precios, ni ofertas, ni validación de
+    /// pagos): todo lo que esta operación escribe es la INVERSA exacta de lo que
+    /// <see cref="EjecutarTransaccionAsync"/> ya escribió, tomada del ledger original
+    /// (<c>movimientos_stock</c>/<c>movimientos_cuenta_corriente</c>), nunca recalculada desde
+    /// <c>items_comprobante_venta</c> — así una línea de servicio (<c>EsProducto = false</c>, que
+    /// nunca generó movimiento) automáticamente no genera tampoco su reversa, sin tener que
+    /// re-consultar el catálogo.</summary>
+    public async Task<ComprobanteEmitido> AnularAsync(int id, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        // Sin reintento automático (ver el doc-comment de
+        // FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento): una anulación es humana y
+        // manual, sin clave de idempotencia — un reintento de EnableRetryOnFailure sobre un
+        // commit ambiguo re-correría el UPDATE condicional del paso 1, que ya no matchea
+        // 'emitido' tras el commit real, y devolvería 409 comprobante_ya_anulado a una solicitud
+        // que en verdad tuvo éxito. Un reintento manual del operador que vea ese 409 está viendo
+        // información correcta: el comprobante ya está anulado.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () => await EjecutarAnulacionAsync(id, idTenant, idEmpleado, momento, ct));
+    }
+
+    private async Task<ComprobanteEmitido> EjecutarAnulacionAsync(
+        int id, int idTenant, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        // Defensa en profundidad (design: Domain rules first, mismo criterio que
+        // ValidarSignoDeLineas dentro de MaterializarItems): valida la transición contra el
+        // estado pre-leído ANTES del UPDATE atómico del paso 1, que sigue siendo la única
+        // autoridad race-safe — si otra anulación gana la carrera entre este SELECT y ese UPDATE,
+        // la rama `!seAnulo` de abajo la sigue atrapando sin depender de este pre-chequeo.
+        // AsNoTracking(): el UPDATE de abajo es SQL crudo, no pasa por el change tracker de EF —
+        // sin esto, la entidad quedaría trackeada con el estado VIEJO y el ObtenerAsync() del
+        // final devolvería ese mismo objeto stale desde el identity map, en vez de re-consultar.
+        var comprobantePreLectura = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (comprobantePreLectura is not null)
+        {
+            ReglaDeComprobantes.ValidarTransicionAEstado(comprobantePreLectura.Estado, EstadoComprobante.Anulado);
+        }
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // 1. Transición atómica emitido → anulado — un único UPDATE ... WHERE estado = 'emitido'
+        // RETURNING (forward obligation, ADR-8: el segundo layer id_tenant en el WHERE es la
+        // misma defensa barata que ActualizarSaldoClienteAsync, RLS ya aísla por tenant). Dos
+        // anulaciones concurrentes del mismo comprobante se serializan acá: Postgres toma el row
+        // lock de la primera, la segunda espera y, al retomarlo, re-evalúa el WHERE contra el
+        // estado YA COMITEADO por la primera — 'anulado' no matchea 'emitido', 0 filas, nunca un
+        // 500 ni una condición de carrera silenciosa.
+        var seAnulo = await MarcarAnuladoAsync(conexion, transaccionCruda, idTenant, id, ct);
+
+        if (!seAnulo)
+        {
+            // ADR-8: mismo 404 para "no existe" y "es de otro tenant" (filtro de EF + RLS ya
+            // deja invisible un comprobante ajeno) — solo si NINGUNA fila visible tiene ese id
+            // es 404; si la fila existe pero ya estaba anulada, es 409 (spec: "idempotent-safe
+            // against double-anulación").
+            var existe = await db.ComprobantesVenta.AnyAsync(c => c.Id == id, ct);
+            if (!existe)
+            {
+                throw ErrorDominio.NoEncontrado($"No existe el comprobante {id}.");
+            }
+
+            throw new ErrorDominio("comprobante_ya_anulado", "El comprobante ya está anulado.", 409);
+        }
+
+        // 2. Movimientos de stock inversos — uno por cada movimiento ORIGINAL de motivo = venta
+        // de este comprobante (nunca recalculado desde items: ver el doc-comment de
+        // AnularAsync). Orden ascendente por id_articulo, mismo criterio anti-deadlock que
+        // EjecutarTransaccionAsync paso 5 (design decisión 2), aunque acá no hay otra venta
+        // concurrente compitiendo por las mismas filas — se mantiene por consistencia de
+        // convención, no por necesidad estricta.
+        var movimientosOriginales = await db.MovimientosStock
+            .Where(m => m.IdComprobanteVenta == id && m.Motivo == MotivoStock.Venta)
+            .OrderBy(m => m.IdArticulo)
+            .ToListAsync(ct);
+
+        foreach (var original in movimientosOriginales)
+        {
+            var inversa = -original.Cantidad;
+
+            await InsertarMovimientoStockAsync(
+                conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa,
+                MotivoStock.Anulacion, id, idEmpleado, momento, ct);
+
+            await UpsertStockAsync(conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa, ct);
+        }
+
+        // 3. Contramovimiento de cuenta corriente — uno por cada consumo ORIGINAL de este
+        // comprobante (spec: consumo-cuenta-corriente / Anulación Produces A Contramovimiento;
+        // Movimiento Schema At Rest: "tipo = ajuste-shaped inverse rows used as the anulación
+        // contramovimiento", nunca tipo = consumo). id_pago_comprobante del consumo original
+        // siempre está poblado (EjecutarTransaccionAsync paso 6 lo setea siempre) — forzarlo acá
+        // es defensa en profundidad de un invariante de escritura, no un caso de negocio
+        // alcanzable.
+        var consumosOriginales = await db.MovimientosCuentaCorriente
+            .Where(m => m.IdComprobanteVenta == id && m.Tipo == TipoMovimientoCc.Consumo)
+            .ToListAsync(ct);
+
+        foreach (var consumo in consumosOriginales)
+        {
+            var idPagoComprobante = consumo.IdPagoComprobante
+                ?? throw new InvalidOperationException(
+                    $"El movimiento de consumo {consumo.Id} no tiene id_pago_comprobante — invariante de escritura violado.");
+
+            var nuevoSaldo = await ActualizarSaldoClienteAsync(
+                conexion, transaccionCruda, idTenant, consumo.IdCliente, -consumo.Importe, ct);
+
+            await InsertarMovimientoCcAsync(
+                conexion, transaccionCruda, idTenant, consumo.IdCliente, momento, consumo.IdPuntoVenta, idEmpleado,
+                TipoMovimientoCc.Ajuste, id, idPagoComprobante, -consumo.Importe, nuevoSaldo, ct);
+        }
+
+        await transaccion.CommitAsync(ct);
+
+        return await ObtenerAsync(id, ct);
+    }
+
+    /// <summary>Único UPDATE atómico de la transición de estado — ver el doc-comment de
+    /// <see cref="EjecutarAnulacionAsync"/> sobre por qué esto alcanza para serializar dos
+    /// anulaciones concurrentes sin ningún lock explícito.</summary>
+    private static async Task<bool> MarcarAnuladoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idComprobanteVenta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "UPDATE comprobantes_venta SET estado = $1 " +
+            "WHERE id_comprobante_venta = $2 AND id_tenant = $3 AND estado = $4 " +
+            "RETURNING id_comprobante_venta";
+
+        AgregarParametro(comando, EstadoComprobante.Anulado);
+        AgregarParametro(comando, idComprobanteVenta);
+        AgregarParametro(comando, idTenant);
+        AgregarParametro(comando, EstadoComprobante.Emitido);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is not null;
+    }
+
     // ---- La transacción (design: The Sale Transaction, orden de statements pineado) ----------
 
     private async Task<ComprobanteEmitido> EjecutarTransaccionAsync(PlanDeVenta plan, long numero, CancellationToken ct)

@@ -385,35 +385,35 @@ comprobante to anular). **Start**: PR 4 merged/branch. **Finish**: anulación
 reverses stock/CC exactly, double-anulación blocked, admin ajuste live.
 **Rollback**: new routes/methods only.
 
-- [ ] 5.1 Add `ServicioDeVentas.AnularAsync` — one transaction: conditional
+- [x] 5.1 Add `ServicioDeVentas.AnularAsync` — one transaction: conditional
   `UPDATE … SET estado='anulado' WHERE estado='emitido'` (0 rows ⇒ 409
   `comprobante_ya_anulado`), inverse `movimientos_stock` per item, CC
   contramovimiento if used. *(spec: comprobantes-venta / Anulación Reverses
   Stock and CC, Never Restores by Editing; stock / Anulación Inverse
   Movement; consumo-cuenta-corriente / Anulación Produces A
   Contramovimiento)*
-- [ ] 5.2 Add `POST /api/ventas/{id}/anulacion` (POST, not DELETE),
+- [x] 5.2 Add `POST /api/ventas/{id}/anulacion` (POST, not DELETE),
   `OperacionDePos`. *(design: API Surface)*
-- [ ] 5.3 Add `ServicioDeStock.AjustarAsync` — `motivo = ajuste`, requires
+- [x] 5.3 Add `ServicioDeStock.AjustarAsync` — `motivo = ajuste`, requires
   non-empty `observaciones`, `GestionDeCatalogo` only. *(spec: stock /
   Manual Ajuste Path Is Admin-Only)*
-- [ ] 5.4 Add `POST /api/stock/ajustes` (`OperacionDePos` ∧
+- [x] 5.4 Add `POST /api/stock/ajustes` (`OperacionDePos` ∧
   `GestionDeCatalogo`) and `GET /api/stock?idPuntoVenta=&idArticulo=`
   (`OperacionDePos`). *(design: API Surface)*
-- [ ] 5.5 [P] Integration: anulación reverses stock and CC exactly (spec
+- [x] 5.5 [P] Integration: anulación reverses stock and CC exactly (spec
   numbers), idempotent-safe against double-anulación, no `restaurar`
   endpoint (404). *(spec: comprobantes-venta, all 4 scenarios of the
   Anulación requirement)*
-- [ ] 5.6 Integration (concurrency): two concurrent anulaciones of the same
+- [x] 5.6 Integration (concurrency): two concurrent anulaciones of the same
   comprobante → exactly one 200 + one 409. *(design: Backstop Map —
   reachability #3)*
-- [ ] 5.7 [P] Integration: admin ajuste loads initial stock; Vendedor
+- [x] 5.7 [P] Integration: admin ajuste loads initial stock; Vendedor
   blocked; empty `observaciones` rejected. *(spec: stock / Manual Ajuste
   Path Is Admin-Only, all 3 scenarios)*
-- [ ] 5.8 Unit: `stock.cantidad = Σ movimientos_stock` after a mixed
+- [x] 5.8 Unit: `stock.cantidad = Σ movimientos_stock` after a mixed
   venta/ajuste/anulación sequence (spec's concrete numbers). *(spec: stock /
   Cantidad Is Always The Sum Of Its Movimientos)*
-- [ ] 5.9 Regression: Slices 1–4 suites unedited and green.
+- [x] 5.9 Regression: Slices 1–4 suites unedited and green.
 
 ---
 
