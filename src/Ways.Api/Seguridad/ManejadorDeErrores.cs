@@ -117,8 +117,9 @@ public class ManejadorDeErrores(
             // backstop de una escritura cruda/fuera de banda (misma familia que las dos ramas
             // de arriba).
             DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckOferta } }
-                when ckOferta.StartsWith("ck_ofertas_", StringComparison.Ordinal) =>
-                ClasificarCheckDeOfertas(ckOferta),
+                when ckOferta.StartsWith("ck_ofertas_", StringComparison.Ordinal)
+                    && ClasificarCheckDeOfertas(ckOferta) is { } checkOferta =>
+                (checkOferta.EstadoHttp, checkOferta.Titulo, checkOferta.Codigo),
 
             // stage-4-ofertas (Slice 1, task 1.7): pk_ofertas_listas — la única superficie
             // genuinamente racy de esta etapa (design: Backstop Map). El replace-set de
@@ -313,7 +314,7 @@ public class ManejadorDeErrores(
     /// (<c>oferta_alcance_invalido</c>/<c>oferta_beneficio_invalido</c>, no el nombre borrador
     /// de <c>design.md</c>), las otras dos siguen el nombre de <c>design.md</c> tal cual
     /// (ningún escenario de spec las pinea distinto).</summary>
-    private static (int EstadoHttp, string Titulo, string Codigo) ClasificarCheckDeOfertas(string nombreDeCheck) =>
+    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarCheckDeOfertas(string nombreDeCheck) =>
         nombreDeCheck switch
         {
             "ck_ofertas_alcance_exclusivo" =>
@@ -336,8 +337,10 @@ public class ManejadorDeErrores(
                     "Los días de semana de la oferta tienen que ser valores de 1 a 7 sin repetir.",
                     "dias_semana_invalidos"),
 
-            _ => throw new InvalidOperationException(
-                $"'{nombreDeCheck}' pasó el guard de prefijo 'ck_ofertas_' pero no tiene un caso — " +
-                "agregar la CHECK nueva a este switch.")
+            // Nombre inesperado detrás del guard de prefijo "ck_ofertas_" (p.ej. una CHECK nueva
+            // agregada al esquema sin actualizar este switch): cae al mismo 500 genérico que
+            // cualquier otro caso no mapeado (mismo patrón que ClasificarUnicidad — null en vez
+            // de lanzar desde el exception handler).
+            _ => null
         };
 }
