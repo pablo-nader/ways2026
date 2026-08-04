@@ -741,23 +741,26 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
-    /// <summary>Mismo criterio que <see cref="UnVendedorNoPuedeAgregarCodigosDeBarra"/>, para
-    /// el GET de listado: toda la ruta cuelga del mismo grupo con la policy
-    /// <c>GestionDeCatalogo</c> (admin-only).</summary>
+    /// <summary>INVERSIÓN INTENCIONAL (stage-5-pos-ventas, Slice 1, design: Authorization
+    /// Surface — "Two shipped tests invert"): el grupo de <c>ArticulosEndpoints</c> pasa de
+    /// <c>GestionDeCatalogo</c> a <c>Politicas.OperacionDePos</c> (decisión 6) — un Vendedor
+    /// necesita leer los códigos de barra para el escaneo del POS. La escritura (agregar/quitar)
+    /// sigue admin-only vía <see cref="UnVendedorNoPuedeAgregarCodigosDeBarra"/> (apila
+    /// <c>GestionDeCatalogo</c> sobre el grupo).</summary>
     [Fact]
-    public async Task UnVendedorNoPuedeListarCodigosDeBarra()
+    public async Task UnVendedorPuedeListarCodigosDeBarra()
     {
         var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
-            await AprovisionarTenantAsync(nameof(UnVendedorNoPuedeListarCodigosDeBarra));
+            await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarCodigosDeBarra));
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
         var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
 
-        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorNoPuedeListarCodigosDeBarra));
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorPuedeListarCodigosDeBarra));
         using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
 
         var respuesta = await vendedor.GetAsync($"/api/articulos/{articulo.Id}/codigos-barra");
 
-        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
 
     /// <summary>Spec: articulos / Availability Model — un vendedor tampoco puede cambiar la

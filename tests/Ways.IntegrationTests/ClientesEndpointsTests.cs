@@ -329,17 +329,22 @@ public class ClientesEndpointsTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(idListaPrecioGeneralA, listas![0].Id);
     }
 
+    /// <summary>INVERSIÓN INTENCIONAL (stage-5-pos-ventas, Slice 1, design: Authorization
+    /// Surface — "Two shipped tests invert"): <c>GET /api/listas-precio</c> pasa de
+    /// <c>GestionDeCatalogo</c> a <c>Politicas.OperacionDePos</c> (decisión 6) — el POS necesita
+    /// el selector de lista de precios del cliente. Sin ABM propio esta etapa (design decisión
+    /// 1), así que no hay contraparte de escritura que probar acá.</summary>
     [Fact]
-    public async Task UnVendedorNoPuedeListarListasDePrecio()
+    public async Task UnVendedorPuedeListarListasDePrecio()
     {
         var (idTenant, _, _, _, _) =
-            await AprovisionarTenantAsync(nameof(UnVendedorNoPuedeListarListasDePrecio));
-        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorNoPuedeListarListasDePrecio));
+            await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarListasDePrecio));
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorPuedeListarListasDePrecio));
         using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
 
         var respuesta = await vendedor.GetAsync("/api/listas-precio");
 
-        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
 
     /// <summary>Judgment-day ronda 1 (item 4): <see cref="Ways.Domain.Clientes.ReglaDeClientes.ValidarNoConsumidorFinal"/>

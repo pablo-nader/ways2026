@@ -20,7 +20,7 @@ public static class CatalogosEndpoints
     {
         var grupo = app.MapGroup($"/api/catalogos/{recurso}")
             .WithTags("Catálogos")
-            .RequireAuthorization(Politicas.GestionDeCatalogo);
+            .RequireAuthorization(Politicas.OperacionDePos);
 
         grupo.MapGet("/", (TServicio servicio, bool? incluirInactivos, CancellationToken ct) =>
             servicio.ListarAsync(incluirInactivos ?? false, ct))
@@ -35,10 +35,12 @@ public static class CatalogosEndpoints
             var creado = await servicio.CrearAsync(datos, ct);
             return Results.Created($"/api/catalogos/{recurso}/{creado.Id}", creado);
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary($"Crea un elemento de {recurso}.");
 
         grupo.MapPut("/{id:int}", (TServicio servicio, int id, TAlta datos, CancellationToken ct) =>
             servicio.ActualizarAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary($"Actualiza un elemento de {recurso}.");
 
         grupo.MapDelete("/{id:int}", async (TServicio servicio, int id, CancellationToken ct) =>
@@ -46,6 +48,7 @@ public static class CatalogosEndpoints
             await servicio.EliminarAsync(id, ct);
             return Results.NoContent();
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary($"Baja lógica de un elemento de {recurso}.");
 
         return app;

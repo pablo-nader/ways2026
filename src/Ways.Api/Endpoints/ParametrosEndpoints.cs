@@ -9,7 +9,7 @@ public static class ParametrosEndpoints
     {
         var grupo = app.MapGroup("/api/parametros")
             .WithTags("Parámetros")
-            .RequireAuthorization(Politicas.GestionDeCatalogo);
+            .RequireAuthorization(Politicas.OperacionDePos);
 
         grupo.MapGet("/{clave}", (
             ServicioDeParametros servicio, string clave, int idEmpresa, int? idPuntoVenta, CancellationToken ct) =>
@@ -23,6 +23,7 @@ public static class ParametrosEndpoints
         grupo.MapPut("/", (
             ServicioDeParametros servicio, int idEmpresa, ParametroAlta datos, CancellationToken ct) =>
             servicio.EstablecerAsync(idEmpresa, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Crea o edita un parámetro (upsert por clave + punto de venta).");
 
         return app;

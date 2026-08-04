@@ -12,9 +12,10 @@ namespace Ways.Domain.Clientes;
 /// input de usuario deduplicado por unicidad de nombre.
 ///
 /// <see cref="Numero"/> == 1 identifica siempre al Consumidor Final protegido de su tenant
-/// (<see cref="ReglaDeClientes"/>, <c>ck_clientes_cf_protegido</c>). No hay motor de cuenta
-/// corriente todavía (etapa 7): <see cref="Saldo"/> queda en su default fuera de la siembra
-/// del Consumidor Final.
+/// (<see cref="ReglaDeClientes"/>, <c>ck_clientes_cf_protegido</c>). <see cref="Saldo"/> deja
+/// de estar dormant en esta etapa (stage-5-pos-ventas, Slice 3): pasa a ser el caché
+/// mantenido del ledger de <c>movimientos_cuenta_corriente</c>, escrito dentro de la misma
+/// transacción de venta/anulación (Slice 4/5).
 /// </summary>
 public class Cliente : EntidadTenant
 {
@@ -56,9 +57,9 @@ public class Cliente : EntidadTenant
     public decimal LimiteCredito { get; set; }
     public bool CreditoIlimitado { get; set; }
 
-    /// <summary>Sin motor de movimientos de cuenta corriente todavía (etapa 7): se
-    /// mantiene en su valor de siembra/default, nunca lo mueve un caso de uso de esta
-    /// etapa.</summary>
+    /// <summary>Caché mantenido de <c>Σ movimientos_cuenta_corriente.importe</c> (stage-5-pos-ventas,
+    /// Slice 3 crea la tabla; Slice 4/5 son los únicos escritores, dentro de la transacción de
+    /// venta/anulación). Hasta entonces se mantiene en su valor de siembra/default.</summary>
     public decimal Saldo { get; set; }
 
     public bool Activo { get; set; } = true;
