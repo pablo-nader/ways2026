@@ -446,6 +446,11 @@ movimientos_stock (           -- [operativa]
 > (deviación declarada de este documento, design de stage-5-pos-ventas: Table Shapes — write
 > path B). `id_punto_venta_destino` sí se crea en esta etapa (columna lista para
 > transferencias), pero ningún camino de escritura la usa todavía.
+> Nota de implementación: los FK de `id_empleado` (comprobantes_venta, movimientos_stock,
+> movimientos_cuenta_corriente) son simples hacia `usuarios.id_usuario` — no compuestos con
+> `id_tenant` — porque la clave alterna requerida forzaría `id_tenant NOT NULL` en `usuarios`,
+> rompiendo el centinela NULL del staff de plataforma. `id_empleado` se deriva siempre del
+> contexto autenticado del servidor, nunca del cliente.
 
 `stock.cantidad` es un cache mantenido en la misma transacción del movimiento.
 Transferencia entre locales: dos movimientos espejados — feature nueva que el legacy
