@@ -1,7 +1,10 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones; // ModoDeAcceso
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
@@ -11,6 +14,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
 
 namespace Ways.IntegrationTests;
@@ -20,8 +24,16 @@ namespace Ways.IntegrationTests;
 /// <c>OfertasEndpoints</c> punta a punta contra Postgres real — ABM completo con la policy
 /// <c>GestionDeCatalogo</c> (admin-only), el 404 uniforme cross-tenant (ADR-8), el estado
 /// persistido del targeting de listas (spec: Multi-Lista Targeting via ofertas_listas), la
-/// carrera genuina de <c>pk_ofertas_listas</c> (design: Backstop Map) y los FK smoke tests de
-/// las referencias nuevas de esta etapa.
+/// serialización real del replace-set de <c>ofertas_listas</c> bajo PUT concurrentes
+/// (judgment-day, item 1 — <c>pg_advisory_xact_lock</c> por oferta, mismo mecanismo que
+/// <see cref="Ways.Application.Precios.ServicioDePrecios"/>) y los FK smoke tests de las
+/// referencias nuevas de esta etapa.
+///
+/// (judgment-day, item 1) <see cref="ServicioDeOfertas.ActualizarAsync"/> completo (edición de
+/// campos básicos, reemplazo del subconjunto de listas, de-dup de <c>IdsListas</c>) se cubre
+/// ACÁ desde el fix del lock — antes vivía parcialmente en <c>ServicioDeOfertasTests</c>
+/// (Ways.Application.Tests, proveedor InMemory), que ya no lo soporta porque
+/// <c>ActualizarAsync</c> ahora abre transacción explícita.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -372,23 +384,129 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal([idListaDos], editada!.IdsListas);
     }
 
-    // ---- task 2.9: pk_ofertas_listas race -------------------------------------------------------
-
-    /// <summary>design: Backstop Map — <c>pk_ofertas_listas</c> es la única superficie
-    /// genuinamente racy de esta etapa. Dos PUT concurrentes reemplazando el MISMO conjunto de
-    /// listas de la MISMA oferta: sin ningún lock que serialice la carrera por construcción
-    /// (mismo criterio que <c>ArticulosEndpointsTests.LaCreacionConcurrenteConElMismoCodigoDeBarraDaExactamenteUnGanador</c>)
-    /// — exactamente un ganador (200), el perdedor un 409 traducido, nunca un 500.</summary>
+    /// <summary>Movido desde <c>ServicioDeOfertasTests.EditarUnaOfertaFunciona</c> (judgment-day,
+    /// item 1): <c>ActualizarAsync</c> ahora abre transacción explícita, fuera del alcance del
+    /// proveedor InMemory. Cubre la edición de campos básicos sin tocar el targeting de
+    /// listas.</summary>
     [Fact]
-    public async Task DosPutsConcurrentesReemplazandoElMismoConjuntoDeListasDanExactamenteUnGanador()
+    public async Task EditarActualizaCamposBasicosDeLaOferta()
     {
-        var (idTenant, idGrupo, mailAdmin, passwordAdmin) =
-            await AprovisionarTenantAsync(nameof(DosPutsConcurrentesReemplazandoElMismoConjuntoDeListasDanExactamenteUnGanador));
-        var idLista = await SembrarListaAsync(idTenant, "Lista carrera");
+        var (_, idGrupo, mailAdmin, passwordAdmin) = await AprovisionarTenantAsync(nameof(EditarActualizaCamposBasicosDeLaOferta));
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
 
         var creada = await CrearOfertaAsync(admin, idGrupo);
+        var edicion = EdicionDesde(creada, idsListas: null) with
+        {
+            Nombre = "2x1 Verano editada",
+            Porcentaje = 15m,
+            Prioridad = 1,
+            Acumulable = true
+        };
+
+        var respuesta = await admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicion);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var editada = await respuesta.Content.ReadFromJsonAsync<OfertaListado>();
+        Assert.Equal("2x1 Verano editada", editada!.Nombre);
+        Assert.Equal(15m, editada.Porcentaje);
+        Assert.Equal(1, editada.Prioridad);
+        Assert.True(editada.Acumulable);
+    }
+
+    /// <summary>Movido desde <c>ServicioDeOfertasTests.EditarConIdsListasDuplicadosInsertaUnaSolaFila</c>
+    /// (judgment-day, item 1) — mismo motivo que <c>EditarActualizaCamposBasicosDeLaOferta</c>.</summary>
+    [Fact]
+    public async Task EditarConIdsListasDuplicadosPersisteUnaSolaFila()
+    {
+        var (idTenant, idGrupo, mailAdmin, passwordAdmin) = await AprovisionarTenantAsync(nameof(EditarConIdsListasDuplicadosPersisteUnaSolaFila));
+        var idLista = await SembrarListaAsync(idTenant, "Lista");
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var creada = await CrearOfertaAsync(admin, idGrupo);
+        var edicion = EdicionDesde(creada, idsListas: [idLista, idLista]);
+
+        var respuesta = await admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicion);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var editada = await respuesta.Content.ReadFromJsonAsync<OfertaListado>();
+        Assert.Equal([idLista], editada!.IdsListas);
+    }
+
+    /// <summary>Spec: "No junction rows targets every lista", aplicado a la edición — revertir
+    /// una oferta previamente restringida a un subconjunto enviando <c>IdsListas: []</c>
+    /// explícito borra las filas de targeting existentes y no inserta ninguna nueva (orchestrator
+    /// triage, judgment-day item 3): el estado persistido vuelve a "aplica a todas las
+    /// listas".</summary>
+    [Fact]
+    public async Task EditarConIdsListasVacioExplicitoRevierteAlAlcanceDeTodasLasListas()
+    {
+        var (idTenant, idGrupo, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(EditarConIdsListasVacioExplicitoRevierteAlAlcanceDeTodasLasListas));
+        var idLista = await SembrarListaAsync(idTenant, "Lista restringida");
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var creada = await CrearOfertaAsync(admin, idGrupo, idsListas: [idLista]);
+        Assert.Equal([idLista], creada.IdsListas);
+
+        var edicion = EdicionDesde(creada, idsListas: Array.Empty<int>());
+        var respuesta = await admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicion);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var editada = await respuesta.Content.ReadFromJsonAsync<OfertaListado>();
+        Assert.Empty(editada!.IdsListas);
+
+        var detalle = await admin.GetFromJsonAsync<OfertaListado>($"/api/ofertas/{creada.Id}");
+        Assert.Empty(detalle!.IdsListas);
+
+        await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var filas = await lectura.OfertasListas.Where(ol => ol.IdOferta == creada.Id).ToListAsync();
+        Assert.Empty(filas);
+    }
+
+    // ---- task 2.9 / judgment-day item 1: pk_ofertas_listas race, serializada por el lock -------
+
+    /// <summary>design: Backstop Map — <c>pk_ofertas_listas</c> es la única superficie
+    /// genuinamente racy de esta etapa.
+    ///
+    /// <b>Reescrito en judgment-day (item 1), mismo criterio que
+    /// <c>PreciosEndpointsTests.LaCreacionConcurrenteDeDosPrimerosPreciosSeSerializaYAmbosSuceden</c>:</b>
+    /// antes de este fix, dos PUT concurrentes reemplazando el MISMO conjunto de listas de la
+    /// MISMA oferta competían sin ningún lock que serializara la carrera por construcción — un
+    /// ganador (200) y un perdedor (409 <c>oferta_lista_duplicada</c>). Ahora
+    /// <c>ServicioDeOfertas.ActualizarAsync</c> toma un <c>pg_advisory_xact_lock</c>
+    /// determinístico por oferta ANTES de releer <c>ofertas_listas</c> — el segundo llamador
+    /// espera el lock y, al retomarlo, ve el estado YA COMITEADO por el primero, así que hace un
+    /// reemplazo LIMPIO (delete-then-insert del MISMO par) en vez de competir contra el índice:
+    /// las dos escrituras se serializan de verdad y las DOS suceden (2×200), nunca un 409 ni un
+    /// 500. El backstop de esquema (<c>pk_ofertas_listas</c>, <c>ManejadorDeErrores</c> → 409
+    /// <c>oferta_lista_duplicada</c>) se mantiene igual como defensa de esquema — solo queda
+    /// alcanzable por una escritura cruda/fuera de banda que bypasee el servicio.
+    ///
+    /// El rendezvous con <c>InterceptorDeRendezVousOfertas</c> fuerza que las dos transacciones
+    /// arranquen genuinamente solapadas — sin esto, el pool/JIT ya calientes podrían dejar que la
+    /// primera termine antes de que la segunda arranque, y el lock nunca llegaría a contenderse
+    /// de verdad.</summary>
+    [Fact]
+    public async Task DosPutsConcurrentesReemplazandoElMismoConjuntoDeListasSeSerializanYAmbosSuceden()
+    {
+        var (idTenant, idGrupo, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(DosPutsConcurrentesReemplazandoElMismoConjuntoDeListasSeSerializanYAmbosSuceden));
+        var idLista = await SembrarListaAsync(idTenant, "Lista carrera");
+
+        using var admin0 = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var creada = await CrearOfertaAsync(admin0, idGrupo);
         var edicion = EdicionDesde(creada, idsListas: [idLista]);
+
+        using var gate = new CountdownEvent(2);
+        var interceptor = new InterceptorDeRendezVousOfertas(gate);
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) =>
+                    options.AddInterceptors(interceptor))));
+
+        using var admin = factory.CreateClient();
+        var login = await admin.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdmin, passwordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
         var tareaA = admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicion);
         var tareaB = admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicion);
@@ -396,20 +514,129 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var respuestas = await Task.WhenAll(tareaA, tareaB);
         var estados = respuestas.Select(r => r.StatusCode).ToList();
 
-        Assert.DoesNotContain(HttpStatusCode.InternalServerError, estados);
-        Assert.Contains(HttpStatusCode.OK, estados);
-        Assert.Contains(HttpStatusCode.Conflict, estados);
-
-        var respuestaConflicto = respuestas.Single(r => r.StatusCode == HttpStatusCode.Conflict);
-        var problema = await respuestaConflicto.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("oferta_lista_duplicada", problema.GetProperty("codigo").GetString());
+        Assert.True(interceptor.Participantes >= 2, $"participantes={interceptor.Participantes}");
+        Assert.All(estados, e => Assert.Equal(HttpStatusCode.OK, e));
 
         // El estado final es consistente: exactamente una fila de targeting sobrevive, no dos
-        // ni cero (el ganador la insertó, el perdedor nunca comiteó la suya).
+        // ni cero — el último committer reemplaza limpio, nunca una unión ni un DELETE fantasma.
         await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
         var filas = await lectura.OfertasListas.Where(ol => ol.IdOferta == creada.Id).ToListAsync();
         Assert.Single(filas);
         Assert.Equal(idLista, filas[0].IdListaPrecio);
+    }
+
+    /// <summary>NUEVO (judgment-day, item 3): dos PUT concurrentes reemplazando el conjunto de
+    /// listas de la MISMA oferta con targets DISTINTOS (A → lista uno, B → lista dos), sobre una
+    /// oferta PRE-POBLADA con un subconjunto previo. Antes del fix (item 1), esto era exactamente
+    /// el hallazgo CRITICAL confirmado por los dos jueces: sin ningún lock, las dos lecturas de
+    /// <c>filasActuales</c> partían del mismo estado previo, y el orden de commit podía dejar la
+    /// UNIÓN de ambos targets persistida (lost update silencioso) o, si las dos intentaban borrar
+    /// la misma fila previa, un <c>DbUpdateConcurrencyException</c> sin traducir (500 crudo) en
+    /// el perdedor.
+    ///
+    /// Con el fix: las dos escrituras se serializan por el <c>pg_advisory_xact_lock</c> por
+    /// oferta — nunca un 500, y el conjunto final persistido es EXACTAMENTE el target de UNO de
+    /// los dos llamadores (el último committer), nunca la unión de ambos ni un conjunto vacío por
+    /// accidente. Repetido 3 veces con estado aislado por iteración (tenant/oferta nuevos) para
+    /// probar estabilidad — no un resultado de una sola corrida con suerte.</summary>
+    [Fact]
+    public async Task DosPutsConcurrentesConTargetsDistintosSeSerializanYElUltimoCommitPersisteExactamenteUnTarget()
+    {
+        for (var iteracion = 0; iteracion < 3; iteracion++)
+        {
+            var nombreDeCorrida = $"{nameof(DosPutsConcurrentesConTargetsDistintosSeSerializanYElUltimoCommitPersisteExactamenteUnTarget)}-{iteracion}";
+            var (idTenant, idGrupo, mailAdmin, passwordAdmin) = await AprovisionarTenantAsync(nombreDeCorrida);
+            var idListaPrevia = await SembrarListaAsync(idTenant, "Lista previa");
+            var idListaA = await SembrarListaAsync(idTenant, "Lista target A");
+            var idListaB = await SembrarListaAsync(idTenant, "Lista target B");
+
+            using var admin0 = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+            var creada = await CrearOfertaAsync(admin0, idGrupo, idsListas: [idListaPrevia]);
+
+            var edicionA = EdicionDesde(creada, idsListas: [idListaA]);
+            var edicionB = EdicionDesde(creada, idsListas: [idListaB]);
+
+            using var gate = new CountdownEvent(2);
+            var interceptor = new InterceptorDeRendezVousOfertas(gate);
+            await using var factory = fixture.WithWebHostBuilder(builder =>
+                builder.ConfigureServices(services =>
+                    services.AddDbContext<WaysDbContext>((_, options) =>
+                        options.AddInterceptors(interceptor))));
+
+            using var admin = factory.CreateClient();
+            var login = await admin.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdmin, passwordAdmin));
+            Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+            var tareaA = admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicionA);
+            var tareaB = admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicionB);
+
+            var respuestas = await Task.WhenAll(tareaA, tareaB);
+            var estados = respuestas.Select(r => r.StatusCode).ToList();
+
+            Assert.True(interceptor.Participantes >= 2, $"iteración={iteracion} participantes={interceptor.Participantes}");
+            Assert.DoesNotContain(HttpStatusCode.InternalServerError, estados);
+            // Serializado (ambos 200) o, si el perdedor todavía choca contra algo, un 409
+            // traducido — nunca un 500 ni un resultado sin traducir.
+            Assert.All(estados, e => Assert.True(
+                e is HttpStatusCode.OK or HttpStatusCode.Conflict,
+                $"iteración={iteracion} estado inesperado={e}"));
+
+            await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+            var filas = await lectura.OfertasListas.Where(ol => ol.IdOferta == creada.Id).ToListAsync();
+
+            // Nunca la unión de los dos targets (2 filas) ni un conjunto vacío por accidente (0
+            // filas) — exactamente UNA fila, y es el target de A o el de B, nunca la previa.
+            Assert.Single(filas);
+            Assert.Contains(filas[0].IdListaPrecio, new[] { idListaA, idListaB });
+        }
+    }
+
+    /// <summary>Retiene la primera consulta EF a <c>ofertas</c> (la lectura de
+    /// <c>ServicioDeOfertas.BuscarAsync</c>, el primer acceso a datos de <c>ActualizarAsync</c>,
+    /// ANTES de que abra su transacción y tome el <c>pg_advisory_xact_lock</c>) hasta que ambos
+    /// participantes llegaron — mismo mecanismo que
+    /// <c>PreciosEndpointsTests.InterceptorDeRendezVousListasPrecio</c>. El filtro excluye
+    /// <c>ofertas_listas</c> explícitamente porque su nombre de tabla comparte el prefijo
+    /// "ofertas".</summary>
+    private sealed class InterceptorDeRendezVousOfertas(CountdownEvent gate) : DbCommandInterceptor
+    {
+        private int _participantes;
+
+        public int Participantes => _participantes;
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            EsperarSiCorresponde(command);
+            return base.ReaderExecuting(command, eventData, result);
+        }
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            EsperarSiCorresponde(command);
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void EsperarSiCorresponde(DbCommand command)
+        {
+            if (!command.CommandText.Contains("ofertas", StringComparison.OrdinalIgnoreCase) ||
+                command.CommandText.Contains("ofertas_listas", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (Interlocked.Increment(ref _participantes) > 2)
+            {
+                return;
+            }
+
+            gate.Signal();
+
+            var senializo = gate.Wait(TimeSpan.FromSeconds(10));
+            Assert.True(senializo, "El rendezvous de InterceptorDeRendezVousOfertas no llegó a los 2 participantes a tiempo.");
+        }
     }
 
     // ---- task 2.10: FK smoke tests ---------------------------------------------------------------

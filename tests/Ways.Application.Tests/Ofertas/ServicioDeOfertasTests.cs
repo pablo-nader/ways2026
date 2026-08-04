@@ -23,9 +23,18 @@ namespace Ways.Application.Tests.Ofertas;
 /// alcanzables acá; el alta de punta a punta se prueba contra Postgres real en
 /// <c>OfertasEndpointsTests</c> (Ways.IntegrationTests).
 ///
-/// <see cref="ServicioDeOfertas.ActualizarAsync"/> SÍ corre sin transacción explícita (el
-/// replace-set de <c>ofertas_listas</c> entra en UN solo <c>SaveChangesAsync</c>) — se cubre
-/// completo acá, incluido el reemplazo del subconjunto de listas.
+/// <see cref="ServicioDeOfertas.ActualizarAsync"/> COMPLETO (round-trip persistido, incluido el
+/// reemplazo del subconjunto de listas) TAMPOCO se cubre acá desde el fix de judgment-day (item
+/// 1, stage-4-ofertas): ahora también envuelve el replace-set en
+/// <c>Database.BeginTransactionAsync</c> + un <c>pg_advisory_xact_lock</c> por oferta (mismo
+/// motivo/mismo "transaction-blocked-provider caveat" que <see cref="ServicioDeOfertas.CrearAsync"/>
+/// de arriba). Las tres pruebas de round-trip que vivían acá (edición básica de campos, reemplazo
+/// del subconjunto de listas, de-dup de <c>IdsListas</c> repetidos) se movieron a
+/// <c>OfertasEndpointsTests</c> (Ways.IntegrationTests, Postgres real) — ver
+/// <c>EditarActualizaCamposBasicosDeLaOferta</c>, <c>EditarReemplazaElSubconjuntoDeListasPersistido</c>
+/// y <c>EditarConIdsListasDuplicadosPersisteUnaSolaFila</c>. Las validaciones que corren ANTES de
+/// abrir esa transacción (las cinco guardas de <c>ReglaDeOfertas</c>, los pre-chequeos de
+/// referencia) siguen alcanzables acá y NO se movieron.
 /// </summary>
 public class ServicioDeOfertasTests
 {
@@ -360,60 +369,11 @@ public class ServicioDeOfertasTests
         Assert.Equal(404, error.EstadoHttp);
     }
 
-    // ---- ActualizarAsync: cubierto completo (sin transacción explícita) -----------------------
-
-    [Fact]
-    public async Task EditarUnaOfertaFunciona()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var idGrupo = await SembrarGrupoAsync(nombreDeBase, idTenant: 1);
-        var oferta = await SembrarOfertaAsync(nombreDeBase, idTenant: 1, idGrupo);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        var editada = await servicio.ActualizarAsync(oferta.Id, EdicionValida(idGrupo));
-
-        Assert.Equal("2x1 Verano editada", editada.Nombre);
-        Assert.Equal(15m, editada.Porcentaje);
-        Assert.Equal(1, editada.Prioridad);
-        Assert.True(editada.Acumulable);
-    }
-
-    /// <summary>Spec: Multi-Lista Targeting — reemplaza el subconjunto entero (delete-all +
-    /// insert en un solo <c>SaveChangesAsync</c>), no un delta.</summary>
-    [Fact]
-    public async Task EditarReemplazaElSubconjuntoDeListas()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var idGrupo = await SembrarGrupoAsync(nombreDeBase, idTenant: 1);
-        var idListaUno = await SembrarListaAsync(nombreDeBase, idTenant: 1, "Lista 1");
-        var idListaDos = await SembrarListaAsync(nombreDeBase, idTenant: 1, "Lista 2");
-        var oferta = await SembrarOfertaAsync(nombreDeBase, idTenant: 1, idGrupo);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        await servicio.ActualizarAsync(oferta.Id, EdicionValida(idGrupo, idsListas: [idListaUno]));
-        var editada = await servicio.ActualizarAsync(oferta.Id, EdicionValida(idGrupo, idsListas: [idListaDos]));
-
-        Assert.Equal([idListaDos], editada.IdsListas);
-
-        await using var lectura = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, 1));
-        var filas = await lectura.OfertasListas.Where(ol => ol.IdOferta == oferta.Id).ToListAsync();
-        Assert.Single(filas);
-        Assert.Equal(idListaDos, filas[0].IdListaPrecio);
-    }
-
-    [Fact]
-    public async Task EditarConIdsListasDuplicadosInsertaUnaSolaFila()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var idGrupo = await SembrarGrupoAsync(nombreDeBase, idTenant: 1);
-        var idLista = await SembrarListaAsync(nombreDeBase, idTenant: 1);
-        var oferta = await SembrarOfertaAsync(nombreDeBase, idTenant: 1, idGrupo);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        var editada = await servicio.ActualizarAsync(oferta.Id, EdicionValida(idGrupo, idsListas: [idLista, idLista]));
-
-        Assert.Equal([idLista], editada.IdsListas);
-    }
+    // ---- ActualizarAsync: round-trip persistido movido a OfertasEndpointsTests (judgment-day,
+    // item 1) — ActualizarAsync ahora abre transacción explícita (pg_advisory_xact_lock por
+    // oferta), fuera del alcance del proveedor InMemory. Ver
+    // EditarActualizaCamposBasicosDeLaOferta, EditarReemplazaElSubconjuntoDeListasPersistido y
+    // EditarConIdsListasDuplicadosPersisteUnaSolaFila en Ways.IntegrationTests.
 
     [Fact]
     public async Task ObtenerUnaOfertaSinFilasDeListasDevuelveConjuntoVacio()
