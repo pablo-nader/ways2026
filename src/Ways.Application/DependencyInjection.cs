@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
+using Ways.Application.Caja;
 using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
 using Ways.Application.Ofertas;
@@ -45,6 +46,7 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeEscaneo>();
         services.AddScoped<ServicioDeVentas>();
         services.AddScoped<ServicioDeStock>();
+        services.AddScoped<ServicioDeTurnos>();
 
         services.AddScoped<ServicioDeAprovisionamiento>();
         services.AddScoped<ServicioDeOrganizacion>();
