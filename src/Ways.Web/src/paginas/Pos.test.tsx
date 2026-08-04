@@ -446,6 +446,43 @@ describe('Pos — vista previa de precios', () => {
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
   })
 
+  it('con la vista previa fallida, Cobrar envía el importe tipeado y vuelto 0 (nunca el importe tendido, judgment-day R3 CRITICAL)', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') return Promise.reject(new Error('falló la resolución'))
+      if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    await screen.findByText('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '500')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    // Sin total confiable, el vuelto sugerido no puede ser el importe tendido completo — el
+    // cajero no tocó el campo de vuelto, tiene que seguir mostrando 0.
+    expect(screen.getByLabelText('Vuelto de Efectivo (fila 1)')).toHaveValue(0)
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')).toBe(true))
+    const llamadaVentas = apiPostMock.mock.calls.find((llamada) => llamada[0] === '/ventas')
+    const solicitud = llamadaVentas?.[1] as {
+      lineas: { idArticulo: number; cantidad: number; codigoBarra: string | null }[]
+      pagos: { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }[]
+    }
+
+    expect(solicitud.lineas).toEqual([{ idArticulo: 1, cantidad: 1, codigoBarra: '7790001234567' }])
+    expect(solicitud.pagos).toEqual([{ idMedioPago: medioEfectivo.id, importe: 500, referencia: null, vuelto: 0 }])
+  })
+
   it('regresión: una respuesta desactualizada del resolver no pisa una más reciente (fuera de orden)', async () => {
     let resolverPrimera: (resultados: ResultadoDeResolucion[]) => void = () => {}
     const primeraPendiente = new Promise<ResultadoDeResolucion[]>((resolve) => {
@@ -651,12 +688,14 @@ describe('Pos — checkout', () => {
   it('un texto de escaneo sin confirmar no sobrevive a la venta siguiente', async () => {
     await armarVentaLista()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '111222333')
+    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'texto sin buscar')
 
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
     expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
     expect(screen.getByLabelText('Código escaneado')).toHaveValue('')
+    expect(screen.getByLabelText('Buscar cliente')).toHaveValue('')
   })
 
   it('nuevaVenta limpia el error de escaneo que haya quedado de antes de cobrar', async () => {

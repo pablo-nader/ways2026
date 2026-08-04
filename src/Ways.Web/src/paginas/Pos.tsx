@@ -12,7 +12,9 @@ import {
   calcularFaltante,
   filaPagoVacia,
   filasAPagosConVuelto,
+  filasAPagosParaCalculo,
   medioDisponibleParaCliente,
+  sumarImportes,
   validarPagosLocal,
   type FilaPago,
 } from '../api/pagos'
@@ -282,6 +284,11 @@ export function Pos() {
         })
         .catch(() => {
           if (!vigente || generacionResolucionRef.current !== generacion) return
+          // Una resolución fallida invalida cualquier precio previo: dejar `precios` con datos
+          // de una corrida anterior haría que el carrito quedara "parcialmente resuelto" (una
+          // línea con precio viejo, otra en 0) en vez de entrar en modo vista previa fallida —
+          // un subtotal a medias es peor que ninguno (judgment-day R3, falso negativo de Judge B).
+          setPrecios({})
           setAvisoPrecios('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')
         })
         .finally(() => {
@@ -485,9 +492,23 @@ export function Pos() {
 
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
   const totalActual = subtotalPrevia ?? 0
-  const pagosConVuelto = filasAPagosConVuelto(filasPago, medioPorId, totalActual)
-  const faltante = calcularFaltante(totalActual, pagosConVuelto)
-  const excedente = calcularExcedente(totalActual, pagosConVuelto)
+
+  // Una vista previa fallida (`avisoPrecios` seteado, sin estar resolviendo) no cuenta como
+  // precondición incumplida (decisión de diseño 3: el servidor es la autoridad final del total)
+  // — solo la resolución en vuelo bloquea. `subtotalPrevia === null` sin aviso es el estado de
+  // carga inicial (todavía no hay nada que mostrar), ese sí sigue bloqueando.
+  const previaFallida = subtotalPrevia === null && avisoPrecios !== ''
+
+  // Con vista previa fallida, el total no es confiable — calcular vuelto/falta contra un total
+  // sintético de 0 sugeriría como vuelto el importe tendido completo (judgment-day R3, CRITICAL).
+  // En su lugar, el total usado para la sugerencia de vuelto es la propia suma de los importes
+  // cargados: el excedente contra ese total siempre da 0, así que el vuelto sugerido queda en 0
+  // — el cajero puede tipear uno manualmente si lo sabe (`vueltoDeFila` sigue respetando el
+  // override manual).
+  const totalParaVuelto = previaFallida ? sumarImportes(filasAPagosParaCalculo(filasPago, medioPorId)) : totalActual
+  const pagosConVuelto = filasAPagosConVuelto(filasPago, medioPorId, totalParaVuelto)
+  const faltante = previaFallida ? 0 : calcularFaltante(totalActual, pagosConVuelto)
+  const excedente = previaFallida ? 0 : calcularExcedente(totalActual, pagosConVuelto)
 
   const rechazoLocal =
     subtotalPrevia === null || !clienteSeleccionado || !parametros
@@ -502,12 +523,6 @@ export function Pos() {
           limiteCredito: clienteSeleccionado.limiteCredito,
           creditoIlimitado: clienteSeleccionado.creditoIlimitado,
         })
-
-  // Una vista previa fallida (`avisoPrecios` seteado, sin estar resolviendo) no cuenta como
-  // precondición incumplida (decisión de diseño 3: el servidor es la autoridad final del total)
-  // — solo la resolución en vuelo bloquea. `subtotalPrevia === null` sin aviso es el estado de
-  // carga inicial (todavía no hay nada que mostrar), ese sí sigue bloqueando.
-  const previaFallida = subtotalPrevia === null && avisoPrecios !== ''
 
   // react-async-state regla 7: si medios de pago o parámetros no cargaron, "Cobrar" queda
   // efectivamente deshabilitado — no solo un aviso decorativo.
@@ -949,11 +964,11 @@ export function Pos() {
 
             <div className="d-flex justify-content-between small">
               <span>Falta</span>
-              <span>{formatearMoneda(faltante)}</span>
+              <span>{previaFallida ? 'se confirma al cobrar' : formatearMoneda(faltante)}</span>
             </div>
             <div className="d-flex justify-content-between small mb-2">
               <span>Vuelto</span>
-              <span>{formatearMoneda(excedente)}</span>
+              <span>{previaFallida ? 'se confirma al cobrar' : formatearMoneda(excedente)}</span>
             </div>
 
             {rechazoLocal && <div className="alert alert-warning rounded-0 py-1 px-2 small">{rechazoLocal.mensaje}</div>}
