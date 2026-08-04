@@ -424,23 +424,23 @@ parallelizable against Slices 3–5. **Start**: PR 2 branch. **Finish**:
 scan-to-cart flow functional, cart reducer + mappers tested, checkout
 stubbed. **Rollback**: new route only.
 
-- [ ] 6.1 Add pure `src/Ways.Web/src/api/carrito.ts` reducer: scan-add sums
+- [x] 6.1 Add pure `src/Ways.Web/src/api/carrito.ts` reducer: scan-add sums
   quantity on re-scan, manual quantity edit, line removal, NCX negative
   lines. *(design decision 12; spec: codigos-barra / Re-scanning sums
   quantity)*
-- [ ] 6.2 [P] Add `src/Ways.Web/src/api/ventas.ts` request/response mappers
+- [x] 6.2 [P] Add `src/Ways.Web/src/api/ventas.ts` request/response mappers
   (checkout request shape, comprobante response, scan response).
-- [ ] 6.3 Add `src/Ways.Web/src/paginas/Pos.tsx` skeleton: scan input wired
+- [x] 6.3 Add `src/Ways.Web/src/paginas/Pos.tsx` skeleton: scan input wired
   to `GET /api/articulos/escaneo`, cart table driven by `reducirCarrito`,
   cliente selector — `react-async-state` rules 1–4 apply
   (`generacionEscaneoRef`/`tokenEscaneoRef`, functional updaters only).
   "Cobrar" disabled/stubbed — wired in Slice 7. *(design: POS Screen
   Composition; rules 1–4)*
-- [ ] 6.4 [P] Unit: `carrito.ts` — re-scan sums, `N*` prefix pass-through,
+- [x] 6.4 [P] Unit: `carrito.ts` — re-scan sums, `N*` prefix pass-through,
   removal, NCX negative lines. *(design: Testing Strategy — Unit (Web);
   web-descriptor-tests)*
-- [ ] 6.5 [P] Unit: `ventas.ts` mappers.
-- [ ] 6.6 Component: scan → line, re-scan sums instead of duplicating,
+- [x] 6.5 [P] Unit: `ventas.ts` mappers.
+- [x] 6.6 Component: scan → line, re-scan sums instead of duplicating,
   cliente picker. `Pos.test.tsx`, RTL + `user-event`. *(design: Testing
   Strategy — Component (Web))*
 
