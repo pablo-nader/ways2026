@@ -130,4 +130,17 @@ public class ManejadorDeErroresVentasTests
         Assert.Equal(StatusCodes.Status400BadRequest, estado);
         Assert.Equal("movimiento_de_stock_sin_cantidad", codigo);
     }
+
+    [Fact]
+    public async Task CkPagosComprobanteImporteNoNegativoSeTraduceA400PagoImporteNegativo()
+    {
+        var postgres = CrearExcepcion("23514", "ck_pagos_comprobante_importe_no_negativo");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("check", postgres));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, estado);
+        Assert.Equal("pago_importe_negativo", codigo);
+        // A diferencia de ck_pagos_comprobante_vuelto_no_negativo, este código SÍ coincide con el
+        // de la regla 0 de ValidadorDePagos a propósito (misma regla de negocio, backstop de
+        // esquema de la misma validación).
+    }
 }

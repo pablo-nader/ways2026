@@ -11,14 +11,15 @@ using Ways.Infrastructure.Multitenancy;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// stage-5-pos-ventas, Slice 3 (task 3.19, db-error-backstops, design: Backstop Map): raw-SQL
-/// INSERTs que bypasean por completo <c>ValidadorDePagos</c>/<c>ReglaDeComprobantes</c> (no hay
-/// <c>ServicioDeVentas</c> todavía, Slice 4) para probar las tres CHECKs de esquema nuevas, la
-/// unicidad de <c>ux_comprobantes_venta_numero</c> (SQLSTATE 23505 — la traducción exacta al
-/// código de dominio, incluido el "ordering trap", vive en
-/// <c>ManejadorDeErroresVentasTests</c>, que no depende de Postgres real) y la exención
-/// documentada de <c>pk_stock</c> — mismo patrón que <c>OfertasCheckBackstopTests</c>/
-/// <c>NumeracionesComprobanteBackstopTests</c>.
+/// stage-5-pos-ventas, Slice 3 (task 3.19, db-error-backstops, design: Backstop Map; ampliado en
+/// un follow-up con <c>ck_pagos_comprobante_importe_no_negativo</c>, gate de DB aprobado
+/// 2026-08-04): raw-SQL INSERTs que bypasean por completo
+/// <c>ValidadorDePagos</c>/<c>ReglaDeComprobantes</c> (no hay <c>ServicioDeVentas</c> todavía,
+/// Slice 4) para probar las cuatro CHECKs de esquema nuevas, la unicidad de
+/// <c>ux_comprobantes_venta_numero</c> (SQLSTATE 23505 — la traducción exacta al código de
+/// dominio, incluido el "ordering trap", vive en <c>ManejadorDeErroresVentasTests</c>, que no
+/// depende de Postgres real) y la exención documentada de <c>pk_stock</c> — mismo patrón que
+/// <c>OfertasCheckBackstopTests</c>/<c>NumeracionesComprobanteBackstopTests</c>.
 ///
 /// Honesto sobre alcanzabilidad (design: Backstop Map): bajo operación normal (Slice 4 en
 /// adelante) ninguna de estas ramas es alcanzable por un cliente HTTP — prueban la traducción de
@@ -189,6 +190,61 @@ public class VentasStockBackstopTests(WaysApiFixture fixture) : IClassFixture<Wa
         var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
         Assert.Equal("23514", excepcion.SqlState);
         Assert.Equal("ck_pagos_comprobante_vuelto_no_negativo", excepcion.ConstraintName);
+    }
+
+    // ---- ck_pagos_comprobante_importe_no_negativo (follow-up, gate de DB aprobado 2026-08-04)
+    // -------------------------------------------------------------------------------------------
+    // Honesto sobre alcanzabilidad: bajo operación normal esta rama es inalcanzable por un
+    // cliente vía servicio — la regla 0 de ValidadorDePagos ya rechaza cualquier Importe
+    // negativo antes de que la fila llegue a INSERT (misma razón que documenta la clase sobre
+    // las otras CHECKs de esta tabla).
+
+    [Fact]
+    public async Task UnPagoConImporteNegativoViolaLaCheckDeImporteNoNegativo()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnPagoConImporteNegativoViolaLaCheckDeImporteNoNegativo));
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+        var comprobante = new ComprobanteVenta
+        {
+            IdTenant = p.IdTenant,
+            IdTipoComprobante = p.IdTipoComprobanteTx,
+            Numero = 1,
+            Fecha = ahora,
+            IdPuntoVenta = p.IdPuntoVenta,
+            IdEmpleado = p.IdEmpleado,
+            IdCliente = p.IdCliente,
+            Subtotal = 100m,
+            DescuentoTotal = 0m,
+            Total = 100m,
+            Estado = EstadoComprobante.Emitido,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.ComprobantesVenta.Add(comprobante);
+        await db.SaveChangesAsync();
+
+        var medioPago = new MedioPago
+        {
+            IdTenant = p.IdTenant, Nombre = "efectivo", Orden = 1, Comportamiento = ComportamientoMedioPago.Efectivo,
+            AdmiteVuelto = true, RequiereReferencia = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.MediosPago.Add(medioPago);
+        await db.SaveChangesAsync();
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO pagos_comprobante (id_tenant, id_comprobante_venta, id_medio_pago, importe, vuelto, " +
+            "created_at, updated_at) VALUES ($1, $2, $3, -100, 0, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = comprobante.Id });
+        comando.Parameters.Add(new NpgsqlParameter { Value = medioPago.Id });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_pagos_comprobante_importe_no_negativo", excepcion.ConstraintName);
     }
 
     // ---- ck_movimientos_stock_cantidad_no_cero ---------------------------------------------
