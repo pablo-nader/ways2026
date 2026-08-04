@@ -220,88 +220,88 @@ candidate.**
 
 ### 3A. Migration
 
-- [ ] 3.1 Add `VentasStockYCuentaCorrienteEtapa5` migration:
+- [x] 3.1 Add `VentasStockYCuentaCorrienteEtapa5` migration:
   `comprobantes_venta`, `items_comprobante_venta`, `pagos_comprobante`,
   `stock`, `movimientos_stock`, `movimientos_cuenta_corriente` + enums
   `estado_comprobante`, `motivo_stock`, `tipo_movimiento_cc`, all hand-named
   snake_case `pk_*`/`ix_*`/`fk_*`, `HabilitarRlsDeTenant` on all six tables
   in this same migration. Confirm `has-pending-model-changes` clean.
   *(design: Table Shapes A/B/C; Migration Sequencing)*
-- [ ] 3.2 Update `docs/10-modelo-de-datos.md` in the same PR: record the
+- [x] 3.2 Update `docs/10-modelo-de-datos.md` in the same PR: record the
   `movimientos_stock.id_comprobante_compra` deferral to stage 8. *(design:
   Table Shapes — write path B note)*
 
 ### 3B. Domain entities
 
-- [ ] 3.3 [P] Add `ComprobanteVenta`, `ItemComprobanteVenta`,
+- [x] 3.3 [P] Add `ComprobanteVenta`, `ItemComprobanteVenta`,
   `PagoComprobante` (operativa scope, `id_punto_venta`) in
   `Ways.Domain/Ventas`. *(spec: comprobantes-venta / Comprobante Schema At
   Rest, Snapshot Immutability of Items)*
-- [ ] 3.4 [P] Add `Stock`, `MovimientoStock`, `MotivoStock` enum in
+- [x] 3.4 [P] Add `Stock`, `MovimientoStock`, `MotivoStock` enum in
   `Ways.Domain/Stock`. *(spec: stock / Stock Schema At Rest)*
-- [ ] 3.5 [P] Add `MovimientoCuentaCorriente`, `TipoMovimientoCc` enum in
+- [x] 3.5 [P] Add `MovimientoCuentaCorriente`, `TipoMovimientoCc` enum in
   `Ways.Domain/CuentaCorriente`. *(spec: consumo-cuenta-corriente /
   Movimiento Schema At Rest)*
 
 ### 3C. Pure Domain rules
 
-- [ ] 3.6 Add `ValidadorDePagos` (pure): rejection order 1–8 per design's
+- [x] 3.6 Add `ValidadorDePagos` (pure): rejection order 1–8 per design's
   parametrized table (no literal `10`/`20`), `tolerancia_pago`/
   `vuelto_maximo` as parameters, CF exclusion, `LimiteCredito`/
   `CreditoIlimitado`. *(design decision 5; spec: comprobantes-venta /
   Payment Validation Rejection Order, Cuenta Corriente Payment Gating;
   consumo-cuenta-corriente / Credit-Limit Evaluation)*
-- [ ] 3.7 Add `CalculadorDeTotales` (pure): pinned rounding order
+- [x] 3.7 Add `CalculadorDeTotales` (pure): pinned rounding order
   (`MidpointRounding.AwayFromZero`), `total == Σ item.total` assertion,
   negative NCX lines. *(design: Checkout Contract — CalculadorDeTotales)*
-- [ ] 3.8 Add `ReglaDeComprobantes` (pure): sign vs `tipos_comprobante.signo`
+- [x] 3.8 Add `ReglaDeComprobantes` (pure): sign vs `tipos_comprobante.signo`
   (TX ⇒ positive, NCX ⇒ negative), estado transitions,
   `id_comprobante_asociado` rules. *(design decision 4; spec:
   comprobantes-venta / Devoluciones As NCX Comprobantes)*
-- [ ] 3.9 Add `ResolvedorDeLetraComprobante` (pure, dormant — no endpoint
+- [x] 3.9 Add `ResolvedorDeLetraComprobante` (pure, dormant — no endpoint
   wiring). *(design decision 8; spec: comprobantes-venta /
   Comprobante-Letter Resolution Stays Dormant)*
 
 ### 3D. Backstop mapping — ordering trap
 
-- [ ] 3.10 Add `ux_comprobantes_venta_numero` → 23505 → 409
+- [x] 3.10 Add `ux_comprobantes_venta_numero` → 23505 → 409
   `numero_de_comprobante_duplicado` to `ManejadorDeErrores`, inserted
   **before** the existing `_numero` branch (`numero_duplicado`, cliente).
   Same work unit adds the test proving the new branch wins. *(design:
   Backstop Map — "Ordering trap")*
-- [ ] 3.11 Add `pk_stock` → 23505 → 409 `stock_duplicado` (documented
+- [x] 3.11 Add `pk_stock` → 23505 → 409 `stock_duplicado` (documented
   exemption — `ON CONFLICT` write, raw-SQL test only). *(design: Backstop
   Map)*
-- [ ] 3.12 Add `ClasificarCheckDeVentas` (exact-name switch, appended after
+- [x] 3.12 Add `ClasificarCheckDeVentas` (exact-name switch, appended after
   `ClasificarCheckDeOfertas`): `ck_comprobantes_venta_numero_positivo` → 400
   `numero_de_comprobante_invalido`;
   `ck_pagos_comprobante_vuelto_no_negativo` → 400 `vuelto_de_pago_negativo`
   (distinct from the domain code `vuelto_invalido` — Orchestrator Decision
   2); `ck_movimientos_stock_cantidad_no_cero` → 400
   `movimiento_de_stock_sin_cantidad`. *(design: Backstop Map)*
-- [ ] 3.13 Confirm (comment only, no code change) the existing generic `fk_`
+- [x] 3.13 Confirm (comment only, no code change) the existing generic `fk_`
   prefix branch covers all seven tables' FKs.
 
 ### 3E. Tests
 
-- [ ] 3.14 [P] Unit: `ValidadorDePagos` — every rejection rule and its order
+- [x] 3.14 [P] Unit: `ValidadorDePagos` — every rejection rule and its order
   (a payload violating rules 2 and 6 reports 2), tolerancia/vuelto
   boundaries, CF exclusion, `CreditoIlimitado`. *(spec: comprobantes-venta /
   Payment Validation Rejection Order, all 7 scenarios; consumo-cuenta-corriente
   / Credit-Limit Evaluation, both scenarios)*
-- [ ] 3.15 [P] Unit: `CalculadorDeTotales` — rounding order, discount clamp,
+- [x] 3.15 [P] Unit: `CalculadorDeTotales` — rounding order, discount clamp,
   negative NCX lines, `total == Σ item.total`.
-- [ ] 3.16 [P] Unit: `ReglaDeComprobantes` — sign vs `signo`, estado
+- [x] 3.16 [P] Unit: `ReglaDeComprobantes` — sign vs `signo`, estado
   transitions, asociado optional/populated. *(spec: comprobantes-venta /
   Devoluciones As NCX Comprobantes, both scenarios)*
-- [ ] 3.17 [P] Unit: `ResolvedorDeLetraComprobante` — full condición-fiscal
+- [x] 3.17 [P] Unit: `ResolvedorDeLetraComprobante` — full condición-fiscal
   cross, no side effects. *(spec: comprobantes-venta / Comprobante-Letter
   Resolution Stays Dormant, both scenarios)*
-- [ ] 3.18 Integration: RLS proofs for all six new tables. *(spec:
+- [x] 3.18 Integration: RLS proofs for all six new tables. *(spec:
   comprobantes-venta / Tenant and Punto de Venta Isolation)*
-- [ ] 3.19 Integration: raw-SQL backstop tests for the three new CHECKs +
+- [x] 3.19 Integration: raw-SQL backstop tests for the three new CHECKs +
   the `_numero` ordering-trap proof + `pk_stock` exemption test.
-- [ ] 3.20 Regression: Slice 1 + Slice 2 suites unedited and green.
+- [x] 3.20 Regression: Slice 1 + Slice 2 suites unedited and green.
 
 ---
 
