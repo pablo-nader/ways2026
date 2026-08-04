@@ -763,6 +763,22 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
 
+    /// <summary>Confirmed issue (judgment-day, stage-5-pos-ventas Slice 1): Root-403 en una
+    /// superficie de lectura re-gateada — root no está en OperacionDePos (design decisión 6,
+    /// "root administra tenants, no opera ninguno"), mismo criterio que
+    /// <c>CatalogosTests.UnaSesionDeRootRecibe403EnUnCatalogoDeTenant</c>.</summary>
+    [Fact]
+    public async Task UnaSesionDeRootRecibe403AlListarArticulos()
+    {
+        using var cliente = fixture.CreateClient();
+        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin("test@test.com", "root"));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var respuesta = await cliente.GetAsync("/api/articulos");
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
     /// <summary>Spec: articulos / Availability Model — un vendedor tampoco puede cambiar la
     /// disponibilidad de un artículo (la disponibilidad viaja en el PUT de edición, no en un
     /// endpoint propio).</summary>

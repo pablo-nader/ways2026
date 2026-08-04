@@ -27,13 +27,14 @@ public static class Politicas
     /// distinto (organización, no cuentas).</summary>
     public const string GestionDeOrganizacion = "gestion_organizacion";
 
-    /// <summary>Vendedor o admin — la puerta de la superficie de lectura del POS (artículos,
-    /// códigos de barra, clientes, listas de precio, parámetros, catálogos fiscales/medios de
-    /// pago, resolución de ofertas) y del checkout/anulación/lectura de stock (etapa 5). Root
-    /// queda afuera, mismo criterio que <see cref="GestionDeCatalogo"/> ("root administra
-    /// tenants, no opera ninguno" — design.md decisión 6). ASP.NET Core compone políticas con
-    /// AND: los endpoints de escritura apilan <see cref="GestionDeCatalogo"/> sobre esta para
-    /// no relajar el ABM.</summary>
+    /// <summary>Vendedor, supervisor o admin — la puerta de la superficie de lectura del POS
+    /// (artículos, códigos de barra, clientes, listas de precio, parámetros, catálogos
+    /// fiscales/medios de pago, resolución de ofertas) y del checkout/anulación/lectura de
+    /// stock (etapa 5). Supervisor se suma por paridad con el legacy (decisión del
+    /// orquestador, registrada en el spec). Root queda afuera, mismo criterio que
+    /// <see cref="GestionDeCatalogo"/> ("root administra tenants, no opera ninguno" —
+    /// design.md decisión 6). ASP.NET Core compone políticas con AND: los endpoints de
+    /// escritura apilan <see cref="GestionDeCatalogo"/> sobre esta para no relajar el ABM.</summary>
     public const string OperacionDePos = "operacion_de_pos";
 
     public static AuthorizationBuilder AgregarPoliticasWays(this AuthorizationBuilder builder)
@@ -62,6 +63,7 @@ public static class Politicas
                         .RequireClaim(
                             ClaimsWays.RolId,
                             ((int)RolConocido.Vendedor).ToString(),
+                            ((int)RolConocido.Supervisor).ToString(),
                             ((int)RolConocido.Admin).ToString()));
     }
 }

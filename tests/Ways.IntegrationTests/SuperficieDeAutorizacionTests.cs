@@ -102,4 +102,78 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
             faltantes.Count == 0,
             $"Endpoint(s) de escritura sin GestionDeCatalogo y fuera del allowlist: {string.Join(", ", faltantes)}");
     }
+
+    /// <summary>
+    /// WARNING real (judgment-day, Judge A): el guard de arriba salta explícitamente todo
+    /// endpoint GET (<c>metodos.Contains("GET")</c>) — quedaba ciego a un grupo GET sin
+    /// <c>RequireAuthorization</c> (el caso real: <c>/api/catalogos-fiscales</c>, que caía al
+    /// fallback autenticado-only). Este segundo guard cubre justo ese punto ciego: camina el
+    /// mismo <see cref="EndpointDataSource"/> real y falla-cerrado sobre las superficies de
+    /// lectura que este slice re-gateó a <see cref="Politicas.OperacionDePos"/> — cualquier GET
+    /// nuevo bajo esos prefijos que no apile una policy al menos tan estricta como
+    /// <see cref="Politicas.OperacionDePos"/> (o quede en el fallback autenticado-only, sin
+    /// policy nombrada) rompe la build.
+    /// </summary>
+    private static readonly string[] PrefijosDeLecturaReGateados =
+    [
+        "/api/articulos",
+        "/api/clientes",
+        "/api/listas-precio",
+        "/api/catalogos/",
+        "/api/catalogos-fiscales",
+        "/api/parametros",
+        "/api/ofertas"
+    ];
+
+    // Policies que, de aparecer en vez de OperacionDePos, siguen siendo un gate válido —
+    // todas excluyen Vendedor, así que ninguna relaja la superficie que este guard vigila.
+    private static readonly HashSet<string> PoliticasAlMenosTanEstrictasComoOperacionDePos =
+    [
+        Politicas.OperacionDePos,
+        Politicas.GestionDeCatalogo,
+        Politicas.GestionDeUsuarios,
+        Politicas.GestionDeOrganizacion,
+        Politicas.SoloPlataforma
+    ];
+
+    [Fact]
+    public void TodoEndpointGetBajoLasSuperficiesReGateadasApilaOperacionDePos()
+    {
+        var fuente = fixture.Services.GetRequiredService<EndpointDataSource>();
+
+        var faltantes = new List<string>();
+
+        foreach (var endpoint in fuente.Endpoints)
+        {
+            if (endpoint is not RouteEndpoint ruta)
+            {
+                continue;
+            }
+
+            var metodos = ruta.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods;
+            if (metodos is null || !metodos.Contains("GET"))
+            {
+                continue;
+            }
+
+            var patron = ruta.RoutePattern.RawText ?? string.Empty;
+            if (!PrefijosDeLecturaReGateados.Any(prefijo => patron.StartsWith(prefijo, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            var tienePoliticaValida = ruta.Metadata
+                .GetOrderedMetadata<IAuthorizeData>()
+                .Any(dato => dato.Policy is not null && PoliticasAlMenosTanEstrictasComoOperacionDePos.Contains(dato.Policy));
+
+            if (!tienePoliticaValida)
+            {
+                faltantes.Add($"GET {patron}");
+            }
+        }
+
+        Assert.True(
+            faltantes.Count == 0,
+            $"Endpoint(s) GET sin OperacionDePos (o una policy más estricta) bajo las superficies re-gateadas: {string.Join(", ", faltantes)}");
+    }
 }

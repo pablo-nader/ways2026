@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using Ways.Api.Seguridad;
+using Ways.Application.Catalogos;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios; // SolicitudDeLogin
@@ -23,6 +25,7 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
     private const string PasswordVendedor = "una-contraseña-larga";
+    private const string PasswordSupervisor = "una-contraseña-larga";
 
     private async Task<(int IdTenant, int IdEmpresa)> AprovisionarTenantAsync(string nombre)
     {
@@ -70,6 +73,39 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
         var mailVendedor = await SembrarVendedorAsync(idTenant, nombre);
         var cliente = fixture.CreateClient();
         var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailVendedor, PasswordVendedor));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        return cliente;
+    }
+
+    private async Task<string> SembrarSupervisorAsync(int idTenant, string nombre)
+    {
+        var hasheador = new HasheadorPbkdf2();
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+        var mail = $"{nombre.ToLowerInvariant()}-supervisor@ways.test";
+
+        db.Usuarios.Add(new Usuario
+        {
+            IdTenant = idTenant,
+            NombreUsuario = "supervisor",
+            Mail = mail,
+            RolId = (int)RolConocido.Supervisor,
+            PasswordHash = hasheador.Hashear(PasswordSupervisor),
+            PasswordAlgoritmo = hasheador.Algoritmo,
+            PasswordActualizadoEl = ahora,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+
+        return mail;
+    }
+
+    private async Task<HttpClient> SupervisorLogueadoAsync(int idTenant, string nombre)
+    {
+        var mailSupervisor = await SembrarSupervisorAsync(idTenant, nombre);
+        var cliente = fixture.CreateClient();
+        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailSupervisor, PasswordSupervisor));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         return cliente;
     }
@@ -132,5 +168,47 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
             "/api/ofertas/resolver", new SolicitudDeResolucion(Lineas: []));
 
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+    }
+
+    /// <summary>Confirmed issue (judgment-day, stage-5-pos-ventas Slice 1): sin token, la
+    /// policy OperacionDePos exige <c>RequireAuthenticatedUser()</c> antes que nada — 401, no
+    /// 403 (la distinción importa: 403 implica una sesión ya autenticada sin el rol correcto).</summary>
+    [Fact]
+    public async Task ResolverOfertasSinTokenDevuelve401()
+    {
+        using var cliente = fixture.CreateClient();
+
+        var respuesta = await cliente.PostAsJsonAsync(
+            "/api/ofertas/resolver", new SolicitudDeResolucion(Lineas: []));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+    }
+
+    /// <summary>ORCHESTRATOR DECISION (recorded en el spec de main, paridad legacy): Supervisor
+    /// se suma al conjunto de roles de <see cref="Politicas.OperacionDePos"/> — mismo acceso de
+    /// lectura que Vendedor sobre las superficies re-gateadas.</summary>
+    [Fact]
+    public async Task UnSupervisorPuedeListarArticulos()
+    {
+        var (idTenant, _) = await AprovisionarTenantAsync(nameof(UnSupervisorPuedeListarArticulos));
+        using var supervisor = await SupervisorLogueadoAsync(idTenant, nameof(UnSupervisorPuedeListarArticulos));
+
+        var respuesta = await supervisor.GetAsync("/api/articulos");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+    }
+
+    /// <summary>Companion del test de arriba: sumar Supervisor a OperacionDePos no relaja el
+    /// ABM de catálogos, que sigue admin-only (<see cref="Politicas.GestionDeCatalogo"/>).</summary>
+    [Fact]
+    public async Task UnSupervisorNoPuedeCrearUnCatalogoDeTenant()
+    {
+        var (idTenant, _) = await AprovisionarTenantAsync(nameof(UnSupervisorNoPuedeCrearUnCatalogoDeTenant));
+        using var supervisor = await SupervisorLogueadoAsync(idTenant, nameof(UnSupervisorNoPuedeCrearUnCatalogoDeTenant));
+
+        var respuesta = await supervisor.PostAsJsonAsync(
+            "/api/catalogos/areas", new AreaAlta("Intrusa", IdEmpresa: null, Orden: 1));
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 }

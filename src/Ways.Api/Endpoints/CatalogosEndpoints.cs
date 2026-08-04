@@ -74,8 +74,12 @@ public static class CatalogosEndpoints
         // Los 3 catálogos globales (ADR-11, gate #4) son de solo lectura en esta etapa — no
         // hay POST/PUT/DELETE mapeados a propósito, ni siquiera detrás de una policy: la
         // ausencia de ruta es la superficie de API, RLS (HabilitarRlsDeCatalogoGlobal) es la
-        // segunda capa detrás. Cualquier sesión autenticada (tenant o plataforma) puede leer.
-        var fiscales = app.MapGroup("/api/catalogos-fiscales").WithTags("Catálogos fiscales");
+        // segunda capa detrás. La lectura ya no es "cualquier sesión autenticada" (criterio
+        // original de gate #4): stage-5-pos-ventas la reemplaza por OperacionDePos (design.md,
+        // Authorization Surface), coherente con el resto de la superficie de lectura del POS.
+        var fiscales = app.MapGroup("/api/catalogos-fiscales")
+            .WithTags("Catálogos fiscales")
+            .RequireAuthorization(Politicas.OperacionDePos);
 
         fiscales.MapGet("/condiciones-fiscales", (
             ServicioDeCatalogosFiscales servicio, CancellationToken ct) =>
