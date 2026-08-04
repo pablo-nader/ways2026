@@ -237,4 +237,61 @@ describe('Ofertas — ventana deshabilitada durante el guardado (react-async-sta
     resolverCreacion(ofertaFixture())
     await screen.findByText('Oferta "Oferta nueva" creada.')
   })
+
+  it('mientras el POST está en vuelo, Editar/Nuevo/Baja no disparan fetch ni pisan el formulario en guardado', async () => {
+    const ofertaExistente = ofertaFixture({ id: 2, nombre: 'Oferta existente' })
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas') return Promise.resolve<OfertaListado[]>([ofertaExistente])
+      if (ruta === '/catalogos/grupos') return Promise.resolve([grupoBebidas])
+      if (ruta === '/catalogos/categorias') return Promise.resolve([])
+      if (ruta === '/empresas') return Promise.resolve([])
+      if (ruta === '/catalogos/listas-precio') return Promise.resolve([listaMayorista])
+      if (ruta.startsWith('/articulos?')) {
+        const pagina: PaginaDe<ArticuloListado> = { items: [articuloCoca], total: 1, pagina: 1, tamanio: 20 }
+        return Promise.resolve(pagina)
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    let resolverCreacion: (valor: OfertaListado) => void = () => {}
+    apiPostMock.mockImplementation(
+      () =>
+        new Promise<OfertaListado>((resolve) => {
+          resolverCreacion = resolve
+        }),
+    )
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<Ofertas />)
+    await screen.findByText('Oferta existente')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Nuevo' }))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Oferta nueva')
+    await userEvent.type(screen.getByLabelText('Porcentaje (%)'), '10')
+    await userEvent.type(screen.getByPlaceholderText('Buscar por nombre o código interno…'), 'coca')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    await userEvent.selectOptions(await screen.findByRole('listbox'), '1')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    apiGetMock.mockClear()
+
+    // Con el guardado en vuelo, intentamos las tres acciones que podrían pisar la edición en curso.
+    await userEvent.click(screen.getByRole('button', { name: 'Editar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Baja' }))
+
+    expect(apiGetMock).not.toHaveBeenCalledWith(expect.stringMatching(/^\/ofertas\/\d+$/))
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.getByText('Nueva oferta')).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Oferta nueva')
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(apiPutMock).not.toHaveBeenCalled()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+
+    resolverCreacion(ofertaFixture())
+    await screen.findByText('Oferta "Oferta nueva" creada.')
+
+    confirmSpy.mockRestore()
+  })
 })
