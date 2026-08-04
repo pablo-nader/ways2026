@@ -32,6 +32,37 @@ public class ValidadorDePagosTests
         bool creditoIlimitado = false) =>
         ValidadorDePagos.Validar(total, pagos, tolerancia, vueltoMaximo, esConsumidorFinal, saldo, limiteCredito, creditoIlimitado);
 
+    // ---- 0: pago_importe_negativo -----------------------------------------------------------
+
+    [Fact]
+    public void UnPagoDeCuentaCorrienteNegativoQueCompensaOtroPagoSeRechaza()
+    {
+        // El exploit: {Efectivo, 150}, {CuentaCorriente, -50} sobre un total de 100 -> Σ importe
+        // da 100 (pasaría la regla 2) y consumoCuentaCorriente da -50 (nunca dispara las reglas
+        // 5/6, que exigen "> 0m"). Sin la regla 0 esto se aceptaba.
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            Validar(100m, [Efectivo(150m), CuentaCorriente(-50m)], esConsumidorFinal: true));
+        Assert.Equal("pago_importe_negativo", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void UnSoloPagoEnEfectivoNegativoSeRechaza()
+    {
+        var excepcion = Assert.Throws<ErrorDominio>(() => Validar(100m, [Efectivo(-50m)]));
+        Assert.Equal("pago_importe_negativo", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void UnPagoConImporteExactamenteCeroNoDisparaLaRegla0()
+    {
+        // Boundary: 0 no es negativo, así que la regla 0 lo deja pasar — no tiene significado
+        // propio de negocio (ni resta ni suma), así que queda como no-op frente al resto de las
+        // reglas (mismo comportamiento que si no se hubiera incluido en la lista); no se lo
+        // rechaza de forma explícita para no reñir con la regla 1 (que sí lo cubre cuando es el
+        // ÚNICO pago) ni con la 5/6 (que ya lo tratan como "sin consumo" al no ser > 0m).
+        Validar(100m, [Efectivo(100m), CuentaCorriente(0m)], esConsumidorFinal: true);
+    }
+
     // ---- 1: pago_no_ingresado -------------------------------------------------------------
 
     [Fact]

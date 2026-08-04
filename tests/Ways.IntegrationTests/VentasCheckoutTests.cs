@@ -390,6 +390,28 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
+    public async Task UnPagoDeCuentaCorrienteNegativoQueDisfrazaElConsumoRealEsRechazado()
+    {
+        // Mismo exploit que ValidadorDePagosTests.UnPagoDeCuentaCorrienteNegativoQueCompensaOtroPagoSeRechaza,
+        // punta a punta: {Efectivo, 150}, {CuentaCorriente, -50} sobre un total de 100.
+        var ctx = await PrepararAsync(nameof(UnPagoDeCuentaCorrienteNegativoQueDisfrazaElConsumoRealEsRechazado));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-cc-negativo", 100m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente CC negativo", limiteCredito: 1000m);
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 150m, null, 0m), new PagoDeVenta(ctx.IdMedioCuentaCorriente, -50m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("pago_importe_negativo", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
     public async Task ElToleranciaYVueltoMaximoResuelvenPorPuntoDeVentaAntesQuePorDefault()
     {
         var ctx = await PrepararAsync(nameof(ElToleranciaYVueltoMaximoResuelvenPorPuntoDeVentaAntesQuePorDefault));
