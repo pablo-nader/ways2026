@@ -51,6 +51,38 @@ public static class ValidadorDePagos
         decimal limiteCredito,
         bool creditoIlimitado)
     {
+        // 0 (nuevo, sin numeración legacy — corta ANTES que cualquier otra regla): un
+        // Importe negativo permite manipular Σ importe sin que ninguna regla de abajo lo note
+        // (p. ej. {Efectivo, 150}, {CuentaCorriente, -50} sobre un total de 100 pasa la regla 2
+        // porque Σ importe da 100, y nunca dispara las reglas 5/6 porque
+        // <c>consumoCuentaCorriente > 0m</c> es falso con un consumo negativo) — un Importe
+        // negativo no tiene significado de negocio para un pago, se rechaza de plano.
+        //
+        // TODO: este gate de dominio es la defensa de aplicación; falta el backstop de esquema
+        // (CHECK ck_pagos_comprobante_importe_no_negativo sobre pagos_comprobante.importe >= 0,
+        // mismo criterio que ck_comprobantes_venta_numero_positivo) — pendiente del micro-gate de
+        // cambio de base de datos con el usuario, se agrega en un follow-up.
+        foreach (var pago in pagos)
+        {
+            if (pago.Importe < 0m)
+            {
+                throw new ErrorDominio(
+                    "pago_importe_negativo", "El importe de un pago no puede ser negativo.", 400);
+            }
+        }
+
+        // 0b (mismo criterio que la regla 0, mismo lugar en el orden — corta ANTES que
+        // cualquier otra regla): un Vuelto negativo, igual que un Importe negativo, no tiene
+        // significado de negocio y podría manipular Σ vuelto sin que las reglas 3/8 lo noten.
+        foreach (var pago in pagos)
+        {
+            if (pago.Vuelto < 0m)
+            {
+                throw new ErrorDominio(
+                    "vuelto_negativo", "El vuelto de un pago no puede ser negativo.", 400);
+            }
+        }
+
         var sumaImportes = pagos.Sum(p => p.Importe);
         var sumaVueltos = pagos.Sum(p => p.Vuelto);
 
@@ -84,6 +116,10 @@ public static class ValidadorDePagos
             }
         }
 
+        // La regla 0 ya garantizó Importe >= 0 en cada pago, así que "> 0m" abajo distingue sin
+        // ambigüedad "hubo consumo de cuenta corriente" de "no lo hubo" — sin la regla 0, un
+        // Importe negativo en un pago de CuentaCorriente podía compensar uno positivo y esconder
+        // el consumo real detrás de las reglas 5/6.
         var consumoCuentaCorriente = pagos
             .Where(p => p.Comportamiento == ComportamientoMedioPago.CuentaCorriente)
             .Sum(p => p.Importe);

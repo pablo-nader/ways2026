@@ -25,10 +25,11 @@ namespace Ways.Application.Ventas;
 /// nunca <see cref="int"/> — a diferencia de <c>clientes.numero</c>/<c>articulos.codigo_interno</c>.
 ///
 /// Estática a propósito: sin estado propio, cada método recibe el <see cref="IWaysDbContext"/>
-/// del llamador de turno (mismo criterio que los dos asignadores hermanos). Su único llamador
-/// hoy es la suite de concurrencia de esta slice — <c>ServicioDeVentas.EmitirAsync</c> (Slice 4)
-/// es quien lo va a invocar dentro de la transacción de venta, paso 1 del statement order
-/// pineado (design: The Sale Transaction).
+/// del llamador de turno (mismo criterio que los dos asignadores hermanos). Llamado desde
+/// <c>ServicioDeVentas.AsignarNumeroComprometidoAsync</c>, en su PROPIA transacción chica,
+/// comprometida ANTES de la transacción que escribe el resto de la venta (design: Failure
+/// Semantics — corrección de esta slice para que "el número se consume aunque falle el resto"
+/// sea literal, ver el doc-comment de <c>ServicioDeVentas.EmitirAsync</c>), no dentro de ella.
 /// </summary>
 public static class AsignadorDeNumeroComprobante
 {

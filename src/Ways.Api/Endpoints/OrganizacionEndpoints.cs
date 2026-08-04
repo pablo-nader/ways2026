@@ -59,20 +59,25 @@ public static class OrganizacionEndpoints
         .WithSummary("Actualiza los datos descriptivos de una empresa.");
 
         var puntosVenta = app.MapGroup("/api/puntos-venta")
-            .WithTags("Organización")
-            .RequireAuthorization(Politicas.GestionDeOrganizacion);
+            .WithTags("Organización");
 
+        // El listado es la única ruta con policy propia distinta de GestionDeOrganizacion: la
+        // usan tanto el ABM admin (PuntosVenta.tsx) como el selector de PV del POS (Vendedor/
+        // Supervisor). Ver Politicas.LecturaDePuntosVenta.
         puntosVenta.MapGet("/", (ServicioDeOrganizacion servicio, CancellationToken ct) =>
             servicio.ListarPuntosVentaAsync(ct))
+        .RequireAuthorization(Politicas.LecturaDePuntosVenta)
         .WithSummary("Lista puntos de venta: plataforma ve todos, un admin de tenant ve los propios.");
 
         puntosVenta.MapGet("/{id:int}", (ServicioDeOrganizacion servicio, int id, CancellationToken ct) =>
             servicio.ObtenerPuntoVentaAsync(id, ct))
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
         .WithSummary("Obtiene un punto de venta.");
 
         puntosVenta.MapPut("/{id:int}", (
             ServicioDeOrganizacion servicio, int id, PuntoVentaEdicion datos, CancellationToken ct) =>
             servicio.ActualizarPuntoVentaAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
         .WithSummary("Actualiza los datos descriptivos de un punto de venta.");
 
         return app;

@@ -27,7 +27,7 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
     private const string PasswordVendedor = "una-contraseña-larga";
     private const string PasswordSupervisor = "una-contraseña-larga";
 
-    private async Task<(int IdTenant, int IdEmpresa)> AprovisionarTenantAsync(string nombre)
+    private async Task<(int IdTenant, int IdEmpresa, int IdPuntoVenta)> AprovisionarTenantAsync(string nombre)
     {
         using var root = fixture.CreateClient();
         var loginRoot = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
@@ -41,7 +41,7 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
         var resultado = await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>();
         Assert.NotNull(resultado);
 
-        return (resultado!.IdTenant, resultado.IdEmpresa);
+        return (resultado!.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta);
     }
 
     private async Task<string> SembrarVendedorAsync(int idTenant, string nombre)
@@ -113,7 +113,7 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task UnVendedorPuedeListarArticulos()
     {
-        var (idTenant, _) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarArticulos));
+        var (idTenant, _, _) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarArticulos));
         using var vendedor = await VendedorLogueadoAsync(idTenant, nameof(UnVendedorPuedeListarArticulos));
 
         var respuesta = await vendedor.GetAsync("/api/articulos");
@@ -124,7 +124,7 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task UnVendedorPuedeListarClientes()
     {
-        var (idTenant, _) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarClientes));
+        var (idTenant, _, _) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarClientes));
         using var vendedor = await VendedorLogueadoAsync(idTenant, nameof(UnVendedorPuedeListarClientes));
 
         var respuesta = await vendedor.GetAsync("/api/clientes");
@@ -135,7 +135,7 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task UnVendedorPuedeListarUnCatalogoDeTenant()
     {
-        var (idTenant, _) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarUnCatalogoDeTenant));
+        var (idTenant, _, _) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarUnCatalogoDeTenant));
         using var vendedor = await VendedorLogueadoAsync(idTenant, nameof(UnVendedorPuedeListarUnCatalogoDeTenant));
 
         var respuesta = await vendedor.GetAsync("/api/catalogos/areas");
@@ -146,7 +146,7 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task UnVendedorPuedeListarParametros()
     {
-        var (idTenant, idEmpresa) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarParametros));
+        var (idTenant, idEmpresa, _) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarParametros));
         using var vendedor = await VendedorLogueadoAsync(idTenant, nameof(UnVendedorPuedeListarParametros));
 
         var respuesta = await vendedor.GetAsync($"/api/parametros?idEmpresa={idEmpresa}");
@@ -161,7 +161,7 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task UnVendedorPuedeResolverOfertas()
     {
-        var (idTenant, _) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeResolverOfertas));
+        var (idTenant, _, _) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeResolverOfertas));
         using var vendedor = await VendedorLogueadoAsync(idTenant, nameof(UnVendedorPuedeResolverOfertas));
 
         var respuesta = await vendedor.PostAsJsonAsync(
@@ -190,7 +190,7 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task UnSupervisorPuedeListarArticulos()
     {
-        var (idTenant, _) = await AprovisionarTenantAsync(nameof(UnSupervisorPuedeListarArticulos));
+        var (idTenant, _, _) = await AprovisionarTenantAsync(nameof(UnSupervisorPuedeListarArticulos));
         using var supervisor = await SupervisorLogueadoAsync(idTenant, nameof(UnSupervisorPuedeListarArticulos));
 
         var respuesta = await supervisor.GetAsync("/api/articulos");
@@ -203,12 +203,59 @@ public class OperacionDePosLecturaTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task UnSupervisorNoPuedeCrearUnCatalogoDeTenant()
     {
-        var (idTenant, _) = await AprovisionarTenantAsync(nameof(UnSupervisorNoPuedeCrearUnCatalogoDeTenant));
+        var (idTenant, _, _) = await AprovisionarTenantAsync(nameof(UnSupervisorNoPuedeCrearUnCatalogoDeTenant));
         using var supervisor = await SupervisorLogueadoAsync(idTenant, nameof(UnSupervisorNoPuedeCrearUnCatalogoDeTenant));
 
         var respuesta = await supervisor.PostAsJsonAsync(
             "/api/catalogos/areas", new AreaAlta("Intrusa", IdEmpresa: null, Orden: 1));
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    /// <summary>Judgment-day slice-6 CRITICAL: <c>GET /api/puntos-venta</c> (listado) quedaba
+    /// bajo <see cref="Politicas.GestionDeOrganizacion"/> (Root/Admin), lo que le bloqueaba al
+    /// selector de PV del POS el acceso de Vendedor/Supervisor. Se re-gateó solo esta ruta a
+    /// <see cref="Politicas.LecturaDePuntosVenta"/>; el resto de <c>OrganizacionEndpoints</c>
+    /// (obtener por id, editar) sigue exclusivamente bajo GestionDeOrganizacion.</summary>
+    [Fact]
+    public async Task UnVendedorPuedeListarPuntosDeVenta()
+    {
+        var (idTenant, _, _) = await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarPuntosDeVenta));
+        using var vendedor = await VendedorLogueadoAsync(idTenant, nameof(UnVendedorPuedeListarPuntosDeVenta));
+
+        var respuesta = await vendedor.GetAsync("/api/puntos-venta");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+    }
+
+    /// <summary>Companion del test de arriba: el listado se relaja, pero la edición de un punto
+    /// de venta sigue exclusivamente admin/root (<see cref="Politicas.GestionDeOrganizacion"/>).</summary>
+    [Fact]
+    public async Task UnVendedorNoPuedeEditarUnPuntoDeVenta()
+    {
+        var (idTenant, _, idPuntoVenta) = await AprovisionarTenantAsync(nameof(UnVendedorNoPuedeEditarUnPuntoDeVenta));
+        using var vendedor = await VendedorLogueadoAsync(idTenant, nameof(UnVendedorNoPuedeEditarUnPuntoDeVenta));
+
+        var respuesta = await vendedor.PutAsJsonAsync(
+            $"/api/puntos-venta/{idPuntoVenta}",
+            new PuntoVentaEdicion("Intento vendedor", null, null, null, null, null, null));
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    /// <summary>El re-gateo del listado a LecturaDePuntosVenta no le rompe a Root el acceso que
+    /// ya tenía vía GestionDeOrganizacion — <c>PuntosVenta.tsx</c> (admin) sigue funcionando.</summary>
+    [Fact]
+    public async Task RootPuedeListarPuntosDeVenta()
+    {
+        await AprovisionarTenantAsync(nameof(RootPuedeListarPuntosDeVenta));
+
+        using var root = fixture.CreateClient();
+        var login = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var respuesta = await root.GetAsync("/api/puntos-venta");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
 }

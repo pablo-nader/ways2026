@@ -81,8 +81,8 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
     // stage-5-pos-ventas, Slice 3 (schema/domain foundation, DB CHANGE GATE aprobado
     // 2026-08-04): modelo adelantado a la migración, mismo trámite que Articulo/CodigoBarra/
-    // Precio en stage-3 Slice 1 — sin DbSet en IWaysDbContext todavía, ServicioDeVentas
-    // (Slice 4) es el primer consumidor de Application.
+    // Precio en stage-3 Slice 1. Slice 4 expone los 6 en IWaysDbContext: ServicioDeVentas es
+    // el primer consumidor de Application.
     public DbSet<ComprobanteVenta> ComprobantesVenta => Set<ComprobanteVenta>();
     public DbSet<ItemComprobanteVenta> ItemsComprobanteVenta => Set<ItemComprobanteVenta>();
     public DbSet<PagoComprobante> PagosComprobante => Set<PagoComprobante>();
