@@ -45,6 +45,9 @@ export function medioDisponibleParaCliente(medio: MedioPagoListado, esConsumidor
   return medio.comportamiento !== 'CuentaCorriente' || !esConsumidorFinal
 }
 
+// Redondeo a 2 decimales solo para lo que se muestra/calcula en pantalla; el servidor valida
+// contra las sumas exactas (sin este redondeo intermedio) — una diferencia de centavos entre
+// cliente y servidor es solo de presentación, nunca autoritativa (ver el doc-comment del módulo).
 function redondear(valor: number): number {
   return Math.round((valor + Number.EPSILON) * 100) / 100
 }
