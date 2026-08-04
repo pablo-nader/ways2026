@@ -132,13 +132,13 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status409Conflict, "Ya existe stock cargado para ese artículo en ese punto de venta.", "stock_duplicado"),
 
             // stage-5-pos-ventas (Slice 3, task 3.12, db-error-backstops, design: Backstop Map):
-            // las tres CHECKs nuevas de comprobantes_venta/pagos_comprobante/movimientos_stock
+            // las cuatro CHECKs de comprobantes_venta/pagos_comprobante/movimientos_stock
             // no comparten un prefijo común (a diferencia de "ck_ofertas_"), así que el guard
             // de esta rama llama directo a ClasificarCheckDeVentas (switch por nombre EXACTO,
             // nunca Contains) en vez de filtrar por StartsWith primero. ValidadorDePagos/
             // ReglaDeComprobantes/el camino de escritura de movimientos_stock (Slice 4/5) ya
-            // validan los tres invariantes en el servicio — bajo operación normal ninguna de
-            // las tres ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
+            // validan los cuatro invariantes en el servicio — bajo operación normal ninguna de
+            // las cuatro ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
             // de banda (misma familia que ClasificarCheckDeOfertas).
             DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckVenta } }
                 when ClasificarCheckDeVentas(ckVenta) is { } checkVenta =>
@@ -426,15 +426,21 @@ public class ManejadorDeErrores(
         };
 
     /// <summary>stage-5-pos-ventas (Slice 3, task 3.12, tasks.md "Orchestrator Decisions
-    /// Recorded This Phase" #2, design: Backstop Map): switch por nombre EXACTO de las tres
-    /// CHECKs nuevas de <c>comprobantes_venta</c>/<c>pagos_comprobante</c>/
-    /// <c>movimientos_stock</c> — sin prefijo compartido entre las tres tablas (a diferencia de
-    /// <c>ClasificarCheckDeOfertas</c>, que sí puede filtrar por <c>"ck_ofertas_"</c> antes de
-    /// llamar), así que el caso del switch de arriba llama directo a esta función.
+    /// Recorded This Phase" #2, design: Backstop Map; ampliado en un follow-up con
+    /// <c>ck_pagos_comprobante_importe_no_negativo</c>, gate de DB aprobado 2026-08-04): switch
+    /// por nombre EXACTO de las cuatro CHECKs nuevas de <c>comprobantes_venta</c>/
+    /// <c>pagos_comprobante</c>/<c>movimientos_stock</c> — sin prefijo compartido entre las tres
+    /// tablas (a diferencia de <c>ClasificarCheckDeOfertas</c>, que sí puede filtrar por
+    /// <c>"ck_ofertas_"</c> antes de llamar), así que el caso del switch de arriba llama directo
+    /// a esta función.
     /// <c>vuelto_de_pago_negativo</c> se pinea DISTINTO del código de dominio
     /// <c>vuelto_invalido</c> de <c>ValidadorDePagos</c> (regla <c>Σ vuelto &gt; max(0, Σ
     /// importe − total)</c>): son dos familias de rechazo distintas — reusar el mismo texto de
-    /// código las confundiría en un log o en el cliente.</summary>
+    /// código las confundiría en un log o en el cliente.
+    /// <c>pago_importe_negativo</c>, en cambio, REUSA el código de dominio de la regla 0 de
+    /// <c>ValidadorDePagos</c> a propósito: es la MISMA regla de negocio (un importe negativo no
+    /// tiene significado), esta CHECK es solo su backstop de esquema — un cliente nunca debería
+    /// distinguir si el rechazo vino de la validación de aplicación o de la CHECK.</summary>
     private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarCheckDeVentas(string nombreDeCheck) =>
         nombreDeCheck switch
         {
@@ -447,6 +453,11 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "El vuelto de un pago no puede ser negativo.",
                     "vuelto_de_pago_negativo"),
+
+            "ck_pagos_comprobante_importe_no_negativo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El importe de un pago no puede ser negativo.",
+                    "pago_importe_negativo"),
 
             "ck_movimientos_stock_cantidad_no_cero" =>
                 (StatusCodes.Status400BadRequest,
