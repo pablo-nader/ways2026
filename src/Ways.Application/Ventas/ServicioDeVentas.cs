@@ -2,7 +2,9 @@ using System.Data;
 using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Ofertas;
 using Ways.Domain.Articulos;
@@ -307,7 +309,14 @@ public class ServicioDeVentas(
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        var estrategia = db.Database.CreateExecutionStrategy();
+        // Sin reintento automático (ver el doc-comment de CrearEstrategiaSinReintento): una
+        // anulación es humana y manual, sin clave de idempotencia — un reintento de
+        // EnableRetryOnFailure sobre un commit ambiguo re-correría el UPDATE condicional del
+        // paso 1, que ya no matchea 'emitido' tras el commit real, y devolvería 409
+        // comprobante_ya_anulado a una solicitud que en verdad tuvo éxito. Un reintento manual
+        // del operador que vea ese 409 está viendo información correcta: el comprobante ya está
+        // anulado.
+        var estrategia = CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () => await EjecutarAnulacionAsync(id, idTenant, idEmpleado, momento, ct));
     }
 
@@ -315,6 +324,20 @@ public class ServicioDeVentas(
         int id, int idTenant, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        // Defensa en profundidad (design: Domain rules first, mismo criterio que
+        // ValidarSignoDeLineas dentro de MaterializarItems): valida la transición contra el
+        // estado pre-leído ANTES del UPDATE atómico del paso 1, que sigue siendo la única
+        // autoridad race-safe — si otra anulación gana la carrera entre este SELECT y ese UPDATE,
+        // la rama `!seAnulo` de abajo la sigue atrapando sin depender de este pre-chequeo.
+        // AsNoTracking(): el UPDATE de abajo es SQL crudo, no pasa por el change tracker de EF —
+        // sin esto, la entidad quedaría trackeada con el estado VIEJO y el ObtenerAsync() del
+        // final devolvería ese mismo objeto stale desde el identity map, en vez de re-consultar.
+        var comprobantePreLectura = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (comprobantePreLectura is not null)
+        {
+            ReglaDeComprobantes.ValidarTransicionAEstado(comprobantePreLectura.Estado, EstadoComprobante.Anulado);
+        }
 
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
@@ -796,6 +819,49 @@ public class ServicioDeVentas(
         var parametro = comando.CreateParameter();
         parametro.Value = valor;
         comando.Parameters.Add(parametro);
+    }
+
+    /// <summary><c>AjustarAsync</c>/<c>AnularAsync</c> (Slice 5) — operaciones raras, humanas y
+    /// manuales, sin ninguna clave de idempotencia natural (a diferencia de <see
+    /// cref="EmitirAsync"/>, que reintenta con seguridad porque <see
+    /// cref="BuscarPorNumeroComprometidoAsync"/> detecta un commit ambiguo previo antes de
+    /// reinsertar). Sobre esas dos operaciones, <c>EnableRetryOnFailure</c> (global,
+    /// <c>DependencyInjection</c>) reintentaría la transacción entera tras un commit ambiguo — el
+    /// servidor comitea pero el ACK no llega antes de que se corte la conexión — y silenciosamente
+    /// duplicaría un ajuste de stock o mostraría un 409 falso sobre una anulación que en verdad
+    /// tuvo éxito.
+    ///
+    /// <para><see cref="Microsoft.EntityFrameworkCore.Storage.NonRetryingExecutionStrategy"/>
+    /// NO sirve acá: no hereda de <see cref="ExecutionStrategy"/> y por eso no marca el ambient
+    /// <c>ExecutionStrategy.Current</c> que <c>BeginTransactionAsync</c> + una consulta EF dentro
+    /// de esa transacción necesitan para no disparar "does not support user-initiated
+    /// transactions" (la consulta resuelve su PROPIA estrategia reintentable desde la
+    /// configuración del <c>DbContext</c>, que sigue siendo <c>NpgsqlRetryingExecutionStrategy</c>
+    /// sin importar con qué se envolvió la llamada externa — <c>EjecutarAnulacionAsync</c> hace
+    /// justamente eso, un <c>SELECT</c> de pre-lectura dentro de la transacción). El mecanismo
+    /// sancionado por EF Core para optar por-operación fuera del retry global sin romper ese
+    /// ambient tracking es subclasear <see cref="ExecutionStrategy"/> con <c>maxRetryCount: 0</c>
+    /// — mismo tipo base que la estrategia reintentable, así que <c>Current</c> se sigue marcando
+    /// igual.</para>
+    ///
+    /// Con esto, la falla transitoria llega tal cual al operador: el reintento manual del humano
+    /// es el correcto acá, nunca uno automático y silencioso.</summary>
+    private static IExecutionStrategy CrearEstrategiaSinReintento(IWaysDbContext db)
+    {
+        var dependencias = ((IInfrastructure<IServiceProvider>)db.Database).Instance
+            .GetRequiredService<ExecutionStrategyDependencies>();
+        return new EstrategiaSinReintento(dependencias);
+    }
+
+    /// <summary>Ver el doc-comment de <see cref="CrearEstrategiaSinReintento"/> — <c>maxRetryCount:
+    /// 0</c> más <see cref="ShouldRetryOn"/> siempre <c>false</c> es "nunca reintentar", pero
+    /// heredando de <see cref="ExecutionStrategy"/> (no de <c>NonRetryingExecutionStrategy</c>)
+    /// para preservar el ambient tracking que EF Core necesita dentro de una transacción
+    /// manual.</summary>
+    private sealed class EstrategiaSinReintento(ExecutionStrategyDependencies dependencies)
+        : ExecutionStrategy(dependencies, maxRetryCount: 0, maxRetryDelay: TimeSpan.Zero)
+    {
+        protected override bool ShouldRetryOn(Exception exception) => false;
     }
 
     // ---- Utilidades ---------------------------------------------------------------------------
