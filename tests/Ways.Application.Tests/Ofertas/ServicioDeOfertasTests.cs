@@ -78,7 +78,8 @@ public class ServicioDeOfertasTests
     /// <summary>Instancia real de <see cref="ServicioDePrecios"/> sobre el MISMO nombre de base
     /// InMemory — <see cref="ServicioDeOfertas.ResolverAsync"/> (Slice 3) la usa para el lote de
     /// precios; ningún test de este archivo la ejercita todavía (cubierto en
-    /// <c>ServicioDeOfertasResolucionTests</c>), pero el constructor la necesita.</summary>
+    /// <c>ResolvedorDeOfertasTests</c>/<c>OfertasResolucionTests</c>), pero el constructor la
+    /// necesita.</summary>
     private static ServicioDePrecios CrearServicioDePrecios(string nombreDeBase, int idTenant) =>
         new(
             CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)),

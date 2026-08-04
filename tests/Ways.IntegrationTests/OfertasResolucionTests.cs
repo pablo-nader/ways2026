@@ -1,6 +1,8 @@
 using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Ways.Application.Abstracciones;
@@ -388,6 +390,85 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
             await db.OfertasListas.CountAsync(),
             await db.Precios.IgnoreQueryFilters(["BajaLogica"]).CountAsync(),
             await db.Articulos.IgnoreQueryFilters(["BajaLogica"]).CountAsync());
+    }
+
+    // ---- judgment-day: caminos de error/borde sin cobertura previa -----------------------------
+
+    /// <summary>db-error-backstops: <c>idArticulo</c> inexistente en el lote — el pre-chequeo de
+    /// <see cref="ServicioDeOfertas.ResolverAsync"/> lo atrapa antes de tocar ninguna otra tabla,
+    /// mismo código que el resto del ABM de ofertas.</summary>
+    [Fact]
+    public async Task ResolverConIdArticuloInexistenteDevuelve400ReferenciaInvalida()
+    {
+        var (idTenant, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ResolverConIdArticuloInexistenteDevuelve400ReferenciaInvalida));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idLista = await SembrarListaAsync(idTenant, "Lista de Prueba");
+
+        var solicitud = new SolicitudDeResolucion([new LineaDeResolucion(999_999, null, idLista, 1m)]);
+        var respuesta = await admin.PostAsJsonAsync("/api/ofertas/resolver", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>db-error-backstops: <c>idListaPrecio</c> inexistente — lo atrapa
+    /// <see cref="ServicioDePrecios.PreciosVigentesEnLoteAsync"/> (el lote de precios que
+    /// <c>ResolverAsync</c> delega, design decision 5), mismo código 400 observable desde el
+    /// endpoint.</summary>
+    [Fact]
+    public async Task ResolverConIdListaPrecioInexistenteDevuelve400ReferenciaInvalida()
+    {
+        var (idTenant, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ResolverConIdListaPrecioInexistenteDevuelve400ReferenciaInvalida));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idArticulo = await SembrarArticuloAsync(idTenant, "articulo-lista-inexistente");
+
+        var solicitud = new SolicitudDeResolucion([new LineaDeResolucion(idArticulo, null, 999_999, 1m)]);
+        var respuesta = await admin.PostAsJsonAsync("/api/ofertas/resolver", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>(judgment-day, item 1) <c>lineas</c> vacío es un lote válido y trivial —
+    /// <c>ResolverAsync</c> devuelve el resultado vacío sin emitir ninguna consulta (early
+    /// return antes de la primera query de artículos).</summary>
+    [Fact]
+    public async Task ResolverConLineasVaciasDevuelve200ConResultadoVacio()
+    {
+        var (_, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ResolverConLineasVaciasDevuelve200ConResultadoVacio));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var solicitud = new SolicitudDeResolucion([]);
+        var respuesta = await admin.PostAsJsonAsync("/api/ofertas/resolver", solicitud);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var resultado = await respuesta.Content.ReadFromJsonAsync<List<ResultadoDeResolucion>>();
+        Assert.Empty(resultado!);
+    }
+
+    /// <summary>(judgment-day, item 1) <c>{"lineas": null}</c> crudo bindea <c>null</c> más allá
+    /// de <c>required</c> (STJ solo exige que la clave esté presente, no que sea no-nula) — el
+    /// guard de <c>ResolverAsync</c> lo trata igual que el lote vacío, nunca un 500.</summary>
+    [Fact]
+    public async Task ResolverConLineasNulasEnJsonCrudoDevuelve200ConResultadoVacio()
+    {
+        var (_, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ResolverConLineasNulasEnJsonCrudoDevuelve200ConResultadoVacio));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        using var contenido = new StringContent("{\"lineas\": null}", Encoding.UTF8, "application/json");
+        var respuesta = await admin.PostAsync("/api/ofertas/resolver", contenido);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var resultado = await respuesta.Content.ReadFromJsonAsync<List<ResultadoDeResolucion>>();
+        Assert.Empty(resultado!);
     }
 
     // ---- task 3.11: guard de cantidad constante de consultas -----------------------------------

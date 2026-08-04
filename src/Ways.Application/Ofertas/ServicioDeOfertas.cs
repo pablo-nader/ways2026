@@ -326,9 +326,11 @@ public class ServicioDeOfertas(
     /// — no hay huso horario de tenant modelado todavía.</para>
     /// </summary>
     public async Task<IReadOnlyList<ResultadoDeResolucion>> ResolverAsync(
-        IReadOnlyList<LineaDeResolucion> lineas, DateTimeOffset? momento, CancellationToken ct = default)
+        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default)
     {
-        if (lineas.Count == 0)
+        // `required` en SolicitudDeResolucion.Lineas rechaza un cuerpo sin la clave, pero
+        // `{"lineas": null}` igual bindea null acá — se trata como lote vacío, mismo resultado.
+        if (lineas is null || lineas.Count == 0)
         {
             return [];
         }
