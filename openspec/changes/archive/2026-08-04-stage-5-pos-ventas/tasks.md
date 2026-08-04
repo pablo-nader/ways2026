@@ -265,10 +265,10 @@ candidate.**
 ### 3D. Backstop mapping — ordering trap
 
 - [x] 3.10 Add `ux_comprobantes_venta_numero` → 23505 → 409
-  `numero_de_comprobante_duplicado` to `ManejadorDeErrores`, inserted
-  **before** the existing `_numero` branch (`numero_duplicado`, cliente).
-  Same work unit adds the test proving the new branch wins. *(design:
-  Backstop Map — "Ordering trap")*
+  `numero_de_comprobante_duplicado`, inserted **before** the existing
+  `_numero` branch (`numero_duplicado`, cliente). Same work unit adds the
+  test proving the new branch wins. *(design: Backstop Map — "Ordering
+  trap")*
 - [x] 3.11 Add `pk_stock` → 23505 → 409 `stock_duplicado` (documented
   exemption — `ON CONFLICT` write, raw-SQL test only). *(design: Backstop
   Map)*

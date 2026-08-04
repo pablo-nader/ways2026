@@ -1,6 +1,6 @@
 change: stage-5-pos-ventas
-phase: propose
-status: in_progress
+phase: archive
+status: done
 artifact_store: openspec
 phases:
   explore:
@@ -35,7 +35,9 @@ phases:
     artifact: verify-report.md
     notes: "PASS (2026-08-04, HEAD 4c73e3e): 0 CRITICALs, suites exact (271/209/391 + 165 vitest), migrations clean, 9 spec domains traced to runtime evidence, all deviations documented, out-of-scope clean. Two doc-staleness warnings reconciled pre-archive (stock spec advisory-lock wording; design transaction order). Explicit pending: ck_pagos_comprobante_importe_no_negativo awaits the user micro-gate (domain rules 0/0b protect)."
   archive:
-    status: not_started
+    status: done
+    artifact: archive-report.md
+    notes: "Archived 2026-08-04: 4 new full spec domains (comprobantes-venta, stock, consumo-cuenta-corriente, operacion-de-pos) and 5 delta merges (codigos-barra, clientes, articulos, parametros-operativos, resolucion-de-ofertas) merged into openspec/specs/. Change folder moved to openspec/changes/archive/2026-08-04-stage-5-pos-ventas/."
 dependencies:
   spec: [propose]
   design: [propose]

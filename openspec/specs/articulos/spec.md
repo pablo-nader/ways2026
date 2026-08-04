@@ -117,8 +117,12 @@ the same `id_tenant`.
 
 ### Requirement: Articulo ABM Lifecycle and Authorization
 
-Artículos MUST support list/create/edit/soft-delete, gated by
-`GestionDeCatalogo` (tenant `admin` only — `root` and `vendedor` excluded).
+Artículos MUST support create/edit/soft-delete, gated by `GestionDeCatalogo`
+(tenant `admin` only — `root` and `vendedor` excluded). Listing/lookup
+(including by `codigo_interno` and barcode, for cart pricing) MUST also be
+reachable under `Politicas.OperacionDePos` (Vendedor + Admin).
+(Previously: list/create/edit/soft-delete were all gated by
+`GestionDeCatalogo` only.)
 
 #### Scenario: Admin creates and soft-deletes an articulo
 
@@ -132,6 +136,12 @@ Artículos MUST support list/create/edit/soft-delete, gated by
 - GIVEN a user with the `vendedor` role
 - WHEN they call the artículo create endpoint
 - THEN the request is rejected with an authorization error
+
+#### Scenario: Vendedor can list/lookup articulos for the POS cart
+
+- GIVEN a user with the `vendedor` role
+- WHEN they call the artículo lookup endpoint for their tenant
+- THEN the request succeeds
 
 ### Requirement: Tenant Isolation for Articulos And articulos_empresas
 
