@@ -596,6 +596,11 @@ public class ServicioDeVentas(
 
     // ---- Utilidades ---------------------------------------------------------------------------
 
+    /// <summary>Snapshot informativo, nunca clave de negocio (ver doc-comment de
+    /// <see cref="LineaDeVenta.CodigoBarra"/>) — el tope solo evita que un payload arbitrariamente
+    /// largo llegue a <c>items_comprobante_venta.codigo_barra</c>.</summary>
+    private const int LongitudMaximaCodigoBarra = 64;
+
     private static IReadOnlyList<LineaDeVenta> ExigirLineasValidas(IReadOnlyList<LineaDeVenta>? lineas)
     {
         if (lineas is null || lineas.Count == 0)
@@ -609,6 +614,22 @@ public class ServicioDeVentas(
             {
                 throw new ErrorDominio(
                     "cantidad_de_linea_invalida", "La cantidad de cada línea tiene que ser mayor a cero.", 400);
+            }
+
+            // Máximo 3 decimales (doc 10: cantidad soporta fracción para UnidadVenta.Peso, pero
+            // sin precisión ilimitada) — decimal.Round con MidpointRounding.AwayFromZero nunca
+            // altera un valor que ya tiene ≤ 3 decimales, así que la comparación detecta
+            // exactamente el exceso de precisión sin falsos positivos por redondeo bancario.
+            if (decimal.Round(linea.Cantidad, 3, MidpointRounding.AwayFromZero) != linea.Cantidad)
+            {
+                throw new ErrorDominio(
+                    "cantidad_invalida", "La cantidad de cada línea admite hasta 3 decimales.", 400);
+            }
+
+            if (linea.CodigoBarra is { Length: > LongitudMaximaCodigoBarra })
+            {
+                throw new ErrorDominio(
+                    "codigo_barra_invalido", $"El código de barra no puede superar los {LongitudMaximaCodigoBarra} caracteres.", 400);
             }
         }
 

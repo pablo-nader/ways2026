@@ -258,6 +258,64 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
+    public async Task UnaCantidadConMasDeTresDecimalesEsRechazada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaCantidadConMasDeTresDecimalesEsRechazada));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-cantidad-precision", 10m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Cantidad Precisión");
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1.2345m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 12.345m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cantidad_invalida", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task UnaCantidadConHastaTresDecimalesEsAceptada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaCantidadConHastaTresDecimalesEsAceptada));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-cantidad-precision-ok", 10m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Cantidad Precisión Ok");
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1.234m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 12.34m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+    }
+
+    [Fact]
+    public async Task UnCodigoBarraQueSuperaLaLongitudMaximaEsRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(UnCodigoBarraQueSuperaLaLongitudMaximaEsRechazado));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-codigo-barra-largo", 10m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Código Barra Largo");
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, new string('9', 65))],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 10m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("codigo_barra_invalido", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
     public async Task UnVendedorPuedeEmitirUnaVenta()
     {
         var ctx = await PrepararAsync(nameof(UnVendedorPuedeEmitirUnaVenta));
