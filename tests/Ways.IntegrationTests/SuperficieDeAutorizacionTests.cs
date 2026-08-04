@@ -126,18 +126,26 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         "/api/catalogos/",
         "/api/catalogos-fiscales",
         "/api/parametros",
-        "/api/ofertas"
+        "/api/ofertas",
+        // GET /api/puntos-venta (listado) — re-gateado a Politicas.LecturaDePuntosVenta para
+        // habilitar el selector de PV del POS (Vendedor/Supervisor) sin sacarle el acceso a
+        // Root/Admin (PuntosVenta.tsx). GET /{id:int} sigue bajo GestionDeOrganizacion, ya
+        // cubierto por el allowlist de policies de abajo.
+        "/api/puntos-venta"
     ];
 
     // Policies que, de aparecer en vez de OperacionDePos, siguen siendo un gate válido —
-    // todas excluyen Vendedor, así que ninguna relaja la superficie que este guard vigila.
+    // ninguna relaja la superficie que este guard vigila a "autenticado sin rol". La única
+    // excepción documentada es LecturaDePuntosVenta, que sí agrega Root frente a OperacionDePos
+    // pero sigue exigiendo un rol conocido (nunca cae al fallback autenticado-only).
     private static readonly HashSet<string> PoliticasAlMenosTanEstrictasComoOperacionDePos =
     [
         Politicas.OperacionDePos,
         Politicas.GestionDeCatalogo,
         Politicas.GestionDeUsuarios,
         Politicas.GestionDeOrganizacion,
-        Politicas.SoloPlataforma
+        Politicas.SoloPlataforma,
+        Politicas.LecturaDePuntosVenta
     ];
 
     [Fact]
