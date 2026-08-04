@@ -46,6 +46,13 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // restricción que este allowlist traía adelantado desde Slice 1.
         ("POST", "/api/ventas/{id:int}/anulacion"),
 
+        // stage-6-turnos-caja (Slice 2, task 2.6): apertura de turno y movimientos de caja — sin
+        // GestionDeCatalogo apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que
+        // poder abrir su turno y registrar un retiro/refuerzo). Task 4.8 suma acá el cierre
+        // (POST …/{id}/cierre) y los gastos (POST /api/gastos) cuando Slices 3/4 los aterricen.
+        ("POST", "/api/caja/turnos/"),
+        ("POST", "/api/caja/turnos/{id:int}/movimientos"),
+
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).
         ("POST", "/api/plataforma/tenants/"),
