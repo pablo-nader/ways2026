@@ -111,6 +111,7 @@ built in memory from one `id_categoria`/`id_categoria_padre` projection of the t
 | Exactly one scope / one benefit | `ReglaDeOfertas` (pure) before any write | both CHECKs (backstop) |
 | `porcentaje ∈ (0,100]`, `importe_fijo ≥ 0`, `precio_unitario ≥ 0`, `cantidad_minima > 0` | `ReglaDeOfertas` | `numeric(p,s)` overflow → existing 22003 mapping |
 | `dias_semana ⊆ {1..7}`, sin duplicados | `ReglaDeOfertas` | `ck_ofertas_dias_semana` (subset only) |
+| `fecha_hasta ≥ fecha_desde`, `hora_hasta ≥ hora_desde` (NULL-tolerant per axis) | `ReglaDeOfertas` (added at judgment-day R1 — the original draft left this DB-only, contradicting the reachability note below) | `ck_ofertas_ventana_valida` |
 | Referenced articulo/grupo/categoria/lista belong to the tenant | tenant-scoped existence check in `ServicioDeOfertas` (EF global filter) | composite FKs + generic 23503 |
 | Lista set replacement is atomic | delete-all + insert inside one transaction, ids `.Distinct()`ed | `pk_ofertas_listas` |
 
@@ -118,8 +119,8 @@ built in memory from one `id_categoria`/`id_categoria_padre` projection of the t
 
 | Constraint | Mapping | Test |
 |---|---|---|
-| `ck_ofertas_alcance_exclusivo` | 23514 → 400 `alcance_de_oferta_invalido` | raw-SQL INSERT asserting SQLSTATE 23514 + translated code |
-| `ck_ofertas_beneficio_exclusivo` | 23514 → 400 `beneficio_de_oferta_invalido` | idem |
+| `ck_ofertas_alcance_exclusivo` | 23514 → 400 `oferta_alcance_invalido` (spec-pinned code — tasks.md naming decision superseding this table's draft) | raw-SQL INSERT asserting SQLSTATE 23514 + translated code |
+| `ck_ofertas_beneficio_exclusivo` | 23514 → 400 `oferta_beneficio_invalido` (idem) | idem |
 | `ck_ofertas_ventana_valida` | 23514 → 400 `ventana_de_oferta_invalida` | idem |
 | `ck_ofertas_dias_semana` | 23514 → 400 `dias_semana_invalidos` | idem |
 | `pk_ofertas_listas` | 23505 → 409 `oferta_lista_duplicada` (same family as `pk_articulos_empresas`) | **race test**: two concurrent PUTs replacing the same oferta's lista set → exactly one winner, the loser a translated 409/serialization outcome, never a 500 |
