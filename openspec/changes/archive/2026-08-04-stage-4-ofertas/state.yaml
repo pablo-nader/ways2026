@@ -1,6 +1,6 @@
 change: stage-4-ofertas
-phase: propose
-status: in_progress
+phase: archive
+status: done
 artifact_store: openspec
 phases:
   explore:
@@ -31,7 +31,9 @@ phases:
     artifact: verify-report.md
     notes: "PASS (2026-08-04, HEAD f3505f4): 0 findings at any level, 42/42 tasks, 162/207/268 + 57 vitest exact, migrations clean, all 9 design decisions honored, 4 deviations confirmed documented, out-of-scope guard clean. Non-blocking carryover for stage 5: /resolver policy (Admin-gated today, POS needs access)."
   archive:
-    status: not_started
+    status: done
+    artifact: archive-report.md
+    notes: "Archived 2026-08-04: delta specs merged into openspec/specs/ (ofertas, resolucion-de-ofertas new; precios delta ADDED-merged with Batch Current-Price Resolution requirement), change folder moved to openspec/changes/archive/2026-08-04-stage-4-ofertas/."
 dependencies:
   spec: [propose]
   design: [propose]
