@@ -170,6 +170,11 @@ token-reconcile it) and rule 5 (per-entity busy flags, not a page-level boolean)
 
 ## Open Questions
 
+**Added at judgment-day R1 (Slice 3):** `POST /api/ofertas/resolver` ships Admin-gated
+(`GestionDeCatalogo`) because no POS-facing policy exists yet — but its intended real
+caller is stage 5's POS flow (likely `Vendedor`). Stage 5 MUST revisit this policy before
+wiring the POS, or the checkout will hit 403s. Tracked here so it is not rediscovered.
+
 - [ ] **Time zone for `hora_desde/hasta` and `dias_semana` matching.** The resolver is
   timezone-free by design (decision 3), so `ServicioDeOfertas` must choose one. v1 default:
   server-configured local time. There is no tenant timezone modeled anywhere today

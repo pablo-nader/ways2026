@@ -3,6 +3,7 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Precios;
 using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
 
@@ -55,7 +56,8 @@ namespace Ways.Application.Ofertas;
 /// re-chequea existencia con un <c>EXISTS</c> plano DESPUÉS de tomar el lock (nunca reusa la
 /// entidad trackeada desde antes de la transacción, que el identity map de EF no refresca sola)
 /// — cualquiera de los dos que pierda la carrera del lock ve el estado YA COMITEADO por el otro.</summary>
-public class ServicioDeOfertas(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto)
+public class ServicioDeOfertas(
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios)
 {
     /// <summary>Sin filtro de <c>Activo</c> (a diferencia de <c>ServicioDeCatalogo</c>) —
     /// mismo criterio que <c>ArticuloListado</c>: el filtro global de baja lógica ya deja
@@ -300,6 +302,189 @@ public class ServicioDeOfertas(IWaysDbContext db, IRelojDelSistema reloj, IConte
             await db.SaveChangesAsync(ct);
             await transaccion.CommitAsync(ct);
         });
+    }
+
+    /// <summary>
+    /// Resolución batch, query-only (task 3.5; design: Technical Approach — "7 constant queries
+    /// per resolution call, independent of N articles × M listas"; spec: resolucion-de-ofertas /
+    /// Batch Input Shape). NUNCA escribe: ni acá ni en <see cref="ResolvedorDeOfertas"/> hay un
+    /// <c>SaveChangesAsync</c> — el resultado se reporta, nunca se persiste (spec: Applied
+    /// Ofertas Are Reported, Never Persisted).
+    ///
+    /// <para>Presupuesto: 1 <c>articulos</c> + 1 <c>categorias</c> (mapa de ancestros completo del
+    /// tenant) + 1 <c>ofertas</c> (filtro grueso: <c>activo</c>, alcance por ids, <c>id_empresa</c>)
+    /// + 1 <c>ofertas_listas</c> + hasta 3 de <see cref="ServicioDePrecios.PreciosVigentesEnLoteAsync"/>
+    /// = 7, sin loop de una consulta por línea. El resto del matching (ventana de vigencia,
+    /// <c>cantidad_minima</c>, lista objetivo, día de semana, alcance jerárquico de categoría) lo
+    /// hace <see cref="ResolvedorDeOfertas.Coincide"/> en memoria, por línea, sobre las mismas
+    /// <see cref="OfertaCandidata"/> ya materializadas — el único filtro por línea que corre ACÁ
+    /// (no en el resolver puro, porque <see cref="LineaAResolver"/> no lleva <c>id_empresa</c>,
+    /// design: Resolution Contract) es <see cref="ReglaDeOfertas.CoincideEmpresa"/>.</para>
+    ///
+    /// <para>Hora local (design: Open Questions, "server-configured local time" v1): el único
+    /// <paramref name="momento"/> del lote se descompone UNA vez con <see cref="TimeZoneInfo.Local"/>
+    /// — no hay huso horario de tenant modelado todavía.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<ResultadoDeResolucion>> ResolverAsync(
+        IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default)
+    {
+        // La clave "lineas" ausente o explícitamente `null` en el body deserializa igual acá
+        // (STJ no valida `required` con constructores `SetsRequiredMembers`), así que el chequeo
+        // vive en el servicio: distingue un body malformado (400) de un lote vacío legítimo
+        // (`[]` ⇒ resultado vacío, sin error).
+        if (lineas is null)
+        {
+            throw new ErrorDominio("lineas_requeridas", "El campo 'lineas' es obligatorio.", 400);
+        }
+
+        if (lineas.Count == 0)
+        {
+            return [];
+        }
+
+        var idsArticulo = lineas.Select(l => l.IdArticulo).Distinct().ToList();
+        var idsListaPrecio = lineas.Select(l => l.IdListaPrecio).Distinct().ToList();
+
+        // 1 consulta: alcance de los artículos pedidos (categoría/grupo propios).
+        var articulos = await db.Articulos
+            .Where(a => idsArticulo.Contains(a.Id))
+            .Select(a => new { a.Id, a.IdCategoria, a.IdGrupo })
+            .ToListAsync(ct);
+
+        var articuloPorId = articulos.ToDictionary(a => a.Id);
+
+        var idsArticuloFaltantes = idsArticulo.Except(articuloPorId.Keys).ToList();
+        if (idsArticuloFaltantes.Count > 0)
+        {
+            throw new ErrorDominio("referencia_invalida", $"No existe el artículo {idsArticuloFaltantes[0]}.", 400);
+        }
+
+        // 1 consulta: mapa de ancestros de TODA la jerarquía de categorías del tenant — se arma
+        // en memoria por artículo, sin una consulta jerárquica por artículo (design: Batch
+        // Boundary — Categoria scope matching).
+        var padrePorCategoria = await db.Categorias
+            .Select(c => new { c.Id, c.IdCategoriaPadre })
+            .ToDictionaryAsync(c => c.Id, c => c.IdCategoriaPadre, ct);
+
+        var idsCategoriasPorArticulo = new Dictionary<int, IReadOnlySet<int>>(articulos.Count);
+        var todasLasCategoriasAlcanzables = new HashSet<int>();
+        var idsGrupo = new HashSet<int>();
+
+        foreach (var articulo in articulos)
+        {
+            var ancestros = articulo.IdCategoria is { } idCategoria
+                ? CadenaDeCategorias.ConstruirAncestros(idCategoria, padrePorCategoria)
+                : (IReadOnlySet<int>)new HashSet<int>();
+
+            idsCategoriasPorArticulo[articulo.Id] = ancestros;
+            todasLasCategoriasAlcanzables.UnionWith(ancestros);
+
+            if (articulo.IdGrupo is { } idGrupo)
+            {
+                idsGrupo.Add(idGrupo);
+            }
+        }
+
+        var idsEmpresa = lineas
+            .Where(l => l.IdEmpresa is not null)
+            .Select(l => l.IdEmpresa!.Value)
+            .Distinct()
+            .ToList();
+
+        // 1 consulta: ofertas activas cuyo alcance (por id, superconjunto de las líneas pedidas)
+        // e id_empresa podrían aplicar a ALGUNA línea del lote — el matching fino por línea
+        // (incl. id_empresa exacto) corre después, en memoria.
+        var ofertas = await db.Ofertas
+            .Where(o => o.Activo &&
+                ((o.IdArticulo != null && idsArticulo.Contains(o.IdArticulo.Value)) ||
+                 (o.IdGrupo != null && idsGrupo.Contains(o.IdGrupo.Value)) ||
+                 (o.IdCategoria != null && todasLasCategoriasAlcanzables.Contains(o.IdCategoria.Value))) &&
+                (o.IdEmpresa == null || idsEmpresa.Contains(o.IdEmpresa.Value)))
+            .ToListAsync(ct);
+
+        var idsOferta = ofertas.Select(o => o.Id).ToList();
+
+        // 1 consulta: targeting de listas de las ofertas candidatas.
+        var listasPorOferta = idsOferta.Count == 0
+            ? new Dictionary<int, IReadOnlySet<int>>()
+            : (await db.OfertasListas
+                .Where(ol => idsOferta.Contains(ol.IdOferta))
+                .Select(ol => new { ol.IdOferta, ol.IdListaPrecio })
+                .ToListAsync(ct))
+                .GroupBy(ol => ol.IdOferta)
+                .ToDictionary(g => g.Key, g => (IReadOnlySet<int>)g.Select(x => x.IdListaPrecio).ToHashSet());
+
+        // Candidatas materializadas UNA vez, compartidas entre todas las líneas — ReglaDeOfertas
+        // ya validó estas cinco guardas al escribir (Slice 2), así que proyectarlas acá nunca
+        // debería lanzar; si lo hace, es una fila corrupta fuera de banda (defensa en profundidad,
+        // no un camino alcanzable en operación normal).
+        var candidatasPorOferta = ofertas.Select(o => new
+        {
+            Oferta = o,
+            Candidata = new OfertaCandidata(
+                o.Id, o.Nombre, o.Prioridad, o.Acumulable,
+                ReglaDeOfertas.LeerAlcance(o), ReglaDeOfertas.LeerBeneficio(o), o.CantidadMinima,
+                o.FechaDesde, o.FechaHasta, o.HoraDesde, o.HoraHasta,
+                ReglaDeOfertas.LeerDiasSemana(o.DiasSemana),
+                listasPorOferta.TryGetValue(o.Id, out var listas) ? listas : new HashSet<int>())
+        }).ToList();
+
+        // Hasta 3 consultas: precios vigentes en lote para el producto cartesiano de artículos ×
+        // listas pedidas (design decision 5 — ServicioDePrecios.PreciosVigentesAsync/
+        // PrecioVigenteAsync quedan sin tocar).
+        var momentoEfectivo = momento ?? reloj.Ahora;
+        var precios = await servicioDePrecios.PreciosVigentesEnLoteAsync(idsArticulo, idsListaPrecio, momentoEfectivo, ct);
+
+        var (fechaLocal, horaLocal, diaSemanaLocal) = DescomponerHoraLocal(momentoEfectivo);
+
+        var resultado = new List<ResultadoDeResolucion>(lineas.Count);
+
+        foreach (var linea in lineas)
+        {
+            var precioOriginal = precios.TryGetValue((linea.IdArticulo, linea.IdListaPrecio), out var monto)
+                ? monto
+                : null;
+
+            if (precioOriginal is null)
+            {
+                resultado.Add(new ResultadoDeResolucion(
+                    linea.IdArticulo, linea.IdListaPrecio, null, null, 0m, []));
+                continue;
+            }
+
+            var candidatasDeLaLinea = candidatasPorOferta
+                .Where(c => ReglaDeOfertas.CoincideEmpresa(c.Oferta.IdEmpresa, linea.IdEmpresa))
+                .Select(c => c.Candidata)
+                .ToList();
+
+            var lineaAResolver = new LineaAResolver(
+                linea.IdArticulo, articuloPorId[linea.IdArticulo].IdGrupo,
+                idsCategoriasPorArticulo[linea.IdArticulo].ToList(),
+                linea.IdListaPrecio, linea.Cantidad, precioOriginal.Value,
+                fechaLocal, horaLocal, diaSemanaLocal);
+
+            var resuelto = ResolvedorDeOfertas.Resolver(lineaAResolver, candidatasDeLaLinea);
+
+            resultado.Add(new ResultadoDeResolucion(
+                linea.IdArticulo, linea.IdListaPrecio, resuelto.PrecioOriginal, resuelto.PrecioFinal,
+                resuelto.DescuentoUnitario,
+                resuelto.Aplicadas.Select(a => new OfertaAplicadaDto(a.IdOferta, a.Nombre, a.DescuentoUnitario)).ToList()));
+        }
+
+        return resultado;
+    }
+
+    /// <summary>Design: Open Questions, "Time zone for hora_desde/hasta and dias_semana
+    /// matching" — v1 usa <see cref="TimeZoneInfo.Local"/> (huso del servidor, no hay huso de
+    /// tenant modelado todavía). Día de semana ISO-8601 (1 = lunes … 7 = domingo) — .NET expone
+    /// <see cref="DayOfWeek"/> con domingo = 0, así que se remapea acá.</summary>
+    private static (DateOnly Fecha, TimeOnly Hora, int DiaSemana) DescomponerHoraLocal(DateTimeOffset momento)
+    {
+        var local = TimeZoneInfo.ConvertTime(momento, TimeZoneInfo.Local);
+        var diaSemanaDotNet = (int)local.DayOfWeek;
+        var diaSemanaIso = diaSemanaDotNet == 0 ? 7 : diaSemanaDotNet;
+
+        return (DateOnly.FromDateTime(local.DateTime), TimeOnly.FromDateTime(local.DateTime), diaSemanaIso);
     }
 
     /// <summary>Las cinco guardas de <see cref="ReglaDeOfertas"/> (design: Protection Rules) —

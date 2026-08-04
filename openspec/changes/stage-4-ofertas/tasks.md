@@ -252,11 +252,11 @@ green. **Rollback**: new routes/methods only — `PrecioVigenteAsync`/
 
 ### 3A. Domain
 
-- [ ] 3.1 Add resolution contract record structs (`LineaAResolver`,
+- [x] 3.1 Add resolution contract record structs (`LineaAResolver`,
   `OfertaCandidata`, `AlcanceDeOferta`, `BeneficioDeOferta`,
   `OfertaAplicada`, `PrecioConOfertas`) in `Ways.Domain.Ofertas` per design's
   Resolution Contract shape.
-- [ ] 3.2 Add `ResolvedorDeOfertas.Resolver(linea, candidatas)` — pure
+- [x] 3.2 Add `ResolvedorDeOfertas.Resolver(linea, candidatas)` — pure
   static: base selection (highest `prioridad` among `acumulable = false`,
   tie-break greater discount then lower `id_oferta`); additive-over-original
   stacking (each discount computed independently against `PrecioOriginal`,
@@ -265,7 +265,7 @@ green. **Rollback**: new routes/methods only — `PrecioVigenteAsync`/
   ascending `id_oferta`. *(design decisions 2, 3; Resolution Contract
   arithmetic table; spec: resolucion-de-ofertas / Base Selection and
   Tie-Break, Additive-Over-Original Stacking, all scenarios)*
-- [ ] 3.3 Add categoria ancestor-chain matching helper (builds the ancestor
+- [x] 3.3 Add categoria ancestor-chain matching helper (builds the ancestor
   set in memory from one `id_categoria`/`id_categoria_padre` projection,
   reusing `ReglaDeCategorias.ProfundidadMaxima = 3`). *(design: Batch
   Boundary — Categoria scope matching; spec: resolucion-de-ofertas /
@@ -273,7 +273,7 @@ green. **Rollback**: new routes/methods only — `PrecioVigenteAsync`/
 
 ### 3B. Application — batch price path
 
-- [ ] 3.4 Add `ServicioDePrecios.PreciosVigentesEnLoteAsync(ids articulo,
+- [x] 3.4 Add `ServicioDePrecios.PreciosVigentesEnLoteAsync(ids articulo,
   ids lista, fecha, ct)` → `IReadOnlyDictionary<(int,int), decimal?>`: load
   requested listas by id (no `Activo` filter, matching
   `PrecioVigenteAsync`'s explicit-id semantics); load base listas of
@@ -287,7 +287,7 @@ green. **Rollback**: new routes/methods only — `PrecioVigenteAsync`/
 
 ### 3C. Application — resolution service
 
-- [ ] 3.5 Add `ServicioDeOfertas.ResolverAsync(lineas)` — batch-first: one
+- [x] 3.5 Add `ServicioDeOfertas.ResolverAsync(lineas)` — batch-first: one
   `articulos` query, one categorias ancestor-map query, one `ofertas`
   query, one `ofertas_listas` query, calls `PreciosVigentesEnLoteAsync`
   (3 `precios` queries), then calls the pure `ResolvedorDeOfertas` per line
@@ -298,19 +298,19 @@ green. **Rollback**: new routes/methods only — `PrecioVigenteAsync`/
   Technical Approach — 7 constant queries; decision 4 — in-memory lista
   targeting; spec: resolucion-de-ofertas / Batch Input Shape, Candidate
   Matching, all scenarios)*
-- [ ] 3.6 Add contracts: `LineaDeResolucion` (request DTO),
+- [x] 3.6 Add contracts: `LineaDeResolucion` (request DTO),
   `ResultadoDeResolucion` (response DTO incl. applied-ofertas list).
 
 ### 3D. API
 
-- [ ] 3.7 Add `POST /api/ofertas/resolver`, query-only (writes nothing —
+- [x] 3.7 Add `POST /api/ofertas/resolver`, query-only (writes nothing —
   doc-comment and endpoint summary MUST state "POST, no muta nada", design
   decision 7). *(spec: resolucion-de-ofertas / Applied Ofertas Are
   Reported, Never Persisted)*
 
 ### 3E. Tests
 
-- [ ] 3.8 [P] Unit: `ResolvedorDeOfertas` — exhaustive, every spec scenario
+- [x] 3.8 [P] Unit: `ResolvedorDeOfertas` — exhaustive, every spec scenario
   with the spec's concrete numbers (highest-prioridad base, both tie-breaks,
   acumulable-only-no-base, base+1 acumulable, multiple acumulables,
   `precio_unitario` as base, `precio_unitario` as acumulable, 100%-clamp,
@@ -319,27 +319,30 @@ green. **Rollback**: new routes/methods only — `PrecioVigenteAsync`/
   Original Stacking — all scenarios; design: Testing Strategy — "bulk of
   the stage's test mass")* —
   `tests/Ways.Domain.Tests/Ofertas/ResolvedorDeOfertasTests.cs`.
-- [ ] 3.9 [P] Unit: candidate-matching helpers — categoria ancestor-chain
+- [x] 3.9 [P] Unit: candidate-matching helpers — categoria ancestor-chain
   reach, grupo match, empresa exclusion, empty-set-matches-all for lista and
   `dias_semana`. *(spec: resolucion-de-ofertas / Candidate Matching, all
   scenarios)*
-- [ ] 3.10 Integration (parity): `PreciosVigentesEnLoteAsync` ==
+- [x] 3.10 Integration (parity): `PreciosVigentesEnLoteAsync` ==
   `PrecioVigenteAsync` for the same inputs (fija, derivada, missing price,
   inactive lista) — assert value equality per pair, both paths in one test.
   *(design: Testing Strategy — Integration (parity); spec: precios /
   Existing single-articulo methods are unaffected)*
-- [ ] 3.11 Integration (batch query count): resolution over N articles
+- [x] 3.11 Integration (batch query count): resolution over N articles
   issues a **constant** query count — count commands via an EF
   interceptor/`DbCommand` log, assert count is independent of N. *(spec:
   resolucion-de-ofertas / Batch resolves many articulos in one call;
   design: Testing Strategy — Integration (batch))*
-- [ ] 3.12 Integration: `/resolver` end-to-end scenario mirroring a spec
+- [x] 3.12 Integration: `/resolver` end-to-end scenario mirroring a spec
   scenario (base + acumulable over real Postgres data), no-match
   passthrough, and a no-writes assertion (row counts unchanged across every
   affected table). *(spec: resolucion-de-ofertas / Result lists all applied
   ofertas, Resolution performs no writes)* —
   `tests/Ways.IntegrationTests/OfertasResolucionTests.cs`.
-- [ ] 3.13 Regression: Slice 1 + Slice 2 suites unedited and green.
+- [x] 3.13 Regression: Slice 1 + Slice 2 test BEHAVIOR unchanged and suites
+  green — corrected at judgment-day R1: ServicioDeOfertasTests received a
+  mechanical DI-fixture update (ServicioDeOfertas gained a ServicioDePrecios
+  constructor dependency), no assertion or behavior changed.
 
 ---
 
