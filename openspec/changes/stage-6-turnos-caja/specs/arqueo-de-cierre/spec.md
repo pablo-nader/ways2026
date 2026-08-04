@@ -104,8 +104,10 @@ endpoint MUST exist.
 
 #### Scenario: Closing an already-closed turno is rejected
 - GIVEN a turno with `estado = cerrado`
-- WHEN a cierre is requested for the same punto de venta
-- THEN it is rejected with `409 turno_no_abierto`
+- WHEN a cierre is requested for that turno
+- THEN it is rejected with `409 turno_ya_cerrado` — the turno exists but is
+  no longer open, which is distinct from `turno_no_abierto` (no turno at
+  all); the loser of two concurrent cierres MUST receive this code
 
 ### Requirement: Resumen Parcial Uses The Same Derivation As Cierre
 
