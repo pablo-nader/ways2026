@@ -3,7 +3,16 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pos } from './Pos'
 import { ErrorApi } from '../api/cliente'
-import type { ArticuloEscaneado, ClienteListado, PaginaDe, PuntoVentaListado, ResultadoDeResolucion } from '../api/tipos'
+import type {
+  ArticuloEscaneado,
+  ClienteListado,
+  ComprobanteEmitido,
+  MedioPagoListado,
+  PaginaDe,
+  ParametroResuelto,
+  PuntoVentaListado,
+  ResultadoDeResolucion,
+} from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -73,6 +82,62 @@ function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {})
   return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, ...sobrescribir }
 }
 
+function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
+  return {
+    id: 1,
+    nombre: 'Efectivo',
+    activo: true,
+    idEmpresa: null,
+    orden: 1,
+    comportamiento: 'Efectivo',
+    admiteVuelto: true,
+    requiereReferencia: false,
+    recargoPorcentaje: null,
+    ...sobrescribir,
+  }
+}
+
+const medioEfectivo = medioFixture()
+const medioTarjeta = medioFixture({ id: 2, nombre: 'Tarjeta', comportamiento: 'Electronico', admiteVuelto: false, requiereReferencia: true })
+const medioCuentaCorriente = medioFixture({ id: 3, nombre: 'Cuenta corriente', comportamiento: 'CuentaCorriente', admiteVuelto: false })
+
+function comprobanteEmitidoFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): ComprobanteEmitido {
+  return {
+    id: 501,
+    numero: 1,
+    numeroVisible: '0007-00000001',
+    estado: 'Emitido',
+    fecha: '2026-08-04T15:30:00Z',
+    idPuntoVenta: 7,
+    idCliente: 1,
+    idComprobanteAsociado: null,
+    subtotal: 100,
+    descuentoTotal: 0,
+    total: 100,
+    direccionEntrega: null,
+    observaciones: null,
+    items: [
+      {
+        orden: 1,
+        idArticulo: 1,
+        descripcion: 'Coca Cola 1L',
+        codigoBarra: '7790001234567',
+        idArea: 1,
+        idListaPrecio: 1,
+        idOferta: null,
+        idAlicuotaIva: 1,
+        porcentajeIva: 21,
+        cantidad: 1,
+        precioUnitario: 100,
+        descuento: 0,
+        total: 100,
+      },
+    ],
+    pagos: [{ idMedioPago: 1, importe: 100, referencia: null, vuelto: 0 }],
+    ...sobrescribir,
+  }
+}
+
 /**
  * jsdom sanea el `value` de un `<input type="number">` a `""` apenas se le asigna un número
  * incompleto (ej. "1."), a diferencia de un navegador real que preserva el texto tipeado
@@ -105,6 +170,15 @@ function mockearApiGet() {
     if (ruta.startsWith('/articulos/escaneo?entrada=')) {
       return Promise.resolve(articuloEscaneadoFixture())
     }
+    if (ruta === '/catalogos/medios-pago') {
+      return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta, medioCuentaCorriente])
+    }
+    if (ruta.startsWith('/parametros/tolerancia_pago')) {
+      return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
+    }
+    if (ruta.startsWith('/parametros/vuelto_maximo')) {
+      return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
+    }
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -120,7 +194,52 @@ beforeEach(() => {
       ]
       return Promise.resolve(resultados)
     }
+    if (ruta === '/ventas') {
+      return Promise.resolve(comprobanteEmitidoFixture())
+    }
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+  })
+})
+
+/** Deja el carrito con una línea de Coca Cola ($100, sin descuento) y el panel de pagos listo:
+ * medio Efectivo elegido, importe = total. Punto de partida de los tests de checkout. */
+async function armarVentaLista() {
+  render(<Pos />)
+  await screen.findByRole('option', { name: /Consumidor Final/ })
+
+  await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+  await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+  await screen.findByText('Coca Cola 1L')
+  await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+
+  await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+  const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+  await userEvent.type(importe, '100')
+
+  await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+}
+
+describe('Pos — formato de moneda negativa (regresión, INFO recurrente desde slice 6)', () => {
+  it('un total negativo en el ticket antepone el signo al símbolo ($): "-$50,00", nunca "$-50,00"', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/ventas') {
+        return Promise.resolve(
+          comprobanteEmitidoFixture({ subtotal: -50, descuentoTotal: 0, total: -50 }),
+        )
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText(/Total: -\$50,00/)).toBeInTheDocument()
   })
 })
 
@@ -292,8 +411,12 @@ describe('Pos — vista previa de precios', () => {
   })
 
   it('una resolución rechazada muestra el aviso no bloqueante y el carrito sigue usable', async () => {
+    let cantidadDeResoluciones = 0
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') return Promise.reject(new Error('falló la resolución'))
+      if (ruta === '/ofertas/resolver') {
+        cantidadDeResoluciones += 1
+        return Promise.reject(new Error('falló la resolución'))
+      }
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
@@ -308,8 +431,99 @@ describe('Pos — vista previa de precios', () => {
       await screen.findByText('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.'),
     ).toBeInTheDocument()
 
+    // decisión de diseño 3: el servidor es la autoridad final del total — una vista previa
+    // fallida no bloquea el checkout (solo la resolución en vuelo lo hace), alcanza con la
+    // sanidad mínima de tener una fila de pago con importe.
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    const llamadasPrevias = cantidadDeResoluciones
+    await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+    await waitFor(() => expect(cantidadDeResoluciones).toBe(llamadasPrevias + 1))
+
     await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+  })
+
+  it('con la vista previa fallida, Cobrar envía el importe tipeado y vuelto 0 (nunca el importe tendido, judgment-day R3 CRITICAL)', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') return Promise.reject(new Error('falló la resolución'))
+      if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    await screen.findByText('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.')
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '500')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    // Sin total confiable, el vuelto sugerido no puede ser el importe tendido completo — el
+    // cajero no tocó el campo de vuelto, tiene que seguir mostrando 0.
+    expect(screen.getByLabelText('Vuelto de Efectivo (fila 1)')).toHaveValue(0)
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')).toBe(true))
+    const llamadaVentas = apiPostMock.mock.calls.find((llamada) => llamada[0] === '/ventas')
+    const solicitud = llamadaVentas?.[1] as {
+      lineas: { idArticulo: number; cantidad: number; codigoBarra: string | null }[]
+      pagos: { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }[]
+    }
+
+    expect(solicitud.lineas).toEqual([{ idArticulo: 1, cantidad: 1, codigoBarra: '7790001234567' }])
+    expect(solicitud.pagos).toEqual([{ idMedioPago: medioEfectivo.id, importe: 500, referencia: null, vuelto: 0 }])
+  })
+
+  it('regresión: una resolución exitosa seguida de una que rechaza no deja precios stale en el subtotal (judgment-day R4, purga de `precios` en el catch)', async () => {
+    let cantidadDeResoluciones = 0
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        cantidadDeResoluciones += 1
+        if (cantidadDeResoluciones === 1) {
+          const resultados: ResultadoDeResolucion[] = [
+            { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+          ]
+          return Promise.resolve(resultados)
+        }
+        return Promise.reject(new Error('falló la resolución'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    const boton = screen.getByRole('button', { name: 'Agregar' })
+
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+
+    // Segunda mutación (re-escaneo, suma cantidad sobre la misma línea): dispara una segunda
+    // resolución que esta vez rechaza.
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await waitFor(() => expect(cantidadDeResoluciones).toBe(2))
+
+    expect(
+      await screen.findByText('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.'),
+    ).toBeInTheDocument()
+
+    const filaTotalPrevio = screen.getByText('Total previo').closest('div') as HTMLElement
+    await waitFor(() => expect(within(filaTotalPrevio).getByText('—')).toBeInTheDocument())
+    expect(screen.queryByText('$200,00', { selector: 'strong' })).not.toBeInTheDocument()
+    expect(screen.getAllByText('se confirma al cobrar')).toHaveLength(2)
   })
 
   it('regresión: una respuesta desactualizada del resolver no pisa una más reciente (fuera de orden)', async () => {
@@ -358,12 +572,328 @@ describe('Pos — vista previa de precios', () => {
   })
 })
 
-describe('Pos — checkout stubbed', () => {
-  it('el botón Cobrar está deshabilitado (checkout se completa en la próxima entrega)', async () => {
+describe('Pos — panel de pagos: precondiciones', () => {
+  it('Cobrar está deshabilitado con el carrito vacío', async () => {
     render(<Pos />)
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+  })
+
+  it('medios de pago o parámetros que fallan al cargar dejan Cobrar deshabilitado con un aviso legible', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
+      if (ruta === '/clientes') {
+        const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture())
+      if (ruta === '/catalogos/medios-pago') {
+        return Promise.reject(new ErrorApi(500, 'error', 'No se pudieron cargar los medios de pago.'))
+      }
+      if (ruta.startsWith('/parametros/')) return Promise.resolve<ParametroResuelto>({ clave: 'x', valor: '10' })
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    expect(await screen.findByText('No se pudieron cargar los medios de pago.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+  })
+
+  it('Cobrar permanece deshabilitado mientras la primera resolución de precios está pendiente, aunque el resto de las precondiciones ya esté listo', async () => {
+    let resolverPrimera: (resultados: ResultadoDeResolucion[]) => void = () => {}
+    const primeraPendiente = new Promise<ResultadoDeResolucion[]>((resolve) => {
+      resolverPrimera = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') return primeraPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '100')
+
+    expect(screen.getByText('Calculando…')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+
+    await act(async () => {
+      resolverPrimera([
+        { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+      ])
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+  })
+})
+
+describe('Pos — regresión: "resolviendo" no queda huérfano en `true`', () => {
+  it('vaciar el carrito mientras una resolución de precios está en vuelo no deja "Calculando…" para siempre, ni aunque la fetch huérfana se asiente después', async () => {
+    let resolverPrimera: (resultados: ResultadoDeResolucion[]) => void = () => {}
+    const primeraPendiente = new Promise<ResultadoDeResolucion[]>((resolve) => {
+      resolverPrimera = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') return primeraPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    expect(screen.getByText('Calculando…')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+    expect(screen.queryByText('Calculando…')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolverPrimera([
+        { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+      ])
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByText('Calculando…')).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
+  it('cuenta corriente no aparece como opción para el Consumidor Final', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByRole('option', { name: medioEfectivo.nombre })
+
+    expect(screen.queryByRole('option', { name: medioCuentaCorriente.nombre })).not.toBeInTheDocument()
+  })
+
+  it('cuenta corriente aparece como opción para un cliente que no es Consumidor Final', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
+    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+
+    expect(await screen.findByRole('option', { name: medioCuentaCorriente.nombre })).toBeInTheDocument()
+  })
+
+  it('el input de vuelto está deshabilitado para un medio sin AdmiteVuelto', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByRole('option', { name: medioTarjeta.nombre })
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioTarjeta.nombre)
+
+    expect(screen.getByLabelText(`Vuelto de ${medioTarjeta.nombre} (fila 1)`)).toBeDisabled()
+  })
+
+  it('el input de vuelto queda habilitado para un medio con AdmiteVuelto', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByRole('option', { name: medioEfectivo.nombre })
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+
+    expect(screen.getByLabelText(`Vuelto de ${medioEfectivo.nombre} (fila 1)`)).toBeEnabled()
+  })
+})
+
+describe('Pos — checkout', () => {
+  it('un cobro exitoso muestra el ticket con el número emitido y resetea el carrito', async () => {
+    await armarVentaLista()
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+    expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
+    expect(screen.getByText(/Total: \$100,00/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+  })
+
+  it('un texto de escaneo sin confirmar no sobrevive a la venta siguiente', async () => {
+    await armarVentaLista()
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '111222333')
+    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'texto sin buscar')
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+    expect(screen.getByLabelText('Código escaneado')).toHaveValue('')
+    expect(screen.getByLabelText('Buscar cliente')).toHaveValue('')
+  })
+
+  it('nuevaVenta limpia el error de escaneo que haya quedado de antes de cobrar', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
+      if (ruta === '/clientes') {
+        const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      if (ruta.startsWith('/articulos/escaneo?entrada=999')) {
+        return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No se encontró un artículo activo para el código 999.'))
+      }
+      if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture())
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta, medioCuentaCorriente])
+      if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
+      if (ruta.startsWith('/parametros/vuelto_maximo')) return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '999')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    expect(await screen.findByText('No se encontró un artículo activo para el código 999.')).toBeInTheDocument()
+
+    await userEvent.clear(screen.getByLabelText('Código escaneado'))
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+    expect(screen.queryByText('No se encontró un artículo activo para el código 999.')).not.toBeInTheDocument()
+  })
+
+  it('doble click en Cobrar dispara exactamente un POST', async () => {
+    let resolverCheckout: (comprobante: ComprobanteEmitido) => void = () => {}
+    const checkoutPendiente = new Promise<ComprobanteEmitido>((resolve) => {
+      resolverCheckout = resolve
+    })
+
+    await armarVentaLista()
+
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') return checkoutPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    const boton = screen.getByRole('button', { name: /Cobrar/ })
+    await userEvent.click(boton)
+    await userEvent.click(boton)
+    fireEvent.click(boton)
+
+    expect(apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ventas')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Cobrando…' })).toBeDisabled()
+
+    await act(async () => {
+      resolverCheckout(comprobanteEmitidoFixture())
+      await Promise.resolve()
+    })
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+  })
+
+  it('mientras el cobro está en curso, el escaneo y la edición del carrito quedan inertes', async () => {
+    let resolverCheckout: (comprobante: ComprobanteEmitido) => void = () => {}
+    const checkoutPendiente = new Promise<ComprobanteEmitido>((resolve) => {
+      resolverCheckout = resolve
+    })
+
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') return checkoutPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
+    expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Quitar' })).toBeDisabled()
+    expect(screen.getByLabelText('Cliente')).toBeDisabled()
+    expect(screen.getByLabelText('Medio de pago')).toBeDisabled()
+
+    await act(async () => {
+      resolverCheckout(comprobanteEmitidoFixture())
+      await Promise.resolve()
+    })
+  })
+
+  it('un checkout rechazado muestra el mensaje del servidor y no resetea el carrito ni el panel de pagos', async () => {
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') {
+        return Promise.reject(
+          new ErrorApi(400, 'tolerancia_de_pago_superada', 'El pago ingresado no cubre el total, ni siquiera con la tolerancia.'),
+        )
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText('El pago ingresado no cubre el total, ni siquiera con la tolerancia.')).toBeInTheDocument()
+    expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
+    expect(screen.queryByText(/^Venta /)).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — checkout: split de pago con el mismo medio', () => {
+  it('dos filas de Efectivo (split de pago) no colapsan: cada una envía su propio importe y vuelto', async () => {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '60')
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Agregar medio de pago' }))
+    await userEvent.selectOptions(screen.getAllByLabelText('Medio de pago')[1], medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 2)'), '50')
+
+    // Con ambos importes cargados (60 + 50 = 110 sobre un total de 100), el excedente es 10 y el
+    // sugerido por defecto se lo lleva íntegro la fila 1 (la primera que admite vuelto) — recién
+    // acá, contra un valor sugerido ya no-cero, la sobreescritura manual de la fila 1 a "0" es un
+    // cambio real de valor (dispara el evento); si se sobrescribiera antes, con el sugerido
+    // todavía en 0, el input ya mostraría "0" y React no dispararía `onChange` por no detectar
+    // una diferencia real.
+    fireEvent.change(screen.getByLabelText('Vuelto de Efectivo (fila 1)'), { target: { value: '0' } })
+    fireEvent.change(screen.getByLabelText('Vuelto de Efectivo (fila 2)'), { target: { value: '10' } })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')).toBe(true))
+    const llamadaVentas = apiPostMock.mock.calls.find((llamada) => llamada[0] === '/ventas')
+    const solicitud = llamadaVentas?.[1] as {
+      pagos: { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }[]
+    }
+
+    expect(solicitud.pagos).toEqual([
+      { idMedioPago: medioEfectivo.id, importe: 60, referencia: null, vuelto: 0 },
+      { idMedioPago: medioEfectivo.id, importe: 50, referencia: null, vuelto: 10 },
+    ])
   })
 })
 
