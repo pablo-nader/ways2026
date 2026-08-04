@@ -12,8 +12,11 @@ using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
+using Ways.Domain.Ventas;
 using Ways.Infrastructure;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -200,6 +203,9 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<TipoDocumento>("tipo_documento");
                 npgsql.MapEnum<ModoLista>("modo_lista");
                 npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<MotivoStock>("motivo_stock");
+                npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
                 npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
             })
             .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
@@ -226,6 +232,9 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<TipoDocumento>("tipo_documento");
                 npgsql.MapEnum<ModoLista>("modo_lista");
                 npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<MotivoStock>("motivo_stock");
+                npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

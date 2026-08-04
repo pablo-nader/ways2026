@@ -3,8 +3,11 @@ using Microsoft.EntityFrameworkCore.Design;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
+using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
 
 namespace Ways.Infrastructure.Persistencia;
@@ -31,6 +34,9 @@ public class WaysDbContextFactory : IDesignTimeDbContextFactory<WaysDbContext>
                 npgsql.MapEnum<TipoDocumento>("tipo_documento");
                 npgsql.MapEnum<ModoLista>("modo_lista");
                 npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<MotivoStock>("motivo_stock");
+                npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
             })
             .Options;
 

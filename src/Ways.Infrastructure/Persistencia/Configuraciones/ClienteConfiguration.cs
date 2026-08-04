@@ -32,6 +32,15 @@ public class ClienteConfiguration : IEntityTypeConfiguration<Cliente>
             .HasColumnName("id_tenant")
             .IsRequired();
 
+        // stage-5-pos-ventas (Slice 3, design: Table Shapes — write path A/C): clave alterna
+        // (Id, IdTenant) para que fk_comprobantes_venta_cliente/
+        // fk_movimientos_cuenta_corriente_cliente puedan ser compuestas — mismo patrón que
+        // ListaPrecioConfiguration/AreaConfiguration: sin esto, un id_cliente de OTRO tenant
+        // pasaba una FK simple (id_cliente es única globalmente por ser PK) y solo RLS lo
+        // frenaba en runtime.
+        builder.HasAlternateKey(c => new { c.Id, c.IdTenant })
+            .HasName("ak_clientes_id_cliente_id_tenant");
+
         builder.Property(c => c.IdEmpresa)
             .HasColumnName("id_empresa");
 

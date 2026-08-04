@@ -35,6 +35,19 @@ public class ManejadorDeErrores(
             DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: "ux_usuarios_usuario" } } =>
                 (StatusCodes.Status409Conflict, "El usuario ya existe.", "usuario_duplicado"),
 
+            // stage-5-pos-ventas (Slice 3, task 3.10, db-error-backstops, design: Backstop Map
+            // — "ordering trap"): ux_comprobantes_venta_numero tiene que resolverse ANTES de
+            // llegar a ClasificarUnicidad (el caso genérico de más abajo) — su nombre contiene
+            // "_numero", así que la rama genérica de esa substring (backstop de
+            // ux_clientes_numero, "Ya existe un cliente con ese número") lo atraparía primero y
+            // lo clasificaría mal. Exact-match acá, ARRIBA del caso genérico, mismo criterio
+            // que el trap "_codigo_interno"/"codigos_barra" vs. "_codigo" dentro de esa
+            // función — la diferencia es que ese trap se resuelve DENTRO de ClasificarUnicidad
+            // (mismo Contains-chain) y este tiene que resolverse ANTES de siquiera llamarla.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string uxComprobante } }
+                when string.Equals(uxComprobante, "ux_comprobantes_venta_numero", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un comprobante con ese número en este punto de venta y tipo.", "numero_de_comprobante_duplicado"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
@@ -93,9 +106,43 @@ public class ManejadorDeErrores(
             // match por prefijo "fk_" ya cubre las 8 FKs nuevas de esta etapa
             // (fk_ofertas_tenant/empresa/articulo/grupo/categoria,
             // fk_ofertas_listas_tenant/oferta/lista_precio).
+            //
+            // stage-5-pos-ventas (Slice 3, task 3.13): confirmado sin cambio de código — el
+            // mismo match por prefijo "fk_" ya cubre las FKs nuevas de las seis tablas de esta
+            // slice (comprobantes_venta: tenant/punto_venta/cliente/empleado/tipo_comprobante/
+            // comprobante_asociado; items_comprobante_venta: tenant/comprobante/articulo/area/
+            // lista_precio/oferta/alicuota_iva; pagos_comprobante: tenant/comprobante/
+            // medio_pago; stock: tenant/articulo/punto_venta; movimientos_stock: tenant/
+            // articulo/punto_venta/punto_venta_destino/comprobante_venta/empleado;
+            // movimientos_cuenta_corriente: tenant/cliente/punto_venta/empleado/
+            // comprobante_venta/pago_comprobante) — todas siguen la convención fk_* del resto
+            // del esquema.
             DbUpdateException { InnerException: PostgresException { SqlState: "23503", ConstraintName: string fk } }
                 when fk.StartsWith("fk_", StringComparison.Ordinal) =>
                 LogYClasificarReferenciaInvalida(fk, log),
+
+            // stage-5-pos-ventas (Slice 3, task 3.11, db-error-backstops, design: Backstop Map):
+            // pk_stock — exención documentada de prueba de carrera, misma familia que
+            // pk_numeraciones_comprobante: el único escritor de stock (Slice 4/5, INSERT ...
+            // ON CONFLICT DO UPDATE) nunca puede disparar 23505 por construcción. Defensa de
+            // esquema pura, alcanzable solo por un INSERT crudo/fuera de banda, probada con SQL
+            // directo.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string pkStock } }
+                when string.Equals(pkStock, "pk_stock", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe stock cargado para ese artículo en ese punto de venta.", "stock_duplicado"),
+
+            // stage-5-pos-ventas (Slice 3, task 3.12, db-error-backstops, design: Backstop Map):
+            // las tres CHECKs nuevas de comprobantes_venta/pagos_comprobante/movimientos_stock
+            // no comparten un prefijo común (a diferencia de "ck_ofertas_"), así que el guard
+            // de esta rama llama directo a ClasificarCheckDeVentas (switch por nombre EXACTO,
+            // nunca Contains) en vez de filtrar por StartsWith primero. ValidadorDePagos/
+            // ReglaDeComprobantes/el camino de escritura de movimientos_stock (Slice 4/5) ya
+            // validan los tres invariantes en el servicio — bajo operación normal ninguna de
+            // las tres ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
+            // de banda (misma familia que ClasificarCheckDeOfertas).
+            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckVenta } }
+                when ClasificarCheckDeVentas(ckVenta) is { } checkVenta =>
+                (checkVenta.EstadoHttp, checkVenta.Titulo, checkVenta.Codigo),
 
             // Backstop genérico (db-error-backstops, judgment-day slice 3 ronda 1): cualquier
             // valor numérico que desborda la precisión/escala de su columna (p.ej. un margen o
@@ -375,6 +422,37 @@ public class ManejadorDeErrores(
             // agregada al esquema sin actualizar este switch): cae al mismo 500 genérico que
             // cualquier otro caso no mapeado (mismo patrón que ClasificarUnicidad — null en vez
             // de lanzar desde el exception handler).
+            _ => null
+        };
+
+    /// <summary>stage-5-pos-ventas (Slice 3, task 3.12, tasks.md "Orchestrator Decisions
+    /// Recorded This Phase" #2, design: Backstop Map): switch por nombre EXACTO de las tres
+    /// CHECKs nuevas de <c>comprobantes_venta</c>/<c>pagos_comprobante</c>/
+    /// <c>movimientos_stock</c> — sin prefijo compartido entre las tres tablas (a diferencia de
+    /// <c>ClasificarCheckDeOfertas</c>, que sí puede filtrar por <c>"ck_ofertas_"</c> antes de
+    /// llamar), así que el caso del switch de arriba llama directo a esta función.
+    /// <c>vuelto_de_pago_negativo</c> se pinea DISTINTO del código de dominio
+    /// <c>vuelto_invalido</c> de <c>ValidadorDePagos</c> (regla <c>Σ vuelto &gt; max(0, Σ
+    /// importe − total)</c>): son dos familias de rechazo distintas — reusar el mismo texto de
+    /// código las confundiría en un log o en el cliente.</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarCheckDeVentas(string nombreDeCheck) =>
+        nombreDeCheck switch
+        {
+            "ck_comprobantes_venta_numero_positivo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El número del comprobante tiene que ser positivo.",
+                    "numero_de_comprobante_invalido"),
+
+            "ck_pagos_comprobante_vuelto_no_negativo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El vuelto de un pago no puede ser negativo.",
+                    "vuelto_de_pago_negativo"),
+
+            "ck_movimientos_stock_cantidad_no_cero" =>
+                (StatusCodes.Status400BadRequest,
+                    "El movimiento de stock tiene que tener una cantidad distinta de cero.",
+                    "movimiento_de_stock_sin_cantidad"),
+
             _ => null
         };
 }
