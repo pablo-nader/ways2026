@@ -78,7 +78,7 @@ Chain strategy: stacked-to-main
 compile. **Rollback**: down-migration (drop all 5 tables + 4 enums + the
 FK). **`size:exception` candidate.**
 
-- [ ] 1.1 **DB CHANGE GATE — STOP.** Present the model summary grouped by
+- [x] 1.1 **DB CHANGE GATE — STOP.** Present the model summary grouped by
   write path (A: turno lifecycle, B: movimientos_caja, C: gastos, D:
   tesorería, E: checkout wiring FK) and WAIT for explicit approval before
   generating anything. Surface: (a) proposal decision 2 (cierre role —
@@ -93,7 +93,7 @@ FK). **`size:exception` candidate.**
   medio), (g) design decision 9 (tesorería `egreso` = all gastos, legacy
   parity), (h) `diferencia` as a `GENERATED ALWAYS` column. *(design: Table
   Shapes gate intro; proposal: Approach §7)*
-- [ ] 1.2 Add `TurnosCajaYGastosEtapa6` migration: `turnos_caja`,
+- [x] 1.2 Add `TurnosCajaYGastosEtapa6` migration: `turnos_caja`,
   `movimientos_caja`, `arqueos_turno`, `movimientos_tesoreria`, `gastos` +
   enums `estado_turno`, `tipo_movimiento_caja`, `tipo_movimiento_tesoreria`,
   `categoria_gasto`; `ux_turnos_caja_abierto (id_punto_venta) WHERE estado
@@ -101,21 +101,21 @@ FK). **`size:exception` candidate.**
   `ix_comprobantes_venta_turno`; `HabilitarRlsDeTenant` on all 5 new tables
   in this same migration. Confirm `has-pending-model-changes` clean.
   *(design: Table Shapes A–E; Migration/Rollout)*
-- [ ] 1.3 [P] Add Domain entity skeletons: `TurnoCaja`, `MovimientoCaja`,
+- [x] 1.3 [P] Add Domain entity skeletons: `TurnoCaja`, `MovimientoCaja`,
   `ArqueoTurno`, `MovimientoTesoreria` (`Ways.Domain/Caja`), `Gasto`
   (`Ways.Domain/Gastos`) + the 4 enums. *(spec: turnos-de-caja / Turno
   Schema At Rest; movimientos-de-caja / Movimiento Schema At Rest;
   arqueo-de-cierre / Arqueo Schema At Rest; tesoreria / Movimiento
   Tesorería Schema At Rest; gastos / Gasto Schema At Rest)*
-- [ ] 1.4 Add 5 EF configs in `Ways.Infrastructure/Persistencia/Configuraciones`;
+- [x] 1.4 Add 5 EF configs in `Ways.Infrastructure/Persistencia/Configuraciones`;
   update `ComprobanteVentaConfiguration` with the turno FK + index. *(design:
   Table Shapes — EF scope column per table)*
-- [ ] 1.5 Update `WaysDbContext`: 5 new `DbSet`s; manual `id_tenant` filters
+- [x] 1.5 Update `WaysDbContext`: 5 new `DbSet`s; manual `id_tenant` filters
   for `movimientos_caja` / `arqueos_turno` / `movimientos_tesoreria`
   (append-only, not `EntidadTenant`). *(design: Table Shapes — EF scope)*
-- [ ] 1.6 Update `docs/10-modelo-de-datos.md`: `gastos.id_comprobante_compra`
+- [x] 1.6 Update `docs/10-modelo-de-datos.md`: `gastos.id_comprobante_compra`
   deferred-FK twin note (proposal decision 1). *(design: Migration/Rollout)*
-- [ ] 1.7 Backstop groundwork: `ux_turnos_caja_abierto` → 23505 → `409
+- [x] 1.7 Backstop groundwork: `ux_turnos_caja_abierto` → 23505 → `409
   turno_ya_abierto` (new branch in `ClasificarUnicidad`); `ux_arqueos_turno_medio`
   → 23505 → `409 arqueo_duplicado`; add `ClasificarCheckDeCaja` (exact-name
   switch, appended after `ClasificarCheckDeVentas`) for the 6 CHECKs:
@@ -124,10 +124,10 @@ FK). **`size:exception` candidate.**
   `ck_movimientos_caja_motivo_minimo`, `ck_gastos_importe_positivo`,
   `ck_movimientos_tesoreria_cadena`; confirm (comment only) the generic
   `fk_` prefix branch covers all 5 tables' FKs. *(design: Backstop Map)*
-- [ ] 1.8 [P] Integration: RLS proofs for all 5 new tables (EF filter +
+- [x] 1.8 [P] Integration: RLS proofs for all 5 new tables (EF filter +
   raw-SQL/`IgnoreQueryFilters`). *(spec: turnos-de-caja, movimientos-de-caja,
   arqueo-de-cierre, tesoreria, gastos — implicit tenant isolation)*
-- [ ] 1.9 Integration: raw-SQL backstop tests for the 6 new CHECKs + the 2
+- [x] 1.9 Integration: raw-SQL backstop tests for the 6 new CHECKs + the 2
   new unique-index 23505 mappings, incl. the documented exemption for
   `ux_arqueos_turno_medio` (no race test — cierre derives the row set
   inside its own exclusive lock). *(design: Backstop Map)*
