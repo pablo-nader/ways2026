@@ -1,9 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
-using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
 using Ways.Domain.Common;
@@ -46,7 +44,7 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         await ResolverArticuloAsync(solicitud.IdArticulo, ct);
         await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
 
-        var estrategia = CrearEstrategiaSinReintento(db);
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarAjusteAsync(
                 idTenant, idEmpleado, solicitud.IdArticulo, solicitud.IdPuntoVenta, cantidad, observaciones, momento, ct));
@@ -137,45 +135,6 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         var parametro = comando.CreateParameter();
         parametro.Value = valor;
         comando.Parameters.Add(parametro);
-    }
-
-    /// <summary>El ajuste manual es una operación rara, humana y sin ninguna clave de
-    /// idempotencia natural (a diferencia de <c>ServicioDeVentas.EmitirAsync</c>, que reintenta
-    /// con seguridad porque detecta un commit ambiguo previo antes de reinsertar). Si
-    /// <c>EnableRetryOnFailure</c> (global, <c>DependencyInjection</c>) reintentara esta
-    /// transacción tras un commit ambiguo — el servidor comitea pero el ACK no llega antes de que
-    /// se corte la conexión —, el reintento volvería a INSERTAR el mismo movimiento y a duplicar
-    /// el ajuste sobre <c>stock</c>: mismo criterio que <c>ServicioDeVentas.AnularAsync</c>.
-    ///
-    /// <para><see cref="Microsoft.EntityFrameworkCore.Storage.NonRetryingExecutionStrategy"/>
-    /// NO sirve acá: no hereda de <see cref="ExecutionStrategy"/> y por eso no marca el ambient
-    /// <c>ExecutionStrategy.Current</c> que <c>BeginTransactionAsync</c> + una consulta EF dentro
-    /// de esa transacción necesitan para no disparar "does not support user-initiated
-    /// transactions" (la consulta resuelve su PROPIA estrategia reintentable desde la
-    /// configuración del <c>DbContext</c>, que sigue siendo <c>NpgsqlRetryingExecutionStrategy</c>
-    /// sin importar con qué se envolvió la llamada externa). El mecanismo sancionado por EF Core
-    /// para optar por-operación fuera del retry global sin romper ese ambient tracking es
-    /// subclasear <see cref="ExecutionStrategy"/> con <c>maxRetryCount: 0</c> — mismo tipo base
-    /// que la estrategia reintentable, así que <c>Current</c> se sigue marcando igual.</para>
-    ///
-    /// Con esto, una falla transitoria llega tal cual al operador — el reintento manual del
-    /// humano es el correcto acá, no uno automático y silencioso.</summary>
-    private static IExecutionStrategy CrearEstrategiaSinReintento(IWaysDbContext db)
-    {
-        var dependencias = ((IInfrastructure<IServiceProvider>)db.Database).Instance
-            .GetRequiredService<ExecutionStrategyDependencies>();
-        return new EstrategiaSinReintento(dependencias);
-    }
-
-    /// <summary>Ver el doc-comment de <see cref="CrearEstrategiaSinReintento"/> — <c>maxRetryCount:
-    /// 0</c> más <see cref="ShouldRetryOn"/> siempre <c>false</c> es "nunca reintentar", pero
-    /// heredando de <see cref="ExecutionStrategy"/> (no de <c>NonRetryingExecutionStrategy</c>)
-    /// para preservar el ambient tracking que EF Core necesita dentro de una transacción
-    /// manual.</summary>
-    private sealed class EstrategiaSinReintento(ExecutionStrategyDependencies dependencies)
-        : ExecutionStrategy(dependencies, maxRetryCount: 0, maxRetryDelay: TimeSpan.Zero)
-    {
-        protected override bool ShouldRetryOn(Exception exception) => false;
     }
 
     // ---- validaciones -------------------------------------------------------------------------
