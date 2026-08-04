@@ -1,0 +1,94 @@
+using System.Data;
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Ways.Application.Abstracciones;
+
+namespace Ways.Application.Ventas;
+
+/// <summary>
+/// Asigna <c>comprobantes_venta.numero</c> de forma atómica por punto de venta + tipo de
+/// comprobante (design decisiones 8 y 9, clon de
+/// <see cref="Clientes.AsignadorDeNumeroCliente"/>): <c>INSERT ... ON CONFLICT DO NOTHING</c>
+/// (creación perezosa de la fila, sin backfill) seguido de <c>UPDATE numeraciones_comprobante
+/// SET proximo_numero = proximo_numero + 1 ... RETURNING</c>, vía ADO.NET crudo sobre la
+/// conexión/transacción activa de <paramref name="db"/> — nunca <c>Database.SqlQuery&lt;T&gt;()</c>/
+/// <c>FromSqlRaw&lt;T&gt;()</c> (mismo hallazgo de stage-1-slice-2 que documentan
+/// <see cref="Clientes.AsignadorDeNumeroCliente"/>/<see cref="Articulos.AsignadorDeCodigoInternoArticulo"/>).
+///
+/// A diferencia de <see cref="Clientes.AsignadorDeNumeroCliente"/> (PK = <c>id_tenant</c> solo),
+/// acá la fila la identifica <c>(id_punto_venta, tipo_comprobante)</c> — <c>id_tenant</c> viaja
+/// aparte, solo para el INSERT inicial (RLS <c>WITH CHECK</c>) y la columna de diagnóstico; no
+/// participa del <c>WHERE</c> del UPDATE porque la PK ya es global (design decisión 8).
+///
+/// <c>proximo_numero</c> es <c>bigint</c> (doc 10): el contador se expone como <see cref="long"/>,
+/// nunca <see cref="int"/> — a diferencia de <c>clientes.numero</c>/<c>articulos.codigo_interno</c>.
+///
+/// Estática a propósito: sin estado propio, cada método recibe el <see cref="IWaysDbContext"/>
+/// del llamador de turno (mismo criterio que los dos asignadores hermanos). Su único llamador
+/// hoy es la suite de concurrencia de esta slice — <c>ServicioDeVentas.EmitirAsync</c> (Slice 4)
+/// es quien lo va a invocar dentro de la transacción de venta, paso 1 del statement order
+/// pineado (design: The Sale Transaction).
+/// </summary>
+public static class AsignadorDeNumeroComprobante
+{
+    public static async Task AsegurarContadorAsync(
+        IWaysDbContext db, int idTenant, int idPuntoVenta, string tipoComprobante, CancellationToken ct = default)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(db, ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText =
+            "INSERT INTO numeraciones_comprobante (id_tenant, id_punto_venta, tipo_comprobante, proximo_numero) " +
+            "VALUES ($1, $2, $3, 1) " +
+            "ON CONFLICT (id_punto_venta, tipo_comprobante) DO NOTHING";
+
+        AgregarParametro(comando, idTenant);
+        AgregarParametro(comando, idPuntoVenta);
+        AgregarParametro(comando, tipoComprobante);
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    public static async Task<long> AsignarSiguienteAsync(
+        IWaysDbContext db, int idPuntoVenta, string tipoComprobante, CancellationToken ct = default)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(db, ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText =
+            "UPDATE numeraciones_comprobante SET proximo_numero = proximo_numero + 1 " +
+            "WHERE id_punto_venta = $1 AND tipo_comprobante = $2 RETURNING proximo_numero - 1";
+
+        AgregarParametro(comando, idPuntoVenta);
+        AgregarParametro(comando, tipoComprobante);
+
+        var resultado = await comando.ExecuteScalarAsync(ct)
+            ?? throw new InvalidOperationException(
+                $"No existe contador de numeraciones para el punto de venta {idPuntoVenta}, " +
+                $"tipo {tipoComprobante}: llamá a {nameof(AsegurarContadorAsync)} antes de asignar.");
+
+        return Convert.ToInt64(resultado);
+    }
+
+    private static async Task<DbConnection> ObtenerConexionAbiertaAsync(IWaysDbContext db, CancellationToken ct)
+    {
+        var conexion = db.Database.GetDbConnection();
+
+        if (conexion.State != ConnectionState.Open)
+        {
+            await db.Database.OpenConnectionAsync(ct);
+        }
+
+        return conexion;
+    }
+
+    private static void AgregarParametro(DbCommand comando, object valor)
+    {
+        var parametro = comando.CreateParameter();
+        parametro.Value = valor;
+        comando.Parameters.Add(parametro);
+    }
+}

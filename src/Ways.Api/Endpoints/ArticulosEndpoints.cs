@@ -1,6 +1,7 @@
 using Ways.Api.Seguridad;
 using Ways.Application.Articulos;
 using Ways.Application.Precios;
+using Ways.Application.Ventas;
 
 namespace Ways.Api.Endpoints;
 
@@ -22,6 +23,13 @@ public static class ArticulosEndpoints
             CancellationToken ct) =>
             servicio.ListarAsync(busqueda, idEmpresa, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25, ct))
         .WithSummary("Lista artículos con búsqueda, filtro de disponibilidad por empresa y paginado.");
+
+        // stage-5-pos-ventas (Slice 2, task 2.9, design: API Surface): resolución de escaneo
+        // del POS — segmento literal, no colisiona con "/{id:int}" de abajo. Hereda
+        // Politicas.OperacionDePos del grupo (Vendedor + Admin, design decisión 6).
+        grupo.MapGet("/escaneo", (ServicioDeEscaneo servicio, string entrada, CancellationToken ct) =>
+            servicio.ResolverAsync(entrada, ct))
+        .WithSummary("Resuelve un código escaneado (codigo_interno o codigos_barra) a su artículo.");
 
         grupo.MapGet("/{id:int}", (ServicioDeArticulos servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))
