@@ -35,6 +35,16 @@ namespace Ways.Application.Tests.Ofertas;
 /// y <c>EditarConIdsListasDuplicadosPersisteUnaSolaFila</c>. Las validaciones que corren ANTES de
 /// abrir esa transacción (las cinco guardas de <c>ReglaDeOfertas</c>, los pre-chequeos de
 /// referencia) siguen alcanzables acá y NO se movieron.
+///
+/// <see cref="ServicioDeOfertas.EliminarAsync"/> TAMPOCO se cubre acá desde el fix de judgment-day
+/// ronda 2 (item 1, CRITICAL): ahora también abre <c>Database.BeginTransactionAsync</c> + toma el
+/// mismo <c>pg_advisory_xact_lock</c> por oferta que <see cref="ServicioDeOfertas.ActualizarAsync"/>
+/// (para serializarse contra un PUT concurrente y evitar el ghost edit) — mismo
+/// "transaction-blocked-provider caveat" de arriba. La prueba que vivía acá
+/// (<c>EliminarUnaOfertaFunciona</c>) ya estaba duplicada por
+/// <c>OfertasEndpointsTests.UnAdminCreaYDaDeBajaUnaOferta</c> (Postgres real, alta + baja + 404 +
+/// ausencia en el listado), así que se retira de acá sin reemplazo — esa prueba de integración
+/// sigue cubriendo el mismo camino.
 /// </summary>
 public class ServicioDeOfertasTests
 {
@@ -386,19 +396,5 @@ public class ServicioDeOfertasTests
         var detalle = await servicio.ObtenerAsync(oferta.Id);
 
         Assert.Empty(detalle.IdsListas);
-    }
-
-    [Fact]
-    public async Task EliminarUnaOfertaFunciona()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var idGrupo = await SembrarGrupoAsync(nombreDeBase, idTenant: 1);
-        var oferta = await SembrarOfertaAsync(nombreDeBase, idTenant: 1, idGrupo);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        await servicio.EliminarAsync(oferta.Id);
-
-        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ObtenerAsync(oferta.Id));
-        Assert.Equal("no_encontrado", error.Codigo);
     }
 }

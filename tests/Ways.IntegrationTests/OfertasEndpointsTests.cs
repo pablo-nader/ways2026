@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Ways.Application.Abstracciones; // ModoDeAcceso
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
@@ -365,7 +366,14 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
     }
 
     /// <summary>Spec: Junction rows restrict targeting, aplicado a la edición — el PUT reemplaza
-    /// por completo el subconjunto anterior.</summary>
+    /// por completo el subconjunto anterior.
+    ///
+    /// (judgment-day ronda 2, item 3, triage Judge A) Antes solo aserteaba el <c>IdsListas</c>
+    /// ECOADO en la respuesta del PUT — eso prueba lo que <c>Proyectar</c> devuelve, no lo que
+    /// quedó escrito en <c>ofertas_listas</c>. Agrega una lectura independiente de la fila (GET +
+    /// consulta directa a la DB, mismo patrón que
+    /// <c>EditarConIdsListasVacioExplicitoRevierteAlAlcanceDeTodasLasListas</c>) para asertar el
+    /// estado PERSISTIDO, no el eco.</summary>
     [Fact]
     public async Task EditarReemplazaElSubconjuntoDeListasPersistido()
     {
@@ -382,6 +390,13 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var editada = await respuestaEdicion.Content.ReadFromJsonAsync<OfertaListado>();
         Assert.Equal([idListaDos], editada!.IdsListas);
+
+        var detalle = await admin.GetFromJsonAsync<OfertaListado>($"/api/ofertas/{creada.Id}");
+        Assert.Equal([idListaDos], detalle!.IdsListas);
+
+        await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var filas = await lectura.OfertasListas.Where(ol => ol.IdOferta == creada.Id).ToListAsync();
+        Assert.Equal([idListaDos], filas.Select(f => f.IdListaPrecio));
     }
 
     /// <summary>Movido desde <c>ServicioDeOfertasTests.EditarUnaOfertaFunciona</c> (judgment-day,
@@ -538,7 +553,14 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
     /// oferta — nunca un 500, y el conjunto final persistido es EXACTAMENTE el target de UNO de
     /// los dos llamadores (el último committer), nunca la unión de ambos ni un conjunto vacío por
     /// accidente. Repetido 3 veces con estado aislado por iteración (tenant/oferta nuevos) para
-    /// probar estabilidad — no un resultado de una sola corrida con suerte.</summary>
+    /// probar estabilidad — no un resultado de una sola corrida con suerte.
+    ///
+    /// (judgment-day ronda 2, item 2) Tolerar 409 acá era un falso negativo: el lock serializa de
+    /// verdad, así que las DOS escrituras SIEMPRE tienen que suceder (2×200) — exactamente lo que
+    /// ya asegura <c>DosPutsConcurrentesReemplazandoElMismoConjuntoDeListasSeSerializanYAmbosSuceden</c>
+    /// para el caso de targets iguales. Un 409 acá indicaría que el reemplazo del perdedor volvió
+    /// a competir contra <c>pk_ofertas_listas</c> en vez de encontrar el estado ya comiteado tras
+    /// el lock — señal de que el fix se rompió, no un resultado válido a tolerar.</summary>
     [Fact]
     public async Task DosPutsConcurrentesConTargetsDistintosSeSerializanYElUltimoCommitPersisteExactamenteUnTarget()
     {
@@ -574,12 +596,9 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             var estados = respuestas.Select(r => r.StatusCode).ToList();
 
             Assert.True(interceptor.Participantes >= 2, $"iteración={iteracion} participantes={interceptor.Participantes}");
-            Assert.DoesNotContain(HttpStatusCode.InternalServerError, estados);
-            // Serializado (ambos 200) o, si el perdedor todavía choca contra algo, un 409
-            // traducido — nunca un 500 ni un resultado sin traducir.
-            Assert.All(estados, e => Assert.True(
-                e is HttpStatusCode.OK or HttpStatusCode.Conflict,
-                $"iteración={iteracion} estado inesperado={e}"));
+            // (judgment-day ronda 2, item 2) Estrictamente las DOS 200 — el lock serializa de
+            // verdad, así que tolerar un 409 acá esconde una regresión (ver doc-comment).
+            Assert.All(estados, e => Assert.Equal(HttpStatusCode.OK, e));
 
             await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
             var filas = await lectura.OfertasListas.Where(ol => ol.IdOferta == creada.Id).ToListAsync();
@@ -588,6 +607,107 @@ public class OfertasEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
             // filas) — exactamente UNA fila, y es el target de A o el de B, nunca la previa.
             Assert.Single(filas);
             Assert.Contains(filas[0].IdListaPrecio, new[] { idListaA, idListaB });
+        }
+    }
+
+    /// <summary>db-error-backstops (judgment-day ronda 2, item 4a, triage Judge B): coverage gap
+    /// del backstop <c>pk_ofertas_listas</c> — hasta acá la única prueba de esta PK era la carrera
+    /// serializada por el lock (que nunca la alcanza, por diseño). Mismo patrón que
+    /// <c>ArticulosEndpointsTests.UnaFilaDeSubsetDuplicadaInsertadaPorFueraDelServicioViolaLaPk</c>:
+    /// INSERT crudo por SQL que bypasea <c>ServicioDeOfertas</c> por completo para forzar el
+    /// duplicado <c>(id_oferta, id_lista_precio)</c> directamente contra la constraint de
+    /// esquema.</summary>
+    [Fact]
+    public async Task UnaFilaDeOfertasListasDuplicadaInsertadaPorFueraDelServicioViolaLaPk()
+    {
+        var (idTenant, idGrupo, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnaFilaDeOfertasListasDuplicadaInsertadaPorFueraDelServicioViolaLaPk));
+        var idLista = await SembrarListaAsync(idTenant, "Lista backstop");
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var creada = await CrearOfertaAsync(admin, idGrupo, idsListas: [idLista]);
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", idTenant);
+
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO ofertas_listas (id_oferta, id_lista_precio, id_tenant) VALUES ($1, $2, $3)";
+        comando.Parameters.Add(new NpgsqlParameter { Value = creada.Id });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idLista });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23505", excepcion.SqlState);
+        Assert.Equal("pk_ofertas_listas", excepcion.ConstraintName);
+    }
+
+    /// <summary>NUEVO (judgment-day ronda 2, item 1 — CRITICAL): PUT y DELETE concurrentes sobre
+    /// la MISMA oferta. Antes del fix, <c>EliminarAsync</c> no abría transacción ni tomaba lock —
+    /// un PUT podía leer la oferta viva, un DELETE concurrente comiteaba primero fuera de
+    /// cualquier lock, y el PUT (que nunca revalidaba <c>DeletedAt</c>) terminaba pisando los
+    /// campos editables sobre una fila YA ELIMINADA: ghost edit, <c>deleted_at</c> seteado a la
+    /// vez que los campos/targeting frescos del PUT persistidos con un 200.
+    ///
+    /// Reusa <c>InterceptorDeRendezVousOfertas</c> para forzar DELETE-gana-el-lock de forma
+    /// DETERMINÍSTICA (no solo "concurrencia genuina"): el punto de rendezvous del DELETE es su
+    /// <c>BuscarAsync</c> POST-lock (<see cref="ServicioDeOfertas.EliminarAsync"/> ya no tiene
+    /// ninguna otra consulta a <c>ofertas</c>) — para que el DELETE llegue ahí, YA tiene que haber
+    /// tomado el <c>pg_advisory_xact_lock</c> primero. El punto de rendezvous del PUT es su
+    /// <c>BuscarAsync</c> PRE-transacción (antes de siquiera intentar el lock). El interceptor no
+    /// libera a ninguno de los dos hasta que AMBOS llegaron a su respectivo punto, así que,
+    /// estructuralmente, el DELETE siempre tiene el lock tomado ANTES de que el PUT llegue a
+    /// pedirlo — el PUT SIEMPRE espera detrás del DELETE, nunca al revés. Estable por
+    /// construcción, no por suerte de scheduling: se corre 3 veces (estado aislado por iteración)
+    /// para confirmarlo, no para "promediar" un resultado probabilístico.</summary>
+    [Fact]
+    public async Task UnPutYUnDeleteConcurrentesNuncaProducenUnGhostEdit()
+    {
+        for (var iteracion = 0; iteracion < 3; iteracion++)
+        {
+            var nombreDeCorrida = $"{nameof(UnPutYUnDeleteConcurrentesNuncaProducenUnGhostEdit)}-{iteracion}";
+            var (idTenant, idGrupo, mailAdmin, passwordAdmin) = await AprovisionarTenantAsync(nombreDeCorrida);
+            var idListaPrevia = await SembrarListaAsync(idTenant, "Lista previa");
+            var idListaNueva = await SembrarListaAsync(idTenant, "Lista nueva");
+
+            using var admin0 = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+            var creada = await CrearOfertaAsync(admin0, idGrupo, idsListas: [idListaPrevia]);
+
+            var edicion = EdicionDesde(creada, idsListas: [idListaNueva]) with { Nombre = "2x1 Verano editada" };
+
+            using var gate = new CountdownEvent(2);
+            var interceptor = new InterceptorDeRendezVousOfertas(gate);
+            await using var factory = fixture.WithWebHostBuilder(builder =>
+                builder.ConfigureServices(services =>
+                    services.AddDbContext<WaysDbContext>((_, options) =>
+                        options.AddInterceptors(interceptor))));
+
+            using var admin = factory.CreateClient();
+            var login = await admin.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailAdmin, passwordAdmin));
+            Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+            var tareaPut = admin.PutAsJsonAsync($"/api/ofertas/{creada.Id}", edicion);
+            var tareaDelete = admin.DeleteAsync($"/api/ofertas/{creada.Id}");
+
+            await Task.WhenAll(tareaPut, tareaDelete);
+            var respuestaPut = await tareaPut;
+            var respuestaDelete = await tareaDelete;
+
+            Assert.True(interceptor.Participantes >= 2, $"iteración={iteracion} participantes={interceptor.Participantes}");
+
+            // El DELETE siempre gana la carrera del lock (ver doc-comment de arriba) — el PUT ve
+            // la oferta ya eliminada y responde el 404 uniforme, nunca un 200 con campos pisados.
+            Assert.Equal(HttpStatusCode.NoContent, respuestaDelete.StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, respuestaPut.StatusCode);
+
+            await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+            var ofertaFinal = await lectura.Ofertas.IgnoreQueryFilters(["BajaLogica"]).FirstAsync(o => o.Id == creada.Id);
+            var filasFinal = await lectura.OfertasListas.Where(ol => ol.IdOferta == creada.Id).ToListAsync();
+
+            // Estado final: soft-deleted, con los campos y el targeting ORIGINALES — el PUT no
+            // tocó absolutamente nada, ni un campo ni una fila de ofertas_listas.
+            Assert.NotNull(ofertaFinal.DeletedAt);
+            Assert.Equal("2x1 Verano", ofertaFinal.Nombre);
+            Assert.Equal([idListaPrevia], filasFinal.Select(f => f.IdListaPrecio));
         }
     }
 

@@ -43,7 +43,18 @@ namespace Ways.Application.Ofertas;
 /// InMemory (mismo "transaction-blocked-provider caveat" que <see cref="CrearAsync"/>/
 /// <c>ServicioDeArticulosTests</c>) — las pruebas de <c>ServicioDeOfertasTests</c> que cubrían el
 /// replace-set persistido se movieron a <c>OfertasEndpointsTests</c> (Postgres real).
-/// </summary>
+///
+/// (judgment-day ronda 2, item 1 — CRITICAL) El lock de <see cref="ActualizarAsync"/> serializaba
+/// PUT contra PUT, pero no PUT contra <see cref="EliminarAsync"/>: ese último ni abría transacción
+/// ni tomaba el lock, así que un PUT podía leer la oferta viva, un DELETE concurrente comiteaba
+/// primero (fuera de cualquier lock), y el PUT — que nunca volvía a chequear <c>DeletedAt</c> —
+/// terminaba pisando los campos editables sobre una fila YA ELIMINADA (ghost edit: 200 del PUT +
+/// <c>deleted_at</c> seteado, sin que ninguno de los dos escritores fallara). Ahora
+/// <see cref="EliminarAsync"/> abre la MISMA transacción explícita y toma el MISMO
+/// <see cref="TomarLockDeOfertaAsync"/> ANTES de leer la fila, y <see cref="ActualizarAsync"/>
+/// re-chequea existencia con un <c>EXISTS</c> plano DESPUÉS de tomar el lock (nunca reusa la
+/// entidad trackeada desde antes de la transacción, que el identity map de EF no refresca sola)
+/// — cualquiera de los dos que pierda la carrera del lock ve el estado YA COMITEADO por el otro.</summary>
 public class ServicioDeOfertas(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto)
 {
     /// <summary>Sin filtro de <c>Activo</c> (a diferencia de <c>ServicioDeCatalogo</c>) —
@@ -195,6 +206,24 @@ public class ServicioDeOfertas(IWaysDbContext db, IRelojDelSistema reloj, IConte
             // ningún otro escritor puede estar reemplazando el subconjunto en simultáneo.
             await TomarLockDeOfertaAsync(idTenant, id, ct);
 
+            // (judgment-day ronda 2, item 1 — CRITICAL) Re-chequeo de existencia DESPUÉS del
+            // lock, vía un EXISTS plano (nunca materializa entidad, así que nunca pasa por el
+            // identity map) en vez de reusar `oferta` (ya trackeada desde ANTES de la
+            // transacción, con su `DeletedAt` de esa foto vieja). Sin esto: un DELETE
+            // concurrente que gana la carrera del lock, comitea PRIMERO y sale de la
+            // transacción deja la fila con `deleted_at` seteado en la DB — pero `oferta` en
+            // memoria seguía "viva" (el identity map de EF NO refresca una entidad ya
+            // trackeada con los valores de una query posterior), así que este PUT hubiera
+            // seguido de largo, pisado los campos editables y comiteado un 200 sobre una
+            // oferta YA ELIMINADA (ghost edit — ni el DELETE lo revertía, porque nunca tocó
+            // `DeletedAt`). El filtro `BajaLogica` ya excluye la fila del EXISTS si está
+            // borrada, así que el mismo 404 uniforme (ADR-8) que `BuscarAsync` cubre acá el
+            // caso "borrada por otro escritor mientras esperaba el lock".
+            if (!await db.Ofertas.AnyAsync(o => o.Id == id, ct))
+            {
+                throw ErrorDominio.NoEncontrado($"No existe la oferta {id}.");
+            }
+
             oferta.Nombre = candidato.Nombre;
             oferta.IdEmpresa = candidato.IdEmpresa;
             oferta.IdArticulo = candidato.IdArticulo;
@@ -238,16 +267,39 @@ public class ServicioDeOfertas(IWaysDbContext db, IRelojDelSistema reloj, IConte
     /// <summary>Baja lógica: escribe <c>deleted_at</c>, no borra la fila. Las filas de
     /// <see cref="OfertaLista"/> asociadas quedan como están — sin cascada, mismo criterio que
     /// <see cref="Articulos.ServicioDeArticulos.EliminarAsync"/> con
-    /// <see cref="Domain.Articulos.ArticuloEmpresa"/>.</summary>
+    /// <see cref="Domain.Articulos.ArticuloEmpresa"/>.
+    ///
+    /// (judgment-day ronda 2, item 1 — CRITICAL) Mismo <c>CreateExecutionStrategy</c> + transacción
+    /// explícita que <see cref="ActualizarAsync"/>/<see cref="CrearAsync"/>, con el
+    /// <c>pg_advisory_xact_lock</c> de <see cref="TomarLockDeOfertaAsync"/> tomado ANTES de leer
+    /// la fila: antes de este fix, el DELETE no abría transacción propia ni tomaba ningún lock, así
+    /// que un PUT concurrente podía leer la oferta ANTES de que este DELETE comiteara, pisar
+    /// campos editables con su propio <c>SaveChangesAsync</c> DESPUÉS, y dejar la fila con
+    /// <c>deleted_at</c> seteado (por este DELETE) a la vez que los campos frescos del PUT
+    /// (ghost edit — ninguno de los dos escritores fallaba). Con el lock, el DELETE solo lee la
+    /// fila DESPUÉS de tomarlo — si un PUT lo tiene tomado, este DELETE espera hasta que
+    /// comitee y recién ahí lee y marca el estado YA COMITEADO, nunca una foto vieja.</summary>
     public async Task EliminarAsync(int id, CancellationToken ct = default)
     {
-        var oferta = await BuscarAsync(id, ct);
+        var idTenant = ExigirTenantDeLaSesion();
 
-        var ahora = reloj.Ahora;
-        oferta.DeletedAt = ahora;
-        oferta.UpdatedAt = ahora;
+        var estrategia = db.Database.CreateExecutionStrategy();
 
-        await db.SaveChangesAsync(ct);
+        await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            await TomarLockDeOfertaAsync(idTenant, id, ct);
+
+            var oferta = await BuscarAsync(id, ct);
+
+            var ahora = reloj.Ahora;
+            oferta.DeletedAt = ahora;
+            oferta.UpdatedAt = ahora;
+
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+        });
     }
 
     /// <summary>Las cinco guardas de <see cref="ReglaDeOfertas"/> (design: Protection Rules) —
