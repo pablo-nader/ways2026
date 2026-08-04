@@ -10,6 +10,7 @@ import { Empresas } from './paginas/Empresas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
 import { NuevoTenant } from './paginas/NuevoTenant'
+import { Ofertas } from './paginas/Ofertas'
 import { PaginaCatalogo } from './paginas/PaginaCatalogo'
 import { Parametros } from './paginas/Parametros'
 import { Proveedores } from './paginas/Proveedores'
@@ -87,6 +88,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <PaginaCatalogo definicion={descriptorListasPrecio} />
+                </RutaProtegida>
+              }
+            />
+
+            {/* Entidad dedicada (stage-4-ofertas, Slice 4, design decision 9): árbol propio,
+                no la máquina genérica de catálogos — depende solo del CRUD de la Slice 2. */}
+            <Route
+              path="/ofertas"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Ofertas />
                 </RutaProtegida>
               }
             />
