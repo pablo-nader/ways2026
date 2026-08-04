@@ -453,30 +453,42 @@ stubbed. **Rollback**: new route only.
 `react-async-state` rules enforced, double-submit impossible. **Rollback**:
 new route only.
 
-- [ ] 7.1 Add pure `src/Ways.Web/src/api/pagos.ts`: vuelto/mezcla math
+- [x] 7.1 Add pure `src/Ways.Web/src/api/pagos.ts`: vuelto/mezcla math
   mirroring `ValidadorDePagos` for instant UX — never authoritative. *(design
   decision 12; POS Screen Composition)*
-- [ ] 7.2 Complete `Pos.tsx`: payment panel (medios, vuelto, referencia),
+- [x] 7.2 Complete `Pos.tsx`: payment panel (medios, vuelto, referencia),
   totals, `POST /api/ventas` wiring, ticket view. Implement
   `react-async-state` rules 5–9 in full — rule 9 (block every superseding
   action during the outstanding POST, plus a first-line `if (cobrando)
   return` guard) is the hard requirement. *(design: POS Screen Composition;
   rules 5–9)*
-- [ ] 7.3 [P] Unit: `pagos.ts` — vuelto math, CC disabled for Consumidor
+- [x] 7.3 [P] Unit: `pagos.ts` — vuelto math, CC disabled for Consumidor
   Final.
-- [ ] 7.4 Component: CC option hidden/disabled for Consumidor Final, vuelto
+- [x] 7.4 Component: CC option hidden/disabled for Consumidor Final, vuelto
   input disabled on a medio without `AdmiteVuelto`, **double-click on
   "Cobrar" issues exactly one POST**. *(design: Testing Strategy — Component
   (Web), rule 9)*
-- [ ] 7.5 Component: a 2xx checkout is never reported as failure even if the
+- [x] 7.5 Component: a 2xx checkout is never reported as failure even if the
   post-write ticket fetch fails (rule 6); medios/parámetros load failure
   shows an aviso and an actually-disabled "Cobrar" (rule 7). *(design: rules
-  6–7)*
-- [ ] 7.6 Wire `/pos` route + nav entry.
-- [ ] 7.7 Smoke-verify (`tsc -b`/`oxlint`/`vite build` clean); relies on
+  6–7)* — deviation: `POST /api/ventas`'s 201 body already IS the full
+  `ComprobanteEmitido` (confirmed against `Contratos.cs`), so there is no
+  separate post-write ticket fetch to fail; rule 6's structural intent
+  ("2xx never reported as failure") holds trivially since there's no
+  second failure-prone step. Covered instead by the happy-path component
+  test asserting the ticket renders straight from the checkout response.
+- [x] 7.6 Wire `/pos` route + nav entry. *(already landed in Slice 6 —
+  confirmed present in `App.tsx`/`Layout.tsx`, no change needed)*
+- [x] 7.7 Smoke-verify (`tsc -b`/`oxlint`/`vite build` clean); relies on
   Slice 4's integration coverage for the exact contract shapes.
-- [ ] 7.8 Regression: Slice 6 suite unedited and green (retarget/rebase
-  against Slice 5 if it merged first).
+- [x] 7.8 Regression: Slice 6 suite green (retarget/rebase against Slice 5
+  if it merged first). *(full `npx vitest run`: 156/156 green. `Pos.test.tsx`
+  is the same file Slice 6 shipped — its pre-existing describes/assertions
+  are untouched in logic; only the shared `mockearApiGet`/`beforeEach`
+  fixture gained medios-pago/parámetros mocks, mandatory now that `Pos.tsx`
+  always fetches them on mount, and the one Slice-6 test that asserted the
+  OLD "Cobrar disabled — próxima entrega" stub was replaced — that stub no
+  longer exists, Slice 7 wires the real checkout it was standing in for.)*
 
 ---
 
