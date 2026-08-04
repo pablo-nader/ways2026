@@ -57,6 +57,11 @@ public static class ValidadorDePagos
         // porque Σ importe da 100, y nunca dispara las reglas 5/6 porque
         // <c>consumoCuentaCorriente > 0m</c> es falso con un consumo negativo) — un Importe
         // negativo no tiene significado de negocio para un pago, se rechaza de plano.
+        //
+        // TODO: este gate de dominio es la defensa de aplicación; falta el backstop de esquema
+        // (CHECK ck_pagos_comprobante_importe_no_negativo sobre pagos_comprobante.importe >= 0,
+        // mismo criterio que ck_comprobantes_venta_numero_positivo) — pendiente del micro-gate de
+        // cambio de base de datos con el usuario, se agrega en un follow-up.
         foreach (var pago in pagos)
         {
             if (pago.Importe < 0m)
