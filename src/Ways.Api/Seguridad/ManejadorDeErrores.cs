@@ -117,6 +117,15 @@ public class ManejadorDeErrores(
             // movimientos_cuenta_corriente: tenant/cliente/punto_venta/empleado/
             // comprobante_venta/pago_comprobante) — todas siguen la convención fk_* del resto
             // del esquema.
+            //
+            // stage-6-turnos-caja (Slice 1, task 1.7): confirmado sin cambio de código — el
+            // mismo match por prefijo "fk_" ya cubre las FKs nuevas de las cinco tablas de esta
+            // slice (turnos_caja: tenant/punto_venta/empleado_apertura/empleado_cierre;
+            // movimientos_caja: tenant/turno/empleado; arqueos_turno: tenant/turno/medio_pago;
+            // movimientos_tesoreria: tenant/punto_venta/turno/empleado; gastos: tenant/
+            // punto_venta/turno/empleado/proveedor/area/medio_pago) y también
+            // fk_comprobantes_venta_turno — todas siguen la convención fk_* del resto del
+            // esquema.
             DbUpdateException { InnerException: PostgresException { SqlState: "23503", ConstraintName: string fk } }
                 when fk.StartsWith("fk_", StringComparison.Ordinal) =>
                 LogYClasificarReferenciaInvalida(fk, log),
@@ -143,6 +152,18 @@ public class ManejadorDeErrores(
             DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckVenta } }
                 when ClasificarCheckDeVentas(ckVenta) is { } checkVenta =>
                 (checkVenta.EstadoHttp, checkVenta.Titulo, checkVenta.Codigo),
+
+            // stage-6-turnos-caja (Slice 1, task 1.7, db-error-backstops, design: Backstop Map):
+            // switch por nombre EXACTO de las seis CHECKs nuevas de turnos_caja/movimientos_caja/
+            // gastos/movimientos_tesoreria — sin prefijo compartido entre las cuatro tablas
+            // (mismo motivo que ClasificarCheckDeVentas). ReglaDeTurnos/ReglaDeMovimientosDeCaja
+            // (Slice 2), ServicioDeGastos (Slice 3) y ServicioDeTurnos.CerrarAsync (Slice 4) ya
+            // validan estos invariantes en el camino de servicio — bajo operación normal ninguna
+            // de las seis ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
+            // de banda.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckCaja } }
+                when ClasificarCheckDeCaja(ckCaja) is { } checkCaja =>
+                (checkCaja.EstadoHttp, checkCaja.Titulo, checkCaja.Codigo),
 
             // Backstop genérico (db-error-backstops, judgment-day slice 3 ronda 1): cualquier
             // valor numérico que desborda la precisión/escala de su columna (p.ej. un margen o
@@ -259,6 +280,27 @@ public class ManejadorDeErrores(
         if (nombreDeIndice is "ux_parametros_empresa" or "ux_parametros_punto_venta")
         {
             return ("parametro_duplicado", "Ya existe un parámetro con esa clave en este alcance.");
+        }
+
+        // stage-6-turnos-caja (Slice 1, task 1.7, db-error-backstops, design: Backstop Map):
+        // ux_turnos_caja_abierto — backstop de "One Open Turno Per Punto De Venta" (spec:
+        // turnos-de-caja). Sin trampa de ordering: el nombre no contiene ninguna de las
+        // substrings que matchean más abajo (_cuit/_numero/_nombre/_codigo/_vigente/_default),
+        // así que su posición acá no importa — se deja arriba, junto al otro literal exacto,
+        // por prolijidad. La prueba de carrera real vive en Slice 2 (task 2.8); acá solo el
+        // proof raw-SQL 23505 (task 1.9).
+        if (nombreDeIndice == "ux_turnos_caja_abierto")
+        {
+            return ("turno_ya_abierto", "Ya existe un turno abierto en este punto de venta.");
+        }
+
+        // stage-6-turnos-caja (Slice 1, task 1.7, db-error-backstops, design: Backstop Map):
+        // ux_arqueos_turno_medio — exención documentada de prueba de carrera: el cierre deriva
+        // el set de filas dentro de su propio lock exclusivo (Slice 4), así que el camino normal
+        // nunca puede chocar acá. Mismo motivo de "sin trampa de ordering" que el caso de arriba.
+        if (nombreDeIndice == "ux_arqueos_turno_medio")
+        {
+            return ("arqueo_duplicado", "Ya existe un arqueo para ese medio de pago en este turno.");
         }
 
         // stage-2-clientes-proveedores (task 1.12, backstop map): ux_proveedores_cuit —
@@ -463,6 +505,55 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "El movimiento de stock tiene que tener una cantidad distinta de cero.",
                     "movimiento_de_stock_sin_cantidad"),
+
+            _ => null
+        };
+
+    /// <summary>stage-6-turnos-caja (Slice 1, task 1.7, tasks.md "Orchestrator Decisions
+    /// Recorded This Phase" — design decisión 8): switch por nombre EXACTO de las seis CHECKs
+    /// nuevas de <c>turnos_caja</c>/<c>movimientos_caja</c>/<c>gastos</c>/
+    /// <c>movimientos_tesoreria</c>. <c>ck_movimientos_caja_motivo_minimo</c> y
+    /// <c>ck_movimientos_caja_importe</c> cubren, cada una, una sola regla UNIFORME sobre los
+    /// tres <c>tipo_movimiento_caja</c> (design decisión 8: sin rama por tipo) — la CHECK en sí
+    /// no puede distinguir qué tipo la disparó, así que su código de backstop es genérico y
+    /// DISTINTO de los dos códigos de dominio que sí distinguen por tipo
+    /// (<c>movimiento_de_caja_sin_motivo</c> para retiro/refuerzo,
+    /// <c>motivo_de_apertura_cajon_invalido</c> para apertura_cajon — ambos de
+    /// <c>ReglaDeMovimientosDeCaja</c>, Slice 2): mismo criterio que
+    /// <c>ck_pagos_comprobante_vuelto_no_negativo</c>, que tampoco reusa el código de una regla
+    /// de dominio distinta.</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarCheckDeCaja(string nombreDeCheck) =>
+        nombreDeCheck switch
+        {
+            "ck_turnos_caja_fondo_inicial_no_negativo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El fondo inicial no puede ser negativo.",
+                    "fondo_inicial_negativo"),
+
+            "ck_turnos_caja_cierre_consistente" =>
+                (StatusCodes.Status400BadRequest,
+                    "El turno quedó en un estado de cierre inconsistente.",
+                    "turno_cierre_inconsistente"),
+
+            "ck_movimientos_caja_importe" =>
+                (StatusCodes.Status400BadRequest,
+                    "El importe del movimiento de caja no es válido para ese tipo.",
+                    "movimiento_de_caja_importe_invalido"),
+
+            "ck_movimientos_caja_motivo_minimo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El motivo del movimiento de caja tiene que tener al menos 5 caracteres.",
+                    "movimiento_de_caja_motivo_invalido"),
+
+            "ck_gastos_importe_positivo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El importe del gasto tiene que ser positivo.",
+                    "gasto_importe_invalido"),
+
+            "ck_movimientos_tesoreria_cadena" =>
+                (StatusCodes.Status400BadRequest,
+                    "La cadena de tesorería es inconsistente (final tiene que ser inicio + ingreso − egreso).",
+                    "tesoreria_cadena_invalida"),
 
             _ => null
         };

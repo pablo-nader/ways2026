@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
@@ -44,7 +45,10 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
         builder.Property(c => c.Fecha).HasColumnName("fecha").IsRequired();
         builder.Property(c => c.IdPuntoVenta).HasColumnName("id_punto_venta").IsRequired();
 
-        // Siempre NULL en esta etapa (proposal decisión 1) — sin turnos_caja todavía.
+        // stage-6-turnos-caja, Slice 1 (design: Table Shapes — write path E): la columna ya
+        // existía NULL desde la migración de stage 5; acá se agrega la FK/índice. Slice 5 es
+        // quien empieza a poblarla en cada venta nueva — las filas de stage 5 quedan NULL para
+        // siempre (proposal decisión 8, sin backfill).
         builder.Property(c => c.IdTurnoCaja).HasColumnName("id_turno_caja");
 
         builder.Property(c => c.IdEmpleado).HasColumnName("id_empleado").IsRequired();
@@ -94,6 +98,11 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
         builder.HasIndex(c => new { c.IdComprobanteAsociado, c.IdTenant }).HasDatabaseName("ix_comprobantes_venta_asociado");
         builder.HasIndex(c => c.IdEmpleado).HasDatabaseName("ix_comprobantes_venta_empleado");
         builder.HasIndex(c => c.IdTipoComprobante).HasDatabaseName("ix_comprobantes_venta_tipo_comprobante");
+
+        // stage-6-turnos-caja, Slice 1 (design: Table Shapes — write path E): índice de
+        // soporte de fk_comprobantes_venta_turno, además el acceso de la derivación
+        // (LectorDeMovimientosDelTurno, Slice 4) para "pagos/vueltos de este turno".
+        builder.HasIndex(c => new { c.IdTurnoCaja, c.IdTenant }).HasDatabaseName("ix_comprobantes_venta_turno");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -145,6 +154,16 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             .HasForeignKey(c => new { c.IdComprobanteAsociado, c.IdTenant })
             .HasPrincipalKey(c => new { c.Id, c.IdTenant })
             .HasConstraintName("fk_comprobantes_venta_comprobante_asociado")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // stage-6-turnos-caja, Slice 1 (design: Table Shapes — write path E): la columna es
+        // nullable para siempre (stage-5 rows nunca se backfillean) — FK compuesta igual que el
+        // resto, sin marcar la relación requerida.
+        builder.HasOne<TurnoCaja>()
+            .WithMany()
+            .HasForeignKey(c => new { c.IdTurnoCaja, c.IdTenant })
+            .HasPrincipalKey(t => new { t.Id, t.IdTenant })
+            .HasConstraintName("fk_comprobantes_venta_turno")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

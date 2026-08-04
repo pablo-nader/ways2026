@@ -6,9 +6,11 @@ using Ways.Application.Articulos;
 using Ways.Application.Clientes;
 using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
+using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
+using Ways.Domain.Gastos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.CuentaCorriente;
@@ -90,6 +92,16 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<MovimientoStock> MovimientosStock => Set<MovimientoStock>();
     public DbSet<MovimientoCuentaCorriente> MovimientosCuentaCorriente => Set<MovimientoCuentaCorriente>();
 
+    // stage-6-turnos-caja, Slice 1 (schema/domain foundation, DB CHANGE GATE aprobado
+    // 2026-08-04): modelo adelantado a la migración, mismo trámite que ComprobanteVenta/Stock/
+    // MovimientoStock en stage-5 Slice 3 — sin exponer en IWaysDbContext todavía, ningún
+    // consumidor de Application en este lote (Slice 2/3/4 son los primeros escritores reales).
+    public DbSet<TurnoCaja> TurnosCaja => Set<TurnoCaja>();
+    public DbSet<MovimientoCaja> MovimientosCaja => Set<MovimientoCaja>();
+    public DbSet<ArqueoTurno> ArqueosTurno => Set<ArqueoTurno>();
+    public DbSet<MovimientoTesoreria> MovimientosTesoreria => Set<MovimientoTesoreria>();
+    public DbSet<Gasto> Gastos => Set<Gasto>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>
@@ -129,6 +141,9 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnStock(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoStock(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCuentaCorriente(modelBuilder);
+        AplicarFiltroDeTenantEnMovimientoCaja(modelBuilder);
+        AplicarFiltroDeTenantEnArqueoTurno(modelBuilder);
+        AplicarFiltroDeTenantEnMovimientoTesoreria(modelBuilder);
     }
 
     /// <summary>
@@ -533,6 +548,55 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(MovimientoCuentaCorriente), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoCuentaCorriente.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-6-turnos-caja (Slice 1, design: Table Shapes — write path B): <see cref="MovimientoCaja"/>
+    /// es un ledger append-only, no hereda <see cref="EntidadTenant"/> (ver el comentario de la
+    /// clase) — necesita la variante escrita a mano, mismo criterio que
+    /// <see cref="AplicarFiltroDeTenantEnMovimientoStock"/>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnMovimientoCaja(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(MovimientoCaja))!;
+
+        var parametro = Expression.Parameter(typeof(MovimientoCaja), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoCaja.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-6-turnos-caja (Slice 1, design: Table Shapes — write path A): <see cref="ArqueoTurno"/>
+    /// es append-only, escrito una sola vez al cierre — misma variante escrita a mano que
+    /// <see cref="AplicarFiltroDeTenantEnMovimientoCaja"/>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnArqueoTurno(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(ArqueoTurno))!;
+
+        var parametro = Expression.Parameter(typeof(ArqueoTurno), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(ArqueoTurno.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-6-turnos-caja (Slice 1, design: Table Shapes — write path D): <see cref="MovimientoTesoreria"/>
+    /// es el mismo shape de ledger append-only que <see cref="MovimientoCaja"/> — necesita la
+    /// variante escrita a mano.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnMovimientoTesoreria(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(MovimientoTesoreria))!;
+
+        var parametro = Expression.Parameter(typeof(MovimientoTesoreria), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoTesoreria.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

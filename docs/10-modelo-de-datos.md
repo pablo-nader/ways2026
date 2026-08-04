@@ -416,6 +416,16 @@ gastos (                      -- [operativa]
 Los retiros de efectivo **dejan de ser gastos** (`tipo=95` era otro número mágico):
 van a `movimientos_caja` (§7).
 
+> **Estado (Etapa 6, Slice 1):** `gastos` se crea en esta etapa, pero **sin**
+> `id_comprobante_compra`: `comprobantes_compra` no existe todavía (etapa 8), así que un
+> `int NULL` sin FK sería una referencia sin garantía — mismo criterio que
+> `movimientos_stock.id_comprobante_compra` (§6). La etapa 8 agrega la columna y su FK
+> juntas, en la misma migración que crea `comprobantes_compra` (design de
+> stage-6-turnos-caja: Table Shapes — write path C). `id_turno_caja` sí se crea **NOT NULL**
+> desde esta etapa (a diferencia de la ambigüedad de la tabla de arriba, que lo muestra
+> nullable): todo gasto se registra contra un turno abierto, resuelto server-side, nunca
+> input de cliente.
+
 ## 6. Stock
 
 ```sql
