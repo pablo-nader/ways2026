@@ -24,7 +24,9 @@ phases:
     artifact: design.md
     notes: "12 decisions. KEY DEVIATION for the gate: NO advisory locks in checkout (decide-then-commit, atomic UPDATE...RETURNING, pinned statement order numeracion -> stock asc id_articulo -> cliente). Auth mechanism: group gate becomes OperacionDePos, catalog writes stack GestionDeCatalogo (AND composition) -- two shipped Vendedor-403 tests must invert. Backstop trap caught: ux_comprobantes_venta_numero contains _numero, new branch must precede the cliente family branch. 3 enums (estado_comprobante, motivo_stock, tipo_movimiento_cc). movimientos_stock.id_comprobante_compra FK deferred to stage 8 (table missing). Two migrations under one gate approval (400-line budget)."
   tasks:
-    status: not_started
+    status: done
+    artifact: tasks.md
+    notes: "7 slices, ~4,900-6,800 lines forecast, chained stacked-to-main. S1 (auth) || S2 (numeracion+escaneo, first migration); S3 (6-table schema gate, size:exception candidate) -> S4 (checkout, the big one) sequential bottlenecks; S5 (anulacion+ajuste) || S7 (web payment); S6 (web cart+scan) after S1+S2. Two migrations under ONE gate approval presented together. Distinct backstop codes pinned to avoid vuelto_invalido collision. No anulacion UI this stage (API-only)."
   apply:
     status: not_started
   verify:
