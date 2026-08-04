@@ -79,43 +79,43 @@ Chain strategy: stacked-to-main
 writes stay on `GestionDeCatalogo`, omission guard + inverted tests green.
 **Rollback**: revert policy stacking — routes return to `GestionDeCatalogo`-only.
 
-- [ ] 1.1 Add `Politicas.OperacionDePos` (Vendedor + Admin, Root excluded) in
+- [x] 1.1 Add `Politicas.OperacionDePos` (Vendedor + Admin, Root excluded) in
   `src/Ways.Api/Seguridad/Politicas.cs`. *(design decision 6; spec:
   operacion-de-pos / OperacionDePos Policy Admits Vendedor and Admin)*
-- [ ] 1.2 Re-gate `ArticulosEndpoints` group (incl. `/precios`,
+- [x] 1.2 Re-gate `ArticulosEndpoints` group (incl. `/precios`,
   `/codigos-barra`, `/escaneo`) to `OperacionDePos`, stacking
   `GestionDeCatalogo` on POST/PUT/DELETE only. *(spec: articulos / Articulo
   ABM Lifecycle and Authorization; codigos-barra / Barcode Add/Remove/List
   Management)*
-- [ ] 1.3 [P] Re-gate `ClientesEndpoints` group to `OperacionDePos`, stacking
+- [x] 1.3 [P] Re-gate `ClientesEndpoints` group to `OperacionDePos`, stacking
   `GestionDeCatalogo` on writes. *(spec: clientes / Cliente ABM Lifecycle and
   Authorization)*
-- [ ] 1.4 [P] Re-gate `CatalogosEndpoints` and `ParametrosEndpoints` groups to
+- [x] 1.4 [P] Re-gate `CatalogosEndpoints` and `ParametrosEndpoints` groups to
   `OperacionDePos`, stacking `GestionDeCatalogo` on writes. *(spec:
   parametros-operativos / Read Access Under OperacionDePos For UI Preview)*
-- [ ] 1.5 Relax `OfertasEndpoints` group gate to `OperacionDePos`; stack
+- [x] 1.5 Relax `OfertasEndpoints` group gate to `OperacionDePos`; stack
   `GestionDeCatalogo` on POST `/`, PUT, DELETE — `POST /resolver` stays on
   the group gate only, closing the stage-4 carryover. *(spec:
   resolucion-de-ofertas / OperacionDePos Authorization For POST
   /api/ofertas/resolver)*
-- [ ] 1.6 Update `Cliente.cs`'s `Saldo` doc-comment ("never moves" →
+- [x] 1.6 Update `Cliente.cs`'s `Saldo` doc-comment ("never moves" →
   activated by Slice 3), per proposal Affected Areas.
-- [ ] 1.7 Add `SuperficieDeAutorizacionTests`: walk `EndpointDataSource`,
+- [x] 1.7 Add `SuperficieDeAutorizacionTests`: walk `EndpointDataSource`,
   assert every non-GET endpoint carries `GestionDeCatalogo` against an
   explicit allowlist (`POST /api/auth/*`, `POST /api/ofertas/resolver`,
   `POST /api/ventas`, `POST /api/ventas/{id}/anulacion`). *(design:
   Authorization Surface — omission guard, mandatory)*
-- [ ] 1.8 Update the two inverting tests:
+- [x] 1.8 Update the two inverting tests:
   `ClientesEndpointsTests.UnVendedorNoPuedeListarListasDePrecio` and
   `ArticulosEndpointsTests.UnVendedorNoPuedeListarCodigosDeBarra` become
   `…PuedeListar…`, with an explicit comment noting these are the two
   intentional inversions. *(design: Authorization Surface — "Two shipped
   tests invert")*
-- [ ] 1.9 [P] Integration: Vendedor reads succeed on every re-gated group
+- [x] 1.9 [P] Integration: Vendedor reads succeed on every re-gated group
   (articulos, clientes, catálogos, parámetros, `/resolver`); every other
   `UnVendedorNoPuede…` write test stays red. *(spec: articulos, clientes,
   codigos-barra, parametros-operativos — "Vendedor can …" scenarios)*
-- [ ] 1.10 Regression: full existing suite green, no behavior change beyond
+- [x] 1.10 Regression: full existing suite green, no behavior change beyond
   the auth relaxation.
 
 ---

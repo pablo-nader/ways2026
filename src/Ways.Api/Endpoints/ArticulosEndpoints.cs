@@ -10,7 +10,7 @@ public static class ArticulosEndpoints
     {
         var grupo = app.MapGroup("/api/articulos")
             .WithTags("Articulos")
-            .RequireAuthorization(Politicas.GestionDeCatalogo);
+            .RequireAuthorization(Politicas.OperacionDePos);
 
         grupo.MapGet("/", (
             ServicioDeArticulos servicio,
@@ -33,11 +33,13 @@ public static class ArticulosEndpoints
             var creado = await servicio.CrearAsync(datos, ct);
             return Results.Created($"/api/articulos/{creado.Id}", creado);
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Crea un artículo. El código interno se autogenera si se omite.");
 
         grupo.MapPut("/{id:int}", (
             ServicioDeArticulos servicio, int id, EdicionArticulo datos, CancellationToken ct) =>
             servicio.ActualizarAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Actualiza un artículo, incluida su disponibilidad por empresa.");
 
         grupo.MapDelete("/{id:int}", async (
@@ -46,6 +48,7 @@ public static class ArticulosEndpoints
             await servicio.EliminarAsync(id, ct);
             return Results.NoContent();
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Baja lógica del artículo.");
 
         grupo.MapPost("/{id:int}/codigos-barra", async (
@@ -54,6 +57,7 @@ public static class ArticulosEndpoints
             var creado = await servicio.AgregarCodigoBarraAsync(id, datos, ct);
             return Results.Created($"/api/articulos/{id}/codigos-barra/{creado.Id}", creado);
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Agrega un código de barras al artículo.");
 
         grupo.MapDelete("/{id:int}/codigos-barra/{idCodigoBarra:int}", async (
@@ -62,6 +66,7 @@ public static class ArticulosEndpoints
             await servicio.EliminarCodigoBarraAsync(id, idCodigoBarra, ct);
             return Results.NoContent();
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Quita un código de barras del artículo.");
 
         grupo.MapGet("/{id:int}/codigos-barra", (
@@ -84,6 +89,7 @@ public static class ArticulosEndpoints
             var creado = await servicio.EstablecerPrecioAsync(id, datos, ct);
             return Results.Created($"/api/articulos/{id}/precios/{datos.IdListaPrecio}", creado);
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Establece el precio vigente de un artículo en una lista fija, efectivo ahora.");
 
         grupo.MapPost("/{id:int}/precios/programados", async (
@@ -92,6 +98,7 @@ public static class ArticulosEndpoints
             var creado = await servicio.ProgramarPrecioAsync(id, datos, ct);
             return Results.Created($"/api/articulos/{id}/precios/{datos.IdListaPrecio}", creado);
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Programa un precio a futuro; reemplaza el pendiente existente solo con confirmarReemplazo.");
 
         grupo.MapGet("/{id:int}/precios", (

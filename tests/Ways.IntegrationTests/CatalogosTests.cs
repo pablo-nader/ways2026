@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Npgsql;
+using Ways.Api.Seguridad;
 using Ways.Application.Catalogos;
 using Ways.Application.Usuarios;
 using Ways.Domain.Catalogos;
@@ -77,6 +78,30 @@ public class CatalogosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mail, Password));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         return cliente;
+    }
+
+    private async Task<string> SembrarVendedorAsync(int idTenant, string nombre)
+    {
+        var hasheador = new HasheadorPbkdf2();
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+        var mail = $"{nombre.ToLowerInvariant()}-vendedor@ways.test";
+
+        db.Usuarios.Add(new Usuario
+        {
+            IdTenant = idTenant,
+            NombreUsuario = "vendedor",
+            Mail = mail,
+            RolId = (int)RolConocido.Vendedor,
+            PasswordHash = hasheador.Hashear(Password),
+            PasswordAlgoritmo = hasheador.Algoritmo,
+            PasswordActualizadoEl = ahora,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+
+        return mail;
     }
 
     [Fact]
@@ -341,5 +366,37 @@ public class CatalogosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         var intentoDeEscritura = await cliente.PostAsJsonAsync(
             "/api/catalogos-fiscales/condiciones-fiscales", new { });
         Assert.Equal(HttpStatusCode.NotFound, intentoDeEscritura.StatusCode);
+    }
+
+    /// <summary>CRITICAL (judgment-day, stage-5-pos-ventas Slice 1): el grupo
+    /// <c>/api/catalogos-fiscales</c> no apilaba <see cref="Politicas.OperacionDePos"/> y caía
+    /// al fallback autenticado-only — un Vendedor igual podía leer (por accidente, no por
+    /// policy). Esta prueba fija el comportamiento POSITIVO ahora que la policy está explícita:
+    /// un Vendedor lee.</summary>
+    [Fact]
+    public async Task UnVendedorPuedeLeerCatalogosFiscales()
+    {
+        var (idTenant, _) = await SembrarTenantConAdminAsync(nameof(UnVendedorPuedeLeerCatalogosFiscales));
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorPuedeLeerCatalogosFiscales));
+        using var vendedor = await ClienteLogueadoAsync(mailVendedor);
+
+        var respuesta = await vendedor.GetAsync("/api/catalogos-fiscales/condiciones-fiscales");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+    }
+
+    /// <summary>Companion del fix de arriba: mismo criterio que
+    /// <see cref="UnaSesionDeRootRecibe403EnUnCatalogoDeTenant"/> — root queda afuera de
+    /// <see cref="Politicas.OperacionDePos"/> ("root administra tenants, no opera ninguno").</summary>
+    [Fact]
+    public async Task UnaSesionDeRootRecibe403AlLeerCatalogosFiscales()
+    {
+        using var cliente = fixture.CreateClient();
+        var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin("test@test.com", "root"));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var respuesta = await cliente.GetAsync("/api/catalogos-fiscales/condiciones-fiscales");
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 }

@@ -20,7 +20,7 @@ public static class CatalogosEndpoints
     {
         var grupo = app.MapGroup($"/api/catalogos/{recurso}")
             .WithTags("Catálogos")
-            .RequireAuthorization(Politicas.GestionDeCatalogo);
+            .RequireAuthorization(Politicas.OperacionDePos);
 
         grupo.MapGet("/", (TServicio servicio, bool? incluirInactivos, CancellationToken ct) =>
             servicio.ListarAsync(incluirInactivos ?? false, ct))
@@ -35,10 +35,12 @@ public static class CatalogosEndpoints
             var creado = await servicio.CrearAsync(datos, ct);
             return Results.Created($"/api/catalogos/{recurso}/{creado.Id}", creado);
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary($"Crea un elemento de {recurso}.");
 
         grupo.MapPut("/{id:int}", (TServicio servicio, int id, TAlta datos, CancellationToken ct) =>
             servicio.ActualizarAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary($"Actualiza un elemento de {recurso}.");
 
         grupo.MapDelete("/{id:int}", async (TServicio servicio, int id, CancellationToken ct) =>
@@ -46,6 +48,7 @@ public static class CatalogosEndpoints
             await servicio.EliminarAsync(id, ct);
             return Results.NoContent();
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary($"Baja lógica de un elemento de {recurso}.");
 
         return app;
@@ -71,8 +74,12 @@ public static class CatalogosEndpoints
         // Los 3 catálogos globales (ADR-11, gate #4) son de solo lectura en esta etapa — no
         // hay POST/PUT/DELETE mapeados a propósito, ni siquiera detrás de una policy: la
         // ausencia de ruta es la superficie de API, RLS (HabilitarRlsDeCatalogoGlobal) es la
-        // segunda capa detrás. Cualquier sesión autenticada (tenant o plataforma) puede leer.
-        var fiscales = app.MapGroup("/api/catalogos-fiscales").WithTags("Catálogos fiscales");
+        // segunda capa detrás. La lectura ya no es "cualquier sesión autenticada" (criterio
+        // original de gate #4): stage-5-pos-ventas la reemplaza por OperacionDePos (design.md,
+        // Authorization Surface), coherente con el resto de la superficie de lectura del POS.
+        var fiscales = app.MapGroup("/api/catalogos-fiscales")
+            .WithTags("Catálogos fiscales")
+            .RequireAuthorization(Politicas.OperacionDePos);
 
         fiscales.MapGet("/condiciones-fiscales", (
             ServicioDeCatalogosFiscales servicio, CancellationToken ct) =>
