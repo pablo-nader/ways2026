@@ -9,6 +9,7 @@ using Ways.Application.Parametros;
 using Ways.Application.Precios;
 using Ways.Application.Proveedores;
 using Ways.Application.Usuarios;
+using Ways.Application.Ventas;
 
 namespace Ways.Application;
 
@@ -39,6 +40,11 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeArticulos>();
         services.AddScoped<ServicioDePrecios>();
         services.AddScoped<ServicioDeOfertas>();
+
+        // AsignadorDeNumeroComprobante (Ways.Application.Ventas) es estática, sin ciclo de
+        // vida de DI que registrar — mismo criterio que AsignadorDeNumeroCliente/
+        // AsignadorDeCodigoInternoArticulo.
+        services.AddScoped<ServicioDeEscaneo>();
 
         services.AddScoped<ServicioDeAprovisionamiento>();
         services.AddScoped<ServicioDeOrganizacion>();
