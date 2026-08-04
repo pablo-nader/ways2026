@@ -540,9 +540,14 @@ public class ServicioDeVentas(
 
     /// <summary>Design: The Sale Transaction, paso 5 — INSERT simple, sin upsert: usa
     /// <c>ExecuteNonQueryAsync</c> (nunca dispara <c>ReaderExecuting</c>/<c>ScalarExecuting</c>),
-    /// así que el guard de presupuesto de consultas (task 4.12) que solo cuenta lecturas EF de
-    /// la mitad de "decidir" nunca lo ve — es escritura, escala con la cantidad de líneas por
-    /// diseño, no un N+1 a corregir.</summary>
+    /// así que el guard de presupuesto de consultas (task 4.12) no lo ve. Ojo con la simplificación
+    /// fácil acá: el guard SÍ ve los dos <c>SaveChangesAsync</c> de la mitad transaccional
+    /// (comprobante e items/pagos, <see cref="EjecutarTransaccionAsync"/>) — Npgsql dispara
+    /// <c>ReaderExecuting</c> también en un <c>INSERT ... RETURNING</c> para leer la clave
+    /// generada, no solo en un <c>SELECT</c>. El presupuesto sigue dando un número constante
+    /// porque esos dos <c>SaveChangesAsync</c> no escalan con la cantidad de líneas/pagos; esta
+    /// escritura sí escala (una por línea) y por quedar fuera de <c>ReaderExecuting</c> no aporta
+    /// al conteo — no es un N+1 a corregir, es auténticamente invisible al guard.</summary>
     private static async Task InsertarMovimientoStockAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
         decimal cantidad, MotivoStock motivo, int idComprobanteVenta, int idEmpleado, DateTimeOffset creadoEl,

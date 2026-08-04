@@ -738,11 +738,16 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
     // ---- task 4.12: guard de presupuesto de consultas --------------------------------------------
 
-    /// <summary>Cuenta cada <c>SELECT</c> que EF Core emite a través de su propio pipeline —
-    /// misma técnica que <c>OfertasResolucionTests.ContadorDeComandos</c>. Los statements crudos
-    /// de la mitad transaccional (numeración/stock/cuenta corriente) usan
-    /// <c>ExecuteNonQueryAsync</c>/<c>ExecuteScalarAsync</c>, nunca <c>ExecuteReaderAsync</c>, así
-    /// que este contador aísla exactamente la mitad "decidir" que design acota a ≤ 16 lecturas.</summary>
+    /// <summary>Cuenta cada comando que dispara <c>ReaderExecuting</c> — misma técnica que
+    /// <c>OfertasResolucionTests.ContadorDeComandos</c>, pero acá NO es literalmente "cada
+    /// <c>SELECT</c>": los dos <c>SaveChangesAsync</c> de la mitad transaccional (comprobante e
+    /// items/pagos) también entran, porque Npgsql dispara <c>ReaderExecuting</c> en un
+    /// <c>INSERT ... RETURNING</c> igual que en un <c>SELECT</c>, para leer la clave generada.
+    /// Eso no rompe el guard (design: Technical Approach, "≤ 16 round trips") porque esos dos
+    /// <c>SaveChangesAsync</c> son de cantidad constante, no escalan con la cantidad de
+    /// líneas/pagos. Los statements crudos de numeración/stock/cuenta corriente sí quedan afuera
+    /// del conteo: usan <c>ExecuteNonQueryAsync</c>/<c>ExecuteScalarAsync</c>, nunca
+    /// <c>ExecuteReaderAsync</c>.</summary>
     private sealed class ContadorDeComandos : DbCommandInterceptor
     {
         public int Consultas { get; private set; }
