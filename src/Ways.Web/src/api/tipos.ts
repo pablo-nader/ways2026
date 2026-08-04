@@ -577,11 +577,9 @@ export type ResultadoDeResolucion = {
 }
 
 // --- POS: checkout (stage-5-pos-ventas, Slice 6 → wireado en Slice 7) ---
-// Espejo pinneado por design.md (Checkout Contract) del futuro `SolicitudDeVenta`/comprobante
-// emitido de `POST /api/ventas` — ese endpoint vive en la Slice 4 (todavía en review, no
-// mergeada a main). Estos tipos solo sostienen los mappers puros de `ventas.ts`; ningún fetch
-// de esta slice los usa. Slice 7 debe confirmar el shape contra el DTO real antes de invocar el
-// endpoint — ver el comentario de `ComprobanteVenta`.
+// Espejo de `Ways.Application.Ventas.Contratos` (confirmado contra el DTO real de
+// `POST /api/ventas`, mergeado en Slice 4) — usado por `ventas.ts` (mappers) y `Pos.tsx`
+// (wireado en Slice 7).
 
 export type LineaDeVenta = { idArticulo: number; cantidad: number; codigoBarra: string | null }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
@@ -595,6 +593,48 @@ export type SolicitudDeVenta = {
   pagos: PagoDeVenta[]
   direccionEntrega: string | null
   observaciones: string | null
+}
+
+export type EstadoComprobante = 'Emitido' | 'Anulado'
+
+/** Item ya emitido — snapshot inmutable (espejo de `ItemEmitido`). */
+export type ItemEmitido = {
+  orden: number
+  idArticulo: number | null
+  descripcion: string
+  codigoBarra: string | null
+  idArea: number
+  idListaPrecio: number
+  idOferta: number | null
+  idAlicuotaIva: number
+  porcentajeIva: number
+  cantidad: number
+  precioUnitario: number
+  descuento: number
+  total: number
+}
+
+/** Pago ya emitido — espejo de `PagoEmitido`. */
+export type PagoEmitido = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
+
+/** Respuesta de `POST /api/ventas` (checkout) y `GET /api/ventas/{id}` (reimpresión) — espejo
+ * de `ComprobanteEmitido`. `numeroVisible` ya viene formateado `PPPP-NNNNNNNN`. */
+export type ComprobanteEmitido = {
+  id: number
+  numero: number
+  numeroVisible: string
+  estado: EstadoComprobante
+  fecha: string
+  idPuntoVenta: number
+  idCliente: number
+  idComprobanteAsociado: number | null
+  subtotal: number
+  descuentoTotal: number
+  total: number
+  direccionEntrega: string | null
+  observaciones: string | null
+  items: ItemEmitido[]
+  pagos: PagoEmitido[]
 }
 
 export type ItemComprobanteVenta = {

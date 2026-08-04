@@ -1,19 +1,26 @@
 /**
- * Mappers puros del POS (stage-5-pos-ventas, Slice 6, task 6.2): traducen entre la forma HTTP
+ * Mappers puros del POS (stage-5-pos-ventas, Slice 6/7): traducen entre la forma HTTP
  * (`ArticuloEscaneado`, `ResultadoDeResolucion`) y la forma del carrito (`LineaCarrito`), sin
- * que `carrito.ts` ni `Pos.tsx` necesiten conocer el shape crudo de cada respuesta. Los mappers
- * de checkout (`aSolicitudDeVenta`) son forward-looking: el `POST /api/ventas` real lo wirea la
- * Slice 7 (Slice 4 — el endpoint — sigue en review), acá solo vive la forma pura y testeada.
+ * que `carrito.ts` ni `Pos.tsx` necesiten conocer el shape crudo de cada respuesta. `clienteDeVentas`
+ * wirea `POST /api/ventas` (checkout real, Slice 4, mergeado a main).
  */
+import { api } from './cliente'
 import type { LineaCarrito } from './carrito'
 import type {
   ArticuloEscaneado,
+  ComprobanteEmitido,
   LineaDeResolucion,
   LineaDeVenta,
   PagoDeVenta,
   ResultadoDeResolucion,
   SolicitudDeVenta,
 } from './tipos'
+
+export const clienteDeVentas = {
+  /** `POST /api/ventas` (design: API Surface): checkout — 201 + body = comprobante emitido, sin
+   * ningún campo de dinero re-derivable en el cliente (el servidor vuelve a resolver todo). */
+  emitir: (solicitud: SolicitudDeVenta) => api.post<ComprobanteEmitido>('/ventas', solicitud),
+}
 
 /** Respuesta de `GET /api/articulos/escaneo` → acción `escanear` de `carrito.ts` (spec:
  * codigos-barra / Scan Resolution Rule) — separa la cantidad parseada por el servidor
@@ -80,11 +87,9 @@ export function calcularSubtotalPrevia(lineas: LineaCarrito[], precios: Record<n
 }
 
 /**
- * Carrito confirmado → `SolicitudDeVenta` (design: Checkout Contract) — TODO(slice-7): ningún
- * fetch de esta slice invoca este mapper todavía (`POST /api/ventas` es Slice 4, en review); se
- * agrega ahora, probado, para que Slice 7 solo tenga que confirmar el contrato real y wirear el
- * `fetch`, no diseñar el mapping desde cero. Sin precios en `LineaDeVenta` a propósito (design
- * decisión 3: "no precioUnitario, no descuento, no total en el request").
+ * Carrito confirmado → `SolicitudDeVenta` (design: Checkout Contract), invocado por `Pos.tsx`
+ * al cobrar. Sin precios en `LineaDeVenta` a propósito (design decisión 3: "no precioUnitario,
+ * no descuento, no total en el request").
  */
 export function aSolicitudDeVenta(params: {
   idPuntoVenta: number
