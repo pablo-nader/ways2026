@@ -42,9 +42,13 @@ anulación/stock-read endpoints. ABM write endpoints stay on
 
 ### Requirement: Explicit idPuntoVenta, No Server-Side POS Session
 
-Every POS request (read or write) MUST carry an explicit `idPuntoVenta`
+Every PUNTO-DE-VENTA-SCOPED POS request (read or write) MUST carry an explicit `idPuntoVenta`
 parameter. The system MUST NOT persist or resolve a "current punto de venta"
 from session state.
+
+> Scope tightened at judgment-day R1 of Slice 2: identity-only lookups with no
+> per-PV data (e.g. `GET /api/articulos/escaneo`) are tenant-scoped and carry no
+> `idPuntoVenta`, per design decision 7.
 
 #### Scenario: Same user operates two puntos de venta in sequence
 - GIVEN a Vendedor with access to punto de venta A and B of the same tenant
