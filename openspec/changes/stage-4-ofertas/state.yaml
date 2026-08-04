@@ -21,7 +21,8 @@ phases:
     status: done
     artifact: design.md
   tasks:
-    status: not_started
+    status: done
+    artifact: tasks.md
   apply:
     status: not_started
   verify:
@@ -52,3 +53,4 @@ notes:
   - "Rollback: fully additive. New tables (ofertas, ofertas_listas), new endpoints, new /ofertas route, new Domain namespace -- all removable without touching stage 1-3 flows. The only change to already-shipped code is the ADDED batch price path in ServicioDePrecios; existing single-article methods keep their signatures and semantics, so reverting stage 4 cannot break stage 3. The doc-10 edit is text-only and reverts with the migration."
   - "Engram was UNAVAILABLE during propose (2026-08-03) -- no mem_save was performed for sdd/stage-4-ofertas/proposal. openspec files are the single source of truth for this change. If Engram comes back, re-persisting proposal.md under topic_key sdd/stage-4-ofertas/proposal is a cheap catch-up."
   - "Spec/design reconciliation (orchestrator + user, 2026-08-03, third question round): (a) categoria-scoped ofertas INCLUDE descendant categorias (ancestor-chain match, tree depth <= 3) -- spec's original exact-match wording corrected, scenario added; (b) importe_fijo is PER UNIT (line of quantity Q discounts Q x importe_fijo; resolved output stays a reproducible unit price) -- pinned in the spec's stacking requirement; (c) hora/dias_semana windows evaluate in SERVER LOCAL TIME for v1 (no tenant timezone modeled anywhere yet; ParametroConocido is the natural future home -- design open question resolved as documented default, not user-blocking). Spec-level pinned assumptions confirmed with design: vigencia boundaries inclusive on both ends (unlike precios' half-open history windows, which exist to prevent overlap between consecutive rows -- not applicable here), dias_semana ISO-8601 numbering (1=Monday..7=Sunday), cantidad_minima matches with >=."
+  - "sdd-tasks (2026-08-03): 4 slices, 39 tasks, ~2,850-3,950 lines forecast, High budget risk, chained PRs stacked-to-main. Slice 1 (schema+domain+first CHECK backstop classifier) is the size:exception candidate. Slices 3 (resolution engine) and 4 (web screen) are parallelizable -- both depend only on Slice 2's CRUD API (the Ofertas form never calls /resolver). Naming-drift decision recorded in tasks.md: the spec's CHECK error codes (oferta_alcance_invalido / oferta_beneficio_invalido) win over design.md's Backstop Map draft names; sdd-apply must honor the spec codes."
