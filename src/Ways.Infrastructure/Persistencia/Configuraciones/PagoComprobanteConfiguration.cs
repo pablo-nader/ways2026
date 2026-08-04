@@ -7,10 +7,11 @@ using Ways.Domain.Ventas;
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
 /// <summary>
-/// Mapea <see cref="PagoComprobante"/> (design: Table Shapes — write path A). La CHECK
-/// <c>ck_pagos_comprobante_vuelto_no_negativo</c> es defensa en profundidad —
-/// <c>ValidadorDePagos</c> ya rechaza cualquier vuelto negativo aritméticamente antes de llegar
-/// acá (misma familia que <c>ck_comprobantes_venta_numero_positivo</c>).
+/// Mapea <see cref="PagoComprobante"/> (design: Table Shapes — write path A). Las CHECKs
+/// <c>ck_pagos_comprobante_vuelto_no_negativo</c> e <c>ck_pagos_comprobante_importe_no_negativo</c>
+/// son defensa en profundidad — <c>ValidadorDePagos</c> ya rechaza cualquier vuelto o importe
+/// negativo aritméticamente antes de llegar acá (misma familia que
+/// <c>ck_comprobantes_venta_numero_positivo</c>).
 /// </summary>
 public class PagoComprobanteConfiguration : IEntityTypeConfiguration<PagoComprobante>
 {
@@ -19,6 +20,7 @@ public class PagoComprobanteConfiguration : IEntityTypeConfiguration<PagoComprob
         builder.ToTable("pagos_comprobante", t =>
         {
             t.HasCheckConstraint("ck_pagos_comprobante_vuelto_no_negativo", "vuelto >= 0");
+            t.HasCheckConstraint("ck_pagos_comprobante_importe_no_negativo", "importe >= 0");
         });
 
         builder.HasKey(p => p.Id).HasName("pk_pagos_comprobante");
