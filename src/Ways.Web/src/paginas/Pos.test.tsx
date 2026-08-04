@@ -609,6 +609,47 @@ describe('Pos — checkout', () => {
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
   })
 
+  it('nuevaVenta limpia el error de escaneo que haya quedado de antes de cobrar', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
+      if (ruta === '/clientes') {
+        const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      if (ruta.startsWith('/articulos/escaneo?entrada=999')) {
+        return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No se encontró un artículo activo para el código 999.'))
+      }
+      if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture())
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta, medioCuentaCorriente])
+      if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
+      if (ruta.startsWith('/parametros/vuelto_maximo')) return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '999')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    expect(await screen.findByText('No se encontró un artículo activo para el código 999.')).toBeInTheDocument()
+
+    await userEvent.clear(screen.getByLabelText('Código escaneado'))
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+    expect(screen.queryByText('No se encontró un artículo activo para el código 999.')).not.toBeInTheDocument()
+  })
+
   it('doble click en Cobrar dispara exactamente un POST', async () => {
     let resolverCheckout: (comprobante: ComprobanteEmitido) => void = () => {}
     const checkoutPendiente = new Promise<ComprobanteEmitido>((resolve) => {

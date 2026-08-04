@@ -459,10 +459,15 @@ export function Pos() {
     setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, vueltoManual } : f)))
   }
 
+  // El resto del estado de la venta anterior (filas de pago, overrides de edición de cantidad,
+  // precios/aviso) ya queda limpio desde el propio éxito de `cobrar()` — acá solo falta
+  // `errorEscaneo`, que sobrevive a una venta completa si el cajero había escaneado mal un
+  // código antes de cobrar.
   function nuevaVenta() {
     if (cobrandoRef.current) return
     setVentaEmitida(null)
     setErrorCobro('')
+    setErrorEscaneo('')
   }
 
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
