@@ -453,6 +453,49 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
+    public async Task UnaDevolucionReResuelveElPrecioVigenteEnVezDePinearElDeLaVentaOriginal()
+    {
+        // Paridad legacy (alsina): una devolución NO es un "deshacer" contable de la venta
+        // original — vuelve a pasar por el mismo camino de resolución de precios que cualquier
+        // línea nueva, así que si el precio cambió entre la venta y la devolución, la devolución
+        // usa el vigente AL MOMENTO DE LA DEVOLUCIÓN, nunca el snapshoteado en la venta original
+        // (a diferencia del reimpreso de la MISMA venta, que sí es un snapshot inmutable —
+        // ReimprimirDespuesDeUnCambioDeCatalogoDevuelveElItemSinCambios).
+        var ctx = await PrepararAsync(nameof(UnaDevolucionReResuelveElPrecioVigenteEnVezDePinearElDeLaVentaOriginal));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ncx-precio-vigente", 100m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente NCX Precio Vigente");
+
+        var original = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)],
+            null, null);
+        var respuestaOriginal = await ctx.Admin.PostAsJsonAsync("/api/ventas", original);
+        Assert.Equal(HttpStatusCode.Created, respuestaOriginal.StatusCode);
+        var emitidoOriginal = (await respuestaOriginal.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(100m, emitidoOriginal.Items[0].PrecioUnitario);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var precio = await db.Precios.FirstAsync(p => p.IdArticulo == idArticulo);
+            precio.Monto = 150m;
+            await db.SaveChangesAsync();
+        }
+
+        var devolucion = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "NCX", emitidoOriginal.Id,
+            [new LineaDeVenta(idArticulo, 1m, null)],
+            [],
+            null, null);
+        var respuestaDevolucion = await ctx.Admin.PostAsJsonAsync("/api/ventas", devolucion);
+        Assert.Equal(HttpStatusCode.Created, respuestaDevolucion.StatusCode);
+
+        var emitidoDevolucion = (await respuestaDevolucion.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(150m, emitidoDevolucion.Items[0].PrecioUnitario);
+        Assert.Equal(-150m, emitidoDevolucion.Total);
+    }
+
+    [Fact]
     public async Task UnaTxNoPuedeAsociarseAOtroComprobante()
     {
         var ctx = await PrepararAsync(nameof(UnaTxNoPuedeAsociarseAOtroComprobante));
