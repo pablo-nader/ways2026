@@ -132,13 +132,13 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status409Conflict, "Ya existe stock cargado para ese artículo en ese punto de venta.", "stock_duplicado"),
 
             // stage-5-pos-ventas (Slice 3, task 3.12, db-error-backstops, design: Backstop Map):
-            // las tres CHECKs nuevas de comprobantes_venta/pagos_comprobante/movimientos_stock
+            // las cuatro CHECKs de comprobantes_venta/pagos_comprobante/movimientos_stock
             // no comparten un prefijo común (a diferencia de "ck_ofertas_"), así que el guard
             // de esta rama llama directo a ClasificarCheckDeVentas (switch por nombre EXACTO,
             // nunca Contains) en vez de filtrar por StartsWith primero. ValidadorDePagos/
             // ReglaDeComprobantes/el camino de escritura de movimientos_stock (Slice 4/5) ya
-            // validan los tres invariantes en el servicio — bajo operación normal ninguna de
-            // las tres ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
+            // validan los cuatro invariantes en el servicio — bajo operación normal ninguna de
+            // las cuatro ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
             // de banda (misma familia que ClasificarCheckDeOfertas).
             DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckVenta } }
                 when ClasificarCheckDeVentas(ckVenta) is { } checkVenta =>
