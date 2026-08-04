@@ -129,7 +129,14 @@ scan resolution live end-to-end. **Rollback**: down-migration (drop
 
 ### 2A. DB CHANGE GATE — BLOCKING (covers BOTH migrations)
 
-- [ ] 2.1 **STOP.** Present the full model for approval before generating
+- [x] 2.1 **APPROVED 2026-08-04** ("dale nomas"), exactly as presented: both
+  migrations, all 7 tables grouped by write path, 3 enums, RLS on all, the 8
+  bundled assumptions (sales without turno, OperacionDePos AND-composition with
+  the two inverted Vendedor tests, explicit idPuntoVenta + no asignaciones
+  table, CC narrow slice with LimiteCredito model, anular-never-restaurar +
+  TX/NCX only + optional asociado, admin-only ajuste, recargo dormant, and the
+  no-advisory-locks decide-then-commit deviation with pinned statement order).
+  **STOP.** Present the full model for approval before generating
   anything (CLAUDE.md gate), grouped by write path:
   - **Write path A** (Emisión): `numeraciones_comprobante` (this slice's
     migration) + `comprobantes_venta`/`items_comprobante_venta`/
