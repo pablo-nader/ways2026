@@ -133,6 +133,15 @@ export function Pos() {
   useEffect(() => {
     const generacion = (generacionResolucionRef.current += 1)
 
+    // Una edición de cantidad se debounce (el usuario suele seguir tipeando); un escaneo
+    // dispara la resolución de inmediato, es una única mutación discreta. La bandera se
+    // consume acá mismo, ANTES del guard de precondiciones, para que se resetee en cada
+    // corrida del efecto sin importar si esta corrida llega a resolver o no — así una edición
+    // hecha mientras cliente/punto de venta todavía cargan no queda pendiente y termina
+    // heredada por una corrida posterior no relacionada.
+    const demora = ultimaAccionEsEdicionRef.current ? 250 : 0
+    ultimaAccionEsEdicionRef.current = false
+
     if (lineas.length === 0 || !clienteSeleccionado || !puntoVentaSeleccionada) {
       setPrecios({})
       setAvisoPrecios('')
@@ -143,12 +152,6 @@ export function Pos() {
     setResolviendo(true)
     setAvisoPrecios('')
 
-    // Una edición de cantidad se debounce (el usuario suele seguir tipeando); un escaneo
-    // dispara la resolución de inmediato, es una única mutación discreta. La bandera se
-    // consume acá mismo: un cambio de cliente/punto de venta disparado justo después de una
-    // edición no debe heredar la demora de esa edición anterior.
-    const demora = ultimaAccionEsEdicionRef.current ? 250 : 0
-    ultimaAccionEsEdicionRef.current = false
     const idTimeout = setTimeout(() => {
       clienteDeOfertas
         .resolver(aLineasDeResolucion(lineas, clienteSeleccionado.idListaPrecio, puntoVentaSeleccionada.idEmpresa))
@@ -197,6 +200,12 @@ export function Pos() {
       case 'vaciar':
         setCantidadesEnEdicion({})
         break
+      case 'editarCantidad':
+        break
+      default: {
+        const _exhaustivo: never = accion
+        void _exhaustivo
+      }
     }
   }, [])
 
@@ -211,9 +220,16 @@ export function Pos() {
   function cambiarCantidad(idArticulo: number, texto: string) {
     setCantidadesEnEdicion((prev) => ({ ...prev, [idArticulo]: texto }))
     const cantidad = Number(texto)
-    if (texto.trim() !== '' && Number.isFinite(cantidad) && cantidad >= CANTIDAD_MINIMA) {
-      mutarCarrito({ tipo: 'editarCantidad', idArticulo, cantidad })
-    }
+    if (texto.trim() === '' || !Number.isFinite(cantidad) || cantidad < CANTIDAD_MINIMA) return
+
+    // Un estado intermedio del input (ej. "1." tipeando hacia "1.5") puede parsear al mismo
+    // valor ya comprometido en la línea (Number("1.") === 1) — despachar en ese caso dispara
+    // una resolución de precios redundante. Solo se despacha cuando el valor parseado difiere
+    // de la cantidad comprometida.
+    const lineaActual = lineas.find((l) => l.idArticulo === idArticulo)
+    if (lineaActual && lineaActual.cantidad === cantidad) return
+
+    mutarCarrito({ tipo: 'editarCantidad', idArticulo, cantidad })
   }
 
   function confirmarCantidad(idArticulo: number) {

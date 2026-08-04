@@ -411,14 +411,24 @@ describe('Pos — edición de cantidad', () => {
     return screen.getByLabelText('Cantidad de Coca Cola 1L') as HTMLInputElement
   }
 
-  it('tipear "1." conserva el punto decimal visible y no dispara ninguna mutación de cantidad', async () => {
+  it('tipear "1." sobre una línea con cantidad 1 conserva el punto decimal visible y no dispara una resolución redundante (mismo valor comprometido), pero completar a "1.5" sí dispara una resolución', async () => {
     const input = await agregarLineaCocaCola()
-    const llamadasPrevias = apiPostMock.mock.calls.length
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
 
-    escribirValorCrudo(input, '1.')
+    vi.useFakeTimers()
+    try {
+      escribirValorCrudo(input, '1.')
+      expect(input.value).toBe('1.')
+      await vi.advanceTimersByTimeAsync(300)
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+      expect(input.value).toBe('1.')
 
-    expect(input.value).toBe('1.')
-    expect(apiPostMock.mock.calls.length).toBe(llamadasPrevias)
+      escribirValorCrudo(input, '1.5')
+      await vi.advanceTimersByTimeAsync(300)
+      expect(apiPostMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('poner la cantidad en "0" y perder el foco hace que el input vuelva a mostrar la cantidad confirmada', async () => {
@@ -499,6 +509,46 @@ describe('Pos — debounce de la resolución de precios', () => {
       await vi.advanceTimersByTimeAsync(50)
 
       expect(apiPostMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('una edición hecha mientras el cliente todavía carga no queda pendiente: cuando el cliente carga, la corrida no relacionada resuelve sin heredar la demora de esa edición', async () => {
+    let resolverClientes: (pagina: PaginaDe<ClienteListado>) => void = () => {}
+    const clientesPendientes = new Promise<PaginaDe<ClienteListado>>((resolve) => {
+      resolverClientes = resolve
+    })
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
+      if (ruta === '/clientes') return clientesPendientes
+      if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    expect(apiPostMock).not.toHaveBeenCalled()
+
+    vi.useFakeTimers()
+    try {
+      const input = screen.getByLabelText('Cantidad de Coca Cola 1L')
+      fireEvent.change(input, { target: { value: '2' } })
+      expect(apiPostMock).not.toHaveBeenCalled()
+
+      await act(async () => {
+        resolverClientes({ items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 })
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      await vi.advanceTimersByTimeAsync(50)
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
     }
