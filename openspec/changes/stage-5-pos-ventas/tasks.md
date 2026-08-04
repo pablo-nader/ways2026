@@ -315,7 +315,7 @@ slice — expect its own review round to run long.
 
 ### 4A. Application — the transaction
 
-- [ ] 4.1 Add `ServicioDeVentas.EmitirAsync` — decide-then-commit: resolve
+- [x] 4.1 Add `ServicioDeVentas.EmitirAsync` — decide-then-commit: resolve
   `momento`, `tipo`, `cliente`/`puntoVenta`, run `ServicioDeOfertas.
   ResolverAsync` (7 queries), snapshot articulos/codigos_barra/alicuotas (2
   queries), `CalculadorDeTotales.Materializar` (pure), resolve
@@ -323,58 +323,58 @@ slice — expect its own review round to run long.
   `ValidadorDePagos.Validar` (pure) — all **outside** the transaction,
   building an immutable `PlanDeVenta`. *(design: Technical Approach —
   "decide, then commit"; The Sale Transaction)*
-- [ ] 4.2 Add the transactional half inside `CreateExecutionStrategy`: steps
+- [x] 4.2 Add the transactional half inside `CreateExecutionStrategy`: steps
   1–6 in the pinned order (numeración → comprobante → items → pagos → stock
   loop ascending `id_articulo` → CC), every entity built fresh from the plan
   on each retry attempt, step 6 raw ADO. *(design: The Sale Transaction —
   binding statement order, Retry contract)*
-- [ ] 4.3 Add `LineaDeVenta`/`PagoDeVenta`/`SolicitudDeVenta` contracts — no
+- [x] 4.3 Add `LineaDeVenta`/`PagoDeVenta`/`SolicitudDeVenta` contracts — no
   money fields on the request. *(design decision 3; spec: operacion-de-pos /
   Checkout Orchestration Contract)*
-- [ ] 4.4 Wire `movimientos_stock` INSERT + `stock` upsert (`ON CONFLICT DO
+- [x] 4.4 Wire `movimientos_stock` INSERT + `stock` upsert (`ON CONFLICT DO
   UPDATE … RETURNING`) per line, ascending `id_articulo`. *(design decisions
   1, 2; spec: stock / Sale Decrement Inside The Checkout Transaction)*
-- [ ] 4.5 Wire `movimientos_cuenta_corriente` consumo + `Cliente.Saldo`
+- [x] 4.5 Wire `movimientos_cuenta_corriente` consumo + `Cliente.Saldo`
   `UPDATE … RETURNING` + post-check, only when a pago's medio is
   `CuentaCorriente`. *(spec: consumo-cuenta-corriente / Consumo Is Written
   Inside The Sale Transaction)*
 
 ### 4B. API
 
-- [ ] 4.6 Add `POST /api/ventas` — 201 + `Location`, body = comprobante
+- [x] 4.6 Add `POST /api/ventas` — 201 + `Location`, body = comprobante
   emitido with `numeroVisible`, `OperacionDePos`. *(spec: operacion-de-pos /
   Checkout Orchestration Contract)*
-- [ ] 4.7 [P] Add `GET /api/ventas/{id}` (reprint, reads the snapshot only)
+- [x] 4.7 [P] Add `GET /api/ventas/{id}` (reprint, reads the snapshot only)
   and `GET /api/ventas` (filtros + paginado), both `OperacionDePos`. *(spec:
   comprobantes-venta / Snapshot Immutability of Items)*
 
 ### 4C. Tests
 
-- [ ] 4.8 Integration (atomicity): force a failure at each of the six
+- [x] 4.8 Integration (atomicity): force a failure at each of the six
   statements, assert nothing persisted except the consumed número. *(spec:
   comprobantes-venta / A failure after stock decrement rolls back
   everything; design: Testing Strategy — Integration (atomicity))*
-- [ ] 4.9 Integration (concurrency): two concurrent sales of the same
+- [x] 4.9 Integration (concurrency): two concurrent sales of the same
   articulo/punto de venta → `stock.cantidad = Σ movimientos_stock`. *(spec:
   stock / Concurrent sales of the same articulo do not corrupt the cache)*
-- [ ] 4.10 Integration (concurrency): two concurrent CC sales near the limit
+- [x] 4.10 Integration (concurrency): two concurrent CC sales near the limit
   → limit never exceeded, `saldo = Σ movimientos_cc`. *(spec:
   consumo-cuenta-corriente / Credit-Limit Evaluation)*
-- [ ] 4.11 Integration (concurrency): two concurrent sales at the same
+- [x] 4.11 Integration (concurrency): two concurrent sales at the same
   punto de venta racing the counter → consecutive numbers.
-- [ ] 4.12 Integration (budget): checkout with 2/20/50 lines issues the same
+- [x] 4.12 Integration (budget): checkout with 2/20/50 lines issues the same
   command count (≤16 + writes), `DbCommand` interceptor. *(design: Testing
   Strategy — Integration (budget))*
-- [ ] 4.13 Integration (snapshot): sell, mutate the articulo's catalog
+- [x] 4.13 Integration (snapshot): sell, mutate the articulo's catalog
   fields, re-read the comprobante ⇒ byte-identical items. *(spec:
   comprobantes-venta / Reprint is unaffected by a later catalog change)*
-- [ ] 4.14 Integration (parity): legacy B6 rejection order end-to-end; grep
+- [x] 4.14 Integration (parity): legacy B6 rejection order end-to-end; grep
   assertion — no literal `10`/`20` in the checkout path. *(spec:
   parametros-operativos / No hardcoded tolerancia or vuelto value exists)*
-- [ ] 4.15 [P] Integration: devolución as standalone NCX and as NCX
+- [x] 4.15 [P] Integration: devolución as standalone NCX and as NCX
   referencing an original TX. *(spec: comprobantes-venta / Devoluciones As
   NCX Comprobantes, both scenarios)*
-- [ ] 4.16 Regression: Slices 1–3 suites unedited and green.
+- [x] 4.16 Regression: Slices 1–3 suites unedited and green.
 
 ---
 
