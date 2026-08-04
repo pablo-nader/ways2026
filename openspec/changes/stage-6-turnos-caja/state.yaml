@@ -1,5 +1,5 @@
 change: stage-6-turnos-caja
-phase: propose
+phase: tasks
 status: in_progress
 artifact_store: openspec
 phases:
@@ -11,9 +11,13 @@ phases:
     status: done
     artifact: proposal.md
   spec:
-    status: pending
+    status: done
+    artifact: specs/
+    notes: "5 new capability specs (turnos-de-caja, movimientos-de-caja, arqueo-de-cierre, gastos, tesoreria) + 2 deltas (comprobantes-venta, operacion-de-pos); 26 requirements / 65 scenarios. Pinned error codes: turno_ya_abierto, turno_no_abierto, turno_cerrado, movimiento_de_caja_sin_motivo, motivo_de_apertura_cajon_invalido. Decisions 2 and 9 specced as proposed but remain flagged for the gate."
   design:
-    status: pending
+    status: done
+    artifact: design.md
+    notes: "Centerpiece pinned: importe_esperado(m) = pagos(m) - gastos(m) + [m = ancla] * (fondo + refuerzos - retiros - vueltosTotales), over medios with Comportamiento != CuentaCorriente; the cash anchor is the tenant's UNIQUE Comportamiento=Efectivo medio (0 or 2+ -> 409 caja_sin_medio_efectivo_unico, raised by resumen too); vueltos subtract from the anchor as a TOTAL regardless of the pago's medio (AdmiteVuelto is editable per row, doc 10's literal per-medio formula would double-miscount). DECLARED DEVIATION flagged for the gate: cierre order inverted to UPDATE-turno-FIRST (exclusive lock before derivation reads) + SELECT ... FOR SHARE on the turno as the first statement of EmitirAsync's write transaction and of the anulacion path -- closes the race where a sale resolving the turno as open commits after the arqueo was derived (uncounted cash). Cost: checkout diff grows to ~30 lines (still its own full judgment-day round); lock order is total (turno always first) so no deadlock. Also flagged: motivo NOT NULL >= 5 uniformized across all three tipo_movimiento_caja (stricter than decision 9 for retiro/refuerzo); tesoreria egreso = all gastos (legacy parity). Fails closed on multi-cash-medio tenants until es_caja_fisica ships (deliberate)."
   tasks:
     status: pending
   apply:
@@ -54,5 +58,5 @@ notes:
   - "Delivery: chained PRs, stacked-to-main per protocolo-pr-solo-dev and the stage-3/4/5 precedent, with judgment-day before EVERY PR. THE CHECKOUT-WIRING SLICE NEEDS FULL JUDGMENT RIGOR: it modifies ServicioDeVentas.EmitirAsync/AnularAsync, the most-guarded transaction in the project, so its diff gets a dedicated judgment-day round and the entire stage-5 integration suite must stay green except for the new turno precondition. Proposal flags for sdd-tasks to slice BY WRITE PATH: (1) schema gate -- 5 tables + 4 enums + partial unique index + FK + RLS + EF configs + backstops (size:exception candidate); (2) turno lifecycle -- apertura (with the 23505 race test) + cierre skeleton + movimientos_caja; (3) gastos write path (small, independent once the schema lands); (4) derivation + cierre -- pure CalculadorDeArqueo + resumen parcial + the one cierre transaction (the centerpiece); (5) checkout wiring -- deliberately SMALL AND SURGICAL, its own slice, its own full judgment-day round; (6) web caja screens + Pos.tsx gate seam. Review Workload Forecast discipline applies (exact guard lines required: 'Decision needed before apply', 'Chained PRs recommended', '400-line budget risk')."
   - "Dependencies: stage 5 (merged and archived) -- comprobantes_venta/items/pagos_comprobante, movimientos_stock, movimientos_cuenta_corriente, ServicioDeVentas (EmitirAsync/AnularAsync), EstrategiaSinReintento, Politicas.OperacionDePos (Vendedor+Supervisor+Admin), MedioPago with Comportamiento/AdmiteVuelto/RequiereReferencia, seeded areas and proveedores, ServicioDeParametros. DB Change Gate approval is BLOCKING before the migration."
   - "Rollback: fully additive. Five new tables, four new enums, two new Domain namespaces (Caja, Gastos), new endpoints and new web routes -- all droppable without touching stage 1-5 data. The only non-additive edges revert cleanly: comprobantes_venta.id_turno_caja ALREADY EXISTS and is nullable (shipped NULL in stage 5, migration 20260804143427), so stage 6 only adds the FK and starts populating it -- dropping the FK returns the column to its dormant state and stage-5 rows are untouched; EmitirAsync gains a precondition and one assignment (reverting restores stage-5 behaviour exactly, no data repair); AnularAsync gains a guard (reverting only removes a restriction). No backfill runs (decision 8), so there is no row migration to undo."
-  - "Carryover watch: still OPEN and unrelated to this stage -- (a) the ServicioDeArticulos articulos_empresas replace-set concurrency gap (spawned during stage-4 slice 2), (b) the ck_pagos_comprobante_importe_no_negativo CHECK awaiting the user micro-gate (recorded in the stage-5 verify report; domain rules 0/0b protect it meanwhile)."
+  - "Carryover watch: still OPEN and unrelated to this stage -- (a) the ServicioDeArticulos articulos_empresas replace-set concurrency gap (spawned during stage-4 slice 2), (b) RESOLVED 2026-08-04: ck_pagos_comprobante_importe_no_negativo shipped in PR #51 (gate-approved follow-up, clean judgment-day round)."
   - "Engram availability during propose (2026-08-04): if mem_save succeeded, the mirror lives at topic_key sdd/stage-6-turnos-caja/proposal; openspec files remain the single source of truth for this change either way (stage-4/5 precedent)."
