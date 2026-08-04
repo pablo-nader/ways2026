@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
 using Ways.Application.Clientes;
+using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
@@ -13,6 +14,7 @@ using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
+using Ways.Domain.Ventas;
 
 namespace Ways.Infrastructure.Persistencia;
 
@@ -67,6 +69,14 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Oferta> Ofertas => Set<Oferta>();
     public DbSet<OfertaLista> OfertasListas => Set<OfertaLista>();
 
+    // stage-5-pos-ventas, Slice 2: NumeracionesComprobante NO se expone en IWaysDbContext —
+    // mismo criterio que NumeracionesArticulos (no NumeracionesClientes): su único escritor
+    // legítimo (AsignadorDeNumeroComprobante) recibe el WaysDbContext concreto por parámetro,
+    // y no hay backfill de InicializadorDeBaseDeDatos que necesite la interfaz acá (design
+    // decisión 9: creación perezosa dentro de la transacción de venta, sin seed al crear el
+    // punto de venta).
+    public DbSet<NumeracionComprobante> NumeracionesComprobante => Set<NumeracionComprobante>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>
@@ -102,6 +112,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnNumeracionArticulo(modelBuilder);
         AplicarFiltroDeTenantEnArticuloEmpresa(modelBuilder);
         AplicarFiltroDeTenantEnOfertaLista(modelBuilder);
+        AplicarFiltroDeTenantEnNumeracionComprobante(modelBuilder);
     }
 
     /// <summary>
@@ -143,6 +154,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     {
         RechazarEscriturasDeNumeracionCliente();
         RechazarEscriturasDeNumeracionArticulo();
+        RechazarEscriturasDeNumeracionComprobante();
 
         foreach (var entrada in ChangeTracker.Entries<EntidadTenant>())
         {
@@ -227,6 +239,27 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
                 throw new InvalidOperationException(
                     "numeraciones_articulos solo se escribe con SQL crudo, vía " +
                     $"{nameof(AsignadorDeCodigoInternoArticulo)} — nunca por " +
+                    $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// stage-5-pos-ventas (Slice 2, design decisión 9): mismo guard que
+    /// <see cref="RechazarEscriturasDeNumeracionArticulo"/>, acá para
+    /// <see cref="NumeracionComprobante"/> — <see cref="AsignadorDeNumeroComprobante"/> es su
+    /// único punto de escritura legítimo, con SQL crudo, con creación perezosa de la fila
+    /// dentro de la transacción del llamador.
+    /// </summary>
+    private void RechazarEscriturasDeNumeracionComprobante()
+    {
+        foreach (var entrada in ChangeTracker.Entries<NumeracionComprobante>())
+        {
+            if (entrada.State is EntityState.Added or EntityState.Modified)
+            {
+                throw new InvalidOperationException(
+                    "numeraciones_comprobante solo se escribe con SQL crudo, vía " +
+                    $"{nameof(AsignadorDeNumeroComprobante)} — nunca por " +
                     $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
             }
         }
@@ -414,6 +447,23 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(OfertaLista), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(OfertaLista.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="NumeracionComprobante"/> no hereda de <see cref="EntidadTenant"/> (PK
+    /// compuesta <c>(IdPuntoVenta, TipoComprobante)</c>, mismo motivo que
+    /// <see cref="OfertaLista"/>/<see cref="ArticuloEmpresa"/>), así que necesita la misma
+    /// variante escrita a mano.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnNumeracionComprobante(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(NumeracionComprobante))!;
+
+        var parametro = Expression.Parameter(typeof(NumeracionComprobante), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(NumeracionComprobante.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

@@ -131,6 +131,19 @@ public class ManejadorDeErrores(
                 when string.Equals(pkOfertasListas, "pk_ofertas_listas", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "La lista de precios ya está en el subconjunto de targeting de la oferta.", "oferta_lista_duplicada"),
 
+            // stage-5-pos-ventas (Slice 2, task 2.6, db-error-backstops, design: Backstop Map):
+            // pk_numeraciones_comprobante — exención documentada de prueba de carrera. A
+            // diferencia de pk_ofertas_listas/PK_articulos_empresas (que SÍ tienen un camino de
+            // escritura normal que puede chocar), el único escritor de esta tabla
+            // (AsignadorDeNumeroComprobante) inserta con ON CONFLICT DO NOTHING — nunca puede
+            // disparar 23505 por construcción. Esta rama queda como defensa de esquema pura,
+            // alcanzable solo por un INSERT crudo/fuera de banda que bypasee el asignador
+            // (misma familia que pk_stock, Slice 3), probada con SQL directo, no con una
+            // carrera real.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string pkNumeracion } }
+                when string.Equals(pkNumeracion, "pk_numeraciones_comprobante", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe una numeración para ese punto de venta y tipo de comprobante.", "numeracion_duplicada"),
+
             // Defensa en profundidad genérica (judgment-day, item 2, stage-4-ofertas): EF
             // interpreta un UPDATE/DELETE que afecta 0 filas de las esperadas (en vez de la 1
             // esperada por su predicado de PK) como un conflicto de concurrencia y lanza
