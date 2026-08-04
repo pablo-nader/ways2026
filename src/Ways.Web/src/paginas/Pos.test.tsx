@@ -483,6 +483,49 @@ describe('Pos — vista previa de precios', () => {
     expect(solicitud.pagos).toEqual([{ idMedioPago: medioEfectivo.id, importe: 500, referencia: null, vuelto: 0 }])
   })
 
+  it('regresión: una resolución exitosa seguida de una que rechaza no deja precios stale en el subtotal (judgment-day R4, purga de `precios` en el catch)', async () => {
+    let cantidadDeResoluciones = 0
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        cantidadDeResoluciones += 1
+        if (cantidadDeResoluciones === 1) {
+          const resultados: ResultadoDeResolucion[] = [
+            { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+          ]
+          return Promise.resolve(resultados)
+        }
+        return Promise.reject(new Error('falló la resolución'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    const boton = screen.getByRole('button', { name: 'Agregar' })
+
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+
+    // Segunda mutación (re-escaneo, suma cantidad sobre la misma línea): dispara una segunda
+    // resolución que esta vez rechaza.
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await waitFor(() => expect(cantidadDeResoluciones).toBe(2))
+
+    expect(
+      await screen.findByText('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.'),
+    ).toBeInTheDocument()
+
+    const filaTotalPrevio = screen.getByText('Total previo').closest('div') as HTMLElement
+    await waitFor(() => expect(within(filaTotalPrevio).getByText('—')).toBeInTheDocument())
+    expect(screen.queryByText('$200,00', { selector: 'strong' })).not.toBeInTheDocument()
+    expect(screen.getAllByText('se confirma al cobrar')).toHaveLength(2)
+  })
+
   it('regresión: una respuesta desactualizada del resolver no pisa una más reciente (fuera de orden)', async () => {
     let resolverPrimera: (resultados: ResultadoDeResolucion[]) => void = () => {}
     const primeraPendiente = new Promise<ResultadoDeResolucion[]>((resolve) => {
