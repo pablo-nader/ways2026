@@ -187,7 +187,7 @@ precio_unitario, 2)`; `descuento_total = Σ descuento`; `total = subtotal − de
 
 ## Authorization Surface
 
-`Politicas.OperacionDePos` = `RolConocido.Vendedor` + `RolConocido.Admin` (Root excluded, same
+`Politicas.OperacionDePos` = `RolConocido.Vendedor` + `RolConocido.Supervisor` + `RolConocido.Admin` (Supervisor added at judgment-day R1 of Slice 1, legacy parity `tipoUser IN (2,3,4)`; Root excluded, same
 criterion as `GestionDeCatalogo`: "root administra tenants, no opera ninguno").
 
 | Group | Group gate becomes | Writes stack |
