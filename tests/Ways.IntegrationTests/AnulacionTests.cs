@@ -336,6 +336,12 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         await comando.ExecuteNonQueryAsync();
     }
 
+    /// <summary>Postura sin reintento (ver <c>ServicioDeVentas.CrearEstrategiaSinReintento</c>):
+    /// el 500 de acá NO dispara ningún reintento automático de <c>EnableRetryOnFailure</c> — el
+    /// REVOKE simula una falla técnica persistente (no transitoria), así que el resultado es el
+    /// mismo con o sin retry, pero el punto de este test es que <c>AnularAsync</c> nunca vuelve a
+    /// correr la transacción por su cuenta; el reintento de abajo es explícitamente del "cliente"
+    /// del test, no de la infraestructura.</summary>
     [Fact]
     public async Task UnaFallaAlRevertirElStockDejaElComprobanteEmitidoYNadaCambiado()
     {
@@ -377,8 +383,109 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         Assert.Equal(HttpStatusCode.OK, reintento.StatusCode);
     }
 
+    /// <summary>Mismo punto de falla que <see
+    /// cref="UnaFallaAlRevertirElStockDejaElComprobanteEmitidoYNadaCambiado"/>, pero sobre el
+    /// contramovimiento de cuenta corriente (paso 3 de <c>EjecutarAnulacionAsync</c>) — postura
+    /// sin reintento: ningún reintento automático re-corre la transacción, así que
+    /// <c>clientes.saldo</c> y el estado del comprobante quedan exactamente como antes del
+    /// intento fallido.</summary>
+    [Fact]
+    public async Task UnaFallaAlRevertirLaCuentaCorrienteDejaElComprobanteEmitidoYNadaCambiado()
+    {
+        var ctx = await PrepararAsync(nameof(UnaFallaAlRevertirLaCuentaCorrienteDejaElComprobanteEmitidoYNadaCambiado));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-atomicidad-anulacion-cc", 150m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Atomicidad Anulación CC", limiteCredito: 1000m);
+        var emitido = await EmitirAsync(ctx, idCliente, idArticulo, 150m, idMedio: ctx.IdMedioCuentaCorriente);
+
+        await RevocarAsync("movimientos_cuenta_corriente", "INSERT");
+        HttpResponseMessage respuesta;
+        try
+        {
+            respuesta = await ctx.Admin.PostAsync($"/api/ventas/{emitido.Id}/anulacion", null);
+        }
+        finally
+        {
+            await RestaurarAsync("movimientos_cuenta_corriente", "INSERT");
+        }
+
+        Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var estado = await db.ComprobantesVenta.Where(c => c.Id == emitido.Id).Select(c => c.Estado).FirstAsync();
+        Assert.Equal(EstadoComprobante.Emitido, estado);
+
+        Assert.Equal(
+            0,
+            await db.MovimientosCuentaCorriente.CountAsync(
+                m => m.IdComprobanteVenta == emitido.Id && m.Tipo == Ways.Domain.CuentaCorriente.TipoMovimientoCc.Ajuste));
+
+        var saldo = await db.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).FirstAsync();
+        Assert.Equal(150m, saldo);
+
+        var reintento = await ctx.Admin.PostAsync($"/api/ventas/{emitido.Id}/anulacion", null);
+        Assert.Equal(HttpStatusCode.OK, reintento.StatusCode);
+    }
+
+    // ---- Triaged: anulación de una NCX invierte el signo correctamente -------------------------
+
+    /// <summary>Una devolución (NCX) escribe un movimiento de stock ORIGINAL positivo (motivo =
+    /// venta, la devolución sube el stock — ver <c>MaterializarItems</c>/<c>EjecutarTransaccionAsync</c>
+    /// paso 5, <c>delta = -item.Cantidad</c> con <c>item.Cantidad</c> ya negativa para NCX). Su
+    /// anulación tiene que escribir la inversa exacta —negativa—, nunca reusar el mismo signo que
+    /// la anulación de una TX.</summary>
+    [Fact]
+    public async Task AnulacionDeUnaNcxReviertaElStockConElSignoInvertidoCorrectamente()
+    {
+        var ctx = await PrepararAsync(nameof(AnulacionDeUnaNcxReviertaElStockConElSignoInvertidoCorrectamente));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-anulacion-ncx", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Anulación NCX");
+
+        var ncx = await EmitirNcxAsync(ctx, idCliente, idArticulo, cantidad: 3m);
+
+        var (cantidadTrasNcx, _) = await LeerStockYSaldoAsync(ctx, idArticulo, idCliente);
+        Assert.Equal(3m, cantidadTrasNcx);
+
+        var respuestaAnulacion = await ctx.Admin.PostAsync($"/api/ventas/{ncx.Id}/anulacion", null);
+        var cuerpo = await respuestaAnulacion.Content.ReadAsStringAsync();
+        Assert.True(respuestaAnulacion.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        var (cantidadTrasAnulacion, _) = await LeerStockYSaldoAsync(ctx, idArticulo, idCliente);
+        Assert.Equal(0m, cantidadTrasAnulacion);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var movimientoInverso = await db.MovimientosStock
+            .SingleAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Anulacion);
+        Assert.Equal(-3m, movimientoInverso.Cantidad);
+    }
+
+    private static async Task<ComprobanteEmitido> EmitirNcxAsync(
+        Contexto ctx, int idCliente, int idArticulo, decimal cantidad = 1m)
+    {
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "NCX", null,
+            [new LineaDeVenta(idArticulo, cantidad, null)],
+            [],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+
+        return (await JsonSerializer.DeserializeAsync<ComprobanteEmitido>(
+            new MemoryStream(System.Text.Encoding.UTF8.GetBytes(cuerpo)), OpcionesJson))!;
+    }
+
     // ---- task 5.6: dos anulaciones concurrentes del mismo comprobante --------------------------
 
+    /// <summary>Spec: task 5.6 / design's forced-rendezvous list (Reachability, honestly — surface
+    /// 3, "two anulaciones of the same comprobante"). Sin interceptor de rendezvous (mismo
+    /// criterio que <c>ClientesEndpointsTests</c>): el <c>UPDATE ... WHERE estado = 'emitido'
+    /// RETURNING</c> condicional de <c>ServicioDeVentas.EjecutarAnulacionAsync</c> ya serializa
+    /// la carrera con su propio lock de fila — mismo hallazgo confirmado sin forzar nada. Dos POST
+    /// lanzados con <c>Task.WhenAll</c> alcanzan para probar la concurrencia real; desvío
+    /// registrado respecto a la lista de forced-rendezvous de design, documentado acá en vez de
+    /// silencioso.</summary>
     [Fact]
     public async Task DosAnulacionesConcurrentesDelMismoComprobanteDanExactamenteUnGanador()
     {

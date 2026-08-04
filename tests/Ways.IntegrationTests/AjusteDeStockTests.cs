@@ -223,6 +223,65 @@ public class AjusteDeStockTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal("cantidad_de_ajuste_invalida", problema.GetProperty("codigo").GetString());
     }
 
+    [Fact]
+    public async Task UnAjusteConMasDeTresDecimalesEsRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(UnAjusteConMasDeTresDecimalesEsRechazado));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ajuste-decimales", 10m);
+
+        var solicitud = new SolicitudDeAjusteDeStock(ctx.IdPuntoVenta, idArticulo, 1.2345m, "Cantidad con demasiados decimales");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/ajustes", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cantidad_invalida", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- pre-checks de FK: referencias inválidas nunca llegan como 500 --------------------------
+
+    [Fact]
+    public async Task UnAjusteConArticuloInexistenteEsRechazadoCon400()
+    {
+        var ctx = await PrepararAsync(nameof(UnAjusteConArticuloInexistenteEsRechazadoCon400));
+
+        var solicitud = new SolicitudDeAjusteDeStock(ctx.IdPuntoVenta, 999_999, 10m, "Artículo inexistente");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/ajustes", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task UnAjusteConPuntoDeVentaInexistenteEsRechazadoCon404()
+    {
+        var ctx = await PrepararAsync(nameof(UnAjusteConPuntoDeVentaInexistenteEsRechazadoCon404));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-ajuste-pv-inexistente", 10m);
+
+        var solicitud = new SolicitudDeAjusteDeStock(999_999, idArticulo, 10m, "Punto de venta inexistente");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/ajustes", solicitud);
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("no_encontrado", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task UnAjusteConArticuloDeOtroTenantEsRechazadoCon400()
+    {
+        var ctxUno = await PrepararAsync($"{nameof(UnAjusteConArticuloDeOtroTenantEsRechazadoCon400)}-uno");
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctxUno, "articulo-ajuste-tenant-uno", 10m);
+
+        var ctxDos = await PrepararAsync($"{nameof(UnAjusteConArticuloDeOtroTenantEsRechazadoCon400)}-dos");
+
+        var solicitud = new SolicitudDeAjusteDeStock(ctxDos.IdPuntoVenta, idArticulo, 10m, "Artículo de otro tenant");
+        var respuesta = await ctxDos.Admin.PostAsJsonAsync("/api/stock/ajustes", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
+
     // ---- task 5.8: invariante tras una secuencia mixta venta/ajuste/anulación ------------------
 
     [Fact]
