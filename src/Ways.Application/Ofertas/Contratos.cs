@@ -78,3 +78,34 @@ public sealed record EdicionOferta(
     bool Acumulable,
     IReadOnlyList<int>? IdsListas,
     bool Activo);
+
+/// <summary>Una línea de entrada para <c>ServicioDeOfertas.ResolverAsync</c> (task 3.6, design:
+/// Resolution Contract) — a diferencia de <c>Ways.Domain.Ofertas.LineaAResolver</c> (pura,
+/// Domain), esta es la forma HTTP: no lleva ni la cadena de ancestros de categoría ni la
+/// descomposición de fecha/hora local (ambas las arma <c>ServicioDeOfertas</c>), y sí lleva
+/// <see cref="IdEmpresa"/> — el dato que <c>LineaAResolver</c> deliberadamente no lleva (spec:
+/// resolucion-de-ofertas / Candidate Matching, "Empresa-scoped oferta excludes other
+/// empresas"; ver <c>Ways.Domain.Ofertas.ReglaDeOfertas.CoincideEmpresa</c>).</summary>
+public sealed record LineaDeResolucion(int IdArticulo, int? IdEmpresa, int IdListaPrecio, decimal Cantidad);
+
+/// <summary>Cuerpo de <c>POST /api/ofertas/resolver</c> — un único <paramref name="Momento"/>
+/// (design: Open Questions, "server-configured local time") para todo el lote entero, no uno
+/// por línea: resolver un carrito es "ahora" (o un instante hipotético) para todas sus líneas a
+/// la vez. <c>null</c> ⇒ <c>IRelojDelSistema.Ahora</c>.</summary>
+public sealed record SolicitudDeResolucion(IReadOnlyList<LineaDeResolucion> Lineas, DateTimeOffset? Momento = null);
+
+/// <summary>Una oferta aplicada, forma HTTP de <c>Ways.Domain.Ofertas.OfertaAplicada</c>.</summary>
+public sealed record OfertaAplicadaDto(int IdOferta, string Nombre, decimal DescuentoUnitario);
+
+/// <summary>Resultado de resolver una línea (spec: resolucion-de-ofertas / Applied Ofertas Are
+/// Reported, Never Persisted) — <see cref="PrecioOriginal"/>/<see cref="PrecioFinal"/> son
+/// <c>null</c> cuando el lote de precios no tiene ningún precio vigente para el par
+/// (artículo, lista) consultado (caso fuera de alcance de la spec de ofertas: sin precio no hay
+/// nada que descontar, <see cref="Aplicadas"/> queda vacía).</summary>
+public sealed record ResultadoDeResolucion(
+    int IdArticulo,
+    int IdListaPrecio,
+    decimal? PrecioOriginal,
+    decimal? PrecioFinal,
+    decimal DescuentoUnitario,
+    IReadOnlyList<OfertaAplicadaDto> Aplicadas);

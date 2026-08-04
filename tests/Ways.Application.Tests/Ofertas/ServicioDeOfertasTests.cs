@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Ofertas;
+using Ways.Application.Precios;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
@@ -68,6 +69,17 @@ public class ServicioDeOfertasTests
         new(new DbContextOptionsBuilder<WaysDbContext>().UseInMemoryDatabase(nombreDeBase).Options, tenantActual);
 
     private static ServicioDeOfertas CrearServicio(string nombreDeBase, int idTenant) =>
+        new(
+            CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)),
+            new RelojFijo(Ahora),
+            new ContextoFijo(idTenant),
+            CrearServicioDePrecios(nombreDeBase, idTenant));
+
+    /// <summary>Instancia real de <see cref="ServicioDePrecios"/> sobre el MISMO nombre de base
+    /// InMemory — <see cref="ServicioDeOfertas.ResolverAsync"/> (Slice 3) la usa para el lote de
+    /// precios; ningún test de este archivo la ejercita todavía (cubierto en
+    /// <c>ServicioDeOfertasResolucionTests</c>), pero el constructor la necesita.</summary>
+    private static ServicioDePrecios CrearServicioDePrecios(string nombreDeBase, int idTenant) =>
         new(
             CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)),
             new RelojFijo(Ahora),

@@ -254,6 +254,147 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         return resultado;
     }
 
+    /// <summary>
+    /// Resolución batch (stage-4-ofertas, task 3.4; spec: precios / Batch Current-Price
+    /// Resolution; design: Batch Boundary) — ADITIVA: <see cref="PrecioVigenteAsync"/> y
+    /// <see cref="PreciosVigentesAsync"/> quedan sin tocar, misma firma y semántica (design
+    /// decision 5). Devuelve el producto cartesiano completo de <paramref name="idsArticulo"/> ×
+    /// <paramref name="idsListaPrecio"/> — nunca una consulta por par.
+    ///
+    /// <para>Presupuesto fijo de 3 consultas, independiente de N artículos × M listas: (1) las
+    /// listas pedidas por id, SIN filtro de <c>Activo</c> — mismo criterio explícito-por-id que
+    /// <see cref="PrecioVigenteAsync"/>, documentado ahí, no el "qué listas mostrar por default"
+    /// de <see cref="PreciosVigentesAsync"/>; (2) las listas base de las <c>derivada</c>s
+    /// pedidas, solo si alguna no vino ya incluida en (1); (3) UNA consulta de <c>precios</c> con
+    /// <c>= ANY</c> sobre el set de artículos y el set de listas <c>fija</c> involucradas (pedidas
+    /// + bases), agrupada en memoria por <c>OrderByDescending(VigenteDesde)</c> — misma
+    /// determinismo defensivo que <see cref="ObtenerPrecioFijaAsync"/>. Las derivadas se resuelven
+    /// con el mismo <see cref="ResolvedorDePrecios.ResolverPrecioDerivado"/> que
+    /// <see cref="ResolverPrecioAsync"/> (profundidad 1, guarda de precio negativo incluida).
+    /// </para>
+    /// </summary>
+    public async Task<IReadOnlyDictionary<(int IdArticulo, int IdListaPrecio), decimal?>> PreciosVigentesEnLoteAsync(
+        IReadOnlyList<int> idsArticulo, IReadOnlyList<int> idsListaPrecio, DateTimeOffset fecha,
+        CancellationToken ct = default)
+    {
+        if (idsArticulo.Count == 0 || idsListaPrecio.Count == 0)
+        {
+            return new Dictionary<(int, int), decimal?>();
+        }
+
+        // (1) Listas pedidas por id — sin filtro de Activo.
+        var listasPedidas = await db.ListasPrecio
+            .Where(l => idsListaPrecio.Contains(l.Id))
+            .ToListAsync(ct);
+
+        var idsListaFaltantes = idsListaPrecio.Except(listasPedidas.Select(l => l.Id)).ToList();
+        if (idsListaFaltantes.Count > 0)
+        {
+            throw new ErrorDominio(
+                "referencia_invalida", $"No existe la lista de precios {idsListaFaltantes[0]}.", 400);
+        }
+
+        var listaPorId = listasPedidas.ToDictionary(l => l.Id);
+
+        var derivadas = listasPedidas.Where(l => l.Modo == ModoLista.Derivada).ToList();
+        var idsBase = derivadas
+            .Select(d => d.IdListaBase
+                ?? throw new InvalidOperationException(
+                    $"La lista {d.Id} es derivada sin id_lista_base — invariante de ServicioDeListasPrecio violado."))
+            .Distinct()
+            .ToList();
+
+        // (2) Listas base de las derivadas — solo las que no vinieron ya en (1).
+        var idsBaseFaltantes = idsBase.Except(listaPorId.Keys).ToList();
+        if (idsBaseFaltantes.Count > 0)
+        {
+            var basesCargadas = await db.ListasPrecio
+                .Where(l => idsBaseFaltantes.Contains(l.Id))
+                .ToListAsync(ct);
+
+            foreach (var listaBaseCargada in basesCargadas)
+            {
+                listaPorId[listaBaseCargada.Id] = listaBaseCargada;
+            }
+        }
+
+        foreach (var derivada in derivadas)
+        {
+            var idListaBase = derivada.IdListaBase!.Value;
+            if (!listaPorId.TryGetValue(idListaBase, out var listaBase))
+            {
+                throw new ErrorDominio("referencia_invalida", $"No existe la lista base {idListaBase}.", 400);
+            }
+
+            if (listaBase.Modo != ModoLista.Fija)
+            {
+                throw new ErrorDominio(
+                    "lista_base_invalida",
+                    "La lista base de una lista derivada no puede ser a su vez derivada.",
+                    400);
+            }
+        }
+
+        // (3) UNA consulta de precios sobre todas las listas fija involucradas.
+        var idsListaFija = listaPorId.Values
+            .Where(l => l.Modo == ModoLista.Fija)
+            .Select(l => l.Id)
+            .Distinct()
+            .ToList();
+
+        var filas = idsListaFija.Count == 0
+            ? []
+            : await db.Precios
+                .Where(p =>
+                    idsArticulo.Contains(p.IdArticulo) && idsListaFija.Contains(p.IdListaPrecio) &&
+                    p.VigenteDesde <= fecha && (p.VigenteHasta == null || p.VigenteHasta > fecha))
+                .ToListAsync(ct);
+
+        var montoFijaPorPar = filas
+            .GroupBy(p => (p.IdArticulo, p.IdListaPrecio))
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(p => p.VigenteDesde).First().Monto);
+
+        var resultado = new Dictionary<(int, int), decimal?>(idsArticulo.Count * idsListaPrecio.Count);
+
+        foreach (var idArticulo in idsArticulo)
+        {
+            foreach (var idListaPrecio in idsListaPrecio)
+            {
+                var lista = listaPorId[idListaPrecio];
+
+                if (lista.Modo == ModoLista.Fija)
+                {
+                    resultado[(idArticulo, idListaPrecio)] =
+                        montoFijaPorPar.TryGetValue((idArticulo, idListaPrecio), out var montoFija)
+                            ? montoFija
+                            : null;
+                    continue;
+                }
+
+                var idListaBase = lista.IdListaBase!.Value;
+                var montoBase = montoFijaPorPar.TryGetValue((idArticulo, idListaBase), out var montoBaseValor)
+                    ? montoBaseValor
+                    : (decimal?)null;
+
+                if (montoBase is null)
+                {
+                    resultado[(idArticulo, idListaPrecio)] = null;
+                    continue;
+                }
+
+                var porcentaje = lista.Porcentaje
+                    ?? throw new ErrorDominio(
+                        "precio_derivado_invalido",
+                        $"La lista derivada {lista.Id} no tiene porcentaje configurado.",
+                        422);
+
+                resultado[(idArticulo, idListaPrecio)] = ResolvedorDePrecios.ResolverPrecioDerivado(montoBase.Value, porcentaje);
+            }
+        }
+
+        return resultado;
+    }
+
     /// <summary>Historial completo (spec: Price History Never Overwrites, "Historical prices
     /// remain queryable") — solo tiene sentido para una lista <c>fija</c>: una <c>derivada</c>
     /// nunca tiene filas propias.</summary>

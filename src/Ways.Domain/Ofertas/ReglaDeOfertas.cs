@@ -158,4 +158,13 @@ public static class ReglaDeOfertas
 
         return conjunto;
     }
+
+    /// <summary>Spec: resolucion-de-ofertas / Candidate Matching, "Empresa-scoped oferta
+    /// excludes other empresas" — <c>NULL</c> ⇒ toda empresa del tenant (design decision 5);
+    /// seteado, tiene que coincidir exactamente con la empresa de la línea consultada. Pura,
+    /// sin depender de <see cref="LineaAResolver"/> (que no lleva <c>id_empresa</c>, design:
+    /// Resolution Contract) — <c>ServicioDeOfertas.ResolverAsync</c> filtra por acá ANTES de
+    /// armar la lista de candidatas de cada línea.</summary>
+    public static bool CoincideEmpresa(int? idEmpresaOferta, int? idEmpresaLinea) =>
+        idEmpresaOferta is null || idEmpresaOferta == idEmpresaLinea;
 }

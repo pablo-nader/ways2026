@@ -37,6 +37,14 @@ public static class OfertasEndpoints
         })
         .WithSummary("Baja lógica de la oferta.");
 
+        // stage-4-ofertas, Slice 3 (design decision 7): POST, no muta nada — solo resuelve
+        // precios + ofertas aplicadas para un lote de líneas, nunca escribe en ninguna tabla
+        // (spec: resolucion-de-ofertas / Applied Ofertas Are Reported, Never Persisted). POST en
+        // vez de GET porque el cuerpo es un lote de líneas, no algo que entre en un query string.
+        grupo.MapPost("/resolver", (ServicioDeOfertas servicio, SolicitudDeResolucion solicitud, CancellationToken ct) =>
+            servicio.ResolverAsync(solicitud.Lineas, solicitud.Momento, ct))
+        .WithSummary("POST, no muta nada: resuelve precio final y ofertas aplicadas para un lote de líneas.");
+
         return app;
     }
 }

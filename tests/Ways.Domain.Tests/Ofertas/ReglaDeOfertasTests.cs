@@ -350,4 +350,37 @@ public class ReglaDeOfertasTests
 
         Assert.Equal("dias_semana_invalidos", error.Codigo);
     }
+
+    // --- CoincideEmpresa (stage-4-ofertas, Slice 3, task 3.9; spec: resolucion-de-ofertas /
+    // Candidate Matching, "Empresa-scoped oferta excludes other empresas") ---
+
+    [Fact]
+    public void CoincideEmpresaConOfertaSinEmpresaMatcheaCualquierEmpresaDeLinea()
+    {
+        Assert.True(ReglaDeOfertas.CoincideEmpresa(idEmpresaOferta: null, idEmpresaLinea: 5));
+    }
+
+    [Fact]
+    public void CoincideEmpresaConOfertaSinEmpresaMatcheaLineaSinEmpresa()
+    {
+        Assert.True(ReglaDeOfertas.CoincideEmpresa(idEmpresaOferta: null, idEmpresaLinea: null));
+    }
+
+    [Fact]
+    public void CoincideEmpresaConLaMismaEmpresaMatchea()
+    {
+        Assert.True(ReglaDeOfertas.CoincideEmpresa(idEmpresaOferta: 5, idEmpresaLinea: 5));
+    }
+
+    [Fact]
+    public void CoincideEmpresaConEmpresaDistintaNoMatchea()
+    {
+        Assert.False(ReglaDeOfertas.CoincideEmpresa(idEmpresaOferta: 5, idEmpresaLinea: 6));
+    }
+
+    [Fact]
+    public void CoincideEmpresaConOfertaDeEmpresaYLineaSinEmpresaNoMatchea()
+    {
+        Assert.False(ReglaDeOfertas.CoincideEmpresa(idEmpresaOferta: 5, idEmpresaLinea: null));
+    }
 }
