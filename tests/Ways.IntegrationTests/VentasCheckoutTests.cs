@@ -220,6 +220,60 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(emitido.Items.Count, reimpreso.Items.Count);
     }
 
+    // ---- doc 10 §3: EsProducto = false (servicio) no toca stock -------------------------------
+
+    [Fact]
+    public async Task UnaVentaDeUnServicioNoGeneraMovimientoNiFilaDeStock()
+    {
+        var ctx = await PrepararAsync(nameof(UnaVentaDeUnServicioNoGeneraMovimientoNiFilaDeStock));
+        var idServicio = await SembrarArticuloConPrecioAsync(ctx, "servicio-mano-de-obra", 100m, esProducto: false);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Servicio", limiteCredito: 1000m);
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idServicio, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Single(emitido.Items);
+        Assert.Single(emitido.Pagos);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idServicio));
+        Assert.False(await db.Stock.AnyAsync(s => s.IdArticulo == idServicio));
+    }
+
+    [Fact]
+    public async Task UnCarritoMixtoDeProductoYServicioSoloMueveElStockDelProducto()
+    {
+        var ctx = await PrepararAsync(nameof(UnCarritoMixtoDeProductoYServicioSoloMueveElStockDelProducto));
+        var idProducto = await SembrarArticuloConPrecioAsync(ctx, "producto-mixto", 50m);
+        var idServicio = await SembrarArticuloConPrecioAsync(ctx, "servicio-mixto", 30m, esProducto: false);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Carrito Mixto", limiteCredito: 1000m);
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idProducto, 2m, null), new LineaDeVenta(idServicio, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 130m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+
+        var (cantidadProducto, _) = await LeerStockYSaldoAsync(ctx, idProducto, idCliente);
+        Assert.Equal(-2m, cantidadProducto);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idServicio));
+        Assert.False(await db.Stock.AnyAsync(s => s.IdArticulo == idServicio));
+    }
+
     [Fact]
     public async Task CheckoutOmitiendoIdClienteQuedaAtribuidoAlConsumidorFinal()
     {

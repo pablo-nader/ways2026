@@ -304,8 +304,11 @@ public class ServicioDeVentas(
 
         // 5. Stock — ORDEN ASCENDENTE por id_articulo (design decisión 2, no negociable): el
         // upsert de abajo toma su propio row lock de forma implícita, así que dos ventas que
-        // comparten artículos en orden distinto se deadlockearían sin este orden total.
-        foreach (var item in plan.Items.OrderBy(i => i.IdArticulo))
+        // comparten artículos en orden distinto se deadlockearían sin este orden total. Un
+        // artículo con EsProducto = false es un servicio (doc 10 §3: "false = servicio: no toca
+        // stock") — se salta ENTERO, ni movimiento ni upsert, en vez de escribir un movimiento
+        // sin sentido para algo que nunca tuvo una fila en stock.
+        foreach (var item in plan.Items.Where(i => i.EsProducto).OrderBy(i => i.IdArticulo))
         {
             var delta = -item.Cantidad;
 
@@ -460,7 +463,8 @@ public class ServicioDeVentas(
             items.Add(new LineaDelPlan(
                 articulo.Id, articulo.Nombre, linea.CodigoBarra, articulo.IdArea, idListaPrecio, idOferta,
                 articulo.IdAlicuotaIva, porcentajePorAlicuota[articulo.IdAlicuotaIva],
-                calculado.Cantidad, calculado.PrecioUnitario, calculado.Descuento, calculado.Total));
+                calculado.Cantidad, calculado.PrecioUnitario, calculado.Descuento, calculado.Total,
+                articulo.EsProducto));
         }
 
         return (items, totales);
@@ -676,7 +680,7 @@ public class ServicioDeVentas(
     private readonly record struct LineaDelPlan(
         int IdArticulo, string Descripcion, string? CodigoBarra, int IdArea, int IdListaPrecio, int? IdOferta,
         int IdAlicuotaIva, decimal PorcentajeIva, decimal Cantidad, decimal PrecioUnitario, decimal Descuento,
-        decimal Total);
+        decimal Total, bool EsProducto);
 
     private readonly record struct PagoDelPlan(
         int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto);
