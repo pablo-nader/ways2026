@@ -13,6 +13,7 @@ import { NuevoTenant } from './paginas/NuevoTenant'
 import { Ofertas } from './paginas/Ofertas'
 import { PaginaCatalogo } from './paginas/PaginaCatalogo'
 import { Parametros } from './paginas/Parametros'
+import { Pos } from './paginas/Pos'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
@@ -37,6 +38,18 @@ export function App() {
             }
           >
             <Route path="/" element={<Inicio />} />
+
+            {/* stage-5-pos-ventas (Slice 6, design: POS Screen Composition): pantalla dedicada,
+                admite Vendedor + Supervisor + Admin (Politicas.OperacionDePos) — no solo Admin
+                como el resto del ABM. Ruta propia, no la máquina genérica de catálogos. */}
+            <Route
+              path="/pos"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <Pos />
+                </RutaProtegida>
+              }
+            />
             <Route
               path="/usuarios"
               element={

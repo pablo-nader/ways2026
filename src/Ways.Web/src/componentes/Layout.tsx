@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { DESCRIPTORES_DE_CATALOGO } from '../api/catalogos'
-import { ROL, puedeAprovisionarTenants, puedeGestionarCatalogos, puedeGestionarUsuarios } from '../api/tipos'
+import { ROL, puedeAprovisionarTenants, puedeGestionarCatalogos, puedeGestionarUsuarios, puedeOperarPos } from '../api/tipos'
 
 export function Layout() {
   const { usuario, cerrarSesion } = useAuth()
@@ -32,6 +32,13 @@ export function Layout() {
                     Inicio
                   </NavLink>
                 </li>
+                {usuario && puedeOperarPos(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/pos">
+                      POS
+                    </NavLink>
+                  </li>
+                )}
                 {usuario && puedeGestionarUsuarios(usuario.rolId) && (
                   <li className="nav-item">
                     <NavLink className="nav-link" to="/usuarios">

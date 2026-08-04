@@ -78,6 +78,13 @@ export function puedeAprovisionarTenants(rolId: number) {
   return rolId === ROL.Root
 }
 
+/** Espejo de `Politicas.OperacionDePos` (stage-5-pos-ventas, design decisión 6): vendedor,
+ * supervisor o admin pueden operar el POS — root queda afuera, mismo criterio que
+ * `puedeGestionarCatalogos` ("root administra tenants, no opera ninguno"). */
+export function puedeOperarPos(rolId: number) {
+  return rolId === ROL.Vendedor || rolId === ROL.Supervisor || rolId === ROL.Admin
+}
+
 // --- Catálogos de tenant (ADR-11) ---
 
 export type ComportamientoMedioPago = 'Efectivo' | 'Electronico' | 'CuentaCorriente'
@@ -536,4 +543,79 @@ export type ResultadoAprovisionamiento = {
   idPuntoVenta: number
   idUsuarioAdmin: number
   passwordTemporal: string
+}
+
+// --- POS: escaneo y resolución de precios (stage-5-pos-ventas, Slice 6) ---
+// Espejo de Ways.Application.Ventas.ArticuloEscaneado y Ways.Application.Ofertas.Contratos —
+// identidad de escaneo y resolución de precios, nunca el checkout en sí (design decisión 7/10).
+
+/** Respuesta de `GET /api/articulos/escaneo` — identidad y snapshot únicamente, nunca precio ni
+ * oferta (design decisión 7: la resolución de precio queda en `POST /api/ofertas/resolver`).
+ * `codigoBarra` es `null` cuando la entrada resolvió por `codigoInterno`. */
+export type ArticuloEscaneado = {
+  idArticulo: number
+  codigoInterno: string
+  nombre: string
+  codigoBarra: string | null
+  cantidad: number
+}
+
+/** Línea de entrada de `POST /api/ofertas/resolver` (espejo de `LineaDeResolucion`, stage-4). */
+export type LineaDeResolucion = { idArticulo: number; idEmpresa: number | null; idListaPrecio: number; cantidad: number }
+
+export type OfertaAplicada = { idOferta: number; nombre: string; descuentoUnitario: number }
+
+/** `precioOriginal`/`precioFinal` son `null` cuando no hay precio vigente para el par (artículo,
+ * lista) — sin nada que descontar, `aplicadas` queda vacía (espejo de `ResultadoDeResolucion`). */
+export type ResultadoDeResolucion = {
+  idArticulo: number
+  idListaPrecio: number
+  precioOriginal: number | null
+  precioFinal: number | null
+  descuentoUnitario: number
+  aplicadas: OfertaAplicada[]
+}
+
+// --- POS: checkout (stage-5-pos-ventas, Slice 6 → wireado en Slice 7) ---
+// Espejo pinneado por design.md (Checkout Contract) del futuro `SolicitudDeVenta`/comprobante
+// emitido de `POST /api/ventas` — ese endpoint vive en la Slice 4 (todavía en review, no
+// mergeada a main). Estos tipos solo sostienen los mappers puros de `ventas.ts`; ningún fetch
+// de esta slice los usa. Slice 7 debe confirmar el shape contra el DTO real antes de invocar el
+// endpoint — ver el comentario de `ComprobanteVenta`.
+
+export type LineaDeVenta = { idArticulo: number; cantidad: number; codigoBarra: string | null }
+export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
+
+export type SolicitudDeVenta = {
+  idPuntoVenta: number
+  idCliente: number
+  codigoTipoComprobante: 'TX' | 'NCX'
+  idComprobanteAsociado: number | null
+  lineas: LineaDeVenta[]
+  pagos: PagoDeVenta[]
+  direccionEntrega: string | null
+  observaciones: string | null
+}
+
+export type ItemComprobanteVenta = {
+  idArticulo: number | null
+  descripcion: string
+  codigoBarra: string | null
+  cantidad: number
+  precioUnitario: number
+  descuento: number
+  total: number
+}
+
+/** TODO(slice-7): shape inferido del Checkout Orchestration Contract + Table Shapes A de
+ * design.md — no existe todavía un DTO real de `POST /api/ventas` en main (Slice 4 en review).
+ * Confirmar/ajustar contra ese contrato definitivo antes de wirear el fetch. */
+export type ComprobanteVenta = {
+  id: number
+  numeroVisible: string
+  estado: 'emitido' | 'anulado'
+  subtotal: number
+  descuentoTotal: number
+  total: number
+  items: ItemComprobanteVenta[]
 }
