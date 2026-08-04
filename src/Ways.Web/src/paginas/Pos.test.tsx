@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pos } from './Pos'
@@ -198,6 +198,149 @@ describe('Pos — selector de cliente', () => {
     await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
 
     expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id))
+  })
+})
+
+describe('Pos — regresión: carga inicial de clientes vs. selección del usuario', () => {
+  it('una respuesta tardía del fetch de montaje no pisa una selección hecha durante una búsqueda posterior', async () => {
+    let resolverMontaje: (pagina: PaginaDe<ClienteListado>) => void = () => {}
+    const montajePendiente = new Promise<PaginaDe<ClienteListado>>((resolve) => {
+      resolverMontaje = resolve
+    })
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
+      if (ruta === '/clientes') return montajePendiente
+      if (ruta.startsWith('/clientes?busqueda=')) {
+        const pagina: PaginaDe<ClienteListado> = { items: [otroCliente], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+
+    await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+
+    const opcionJuan = await screen.findByRole('option', { name: /Juan Pérez/ })
+    await userEvent.selectOptions(screen.getByLabelText('Cliente'), opcionJuan)
+    expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id))
+
+    await act(async () => {
+      resolverMontaje({ items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id))
+  })
+})
+
+describe('Pos — vista previa de precios', () => {
+  it('una resolución exitosa muestra el precio unitario, el original tachado, el total de línea y el subtotal previo', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          {
+            idArticulo: 1,
+            idListaPrecio: 1,
+            precioOriginal: 120,
+            precioFinal: 100,
+            descuentoUnitario: 20,
+            aplicadas: [{ idOferta: 9, nombre: '2x1 Gaseosas', descuentoUnitario: 20 }],
+          },
+        ]
+        return Promise.resolve(resultados)
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    const boton = screen.getByRole('button', { name: 'Agregar' })
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await screen.findByText('Coca Cola 1L')
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
+
+    const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+    await waitFor(() => expect(within(fila).getByText('$120,00')).toBeInTheDocument())
+    expect(within(fila).getByText('$100,00')).toBeInTheDocument()
+    expect(within(fila).getByText('$200,00')).toBeInTheDocument()
+    expect(within(fila).getByText('2x1 Gaseosas')).toBeInTheDocument()
+
+    await waitFor(() => expect(screen.getByText('$200,00', { selector: 'strong' })).toBeInTheDocument())
+  })
+
+  it('una resolución rechazada muestra el aviso no bloqueante y el carrito sigue usable', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') return Promise.reject(new Error('falló la resolución'))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    expect(
+      await screen.findByText('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.'),
+    ).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+  })
+
+  it('regresión: una respuesta desactualizada del resolver no pisa una más reciente (fuera de orden)', async () => {
+    let resolverPrimera: (resultados: ResultadoDeResolucion[]) => void = () => {}
+    const primeraPendiente = new Promise<ResultadoDeResolucion[]>((resolve) => {
+      resolverPrimera = resolve
+    })
+
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/ofertas/resolver') return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      if (apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ofertas/resolver').length === 1) {
+        return primeraPendiente
+      }
+      const resultados: ResultadoDeResolucion[] = [
+        { idArticulo: 1, idListaPrecio: 1, precioOriginal: 90, precioFinal: 90, descuentoUnitario: 0, aplicadas: [] },
+      ]
+      return Promise.resolve(resultados)
+    })
+
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const entrada = screen.getByLabelText('Código escaneado')
+    const boton = screen.getByRole('button', { name: 'Agregar' })
+
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.type(entrada, '7790001234567')
+    await userEvent.click(boton)
+    await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
+
+    const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+    await waitFor(() => expect(within(fila).getByText('$90,00')).toBeInTheDocument())
+
+    await act(async () => {
+      resolverPrimera([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(within(fila).getByText('$90,00')).toBeInTheDocument()
   })
 })
 
