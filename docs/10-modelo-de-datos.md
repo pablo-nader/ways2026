@@ -437,6 +437,16 @@ movimientos_stock (           -- [operativa]
 );
 ```
 
+> **Estado (Etapa 5, Slice 3):** `stock` y `movimientos_stock` implementadas — `motivo` solo
+> tiene camino de escritura para `venta`/`anulacion`/`ajuste` en esta etapa; `compra`/
+> `transferencia`/`inventario` quedan como valores reservados del enum, sin escritor. La columna
+> `id_comprobante_compra` de arriba **no se crea todavía**: `comprobantes_compra` no existe
+> (doc 10 §5, etapa 8), así que un `int NULL` sin FK sería una referencia sin garantía. La etapa
+> 8 agrega la columna y su FK juntas, en la misma migración que crea `comprobantes_compra`
+> (deviación declarada de este documento, design de stage-5-pos-ventas: Table Shapes — write
+> path B). `id_punto_venta_destino` sí se crea en esta etapa (columna lista para
+> transferencias), pero ningún camino de escritura la usa todavía.
+
 `stock.cantidad` es un cache mantenido en la misma transacción del movimiento.
 Transferencia entre locales: dos movimientos espejados — feature nueva que el legacy
 resolvía "a mano y que Dios ayude".

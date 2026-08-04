@@ -11,8 +11,10 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
+using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
+using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 
@@ -77,6 +79,17 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // punto de venta).
     public DbSet<NumeracionComprobante> NumeracionesComprobante => Set<NumeracionComprobante>();
 
+    // stage-5-pos-ventas, Slice 3 (schema/domain foundation, DB CHANGE GATE aprobado
+    // 2026-08-04): modelo adelantado a la migración, mismo trámite que Articulo/CodigoBarra/
+    // Precio en stage-3 Slice 1 — sin DbSet en IWaysDbContext todavía, ServicioDeVentas
+    // (Slice 4) es el primer consumidor de Application.
+    public DbSet<ComprobanteVenta> ComprobantesVenta => Set<ComprobanteVenta>();
+    public DbSet<ItemComprobanteVenta> ItemsComprobanteVenta => Set<ItemComprobanteVenta>();
+    public DbSet<PagoComprobante> PagosComprobante => Set<PagoComprobante>();
+    public DbSet<Stock> Stock => Set<Stock>();
+    public DbSet<MovimientoStock> MovimientosStock => Set<MovimientoStock>();
+    public DbSet<MovimientoCuentaCorriente> MovimientosCuentaCorriente => Set<MovimientoCuentaCorriente>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>
@@ -113,6 +126,9 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnArticuloEmpresa(modelBuilder);
         AplicarFiltroDeTenantEnOfertaLista(modelBuilder);
         AplicarFiltroDeTenantEnNumeracionComprobante(modelBuilder);
+        AplicarFiltroDeTenantEnStock(modelBuilder);
+        AplicarFiltroDeTenantEnMovimientoStock(modelBuilder);
+        AplicarFiltroDeTenantEnMovimientoCuentaCorriente(modelBuilder);
     }
 
     /// <summary>
@@ -464,6 +480,59 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(NumeracionComprobante), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(NumeracionComprobante.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-5-pos-ventas (Slice 3, design: Table Shapes — write path B): <see cref="Stock"/>
+    /// PK-only (mismo motivo que <see cref="NumeracionComprobante"/>/<see cref="OfertaLista"/>),
+    /// necesita la variante escrita a mano.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnStock(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(Stock))!;
+
+        var parametro = Expression.Parameter(typeof(Stock), "e");
+        // nameof(Stock.IdTenant) no compila acá: dentro de WaysDbContext, "Stock" resuelve al
+        // DbSet<Stock> del mismo nombre (arriba) antes que al tipo — mismo shadowing que
+        // cualquier miembro de instancia tapa un tipo de igual nombre en C#. Nombre calificado
+        // completo en vez de renombrar el DbSet (que sí matchea doc 10: la tabla es "stock",
+        // invariante en singular, igual que su propiedad acá).
+        var propiedadIdTenant = Expression.Property(parametro, nameof(Ways.Domain.Stock.Stock.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-5-pos-ventas (Slice 3, design: Table Shapes — write path B): <see cref="MovimientoStock"/>
+    /// es un ledger append-only, no hereda <see cref="EntidadTenant"/> (ver el comentario de la
+    /// clase) — necesita la variante escrita a mano, mismo criterio que <see cref="AplicarFiltroDeTenantEnStock"/>.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnMovimientoStock(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(MovimientoStock))!;
+
+        var parametro = Expression.Parameter(typeof(MovimientoStock), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoStock.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-5-pos-ventas (Slice 3, design: Table Shapes — write path C): <see cref="MovimientoCuentaCorriente"/>
+    /// es el mismo shape de ledger append-only que <see cref="MovimientoStock"/> — necesita la
+    /// variante escrita a mano.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnMovimientoCuentaCorriente(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(MovimientoCuentaCorriente))!;
+
+        var parametro = Expression.Parameter(typeof(MovimientoCuentaCorriente), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoCuentaCorriente.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);
