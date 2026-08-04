@@ -26,6 +26,17 @@ public static class VentasEndpoints
             servicio.ObtenerAsync(id, ct))
         .WithSummary("Reimpresión: lee el snapshot del comprobante, nunca re-joinea el catálogo.");
 
+        // stage-5-pos-ventas (Slice 5, task 5.2, design: API Surface): POST, no DELETE — produce
+        // filas (movimientos inversos + contramovimiento CC), no elimina ninguna. Sin
+        // GestionDeCatalogo apilado (spec: OperacionDePos Authorization For Emission and
+        // Anulación — un Vendedor puede anular su propia venta, mismo criterio que emitir).
+        grupo.MapPost("/{id:int}/anulacion", async (ServicioDeVentas servicio, int id, CancellationToken ct) =>
+        {
+            var anulado = await servicio.AnularAsync(id, ct);
+            return Results.Ok(anulado);
+        })
+        .WithSummary("Anula un comprobante: revierte stock y cuenta corriente en la misma transacción. No existe restaurar.");
+
         grupo.MapGet("/", (
             ServicioDeVentas servicio,
             int? idPuntoVenta,

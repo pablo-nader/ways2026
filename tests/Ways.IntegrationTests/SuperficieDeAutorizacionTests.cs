@@ -40,7 +40,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // más abajo), a diferencia del literal sin barra que este allowlist traía adelantado
         // desde Slice 1.
         ("POST", "/api/ventas/"),
-        ("POST", "/api/ventas/{id}/anulacion"),
+        // stage-5-pos-ventas (Slice 5, task 5.2): el RawText real lleva la restricción ":int"
+        // (mismo criterio que "/api/empresas/{id:int}"/"/api/puntos-venta/{id:int}" más abajo,
+        // y que el propio GET "/api/ventas/{id:int}" del mismo grupo) — corrige el literal sin
+        // restricción que este allowlist traía adelantado desde Slice 1.
+        ("POST", "/api/ventas/{id:int}/anulacion"),
 
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).
@@ -131,7 +135,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // habilitar el selector de PV del POS (Vendedor/Supervisor) sin sacarle el acceso a
         // Root/Admin (PuntosVenta.tsx). GET /{id:int} sigue bajo GestionDeOrganizacion, ya
         // cubierto por el allowlist de policies de abajo.
-        "/api/puntos-venta"
+        "/api/puntos-venta",
+        // stage-5-pos-ventas (Slice 5, task 5.4): GET /api/stock — balance del badge del POS,
+        // spec: stock / Stock Read Access Under OperacionDePos.
+        "/api/stock"
     ];
 
     // Policies que, de aparecer en vez de OperacionDePos, siguen siendo un gate válido —
