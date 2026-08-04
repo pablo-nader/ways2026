@@ -3,11 +3,14 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
+using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
+using Ways.Domain.Ventas;
 
 namespace Ways.Application.Abstracciones;
 
@@ -58,6 +61,18 @@ public interface IWaysDbContext
     // (list/create/edit/soft-delete + replace-set de ofertas_listas).
     DbSet<Oferta> Ofertas { get; }
     DbSet<OfertaLista> OfertasListas { get; }
+
+    // stage-5-pos-ventas, Slice 4: ServicioDeVentas es el primer consumidor de Application de
+    // estos 6 — Slice 3 solo adelantaba el modelo a la migración (design: Table Shapes A/B/C).
+    // NumeracionesComprobante sigue sin exponerse acá (ver el comentario de WaysDbContext):
+    // AsignadorDeNumeroComprobante recibe el IWaysDbContext por parámetro y opera con ADO.NET
+    // crudo, no un DbSet.
+    DbSet<ComprobanteVenta> ComprobantesVenta { get; }
+    DbSet<ItemComprobanteVenta> ItemsComprobanteVenta { get; }
+    DbSet<PagoComprobante> PagosComprobante { get; }
+    DbSet<Ways.Domain.Stock.Stock> Stock { get; }
+    DbSet<MovimientoStock> MovimientosStock { get; }
+    DbSet<MovimientoCuentaCorriente> MovimientosCuentaCorriente { get; }
 
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>
