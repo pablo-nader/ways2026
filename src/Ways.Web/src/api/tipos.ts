@@ -452,6 +452,74 @@ export type ProgramarPrecio = {
 export type PrecioVigente = { idArticulo: number; idListaPrecio: number; precio: number | null; fecha: string }
 export type HistorialDePrecio = { id: number; precio: number; vigenteDesde: string; vigenteHasta: string | null }
 
+// --- Ofertas (stage-4-ofertas) ---
+// Entidad dedicada (design decision 9): alcance (id_articulo/id_grupo/id_categoria) y
+// beneficio (precio_unitario/porcentaje/importe_fijo) viajan como las tres columnas nullable
+// crudas de cada grupo (design decision 1) — la exclusividad la valida el servidor
+// (ReglaDeOfertas), acá solo se refleja/arma.
+
+/** ISO-8601: 1 = lunes … 7 = domingo. */
+export const DIAS_SEMANA: { valor: number; etiqueta: string }[] = [
+  { valor: 1, etiqueta: 'Lunes' },
+  { valor: 2, etiqueta: 'Martes' },
+  { valor: 3, etiqueta: 'Miércoles' },
+  { valor: 4, etiqueta: 'Jueves' },
+  { valor: 5, etiqueta: 'Viernes' },
+  { valor: 6, etiqueta: 'Sábado' },
+  { valor: 7, etiqueta: 'Domingo' },
+]
+
+/** `idsListas` vacío ⇒ la oferta aplica a todas las listas del tenant (spec: Multi-Lista
+ * Targeting via ofertas_listas). El listado no completa `idsListas` por fila (evita el N+1,
+ * mismo criterio que `ArticuloListado.idsEmpresas`) — solo `obtener`/`crear`/`actualizar` lo
+ * completan con el subconjunto real. */
+export type OfertaListado = {
+  id: number
+  nombre: string
+  idEmpresa: number | null
+  idArticulo: number | null
+  idGrupo: number | null
+  idCategoria: number | null
+  fechaDesde: string | null
+  fechaHasta: string | null
+  horaDesde: string | null
+  horaHasta: string | null
+  diasSemana: number[]
+  cantidadMinima: number | null
+  precioUnitario: number | null
+  porcentaje: number | null
+  importeFijo: number | null
+  prioridad: number
+  acumulable: boolean
+  activo: boolean
+  idsListas: number[]
+}
+
+/** Mismo shape para alta y edición: a diferencia de `ArticuloListado.codigoInterno`, acá no hay
+ * ninguna columna inmutable en edición (backend: `Contratos.cs`, task 2.3). */
+export type AltaOferta = {
+  nombre: string
+  idEmpresa: number | null
+  idArticulo: number | null
+  idGrupo: number | null
+  idCategoria: number | null
+  fechaDesde: string | null
+  fechaHasta: string | null
+  horaDesde: string | null
+  horaHasta: string | null
+  diasSemana: number[] | null
+  cantidadMinima: number | null
+  precioUnitario: number | null
+  porcentaje: number | null
+  importeFijo: number | null
+  prioridad: number
+  acumulable: boolean
+  idsListas: number[] | null
+  activo: boolean
+}
+
+export type EdicionOferta = AltaOferta
+
 // --- Aprovisionamiento de tenants (ADR-16, plataforma) ---
 
 export type SolicitudDeAprovisionamiento = {
