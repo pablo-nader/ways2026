@@ -196,7 +196,8 @@ criterion as `GestionDeCatalogo`: "root administra tenants, no opera ninguno").
 | `/api/clientes`, `/api/catalogos/{recurso}`, `/api/catalogos-fiscales`, `/api/parametros` | `OperacionDePos` | idem |
 | `/api/ofertas` | `OperacionDePos` | `GestionDeCatalogo` on POST `/`, PUT, DELETE — **not** on POST `/resolver` (closes the stage-4 carryover) |
 | `/api/ventas`, `/api/stock` | `OperacionDePos` | `GestionDeCatalogo` only on `POST /api/stock/ajustes` (admin-only, proposal decision 7) |
-| `/api/usuarios`, `/api/proveedores`, `/api/empresas`, `/api/puntos-venta`, `/api/plataforma/*` | unchanged | unchanged |
+| `/api/usuarios`, `/api/proveedores`, `/api/empresas`, `/api/plataforma/*` | unchanged | unchanged |
+| `/api/puntos-venta` | **GET (list) re-gated to `OperacionDePos` at judgment-day R1 of Slice 6** — the POS's PV selector needs it for Vendedor/Supervisor (proposal decision 4: any POS user operates any PV); the original 'unchanged' row shipped a screen unusable for its target roles | writes stay `GestionDeOrganizacion` |
 
 **Omission guard (mandatory).** A `SuperficieDeAutorizacionTests` walks `EndpointDataSource` and
 asserts that every endpoint whose HTTP method is not GET carries `GestionDeCatalogo`, against an
