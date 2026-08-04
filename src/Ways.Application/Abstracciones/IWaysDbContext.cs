@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
@@ -52,6 +53,11 @@ public interface IWaysDbContext
     DbSet<CodigoBarra> CodigosBarra { get; }
     DbSet<ArticuloEmpresa> ArticulosEmpresas { get; }
     DbSet<Precio> Precios { get; }
+
+    // stage-4-ofertas, Slice 2: primer consumidor de Application — ServicioDeOfertas
+    // (list/create/edit/soft-delete + replace-set de ofertas_listas).
+    DbSet<Oferta> Ofertas { get; }
+    DbSet<OfertaLista> OfertasListas { get; }
 
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>
