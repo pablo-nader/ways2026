@@ -156,55 +156,55 @@ scan resolution live end-to-end. **Rollback**: down-migration (drop
 
 ### 2B. Migration + domain (only after 2.1 approved)
 
-- [ ] 2.2 Add `NumeracionDeComprobantesEtapa5` migration:
+- [x] 2.2 Add `NumeracionDeComprobantesEtapa5` migration:
   `numeraciones_comprobante` (PK `(id_punto_venta, tipo_comprobante)`,
   `id_tenant` non-key, composite FK to `puntos_venta`),
   `HabilitarRlsDeTenant`. Confirm `has-pending-model-changes` clean. *(design
   decision 8; Migration Sequencing)*
-- [ ] 2.3 Add `NumeracionComprobante` entity + EF config in
+- [x] 2.3 Add `NumeracionComprobante` entity + EF config in
   `Ways.Domain/Ventas` / `Ways.Infrastructure`.
-- [ ] 2.4 Add `AsignadorDeNumeroComprobante` (raw ADO, clone of
+- [x] 2.4 Add `AsignadorDeNumeroComprobante` (raw ADO, clone of
   `AsignadorDeNumeroCliente`): `INSERT … ON CONFLICT DO NOTHING` then
   `UPDATE … RETURNING proximo_numero - 1`. *(design decision 9; spec:
   comprobantes-venta / Numeración Allocation Is Atomic)*
-- [ ] 2.5 Add pure `NumeroDeComprobante.Formatear(idPuntoVenta, numero)` →
+- [x] 2.5 Add pure `NumeroDeComprobante.Formatear(idPuntoVenta, numero)` →
   `PPPP-NNNNNNNN`. *(design: API Surface)*
 
 ### 2C. Backstop groundwork
 
-- [ ] 2.6 Add `pk_numeraciones_comprobante` → 23505 → 409
+- [x] 2.6 Add `pk_numeraciones_comprobante` → 23505 → 409
   `numeracion_duplicada` to `ManejadorDeErrores` (documented exemption from a
   race test — the write goes through `ON CONFLICT`). *(design: Backstop Map)*
 
 ### 2D. Escaneo
 
-- [ ] 2.7 Add pure `ParserDeEscaneo` (Domain): `<7` digits → `codigo_interno`,
+- [x] 2.7 Add pure `ParserDeEscaneo` (Domain): `<7` digits → `codigo_interno`,
   `>=7` → `codigos_barra`, `activo` only, `N*codigo` syntax, empty/`0`
   cantidad defaults to `1`. *(design decision 7; spec: codigos-barra / Scan
   Resolution Rule)*
-- [ ] 2.8 Add `ServicioDeEscaneo` (Application, dedicated — not
+- [x] 2.8 Add `ServicioDeEscaneo` (Application, dedicated — not
   `ServicioDeArticulos`): parses then runs one identity-only query, no
   pricing. *(design decisions 7, 10)*
-- [ ] 2.9 Add `GET /api/articulos/escaneo?entrada=` under `OperacionDePos`.
+- [x] 2.9 Add `GET /api/articulos/escaneo?entrada=` under `OperacionDePos`.
   *(design: API Surface)*
 
 ### 2E. Tests
 
-- [ ] 2.10 [P] Unit: `NumeroDeComprobante.Formatear` — padding edge cases.
-- [ ] 2.11 [P] Unit: `ParserDeEscaneo` exhaustive — 6/7/13-digit boundary,
+- [x] 2.10 [P] Unit: `NumeroDeComprobante.Formatear` — padding edge cases.
+- [x] 2.11 [P] Unit: `ParserDeEscaneo` exhaustive — 6/7/13-digit boundary,
   `N*codigo`, empty/`0` cantidad, garbage input. *(spec: codigos-barra / Scan
   Resolution Rule, all scenarios)*
-- [ ] 2.12 Integration: RLS proof for `numeraciones_comprobante` (EF filter +
+- [x] 2.12 Integration: RLS proof for `numeraciones_comprobante` (EF filter +
   raw-SQL/`IgnoreQueryFilters`).
-- [ ] 2.13 Integration (concurrency, honest reachability): two concurrent
+- [x] 2.13 Integration (concurrency, honest reachability): two concurrent
   counter allocations at the same punto de venta/tipo → consecutive numbers,
   no gap, no duplicate; a rolled-back allocation leaves an accepted gap.
   *(spec: comprobantes-venta / Numeración Allocation Is Atomic, both
   scenarios)*
-- [ ] 2.14 Integration: `GET /api/articulos/escaneo` end-to-end — short code,
+- [x] 2.14 Integration: `GET /api/articulos/escaneo` end-to-end — short code,
   long code, `N*` prefix, inactive articulo not resolved, unknown code
   rejected. *(spec: codigos-barra / Scan Resolution Rule, all scenarios)*
-- [ ] 2.15 Regression: Slice 1 suites unedited and green.
+- [x] 2.15 Regression: Slice 1 suites unedited and green.
 
 ---
 
