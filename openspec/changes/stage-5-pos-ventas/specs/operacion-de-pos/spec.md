@@ -30,7 +30,12 @@ anulación/stock-read endpoints. ABM write endpoints stay on
 - WHEN a request checks `Politicas.OperacionDePos`
 - THEN authorization succeeds
 
-#### Scenario: A role outside Vendedor/Admin is rejected
+> Amended at judgment-day R1 of Slice 1 (2026-08-04, orchestrator decision under
+> legacy-parity auto mode): the legacy admits admin/supervisor/vendedor to the
+> selling flow (`tipoUser IN (2,3,4)`), so `Supervisor` joins `OperacionDePos`.
+> Catalog WRITES remain Admin-only (`GestionDeCatalogo` unchanged).
+
+#### Scenario: A role outside Vendedor/Supervisor/Admin is rejected
 - GIVEN a user with `RolConocido.Root`
 - WHEN a request checks `Politicas.OperacionDePos`
 - THEN authorization fails (root administers tenants, does not operate them)
