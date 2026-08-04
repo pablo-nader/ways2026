@@ -339,7 +339,10 @@ green. **Rollback**: new routes/methods only — `PrecioVigenteAsync`/
   affected table). *(spec: resolucion-de-ofertas / Result lists all applied
   ofertas, Resolution performs no writes)* —
   `tests/Ways.IntegrationTests/OfertasResolucionTests.cs`.
-- [x] 3.13 Regression: Slice 1 + Slice 2 suites unedited and green.
+- [x] 3.13 Regression: Slice 1 + Slice 2 test BEHAVIOR unchanged and suites
+  green — corrected at judgment-day R1: ServicioDeOfertasTests received a
+  mechanical DI-fixture update (ServicioDeOfertas gained a ServicioDePrecios
+  constructor dependency), no assertion or behavior changed.
 
 ---
 
