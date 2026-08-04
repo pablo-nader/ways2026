@@ -131,6 +131,27 @@ public class ManejadorDeErrores(
                 when string.Equals(pkOfertasListas, "pk_ofertas_listas", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "La lista de precios ya está en el subconjunto de targeting de la oferta.", "oferta_lista_duplicada"),
 
+            // Defensa en profundidad genérica (judgment-day, item 2, stage-4-ofertas): EF
+            // interpreta un UPDATE/DELETE que afecta 0 filas de las esperadas (en vez de la 1
+            // esperada por su predicado de PK) como un conflicto de concurrencia y lanza
+            // DbUpdateConcurrencyException — p.ej. un segundo escritor cuyo DELETE apunta a filas
+            // que otro escritor ya borró y comiteó primero. Sin este caso, eso llegaba como 500
+            // crudo en vez de un 409 traducido.
+            //
+            // Colocado ACÁ, DESPUÉS de todos los casos `DbUpdateException { InnerException:
+            // PostgresException {...} }` de arriba y ANTES del catch-all `_`, en vez de arriba de
+            // todo junto a `ErrorDominio`: como `DbUpdateConcurrencyException` DERIVA de
+            // `DbUpdateException`, esta posición es la única que estructuralmente GARANTIZA que
+            // nunca puede eclipsar ninguno de esos casos más específicos (cada uno de ellos exige
+            // además un `InnerException` de tipo `PostgresException` con un `SqlState`/
+            // `ConstraintName` puntual — si alguna vez `DbUpdateConcurrencyException` llegara a
+            // traer ese mismo shape de `InnerException`, el switch ya lo habría resuelto arriba
+            // antes de llegar acá). Genérico a propósito (no ofertas-específico): cualquier
+            // replace-set/edición concurrente que EF detecte como "0 filas afectadas" en
+            // cualquier tabla cae acá con el mismo código estable.
+            DbUpdateConcurrencyException =>
+                (StatusCodes.Status409Conflict, "El registro fue modificado por otra operación concurrente; reintentá la operación.", "edicion_concurrente"),
+
             _ => (StatusCodes.Status500InternalServerError,
                   "Ocurrió un error inesperado.",
                   "error_interno")
