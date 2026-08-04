@@ -26,12 +26,14 @@ namespace Ways.Application.Ventas;
 /// <see cref="PlanDeVenta"/> inmutable. Si esta mitad corriera DENTRO de la lambda reintentable
 /// de <c>CreateExecutionStrategy</c>, un reintento podría recalcular un total DISTINTO del que
 /// la mezcla de pagos ya validó.</item>
-/// <item>La transacción recibe el plan ya congelado y solo lo escribe, en el orden pineado por
-/// design (numeración → comprobante → items → pagos → stock ascendente por <c>id_articulo</c> →
-/// cuenta corriente). Cada fila mutable se escribe con un único statement atómico que toma su
-/// propio row lock y devuelve el post-estado (<c>UPDATE ... RETURNING</c>/<c>INSERT ... ON
-/// CONFLICT DO UPDATE ... RETURNING</c>) — design decisión 1: sin advisory locks, el lock de fila
-/// del propio upsert alcanza.</item>
+/// <item>La numeración se reserva y comitea en su PROPIA transacción, ANTES de la que escribe el
+/// resto (corrección de esta slice: el número queda consumido aunque lo de abajo falle, ver el
+/// comentario de <see cref="EmitirAsync"/>). Esa segunda transacción recibe el plan ya congelado
+/// más el número ya comprometido, y solo escribe, en el orden pineado por design (comprobante →
+/// items → pagos → stock ascendente por <c>id_articulo</c> → cuenta corriente). Cada fila mutable
+/// se escribe con un único statement atómico que toma su propio row lock y devuelve el
+/// post-estado (<c>UPDATE ... RETURNING</c>/<c>INSERT ... ON CONFLICT DO UPDATE ... RETURNING</c>)
+/// — design decisión 1: sin advisory locks, el lock de fila del propio upsert alcanza.</item>
 /// </list>
 ///
 /// Dedicado (design decisión 10), no una extensión de ningún ABM: autorización, transacción y
@@ -135,13 +137,78 @@ public class ServicioDeVentas(
             pagosDelPlan, cliente.LimiteCredito, cliente.CreditoIlimitado,
             NormalizarOpcional(solicitud.DireccionEntrega), NormalizarOpcional(solicitud.Observaciones));
 
+        // Corrección de esta slice al decisión 2 original (ver el doc-comment de
+        // VentasAtomicidadYConcurrenciaTests): la numeración se reserva y COMITEA en su PROPIA
+        // transacción, separada de la que escribe el resto de la venta — así "el número se
+        // consume aunque falle el resto" (design: Failure Semantics) es literal, no una
+        // aproximación que un ROLLBACK conjunto desmentía. Un commit ambiguo sobre ESTA
+        // transacción es inofensivo: si en verdad comiteó, el contador ya avanzó; si el cliente
+        // reintenta (execution strategy), reservar de nuevo solo vuelve a avanzarlo — nunca
+        // duplica una fila (design decisión 2: "gaps are accepted", nunca duplicados).
+        var estrategiaNumeracion = db.Database.CreateExecutionStrategy();
+        var numero = await estrategiaNumeracion.ExecuteAsync(async () => await AsignarNumeroComprometidoAsync(plan, ct));
+
         // ADR-16 (mismo trámite que ServicioDeAprovisionamiento/ServicioDeOfertas): la
         // transacción se abre ACÁ ADENTRO — EnableRetryOnFailure exige que la apertura viva
         // dentro de ExecuteAsync. El plan de arriba es el ÚNICO dato de negocio que cruza hacia
         // la lambda: cada entidad de EF se construye de cero en cada intento (retry contract).
+        //
+        // El número YA está comprometido cuando esta lambda arranca — un commit ambiguo acá (el
+        // servidor comitea pero la conexión se corta antes del ACK al cliente) hace que
+        // CreateExecutionStrategy reintente la lambda completa; sin la guarda de abajo, ese
+        // reintento volvería a INSERTAR el mismo comprobante bajo el mismo número, violando
+        // ux_comprobantes_venta_numero (o, peor, duplicando la venta si esa unicidad no
+        // existiera). BuscarPorNumeroComprometidoAsync corre PRIMERO en cada intento: si el
+        // commit anterior sí llegó a puerto, el comprobante ya existe y se devuelve tal cual en
+        // vez de reinsertarse.
         var estrategia = db.Database.CreateExecutionStrategy();
 
-        return await estrategia.ExecuteAsync(async () => await EjecutarTransaccionAsync(plan, ct));
+        return await estrategia.ExecuteAsync(async () =>
+            await BuscarPorNumeroComprometidoAsync(plan.IdPuntoVenta, plan.IdTipoComprobante, numero, ct)
+            ?? await EjecutarTransaccionAsync(plan, numero, ct));
+    }
+
+    /// <summary>Transacción chica y propia (ADR-16), comprometida ANTES de que exista ningún
+    /// otro dato de la venta — ver el comentario de <see cref="EmitirAsync"/>.</summary>
+    private async Task<long> AsignarNumeroComprometidoAsync(PlanDeVenta plan, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        await AsignadorDeNumeroComprobante.AsegurarContadorAsync(db, plan.IdTenant, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct);
+        var numero = await AsignadorDeNumeroComprobante.AsignarSiguienteAsync(db, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct);
+
+        await transaccion.CommitAsync(ct);
+        return numero;
+    }
+
+    /// <summary>Detección de idempotencia (ver el comentario de <see cref="EmitirAsync"/> sobre
+    /// el commit ambiguo): <c>null</c> ⇒ el número todavía no tiene comprobante, esta es la
+    /// primera vez que se corre la mitad transaccional para él. Firma en primitivos (no recibe
+    /// <see cref="PlanDeVenta"/> entero) a propósito: es la pieza que
+    /// <c>VentasAtomicidadYConcurrenciaTests</c> ejercita por reflexión para probar la detección
+    /// en aislamiento, sin tener que construir un <see cref="PlanDeVenta"/> completo (privado,
+    /// sin constructor público) desde el test.</summary>
+    private async Task<ComprobanteEmitido?> BuscarPorNumeroComprometidoAsync(
+        int idPuntoVenta, int idTipoComprobante, long numero, CancellationToken ct)
+    {
+        var comprobante = await db.ComprobantesVenta.FirstOrDefaultAsync(
+            c => c.IdPuntoVenta == idPuntoVenta && c.IdTipoComprobante == idTipoComprobante && c.Numero == numero, ct);
+
+        if (comprobante is null)
+        {
+            return null;
+        }
+
+        var items = await db.ItemsComprobanteVenta
+            .Where(i => i.IdComprobanteVenta == comprobante.Id)
+            .OrderBy(i => i.Orden)
+            .ToListAsync(ct);
+
+        var pagos = await db.PagosComprobante
+            .Where(p => p.IdComprobanteVenta == comprobante.Id)
+            .ToListAsync(ct);
+
+        return Proyectar(comprobante, items, pagos);
     }
 
     public async Task<ComprobanteEmitido> ObtenerAsync(int id, CancellationToken ct = default)
@@ -222,17 +289,15 @@ public class ServicioDeVentas(
 
     // ---- La transacción (design: The Sale Transaction, orden de statements pineado) ----------
 
-    private async Task<ComprobanteEmitido> EjecutarTransaccionAsync(PlanDeVenta plan, CancellationToken ct)
+    private async Task<ComprobanteEmitido> EjecutarTransaccionAsync(PlanDeVenta plan, long numero, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-        // 1. Numeración — lazy, misma fila que el resto de la venta serializa por completo
-        // (design decisión 2: numeración PRIMERO, aunque acorte el throughput, para que "el
-        // primer statement de toda venta es el asignador" sea un invariante auditable de un
-        // vistazo).
-        await AsignadorDeNumeroComprobante.AsegurarContadorAsync(db, plan.IdTenant, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct);
-        var numero = await AsignadorDeNumeroComprobante.AsignarSiguienteAsync(db, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct);
-
+        // 1. Numeración — YA reservada y comprometida por AsignarNumeroComprometidoAsync, en su
+        // propia transacción (ver el comentario de EmitirAsync). Esta transacción arranca
+        // directo en el paso 2: el número que recibe como parámetro es un dato de solo lectura
+        // acá, nunca se vuelve a pedir.
+        //
         // 2. Comprobante.
         var comprobante = new ComprobanteVenta
         {

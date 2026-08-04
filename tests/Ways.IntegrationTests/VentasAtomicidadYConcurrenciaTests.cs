@@ -11,6 +11,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
+using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
 
@@ -22,19 +23,25 @@ namespace Ways.IntegrationTests;
 /// fuerzan REVOCANDO el privilegio de Postgres de la tabla puntual (con <c>ways_owner</c>, nunca
 /// con <c>ways_app</c>) durante el único checkout de la prueba — funciona igual para los pasos
 /// escritos vía EF (comprobante/items/pagos, <c>SaveChangesAsync</c>) y los escritos con ADO.NET
-/// crudo (numeración/stock/cuenta corriente), a diferencia de un <c>DbCommandInterceptor</c> de
-/// EF Core, que NUNCA ve un <c>DbCommand</c> creado a mano sobre
-/// <c>db.Database.GetDbConnection()</c>.
+/// crudo (stock/cuenta corriente), a diferencia de un <c>DbCommandInterceptor</c> de EF Core, que
+/// NUNCA ve un <c>DbCommand</c> creado a mano sobre <c>db.Database.GetDbConnection()</c>.
 ///
-/// Gap semantics (honesto, no el resumen simplificado de design.md): un ROLLBACK LIMPIO —
-/// exactamente lo que fuerza esta prueba— deshace TAMBIÉN el <c>UPDATE numeraciones_comprobante</c>
-/// del paso 1 (misma transacción), así que el próximo checkout exitoso en el mismo punto de
-/// venta/tipo REUSA el número — no lo saltea. Confirmado por
+/// Gap semantics (ahora literal, no el resumen simplificado de una corrección previa de esta
+/// clase): <c>ServicioDeVentas.EmitirAsync</c> reserva y COMITEA el número en su PROPIA
+/// transacción, ANTES de abrir la que escribe el resto de la venta (ver el doc-comment de
+/// <c>EmitirAsync</c>). Un ROLLBACK de la transacción principal —exactamente lo que fuerzan las
+/// pruebas de este archivo, salvo <see cref="UnaFallaEnLaNumeracionDejaElContadorSinAvanzar"/>—
+/// nunca alcanza esa primera transacción: el número queda consumido pase lo que pase después.
+/// El próximo checkout exitoso en el mismo punto de venta/tipo SALTEA el número fallido — el
+/// "hueco aceptado" de la spec/design.md (Failure Semantics) es ahora el comportamiento real, no
+/// solo el de un reintento de <c>CreateExecutionStrategy</c> ante un commit ambiguo.
+///
+/// La única excepción es una falla DENTRO de la transacción de numeración
+/// (<see cref="UnaFallaEnLaNumeracionDejaElContadorSinAvanzar"/>): ahí no hay nada que comprometer
+/// todavía, así que esa transacción también hace ROLLBACK limpio y el contador no avanza — el
+/// próximo checkout exitoso REUSA el número, no lo saltea. Confirmado por
 /// <c>AsignadorDeNumeroComprobanteConcurrenciaTests.UnaAsignacionConRollbackAntesDeComitearReusaElNumeroEnVezDeDejarUnHueco</c>
-/// (Slice 2). El "hueco aceptado" de la spec nace únicamente de un reintento de
-/// <c>CreateExecutionStrategy</c> ante un fallo transitorio de commit ambiguo — un mecanismo
-/// distinto, no reproducible con una revocación de privilegio determinística, y por eso NO es lo
-/// que estas pruebas afirman.
+/// (Slice 2), que prueba exactamente esa transacción chica en aislamiento.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -229,9 +236,10 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
         Assert.Equal(0, await db.MovimientosCuentaCorriente.CountAsync());
     }
 
-    /// <summary>Prueba central del "gap honesto": el próximo checkout LIMPIO en el mismo punto
-    /// de venta/tipo recibe <c>numero = 1</c> — si el intento fallido hubiera dejado un hueco,
-    /// este sería <c>2</c>.</summary>
+    /// <summary>Solo para <see cref="UnaFallaEnLaNumeracionDejaElContadorSinAvanzar"/>: ahí la
+    /// falla ocurre DENTRO de la transacción de numeración, así que no hay número comprometido
+    /// que consumir — el próximo checkout LIMPIO en el mismo punto de venta/tipo reusa
+    /// <c>numero = 1</c>.</summary>
     private static async Task VerificarElProximoNumeroEsUnoAsync(Contexto ctx, int idCliente, int idArticulo, decimal precio)
     {
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", SolicitudSimple(ctx, idCliente, idArticulo, precio));
@@ -241,12 +249,25 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
         Assert.Equal(1L, emitido.Numero);
     }
 
+    /// <summary>Prueba central del gap ahora literal (ver el doc-comment de la clase): una falla
+    /// DESPUÉS de que la numeración ya comitió en su propia transacción deja el número 1
+    /// consumido sin comprobante — el próximo checkout LIMPIO en el mismo punto de venta/tipo
+    /// saltea directo a <c>numero = 2</c>.</summary>
+    private static async Task VerificarElProximoNumeroEsDosAsync(Contexto ctx, int idCliente, int idArticulo, decimal precio)
+    {
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", SolicitudSimple(ctx, idCliente, idArticulo, precio));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(2L, emitido.Numero);
+    }
+
     // ---- task 4.8: atomicidad, un punto de falla por prueba -----------------------------------
 
     [Fact]
-    public async Task UnaFallaEnLaNumeracionNoPersisteNadaYElProximoIntentoReusaElNumero()
+    public async Task UnaFallaEnLaNumeracionDejaElContadorSinAvanzar()
     {
-        var ctx = await PrepararAsync(nameof(UnaFallaEnLaNumeracionNoPersisteNadaYElProximoIntentoReusaElNumero));
+        var ctx = await PrepararAsync(nameof(UnaFallaEnLaNumeracionDejaElContadorSinAvanzar));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "art-atom-1", 100m);
         var idCliente = await SembrarClienteAsync(ctx, "Cliente Atomicidad 1");
 
@@ -259,9 +280,9 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
     }
 
     [Fact]
-    public async Task UnaFallaEnElComprobanteNoPersisteNadaYElProximoIntentoReusaElNumero()
+    public async Task UnaFallaEnElComprobanteNoPersisteNadaYElNumeroQuedaConsumido()
     {
-        var ctx = await PrepararAsync(nameof(UnaFallaEnElComprobanteNoPersisteNadaYElProximoIntentoReusaElNumero));
+        var ctx = await PrepararAsync(nameof(UnaFallaEnElComprobanteNoPersisteNadaYElNumeroQuedaConsumido));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "art-atom-2", 100m);
         var idCliente = await SembrarClienteAsync(ctx, "Cliente Atomicidad 2");
 
@@ -270,13 +291,13 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
         Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
         await VerificarNadaPersistidoAsync(ctx);
-        await VerificarElProximoNumeroEsUnoAsync(ctx, idCliente, idArticulo, 100m);
+        await VerificarElProximoNumeroEsDosAsync(ctx, idCliente, idArticulo, 100m);
     }
 
     [Fact]
-    public async Task UnaFallaEnLosItemsNoPersisteNadaYElProximoIntentoReusaElNumero()
+    public async Task UnaFallaEnLosItemsNoPersisteNadaYElNumeroQuedaConsumido()
     {
-        var ctx = await PrepararAsync(nameof(UnaFallaEnLosItemsNoPersisteNadaYElProximoIntentoReusaElNumero));
+        var ctx = await PrepararAsync(nameof(UnaFallaEnLosItemsNoPersisteNadaYElNumeroQuedaConsumido));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "art-atom-3", 100m);
         var idCliente = await SembrarClienteAsync(ctx, "Cliente Atomicidad 3");
 
@@ -285,13 +306,13 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
         Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
         await VerificarNadaPersistidoAsync(ctx);
-        await VerificarElProximoNumeroEsUnoAsync(ctx, idCliente, idArticulo, 100m);
+        await VerificarElProximoNumeroEsDosAsync(ctx, idCliente, idArticulo, 100m);
     }
 
     [Fact]
-    public async Task UnaFallaEnLosPagosNoPersisteNadaYElProximoIntentoReusaElNumero()
+    public async Task UnaFallaEnLosPagosNoPersisteNadaYElNumeroQuedaConsumido()
     {
-        var ctx = await PrepararAsync(nameof(UnaFallaEnLosPagosNoPersisteNadaYElProximoIntentoReusaElNumero));
+        var ctx = await PrepararAsync(nameof(UnaFallaEnLosPagosNoPersisteNadaYElNumeroQuedaConsumido));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "art-atom-4", 100m);
         var idCliente = await SembrarClienteAsync(ctx, "Cliente Atomicidad 4");
 
@@ -300,13 +321,13 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
         Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
         await VerificarNadaPersistidoAsync(ctx);
-        await VerificarElProximoNumeroEsUnoAsync(ctx, idCliente, idArticulo, 100m);
+        await VerificarElProximoNumeroEsDosAsync(ctx, idCliente, idArticulo, 100m);
     }
 
     [Fact]
-    public async Task UnaFallaEnElStockNoPersisteNadaYElProximoIntentoReusaElNumero()
+    public async Task UnaFallaEnElStockNoPersisteNadaYElNumeroQuedaConsumido()
     {
-        var ctx = await PrepararAsync(nameof(UnaFallaEnElStockNoPersisteNadaYElProximoIntentoReusaElNumero));
+        var ctx = await PrepararAsync(nameof(UnaFallaEnElStockNoPersisteNadaYElNumeroQuedaConsumido));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "art-atom-5", 100m);
         var idCliente = await SembrarClienteAsync(ctx, "Cliente Atomicidad 5");
 
@@ -321,7 +342,49 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
             Assert.Equal(0, await db.Stock.CountAsync());
         }
 
-        await VerificarElProximoNumeroEsUnoAsync(ctx, idCliente, idArticulo, 100m);
+        await VerificarElProximoNumeroEsDosAsync(ctx, idCliente, idArticulo, 100m);
+    }
+
+    [Fact]
+    public async Task UnaFallaEnElUpsertDeStockNoPersisteNadaYElStockQuedaSinCambios()
+    {
+        // El movimiento (paso 5a) YA se insertó cuando el upsert (paso 5b) falla — el upsert es
+        // un INSERT ... ON CONFLICT DO UPDATE, y SembrarStockInicialAsync ya deja la fila de
+        // stock sembrada, así que la venta siempre pisa la rama UPDATE (privilegio revocado).
+        // Prueba que el rollback deshace TAMBIÉN un statement anterior de la MISMA transacción,
+        // no solo el que efectivamente tiró la excepción.
+        var ctx = await PrepararAsync(nameof(UnaFallaEnElUpsertDeStockNoPersisteNadaYElStockQuedaSinCambios));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "art-atom-7", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Atomicidad 7");
+        await SembrarStockInicialAsync(ctx, idArticulo, 10m);
+
+        var respuesta = await IntentarConPrivilegioRevocadoAsync(
+            ctx, SolicitudSimple(ctx, idCliente, idArticulo, 100m), "stock", "UPDATE");
+
+        Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            Assert.Equal(0, await db.ComprobantesVenta.CountAsync());
+            Assert.Equal(0, await db.ItemsComprobanteVenta.CountAsync());
+            Assert.Equal(0, await db.PagosComprobante.CountAsync());
+            Assert.Equal(0, await db.MovimientosCuentaCorriente.CountAsync());
+
+            // Único movimiento esperado: el de motivo = ajuste que sembró
+            // SembrarStockInicialAsync ANTES de la venta — el rollback deshizo el de motivo =
+            // venta (paso 5a) junto con el upsert que falló (paso 5b).
+            Assert.Equal(1, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo));
+            Assert.Equal(
+                Ways.Domain.Stock.MotivoStock.Ajuste,
+                await db.MovimientosStock.Where(m => m.IdArticulo == idArticulo).Select(m => m.Motivo).SingleAsync());
+
+            var cantidad = await db.Stock
+                .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+                .Select(s => s.Cantidad).FirstAsync();
+            Assert.Equal(10m, cantidad);
+        }
+
+        await VerificarElProximoNumeroEsDosAsync(ctx, idCliente, idArticulo, 100m);
     }
 
     [Fact]
@@ -344,7 +407,34 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
             Assert.Equal(0m, saldo);
         }
 
-        await VerificarElProximoNumeroEsUnoAsync(ctx, idCliente, idArticulo, 100m);
+        await VerificarElProximoNumeroEsDosAsync(ctx, idCliente, idArticulo, 100m);
+    }
+
+    [Fact]
+    public async Task UnaFallaEnElInsertDeCuentaCorrienteNoPersisteNadaYElSaldoQuedaSinCambios()
+    {
+        // El UPDATE de saldo (primer statement de paso 6) YA corrió cuando el INSERT del
+        // movimiento (segundo statement) falla — REVOKE INSERT sobre
+        // movimientos_cuenta_corriente prueba que el rollback deshace ese UPDATE previo también,
+        // no solo el INSERT que tiró la excepción.
+        var ctx = await PrepararAsync(nameof(UnaFallaEnElInsertDeCuentaCorrienteNoPersisteNadaYElSaldoQuedaSinCambios));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "art-atom-8", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Atomicidad 8", limiteCredito: 1000m);
+
+        var solicitud = SolicitudSimple(ctx, idCliente, idArticulo, 100m, idMedio: ctx.IdMedioCuentaCorriente);
+
+        var respuesta = await IntentarConPrivilegioRevocadoAsync(ctx, solicitud, "movimientos_cuenta_corriente", "INSERT");
+
+        Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+        await VerificarNadaPersistidoAsync(ctx);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var saldo = await db.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).FirstAsync();
+            Assert.Equal(0m, saldo);
+        }
+
+        await VerificarElProximoNumeroEsDosAsync(ctx, idCliente, idArticulo, 100m);
     }
 
     // ---- task 4.9: dos ventas concurrentes del mismo artículo ---------------------------------
@@ -446,5 +536,70 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
             Assert.NotEqual(numeros[0], numeros[1]);
             Assert.Equal([1L, 2L], numeros.OrderBy(n => n));
         }
+    }
+
+    // ---- task 4.8b: detección de commit ambiguo ------------------------------------------------
+
+    /// <summary>Un commit ambiguo genuino (el servidor comitea, la conexión se corta antes del
+    /// ACK) no es reproducible de forma determinística con una revocación de privilegio — por
+    /// eso esta prueba ejercita <c>ServicioDeVentas.BuscarPorNumeroComprometidoAsync</c>
+    /// DIRECTAMENTE por reflexión (es privado — la firma en primitivos, no en
+    /// <c>PlanDeVenta</c>, es justamente para que esto sea posible sin reconstruir el plan
+    /// completo) en sus dos ramas: número con comprobante ya comprometido (lo que un reintento
+    /// vería tras un commit que sí llegó a puerto) y número sin comprobante (lo que vería tras un
+    /// rollback limpio).</summary>
+    [Fact]
+    public async Task LaDeteccionDeCommitAmbiguoEncuentraLoYaEmitidoYNoInventaLoQueNuncaSeEscribio()
+    {
+        var ctx = await PrepararAsync(nameof(LaDeteccionDeCommitAmbiguoEncuentraLoYaEmitidoYNoInventaLoQueNuncaSeEscribio));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "art-deteccion-ambiguo", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Deteccion Ambiguo");
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", SolicitudSimple(ctx, idCliente, idArticulo, 100m));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idTipoComprobante = await db.TiposComprobante.Where(t => t.Codigo == "TX").Select(t => t.Id).FirstAsync();
+
+        var reloj = new RelojDetector(DateTimeOffset.UtcNow);
+        var contexto = new ContextoDetector(ctx.IdTenant, usuarioId: 1);
+        var servicioDePrecios = new Ways.Application.Precios.ServicioDePrecios(db, reloj, contexto);
+        var servicioDeOfertas = new Ways.Application.Ofertas.ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
+        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas);
+
+        var metodo = typeof(ServicioDeVentas).GetMethod(
+            "BuscarPorNumeroComprometidoAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+
+        // Rama "el commit anterior sí llegó a puerto": el número de la venta que ya se emitió.
+        var tareaEncontrado = (Task<ComprobanteEmitido?>)metodo.Invoke(
+            servicioDeVentas, [ctx.IdPuntoVenta, idTipoComprobante, emitido.Numero, CancellationToken.None])!;
+        var encontrado = await tareaEncontrado;
+
+        Assert.NotNull(encontrado);
+        Assert.Equal(emitido.Id, encontrado!.Id);
+        Assert.Equal(emitido.Numero, encontrado.Numero);
+
+        // Rama "rollback limpio, nunca hubo comprobante": un número que jamás se comprometió
+        // para este punto de venta/tipo.
+        var tareaInexistente = (Task<ComprobanteEmitido?>)metodo.Invoke(
+            servicioDeVentas, [ctx.IdPuntoVenta, idTipoComprobante, emitido.Numero + 999, CancellationToken.None])!;
+        var inexistente = await tareaInexistente;
+
+        Assert.Null(inexistente);
+    }
+
+    private sealed class RelojDetector(DateTimeOffset ahora) : IRelojDelSistema
+    {
+        public DateTimeOffset Ahora { get; } = ahora;
+    }
+
+    private sealed class ContextoDetector(int idTenant, int usuarioId) : IContextoDeUsuario
+    {
+        public bool EstaAutenticado => true;
+        public int UsuarioId => usuarioId;
+        public string NombreUsuario => "actor-de-prueba";
+        public RolConocido Rol => RolConocido.Admin;
+        public int? IdTenant { get; } = idTenant;
     }
 }
