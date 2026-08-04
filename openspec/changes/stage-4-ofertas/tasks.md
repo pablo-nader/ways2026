@@ -193,52 +193,52 @@ green. **Rollback**: new routes only.
 
 ### 2A. Application
 
-- [ ] 2.1 Add `ServicioDeOfertas` (list/create/edit/soft-delete), **not**
+- [x] 2.1 Add `ServicioDeOfertas` (list/create/edit/soft-delete), **not**
   extending `ServicioDeCatalogo<T,TListado,TAlta>` (design decision 6):
   validates scope/benefit exclusivity + ranges via `ReglaDeOfertas` before
   write; tenant-scoped existence pre-check for `id_articulo`/`id_grupo`/
   `id_categoria`/`id_empresa` references (400 `referencia_invalida`);
   `GestionDeCatalogo` policy. *(spec: ofertas / Oferta ABM Lifecycle and
   Authorization, Invalid scope reference maps to 400)*
-- [ ] 2.2 Add `ofertas_listas` replace-set handling inside
+- [x] 2.2 Add `ofertas_listas` replace-set handling inside
   `ServicioDeOfertas`: delete-all + insert inside one transaction, ids
   `.Distinct()`ed, tenant-scoped existence pre-check on `id_lista_precio`
   references (400 `referencia_invalida`). *(spec: ofertas / Multi-Lista
   Targeting via ofertas_listas, all scenarios; design: Protection Rules)*
-- [ ] 2.3 Add contracts: `AltaOferta`/`EdicionOferta`/`OfertaListado` (incl.
+- [x] 2.3 Add contracts: `AltaOferta`/`EdicionOferta`/`OfertaListado` (incl.
   the lista-id-set field).
 
 ### 2B. API
 
-- [ ] 2.4 Add `OfertasEndpoints`: list/create/edit/soft-delete,
+- [x] 2.4 Add `OfertasEndpoints`: list/create/edit/soft-delete,
   `GestionDeCatalogo` policy (tenant admin only), ADR-8 uniform 404 for
   cross-tenant access.
 
 ### 2C. Tests
 
-- [ ] 2.5 [P] Unit (InMemory, transaction-blocked-provider caveat noted):
+- [x] 2.5 [P] Unit (InMemory, transaction-blocked-provider caveat noted):
   required-field validation, invalid scope/benefit shape → rejected before
   DB, invalid clasificador reference → 400, cross-tenant 404. *(spec:
   ofertas / Domain guard rejects invalid shapes before the database)* —
   `tests/Ways.Application.Tests/Ofertas/ServicioDeOfertasTests.cs`.
-- [ ] 2.6 [P] Integration: admin create→soft-delete round trip; vendedor
+- [x] 2.6 [P] Integration: admin create→soft-delete round trip; vendedor
   blocked on create/edit. *(spec: ofertas / Admin creates and soft-deletes
   an oferta, Vendedor blocked from writing)*
-- [ ] 2.7 [P] Integration: cross-tenant read/write → uniform 404 (ADR-8).
+- [x] 2.7 [P] Integration: cross-tenant read/write → uniform 404 (ADR-8).
   *(spec: ofertas / Cross-tenant read/write is a uniform 404)*
-- [ ] 2.8 [P] Integration: `ofertas_listas` — zero rows targets every
+- [x] 2.8 [P] Integration: `ofertas_listas` — zero rows targets every
   lista; rows restrict targeting; cross-tenant lista reference → 400
   `referencia_invalida` via tenant-scoped pre-check. *(spec: ofertas / No
   junction rows targets every lista, Junction rows restrict targeting,
   Junction row references must belong to the same tenant)*
-- [ ] 2.9 Integration: `pk_ofertas_listas` race — two concurrent PUTs
+- [x] 2.9 Integration: `pk_ofertas_listas` race — two concurrent PUTs
   replacing the same oferta's lista set → exactly one winner, the loser a
   translated 409/serialization outcome, never a 500, SQLSTATE-asserted.
   *(design: Backstop Map — pk_ofertas_listas race test)*
-- [ ] 2.10 [P] Integration: FK smoke tests for each new `fk_ofertas_*`/
+- [x] 2.10 [P] Integration: FK smoke tests for each new `fk_ofertas_*`/
   `fk_ofertas_listas_*` (cross-tenant/nonexistent id → 23503/400). *(backstop
   map)* — `tests/Ways.IntegrationTests/OfertasEndpointsTests.cs`.
-- [ ] 2.11 Regression: Slice 1 suites unedited and green.
+- [x] 2.11 Regression: Slice 1 suites unedited and green.
 
 ---
 
