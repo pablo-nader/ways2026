@@ -11,6 +11,11 @@ import { Box } from '../componentes/Box'
 
 const CLAVE_PUNTO_VENTA = 'ways.pos.idPuntoVenta'
 
+/** Piso de cantidad por línea, compartido entre el guard de edición y los atributos
+ * `min`/`step` del input — evita que ambos se desincronicen (ej. el guard aceptando
+ * cantidades que el input ya no permite tipear). */
+const CANTIDAD_MINIMA = 0.001
+
 function leerPuntoVentaGuardado(): number | null {
   try {
     const crudo = localStorage.getItem(CLAVE_PUNTO_VENTA)
@@ -139,8 +144,11 @@ export function Pos() {
     setAvisoPrecios('')
 
     // Una edición de cantidad se debounce (el usuario suele seguir tipeando); un escaneo
-    // dispara la resolución de inmediato, es una única mutación discreta.
+    // dispara la resolución de inmediato, es una única mutación discreta. La bandera se
+    // consume acá mismo: un cambio de cliente/punto de venta disparado justo después de una
+    // edición no debe heredar la demora de esa edición anterior.
     const demora = ultimaAccionEsEdicionRef.current ? 250 : 0
+    ultimaAccionEsEdicionRef.current = false
     const idTimeout = setTimeout(() => {
       clienteDeOfertas
         .resolver(aLineasDeResolucion(lineas, clienteSeleccionado.idListaPrecio, puntoVentaSeleccionada.idEmpresa))
@@ -167,6 +175,29 @@ export function Pos() {
   const mutarCarrito = useCallback((accion: AccionCarrito) => {
     ultimaAccionEsEdicionRef.current = accion.tipo === 'editarCantidad'
     setLineas((prev) => reducirCarrito(prev, accion))
+
+    // El mapa de ediciones en curso es un override por fila: si la fila desaparece (quitar,
+    // vaciar) o su cantidad se recalcula por fuera de la edición manual (un escaneo que suma
+    // sobre la línea existente), el override queda desactualizado y debe limpiarse acá mismo
+    // — no puede depender de que el blur del input dispare antes que la próxima mutación.
+    const limpiarFila = (idArticulo: number) =>
+      setCantidadesEnEdicion((prev) => {
+        if (!(idArticulo in prev)) return prev
+        const { [idArticulo]: _omitido, ...resto } = prev
+        return resto
+      })
+
+    switch (accion.tipo) {
+      case 'quitarLinea':
+        limpiarFila(accion.idArticulo)
+        break
+      case 'escanear':
+        limpiarFila(accion.linea.idArticulo)
+        break
+      case 'vaciar':
+        setCantidadesEnEdicion({})
+        break
+    }
   }, [])
 
   /** Texto crudo del input de cantidad de una línea: mientras el usuario está editando (input
@@ -180,7 +211,7 @@ export function Pos() {
   function cambiarCantidad(idArticulo: number, texto: string) {
     setCantidadesEnEdicion((prev) => ({ ...prev, [idArticulo]: texto }))
     const cantidad = Number(texto)
-    if (texto.trim() !== '' && Number.isFinite(cantidad) && cantidad > 0) {
+    if (texto.trim() !== '' && Number.isFinite(cantidad) && cantidad >= CANTIDAD_MINIMA) {
       mutarCarrito({ tipo: 'editarCantidad', idArticulo, cantidad })
     }
   }
@@ -288,8 +319,8 @@ export function Pos() {
                         <td>
                           <input
                             type="number"
-                            step="0.001"
-                            min="0.001"
+                            step={CANTIDAD_MINIMA}
+                            min={CANTIDAD_MINIMA}
                             className="form-control form-control-sm rounded-0"
                             aria-label={`Cantidad de ${l.nombre}`}
                             value={textoCantidad(l)}
@@ -314,7 +345,9 @@ export function Pos() {
                                     className="badge bg-success ms-1"
                                     title={resultado.aplicadas.map((a) => a.nombre).join(', ')}
                                   >
-                                    {resultado.aplicadas[0].nombre}
+                                    {resultado.aplicadas.length === 1
+                                      ? resultado.aplicadas[0].nombre
+                                      : `${resultado.aplicadas[0].nombre} +${resultado.aplicadas.length - 1}`}
                                   </span>
                                 )}
                               </div>
