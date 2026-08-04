@@ -10,9 +10,11 @@ using Npgsql;
 using Testcontainers.PostgreSql;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
+using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
@@ -206,6 +208,10 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
                 npgsql.MapEnum<MotivoStock>("motivo_stock");
                 npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<EstadoTurno>("estado_turno");
+                npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
+                npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
+                npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
             })
             .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
@@ -235,6 +241,10 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
                 npgsql.MapEnum<MotivoStock>("motivo_stock");
                 npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<EstadoTurno>("estado_turno");
+                npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
+                npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
+                npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;
