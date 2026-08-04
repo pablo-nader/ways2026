@@ -266,6 +266,13 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 
+        // El servicio (30, sin stock) tiene que entrar en el total igual que el producto
+        // (2 × 50 = 100) — el guard de stock de abajo no puede confundirse con un descuento
+        // silencioso del precio de la línea de servicio.
+        var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+        Assert.Equal(130m, emitido.Subtotal);
+        Assert.Equal(130m, emitido.Total);
+
         var (cantidadProducto, _) = await LeerStockYSaldoAsync(ctx, idProducto, idCliente);
         Assert.Equal(-2m, cantidadProducto);
 
@@ -367,6 +374,25 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("codigo_barra_invalido", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task UnCodigoBarraEnLaLongitudMaximaEsAceptado()
+    {
+        var ctx = await PrepararAsync(nameof(UnCodigoBarraEnLaLongitudMaximaEsAceptado));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-codigo-barra-maximo", 10m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Código Barra Máximo");
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, new string('9', 64))],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 10m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
     }
 
     [Fact]
@@ -564,6 +590,39 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("pago_importe_negativo", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task UnPagoConVueltoNegativoEsRechazadoYNoConsumeNumero()
+    {
+        var ctx = await PrepararAsync(nameof(UnPagoConVueltoNegativoEsRechazadoYNoConsumeNumero));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-vuelto-negativo", 100m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Vuelto Negativo");
+
+        var solicitudRechazada = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, -1m)],
+            null, null);
+
+        var respuestaRechazada = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitudRechazada);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuestaRechazada.StatusCode);
+        var problema = await respuestaRechazada.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("vuelto_negativo", problema.GetProperty("codigo").GetString());
+
+        // El rechazo corre ANTES de la reserva de número (design: Failure Semantics) — un
+        // checkout válido inmediato después tiene que arrancar en el número 1, sin gap.
+        var solicitudValida = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)],
+            null, null);
+
+        var respuestaValida = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitudValida);
+        Assert.Equal(HttpStatusCode.Created, respuestaValida.StatusCode);
+        var emitido = (await respuestaValida.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(1, emitido.Numero);
     }
 
     [Fact]
@@ -833,11 +892,15 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         var consultasConPocasLineas = await EmitirYContarConsultasAsync(ctx, idCliente, cantidadDeLineas: 2);
         var consultasConMuchasLineas = await EmitirYContarConsultasAsync(ctx, idCliente, cantidadDeLineas: 20);
+        var consultasConMuchisimasLineas = await EmitirYContarConsultasAsync(ctx, idCliente, cantidadDeLineas: 50);
 
         Assert.Equal(consultasConPocasLineas, consultasConMuchasLineas);
-        Assert.True(
-            consultasConPocasLineas <= 16,
-            $"Se esperaban a lo sumo 16 consultas (design: Technical Approach), se emitieron {consultasConPocasLineas}.");
+        Assert.Equal(consultasConPocasLineas, consultasConMuchisimasLineas);
+
+        // El techo en sí está bajo prueba (design: Technical Approach, "≤ 16 round trips"): una
+        // baja tiene que notarse acá y actualizar la constante a propósito, nunca colarse muda
+        // detrás de un "<=".
+        Assert.Equal(16, consultasConPocasLineas);
     }
 
     private async Task<int> EmitirYContarConsultasAsync(Contexto ctx, int idCliente, int cantidadDeLineas)
