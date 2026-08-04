@@ -23,8 +23,9 @@ public record ArticuloEscaneado(
 /// distinto de <see cref="Articulos.ServicioDeArticulos"/> (ABM): acá no hay autorización de
 /// catálogo ni ciclo de vida de escritura, solo una lectura identity-only. Parsea con
 /// <see cref="ParserDeEscaneo"/> (pure) y corre UNA query contra <c>articulos</c>/
-/// <c>codigos_barra</c>, ambas ya filtradas por tenant (EF query filter) y por
-/// <c>activo = true</c> (spec: "Inactive articulo is not resolved").
+/// <c>codigos_barra</c>, ambas ya filtradas por tenant (EF query filter); el artículo además
+/// exige <c>activo = true</c> (spec: "Inactive articulo is not resolved") — el código de barra
+/// no tiene baja lógica propia, su ciclo de vida es el soft-delete global.
 /// </summary>
 public class ServicioDeEscaneo(IWaysDbContext db)
 {
@@ -41,7 +42,7 @@ public class ServicioDeEscaneo(IWaysDbContext db)
             ObjetivoDeEscaneo.CodigoBarra => await (
                 from a in db.Articulos
                 join c in db.CodigosBarra on a.Id equals c.IdArticulo
-                where a.Activo && c.Activo && c.Codigo == parseado.Codigo
+                where a.Activo && c.Codigo == parseado.Codigo
                 select a).FirstOrDefaultAsync(ct),
 
             _ => null

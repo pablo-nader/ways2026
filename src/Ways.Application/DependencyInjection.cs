@@ -41,9 +41,6 @@ public static class DependencyInjection
         services.AddScoped<ServicioDePrecios>();
         services.AddScoped<ServicioDeOfertas>();
 
-        // AsignadorDeNumeroComprobante (Ways.Application.Ventas) es estática, sin ciclo de
-        // vida de DI que registrar — mismo criterio que AsignadorDeNumeroCliente/
-        // AsignadorDeCodigoInternoArticulo.
         services.AddScoped<ServicioDeEscaneo>();
 
         services.AddScoped<ServicioDeAprovisionamiento>();

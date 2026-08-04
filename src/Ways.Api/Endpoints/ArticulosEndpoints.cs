@@ -25,11 +25,8 @@ public static class ArticulosEndpoints
         .WithSummary("Lista artículos con búsqueda, filtro de disponibilidad por empresa y paginado.");
 
         // stage-5-pos-ventas (Slice 2, task 2.9, design: API Surface): resolución de escaneo
-        // del POS — segmento literal, no colisiona con "/{id:int}" de abajo. Gateada acá con
-        // Politicas.GestionDeCatalogo (admin-only) por construcción del grupo: la Slice 1 en
-        // paralelo (auth policy) va a re-gatear TODO el grupo a Politicas.OperacionDePos
-        // (Vendedor + Admin, design decisión 6) — esta línea queda como deuda declarada hasta
-        // que esa slice se mergee, no como decisión final de autorización.
+        // del POS — segmento literal, no colisiona con "/{id:int}" de abajo. Hereda
+        // Politicas.OperacionDePos del grupo (Vendedor + Admin, design decisión 6).
         grupo.MapGet("/escaneo", (ServicioDeEscaneo servicio, string entrada, CancellationToken ct) =>
             servicio.ResolverAsync(entrada, ct))
         .WithSummary("Resuelve un código escaneado (codigo_interno o codigos_barra) a su artículo.");

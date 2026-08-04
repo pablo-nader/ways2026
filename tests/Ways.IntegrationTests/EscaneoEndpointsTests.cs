@@ -18,10 +18,8 @@ namespace Ways.IntegrationTests;
 /// Resolution Rule) — <c>GET /api/articulos/escaneo</c> punta a punta contra Postgres real:
 /// código corto, código largo, prefijo <c>N*</c>, artículo inactivo, código desconocido.
 ///
-/// Gateada hoy con <c>Politicas.GestionDeCatalogo</c> (admin-only) por construcción del grupo
-/// <c>ArticulosEndpoints</c> — deuda declarada hasta que la Slice 1 (en paralelo) re-gatee el
-/// grupo entero a <c>Politicas.OperacionDePos</c> (Vendedor + Admin, design decisión 6). Esta
-/// suite prueba el comportamiento ACTUAL (admin-only), no el final.
+/// Gateada con <c>Politicas.OperacionDePos</c> (Vendedor + Admin, design decisión 6) por
+/// construcción del grupo <c>ArticulosEndpoints</c>, re-gateado por la Slice 1.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -205,21 +203,42 @@ public class EscaneoEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal("no_encontrado", problema.GetProperty("codigo").GetString());
     }
 
-    /// <summary>Deuda declarada (ver el comentario de clase): hoy el grupo entero de
-    /// <c>ArticulosEndpoints</c> exige <c>GestionDeCatalogo</c>, así que un Vendedor todavía no
-    /// puede escanear — la Slice 1 en paralelo (auth policy, design decisión 6) es quien
-    /// habilita esto bajo <c>OperacionDePos</c>.</summary>
+    /// <summary>Depende de la Slice 1 (auth policy, design decisión 6), que re-gateó el grupo
+    /// de <c>ArticulosEndpoints</c> a <c>OperacionDePos</c>: un Vendedor ya puede escanear.</summary>
     [Fact]
-    public async Task UnVendedorTodaviaNoPuedeEscanearHastaQueLaSlice1ReGateeElGrupo()
+    public async Task UnVendedorPuedeEscanear()
     {
-        var (idTenant, _, _, _, _) = await AprovisionarTenantAsync(
-            nameof(UnVendedorTodaviaNoPuedeEscanearHastaQueLaSlice1ReGateeElGrupo));
-        var mailVendedor = await SembrarVendedorAsync(
-            idTenant, nameof(UnVendedorTodaviaNoPuedeEscanearHastaQueLaSlice1ReGateeElGrupo));
+        var (idTenant, idArea, idAlicuotaIva, _, _) =
+            await AprovisionarTenantAsync(nameof(UnVendedorPuedeEscanear));
+        await SembrarArticuloAsync(idTenant, idArea, idAlicuotaIva, "Café", "42");
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorPuedeEscanear));
         using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
 
-        var respuesta = await vendedor.GetAsync("/api/articulos/escaneo?entrada=42");
+        var respuesta = await vendedor.GetFromJsonAsync<ArticuloEscaneado>("/api/articulos/escaneo?entrada=42");
 
-        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+        Assert.NotNull(respuesta);
+        Assert.Equal("42", respuesta!.CodigoInterno);
+    }
+
+    /// <summary>ADR-8: mismo 404 uniforme cross-tenant que el resto de <c>ArticulosEndpoints</c>
+    /// — un artículo de otro tenant es indistinguible de uno inexistente, tanto por
+    /// <c>codigo_interno</c> como por <c>codigos_barra</c>.</summary>
+    [Fact]
+    public async Task UnArticuloDeOtroTenantNoResuelve()
+    {
+        var (idTenantA, idAreaA, idAlicuotaIvaA, _, _) =
+            await AprovisionarTenantAsync(nameof(UnArticuloDeOtroTenantNoResuelve) + "-A");
+        await SembrarArticuloAsync(
+            idTenantA, idAreaA, idAlicuotaIvaA, "Café", "77", codigoBarra: "7790009999999");
+
+        var (_, _, _, mailAdminB, passwordAdminB) =
+            await AprovisionarTenantAsync(nameof(UnArticuloDeOtroTenantNoResuelve) + "-B");
+        using var adminB = await ClienteLogueadoAsync(mailAdminB, passwordAdminB);
+
+        var respuestaCodigoInterno = await adminB.GetAsync("/api/articulos/escaneo?entrada=77");
+        var respuestaCodigoBarra = await adminB.GetAsync("/api/articulos/escaneo?entrada=7790009999999");
+
+        Assert.Equal(HttpStatusCode.NotFound, respuestaCodigoInterno.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, respuestaCodigoBarra.StatusCode);
     }
 }
