@@ -35,7 +35,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("POST", "/api/auth/login"),
         ("POST", "/api/auth/logout"),
         ("POST", "/api/ofertas/resolver"),
-        ("POST", "/api/ventas"),
+        // Slice 4 (task 4.6): MapGroup("/api/ventas").MapPost("/", ...) — el RoutePattern.RawText
+        // real lleva la barra final (mismo shape que "/api/plataforma/tenants/"/"/api/usuarios/"
+        // más abajo), a diferencia del literal sin barra que este allowlist traía adelantado
+        // desde Slice 1.
+        ("POST", "/api/ventas/"),
         ("POST", "/api/ventas/{id}/anulacion"),
 
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
