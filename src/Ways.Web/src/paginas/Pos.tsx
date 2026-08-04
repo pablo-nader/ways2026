@@ -106,6 +106,7 @@ export function Pos() {
   const [precios, setPrecios] = useState<Record<number, ResultadoDeResolucion>>({})
   const [resolviendo, setResolviendo] = useState(false)
   const [avisoPrecios, setAvisoPrecios] = useState('')
+  const [reintentoPrecios, setReintentoPrecios] = useState(0)
   const generacionResolucionRef = useRef(0)
   const ultimaAccionEsEdicionRef = useRef(false)
   const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>({})
@@ -132,6 +133,7 @@ export function Pos() {
   // los controles en pantalla.
   const [cobrando, setCobrando] = useState(false)
   const cobrandoRef = useRef(false)
+  const generacionCobroRef = useRef(0)
   const [errorCobro, setErrorCobro] = useState('')
 
   const [ventaEmitida, setVentaEmitida] = useState<{ comprobante: ComprobanteEmitido; cliente: ClienteListado } | null>(null)
@@ -259,10 +261,10 @@ export function Pos() {
     if (lineas.length === 0 || !clienteSeleccionado || !puntoVentaSeleccionada) {
       setPrecios({})
       setAvisoPrecios('')
-      // El bump de generación que hace `cobrar()` al terminar puede huerfanar una resolución
-      // en vuelo (su `finally` se salta porque la generación ya no coincide): sin este reset,
-      // esta corrida temprana (ej. tras vaciar el carrito post-cobro) deja `resolviendo` en
-      // `true` para siempre.
+      // Este efecto bumpea su propia generación en cada corrida (línea de arriba): eso huerfana
+      // cualquier fetch en vuelo de una corrida anterior (su `finally` se salta porque la
+      // generación ya no coincide). Sin este reset explícito, esta corrida temprana (ej. vaciar
+      // el carrito, o que quede vacío tras cobrar) deja `resolviendo` en `true` para siempre.
       setResolviendo(false)
       return
     }
@@ -292,7 +294,14 @@ export function Pos() {
       vigente = false
       clearTimeout(idTimeout)
     }
-  }, [lineas, clienteSeleccionado, puntoVentaSeleccionada])
+  }, [lineas, clienteSeleccionado, puntoVentaSeleccionada, reintentoPrecios])
+
+  /** Reintenta la vista previa de precios sin mutar el carrito (bumpea `reintentoPrecios` para
+   * que el efecto de arriba vuelva a correr con las mismas líneas/cliente/punto de venta). */
+  function reintentarPrecios() {
+    if (cobrandoRef.current) return
+    setReintentoPrecios((r) => r + 1)
+  }
 
   // El Consumidor Final nunca puede pagar con cuenta corriente (spec: comprobantes-venta /
   // Cuenta Corriente Payment Gating) — si el cajero cambia de cliente a mitad de armar el pago
@@ -494,6 +503,12 @@ export function Pos() {
           creditoIlimitado: clienteSeleccionado.creditoIlimitado,
         })
 
+  // Una vista previa fallida (`avisoPrecios` seteado, sin estar resolviendo) no cuenta como
+  // precondición incumplida (decisión de diseño 3: el servidor es la autoridad final del total)
+  // — solo la resolución en vuelo bloquea. `subtotalPrevia === null` sin aviso es el estado de
+  // carga inicial (todavía no hay nada que mostrar), ese sí sigue bloqueando.
+  const previaFallida = subtotalPrevia === null && avisoPrecios !== ''
+
   // react-async-state regla 7: si medios de pago o parámetros no cargaron, "Cobrar" queda
   // efectivamente deshabilitado — no solo un aviso decorativo.
   const precondicionesListas =
@@ -504,10 +519,14 @@ export function Pos() {
     errorMedios === '' &&
     parametros !== null &&
     errorParametros === '' &&
-    subtotalPrevia !== null &&
-    !resolviendo
+    !resolviendo &&
+    (subtotalPrevia !== null || previaFallida)
 
-  const puedeCobrar = precondicionesListas && !cobrando && rechazoLocal === null
+  // Con vista previa disponible, se exige la validación local completa (`rechazoLocal`). Con
+  // vista previa fallida, alcanza un chequeo mínimo de sanidad (al menos una fila de pago con
+  // importe > 0): el servidor recalcula el total real y su rechazo se muestra igual de legible.
+  const puedeCobrar =
+    precondicionesListas && !cobrando && (subtotalPrevia !== null ? rechazoLocal === null : pagosConVuelto.length > 0)
 
   async function cobrar() {
     // react-async-state regla 9: guard de reentrancia de primera línea — un doble click en el
@@ -515,7 +534,7 @@ export function Pos() {
     if (cobrandoRef.current) return
     if (!puedeCobrar || !clienteSeleccionado || !puntoVentaSeleccionada) return
 
-    const miGeneracion = (generacionResolucionRef.current += 1)
+    const miGeneracion = (generacionCobroRef.current += 1)
     cobrandoRef.current = true
     setCobrando(true)
     setErrorCobro('')
@@ -533,18 +552,20 @@ export function Pos() {
       })
 
       const emitido = await clienteDeVentas.emitir(solicitud)
-      if (generacionResolucionRef.current !== miGeneracion) return
+      if (generacionCobroRef.current !== miGeneracion) return
 
       setVentaEmitida({ comprobante: emitido, cliente: clienteSeleccionado })
       setLineas([])
       setPrecios({})
       setCantidadesEnEdicion({})
       setFilasPago([filaPagoVacia(proximaFilaPagoIdRef.current++)])
+      setEntradaEscaneo('')
+      setTerminoCliente('')
     } catch (e) {
-      if (generacionResolucionRef.current !== miGeneracion) return
+      if (generacionCobroRef.current !== miGeneracion) return
       setErrorCobro(e instanceof ErrorApi ? e.message : 'No se pudo registrar la venta.')
     } finally {
-      if (generacionResolucionRef.current === miGeneracion) {
+      if (generacionCobroRef.current === miGeneracion) {
         cobrandoRef.current = false
         setCobrando(false)
       }
@@ -632,7 +653,19 @@ export function Pos() {
         <div className="col-lg-8">
           <Box titulo="Carrito">
             {errorEscaneo && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEscaneo}</div>}
-            {avisoPrecios && <div className="alert alert-warning rounded-0 py-1 px-2 small">{avisoPrecios}</div>}
+            {avisoPrecios && (
+              <div className="alert alert-warning rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
+                <span>{avisoPrecios}</span>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-warning rounded-0"
+                  disabled={cobrando || resolviendo}
+                  onClick={reintentarPrecios}
+                >
+                  Reintentar
+                </button>
+              </div>
+            )}
 
             <div className="input-group mb-3">
               <input

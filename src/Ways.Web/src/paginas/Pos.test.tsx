@@ -411,8 +411,12 @@ describe('Pos — vista previa de precios', () => {
   })
 
   it('una resolución rechazada muestra el aviso no bloqueante y el carrito sigue usable', async () => {
+    let cantidadDeResoluciones = 0
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/ofertas/resolver') return Promise.reject(new Error('falló la resolución'))
+      if (ruta === '/ofertas/resolver') {
+        cantidadDeResoluciones += 1
+        return Promise.reject(new Error('falló la resolución'))
+      }
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
@@ -426,6 +430,17 @@ describe('Pos — vista previa de precios', () => {
     expect(
       await screen.findByText('No se pudo calcular la vista previa de precios. El total se confirma recién al cobrar.'),
     ).toBeInTheDocument()
+
+    // decisión de diseño 3: el servidor es la autoridad final del total — una vista previa
+    // fallida no bloquea el checkout (solo la resolución en vuelo lo hace), alcanza con la
+    // sanidad mínima de tener una fila de pago con importe.
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+
+    const llamadasPrevias = cantidadDeResoluciones
+    await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+    await waitFor(() => expect(cantidadDeResoluciones).toBe(llamadasPrevias + 1))
 
     await userEvent.click(screen.getByRole('button', { name: 'Quitar' }))
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
@@ -631,6 +646,17 @@ describe('Pos — checkout', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+  })
+
+  it('un texto de escaneo sin confirmar no sobrevive a la venta siguiente', async () => {
+    await armarVentaLista()
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '111222333')
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+    expect(screen.getByLabelText('Código escaneado')).toHaveValue('')
   })
 
   it('nuevaVenta limpia el error de escaneo que haya quedado de antes de cobrar', async () => {
