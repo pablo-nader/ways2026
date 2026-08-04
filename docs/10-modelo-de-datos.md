@@ -270,6 +270,8 @@ ofertas (                     -- [catálogo]
 );
 CHECK (num_nonnulls(id_articulo, id_grupo, id_categoria) = 1);
 CHECK (num_nonnulls(precio_unitario, porcentaje, importe_fijo) = 1);
+CHECK (fecha_hasta >= fecha_desde AND hora_hasta >= hora_desde);  -- tolerante a NULL por eje
+CHECK (dias_semana IS NULL OR dias_semana <@ ARRAY[1,2,3,4,5,6,7]::smallint[]);
 
 ofertas_listas (               -- [catálogo] junction, sin auditoría (PK-only)
     id_oferta, id_lista_precio, id_tenant
