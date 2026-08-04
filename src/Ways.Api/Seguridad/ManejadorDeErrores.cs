@@ -88,6 +88,11 @@ public class ManejadorDeErrores(
             // fk_codigos_barra_tenant/articulo, fk_precios_tenant/articulo/lista_precio,
             // fk_numeraciones_articulos_tenant): todas siguen la convención fk_* del resto del
             // esquema, así que no hace falta un caso nuevo acá.
+            //
+            // stage-4-ofertas (Slice 1, task 1.7): confirmado sin cambio de código — el mismo
+            // match por prefijo "fk_" ya cubre las 8 FKs nuevas de esta etapa
+            // (fk_ofertas_tenant/empresa/articulo/grupo/categoria,
+            // fk_ofertas_listas_tenant/oferta/lista_precio).
             DbUpdateException { InnerException: PostgresException { SqlState: "23503", ConstraintName: string fk } }
                 when fk.StartsWith("fk_", StringComparison.Ordinal) =>
                 LogYClasificarReferenciaInvalida(fk, log),
@@ -99,6 +104,31 @@ public class ManejadorDeErrores(
             // porque numeric_value_out_of_range aplica por igual a cualquier columna numeric(p,s).
             DbUpdateException { InnerException: PostgresException { SqlState: "22003" } } =>
                 (StatusCodes.Status400BadRequest, "El valor numérico está fuera de rango.", "valor_fuera_de_rango"),
+
+            // stage-4-ofertas (Slice 1, task 1.7, db-error-backstops, design decision 8):
+            // switch por nombre EXACTO detrás de un guard de prefijo "ck_ofertas_" — a
+            // diferencia de ClasificarUnicidad (match por Contains/sufijo), acá no hay riesgo
+            // de colisión de substring porque los cuatro nombres son literales completos y
+            // mutuamente exclusivos. Agregado DESPUÉS de las dos ramas exactas existentes
+            // (ck_clientes_cf_protegido/ck_precios_ventana_valida): cero cambio de
+            // comportamiento para esas dos. ReglaDeOfertas ya valida los cuatro invariantes en
+            // el camino de servicio (Slice 1, dominio; Slice 2, ServicioDeOfertas) — bajo
+            // operación normal ninguna de las cuatro ramas de abajo es alcanzable, quedan como
+            // backstop de una escritura cruda/fuera de banda (misma familia que las dos ramas
+            // de arriba).
+            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckOferta } }
+                when ckOferta.StartsWith("ck_ofertas_", StringComparison.Ordinal) =>
+                ClasificarCheckDeOfertas(ckOferta),
+
+            // stage-4-ofertas (Slice 1, task 1.7): pk_ofertas_listas — la única superficie
+            // genuinamente racy de esta etapa (design: Backstop Map). El replace-set de
+            // ServicioDeOfertas (Slice 2: delete-all + insert transaccional, ids .Distinct()ed)
+            // ya evita el duplicado en el camino normal; esto cubre dos PUT concurrentes que
+            // reemplazan el mismo set de listas de una oferta y chocan acá — misma familia que
+            // pk_articulos_empresas.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string pkOfertasListas } }
+                when string.Equals(pkOfertasListas, "pk_ofertas_listas", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "La lista de precios ya está en el subconjunto de targeting de la oferta.", "oferta_lista_duplicada"),
 
             _ => (StatusCodes.Status500InternalServerError,
                   "Ocurrió un error inesperado.",
@@ -276,4 +306,38 @@ public class ManejadorDeErrores(
         log.LogWarning("Referencia inválida por la restricción {NombreDeFk}.", nombreDeFk);
         return (StatusCodes.Status400BadRequest, "La referencia indicada no existe.", "referencia_invalida");
     }
+
+    /// <summary>stage-4-ofertas (Slice 1, task 1.7, tasks.md "Orchestrator Decisions Recorded
+    /// This Phase" #1): switch por nombre EXACTO de las cuatro CHECKs de <c>ofertas</c> — el
+    /// código de las dos exclusividades sigue el código pineado por <c>specs/ofertas/spec.md</c>
+    /// (<c>oferta_alcance_invalido</c>/<c>oferta_beneficio_invalido</c>, no el nombre borrador
+    /// de <c>design.md</c>), las otras dos siguen el nombre de <c>design.md</c> tal cual
+    /// (ningún escenario de spec las pinea distinto).</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo) ClasificarCheckDeOfertas(string nombreDeCheck) =>
+        nombreDeCheck switch
+        {
+            "ck_ofertas_alcance_exclusivo" =>
+                (StatusCodes.Status400BadRequest,
+                    "La oferta tiene que apuntar a exactamente un artículo, grupo o categoría.",
+                    "oferta_alcance_invalido"),
+
+            "ck_ofertas_beneficio_exclusivo" =>
+                (StatusCodes.Status400BadRequest,
+                    "La oferta tiene que definir exactamente un beneficio: precio unitario, porcentaje o importe fijo.",
+                    "oferta_beneficio_invalido"),
+
+            "ck_ofertas_ventana_valida" =>
+                (StatusCodes.Status400BadRequest,
+                    "La ventana de vigencia de la oferta es inválida.",
+                    "ventana_de_oferta_invalida"),
+
+            "ck_ofertas_dias_semana" =>
+                (StatusCodes.Status400BadRequest,
+                    "Los días de semana de la oferta tienen que ser valores de 1 a 7 sin repetir.",
+                    "dias_semana_invalidos"),
+
+            _ => throw new InvalidOperationException(
+                $"'{nombreDeCheck}' pasó el guard de prefijo 'ck_ofertas_' pero no tiene un caso — " +
+                "agregar la CHECK nueva a este switch.")
+        };
 }
