@@ -453,22 +453,41 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Empty(resultado!);
     }
 
-    /// <summary>(judgment-day, item 1) <c>{"lineas": null}</c> crudo bindea <c>null</c> más allá
-    /// de <c>required</c> (STJ solo exige que la clave esté presente, no que sea no-nula) — el
-    /// guard de <c>ResolverAsync</c> lo trata igual que el lote vacío, nunca un 500.</summary>
+    /// <summary>(judgment-day, item 1 — revisado) <c>{"lineas": null}</c> crudo bindea
+    /// <c>null</c> más allá de <c>required</c> (STJ no valida miembros <c>required</c> en
+    /// constructores <c>SetsRequiredMembers</c>) — <c>ResolverAsync</c> lo distingue de un lote
+    /// vacío legítimo y devuelve 400 <c>lineas_requeridas</c>, nunca un 200 silencioso.</summary>
     [Fact]
-    public async Task ResolverConLineasNulasEnJsonCrudoDevuelve200ConResultadoVacio()
+    public async Task ResolverConLineasNulasEnJsonCrudoDevuelve400LineasRequeridas()
     {
         var (_, mailAdmin, passwordAdmin) =
-            await AprovisionarTenantAsync(nameof(ResolverConLineasNulasEnJsonCrudoDevuelve200ConResultadoVacio));
+            await AprovisionarTenantAsync(nameof(ResolverConLineasNulasEnJsonCrudoDevuelve400LineasRequeridas));
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
 
         using var contenido = new StringContent("{\"lineas\": null}", Encoding.UTF8, "application/json");
         var respuesta = await admin.PostAsync("/api/ofertas/resolver", contenido);
 
-        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
-        var resultado = await respuesta.Content.ReadFromJsonAsync<List<ResultadoDeResolucion>>();
-        Assert.Empty(resultado!);
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("lineas_requeridas", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>(judgment-day, item 1 — revisado) La clave <c>"lineas"</c> ausente del body es el
+    /// mismo caso que <c>null</c> desde el punto de vista de STJ (no hay validación de
+    /// <c>required</c> con <c>SetsRequiredMembers</c>): mismo 400 <c>lineas_requeridas</c>.</summary>
+    [Fact]
+    public async Task ResolverSinLaClaveLineasDevuelve400LineasRequeridas()
+    {
+        var (_, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ResolverSinLaClaveLineasDevuelve400LineasRequeridas));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        using var contenido = new StringContent("{}", Encoding.UTF8, "application/json");
+        var respuesta = await admin.PostAsync("/api/ofertas/resolver", contenido);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("lineas_requeridas", problema.GetProperty("codigo").GetString());
     }
 
     // ---- task 3.11: guard de cantidad constante de consultas -----------------------------------

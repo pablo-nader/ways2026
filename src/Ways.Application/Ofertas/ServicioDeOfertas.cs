@@ -328,9 +328,16 @@ public class ServicioDeOfertas(
     public async Task<IReadOnlyList<ResultadoDeResolucion>> ResolverAsync(
         IReadOnlyList<LineaDeResolucion>? lineas, DateTimeOffset? momento, CancellationToken ct = default)
     {
-        // `required` en SolicitudDeResolucion.Lineas rechaza un cuerpo sin la clave, pero
-        // `{"lineas": null}` igual bindea null acá — se trata como lote vacío, mismo resultado.
-        if (lineas is null || lineas.Count == 0)
+        // La clave "lineas" ausente o explícitamente `null` en el body deserializa igual acá
+        // (STJ no valida `required` con constructores `SetsRequiredMembers`), así que el chequeo
+        // vive en el servicio: distingue un body malformado (400) de un lote vacío legítimo
+        // (`[]` ⇒ resultado vacío, sin error).
+        if (lineas is null)
+        {
+            throw new ErrorDominio("lineas_requeridas", "El campo 'lineas' es obligatorio.", 400);
+        }
+
+        if (lineas.Count == 0)
         {
             return [];
         }

@@ -1,5 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
-
 namespace Ways.Application.Ofertas;
 
 /// <summary><see cref="IdsListas"/> (mismo criterio judgment-day que
@@ -93,16 +91,12 @@ public sealed record LineaDeResolucion(int IdArticulo, int? IdEmpresa, int IdLis
 /// <summary>Cuerpo de <c>POST /api/ofertas/resolver</c> — un único <paramref name="Momento"/>
 /// (design: Open Questions, "server-configured local time") para todo el lote entero, no uno
 /// por línea: resolver un carrito es "ahora" (o un instante hipotético) para todas sus líneas a
-/// la vez. <c>null</c> ⇒ <c>IRelojDelSistema.Ahora</c>.</summary>
-[method: SetsRequiredMembers]
-public sealed record SolicitudDeResolucion(IReadOnlyList<LineaDeResolucion> Lineas, DateTimeOffset? Momento = null)
-{
-    // Redeclara la propiedad posicional para poder marcarla `required` (STJ exige la clave
-    // "lineas" en el body y devuelve 400 si falta) — el positional record no permite `required`
-    // directo en la lista de parámetros; `SetsRequiredMembers` habilita seguir construyendo por
-    // posición (como ya hacen los tests) sin pasar por un inicializador de objeto.
-    public required IReadOnlyList<LineaDeResolucion> Lineas { get; init; } = Lineas;
-}
+/// la vez. <c>null</c> ⇒ <c>IRelojDelSistema.Ahora</c>. <see cref="Lineas"/> es nullable porque
+/// System.Text.Json no valida miembros <c>required</c> en constructores marcados
+/// <c>SetsRequiredMembers</c>: la clave "lineas" ausente o explícitamente <c>null</c> deserializa
+/// igual, así que <c>ServicioDeOfertas.ResolverAsync</c> es quien distingue ese caso (400
+/// <c>lineas_requeridas</c>) de un lote vacío legítimo (<c>[]</c> ⇒ resultado vacío).</summary>
+public sealed record SolicitudDeResolucion(IReadOnlyList<LineaDeResolucion>? Lineas, DateTimeOffset? Momento = null);
 
 /// <summary>Una oferta aplicada, forma HTTP de <c>Ways.Domain.Ofertas.OfertaAplicada</c>.</summary>
 public sealed record OfertaAplicadaDto(int IdOferta, string Nombre, decimal DescuentoUnitario);
