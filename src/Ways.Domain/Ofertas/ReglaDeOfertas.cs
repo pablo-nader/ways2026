@@ -10,10 +10,8 @@ namespace Ways.Domain.Ofertas;
 /// cuatro CHECKs de esquema (<c>ck_ofertas_alcance_exclusivo</c>/
 /// <c>ck_ofertas_beneficio_exclusivo</c>/<c>ck_ofertas_ventana_valida</c>/
 /// <c>ck_ofertas_dias_semana</c>) son defensa en profundidad, alcanzables solo por una
-/// escritura cruda/fuera de banda (design: Backstop Map, reachability note) — con la
-/// excepción de <c>ck_ofertas_ventana_valida</c>, que esta clase deliberadamente NO valida
-/// (design: Protection Rules — la ventana de vigencia queda como backstop de esquema puro en
-/// esta etapa).
+/// escritura cruda/fuera de banda (design: Backstop Map, reachability note) — esta clase
+/// pre-valida los cuatro invariantes.
 /// </summary>
 public static class ReglaDeOfertas
 {
@@ -105,6 +103,31 @@ public static class ReglaDeOfertas
         {
             throw new ErrorDominio(
                 "cantidad_minima_invalida", "La cantidad mínima de la oferta tiene que ser mayor a cero.", 400);
+        }
+    }
+
+    /// <summary>Spec: Vigencia Window Semantics — cada eje de vigencia (fecha/hora) es
+    /// independientemente opcional (<c>NULL</c> = sin restricción en ese eje); seteados ambos
+    /// extremos de un eje, el "hasta" tiene que ser mayor o igual al "desde" (inclusive, mismo
+    /// criterio que <c>ck_ofertas_ventana_valida</c> — la CHECK usa <c>&gt;=</c>, no
+    /// <c>&gt;</c>).</summary>
+    public static void ValidarVentana(
+        DateOnly? fechaDesde, DateOnly? fechaHasta, TimeOnly? horaDesde, TimeOnly? horaHasta)
+    {
+        if (fechaDesde is { } desde && fechaHasta is { } hasta && hasta < desde)
+        {
+            throw new ErrorDominio(
+                "ventana_de_oferta_invalida",
+                "La ventana de vigencia de la oferta es inválida.",
+                400);
+        }
+
+        if (horaDesde is { } horaDesdeValor && horaHasta is { } horaHastaValor && horaHastaValor < horaDesdeValor)
+        {
+            throw new ErrorDominio(
+                "ventana_de_oferta_invalida",
+                "La ventana de vigencia de la oferta es inválida.",
+                400);
         }
     }
 

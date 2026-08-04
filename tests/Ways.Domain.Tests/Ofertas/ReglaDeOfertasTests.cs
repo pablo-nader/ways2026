@@ -178,6 +178,94 @@ public class ReglaDeOfertasTests
         Assert.Equal("oferta_importe_fijo_invalido", error.Codigo);
     }
 
+    // --- ValidarVentana ---
+
+    [Fact]
+    public void ValidarVentanaConFechaHastaAnteriorAFechaDesdeEsRechazado()
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeOfertas.ValidarVentana(
+                new DateOnly(2026, 8, 10), new DateOnly(2026, 8, 1), null, null));
+
+        Assert.Equal("ventana_de_oferta_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void ValidarVentanaConHoraHastaAnteriorAHoraDesdeEsRechazado()
+    {
+        var error = Assert.Throws<ErrorDominio>(() =>
+            ReglaDeOfertas.ValidarVentana(
+                null, null, new TimeOnly(14, 0), new TimeOnly(10, 0)));
+
+        Assert.Equal("ventana_de_oferta_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public void ValidarVentanaConFechasIgualesEsPermitido()
+    {
+        var excepcion = Record.Exception(() =>
+            ReglaDeOfertas.ValidarVentana(
+                new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 1), null, null));
+
+        Assert.Null(excepcion);
+    }
+
+    [Fact]
+    public void ValidarVentanaConHorasIgualesEsPermitido()
+    {
+        var excepcion = Record.Exception(() =>
+            ReglaDeOfertas.ValidarVentana(
+                null, null, new TimeOnly(10, 0), new TimeOnly(10, 0)));
+
+        Assert.Null(excepcion);
+    }
+
+    [Fact]
+    public void ValidarVentanaConFechaDesdeNulaEsPermitido()
+    {
+        var excepcion = Record.Exception(() =>
+            ReglaDeOfertas.ValidarVentana(null, new DateOnly(2026, 8, 1), null, null));
+
+        Assert.Null(excepcion);
+    }
+
+    [Fact]
+    public void ValidarVentanaConFechaHastaNulaEsPermitido()
+    {
+        var excepcion = Record.Exception(() =>
+            ReglaDeOfertas.ValidarVentana(new DateOnly(2026, 8, 1), null, null, null));
+
+        Assert.Null(excepcion);
+    }
+
+    [Fact]
+    public void ValidarVentanaConHoraDesdeNulaEsPermitido()
+    {
+        var excepcion = Record.Exception(() =>
+            ReglaDeOfertas.ValidarVentana(null, null, null, new TimeOnly(10, 0)));
+
+        Assert.Null(excepcion);
+    }
+
+    [Fact]
+    public void ValidarVentanaConHoraHastaNulaEsPermitido()
+    {
+        var excepcion = Record.Exception(() =>
+            ReglaDeOfertas.ValidarVentana(null, null, new TimeOnly(10, 0), null));
+
+        Assert.Null(excepcion);
+    }
+
+    [Fact]
+    public void ValidarVentanaConTodoNuloEsPermitido()
+    {
+        var excepcion = Record.Exception(() => ReglaDeOfertas.ValidarVentana(null, null, null, null));
+
+        Assert.Null(excepcion);
+    }
+
     // --- ValidarCantidadMinima ---
 
     [Fact]
