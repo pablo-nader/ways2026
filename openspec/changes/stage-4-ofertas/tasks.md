@@ -355,19 +355,19 @@ new route only.
 
 ### 4A. Pure mappers
 
-- [ ] 4.1 [P] Add `src/Ways.Web/src/api/ofertas.ts` pure mapping helpers:
+- [x] 4.1 [P] Add `src/Ways.Web/src/api/ofertas.ts` pure mapping helpers:
   `aAltaOferta`, `aValoresOferta`, `opcionesDeLista`, `resumenDeBeneficio`
   (design decision 9 — mappers live outside the component so
   `web-descriptor-tests` stays applicable). *(spec: ofertas / Ofertas
   Schema At Rest, Multi-Lista Targeting via ofertas_listas)*
-- [ ] 4.2 [P] Unit: `ofertas.ts` mappers — coercion, `'' → null`, exclusive
+- [x] 4.2 [P] Unit: `ofertas.ts` mappers — coercion, `'' → null`, exclusive
   group forced to `null`, lista option filtering. *(design: Testing
   Strategy — Unit (Web))* — colocated
   `src/Ways.Web/src/api/ofertas.test.ts`.
 
 ### 4B. Screen
 
-- [ ] 4.3 Add dedicated `src/Ways.Web/src/paginas/Ofertas.tsx` (not the
+- [x] 4.3 Add dedicated `src/Ways.Web/src/paginas/Ofertas.tsx` (not the
   generic descriptor machine, design decision 9): identification (`nombre`,
   `prioridad`, `acumulable`, `activo`) + scope radio driving one of three
   pickers (articulo/grupo/categoria) + optional empresa picker (default
@@ -381,16 +381,16 @@ new route only.
 
 ### 4C. Component tests + wiring
 
-- [ ] 4.4 [P] Component: scope/benefit radio show-hide (the `visibleSi`
+- [x] 4.4 [P] Component: scope/benefit radio show-hide (the `visibleSi`
   analogue), multi-lista selector, disabled-window behavior. RTL +
   `user-event`, `vi.mock('../api/cliente')`. *(design: Testing Strategy —
   Component (Web); web-descriptor-tests skill)* — colocated
   `src/Ways.Web/src/paginas/Ofertas.test.tsx`.
-- [ ] 4.5 Wire `/ofertas` route + nav entry.
-- [ ] 4.6 Smoke-verify (`tsc -b`/`oxlint`/`vite build` clean); relies on
+- [x] 4.5 Wire `/ofertas` route + nav entry.
+- [x] 4.6 Smoke-verify (`tsc -b`/`oxlint`/`vite build` clean); relies on
   Slice 2's integration coverage proving the exact contract shapes the
   screen consumes.
-- [ ] 4.7 Regression: Slice 1 + Slice 2 suites unedited and green
+- [x] 4.7 Regression: Slice 1 + Slice 2 suites unedited and green
   (retarget/rebase against Slice 3 if it merged first, per chosen chain
   strategy).
 
