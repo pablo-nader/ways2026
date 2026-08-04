@@ -8,6 +8,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
+using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Proveedores;
@@ -60,6 +61,13 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<NumeracionArticulo> NumeracionesArticulos => Set<NumeracionArticulo>();
     public DbSet<Precio> Precios => Set<Precio>();
 
+    // stage-4-ofertas, Slice 1 (schema/domain foundation, DB CHANGE GATE aprobado
+    // 2026-08-03): mismo trámite que articulos/precios en stage-3 Slice 1 — modelo adelantado
+    // a la migración, sin DbSet en IWaysDbContext todavía (ningún caso de uso de Application
+    // los consume en este lote; ServicioDeOfertas llega en la Slice 2).
+    public DbSet<Oferta> Ofertas => Set<Oferta>();
+    public DbSet<OfertaLista> OfertasListas => Set<OfertaLista>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>
@@ -94,6 +102,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnNumeracionCliente(modelBuilder);
         AplicarFiltroDeTenantEnNumeracionArticulo(modelBuilder);
         AplicarFiltroDeTenantEnArticuloEmpresa(modelBuilder);
+        AplicarFiltroDeTenantEnOfertaLista(modelBuilder);
     }
 
     /// <summary>
@@ -385,6 +394,27 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(ArticuloEmpresa), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(ArticuloEmpresa.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// <see cref="OfertaLista"/> no hereda de <see cref="EntidadTenant"/> (junction PK-only,
+    /// mismo motivo que <see cref="ArticuloEmpresa"/>), así que necesita la misma variante
+    /// escrita a mano que <see cref="AplicarFiltroDeTenantEnArticuloEmpresa"/>.
+    ///
+    /// <see cref="OfertaLista.IdTenant"/> tampoco se auto-estampa acá — quien construya la fila
+    /// DEBE asignarlo, y el RLS <c>WITH CHECK</c> rechaza el INSERT con SQLSTATE 42501 si
+    /// falta. Pendiente para Slice 2 cuando aterrice el camino de escritura real
+    /// (<c>ServicioDeOfertas</c>, replace-set de <c>ofertas_listas</c>).
+    /// </summary>
+    private void AplicarFiltroDeTenantEnOfertaLista(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(OfertaLista))!;
+
+        var parametro = Expression.Parameter(typeof(OfertaLista), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(OfertaLista.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);
