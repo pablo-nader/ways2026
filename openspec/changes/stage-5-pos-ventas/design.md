@@ -92,6 +92,13 @@ Postgres enums, same criterion as `comportamiento_medio_pago`/`estado_tenant`.
 
 ## The Sale Transaction (binding statement order)
 
+> **Reconciled at verify (2026-08-04):** the numeración allocation (originally step 1
+> inside this transaction) is COMMITTED IN ITS OWN PRIOR TRANSACTION since judgment-day
+> R1 of Slice 4 — a failed sale therefore leaves a real número gap (spec semantics), and
+> the pre-committed número serves as the ambiguous-commit idempotency key
+> (`BuscarPorNumeroComprometidoAsync`). The sale transaction begins at the stock step.
+
+
 ```
 ── outside the transaction (reads + pure rules, executed exactly once) ───────────
   momento := reloj.Ahora                        (pinned; never re-read on retry)

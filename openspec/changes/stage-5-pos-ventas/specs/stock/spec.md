@@ -31,11 +31,7 @@ exist for a movement row.
 
 ### Requirement: Sale Decrement Inside The Checkout Transaction
 
-For every item with `id_articulo NOT NULL`, checkout MUST insert a
-`movimientos_stock` row with `motivo = venta` and negative `cantidad` (the
-sold quantity), take a `pg_advisory_xact_lock` per `(id_tenant, id_articulo,
-id_punto_venta)` before reading/writing the `stock` cache, and update
-`stock.cantidad` in the same transaction. Availability is NOT checked —
+For every item with `id_articulo NOT NULL`, checkout MUST serialize concurrent decrements of the same (id_articulo, id_punto_venta) pair — implemented via the atomic `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` upsert whose own row lock provides the serialization (design decision 1, approved at the gate, superseding this spec's original advisory-lock wording; reconciled at verify).cantidad` in the same transaction. Availability is NOT checked —
 negative stock is allowed (legacy parity).
 
 #### Scenario: A sale below zero stock succeeds
