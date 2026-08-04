@@ -250,7 +250,8 @@ Las listas `derivadas` (ej. "10% descuento" sobre la general) no guardan filas e
 ```sql
 ofertas (                     -- [catálogo]
     id_oferta,
-    nombre          citext,                  -- lo que imprime el ticket
+    id_empresa integer NULL,                 -- NULL = toda empresa del tenant
+    nombre          citext,                  -- lo que imprime el ticket (no único)
     -- alcance: exactamente uno
     id_articulo integer NULL, id_grupo integer NULL, id_categoria integer NULL,
     -- vigencia
@@ -263,20 +264,31 @@ ofertas (                     -- [catálogo]
     precio_unitario numeric(14,2) NULL,      -- "a $X la unidad" (ex precioOferta/precioCant)
     porcentaje      numeric(5,2)  NULL,      -- "X% de descuento"
     importe_fijo    numeric(14,2) NULL,      -- "$X de descuento" / "3x2 a $X"
-    id_lista_precio integer NULL,            -- NULL = aplica a todas las listas
     prioridad       int NOT NULL DEFAULT 0,  -- ante solapamiento gana la mayor;
     acumulable      boolean NOT NULL DEFAULT false,  -- ¿se suma a otras o excluye?
     activo
 );
 CHECK (num_nonnulls(id_articulo, id_grupo, id_categoria) = 1);
 CHECK (num_nonnulls(precio_unitario, porcentaje, importe_fijo) = 1);
+
+ofertas_listas (               -- [catálogo] junction, sin auditoría (PK-only)
+    id_oferta, id_lista_precio, id_tenant
+);
+-- PK (id_oferta, id_lista_precio)
 ```
 
+**DEVIATION (stage-4-ofertas, aprobado 2026-08-03):** la columna única
+`id_lista_precio NULL` que este documento definía originalmente en `ofertas` se
+reemplaza por la junction `ofertas_listas` de arriba. Cero filas para una oferta
+significa que aplica a **todas** las listas del tenant (incluidas las `derivada`);
+una o más filas la restringen a exactamente esas listas — un targeting multi-lista
+que una sola columna nullable no podía expresar.
+
 Cubre todo el motor del legacy (por fecha, por hora, por cantidad, de grupo directa y
-por cantidad) más lo que le faltaba: días de semana, ofertas por categoría, oferta
-limitada a una lista, y reglas explícitas de solapamiento en lugar del `elseif`
-accidental de `funciones.php`. El descuento aplicado queda **en el item** que lo generó
-(ver abajo), no como línea fantasma con barra `OF...`.
+por cantidad) más lo que le faltaba: días de semana, ofertas por categoría, ofertas
+limitadas a un subconjunto de listas, y reglas explícitas de solapamiento en lugar del
+`elseif` accidental de `funciones.php`. El descuento aplicado queda **en el item** que
+lo generó (ver abajo), no como línea fantasma con barra `OF...`.
 
 ---
 
