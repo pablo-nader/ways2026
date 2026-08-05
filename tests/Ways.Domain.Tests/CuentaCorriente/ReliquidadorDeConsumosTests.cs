@@ -200,6 +200,30 @@ public class ReliquidadorDeConsumosTests
         Assert.Equal([1], resultado.IdsMovimientosCubiertos);
     }
 
+    // ---- delta total cero por deltas que se cancelan (contrato del calculador, no del servicio) --
+
+    [Fact]
+    public void DosConsumosConDeltasQueSeCancelanDanDeltaTotalCeroPeroElCalculadorSigueReportandoLosDosProcesados()
+    {
+        // El calculador reporta lo PROCESADO, nunca lo MARCADO — quien decide si se marca es el
+        // llamador (ServicioDeReliquidacion), según si el Delta TOTAL de la corrida es distinto de
+        // cero. Acá +X y −X se cancelan (Delta == 0) pero el contrato de Calcular no cambia: los
+        // dos consumos siguen apareciendo en IdsMovimientosCubiertos.
+        var lineaSube = new LineaAReliquidar(1, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 100m);
+        var consumoSube = UnConsumo(1, lineaSube); // delta +20 con precio actual 120.
+
+        var lineaBaja = new LineaAReliquidar(2, Cantidad: 1m, PrecioUnitario: 100m, Descuento: 0m, TotalHistorico: 100m);
+        var consumoBaja = UnConsumo(2, lineaBaja); // delta -20 con precio actual 80.
+
+        var precios = new Dictionary<int, decimal?> { [1] = 120m, [2] = 80m };
+
+        var resultado = ReliquidadorDeConsumos.Calcular([consumoSube, consumoBaja], precios);
+
+        Assert.Equal(0m, resultado.Delta);
+        Assert.Equal(2, resultado.IdsMovimientosCubiertos.Count);
+        Assert.Equal([1, 2], resultado.IdsMovimientosCubiertos);
+    }
+
     // ---- empty input -------------------------------------------------------------------------
 
     [Fact]

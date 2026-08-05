@@ -25,7 +25,8 @@ public class LectorDeConsumosReliquidables(IWaysDbContext db)
     /// <c>ix_movimientos_cuenta_corriente_consumos_pendientes</c> ES esta predicate), <c>importe
     /// &gt; 0</c>, el comprobante <c>estado = 'emitido'</c> (un anulado NUNCA se reliquida — deja
     /// pasar la deuda contra-movida por la anulación) y <c>comprobante.total &gt; 0</c>. Ordenado
-    /// por <c>fecha ASC</c>.</summary>
+    /// por <c>fecha ASC, id ASC</c> — el desempate por <c>id</c> hace determinístico el corte del
+    /// slot 500 cuando dos consumos comparten <c>fecha</c>.</summary>
     public async Task<IReadOnlyList<ConsumoAReliquidar>> LeerElegiblesAsync(int idCliente, CancellationToken ct)
     {
         var elegibles = await (
@@ -37,7 +38,7 @@ public class LectorDeConsumosReliquidables(IWaysDbContext db)
                     && m.Importe > 0
                     && c.Estado == EstadoComprobante.Emitido
                     && c.Total > 0
-                orderby m.Fecha ascending
+                orderby m.Fecha ascending, m.Id ascending
                 select new { m.Id, IdComprobanteVenta = c.Id, m.Importe, c.Total })
             .Take(LimiteDeLaConsulta)
             .ToListAsync(ct);

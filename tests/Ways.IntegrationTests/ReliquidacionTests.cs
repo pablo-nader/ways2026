@@ -532,9 +532,13 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Single(primera.IdsMovimientosCubiertos);
 
         // Un consumo NUEVO se agrega — la corrida siguiente cubre solo el nuevo, nunca reprocesa
-        // el ya marcado (spec: A previously reliquidated consumo is skipped).
+        // el ya marcado (spec: A previously reliquidated consumo is skipped). El precio sube DE
+        // NUEVO después de la compra para que el nuevo consumo aporte un delta distinto de cero —
+        // si quedara en cero la corrida sería un no-op y no escribiría ningún marcador (mismo
+        // criterio que UnDeltaTotalCeroPorDeltasQueSeCancelanNoDejaNingunConsumoMarcadoComoCubierto).
         await SubirPrecioAsync(ctx, idArticulo, 200m);
-        await RealizarConsumoAsync(ctx, idCliente, idArticulo, 1m, 200m);
+        var consumoNuevo = await RealizarConsumoAsync(ctx, idCliente, idArticulo, 1m, 200m);
+        await SubirPrecioAsync(ctx, idArticulo, 250m);
 
         var segunda = await LeerResultadoAsync(await EjecutarAsync(ctx, idCliente));
         Assert.Single(segunda.IdsMovimientosCubiertos);
@@ -544,6 +548,11 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
             .Where(m => m.IdComprobanteVenta == consumoViejo.Id && m.Tipo == TipoMovimientoCc.Consumo)
             .Select(m => m.IdMovimientoActualizacion).SingleAsync();
         Assert.NotNull(marcadorViejo);
+
+        var marcadorNuevo = await db.MovimientosCuentaCorriente
+            .Where(m => m.IdComprobanteVenta == consumoNuevo.Id && m.Tipo == TipoMovimientoCc.Consumo)
+            .Select(m => m.IdMovimientoActualizacion).SingleAsync();
+        Assert.NotNull(marcadorNuevo);
     }
 
     // ---- task 3.10: un único movimiento por N comprobantes/líneas; sin reversión --------------
@@ -830,5 +839,146 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.MovimientosCuentaCorriente.CountAsync(m => m.IdCliente == idCliente));
+    }
+
+    [Fact]
+    public async Task UnDeltaTotalCeroPorDeltasQueSeCancelanNoDejaNingunConsumoMarcadoComoCubierto()
+    {
+        // Dos consumos elegibles, uno sube (+50) y otro baja (-50) — el delta TOTAL de la corrida
+        // da 0, así que el servicio no escribe absolutamente nada (paso 6/7/8 se saltean). La
+        // respuesta tiene que reflejar esa realidad de la DB: IdsMovimientosCubiertos vacío, nunca
+        // la lista de "procesados" que devuelve el calculador puro.
+        var ctx = await PrepararAsync(nameof(UnDeltaTotalCeroPorDeltasQueSeCancelanNoDejaNingunConsumoMarcadoComoCubierto));
+        var idArticuloSube = await SembrarArticuloConPrecioAsync(ctx, "articulo-cancela-sube", 100m);
+        var idArticuloBaja = await SembrarArticuloConPrecioAsync(ctx, "articulo-cancela-baja", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente delta cancela");
+
+        var consumoSube = await RealizarConsumoAsync(ctx, idCliente, idArticuloSube, 1m, 100m);
+        var consumoBaja = await RealizarConsumoAsync(ctx, idCliente, idArticuloBaja, 1m, 100m);
+        await SubirPrecioAsync(ctx, idArticuloSube, 150m); // delta +50.
+        await SubirPrecioAsync(ctx, idArticuloBaja, 50m); // delta -50.
+
+        var respuesta = await EjecutarAsync(ctx, idCliente);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var resultado = await LeerResultadoAsync(respuesta);
+
+        Assert.Equal(0m, resultado.Delta);
+        Assert.Empty(resultado.IdsMovimientosCubiertos);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosCuentaCorriente.CountAsync(
+            m => m.IdCliente == idCliente && m.Tipo == TipoMovimientoCc.ActualizacionPrecios));
+
+        var marcadorSube = await db.MovimientosCuentaCorriente
+            .Where(m => m.IdComprobanteVenta == consumoSube.Id && m.Tipo == TipoMovimientoCc.Consumo)
+            .Select(m => m.IdMovimientoActualizacion).SingleAsync();
+        var marcadorBaja = await db.MovimientosCuentaCorriente
+            .Where(m => m.IdComprobanteVenta == consumoBaja.Id && m.Tipo == TipoMovimientoCc.Consumo)
+            .Select(m => m.IdMovimientoActualizacion).SingleAsync();
+        Assert.Null(marcadorSube);
+        Assert.Null(marcadorBaja);
+    }
+
+    // ---- el cap de 500 consumos por corrida, punta a punta -------------------------------------
+
+    /// <summary>Seed crudo en lote (<c>AddRange</c> + un único <c>SaveChangesAsync</c> por tabla,
+    /// en vez de N×3 round-trips) — mismo criterio que <see cref="SembrarConsumoCrudoAsync"/>: el
+    /// camino de escritura completo no hace falta para probar la FORMA del cap de 500, solo el
+    /// volumen de filas.</summary>
+    private async Task<List<int>> SembrarConsumosCrudosEnLoteAsync(
+        Contexto ctx, int idCliente, int idArticulo, decimal precio, int cantidad, DateTimeOffset fecha)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var comprobantes = Enumerable.Range(0, cantidad)
+            .Select(_ => new ComprobanteVenta
+            {
+                IdTenant = ctx.IdTenant, IdTipoComprobante = ctx.IdTipoComprobanteTx,
+                Numero = Interlocked.Increment(ref _numeroSecuencial), Fecha = fecha, IdPuntoVenta = ctx.IdPuntoVenta,
+                IdEmpleado = ctx.IdEmpleadoAdmin, IdCliente = idCliente, Subtotal = precio, DescuentoTotal = 0m,
+                Total = precio, Estado = EstadoComprobante.Emitido, CreatedAt = fecha, UpdatedAt = fecha
+            })
+            .ToList();
+        db.ComprobantesVenta.AddRange(comprobantes);
+        await db.SaveChangesAsync();
+
+        var items = comprobantes
+            .Select(c => new ItemComprobanteVenta
+            {
+                IdTenant = ctx.IdTenant, IdComprobanteVenta = c.Id, Orden = 1, IdArticulo = idArticulo,
+                Descripcion = "item de prueba", IdArea = ctx.IdArea, IdListaPrecio = ctx.IdListaPrecio,
+                IdAlicuotaIva = ctx.IdAlicuotaIva, PorcentajeIva = 0m, Cantidad = 1m, PrecioUnitario = precio,
+                Descuento = 0m, Total = precio, CreatedAt = fecha, UpdatedAt = fecha
+            })
+            .ToList();
+        db.ItemsComprobanteVenta.AddRange(items);
+        await db.SaveChangesAsync();
+
+        var movimientos = comprobantes
+            .Select(c => new MovimientoCuentaCorriente
+            {
+                IdTenant = ctx.IdTenant, IdCliente = idCliente, Fecha = fecha, IdPuntoVenta = ctx.IdPuntoVenta,
+                IdEmpleado = ctx.IdEmpleadoAdmin, Tipo = TipoMovimientoCc.Consumo, IdComprobanteVenta = c.Id,
+                IdPagoComprobante = null, Importe = precio, SaldoResultante = 0m
+            })
+            .ToList();
+        db.MovimientosCuentaCorriente.AddRange(movimientos);
+        await db.SaveChangesAsync();
+
+        return movimientos.OrderBy(m => m.Id).Select(m => m.Id).ToList();
+    }
+
+    [Fact]
+    public async Task ConQuinientosUnoElegiblesLaPrimeraCorridaCubreLosQuinientosMasViejosYLaSegundaElResto()
+    {
+        var ctx = await PrepararAsync(nameof(ConQuinientosUnoElegiblesLaPrimeraCorridaCubreLosQuinientosMasViejosYLaSegundaElResto));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-cap-500", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente cap 500");
+
+        // Misma fecha para las 501 filas — el desempate determinístico por id (Fix del lector) es
+        // lo que decide cuáles 500 quedan del lado de la primera corrida.
+        var fecha = DateTimeOffset.UtcNow;
+        var idsMovimiento = await SembrarConsumosCrudosEnLoteAsync(ctx, idCliente, idArticulo, 100m, 501, fecha);
+        Assert.Equal(501, idsMovimiento.Count);
+
+        await SubirPrecioAsync(ctx, idArticulo, 110m); // delta +10 por consumo.
+
+        var primera = await LeerResultadoAsync(await EjecutarAsync(ctx, idCliente));
+
+        Assert.Equal(500, primera.IdsMovimientosCubiertos.Count);
+        Assert.True(primera.HayMas);
+        Assert.Equal(5000m, primera.Delta); // 500 × 10.
+
+        var idsEsperadosPrimeraCorrida = idsMovimiento.Take(500).ToList();
+        Assert.Equal(idsEsperadosPrimeraCorrida, primera.IdsMovimientosCubiertos.OrderBy(id => id).ToList());
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            Assert.Equal(1, await db.MovimientosCuentaCorriente.CountAsync(
+                m => m.IdCliente == idCliente && m.Tipo == TipoMovimientoCc.ActualizacionPrecios));
+
+            var idUltimoNoCubierto = idsMovimiento[500];
+            var marcadorPendiente = await db.MovimientosCuentaCorriente
+                .Where(m => m.Id == idUltimoNoCubierto).Select(m => m.IdMovimientoActualizacion).SingleAsync();
+            Assert.Null(marcadorPendiente);
+        }
+
+        var segunda = await LeerResultadoAsync(await EjecutarAsync(ctx, idCliente));
+
+        Assert.Single(segunda.IdsMovimientosCubiertos);
+        Assert.Equal(idsMovimiento[500], segunda.IdsMovimientosCubiertos[0]);
+        Assert.False(segunda.HayMas);
+        Assert.Equal(10m, segunda.Delta);
+
+        await using var dbFinal = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(2, await dbFinal.MovimientosCuentaCorriente.CountAsync(
+            m => m.IdCliente == idCliente && m.Tipo == TipoMovimientoCc.ActualizacionPrecios));
+
+        var saldoFinal = await dbFinal.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).FirstAsync();
+        // El seed crudo (SembrarConsumosCrudosEnLoteAsync) inserta los 501 Consumo directo en el
+        // ledger sin pasar por el checkout, así que nunca toca Cliente.Saldo (mismo criterio que
+        // SembrarConsumoCrudoAsync) — el único efecto en saldo es el de las dos corridas de
+        // reliquidación (5000 + 10).
+        Assert.Equal(primera.Delta + segunda.Delta, saldoFinal);
     }
 }

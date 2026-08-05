@@ -98,9 +98,11 @@ public class ServicioDeReliquidacion(
         {
             // Zero delta ⇒ no-op: COMMIT sin escribir nada (design: The Re-Pricing Derivation —
             // "the same consumos are re-evaluated against the prices of the day the client
-            // actually pays").
+            // actually pays"). La lista de cubiertos del calculador refleja lo PROCESADO, no lo
+            // MARCADO — acá no se escribe ningún marcador, así que la respuesta tiene que reflejar
+            // la DB real: sin cubiertos.
             await transaccion.CommitAsync(ct);
-            return resultado;
+            return resultado with { IdsMovimientosCubiertos = [] };
         }
 
         var conexion = await ObtenerConexionAbiertaAsync(ct);
