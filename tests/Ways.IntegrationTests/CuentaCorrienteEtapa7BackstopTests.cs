@@ -7,6 +7,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
@@ -131,6 +132,11 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
     // Pin directo del guard AND EXISTS del seed de RC: en una base fresca la migración no debe
     // insertar nada (el seeder ve la tabla vacía y siembra el catálogo completo, RC incluido).
     // Sin este pin, quitar el guard solo se detectaba por fallas colaterales en otra suite.
+    //
+    // stage-8-compras-transferencias-inventario (Slice 1, task 1.14): el total pasa de 11 a 14 —
+    // mismo motivo que RC en su momento: TiposComprobanteBase ahora también incluye C-FA/C-FB/
+    // C-FC (design: Table Shapes — E), y el mismo guard AND EXISTS del seed de compra deja una
+    // base fresca intacta para que este seeder la puebla completa y atómica.
     [Fact]
     public async Task UnaBaseFrescaTerminaConElCatalogoCompletoDeTiposIncluidoRc()
     {
@@ -141,10 +147,13 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
 
         var codigos = await db.TiposComprobante.Select(t => t.Codigo).OrderBy(c => c).ToListAsync();
 
-        Assert.Equal(11, codigos.Count);
+        Assert.Equal(14, codigos.Count);
         Assert.Contains("RC", codigos);
         Assert.Contains("FA", codigos);
         Assert.Contains("TX", codigos);
+        Assert.Contains("C-FA", codigos);
+        Assert.Contains("C-FB", codigos);
+        Assert.Contains("C-FC", codigos);
     }
 
     // ---- RC idempotente en una base ya migrada desde stage 6 (task 1.9) ----------------------
@@ -183,6 +192,7 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
                     npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                     npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                    npgsql.MapEnum<EstadoCompra>("estado_compra");
                 })
                 .Options;
 
