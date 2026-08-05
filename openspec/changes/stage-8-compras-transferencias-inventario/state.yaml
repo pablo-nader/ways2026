@@ -29,7 +29,8 @@ phases:
     notes: "Written 2026-08-05. Six PR slices per the six-way split supplied for this phase (merges the proposal's borrador/confirmar+anular slices into one Slice 2 centerpiece with its own judgment-day round; splits web into Slice 5 compras / Slice 6 transferencias+conteo+saldo, mirroring stage-7). DB CHANGE GATE carries no STOP task — already exercised in autonomous mode. doc-10 update split Slice 1 (§1/§5/§6) / Slice 6 (stage-table close-out, last row of doc 10). Review Workload Forecast: High risk, ~6,300-8,000 lines, chained PRs stacked-to-main, auto-chain — Decision needed before apply: No."
     depends_on: [spec, design]
   apply:
-    status: pending
+    status: in_progress
+    notes: "Slice 1 (schema + seed gate) MERGED in PR #68 (2026-08-05, main b98d17d): migration ComprasYTransferenciasEtapa8 (2 tables + estado_compra + partial dedupe unique + 5 CHECKs + RLS same-migration), the two deferred FK columns finally landed together, C-FA/C-FB/C-FC dual-path seeds with the fresh-DB guard, the _numero classifier trap closed with a mutation-grade test, doc-10 §1/§5/§6 notes updated (stage-table close-out deferred to slice 6). Suites 356/212/604/322. Judgment-day: BOTH judges CLEAN round 1 (seeder blast-radius byte-diffed against main; StartsWith composite-FK reasoning independently reproduced); 1 MINOR deferred to slice 2 (citext case-insensitivity test). Remaining: slices 2-6."
     depends_on: [tasks]
   verify:
     status: pending

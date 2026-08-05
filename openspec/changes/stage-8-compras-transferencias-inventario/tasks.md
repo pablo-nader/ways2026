@@ -79,20 +79,20 @@ a fresh and a stage-7-migrated database, doc-10 §1/§5/§6 updated. **Rollback*
 down-migration (drop the two tables, drop the two nullable FK columns, drop
 the enum with its tables, deactivate the three compra tipos).
 
-- [ ] 1.1 Re-read the four cached baselines (`dotnet test` Domain/Application/
+- [x] 1.1 Re-read the four cached baselines (`dotnet test` Domain/Application/
   Integration counts, `npx vitest run` count) at branch-cut and record the
   actual numbers in this task's checkbox note. *(Orchestrator Decision 5)*
-- [ ] 1.2 [P] Create `src/Ways.Domain/Compras/ComprobanteCompra.cs`,
+- [x] 1.2 [P] Create `src/Ways.Domain/Compras/ComprobanteCompra.cs`,
   `ItemComprobanteCompra.cs`, `EstadoCompra.cs`. *(design: Table Shapes A/B/C;
   File Changes)*
-- [ ] 1.3 [P] Modify `src/Ways.Domain/Stock/MotivoStock.cs`,
+- [x] 1.3 [P] Modify `src/Ways.Domain/Stock/MotivoStock.cs`,
   `MovimientoStock.cs`: `IdComprobanteCompra` added, "reserved/never written"
   doc-comments removed. *(design: File Changes; spec: stock / Comprobante
   Compra Schema At Rest — "A compra movement carries its comprobante link")*
-- [ ] 1.4 [P] Modify `src/Ways.Domain/Gastos/Gasto.cs`: `IdComprobanteCompra`
+- [x] 1.4 [P] Modify `src/Ways.Domain/Gastos/Gasto.cs`: `IdComprobanteCompra`
   added, deferral note removed. *(design: File Changes; spec: gastos /
   Gasto Schema At Rest)*
-- [ ] 1.5 Migration `ComprasYTransferenciasEtapa8`: `estado_compra` enum;
+- [x] 1.5 Migration `ComprasYTransferenciasEtapa8`: `estado_compra` enum;
   `comprobantes_compra` (all columns, `ux_comprobantes_compra_numero_externo`
   partial UNIQUE, `ck_comprobantes_compra_confirmada_completa`,
   `ck_comprobantes_compra_totales_no_negativos`, all indexes);
@@ -101,46 +101,46 @@ the enum with its tables, deactivate the three compra tipos).
   two deferred FK columns (`movimientos_stock.id_comprobante_compra`,
   `gastos.id_comprobante_compra`) + support indexes; RLS on both new tables.
   *(design: Table Shapes A, B, D, F)*
-- [ ] 1.6 [P] Register `MapEnum<EstadoCompra>("estado_compra")` in **both**
+- [x] 1.6 [P] Register `MapEnum<EstadoCompra>("estado_compra")` in **both**
   `DependencyInjection.cs` and `WaysDbContextFactory.cs` — never also via
   `HasPostgresEnum`. *(design: Table Shape C)*
-- [ ] 1.7 Create `ComprobanteCompraConfiguration.cs`,
+- [x] 1.7 Create `ComprobanteCompraConfiguration.cs`,
   `ItemComprobanteCompraConfiguration.cs`; modify
   `MovimientoStockConfiguration.cs`, `GastoConfiguration.cs` for the two FK
   columns. *(design: File Changes)*
-- [ ] 1.8 Modify `InicializadorDeBaseDeDatos.cs`: `TiposComprobanteBase`
+- [x] 1.8 Modify `InicializadorDeBaseDeDatos.cs`: `TiposComprobanteBase`
   gains a `Clase` field (`:424` currently hardcodes `Venta`); append
   `C-FA`/`C-FB`/`C-FC` to the seed list. *(design: Table Shape E; decisions
   7, 12)*
-- [ ] 1.9 Same migration: idempotent dual-path compra-tipo insert —
+- [x] 1.9 Same migration: idempotent dual-path compra-tipo insert —
   `WHERE EXISTS (SELECT 1 FROM tipos_comprobante)` (fresh-DB guard) **AND**
   a per-row `NOT EXISTS (… WHERE codigo = v.codigo)`, the
   `CuentaCorrienteEtapa7` pattern. *(design: Table Shape E; spec:
   comprobantes-compra / Compra-Clase Tipos Are Platform-Seeded — "seed does
   not break a fresh-database boot")*
-- [ ] 1.10 Modify `ManejadorDeErrores.cs`: **exact-name branch, before
+- [x] 1.10 Modify `ManejadorDeErrores.cs`: **exact-name branch, before
   `ClasificarUnicidad`**, for `ux_comprobantes_compra_numero_externo` → `409
   compra_duplicada` (the `_numero` substring trap); exact-name branch for
   `ux_items_comprobante_compra_orden` → `409 orden_de_item_duplicado`; new
   `ClasificarCheckDeCompras` behind a `ck_comprobantes_compra_`/
   `ck_items_comprobante_compra_` prefix guard, exact-name switch inside (the
   `ck_ofertas_` pattern, not a `Contains` family). *(design: Backstop Map)*
-- [ ] 1.11 Update `docs/10-modelo-de-datos.md` §1 (compra-tipo catalog note),
+- [x] 1.11 Update `docs/10-modelo-de-datos.md` §1 (compra-tipo catalog note),
   §5/§6 (etapa 8 implemented; both deferred FKs landed), stage table.
   *(gate condition, `state.yaml`; Orchestrator Decision 3)*
-- [ ] 1.12 [P] Integration: `has-pending-model-changes` clean; RLS enforced on
+- [x] 1.12 [P] Integration: `has-pending-model-changes` clean; RLS enforced on
   both new tables.
-- [ ] 1.13 [P] Integration (backstops): the `_numero` trap test (a duplicate
+- [x] 1.13 [P] Integration (backstops): the `_numero` trap test (a duplicate
   `numero_externo` returns `compra_duplicada`, never the generic
   `numero_duplicado`); `orden` duplicate 23505; both new CHECKs (23514) each;
   every new FK 23503; a genuine race on the dedupe unique — exactly one
   winner. *(design: Backstop Map)*
-- [ ] 1.14 [P] Integration: every venta `tipos_comprobante` code resolves to
+- [x] 1.14 [P] Integration: every venta `tipos_comprobante` code resolves to
   its venta row after the seed, proven on **both** a fresh database **and**
   one migrated from stage 7 (two separate boot tests). *(spec:
   comprobantes-compra / Compra-Clase Tipos… — both scenarios; GATE condition
   (ii))*
-- [ ] 1.15 Regression: full stage 1–7 suite green, no assertion changed.
+- [x] 1.15 Regression: full stage 1–7 suite green, no assertion changed.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ComprobanteCompra|FullyQualifiedName~TiposComprobante`
 
