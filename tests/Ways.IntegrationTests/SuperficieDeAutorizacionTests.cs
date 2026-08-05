@@ -145,7 +145,11 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         "/api/puntos-venta",
         // stage-5-pos-ventas (Slice 5, task 5.4): GET /api/stock — balance del badge del POS,
         // spec: stock / Stock Read Access Under OperacionDePos.
-        "/api/stock"
+        "/api/stock",
+        // stage-6-turnos-caja (Slice 2, task 2.10): GET /api/caja/turnos/abierto,
+        // GET /api/caja/turnos/{id} y GET /api/caja/turnos (historial) — mismo criterio que
+        // "/api/stock", las tres rutas de lectura de CajaEndpoints quedan bajo OperacionDePos.
+        "/api/caja/turnos"
     ];
 
     // Policies que, de aparecer en vez de OperacionDePos, siguen siendo un gate válido —

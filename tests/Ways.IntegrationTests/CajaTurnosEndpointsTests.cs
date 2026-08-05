@@ -418,6 +418,102 @@ public class CajaTurnosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal(HttpStatusCode.Forbidden, movimiento.StatusCode);
     }
 
+    // ---- judgment-day (Slice 2, ronda 2): auth guard blind spot ------------------------------------
+
+    /// <summary>Confirmed issue (judgment-day, Slice 2 ronda 2, MAJOR): companion directa del
+    /// guard de <see cref="SuperficieDeAutorizacionTests.TodoEndpointGetBajoLasSuperficiesReGateadasApilaOperacionDePos"/>
+    /// — mismo criterio que <c>OperacionDePosLecturaTests.ResolverOfertasSinTokenDevuelve401</c>:
+    /// sin token, <c>OperacionDePos</c> exige <c>RequireAuthenticatedUser()</c> antes que nada.</summary>
+    [Fact]
+    public async Task ObtenerTurnoAbiertoSinTokenDevuelve401()
+    {
+        using var cliente = fixture.CreateClient();
+
+        var respuesta = await cliente.GetAsync("/api/caja/turnos/abierto?idPuntoVenta=1");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+    }
+
+    // ---- judgment-day (Slice 2, ronda 2): regresión cross-tenant ------------------------------------
+
+    /// <summary>Confirmed issue (judgment-day, Slice 2 ronda 2, MAJOR): mismo criterio ADR-8 que
+    /// <c>ArticulosEndpointsTests.AgregarCodigoBarraAUnArticuloDeOtroTenantDevuelve404</c> — pin
+    /// contra una regresión futura de <c>IgnoreQueryFilters</c> sobre <c>ObtenerAsync</c>.</summary>
+    [Fact]
+    public async Task ObtenerUnTurnoDeOtroTenantDevuelve404()
+    {
+        var ctxA = await PrepararAsync(nameof(ObtenerUnTurnoDeOtroTenantDevuelve404) + "-A");
+        var turnoDeA = await AbrirTurnoAsync(ctxA);
+
+        var ctxB = await PrepararAsync(nameof(ObtenerUnTurnoDeOtroTenantDevuelve404) + "-B");
+
+        var respuesta = await ctxB.Admin.GetAsync($"/api/caja/turnos/{turnoDeA.Id}");
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    /// <summary>Confirmed issue (judgment-day, Slice 2 ronda 2, MAJOR): mismo criterio que
+    /// <see cref="ObtenerUnTurnoDeOtroTenantDevuelve404"/>, pin contra
+    /// <c>ResolverTurnoPorIdAbiertoAsync</c> sobre el turno ABIERTO de otro tenant.</summary>
+    [Fact]
+    public async Task RegistrarMovimientoContraElTurnoAbiertoDeOtroTenantDevuelve404()
+    {
+        var ctxA = await PrepararAsync(nameof(RegistrarMovimientoContraElTurnoAbiertoDeOtroTenantDevuelve404) + "-A");
+        var turnoDeA = await AbrirTurnoAsync(ctxA);
+
+        var ctxB = await PrepararAsync(nameof(RegistrarMovimientoContraElTurnoAbiertoDeOtroTenantDevuelve404) + "-B");
+
+        var respuesta = await ctxB.Admin.PostAsJsonAsync(
+            $"/api/caja/turnos/{turnoDeA.Id}/movimientos",
+            new SolicitudDeMovimiento(TipoMovimientoCaja.Retiro, 100m, "intento cross-tenant"));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    // ---- judgment-day (Slice 2, ronda 2): cobertura del historial y del 404 puntual ------------------
+
+    /// <summary>Confirmed issue (judgment-day, Slice 2 ronda 2, MINOR): <c>ServicioDeTurnos.ListarAsync</c>
+    /// sin cobertura punta a punta — pagina (Total/Pagina/Tamanio) y el filtro <c>idPuntoVenta</c>.</summary>
+    [Fact]
+    public async Task ElHistorialPaginaYFiltraPorPuntoDeVenta()
+    {
+        var ctx = await PrepararAsync(nameof(ElHistorialPaginaYFiltraPorPuntoDeVenta));
+        var idOtroPuntoVenta = await SembrarSegundoPuntoDeVentaAsync(ctx);
+
+        await SembrarTurnoCerradoAsync(ctx);
+        await AbrirTurnoAsync(ctx);
+
+        var enOtroPunto = await ctx.Admin.PostAsJsonAsync(
+            "/api/caja/turnos", new SolicitudDeApertura(idOtroPuntoVenta, 100m, "Local 2"));
+        Assert.Equal(HttpStatusCode.Created, enOtroPunto.StatusCode);
+
+        var completo = await ctx.Admin.GetFromJsonAsync<PaginaDeTurnos>("/api/caja/turnos", OpcionesJson);
+        Assert.NotNull(completo);
+        Assert.Equal(3, completo!.Total);
+        Assert.Equal(3, completo.Items.Count);
+        Assert.Equal(1, completo.Pagina);
+        Assert.Equal(25, completo.Tamanio);
+
+        var filtrado = await ctx.Admin.GetFromJsonAsync<PaginaDeTurnos>(
+            $"/api/caja/turnos?idPuntoVenta={ctx.IdPuntoVenta}", OpcionesJson);
+        Assert.NotNull(filtrado);
+        Assert.Equal(2, filtrado!.Total);
+        Assert.All(filtrado.Items, item => Assert.Equal(ctx.IdPuntoVenta, item.IdPuntoVenta));
+    }
+
+    /// <summary>Confirmed issue (judgment-day, Slice 2 ronda 2, MINOR): <c>GET …/{id}</c> con un id
+    /// que no existe (a diferencia de <see cref="ObtenerUnTurnoDeOtroTenantDevuelve404"/>, que
+    /// existe pero es de otro tenant) también cae en el mismo <c>404</c> ADR-8.</summary>
+    [Fact]
+    public async Task ObtenerUnTurnoInexistenteDevuelve404()
+    {
+        var ctx = await PrepararAsync(nameof(ObtenerUnTurnoInexistenteDevuelve404));
+
+        var respuesta = await ctx.Admin.GetAsync("/api/caja/turnos/999999");
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
     // ---- helper compartido ----------------------------------------------------------------------
 
     private static async Task<TurnoResumen> AbrirTurnoAsync(Contexto ctx)
