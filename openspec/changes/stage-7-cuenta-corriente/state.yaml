@@ -1,5 +1,5 @@
 change: stage-7-cuenta-corriente
-phase: tasks
+phase: apply
 status: in-progress
 artifact_store: openspec
 gate: "DB CHANGE GATE exercised by the ORCHESTRATOR under the user's explicit autonomous delegation (2026-08-05, 'aprobalas vos... maneja todo autonomo'). APPROVED: (1) movimientos_cuenta_corriente.id_movimiento_actualizacion int NULL + composite self-FK + new AK (id_movimiento, id_tenant) + partial eligibility index (id_cliente, id_tenant) WHERE tipo='consumo' AND id_movimiento_actualizacion IS NULL — additive, doc-10 §8 conform, auditable marker superior to a boolean; (2) RC row in tipos_comprobante via BOTH seed-list append AND idempotent INSERT...WHERE NOT EXISTS in the migration (seeder only runs on empty tables) — CONDITION: doc 10 §1 must gain the RC note in the same slice so the doc does not drift. Money-semantics deviations approved and logged for the user's final summary: financed-fraction proration (legacy over-charges partially-financed sales), unpriceable lines skipped with detail note (legacy NULL-multiply bug), anulacion post-reliquidacion refused 409 consumo_reliquidado with manual Ajuste as remedy, 500-consumo cap per run. Zero new ManejadorDeErrores branches (no new constraint classes)."
@@ -24,7 +24,8 @@ phases:
     status: pending
     depends_on: [spec, design]
   apply:
-    status: pending
+    status: in_progress
+    notes: "Slice 1 (schema) MERGED in PR #61 (2026-08-05, main e503825): CuentaCorrienteEtapa7 migration (marker column + AK + composite self-FK + partial eligibility index + idempotent RC dual-path seed with the AND EXISTS fresh-DB guard — critical bug caught in apply: without it, fresh deployments got RC pre-seeder and lost the other 10 catalog rows), doc-10 §1 RC note (gate condition met), honest Down (RC deactivated, resolver filters activo). Suites 306/209/488/221 post-rebase (D6 PR #60 included). Judgment-day: both judges CLEAN round 1; convergent note (dedicated fresh-catalog pin) applied by orchestrator with host-boot fix. Remaining: slices 2-6."
     depends_on: [tasks]
   verify:
     status: pending

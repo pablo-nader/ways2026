@@ -84,11 +84,11 @@ Chain strategy: stacked-to-main
 stage-6-migrated database; doc-10 §1 carries the RC note. **Rollback**:
 down-migration (drop the column, its FK, its index; set `RC.activo = false`).
 
-- [ ] 1.1 Re-read the four cached baselines (`dotnet test` Domain/Application/
+- [x] 1.1 Re-read the four cached baselines (`dotnet test` Domain/Application/
   Integration counts, `npx vitest run` count) at branch-cut time and record
   the actual numbers in this task's checkbox note — the D6 resumen-parcial
   follow-up may have shifted them. *(Orchestrator Decision 5)*
-- [ ] 1.2 Add `CuentaCorrienteEtapa7` migration: `movimientos_cuenta_corriente
+- [x] 1.2 Add `CuentaCorrienteEtapa7` migration: `movimientos_cuenta_corriente
   .id_movimiento_actualizacion integer NULL`; `ak_movimientos_cuenta_corriente
   _id_movimiento_id_tenant (id_movimiento, id_tenant)`;
   `fk_movimientos_cuenta_corriente_actualizacion (id_movimiento_actualizacion,
@@ -97,34 +97,34 @@ down-migration (drop the column, its FK, its index; set `RC.activo = false`).
   `ix_movimientos_cuenta_corriente_consumos_pendientes (id_cliente, id_tenant)
   WHERE tipo = 'consumo' AND id_movimiento_actualizacion IS NULL`. *(design:
   Table Shapes A — pinned decision "self-FK marker")*
-- [ ] 1.3 Same migration: idempotent `INSERT INTO tipos_comprobante (…)
+- [x] 1.3 Same migration: idempotent `INSERT INTO tipos_comprobante (…)
   SELECT … WHERE NOT EXISTS (SELECT 1 FROM tipos_comprobante WHERE codigo =
   'RC')` — `clase = venta`, `nombre = 'Recibo de cobranza'`, `letra NULL`,
   `signo = +1`, `discrimina_iva = false`, `es_fiscal = false`,
   `afecta_stock = false`, `activo = true`. *(design: Table Shapes B; spec:
   pagos-a-cuenta / RC Tipo Comprobante Ships As An Idempotent Seed)*
-- [ ] 1.4 [P] Append `RC` to `TiposComprobanteBase` in
+- [x] 1.4 [P] Append `RC` to `TiposComprobanteBase` in
   `InicializadorDeBaseDeDatos.cs` (fresh-database seed list). *(spec:
   pagos-a-cuenta / A fresh database seeds RC from the seed list)*
-- [ ] 1.5 [P] Modify `src/Ways.Domain/CuentaCorriente/MovimientoCuentaCorriente.cs`:
+- [x] 1.5 [P] Modify `src/Ways.Domain/CuentaCorriente/MovimientoCuentaCorriente.cs`:
   add `IdMovimientoActualizacion`; `TipoMovimientoCc.cs` loses its "reserved
   for stage 7" doc-comment on `Pago`/`ActualizacionPrecios`. *(design: File
   Changes)*
-- [ ] 1.6 Update `MovimientoCuentaCorrienteConfiguration.cs`: the new column,
+- [x] 1.6 Update `MovimientoCuentaCorrienteConfiguration.cs`: the new column,
   self-FK, AK, and partial index. Confirm `has-pending-model-changes` clean.
   *(design: Table Shapes A)*
-- [ ] 1.7 Update `docs/10-modelo-de-datos.md` §1: add the `RC` row to the
+- [x] 1.7 Update `docs/10-modelo-de-datos.md` §1: add the `RC` row to the
   `tipos_comprobante` catalog note (letra NULL, signo +1, non-fiscal — `PRE`
   precedent). *(gate condition, `state.yaml`; Orchestrator Decision 6)*
-- [ ] 1.8 Backstop: confirm (comment only, no code change) the generic `fk_`
+- [x] 1.8 Backstop: confirm (comment only, no code change) the generic `fk_`
   prefix branch in `ManejadorDeErrores` covers
   `fk_movimientos_cuenta_corriente_actualizacion` → `400
   referencia_invalida`; confirm `ux_tipos_comprobante_codigo` is already
   mapped (stage 1). *(design: Backstop Map)*
-- [ ] 1.9 [P] Integration: `RC` resolves on a database migrated from stage 6
+- [x] 1.9 [P] Integration: `RC` resolves on a database migrated from stage 6
   (idempotent insert proven, re-run safe, no duplicate row). *(spec:
   pagos-a-cuenta / RC resolves on an already-migrated database)*
-- [ ] 1.10 [P] Integration: raw-SQL 23503 backstop test for the new self-FK
+- [x] 1.10 [P] Integration: raw-SQL 23503 backstop test for the new self-FK
   (unreachable in normal flow — the id comes from the same-transaction
   `RETURNING`, tested via a forced raw insert); confirm RLS still applies to
   `movimientos_cuenta_corriente` with the new column (no policy change
