@@ -43,8 +43,18 @@ public class MovimientoCuentaCorrienteConfiguration : IEntityTypeConfiguration<M
         builder.Property(m => m.Importe).HasColumnName("importe").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(m => m.SaldoResultante).HasColumnName("saldo_resultante").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(m => m.Detalle).HasColumnName("detalle").HasColumnType("text");
+        builder.Property(m => m.IdMovimientoActualizacion).HasColumnName("id_movimiento_actualizacion");
+
+        builder.HasAlternateKey(m => new { m.Id, m.IdTenant })
+            .HasName("ak_movimientos_cuenta_corriente_id_movimiento_id_tenant");
 
         builder.HasIndex(m => m.IdTenant).HasDatabaseName("ix_movimientos_cuenta_corriente_tenant");
+
+        // La predicate de elegibilidad de la reliquidación ES este índice (design: Table Shapes A):
+        // self-vacuuming a medida que los consumos se reliquidan.
+        builder.HasIndex(m => new { m.IdCliente, m.IdTenant })
+            .HasDatabaseName("ix_movimientos_cuenta_corriente_consumos_pendientes")
+            .HasFilter("tipo = 'consumo' AND id_movimiento_actualizacion IS NULL");
 
         // Índice de negocio (extracto de cuenta corriente por cliente, spec: Saldo Is The
         // Maintained Cache Of The Ledger) que además sirve de soporte de la FK compuesta a
@@ -99,6 +109,26 @@ public class MovimientoCuentaCorrienteConfiguration : IEntityTypeConfiguration<M
             .HasForeignKey(m => new { m.IdPagoComprobante, m.IdTenant })
             .HasPrincipalKey(p => new { p.Id, p.IdTenant })
             .HasConstraintName("fk_movimientos_cuenta_corriente_pago_comprobante")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // DESVIACIÓN DOCUMENTADA vs. design (Table Shapes A, "no second index for the reverse
+        // audit lookup"): EF Core re-agrega un índice de soporte para toda FK sin cobertura en
+        // ModelFinalizingConvention, aun si se lo remueve a mano dentro de este Configure() —
+        // suprimirlo por completo exigiría desregistrar ForeignKeyIndexConvention para todo el
+        // modelo, un cambio global fuera de alcance de esta slice. Se declara explícito con el
+        // nombre de la convención del resto de la tabla en vez de dejar el nombre autogenerado
+        // de EF (IX_movimientos_cuenta_corriente_id_movimiento_actualizacion_id~).
+        builder.HasIndex(m => new { m.IdMovimientoActualizacion, m.IdTenant })
+            .HasDatabaseName("ix_movimientos_cuenta_corriente_actualizacion");
+
+        // Self-FK (design decision 2 — el marcador de reliquidación): apunta a la fila
+        // ActualizacionPrecios que cubrió este consumo. Requiere la AK compuesta declarada
+        // arriba, mismo criterio que el resto de las FKs de esta tabla.
+        builder.HasOne<MovimientoCuentaCorriente>()
+            .WithMany()
+            .HasForeignKey(m => new { m.IdMovimientoActualizacion, m.IdTenant })
+            .HasPrincipalKey(m => new { m.Id, m.IdTenant })
+            .HasConstraintName("fk_movimientos_cuenta_corriente_actualizacion")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

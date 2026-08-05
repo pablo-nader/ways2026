@@ -53,11 +53,13 @@ public class InicializadorDeBaseDeDatos(
         ("No gravado", 0.00m)
     ];
 
-    /// <summary>Doc 10 §1: "FA, FB, FC, NCA, NCB, NCC, NDA…, TX, NCX, PRE". Solo el lado
+    /// <summary>Doc 10 §1: "FA, FB, FC, NCA, NCB, NCC, NDA…, TX, NCX, PRE, RC". Solo el lado
     /// venta — comprobantes de compra (proveedores) no son parte de esta etapa (doc 10,
     /// "Etapas sugeridas": clientes/proveedores desbloquean comprobantes recién en la etapa
     /// 2). <c>CodigoAfip</c> queda <c>NULL</c> por la misma razón que en las condiciones
-    /// fiscales.</summary>
+    /// fiscales. <c>RC</c> (etapa 7 — pago a cuenta) también se inserta de forma idempotente
+    /// en la migración <c>CuentaCorrienteEtapa7</c>, porque este seed solo corre en una base
+    /// vacía (design: Table Shapes B).</summary>
     private static readonly (string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock)[] TiposComprobanteBase =
     [
         ("FA", "Factura A", 'A', 1, true, true, true),
@@ -69,7 +71,8 @@ public class InicializadorDeBaseDeDatos(
         ("NDA", "Nota de Débito A", 'A', 1, true, true, true),
         ("TX", "Ticket X", 'X', 1, false, false, true),
         ("NCX", "Nota de Crédito X", 'X', -1, false, false, true),
-        ("PRE", "Presupuesto", null, 1, false, false, false)
+        ("PRE", "Presupuesto", null, 1, false, false, false),
+        ("RC", "Recibo de cobranza", null, 1, false, false, false)
     ];
 
     public async Task EjecutarAsync(SemillaRoot semilla, CancellationToken ct = default)

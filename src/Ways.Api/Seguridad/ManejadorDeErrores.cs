@@ -126,6 +126,13 @@ public class ManejadorDeErrores(
             // punto_venta/turno/empleado/proveedor/area/medio_pago) y también
             // fk_comprobantes_venta_turno — todas siguen la convención fk_* del resto del
             // esquema.
+            //
+            // stage-7-cuenta-corriente (Slice 1, task 1.8, design: Backstop Map): confirmado sin
+            // cambio de código — el mismo match por prefijo "fk_" ya cubre
+            // fk_movimientos_cuenta_corriente_actualizacion (el self-FK del marcador de
+            // reliquidación). En operación normal es inalcanzable — el id viene del RETURNING de
+            // la misma transacción que la fila que apunta —, así que el único camino para
+            // ejercitarla es un INSERT crudo fuera de banda (test de esquema, no de cliente HTTP).
             DbUpdateException { InnerException: PostgresException { SqlState: "23503", ConstraintName: string fk } }
                 when fk.StartsWith("fk_", StringComparison.Ordinal) =>
                 LogYClasificarReferenciaInvalida(fk, log),
