@@ -168,68 +168,78 @@ only — nothing in stages 5–7 changes shape.
   same articulo (highest `orden` wins the cost), empty line set;
   `SugeridorDePrecio` reuse asserted, not re-implemented. *(design: Testing
   Strategy — Unit Domain)*
-- [ ] 2.3 Create `src/Ways.Application/Compras/ServicioDeCompras.cs`:
+- [x] 2.3 Create `src/Ways.Application/Compras/ServicioDeCompras.cs`:
   `CrearBorradorAsync`, `ActualizarBorradorAsync` (`PUT`, full item
   replace-set under `SELECT … FOR UPDATE … WHERE estado='borrador'`, physical
   `DELETE`+`INSERT`), `ListarAsync`. *(design decision 2)*
-- [ ] 2.4 `ServicioDeCompras.ConfirmarAsync`: estado-guarded
+- [x] 2.4 `ServicioDeCompras.ConfirmarAsync`: estado-guarded
   `UPDATE … RETURNING` as the first statement, items read **after** it under
   that lock, per-item ledger `INSERT` + cache upsert (asc `id_articulo`),
   `costo_nominal` overwrite (`actualiza_costo AND costo_unitario > 0`,
   deduplicated with highest `orden` winning), `precio_sugerido` via the
   existing `SugeridorDePrecio`, `EstrategiaSinReintento`. *(design decisions
   1, 4, 5; Transactions — CONFIRMAR COMPRA)*
-- [ ] 2.5 `ServicioDeCompras.AnularAsync`: estado-guarded `UPDATE … RETURNING`
+- [x] 2.5 `ServicioDeCompras.AnularAsync`: estado-guarded `UPDATE … RETURNING`
   (`confirmada → anulada`), contramovimientos from the **original ledger**
   (never recalculated from items), `409 compra_anulacion_stock_negativo`
   when any resulting cache would go negative, informational-only linked-gasto
   count — **no block** (the inverted rule). *(design decision 6; Transactions
   — ANULAR COMPRA)*
-- [ ] 2.6 `ServicioDeCompras`: `ObtenerAsync` (detail with `precioSugerido`
+- [x] 2.6 `ServicioDeCompras`: `ObtenerAsync` (detail with `precioSugerido`
   per item) + `AplicarPrecioSugeridoAsync` looping
   `AbrirNuevoPrecioAsync` once per articulo, each its own transaction,
   per-line results. *(design decision 8)*
-- [ ] 2.7 Create `ComprasEndpoints.cs`: 7 routes — writes stack
+- [x] 2.7 Create `ComprasEndpoints.cs`: 7 routes — writes stack
   `GestionDeCatalogo` over `OperacionDePos`, reads stay `OperacionDePos`.
   Update `SuperficieDeAutorizacionTests` allowlist. *(design: API Surface)*
-- [ ] 2.8 [P] Integration: borrador create/edit/remove-item across several
+- [x] 2.8 [P] Integration: borrador create/edit/remove-item across several
   requests writes no `movimientos_stock` row; confirmada/anulada reject an
   item edit `409 compra_no_editable`. *(spec: comprobantes-compra / Borrador
   Is Mutable Because It Has No Ledger Effect)*
-- [ ] 2.9 [P] Integration: same `(proveedor, tipo, numero_externo)` confirmed
+- [x] 2.9 [P] Integration: same `(proveedor, tipo, numero_externo)` confirmed
   twice rejected `409 compra_duplicada`; an annulled number is re-enterable;
   confirming without `numero_externo` rejected `400
-  compra_numero_externo_requerido`. *(spec: comprobantes-compra / Numero
-  Externo Identity And Dedupe)*
-- [ ] 2.10 Integration: confirmar writes stock+cache+cost together in one
+  compra_numero_externo_requerido`. **Deviation**: the collision is proven at
+  the earliest write that persists the duplicate identity (the second
+  `POST`/`PUT`), not literally "at confirm" — the partial unique excludes
+  only `estado = anulada`, so it fires on ANY save that repeats a live
+  `(proveedor, tipo, numero_externo)`, matching design's own Backstop Map
+  framing ("two concurrent **saves**"), not a confirm-only race. *(spec:
+  comprobantes-compra / Numero Externo Identity And Dedupe)*
+- [x] 2.10 Integration: confirmar writes stock+cache+cost together in one
   transaction; a fault-point failure at each step leaves `estado`, stock,
   cache and `costo_nominal` untouched; a second confirm of an already-
   `confirmada` compra rejected `409 compra_ya_procesada`, no duplicate
   movements. *(spec: comprobantes-compra / Confirmar Is One All-Or-Nothing
   Transaction)*
-- [ ] 2.11 Integration: confirm stores `precio_sugerido` without opening a
+- [x] 2.11 Integration: confirm stores `precio_sugerido` without opening a
   new price; the explicit apply action opens a new `precios` row preserving
   history. *(spec: comprobantes-compra / Precio Sugerido Is A Suggestion)*
-- [ ] 2.12 Integration: anulación reverses stock and restores the cache;
+- [x] 2.12 Integration: anulación reverses stock and restores the cache;
   refused `409` when the goods were already sold (names the articulo); no
   `costo_nominal` reversion; anulando a `borrador` rejected `409
   compra_no_procesada`. *(spec: comprobantes-compra / Anulación Reverses By
   Contramovimientos)*
-- [ ] 2.13 Integration (racy surfaces, forced rendezvous): double confirm of
+- [x] 2.13 Integration (racy surfaces, forced rendezvous): double confirm of
   the same borrador — exactly one winner, the loser `409
   compra_no_es_borrador`; confirm × concurrent borrador edit. *(design:
   Backstop Map — "five racy surfaces" 1–2; `ParametrosTests` precedent)*
-- [ ] 2.14 [P] Integration (authorization): Admin confirms and anula
+- [x] 2.14 [P] Integration (authorization): Admin confirms and anula
   (authorization-wise); Vendedor `403` on every compra write path; Vendedor
   reads the compra list. *(spec: comprobantes-compra / Authorization)*
-- [ ] 2.15 [P] Integration (budget): constant command count for a 2 / 20 /
+- [x] 2.15 [P] Integration (budget): constant command count for a 2 / 20 /
   100-item compra's confirm and anular. `DbCommand` interceptor test.
   *(design: Transactions — "Read budget")*
 - [ ] 2.16 Run a **dedicated full judgment-day round** on this slice's diff
   alone before opening the PR — the project's newest guarded state machine.
-  *(Orchestrator Decision 4)*
-- [ ] 2.17 Regression: entire stage 5–7 suite green; `ServicioDeStock`,
-  `ServicioDeVentas`, `CalculadorDeArqueo` untouched.
+  *(Orchestrator Decision 4)* **Not run by this apply batch** — judgment-day
+  requires two independent blind review agents, which is an orchestration
+  action outside an executor's scope (sdd-apply is delegate-only, does not
+  launch sub-agents). Recommend the orchestrator run judgment-day next,
+  before opening the PR.
+- [x] 2.17 Regression: entire stage 5–7 suite green; `ServicioDeStock`,
+  `ServicioDeVentas`, `CalculadorDeArqueo` untouched (byte-identical — no
+  edit made to either file this slice; confirmed via `git status`).
 
 **Verify**: `dotnet test --filter FullyQualifiedName~CalculadorDeCompra|FullyQualifiedName~ServicioDeCompras`
 
