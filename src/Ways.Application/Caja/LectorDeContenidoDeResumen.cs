@@ -32,20 +32,27 @@ public class LectorDeContenidoDeResumen(IWaysDbContext db)
         // spec Anulados Are Excluded From The Derivation).
         var cantidadTickets = await comprobantesDelTurno.CountAsync(ct);
 
-        // 2. primer ticket — orden por fecha, desempate estable por id.
+        // 2. primer ticket — orden por fecha, desempate estable por id. Join con tipos_comprobante
+        // para traer el código (TX, RC, …): cada tipo numera su PROPIA serie independiente
+        // (stage-7-cuenta-corriente, design decisión 7), así que "el primer ticket" mezcla series
+        // sin relación entre sí — el código es lo que lo hace legible, no un dato accesorio.
         var primerTicket = await comprobantesDelTurno
             .OrderBy(c => c.Fecha).ThenBy(c => c.Id)
-            .Select(c => new TicketLimite(c.Numero, c.Fecha))
+            .Join(db.TiposComprobante, c => c.IdTipoComprobante, t => t.Id, (c, t) => new TicketLimite(c.Numero, c.Fecha, t.Codigo))
             .FirstOrDefaultAsync(ct);
 
         // 3. último ticket — ídem, orden inverso.
         var ultimoTicket = await comprobantesDelTurno
             .OrderByDescending(c => c.Fecha).ThenByDescending(c => c.Id)
-            .Select(c => new TicketLimite(c.Numero, c.Fecha))
+            .Join(db.TiposComprobante, c => c.IdTipoComprobante, t => t.Id, (c, t) => new TicketLimite(c.Numero, c.Fecha, t.Codigo))
             .FirstOrDefaultAsync(ct);
 
         // 4. ingresos por área — snapshot inmutable de ItemComprobanteVenta.IdArea (doc 10
-        // principio 6), nunca re-derivado de articulos.
+        // principio 6), nunca re-derivado de articulos. Una RC (pago a cuenta) no tiene items —
+        // cero por construcción (stage-7-cuenta-corriente) — así que su plata nunca aparece acá;
+        // sí aparece en el esperado por medio del arqueo (paso 7 de LectorDeMovimientosDelTurno),
+        // igual que el legacy: las filas tipo=3 tampoco traían líneas de artículo. Es paridad
+        // deliberada, no un bug.
         var totalesPorArea = await db.ItemsComprobanteVenta
             .Join(
                 db.ComprobantesVenta,

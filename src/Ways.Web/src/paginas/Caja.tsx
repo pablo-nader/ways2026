@@ -431,13 +431,13 @@ function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: 
             <div className="small text-muted">Primer ticket</div>
             <div className="mb-2">
               {resumen.primerTicket
-                ? `#${resumen.primerTicket.numero} · ${formatearFechaHora(resumen.primerTicket.fecha)}`
+                ? `${resumen.primerTicket.codigo} #${resumen.primerTicket.numero} · ${formatearFechaHora(resumen.primerTicket.fecha)}`
                 : '—'}
             </div>
             <div className="small text-muted">Último ticket</div>
             <div>
               {resumen.ultimoTicket
-                ? `#${resumen.ultimoTicket.numero} · ${formatearFechaHora(resumen.ultimoTicket.fecha)}`
+                ? `${resumen.ultimoTicket.codigo} #${resumen.ultimoTicket.numero} · ${formatearFechaHora(resumen.ultimoTicket.fecha)}`
                 : '—'}
             </div>
           </div>

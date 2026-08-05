@@ -57,11 +57,14 @@ public sealed record SolicitudDeCierre(IReadOnlyList<ConteoDeclarado> Conteos, s
 /// persistir (spec: Resumen Parcial Uses The Same Derivation As Cierre).</summary>
 public sealed record LineaDeResumen(int IdMedioPago, decimal ImporteEsperado);
 
-/// <summary>Un ticket límite del turno (legacy D6: "primer y último ticket") — número visible y
-/// fecha de emisión del <see cref="Ways.Domain.Ventas.ComprobanteVenta"/> correspondiente.
-/// Nunca aparece para un comprobante anulado (spec: Anulados Are Excluded From The
+/// <summary>Un ticket límite del turno (legacy D6: "primer y último ticket") — número visible,
+/// fecha de emisión y el código del tipo de comprobante (<c>TX</c>, <c>RC</c>, …) del
+/// <see cref="Ways.Domain.Ventas.ComprobanteVenta"/> correspondiente. <see cref="Codigo"/> es
+/// necesario porque cada tipo numera su propia serie independiente (stage-7-cuenta-corriente,
+/// design decisión 7): sin él, "primer ticket #1" es ambiguo entre una TX y una RC que arrancan
+/// las dos en 1. Nunca aparece para un comprobante anulado (spec: Anulados Are Excluded From The
 /// Derivation, mismo criterio aplicado acá).</summary>
-public sealed record TicketLimite(long Numero, DateTimeOffset Fecha);
+public sealed record TicketLimite(long Numero, DateTimeOffset Fecha, string Codigo);
 
 /// <summary>Ingresos de un área dentro del turno (legacy D6, primer bloque: "por área") —
 /// agrupa <see cref="Ways.Domain.Ventas.ItemComprobanteVenta.Total"/> por

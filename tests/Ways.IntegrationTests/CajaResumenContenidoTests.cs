@@ -4,11 +4,14 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
+using Ways.Application.CuentaCorriente;
 using Ways.Application.Gastos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
+using Ways.Application.Ventas;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
@@ -96,6 +99,26 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
         await db.SaveChangesAsync();
 
         return area.Id;
+    }
+
+    /// <summary>Cliente propio (no el Consumidor Final que devuelve <c>ctx.IdCliente</c>) para
+    /// registrar una RC — mismo criterio que <c>PagosACuentaTests.SembrarClienteAsync</c>.</summary>
+    private async Task<int> SembrarClienteConCuentaCorrienteAsync(Contexto ctx, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idCondicionFiscal = await db.CondicionesFiscales.Select(c => c.Id).FirstAsync();
+
+        var cliente = new Cliente
+        {
+            IdTenant = ctx.IdTenant, Numero = 1000 + Random.Shared.Next(1, 100_000), Nombre = nombre,
+            IdCondicionFiscal = idCondicionFiscal, IdListaPrecio = ctx.IdListaPrecio, LimiteCredito = 0m,
+            CreditoIlimitado = true, Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Clientes.Add(cliente);
+        await db.SaveChangesAsync();
+
+        return cliente.Id;
     }
 
     private static async Task<TurnoResumen> AbrirTurnoAsync(Contexto ctx, decimal fondoInicial = 0m)
@@ -316,5 +339,50 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
 
         var almacen = resumen!.IngresosPorArea.Single(a => a.IdArea == idArea);
         Assert.Equal(70m, almacen.Total); // 100 + (-30)
+    }
+
+    /// <summary>judgment-day fix 3: la coherencia de tres puntas de una RC en el resumen D6 (design
+    /// decisión "RC carries zero items and no stock effect", legacy D1 parity de cantidad de
+    /// tickets) — pineada en UN solo test para que no se pueda romper una punta sin que las otras
+    /// tres queden mudas. (a) <c>cantidadTickets</c> INCLUYE la RC — dos series independientes
+    /// (design decisión 7) contadas juntas. (b) los ingresos por área NO la incluyen — una RC no
+    /// tiene items, cero por construcción. (c) el esperado por medio SÍ la incluye — misma plata
+    /// física que ve el arqueo. El primer/último ticket, además, quedan identificados sin
+    /// ambigüedad por <c>Codigo</c> ("TX"/"RC"), no solo por número.</summary>
+    [Fact]
+    public async Task UnaRcParticipaEnTicketsYEnElEsperadoPorMedioPeroNuncaEnLosIngresosPorArea()
+    {
+        var ctx = await PrepararAsync(nameof(UnaRcParticipaEnTicketsYEnElEsperadoPorMedioPeroNuncaEnLosIngresosPorArea));
+        var idArea = await SembrarAreaAsync(ctx, "Almacén RC");
+        var turno = await AbrirTurnoAsync(ctx);
+        var idClienteRc = await SembrarClienteConCuentaCorrienteAsync(ctx, "Cliente RC resumen");
+
+        var tx = await SembrarVentaAsync(ctx, turno.Id, idArea, ctx.IdMedioEfectivo, 100m, DateTimeOffset.UtcNow);
+
+        var solicitudRc = new SolicitudDePagoACuenta(
+            ctx.IdPuntoVenta, [new PagoDeCuenta(ctx.IdMedioEfectivo, 50m, null, 0m)], null);
+        var respuestaRc = await ctx.Admin.PostAsJsonAsync(
+            $"/api/clientes/{idClienteRc}/cuenta-corriente/pagos", solicitudRc);
+        var cuerpoRc = await respuestaRc.Content.ReadAsStringAsync();
+        Assert.True(respuestaRc.StatusCode == HttpStatusCode.Created, cuerpoRc);
+        var rc = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoRc, OpcionesJson)!;
+
+        var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>($"/api/caja/turnos/{turno.Id}/resumen", OpcionesJson);
+        Assert.NotNull(resumen);
+
+        // (a) cantidad de tickets — TX y RC son series independientes, pero las dos cuentan.
+        Assert.Equal(2, resumen!.CantidadTickets);
+        Assert.Equal("TX", resumen.PrimerTicket!.Codigo);
+        Assert.Equal(tx.Numero, resumen.PrimerTicket.Numero);
+        Assert.Equal("RC", resumen.UltimoTicket!.Codigo);
+        Assert.Equal(rc.Numero, resumen.UltimoTicket.Numero);
+
+        // (b) ingresos por área — la RC no tiene items, su plata nunca aparece acá.
+        var area = resumen.IngresosPorArea.Single(a => a.IdArea == idArea);
+        Assert.Equal(100m, area.Total);
+
+        // (c) esperado por medio — misma plata física que arma el arqueo, la RC sí cuenta.
+        var esperadoEfectivo = resumen.Medios.Single(m => m.IdMedioPago == ctx.IdMedioEfectivo).ImporteEsperado;
+        Assert.Equal(150m, esperadoEfectivo);
     }
 }

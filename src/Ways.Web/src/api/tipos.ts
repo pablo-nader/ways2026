@@ -625,9 +625,10 @@ export type MovimientoRegistrado = {
 
 export type LineaDeResumen = { idMedioPago: number; importeEsperado: number }
 
-/** Un ticket límite del turno (legacy doc 01 D6: "primer y último ticket") — espejo de
- * `Ways.Application.Caja.TicketLimite`. */
-export type TicketLimite = { numero: number; fecha: string }
+/** Un ticket límite del turno (legacy doc 01 D6: "primer y último ticket") — `codigo` es el tipo
+ * de comprobante (`TX`, `RC`, …): cada tipo numera su propia serie independiente, así que el
+ * número solo no alcanza para identificar el ticket — espejo de `Ways.Application.Caja.TicketLimite`. */
+export type TicketLimite = { numero: number; fecha: string; codigo: string }
 
 /** Ingresos de un área dentro del turno (legacy D6, primer bloque: "por área") — espejo de
  * `IngresoPorArea`. */

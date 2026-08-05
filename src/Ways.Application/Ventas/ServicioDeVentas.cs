@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
+using Ways.Application.CuentaCorriente;
 using Ways.Application.Ofertas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -156,7 +157,8 @@ public class ServicioDeVentas(
         // reintenta (execution strategy), reservar de nuevo solo vuelve a avanzarlo — nunca
         // duplica una fila (design decisión 2: "gaps are accepted", nunca duplicados).
         var estrategiaNumeracion = db.Database.CreateExecutionStrategy();
-        var numero = await estrategiaNumeracion.ExecuteAsync(async () => await AsignarNumeroComprometidoAsync(plan, ct));
+        var numero = await estrategiaNumeracion.ExecuteAsync(async () =>
+            await AsignadorDeNumeroComprobante.AsignarComprometidoAsync(db, plan.IdTenant, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct));
 
         // ADR-16 (mismo trámite que ServicioDeAprovisionamiento/ServicioDeOfertas): la
         // transacción se abre ACÁ ADENTRO — EnableRetryOnFailure exige que la apertura viva
@@ -176,19 +178,6 @@ public class ServicioDeVentas(
         return await estrategia.ExecuteAsync(async () =>
             await BuscarPorNumeroComprometidoAsync(plan.IdPuntoVenta, plan.IdTipoComprobante, numero, ct)
             ?? await EjecutarTransaccionAsync(plan, numero, ct));
-    }
-
-    /// <summary>Transacción chica y propia (ADR-16), comprometida ANTES de que exista ningún
-    /// otro dato de la venta — ver el comentario de <see cref="EmitirAsync"/>.</summary>
-    private async Task<long> AsignarNumeroComprometidoAsync(PlanDeVenta plan, CancellationToken ct)
-    {
-        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
-
-        await AsignadorDeNumeroComprobante.AsegurarContadorAsync(db, plan.IdTenant, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct);
-        var numero = await AsignadorDeNumeroComprobante.AsignarSiguienteAsync(db, plan.IdPuntoVenta, plan.CodigoTipoComprobante, ct);
-
-        await transaccion.CommitAsync(ct);
-        return numero;
     }
 
     /// <summary>Detección de idempotencia (ver el comentario de <see cref="EmitirAsync"/> sobre
@@ -403,29 +392,49 @@ public class ServicioDeVentas(
             await UpsertStockAsync(conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa, ct);
         }
 
-        // 3. Contramovimiento de cuenta corriente — uno por cada consumo ORIGINAL de este
+        // 3. Contramovimiento de cuenta corriente — uno por cada consumo/pago ORIGINAL de este
         // comprobante (spec: consumo-cuenta-corriente / Anulación Produces A Contramovimiento;
-        // Movimiento Schema At Rest: "tipo = ajuste-shaped inverse rows used as the anulación
-        // contramovimiento", nunca tipo = consumo). id_pago_comprobante del consumo original
-        // siempre está poblado (EjecutarTransaccionAsync paso 6 lo setea siempre) — forzarlo acá
-        // es defensa en profundidad de un invariante de escritura, no un caso de negocio
-        // alcanzable.
-        var consumosOriginales = await db.MovimientosCuentaCorriente
-            .Where(m => m.IdComprobanteVenta == id && m.Tipo == TipoMovimientoCc.Consumo)
+        // pagos-a-cuenta / Anulación Reverses The Pago Movement; Movimiento Schema At Rest: "tipo
+        // = ajuste-shaped inverse rows used as the anulación contramovimiento", nunca tipo =
+        // consumo/pago). stage-7-cuenta-corriente (Slice 2, task 2.6, design decisión 5 — el
+        // widening de 3 líneas): el filtro se abre a Pago (una RC solo puede producir un
+        // movimiento Pago, nunca un Consumo, así que un comprobante siempre cae en una sola de
+        // las dos ramas de abajo) y -consumo.Importe/-movimiento.Importe restaura la deuda sin
+        // rama de signo (un Pago ya es negativo, así que su reversa da positiva sola).
+        var movimientosCcOriginales = await db.MovimientosCuentaCorriente
+            .Where(m => m.IdComprobanteVenta == id
+                && (m.Tipo == TipoMovimientoCc.Consumo || m.Tipo == TipoMovimientoCc.Pago))
             .ToListAsync(ct);
 
-        foreach (var consumo in consumosOriginales)
+        foreach (var movimiento in movimientosCcOriginales)
         {
-            var idPagoComprobante = consumo.IdPagoComprobante
-                ?? throw new InvalidOperationException(
-                    $"El movimiento de consumo {consumo.Id} no tiene id_pago_comprobante — invariante de escritura violado.");
+            // Guard nuevo (design decisión 5, spec: pagos-a-cuenta / Anulación Reverses The Pago
+            // Movement no lo pide, pero el consumo reliquidado sí — cierra el leak de anular un
+            // consumo ya cubierto por una reliquidación, que dejaría el delta de
+            // ActualizacionPrecios en el aire sin el Consumo que lo originó). El marcador lo
+            // escribe recién Slice 3 (ServicioDeReliquidacion) — acá solo se lee.
+            if (movimiento.IdMovimientoActualizacion is not null)
+            {
+                throw new ErrorDominio(
+                    "consumo_reliquidado", "El consumo ya fue reliquidado; no se puede anular.", 409);
+            }
 
-            var nuevoSaldo = await ActualizarSaldoClienteAsync(
-                conexion, transaccionCruda, idTenant, consumo.IdCliente, -consumo.Importe, ct);
+            // Un Consumo siempre trae id_pago_comprobante (EjecutarTransaccionAsync paso 6 lo
+            // setea siempre); un Pago (RC) nunca lo trae (RegistrarPagoAsync lo inserta con
+            // id_pago_comprobante NULL, design decisión 1) — invariante de escritura por tipo,
+            // forzarlo acá es defensa en profundidad, no un caso de negocio alcanzable.
+            var idPagoComprobante = movimiento.Tipo == TipoMovimientoCc.Consumo
+                ? movimiento.IdPagoComprobante
+                    ?? throw new InvalidOperationException(
+                        $"El movimiento de consumo {movimiento.Id} no tiene id_pago_comprobante — invariante de escritura violado.")
+                : (int?)null;
 
-            await InsertarMovimientoCcAsync(
-                conexion, transaccionCruda, idTenant, consumo.IdCliente, momento, consumo.IdPuntoVenta, idEmpleado,
-                TipoMovimientoCc.Ajuste, id, idPagoComprobante, -consumo.Importe, nuevoSaldo, ct);
+            var nuevoSaldo = await EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(
+                conexion, transaccionCruda, idTenant, movimiento.IdCliente, -movimiento.Importe, ct);
+
+            await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
+                conexion, transaccionCruda, idTenant, movimiento.IdCliente, momento, movimiento.IdPuntoVenta, idEmpleado,
+                TipoMovimientoCc.Ajuste, id, idPagoComprobante, -movimiento.Importe, nuevoSaldo, ct);
         }
 
         await transaccion.CommitAsync(ct);
@@ -600,7 +609,7 @@ public class ServicioDeVentas(
                 continue;
             }
 
-            var nuevoSaldo = await ActualizarSaldoClienteAsync(
+            var nuevoSaldo = await EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(
                 conexion, transaccionCruda, plan.IdTenant, plan.IdCliente, pago.Importe, ct);
 
             if (!plan.ClienteCreditoIlimitado && nuevoSaldo > plan.ClienteLimiteCredito)
@@ -612,7 +621,7 @@ public class ServicioDeVentas(
                 throw new ErrorDominio("limite_credito_excedido", "El pago supera el límite de crédito del cliente.", 400);
             }
 
-            await InsertarMovimientoCcAsync(
+            await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
                 conexion, transaccionCruda, plan.IdTenant, plan.IdCliente, plan.Momento, plan.IdPuntoVenta,
                 plan.IdEmpleado, TipoMovimientoCc.Consumo, comprobante.Id, pagosEntidad[i].Id, pago.Importe, nuevoSaldo, ct);
         }
@@ -800,58 +809,6 @@ public class ServicioDeVentas(
         AgregarParametro(comando, delta);
 
         await comando.ExecuteScalarAsync(ct);
-    }
-
-    /// <summary>Design: The Sale Transaction, paso 6 — <c>UPDATE ... RETURNING</c> crudo:
-    /// nunca vía una entidad <see cref="Cliente"/> trackeada (un <c>cliente.Saldo += x</c> por
-    /// <c>SaveChangesAsync</c> duplicaría el incremento en un reintento de
-    /// <c>CreateExecutionStrategy</c>, ver el Retry contract de design). <c>id_tenant</c> en el
-    /// <c>WHERE</c> además de <c>id</c>: RLS ya aísla por tenant, esto es una segunda capa
-    /// barata (mismo criterio que el resto del proyecto), no la única defensa.</summary>
-    private static async Task<decimal> ActualizarSaldoClienteAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, decimal importe,
-        CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "UPDATE clientes SET saldo = saldo + $1 WHERE id_cliente = $2 AND id_tenant = $3 RETURNING saldo";
-
-        AgregarParametro(comando, importe);
-        AgregarParametro(comando, idCliente);
-        AgregarParametro(comando, idTenant);
-
-        var resultado = await comando.ExecuteScalarAsync(ct)
-            ?? throw new InvalidOperationException($"No se pudo actualizar el saldo del cliente {idCliente}.");
-
-        return Convert.ToDecimal(resultado);
-    }
-
-    private static async Task InsertarMovimientoCcAsync(
-        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, DateTimeOffset fecha,
-        int idPuntoVenta, int idEmpleado, TipoMovimientoCc tipo, int idComprobanteVenta, int idPagoComprobante,
-        decimal importe, decimal saldoResultante, CancellationToken ct)
-    {
-        await using var comando = conexion.CreateCommand();
-        comando.Transaction = transaccion;
-        comando.CommandText =
-            "INSERT INTO movimientos_cuenta_corriente " +
-            "(id_tenant, id_cliente, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_venta, " +
-            " id_pago_comprobante, importe, saldo_resultante) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
-
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, idCliente);
-        AgregarParametro(comando, fecha);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idEmpleado);
-        AgregarParametro(comando, tipo);
-        AgregarParametro(comando, idComprobanteVenta);
-        AgregarParametro(comando, idPagoComprobante);
-        AgregarParametro(comando, importe);
-        AgregarParametro(comando, saldoResultante);
-
-        await comando.ExecuteNonQueryAsync(ct);
     }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
