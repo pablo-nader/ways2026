@@ -625,11 +625,49 @@ export type MovimientoRegistrado = {
 
 export type LineaDeResumen = { idMedioPago: number; importeEsperado: number }
 
-/** Respuesta de `GET /api/caja/turnos/{id}/resumen` (espejo de `ResumenDeTurno`, Slice 4) — el
- * `importeEsperado` derivado por medio y el medio ancla (efectivo), la misma derivación que el
- * cierre va a persistir. Sin desglose de tickets ni de gastos por categoría: la derivación real
- * (`ServicioDeResumenDeTurno`) no expone ese detalle, solo el total esperado por medio. */
-export type ResumenDeTurno = { idTurnoCaja: number; idMedioAncla: number; medios: LineaDeResumen[] }
+/** Un ticket límite del turno (legacy doc 01 D6: "primer y último ticket") — espejo de
+ * `Ways.Application.Caja.TicketLimite`. */
+export type TicketLimite = { numero: number; fecha: string }
+
+/** Ingresos de un área dentro del turno (legacy D6, primer bloque: "por área") — espejo de
+ * `IngresoPorArea`. */
+export type IngresoPorArea = { idArea: number; nombreArea: string; total: number }
+
+export type CategoriaGasto = 'Proveedor' | 'Sueldos' | 'Viaticos' | 'Impuestos' | 'Servicios' | 'Otros'
+
+export const CATEGORIAS_GASTO: { valor: CategoriaGasto; etiqueta: string }[] = [
+  { valor: 'Proveedor', etiqueta: 'Proveedores' },
+  { valor: 'Sueldos', etiqueta: 'Sueldos' },
+  { valor: 'Viaticos', etiqueta: 'Viáticos' },
+  { valor: 'Impuestos', etiqueta: 'Impuestos' },
+  { valor: 'Servicios', etiqueta: 'Servicios' },
+  { valor: 'Otros', etiqueta: 'Otros' },
+]
+
+/** Egresos de una categoría de gasto dentro del turno (legacy D6, segundo bloque: "por tipo") —
+ * espejo de `EgresoPorCategoria`. */
+export type EgresoPorCategoria = { categoria: CategoriaGasto; total: number }
+
+/** Egresos del turno — gastos por categoría más el total de retiros físicos; nunca incluye
+ * refuerzos ni la apertura de cajón, que no son egresos — espejo de `EgresosDeTurno`. */
+export type EgresosDeTurno = { porCategoria: EgresoPorCategoria[]; retiros: number }
+
+/** Respuesta de `GET /api/caja/turnos/{id}/resumen` (espejo de `ResumenDeTurno`, Slice 4 +
+ * follow-up "Resumen parcial D6-content enrichment") — `medios` es el `importeEsperado`
+ * derivado por medio y el medio ancla (efectivo), la misma derivación que el cierre va a
+ * persistir (invariante intacto). `cantidadTickets`/`primerTicket`/`ultimoTicket`/
+ * `ingresosPorArea`/`egresos` son contenido de reporte aditivo (legacy D6 parity) — nunca
+ * alimentan la derivación del arqueo. */
+export type ResumenDeTurno = {
+  idTurnoCaja: number
+  idMedioAncla: number
+  medios: LineaDeResumen[]
+  cantidadTickets: number
+  primerTicket: TicketLimite | null
+  ultimoTicket: TicketLimite | null
+  ingresosPorArea: IngresoPorArea[]
+  egresos: EgresosDeTurno
+}
 
 // --- Caja: cierre y comprobante Z (stage-6-turnos-caja, Slice 7) ---
 // Espejo de `Ways.Application.Caja.Contratos` (Slice 4/7) — el cierre y el detalle con arqueos.

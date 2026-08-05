@@ -78,6 +78,11 @@ function resumenFixture(sobrescribir: Partial<ResumenDeTurno> = {}): ResumenDeTu
     idTurnoCaja: 501,
     idMedioAncla: 1,
     medios: [{ idMedioPago: 1, importeEsperado: 640 }],
+    cantidadTickets: 0,
+    primerTicket: null,
+    ultimoTicket: null,
+    ingresosPorArea: [],
+    egresos: { porCategoria: [], retiros: 0 },
     ...sobrescribir,
   }
 }
@@ -248,7 +253,10 @@ describe('Caja — movimientos', () => {
 
     render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
-    expect(screen.getByText('Calculando…')).toBeInTheDocument()
+    // El badge se monta en el mismo commit que dispara el efecto de carga del resumen, pero ese
+    // efecto todavía no corrió bajo carga de la suite completa (mismo flake que PR #59 fijó más
+    // abajo en este archivo) — hay que esperar a "Calculando…", no asumir que ya está.
+    await screen.findByText('Calculando…')
 
     await userEvent.type(screen.getByLabelText('Importe'), '100')
     await userEvent.type(screen.getByLabelText('Motivo'), 'retiro de prueba')
@@ -528,5 +536,65 @@ describe('Caja — navegación a cierre (Slice 7)', () => {
     await screen.findByText('Turno abierto')
 
     expect(screen.getByRole('link', { name: 'Cerrar turno' })).toHaveAttribute('href', '/caja/cierre?idTurno=501')
+  })
+})
+
+describe('Caja — resumen D6 (follow-up "Resumen parcial D6-content enrichment")', () => {
+  it('muestra cantidad de tickets, primer/último ticket, ingresos por área y egresos por categoría + retiros', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(turnoFixture())
+      if (ruta === '/caja/turnos/501/resumen') {
+        return Promise.resolve<ResumenDeTurno>(
+          resumenFixture({
+            cantidadTickets: 3,
+            primerTicket: { numero: 1001, fecha: '2026-08-04T12:00:00Z' },
+            ultimoTicket: { numero: 1003, fecha: '2026-08-04T14:00:00Z' },
+            ingresosPorArea: [
+              { idArea: 1, nombreArea: 'Almacén', total: 150 },
+              { idArea: 2, nombreArea: 'Verdulería', total: 200 },
+            ],
+            egresos: { porCategoria: [{ categoria: 'Proveedor', total: 30 }], retiros: 40 },
+          }),
+        )
+      }
+      return undefined
+    })
+
+    render(<Caja />, { wrapper: MemoryRouter })
+    await screen.findByText('Turno abierto')
+    await waitFor(() => expect(screen.getByText('Tickets')).toBeInTheDocument())
+
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByText('#1001 · ' + new Date('2026-08-04T12:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
+    expect(screen.getByText('#1003 · ' + new Date('2026-08-04T14:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
+
+    expect(screen.getByText('Almacén')).toBeInTheDocument()
+    expect(screen.getByText('$150,00')).toBeInTheDocument()
+    expect(screen.getByText('Verdulería')).toBeInTheDocument()
+    expect(screen.getByText('$200,00')).toBeInTheDocument()
+
+    expect(screen.getByText('Proveedores')).toBeInTheDocument()
+    expect(screen.getByText('$30,00')).toBeInTheDocument()
+    expect(screen.getByText('Retiros')).toBeInTheDocument()
+    expect(screen.getByText('$40,00')).toBeInTheDocument()
+  })
+
+  it('un turno sin actividad muestra ceros, guiones y los avisos de "todavía no hay" en las tres secciones', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(turnoFixture())
+      if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture())
+      return undefined
+    })
+
+    render(<Caja />, { wrapper: MemoryRouter })
+    await screen.findByText('Turno abierto')
+    await waitFor(() => expect(screen.getByText('Tickets')).toBeInTheDocument())
+
+    expect(screen.getByText('0')).toBeInTheDocument()
+    expect(screen.getAllByText('—')).toHaveLength(2) // primer y último ticket, ambos null
+    expect(screen.getByText('Todavía no hay ingresos en este turno.')).toBeInTheDocument()
+    expect(screen.getByText('Todavía no hay egresos en este turno.')).toBeInTheDocument()
+    // sin actividad, no debería renderizarse una fila de "Retiros" suelta.
+    expect(screen.queryByText('Retiros')).not.toBeInTheDocument()
   })
 })
