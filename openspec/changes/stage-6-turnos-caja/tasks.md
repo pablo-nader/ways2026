@@ -197,23 +197,23 @@ in place. **Rollback**: new routes/service only.
 merged/branch. **Finish**: gasto capture live against the open turno, no
 retiro-equivalent representable. **Rollback**: new routes/service only.
 
-- [ ] 3.1 Add `ServicioDeGastos.RegistrarAsync`: resolve open turno via the
+- [x] 3.1 Add `ServicioDeGastos.RegistrarAsync`: resolve open turno via the
   shared resolver, reject `importe <= 0`, insert `gastos` row with
   `id_turno_caja` populated server-side. *(spec: gastos / Gasto Requires
   An Open Turno, Importe Must Be Positive)*
-- [ ] 3.2 Add `GastosEndpoints`: `POST /api/gastos`, `GET /api/gastos` —
+- [x] 3.2 Add `GastosEndpoints`: `POST /api/gastos`, `GET /api/gastos` —
   `OperacionDePos`. *(design: API Surface)*
-- [ ] 3.3 Integration: gasto persists with categoría/medio; gasto rejected
+- [x] 3.3 Integration: gasto persists with categoría/medio; gasto rejected
   with no open turno; gasto succeeds with `id_turno_caja` populated
   server-side (never client-supplied); zero-importe gasto rejected before
   reaching the database. *(spec: gastos / Gasto Schema At Rest, all 4
   scenarios)*
-- [ ] 3.4 [P] Reflection/static test: `categoria_gasto` enum contains no
+- [x] 3.4 [P] Reflection/static test: `categoria_gasto` enum contains no
   retiro-equivalent value. *(spec: gastos / No Magic Tipo Encodes A Retiro
   As A Gasto)*
-- [ ] 3.5 [P] Integration: Vendedor records a gasto (authorization). *(spec:
+- [x] 3.5 [P] Integration: Vendedor records a gasto (authorization). *(spec:
   gastos / Gasto Authorization)*
-- [ ] 3.6 Regression: Slices 1–2 suites unedited and green.
+- [x] 3.6 Regression: Slices 1–2 suites unedited and green.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ServicioDeGastos|FullyQualifiedName~GastosEndpoints`
 
