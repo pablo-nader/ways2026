@@ -229,6 +229,7 @@ describe('CuentaCorriente — header y ledger', () => {
 
   it('la falla al cargar medios de pago muestra un aviso y deja "Ingresar pago" realmente deshabilitado', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
+      if (/^\/clientes\/\d+$/.test(ruta)) return Promise.resolve<ClienteListado>(clienteFixture())
       if (ruta === '/catalogos/medios-pago') {
         return Promise.reject(new ErrorApi(500, 'error', 'No se pudieron cargar los medios de pago.'))
       }
@@ -260,6 +261,20 @@ describe('CuentaCorriente — header y ledger', () => {
     await screen.findByText('#0005 — Juan Pérez', { exact: false })
     expect(screen.queryByText('Cliente #5', { exact: false })).not.toBeInTheDocument()
     expect(apiGetMock.mock.calls.some((c) => c[0] === '/clientes/5')).toBe(true)
+  })
+
+  it('Fix 2: si el fetch del cliente falla (sin state, único camino del Vendedor) el gate falla CERRADO — aviso visible y "Ingresar pago" deshabilitado, nunca habilitado por default', async () => {
+    mockearRutasBase((ruta) =>
+      /^\/clientes\/\d+$/.test(ruta)
+        ? Promise.reject(new ErrorApi(500, 'error', 'No se pudo confirmar el cliente.'))
+        : undefined,
+    )
+
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+    expect(await screen.findByText(/No se pudo confirmar el cliente\./)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Ingresar pago' })).toBeDisabled())
   })
 
   it('un Consumidor Final llegado por URL directa (sin state) también deja "Ingresar pago" deshabilitado con el aviso de CF, una vez resuelta la identidad', async () => {
@@ -306,6 +321,13 @@ describe('CuentaCorriente — filtros (react-async-state regla 2)', () => {
 
     expect((screen.getByLabelText('Desde') as HTMLInputElement).value).toBe('')
     expect((screen.getByLabelText('Hasta') as HTMLInputElement).value).toBe('')
+
+    // Fix 4: destildar repuebla la ventana (último mes) — los inputs nunca quedan en blanco
+    // mostrando una ventana invisible.
+    await userEvent.click(screen.getByLabelText('Ver histórico completo'))
+
+    expect((screen.getByLabelText('Desde') as HTMLInputElement).value).not.toBe('')
+    expect((screen.getByLabelText('Hasta') as HTMLInputElement).value).not.toBe('')
   })
 
   it('los filtros disparan un nuevo GET; una respuesta obsoleta que llega tarde nunca pisa la más reciente', async () => {
@@ -356,6 +378,7 @@ describe('CuentaCorriente — modal de pago a cuenta', () => {
   it('un medio CuentaCorriente nunca aparece en el selector de medios del pago (design decisión 6)', async () => {
     const medioCc = medioFixture({ id: 2, nombre: 'Cuenta corriente del cliente', comportamiento: 'CuentaCorriente' })
     apiGetMock.mockImplementation((ruta: string) => {
+      if (/^\/clientes\/\d+$/.test(ruta)) return Promise.resolve<ClienteListado>(clienteFixture())
       if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioCc])
       if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
       if (ruta.includes('/cuenta-corriente')) return Promise.resolve<EstadoDeCuenta>(estadoFixture())

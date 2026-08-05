@@ -70,7 +70,14 @@ function fechaLocalAIso(fecha: Date): string {
  * inputs de filtro nunca queden vacíos mostrando una ventana invisible. */
 export function rangoUltimoMes(ahora: Date = new Date()): { desde: string; hasta: string } {
   const hasta = fechaLocalAIso(ahora)
-  const desde = fechaLocalAIso(new Date(ahora.getFullYear(), ahora.getMonth() - 1, ahora.getDate()))
+  const anio = ahora.getFullYear()
+  const mes = ahora.getMonth()
+  // `new Date(anio, mes, 0)` cae en el último día del mes anterior — semántica AddMonths-clamp
+  // (.NET): un 31 de marzo no puede convertirse en un inexistente "31 de febrero", se recorta al
+  // último día real del mes anterior (28/29 de febrero, 30 de junio, etc.).
+  const diasDelMesAnterior = new Date(anio, mes, 0).getDate()
+  const dia = Math.min(ahora.getDate(), diasDelMesAnterior)
+  const desde = fechaLocalAIso(new Date(anio, mes - 1, dia))
   return { desde, hasta }
 }
 

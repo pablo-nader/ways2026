@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   aSolicitudDePagoACuenta,
   calcularImporteAplicado,
@@ -87,6 +87,30 @@ describe('construirQueryEstadoDeCuenta', () => {
   })
 })
 
+// Los tests de arriba espejan la fórmula de la implementación con `offsetEsperado` para no
+// depender de la zona horaria de la máquina que corre el test — pero eso deja pasar un flip de
+// signo circular. Estos dos fijan `getTimezoneOffset` a un valor conocido y assertan el literal
+// esperado, sin espejar ninguna fórmula.
+describe('construirQueryEstadoDeCuenta — offset fijo (sin espejar la fórmula de la implementación)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('minutos=180 (UTC-3) produce el literal -03:00', () => {
+    vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(180)
+    const query = decodeURIComponent(construirQueryEstadoDeCuenta('2026-07-01', '2026-07-31', false))
+    expect(query).toContain('desde=2026-07-01T00:00:00-03:00')
+    expect(query).toContain('hasta=2026-07-31T23:59:59.999-03:00')
+  })
+
+  it('minutos=-330 (UTC+5:30) produce +05:30, codificado como %2B05%3A30', () => {
+    vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(-330)
+    const query = construirQueryEstadoDeCuenta('2026-07-01', '', false)
+    expect(query).toContain('%2B05%3A30')
+    expect(decodeURIComponent(query)).toContain('desde=2026-07-01T00:00:00+05:30')
+  })
+})
+
 describe('rangoUltimoMes', () => {
   it('desde = hoy − 1 mes, hasta = hoy (fechas locales, mismo default que el servidor)', () => {
     const ahora = new Date(2026, 7, 15) // 15 de agosto de 2026 (mes 0-indexado)
@@ -96,6 +120,21 @@ describe('rangoUltimoMes', () => {
   it('cruza el año cuando el mes actual es enero', () => {
     const ahora = new Date(2026, 0, 10)
     expect(rangoUltimoMes(ahora)).toEqual({ desde: '2025-12-10', hasta: '2026-01-10' })
+  })
+
+  it('fin de mes: 31 de marzo → 28 de febrero (semántica AddMonths-clamp, sin overflow a marzo)', () => {
+    const ahora = new Date(2026, 2, 31) // 2026 no es bisiesto
+    expect(rangoUltimoMes(ahora)).toEqual({ desde: '2026-02-28', hasta: '2026-03-31' })
+  })
+
+  it('fin de mes en año bisiesto: 31 de marzo → 29 de febrero', () => {
+    const ahora = new Date(2028, 2, 31) // 2028 es bisiesto
+    expect(rangoUltimoMes(ahora)).toEqual({ desde: '2028-02-29', hasta: '2028-03-31' })
+  })
+
+  it('fin de mes: 31 de julio → 30 de junio (junio tiene 30 días)', () => {
+    const ahora = new Date(2026, 6, 31)
+    expect(rangoUltimoMes(ahora)).toEqual({ desde: '2026-06-30', hasta: '2026-07-31' })
   })
 })
 

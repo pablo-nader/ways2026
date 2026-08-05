@@ -500,6 +500,7 @@ type PropsPantalla = {
   idCliente: number
   clienteInfo: ClienteListado | null
   cargandoCliente: boolean
+  errorCliente: string
   medios: MedioPagoListado[] | null
   errorMedios: string
   puntosVenta: PuntoVentaListado[] | null
@@ -512,6 +513,7 @@ function PantallaCuentaCorriente({
   idCliente,
   clienteInfo,
   cargandoCliente,
+  errorCliente,
   medios,
   errorMedios,
   puntosVenta,
@@ -562,8 +564,13 @@ function PantallaCuentaCorriente({
   }, [cargarEstado])
 
   const esConsumidorFinal = clienteInfo?.esConsumidorFinal ?? false
+  // Fix 2 (react-async-state regla 7): `clienteInfo !== null` falla cerrado tanto mientras la
+  // identidad todavía carga como cuando el fetch terminó en error — un cliente NUNCA verificado
+  // no puede habilitar el pago, sin importar qué valor por default tuviera `esConsumidorFinal`.
   const puedeIngresarPago =
     !cargandoCliente &&
+    clienteInfo !== null &&
+    errorCliente === '' &&
     medios !== null &&
     errorMedios === '' &&
     puntosVenta !== null &&
@@ -571,12 +578,11 @@ function PantallaCuentaCorriente({
     puntosVenta.length > 0 &&
     !esConsumidorFinal
 
-  // Mientras la identidad del cliente todavía se está resolviendo (sin `location.state`, p. ej. el
-  // único camino del Vendedor o cualquier refresh) el gate de Consumidor Final falla cerrado: el
-  // botón queda deshabilitado hasta confirmar el dato real, nunca habilitado por default.
   let motivoBloqueoPago: string | undefined
   if (cargandoCliente) {
     motivoBloqueoPago = 'Cargando los datos del cliente…'
+  } else if (errorCliente) {
+    motivoBloqueoPago = 'No se pudo confirmar el cliente — no se puede ingresar un pago hasta que esto se resuelva.'
   } else if (esConsumidorFinal) {
     motivoBloqueoPago = 'El Consumidor Final no tiene cuenta corriente.'
   } else if (!puedeIngresarPago) {
@@ -595,9 +601,9 @@ function PantallaCuentaCorriente({
       >
         {avisoPago && <div className="alert alert-success rounded-0">{avisoPago}</div>}
         {errorEstado && <div className="alert alert-danger rounded-0">{errorEstado}</div>}
-        {(errorMedios || errorPuntosVenta) && (
+        {(errorCliente || errorMedios || errorPuntosVenta) && (
           <div className="alert alert-warning rounded-0 py-1 px-2 small">
-            {errorMedios || errorPuntosVenta} No se puede ingresar un pago hasta que esto se resuelva.
+            {errorCliente || errorMedios || errorPuntosVenta} No se puede ingresar un pago hasta que esto se resuelva.
           </div>
         )}
 
@@ -671,11 +677,17 @@ function PantallaCuentaCorriente({
                     onChange={(e) => {
                       const marcado = e.target.checked
                       setHistorico(marcado)
-                      // "Ver histórico" limpia la ventana — los inputs, deshabilitados y vacíos,
-                      // reflejan que la consulta ya no tiene ningún recorte de fecha.
                       if (marcado) {
+                        // "Ver histórico" limpia la ventana — los inputs, deshabilitados y
+                        // vacíos, reflejan que la consulta ya no tiene ningún recorte de fecha.
                         setDesde('')
                         setHasta('')
+                      } else {
+                        // Al destildar, la ventana efectiva vuelve a ser la de último mes — los
+                        // inputs nunca quedan en blanco mostrando una ventana invisible.
+                        const ventana = rangoUltimoMes()
+                        setDesde(ventana.desde)
+                        setHasta(ventana.hasta)
                       }
                     }}
                   />
@@ -769,6 +781,7 @@ export function CuentaCorriente() {
   // resuelve, `puedeIngresarPago` falla cerrado vía `cargandoCliente`.
   const [clienteInfo, setClienteInfo] = useState<ClienteListado | null>(clienteDeState)
   const [cargandoCliente, setCargandoCliente] = useState(clienteDeState === null)
+  const [errorCliente, setErrorCliente] = useState('')
   const generacionClienteRef = useRef(0)
 
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
@@ -781,12 +794,14 @@ export function CuentaCorriente() {
     if (clienteDeState !== null || !idClienteValido) {
       setClienteInfo(clienteDeState)
       setCargandoCliente(false)
+      setErrorCliente('')
       return
     }
 
     let vigente = true
     const miGeneracion = (generacionClienteRef.current += 1)
     setCargandoCliente(true)
+    setErrorCliente('')
 
     clienteDeClientes
       .obtener(idCliente)
@@ -794,9 +809,13 @@ export function CuentaCorriente() {
         if (!vigente || generacionClienteRef.current !== miGeneracion) return
         setClienteInfo(cliente)
       })
-      .catch(() => {
+      .catch((e) => {
         if (!vigente || generacionClienteRef.current !== miGeneracion) return
         setClienteInfo(null)
+        // Fix 2 (react-async-state regla 7): sin este aviso, un fallo de red dejaba
+        // `clienteInfo` en null y el gate de Consumidor Final (`?? false`) habilitaba
+        // "Ingresar pago" para un cliente NUNCA verificado.
+        setErrorCliente(e instanceof ErrorApi ? e.message : 'No se pudo confirmar el cliente.')
       })
       .finally(() => {
         if (!vigente || generacionClienteRef.current !== miGeneracion) return
@@ -859,6 +878,7 @@ export function CuentaCorriente() {
       idCliente={idCliente}
       clienteInfo={clienteInfo}
       cargandoCliente={cargandoCliente}
+      errorCliente={errorCliente}
       medios={medios}
       errorMedios={errorMedios}
       puntosVenta={puntosVenta}
