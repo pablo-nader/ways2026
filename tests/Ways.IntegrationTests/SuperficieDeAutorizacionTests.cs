@@ -63,6 +63,12 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que poder cobrar una
         // cuenta corriente).
         ("POST", "/api/clientes/{idCliente:int}/cuenta-corriente/pagos"),
+        // stage-7-cuenta-corriente (Slice 3, task 3.5): commit de reliquidación — sin
+        // GestionDeCatalogo apilado (apila SupervisionDeCuentaCorriente en su lugar, ver
+        // CuentaCorrienteEndpoints); este guard solo vigila la ausencia de GestionDeCatalogo, no
+        // reemplaza el chequeo de rol real (SuperficieDeAutorizacionTests de PagosACuentaTests/
+        // ReliquidacionTests cubre 403 Vendedor).
+        ("POST", "/api/clientes/{idCliente:int}/cuenta-corriente/reliquidacion"),
 
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).
