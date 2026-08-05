@@ -45,7 +45,7 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
     private sealed record Contexto(
         int IdTenant, int IdPuntoVenta, HttpClient Admin, int IdProveedor, int IdArticulo, int IdAlicuotaIva21, int IdTipoCFA,
-        string MailAdmin, string PasswordAdmin);
+        int IdTipoCFB, string MailAdmin, string PasswordAdmin);
 
     private async Task<Contexto> PrepararAsync(string nombre)
     {
@@ -95,10 +95,11 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
         await db.SaveChangesAsync();
 
         var idTipoCFA = await db.TiposComprobante.Where(t => t.Codigo == "C-FA").Select(t => t.Id).SingleAsync();
+        var idTipoCFB = await db.TiposComprobante.Where(t => t.Codigo == "C-FB").Select(t => t.Id).SingleAsync();
 
         return new Contexto(
             resultado.IdTenant, resultado.IdPuntoVenta, admin, proveedor.Id, articulo.Id, idAlicuotaIva21, idTipoCFA,
-            mailAdmin, resultado.PasswordTemporal);
+            idTipoCFB, mailAdmin, resultado.PasswordTemporal);
     }
 
     private static SolicitudDeCompra SolicitudSimple(
@@ -503,6 +504,182 @@ public class ComprasAnulacionYConcurrenciaTests(WaysApiFixture fixture) : IClass
 
         // Un único movimiento de compra como máximo — nunca dos confirmaciones sobrevivieron.
         Assert.True(await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id) <= 1);
+    }
+
+    /// <summary>Pausa cada transacción manual (<c>EjecutarConfirmarAsync</c>/
+    /// <c>EjecutarAnulacionAsync</c>) justo DESPUÉS de <c>BeginTransactionAsync</c> — antes de que
+    /// el statement crudo <c>UPDATE ... RETURNING</c> corra — hasta que el test la libera. Fuerza
+    /// determinísticamente el interleaving "un PUT concurrente commitea ANTES de que el lock del
+    /// header confirme", sin depender del timing real del pool (mismo criterio de forced
+    /// rendezvous que <see cref="InterceptorDeRendezVousConfirmar"/>, pero enganchado al ciclo de
+    /// vida de la transacción en vez de a un <c>DbCommand</c> puntual).</summary>
+    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
+        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
+    {
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
+            CancellationToken cancellationToken = default)
+        {
+            transaccionIniciada.TrySetResult();
+            await puedeContinuar.Task;
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
+        }
+    }
+
+    /// <summary>Design: Backstop Map — superficie racy 1, "confirm × concurrent tipo-switching
+    /// edit" (judgment-day, blocker judge B). Antes del fix, <c>discriminaIva</c> se resolvía del
+    /// <c>tipos_comprobante</c> leído ANTES del lock del header — un PUT que cambia el tipo
+    /// (C-FB, sin IVA discriminado → C-FA, con IVA discriminado) entre esa lectura y el lock podía
+    /// dejar <c>costo_nominal</c> calculado con el <c>discrimina_iva</c> del tipo VIEJO aunque la
+    /// compra confirmada terminó con el tipo NUEVO — un 21% de diferencia silenciosa. El fix
+    /// resuelve <c>discrimina_iva</c> DESPUÉS del lock, a partir de <c>id_tipo_comprobante</c> tal
+    /// como lo devuelve el <c>RETURNING</c> del propio <c>UPDATE</c>, así que siempre es
+    /// consistente con el tipo que ese lock efectivamente vio — cualquiera de las dos
+    /// interleavings es válida, la única que no lo es es la mezcla.</summary>
+    [Fact]
+    public async Task ConfirmarConCambioDeTipoDeIvaConcurrenteUsaElDiscriminaIvaQueElLockRealmenteVio()
+    {
+        var ctx = await PrepararAsync(nameof(ConfirmarConCambioDeTipoDeIvaConcurrenteUsaElDiscriminaIvaQueElLockRealmenteVio));
+
+        var solicitudInicial = new SolicitudDeCompra(
+            ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, "tipo-switch-race", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 1m, null, null, 100m, 0m, ctx.IdAlicuotaIva21, true)]);
+        var creada = await CrearBorradorAsync(ctx, solicitudInicial);
+
+        var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var clienteConfirmar = factory.CreateClient();
+        var login = await clienteConfirmar.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tareaConfirmar = clienteConfirmar.PostAsync($"/api/compras/{creada.Id}/confirmar", null);
+
+        await transaccionIniciada.Task;
+
+        // El PUT gana la carrera: cambia el tipo (mismo costoUnitario) y COMMITEA antes de que el
+        // lock del header de confirmar corra.
+        var solicitudSwitch = new SolicitudDeCompra(
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, "tipo-switch-race", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 1m, null, null, 100m, 0m, ctx.IdAlicuotaIva21, true)]);
+        var respuestaPut = await ctx.Admin.PutAsJsonAsync($"/api/compras/{creada.Id}", solicitudSwitch);
+        var cuerpoPut = await respuestaPut.Content.ReadAsStringAsync();
+        Assert.True(respuestaPut.StatusCode == HttpStatusCode.OK, cuerpoPut);
+
+        puedeContinuar.TrySetResult();
+
+        var respuestaConfirmar = await tareaConfirmar;
+        var cuerpoConfirmar = await respuestaConfirmar.Content.ReadAsStringAsync();
+        Assert.True(respuestaConfirmar.StatusCode == HttpStatusCode.OK, cuerpoConfirmar);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        // El tipo persistido es SIEMPRE el que el lock de confirmar efectivamente vio: si el PUT
+        // hubiese ganado DESPUÉS del lock, habría chocado contra "estado != borrador" (409) y
+        // nunca habría llegado a cambiar el tipo.
+        var compra = await db.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id);
+        Assert.Equal(ctx.IdTipoCFA, compra.IdTipoComprobante);
+
+        var tipoGanador = await db.TiposComprobante.FirstAsync(t => t.Id == compra.IdTipoComprobante);
+        var item = await db.ItemsComprobanteCompra.SingleAsync(i => i.IdComprobanteCompra == creada.Id);
+        var costoEsperado = CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(
+            item.Total, item.Cantidad, item.PorcentajeIva, tipoGanador.DiscriminaIva);
+
+        var articulo = await db.Articulos.FirstAsync(a => a.Id == ctx.IdArticulo);
+        Assert.Equal(costoEsperado, articulo.CostoNominal);
+
+        // discriminaIva=true (C-FA) ganó la carrera: 100 * 1.21 = 121 — nunca el 100 stale que el
+        // discriminaIva viejo de C-FB hubiese producido.
+        Assert.Equal(121.00m, articulo.CostoNominal);
+    }
+
+    /// <summary>Design: Backstop Map — superficie racy adicional, "confirm × concurrent field-
+    /// clearing edit" (judgment-day, blocker judge A). Un confirmar ordinario con
+    /// <c>fecha_comprobante = NULL</c> (nunca chequeada por el pre-check original, solo
+    /// <c>numero_externo</c>) llegaba crudo al <c>UPDATE ... RETURNING</c>, violaba
+    /// <c>ck_comprobantes_compra_confirmada_completa</c> y escapaba como 500 — <see
+    /// cref="PostgresException"/> nunca envuelta en <c>DbUpdateException</c> (a diferencia del
+    /// camino de EF <c>SaveChanges</c>), así que <c>ManejadorDeErrores</c> no la podía clasificar.
+    /// El caso ordinario (sin carrera) ya lo cubre <see
+    /// cref="ConfirmarSinFechaDeComprobanteEsRechazadaConElCodigoPineado"/>; esta prueba fuerza el
+    /// caso racy — un PUT que vacía <c>numero_externo</c>/<c>fecha_comprobante</c> DESPUÉS del
+    /// pre-chequeo amistoso de <c>ConfirmarAsync</c> pero ANTES del lock del header — para probar
+    /// que el WHERE guard bajo lock de <c>ConfirmarHeaderAsync</c> (nunca un catch de
+    /// <c>PostgresException</c>: <c>Ways.Application</c> no referencia Npgsql) también lo
+    /// atrapa.</summary>
+    [Fact]
+    public async Task ConfirmarConNumeroYFechaVaciadosPorUnPutConcurrenteEsRechazadoConBadRequestNoConError500()
+    {
+        var ctx = await PrepararAsync(nameof(ConfirmarConNumeroYFechaVaciadosPorUnPutConcurrenteEsRechazadoConBadRequestNoConError500));
+        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, numeroExterno: "vaciado-race"));
+
+        var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var clienteConfirmar = factory.CreateClient();
+        var login = await clienteConfirmar.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tareaConfirmar = clienteConfirmar.PostAsync($"/api/compras/{creada.Id}/confirmar", null);
+
+        await transaccionIniciada.Task;
+
+        var solicitudVaciada = new SolicitudDeCompra(
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, null, null, null,
+            [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 10m, null, null, 100m, 0m, ctx.IdAlicuotaIva21, true)]);
+        var respuestaPut = await ctx.Admin.PutAsJsonAsync($"/api/compras/{creada.Id}", solicitudVaciada);
+        var cuerpoPut = await respuestaPut.Content.ReadAsStringAsync();
+        Assert.True(respuestaPut.StatusCode == HttpStatusCode.OK, cuerpoPut);
+
+        puedeContinuar.TrySetResult();
+
+        var respuestaConfirmar = await tareaConfirmar;
+        var cuerpoConfirmar = await respuestaConfirmar.Content.ReadAsStringAsync();
+
+        Assert.True(respuestaConfirmar.StatusCode == HttpStatusCode.BadRequest, cuerpoConfirmar);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpoConfirmar, OpcionesJson);
+        Assert.Equal("compra_incompleta_para_confirmar", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(EstadoCompra.Borrador, (await db.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id));
+    }
+
+    /// <summary>Design: Backstop Map, caso ordinario (sin carrera) del blocker judge A —
+    /// <c>fecha_comprobante</c> nunca fue validada por el pre-check original (solo
+    /// <c>numero_externo</c>), así que un confirmar normal con fecha NULL llegaba crudo al
+    /// <c>UPDATE</c> y violaba <c>ck_comprobantes_compra_confirmada_completa</c> como 500. El
+    /// pre-chequeo amistoso ahora la rechaza ANTES de tocar la transacción, con el mismo código
+    /// del backstop de esquema (spec no pinea uno propio para <c>fecha_comprobante</c>).</summary>
+    [Fact]
+    public async Task ConfirmarSinFechaDeComprobanteEsRechazadaConElCodigoPineado()
+    {
+        var ctx = await PrepararAsync(nameof(ConfirmarSinFechaDeComprobanteEsRechazadaConElCodigoPineado));
+        var solicitud = new SolicitudDeCompra(
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, "sin-fecha", null, null,
+            [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 1m, null, null, 100m, 0m, ctx.IdAlicuotaIva21, true)]);
+        var creada = await CrearBorradorAsync(ctx, solicitud);
+
+        var respuesta = await ctx.Admin.PostAsync($"/api/compras/{creada.Id}/confirmar", null);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+
+        Assert.True(respuesta.StatusCode == HttpStatusCode.BadRequest, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal("compra_incompleta_para_confirmar", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(EstadoCompra.Borrador, (await db.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id));
     }
 
     // ---- task 2.15: presupuesto de comandos --------------------------------------------------------

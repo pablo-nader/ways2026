@@ -226,7 +226,9 @@ public class ServicioDeCompras(
         // spec: "Confirming without a numero_externo is rejected... before any write" — chequeo
         // de servicio explícito, distinto del backstop de esquema
         // (ck_comprobantes_compra_confirmada_completa → compra_incompleta_para_confirmar), que
-        // queda como defensa de una escritura fuera de banda.
+        // queda como defensa de una escritura fuera de banda. fecha_comprobante comparte la
+        // misma CHECK de esquema (sin código propio pineado por el spec), así que reusa el
+        // código del backstop.
         if (preLectura.NumeroExterno is null)
         {
             throw new ErrorDominio(
@@ -235,15 +237,21 @@ public class ServicioDeCompras(
                 400);
         }
 
-        var tipo = await db.TiposComprobante.FirstAsync(t => t.Id == preLectura.IdTipoComprobante, ct);
+        if (preLectura.FechaComprobante is null)
+        {
+            throw new ErrorDominio(
+                "compra_incompleta_para_confirmar",
+                "La compra necesita una fecha de comprobante para confirmarse.",
+                400);
+        }
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
-            await EjecutarConfirmarAsync(id, idTenant, idEmpleado, tipo.DiscriminaIva, momento, ct));
+            await EjecutarConfirmarAsync(id, idTenant, idEmpleado, momento, ct));
     }
 
     private async Task<CompraDetalle> EjecutarConfirmarAsync(
-        int id, int idTenant, int idEmpleado, bool discriminaIva, DateTimeOffset momento, CancellationToken ct)
+        int id, int idTenant, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -253,14 +261,32 @@ public class ServicioDeCompras(
         // 1. UPDATE ... RETURNING — autoridad única de la transición (design decisión 1). El
         // lock de fila serializa dos confirmar concurrentes: el que pierde re-evalúa el WHERE
         // contra el estado YA COMITEADO por el ganador, 0 filas, nunca un 500 ni una doble
-        // escritura de stock.
-        var idPuntoVenta = await ConfirmarHeaderAsync(conexion, transaccionCruda, id, idTenant, momento, ct);
-        if (idPuntoVenta is null)
+        // escritura de stock. La RETURNING trae también id_tipo_comprobante/numero_externo/
+        // fecha_comprobante — los valores que ESTE lock vio, nunca los leídos antes de entrar a
+        // la transacción (design: Transactions — CONFIRMAR COMPRA): un PUT concurrente puede
+        // cambiar cualquiera de los tres entre el pre-chequeo de ConfirmarAsync y este lock. El
+        // WHERE de este UPDATE exige además numero_externo/fecha_comprobante NOT NULL (ver el
+        // doc-comment de ConfirmarHeaderAsync), así que 0 filas puede deberse a dos motivos
+        // distintos que hay que reclasificar bajo lock: la compra ya no está en borrador, o
+        // sigue en borrador pero un PUT concurrente la dejó incompleta.
+        if (await ConfirmarHeaderAsync(conexion, transaccionCruda, id, idTenant, momento, ct) is not { } encabezado)
         {
-            var existe = await db.ComprobantesCompra.AsNoTracking().AnyAsync(c => c.Id == id, ct);
-            if (!existe)
+            var actual = await db.ComprobantesCompra.AsNoTracking()
+                .Where(c => c.Id == id)
+                .Select(c => (EstadoCompra?)c.Estado)
+                .FirstOrDefaultAsync(ct);
+
+            if (actual is null)
             {
                 throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+            }
+
+            if (actual == EstadoCompra.Borrador)
+            {
+                throw new ErrorDominio(
+                    "compra_incompleta_para_confirmar",
+                    "La compra necesita número de comprobante y fecha para confirmarse.",
+                    400);
             }
 
             throw new ErrorDominio("compra_no_es_borrador", "La compra ya no está en borrador.", 409);
@@ -277,15 +303,22 @@ public class ServicioDeCompras(
             throw new ErrorDominio("compra_sin_items", "La compra no tiene items para confirmar.", 400);
         }
 
+        // discriminaIva del tipo QUE VIO este lock (encabezado.IdTipoComprobante), nunca el
+        // resuelto antes de entrar a la transacción — un PUT concurrente que cambia el tipo
+        // (p.ej. C-FB → C-FA) entre el pre-chequeo y este lock no puede corromper costo_nominal
+        // con un discriminaIva stale (design: Transactions — CONFIRMAR COMPRA, paso 1).
+        var tipo = await db.TiposComprobante.FirstAsync(t => t.Id == encabezado.IdTipoComprobante, ct);
+        var discriminaIva = tipo.DiscriminaIva;
+
         // 3. Un movimiento + upsert de stock por item, orden ascendente id_articulo (design:
         // Transactions — lock order discipline).
         foreach (var item in items)
         {
             await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, idTenant, item.IdArticulo, idPuntoVenta.Value, item.Cantidad,
+                conexion, transaccionCruda, idTenant, item.IdArticulo, encabezado.IdPuntoVenta, item.Cantidad,
                 MotivoStock.Compra, id, idEmpleado, momento, ct);
 
-            await UpsertStockAsync(conexion, transaccionCruda, idTenant, item.IdArticulo, idPuntoVenta.Value, item.Cantidad, ct);
+            await UpsertStockAsync(conexion, transaccionCruda, idTenant, item.IdArticulo, encabezado.IdPuntoVenta, item.Cantidad, ct);
         }
 
         // 4. costo_nominal — solo actualiza_costo AND costo_unitario > 0, deduplicado con el
@@ -441,7 +474,23 @@ public class ServicioDeCompras(
 
     // ---- statements crudos: confirmar/anular (sibling raw SQL, ver el doc-comment de la clase) ----
 
-    private static async Task<int?> ConfirmarHeaderAsync(
+    /// <summary>Fila devuelta por el UPDATE...RETURNING de <see cref="ConfirmarHeaderAsync"/> —
+    /// design: Transactions — CONFIRMAR COMPRA, paso 1. Los cinco valores son los que ESTE lock
+    /// vio, nunca los leídos antes de entrar a la transacción.</summary>
+    private readonly record struct EncabezadoConfirmado(
+        int IdProveedor, int IdPuntoVenta, int IdTipoComprobante, string? NumeroExterno, DateOnly? FechaComprobante);
+
+    /// <summary>El predicado incluye <c>numero_externo</c>/<c>fecha_comprobante IS NOT NULL</c>
+    /// además de <c>estado='borrador'</c> — validación bajo el mismo lock, resuelta por el propio
+    /// predicado del UPDATE en vez de un chequeo posterior en C#: sin esto, un PUT concurrente que
+    /// vacía esas columnas entre el pre-chequeo amistoso de <see cref="ConfirmarAsync"/> y este
+    /// lock haría que este UPDATE viole <c>ck_comprobantes_compra_confirmada_completa</c> — un
+    /// <c>PostgresException</c> crudo (nunca envuelto en <c>DbUpdateException</c>, a diferencia del
+    /// camino de EF <c>SaveChanges</c>) que <c>ManejadorDeErrores</c> no puede clasificar y deja
+    /// pasar como 500. <c>Ways.Application</c> no referencia Npgsql (Npgsql solo vive en
+    /// Infrastructure), así que la única forma de evitar ese 500 sin acoplar la capa es que el
+    /// propio predicado impida la violación en vez de atraparla después.</summary>
+    private static async Task<EncabezadoConfirmado?> ConfirmarHeaderAsync(
         DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, DateTimeOffset momento, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
@@ -449,14 +498,25 @@ public class ServicioDeCompras(
         comando.CommandText =
             "UPDATE comprobantes_compra SET estado = 'confirmada'::estado_compra, fecha_recepcion = $1, updated_at = $1 " +
             "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'borrador'::estado_compra " +
-            "RETURNING id_punto_venta";
+            "AND numero_externo IS NOT NULL AND fecha_comprobante IS NOT NULL " +
+            "RETURNING id_proveedor, id_punto_venta, id_tipo_comprobante, numero_externo, fecha_comprobante";
 
         AgregarParametro(comando, momento);
         AgregarParametro(comando, id);
         AgregarParametro(comando, idTenant);
 
-        var resultado = await comando.ExecuteScalarAsync(ct);
-        return resultado is null ? null : Convert.ToInt32(resultado);
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new EncabezadoConfirmado(
+            lector.GetInt32(0),
+            lector.GetInt32(1),
+            lector.GetInt32(2),
+            lector.IsDBNull(3) ? null : lector.GetString(3),
+            lector.IsDBNull(4) ? null : DateOnly.FromDateTime(lector.GetDateTime(4)));
     }
 
     private static async Task<int?> MarcarAnuladaAsync(
