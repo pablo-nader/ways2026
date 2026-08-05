@@ -19,7 +19,7 @@ public class EscriturasDeCuentaCorrienteTests
             EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
                 null!, null, idTenant: 1, idCliente: 1, fecha: DateTimeOffset.UtcNow, idPuntoVenta: 1, idEmpleado: 1,
                 TipoMovimientoCc.Consumo, idComprobanteVenta: 10, idPagoComprobante: null, importe: 100m,
-                saldoResultante: 100m, CancellationToken.None));
+                saldoResultante: 100m, detalle: null, CancellationToken.None));
 
         Assert.Contains("Consumo", excepcion.Message);
     }
@@ -31,8 +31,23 @@ public class EscriturasDeCuentaCorrienteTests
             EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
                 null!, null, idTenant: 1, idCliente: 1, fecha: DateTimeOffset.UtcNow, idPuntoVenta: 1, idEmpleado: 1,
                 TipoMovimientoCc.Pago, idComprobanteVenta: 10, idPagoComprobante: 5, importe: -100m,
-                saldoResultante: 0m, CancellationToken.None));
+                saldoResultante: 0m, detalle: null, CancellationToken.None));
 
         Assert.Contains("Pago", excepcion.Message);
+    }
+
+    [Fact]
+    public async Task UnaActualizacionDePreciosConIdComprobanteVentaViolaLaFormaYLanza()
+    {
+        // stage-7-cuenta-corriente (Slice 3): ActualizacionPrecios no lleva id_comprobante_venta
+        // (no lo origina un comprobante puntual, sino la corrida completa) — mismo guard de forma
+        // por tipo que Consumo/Pago.
+        var excepcion = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
+                null!, null, idTenant: 1, idCliente: 1, fecha: DateTimeOffset.UtcNow, idPuntoVenta: 1, idEmpleado: 1,
+                TipoMovimientoCc.ActualizacionPrecios, idComprobanteVenta: 10, idPagoComprobante: null, importe: 50m,
+                saldoResultante: 150m, detalle: "[]", CancellationToken.None));
+
+        Assert.Contains("ActualizacionPrecios", excepcion.Message);
     }
 }

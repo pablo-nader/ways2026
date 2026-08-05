@@ -47,6 +47,15 @@ public static class Politicas
     /// exclusivamente bajo <see cref="GestionDeOrganizacion"/>.</summary>
     public const string LecturaDePuntosVenta = "lectura_puntos_venta";
 
+    /// <summary>Supervisor o admin — la puerta de la reliquidación a precio del día y el ajuste
+    /// manual de cuenta corriente (stage-7-cuenta-corriente, tasks.md Orchestrator Decision 2;
+    /// spec: operacion-de-pos / SupervisionDeCuentaCorriente Policy Gates Reliquidación And
+    /// Ajuste Manual). Nombrada genéricamente a propósito (no "ReliquidacionDeCuenta") para que
+    /// el tightening diferido de cierre (open question de stage 6) pueda apilarse acá sin una
+    /// segunda policy. Vendedor queda afuera: es la única desviación deliberada de paridad
+    /// legacy de esta etapa (el legacy no tiene ningún gate de rol sobre cuenta corriente).</summary>
+    public const string SupervisionDeCuentaCorriente = "supervision_cuenta_corriente";
+
     public static AuthorizationBuilder AgregarPoliticasWays(this AuthorizationBuilder builder)
     {
         return builder
@@ -82,6 +91,12 @@ public static class Politicas
                             ((int)RolConocido.Root).ToString(),
                             ((int)RolConocido.Admin).ToString(),
                             ((int)RolConocido.Supervisor).ToString(),
-                            ((int)RolConocido.Vendedor).ToString()));
+                            ((int)RolConocido.Vendedor).ToString()))
+            .AddPolicy(SupervisionDeCuentaCorriente, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(
+                            ClaimsWays.RolId,
+                            ((int)RolConocido.Supervisor).ToString(),
+                            ((int)RolConocido.Admin).ToString()));
     }
 }

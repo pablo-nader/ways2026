@@ -406,14 +406,36 @@ public class ServicioDeVentas(
                 && (m.Tipo == TipoMovimientoCc.Consumo || m.Tipo == TipoMovimientoCc.Pago))
             .ToListAsync(ct);
 
+        // stage-7-cuenta-corriente (Slice 3, task 3.13, judgment-day slice-2 finding, judge A):
+        // el guard de abajo NO puede confiar en IdMovimientoActualizacion tal como lo trajo el
+        // ToListAsync de arriba — esa lectura corre SIN lock, así que una reliquidación
+        // concurrente podría comitear su marcador justo ENTRE esa lectura y el commit de esta
+        // anulación, produciendo un estado irrepresentable ("revertido y reliquidado" a la vez).
+        // El lock del cliente cierra la ventana: ServicioDeReliquidacion toma el MISMO lock
+        // (SELECT ... FOR UPDATE) como el PRIMER statement de su transacción — si esta anulación
+        // lo toma primero, la reliquidación concurrente queda bloqueada hasta que esta transacción
+        // termine; si la reliquidación ya lo tenía, esta anulación espera acá y retoma el lock
+        // DESPUÉS de su commit, así que el re-chequeo de abajo, ya bajo el lock, ve el marcador
+        // recién comiteado y falla cerrado con el mismo 409. Todos los movimientos de un mismo
+        // comprobante comparten el mismo cliente (un comprobante tiene un único IdCliente), así
+        // que un solo lock alcanza para todo el foreach — orden total sin cambios (turnos_caja →
+        // clientes → ledger): el guard de turno (paso 0, arriba) ya corrió antes que este lock.
+        if (movimientosCcOriginales.Count > 0)
+        {
+            await BloquearClienteAsync(conexion, transaccionCruda, idTenant, movimientosCcOriginales[0].IdCliente, ct);
+        }
+
         foreach (var movimiento in movimientosCcOriginales)
         {
-            // Guard nuevo (design decisión 5, spec: pagos-a-cuenta / Anulación Reverses The Pago
-            // Movement no lo pide, pero el consumo reliquidado sí — cierra el leak de anular un
-            // consumo ya cubierto por una reliquidación, que dejaría el delta de
-            // ActualizacionPrecios en el aire sin el Consumo que lo originó). El marcador lo
-            // escribe recién Slice 3 (ServicioDeReliquidacion) — acá solo se lee.
-            if (movimiento.IdMovimientoActualizacion is not null)
+            // Re-chequeo BAJO el lock recién tomado — nunca el valor materializado por el
+            // ToListAsync sin lock de arriba, que es justamente la lectura vulnerable al TOCTOU
+            // que este método cierra (spec: pagos-a-cuenta / Anulación Reverses The Pago Movement
+            // no lo pide, pero el consumo reliquidado sí — cierra el leak de anular un consumo ya
+            // cubierto por una reliquidación, que dejaría el delta de ActualizacionPrecios en el
+            // aire sin el Consumo que lo originó).
+            var idMovimientoActualizacion = await LeerMarcadorDeReliquidacionAsync(
+                conexion, transaccionCruda, idTenant, movimiento.Id, ct);
+            if (idMovimientoActualizacion is not null)
             {
                 throw new ErrorDominio(
                     "consumo_reliquidado", "El consumo ya fue reliquidado; no se puede anular.", 409);
@@ -434,7 +456,7 @@ public class ServicioDeVentas(
 
             await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
                 conexion, transaccionCruda, idTenant, movimiento.IdCliente, momento, movimiento.IdPuntoVenta, idEmpleado,
-                TipoMovimientoCc.Ajuste, id, idPagoComprobante, -movimiento.Importe, nuevoSaldo, ct);
+                TipoMovimientoCc.Ajuste, id, idPagoComprobante, -movimiento.Importe, nuevoSaldo, detalle: null, ct);
         }
 
         await transaccion.CommitAsync(ct);
@@ -468,6 +490,42 @@ public class ServicioDeVentas(
         {
             throw new ErrorDominio("turno_cerrado", "El turno de este comprobante está cerrado.", 409);
         }
+    }
+
+    /// <summary>task 3.13: lock del cliente ANTES de re-chequear el marcador de reliquidación de
+    /// cada movimiento — mismo criterio "lock primero, decide después" que design decisión 4
+    /// (<c>ServicioDeReliquidacion</c>, paso 1, el mismo <c>SELECT ... FOR UPDATE</c>).</summary>
+    private static async Task BloquearClienteAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText = "SELECT 1 FROM clientes WHERE id_cliente = $1 AND id_tenant = $2 FOR UPDATE";
+
+        AgregarParametro(comando, idCliente);
+        AgregarParametro(comando, idTenant);
+
+        await comando.ExecuteScalarAsync(ct);
+    }
+
+    /// <summary>task 3.13: re-lee <c>id_movimiento_actualizacion</c> directo de la base, bajo el
+    /// lock del cliente ya tomado por <see cref="BloquearClienteAsync"/> — nunca el valor
+    /// materializado por el <c>ToListAsync</c> sin lock de <see cref="EjecutarAnulacionAsync"/>,
+    /// que es la lectura vulnerable al TOCTOU que este método cierra.</summary>
+    private static async Task<int?> LeerMarcadorDeReliquidacionAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idMovimiento, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT id_movimiento_actualizacion FROM movimientos_cuenta_corriente " +
+            "WHERE id_movimiento = $1 AND id_tenant = $2";
+
+        AgregarParametro(comando, idMovimiento);
+        AgregarParametro(comando, idTenant);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is null or DBNull ? null : Convert.ToInt32(resultado);
     }
 
     /// <summary>Único UPDATE atómico de la transición de estado — ver el doc-comment de
@@ -623,7 +681,8 @@ public class ServicioDeVentas(
 
             await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
                 conexion, transaccionCruda, plan.IdTenant, plan.IdCliente, plan.Momento, plan.IdPuntoVenta,
-                plan.IdEmpleado, TipoMovimientoCc.Consumo, comprobante.Id, pagosEntidad[i].Id, pago.Importe, nuevoSaldo, ct);
+                plan.IdEmpleado, TipoMovimientoCc.Consumo, comprobante.Id, pagosEntidad[i].Id, pago.Importe, nuevoSaldo,
+                detalle: null, ct);
         }
 
         await transaccion.CommitAsync(ct);

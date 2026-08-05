@@ -50,21 +50,31 @@ public static class EscriturasDeCuentaCorriente
     /// <c>id_pago_comprobante</c> (el pago físico de la RC no es "el que generó" el movimiento —
     /// el movimiento lo genera el comprobante entero), y un <see cref="TipoMovimientoCc.Ajuste"/>
     /// manual (Slice 4) no trae ninguno de los dos. El llamador decide qué pasa; esta clase solo
-    /// escribe.</summary>
-    public static async Task InsertarMovimientoCcAsync(
+    /// escribe.
+    ///
+    /// stage-7-cuenta-corriente (Slice 3): <c>RETURNING id_movimiento</c> — la reliquidación
+    /// (<c>ServicioDeReliquidacion</c>) necesita el id de la fila recién insertada para el paso 8
+    /// de su transacción (marcar cada consumo cubierto con un self-FK a esta fila). Los llamadores
+    /// preexistentes (<c>ServicioDeVentas</c>/<c>ServicioDeCuentaCorriente</c>) siguen sin usar el
+    /// valor devuelto — <c>await</c> sin asignar sigue compilando igual. <paramref name="detalle"/>
+    /// nuevo (Slice 3): <c>NULL</c> para <see cref="TipoMovimientoCc.Consumo"/>/<see cref="TipoMovimientoCc.Pago"/>,
+    /// el JSON auditable para <see cref="TipoMovimientoCc.ActualizacionPrecios"/> (design: Table
+    /// Shapes A — columna <c>text</c>, doc-10 §8).</summary>
+    public static async Task<int> InsertarMovimientoCcAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idCliente, DateTimeOffset fecha,
         int idPuntoVenta, int idEmpleado, TipoMovimientoCc tipo, int? idComprobanteVenta, int? idPagoComprobante,
-        decimal importe, decimal saldoResultante, CancellationToken ct)
+        decimal importe, decimal saldoResultante, string? detalle, CancellationToken ct)
     {
-        ValidarFormaPorTipo(tipo, idPagoComprobante);
+        ValidarFormaPorTipo(tipo, idComprobanteVenta, idPagoComprobante);
 
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "INSERT INTO movimientos_cuenta_corriente " +
             "(id_tenant, id_cliente, fecha, id_punto_venta, id_empleado, tipo, id_comprobante_venta, " +
-            " id_pago_comprobante, importe, saldo_resultante) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
+            " id_pago_comprobante, importe, saldo_resultante, detalle) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) " +
+            "RETURNING id_movimiento";
 
         AgregarParametro(comando, idTenant);
         AgregarParametro(comando, idCliente);
@@ -76,17 +86,20 @@ public static class EscriturasDeCuentaCorriente
         AgregarParametroNullable(comando, idPagoComprobante);
         AgregarParametro(comando, importe);
         AgregarParametro(comando, saldoResultante);
+        AgregarParametroNullable(comando, detalle);
 
-        await comando.ExecuteNonQueryAsync(ct);
+        var resultado = await comando.ExecuteScalarAsync(ct)
+            ?? throw new InvalidOperationException("No se pudo insertar el movimiento de cuenta corriente.");
+        return Convert.ToInt32(resultado);
     }
 
     /// <summary>Defensa en profundidad, infraestructura pura (nunca un <c>ErrorDominio</c> 4xx):
     /// pinea acá, en el único escritor, la forma nullable por tipo que hoy solo garantizan los
-    /// llamadores (design: decision 5 — movement shape per tipo). Solo <see cref="TipoMovimientoCc.Consumo"/>
-    /// y <see cref="TipoMovimientoCc.Pago"/> tienen una forma única y fija (el resto — un
-    /// <c>Ajuste</c> puede ser un contramovimiento de anulación o un ajuste manual — es
-    /// estructuralmente dual, no viola nada acá).</summary>
-    private static void ValidarFormaPorTipo(TipoMovimientoCc tipo, int? idPagoComprobante)
+    /// llamadores (design: decision 5 — movement shape per tipo). <see cref="TipoMovimientoCc.Consumo"/>,
+    /// <see cref="TipoMovimientoCc.Pago"/> y (Slice 3) <see cref="TipoMovimientoCc.ActualizacionPrecios"/>
+    /// tienen una forma única y fija (el resto — un <c>Ajuste</c> puede ser un contramovimiento de
+    /// anulación o un ajuste manual — es estructuralmente dual, no viola nada acá).</summary>
+    private static void ValidarFormaPorTipo(TipoMovimientoCc tipo, int? idComprobanteVenta, int? idPagoComprobante)
     {
         if (tipo == TipoMovimientoCc.Consumo && idPagoComprobante is null)
         {
@@ -98,6 +111,13 @@ public static class EscriturasDeCuentaCorriente
         {
             throw new InvalidOperationException(
                 "Un movimiento de tipo Pago nunca lleva id_pago_comprobante — invariante de escritura violado.");
+        }
+
+        if (tipo == TipoMovimientoCc.ActualizacionPrecios && (idComprobanteVenta is not null || idPagoComprobante is not null))
+        {
+            throw new InvalidOperationException(
+                "Un movimiento de tipo ActualizacionPrecios no lleva id_comprobante_venta ni id_pago_comprobante — " +
+                "invariante de escritura violado.");
         }
     }
 
