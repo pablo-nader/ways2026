@@ -145,10 +145,14 @@ public class EstadoDeCuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var estado = await LeerEstadoDeCuentaAsync(ctx, idCliente, "?historico=true");
 
         Assert.Equal(3, estado.Movimientos.Count);
-        Assert.Equal([100m, 50m, 120m], estado.Movimientos.Select(m => m.SaldoResultante).ToArray());
-        // Orden ASC por fecha (spec: ordered by fecha).
-        Assert.True(estado.Movimientos[0].Fecha < estado.Movimientos[1].Fecha);
-        Assert.True(estado.Movimientos[1].Fecha < estado.Movimientos[2].Fecha);
+        Assert.Equal([120m, 50m, 100m], estado.Movimientos.Select(m => m.SaldoResultante).ToArray());
+        // Orden DESC por fecha (legacy: `ORDER BY fecha DESC`, doc-01:375 — "saldo corriendo hacia
+        // atrás desde el saldo actual"); el cómputo de saldo_resultante es ortogonal a este orden.
+        Assert.True(estado.Movimientos[0].Fecha > estado.Movimientos[1].Fecha);
+        Assert.True(estado.Movimientos[1].Fecha > estado.Movimientos[2].Fecha);
+        // Sin filtro de fecha (solo histórico), el saldo_resultante de la fila más nueva coincide
+        // con el header.
+        Assert.Equal(estado.Header.Saldo, estado.Movimientos[0].SaldoResultante);
     }
 
     // ---- Filtro de fecha: default último mes / desde-hasta / histórico ---------------------------
@@ -203,6 +207,53 @@ public class EstadoDeCuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         var movimiento = Assert.Single(estado.Movimientos);
         Assert.Equal(50m, movimiento.Importe);
+    }
+
+    [Fact]
+    public async Task UnHastaSinDesdeAcotaAlUltimoMesAntesDeHasta()
+    {
+        var ctx = await PrepararAsync(nameof(UnHastaSinDesdeAcotaAlUltimoMesAntesDeHasta));
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente hasta sin desde", saldo: 0m);
+        var ancla = new DateTimeOffset(2026, 1, 15, 12, 0, 0, TimeSpan.Zero);
+
+        // Antes del piso de un mes hacia atrás desde hasta — debe quedar afuera.
+        await SembrarMovimientoAsync(ctx, idCliente, TipoMovimientoCc.Consumo, 100m, 100m, ancla.AddMonths(-2));
+        // Dentro de la ventana [hasta - 1 mes, hasta].
+        await SembrarMovimientoAsync(ctx, idCliente, TipoMovimientoCc.Consumo, 50m, 150m, ancla.AddDays(-10));
+        // Después de hasta — debe quedar afuera.
+        await SembrarMovimientoAsync(ctx, idCliente, TipoMovimientoCc.Consumo, 20m, 170m, ancla.AddDays(5));
+
+        var hasta = Uri.EscapeDataString(ancla.ToString("O"));
+        var estado = await LeerEstadoDeCuentaAsync(ctx, idCliente, $"?hasta={hasta}");
+
+        var movimiento = Assert.Single(estado.Movimientos);
+        Assert.Equal(50m, movimiento.Importe);
+        Assert.False(estado.Historico);
+    }
+
+    [Fact]
+    public async Task DesdeYHastaSonInclusivosEnAmbosExtremos()
+    {
+        var ctx = await PrepararAsync(nameof(DesdeYHastaSonInclusivosEnAmbosExtremos));
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente limites inclusivos", saldo: 0m);
+        var desdeAncla = new DateTimeOffset(2026, 1, 5, 12, 0, 0, TimeSpan.Zero);
+        var hastaAncla = new DateTimeOffset(2026, 1, 15, 12, 0, 0, TimeSpan.Zero);
+
+        await SembrarMovimientoAsync(ctx, idCliente, TipoMovimientoCc.Consumo, 100m, 100m, desdeAncla);
+        await SembrarMovimientoAsync(ctx, idCliente, TipoMovimientoCc.Consumo, 50m, 150m, hastaAncla);
+        // Fuera del rango, para probar que el filtro realmente acota y no matchea siempre.
+        await SembrarMovimientoAsync(ctx, idCliente, TipoMovimientoCc.Consumo, 20m, 170m, desdeAncla.AddDays(-1));
+        await SembrarMovimientoAsync(ctx, idCliente, TipoMovimientoCc.Consumo, 30m, 200m, hastaAncla.AddDays(1));
+
+        var desde = Uri.EscapeDataString(desdeAncla.ToString("O"));
+        var hasta = Uri.EscapeDataString(hastaAncla.ToString("O"));
+        var estado = await LeerEstadoDeCuentaAsync(ctx, idCliente, $"?desde={desde}&hasta={hasta}");
+
+        // BETWEEN inclusivo en ambos extremos (legacy parity): el movimiento en desde y el que
+        // está en hasta entran los dos.
+        Assert.Equal(2, estado.Movimientos.Count);
+        Assert.Contains(estado.Movimientos, m => m.Importe == 100m);
+        Assert.Contains(estado.Movimientos, m => m.Importe == 50m);
     }
 
     // ---- Etiqueta estructural de ajuste (design decisión 8/9) -------------------------------------

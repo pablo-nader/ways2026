@@ -172,6 +172,7 @@ public class AjustesDeCuentaCorrienteTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Null(movimiento.IdComprobanteVenta);
         Assert.Null(movimiento.IdPagoComprobante);
         Assert.Equal("Ajuste manual de prueba", movimiento.Detalle);
+        Assert.Equal(ctx.IdPuntoVenta, movimiento.IdPuntoVenta);
     }
 
     [Fact]

@@ -183,7 +183,9 @@ public class ServicioDeCuentaCorriente(
         DateTimeOffset? hastaEfectivo = null;
         if (!historico)
         {
-            desdeEfectivo = desde ?? (hasta is null ? reloj.Ahora.AddMonths(-1) : null);
+            // Un hasta explícito sin desde también recorta la ventana a un mes — sin este piso,
+            // hasta-only devolvía TODO el ledger desde el día uno con Historico=false.
+            desdeEfectivo = desde ?? (hasta is { } hastaSinDesde ? hastaSinDesde.AddMonths(-1) : reloj.Ahora.AddMonths(-1));
             hastaEfectivo = hasta;
         }
 
@@ -198,8 +200,11 @@ public class ServicioDeCuentaCorriente(
             consulta = consulta.Where(m => m.Fecha <= hastaAplicado);
         }
 
+        // Newest-first (legacy: `ORDER BY fecha DESC`, doc-01:375 — "saldo corriendo hacia atrás
+        // desde el saldo actual") y convención de resumen bancario. El cómputo del saldo (columna
+        // saldo_resultante persistida) es ortogonal a este orden de display.
         var filas = await consulta
-            .OrderBy(m => m.Fecha).ThenBy(m => m.Id)
+            .OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id)
             .Select(m => new
             {
                 m.Id, m.Fecha, m.Tipo, m.Importe, m.SaldoResultante, m.Detalle, m.IdComprobanteVenta
