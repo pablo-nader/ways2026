@@ -307,7 +307,21 @@ transaction, all 3 racy surfaces this stage introduces are proven.
   row, A cierre request with only declared counts is accepted; tesoreria /
   First-ever cierre starts from zero, A second cierre chains from the
   first's final, Cierre never writes more than one tesorería row)*
-- [ ] 4.17 Regression: Slices 1–3 suites unedited and green.
+- [ ] 4.17 Wire the `FOR SHARE` turno guard into the two ledger writers that
+  predate this slice: `ServicioDeTurnos.RegistrarMovimientoAsync` and
+  `ServicioDeGastos.RegistrarAsync` re-check the turno via `SELECT … FOR
+  SHARE` as the first statement of their write transaction (same discipline
+  as tasks 5.2/5.3). Without this, once `CerrarAsync` exists a concurrent
+  retiro/refuerzo/gasto can commit into a turno whose arqueo was already
+  derived — the exact D7 class design decision 1 kills. *(design: Technical
+  Approach — "every path that writes into a turno"; judgment-day slice-2
+  finding, judge B)*
+- [ ] 4.18 Integration (concurrency): rendezvous race — a movimiento (and a
+  gasto) racing a cierre of the same turno ⇒ either the write lands before
+  the cierre and its importe is counted in the arqueo, or it loses and gets
+  `409 turno_no_abierto`; never an uncounted write into a closed turno.
+  *(design decision 1; same rendezvous pattern as task 2.8)*
+- [ ] 4.19 Regression: Slices 1–3 suites unedited and green.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~CalculadorDeArqueo|FullyQualifiedName~ServicioDeTurnos.CerrarAsync|FullyQualifiedName~Arqueo`
 
