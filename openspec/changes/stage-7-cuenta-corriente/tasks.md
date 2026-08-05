@@ -319,7 +319,18 @@ cannot run again if reverted; no stage-5/6 behaviour depends on it.
   reliquidación; Supervisor and Admin both succeed (authorization-wise).
   *(spec: operacion-de-pos / Supervisor can run reliquidación…, Vendedor is
   rejected…)*
-- [ ] 3.13 Regression: Slices 1–2 suites unedited and green.
+- [ ] 3.13 Close the anulación×reliquidación TOCTOU (judgment-day slice-2
+  finding, judge A): `AnularAsync`'s `consumo_reliquidado` guard reads the
+  movements via a plain unlocked SELECT before any row lock — a concurrent
+  reliquidación committing its marker between that read and the reversal
+  commit produces an unrepresentable "reversed and reliquidated" state.
+  Fix per the judge's recommendation: lock the `clientes` row (or re-check
+  `id_movimiento_actualizacion` for each movement immediately after
+  acquiring its cliente-row lock, failing closed with `409
+  consumo_reliquidado` if it flipped). Rendezvous race test: anulación ×
+  reliquidación of the same cliente ⇒ exactly one wins; never both.
+  *(design: Concurrency guarantees — extends the enumerated racy surfaces)*
+- [ ] 3.14 Regression: Slices 1–2 suites unedited and green.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ReliquidadorDeConsumos|FullyQualifiedName~ServicioDeReliquidacion`
 

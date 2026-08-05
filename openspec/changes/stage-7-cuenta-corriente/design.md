@@ -344,3 +344,13 @@ move, so its revert is mechanical.
 - [ ] **`id_punto_venta` on a reliquidación / ajuste is provenance, not authority** — it comes from
       the request (validated tenant-scoped, ADR-8), since neither operation has a turno to derive
       it from.
+- [ ] **RC cash in the D6 resumen: counted per-medio, absent per-área — accepted legacy parity**
+      (judgment-day slice-2 finding, judge B). An RC has zero items, so its cash flows into the
+      arqueo's per-medio `esperado` (via `pagos(m)`) but never into `ingresosPorArea` (derived
+      from items). The legacy behaved identically: tipo=3 rows had no article lines, so they were
+      absent from the área breakdown while their efectivo entered the caja totals. Deliberate
+      parity, documented in `LectorDeContenidoDeResumen`; the resumen's primer/último ticket carry
+      the tipo código so RC's independent numeración series reads honestly alongside TX.
+- [ ] **Anulación×reliquidación TOCTOU** (judgment-day slice-2 finding, judge A): the
+      `consumo_reliquidado` guard's unlocked read must be re-checked under the cliente-row lock
+      before Slice 3 ships the marker writer — scheduled as task 3.13.
