@@ -10,6 +10,7 @@ using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
+using Ways.Domain.Compras;
 using Ways.Domain.Gastos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
@@ -101,6 +102,13 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<ArqueoTurno> ArqueosTurno => Set<ArqueoTurno>();
     public DbSet<MovimientoTesoreria> MovimientosTesoreria => Set<MovimientoTesoreria>();
     public DbSet<Gasto> Gastos => Set<Gasto>();
+
+    // stage-8-compras-transferencias-inventario, Slice 1 (schema + seed gate, DB CHANGE GATE
+    // exercised in autonomous mode): modelo adelantado a la migración, mismo trámite que
+    // TurnoCaja/Gasto en stage-6 Slice 1 — sin exponer en IWaysDbContext todavía, Slice 2
+    // (ServicioDeCompras) es el primer consumidor de Application.
+    public DbSet<ComprobanteCompra> ComprobantesCompra => Set<ComprobanteCompra>();
+    public DbSet<ItemComprobanteCompra> ItemsComprobanteCompra => Set<ItemComprobanteCompra>();
 
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un

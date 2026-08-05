@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Ways.Domain.Articulos;
+using Ways.Domain.Compras;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
@@ -45,9 +46,10 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
 
         builder.Property(m => m.IdComprobanteVenta).HasColumnName("id_comprobante_venta");
 
-        // id_comprobante_compra deferido a la etapa 8 (design: Table Shapes — write path B):
-        // comprobantes_compra no existe todavía, así que esta columna NO se crea en esta
-        // migración (docs/10-modelo-de-datos.md registra la deviación, task 3.2).
+        // stage-8-compras-transferencias-inventario, Slice 1 (design: Table Shapes — D, la FK
+        // diferida de doc-10:457-465): columna + FK compuesta aterrizan juntas en esta migración.
+        builder.Property(m => m.IdComprobanteCompra).HasColumnName("id_comprobante_compra");
+
         builder.Property(m => m.IdPuntoVentaDestino).HasColumnName("id_punto_venta_destino");
 
         builder.Property(m => m.IdEmpleado).HasColumnName("id_empleado").IsRequired();
@@ -63,6 +65,7 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
             .HasDatabaseName("ix_movimientos_stock_articulo_punto_venta");
 
         builder.HasIndex(m => new { m.IdComprobanteVenta, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_comprobante_venta");
+        builder.HasIndex(m => new { m.IdComprobanteCompra, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_comprobante_compra");
 
         // Índices de soporte de FK compuesta (evitan el índice implícito PascalCase de EF): la
         // columna líder de cada uno no coincide con la de ix_movimientos_stock_articulo_punto_venta
@@ -107,6 +110,13 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
             .HasForeignKey(m => new { m.IdComprobanteVenta, m.IdTenant })
             .HasPrincipalKey(c => new { c.Id, c.IdTenant })
             .HasConstraintName("fk_movimientos_stock_comprobante_venta")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<ComprobanteCompra>()
+            .WithMany()
+            .HasForeignKey(m => new { m.IdComprobanteCompra, m.IdTenant })
+            .HasPrincipalKey(c => new { c.Id, c.IdTenant })
+            .HasConstraintName("fk_movimientos_stock_comprobante_compra")
             .OnDelete(DeleteBehavior.Restrict);
 
         // id_empleado: FK SIMPLE (no compuesta), misma deviación deliberada que

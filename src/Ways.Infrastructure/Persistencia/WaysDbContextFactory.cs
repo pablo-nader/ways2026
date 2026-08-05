@@ -4,6 +4,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
@@ -43,6 +44,7 @@ public class WaysDbContextFactory : IDesignTimeDbContextFactory<WaysDbContext>
                 npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
                 npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                npgsql.MapEnum<EstadoCompra>("estado_compra");
             })
             .Options;
 

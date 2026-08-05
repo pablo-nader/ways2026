@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Compras;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
@@ -52,6 +53,10 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
 
         builder.Property(g => g.Importe).HasColumnName("importe").HasColumnType("numeric(14,2)").IsRequired();
 
+        // stage-8-compras-transferencias-inventario, Slice 1 (design: Table Shapes — D, la FK
+        // diferida de doc-10:426-434): columna + FK compuesta aterrizan juntas en esta migración.
+        builder.Property(g => g.IdComprobanteCompra).HasColumnName("id_comprobante_compra");
+
         builder.Property(g => g.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(g => g.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(g => g.DeletedAt).HasColumnName("deleted_at");
@@ -62,6 +67,7 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
         builder.HasIndex(g => new { g.IdTurnoCaja, g.IdTenant }).HasDatabaseName("ix_gastos_turno");
         builder.HasIndex(g => new { g.IdPuntoVenta, g.IdTenant, g.Fecha }).HasDatabaseName("ix_gastos_punto_venta_fecha");
         builder.HasIndex(g => new { g.IdProveedor, g.IdTenant }).HasDatabaseName("ix_gastos_proveedor");
+        builder.HasIndex(g => new { g.IdComprobanteCompra, g.IdTenant }).HasDatabaseName("ix_gastos_comprobante_compra");
 
         // Índices de soporte de FK (evitan el índice implícito PascalCase de EF, misma trampa
         // que documenta ComprobanteVentaConfiguration).
@@ -101,6 +107,13 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
             .HasForeignKey(g => new { g.IdProveedor, g.IdTenant })
             .HasPrincipalKey(p => new { p.Id, p.IdTenant })
             .HasConstraintName("fk_gastos_proveedor")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<ComprobanteCompra>()
+            .WithMany()
+            .HasForeignKey(g => new { g.IdComprobanteCompra, g.IdTenant })
+            .HasPrincipalKey(c => new { c.Id, c.IdTenant })
+            .HasConstraintName("fk_gastos_comprobante_compra")
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Area>()

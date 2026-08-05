@@ -7,6 +7,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
@@ -103,6 +104,7 @@ public static class DependencyInjection
             npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
             npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
             npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+            npgsql.MapEnum<EstadoCompra>("estado_compra");
             npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
         });
 }
