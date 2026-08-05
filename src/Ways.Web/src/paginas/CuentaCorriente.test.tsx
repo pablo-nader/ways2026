@@ -1,0 +1,408 @@
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { CuentaCorriente } from './CuentaCorriente'
+import { ErrorApi } from '../api/cliente'
+import type {
+  ClienteListado,
+  ComprobanteEmitido,
+  EstadoDeCuenta,
+  MedioPagoListado,
+  MovimientoDeCuentaCorriente,
+  ParametroResuelto,
+  PuntoVentaListado,
+} from '../api/tipos'
+
+const apiGetMock = vi.fn()
+const apiPostMock = vi.fn()
+
+vi.mock('../api/cliente', () => ({
+  api: {
+    get: (...args: unknown[]) => apiGetMock(...(args as [string])),
+    post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
+    put: vi.fn(),
+    delete: vi.fn(),
+  },
+  ErrorApi: class ErrorApiMock extends Error {
+    estado: number
+    codigo: string
+    constructor(estado: number, codigo: string, mensaje: string) {
+      super(mensaje)
+      this.estado = estado
+      this.codigo = codigo
+    }
+  },
+}))
+
+function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
+  return {
+    id: 1,
+    nombre: 'Efectivo',
+    activo: true,
+    idEmpresa: null,
+    orden: 1,
+    comportamiento: 'Efectivo',
+    admiteVuelto: true,
+    requiereReferencia: false,
+    recargoPorcentaje: null,
+    ...sobrescribir,
+  }
+}
+
+function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): PuntoVentaListado {
+  return {
+    id: 7,
+    idTenant: 1,
+    idEmpresa: 1,
+    nombre: 'Local Centro',
+    domicilio: null,
+    horario: null,
+    whatsapp: null,
+    instagram: null,
+    facebook: null,
+    web: null,
+    ...sobrescribir,
+  }
+}
+
+// `importe`/`saldoResultante` deliberadamente distintos del `saldo` del header (500) y entre sí,
+// para que ningún assert de "$500,00" choque con una fila de la tabla en los tests.
+function movimientoFixture(sobrescribir: Partial<MovimientoDeCuentaCorriente> = {}): MovimientoDeCuentaCorriente {
+  return {
+    id: 1,
+    fecha: '2026-08-01T12:00:00Z',
+    tipo: 'Consumo',
+    importe: 300,
+    saldoResultante: 200,
+    detalle: null,
+    idComprobanteVenta: 10,
+    etiqueta: null,
+    ...sobrescribir,
+  }
+}
+
+function estadoFixture(sobrescribir: Partial<EstadoDeCuenta> = {}): EstadoDeCuenta {
+  return {
+    header: { saldo: 500, limiteCredito: 5000, creditoIlimitado: false, disponibilidad: 4500 },
+    movimientos: [movimientoFixture()],
+    historico: false,
+    desde: '2026-07-01T00:00:00Z',
+    hasta: null,
+    ...sobrescribir,
+  }
+}
+
+function comprobanteFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): ComprobanteEmitido {
+  return {
+    id: 99,
+    numero: 3,
+    numeroVisible: '0007-00000003',
+    estado: 'Emitido',
+    fecha: '2026-08-04T15:00:00Z',
+    idPuntoVenta: 7,
+    idCliente: 5,
+    idComprobanteAsociado: null,
+    subtotal: 500,
+    descuentoTotal: 0,
+    total: 500,
+    direccionEntrega: null,
+    observaciones: null,
+    items: [],
+    pagos: [{ idMedioPago: 1, importe: 500, referencia: null, vuelto: 0 }],
+    ...sobrescribir,
+  }
+}
+
+const medioEfectivo = medioFixture()
+const puntoVentaCentro = puntoVentaFixture()
+
+function renderPantalla(idCliente: number | string = 5, state?: { cliente: ClienteListado }) {
+  return render(
+    <MemoryRouter initialEntries={[{ pathname: `/clientes/${idCliente}/cuenta-corriente`, state }]}>
+      <Routes>
+        <Route path="/clientes/:id/cuenta-corriente" element={<CuentaCorriente />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+/** Rutas comunes a toda la pantalla (medios de pago + puntos de venta + estado de cuenta +
+ * vuelto_maximo) — un override toma prioridad sobre el default para que un test pueda reemplazar
+ * cualquiera de estas rutas base. */
+function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined) {
+  apiGetMock.mockImplementation((ruta: string) => {
+    const propia = sobrescribirGet?.(ruta)
+    if (propia) return propia
+    if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
+    if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
+    if (ruta.startsWith('/parametros/vuelto_maximo')) {
+      return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
+    }
+    if (ruta.includes('/cuenta-corriente')) return Promise.resolve<EstadoDeCuenta>(estadoFixture())
+    return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+  })
+}
+
+/** Abre el modal de pago y completa una fila válida (Efectivo, importe dado) — espera a que
+ * "Registrar pago" esté habilitado (vuelto_maximo ya resuelto). */
+async function abrirModalYCompletarFila(importe = '500') {
+  renderPantalla()
+  await screen.findByText('$500,00')
+  await userEvent.click(screen.getByRole('button', { name: 'Ingresar pago' }))
+  await screen.findByText('Ingresar pago a cuenta')
+  await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+  await userEvent.type(screen.getByLabelText('Importe'), importe)
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Registrar pago' })).not.toBeDisabled())
+}
+
+beforeEach(() => {
+  apiGetMock.mockReset()
+  apiPostMock.mockReset()
+})
+
+describe('CuentaCorriente — header y ledger', () => {
+  it('muestra saldo, límite de crédito y disponibilidad', async () => {
+    mockearRutasBase()
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+    expect(screen.getByText('$5.000,00')).toBeInTheDocument()
+    expect(screen.getByText('$4.500,00')).toBeInTheDocument()
+  })
+
+  it('crédito ilimitado muestra "Ilimitado" en límite y disponibilidad, nunca un número fabricado', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente')) {
+        return Promise.resolve<EstadoDeCuenta>(
+          estadoFixture({ header: { saldo: 0, limiteCredito: 0, creditoIlimitado: true, disponibilidad: null } }),
+        )
+      }
+      return undefined
+    })
+    renderPantalla()
+
+    await screen.findByText('Cliente #5', { exact: false })
+    expect(screen.getAllByText('Ilimitado')).toHaveLength(2)
+  })
+
+  it('un período sin movimientos muestra el estado vacío, con exactamente un GET (nunca una re-consulta)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente')) return Promise.resolve<EstadoDeCuenta>(estadoFixture({ movimientos: [] }))
+      return undefined
+    })
+    renderPantalla()
+
+    expect(await screen.findByText('No hay movimientos en el período seleccionado.')).toBeInTheDocument()
+    const llamadasEstado = apiGetMock.mock.calls.filter((c) => (c[0] as string).includes('/cuenta-corriente'))
+    expect(llamadasEstado).toHaveLength(1)
+  })
+
+  it('la falla al cargar medios de pago muestra un aviso y deja "Ingresar pago" realmente deshabilitado', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/catalogos/medios-pago') {
+        return Promise.reject(new ErrorApi(500, 'error', 'No se pudieron cargar los medios de pago.'))
+      }
+      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
+      if (ruta.includes('/cuenta-corriente')) return Promise.resolve<EstadoDeCuenta>(estadoFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderPantalla()
+
+    expect(await screen.findByText(/No se pudieron cargar los medios de pago\./)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Ingresar pago' })).toBeDisabled())
+  })
+
+  it('el Consumidor Final (conocido por state de navegación) deja "Ingresar pago" deshabilitado', async () => {
+    mockearRutasBase()
+    const cf: ClienteListado = {
+      id: 1,
+      numero: 1,
+      nombre: 'Consumidor Final',
+      apellido: null,
+      razonSocial: null,
+      tipoDocumento: null,
+      numeroDocumento: null,
+      idCondicionFiscal: 1,
+      nacimiento: null,
+      domicilio: null,
+      telefono: null,
+      celular: null,
+      email: null,
+      observaciones: null,
+      idListaPrecio: 1,
+      limiteCredito: 0,
+      creditoIlimitado: false,
+      saldo: 0,
+      activo: true,
+      idEmpresa: null,
+      esConsumidorFinal: true,
+    }
+
+    renderPantalla(1, { cliente: cf })
+
+    await screen.findByText('$500,00')
+    expect(screen.getByRole('button', { name: 'Ingresar pago' })).toBeDisabled()
+  })
+})
+
+describe('CuentaCorriente — filtros (react-async-state regla 2)', () => {
+  it('los filtros disparan un nuevo GET; una respuesta obsoleta que llega tarde nunca pisa la más reciente', async () => {
+    let llamadas = 0
+    let resolverSegunda: (v: EstadoDeCuenta) => void = () => {}
+    const segundaPendiente = new Promise<EstadoDeCuenta>((resolve) => {
+      resolverSegunda = resolve
+    })
+
+    mockearRutasBase((ruta) => {
+      if (!ruta.includes('/cuenta-corriente')) return undefined
+      llamadas += 1
+      if (llamadas === 1) return Promise.resolve<EstadoDeCuenta>(estadoFixture())
+      if (llamadas === 2) return segundaPendiente
+      if (llamadas === 3) {
+        return Promise.resolve<EstadoDeCuenta>(
+          estadoFixture({ movimientos: [movimientoFixture({ id: 3, importe: 999, saldoResultante: 111 })] }),
+        )
+      }
+      return Promise.reject(new Error('llamada inesperada'))
+    })
+
+    renderPantalla()
+    await screen.findByLabelText('Ver histórico completo')
+
+    // 1ra: activa histórico (queda pendiente, lenta).
+    await userEvent.click(screen.getByLabelText('Ver histórico completo'))
+    expect(screen.getByLabelText('Desde')).toBeDisabled()
+
+    // 2da: lo desactiva de nuevo — dispara una generación MÁS NUEVA, que resuelve rápido.
+    await userEvent.click(screen.getByLabelText('Ver histórico completo'))
+
+    await waitFor(() => expect(screen.getByText('$999,00')).toBeInTheDocument())
+
+    // La respuesta obsoleta (de la generación anterior) llega tarde con datos distintos — no
+    // puede pisar lo que ya se muestra.
+    await act(async () => {
+      resolverSegunda(estadoFixture({ movimientos: [movimientoFixture({ id: 2, importe: 777, saldoResultante: 888 })] }))
+      await Promise.resolve()
+    })
+    expect(screen.getByText('$999,00')).toBeInTheDocument()
+    expect(screen.queryByText('$777,00')).not.toBeInTheDocument()
+    expect(screen.queryByText('$888,00')).not.toBeInTheDocument()
+  })
+})
+
+describe('CuentaCorriente — modal de pago a cuenta', () => {
+  it('un medio CuentaCorriente nunca aparece en el selector de medios del pago (design decisión 6)', async () => {
+    const medioCc = medioFixture({ id: 2, nombre: 'Cuenta corriente del cliente', comportamiento: 'CuentaCorriente' })
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioCc])
+      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
+      if (ruta.includes('/cuenta-corriente')) return Promise.resolve<EstadoDeCuenta>(estadoFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderPantalla()
+    await screen.findByText('$500,00')
+    await userEvent.click(screen.getByRole('button', { name: 'Ingresar pago' }))
+    await screen.findByText('Ingresar pago a cuenta')
+
+    const opciones = within(screen.getByLabelText('Medio de pago')).getAllByRole('option')
+    expect(opciones.map((o) => o.textContent)).not.toContain('Cuenta corriente del cliente')
+    expect(opciones.map((o) => o.textContent)).toContain('Efectivo')
+  })
+
+  it('doble click en "Registrar pago" dispara exactamente un POST', async () => {
+    mockearRutasBase()
+    let resolverPago: (c: ComprobanteEmitido) => void = () => {}
+    const pagoPendiente = new Promise<ComprobanteEmitido>((resolve) => {
+      resolverPago = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/pagos') return pagoPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalYCompletarFila()
+
+    const boton = screen.getByRole('button', { name: 'Registrar pago' })
+    await userEvent.click(boton)
+    await userEvent.click(boton)
+    fireEvent.click(boton)
+
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/clientes/5/cuenta-corriente/pagos')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Registrando…' })).toBeDisabled()
+
+    await act(async () => {
+      resolverPago(comprobanteFixture())
+      await Promise.resolve()
+    })
+  })
+
+  it('arma el cuerpo del POST de pago con la forma exacta del contrato', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/pagos') return Promise.resolve<ComprobanteEmitido>(comprobanteFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalYCompletarFila('500')
+    await userEvent.type(screen.getByLabelText('Observaciones'), '  nota de prueba  ')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+
+    await screen.findByText(/Pago registrado/)
+
+    const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/clientes/5/cuenta-corriente/pagos')
+    expect(llamada?.[1]).toEqual({
+      idPuntoVenta: 7,
+      pagos: [{ idMedioPago: 1, importe: 500, referencia: null, vuelto: 0 }],
+      observaciones: 'nota de prueba',
+    })
+  })
+
+  it('un pago 2xx nunca se reporta como fallo, aunque el refetch del ledger posterior falle', async () => {
+    let llamadasEstado = 0
+    mockearRutasBase((ruta) => {
+      if (!ruta.includes('/cuenta-corriente')) return undefined
+      llamadasEstado += 1
+      if (llamadasEstado === 1) return Promise.resolve<EstadoDeCuenta>(estadoFixture())
+      return Promise.reject(new Error('boom'))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/pagos') return Promise.resolve<ComprobanteEmitido>(comprobanteFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalYCompletarFila()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+
+    expect(await screen.findByText('Pago registrado: comprobante 0007-00000003.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('No se pudo cargar el estado de cuenta.')).toBeInTheDocument())
+    // el aviso de éxito del pago sigue en pantalla — el fallo del refetch no lo pisa.
+    expect(screen.getByText('Pago registrado: comprobante 0007-00000003.')).toBeInTheDocument()
+  })
+
+  it('turno_no_abierto durante el pago ofrece abrir el turno ahí mismo — sin reintento automático del pago', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/pagos') {
+        return Promise.reject(new ErrorApi(409, 'turno_no_abierto', 'No hay un turno abierto en este punto de venta.'))
+      }
+      if (ruta === '/caja/turnos') return Promise.resolve({})
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalYCompletarFila()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+
+    await screen.findByText('No hay un turno abierto')
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/clientes/5/cuenta-corriente/pagos')).toHaveLength(1)
+
+    await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+
+    await screen.findByText('Ingresar pago a cuenta')
+    // sin reintento automático: reabrir el turno no reenvía el pago solo.
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/clientes/5/cuenta-corriente/pagos')).toHaveLength(1)
+  })
+})
