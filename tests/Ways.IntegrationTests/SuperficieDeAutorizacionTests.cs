@@ -49,9 +49,13 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // stage-6-turnos-caja (Slice 2, task 2.6): apertura de turno y movimientos de caja — sin
         // GestionDeCatalogo apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que
         // poder abrir su turno y registrar un retiro/refuerzo). Task 4.8 suma acá el cierre
-        // (POST …/{id}/cierre) y los gastos (POST /api/gastos) cuando Slices 3/4 los aterricen.
+        // (POST …/{id}/cierre) cuando Slice 4 lo aterrice.
         ("POST", "/api/caja/turnos/"),
         ("POST", "/api/caja/turnos/{id:int}/movimientos"),
+        // stage-6-turnos-caja (Slice 3, task 3.2): captura de gasto — sin GestionDeCatalogo
+        // apilado, mismo criterio que los dos de arriba (spec: gastos / Gasto Authorization, un
+        // Vendedor tiene que poder registrar un gasto).
+        ("POST", "/api/gastos/"),
 
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).
@@ -149,7 +153,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // stage-6-turnos-caja (Slice 2, task 2.10): GET /api/caja/turnos/abierto,
         // GET /api/caja/turnos/{id} y GET /api/caja/turnos (historial) — mismo criterio que
         // "/api/stock", las tres rutas de lectura de CajaEndpoints quedan bajo OperacionDePos.
-        "/api/caja/turnos"
+        "/api/caja/turnos",
+        // stage-6-turnos-caja (Slice 3, task 3.5): GET /api/gastos (historial) — mismo criterio
+        // que "/api/caja/turnos".
+        "/api/gastos"
     ];
 
     // Policies que, de aparecer en vez de OperacionDePos, siguen siendo un gate válido —
