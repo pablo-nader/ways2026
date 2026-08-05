@@ -879,6 +879,29 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Null(marcadorBaja);
     }
 
+    [Fact]
+    public async Task UnPreviewConDeltaTotalCeroPorDeltasQueSeCancelanNoMuestraNingunConsumoCubierto()
+    {
+        // Mismo escenario de deltas que se cancelan (+50/-50) que
+        // UnDeltaTotalCeroPorDeltasQueSeCancelanNoDejaNingunConsumoMarcadoComoCubierto, pero
+        // consultado por GET: el preview tiene que anticipar la MISMA respuesta que el commit
+        // (never two formulas) — nada de "cubiertos" para un delta que no va a escribir nada.
+        var ctx = await PrepararAsync(nameof(UnPreviewConDeltaTotalCeroPorDeltasQueSeCancelanNoMuestraNingunConsumoCubierto));
+        var idArticuloSube = await SembrarArticuloConPrecioAsync(ctx, "articulo-preview-cancela-sube", 100m);
+        var idArticuloBaja = await SembrarArticuloConPrecioAsync(ctx, "articulo-preview-cancela-baja", 100m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente preview delta cancela");
+
+        await RealizarConsumoAsync(ctx, idCliente, idArticuloSube, 1m, 100m);
+        await RealizarConsumoAsync(ctx, idCliente, idArticuloBaja, 1m, 100m);
+        await SubirPrecioAsync(ctx, idArticuloSube, 150m); // delta +50.
+        await SubirPrecioAsync(ctx, idArticuloBaja, 50m); // delta -50.
+
+        var resultado = await LeerResultadoAsync(await PreviewAsync(ctx, idCliente));
+
+        Assert.Equal(0m, resultado.Delta);
+        Assert.Empty(resultado.IdsMovimientosCubiertos);
+    }
+
     // ---- el cap de 500 consumos por corrida, punta a punta -------------------------------------
 
     /// <summary>Seed crudo en lote (<c>AddRange</c> + un único <c>SaveChangesAsync</c> por tabla,
