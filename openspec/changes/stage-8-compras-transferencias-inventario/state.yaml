@@ -16,13 +16,17 @@ phases:
     artifact: proposal.md
     notes: "Written 2026-08-05 in autonomous mode. 11 binding decisions, all orchestrator-resolved, each with provenance + rationale. ONE VERIFIED CORRECTION to the incoming brief is recorded in decision 5: the brief said an insufficient-origin-stock transfer refusal was 'the same rule class as venta' -- it is the OPPOSITE. openspec/specs/stock/spec.md:34-35 states that at checkout 'Availability is NOT checked -- negative stock is allowed (legacy parity)', so refusing a transfer is a DELIBERATE TIGHTENING. The proposal pins the governing principle instead: COUNTER OPERATIONS NEVER BLOCK ON STOCK; BACK-OFFICE STOCK-REDUCING OPERATIONS DO. The same principle carries decision 10(b) (compra anulacion refused when it would go negative). Capabilities contract: 4 new (comprobantes-compra, transferencias-de-stock, conteo-de-inventario, saldo-de-proveedor) + 5 modified (stock, gastos, arqueo-de-cierre, proveedores, operacion-de-pos). A 'Proposal question round' section records the 5 questions NOT asked (autonomous mode) with the assumption taken for each, so the user can veto before sdd-tasks."
   spec:
-    status: pending
+    status: done
+    artifact: specs/ (9 files)
     depends_on: [propose]
   design:
-    status: pending
+    status: done
+    artifact: design.md
     depends_on: [propose]
   tasks:
-    status: pending
+    status: done
+    artifact: tasks.md
+    notes: "Written 2026-08-05. Six PR slices per the six-way split supplied for this phase (merges the proposal's borrador/confirmar+anular slices into one Slice 2 centerpiece with its own judgment-day round; splits web into Slice 5 compras / Slice 6 transferencias+conteo+saldo, mirroring stage-7). DB CHANGE GATE carries no STOP task — already exercised in autonomous mode. doc-10 update split Slice 1 (§1/§5/§6) / Slice 6 (stage-table close-out, last row of doc 10). Review Workload Forecast: High risk, ~6,300-8,000 lines, chained PRs stacked-to-main, auto-chain — Decision needed before apply: No."
     depends_on: [spec, design]
   apply:
     status: pending
