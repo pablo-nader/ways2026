@@ -1,0 +1,744 @@
+using System.Data;
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Ways.Application.Abstracciones;
+using Ways.Application.Precios;
+using Ways.Domain.Articulos;
+using Ways.Domain.Catalogos;
+using Ways.Domain.Common;
+using Ways.Domain.Compras;
+using Ways.Domain.Organizacion;
+using Ways.Domain.Proveedores;
+using Ways.Domain.Stock;
+
+namespace Ways.Application.Compras;
+
+/// <summary>
+/// Ciclo de vida del comprobante de compra — el centerpiece de stage-8 (design: Technical
+/// Approach, "the document header row is the serialization point of every state transition of
+/// una compra"). Dedicado (no reusa ningún ABM), mismo criterio que
+/// <see cref="Ways.Application.Ventas.ServicioDeVentas"/>: <see cref="ConfirmarAsync"/> y
+/// <see cref="AnularAsync"/> son el único punto de escritura de <c>movimientos_stock</c>
+/// (<c>motivo = compra/anulacion</c>) y de <c>articulos.costo_nominal</c> de esta etapa.
+///
+/// <see cref="ServicioDeStock"/>/<see cref="Ways.Application.Ventas.ServicioDeVentas"/> NO se
+/// tocan (Slice 2 non-negotiable) — los statements crudos de stock de acá son propios de esta
+/// clase (sibling raw SQL), duplicados a propósito del shape de
+/// <c>ServicioDeStock.InsertarMovimientoStockAsync</c>/<c>UpsertStockAsync</c> en vez de
+/// compartir un helper: <c>ServicioDeStock</c> gana esos parámetros recién en Slice 3.
+/// </summary>
+public class ServicioDeCompras(
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios)
+{
+    // ---- lectura --------------------------------------------------------------------------------
+
+    public async Task<CompraDetalle> ObtenerAsync(int id, CancellationToken ct = default)
+    {
+        var comprobante = await BuscarComprobanteAsync(id, ct);
+        var items = await db.ItemsComprobanteCompra
+            .Where(i => i.IdComprobanteCompra == id)
+            .OrderBy(i => i.Orden)
+            .ToListAsync(ct);
+
+        return Proyectar(comprobante, items);
+    }
+
+    public async Task<PaginaDeCompras> ListarAsync(
+        int? idProveedor = null,
+        EstadoCompra? estado = null,
+        DateTimeOffset? desde = null,
+        DateTimeOffset? hasta = null,
+        int pagina = 1,
+        int tamanio = 25,
+        CancellationToken ct = default)
+    {
+        pagina = Math.Max(pagina, 1);
+        tamanio = Math.Clamp(tamanio, 1, 200);
+
+        var query = db.ComprobantesCompra.AsQueryable();
+
+        if (idProveedor is { } p)
+        {
+            query = query.Where(c => c.IdProveedor == p);
+        }
+
+        if (estado is { } e)
+        {
+            query = query.Where(c => c.Estado == e);
+        }
+
+        if (desde is { } d)
+        {
+            query = query.Where(c => c.FechaRecepcion >= d);
+        }
+
+        if (hasta is { } h)
+        {
+            query = query.Where(c => c.FechaRecepcion <= h);
+        }
+
+        var total = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderByDescending(c => c.Id)
+            .Skip((pagina - 1) * tamanio)
+            .Take(tamanio)
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total))
+            .ToListAsync(ct);
+
+        return new PaginaDeCompras(items, total, pagina, tamanio);
+    }
+
+    // ---- borrador: crear + replace-set (design decisión 2) ---------------------------------------
+
+    public async Task<CompraDetalle> CrearBorradorAsync(SolicitudDeCompra solicitud, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
+        var (lineas, calculada) = Calcular(solicitud.Items, tipo.DiscriminaIva, porcentajePorAlicuota, margenes);
+
+        var comprobante = new ComprobanteCompra
+        {
+            IdTenant = idTenant,
+            IdProveedor = solicitud.IdProveedor,
+            IdTipoComprobante = solicitud.IdTipoComprobante,
+            NumeroExterno = NormalizarOpcional(solicitud.NumeroExterno),
+            FechaComprobante = solicitud.FechaComprobante,
+            FechaRecepcion = null,
+            IdPuntoVenta = solicitud.IdPuntoVenta,
+            IdEmpleado = idEmpleado,
+            Subtotal = calculada.Subtotal,
+            DescuentoTotal = calculada.DescuentoTotal,
+            IvaTotal = calculada.IvaTotal,
+            Total = calculada.Total,
+            Observaciones = NormalizarOpcional(solicitud.Observaciones),
+            Estado = EstadoCompra.Borrador,
+            CreatedAt = momento,
+            UpdatedAt = momento
+        };
+        db.ComprobantesCompra.Add(comprobante);
+        await db.SaveChangesAsync(ct);
+
+        var itemsEntidad = MaterializarItems(comprobante.Id, idTenant, lineas, calculada, momento);
+        db.ItemsComprobanteCompra.AddRange(itemsEntidad);
+        await db.SaveChangesAsync(ct);
+
+        return Proyectar(comprobante, itemsEntidad);
+    }
+
+    /// <summary>Design decisión 2: replace-set completo bajo <c>SELECT … FOR UPDATE … WHERE
+    /// estado='borrador'</c> — el lock de fila hace que "el último committer gana" sea una
+    /// garantía real (no una carrera) y el predicado de estado en el mismo statement hace que
+    /// editar una confirmada sea estructuralmente imposible, no solo chequeado.</summary>
+    public async Task<CompraDetalle> ActualizarBorradorAsync(int id, SolicitudDeCompra solicitud, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var momento = reloj.Ahora;
+
+        var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
+        var (lineas, calculada) = Calcular(solicitud.Items, tipo.DiscriminaIva, porcentajePorAlicuota, margenes);
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () =>
+            await EjecutarActualizacionAsync(id, idTenant, solicitud, lineas, calculada, momento, ct));
+    }
+
+    private async Task<CompraDetalle> EjecutarActualizacionAsync(
+        int id, int idTenant, SolicitudDeCompra solicitud, IReadOnlyList<LineaDeCompra> lineas, CompraCalculada calculada,
+        DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        var bloqueado = await BloquearBorradorAsync(conexion, transaccionCruda, id, idTenant, ct);
+        if (!bloqueado)
+        {
+            var existe = await db.ComprobantesCompra.AsNoTracking().AnyAsync(c => c.Id == id, ct);
+            if (!existe)
+            {
+                throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+            }
+
+            throw new ErrorDominio("compra_no_editable", "Solo una compra en borrador puede editarse.", 409);
+        }
+
+        // El lock de fila crudo de arriba ya serializa cualquier escritor concurrente sobre este
+        // header — esta lectura vía EF (sin FOR UPDATE propio) es segura, ve el estado ya
+        // comiteado bajo el mismo lock (mismo criterio que ServicioDePrecios.BuscarFilaAbiertaAsync
+        // tras TomarLockDelParAsync).
+        var comprobante = await db.ComprobantesCompra.FirstAsync(c => c.Id == id, ct);
+
+        var itemsExistentes = await db.ItemsComprobanteCompra.Where(i => i.IdComprobanteCompra == id).ToListAsync(ct);
+        db.ItemsComprobanteCompra.RemoveRange(itemsExistentes);
+
+        comprobante.IdProveedor = solicitud.IdProveedor;
+        comprobante.IdTipoComprobante = solicitud.IdTipoComprobante;
+        comprobante.NumeroExterno = NormalizarOpcional(solicitud.NumeroExterno);
+        comprobante.FechaComprobante = solicitud.FechaComprobante;
+        comprobante.IdPuntoVenta = solicitud.IdPuntoVenta;
+        comprobante.Observaciones = NormalizarOpcional(solicitud.Observaciones);
+        comprobante.Subtotal = calculada.Subtotal;
+        comprobante.DescuentoTotal = calculada.DescuentoTotal;
+        comprobante.IvaTotal = calculada.IvaTotal;
+        comprobante.Total = calculada.Total;
+        comprobante.UpdatedAt = momento;
+
+        var itemsNuevos = MaterializarItems(id, idTenant, lineas, calculada, momento);
+        db.ItemsComprobanteCompra.AddRange(itemsNuevos);
+
+        await db.SaveChangesAsync(ct);
+        await transaccion.CommitAsync(ct);
+
+        return Proyectar(comprobante, itemsNuevos);
+    }
+
+    // ---- confirmar (design: Transactions — CONFIRMAR COMPRA) --------------------------------------
+
+    public async Task<CompraDetalle> ConfirmarAsync(int id, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        // Camino secuencial (spec: canónico) — una compra visiblemente ya procesada se rechaza
+        // ACÁ, antes de entrar a la transacción, con el código que el spec pinea
+        // (compra_ya_procesada). El UPDATE...RETURNING atómico de abajo sigue siendo la única
+        // autoridad race-safe: si otro confirmar gana la carrera entre esta lectura y ese UPDATE,
+        // la rama de 0 filas lo atrapa con el código genérico del backstop
+        // (compra_no_es_borrador, design: Transactions — "double confirm... the loser").
+        var preLectura = await db.ComprobantesCompra.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (preLectura is null)
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+        }
+
+        if (preLectura.Estado != EstadoCompra.Borrador)
+        {
+            throw new ErrorDominio("compra_ya_procesada", "La compra ya fue procesada.", 409);
+        }
+
+        // spec: "Confirming without a numero_externo is rejected... before any write" — chequeo
+        // de servicio explícito, distinto del backstop de esquema
+        // (ck_comprobantes_compra_confirmada_completa → compra_incompleta_para_confirmar), que
+        // queda como defensa de una escritura fuera de banda.
+        if (preLectura.NumeroExterno is null)
+        {
+            throw new ErrorDominio(
+                "compra_numero_externo_requerido",
+                "La compra necesita un número de comprobante del proveedor para confirmarse.",
+                400);
+        }
+
+        var tipo = await db.TiposComprobante.FirstAsync(t => t.Id == preLectura.IdTipoComprobante, ct);
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () =>
+            await EjecutarConfirmarAsync(id, idTenant, idEmpleado, tipo.DiscriminaIva, momento, ct));
+    }
+
+    private async Task<CompraDetalle> EjecutarConfirmarAsync(
+        int id, int idTenant, int idEmpleado, bool discriminaIva, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // 1. UPDATE ... RETURNING — autoridad única de la transición (design decisión 1). El
+        // lock de fila serializa dos confirmar concurrentes: el que pierde re-evalúa el WHERE
+        // contra el estado YA COMITEADO por el ganador, 0 filas, nunca un 500 ni una doble
+        // escritura de stock.
+        var idPuntoVenta = await ConfirmarHeaderAsync(conexion, transaccionCruda, id, idTenant, momento, ct);
+        if (idPuntoVenta is null)
+        {
+            var existe = await db.ComprobantesCompra.AsNoTracking().AnyAsync(c => c.Id == id, ct);
+            if (!existe)
+            {
+                throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+            }
+
+            throw new ErrorDominio("compra_no_es_borrador", "La compra ya no está en borrador.", 409);
+        }
+
+        // 2. El read set de items queda congelado bajo el lock del header (design decisión 1).
+        var items = await db.ItemsComprobanteCompra
+            .Where(i => i.IdComprobanteCompra == id)
+            .OrderBy(i => i.IdArticulo)
+            .ToListAsync(ct);
+
+        if (items.Count == 0)
+        {
+            throw new ErrorDominio("compra_sin_items", "La compra no tiene items para confirmar.", 400);
+        }
+
+        // 3. Un movimiento + upsert de stock por item, orden ascendente id_articulo (design:
+        // Transactions — lock order discipline).
+        foreach (var item in items)
+        {
+            await InsertarMovimientoStockAsync(
+                conexion, transaccionCruda, idTenant, item.IdArticulo, idPuntoVenta.Value, item.Cantidad,
+                MotivoStock.Compra, id, idEmpleado, momento, ct);
+
+            await UpsertStockAsync(conexion, transaccionCruda, idTenant, item.IdArticulo, idPuntoVenta.Value, item.Cantidad, ct);
+        }
+
+        // 4. costo_nominal — solo actualiza_costo AND costo_unitario > 0, deduplicado con el
+        // mayor orden ganando (design decisión 4; CalculadorDeCompra.ResolverActualizacionesDeCosto).
+        var itemsParaCosto = items
+            .Select(i => (
+                i.Orden, i.IdArticulo, i.ActualizaCosto, i.CostoUnitario,
+                CostoEfectivo: CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(i.Total, i.Cantidad, i.PorcentajeIva, discriminaIva)))
+            .ToList();
+
+        var costosAActualizar = CalculadorDeCompra.ResolverActualizacionesDeCosto(itemsParaCosto);
+
+        foreach (var (idArticulo, costo) in costosAActualizar.OrderBy(kv => kv.Key))
+        {
+            await ActualizarCostoNominalAsync(conexion, transaccionCruda, idTenant, idArticulo, costo, momento, ct);
+        }
+
+        await transaccion.CommitAsync(ct);
+
+        return await ObtenerAsync(id, ct);
+    }
+
+    // ---- anular (design: Transactions — ANULAR COMPRA; decisión 6, la regla invertida) -----------
+
+    public async Task<ResultadoAnulacion> AnularAsync(int id, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        var preLectura = await db.ComprobantesCompra.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (preLectura is null)
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+        }
+
+        // spec: "Anulando a borrador is rejected... 409 compra_no_procesada — a borrador has no
+        // ledger effect to reverse" — el código canónico del scenario, distinto del backstop
+        // atómico genérico de abajo.
+        if (preLectura.Estado == EstadoCompra.Borrador)
+        {
+            throw new ErrorDominio(
+                "compra_no_procesada", "Una compra en borrador no tiene movimientos que revertir.", 409);
+        }
+
+        if (preLectura.Estado == EstadoCompra.Anulada)
+        {
+            throw new ErrorDominio("compra_no_confirmada", "La compra ya está anulada.", 409);
+        }
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () => await EjecutarAnulacionAsync(id, idTenant, idEmpleado, momento, ct));
+    }
+
+    private async Task<ResultadoAnulacion> EjecutarAnulacionAsync(
+        int id, int idTenant, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // 1. UPDATE ... RETURNING — misma autoridad única que confirmar.
+        var idPuntoVenta = await MarcarAnuladaAsync(conexion, transaccionCruda, id, idTenant, momento, ct);
+        if (idPuntoVenta is null)
+        {
+            var existe = await db.ComprobantesCompra.AsNoTracking().AnyAsync(c => c.Id == id, ct);
+            if (!existe)
+            {
+                throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+            }
+
+            throw new ErrorDominio("compra_no_confirmada", "La compra no está confirmada.", 409);
+        }
+
+        // 2. El ledger ORIGINAL, nunca recalculado desde items (design: doc-comment de
+        // ServicioDeVentas.AnularAsync, mismo criterio acá).
+        var movimientosOriginales = await db.MovimientosStock
+            .Where(m => m.IdComprobanteCompra == id && m.Motivo == MotivoStock.Compra)
+            .OrderBy(m => m.IdArticulo)
+            .ToListAsync(ct);
+
+        foreach (var original in movimientosOriginales)
+        {
+            var inversa = -original.Cantidad;
+
+            await InsertarMovimientoStockAsync(
+                conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa,
+                MotivoStock.Anulacion, id, idEmpleado, momento, ct);
+
+            var nueva = await UpsertStockAsync(
+                conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa, ct);
+
+            if (nueva < 0m)
+            {
+                throw new ErrorDominio(
+                    "compra_anulacion_stock_negativo",
+                    $"El artículo {original.IdArticulo} quedaría con stock negativo al anular esta compra.",
+                    409);
+            }
+        }
+
+        // 4. Informativo — la regla invertida (design decisión 6): NUNCA bloquea.
+        var gastosLigados = await db.Gastos.CountAsync(g => g.IdComprobanteCompra == id, ct);
+
+        await transaccion.CommitAsync(ct);
+
+        var detalle = await ObtenerAsync(id, ct);
+        return new ResultadoAnulacion(detalle, gastosLigados);
+    }
+
+    // ---- aplicar precio sugerido (design decisión 8) -----------------------------------------------
+
+    /// <summary>Loop de <c>AbrirNuevoPrecioAsync</c>, cada llamada su PROPIA transacción — un
+    /// rechazo de una línea (p.ej. <c>precio_pendiente_existe</c>) no aborta las demás (design
+    /// decisión 8: partial success es el contrato honesto).</summary>
+    public async Task<IReadOnlyList<ResultadoAplicarPrecio>> AplicarPrecioSugeridoAsync(
+        int id, SolicitudDeAplicarPrecios solicitud, CancellationToken ct = default)
+    {
+        var comprobante = await BuscarComprobanteAsync(id, ct);
+        if (comprobante.Estado != EstadoCompra.Confirmada)
+        {
+            throw new ErrorDominio(
+                "compra_no_confirmada", "Solo una compra confirmada tiene precio_sugerido para aplicar.", 409);
+        }
+
+        var items = await db.ItemsComprobanteCompra
+            .Where(i => i.IdComprobanteCompra == id && i.PrecioSugerido != null)
+            .OrderBy(i => i.Orden)
+            .ToListAsync(ct);
+
+        var resultados = new List<ResultadoAplicarPrecio>(items.Count);
+
+        foreach (var item in items)
+        {
+            try
+            {
+                var precio = await servicioDePrecios.EstablecerPrecioAsync(
+                    item.IdArticulo,
+                    new AltaPrecio(solicitud.IdListaPrecio, item.PrecioSugerido!.Value, solicitud.ConfirmarReemplazo),
+                    ct);
+
+                resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo, true, precio.Precio, null));
+            }
+            catch (ErrorDominio error)
+            {
+                resultados.Add(new ResultadoAplicarPrecio(item.IdArticulo, false, null, error.Message));
+            }
+        }
+
+        return resultados;
+    }
+
+    // ---- statements crudos: confirmar/anular (sibling raw SQL, ver el doc-comment de la clase) ----
+
+    private static async Task<int?> ConfirmarHeaderAsync(
+        DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "UPDATE comprobantes_compra SET estado = 'confirmada'::estado_compra, fecha_recepcion = $1, updated_at = $1 " +
+            "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'borrador'::estado_compra " +
+            "RETURNING id_punto_venta";
+
+        AgregarParametro(comando, momento);
+        AgregarParametro(comando, id);
+        AgregarParametro(comando, idTenant);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is null ? null : Convert.ToInt32(resultado);
+    }
+
+    private static async Task<int?> MarcarAnuladaAsync(
+        DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "UPDATE comprobantes_compra SET estado = 'anulada'::estado_compra, updated_at = $1 " +
+            "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'confirmada'::estado_compra " +
+            "RETURNING id_punto_venta";
+
+        AgregarParametro(comando, momento);
+        AgregarParametro(comando, id);
+        AgregarParametro(comando, idTenant);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is null ? null : Convert.ToInt32(resultado);
+    }
+
+    private static async Task<bool> BloquearBorradorAsync(
+        DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT 1 FROM comprobantes_compra " +
+            "WHERE id_comprobante_compra = $1 AND id_tenant = $2 AND estado = 'borrador'::estado_compra " +
+            "FOR UPDATE";
+
+        AgregarParametro(comando, id);
+        AgregarParametro(comando, idTenant);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is not null;
+    }
+
+    private static async Task InsertarMovimientoStockAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
+        decimal cantidad, MotivoStock motivo, int idComprobanteCompra, int idEmpleado, DateTimeOffset creadoEl,
+        CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "INSERT INTO movimientos_stock " +
+            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_compra, id_empleado, creado_el) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)";
+
+        AgregarParametro(comando, idTenant);
+        AgregarParametro(comando, idArticulo);
+        AgregarParametro(comando, idPuntoVenta);
+        AgregarParametro(comando, cantidad);
+        AgregarParametro(comando, motivo);
+        AgregarParametro(comando, idComprobanteCompra);
+        AgregarParametro(comando, idEmpleado);
+        AgregarParametro(comando, creadoEl);
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task<decimal> UpsertStockAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
+        decimal delta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad) " +
+            "VALUES ($1, $2, $3, $4) " +
+            "ON CONFLICT (id_articulo, id_punto_venta) DO UPDATE " +
+            "SET cantidad = stock.cantidad + EXCLUDED.cantidad " +
+            "RETURNING cantidad";
+
+        AgregarParametro(comando, idArticulo);
+        AgregarParametro(comando, idPuntoVenta);
+        AgregarParametro(comando, idTenant);
+        AgregarParametro(comando, delta);
+
+        var resultado = await comando.ExecuteScalarAsync(ct)
+            ?? throw new InvalidOperationException("El upsert de stock no devolvió ninguna fila.");
+
+        return Convert.ToDecimal(resultado);
+    }
+
+    private static async Task ActualizarCostoNominalAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, decimal costoNominal,
+        DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "UPDATE articulos SET costo_nominal = $1, updated_at = $2 WHERE id_articulo = $3 AND id_tenant = $4";
+
+        AgregarParametro(comando, costoNominal);
+        AgregarParametro(comando, momento);
+        AgregarParametro(comando, idArticulo);
+        AgregarParametro(comando, idTenant);
+
+        await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
+    {
+        var conexion = db.Database.GetDbConnection();
+
+        if (conexion.State != ConnectionState.Open)
+        {
+            await db.Database.OpenConnectionAsync(ct);
+        }
+
+        return conexion;
+    }
+
+    private static void AgregarParametro(DbCommand comando, object valor)
+    {
+        var parametro = comando.CreateParameter();
+        parametro.Value = valor;
+        comando.Parameters.Add(parametro);
+    }
+
+    // ---- resolución de contexto (fuera de transacción) ---------------------------------------------
+
+    private async Task<(
+        TipoComprobante Tipo, Proveedor Proveedor, PuntoVenta PuntoVenta,
+        IReadOnlyDictionary<int, Articulo> ArticuloPorId, IReadOnlyDictionary<int, decimal> PorcentajePorAlicuota,
+        IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> Margenes)>
+        ResolverContextoAsync(SolicitudDeCompra solicitud, CancellationToken ct)
+    {
+        var tipo = await ResolverTipoDeCompraAsync(solicitud.IdTipoComprobante, ct);
+        var proveedor = await ResolverProveedorAsync(solicitud.IdProveedor, ct);
+        var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+
+        var idsArticulo = solicitud.Items.Select(i => i.IdArticulo).Distinct().ToList();
+        var articuloPorId = idsArticulo.Count == 0
+            ? new Dictionary<int, Articulo>()
+            : await db.Articulos.Where(a => idsArticulo.Contains(a.Id)).ToDictionaryAsync(a => a.Id, ct);
+
+        var idsArticuloFaltantes = idsArticulo.Except(articuloPorId.Keys).ToList();
+        if (idsArticuloFaltantes.Count > 0)
+        {
+            throw new ErrorDominio("referencia_invalida", $"No existe el artículo {idsArticuloFaltantes[0]}.", 400);
+        }
+
+        var idsAlicuota = solicitud.Items.Select(i => i.IdAlicuotaIva).Distinct().ToList();
+        var porcentajePorAlicuota = idsAlicuota.Count == 0
+            ? new Dictionary<int, decimal>()
+            : await db.AlicuotasIva.Where(a => idsAlicuota.Contains(a.Id)).ToDictionaryAsync(a => a.Id, a => a.Porcentaje, ct);
+
+        var idsAlicuotaFaltantes = idsAlicuota.Except(porcentajePorAlicuota.Keys).ToList();
+        if (idsAlicuotaFaltantes.Count > 0)
+        {
+            throw new ErrorDominio("referencia_invalida", $"No existe la alícuota de IVA {idsAlicuotaFaltantes[0]}.", 400);
+        }
+
+        var margenes = await ResolverMargenesAsync(articuloPorId, ct);
+
+        return (tipo, proveedor, puntoVenta, articuloPorId, porcentajePorAlicuota, margenes);
+    }
+
+    private async Task<IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)>> ResolverMargenesAsync(
+        IReadOnlyDictionary<int, Articulo> articuloPorId, CancellationToken ct)
+    {
+        var idsGrupo = articuloPorId.Values.Where(a => a.IdGrupo is not null).Select(a => a.IdGrupo!.Value).Distinct().ToList();
+        var margenPorGrupo = idsGrupo.Count == 0
+            ? new Dictionary<int, decimal?>()
+            : await db.Grupos.Where(g => idsGrupo.Contains(g.Id)).ToDictionaryAsync(g => g.Id, g => g.Margen, ct);
+
+        var idsProveedor = articuloPorId.Values
+            .Where(a => a.IdProveedorHabitual is not null)
+            .Select(a => a.IdProveedorHabitual!.Value)
+            .Distinct()
+            .ToList();
+        var margenPorProveedor = idsProveedor.Count == 0
+            ? new Dictionary<int, decimal?>()
+            : await db.Proveedores.Where(p => idsProveedor.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => p.Margen, ct);
+
+        return articuloPorId.ToDictionary(
+            kv => kv.Key,
+            kv => (
+                kv.Value.IdGrupo is { } g && margenPorGrupo.TryGetValue(g, out var mg) ? mg : (decimal?)null,
+                kv.Value.IdProveedorHabitual is { } p && margenPorProveedor.TryGetValue(p, out var mp) ? mp : (decimal?)null));
+    }
+
+    private static (IReadOnlyList<LineaDeCompra> Lineas, CompraCalculada Calculada) Calcular(
+        IReadOnlyList<LineaDeCompraSolicitada> items, bool discriminaIva,
+        IReadOnlyDictionary<int, decimal> porcentajePorAlicuota,
+        IReadOnlyDictionary<int, (decimal? MargenGrupo, decimal? MargenProveedor)> margenes)
+    {
+        var orden = 1;
+        var lineas = items
+            .Select(i => new LineaDeCompra(
+                orden++, i.IdArticulo, i.Descripcion, i.Unidades, i.Bultos, i.UnidadesPorBulto,
+                i.CostoUnitario, i.Descuento, i.IdAlicuotaIva, porcentajePorAlicuota[i.IdAlicuotaIva], i.ActualizaCosto))
+            .ToList();
+
+        var calculada = CalculadorDeCompra.Calcular(lineas, discriminaIva, margenes);
+        return (lineas, calculada);
+    }
+
+    private static List<ItemComprobanteCompra> MaterializarItems(
+        int idComprobante, int idTenant, IReadOnlyList<LineaDeCompra> lineas, CompraCalculada calculada, DateTimeOffset momento)
+    {
+        var items = new List<ItemComprobanteCompra>(lineas.Count);
+
+        for (var i = 0; i < lineas.Count; i++)
+        {
+            var linea = lineas[i];
+            var item = calculada.Items[i];
+
+            items.Add(new ItemComprobanteCompra
+            {
+                IdTenant = idTenant,
+                IdComprobanteCompra = idComprobante,
+                Orden = linea.Orden,
+                IdArticulo = linea.IdArticulo,
+                Descripcion = linea.Descripcion,
+                Cantidad = item.Cantidad,
+                Bultos = linea.Bultos,
+                UnidadesPorBulto = linea.UnidadesPorBulto,
+                CostoUnitario = linea.CostoUnitario,
+                Descuento = linea.Descuento,
+                IdAlicuotaIva = linea.IdAlicuotaIva,
+                PorcentajeIva = linea.PorcentajeIva,
+                Total = item.Total,
+                ActualizaCosto = linea.ActualizaCosto,
+                PrecioSugerido = item.PrecioSugerido,
+                CreatedAt = momento,
+                UpdatedAt = momento
+            });
+        }
+
+        return items;
+    }
+
+    private async Task<TipoComprobante> ResolverTipoDeCompraAsync(int idTipoComprobante, CancellationToken ct)
+    {
+        var tipo = await db.TiposComprobante.FirstOrDefaultAsync(t => t.Id == idTipoComprobante, ct);
+
+        if (tipo is null || !tipo.Activo || tipo.Clase != ClaseComprobante.Compra)
+        {
+            throw new ErrorDominio(
+                "tipo_de_compra_invalido", $"El tipo de comprobante {idTipoComprobante} no es un tipo de compra válido.", 400);
+        }
+
+        return tipo;
+    }
+
+    private async Task<Proveedor> ResolverProveedorAsync(int idProveedor, CancellationToken ct) =>
+        await db.Proveedores.FirstOrDefaultAsync(p => p.Id == idProveedor, ct)
+            // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
+            ?? throw ErrorDominio.NoEncontrado($"No existe el proveedor {idProveedor}.");
+
+    private async Task<PuntoVenta> ResolverPuntoVentaAsync(int idPuntoVenta, CancellationToken ct) =>
+        await db.PuntosVenta.FirstOrDefaultAsync(pv => pv.Id == idPuntoVenta, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idPuntoVenta}.");
+
+    private async Task<ComprobanteCompra> BuscarComprobanteAsync(int id, CancellationToken ct) =>
+        await db.ComprobantesCompra.FirstOrDefaultAsync(c => c.Id == id, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
+
+    private static string? NormalizarOpcional(string? valor)
+    {
+        var limpio = valor?.Trim();
+        return string.IsNullOrEmpty(limpio) ? null : limpio;
+    }
+
+    private int ExigirTenantDeLaSesion() =>
+        contexto.IdTenant
+            ?? throw new InvalidOperationException(
+                "ServicioDeCompras requiere un actor de tenant; GestionDeCatalogo no admite plataforma.");
+
+    private static CompraDetalle Proyectar(ComprobanteCompra comprobante, IReadOnlyList<ItemComprobanteCompra> items) => new(
+        comprobante.Id, comprobante.IdProveedor, comprobante.IdTipoComprobante, comprobante.IdPuntoVenta,
+        comprobante.NumeroExterno, comprobante.FechaComprobante, comprobante.FechaRecepcion,
+        comprobante.Subtotal, comprobante.DescuentoTotal, comprobante.IvaTotal, comprobante.Total,
+        comprobante.Observaciones, comprobante.Estado,
+        items
+            .OrderBy(i => i.Orden)
+            .Select(i => new ItemDeCompra(
+                i.Orden, i.IdArticulo, i.Descripcion, i.Cantidad, i.Bultos, i.UnidadesPorBulto,
+                i.CostoUnitario, i.Descuento, i.IdAlicuotaIva, i.PorcentajeIva, i.Total, i.ActualizaCosto,
+                i.PrecioSugerido))
+            .ToList());
+}

@@ -59,6 +59,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // apilado, mismo criterio que los dos de arriba (spec: gastos / Gasto Authorization, un
         // Vendedor tiene que poder registrar un gasto).
         ("POST", "/api/gastos/"),
+        // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): las cinco rutas de
+        // escritura de compras (crear/editar/confirmar/anular/aplicar-precios) SÍ apilan
+        // GestionDeCatalogo (design: API Surface) — no van en este allowlist. Nada nuevo acá.
         // stage-7-cuenta-corriente (Slice 2, task 2.7): pago a cuenta (RC) — sin GestionDeCatalogo
         // apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que poder cobrar una
         // cuenta corriente).
@@ -173,7 +176,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         "/api/caja/turnos",
         // stage-6-turnos-caja (Slice 3, task 3.5): GET /api/gastos (historial) — mismo criterio
         // que "/api/caja/turnos".
-        "/api/gastos"
+        "/api/gastos",
+        // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): GET /api/compras
+        // (listado) y GET /api/compras/{id} (detalle) — mismo criterio que "/api/gastos".
+        "/api/compras"
     ];
 
     // Policies que, de aparecer en vez de OperacionDePos, siguen siendo un gate válido —

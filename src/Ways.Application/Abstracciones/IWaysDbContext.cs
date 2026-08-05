@@ -4,6 +4,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Gastos;
 using Ways.Domain.Ofertas;
@@ -92,6 +93,12 @@ public interface IWaysDbContext
     // stage-6-turnos-caja, Slice 3: ServicioDeGastos es el primer consumidor de Application de
     // este DbSet — Slice 1 solo adelantaba el modelo a la migración (design: Table Shapes C).
     DbSet<Gasto> Gastos { get; }
+
+    // stage-8-compras-transferencias-inventario, Slice 2: ServicioDeCompras es el primer
+    // consumidor de Application de estos 2 — Slice 1 solo adelantaba el modelo a la migración
+    // (design: Table Shapes A/B).
+    DbSet<ComprobanteCompra> ComprobantesCompra { get; }
+    DbSet<ItemComprobanteCompra> ItemsComprobanteCompra { get; }
 
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>

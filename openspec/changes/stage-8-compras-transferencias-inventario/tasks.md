@@ -156,11 +156,11 @@ with the inverted gasto rule (no block, negative-stock refusal); entire stage
 5–7 suite green through it. **Rollback**: new files + one endpoint group
 only — nothing in stages 5–7 changes shape.
 
-- [ ] 2.1 [P] Create `src/Ways.Domain/Compras/CalculadorDeCompra.cs` + records
+- [x] 2.1 [P] Create `src/Ways.Domain/Compras/CalculadorDeCompra.cs` + records
   `LineaDeCompra`/`ItemCalculado`/`CompraCalculada`: `cantidad`, `bruto`,
   `total(i)`, header totals branching on `discrimina_iva`, `costoEfectivo`.
   *(design: Compra Arithmetic; Interfaces/Contracts)*
-- [ ] 2.2 [P] Unit: `CalculadorDeCompra` exhaustive — `cantidad` from
+- [x] 2.2 [P] Unit: `CalculadorDeCompra` exhaustive — `cantidad` from
   unidades/bultos, both IVA regimes, `iva_total NULL` when not
   discriminando, `costoEfectivo` with and without IVA, the `numeric(14,4) →
   numeric(14,2)` narrowing `AwayFromZero`, `descuento > bruto` rejected
