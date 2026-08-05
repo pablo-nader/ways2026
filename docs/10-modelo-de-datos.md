@@ -80,9 +80,9 @@ alicuotas_iva (               -- [global]
 tipos_comprobante (           -- [global]
     id_tipo_comprobante,
     clase           clase_comprobante,       -- enum: venta | compra
-    codigo          citext,                  -- FA, FB, FC, NCA, NCB, NCC, NDA…, TX, NCX, PRE
+    codigo          citext,                  -- FA, FB, FC, NCA, NCB, NCC, NDA…, TX, NCX, PRE, RC
     nombre,                                  -- "Factura A", "Nota de Crédito X", "Presupuesto"
-    letra           char(1) NULL,            -- A, B, C, X; NULL para presupuesto
+    letra           char(1) NULL,            -- A, B, C, X; NULL para presupuesto y RC
     signo           smallint,                -- +1 suma a la cuenta, −1 resta (NC = −1)
     discrimina_iva  boolean,                 -- A: neto + IVA por alícuota; B/C/X: total
     es_fiscal       boolean,                 -- ¿reporta a AFIP/ARCA cuando exista FE?
@@ -91,6 +91,13 @@ tipos_comprobante (           -- [global]
     activo
 )
 ```
+
+**`RC` (etapa 7 — pago a cuenta, doc 10 §8):** mismo perfil que `PRE` — `letra NULL`,
+`es_fiscal false`, `afecta_stock false`, `discrimina_iva false` —, pero `signo +1` porque el
+dinero entra (el signo negativo vive en el movimiento de cuenta corriente, nunca en el total
+del comprobante). Se siembra dos veces: en la lista de arriba para una base nueva y, de forma
+idempotente, dentro de la migración `CuentaCorrienteEtapa7` para una base ya migrada — este
+seed corre solo cuando la tabla está vacía.
 
 **Regla de la letra** (se implementa en dominio, no en tablas): la letra sale del cruce
 `condición fiscal de la empresa emisora × condición fiscal del cliente`. RI → RI emite A;

@@ -44,4 +44,13 @@ public class MovimientoCuentaCorriente
     public decimal SaldoResultante { get; set; }
 
     public string? Detalle { get; set; }
+
+    /// <summary>Marca este <c>Consumo</c> como cubierto por la reliquidación apuntada
+    /// (design decision 2 — self-FK a la fila <see cref="TipoMovimientoCc.ActualizacionPrecios"/>
+    /// que lo reliquidó, en vez de un booleano). <c>NULL</c> mientras el consumo sigue elegible
+    /// para la próxima corrida (design: Table Shapes A; la predicate de elegibilidad ES el
+    /// índice parcial <c>ix_movimientos_cuenta_corriente_consumos_pendientes</c>). Escrito
+    /// únicamente por el paso 8 de la transacción de reliquidación, en la misma transacción que
+    /// la fila que apunta.</summary>
+    public int? IdMovimientoActualizacion { get; set; }
 }
