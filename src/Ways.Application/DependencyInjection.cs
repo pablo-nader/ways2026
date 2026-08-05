@@ -63,6 +63,11 @@ public static class DependencyInjection
         // ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync, se registra junto a la caja.
         services.AddScoped<ServicioDeCuentaCorriente>();
 
+        // stage-7-cuenta-corriente (Slice 3): reliquidación a precio del día — el lector de
+        // elegibles alimenta tanto el preview como el commit del servicio.
+        services.AddScoped<LectorDeConsumosReliquidables>();
+        services.AddScoped<ServicioDeReliquidacion>();
+
         services.AddScoped<ServicioDeAprovisionamiento>();
         services.AddScoped<ServicioDeOrganizacion>();
 

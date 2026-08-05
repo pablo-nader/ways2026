@@ -166,7 +166,7 @@ public class ServicioDeCuentaCorriente(
         // comprobante entero, que puede traer varios medios.
         await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
             conexion, transaccionCruda, idTenant, idCliente, momento, idPuntoVenta, idEmpleado,
-            TipoMovimientoCc.Pago, comprobante.Id, null, -importeAplicado, nuevoSaldo, ct);
+            TipoMovimientoCc.Pago, comprobante.Id, null, -importeAplicado, nuevoSaldo, detalle: null, ct);
 
         await transaccion.CommitAsync(ct);
 

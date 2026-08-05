@@ -14,3 +14,11 @@ public sealed record SolicitudDePagoACuenta(
 /// <see cref="Ventas.PagoDeVenta"/>, redeclarado acá porque una RC no es un checkout (design
 /// decisión 1: no reusa <c>ServicioDeVentas</c>).</summary>
 public sealed record PagoDeCuenta(int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto);
+
+/// <summary>
+/// Cuerpo de <c>POST /api/clientes/{id}/cuenta-corriente/reliquidacion</c> (design: API Surface).
+/// <see cref="IdPuntoVenta"/> es provenance, no autoridad (design: Open Questions — la
+/// reliquidación no tiene turno del que derivarlo, así que viaja en el request, validado
+/// tenant-scoped como cualquier otro id de punto de venta) — se persiste en el movimiento
+/// <c>ActualizacionPrecios</c> resultante.</summary>
+public sealed record SolicitudDeReliquidacion(int IdPuntoVenta);
