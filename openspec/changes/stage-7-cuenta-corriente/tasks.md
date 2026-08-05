@@ -344,55 +344,55 @@ against saldo with a required detalle, estado de cuenta reads header + page
 in one call, the mixed-sequence saldo-invariant Success Criterion is
 provable end-to-end. **Rollback**: new files + one new endpoint group only.
 
-- [ ] 4.1 [P] Create `src/Ways.Domain/CuentaCorriente/ReglaDeAjusteDeCuenta.cs`:
+- [x] 4.1 [P] Create `src/Ways.Domain/CuentaCorriente/ReglaDeAjusteDeCuenta.cs`:
   `importe ≠ 0`, `detalle` required with `length(btrim(detalle)) >= 5`.
   *(design decision 8 — pinned: "ajuste structural distinction"; Transactions
   — AJUSTE MANUAL; spec: ajustes-de-cuenta-corriente / Ajuste Requires A
   Detalle)*
-- [ ] 4.2 [P] Create `src/Ways.Domain/CuentaCorriente/CalculadorDeEstadoDeCuenta.cs`:
+- [x] 4.2 [P] Create `src/Ways.Domain/CuentaCorriente/CalculadorDeEstadoDeCuenta.cs`:
   `disponibilidad` as `decimal?` (`credito_ilimitado` ⇒ `null`, never a
   fabricated number); movement labelling derived structurally
   (`id_comprobante_venta IS NULL` ⇒ manual ajuste, `IS NOT NULL` ⇒ anulación
   contramovimiento — no new column). *(design decision 8, decision 9;
   Interfaces/Contracts)*
-- [ ] 4.3 Extend `ServicioDeCuentaCorriente.cs` with `RegistrarAjusteAsync`
+- [x] 4.3 Extend `ServicioDeCuentaCorriente.cs` with `RegistrarAjusteAsync`
   (single-statement transaction: `UPDATE clientes SET saldo = saldo +
   importe … RETURNING` → INSERT movimiento `ajuste`, `id_comprobante_venta
   NULL`, `detalle`) and `ObtenerEstadoDeCuentaAsync` (header + page in one
   `GET`; running balance is the stored `saldo_resultante`, never
   re-derived; default last-month window, `desde`/`hasta`, `historico`).
   *(design decision 9; Transactions — AJUSTE MANUAL)*
-- [ ] 4.4 Add endpoints: `POST /api/clientes/{id}/cuenta-corriente/ajustes`
+- [x] 4.4 Add endpoints: `POST /api/clientes/{id}/cuenta-corriente/ajustes`
   under `SupervisionDeCuentaCorriente`; `GET
   /api/clientes/{id}/cuenta-corriente?desde=&hasta=&historico=` under
   `OperacionDePos`. Update `SuperficieDeAutorizacionTests` allowlist with the
   new POST route. *(design: API Surface)*
-- [ ] 4.5 [P] Unit: `ReglaDeAjusteDeCuenta` — empty/short detalle rejected,
+- [x] 4.5 [P] Unit: `ReglaDeAjusteDeCuenta` — empty/short detalle rejected,
   the 5-char boundary, `importe = 0` rejected; `CalculadorDeEstadoDeCuenta`
   — `credito_ilimitado` ⇒ `null` disponibilidad, movement-label derivation
   both directions. *(spec: ajustes-de-cuenta-corriente / Ajuste Requires A
   Detalle, Ajuste Is Distinct From The Anulación Contramovimiento)*
-- [ ] 4.6 Integration: ajuste with no detalle rejected
+- [x] 4.6 Integration: ajuste with no detalle rejected
   `ajuste_detalle_requerido` before any write; a negative ajuste reduces
   saldo; a manual ajuste carries `id_comprobante_venta NULL` and stays
   distinguishable from an anulación contramovimiento; ajuste snapshots
   `saldo_resultante` atomically. *(spec: ajustes-de-cuenta-corriente, all
   four "Ajuste Requires…"/"Is Distinct…"/"Updates Saldo…" scenarios)*
-- [ ] 4.7 [P] Integration (authorization): Supervisor posts an ajuste
+- [x] 4.7 [P] Integration (authorization): Supervisor posts an ajuste
   successfully; Vendedor rejected `403`. *(spec: ajustes-de-cuenta-corriente
   / Ajuste Authorization Under Supervisor + Admin, both scenarios)*
-- [ ] 4.8 Integration: disponibilidad for a limited-credit cliente; ilimitado
+- [x] 4.8 Integration: disponibilidad for a limited-credit cliente; ilimitado
   when `credito_ilimitado`; the movement list's `saldo_resultante` matches
   the ledger at every row; no filter returns the last month; `historico`
   returns the full ledger; RLS blocks a cross-tenant read; a brand-new
   cliente's estado de cuenta returns `saldo = 0` and an empty list with
   `200`, never a 404. *(spec: estado-de-cuenta, all seven scenarios)*
-- [ ] 4.9 Integration (invariant, Success Criterion): `Cliente.Saldo` equals
+- [x] 4.9 Integration (invariant, Success Criterion): `Cliente.Saldo` equals
   the sum of that cliente's `movimientos_cuenta_corriente.importe` over a
   scenario mixing consumo, pago, ajuste, reliquidación and anulación.
   *(spec: consumo-cuenta-corriente / Saldo Is The Maintained Cache Of The
   Ledger — mixed sequence; proposal: Success Criteria)*
-- [ ] 4.10 Regression: Slices 1–3 suites unedited and green.
+- [x] 4.10 Regression: Slices 1–3 suites unedited and green.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ServicioDeCuentaCorriente|FullyQualifiedName~CalculadorDeEstadoDeCuenta`
 
