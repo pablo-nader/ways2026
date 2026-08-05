@@ -47,7 +47,6 @@ function formatearFechaHora(iso: string): string {
 
 type PropsFormularioApertura = {
   idPuntoVenta: number
-  disabled: boolean
   onAbierto: (turno: TurnoResumen) => void
   onEscribiendoCambio: (valor: boolean) => void
 }
@@ -55,7 +54,7 @@ type PropsFormularioApertura = {
 /** Apertura de turno (spec: turnos-de-caja / Apertura Creates An Open Turno With Its Fondo):
  * fondo inicial + observaciones opcionales, `idPuntoVenta` siempre lo trae la selección de
  * arriba, nunca un campo editable acá. */
-function FormularioApertura({ idPuntoVenta, disabled, onAbierto, onEscribiendoCambio }: PropsFormularioApertura) {
+function FormularioApertura({ idPuntoVenta, onAbierto, onEscribiendoCambio }: PropsFormularioApertura) {
   const [fondoInicial, setFondoInicial] = useState('')
   const [observaciones, setObservaciones] = useState('')
   const [abriendo, setAbriendo] = useState(false)
@@ -94,7 +93,7 @@ function FormularioApertura({ idPuntoVenta, disabled, onAbierto, onEscribiendoCa
     }
   }
 
-  const bloqueado = disabled || abriendo
+  const bloqueado = abriendo
 
   return (
     <div>
@@ -237,7 +236,6 @@ function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: 
       )
       setImporteMovimiento('')
       setMotivoMovimiento('')
-      cargarResumen()
     } catch (e) {
       setErrorMovimiento(e instanceof ErrorApi ? e.message : 'No se pudo registrar el movimiento.')
     } finally {
@@ -245,6 +243,12 @@ function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: 
       setRegistrando(false)
       onEscribiendoCambio(false)
     }
+
+    // regla 6: el refetch del resumen queda aislado del try/catch de la escritura — corre tanto en
+    // éxito como en falla, porque el bump de generación previo a la escritura deja huérfano
+    // cualquier resumen en vuelo y solo un nuevo pedido lo cierra (si no, "Calculando…" queda
+    // colgado para siempre). Un error acá no debe pisar `errorMovimiento`.
+    cargarResumen()
   }
 
   return (
@@ -541,7 +545,6 @@ export function Caja() {
                 {!cargandoTurno && turno === null && (
                   <FormularioApertura
                     idPuntoVenta={idPuntoVenta}
-                    disabled={cargandoTurno}
                     onAbierto={turnoAbierto}
                     onEscribiendoCambio={setEscribiendo}
                   />

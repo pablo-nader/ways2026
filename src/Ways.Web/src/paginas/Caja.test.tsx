@@ -320,6 +320,115 @@ describe('Caja — movimientos', () => {
       await Promise.resolve()
     })
   })
+
+  it('un movimiento que falla igual dispara el refetch del resumen: "Calculando…" no queda colgado', async () => {
+    let resolverResumenInicial: (valor: ResumenDeTurno) => void = () => {}
+    const resumenInicialPromise = new Promise<ResumenDeTurno>((resolve) => {
+      resolverResumenInicial = resolve
+    })
+    let llamadasResumen = 0
+
+    mockearRutasBase((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(turnoFixture())
+      if (ruta === '/caja/turnos/501/resumen') {
+        llamadasResumen += 1
+        if (llamadasResumen === 1) return resumenInicialPromise
+        return Promise.resolve<ResumenDeTurno>(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 850 }] }))
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/movimientos') {
+        return Promise.reject(new ErrorApi(400, 'error', 'No se pudo registrar el movimiento.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Caja />)
+    await screen.findByText('Turno abierto')
+    expect(screen.getByText('Calculando…')).toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('Importe'), '100')
+    await userEvent.type(screen.getByLabelText('Motivo'), 'retiro de prueba')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar movimiento' }))
+
+    expect(await screen.findByText('No se pudo registrar el movimiento.')).toBeInTheDocument()
+
+    // regla 6: aunque la respuesta inicial del resumen (generación anterior al bump previo a la
+    // escritura) nunca llega, el refetch disparado tras la falla del movimiento cierra
+    // "Calculando…" por su cuenta y trae el dato vigente.
+    await waitFor(() => expect(screen.queryByText('Calculando…')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$850,00')).toBeInTheDocument())
+
+    // la respuesta huérfana de la carga inicial, si llega tarde, no debe pisar nada.
+    await act(async () => {
+      resolverResumenInicial(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 111 }] }))
+      await Promise.resolve()
+    })
+    expect(screen.getByText('$850,00')).toBeInTheDocument()
+    expect(screen.queryByText('$111,00')).not.toBeInTheDocument()
+  })
+})
+
+describe('Caja — selector de punto de venta bloqueado durante una escritura en vuelo (react-async-state regla 9)', () => {
+  it('queda deshabilitado mientras la apertura del turno está en vuelo', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(null)
+      return undefined
+    })
+
+    let resolverApertura: (t: TurnoResumen) => void = () => {}
+    const aperturaPendiente = new Promise<TurnoResumen>((resolve) => {
+      resolverApertura = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos') return aperturaPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Caja />)
+    await screen.findByText('No hay un turno abierto en este punto de venta.')
+
+    await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+
+    expect(screen.getByLabelText('Punto de venta')).toBeDisabled()
+
+    await act(async () => {
+      resolverApertura(turnoFixture())
+      await Promise.resolve()
+    })
+  })
+
+  it('queda deshabilitado mientras un movimiento de caja está en vuelo', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(turnoFixture())
+      if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture())
+      return undefined
+    })
+
+    let resolverMovimiento: (m: MovimientoRegistrado) => void = () => {}
+    const movimientoPendiente = new Promise<MovimientoRegistrado>((resolve) => {
+      resolverMovimiento = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/movimientos') return movimientoPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Caja />)
+    await screen.findByText('Turno abierto')
+    await userEvent.type(screen.getByLabelText('Importe'), '100')
+    await userEvent.type(screen.getByLabelText('Motivo'), 'retiro de prueba')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar movimiento' }))
+
+    expect(screen.getByLabelText('Punto de venta')).toBeDisabled()
+
+    await act(async () => {
+      resolverMovimiento(movimientoFixture())
+      await Promise.resolve()
+    })
+  })
 })
 
 describe('Caja — turno nuevo no hereda el estado del anterior (react-async-state regla 8)', () => {
