@@ -4,14 +4,19 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CuentaCorriente } from './CuentaCorriente'
 import { ErrorApi } from '../api/cliente'
+import { ROL } from '../api/tipos'
 import type {
   ClienteListado,
   ComprobanteEmitido,
+  DetalleDeConsumo,
+  DetalleDeLinea,
   EstadoDeCuenta,
   MedioPagoListado,
   MovimientoDeCuentaCorriente,
   ParametroResuelto,
   PuntoVentaListado,
+  ResultadoDeReliquidacion,
+  UsuarioAutenticado,
 } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -33,6 +38,27 @@ vi.mock('../api/cliente', () => ({
       this.codigo = codigo
     }
   },
+}))
+
+/** `usuarioActual` es mutable a propósito (reset en `beforeEach`) — cada test de gating de rol
+ * (Vendedor vs. Supervisor/Admin) lo sobrescribe sin tener que remockear todo el módulo. */
+function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
+  return {
+    id: 9,
+    usuario: 'supervisor',
+    mail: 'supervisor@ways.test',
+    rolId: ROL.Supervisor,
+    rol: 'Supervisor',
+    ultimaConexion: null,
+    idTenant: 1,
+    ...sobrescribir,
+  }
+}
+
+let usuarioActual: UsuarioAutenticado | null = usuarioFixture()
+
+vi.mock('../auth/useAuth', () => ({
+  useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
 }))
 
 function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
@@ -141,6 +167,32 @@ function comprobanteFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): Com
   }
 }
 
+function detalleLineaFixture(sobrescribir: Partial<DetalleDeLinea> = {}): DetalleDeLinea {
+  return {
+    idArticulo: 1,
+    cantidad: 2,
+    precioHistorico: 100,
+    precioActual: 120,
+    totalHistorico: 200,
+    totalDelDia: 240,
+    delta: 40,
+    motivo: null,
+    ...sobrescribir,
+  }
+}
+
+function detalleConsumoFixture(sobrescribir: Partial<DetalleDeConsumo> = {}): DetalleDeConsumo {
+  return { idMovimiento: 1, idComprobanteVenta: 10, delta: 40, lineas: [detalleLineaFixture()], ...sobrescribir }
+}
+
+function resultadoReliquidacionFixture(sobrescribir: Partial<ResultadoDeReliquidacion> = {}): ResultadoDeReliquidacion {
+  return { delta: 40, idsMovimientosCubiertos: [1], detalle: [detalleConsumoFixture()], hayMas: false, ...sobrescribir }
+}
+
+function resultadoReliquidacionNoOpFixture(): ResultadoDeReliquidacion {
+  return { delta: 0, idsMovimientosCubiertos: [], detalle: [], hayMas: false }
+}
+
 const medioEfectivo = medioFixture()
 const puntoVentaCentro = puntoVentaFixture()
 
@@ -155,9 +207,11 @@ function renderPantalla(idCliente: number | string = 5, state?: { cliente: Clien
 }
 
 /** Rutas comunes a toda la pantalla (cliente + medios de pago + puntos de venta + estado de
- * cuenta + vuelto_maximo) — un override toma prioridad sobre el default para que un test pueda
- * reemplazar cualquiera de estas rutas base. `GET /clientes/:id` cubre el fetch de identidad
- * cuando no llega `location.state` (Fix 2: único camino del Vendedor / cualquier refresh). */
+ * cuenta + vuelto_maximo + preview de reliquidación) — un override toma prioridad sobre el
+ * default para que un test pueda reemplazar cualquiera de estas rutas base. `GET /clientes/:id`
+ * cubre el fetch de identidad cuando no llega `location.state` (Fix 2: único camino del Vendedor /
+ * cualquier refresh). El preview de reliquidación se chequea ANTES que el catch-all de
+ * `/cuenta-corriente` — su ruta también contiene ese substring. */
 function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     const propia = sobrescribirGet?.(ruta)
@@ -167,6 +221,9 @@ function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> |
     if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
     if (ruta.startsWith('/parametros/vuelto_maximo')) {
       return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
+    }
+    if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+      return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionNoOpFixture())
     }
     if (ruta.includes('/cuenta-corriente')) return Promise.resolve<EstadoDeCuenta>(estadoFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -185,9 +242,27 @@ async function abrirModalYCompletarFila(importe = '500') {
   await waitFor(() => expect(screen.getByRole('button', { name: 'Registrar pago' })).not.toBeDisabled())
 }
 
+/** Abre el modal de ajuste manual — requiere Supervisor/Admin, `usuarioActual` es Supervisor por
+ * default (ver `beforeEach`). */
+async function abrirModalAjuste() {
+  renderPantalla()
+  await screen.findByText('$500,00')
+  await userEvent.click(screen.getByRole('button', { name: 'Ajuste manual' }))
+  await screen.findByText('Ajuste manual de cuenta corriente')
+}
+
+/** Abre el modal de reliquidación — el preview se dispara automáticamente al montar. */
+async function abrirModalReliquidacion() {
+  renderPantalla()
+  await screen.findByText('$500,00')
+  await userEvent.click(screen.getByRole('button', { name: 'Actualizar precios' }))
+  await screen.findByText('Actualizar precios (reliquidación)')
+}
+
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  usuarioActual = usuarioFixture()
 })
 
 describe('CuentaCorriente — header y ledger', () => {
@@ -491,5 +566,316 @@ describe('CuentaCorriente — modal de pago a cuenta', () => {
     // recuperarse del gate de turno (el JSDoc de PanelAperturaDeTurnoEnModal lo promete).
     expect(screen.getByLabelText('Medio de pago')).toHaveValue('1')
     expect(screen.getByLabelText('Importe')).toHaveValue(500)
+  })
+})
+
+describe('CuentaCorriente — gating de rol (Supervisor+Admin) para ajuste y reliquidación', () => {
+  it('un Vendedor no ve las acciones de ajuste ni reliquidación', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+    mockearRutasBase()
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+    expect(screen.queryByRole('button', { name: 'Ajuste manual' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Actualizar precios' })).not.toBeInTheDocument()
+    // el pago sigue disponible para cualquier rol — OperacionDePos, no SupervisionDeCuentaCorriente.
+    expect(screen.getByRole('button', { name: 'Ingresar pago' })).toBeInTheDocument()
+  })
+
+  it('un Supervisor ve ambas acciones, habilitadas una vez cargados los datos', async () => {
+    mockearRutasBase()
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Ajuste manual' })).not.toBeDisabled())
+    expect(screen.getByRole('button', { name: 'Actualizar precios' })).not.toBeDisabled()
+  })
+
+  it('un Admin también ve ambas acciones', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase()
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Ajuste manual' })).not.toBeDisabled())
+    expect(screen.getByRole('button', { name: 'Actualizar precios' })).not.toBeDisabled()
+  })
+})
+
+describe('CuentaCorriente — modal de ajuste manual', () => {
+  it('importe cero se rechaza localmente (ajuste_importe_invalido), sin llamar al servidor', async () => {
+    mockearRutasBase()
+    await abrirModalAjuste()
+
+    await userEvent.type(screen.getByLabelText('Importe'), '0')
+    await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), 'Detalle válido')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
+
+    expect(screen.getByText('El importe del ajuste no puede ser cero.')).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('un detalle recortado por debajo de 5 caracteres se rechaza localmente (ajuste_detalle_requerido)', async () => {
+    mockearRutasBase()
+    await abrirModalAjuste()
+
+    await userEvent.type(screen.getByLabelText('Importe'), '40')
+    await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), '  abcd  ')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
+
+    expect(
+      screen.getByText('El detalle del ajuste es obligatorio y tiene que tener al menos 5 caracteres.'),
+    ).toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  it('semántica con signo: positivo aumenta el saldo resultante, negativo lo reduce (header.saldo = 500)', async () => {
+    mockearRutasBase()
+    await abrirModalAjuste()
+
+    await userEvent.type(screen.getByLabelText('Importe'), '40')
+    expect(screen.getByText('Saldo resultante: $540,00')).toBeInTheDocument()
+
+    await userEvent.clear(screen.getByLabelText('Importe'))
+    await userEvent.type(screen.getByLabelText('Importe'), '-50')
+    expect(screen.getByText('Saldo resultante: $450,00')).toBeInTheDocument()
+  })
+
+  it('arma el cuerpo del POST con la forma exacta del contrato, detalle recortado, y refresca el ledger', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/ajustes') {
+        return Promise.resolve<MovimientoDeCuentaCorriente>(
+          movimientoFixture({ tipo: 'Ajuste', importe: -50, saldoResultante: 450, etiqueta: 'Manual' }),
+        )
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalAjuste()
+    await userEvent.type(screen.getByLabelText('Importe'), '-50')
+    await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), '  Descuento por reclamo  ')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
+
+    await screen.findByText(/Ajuste registrado/)
+
+    const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/clientes/5/cuenta-corriente/ajustes')
+    expect(llamada?.[1]).toEqual({ idPuntoVenta: 7, importe: -50, detalle: 'Descuento por reclamo' })
+  })
+
+  it('doble click en "Registrar ajuste" dispara exactamente un POST', async () => {
+    mockearRutasBase()
+    let resolverAjuste: (m: MovimientoDeCuentaCorriente) => void = () => {}
+    const ajustePendiente = new Promise<MovimientoDeCuentaCorriente>((resolve) => {
+      resolverAjuste = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/ajustes') return ajustePendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalAjuste()
+    await userEvent.type(screen.getByLabelText('Importe'), '40')
+    await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), 'Corrección de saldo')
+
+    const boton = screen.getByRole('button', { name: 'Registrar ajuste' })
+    await userEvent.click(boton)
+    await userEvent.click(boton)
+    fireEvent.click(boton)
+
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/clientes/5/cuenta-corriente/ajustes')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Registrando…' })).toBeDisabled()
+
+    await act(async () => {
+      resolverAjuste(movimientoFixture({ tipo: 'Ajuste', importe: 40, etiqueta: 'Manual' }))
+      await Promise.resolve()
+    })
+  })
+
+  it('un ajuste 2xx nunca se reporta como fallo, aunque el refetch del ledger posterior falle', async () => {
+    let llamadasEstado = 0
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) return undefined
+      if (!ruta.includes('/cuenta-corriente')) return undefined
+      llamadasEstado += 1
+      if (llamadasEstado === 1) return Promise.resolve<EstadoDeCuenta>(estadoFixture())
+      return Promise.reject(new Error('boom'))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/ajustes') {
+        return Promise.resolve<MovimientoDeCuentaCorriente>(movimientoFixture({ tipo: 'Ajuste', importe: 40, etiqueta: 'Manual' }))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalAjuste()
+    await userEvent.type(screen.getByLabelText('Importe'), '40')
+    await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), 'Corrección')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
+
+    expect(await screen.findByText(/Ajuste registrado/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('No se pudo cargar el estado de cuenta.')).toBeInTheDocument())
+    // el aviso de éxito del ajuste sigue en pantalla — el fallo del refetch no lo pisa.
+    expect(screen.getByText(/Ajuste registrado/)).toBeInTheDocument()
+  })
+})
+
+describe('CuentaCorriente — modal de reliquidación a precio del día', () => {
+  it('preview primero: muestra delta, consumos cubiertos y solo habilita ejecutar tras confirmar', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture())
+      }
+      return undefined
+    })
+
+    await abrirModalReliquidacion()
+
+    const dialogo = screen.getByRole('dialog')
+    await within(dialogo).findByText('$40,00')
+    expect(within(dialogo).getByRole('button', { name: 'Ejecutar reliquidación' })).toBeDisabled()
+
+    await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
+    expect(within(dialogo).getByRole('button', { name: 'Ejecutar reliquidación' })).not.toBeDisabled()
+  })
+
+  it('hayMas en el preview muestra el aviso de que quedan más consumos pendientes', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture({ hayMas: true }))
+      }
+      return undefined
+    })
+
+    await abrirModalReliquidacion()
+
+    expect(
+      await screen.findByText(/Quedan más consumos pendientes — esta corrida no los cubre/),
+    ).toBeInTheDocument()
+  })
+
+  it('preview sin consumos elegibles muestra el estado no-op y solo permite cerrar', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionNoOpFixture())
+      }
+      return undefined
+    })
+
+    await abrirModalReliquidacion()
+
+    expect(await screen.findByText('No hay consumos pendientes de actualizar para este cliente.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Ejecutar reliquidación' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeInTheDocument()
+  })
+
+  it('ejecuta la reliquidación tras confirmar y arma el cuerpo del POST con la forma exacta del contrato', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture())
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/reliquidacion') {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture())
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalReliquidacion()
+    await screen.findByText('$40,00')
+    await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
+    await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
+
+    await screen.findByText(/Precios actualizados/)
+
+    const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/clientes/5/cuenta-corriente/reliquidacion')
+    expect(llamada?.[1]).toEqual({ idPuntoVenta: 7 })
+  })
+
+  it('doble click en "Ejecutar reliquidación" dispara exactamente un POST', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture())
+      }
+      return undefined
+    })
+    let resolverReliquidacion: (r: ResultadoDeReliquidacion) => void = () => {}
+    const reliquidacionPendiente = new Promise<ResultadoDeReliquidacion>((resolve) => {
+      resolverReliquidacion = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/reliquidacion') return reliquidacionPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalReliquidacion()
+    await screen.findByText('$40,00')
+    await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
+
+    const boton = screen.getByRole('button', { name: 'Ejecutar reliquidación' })
+    await userEvent.click(boton)
+    await userEvent.click(boton)
+    fireEvent.click(boton)
+
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/clientes/5/cuenta-corriente/reliquidacion')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Ejecutando…' })).toBeDisabled()
+
+    await act(async () => {
+      resolverReliquidacion(resultadoReliquidacionFixture())
+      await Promise.resolve()
+    })
+  })
+
+  it('un commit no-op (carrera preview↔commit) se reporta como éxito, nunca como fallo', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture())
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/reliquidacion') {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionNoOpFixture())
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalReliquidacion()
+    await screen.findByText('$40,00')
+    await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
+    await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
+
+    expect(await screen.findByText('No había nada para actualizar.')).toBeInTheDocument()
+  })
+
+  it('una reliquidación 2xx nunca se reporta como fallo, aunque el refetch del ledger posterior falle', async () => {
+    let llamadasEstado = 0
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture())
+      }
+      if (!ruta.includes('/cuenta-corriente')) return undefined
+      llamadasEstado += 1
+      if (llamadasEstado === 1) return Promise.resolve<EstadoDeCuenta>(estadoFixture())
+      return Promise.reject(new Error('boom'))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/reliquidacion') {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture())
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalReliquidacion()
+    await screen.findByText('$40,00')
+    await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
+    await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
+
+    expect(await screen.findByText(/Precios actualizados/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('No se pudo cargar el estado de cuenta.')).toBeInTheDocument())
+    // el aviso de éxito de la reliquidación sigue en pantalla — el fallo del refetch no lo pisa.
+    expect(screen.getByText(/Precios actualizados/)).toBeInTheDocument()
   })
 })
