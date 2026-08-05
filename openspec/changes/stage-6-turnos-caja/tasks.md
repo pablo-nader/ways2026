@@ -452,7 +452,12 @@ route + `Pos.tsx` guard only.
   *(design: Testing Strategy — Component (Web))*
 - [ ] 7.6 Wire `/caja/cierre` route.
 - [ ] 7.7 Smoke-verify (`tsc -b` / `oxlint` / `vite build` clean).
-- [ ] 7.8 Regression: full `npx vitest run` green (165 baseline + this
+- [ ] 7.8 `Caja.tsx` apertura 409 self-heal (judgment-day slice-6 finding,
+  judge B): on `turno_ya_abierto` the losing tab refetches `GET …/abierto`
+  and renders the turno that is actually open instead of a stale error +
+  form. Component test: apertura POST rejecting with that codigo ⇒ the
+  panel shows the open turno.
+- [ ] 7.9 Regression: full `npx vitest run` green (165 baseline + this
   stage's new tests, no unrelated assertion changed).
 
 **Verify**: `npx vitest run` (full suite) && `npx tsc -b` && `npx vite build`
