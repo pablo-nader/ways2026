@@ -11,10 +11,22 @@ namespace Ways.Domain.Tests.Gastos;
 public class CategoriaGastoTests
 {
     [Fact]
-    public void NingunValorDeCategoriaGastoRepresentaUnRetiro()
+    public void CategoriaGastoSoloContieneLosValoresDelWhitelistYNingunoRepresentaUnRetiro()
     {
+        // Whitelist exacta (no blacklist de "retiro"): pinea el conjunto completo de miembros
+        // para que un valor nuevo agregado al enum deba pasar explícitamente por este test.
+        var nombresEsperados = new[]
+        {
+            nameof(CategoriaGasto.Proveedor),
+            nameof(CategoriaGasto.Sueldos),
+            nameof(CategoriaGasto.Viaticos),
+            nameof(CategoriaGasto.Impuestos),
+            nameof(CategoriaGasto.Servicios),
+            nameof(CategoriaGasto.Otros)
+        };
+
         var nombres = Enum.GetNames<CategoriaGasto>();
 
-        Assert.All(nombres, nombre => Assert.DoesNotContain("retiro", nombre, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(nombresEsperados.OrderBy(n => n), nombres.OrderBy(n => n));
     }
 }

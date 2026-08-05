@@ -159,6 +159,42 @@ public class GastosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal("gasto_importe_invalido", problema.GetProperty("codigo").GetString());
     }
 
+    // ---- pre-checks de FK: referencias inválidas nunca llegan como 500 --------------------------
+
+    [Fact]
+    public async Task UnGastoConMedioDePagoInexistenteEsRechazadoCon400()
+    {
+        var ctx = await PrepararAsync(nameof(UnGastoConMedioDePagoInexistenteEsRechazadoCon400));
+        await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/gastos",
+            new SolicitudDeGasto(
+                ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "Medio de pago apócrifo", null,
+                999999, null, 100m));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
+
+    [Fact]
+    public async Task UnGastoConProveedorInexistenteEsRechazadoCon400()
+    {
+        var ctx = await PrepararAsync(nameof(UnGastoConProveedorInexistenteEsRechazadoCon400));
+        await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/gastos",
+            new SolicitudDeGasto(
+                ctx.IdPuntoVenta, CategoriaGasto.Proveedor, 999999, null, "Proveedor apócrifo", null,
+                ctx.IdMedioPago, null, 100m));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
+
     // ---- task 3.5: autorización -------------------------------------------------------------------
 
     [Fact]
@@ -175,6 +211,26 @@ public class GastosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                 ctx.IdMedioPago, null, 150m));
 
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnRolFueraDeOperacionDePosEsRechazadoDeGastos()
+    {
+        var ctx = await PrepararAsync(nameof(UnRolFueraDeOperacionDePosEsRechazadoDeGastos));
+        await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
+
+        using var root = fixture.CreateClient();
+        var loginRoot = await root.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin("test@test.com", "root"));
+        Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
+
+        var respuesta = await root.PostAsJsonAsync(
+            "/api/gastos",
+            new SolicitudDeGasto(
+                ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "Intento de root", null,
+                ctx.IdMedioPago, null, 100m));
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
     // ---- historial paginado (GET /api/gastos) ------------------------------------------------------
