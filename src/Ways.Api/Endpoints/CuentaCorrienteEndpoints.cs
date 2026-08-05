@@ -41,6 +41,27 @@ public static class CuentaCorrienteEndpoints
         .RequireAuthorization(Politicas.SupervisionDeCuentaCorriente)
         .WithSummary("Ejecuta la reliquidación a precio del día — irreversible, sin turno.");
 
+        // stage-7-cuenta-corriente (Slice 4, task 4.4, design: API Surface): ajuste manual — sin
+        // turno, mismo criterio que la reliquidación. SupervisionDeCuentaCorriente apilado sobre
+        // OperacionDePos (mismo patrón que las dos rutas de reliquidación de arriba).
+        grupo.MapPost("/ajustes", async (
+            ServicioDeCuentaCorriente servicio, int idCliente, SolicitudDeAjuste solicitud, CancellationToken ct) =>
+        {
+            var movimiento = await servicio.RegistrarAjusteAsync(idCliente, solicitud, ct);
+            return Results.Created($"/api/clientes/{idCliente}/cuenta-corriente", movimiento);
+        })
+        .RequireAuthorization(Politicas.SupervisionDeCuentaCorriente)
+        .WithSummary("Registra un ajuste manual de cuenta corriente — importe con signo, detalle obligatorio.");
+
+        // stage-7-cuenta-corriente (Slice 4, task 4.4, design: API Surface): estado de cuenta —
+        // header + movimientos en un único GET, bajo OperacionDePos (el grupo entero, sin policy
+        // apilada — un Vendedor tiene que poder consultar la cuenta corriente de un cliente).
+        grupo.MapGet("/", async (
+            ServicioDeCuentaCorriente servicio, int idCliente, DateTimeOffset? desde, DateTimeOffset? hasta,
+            bool? historico, CancellationToken ct) =>
+            Results.Ok(await servicio.ObtenerEstadoDeCuentaAsync(idCliente, desde, hasta, historico ?? false, ct)))
+        .WithSummary("Estado de cuenta: header (saldo/acuerdo/disponibilidad) + movimientos con saldo corrido.");
+
         return app;
     }
 }

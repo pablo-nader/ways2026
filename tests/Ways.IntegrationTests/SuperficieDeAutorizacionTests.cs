@@ -69,6 +69,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // reemplaza el chequeo de rol real (SuperficieDeAutorizacionTests de PagosACuentaTests/
         // ReliquidacionTests cubre 403 Vendedor).
         ("POST", "/api/clientes/{idCliente:int}/cuenta-corriente/reliquidacion"),
+        // stage-7-cuenta-corriente (Slice 4, task 4.4): ajuste manual — mismo criterio que la
+        // línea de arriba (apila SupervisionDeCuentaCorriente en vez de GestionDeCatalogo, ver
+        // CuentaCorrienteEndpoints); 403 Vendedor cubierto en AjustesDeCuentaCorrienteTests.
+        ("POST", "/api/clientes/{idCliente:int}/cuenta-corriente/ajustes"),
 
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).

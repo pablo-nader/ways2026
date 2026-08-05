@@ -102,6 +102,119 @@ public class ServicioDeCuentaCorriente(
                 pagos, NormalizarOpcional(solicitud.Observaciones), ct));
     }
 
+    /// <summary>Design: Transactions — AJUSTE MANUAL (orden pineado: "fuera:
+    /// ReglaDeAjusteDeCuenta … ; cliente ; punto de venta"). Una sola transacción de dos
+    /// statements — sin turno (mismo criterio que la reliquidación: un ajuste no mueve plata
+    /// física).</summary>
+    public async Task<MovimientoDeCuentaCorriente> RegistrarAjusteAsync(
+        int idCliente, SolicitudDeAjuste solicitud, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        // 1. ReglaDeAjusteDeCuenta — pura, corre ANTES de cualquier consulta a la base (spec:
+        // Ajuste with no detalle is rejected — "rejected … before any write").
+        ReglaDeAjusteDeCuenta.Validar(solicitud.Importe, solicitud.Detalle);
+        var detalleNormalizado = solicitud.Detalle!.Trim();
+
+        // 2. Cliente — mismo guard CF que RegistrarPagoAsync/ServicioDeReliquidacion (un ajuste
+        // manual tampoco tiene sentido de negocio sobre el Consumidor Final, que no maneja
+        // cuenta corriente).
+        var cliente = await ResolverClienteAsync(idCliente, ct);
+        if (cliente.EsConsumidorFinal)
+        {
+            throw new ErrorDominio(
+                "cliente_sin_cuenta_corriente", "El Consumidor Final no tiene cuenta corriente.", 400);
+        }
+
+        // 3. Punto de venta — provenance, no autoridad (design: Open Questions — el ajuste no
+        // tiene turno del que derivarlo).
+        var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () =>
+            await EjecutarAjusteAsync(
+                idTenant, idEmpleado, momento, idCliente, puntoVenta.Id, solicitud.Importe, detalleNormalizado, ct));
+    }
+
+    private async Task<MovimientoDeCuentaCorriente> EjecutarAjusteAsync(
+        int idTenant, int idEmpleado, DateTimeOffset momento, int idCliente, int idPuntoVenta, decimal importe,
+        string detalle, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // 1. Saldo — el mismo UPDATE ... RETURNING que el resto de la cuenta corriente, lock de
+        // la fila cliente.
+        var nuevoSaldo = await EscriturasDeCuentaCorriente.ActualizarSaldoClienteAsync(
+            conexion, transaccionCruda, idTenant, idCliente, importe, ct);
+
+        // 2. Movimiento — id_comprobante_venta NULL (design decisión 8: la marca estructural de
+        // "es un ajuste manual, no un contramovimiento de anulación").
+        var idMovimiento = await EscriturasDeCuentaCorriente.InsertarMovimientoCcAsync(
+            conexion, transaccionCruda, idTenant, idCliente, momento, idPuntoVenta, idEmpleado,
+            TipoMovimientoCc.Ajuste, idComprobanteVenta: null, idPagoComprobante: null, importe, nuevoSaldo, detalle, ct);
+
+        await transaccion.CommitAsync(ct);
+
+        return new MovimientoDeCuentaCorriente(
+            idMovimiento, momento, TipoMovimientoCc.Ajuste, importe, nuevoSaldo, detalle, IdComprobanteVenta: null,
+            Etiqueta: EtiquetaDeAjuste.Manual);
+    }
+
+    /// <summary>Design decisión 9: header + movimientos en un único <c>GET</c>, sin lock (lectura
+    /// pura) — <c>saldo_resultante</c> es la ÚNICA fuente de la corrida, nunca re-derivada.
+    /// <paramref name="historico"/> gana sobre <paramref name="desde"/>/<paramref name="hasta"/>
+    /// (spec: histórico returns the full ledger); si ninguno de los tres viene, aplica el default
+    /// de último mes (spec: No filter returns the last month) — un <paramref name="desde"/>/
+    /// <paramref name="hasta"/> explícito nunca lo pisa.</summary>
+    public async Task<EstadoDeCuenta> ObtenerEstadoDeCuentaAsync(
+        int idCliente, DateTimeOffset? desde, DateTimeOffset? hasta, bool historico, CancellationToken ct = default)
+    {
+        var cliente = await ResolverClienteAsync(idCliente, ct);
+
+        var disponibilidad = CalculadorDeEstadoDeCuenta.CalcularDisponibilidad(
+            cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado);
+        var header = new EstadoDeCuentaHeader(cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado, disponibilidad);
+
+        DateTimeOffset? desdeEfectivo = null;
+        DateTimeOffset? hastaEfectivo = null;
+        if (!historico)
+        {
+            desdeEfectivo = desde ?? (hasta is null ? reloj.Ahora.AddMonths(-1) : null);
+            hastaEfectivo = hasta;
+        }
+
+        var consulta = db.MovimientosCuentaCorriente.Where(m => m.IdCliente == idCliente);
+        if (desdeEfectivo is { } desdeAplicado)
+        {
+            consulta = consulta.Where(m => m.Fecha >= desdeAplicado);
+        }
+
+        if (hastaEfectivo is { } hastaAplicado)
+        {
+            consulta = consulta.Where(m => m.Fecha <= hastaAplicado);
+        }
+
+        var filas = await consulta
+            .OrderBy(m => m.Fecha).ThenBy(m => m.Id)
+            .Select(m => new
+            {
+                m.Id, m.Fecha, m.Tipo, m.Importe, m.SaldoResultante, m.Detalle, m.IdComprobanteVenta
+            })
+            .ToListAsync(ct);
+
+        var movimientos = filas
+            .Select(f => new MovimientoDeCuentaCorriente(
+                f.Id, f.Fecha, f.Tipo, f.Importe, f.SaldoResultante, f.Detalle, f.IdComprobanteVenta,
+                f.Tipo == TipoMovimientoCc.Ajuste ? CalculadorDeEstadoDeCuenta.EtiquetarAjuste(f.IdComprobanteVenta) : null))
+            .ToList();
+
+        return new EstadoDeCuenta(header, movimientos, historico, desdeEfectivo, hastaEfectivo);
+    }
+
     private async Task<ComprobanteEmitido> EjecutarTransaccionAsync(
         int idTenant, int idEmpleado, DateTimeOffset momento, int idTipoComprobante, long numero, int idPuntoVenta,
         int idTurnoCaja, int idCliente, decimal importeAplicado, IReadOnlyList<PagoDeCuenta> pagos,
