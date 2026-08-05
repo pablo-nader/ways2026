@@ -3,6 +3,7 @@ import { AuthProvider } from './auth/AuthContext'
 import { RutaProtegida } from './auth/RutaProtegida'
 import { Layout } from './componentes/Layout'
 import { Articulos } from './paginas/Articulos'
+import { Caja } from './paginas/Caja'
 import { Categorias } from './paginas/Categorias'
 import { CatalogosFiscales } from './paginas/CatalogosFiscales'
 import { Clientes } from './paginas/Clientes'
@@ -47,6 +48,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
                   <Pos />
+                </RutaProtegida>
+              }
+            />
+            {/* stage-6-turnos-caja (Slice 6, design: Web Composition): turno de caja del punto
+                de venta — apertura, movimientos y resumen parcial. Misma política de rol que
+                /pos (Politicas.OperacionDePos): Vendedor + Supervisor + Admin. */}
+            <Route
+              path="/caja"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <Caja />
                 </RutaProtegida>
               }
             />

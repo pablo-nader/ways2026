@@ -391,9 +391,9 @@ sequenced here after PR 5 for review load). **Finish**: apertura,
 movimientos, and live resumen parcial functional; `Caja.tsx` compiles and
 is tested. **Rollback**: new route only.
 
-- [ ] 6.1 Add pure `src/Ways.Web/src/api/caja.ts`: request/response mappers
+- [x] 6.1 Add pure `src/Ways.Web/src/api/caja.ts`: request/response mappers
   for apertura, movimiento, and resumen. *(design: Web Composition)*
-- [ ] 6.2 Add `src/Ways.Web/src/paginas/Caja.tsx`: turno status, apertura
+- [x] 6.2 Add `src/Ways.Web/src/paginas/Caja.tsx`: turno status, apertura
   form (fondo inicial + observaciones), movimientos form (retiro / refuerzo
   / apertura de cajón with motivo), resumen parcial (áreas, medios,
   tickets, egresos por categoría). `react-async-state` rules 1
@@ -402,9 +402,17 @@ is tested. **Rollback**: new route only.
   or gasto bumps the resumen generation before the write), 8
   (`key={idTurno ?? 'sin-turno'}` on the caja subtree). *(design: Web
   Composition; react-async-state obligations 2, 3, 8)*
-- [ ] 6.3 Wire `/caja` route + nav entry.
-- [ ] 6.4 [P] Unit: `caja.ts` mappers. *(web-descriptor-tests)*
-- [ ] 6.5 Component: apertura flow; registering a movimiento bumps and
+  — **Deviation**: the merged `GET …/resumen` contract
+  (`ServicioDeResumenDeTurno`/`ResumenDeTurno`, Slice 4) exposes only
+  `{ idTurnoCaja, idMedioAncla, medios: [{ idMedioPago, importeEsperado }] }`
+  — no tickets count, no gastos-por-categoría breakdown, no
+  retiros/refuerzos/fondo lines. The screen renders per-medio esperado
+  (medio ancla flagged) against the real contract; the "áreas, medios,
+  tickets, egresos" wording here and in design's Data Flow diagram is
+  aspirational and not backed by the backend response as merged.
+- [x] 6.3 Wire `/caja` route + nav entry.
+- [x] 6.4 [P] Unit: `caja.ts` mappers. *(web-descriptor-tests)*
+- [x] 6.5 Component: apertura flow; registering a movimiento bumps and
   refetches the resumen generation; opening a new turno does not inherit
   the previous turno's displayed state (`key` reset). RTL + `user-event`,
   `vi.mock('../api/cliente')`. *(design: Testing Strategy — Component

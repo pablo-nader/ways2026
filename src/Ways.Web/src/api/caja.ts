@@ -1,0 +1,61 @@
+/**
+ * Cliente HTTP + reglas puras de caja (stage-6-turnos-caja, Slice 6): apertura de turno,
+ * movimientos físicos fuera de la venta (retiro/refuerzo/apertura de cajón) y resumen parcial.
+ * `motivoValido`/`importeValidoParaTipo` espejan `ReglaDeMovimientosDeCaja` (Ways.Domain.Caja)
+ * para dar feedback instantáneo en pantalla — nunca son autoritativos, el servidor vuelve a
+ * validar todo (mismo criterio que `pagos.ts`, stage-5).
+ */
+import { api } from './cliente'
+import type {
+  MovimientoRegistrado,
+  ResumenDeTurno,
+  SolicitudDeApertura,
+  SolicitudDeMovimiento,
+  TipoMovimientoCaja,
+  TurnoResumen,
+} from './tipos'
+
+export const clienteDeCaja = {
+  /** `POST /api/caja/turnos` (design: API Surface): 201 + turno, o `409 turno_ya_abierto` si el
+   * punto de venta ya tiene uno abierto. */
+  abrir: (solicitud: SolicitudDeApertura) => api.post<TurnoResumen>('/caja/turnos', solicitud),
+  /** `GET /api/caja/turnos/abierto?idPuntoVenta=` — fuente de verdad del estado del turno: 200
+   * con el turno abierto o 200 con `null`, nunca un error. */
+  obtenerAbierto: (idPuntoVenta: number) =>
+    api.get<TurnoResumen | null>(`/caja/turnos/abierto?idPuntoVenta=${idPuntoVenta}`),
+  /** `POST /api/caja/turnos/{id}/movimientos` — retiro / refuerzo / apertura de cajón contra el
+   * turno de la ruta (nunca contra un `idTurnoCaja` del cuerpo). */
+  registrarMovimiento: (idTurnoCaja: number, solicitud: SolicitudDeMovimiento) =>
+    api.post<MovimientoRegistrado>(`/caja/turnos/${idTurnoCaja}/movimientos`, solicitud),
+  /** `GET /api/caja/turnos/{id}/resumen` — resumen parcial, misma derivación que el cierre
+   * (spec: Resumen Parcial Uses The Same Derivation As Cierre), de solo lectura. */
+  obtenerResumen: (idTurnoCaja: number) => api.get<ResumenDeTurno>(`/caja/turnos/${idTurnoCaja}/resumen`),
+}
+
+/** Longitud mínima del motivo, uniforme para los 3 tipos de movimiento (design decisión 8;
+ * spec: movimientos-de-caja / Motivo Required For Retiro And Refuerzo, Apertura De Cajón Follows
+ * Legacy F12 Parity). */
+const MOTIVO_LONGITUD_MINIMA = 5
+
+/** Espejo de `ReglaDeMovimientosDeCaja.ExigirMotivoValido` — `motivo` es obligatorio y con al
+ * menos 5 caracteres (tras recortar espacios) para los 3 tipos de movimiento. */
+export function motivoValido(motivo: string): boolean {
+  return motivo.trim().length >= MOTIVO_LONGITUD_MINIMA
+}
+
+/** Espejo de `ReglaDeMovimientosDeCaja.ExigirImporteValido`: `apertura_cajon` es SIEMPRE `0`
+ * (paridad legacy F12), los demás tipos exigen un importe positivo. */
+export function importeValidoParaTipo(tipo: TipoMovimientoCaja, importe: number): boolean {
+  if (tipo === 'AperturaCajon') return importe === 0
+  return Number.isFinite(importe) && importe > 0
+}
+
+/** Arma el cuerpo de `POST …/movimientos`: fuerza `importe = 0` para `apertura_cajon` (el
+ * cajero nunca tipea uno, el campo queda deshabilitado en pantalla) y recorta el motivo. */
+export function aSolicitudDeMovimiento(tipo: TipoMovimientoCaja, importe: string, motivo: string): SolicitudDeMovimiento {
+  return {
+    tipo,
+    importe: tipo === 'AperturaCajon' ? 0 : Number(importe),
+    motivo: motivo.trim(),
+  }
+}
