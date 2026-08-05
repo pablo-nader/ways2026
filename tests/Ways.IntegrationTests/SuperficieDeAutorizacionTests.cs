@@ -48,10 +48,13 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
 
         // stage-6-turnos-caja (Slice 2, task 2.6): apertura de turno y movimientos de caja — sin
         // GestionDeCatalogo apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que
-        // poder abrir su turno y registrar un retiro/refuerzo). Task 4.8 suma acá el cierre
-        // (POST …/{id}/cierre) cuando Slice 4 lo aterrice.
+        // poder abrir su turno y registrar un retiro/refuerzo).
         ("POST", "/api/caja/turnos/"),
         ("POST", "/api/caja/turnos/{id:int}/movimientos"),
+        // stage-6-turnos-caja (Slice 4, task 4.8): cierre de turno — mismo criterio que las dos
+        // rutas de arriba (proposal decisión 2 ofrece tightening a Supervisor+Admin, flagged en
+        // el gate; sigue OperacionDePos por ahora, sin decisión tomada).
+        ("POST", "/api/caja/turnos/{id:int}/cierre"),
         // stage-6-turnos-caja (Slice 3, task 3.2): captura de gasto — sin GestionDeCatalogo
         // apilado, mismo criterio que los dos de arriba (spec: gastos / Gasto Authorization, un
         // Vendedor tiene que poder registrar un gasto).

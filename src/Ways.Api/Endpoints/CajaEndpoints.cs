@@ -58,6 +58,23 @@ public static class CajaEndpoints
         })
         .WithSummary("Retiro / refuerzo / apertura de cajón contra el turno abierto.");
 
+        // stage-6-turnos-caja (Slice 4, task 4.7, design: API Surface): resumen parcial — misma
+        // derivación que el cierre (spec: Resumen Parcial Uses The Same Derivation As Cierre),
+        // de solo lectura.
+        grupo.MapGet("/{id:int}/resumen", async (
+            ServicioDeResumenDeTurno servicio, int id, CancellationToken ct) =>
+            Results.Ok(await servicio.ObtenerAsync(id, ct)))
+        .WithSummary("Resumen parcial del turno — misma derivación que el cierre.");
+
+        // stage-6-turnos-caja (Slice 4, task 4.7, design: The Cierre Transaction): cierre —
+        // irreversible, una sola transacción atómica. El cuerpo SOLO trae los conteos declarados
+        // (spec: Cierre Payload Carries Only Declared Counts) — el importe esperado siempre lo
+        // deriva el servidor.
+        grupo.MapPost("/{id:int}/cierre", async (
+            ServicioDeTurnos servicio, int id, SolicitudDeCierre solicitud, CancellationToken ct) =>
+            Results.Ok(await servicio.CerrarAsync(id, solicitud, ct)))
+        .WithSummary("Cierre de turno: deriva el arqueo, lo persiste y encadena la tesorería — irreversible.");
+
         return app;
     }
 }

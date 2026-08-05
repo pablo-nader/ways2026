@@ -78,10 +78,16 @@ public interface IWaysDbContext
 
     // stage-6-turnos-caja, Slice 2: ServicioDeTurnos es el primer consumidor de Application de
     // estos 2 — Slice 1 solo adelantaba el modelo a la migración (design: Table Shapes A/B).
-    // ArqueosTurno/MovimientosTesoreria siguen sin exponerse acá: su primer consumidor
-    // (ServicioDeTurnos.CerrarAsync) llega en Slice 4.
     DbSet<TurnoCaja> TurnosCaja { get; }
     DbSet<MovimientoCaja> MovimientosCaja { get; }
+
+    // stage-6-turnos-caja, Slice 4: ServicioDeTurnos.CerrarAsync es el primer consumidor de
+    // Application de estos 2 — Slice 1 solo adelantaba el modelo a la migración (design: Table
+    // Shapes A/D). ArqueosTurno es append-only (una fila por medio arqueable, escrita una sola
+    // vez al cierre); MovimientosTesoreria encadena su Inicio desde el Final de la última fila
+    // del mismo punto de venta.
+    DbSet<ArqueoTurno> ArqueosTurno { get; }
+    DbSet<MovimientoTesoreria> MovimientosTesoreria { get; }
 
     // stage-6-turnos-caja, Slice 3: ServicioDeGastos es el primer consumidor de Application de
     // este DbSet — Slice 1 solo adelantaba el modelo a la migración (design: Table Shapes C).
