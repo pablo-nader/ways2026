@@ -59,6 +59,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // apilado, mismo criterio que los dos de arriba (spec: gastos / Gasto Authorization, un
         // Vendedor tiene que poder registrar un gasto).
         ("POST", "/api/gastos/"),
+        // stage-7-cuenta-corriente (Slice 2, task 2.7): pago a cuenta (RC) — sin GestionDeCatalogo
+        // apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que poder cobrar una
+        // cuenta corriente).
+        ("POST", "/api/clientes/{idCliente:int}/cuenta-corriente/pagos"),
 
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).
