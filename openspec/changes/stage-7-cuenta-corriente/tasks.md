@@ -144,27 +144,27 @@ integration suite stays green. **Rollback**: new files + the 3-line
 `AnularAsync` widening only — revert restores stage-6 `AnularAsync` behaviour
 bit-for-bit for `TX`/`NCX`.
 
-- [ ] 2.1 [P] Create `src/Ways.Application/CuentaCorriente/EscriturasDeCuentaCorriente.cs`:
+- [x] 2.1 [P] Create `src/Ways.Application/CuentaCorriente/EscriturasDeCuentaCorriente.cs`:
   extract `ActualizarSaldoClienteAsync` (`ServicioDeVentas.cs:811-828`) and
   `InsertarMovimientoCcAsync` (`:830-855`) **verbatim**, widening
   `id_comprobante_venta`/`id_pago_comprobante` to nullable-per-tipo (a
   `Consumo` requires `id_pago_comprobante`, a `Pago` must not carry one).
   *(design decision 1 — pinned: "shared EscriturasDeCuentaCorriente")*
-- [ ] 2.2 Modify `ServicioDeVentas.cs`: delegate the two extracted statements
+- [x] 2.2 Modify `ServicioDeVentas.cs`: delegate the two extracted statements
   to `EscriturasDeCuentaCorriente` — no behavior change to the existing
   `Consumo` write path. *(design decision 1; File Changes)*
-- [ ] 2.3 [P] Create `src/Ways.Domain/CuentaCorriente/ValidadorDePagoACuenta.cs`:
+- [x] 2.3 [P] Create `src/Ways.Domain/CuentaCorriente/ValidadorDePagoACuenta.cs`:
   a sibling pure validator (not a `ValidadorDePagos` branch) — 7 rules,
   observable rejection order, CC medio forbidden, no importe field
   (`importeAplicado = Σ importe − Σ vuelto`). *(design decision 6 — pinned:
   "ValidadorDePagoACuenta sibling class"; spec: pagos-a-cuenta / RC Forbids
   Cuenta Corriente Medios And Consumidor Final)*
-- [ ] 2.4 Promote `AsignarNumeroComprobante`/`AsignarComprometidoAsync` from a
+- [x] 2.4 Promote `AsignarNumeroComprobante`/`AsignarComprometidoAsync` from a
   private method of `ServicioDeVentas` to
   `AsignadorDeNumeroComprobante.AsignarComprometidoAsync` (pure move, no new
   mechanism). *(design decision 7 — pinned: "numeración untouched"; spec:
   comprobantes-venta / RC and TX numerar independently)*
-- [ ] 2.5 Create `src/Ways.Application/CuentaCorriente/ServicioDeCuentaCorriente.cs`
+- [x] 2.5 Create `src/Ways.Application/CuentaCorriente/ServicioDeCuentaCorriente.cs`
   with `RegistrarPagoAsync`: resolve cliente (404 / CF → 400
   `cliente_sin_cuenta_corriente`), punto de venta (404), turno abierto (409
   `turno_no_abierto`, before all else), `ValidadorDePagoACuenta.Validar` →
@@ -174,22 +174,22 @@ bit-for-bit for `TX`/`NCX`.
   `EscriturasDeCuentaCorriente.ActualizarSaldo(−importeAplicado)` → INSERT
   movimiento `pago`. *(design: Transactions — PAGO A CUENTA, binding
   statement order; design decision 1 — pinned: "new lean services")*
-- [ ] 2.6 Modify `ServicioDeVentas.AnularAsync` — the pinned 3-line widening:
+- [x] 2.6 Modify `ServicioDeVentas.AnularAsync` — the pinned 3-line widening:
   contramovimiento filter becomes `Tipo == Consumo || Tipo == Pago`;
   `id_pago_comprobante` nullable per tipo; a reliquidated consumo raises
   `409 consumo_reliquidado`. *(design decision 5 — pinned: "AnularAsync
   3-line widening + 409 consumo_reliquidado"; spec: pagos-a-cuenta /
   Anulación Reverses The Pago Movement; consumo-cuenta-corriente / Anulación
   Produces A Contramovimiento)*
-- [ ] 2.7 Add `CuentaCorrienteEndpoints.cs`: `POST
+- [x] 2.7 Add `CuentaCorrienteEndpoints.cs`: `POST
   /api/clientes/{id}/cuenta-corriente/pagos` under `OperacionDePos`. Update
   `SuperficieDeAutorizacionTests` allowlist with this new non-GET route.
   *(design: API Surface)*
-- [ ] 2.8 [P] Unit: `ValidadorDePagoACuenta` — all 7 rules, observable
+- [x] 2.8 [P] Unit: `ValidadorDePagoACuenta` — all 7 rules, observable
   rejection order, CC medio rejected, CF rejected, importeAplicado
   derivation. *(design decision 6; spec: pagos-a-cuenta, all validation
   scenarios)*
-- [ ] 2.9 Integration: RC emission persists zero items and zero
+- [x] 2.9 Integration: RC emission persists zero items and zero
   `movimientos_stock`; RC with no open turno rejected `409
   turno_no_abierto` before any write; RC attaches the resolved open turno;
   RC with a CC medio rejected `pago_a_cuenta_sin_medios_fisicos`; RC
@@ -197,34 +197,34 @@ bit-for-bit for `TX`/`NCX`.
   accepted with mixed physical medios. *(spec: pagos-a-cuenta, all six
   scenarios under "RC Comprobante…", "RC Requires An Open Turno", "RC
   Forbids…")*
-- [ ] 2.10 Integration: RC emission writes one `Pago` movement and drops
+- [x] 2.10 Integration: RC emission writes one `Pago` movement and drops
   `Cliente.Saldo`; a failure after the comprobante insert rolls back
   everything (comprobante, movement, saldo); overpayment produces saldo a
   favor, never rejected. *(spec: pagos-a-cuenta / RC Writes One Negative
   Pago Movement Atomically, Overpayment Produces Saldo A Favor)*
-- [ ] 2.11 Integration: anulando an RC restores saldo with a `+`
+- [x] 2.11 Integration: anulando an RC restores saldo with a `+`
   contramovimiento; anulando an RC is rejected `409 turno_cerrado` when its
   turno is closed. *(spec: pagos-a-cuenta / Anulación Reverses The Pago
   Movement, both scenarios)*
-- [ ] 2.12 [P] Integration: RC and TX numerar independently at the same
+- [x] 2.12 [P] Integration: RC and TX numerar independently at the same
   punto de venta. *(spec: comprobantes-venta / RC and TX numerar
   independently; pagos-a-cuenta / RC Gets Its Own Numeración Series)*
-- [ ] 2.13 Integration (arqueo participation): a turno with a TX sale
+- [x] 2.13 Integration (arqueo participation): a turno with a TX sale
   (efectivo) and an RC pago a cuenta (efectivo) — both contribute to the
   same `SUM(pagos_comprobante.importe)` term, no separate RC line, no code
   change to `CalculadorDeArqueo`. *(spec: arqueo-de-cierre / An RC pago
   counts toward efectivo esperado like any other pago)*
-- [ ] 2.14 Integration (concurrency, racy surface): pago a cuenta racing a
+- [x] 2.14 Integration (concurrency, racy surface): pago a cuenta racing a
   cierre de turno — the pago is either counted in the arqueo or rejected
   `409 turno_no_abierto`, never neither. *(design: Backstop Map — "three
   racy surfaces"; Concurrency guarantees)*
-- [ ] 2.15 [P] Integration (budget): pago a cuenta issues a **constant** ≤ 7
+- [x] 2.15 [P] Integration (budget): pago a cuenta issues a **constant** ≤ 7
   queries regardless of medios count. `DbCommand` interceptor test. *(design:
   Transactions — "Read budget")*
-- [ ] 2.16 Run a **dedicated full judgment-day round** on this slice's diff
+- [x] 2.16 Run a **dedicated full judgment-day round** on this slice's diff
   alone before opening the PR — `AnularAsync` is the project's most-guarded
   transaction. *(Orchestrator Decision 4)*
-- [ ] 2.17 Regression: entire stage-5/6 integration suite green, no
+- [x] 2.17 Regression: entire stage-5/6 integration suite green, no
   assertion changed beyond the new turno-precondition-adjacent fixtures.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ServicioDeCuentaCorriente|FullyQualifiedName~ServicioDeVentas.AnularAsync`
