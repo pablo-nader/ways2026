@@ -1,6 +1,6 @@
 change: stage-6-turnos-caja
-phase: apply
-status: in_progress
+phase: archive
+status: done
 gate: "DB CHANGE GATE APPROVED by the user (2026-08-04, 'dale') with the presented defaults: cierre stays under OperacionDePos (decision 2, legacy parity — no Supervisor tightening), motivo NOT NULL >= 5 uniformized across all three tipo_movimiento_caja (design decision 8), gastos without the compra FK (decision 1), FOR SHARE checkout lock + close-first cierre order (design decision 1), vuelto on the cash anchor as a total (design decision 2), hard stop on non-unique efectivo medio (design decision 3), diferencia GENERATED ALWAYS. Migration TurnosCajaYGastosEtapa6 is authorized."
 artifact_store: openspec
 phases:
@@ -30,7 +30,8 @@ phases:
     status: done
     notes: "PASS WITH WARNINGS (2026-08-05, main 94e9daa): 0 CRITICAL; 1 WARNING — resumen parcial D6-content gap (areas/tickets/primer-ultimo ticket/egresos por categoria absent from ServicioDeResumenDeTurno; the binding spec requirement 'same derivation as cierre' IS met and byte-proven; display-completeness shortfall vs design/proposal, self-disclosed, defer as documented follow-up); 1 SUGGESTION — cosmetic off-by-one in task 4.8 prose (says 5 routes, lists/ships 4, matching design). All suites at exact expected counts: Domain 306, Application 209, Integration 481 (real Postgres), vitest 219 (flake fixed in PR #59, stable). All 11 proposal success criteria runtime-evidenced; all scenarios across the 7 spec files map to passing tests; turno_ya_cerrado wording already aligned; FOR SHARE discipline confirmed on all four turno-writing paths + cierre exclusive lock; RLS 5x4 proofs; 6 CHECKs + 2 unique indexes fully backstopped (ux_arqueos_turno_medio race-test exemption design-justified). Verdict: ready to archive with the D6 gap recorded as backlog."
   archive:
-    status: pending
+    status: done
+    notes: "Archived 2026-08-05. Verdict carried from verify: PASS WITH WARNINGS (0 CRITICAL, 1 WARNING — resumen D6-content gap, deferred as documented follow-up; 1 SUGGESTION — cosmetic task 4.8 wording). 5 new capability specs merged into openspec/specs/ verbatim (turnos-de-caja, movimientos-de-caja, arqueo-de-cierre, gastos, tesoreria); 2 delta specs merged into existing main specs (comprobantes-venta, operacion-de-pos), preserving every untouched requirement. Change folder moved to openspec/changes/archive/2026-08-05-stage-6-turnos-caja/."
 dependencies:
   spec: [propose]
   design: [propose]

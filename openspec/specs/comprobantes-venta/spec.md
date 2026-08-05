@@ -14,20 +14,28 @@ contract. No `restaurar` endpoint exists, ever.
 
 `comprobantes_venta` MUST be operativa-scoped (`id_tenant` + `id_punto_venta`,
 doc 09) with `estado_comprobante` enum (`emitido | anulado`), `id_turno_caja`
-nullable (written NULL in this stage — stage 6 tightens it),
-`id_comprobante_asociado` nullable, and `UNIQUE (id_punto_venta,
-id_tipo_comprobante, numero)`. `items_comprobante_venta` and
-`pagos_comprobante` MUST reference their comprobante via FK.
+referencing `turnos_caja` via FK — **required for every new sale**, resolved
+server-side from the punto de venta's open turno and never client-supplied.
+Comprobantes emitted before this stage keep `id_turno_caja = NULL`
+permanently (decision 8: no backfill). `id_comprobante_asociado` nullable,
+`UNIQUE (id_punto_venta, id_tipo_comprobante, numero)`. `items_comprobante_venta`
+and `pagos_comprobante` MUST reference their comprobante via FK.
 
-#### Scenario: Sale persists with id_turno_caja NULL
-- GIVEN a Vendedor completes checkout with no open turno de caja concept in stage 5
-- WHEN the comprobante is persisted
-- THEN `id_turno_caja` is NULL and the insert succeeds
+#### Scenario: Every new sale carries the resolved open turno
+- GIVEN a Vendedor with an open turno at punto de venta 7
+- WHEN checkout completes
+- THEN the persisted comprobante's `id_turno_caja` equals the open turno's
+  id, not NULL
 
 #### Scenario: Duplicate numero within the same punto de venta and tipo is rejected
 - GIVEN a non-standard write path bypasses the atomic numeración allocator
 - WHEN two rows are inserted with the same `(id_punto_venta, id_tipo_comprobante, numero)`
 - THEN Postgres raises 23505 and `ManejadorDeErrores` maps it to 409
+
+#### Scenario: Stage-5 NULL-turno comprobantes stay untouched
+- GIVEN a comprobante emitted in stage 5 with `id_turno_caja NULL`
+- WHEN the system is queried after stage 6 ships
+- THEN the row still has `id_turno_caja NULL` — no backfill process ever runs
 
 ### Requirement: Snapshot Immutability of Items
 
@@ -180,9 +188,12 @@ devolución references an original comprobante.
 - WHEN a devolución is emitted against it
 - THEN the new NCX comprobante's `id_comprobante_asociado = 501`
 
-### Requirement: Anulación Reverses Stock and CC, Never Restores by Editing
+### Requirement: Anulación Reverses Stock and CC, Never Restores by Editing, and Is Blocked By A Closed Turno
 
-Anulación MUST, in one transaction: set `estado = anulado`, insert inverse
+Anulación MUST reject with `409 turno_cerrado` when the comprobante's
+`id_turno_caja` references a turno whose `estado = cerrado` — comprobantes
+with `id_turno_caja NULL` (stage-5 era) are exempt from this gate (decision
+5). Otherwise, in one transaction: set `estado = anulado`, insert inverse
 `movimientos_stock` rows (opposite sign, `motivo = anulacion`) for every item
 with `id_articulo NOT NULL`, and insert a `contramovimiento` in
 `movimientos_cuenta_corriente` if the original sale used cuenta corriente.
@@ -210,6 +221,19 @@ No `restaurar` endpoint MUST exist at any point.
 - GIVEN an anulado comprobante
 - WHEN any client attempts to call a restaurar/undo-anulación endpoint
 - THEN no such endpoint exists (404)
+
+#### Scenario: Anulación rejected when the comprobante's turno is closed
+- GIVEN a comprobante whose `id_turno_caja` points to a turno with `estado =
+  cerrado`
+- WHEN anulación is requested
+- THEN it is rejected with `409 turno_cerrado` and no stock/CC reversal is
+  written
+
+#### Scenario: Stage-5 NULL-turno comprobante stays anulable
+- GIVEN a comprobante with `id_turno_caja NULL`
+- WHEN anulación is requested
+- THEN it succeeds — the closed-turno gate only fires when a turno exists
+  and is closed
 
 ### Requirement: OperacionDePos Authorization For Emission and Anulación
 
