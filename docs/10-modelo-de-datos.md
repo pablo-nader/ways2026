@@ -542,6 +542,30 @@ precio del día (F4) recorre los consumos no actualizados, consulta `precios` vi
 graba **un** movimiento `actualizacion_precios` con el detalle — igual efecto de negocio
 que hoy, pero auditable.
 
+> **Estado (Etapa 7, stage-7-cuenta-corriente): implementada.** `movimientos_cuenta_corriente`
+> gana `id_movimiento_actualizacion integer NULL` — un **self-FK** (`ON DELETE RESTRICT`,
+> `RETURNING`-friendly) sobre la propia tabla, no un booleano: cada consumo apunta al movimiento
+> `actualizacion_precios` que lo cubrió, en vez de solo marcar "ya reliquidado" — trazabilidad
+> completa desde cualquier consumo hacia la corrida que lo re-precificó. Un índice parcial
+> (`WHERE tipo = 'consumo' AND id_movimiento_actualizacion IS NULL`) acota el escaneo de
+> elegibles a los consumos todavía sin cubrir. El pago a cuenta (`tipo = pago`) se emite como un
+> comprobante `RC` de cero ítems (doc 10 §1) — el pago con medio `cuenta_corriente` en un
+> comprobante de venta normal sigue generando el movimiento `consumo` como antes, sin cambios.
+>
+> **Deviación declarada — fracción financiada:** la reliquidación re-precifica solo la porción
+> del comprobante que quedó fiada (`factor = min(1, importeFinanciado / totalComprobante)`), no
+> el ticket completo — el legacy re-precificaba el ticket entero incluso cuando ya estaba
+> parcialmente pagado. Con financiamiento total (`factor = 1`, el caso normal) la fórmula
+> colapsa exacto a la del legacy; el dueño del negocio confirmó la semántica de financiamiento
+> parcial como aceptable para esta etapa.
+>
+> **Irreversibilidad:** ningún endpoint revierte ni edita un movimiento `actualizacion_precios`
+> — la única corrección posible es un `Ajuste` manual nuevo, distinto y auditable por su propio
+> `detalle`. La reliquidación tampoco tiene turno de caja: no mueve plata física, así que no
+> aporta ningún término al arqueo — mismo criterio que el ajuste manual. Ambos llevan
+> `id_punto_venta` como *provenance* (de dónde salió el pedido), nunca como autoridad (ninguno
+> de los dos deriva nada de un turno).
+
 ## 9. Parámetros operativos
 
 > **Estado (Etapa 1):** tabla, RLS y API (`GET`/`PUT`, resolución punto de venta > empresa >
