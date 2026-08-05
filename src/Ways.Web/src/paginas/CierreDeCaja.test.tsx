@@ -107,12 +107,6 @@ describe('CierreDeCaja — flujo feliz', () => {
       if (ruta === '/caja/turnos/501/cierre') return Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture())
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
-    apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
-      if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture())
-      if (ruta === '/caja/turnos/501') return Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture())
-      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
-    })
 
     renderCierre()
     await screen.findByText('Efectivo')
@@ -186,17 +180,11 @@ describe('CierreDeCaja — reentrancia (react-async-state regla 9)', () => {
   })
 })
 
-describe('CierreDeCaja — un cierre 2xx nunca se reporta como falla (react-async-state regla 6)', () => {
-  it('si el POST de cierre tiene éxito pero el fetch posterior del comprobante Z falla, se muestra el turno cerrado con un aviso propio, nunca un error de cierre', async () => {
+describe('CierreDeCaja — un cierre 2xx nunca se reporta como falla, ni se muestra sin datos (react-async-state regla 6)', () => {
+  it('un POST de cierre exitoso muestra el turno cerrado CON los datos del arqueo, sin depender de ningún fetch posterior', async () => {
     mockearRutasBase()
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/caja/turnos/501/cierre') return Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture())
-      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
-    })
-    apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
-      if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture())
-      if (ruta === '/caja/turnos/501') return Promise.reject(new ErrorApi(500, 'error', 'boom'))
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
@@ -207,11 +195,88 @@ describe('CierreDeCaja — un cierre 2xx nunca se reporta como falla (react-asyn
     await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
 
     await screen.findByText('Turno #501 cerrado')
-    expect(
-      await screen.findByText('El turno se cerró, pero no se pudo abrir el comprobante Z.'),
-    ).toBeInTheDocument()
+    const fila = screen.getByText('Efectivo').closest('tr') as HTMLElement
+    expect(fila.textContent).toContain('$640,00')
+    expect(fila.textContent).toContain('$635,00')
+    expect(fila.textContent).toContain('$5,00')
     expect(screen.queryByText('No se pudo cerrar el turno.')).not.toBeInTheDocument()
-    expect(screen.queryByText('boom')).not.toBeInTheDocument()
+
+    // El payload del comprobante Z sale íntegro del POST — no hay ningún GET adicional a
+    // `/caja/turnos/501` después del cierre.
+    expect(apiGetMock.mock.calls.some((c) => c[0] === '/caja/turnos/501')).toBe(false)
+  })
+})
+
+describe('CierreDeCaja — turno sin actividad (Fix: conteosCompletos ya no exige medios.length > 0)', () => {
+  it('un turno sin actividad (resumen.medios vacío) se cierra con conteos: [] y muestra el comprobante Z vacío', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
+      if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture({ medios: [] }))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        return Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture({ arqueos: [] }))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await screen.findByText('Este turno no tuvo actividad: no hay ningún medio para arquear.')
+
+    await userEvent.click(screen.getByRole('checkbox'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+
+    await screen.findByText('Turno #501 cerrado')
+    expect(screen.getByText('Este turno no tuvo actividad: no hay ningún medio arqueado.')).toBeInTheDocument()
+
+    const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/caja/turnos/501/cierre')
+    expect(llamada?.[1]).toEqual({ conteos: [], observaciones: null })
+  })
+})
+
+describe('CierreDeCaja — checklist desactualizado tras un rechazo del servidor (Fix: refetch del resumen)', () => {
+  it('arqueo_incompleto refresca el resumen, agrega el medio que apareció en el servidor, preserva los conteos ya tipeados y vuelve a habilitar "Finalizar cierre" una vez completado', async () => {
+    const medioTarjeta = medioFixture({ id: 2, nombre: 'Tarjeta' })
+    let resumenActual = resumenFixture()
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta])
+      if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenActual)
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/501/cierre') {
+        return Promise.reject(new ErrorApi(409, 'arqueo_incompleto', 'Faltan medios por declarar.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderCierre()
+    await screen.findByText('Efectivo')
+    await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '640')
+    await userEvent.click(screen.getByRole('checkbox'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+
+    // Entre que se cargó este resumen y el click, el servidor ganó una carrera: apareció
+    // actividad en un medio nuevo — el próximo GET /resumen ya lo refleja.
+    resumenActual = resumenFixture({
+      medios: [
+        { idMedioPago: 1, importeEsperado: 640 },
+        { idMedioPago: 2, importeEsperado: 300 },
+      ],
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+
+    expect(await screen.findByText('Faltan medios por declarar.')).toBeInTheDocument()
+    expect(await screen.findByLabelText('Declarado de Tarjeta')).toBeInTheDocument()
+    expect(screen.getByLabelText('Declarado de Efectivo')).toHaveValue(640)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeDisabled())
+
+    await userEvent.type(screen.getByLabelText('Declarado de Tarjeta'), '300')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
   })
 })
 

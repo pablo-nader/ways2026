@@ -38,10 +38,6 @@ export const clienteDeCaja = {
    * Declared Counts). */
   cerrar: (idTurnoCaja: number, solicitud: SolicitudDeCierre) =>
     api.post<TurnoConArqueos>(`/caja/turnos/${idTurnoCaja}/cierre`, solicitud),
-  /** `GET /api/caja/turnos/{id}` — turno + arqueos (el payload del comprobante Z). Se usa
-   * después de un cierre exitoso para volver a traer el comprobante en un fetch aislado del POST
-   * de cierre (react-async-state regla 6: un cierre 2xx nunca se reporta como falla). */
-  obtenerConArqueos: (idTurnoCaja: number) => api.get<TurnoConArqueos>(`/caja/turnos/${idTurnoCaja}`),
 }
 
 /** Longitud mínima del motivo, uniforme para los 3 tipos de movimiento (design decisión 8;

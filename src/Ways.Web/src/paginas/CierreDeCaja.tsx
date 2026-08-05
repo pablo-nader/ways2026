@@ -52,11 +52,12 @@ export function CierreDeCaja() {
   const generacionCierreRef = useRef(0)
   const [errorCierre, setErrorCierre] = useState('')
 
-  // A partir de acá el cierre en el servidor YA ocurrió — nada de lo que siga (el fetch del
-  // comprobante Z) puede volver a marcar el cierre como fallido (regla 6).
-  const [turnoCerrado, setTurnoCerrado] = useState(false)
+  // El comprobante Z viene en la propia respuesta 2xx del POST de cierre (design: The Cierre
+  // Transaction) — `zReporte !== null` ES la señal de "el turno ya cerró", no hace falta un
+  // booleano aparte ni un GET aislado después (react-async-state regla 6: un cierre 2xx que
+  // dependiera de un fetch posterior para mostrar sus propios datos podría reportarse sin datos
+  // por una falla ajena al cierre en sí).
   const [zReporte, setZReporte] = useState<TurnoConArqueos | null>(null)
-  const [errorZ, setErrorZ] = useState('')
 
   const medioPorId = useMemo(() => {
     const indice: Record<number, MedioPagoListado> = {}
@@ -126,36 +127,46 @@ export function CierreDeCaja() {
     const solicitud = aSolicitudDeCierre(resumen.medios, conteos, observaciones)
 
     try {
-      await clienteDeCaja.cerrar(idTurno, solicitud)
-    } catch (e) {
-      // regla 4: el `finally` que libera `cerrando` está gateado por generación — acá el catch
-      // hace las veces de finally porque esta rama SÍ es una falla real del cierre.
+      const conArqueos = await clienteDeCaja.cerrar(idTurno, solicitud)
+      // regla 4/6: el `finally` que libera `cerrando` está gateado por generación. El POST ya
+      // devolvió 2xx con el comprobante Z completo — se usa directo, sin un GET aislado después
+      // que podría fallar y dejar el cierre exitoso sin datos que el servidor ya mandó.
       if (generacionCierreRef.current !== miGeneracion) return
+      setZReporte(conArqueos)
+      cerrandoRef.current = false
+      setCerrando(false)
+    } catch (e) {
+      if (generacionCierreRef.current !== miGeneracion) return
+
+      if (e instanceof ErrorApi && (e.codigo === 'arqueo_incompleto' || e.codigo === 'medio_sin_actividad_en_el_turno')) {
+        // El checklist en pantalla quedó desactualizado contra el servidor (otro movimiento entró
+        // al turno entre que se cargó el resumen y este intento) — se refresca el resumen para
+        // volver a mostrar el set real de medios arqueables. Los conteos ya tipeados sobreviven
+        // tal cual están (siguen indexados por `idMedioPago`, ningún reset acá) para los medios
+        // que siguen presentes.
+        setErrorCierre(e.message)
+        clienteDeCaja
+          .obtenerResumen(idTurno)
+          .then((datos) => {
+            if (generacionCierreRef.current !== miGeneracion) return
+            setResumen(datos)
+            setErrorResumen('')
+          })
+          .catch(() => {
+            if (generacionCierreRef.current !== miGeneracion) return
+            setErrorResumen('No se pudo actualizar el resumen del turno con los datos más recientes. Actualizá la página.')
+          })
+          .finally(() => {
+            if (generacionCierreRef.current !== miGeneracion) return
+            cerrandoRef.current = false
+            setCerrando(false)
+          })
+        return
+      }
+
       setErrorCierre(e instanceof ErrorApi ? e.message : 'No se pudo cerrar el turno.')
       cerrandoRef.current = false
       setCerrando(false)
-      return
-    }
-
-    if (generacionCierreRef.current === miGeneracion) {
-      setTurnoCerrado(true)
-    }
-
-    // regla 6: el POST ya devolvió 2xx — el cierre YA pasó. El fetch del comprobante Z queda
-    // aislado en su propio try/catch: si falla, se avisa con una copia distinta ("se cerró, pero
-    // no se pudo abrir el Z"), nunca se reporta como una falla del cierre en sí.
-    try {
-      const conArqueos = await clienteDeCaja.obtenerConArqueos(idTurno)
-      if (generacionCierreRef.current !== miGeneracion) return
-      setZReporte(conArqueos)
-    } catch {
-      if (generacionCierreRef.current !== miGeneracion) return
-      setErrorZ('El turno se cerró, pero no se pudo abrir el comprobante Z.')
-    } finally {
-      if (generacionCierreRef.current === miGeneracion) {
-        cerrandoRef.current = false
-        setCerrando(false)
-      }
     }
   }
 
@@ -176,56 +187,56 @@ export function CierreDeCaja() {
     )
   }
 
-  if (turnoCerrado) {
+  if (zReporte) {
     return (
       <div className="container-fluid py-4">
         <div className="row g-3">
           <div className="col-12">
             <Box titulo={`Turno #${idTurno} cerrado`} variante="success">
-              {!zReporte && !errorZ && <p className="text-muted">Generando el comprobante Z…</p>}
-              {errorZ && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorZ}</div>}
+              <div className="row g-3 mb-3">
+                <div className="col-md-4">
+                  <div className="small text-muted">Apertura</div>
+                  <div>{formatearFechaHora(zReporte.fechaApertura)}</div>
+                </div>
+                <div className="col-md-4">
+                  <div className="small text-muted">Cierre</div>
+                  <div>{zReporte.fechaCierre ? formatearFechaHora(zReporte.fechaCierre) : '—'}</div>
+                </div>
+                <div className="col-md-4">
+                  <div className="small text-muted">Fondo inicial</div>
+                  <div>{formatearMoneda(zReporte.fondoInicial)}</div>
+                </div>
+              </div>
 
-              {zReporte && (
-                <>
-                  <div className="row g-3 mb-3">
-                    <div className="col-md-4">
-                      <div className="small text-muted">Apertura</div>
-                      <div>{formatearFechaHora(zReporte.fechaApertura)}</div>
-                    </div>
-                    <div className="col-md-4">
-                      <div className="small text-muted">Cierre</div>
-                      <div>{zReporte.fechaCierre ? formatearFechaHora(zReporte.fechaCierre) : '—'}</div>
-                    </div>
-                    <div className="col-md-4">
-                      <div className="small text-muted">Fondo inicial</div>
-                      <div>{formatearMoneda(zReporte.fondoInicial)}</div>
-                    </div>
-                  </div>
-
-                  <div className="table-responsive">
-                    <table className="table table-sm table-striped table-bordered align-middle">
-                      <thead>
-                        <tr>
-                          <th>Medio</th>
-                          <th className="text-end">Esperado</th>
-                          <th className="text-end">Declarado</th>
-                          <th className="text-end">Diferencia</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {zReporte.arqueos.map((a) => (
-                          <tr key={a.idMedioPago}>
-                            <td>{medioPorId[a.idMedioPago]?.nombre ?? `Medio #${a.idMedioPago}`}</td>
-                            <td className="text-end">{formatearMoneda(a.importeEsperado)}</td>
-                            <td className="text-end">{formatearMoneda(a.importeDeclarado)}</td>
-                            <td className="text-end">{formatearMoneda(a.diferencia)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
+              <div className="table-responsive">
+                <table className="table table-sm table-striped table-bordered align-middle">
+                  <thead>
+                    <tr>
+                      <th>Medio</th>
+                      <th className="text-end">Esperado</th>
+                      <th className="text-end">Declarado</th>
+                      <th className="text-end">Diferencia</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {zReporte.arqueos.map((a) => (
+                      <tr key={a.idMedioPago}>
+                        <td>{medioPorId[a.idMedioPago]?.nombre ?? `Medio #${a.idMedioPago}`}</td>
+                        <td className="text-end">{formatearMoneda(a.importeEsperado)}</td>
+                        <td className="text-end">{formatearMoneda(a.importeDeclarado)}</td>
+                        <td className="text-end">{formatearMoneda(a.diferencia)}</td>
+                      </tr>
+                    ))}
+                    {zReporte.arqueos.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="text-center text-muted">
+                          Este turno no tuvo actividad: no hay ningún medio arqueado.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
 
               <Link className="btn btn-outline-secondary rounded-0" to="/caja">
                 Volver a caja
