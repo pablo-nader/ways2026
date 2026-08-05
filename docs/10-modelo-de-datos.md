@@ -99,6 +99,18 @@ del comprobante). Se siembra dos veces: en la lista de arriba para una base nuev
 idempotente, dentro de la migración `CuentaCorrienteEtapa7` para una base ya migrada — este
 seed corre solo cuando la tabla está vacía.
 
+**`C-FA`/`C-FB`/`C-FC` (etapa 8 — comprobantes de compra, doc 10 §5):** `clase compra`,
+`letra` A/B/C, `signo +1` (entran mercadería), `discrimina_iva` solo en `C-FA` (el costo del
+proveedor es neto de IVA), `es_fiscal false` (el sistema nunca *emite* la factura del
+proveedor — la flag distingue si reporta a AFIP/ARCA como emisor, no si hay crédito de IVA),
+`afecta_stock true`. El prefijo `C-` es **obligatorio, no cosmético**:
+`ux_tipos_comprobante_codigo` es UNIQUE sobre `codigo` solo (sin `clase`), así que un código
+de compra sin prefijo podría colisionar con uno de venta existente y quedar resuelto por el
+camino equivocado. No se siembran notas de crédito de proveedor — la anulación es la única
+reversión de una compra confirmada (proposal decisión 10). Mismo mecanismo de siembra doble
+que `RC`: en la lista de arriba para una base nueva y, de forma idempotente, dentro de la
+migración `ComprasYTransferenciasEtapa8` para una base ya migrada.
+
 **Regla de la letra** (se implementa en dominio, no en tablas): la letra sale del cruce
 `condición fiscal de la empresa emisora × condición fiscal del cliente`. RI → RI emite A;
 RI → CF/monotributo emite B; monotributista emite C a todos; el ticket no fiscal de hoy
@@ -403,6 +415,26 @@ Ciclo: se carga en `borrador` (se puede ir armando con el remito en la mano), y 
 actualiza `costo_nominal` donde `actualiza_costo`, y ofrece actualizar precios de venta
 según margen del grupo/proveedor. `anulada` revierte con contramovimientos.
 
+> **Estado (Etapa 8, Slice 1 — schema + seed gate):** `comprobantes_compra`/
+> `items_comprobante_compra` creadas por la migración `ComprasYTransferenciasEtapa8`, con dos
+> ajustes de conformidad sobre el esquema de arriba (DB CHANGE GATE, autonomous mode
+> 2026-08-05): (1) la unicidad de `numero_externo` gana `id_tenant` en la clave —
+> `(id_tenant, id_proveedor, id_tipo_comprobante, numero_externo)` — porque toda tabla
+> `[operativa]` está tenant-scoped y el esquema de arriba omite `id_tenant` por convención;
+> (2) es una **unicidad PARCIAL** (`WHERE estado <> 'anulada' AND numero_externo IS NOT
+> NULL`), no una UNIQUE llana: excluye `numero_externo NULL` mientras es borrador y permite
+> reingresar el número de una factura anulada por error de carga. `id_articulo` en
+> `items_comprobante_compra` es **`NOT NULL`**, a diferencia de `items_comprobante_venta`
+> (§4): una línea de compra sin artículo no puede mover stock ni actualizar costo — sería un
+> gasto, y los gastos ya existen como concepto separado. Nueva CHECK
+> `ck_comprobantes_compra_confirmada_completa` (`estado = 'borrador' OR (numero_externo,
+> fecha_comprobante, fecha_recepcion todos NOT NULL)`), no especificada arriba, cierra a nivel
+> esquema la regla de negocio "no se confirma sin identidad de factura". `estado_compra` se
+> registra únicamente vía `npgsql.MapEnum<EstadoCompra>` en `DependencyInjection.cs` y
+> `WaysDbContextFactory.cs` — nunca también con `HasPostgresEnum`, mismo criterio que el
+> resto de los enums nativos del proyecto. La aritmética de la compra (`CalculadorDeCompra`),
+> el ciclo `borrador → confirmada → anulada` y la actualización de `costo_nominal` son Slice 2.
+
 **Relación con gastos:** la compra registra la mercadería; el gasto registra la plata.
 `gastos` gana `id_comprobante_compra NULL`: pagarle al proveedor referencia la factura.
 Una compra puede estar impaga (sin gasto asociado) — eso ya da una cuenta corriente de
@@ -426,12 +458,19 @@ van a `movimientos_caja` (§7).
 > **Estado (Etapa 6, Slice 1):** `gastos` se crea en esta etapa, pero **sin**
 > `id_comprobante_compra`: `comprobantes_compra` no existe todavía (etapa 8), así que un
 > `int NULL` sin FK sería una referencia sin garantía — mismo criterio que
-> `movimientos_stock.id_comprobante_compra` (§6). La etapa 8 agrega la columna y su FK
-> juntas, en la misma migración que crea `comprobantes_compra` (design de
-> stage-6-turnos-caja: Table Shapes — write path C). `id_turno_caja` sí se crea **NOT NULL**
+> `movimientos_stock.id_comprobante_compra` (§6). `id_turno_caja` sí se crea **NOT NULL**
 > desde esta etapa (a diferencia de la ambigüedad de la tabla de arriba, que lo muestra
 > nullable): todo gasto se registra contra un turno abierto, resuelto server-side, nunca
 > input de cliente.
+>
+> **Estado (Etapa 8, Slice 1 — RESUELTO):** `gastos.id_comprobante_compra` aterriza en esta
+> slice, junto con su FK compuesta `(id_comprobante_compra, id_tenant)` RESTRICT y su índice
+> de soporte — la deuda declarada arriba queda pagada, sin cambio de forma en ninguna otra
+> columna. Poblado por `ServicioDeGastos` (etapa 8, Slice 4) bajo un `SELECT ... FOR SHARE`
+> sobre el header de la compra (TOCTOU cerrado contra una anulación concurrente); solo válido
+> cuando `categoria = proveedor` y la compra referenciada está `confirmada`. El vínculo es
+> historia, no un bloqueo: anular la compra vinculada sigue permitido (design decisión 6 —
+> ningún camino de reversión de gasto existe todavía).
 
 ## 6. Stock
 
@@ -456,13 +495,16 @@ movimientos_stock (           -- [operativa]
 
 > **Estado (Etapa 5, Slice 3):** `stock` y `movimientos_stock` implementadas — `motivo` solo
 > tiene camino de escritura para `venta`/`anulacion`/`ajuste` en esta etapa; `compra`/
-> `transferencia`/`inventario` quedan como valores reservados del enum, sin escritor. La columna
-> `id_comprobante_compra` de arriba **no se crea todavía**: `comprobantes_compra` no existe
-> (doc 10 §5, etapa 8), así que un `int NULL` sin FK sería una referencia sin garantía. La etapa
-> 8 agrega la columna y su FK juntas, en la misma migración que crea `comprobantes_compra`
-> (deviación declarada de este documento, design de stage-5-pos-ventas: Table Shapes — write
-> path B). `id_punto_venta_destino` sí se crea en esta etapa (columna lista para
-> transferencias), pero ningún camino de escritura la usa todavía.
+> `transferencia`/`inventario` quedan como valores reservados del enum, sin escritor.
+> `id_punto_venta_destino` sí se crea en esta etapa (columna lista para transferencias), pero
+> ningún camino de escritura la usa todavía.
+>
+> **Estado (Etapa 8, Slice 1 — RESUELTO):** `movimientos_stock.id_comprobante_compra` aterriza
+> en esta slice, junto con su FK compuesta `(id_comprobante_compra, id_tenant)` RESTRICT y su
+> índice de soporte — la deuda declarada arriba (columna sin FK) queda pagada. `motivo = compra`
+> abre camino de escritura recién en Slice 2 (`ServicioDeCompras.ConfirmarAsync`/`AnularAsync`);
+> `transferencia`/`inventario` lo abren en Slice 3 (`ServicioDeStock.TransferirAsync`/
+> `ContarAsync`) — ningún escritor nuevo se agrega en esta slice, solo el esquema.
 > Nota de implementación: los FK de `id_empleado` (comprobantes_venta, movimientos_stock,
 > movimientos_cuenta_corriente) son simples hacia `usuarios.id_usuario` — no compuestos con
 > `id_tenant` — porque la clave alterna requerida forzaría `id_tenant NOT NULL` en `usuarios`,
