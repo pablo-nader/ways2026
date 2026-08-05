@@ -420,7 +420,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: 
       </div>
 
       {/* follow-up "Resumen parcial D6-content enrichment" (legacy doc 01 D6 "Ver Parcial"):
-          tickets, ingresos por área y egresos por categoría + retiros — contenido de reporte
+          tickets, ingresos por área y egresos por categoría/área + retiros — contenido de reporte
           aditivo, nunca alimenta la derivación del arqueo de arriba. */}
       {!cargandoResumen && resumen && (
         <div className="row g-3 mt-1">
@@ -473,37 +473,71 @@ function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: 
 
           <div className="col-lg-4">
             <h6>Egresos</h6>
-            <div className="table-responsive">
-              <table className="table table-sm table-striped table-bordered align-middle">
-                <thead>
-                  <tr>
-                    <th>Categoría</th>
-                    <th className="text-end">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resumen.egresos.porCategoria.length === 0 && resumen.egresos.retiros === 0 ? (
-                    <tr>
-                      <td colSpan={2} className="text-center text-muted">
-                        Todavía no hay egresos en este turno.
-                      </td>
-                    </tr>
-                  ) : (
-                    <>
-                      {resumen.egresos.porCategoria.map((e) => (
-                        <tr key={e.categoria}>
-                          <td>{etiquetaCategoriaGasto(e.categoria)}</td>
-                          <td className="text-end">{formatearMoneda(e.total)}</td>
+            <div className="row g-2">
+              <div className="col-6">
+                <div className="small text-muted mb-1">Por categoría</div>
+                <div className="table-responsive">
+                  <table className="table table-sm table-striped table-bordered align-middle">
+                    <thead>
+                      <tr>
+                        <th>Categoría</th>
+                        <th className="text-end">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {resumen.egresos.porCategoria.length === 0 && resumen.egresos.retiros === 0 ? (
+                        <tr>
+                          <td colSpan={2} className="text-center text-muted">
+                            Todavía no hay egresos en este turno.
+                          </td>
+                        </tr>
+                      ) : (
+                        <>
+                          {resumen.egresos.porCategoria.map((e) => (
+                            <tr key={e.categoria}>
+                              <td>{etiquetaCategoriaGasto(e.categoria)}</td>
+                              <td className="text-end">{formatearMoneda(e.total)}</td>
+                            </tr>
+                          ))}
+                          <tr>
+                            <td>Retiros</td>
+                            <td className="text-end">{formatearMoneda(resumen.egresos.retiros)}</td>
+                          </tr>
+                        </>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="col-6">
+                <div className="small text-muted mb-1">Por área</div>
+                <div className="table-responsive">
+                  <table className="table table-sm table-striped table-bordered align-middle">
+                    <thead>
+                      <tr>
+                        <th>Área</th>
+                        <th className="text-end">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {resumen.egresos.porArea.map((a) => (
+                        <tr key={a.idArea ?? 'sin-area'}>
+                          <td>{a.nombreArea}</td>
+                          <td className="text-end">{formatearMoneda(a.total)}</td>
                         </tr>
                       ))}
-                      <tr>
-                        <td>Retiros</td>
-                        <td className="text-end">{formatearMoneda(resumen.egresos.retiros)}</td>
-                      </tr>
-                    </>
-                  )}
-                </tbody>
-              </table>
+                      {resumen.egresos.porArea.length === 0 && (
+                        <tr>
+                          <td colSpan={2} className="text-center text-muted">
+                            Todavía no hay egresos en este turno.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -517,7 +551,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: 
  * punto de venta seleccionado, apertura cuando no hay uno abierto, movimientos físicos fuera de
  * la venta y el resumen parcial en vivo — misma derivación que el cierre (Slice 7). Precedente de
  * forma: `Pos.tsx`. El resumen (`ServicioDeResumenDeTurno`) también expone el contenido D6
- * (cantidad de tickets, primer/último ticket, ingresos por área y egresos por categoría +
+ * (cantidad de tickets, primer/último ticket, ingresos por área y egresos por categoría/área +
  * retiros; follow-up "Resumen parcial D6-content enrichment") — ver el doc-comment de
  * `ResumenDeTurno` en `api/tipos.ts`.
  */

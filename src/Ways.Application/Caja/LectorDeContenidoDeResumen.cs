@@ -15,10 +15,11 @@ namespace Ways.Application.Caja;
 /// presupuesto — este lector solo arma contenido de lectura adicional, nunca toca esa fórmula
 /// ni su set de insumos.
 ///
-/// 6 consultas agrupadas de cantidad FIJA (nunca una por fila, mismo criterio que el lector
+/// 7 consultas agrupadas de cantidad FIJA (nunca una por fila, mismo criterio que el lector
 /// hermano): cantidad de tickets, primer ticket, último ticket, ingresos por área, catálogo de
-/// áreas y egresos por categoría — el turno-con-más-tickets test (task 4.14 original) sigue
-/// pasando porque cada una de estas consultas es una agregación, no una lectura por ticket.
+/// áreas, egresos por categoría y egresos por área — el turno-con-más-tickets test (task 4.14
+/// original) sigue pasando porque cada una de estas consultas es una agregación, no una lectura
+/// por ticket.
 /// </summary>
 public class LectorDeContenidoDeResumen(IWaysDbContext db)
 {
@@ -78,7 +79,28 @@ public class LectorDeContenidoDeResumen(IWaysDbContext db)
             .Select(g => new EgresoPorCategoria(g.Key, g.Sum(x => x.Importe)))
             .ToListAsync(ct);
 
-        return new ContenidoDeResumen(cantidadTickets, primerTicket, ultimoTicket, ingresosPorArea, egresosPorCategoria);
+        // 7. egresos por área — mismo criterio que ingresos por área (catálogo ya cargado en el
+        // paso 5), pero Gasto.IdArea es NULLABLE (a diferencia del snapshot inmutable del ítem de
+        // venta): los gastos sin área declarada se agrupan bajo un bucket "Sin área" con IdArea
+        // null, en vez de descartarlos.
+        var totalesEgresoPorArea = await db.Gastos
+            .Where(g => g.IdTurnoCaja == idTurnoCaja)
+            .GroupBy(g => g.IdArea)
+            .Select(g => new { IdArea = g.Key, Total = g.Sum(x => x.Importe) })
+            .ToListAsync(ct);
+
+        var egresosPorArea = totalesEgresoPorArea
+            .Select(x => new EgresoPorArea(
+                x.IdArea,
+                x.IdArea.HasValue
+                    ? areas.FirstOrDefault(a => a.Id == x.IdArea)?.Nombre ?? $"Área #{x.IdArea}"
+                    : "Sin área",
+                x.Total))
+            .OrderBy(e => e.IdArea)
+            .ToList();
+
+        return new ContenidoDeResumen(
+            cantidadTickets, primerTicket, ultimoTicket, ingresosPorArea, egresosPorCategoria, egresosPorArea);
     }
 }
 
@@ -91,4 +113,5 @@ public sealed record ContenidoDeResumen(
     TicketLimite? PrimerTicket,
     TicketLimite? UltimoTicket,
     IReadOnlyList<IngresoPorArea> IngresosPorArea,
-    IReadOnlyList<EgresoPorCategoria> EgresosPorCategoria);
+    IReadOnlyList<EgresoPorCategoria> EgresosPorCategoria,
+    IReadOnlyList<EgresoPorArea> EgresosPorArea);

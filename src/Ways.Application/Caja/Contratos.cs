@@ -74,11 +74,21 @@ public sealed record IngresoPorArea(int IdArea, string NombreArea, decimal Total
 /// tipo").</summary>
 public sealed record EgresoPorCategoria(CategoriaGasto Categoria, decimal Total);
 
-/// <summary>Egresos del turno (legacy D6, segundo bloque) — gastos agrupados por categoría más
-/// el total de retiros físicos (<c>movimientos_caja</c> tipo <see
-/// cref="TipoMovimientoCaja.Retiro"/>); nunca incluye <see cref="TipoMovimientoCaja.Refuerzo"/>
-/// ni <see cref="TipoMovimientoCaja.AperturaCajon"/>, que no son egresos.</summary>
-public sealed record EgresosDeTurno(IReadOnlyList<EgresoPorCategoria> PorCategoria, decimal Retiros);
+/// <summary>Egresos de un área dentro del turno (legacy D6, segundo bloque: "por área") — agrupa
+/// <see cref="Ways.Domain.Gastos.Gasto.Importe"/> por <see cref="Ways.Domain.Gastos.Gasto.IdArea"/>,
+/// que a diferencia de <see cref="Ways.Domain.Ventas.ItemComprobanteVenta.IdArea"/> es NULLABLE:
+/// <see cref="IdArea"/> null representa el bucket "Sin área" (gastos sin área declarada), nunca
+/// descartados.</summary>
+public sealed record EgresoPorArea(int? IdArea, string NombreArea, decimal Total);
+
+/// <summary>Egresos del turno (legacy D6, segundo bloque: "por área y por tipo") — gastos
+/// agrupados por categoría y por área más el total de retiros físicos (<c>movimientos_caja</c>
+/// tipo <see cref="TipoMovimientoCaja.Retiro"/>); nunca incluye <see
+/// cref="TipoMovimientoCaja.Refuerzo"/> ni <see cref="TipoMovimientoCaja.AperturaCajon"/>, que no
+/// son egresos. Con este bloque, D6 queda completo salvo "saldo" (uno de los medios de pago del
+/// primer bloque de D6, Ingresos), que depende de la etapa 7 y todavía no existe.</summary>
+public sealed record EgresosDeTurno(
+    IReadOnlyList<EgresoPorCategoria> PorCategoria, IReadOnlyList<EgresoPorArea> PorArea, decimal Retiros);
 
 /// <summary>Respuesta de <c>GET /api/caja/turnos/{id}/resumen</c> (D6 parity, design: API
 /// Surface) — de solo lectura, nunca escribe nada. <see cref="Medios"/> es la MISMA derivación

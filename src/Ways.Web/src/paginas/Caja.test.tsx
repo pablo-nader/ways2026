@@ -82,7 +82,7 @@ function resumenFixture(sobrescribir: Partial<ResumenDeTurno> = {}): ResumenDeTu
     primerTicket: null,
     ultimoTicket: null,
     ingresosPorArea: [],
-    egresos: { porCategoria: [], retiros: 0 },
+    egresos: { porCategoria: [], porArea: [], retiros: 0 },
     ...sobrescribir,
   }
 }
@@ -553,7 +553,14 @@ describe('Caja — resumen D6 (follow-up "Resumen parcial D6-content enrichment"
               { idArea: 1, nombreArea: 'Almacén', total: 150 },
               { idArea: 2, nombreArea: 'Verdulería', total: 200 },
             ],
-            egresos: { porCategoria: [{ categoria: 'Proveedor', total: 30 }], retiros: 40 },
+            egresos: {
+              porCategoria: [{ categoria: 'Proveedor', total: 30 }],
+              porArea: [
+                { idArea: 3, nombreArea: 'Cigarrillos', total: 25 },
+                { idArea: null, nombreArea: 'Sin área', total: 15 },
+              ],
+              retiros: 40,
+            },
           }),
         )
       }
@@ -577,9 +584,16 @@ describe('Caja — resumen D6 (follow-up "Resumen parcial D6-content enrichment"
     expect(screen.getByText('$30,00')).toBeInTheDocument()
     expect(screen.getByText('Retiros')).toBeInTheDocument()
     expect(screen.getByText('$40,00')).toBeInTheDocument()
+
+    // egresos por área — bloque nuevo, incluye el bucket "Sin área".
+    expect(screen.getByText('Por área')).toBeInTheDocument()
+    expect(screen.getByText('Cigarrillos')).toBeInTheDocument()
+    expect(screen.getByText('$25,00')).toBeInTheDocument()
+    expect(screen.getByText('Sin área')).toBeInTheDocument()
+    expect(screen.getByText('$15,00')).toBeInTheDocument()
   })
 
-  it('un turno sin actividad muestra ceros, guiones y los avisos de "todavía no hay" en las tres secciones', async () => {
+  it('un turno sin actividad muestra ceros, guiones y los avisos de "todavía no hay" en las cuatro secciones', async () => {
     mockearRutasBase((ruta) => {
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(turnoFixture())
       if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture())
@@ -593,7 +607,8 @@ describe('Caja — resumen D6 (follow-up "Resumen parcial D6-content enrichment"
     expect(screen.getByText('0')).toBeInTheDocument()
     expect(screen.getAllByText('—')).toHaveLength(2) // primer y último ticket, ambos null
     expect(screen.getByText('Todavía no hay ingresos en este turno.')).toBeInTheDocument()
-    expect(screen.getByText('Todavía no hay egresos en este turno.')).toBeInTheDocument()
+    // "todavía no hay egresos" aparece una vez por tabla (por categoría y por área).
+    expect(screen.getAllByText('Todavía no hay egresos en este turno.')).toHaveLength(2)
     // sin actividad, no debería renderizarse una fila de "Retiros" suelta.
     expect(screen.queryByText('Retiros')).not.toBeInTheDocument()
   })

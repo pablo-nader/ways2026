@@ -33,7 +33,7 @@ public class ServicioDeResumenDeTurno(
             idTurnoCaja, idAncla,
             lineas.Select(l => new LineaDeResumen(l.IdMedioPago, l.ImporteEsperado)).ToList(),
             contenido.CantidadTickets, contenido.PrimerTicket, contenido.UltimoTicket, contenido.IngresosPorArea,
-            new EgresosDeTurno(contenido.EgresosPorCategoria, insumos.Retiros));
+            new EgresosDeTurno(contenido.EgresosPorCategoria, contenido.EgresosPorArea, insumos.Retiros));
     }
 
     private async Task ExigirTurnoExisteAsync(int idTurnoCaja, CancellationToken ct)

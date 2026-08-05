@@ -21,7 +21,7 @@ namespace Ways.IntegrationTests;
 /// Follow-up de stage-6-turnos-caja, "Resumen parcial D6-content enrichment" (archive-report.md,
 /// Deferred/Follow-Ups (a); design.md Data Flow: "GET …/resumen (D6: áreas, medios, tickets,
 /// egresos)"; docs/01 D6 "Ver Parcial") — <see cref="LectorDeContenidoDeResumen"/>: cantidad de
-/// tickets, primer/último ticket, ingresos por área y egresos por categoría + retiros.
+/// tickets, primer/último ticket, ingresos por área y egresos por categoría/área + retiros.
 ///
 /// Deliberadamente en un archivo SEPARADO de <see cref="CajaCierreEndpointsTests"/>: ese archivo
 /// prueba la derivación del arqueo (<c>Medios</c>) — invariante intacto, no tocado acá. Este
@@ -164,7 +164,9 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
             IdTenant = ctx.IdTenant,
             IdComprobanteVenta = comprobante.Id,
             IdMedioPago = idMedioPago,
-            Importe = importe,
+            // el pago nunca es negativo, incluso para una NCX con Total negativo (mismo criterio
+            // que ck_pagos_comprobante_importe_no_negativo).
+            Importe = Math.Abs(importe),
             Vuelto = 0m,
             CreatedAt = ahora,
             UpdatedAt = ahora
@@ -181,11 +183,12 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
-    private static async Task RegistrarGastoAsync(Contexto ctx, CategoriaGasto categoria, int idMedioPago, decimal importe)
+    private static async Task RegistrarGastoAsync(
+        Contexto ctx, CategoriaGasto categoria, int idMedioPago, decimal importe, int? idArea = null)
     {
         var respuesta = await ctx.Admin.PostAsJsonAsync(
             "/api/gastos",
-            new SolicitudDeGasto(ctx.IdPuntoVenta, categoria, null, null, "Gasto de prueba", null, idMedioPago, null, importe));
+            new SolicitudDeGasto(ctx.IdPuntoVenta, categoria, null, idArea, "Gasto de prueba", null, idMedioPago, null, importe));
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
     }
@@ -208,8 +211,10 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
         await SembrarVentaAsync(
             ctx, turno.Id, idAreaAlmacen, ctx.IdMedioEfectivo, 999m, baseFecha.AddMinutes(3), EstadoComprobante.Anulado);
 
-        await RegistrarGastoAsync(ctx, CategoriaGasto.Proveedor, ctx.IdMedioEfectivo, 30m);
-        await RegistrarGastoAsync(ctx, CategoriaGasto.Sueldos, ctx.IdMedioEfectivo, 70m);
+        await RegistrarGastoAsync(ctx, CategoriaGasto.Proveedor, ctx.IdMedioEfectivo, 30m, idAreaAlmacen);
+        await RegistrarGastoAsync(ctx, CategoriaGasto.Sueldos, ctx.IdMedioEfectivo, 70m, idAreaVerduleria);
+        // sin área declarada — cae en el bucket "Sin área", no se descarta.
+        await RegistrarGastoAsync(ctx, CategoriaGasto.Otros, ctx.IdMedioEfectivo, 15m, idArea: null);
         await RegistrarMovimientoAsync(ctx, turno.Id, TipoMovimientoCaja.Retiro, 40m, "retiro de prueba");
         // el refuerzo NUNCA es un egreso — no debe aparecer en Egresos.
         await RegistrarMovimientoAsync(ctx, turno.Id, TipoMovimientoCaja.Refuerzo, 10m, "refuerzo de prueba");
@@ -235,12 +240,25 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal("Verdulería", verduleria.NombreArea);
         Assert.Equal(200m, verduleria.Total);
 
-        Assert.Equal(2, resumen.Egresos.PorCategoria.Count);
+        Assert.Equal(3, resumen.Egresos.PorCategoria.Count);
         var proveedor = resumen.Egresos.PorCategoria.Single(e => e.Categoria == CategoriaGasto.Proveedor);
         Assert.Equal(30m, proveedor.Total);
         var sueldos = resumen.Egresos.PorCategoria.Single(e => e.Categoria == CategoriaGasto.Sueldos);
         Assert.Equal(70m, sueldos.Total);
+        var otros = resumen.Egresos.PorCategoria.Single(e => e.Categoria == CategoriaGasto.Otros);
+        Assert.Equal(15m, otros.Total);
         Assert.Equal(40m, resumen.Egresos.Retiros);
+
+        Assert.Equal(3, resumen.Egresos.PorArea.Count);
+        var egresoAlmacen = resumen.Egresos.PorArea.Single(e => e.IdArea == idAreaAlmacen);
+        Assert.Equal("Almacén", egresoAlmacen.NombreArea);
+        Assert.Equal(30m, egresoAlmacen.Total);
+        var egresoVerduleria = resumen.Egresos.PorArea.Single(e => e.IdArea == idAreaVerduleria);
+        Assert.Equal("Verdulería", egresoVerduleria.NombreArea);
+        Assert.Equal(70m, egresoVerduleria.Total);
+        var egresoSinArea = resumen.Egresos.PorArea.Single(e => e.IdArea == null);
+        Assert.Equal("Sin área", egresoSinArea.NombreArea);
+        Assert.Equal(15m, egresoSinArea.Total);
     }
 
     [Fact]
@@ -257,6 +275,7 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Null(resumen.UltimoTicket);
         Assert.Empty(resumen.IngresosPorArea);
         Assert.Empty(resumen.Egresos.PorCategoria);
+        Assert.Empty(resumen.Egresos.PorArea);
         Assert.Equal(0m, resumen.Egresos.Retiros);
     }
 
@@ -275,5 +294,27 @@ public class CajaResumenContenidoTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(1, resumen!.CantidadTickets);
         Assert.Equal(unico.Numero, resumen.PrimerTicket!.Numero);
         Assert.Equal(unico.Numero, resumen.UltimoTicket!.Numero);
+    }
+
+    /// <summary>Ingresos por área es un SUM de <c>ItemComprobanteVenta.Total</c> (signado): una
+    /// NCX (devolución) escribe una línea con <c>Total</c> negativo, así que el total del área
+    /// tiene que netear la TX y la NCX en la misma agrupación — no filtrar, no valor absoluto
+    /// (código correcto por inspección; este test lo fija).</summary>
+    [Fact]
+    public async Task LosIngresosPorAreaNeteanUnaTxConSuNcxDelMismoArea()
+    {
+        var ctx = await PrepararAsync(nameof(LosIngresosPorAreaNeteanUnaTxConSuNcxDelMismoArea));
+        var idArea = await SembrarAreaAsync(ctx, "Almacén");
+        var turno = await AbrirTurnoAsync(ctx);
+
+        var baseFecha = DateTimeOffset.UtcNow;
+        await SembrarVentaAsync(ctx, turno.Id, idArea, ctx.IdMedioEfectivo, 100m, baseFecha);
+        await SembrarVentaAsync(ctx, turno.Id, idArea, ctx.IdMedioEfectivo, -30m, baseFecha.AddMinutes(1));
+
+        var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>($"/api/caja/turnos/{turno.Id}/resumen", OpcionesJson);
+        Assert.NotNull(resumen);
+
+        var almacen = resumen!.IngresosPorArea.Single(a => a.IdArea == idArea);
+        Assert.Equal(70m, almacen.Total); // 100 + (-30)
     }
 }

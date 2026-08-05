@@ -51,7 +51,7 @@ function resumenFixture(sobrescribir: Partial<ResumenDeTurno> = {}): ResumenDeTu
     primerTicket: null,
     ultimoTicket: null,
     ingresosPorArea: [],
-    egresos: { porCategoria: [], retiros: 0 },
+    egresos: { porCategoria: [], porArea: [], retiros: 0 },
     ...sobrescribir,
   }
 }

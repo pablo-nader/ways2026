@@ -648,9 +648,13 @@ export const CATEGORIAS_GASTO: { valor: CategoriaGasto; etiqueta: string }[] = [
  * espejo de `EgresoPorCategoria`. */
 export type EgresoPorCategoria = { categoria: CategoriaGasto; total: number }
 
-/** Egresos del turno — gastos por categoría más el total de retiros físicos; nunca incluye
- * refuerzos ni la apertura de cajón, que no son egresos — espejo de `EgresosDeTurno`. */
-export type EgresosDeTurno = { porCategoria: EgresoPorCategoria[]; retiros: number }
+/** Egresos de un área dentro del turno (legacy D6, segundo bloque: "por área") — `idArea` es
+ * `null` para el bucket "Sin área" (gastos sin área declarada) — espejo de `EgresoPorArea`. */
+export type EgresoPorArea = { idArea: number | null; nombreArea: string; total: number }
+
+/** Egresos del turno — gastos por categoría y por área más el total de retiros físicos; nunca
+ * incluye refuerzos ni la apertura de cajón, que no son egresos — espejo de `EgresosDeTurno`. */
+export type EgresosDeTurno = { porCategoria: EgresoPorCategoria[]; porArea: EgresoPorArea[]; retiros: number }
 
 /** Respuesta de `GET /api/caja/turnos/{id}/resumen` (espejo de `ResumenDeTurno`, Slice 4 +
  * follow-up "Resumen parcial D6-content enrichment") — `medios` es el `importeEsperado`
