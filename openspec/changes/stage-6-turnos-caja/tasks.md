@@ -227,27 +227,27 @@ parcial and cierre share one derivation, cierre is one atomic irreversible
 transaction, all 3 racy surfaces this stage introduces are proven.
 **Rollback**: new routes/service only.
 
-- [ ] 4.1 Add `CalculadorDeArqueo` (pure Domain): `ActividadDeMedio`,
+- [x] 4.1 Add `CalculadorDeArqueo` (pure Domain): `ActividadDeMedio`,
   `InsumosDeArqueo`, `LineaDeArqueo` records; per-medio formula
   `pagos(m) − gastos(m) + [m=ancla]×(fondo + refuerzos − retiros −
   vueltosTotales)`; arqueables by row existence, never by value; CC medios
   excluded. *(design: The Derivation; Interfaces/Contracts)*
-- [ ] 4.2 Add `ResolvedorDeMedioDeCajaFisica` (pure): resolve the tenant's
+- [x] 4.2 Add `ResolvedorDeMedioDeCajaFisica` (pure): resolve the tenant's
   unique `Comportamiento = Efectivo` medio over all rows regardless of
   `activo`; `409 caja_sin_medio_efectivo_unico` on 0 or 2+. *(design
   decision 3)*
-- [ ] 4.3 Add `LectorDeMovimientosDelTurno` (Application): 7 fixed grouped
+- [x] 4.3 Add `LectorDeMovimientosDelTurno` (Application): 7 fixed grouped
   queries (pagos por medio, vueltos por medio de comprobantes `emitido`,
   gastos por medio, refuerzos, retiros, fondo, catálogo de medios) → build
   `InsumosDeArqueo`, query count constant in ticket volume. *(design
   decision 5; arqueo-de-cierre / Anulados Are Excluded From The
   Derivation)*
-- [ ] 4.4 Add `ValidadorDeConteos` (Application): declared counts vs.
+- [x] 4.4 Add `ValidadorDeConteos` (Application): declared counts vs.
   `arqueables` — missing medio → `400 arqueo_incompleto`; extra medio →
   `400 medio_sin_actividad_en_el_turno`; CC medio declared → `400
   medio_no_arqueable`. *(design: The Derivation — "Which medios get a
   row")*
-- [ ] 4.5 Add `ServicioDeTurnos.CerrarAsync`: pin `momento` outside the
+- [x] 4.5 Add `ServicioDeTurnos.CerrarAsync`: pin `momento` outside the
   transaction; `EstrategiaSinReintento`; the 6-step transaction — (1)
   `UPDATE turnos_caja SET estado='cerrado' … WHERE estado='abierto'
   RETURNING` (exclusive lock, first statement; 0 rows ⇒ 404 or `409
@@ -257,17 +257,17 @@ transaction, all 3 racy surfaces this stage introduces are proven.
   `movimientos_tesoreria` row (`inicio` = last `final` for the punto de
   venta, `ingreso` = Σ retiros, `egreso` = Σ gastos). *(design: The Cierre
   Transaction — binding statement order; decision 1's declared deviation)*
-- [ ] 4.6 Add `ServicioDeResumenDeTurno`: calls the same
+- [x] 4.6 Add `ServicioDeResumenDeTurno`: calls the same
   `LectorDeMovimientosDelTurno` + `CalculadorDeArqueo` pair, read-only, no
   writes. *(spec: arqueo-de-cierre / Resumen Parcial Uses The Same
   Derivation As Cierre)*
-- [ ] 4.7 Add endpoints: `GET /api/caja/turnos/{id}/resumen`, `POST
+- [x] 4.7 Add endpoints: `GET /api/caja/turnos/{id}/resumen`, `POST
   /api/caja/turnos/{id}/cierre` — `OperacionDePos`. *(design: API Surface)*
-- [ ] 4.8 Update `SuperficieDeAutorizacionTests` allowlist with the 5 new
+- [x] 4.8 Update `SuperficieDeAutorizacionTests` allowlist with the 5 new
   caja/gastos non-GET routes (`POST /api/caja/turnos`, `POST
   …/movimientos`, `POST …/cierre`, `POST /api/gastos`). *(design: API
   Surface — omission guard note)*
-- [ ] 4.9 [P] Unit: `CalculadorDeArqueo` exhaustive over a synthetic
+- [x] 4.9 [P] Unit: `CalculadorDeArqueo` exhaustive over a synthetic
   turno — vuelto on the anchor and on an electronic medio, anulados
   excluded, NCX negatives, gastos per medio, retiros/refuerzos/fondo
   anchor-only, a medio netting to exactly 0 that still gets a row, a CC
@@ -276,29 +276,29 @@ transaction, all 3 racy surfaces this stage introduces are proven.
   only on efectivo. *(design: Testing Strategy — Unit (Domain); spec:
   arqueo-de-cierre / Importe Esperado Derivation Per Medio, all 3
   scenarios; Arqueo Rows Only For Medios With Activity, both scenarios)*
-- [ ] 4.10 [P] Unit: `ResolvedorDeMedioDeCajaFisica` — 0 / 1 / 2 efectivo
+- [x] 4.10 [P] Unit: `ResolvedorDeMedioDeCajaFisica` — 0 / 1 / 2 efectivo
   medios.
-- [ ] 4.11 Integration (atomicity): force a failure at each of the 6 cierre
+- [x] 4.11 Integration (atomicity): force a failure at each of the 6 cierre
   steps ⇒ turno still `abierto`, zero `arqueos_turno`, zero
   `movimientos_tesoreria`. *(spec: arqueo-de-cierre / A failed cierre
   leaves the turno open with no side effects; tesoreria / A failed cierre
   leaves no tesorería row)*
-- [ ] 4.12 Integration (concurrency): two concurrent cierres of the same
+- [x] 4.12 Integration (concurrency): two concurrent cierres of the same
   turno ⇒ exactly one success + one `409 turno_ya_cerrado`. *(spec:
   arqueo-de-cierre / Closing an already-closed turno is rejected — bound to
   `turno_ya_cerrado` per Orchestrator Decision 2 above)*
-- [ ] 4.13 Integration (derivation identity): `GET …/resumen` immediately
+- [x] 4.13 Integration (derivation identity): `GET …/resumen` immediately
   before a cierre returns per-medio expectations byte-identical to the
   `arqueos_turno.importe_esperado` written by that cierre. *(spec:
   arqueo-de-cierre / Resumen parcial matches what cierre would compute)*
-- [ ] 4.14 Integration (budget): resumen over turnos with 2/50/200 tickets
+- [x] 4.14 Integration (budget): resumen over turnos with 2/50/200 tickets
   issues the same command count; `DbCommand` interceptor. *(design: Testing
   Strategy — Integration (budget))*
-- [ ] 4.15 Integration (parity/shape): grep assertion — no cierre request
+- [x] 4.15 Integration (parity/shape): grep assertion — no cierre request
   DTO field named `total`/`esperado`/`importe_esperado`. *(spec:
   arqueo-de-cierre / No request shape accepts a total; proposal: Success
   Criteria)*
-- [ ] 4.16 [P] Integration: cierre writes one `arqueos_turno` row per medio
+- [x] 4.16 [P] Integration: cierre writes one `arqueos_turno` row per medio
   with activity, none for a zero-activity medio, none for cuenta corriente;
   tesorería chains correctly across a first-ever and a second cierre;
   cierre payload with only declared counts accepted. *(spec:
@@ -307,7 +307,7 @@ transaction, all 3 racy surfaces this stage introduces are proven.
   row, A cierre request with only declared counts is accepted; tesoreria /
   First-ever cierre starts from zero, A second cierre chains from the
   first's final, Cierre never writes more than one tesorería row)*
-- [ ] 4.17 Wire the `FOR SHARE` turno guard into the two ledger writers that
+- [x] 4.17 Wire the `FOR SHARE` turno guard into the two ledger writers that
   predate this slice: `ServicioDeTurnos.RegistrarMovimientoAsync` and
   `ServicioDeGastos.RegistrarAsync` re-check the turno via `SELECT … FOR
   SHARE` as the first statement of their write transaction (same discipline
@@ -316,12 +316,12 @@ transaction, all 3 racy surfaces this stage introduces are proven.
   derived — the exact D7 class design decision 1 kills. *(design: Technical
   Approach — "every path that writes into a turno"; judgment-day slice-2
   finding, judge B)*
-- [ ] 4.18 Integration (concurrency): rendezvous race — a movimiento (and a
+- [x] 4.18 Integration (concurrency): rendezvous race — a movimiento (and a
   gasto) racing a cierre of the same turno ⇒ either the write lands before
   the cierre and its importe is counted in the arqueo, or it loses and gets
   `409 turno_no_abierto`; never an uncounted write into a closed turno.
   *(design decision 1; same rendezvous pattern as task 2.8)*
-- [ ] 4.19 Regression: Slices 1–3 suites unedited and green.
+- [x] 4.19 Regression: Slices 1–3 suites unedited and green.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~CalculadorDeArqueo|FullyQualifiedName~ServicioDeTurnos.CerrarAsync|FullyQualifiedName~Arqueo`
 
