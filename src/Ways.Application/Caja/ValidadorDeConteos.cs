@@ -18,6 +18,28 @@ public static class ValidadorDeConteos
         IReadOnlyList<LineaDeArqueo> arqueables, IReadOnlyList<ActividadDeMedio> actividad,
         IReadOnlyList<ConteoDeclarado> declarados)
     {
+        // Chequeos de forma del payload, ANTES de comparar contra los arqueables del servidor: un
+        // idMedioPago duplicado reventaría con un ArgumentException genérico (500) al armar el
+        // diccionario en ServicioDeTurnos.EjecutarCierreAsync si llegara hasta ahí sin control.
+        var duplicado = declarados
+            .GroupBy(d => d.IdMedioPago)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicado is not null)
+        {
+            throw new ErrorDominio(
+                "conteo_duplicado",
+                "Declaraste el conteo de un mismo medio más de una vez.",
+                400);
+        }
+
+        if (declarados.Any(d => d.ImporteDeclarado < 0))
+        {
+            throw new ErrorDominio(
+                "conteo_invalido",
+                "El conteo declarado no puede ser negativo.",
+                400);
+        }
+
         var idsArqueables = arqueables.Select(a => a.IdMedioPago).ToHashSet();
         var idsDeclarados = declarados.Select(d => d.IdMedioPago).ToHashSet();
 
