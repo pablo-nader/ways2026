@@ -8,6 +8,7 @@ import {
   filaPagoACuentaVacia,
   filasAPagosACuentaParaCalculo,
   medioFisicoParaPagoACuenta,
+  rangoUltimoMes,
   validarPagoACuentaLocal,
   type FilaPagoACuenta,
   type PagoACuentaParaCalculo,
@@ -43,27 +44,58 @@ function pagoFixture(sobrescribir: Partial<PagoACuentaParaCalculo> = {}): PagoAC
   }
 }
 
+// Espeja `desplazamientoUtcLocal` (no exportada) para calcular el offset esperado con el MISMO
+// criterio que la implementación, sin fijar una zona horaria — el offset real depende de la
+// máquina donde corre el test (regresión: los strings sin offset fallaban en ART pero pasaban en
+// UTC, un test que fija "-03:00" a mano repetiría el mismo error en otra zona horaria).
+function offsetEsperado(anio: number, mes: number, dia: number): string {
+  const minutos = new Date(anio, mes - 1, dia).getTimezoneOffset()
+  const signo = minutos > 0 ? '-' : '+'
+  const minutosAbsolutos = Math.abs(minutos)
+  const horas = String(Math.floor(minutosAbsolutos / 60)).padStart(2, '0')
+  const restoMinutos = String(minutosAbsolutos % 60).padStart(2, '0')
+  return `${signo}${horas}:${restoMinutos}`
+}
+
 describe('construirQueryEstadoDeCuenta', () => {
   it('sin ningún filtro no manda query string — el servidor aplica su default de último mes', () => {
     expect(construirQueryEstadoDeCuenta('', '', false)).toBe('')
   })
 
-  it('desde solo expande al borde inicial del día', () => {
-    expect(construirQueryEstadoDeCuenta('2026-07-01', '', false)).toBe('?desde=2026-07-01T00%3A00%3A00')
+  it('desde solo expande al borde inicial del día, con el offset horario local del navegador', () => {
+    const offset = offsetEsperado(2026, 7, 1)
+    const esperado = new URLSearchParams({ desde: `2026-07-01T00:00:00${offset}` }).toString()
+    expect(construirQueryEstadoDeCuenta('2026-07-01', '', false)).toBe(`?${esperado}`)
   })
 
-  it('hasta solo expande al borde final del día', () => {
-    expect(construirQueryEstadoDeCuenta('', '2026-07-31', false)).toBe('?hasta=2026-07-31T23%3A59%3A59.999')
+  it('hasta solo expande al borde final del día, con el offset horario local del navegador', () => {
+    const offset = offsetEsperado(2026, 7, 31)
+    const esperado = new URLSearchParams({ hasta: `2026-07-31T23:59:59.999${offset}` }).toString()
+    expect(construirQueryEstadoDeCuenta('', '2026-07-31', false)).toBe(`?${esperado}`)
   })
 
-  it('desde y hasta juntos', () => {
-    const query = construirQueryEstadoDeCuenta('2026-07-01', '2026-07-31', false)
-    expect(query).toContain('desde=2026-07-01T00%3A00%3A00')
-    expect(query).toContain('hasta=2026-07-31T23%3A59%3A59.999')
+  it('desde y hasta juntos, cada uno con su propio offset', () => {
+    const offsetDesde = offsetEsperado(2026, 7, 1)
+    const offsetHasta = offsetEsperado(2026, 7, 31)
+    const query = decodeURIComponent(construirQueryEstadoDeCuenta('2026-07-01', '2026-07-31', false))
+    expect(query).toContain(`desde=2026-07-01T00:00:00${offsetDesde}`)
+    expect(query).toContain(`hasta=2026-07-31T23:59:59.999${offsetHasta}`)
   })
 
   it('historico gana sobre desde/hasta — ninguno de los dos viaja', () => {
     expect(construirQueryEstadoDeCuenta('2026-07-01', '2026-07-31', true)).toBe('?historico=true')
+  })
+})
+
+describe('rangoUltimoMes', () => {
+  it('desde = hoy − 1 mes, hasta = hoy (fechas locales, mismo default que el servidor)', () => {
+    const ahora = new Date(2026, 7, 15) // 15 de agosto de 2026 (mes 0-indexado)
+    expect(rangoUltimoMes(ahora)).toEqual({ desde: '2026-07-15', hasta: '2026-08-15' })
+  })
+
+  it('cruza el año cuando el mes actual es enero', () => {
+    const ahora = new Date(2026, 0, 10)
+    expect(rangoUltimoMes(ahora)).toEqual({ desde: '2025-12-10', hasta: '2026-01-10' })
   })
 })
 

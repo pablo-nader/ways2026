@@ -50,6 +50,33 @@ function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoLi
   }
 }
 
+function clienteFixture(sobrescribir: Partial<ClienteListado> = {}): ClienteListado {
+  return {
+    id: 5,
+    numero: 5,
+    nombre: 'Juan',
+    apellido: 'Pérez',
+    razonSocial: null,
+    tipoDocumento: null,
+    numeroDocumento: null,
+    idCondicionFiscal: 1,
+    nacimiento: null,
+    domicilio: null,
+    telefono: null,
+    celular: null,
+    email: null,
+    observaciones: null,
+    idListaPrecio: 1,
+    limiteCredito: 5000,
+    creditoIlimitado: false,
+    saldo: 0,
+    activo: true,
+    idEmpresa: null,
+    esConsumidorFinal: false,
+    ...sobrescribir,
+  }
+}
+
 function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): PuntoVentaListado {
   return {
     id: 7,
@@ -127,13 +154,15 @@ function renderPantalla(idCliente: number | string = 5, state?: { cliente: Clien
   )
 }
 
-/** Rutas comunes a toda la pantalla (medios de pago + puntos de venta + estado de cuenta +
- * vuelto_maximo) — un override toma prioridad sobre el default para que un test pueda reemplazar
- * cualquiera de estas rutas base. */
+/** Rutas comunes a toda la pantalla (cliente + medios de pago + puntos de venta + estado de
+ * cuenta + vuelto_maximo) — un override toma prioridad sobre el default para que un test pueda
+ * reemplazar cualquiera de estas rutas base. `GET /clientes/:id` cubre el fetch de identidad
+ * cuando no llega `location.state` (Fix 2: único camino del Vendedor / cualquier refresh). */
 function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     const propia = sobrescribirGet?.(ruta)
     if (propia) return propia
+    if (/^\/clientes\/\d+$/.test(ruta)) return Promise.resolve<ClienteListado>(clienteFixture())
     if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
     if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
     if (ruta.startsWith('/parametros/vuelto_maximo')) {
@@ -182,7 +211,7 @@ describe('CuentaCorriente — header y ledger', () => {
     })
     renderPantalla()
 
-    await screen.findByText('Cliente #5', { exact: false })
+    await screen.findByText('#0005 — Juan Pérez', { exact: false })
     expect(screen.getAllByText('Ilimitado')).toHaveLength(2)
   })
 
@@ -216,38 +245,69 @@ describe('CuentaCorriente — header y ledger', () => {
 
   it('el Consumidor Final (conocido por state de navegación) deja "Ingresar pago" deshabilitado', async () => {
     mockearRutasBase()
-    const cf: ClienteListado = {
-      id: 1,
-      numero: 1,
-      nombre: 'Consumidor Final',
-      apellido: null,
-      razonSocial: null,
-      tipoDocumento: null,
-      numeroDocumento: null,
-      idCondicionFiscal: 1,
-      nacimiento: null,
-      domicilio: null,
-      telefono: null,
-      celular: null,
-      email: null,
-      observaciones: null,
-      idListaPrecio: 1,
-      limiteCredito: 0,
-      creditoIlimitado: false,
-      saldo: 0,
-      activo: true,
-      idEmpresa: null,
-      esConsumidorFinal: true,
-    }
+    const cf = clienteFixture({ id: 1, numero: 1, nombre: 'Consumidor Final', apellido: null, esConsumidorFinal: true })
 
     renderPantalla(1, { cliente: cf })
 
     await screen.findByText('$500,00')
     expect(screen.getByRole('button', { name: 'Ingresar pago' })).toBeDisabled()
   })
+
+  it('sin state de navegación (único camino del Vendedor / cualquier refresh) busca el cliente por GET y muestra el nombre real, no el placeholder', async () => {
+    mockearRutasBase()
+    renderPantalla()
+
+    await screen.findByText('#0005 — Juan Pérez', { exact: false })
+    expect(screen.queryByText('Cliente #5', { exact: false })).not.toBeInTheDocument()
+    expect(apiGetMock.mock.calls.some((c) => c[0] === '/clientes/5')).toBe(true)
+  })
+
+  it('un Consumidor Final llegado por URL directa (sin state) también deja "Ingresar pago" deshabilitado con el aviso de CF, una vez resuelta la identidad', async () => {
+    const cf = clienteFixture({ esConsumidorFinal: true, nombre: 'Consumidor', apellido: 'Final' })
+    mockearRutasBase((ruta) => (/^\/clientes\/\d+$/.test(ruta) ? Promise.resolve<ClienteListado>(cf) : undefined))
+
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Ingresar pago' })).toBeDisabled())
+    expect(screen.getByRole('button', { name: 'Ingresar pago' })).toHaveAttribute(
+      'title',
+      'El Consumidor Final no tiene cuenta corriente.',
+    )
+  })
 })
 
 describe('CuentaCorriente — filtros (react-async-state regla 2)', () => {
+  it('la ventana por defecto (design.md: "último mes") se precarga en Desde/Hasta y viaja en la consulta inicial', async () => {
+    mockearRutasBase()
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+
+    const inputDesde = screen.getByLabelText('Desde') as HTMLInputElement
+    const inputHasta = screen.getByLabelText('Hasta') as HTMLInputElement
+    expect(inputDesde.value).not.toBe('')
+    expect(inputHasta.value).not.toBe('')
+
+    const llamadaEstado = apiGetMock.mock.calls.find((c) => (c[0] as string).includes('/cuenta-corriente'))
+    const query = decodeURIComponent(llamadaEstado?.[0] as string)
+    expect(query).toContain(`desde=${inputDesde.value}T00:00:00`)
+    expect(query).toContain(`hasta=${inputHasta.value}T23:59:59.999`)
+  })
+
+  it('"Ver histórico completo" limpia los inputs Desde/Hasta — la ventana en efecto (sin recorte) queda visible', async () => {
+    mockearRutasBase()
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+    expect((screen.getByLabelText('Desde') as HTMLInputElement).value).not.toBe('')
+
+    await userEvent.click(screen.getByLabelText('Ver histórico completo'))
+
+    expect((screen.getByLabelText('Desde') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('Hasta') as HTMLInputElement).value).toBe('')
+  })
+
   it('los filtros disparan un nuevo GET; una respuesta obsoleta que llega tarde nunca pisa la más reciente', async () => {
     let llamadas = 0
     let resolverSegunda: (v: EstadoDeCuenta) => void = () => {}
@@ -404,5 +464,9 @@ describe('CuentaCorriente — modal de pago a cuenta', () => {
     await screen.findByText('Ingresar pago a cuenta')
     // sin reintento automático: reabrir el turno no reenvía el pago solo.
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/clientes/5/cuenta-corriente/pagos')).toHaveLength(1)
+    // los datos del pago que ya se habían cargado en el modal siguen ahí — no se pierden al
+    // recuperarse del gate de turno (el JSDoc de PanelAperturaDeTurnoEnModal lo promete).
+    expect(screen.getByLabelText('Medio de pago')).toHaveValue('1')
+    expect(screen.getByLabelText('Importe')).toHaveValue(500)
   })
 })

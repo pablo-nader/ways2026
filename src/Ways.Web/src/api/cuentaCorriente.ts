@@ -22,20 +22,56 @@ function redondear(valor: number): number {
   return Math.round((valor + Number.EPSILON) * 100) / 100
 }
 
+/** Offset UTC del navegador (`±HH:MM`) para la fecha local dada — el servidor corre en UTC
+ * (Docker) mientras el local opera en ART (UTC-3); sin este offset explícito, un `desde`/`hasta`
+ * sin zona se interpreta como UTC del lado del servidor y un movimiento nocturno queda fuera del
+ * día que el cajero ve en pantalla. Se calcula por fecha (no una única vez) para no romper en un
+ * cambio de DST dentro del rango. */
+function desplazamientoUtcLocal(anio: number, mes: number, dia: number): string {
+  const minutos = new Date(anio, mes - 1, dia).getTimezoneOffset()
+  const signo = minutos > 0 ? '-' : '+'
+  const minutosAbsolutos = Math.abs(minutos)
+  const horas = String(Math.floor(minutosAbsolutos / 60)).padStart(2, '0')
+  const restoMinutos = String(minutosAbsolutos % 60).padStart(2, '0')
+  return `${signo}${horas}:${restoMinutos}`
+}
+
+function fechaIsoConOffset(fechaIso: string, horaLimite: string): string {
+  const [anio, mes, dia] = fechaIso.split('-').map(Number)
+  return `${fechaIso}T${horaLimite}${desplazamientoUtcLocal(anio, mes, dia)}`
+}
+
 /** Arma el query string de `GET …/cuenta-corriente` — `historico` gana sobre `desde`/`hasta`
  * (mismo criterio que `ObtenerEstadoDeCuentaAsync`); un `desde`/`hasta` vacío se omite (el
  * servidor aplica su propio default de último mes). Un `desde`/`hasta` de un `<input type="date">`
- * (`YYYY-MM-DD`) se expande a los bordes inclusivos del día. */
+ * (`YYYY-MM-DD`) se expande a los bordes inclusivos del día, con el offset horario local del
+ * navegador (nunca un `Z`/sin-offset que el servidor interpretaría como UTC). */
 export function construirQueryEstadoDeCuenta(desde: string, hasta: string, historico: boolean): string {
   const parametros = new URLSearchParams()
   if (historico) {
     parametros.set('historico', 'true')
   } else {
-    if (desde) parametros.set('desde', `${desde}T00:00:00`)
-    if (hasta) parametros.set('hasta', `${hasta}T23:59:59.999`)
+    if (desde) parametros.set('desde', fechaIsoConOffset(desde, '00:00:00'))
+    if (hasta) parametros.set('hasta', fechaIsoConOffset(hasta, '23:59:59.999'))
   }
   const cadena = parametros.toString()
   return cadena ? `?${cadena}` : ''
+}
+
+function fechaLocalAIso(fecha: Date): string {
+  const anio = fecha.getFullYear()
+  const mes = String(fecha.getMonth() + 1).padStart(2, '0')
+  const dia = String(fecha.getDate()).padStart(2, '0')
+  return `${anio}-${mes}-${dia}`
+}
+
+/** Ventana por defecto de la pantalla (design.md, decisión 9: "the screen sends last-month by
+ * default") — replica en el cliente el default del servidor (`hoy − 1 mes` → `hoy`) para que los
+ * inputs de filtro nunca queden vacíos mostrando una ventana invisible. */
+export function rangoUltimoMes(ahora: Date = new Date()): { desde: string; hasta: string } {
+  const hasta = fechaLocalAIso(ahora)
+  const desde = fechaLocalAIso(new Date(ahora.getFullYear(), ahora.getMonth() - 1, ahora.getDate()))
+  return { desde, hasta }
 }
 
 export const clienteDeCuentaCorriente = {

@@ -14,6 +14,7 @@ export const clienteDeClientes = {
     const cadena = parametros.toString()
     return api.get<PaginaDe<ClienteListado>>(`/clientes${cadena ? `?${cadena}` : ''}`)
   },
+  obtener: (id: number) => api.get<ClienteListado>(`/clientes/${id}`),
   crear: (datos: AltaCliente) => api.post<ClienteListado>('/clientes', datos),
   actualizar: (id: number, datos: EdicionCliente) => api.put<ClienteListado>(`/clientes/${id}`, datos),
   eliminar: (id: number) => api.delete(`/clientes/${id}`),

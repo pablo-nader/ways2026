@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from 'react-router'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
+import { clienteDeClientes } from '../api/clientes'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import {
   aSolicitudDePagoACuenta,
@@ -13,6 +14,7 @@ import {
   filaPagoACuentaVacia,
   filasAPagosACuentaParaCalculo,
   medioFisicoParaPagoACuenta,
+  rangoUltimoMes,
   validarPagoACuentaLocal,
   type FilaPagoACuenta,
 } from '../api/cuentaCorriente'
@@ -221,9 +223,12 @@ function ModalPagoACuenta({ idCliente, puntosVenta, medios, header, onCerrar, on
   // regla 2: cada cambio de punto de venta dispara una nueva resolución de vuelto_maximo — una
   // respuesta desactualizada nunca puede pisar la más reciente.
   useEffect(() => {
+    // El botón de pago no puede correr con el vuelto_maximo del PV anterior mientras se resuelve
+    // el nuevo — se limpia ANTES de cualquier chequeo, no solo en la rama sin PV.
+    setParametros(null)
+
     const puntoVentaSeleccionado = puntosVenta.find((p) => p.id === idPuntoVenta) ?? null
     if (!puntoVentaSeleccionado) {
-      setParametros(null)
       setErrorParametros('')
       return
     }
@@ -494,6 +499,7 @@ function ModalPagoACuenta({ idCliente, puntosVenta, medios, header, onCerrar, on
 type PropsPantalla = {
   idCliente: number
   clienteInfo: ClienteListado | null
+  cargandoCliente: boolean
   medios: MedioPagoListado[] | null
   errorMedios: string
   puntosVenta: PuntoVentaListado[] | null
@@ -502,9 +508,21 @@ type PropsPantalla = {
 
 /** Remontada por `key={idCliente}` (regla 8) — ningún estado de acá (filtros, ledger, modal de
  * pago) sobrevive a un cambio de cliente. */
-function PantallaCuentaCorriente({ idCliente, clienteInfo, medios, errorMedios, puntosVenta, errorPuntosVenta }: PropsPantalla) {
-  const [desde, setDesde] = useState('')
-  const [hasta, setHasta] = useState('')
+function PantallaCuentaCorriente({
+  idCliente,
+  clienteInfo,
+  cargandoCliente,
+  medios,
+  errorMedios,
+  puntosVenta,
+  errorPuntosVenta,
+}: PropsPantalla) {
+  // design.md decisión 9: "the screen sends last-month by default" — se precarga acá para que los
+  // inputs de filtro nunca muestren una ventana vacía mientras el default real (calculado por
+  // `construirQueryEstadoDeCuenta`, Fix 1) ya viaja en la consulta.
+  const [ventanaInicial] = useState(() => rangoUltimoMes())
+  const [desde, setDesde] = useState(ventanaInicial.desde)
+  const [hasta, setHasta] = useState(ventanaInicial.hasta)
   const [historico, setHistorico] = useState(false)
 
   const [estado, setEstado] = useState<EstadoDeCuenta | null>(null)
@@ -545,10 +563,21 @@ function PantallaCuentaCorriente({ idCliente, clienteInfo, medios, errorMedios, 
 
   const esConsumidorFinal = clienteInfo?.esConsumidorFinal ?? false
   const puedeIngresarPago =
-    medios !== null && errorMedios === '' && puntosVenta !== null && errorPuntosVenta === '' && puntosVenta.length > 0 && !esConsumidorFinal
+    !cargandoCliente &&
+    medios !== null &&
+    errorMedios === '' &&
+    puntosVenta !== null &&
+    errorPuntosVenta === '' &&
+    puntosVenta.length > 0 &&
+    !esConsumidorFinal
 
+  // Mientras la identidad del cliente todavía se está resolviendo (sin `location.state`, p. ej. el
+  // único camino del Vendedor o cualquier refresh) el gate de Consumidor Final falla cerrado: el
+  // botón queda deshabilitado hasta confirmar el dato real, nunca habilitado por default.
   let motivoBloqueoPago: string | undefined
-  if (esConsumidorFinal) {
+  if (cargandoCliente) {
+    motivoBloqueoPago = 'Cargando los datos del cliente…'
+  } else if (esConsumidorFinal) {
     motivoBloqueoPago = 'El Consumidor Final no tiene cuenta corriente.'
   } else if (!puedeIngresarPago) {
     motivoBloqueoPago = 'No se pudieron cargar los datos necesarios para registrar un pago.'
@@ -639,7 +668,16 @@ function PantallaCuentaCorriente({ idCliente, clienteInfo, medios, errorMedios, 
                     type="checkbox"
                     className="form-check-input rounded-0"
                     checked={historico}
-                    onChange={(e) => setHistorico(e.target.checked)}
+                    onChange={(e) => {
+                      const marcado = e.target.checked
+                      setHistorico(marcado)
+                      // "Ver histórico" limpia la ventana — los inputs, deshabilitados y vacíos,
+                      // reflejan que la consulta ya no tiene ningún recorte de fecha.
+                      if (marcado) {
+                        setDesde('')
+                        setHasta('')
+                      }
+                    }}
                   />
                   <label className="form-check-label" htmlFor="cc-filtro-historico">
                     Ver histórico completo
@@ -722,13 +760,53 @@ export function CuentaCorriente() {
   const idClienteValido = id !== undefined && Number.isFinite(idCliente)
 
   const location = useLocation()
-  const clienteInfo = (location.state as { cliente?: ClienteListado } | null)?.cliente ?? null
+  const clienteDeState = (location.state as { cliente?: ClienteListado } | null)?.cliente ?? null
+
+  // El Vendedor SIEMPRE llega acá sin `location.state` (URL directa, único camino del rol) y
+  // cualquier refresh lo pierde también — sin este fetch, el header mentía "Cliente #N" y el gate
+  // de Consumidor Final quedaba deshabilitado del lado del cliente (el servidor lo sigue
+  // rechazando, pero el botón se veía habilitado). Generación-gateado (regla 2): mientras se
+  // resuelve, `puedeIngresarPago` falla cerrado vía `cargandoCliente`.
+  const [clienteInfo, setClienteInfo] = useState<ClienteListado | null>(clienteDeState)
+  const [cargandoCliente, setCargandoCliente] = useState(clienteDeState === null)
+  const generacionClienteRef = useRef(0)
 
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
   const [errorMedios, setErrorMedios] = useState('')
 
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
   const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
+
+  useEffect(() => {
+    if (clienteDeState !== null || !idClienteValido) {
+      setClienteInfo(clienteDeState)
+      setCargandoCliente(false)
+      return
+    }
+
+    let vigente = true
+    const miGeneracion = (generacionClienteRef.current += 1)
+    setCargandoCliente(true)
+
+    clienteDeClientes
+      .obtener(idCliente)
+      .then((cliente) => {
+        if (!vigente || generacionClienteRef.current !== miGeneracion) return
+        setClienteInfo(cliente)
+      })
+      .catch(() => {
+        if (!vigente || generacionClienteRef.current !== miGeneracion) return
+        setClienteInfo(null)
+      })
+      .finally(() => {
+        if (!vigente || generacionClienteRef.current !== miGeneracion) return
+        setCargandoCliente(false)
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [idCliente, idClienteValido, clienteDeState])
 
   useEffect(() => {
     let vigente = true
@@ -780,6 +858,7 @@ export function CuentaCorriente() {
       key={idCliente}
       idCliente={idCliente}
       clienteInfo={clienteInfo}
+      cargandoCliente={cargandoCliente}
       medios={medios}
       errorMedios={errorMedios}
       puntosVenta={puntosVenta}
