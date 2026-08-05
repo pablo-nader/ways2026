@@ -16,6 +16,7 @@ import {
   filaPagoACuentaVacia,
   filasAPagosACuentaParaCalculo,
   medioFisicoParaPagoACuenta,
+  parsearDetalleDeActualizacionPrecios,
   rangoUltimoMes,
   reliquidacionEsNoOp,
   saldoResultanteDeAjuste,
@@ -26,6 +27,7 @@ import {
 import type {
   ClienteListado,
   ComprobanteEmitido,
+  DetalleDeConsumo,
   EstadoDeCuenta,
   EstadoDeCuentaHeader,
   MedioPagoAlta,
@@ -73,6 +75,76 @@ function formatearFechaHora(iso: string): string {
 
 function formatearDisponibilidad(valor: number | null): string {
   return valor === null ? 'Ilimitado' : formatearMoneda(valor)
+}
+
+/**
+ * Detalle auditable por consumo (Fix 1: preview/commit de la reliquidación traían `detalle` pero
+ * nunca se mostraba). Cada consumo queda siempre visible (id + delta); las líneas — histórico →
+ * actual, delta y el `motivo` de las omitidas — quedan en un `<details>` expandible para que la
+ * lista no se coma la pantalla cuando el cap de 500 trae muchos consumos.
+ */
+function DetalleDeConsumosDeReliquidacion({ detalle }: { detalle: DetalleDeConsumo[] }) {
+  if (detalle.length === 0) return null
+  return (
+    <div className="mb-3">
+      <div className="small text-muted mb-1">Detalle por consumo</div>
+      {detalle.map((consumo) => (
+        <details key={consumo.idMovimiento} className="mb-1">
+          <summary>
+            Movimiento #{consumo.idMovimiento} — {formatearMoneda(consumo.delta)}
+          </summary>
+          <table className="table table-sm table-bordered mb-0 mt-1">
+            <thead>
+              <tr>
+                <th>Artículo</th>
+                <th>Cant.</th>
+                <th>Precio histórico</th>
+                <th>Precio actual</th>
+                <th>Delta</th>
+                <th>Motivo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {consumo.lineas.map((linea, indice) => (
+                <tr key={indice}>
+                  <td>{linea.idArticulo ?? '—'}</td>
+                  <td>{linea.cantidad}</td>
+                  <td>{formatearMoneda(linea.precioHistorico)}</td>
+                  <td>{linea.precioActual === null ? '—' : formatearMoneda(linea.precioActual)}</td>
+                  <td>{formatearMoneda(linea.delta)}</td>
+                  <td>{linea.motivo ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      ))}
+    </div>
+  )
+}
+
+/** Detalle del ledger para un movimiento `ActualizacionPrecios` (Fix 1b) — el `detalle` guardado
+ * es el mismo JSON auditable de la reliquidación, nunca un texto libre: se parsea de forma
+ * defensiva y se muestra un resumen legible; un JSON malformado cae al texto crudo, nunca rompe la
+ * fila. */
+function DetalleDeMovimientoDeActualizacionPrecios({ detalle }: { detalle: string | null }) {
+  const consumos = parsearDetalleDeActualizacionPrecios(detalle)
+  if (consumos === null) return <>{detalle ?? '—'}</>
+  if (consumos.length === 0) return <>Sin consumos re-preciados.</>
+  return (
+    <details>
+      <summary>
+        {consumos.length} consumo{consumos.length === 1 ? '' : 's'} re-preciado{consumos.length === 1 ? '' : 's'}
+      </summary>
+      <ul className="mb-0 ps-3 small">
+        {consumos.map((consumo) => (
+          <li key={consumo.idMovimiento}>
+            Movimiento #{consumo.idMovimiento}: {formatearMoneda(consumo.delta)}
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
 }
 
 function nombreDeCliente(idCliente: number, cliente: ClienteListado | null): string {
@@ -529,6 +601,10 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
   )
   const [importe, setImporte] = useState('')
   const [detalle, setDetalle] = useState('')
+  // Fix 2 (mismo patrón que la reliquidación): un ajuste manual también modifica el saldo del
+  // cliente de forma directa — la confirmación explícita evita que un click apurado dispare un
+  // ajuste sin que el supervisor haya leído el importe/detalle que está a punto de registrar.
+  const [confirmado, setConfirmado] = useState(false)
 
   const [registrando, setRegistrando] = useState(false)
   const registrandoRef = useRef(false)
@@ -536,6 +612,7 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
 
   const importeNumerico = importe.trim() === '' ? Number.NaN : Number(importe)
   const saldoResultante = Number.isFinite(importeNumerico) ? saldoResultanteDeAjuste(header.saldo, importeNumerico) : null
+  const puedeRegistrar = !registrando && confirmado
 
   function cambiarPuntoVenta(id: number) {
     if (registrandoRef.current) return
@@ -546,6 +623,7 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
   async function registrarAjuste() {
     // regla 9: guard de reentrancia de primera línea.
     if (registrandoRef.current) return
+    if (!puedeRegistrar) return
 
     const rechazo = validarAjusteLocal({ importe: importeNumerico, detalle })
     if (rechazo) {
@@ -644,12 +722,26 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
 
               <div className="small text-muted">Saldo actual: {formatearMoneda(header.saldo)}</div>
               {saldoResultante !== null && <div className="fs-6">Saldo resultante: {formatearMoneda(saldoResultante)}</div>}
+
+              <div className="form-check mt-3">
+                <input
+                  id="cc-ajuste-confirmacion"
+                  type="checkbox"
+                  className="form-check-input rounded-0"
+                  checked={confirmado}
+                  disabled={registrando}
+                  onChange={(e) => setConfirmado(e.target.checked)}
+                />
+                <label className="form-check-label" htmlFor="cc-ajuste-confirmacion">
+                  Entiendo que este ajuste modifica el saldo del cliente.
+                </label>
+              </div>
             </div>
             <div className="modal-footer">
               <button type="button" className="btn btn-outline-secondary rounded-0" disabled={registrando} onClick={onCerrar}>
                 Cancelar
               </button>
-              <button type="button" className="btn btn-primary rounded-0" disabled={registrando} onClick={registrarAjuste}>
+              <button type="button" className="btn btn-primary rounded-0" disabled={!puedeRegistrar} onClick={registrarAjuste}>
                 {registrando ? 'Registrando…' : 'Registrar ajuste'}
               </button>
             </div>
@@ -780,7 +872,9 @@ function ModalReliquidacion({ idCliente, puntosVenta, onCerrar, onAntesDeEscribi
                   <div className="row g-3 mb-3">
                     <div className="col-md-6">
                       <div className="small text-muted">Delta estimado</div>
-                      <div className="fs-6">{formatearMoneda(preview.delta)}</div>
+                      <div className="fs-6" data-testid="cc-reliq-delta-estimado">
+                        {formatearMoneda(preview.delta)}
+                      </div>
                     </div>
                     <div className="col-md-6">
                       <div className="small text-muted">Consumos cubiertos</div>
@@ -793,6 +887,8 @@ function ModalReliquidacion({ idCliente, puntosVenta, onCerrar, onAntesDeEscribi
                       reliquidación de nuevo después.
                     </div>
                   )}
+
+                  <DetalleDeConsumosDeReliquidacion detalle={preview.detalle} />
 
                   <div className="mb-3" style={{ maxWidth: 320 }}>
                     <label className="form-label" htmlFor="cc-reliq-punto-venta">
@@ -989,7 +1085,8 @@ function PantallaCuentaCorriente({
         {errorEstado && <div className="alert alert-danger rounded-0">{errorEstado}</div>}
         {(errorCliente || errorMedios || errorPuntosVenta) && (
           <div className="alert alert-warning rounded-0 py-1 px-2 small">
-            {errorCliente || errorMedios || errorPuntosVenta} No se puede ingresar un pago hasta que esto se resuelva.
+            {errorCliente || errorMedios || errorPuntosVenta} No se pueden registrar operaciones de cuenta corriente
+            hasta que esto se resuelva.
           </div>
         )}
 
@@ -1132,7 +1229,13 @@ function PantallaCuentaCorriente({
                     <tr key={m.id}>
                       <td>{formatearFechaHora(m.fecha)}</td>
                       <td>{etiquetaDeMovimiento(m)}</td>
-                      <td>{m.detalle ?? '—'}</td>
+                      <td>
+                        {m.tipo === 'ActualizacionPrecios' ? (
+                          <DetalleDeMovimientoDeActualizacionPrecios detalle={m.detalle} />
+                        ) : (
+                          (m.detalle ?? '—')
+                        )}
+                      </td>
                       <td className="text-end">{formatearMoneda(m.importe)}</td>
                       <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
                     </tr>

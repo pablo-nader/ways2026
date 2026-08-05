@@ -11,6 +11,8 @@ import { api } from './cliente'
 import type {
   ComportamientoMedioPago,
   ComprobanteEmitido,
+  DetalleDeConsumo,
+  DetalleDeLinea,
   EstadoDeCuenta,
   MedioPagoListado,
   MovimientoDeCuentaCorriente,
@@ -329,4 +331,59 @@ export function aSolicitudDeReliquidacion(idPuntoVenta: number): SolicitudDeReli
  * no-precificables también puede aportar delta 0 sin ser un no-op de "nada para hacer". */
 export function reliquidacionEsNoOp(resultado: Pick<ResultadoDeReliquidacion, 'idsMovimientosCubiertos'>): boolean {
   return resultado.idsMovimientosCubiertos.length === 0
+}
+
+// ---- Reliquidación: parseo defensivo del detalle guardado en el ledger ----------------------
+
+function leerCampo<T>(objeto: Record<string, unknown>, ...claves: string[]): T {
+  for (const clave of claves) {
+    if (clave in objeto) return objeto[clave] as T
+  }
+  throw new Error(`campo ausente: ${claves.join('/')}`)
+}
+
+function normalizarDetalleDeLinea(crudo: unknown): DetalleDeLinea {
+  if (typeof crudo !== 'object' || crudo === null) throw new Error('línea de reliquidación inválida')
+  const o = crudo as Record<string, unknown>
+  return {
+    idArticulo: leerCampo<number | null>(o, 'idArticulo', 'IdArticulo') ?? null,
+    cantidad: leerCampo<number>(o, 'cantidad', 'Cantidad'),
+    precioHistorico: leerCampo<number>(o, 'precioHistorico', 'PrecioHistorico'),
+    precioActual: leerCampo<number | null>(o, 'precioActual', 'PrecioActual') ?? null,
+    totalHistorico: leerCampo<number>(o, 'totalHistorico', 'TotalHistorico'),
+    totalDelDia: leerCampo<number | null>(o, 'totalDelDia', 'TotalDelDia') ?? null,
+    delta: leerCampo<number>(o, 'delta', 'Delta'),
+    motivo: leerCampo<string | null>(o, 'motivo', 'Motivo') ?? null,
+  }
+}
+
+function normalizarDetalleDeConsumo(crudo: unknown): DetalleDeConsumo {
+  if (typeof crudo !== 'object' || crudo === null) throw new Error('consumo de reliquidación inválido')
+  const o = crudo as Record<string, unknown>
+  const lineas = leerCampo<unknown[]>(o, 'lineas', 'Lineas')
+  if (!Array.isArray(lineas)) throw new Error('lineas de reliquidación inválidas')
+  return {
+    idMovimiento: leerCampo<number>(o, 'idMovimiento', 'IdMovimiento'),
+    idComprobanteVenta: leerCampo<number>(o, 'idComprobanteVenta', 'IdComprobanteVenta'),
+    delta: leerCampo<number>(o, 'delta', 'Delta'),
+    lineas: lineas.map(normalizarDetalleDeLinea),
+  }
+}
+
+/**
+ * Parsea el `detalle` crudo de un movimiento `ActualizacionPrecios` — el backend lo guarda con
+ * `JsonSerializer.Serialize(resultado.Detalle)` SIN el naming policy camelCase de la API (a
+ * diferencia de la respuesta de preview/commit), así que las claves llegan en PascalCase; se
+ * aceptan ambos casos por robustez. Nunca lanza: cualquier JSON malformado o con una forma
+ * inesperada devuelve `null` para que la pantalla caiga al texto crudo en vez de romper.
+ */
+export function parsearDetalleDeActualizacionPrecios(detalle: string | null): DetalleDeConsumo[] | null {
+  if (!detalle) return null
+  try {
+    const crudo: unknown = JSON.parse(detalle)
+    if (!Array.isArray(crudo)) return null
+    return crudo.map(normalizarDetalleDeConsumo)
+  } catch {
+    return null
+  }
 }

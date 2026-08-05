@@ -609,6 +609,7 @@ describe('CuentaCorriente — modal de ajuste manual', () => {
 
     await userEvent.type(screen.getByLabelText('Importe'), '0')
     await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), 'Detalle válido')
+    await userEvent.click(screen.getByLabelText(/Entiendo que este ajuste modifica el saldo/))
     await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
     expect(screen.getByText('El importe del ajuste no puede ser cero.')).toBeInTheDocument()
@@ -621,6 +622,7 @@ describe('CuentaCorriente — modal de ajuste manual', () => {
 
     await userEvent.type(screen.getByLabelText('Importe'), '40')
     await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), '  abcd  ')
+    await userEvent.click(screen.getByLabelText(/Entiendo que este ajuste modifica el saldo/))
     await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
     expect(
@@ -655,6 +657,7 @@ describe('CuentaCorriente — modal de ajuste manual', () => {
     await abrirModalAjuste()
     await userEvent.type(screen.getByLabelText('Importe'), '-50')
     await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), '  Descuento por reclamo  ')
+    await userEvent.click(screen.getByLabelText(/Entiendo que este ajuste modifica el saldo/))
     await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
     await screen.findByText(/Ajuste registrado/)
@@ -677,6 +680,7 @@ describe('CuentaCorriente — modal de ajuste manual', () => {
     await abrirModalAjuste()
     await userEvent.type(screen.getByLabelText('Importe'), '40')
     await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), 'Corrección de saldo')
+    await userEvent.click(screen.getByLabelText(/Entiendo que este ajuste modifica el saldo/))
 
     const boton = screen.getByRole('button', { name: 'Registrar ajuste' })
     await userEvent.click(boton)
@@ -711,6 +715,7 @@ describe('CuentaCorriente — modal de ajuste manual', () => {
     await abrirModalAjuste()
     await userEvent.type(screen.getByLabelText('Importe'), '40')
     await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), 'Corrección')
+    await userEvent.click(screen.getByLabelText(/Entiendo que este ajuste modifica el saldo/))
     await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
 
     expect(await screen.findByText(/Ajuste registrado/)).toBeInTheDocument()
@@ -732,7 +737,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     await abrirModalReliquidacion()
 
     const dialogo = screen.getByRole('dialog')
-    await within(dialogo).findByText('$40,00')
+    await within(dialogo).findByTestId('cc-reliq-delta-estimado')
     expect(within(dialogo).getByRole('button', { name: 'Ejecutar reliquidación' })).toBeDisabled()
 
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
@@ -784,7 +789,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    await screen.findByText('$40,00')
+    await screen.findByTestId('cc-reliq-delta-estimado')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
@@ -811,7 +816,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    await screen.findByText('$40,00')
+    await screen.findByTestId('cc-reliq-delta-estimado')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
 
     const boton = screen.getByRole('button', { name: 'Ejecutar reliquidación' })
@@ -843,7 +848,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    await screen.findByText('$40,00')
+    await screen.findByTestId('cc-reliq-delta-estimado')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
@@ -869,7 +874,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    await screen.findByText('$40,00')
+    await screen.findByTestId('cc-reliq-delta-estimado')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
@@ -877,5 +882,97 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     await waitFor(() => expect(screen.getByText('No se pudo cargar el estado de cuenta.')).toBeInTheDocument())
     // el aviso de éxito de la reliquidación sigue en pantalla — el fallo del refetch no lo pisa.
     expect(screen.getByText(/Precios actualizados/)).toBeInTheDocument()
+  })
+
+  it('Fix 1: la vista previa muestra el detalle por consumo, con la línea omitida y su motivo', async () => {
+    const detalle: DetalleDeConsumo[] = [
+      detalleConsumoFixture({ idMovimiento: 1, delta: 40 }),
+      detalleConsumoFixture({
+        idMovimiento: 2,
+        delta: 0,
+        lineas: [
+          detalleLineaFixture({ precioActual: null, totalDelDia: null, delta: 0, motivo: 'articulo_no_encontrado' }),
+        ],
+      }),
+    ]
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+        return Promise.resolve<ResultadoDeReliquidacion>(
+          resultadoReliquidacionFixture({ idsMovimientosCubiertos: [1, 2], detalle }),
+        )
+      }
+      return undefined
+    })
+
+    await abrirModalReliquidacion()
+    const dialogo = screen.getByRole('dialog')
+    await within(dialogo).findByTestId('cc-reliq-delta-estimado')
+
+    expect(within(dialogo).getByText('Movimiento #1 — $40,00')).toBeInTheDocument()
+    expect(within(dialogo).getByText('Movimiento #2 — $0,00')).toBeInTheDocument()
+    expect(within(dialogo).getByText('articulo_no_encontrado')).toBeInTheDocument()
+  })
+
+  it('Fix 4: el aviso de éxito muestra el delta EJECUTADO, nunca el delta previsualizado', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture({ delta: 40 }))
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/clientes/5/cuenta-corriente/reliquidacion') {
+        return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionFixture({ delta: 75 }))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirModalReliquidacion()
+    await screen.findByTestId('cc-reliq-delta-estimado')
+    await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
+    await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
+
+    expect(await screen.findByText(/Precios actualizados: \$75,00/)).toBeInTheDocument()
+    expect(screen.queryByText(/Precios actualizados: \$40,00/)).not.toBeInTheDocument()
+  })
+})
+
+describe('CuentaCorriente — detalle de un movimiento ActualizacionPrecios en el ledger (Fix 1b)', () => {
+  it('un detalle JSON válido se muestra como un resumen legible, nunca el JSON crudo', async () => {
+    const detalleCrudo = JSON.stringify([detalleConsumoFixture({ idMovimiento: 3, delta: 55 })])
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) return undefined
+      if (ruta.includes('/cuenta-corriente')) {
+        return Promise.resolve<EstadoDeCuenta>(
+          estadoFixture({
+            movimientos: [movimientoFixture({ tipo: 'ActualizacionPrecios', detalle: detalleCrudo, importe: 55 })],
+          }),
+        )
+      }
+      return undefined
+    })
+
+    renderPantalla()
+
+    expect(await screen.findByText('1 consumo re-preciado')).toBeInTheDocument()
+    expect(screen.queryByText(detalleCrudo)).not.toBeInTheDocument()
+  })
+
+  it('un detalle malformado cae al texto crudo en vez de romper la fila', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.includes('/cuenta-corriente/reliquidacion')) return undefined
+      if (ruta.includes('/cuenta-corriente')) {
+        return Promise.resolve<EstadoDeCuenta>(
+          estadoFixture({
+            movimientos: [movimientoFixture({ tipo: 'ActualizacionPrecios', detalle: '{esto no es json', importe: 10 })],
+          }),
+        )
+      }
+      return undefined
+    })
+
+    renderPantalla()
+
+    expect(await screen.findByText('{esto no es json')).toBeInTheDocument()
   })
 })
