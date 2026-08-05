@@ -547,8 +547,8 @@ describe('Caja — resumen D6 (follow-up "Resumen parcial D6-content enrichment"
         return Promise.resolve<ResumenDeTurno>(
           resumenFixture({
             cantidadTickets: 3,
-            primerTicket: { numero: 1001, fecha: '2026-08-04T12:00:00Z' },
-            ultimoTicket: { numero: 1003, fecha: '2026-08-04T14:00:00Z' },
+            primerTicket: { numero: 1001, fecha: '2026-08-04T12:00:00Z', codigo: 'TX' },
+            ultimoTicket: { numero: 3, fecha: '2026-08-04T14:00:00Z', codigo: 'RC' },
             ingresosPorArea: [
               { idArea: 1, nombreArea: 'Almacén', total: 150 },
               { idArea: 2, nombreArea: 'Verdulería', total: 200 },
@@ -572,8 +572,10 @@ describe('Caja — resumen D6 (follow-up "Resumen parcial D6-content enrichment"
     await waitFor(() => expect(screen.getByText('Tickets')).toBeInTheDocument())
 
     expect(screen.getByText('3')).toBeInTheDocument()
-    expect(screen.getByText('#1001 · ' + new Date('2026-08-04T12:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
-    expect(screen.getByText('#1003 · ' + new Date('2026-08-04T14:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
+    // mezcla de series independientes por tipo (design decisión 7): el código deja "TX #1001" y
+    // "RC #3" inequívocos, aunque una RC pudiera numerar por debajo del último ticket TX.
+    expect(screen.getByText('TX #1001 · ' + new Date('2026-08-04T12:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
+    expect(screen.getByText('RC #3 · ' + new Date('2026-08-04T14:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
 
     expect(screen.getByText('Almacén')).toBeInTheDocument()
     expect(screen.getByText('$150,00')).toBeInTheDocument()
