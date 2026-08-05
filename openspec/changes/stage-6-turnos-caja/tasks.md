@@ -336,46 +336,46 @@ entire stage-5 integration suite stays green except turno-precondition
 fixtures. **Rollback**: precondition + one field + one assignment only —
 revert restores stage-5 behaviour exactly.
 
-- [ ] 5.1 Modify `ServicioDeVentas.EmitirAsync`: call
+- [x] 5.1 Modify `ServicioDeVentas.EmitirAsync`: call
   `ResolverTurnoAbiertoAsync` immediately after `ResolverPuntoVentaAsync`
   (so a bogus PV still yields the ADR-8 404 before `409 turno_no_abierto`);
   add `IdTurnoCaja` to the frozen `PlanDeVenta`. *(design decision 11;
   spec: operacion-de-pos / Selling with no open turno fails before any
   pricing work)*
-- [ ] 5.2 Modify `EjecutarTransaccionAsync`: add `SELECT … FROM
+- [x] 5.2 Modify `EjecutarTransaccionAsync`: add `SELECT … FROM
   turnos_caja … FOR SHARE` as the first statement of the write
   transaction; replace the `IdTurnoCaja = null` hardcode at
   `ServicioDeVentas.cs:459` with `plan.IdTurnoCaja`. *(design decisions 1,
   11; spec: comprobantes-venta / Every new sale carries the resolved open
   turno)*
-- [ ] 5.3 Modify `AnularAsync`: add `SELECT t.estado … JOIN
+- [x] 5.3 Modify `AnularAsync`: add `SELECT t.estado … JOIN
   comprobantes_venta … FOR SHARE OF t` before the existing atomic `UPDATE …
   WHERE estado='emitido' RETURNING`; 0 rows (NULL turno) ⇒ proceed;
   `'cerrado'` ⇒ `409 turno_cerrado`. *(design decision 4; spec:
   comprobantes-venta / Anulación rejected when the comprobante's turno is
   closed, Stage-5 NULL-turno comprobante stays anulable)*
-- [ ] 5.4 Update `ComprobanteVenta.cs`'s `IdTurnoCaja` doc-comment: the
+- [x] 5.4 Update `ComprobanteVenta.cs`'s `IdTurnoCaja` doc-comment: the
   stage-5 promise is fulfilled. *(proposal: Affected Areas)*
-- [ ] 5.5 Integration: every comprobante emitted after this stage carries a
+- [x] 5.5 Integration: every comprobante emitted after this stage carries a
   non-NULL `id_turno_caja`; selling with no open turno rejected before any
   oferta resolution or price lookup runs (assert via command-count/mock
   spy, not just the response). *(spec: comprobantes-venta / Every new sale
   carries the resolved open turno; operacion-de-pos / Selling with no open
   turno fails before any pricing work)*
-- [ ] 5.6 Integration (concurrency, 3rd racy surface): a sale racing a
+- [x] 5.6 Integration (concurrency, 3rd racy surface): a sale racing a
   cierre ⇒ the pago is either counted in the arqueo or the sale receives
   `409 turno_no_abierto`, never neither. *(design: Backstop Map —
   "Genuinely racy surfaces… three")*
-- [ ] 5.7 [P] Integration: anulación rejected with `409 turno_cerrado` when
+- [x] 5.7 [P] Integration: anulación rejected with `409 turno_cerrado` when
   the comprobante's turno is closed; stage-5 NULL-turno comprobante stays
   anulable. *(spec: comprobantes-venta, both scenarios)*
-- [ ] 5.8 Integration (budget): checkout read count stays ≤ 17 regardless
+- [x] 5.8 Integration (budget): checkout read count stays ≤ 17 regardless
   of line count (was ≤ 16 pre-stage-6). *(design decision 11)*
-- [ ] 5.9 Regression: entire stage-5 integration suite green, updating only
+- [x] 5.9 Regression: entire stage-5 integration suite green, updating only
   fixtures that now need an open turno opened first; confirm no other
   assertion changed. *(proposal: Risks — "the entire stage-5 integration
   suite must stay green unchanged except for the new turno precondition")*
-- [ ] 5.10 Run a **dedicated full judgment-day round** on this slice's diff
+- [x] 5.10 Run a **dedicated full judgment-day round** on this slice's diff
   alone before opening the PR — the most-guarded transaction in the
   project. *(proposal: Approach §6; Risks)*
 
