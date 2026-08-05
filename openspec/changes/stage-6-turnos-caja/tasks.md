@@ -430,10 +430,10 @@ functional, irreversible-by-design, double-submit impossible; `Pos.tsx`
 offers to open a turno instead of surfacing a raw error. **Rollback**: new
 route + `Pos.tsx` guard only.
 
-- [ ] 7.1 Add pure `src/Ways.Web/src/api/arqueo.ts`: client-side
+- [x] 7.1 Add pure `src/Ways.Web/src/api/arqueo.ts`: client-side
   `diferencia` preview — mirrors the server, never authoritative. *(design:
   Web Composition)*
-- [ ] 7.2 Add `src/Ways.Web/src/paginas/CierreDeCaja.tsx`: resumen display
+- [x] 7.2 Add `src/Ways.Web/src/paginas/CierreDeCaja.tsx`: resumen display
   + per-medio count inputs (one `conteos` record, functional updater only
   — rule 1) + irreversibility confirmation + "Finalizar cierre" wiring to
   `POST …/cierre`. Implement rules 4 (`finally` clearing
@@ -445,27 +445,27 @@ route + `Pos.tsx` guard only.
   cierre POST is outstanding, plus a first-line `if (cerrando) return`).
   *(design: Web Composition; react-async-state obligations 1, 4, 5, 6, 7,
   9)*
-- [ ] 7.3 Modify `Pos.tsx`: `409 turno_no_abierto` from `POST /api/ventas`
+- [x] 7.3 Modify `Pos.tsx`: `409 turno_no_abierto` from `POST /api/ventas`
   renders a blocking panel offering "Abrir turno" (fondo inicial +
   observaciones); after a successful apertura the checkout is **never**
   auto-resubmitted — the cashier presses Cobrar again. *(design: Web
   Composition — "Pos.tsx gate seam"; react-async-state obligation 9)*
-- [ ] 7.4 [P] Unit: `arqueo.ts` — `diferencia` preview sign.
+- [x] 7.4 [P] Unit: `arqueo.ts` — `diferencia` preview sign.
   *(web-descriptor-tests)*
-- [ ] 7.5 Component: double-click on "Finalizar cierre" issues exactly one
+- [x] 7.5 Component: double-click on "Finalizar cierre" issues exactly one
   POST (rule 9); gate seam renders on `409` and does not auto-resubmit the
   sale; a 2xx cierre is never reported as failure even if the post-close Z
   fetch fails (rule 6); medios/resumen failing to load shows an aviso and
   an actually-disabled "Finalizar cierre" (rule 7). RTL + `user-event`.
   *(design: Testing Strategy — Component (Web))*
-- [ ] 7.6 Wire `/caja/cierre` route.
-- [ ] 7.7 Smoke-verify (`tsc -b` / `oxlint` / `vite build` clean).
-- [ ] 7.8 `Caja.tsx` apertura 409 self-heal (judgment-day slice-6 finding,
+- [x] 7.6 Wire `/caja/cierre` route.
+- [x] 7.7 Smoke-verify (`tsc -b` / `oxlint` / `vite build` clean).
+- [x] 7.8 `Caja.tsx` apertura 409 self-heal (judgment-day slice-6 finding,
   judge B): on `turno_ya_abierto` the losing tab refetches `GET …/abierto`
   and renders the turno that is actually open instead of a stale error +
   form. Component test: apertura POST rejecting with that codigo ⇒ the
   panel shows the open turno.
-- [ ] 7.9 Regression: full `npx vitest run` green (165 baseline + this
+- [x] 7.9 Regression: full `npx vitest run` green (165 baseline + this
   stage's new tests, no unrelated assertion changed).
 
 **Verify**: `npx vitest run` (full suite) && `npx tsc -b` && `npx vite build`
