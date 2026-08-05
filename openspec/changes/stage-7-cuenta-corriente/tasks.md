@@ -405,28 +405,39 @@ merged/branch. **Finish**: the screen renders header + filtered movement
 list + a working pago modal for every role; `CuentaCorriente.tsx` compiles
 and is tested. **Rollback**: new route + entry point only.
 
-- [ ] 5.1 [P] Add `src/Ways.Web/src/api/cuentaCorriente.ts`: pure
+- [x] 5.1 [P] Add `src/Ways.Web/src/api/cuentaCorriente.ts`: pure
   request/response mappers for header + page + pagos; a
   **non-authoritative** disponibilidad mirror (same posture as `arqueo.ts`).
   *(design: Web Composition)*
-- [ ] 5.2 Add `src/Ways.Web/src/paginas/CuentaCorriente.tsx`: header (saldo /
+- [x] 5.2 Add `src/Ways.Web/src/paginas/CuentaCorriente.tsx`: header (saldo /
   acuerdo — `"ilimitado"` when applicable / disponibilidad), desde–hasta +
   "ver histórico" filters, movement table reading `saldoResultante` per row,
   pago modal. `react-async-state` rules 8 (`key={idCliente}` on the
   subtree), 9 (first-line re-entrancy guard + full-window disable on the
   pago), 3 (ledger generation bumped before the write), 7 (medios de pago
   load failure ⇒ visible aviso + actually-disabled "Registrar pago").
-  *(design: Web Composition; react-async-state obligations 3, 7, 8, 9)*
-- [ ] 5.3 Modify `Clientes.tsx`: per-row entry point to
-  `/clientes/:id/cuenta-corriente`; modify `App.tsx`: wire the route.
-  *(design: File Changes)*
-- [ ] 5.4 [P] Unit: `cuentaCorriente.ts` mappers, disponibilidad mirror.
+  Also implements a full rule-10 `turno_no_abierto` recovery on the pago
+  modal (same "Abrir turno" pattern as `PanelGateTurno`/`FormularioApertura`)
+  so Slice 6 has a real path to replicate. *(design: Web Composition;
+  react-async-state obligations 3, 7, 8, 9, 10)*
+- [x] 5.3 Modify `Clientes.tsx`: per-row entry point to
+  `/clientes/:id/cuenta-corriente`; modify `App.tsx`: wire the route under
+  `Politicas.OperacionDePos` (Vendedor/Supervisor/Admin). *(design: File
+  Changes)*
+- [x] 5.4 [P] Unit: `cuentaCorriente.ts` mappers, disponibilidad mirror.
+  35 tests: query builder, etiqueta de movimiento, disponibilidad mirror,
+  medio-físico filter, filas→cálculo, importeAplicado, the 7
+  `ValidadorDePagoACuenta`-mirrored rejection rules, request body shape.
   *(web-descriptor-tests)*
-- [ ] 5.5 Component: pago flow succeeds and refetches the ledger; empty
+- [x] 5.5 Component: pago flow succeeds and refetches the ledger; empty
   ledger renders an empty state, never a re-query; medios/estado-de-cuenta
-  failing to load shows an aviso and an actually-disabled "Registrar pago".
-  RTL + `user-event`, `vi.mock('../api/cliente')`. *(design: Testing
-  Strategy — Component (Web))*
+  failing to load shows an aviso and an actually-disabled "Registrar pago";
+  filters drive refetches with stale-response discard; double-click issues
+  exactly one POST; CC medio never offered; `turno_no_abierto` recovery
+  renders and does not auto-retry the payment; a 2xx payment is never
+  reported as a failure even when the post-write refetch fails; POST body
+  shape asserted. 11 tests. RTL + `user-event`, `vi.mock('../api/cliente')`.
+  *(design: Testing Strategy — Component (Web))*
 
 **Verify**: `npx vitest run src/paginas/CuentaCorriente.test.tsx src/api/cuentaCorriente.test.ts`
 
