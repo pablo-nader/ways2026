@@ -13,9 +13,10 @@ namespace Ways.Domain.Stock;
 /// <see cref="Ventas.NumeracionComprobante"/>/<see cref="Ways.Domain.Stock.Stock"/>, con filtro
 /// de tenant escrito a mano en <c>WaysDbContext.AplicarFiltroDeTenantEnMovimientoStock</c>.
 ///
-/// <see cref="IdComprobanteCompra"/> NO existe todavía (design: Table Shapes — write path B):
-/// <c>comprobantes_compra</c> no existe, así que la columna se difiere a la etapa 8 (que la
-/// crea junto con su FK) en vez de dejar un <c>int?</c> sin constraint.
+/// <see cref="IdComprobanteCompra"/> aterriza en stage-8 Slice 1 (design: Table Shapes — D, la
+/// FK diferida de doc-10:457-465): columna + FK compuesta juntas, en la misma migración que crea
+/// <c>comprobantes_compra</c> — nunca escrita fuera de <c>ServicioDeCompras.ConfirmarAsync</c>/
+/// <c>AnularAsync</c> (Slice 2).
 /// </summary>
 public class MovimientoStock
 {
@@ -36,10 +37,14 @@ public class MovimientoStock
     /// <see cref="MotivoStock.Anulacion"/> (design: The Sale Transaction).</summary>
     public int? IdComprobanteVenta { get; set; }
 
-    /// <summary>Transferencias entre locales (doc 10 §6) — columna creada pero nunca escrita
-    /// en esta etapa (design: Table Shapes — write path B, "created, never written"): la
-    /// feature de transferencia no tiene camino de escritura hasta que <c>motivo_stock.
-    /// Transferencia</c> se active.</summary>
+    /// <summary>Poblado solo cuando <see cref="Motivo"/> es <see cref="MotivoStock.Compra"/> o
+    /// la <see cref="MotivoStock.Anulacion"/> que la revierte (design: Table Shapes — D;
+    /// Transactions — CONFIRMAR COMPRA / ANULAR COMPRA).</summary>
+    public int? IdComprobanteCompra { get; set; }
+
+    /// <summary>Transferencias entre locales (doc 10 §6) — columna creada en stage 5, escrita
+    /// recién en stage-8 Slice 3 (<c>ServicioDeStock.TransferirAsync</c>): las dos filas
+    /// espejadas de una transferencia llevan acá el destino (design decisión 5 del proposal).</summary>
     public int? IdPuntoVentaDestino { get; set; }
 
     public int IdEmpleado { get; set; }

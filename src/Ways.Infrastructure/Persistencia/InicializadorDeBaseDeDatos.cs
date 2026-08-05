@@ -53,26 +53,38 @@ public class InicializadorDeBaseDeDatos(
         ("No gravado", 0.00m)
     ];
 
-    /// <summary>Doc 10 §1: "FA, FB, FC, NCA, NCB, NCC, NDA…, TX, NCX, PRE, RC". Solo el lado
-    /// venta — comprobantes de compra (proveedores) no son parte de esta etapa (doc 10,
-    /// "Etapas sugeridas": clientes/proveedores desbloquean comprobantes recién en la etapa
-    /// 2). <c>CodigoAfip</c> queda <c>NULL</c> por la misma razón que en las condiciones
-    /// fiscales. <c>RC</c> (etapa 7 — pago a cuenta) también se inserta de forma idempotente
-    /// en la migración <c>CuentaCorrienteEtapa7</c>, porque este seed solo corre en una base
-    /// vacía (design: Table Shapes B).</summary>
-    private static readonly (string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock)[] TiposComprobanteBase =
+    /// <summary>Doc 10 §1: "FA, FB, FC, NCA, NCB, NCC, NDA…, TX, NCX, PRE, RC" (lado venta) más
+    /// <c>C-FA</c>/<c>C-FB</c>/<c>C-FC</c> (lado compra, stage-8, design: Table Shapes — E,
+    /// decisión 7/12 del proposal). <c>CodigoAfip</c> queda <c>NULL</c> por la misma razón que
+    /// en las condiciones fiscales. <c>RC</c> (etapa 7) y los tres <c>C-*</c> (etapa 8) también
+    /// se insertan de forma idempotente en sus propias migraciones (<c>CuentaCorrienteEtapa7</c>/
+    /// <c>ComprasYTransferenciasEtapa8</c>), porque este seed solo corre en una base vacía
+    /// (design: Table Shapes E). <see cref="ClaseComprobante"/> gana campo propio acá — hasta
+    /// stage-7 estaba hardcodeado a <see cref="ClaseComprobante.Venta"/> en el mapeo de abajo,
+    /// porque no existía otra clase con camino de seed.
+    /// <c>ux_tipos_comprobante_codigo</c> es UNIQUE sobre <c>codigo</c> SOLO (sin <c>clase</c>),
+    /// así que el prefijo <c>C-</c> es BINDING, no cosmético (design decisión 7, "the key gate
+    /// finding"): sin él, un código de compra podría colisionar con uno de venta.</summary>
+    private static readonly (ClaseComprobante Clase, string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock)[] TiposComprobanteBase =
     [
-        ("FA", "Factura A", 'A', 1, true, true, true),
-        ("FB", "Factura B", 'B', 1, false, true, true),
-        ("FC", "Factura C", 'C', 1, false, true, true),
-        ("NCA", "Nota de Crédito A", 'A', -1, true, true, true),
-        ("NCB", "Nota de Crédito B", 'B', -1, false, true, true),
-        ("NCC", "Nota de Crédito C", 'C', -1, false, true, true),
-        ("NDA", "Nota de Débito A", 'A', 1, true, true, true),
-        ("TX", "Ticket X", 'X', 1, false, false, true),
-        ("NCX", "Nota de Crédito X", 'X', -1, false, false, true),
-        ("PRE", "Presupuesto", null, 1, false, false, false),
-        ("RC", "Recibo de cobranza", null, 1, false, false, false)
+        (ClaseComprobante.Venta, "FA", "Factura A", 'A', 1, true, true, true),
+        (ClaseComprobante.Venta, "FB", "Factura B", 'B', 1, false, true, true),
+        (ClaseComprobante.Venta, "FC", "Factura C", 'C', 1, false, true, true),
+        (ClaseComprobante.Venta, "NCA", "Nota de Crédito A", 'A', -1, true, true, true),
+        (ClaseComprobante.Venta, "NCB", "Nota de Crédito B", 'B', -1, false, true, true),
+        (ClaseComprobante.Venta, "NCC", "Nota de Crédito C", 'C', -1, false, true, true),
+        (ClaseComprobante.Venta, "NDA", "Nota de Débito A", 'A', 1, true, true, true),
+        (ClaseComprobante.Venta, "TX", "Ticket X", 'X', 1, false, false, true),
+        (ClaseComprobante.Venta, "NCX", "Nota de Crédito X", 'X', -1, false, false, true),
+        (ClaseComprobante.Venta, "PRE", "Presupuesto", null, 1, false, false, false),
+        (ClaseComprobante.Venta, "RC", "Recibo de cobranza", null, 1, false, false, false),
+
+        // stage-8-compras-transferencias-inventario (design decisión 12/7 del proposal): solo
+        // tres tipos — notas de crédito de proveedor están fuera de alcance (anulación es la
+        // única reversión). es_fiscal=false: nunca EMITIMOS la factura del proveedor.
+        (ClaseComprobante.Compra, "C-FA", "Factura A de compra", 'A', 1, true, false, true),
+        (ClaseComprobante.Compra, "C-FB", "Factura B de compra", 'B', 1, false, false, true),
+        (ClaseComprobante.Compra, "C-FC", "Factura C de compra", 'C', 1, false, false, true)
     ];
 
     public async Task EjecutarAsync(SemillaRoot semilla, CancellationToken ct = default)
@@ -421,7 +433,7 @@ public class InicializadorDeBaseDeDatos(
         {
             db.TiposComprobante.AddRange(TiposComprobanteBase.Select(t => new TipoComprobante
             {
-                Clase = ClaseComprobante.Venta,
+                Clase = t.Clase,
                 Codigo = t.Codigo,
                 Nombre = t.Nombre,
                 Letra = t.Letra,

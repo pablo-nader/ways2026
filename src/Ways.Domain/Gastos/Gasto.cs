@@ -8,11 +8,10 @@ namespace Ways.Domain.Gastos;
 /// gana <c>updated_at</c>/baja lógica igual que <c>Cliente</c>/<c>Proveedor</c>, a diferencia de
 /// los ledgers append-only de esta misma etapa.
 ///
-/// <c>id_comprobante_compra</c> NO existe todavía (proposal decisión 1, design: Table Shapes —
-/// write path C): <c>comprobantes_compra</c> no existe, así que la columna se difiere a la
-/// etapa 8 (que la crea junto con su FK, mismo patrón que
-/// <see cref="Ways.Domain.Stock.MovimientoStock"/> con su propio FK diferido de compra) en vez
-/// de dejar un <c>int?</c> sin constraint.
+/// <see cref="IdComprobanteCompra"/> aterriza en stage-8 Slice 1 (design: Table Shapes — D):
+/// columna + FK compuesta juntas, mismo patrón que <see cref="Ways.Domain.Stock.MovimientoStock.IdComprobanteCompra"/>.
+/// Poblado por <c>ServicioDeGastos</c> (Slice 4) bajo el guard <c>SELECT ... FOR SHARE</c> sobre
+/// el header de la compra (design decisión 7).
 /// </summary>
 public class Gasto : EntidadTenant
 {
@@ -42,4 +41,10 @@ public class Gasto : EntidadTenant
 
     /// <summary>Siempre <c>&gt; 0</c> (spec: Importe Must Be Positive, <c>ck_gastos_importe_positivo</c>).</summary>
     public decimal Importe { get; set; }
+
+    /// <summary>Vincula el gasto a la compra que paga (design decisión 7) — solo válido cuando
+    /// <see cref="Categoria"/> es <see cref="CategoriaGasto.Proveedor"/> y la compra está
+    /// <c>confirmada</c>; el vínculo es historia, nunca bloquea la anulación de la compra
+    /// (design decisión 6, la regla invertida).</summary>
+    public int? IdComprobanteCompra { get; set; }
 }
