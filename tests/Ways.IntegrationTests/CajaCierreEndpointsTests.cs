@@ -20,7 +20,7 @@ namespace Ways.IntegrationTests;
 /// <summary>
 /// stage-6-turnos-caja, Slice 4 (tasks 4.7, 4.8, 4.13, 4.15, 4.16): <c>GET
 /// /api/caja/turnos/{id}/resumen</c> y <c>POST /api/caja/turnos/{id}/cierre</c> punta a punta —
-/// la derivación, los tres rechazos de <c>ValidadorDeConteos</c>, el ancla no-única, una fila de
+/// la derivación, los cinco rechazos de <c>ValidadorDeConteos</c>, el ancla no-única, una fila de
 /// arqueo por medio con actividad, la cadena de tesorería, y autorización/ADR-8 (spec:
 /// arqueo-de-cierre, tesoreria).
 ///
@@ -291,7 +291,7 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal(0m, arqueoEfectivo.Diferencia);
     }
 
-    // ---- ValidadorDeConteos: los tres rechazos ---------------------------------------------------
+    // ---- ValidadorDeConteos: los rechazos ---------------------------------------------------
 
     [Fact]
     public async Task FaltarUnMedioArqueableEnLosConteosDaArqueoIncompleto()
@@ -528,6 +528,14 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
             $"/api/caja/turnos/{primerTurno.Id}/cierre",
             new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 0m)], null));
         Assert.Equal(HttpStatusCode.OK, primerCierre.StatusCode);
+
+        // El esperado derivado negativo (faltante real) fluye sin clamping hasta el arqueo y la
+        // columna generada diferencia: -140 = 0 pagos - 40 gastos + (0 fondo - 100 retiro).
+        var cuerpoPrimerCierre = await primerCierre.Content.ReadAsStringAsync();
+        var arqueosPrimerCierre = JsonSerializer.Deserialize<TurnoConArqueos>(cuerpoPrimerCierre, OpcionesJson)!;
+        var arqueoEfectivo = arqueosPrimerCierre.Arqueos.Single(a => a.IdMedioPago == ctx.IdMedioEfectivo);
+        Assert.Equal(-140m, arqueoEfectivo.ImporteEsperado);
+        Assert.Equal(-140m, arqueoEfectivo.Diferencia);
 
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
         {
