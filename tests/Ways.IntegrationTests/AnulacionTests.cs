@@ -438,6 +438,91 @@ public class AnulacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
         Assert.Equal(HttpStatusCode.OK, reintento.StatusCode);
     }
 
+    // ---- judgment-day fix 2: consumo_reliquidado (design decisión 5) ---------------------------
+
+    /// <summary>El escritor de reliquidación (<c>ServicioDeReliquidacion</c>) todavía no existe —
+    /// Slice 3. Para pinear HOY el guard de <c>ServicioDeVentas.EjecutarAnulacionAsync</c> que lo
+    /// consume (línea "if (movimiento.IdMovimientoActualizacion is not null)"), esta prueba
+    /// simula a mano el efecto del paso 8 de la transacción de reliquidación (design.md,
+    /// Transactions — RELIQUIDACIÓN): una fila <c>ActualizacionPrecios</c> stub que satisface el
+    /// self-FK <c>fk_movimientos_cuenta_corriente_actualizacion</c>, y el marcador puesto sobre el
+    /// consumo — sobre la conexión cruda con el contexto de tenant de <c>ways_app</c> (mismo
+    /// criterio que <see cref="CuentaCorrienteEtapa7BackstopTests"/>), para que la sesión de RLS
+    /// sea idéntica a la de una escritura real.</summary>
+    [Fact]
+    public async Task AnularUnConsumoYaReliquidadoEsRechazado409ConsumoReliquidadoSinCambiarNada()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnConsumoYaReliquidadoEsRechazado409ConsumoReliquidadoSinCambiarNada));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-consumo-reliquidado", 200m);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Consumo Reliquidado", limiteCredito: 1000m);
+
+        var emitido = await EmitirAsync(ctx, idCliente, idArticulo, 200m, idMedio: ctx.IdMedioCuentaCorriente);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var movimientoConsumo = await db.MovimientosCuentaCorriente
+                .SingleAsync(m => m.IdComprobanteVenta == emitido.Id
+                    && m.Tipo == Ways.Domain.CuentaCorriente.TipoMovimientoCc.Consumo);
+
+            await MarcarConsumoComoReliquidadoAsync(ctx, movimientoConsumo);
+        }
+
+        var respuestaAnulacion = await ctx.Admin.PostAsync($"/api/ventas/{emitido.Id}/anulacion", null);
+        var cuerpo = await respuestaAnulacion.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Conflict, respuestaAnulacion.StatusCode);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo);
+        Assert.Equal("consumo_reliquidado", problema.GetProperty("codigo").GetString());
+
+        await using var dbDespues = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        // Nada cambia: ni el estado del comprobante, ni el saldo, ni un contramovimiento nuevo —
+        // el throw dentro del foreach revierte la transacción entera (BeginTransactionAsync
+        // envuelve el paso 1, que ya había marcado 'anulado', junto con este guard).
+        var estado = await dbDespues.ComprobantesVenta.Where(c => c.Id == emitido.Id).Select(c => c.Estado).SingleAsync();
+        Assert.Equal(EstadoComprobante.Emitido, estado);
+
+        var saldo = await dbDespues.Clientes.Where(c => c.Id == idCliente).Select(c => c.Saldo).SingleAsync();
+        Assert.Equal(200m, saldo);
+
+        Assert.Equal(
+            0,
+            await dbDespues.MovimientosCuentaCorriente.CountAsync(
+                m => m.IdComprobanteVenta == emitido.Id && m.Tipo == Ways.Domain.CuentaCorriente.TipoMovimientoCc.Ajuste));
+    }
+
+    private async Task MarcarConsumoComoReliquidadoAsync(
+        Contexto ctx, Ways.Domain.CuentaCorriente.MovimientoCuentaCorriente movimientoConsumo)
+    {
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+
+        int idActualizacion;
+        await using (var insertar = cruda.CreateCommand())
+        {
+            insertar.CommandText =
+                "INSERT INTO movimientos_cuenta_corriente " +
+                "(id_tenant, id_cliente, fecha, id_punto_venta, id_empleado, tipo, importe, saldo_resultante, detalle) " +
+                "VALUES ($1, $2, now(), $3, $4, 'actualizacion_precios', 0, $5, $6) RETURNING id_movimiento";
+            insertar.Parameters.Add(new NpgsqlParameter { Value = ctx.IdTenant });
+            insertar.Parameters.Add(new NpgsqlParameter { Value = movimientoConsumo.IdCliente });
+            insertar.Parameters.Add(new NpgsqlParameter { Value = movimientoConsumo.IdPuntoVenta });
+            insertar.Parameters.Add(new NpgsqlParameter { Value = movimientoConsumo.IdEmpleado });
+            insertar.Parameters.Add(new NpgsqlParameter { Value = movimientoConsumo.SaldoResultante });
+            insertar.Parameters.Add(new NpgsqlParameter
+            {
+                Value = "stub de prueba — el escritor real (ServicioDeReliquidacion) es Slice 3, todavía no existe"
+            });
+            idActualizacion = (int)(await insertar.ExecuteScalarAsync())!;
+        }
+
+        await using var marcar = cruda.CreateCommand();
+        marcar.CommandText =
+            "UPDATE movimientos_cuenta_corriente SET id_movimiento_actualizacion = $1 WHERE id_movimiento = $2";
+        marcar.Parameters.Add(new NpgsqlParameter { Value = idActualizacion });
+        marcar.Parameters.Add(new NpgsqlParameter { Value = movimientoConsumo.Id });
+        await marcar.ExecuteNonQueryAsync();
+    }
+
     // ---- Triaged: anulación de una NCX invierte el signo correctamente -------------------------
 
     /// <summary>Una devolución (NCX) escribe un movimiento de stock ORIGINAL positivo (motivo =

@@ -56,6 +56,8 @@ public static class EscriturasDeCuentaCorriente
         int idPuntoVenta, int idEmpleado, TipoMovimientoCc tipo, int? idComprobanteVenta, int? idPagoComprobante,
         decimal importe, decimal saldoResultante, CancellationToken ct)
     {
+        ValidarFormaPorTipo(tipo, idPagoComprobante);
+
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
@@ -76,6 +78,27 @@ public static class EscriturasDeCuentaCorriente
         AgregarParametro(comando, saldoResultante);
 
         await comando.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Defensa en profundidad, infraestructura pura (nunca un <c>ErrorDominio</c> 4xx):
+    /// pinea acá, en el único escritor, la forma nullable por tipo que hoy solo garantizan los
+    /// llamadores (design: Table Shapes — write path C). Solo <see cref="TipoMovimientoCc.Consumo"/>
+    /// y <see cref="TipoMovimientoCc.Pago"/> tienen una forma única y fija (el resto — un
+    /// <c>Ajuste</c> puede ser un contramovimiento de anulación o un ajuste manual — es
+    /// estructuralmente dual, no viola nada acá).</summary>
+    private static void ValidarFormaPorTipo(TipoMovimientoCc tipo, int? idPagoComprobante)
+    {
+        if (tipo == TipoMovimientoCc.Consumo && idPagoComprobante is null)
+        {
+            throw new InvalidOperationException(
+                "Un movimiento de tipo Consumo requiere id_pago_comprobante — invariante de escritura violado.");
+        }
+
+        if (tipo == TipoMovimientoCc.Pago && idPagoComprobante is not null)
+        {
+            throw new InvalidOperationException(
+                "Un movimiento de tipo Pago nunca lleva id_pago_comprobante — invariante de escritura violado.");
+        }
     }
 
     private static void AgregarParametro(DbCommand comando, object valor)

@@ -142,17 +142,26 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         await AbrirTurnoAsync(ctx);
         var idCliente = await SembrarClienteAsync(ctx, "Cliente RC items");
 
-        var respuesta = await RegistrarPagoAsync(ctx, idCliente, SolicitudSimple(ctx, 200m));
+        var solicitud = new SolicitudDePagoACuenta(
+            ctx.IdPuntoVenta, [new PagoDeCuenta(ctx.IdMedioEfectivo, 200m, null, 0m)], "  Pago parcial de saldo  ");
+        var respuesta = await RegistrarPagoAsync(ctx, idCliente, solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
 
         Assert.Empty(emitido.Items);
         Assert.False(emitido.Estado == EstadoComprobante.Anulado);
+        // task judgment-day fix 1: Observaciones viajaba en la solicitud pero se descartaba en
+        // silencio (EjecutarTransaccionAsync hardcodeaba null) — recortado, nunca en blanco.
+        Assert.Equal("Pago parcial de saldo", emitido.Observaciones);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.ItemsComprobanteVenta.CountAsync(i => i.IdComprobanteVenta == emitido.Id));
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteVenta == emitido.Id));
+
+        var observacionesPersistidas = await db.ComprobantesVenta
+            .Where(c => c.Id == emitido.Id).Select(c => c.Observaciones).SingleAsync();
+        Assert.Equal("Pago parcial de saldo", observacionesPersistidas);
 
         // comprobantes-venta / RC emission never touches fiscal fields.
         var (netoGravado, ivaTotal) = await db.ComprobantesVenta
@@ -160,6 +169,23 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             .Select(x => new ValueTuple<decimal?, decimal?>(x.NetoGravado, x.IvaTotal)).SingleAsync();
         Assert.Null(netoGravado);
         Assert.Null(ivaTotal);
+    }
+
+    [Fact]
+    public async Task RcConObservacionesEnBlancoLasPersisteComoNull()
+    {
+        var ctx = await PrepararAsync(nameof(RcConObservacionesEnBlancoLasPersisteComoNull));
+        await AbrirTurnoAsync(ctx);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente RC obs blancas");
+
+        var solicitud = new SolicitudDePagoACuenta(
+            ctx.IdPuntoVenta, [new PagoDeCuenta(ctx.IdMedioEfectivo, 100m, null, 0m)], "   ");
+        var respuesta = await RegistrarPagoAsync(ctx, idCliente, solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+
+        Assert.Null(emitido.Observaciones);
     }
 
     [Fact]

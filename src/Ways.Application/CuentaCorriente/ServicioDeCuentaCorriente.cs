@@ -99,13 +99,13 @@ public class ServicioDeCuentaCorriente(
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarTransaccionAsync(
                 idTenant, idEmpleado, momento, tipo.Id, numero, puntoVenta.Id, turno.Id, cliente.Id, importeAplicado,
-                pagos, ct));
+                pagos, NormalizarOpcional(solicitud.Observaciones), ct));
     }
 
     private async Task<ComprobanteEmitido> EjecutarTransaccionAsync(
         int idTenant, int idEmpleado, DateTimeOffset momento, int idTipoComprobante, long numero, int idPuntoVenta,
         int idTurnoCaja, int idCliente, decimal importeAplicado, IReadOnlyList<PagoDeCuenta> pagos,
-        CancellationToken ct)
+        string? observaciones, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -129,7 +129,7 @@ public class ServicioDeCuentaCorriente(
             Subtotal = importeAplicado,
             DescuentoTotal = 0m,
             Total = importeAplicado,
-            Observaciones = null,
+            Observaciones = observaciones,
             Estado = EstadoComprobante.Emitido,
             CreatedAt = momento,
             UpdatedAt = momento
@@ -220,6 +220,14 @@ public class ServicioDeCuentaCorriente(
         contexto.IdTenant
             ?? throw new InvalidOperationException(
                 "ServicioDeCuentaCorriente requiere un actor de tenant; OperacionDePos no admite plataforma.");
+
+    // Mismo criterio que ServicioDeVentas.NormalizarOpcional: un string en blanco no es una
+    // observación, es ruido — se persiste NULL en vez de espacios.
+    private static string? NormalizarOpcional(string? valor)
+    {
+        var limpio = valor?.Trim();
+        return string.IsNullOrEmpty(limpio) ? null : limpio;
+    }
 
     private static ComprobanteEmitido Proyectar(
         ComprobanteVenta comprobante, IReadOnlyList<PagoComprobante> pagos) => new(
