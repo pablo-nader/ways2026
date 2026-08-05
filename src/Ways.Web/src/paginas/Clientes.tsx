@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { clienteDeClientes } from '../api/clientes'
@@ -271,6 +272,16 @@ export function Clientes() {
                       </span>
                     </td>
                     <td className="text-end text-nowrap">
+                      {/* stage-7-cuenta-corriente (Slice 5, design: Web Composition): entrada al
+                          estado de cuenta — el cliente lo identifica la URL, la fila lo pasa por
+                          state para no pagar un GET extra por el nombre a mostrar. */}
+                      <Link
+                        className="btn btn-sm btn-outline-secondary rounded-0 me-1"
+                        to={`/clientes/${c.id}/cuenta-corriente`}
+                        state={{ cliente: c }}
+                      >
+                        Estado de cuenta
+                      </Link>
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-primary rounded-0 me-1"

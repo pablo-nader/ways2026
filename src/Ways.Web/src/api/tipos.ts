@@ -759,3 +759,54 @@ export type ComprobanteEmitido = {
   items: ItemEmitido[]
   pagos: PagoEmitido[]
 }
+
+// --- Cuenta corriente: estado de cuenta y pago a cuenta (stage-7-cuenta-corriente, Slice 5) ---
+// Espejo de `Ways.Application.CuentaCorriente.Contratos` — header + movimientos en un único GET
+// (design decisión 9), pago a cuenta (RC) sin ningún campo de importe propio (design decisión 6,
+// `importeAplicado = Σ importe − Σ vuelto`).
+
+export type TipoMovimientoCc = 'Consumo' | 'Pago' | 'Ajuste' | 'ActualizacionPrecios'
+
+/** Distingue un movimiento `Ajuste` por su origen — solo viene poblado para ese tipo (design
+ * decisión 8/9, espejo de `EtiquetaDeAjuste`). */
+export type EtiquetaDeAjuste = 'Manual' | 'AnulacionContramovimiento'
+
+/** Header de estado de cuenta — `disponibilidad: null` cuando `creditoIlimitado` (nunca un
+ * número fabricado, espejo de `EstadoDeCuentaHeader`). */
+export type EstadoDeCuentaHeader = {
+  saldo: number
+  limiteCredito: number
+  creditoIlimitado: boolean
+  disponibilidad: number | null
+}
+
+/** Una fila del ledger — `saldoResultante` es la ÚNICA fuente del saldo corrido, nunca
+ * re-derivada en pantalla (espejo de `MovimientoDeCuentaCorriente`). */
+export type MovimientoDeCuentaCorriente = {
+  id: number
+  fecha: string
+  tipo: TipoMovimientoCc
+  importe: number
+  saldoResultante: number
+  detalle: string | null
+  idComprobanteVenta: number | null
+  etiqueta: EtiquetaDeAjuste | null
+}
+
+/** Respuesta de `GET /api/clientes/{id}/cuenta-corriente` — `historico`/`desde`/`hasta` reflejan
+ * la ventana EFECTIVA aplicada por el servidor, no lo pedido crudo (espejo de `EstadoDeCuenta`). */
+export type EstadoDeCuenta = {
+  header: EstadoDeCuentaHeader
+  movimientos: MovimientoDeCuentaCorriente[]
+  historico: boolean
+  desde: string | null
+  hasta: string | null
+}
+
+/** Un medio de pago de la RC — mismo shape que `PagoDeVenta`, redeclarado porque una RC no es un
+ * checkout (design decisión 1, espejo de `PagoDeCuenta`). */
+export type PagoDeCuenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
+
+/** Cuerpo de `POST /api/clientes/{id}/cuenta-corriente/pagos` — sin ningún campo de importe
+ * propio (design decisión 6, espejo de `SolicitudDePagoACuenta`). */
+export type SolicitudDePagoACuenta = { idPuntoVenta: number; pagos: PagoDeCuenta[]; observaciones: string | null }

@@ -8,6 +8,7 @@ import { CierreDeCaja } from './paginas/CierreDeCaja'
 import { Categorias } from './paginas/Categorias'
 import { CatalogosFiscales } from './paginas/CatalogosFiscales'
 import { Clientes } from './paginas/Clientes'
+import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { Empresas } from './paginas/Empresas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
@@ -90,6 +91,18 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Clientes />
+                </RutaProtegida>
+              }
+            />
+
+            {/* stage-7-cuenta-corriente (Slice 5, design: Web Composition): estado de cuenta +
+                pago a cuenta — Politicas.OperacionDePos (todo rol opera), a diferencia de
+                /clientes que es admin-only. Entrada desde una fila de Clientes.tsx. */}
+            <Route
+              path="/clientes/:id/cuenta-corriente"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <CuentaCorriente />
                 </RutaProtegida>
               }
             />
