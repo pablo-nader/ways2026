@@ -10,8 +10,10 @@ import type {
   MovimientoRegistrado,
   ResumenDeTurno,
   SolicitudDeApertura,
+  SolicitudDeCierre,
   SolicitudDeMovimiento,
   TipoMovimientoCaja,
+  TurnoConArqueos,
   TurnoResumen,
 } from './tipos'
 
@@ -30,6 +32,16 @@ export const clienteDeCaja = {
   /** `GET /api/caja/turnos/{id}/resumen` — resumen parcial, misma derivación que el cierre
    * (spec: Resumen Parcial Uses The Same Derivation As Cierre), de solo lectura. */
   obtenerResumen: (idTurnoCaja: number) => api.get<ResumenDeTurno>(`/caja/turnos/${idTurnoCaja}/resumen`),
+  /** `POST /api/caja/turnos/{id}/cierre` (Slice 7, design: The Cierre Transaction) —
+   * irreversible: deriva el arqueo, lo persiste y encadena la tesorería en una única transacción
+   * atómica. El cuerpo SOLO trae los conteos declarados (spec: Cierre Payload Carries Only
+   * Declared Counts). */
+  cerrar: (idTurnoCaja: number, solicitud: SolicitudDeCierre) =>
+    api.post<TurnoConArqueos>(`/caja/turnos/${idTurnoCaja}/cierre`, solicitud),
+  /** `GET /api/caja/turnos/{id}` — turno + arqueos (el payload del comprobante Z). Se usa
+   * después de un cierre exitoso para volver a traer el comprobante en un fetch aislado del POST
+   * de cierre (react-async-state regla 6: un cierre 2xx nunca se reporta como falla). */
+  obtenerConArqueos: (idTurnoCaja: number) => api.get<TurnoConArqueos>(`/caja/turnos/${idTurnoCaja}`),
 }
 
 /** Longitud mínima del motivo, uniforme para los 3 tipos de movimiento (design decisión 8;

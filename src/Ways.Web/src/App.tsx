@@ -4,6 +4,7 @@ import { RutaProtegida } from './auth/RutaProtegida'
 import { Layout } from './componentes/Layout'
 import { Articulos } from './paginas/Articulos'
 import { Caja } from './paginas/Caja'
+import { CierreDeCaja } from './paginas/CierreDeCaja'
 import { Categorias } from './paginas/Categorias'
 import { CatalogosFiscales } from './paginas/CatalogosFiscales'
 import { Clientes } from './paginas/Clientes'
@@ -59,6 +60,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
                   <Caja />
+                </RutaProtegida>
+              }
+            />
+            {/* stage-6-turnos-caja (Slice 7, design: Web Composition): cierre de turno — el
+                turno lo trae la URL (`?idTurno=`), se navega acá desde el panel del turno
+                abierto en /caja. Misma política de rol. */}
+            <Route
+              path="/caja/cierre"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <CierreDeCaja />
                 </RutaProtegida>
               }
             />
