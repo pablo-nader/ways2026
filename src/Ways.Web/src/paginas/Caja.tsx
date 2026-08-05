@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import { aSolicitudDeMovimiento, clienteDeCaja, importeValidoParaTipo, motivoValido } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
@@ -85,7 +86,24 @@ function FormularioApertura({ idPuntoVenta, onAbierto, onEscribiendoCambio }: Pr
       })
       onAbierto(turno)
     } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir el turno.')
+      if (e instanceof ErrorApi && e.codigo === 'turno_ya_abierto') {
+        // Autocuración (judgment-day slice-6, judge B): otra pestaña/cajero ganó la carrera de
+        // apertura entre que esta pestaña cargó el formulario y el click. En vez de dejar un
+        // error + formulario obsoleto (el turno YA está abierto, reintentar solo repetiría el
+        // mismo 409), se vuelve a consultar el turno abierto real y se muestra ese panel.
+        try {
+          const turnoReal = await clienteDeCaja.obtenerAbierto(idPuntoVenta)
+          if (turnoReal) {
+            onAbierto(turnoReal)
+          } else {
+            setError('El turno ya está abierto, pero no se pudo confirmar cuál — actualizá la página.')
+          }
+        } catch {
+          setError('El turno ya está abierto, pero no se pudo confirmar cuál — actualizá la página.')
+        }
+      } else {
+        setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir el turno.')
+      }
     } finally {
       abriendoRef.current = false
       setAbriendo(false)
@@ -253,20 +271,34 @@ function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: 
 
   return (
     <div>
-      <div className="row g-3 mb-3">
-        <div className="col-md-4">
+      <div className="row g-3 mb-3 align-items-end">
+        <div className="col-md-3">
           <div className="small text-muted">Estado</div>
           <div>
             <span className="badge bg-success">Turno abierto</span>
           </div>
         </div>
-        <div className="col-md-4">
+        <div className="col-md-3">
           <div className="small text-muted">Apertura</div>
           <div>{formatearFechaHora(turno.fechaApertura)}</div>
         </div>
-        <div className="col-md-4">
+        <div className="col-md-3">
           <div className="small text-muted">Fondo inicial</div>
           <div>{formatearMoneda(turno.fondoInicial)}</div>
+        </div>
+        <div className="col-md-3 text-md-end">
+          {/* stage-6-turnos-caja (Slice 7, design: Web Composition): entrada a la pantalla de
+              cierre — el turno lo identifica la URL, nunca un selector propio de esa pantalla. */}
+          <Link
+            className={`btn btn-outline-danger btn-sm rounded-0${registrando ? ' disabled' : ''}`}
+            aria-disabled={registrando}
+            to={`/caja/cierre?idTurno=${turno.id}`}
+            onClick={(e) => {
+              if (registrando) e.preventDefault()
+            }}
+          >
+            Cerrar turno
+          </Link>
         </div>
       </div>
 

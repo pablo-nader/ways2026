@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clienteDeArticulos } from '../api/articulos'
+import { clienteDeCaja } from '../api/caja'
 import { reducirCarrito, type AccionCarrito, type LineaCarrito } from '../api/carrito'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
@@ -86,6 +87,117 @@ function etiquetaDeCampoFila(prefijo: string, medioDeFila: MedioPagoListado | nu
   return `${prefijo} de ${medioDeFila?.nombre ?? 'medio de pago'} (fila ${idFila})`
 }
 
+type PropsPanelGateTurno = {
+  idPuntoVenta: number
+  onAbierto: () => void
+}
+
+/**
+ * Gate seam de checkout (stage-6-turnos-caja, Slice 7, design: Web Composition — "Pos.tsx gate
+ * seam"): un `409 turno_no_abierto` de `POST /api/ventas` reemplaza el panel de cobro por esto
+ * en vez de mostrar el error crudo — ofrece abrir el turno ahí mismo. Tras la apertura la venta
+ * NUNCA se reintenta sola (react-async-state regla 9: un reintento automático de un checkout es
+ * exactamente el defecto de doble venta que esa regla existe para evitar) — el cajero vuelve a
+ * apretar "Cobrar" a mano, con el carrito y el panel de pagos intactos.
+ */
+function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
+  const [fondoInicial, setFondoInicial] = useState('')
+  const [observaciones, setObservaciones] = useState('')
+  const [abriendo, setAbriendo] = useState(false)
+  const abriendoRef = useRef(false)
+  const [error, setError] = useState('')
+
+  async function abrir() {
+    // regla 9 (react-async-state): guard de reentrancia de primera línea.
+    if (abriendoRef.current) return
+
+    const fondo = Number(fondoInicial)
+    if (fondoInicial.trim() === '' || !Number.isFinite(fondo) || fondo < 0) {
+      setError('El fondo inicial tiene que ser un número mayor o igual a 0.')
+      return
+    }
+
+    abriendoRef.current = true
+    setAbriendo(true)
+    setError('')
+
+    try {
+      await clienteDeCaja.abrir({
+        idPuntoVenta,
+        fondoInicial: fondo,
+        observaciones: observaciones.trim() === '' ? null : observaciones.trim(),
+      })
+      onAbierto()
+    } catch (e) {
+      if (e instanceof ErrorApi && e.codigo === 'turno_ya_abierto') {
+        // Autocuración (mismo criterio que `FormularioApertura` en Caja.tsx): otra
+        // pestaña/cajero ganó la carrera de apertura entre que se abrió este gate y el click. El
+        // turno YA está abierto, así que la continuación de éxito es la correcta — reintentar
+        // solo repetiría el mismo 409. El carrito y los pagos siguen intactos, el cajero vuelve a
+        // apretar "Cobrar" a mano (react-async-state regla 9: ningún reintento automático).
+        onAbierto()
+      } else {
+        setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir el turno.')
+      }
+    } finally {
+      abriendoRef.current = false
+      setAbriendo(false)
+    }
+  }
+
+  return (
+    <div className="container-fluid py-4" key="gate-turno">
+      <div className="row g-3">
+        <div className="col-12">
+          <Box titulo="No hay un turno abierto" variante="warning">
+            <p className="text-muted">
+              Para cobrar hace falta abrir un turno de caja en este punto de venta. El carrito y los pagos que ya
+              cargaste quedan como están — al abrir el turno volvés a esta pantalla para apretar «Cobrar» de nuevo.
+            </p>
+            {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+
+            <div className="row g-2 align-items-end" style={{ maxWidth: 640 }}>
+              <div className="col-md-4">
+                <label className="form-label" htmlFor="pos-gate-fondo-inicial">
+                  Fondo inicial
+                </label>
+                <input
+                  id="pos-gate-fondo-inicial"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="form-control rounded-0"
+                  value={fondoInicial}
+                  disabled={abriendo}
+                  onChange={(e) => setFondoInicial(e.target.value)}
+                />
+              </div>
+              <div className="col-md-5">
+                <label className="form-label" htmlFor="pos-gate-observaciones">
+                  Observaciones
+                </label>
+                <input
+                  id="pos-gate-observaciones"
+                  type="text"
+                  className="form-control rounded-0"
+                  value={observaciones}
+                  disabled={abriendo}
+                  onChange={(e) => setObservaciones(e.target.value)}
+                />
+              </div>
+              <div className="col-md-3">
+                <button type="button" className="btn btn-primary rounded-0 w-100" disabled={abriendo} onClick={abrir}>
+                  {abriendo ? 'Abriendo…' : 'Abrir turno'}
+                </button>
+              </div>
+            </div>
+          </Box>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Pantalla del POS (stage-5-pos-ventas, Slice 7, design: POS Screen Composition) — escaneo +
  * carrito + selección de punto de venta/cliente (Slice 6) + panel de pagos, checkout (`POST
@@ -137,6 +249,11 @@ export function Pos() {
   const cobrandoRef = useRef(false)
   const generacionCobroRef = useRef(0)
   const [errorCobro, setErrorCobro] = useState('')
+
+  // stage-6-turnos-caja (Slice 7): gate seam del checkout — un 409 turno_no_abierto reemplaza el
+  // panel de cobro por la oferta de abrir turno en vez de un error crudo (design: Web
+  // Composition — "Pos.tsx gate seam").
+  const [gateTurno, setGateTurno] = useState(false)
 
   const [ventaEmitida, setVentaEmitida] = useState<{ comprobante: ComprobanteEmitido; cliente: ClienteListado } | null>(null)
 
@@ -578,13 +695,31 @@ export function Pos() {
       setTerminoCliente('')
     } catch (e) {
       if (generacionCobroRef.current !== miGeneracion) return
-      setErrorCobro(e instanceof ErrorApi ? e.message : 'No se pudo registrar la venta.')
+      // stage-6-turnos-caja (Slice 7): el gate seam reemplaza el panel entero, no un aviso más
+      // — reintentar el checkout sin turno abierto solo repetiría el mismo 409.
+      if (e instanceof ErrorApi && e.codigo === 'turno_no_abierto') {
+        setGateTurno(true)
+      } else {
+        setErrorCobro(e instanceof ErrorApi ? e.message : 'No se pudo registrar la venta.')
+      }
     } finally {
       if (generacionCobroRef.current === miGeneracion) {
         cobrandoRef.current = false
         setCobrando(false)
       }
     }
+  }
+
+  if (gateTurno && puntoVentaSeleccionada) {
+    return (
+      <PanelGateTurno
+        idPuntoVenta={puntoVentaSeleccionada.id}
+        onAbierto={() => {
+          setGateTurno(false)
+          setErrorCobro('')
+        }}
+      />
+    )
   }
 
   if (ventaEmitida) {

@@ -631,6 +631,31 @@ export type LineaDeResumen = { idMedioPago: number; importeEsperado: number }
  * (`ServicioDeResumenDeTurno`) no expone ese detalle, solo el total esperado por medio. */
 export type ResumenDeTurno = { idTurnoCaja: number; idMedioAncla: number; medios: LineaDeResumen[] }
 
+// --- Caja: cierre y comprobante Z (stage-6-turnos-caja, Slice 7) ---
+// Espejo de `Ways.Application.Caja.Contratos` (Slice 4/7) — el cierre y el detalle con arqueos.
+
+/** Un conteo declarado por el cajero — el ÚNICO dato que viaja en `SolicitudDeCierre.conteos`
+ * (spec: Cierre Payload Carries Only Declared Counts). `importeEsperado` NUNCA es un campo de
+ * entrada acá, lo deriva siempre el servidor. */
+export type ConteoDeclarado = { idMedioPago: number; importeDeclarado: number }
+
+/** Cuerpo de `POST /api/caja/turnos/{id}/cierre` — sin ningún campo de total, subtotal o
+ * esperado (spec: No Request Shape Accepts A Total). */
+export type SolicitudDeCierre = { conteos: ConteoDeclarado[]; observaciones: string | null }
+
+/** Una fila ya persistida de `arqueos_turno` — `diferencia` la calcula la columna `GENERATED
+ * ALWAYS` del servidor (design decisión 6); positivo = faltante. */
+export type LineaDeArqueoResumen = {
+  idMedioPago: number
+  importeEsperado: number
+  importeDeclarado: number
+  diferencia: number
+}
+
+/** Respuesta de `POST /api/caja/turnos/{id}/cierre` y de `GET /api/caja/turnos/{id}` (el
+ * payload del comprobante Z) — mismos campos planos que `TurnoResumen` más `arqueos`. */
+export type TurnoConArqueos = TurnoResumen & { arqueos: LineaDeArqueoResumen[] }
+
 // --- POS: checkout (stage-5-pos-ventas, Slice 6 → wireado en Slice 7) ---
 // Espejo de `Ways.Application.Ventas.Contratos` (confirmado contra el DTO real de
 // `POST /api/ventas`, mergeado en Slice 4) — usado por `ventas.ts` (mappers) y `Pos.tsx`
