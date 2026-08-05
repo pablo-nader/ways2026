@@ -6,7 +6,9 @@ import { api, ErrorApi } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import {
+  aSolicitudDeAjuste,
   aSolicitudDePagoACuenta,
+  aSolicitudDeReliquidacion,
   calcularImporteAplicado,
   clienteDeCuentaCorriente,
   disponibilidadPrevia,
@@ -14,20 +16,29 @@ import {
   filaPagoACuentaVacia,
   filasAPagosACuentaParaCalculo,
   medioFisicoParaPagoACuenta,
+  parsearDetalleDeActualizacionPrecios,
   rangoUltimoMes,
+  reliquidacionEsNoOp,
+  saldoResultanteDeAjuste,
+  validarAjusteLocal,
   validarPagoACuentaLocal,
   type FilaPagoACuenta,
 } from '../api/cuentaCorriente'
 import type {
   ClienteListado,
   ComprobanteEmitido,
+  DetalleDeConsumo,
   EstadoDeCuenta,
   EstadoDeCuentaHeader,
   MedioPagoAlta,
   MedioPagoListado,
+  MovimientoDeCuentaCorriente,
   ParametroResuelto,
   PuntoVentaListado,
+  ResultadoDeReliquidacion,
 } from '../api/tipos'
+import { puedeSupervisarCuentaCorriente } from '../api/tipos'
+import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 
@@ -64,6 +75,76 @@ function formatearFechaHora(iso: string): string {
 
 function formatearDisponibilidad(valor: number | null): string {
   return valor === null ? 'Ilimitado' : formatearMoneda(valor)
+}
+
+/**
+ * Detalle auditable por consumo (Fix 1: preview/commit de la reliquidación traían `detalle` pero
+ * nunca se mostraba). Cada consumo queda siempre visible (id + delta); las líneas — histórico →
+ * actual, delta y el `motivo` de las omitidas — quedan en un `<details>` expandible para que la
+ * lista no se coma la pantalla cuando el cap de 500 trae muchos consumos.
+ */
+function DetalleDeConsumosDeReliquidacion({ detalle }: { detalle: DetalleDeConsumo[] }) {
+  if (detalle.length === 0) return null
+  return (
+    <div className="mb-3">
+      <div className="small text-muted mb-1">Detalle por consumo</div>
+      {detalle.map((consumo) => (
+        <details key={consumo.idMovimiento} className="mb-1">
+          <summary>
+            Movimiento #{consumo.idMovimiento} — {formatearMoneda(consumo.delta)}
+          </summary>
+          <table className="table table-sm table-bordered mb-0 mt-1">
+            <thead>
+              <tr>
+                <th>Artículo</th>
+                <th>Cant.</th>
+                <th>Precio histórico</th>
+                <th>Precio actual</th>
+                <th>Delta</th>
+                <th>Motivo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {consumo.lineas.map((linea, indice) => (
+                <tr key={indice}>
+                  <td>{linea.idArticulo ?? '—'}</td>
+                  <td>{linea.cantidad}</td>
+                  <td>{formatearMoneda(linea.precioHistorico)}</td>
+                  <td>{linea.precioActual === null ? '—' : formatearMoneda(linea.precioActual)}</td>
+                  <td>{formatearMoneda(linea.delta)}</td>
+                  <td>{linea.motivo ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      ))}
+    </div>
+  )
+}
+
+/** Detalle del ledger para un movimiento `ActualizacionPrecios` (Fix 1b) — el `detalle` guardado
+ * es el mismo JSON auditable de la reliquidación, nunca un texto libre: se parsea de forma
+ * defensiva y se muestra un resumen legible; un JSON malformado cae al texto crudo, nunca rompe la
+ * fila. */
+function DetalleDeMovimientoDeActualizacionPrecios({ detalle }: { detalle: string | null }) {
+  const consumos = parsearDetalleDeActualizacionPrecios(detalle)
+  if (consumos === null) return <>{detalle ?? '—'}</>
+  if (consumos.length === 0) return <>Sin consumos re-preciados.</>
+  return (
+    <details>
+      <summary>
+        {consumos.length} consumo{consumos.length === 1 ? '' : 's'} re-preciado{consumos.length === 1 ? '' : 's'}
+      </summary>
+      <ul className="mb-0 ps-3 small">
+        {consumos.map((consumo) => (
+          <li key={consumo.idMovimiento}>
+            Movimiento #{consumo.idMovimiento}: {formatearMoneda(consumo.delta)}
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
 }
 
 function nombreDeCliente(idCliente: number, cliente: ClienteListado | null): string {
@@ -496,6 +577,373 @@ function ModalPagoACuenta({ idCliente, puntosVenta, medios, header, onCerrar, on
   )
 }
 
+type PropsModalAjuste = {
+  idCliente: number
+  puntosVenta: PuntoVentaListado[]
+  header: EstadoDeCuentaHeader
+  onCerrar: () => void
+  onAntesDeEscribir: () => void
+  onRegistrado: (movimiento: MovimientoDeCuentaCorriente) => void
+}
+
+/**
+ * Modal de ajuste manual (Slice 6, design: Web Composition; spec: ajustes-de-cuenta-corriente —
+ * gated por `SupervisionDeCuentaCorriente`, cosmético en pantalla, real en el servidor).
+ * `react-async-state`: regla 9 (guard de reentrancia + deshabilitado de ventana completa), regla 3
+ * (el llamador bumpea la generación del ledger ANTES del POST), regla 6 (el refetch posterior vive
+ * en el padre). Sin turno (design: Open Questions — "provenance, not authority", mismo criterio
+ * que la reliquidación): a diferencia del pago, este endpoint nunca llama a `ServicioDeTurnos`, así
+ * que no hay ningún `turno_no_abierto` que recuperar acá (rule 10 sweep — ver el catch de abajo).
+ */
+function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntesDeEscribir, onRegistrado }: PropsModalAjuste) {
+  const [idPuntoVenta, setIdPuntoVenta] = useState<number>(
+    () => puntosVenta.find((p) => p.id === leerPuntoVentaGuardado())?.id ?? puntosVenta[0].id,
+  )
+  const [importe, setImporte] = useState('')
+  const [detalle, setDetalle] = useState('')
+  // Fix 2 (mismo patrón que la reliquidación): un ajuste manual también modifica el saldo del
+  // cliente de forma directa — la confirmación explícita evita que un click apurado dispare un
+  // ajuste sin que el supervisor haya leído el importe/detalle que está a punto de registrar.
+  const [confirmado, setConfirmado] = useState(false)
+
+  const [registrando, setRegistrando] = useState(false)
+  const registrandoRef = useRef(false)
+  const [error, setError] = useState('')
+
+  const importeNumerico = importe.trim() === '' ? Number.NaN : Number(importe)
+  const saldoResultante = Number.isFinite(importeNumerico) ? saldoResultanteDeAjuste(header.saldo, importeNumerico) : null
+  const puedeRegistrar = !registrando && confirmado
+
+  function cambiarPuntoVenta(id: number) {
+    if (registrandoRef.current) return
+    setIdPuntoVenta(id)
+    guardarPuntoVentaSeleccionado(id)
+  }
+
+  async function registrarAjuste() {
+    // regla 9: guard de reentrancia de primera línea.
+    if (registrandoRef.current) return
+    if (!puedeRegistrar) return
+
+    const rechazo = validarAjusteLocal({ importe: importeNumerico, detalle })
+    if (rechazo) {
+      setError(rechazo.mensaje)
+      return
+    }
+
+    registrandoRef.current = true
+    setRegistrando(true)
+    setError('')
+
+    // regla 3: bumpear la generación del ledger ANTES de la escritura.
+    onAntesDeEscribir()
+
+    try {
+      const solicitud = aSolicitudDeAjuste(idPuntoVenta, importeNumerico, detalle)
+      const movimiento = await clienteDeCuentaCorriente.registrarAjuste(idCliente, solicitud)
+      registrandoRef.current = false
+      setRegistrando(false)
+      // regla 6: el refetch del ledger vive en el padre, aislado de este try/catch.
+      onRegistrado(movimiento)
+    } catch (e) {
+      registrandoRef.current = false
+      setRegistrando(false)
+      // Rule 10 sweep (design: Web Composition — "the three modals are sibling surfaces"): el
+      // ajuste manual no tiene turno (`ServicioDeCuentaCorriente.RegistrarAjusteAsync` nunca llama
+      // a `ServicioDeTurnos`), así que `turno_no_abierto` es estructuralmente irreproducible acá —
+      // replicar el panel de apertura de turno sería código muerto para un 409 que este endpoint
+      // nunca emite. `ajuste_importe_invalido`/`ajuste_detalle_requerido`/
+      // `cliente_sin_cuenta_corriente` caen en el mismo aviso genérico que ya usa el pago.
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo registrar el ajuste.')
+    }
+  }
+
+  return (
+    <>
+      <div className="modal d-block" tabIndex={-1} role="dialog">
+        <div className="modal-dialog" role="document">
+          <div className="modal-content rounded-0">
+            <div className="modal-header">
+              <h5 className="modal-title">Ajuste manual de cuenta corriente</h5>
+            </div>
+            <div className="modal-body">
+              {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+
+              <div className="mb-3" style={{ maxWidth: 320 }}>
+                <label className="form-label" htmlFor="cc-ajuste-punto-venta">
+                  Punto de venta
+                </label>
+                <select
+                  id="cc-ajuste-punto-venta"
+                  className="form-select rounded-0"
+                  value={idPuntoVenta}
+                  disabled={registrando}
+                  onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
+                >
+                  {puntosVenta.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label" htmlFor="cc-ajuste-importe">
+                  Importe
+                </label>
+                <input
+                  id="cc-ajuste-importe"
+                  type="number"
+                  step="0.01"
+                  className="form-control rounded-0"
+                  value={importe}
+                  disabled={registrando}
+                  onChange={(e) => setImporte(e.target.value)}
+                />
+                <div className="form-text">
+                  Positivo aumenta la deuda del cliente, negativo la reduce. Nunca puede ser cero.
+                </div>
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label" htmlFor="cc-ajuste-detalle">
+                  Detalle (obligatorio)
+                </label>
+                <input
+                  id="cc-ajuste-detalle"
+                  type="text"
+                  className="form-control rounded-0"
+                  value={detalle}
+                  disabled={registrando}
+                  onChange={(e) => setDetalle(e.target.value)}
+                />
+              </div>
+
+              <div className="small text-muted">Saldo actual: {formatearMoneda(header.saldo)}</div>
+              {saldoResultante !== null && <div className="fs-6">Saldo resultante: {formatearMoneda(saldoResultante)}</div>}
+
+              <div className="form-check mt-3">
+                <input
+                  id="cc-ajuste-confirmacion"
+                  type="checkbox"
+                  className="form-check-input rounded-0"
+                  checked={confirmado}
+                  disabled={registrando}
+                  onChange={(e) => setConfirmado(e.target.checked)}
+                />
+                <label className="form-check-label" htmlFor="cc-ajuste-confirmacion">
+                  Entiendo que este ajuste modifica el saldo del cliente.
+                </label>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-outline-secondary rounded-0" disabled={registrando} onClick={onCerrar}>
+                Cancelar
+              </button>
+              <button type="button" className="btn btn-primary rounded-0" disabled={!puedeRegistrar} onClick={registrarAjuste}>
+                {registrando ? 'Registrando…' : 'Registrar ajuste'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="modal-backdrop show" />
+    </>
+  )
+}
+
+type PropsModalReliquidacion = {
+  idCliente: number
+  puntosVenta: PuntoVentaListado[]
+  onCerrar: () => void
+  onAntesDeEscribir: () => void
+  onEjecutada: (resultado: ResultadoDeReliquidacion) => void
+}
+
+/**
+ * Modal de reliquidación a precio del día (Slice 6, design: Web Composition; spec:
+ * reliquidacion-a-precio-del-dia) — preview PRIMERO (`GET`, sin lock, nunca autoritativo), después
+ * la confirmación de irreversibilidad (mismo patrón que `CierreDeCaja.tsx`: checkbox explícito,
+ * nunca pre-tildado), recién ahí el commit. `react-async-state`: regla 9 (guard de reentrancia +
+ * deshabilitado de ventana completa — un doble submit re-precificaría al cliente dos veces), regla
+ * 6 (un commit 2xx NUNCA se reporta como fallo, el refetch del ledger vive en el padre, aislado).
+ * Sin turno (mismo motivo que `ModalAjusteDeCuenta`): sin recuperación de `turno_no_abierto` que
+ * replicar, ese 409 es irreproducible en este endpoint.
+ */
+function ModalReliquidacion({ idCliente, puntosVenta, onCerrar, onAntesDeEscribir, onEjecutada }: PropsModalReliquidacion) {
+  const [idPuntoVenta, setIdPuntoVenta] = useState<number>(
+    () => puntosVenta.find((p) => p.id === leerPuntoVentaGuardado())?.id ?? puntosVenta[0].id,
+  )
+
+  const [preview, setPreview] = useState<ResultadoDeReliquidacion | null>(null)
+  const [cargandoPreview, setCargandoPreview] = useState(true)
+  const [errorPreview, setErrorPreview] = useState('')
+  const generacionPreviewRef = useRef(0)
+
+  const [confirmado, setConfirmado] = useState(false)
+  const [ejecutando, setEjecutando] = useState(false)
+  const ejecutandoRef = useRef(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let vigente = true
+    const miGeneracion = (generacionPreviewRef.current += 1)
+    setCargandoPreview(true)
+    setErrorPreview('')
+
+    clienteDeCuentaCorriente
+      .previsualizarReliquidacion(idCliente)
+      .then((resultado) => {
+        if (!vigente || generacionPreviewRef.current !== miGeneracion) return
+        setPreview(resultado)
+      })
+      .catch((e) => {
+        if (!vigente || generacionPreviewRef.current !== miGeneracion) return
+        setPreview(null)
+        setErrorPreview(e instanceof ErrorApi ? e.message : 'No se pudo cargar la vista previa de la reliquidación.')
+      })
+      .finally(() => {
+        if (!vigente || generacionPreviewRef.current !== miGeneracion) return
+        setCargandoPreview(false)
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [idCliente])
+
+  function cambiarPuntoVenta(id: number) {
+    if (ejecutandoRef.current) return
+    setIdPuntoVenta(id)
+    guardarPuntoVentaSeleccionado(id)
+  }
+
+  const previewEsNoOp = preview !== null && reliquidacionEsNoOp(preview)
+  const puedeEjecutar = !cargandoPreview && errorPreview === '' && preview !== null && !previewEsNoOp && confirmado && !ejecutando
+
+  async function ejecutar() {
+    // regla 9: guard de reentrancia de primera línea.
+    if (ejecutandoRef.current) return
+    if (!puedeEjecutar) return
+
+    ejecutandoRef.current = true
+    setEjecutando(true)
+    setError('')
+
+    // regla 3: bumpear la generación del ledger ANTES de la escritura.
+    onAntesDeEscribir()
+
+    try {
+      const solicitud = aSolicitudDeReliquidacion(idPuntoVenta)
+      const resultado = await clienteDeCuentaCorriente.ejecutarReliquidacion(idCliente, solicitud)
+      ejecutandoRef.current = false
+      setEjecutando(false)
+      // regla 6: el refetch del ledger vive en el padre, aislado de este try/catch — un commit
+      // 2xx nunca se reporta como fallo acá, incluida la variante no-op de la carrera preview↔commit.
+      onEjecutada(resultado)
+    } catch (e) {
+      ejecutandoRef.current = false
+      setEjecutando(false)
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo ejecutar la reliquidación.')
+    }
+  }
+
+  return (
+    <>
+      <div className="modal d-block" tabIndex={-1} role="dialog">
+        <div className="modal-dialog" role="document">
+          <div className="modal-content rounded-0">
+            <div className="modal-header">
+              <h5 className="modal-title">Actualizar precios (reliquidación)</h5>
+            </div>
+            <div className="modal-body">
+              {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+              {errorPreview && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorPreview}</div>}
+
+              {cargandoPreview && <Cargando />}
+
+              {!cargandoPreview && preview && previewEsNoOp && (
+                <p className="text-muted">No hay consumos pendientes de actualizar para este cliente.</p>
+              )}
+
+              {!cargandoPreview && preview && !previewEsNoOp && (
+                <>
+                  <div className="row g-3 mb-3">
+                    <div className="col-md-6">
+                      <div className="small text-muted">Delta estimado</div>
+                      <div className="fs-6" data-testid="cc-reliq-delta-estimado">
+                        {formatearMoneda(preview.delta)}
+                      </div>
+                    </div>
+                    <div className="col-md-6">
+                      <div className="small text-muted">Consumos cubiertos</div>
+                      <div className="fs-6">{preview.idsMovimientosCubiertos.length}</div>
+                    </div>
+                  </div>
+                  {preview.hayMas && (
+                    <div className="alert alert-warning rounded-0 py-1 px-2 small">
+                      Quedan más consumos pendientes — esta corrida no los cubre, va a hacer falta correr la
+                      reliquidación de nuevo después.
+                    </div>
+                  )}
+
+                  <DetalleDeConsumosDeReliquidacion detalle={preview.detalle} />
+
+                  <div className="mb-3" style={{ maxWidth: 320 }}>
+                    <label className="form-label" htmlFor="cc-reliq-punto-venta">
+                      Punto de venta
+                    </label>
+                    <select
+                      id="cc-reliq-punto-venta"
+                      className="form-select rounded-0"
+                      value={idPuntoVenta}
+                      disabled={ejecutando}
+                      onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
+                    >
+                      {puntosVenta.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-check mb-3">
+                    <input
+                      id="cc-reliq-confirmacion"
+                      type="checkbox"
+                      className="form-check-input rounded-0"
+                      checked={confirmado}
+                      disabled={ejecutando}
+                      onChange={(e) => setConfirmado(e.target.checked)}
+                    />
+                    <label className="form-check-label" htmlFor="cc-reliq-confirmacion">
+                      Confirmo que quiero actualizar los precios de este cliente. La reliquidación es irreversible: no
+                      se puede deshacer, la única corrección posible es un ajuste manual posterior.
+                    </label>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-outline-secondary rounded-0" disabled={ejecutando} onClick={onCerrar}>
+                {previewEsNoOp ? 'Cerrar' : 'Cancelar'}
+              </button>
+              {!previewEsNoOp && (
+                <button type="button" className="btn btn-danger rounded-0" disabled={!puedeEjecutar} onClick={ejecutar}>
+                  {ejecutando ? 'Ejecutando…' : 'Ejecutar reliquidación'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="modal-backdrop show" />
+    </>
+  )
+}
+
 type PropsPantalla = {
   idCliente: number
   clienteInfo: ClienteListado | null
@@ -533,7 +981,17 @@ function PantallaCuentaCorriente({
   const generacionEstadoRef = useRef(0)
 
   const [modalPagoAbierto, setModalPagoAbierto] = useState(false)
-  const [avisoPago, setAvisoPago] = useState('')
+  const [modalAjusteAbierto, setModalAjusteAbierto] = useState(false)
+  const [modalReliquidacionAbierto, setModalReliquidacionAbierto] = useState(false)
+  // Aviso compartido por las tres acciones de escritura (pago, ajuste, reliquidación) — mismo
+  // patrón de banner único que ya usaba el pago (rule 10 sweep: el aviso de éxito aplica parejo).
+  const [aviso, setAviso] = useState('')
+
+  const { usuario } = useAuth()
+  // Cosmético (design: Web Composition — "el servidor vuelve a exigir SupervisionDeCuentaCorriente
+  // en cada request"): un Vendedor no ve estos botones, pero incluso si forzara el DOM el 403 del
+  // servidor sigue siendo la autoridad real.
+  const esSupervisorOAdmin = usuario !== null && puedeSupervisarCuentaCorriente(usuario.rolId)
 
   // regla 2: cada cambio de filtro dispara una nueva consulta — una respuesta desactualizada
   // nunca puede pisar la más reciente.
@@ -589,6 +1047,30 @@ function PantallaCuentaCorriente({
     motivoBloqueoPago = 'No se pudieron cargar los datos necesarios para registrar un pago.'
   }
 
+  // El ajuste manual y la reliquidación no necesitan medios de pago (ninguno de los dos mueve
+  // plata física), pero sí cliente identificado y al menos un punto de venta — mismo criterio de
+  // fail-closed que `puedeIngresarPago` (Fix 2, regla 7).
+  const puedeSupervisarCC =
+    esSupervisorOAdmin &&
+    !cargandoCliente &&
+    clienteInfo !== null &&
+    errorCliente === '' &&
+    puntosVenta !== null &&
+    errorPuntosVenta === '' &&
+    puntosVenta.length > 0 &&
+    !esConsumidorFinal
+
+  let motivoBloqueoSupervision: string | undefined
+  if (cargandoCliente) {
+    motivoBloqueoSupervision = 'Cargando los datos del cliente…'
+  } else if (errorCliente) {
+    motivoBloqueoSupervision = 'No se pudo confirmar el cliente — no se puede continuar hasta que esto se resuelva.'
+  } else if (esConsumidorFinal) {
+    motivoBloqueoSupervision = 'El Consumidor Final no tiene cuenta corriente.'
+  } else if (!puedeSupervisarCC) {
+    motivoBloqueoSupervision = 'No se pudieron cargar los datos necesarios.'
+  }
+
   return (
     <div className="container-fluid py-4">
       <Box
@@ -599,11 +1081,12 @@ function PantallaCuentaCorriente({
           </Link>
         }
       >
-        {avisoPago && <div className="alert alert-success rounded-0">{avisoPago}</div>}
+        {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
         {errorEstado && <div className="alert alert-danger rounded-0">{errorEstado}</div>}
         {(errorCliente || errorMedios || errorPuntosVenta) && (
           <div className="alert alert-warning rounded-0 py-1 px-2 small">
-            {errorCliente || errorMedios || errorPuntosVenta} No se puede ingresar un pago hasta que esto se resuelva.
+            {errorCliente || errorMedios || errorPuntosVenta} No se pueden registrar operaciones de cuenta corriente
+            hasta que esto se resuelva.
           </div>
         )}
 
@@ -625,18 +1108,48 @@ function PantallaCuentaCorriente({
                 <div>{formatearDisponibilidad(estado.header.disponibilidad)}</div>
               </div>
               <div className="col-md-3 text-md-end">
-                <button
-                  type="button"
-                  className="btn btn-primary rounded-0"
-                  disabled={!puedeIngresarPago}
-                  title={motivoBloqueoPago}
-                  onClick={() => {
-                    setAvisoPago('')
-                    setModalPagoAbierto(true)
-                  }}
-                >
-                  Ingresar pago
-                </button>
+                <div className="d-flex gap-2 justify-content-md-end flex-wrap">
+                  {esSupervisorOAdmin && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary rounded-0"
+                        disabled={!puedeSupervisarCC}
+                        title={motivoBloqueoSupervision}
+                        onClick={() => {
+                          setAviso('')
+                          setModalAjusteAbierto(true)
+                        }}
+                      >
+                        Ajuste manual
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline-danger rounded-0"
+                        disabled={!puedeSupervisarCC}
+                        title={motivoBloqueoSupervision}
+                        onClick={() => {
+                          setAviso('')
+                          setModalReliquidacionAbierto(true)
+                        }}
+                      >
+                        Actualizar precios
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-primary rounded-0"
+                    disabled={!puedeIngresarPago}
+                    title={motivoBloqueoPago}
+                    onClick={() => {
+                      setAviso('')
+                      setModalPagoAbierto(true)
+                    }}
+                  >
+                    Ingresar pago
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -716,7 +1229,13 @@ function PantallaCuentaCorriente({
                     <tr key={m.id}>
                       <td>{formatearFechaHora(m.fecha)}</td>
                       <td>{etiquetaDeMovimiento(m)}</td>
-                      <td>{m.detalle ?? '—'}</td>
+                      <td>
+                        {m.tipo === 'ActualizacionPrecios' ? (
+                          <DetalleDeMovimientoDeActualizacionPrecios detalle={m.detalle} />
+                        ) : (
+                          (m.detalle ?? '—')
+                        )}
+                      </td>
                       <td className="text-end">{formatearMoneda(m.importe)}</td>
                       <td className="text-end">{formatearMoneda(m.saldoResultante)}</td>
                     </tr>
@@ -747,10 +1266,51 @@ function PantallaCuentaCorriente({
           }}
           onRegistrado={(comprobante) => {
             setModalPagoAbierto(false)
-            setAvisoPago(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
+            setAviso(`Pago registrado: comprobante ${comprobante.numeroVisible}.`)
             // regla 6: el refetch queda aislado del try/catch de la escritura del modal — si
             // falla, no pisa el aviso de éxito de arriba (solo el propio error de carga del
             // ledger, que ya tiene su mensaje distinguible).
+            cargarEstado()
+          }}
+        />
+      )}
+
+      {modalAjusteAbierto && estado && puntosVenta && (
+        <ModalAjusteDeCuenta
+          idCliente={idCliente}
+          puntosVenta={puntosVenta}
+          header={estado.header}
+          onCerrar={() => setModalAjusteAbierto(false)}
+          onAntesDeEscribir={() => {
+            generacionEstadoRef.current += 1
+          }}
+          onRegistrado={(movimiento) => {
+            setModalAjusteAbierto(false)
+            setAviso(`Ajuste registrado: ${formatearMoneda(movimiento.importe)}.`)
+            // regla 6: el refetch queda aislado del try/catch de la escritura del modal.
+            cargarEstado()
+          }}
+        />
+      )}
+
+      {modalReliquidacionAbierto && estado && puntosVenta && (
+        <ModalReliquidacion
+          idCliente={idCliente}
+          puntosVenta={puntosVenta}
+          onCerrar={() => setModalReliquidacionAbierto(false)}
+          onAntesDeEscribir={() => {
+            generacionEstadoRef.current += 1
+          }}
+          onEjecutada={(resultado) => {
+            setModalReliquidacionAbierto(false)
+            // regla 6: un commit 2xx nunca se reporta como fallo — el no-op de la carrera
+            // preview↔commit (design: "a consumo committing during a run is simply picked up by
+            // the next run") también es un aviso de éxito, no un error.
+            setAviso(
+              reliquidacionEsNoOp(resultado)
+                ? 'No había nada para actualizar.'
+                : `Precios actualizados: ${formatearMoneda(resultado.delta)} sobre ${resultado.idsMovimientosCubiertos.length} consumo(s).${resultado.hayMas ? ' Quedan más consumos pendientes — corré la reliquidación de nuevo.' : ''}`,
+            )
             cargarEstado()
           }}
         />

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  aSolicitudDeAjuste,
   aSolicitudDePagoACuenta,
+  aSolicitudDeReliquidacion,
   calcularImporteAplicado,
   construirQueryEstadoDeCuenta,
   disponibilidadPrevia,
@@ -8,12 +10,16 @@ import {
   filaPagoACuentaVacia,
   filasAPagosACuentaParaCalculo,
   medioFisicoParaPagoACuenta,
+  parsearDetalleDeActualizacionPrecios,
   rangoUltimoMes,
+  reliquidacionEsNoOp,
+  saldoResultanteDeAjuste,
+  validarAjusteLocal,
   validarPagoACuentaLocal,
   type FilaPagoACuenta,
   type PagoACuentaParaCalculo,
 } from './cuentaCorriente'
-import type { MedioPagoListado, MovimientoDeCuentaCorriente } from './tipos'
+import type { MedioPagoListado, MovimientoDeCuentaCorriente, ResultadoDeReliquidacion } from './tipos'
 
 function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
   return {
@@ -325,5 +331,228 @@ describe('aSolicitudDePagoACuenta', () => {
   it('observaciones en blanco se normaliza a null', () => {
     const solicitud = aSolicitudDePagoACuenta(7, [pagoFixture()], '   ')
     expect(solicitud.observaciones).toBeNull()
+  })
+})
+
+describe('validarAjusteLocal — espejo de ReglaDeAjusteDeCuenta.Validar', () => {
+  it('acepta un ajuste válido', () => {
+    expect(validarAjusteLocal({ importe: 40, detalle: 'Descuento por reclamo' })).toBeNull()
+  })
+
+  it('importe cero se rechaza con ajuste_importe_invalido', () => {
+    expect(validarAjusteLocal({ importe: 0, detalle: 'Detalle válido' })).toEqual({
+      codigo: 'ajuste_importe_invalido',
+      mensaje: 'El importe del ajuste no puede ser cero.',
+    })
+  })
+
+  it('importe no numérico (campo vacío) se rechaza como ajuste_importe_invalido', () => {
+    expect(validarAjusteLocal({ importe: Number.NaN, detalle: 'Detalle válido' })).toEqual({
+      codigo: 'ajuste_importe_invalido',
+      mensaje: 'El importe del ajuste no puede ser cero.',
+    })
+  })
+
+  it('detalle vacío se rechaza con ajuste_detalle_requerido', () => {
+    expect(validarAjusteLocal({ importe: 40, detalle: '' })).toEqual({
+      codigo: 'ajuste_detalle_requerido',
+      mensaje: 'El detalle del ajuste es obligatorio y tiene que tener al menos 5 caracteres.',
+    })
+  })
+
+  it('detalle de 4 caracteres (recortado) se rechaza — un carácter por debajo del piso', () => {
+    expect(validarAjusteLocal({ importe: 40, detalle: '  abcd  ' })?.codigo).toBe('ajuste_detalle_requerido')
+  })
+
+  it('detalle de exactamente 5 caracteres (recortado) se acepta — el límite inclusive', () => {
+    expect(validarAjusteLocal({ importe: 40, detalle: '  abcde  ' })).toBeNull()
+  })
+
+  it('un detalle de solo espacios se rechaza como vacío', () => {
+    expect(validarAjusteLocal({ importe: 40, detalle: '     ' })?.codigo).toBe('ajuste_detalle_requerido')
+  })
+
+  it('importe negativo con detalle válido se acepta — el signo no lo decide esta regla', () => {
+    expect(validarAjusteLocal({ importe: -50, detalle: 'Descuento por reclamo' })).toBeNull()
+  })
+})
+
+describe('saldoResultanteDeAjuste', () => {
+  it('un ajuste positivo aumenta el saldo (aumenta la deuda)', () => {
+    expect(saldoResultanteDeAjuste(100, 40)).toBe(140)
+  })
+
+  it('un ajuste negativo reduce el saldo (reduce la deuda)', () => {
+    expect(saldoResultanteDeAjuste(300, -50)).toBe(250)
+  })
+
+  it('redondea a 2 decimales', () => {
+    expect(saldoResultanteDeAjuste(10.005, 0.005)).toBe(10.01)
+  })
+})
+
+describe('aSolicitudDeAjuste', () => {
+  it('arma el cuerpo del POST con la forma exacta del contrato, detalle recortado', () => {
+    expect(aSolicitudDeAjuste(7, -50, '  Descuento por reclamo  ')).toEqual({
+      idPuntoVenta: 7,
+      importe: -50,
+      detalle: 'Descuento por reclamo',
+    })
+  })
+})
+
+describe('aSolicitudDeReliquidacion', () => {
+  it('arma el cuerpo del POST con la forma exacta del contrato — solo idPuntoVenta', () => {
+    expect(aSolicitudDeReliquidacion(7)).toEqual({ idPuntoVenta: 7 })
+  })
+})
+
+describe('reliquidacionEsNoOp', () => {
+  function resultadoFixture(sobrescribir: Partial<ResultadoDeReliquidacion> = {}): ResultadoDeReliquidacion {
+    return { delta: 0, idsMovimientosCubiertos: [], detalle: [], hayMas: false, ...sobrescribir }
+  }
+
+  it('sin consumos cubiertos es un no-op limpio', () => {
+    expect(reliquidacionEsNoOp(resultadoFixture())).toBe(true)
+  })
+
+  it('con al menos un consumo cubierto NUNCA es un no-op, aunque el delta total sea 0', () => {
+    // Un consumo cubierto con líneas no-precificables aporta delta 0 sin que la corrida sea "nada
+    // para hacer" — está PROCESADO, solo que su delta neto es cero.
+    expect(reliquidacionEsNoOp(resultadoFixture({ delta: 0, idsMovimientosCubiertos: [1] }))).toBe(false)
+  })
+
+  it('con delta distinto de cero y consumos cubiertos no es un no-op', () => {
+    expect(reliquidacionEsNoOp(resultadoFixture({ delta: 45, idsMovimientosCubiertos: [1, 2] }))).toBe(false)
+  })
+})
+
+describe('parsearDetalleDeActualizacionPrecios', () => {
+  it('detalle PascalCase real (lo que emite JsonSerializer.Serialize en el backend, sin naming policy) se parsea completo, incl. líneas y motivo', () => {
+    const crudo = JSON.stringify([
+      {
+        IdMovimiento: 3,
+        IdComprobanteVenta: 10,
+        Delta: 55,
+        Lineas: [
+          {
+            IdArticulo: 1,
+            Cantidad: 2,
+            PrecioHistorico: 100,
+            PrecioActual: 120,
+            TotalHistorico: 200,
+            TotalDelDia: 240,
+            Delta: 40,
+            Motivo: null,
+          },
+          {
+            IdArticulo: null,
+            Cantidad: 1,
+            PrecioHistorico: 50,
+            PrecioActual: null,
+            TotalHistorico: 50,
+            TotalDelDia: null,
+            Delta: 0,
+            Motivo: 'Línea de concepto libre (sin artículo) — no re-precificable.',
+          },
+        ],
+      },
+    ])
+
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toEqual([
+      {
+        idMovimiento: 3,
+        idComprobanteVenta: 10,
+        delta: 55,
+        lineas: [
+          {
+            idArticulo: 1,
+            cantidad: 2,
+            precioHistorico: 100,
+            precioActual: 120,
+            totalHistorico: 200,
+            totalDelDia: 240,
+            delta: 40,
+            motivo: null,
+          },
+          {
+            idArticulo: null,
+            cantidad: 1,
+            precioHistorico: 50,
+            precioActual: null,
+            totalHistorico: 50,
+            totalDelDia: null,
+            delta: 0,
+            motivo: 'Línea de concepto libre (sin artículo) — no re-precificable.',
+          },
+        ],
+      },
+    ])
+  })
+
+  it('detalle camelCase (forma de la API, aceptada por robustez) también se parsea', () => {
+    const crudo = JSON.stringify([
+      {
+        idMovimiento: 3,
+        idComprobanteVenta: 10,
+        delta: 40,
+        lineas: [
+          {
+            idArticulo: 1,
+            cantidad: 2,
+            precioHistorico: 100,
+            precioActual: 120,
+            totalHistorico: 200,
+            totalDelDia: 240,
+            delta: 40,
+            motivo: null,
+          },
+        ],
+      },
+    ])
+
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toEqual([
+      {
+        idMovimiento: 3,
+        idComprobanteVenta: 10,
+        delta: 40,
+        lineas: [
+          {
+            idArticulo: 1,
+            cantidad: 2,
+            precioHistorico: 100,
+            precioActual: 120,
+            totalHistorico: 200,
+            totalDelDia: 240,
+            delta: 40,
+            motivo: null,
+          },
+        ],
+      },
+    ])
+  })
+
+  it('un campo requerido ausente (ni PascalCase ni camelCase) da null, nunca lanza', () => {
+    const crudo = JSON.stringify([{ IdMovimiento: 3, Delta: 55, Lineas: [] }]) // falta IdComprobanteVenta
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toBeNull()
+  })
+
+  it('un nivel superior que no es array da null', () => {
+    const crudo = JSON.stringify({ IdMovimiento: 3, IdComprobanteVenta: 10, Delta: 55, Lineas: [] })
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toBeNull()
+  })
+
+  it('un JSON malformado da null, nunca lanza', () => {
+    expect(parsearDetalleDeActualizacionPrecios('{esto no es json')).toBeNull()
+  })
+
+  it('Lineas ausente da null', () => {
+    const crudo = JSON.stringify([{ IdMovimiento: 3, IdComprobanteVenta: 10, Delta: 55 }])
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toBeNull()
+  })
+
+  it('Lineas que no es array da null', () => {
+    const crudo = JSON.stringify([{ IdMovimiento: 3, IdComprobanteVenta: 10, Delta: 55, Lineas: 'no-es-array' }])
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toBeNull()
   })
 })

@@ -85,6 +85,14 @@ export function puedeOperarPos(rolId: number) {
   return rolId === ROL.Vendedor || rolId === ROL.Supervisor || rolId === ROL.Admin
 }
 
+/** Espejo de `Politicas.SupervisionDeCuentaCorriente` (stage-7-cuenta-corriente, Slice 6):
+ * supervisor o admin pueden hacer un ajuste manual o correr la reliquidación — vendedor queda
+ * afuera, la única desviación deliberada de paridad legacy de la etapa. Puramente cosmético: el
+ * servidor vuelve a exigir la misma policy en cada request. */
+export function puedeSupervisarCuentaCorriente(rolId: number) {
+  return rolId === ROL.Supervisor || rolId === ROL.Admin
+}
+
 // --- Catálogos de tenant (ADR-11) ---
 
 export type ComportamientoMedioPago = 'Efectivo' | 'Electronico' | 'CuentaCorriente'
@@ -810,3 +818,49 @@ export type PagoDeCuenta = { idMedioPago: number; importe: number; referencia: s
 /** Cuerpo de `POST /api/clientes/{id}/cuenta-corriente/pagos` — sin ningún campo de importe
  * propio (design decisión 6, espejo de `SolicitudDePagoACuenta`). */
 export type SolicitudDePagoACuenta = { idPuntoVenta: number; pagos: PagoDeCuenta[]; observaciones: string | null }
+
+// --- Cuenta corriente: ajuste manual y reliquidación (stage-7-cuenta-corriente, Slice 6) ------
+// Espejo de `Ways.Application.CuentaCorriente.Contratos` (ajuste) y
+// `Ways.Domain.CuentaCorriente.ReliquidadorDeConsumos` (reliquidación) — ninguna de las dos trae
+// turno (design: Open Questions — "provenance, not authority").
+
+/** Cuerpo de `POST /api/clientes/{id}/cuenta-corriente/ajustes` — `importe` viaja con signo,
+ * decidido por quien llama (espejo de `SolicitudDeAjuste`). */
+export type SolicitudDeAjuste = { idPuntoVenta: number; importe: number; detalle: string | null }
+
+/** Cuerpo de `POST /api/clientes/{id}/cuenta-corriente/reliquidacion` — `idPuntoVenta` es
+ * provenance, no autoridad (espejo de `SolicitudDeReliquidacion`). */
+export type SolicitudDeReliquidacion = { idPuntoVenta: number }
+
+/** Detalle auditable de una línea re-precificada — `motivo` no nulo ⇒ línea omitida
+ * (`precioActual`/`totalDelDia` quedan `null`, `delta` en `0`), nunca fatal (espejo de
+ * `DetalleDeLinea`). */
+export type DetalleDeLinea = {
+  idArticulo: number | null
+  cantidad: number
+  precioHistorico: number
+  precioActual: number | null
+  totalHistorico: number
+  totalDelDia: number | null
+  delta: number
+  motivo: string | null
+}
+
+/** Detalle auditable de un consumo cubierto — `delta` ya lleva aplicada la fracción financiada
+ * (espejo de `DetalleDeConsumo`). */
+export type DetalleDeConsumo = {
+  idMovimiento: number
+  idComprobanteVenta: number
+  delta: number
+  lineas: DetalleDeLinea[]
+}
+
+/** Respuesta de `GET`/`POST …/reliquidacion` — la MISMA forma para preview y commit (nunca dos
+ * fórmulas, design: "never two formulas"). `idsMovimientosCubiertos` vacío + `delta === 0` es un
+ * no-op limpio, distinguible de un error (espejo de `ResultadoDeReliquidacion`). */
+export type ResultadoDeReliquidacion = {
+  delta: number
+  idsMovimientosCubiertos: number[]
+  detalle: DetalleDeConsumo[]
+  hayMas: boolean
+}
