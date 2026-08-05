@@ -128,6 +128,25 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
         Assert.Equal("fk_movimientos_cuenta_corriente_actualizacion", excepcion.ConstraintName);
     }
 
+    // Pin directo del guard AND EXISTS del seed de RC: en una base fresca la migración no debe
+    // insertar nada (el seeder ve la tabla vacía y siembra el catálogo completo, RC incluido).
+    // Sin este pin, quitar el guard solo se detectaba por fallas colaterales en otra suite.
+    [Fact]
+    public async Task UnaBaseFrescaTerminaConElCatalogoCompletoDeTiposIncluidoRc()
+    {
+        // El seeder corre en el arranque del host: hay que bootearlo antes de mirar el catálogo.
+        using var cliente = fixture.CreateClient();
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        var codigos = await db.TiposComprobante.Select(t => t.Codigo).OrderBy(c => c).ToListAsync();
+
+        Assert.Equal(11, codigos.Count);
+        Assert.Contains("RC", codigos);
+        Assert.Contains("FA", codigos);
+        Assert.Contains("TX", codigos);
+    }
+
     // ---- RC idempotente en una base ya migrada desde stage 6 (task 1.9) ----------------------
 
     [Fact]
