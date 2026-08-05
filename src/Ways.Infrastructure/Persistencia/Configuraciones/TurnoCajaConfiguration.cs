@@ -7,9 +7,10 @@ using Ways.Domain.Usuarios;
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
 /// <summary>
-/// Mapea <see cref="TurnoCaja"/> (design: Table Shapes — write path A). Las dos CHECKs son
-/// defensa en profundidad — <c>ReglaDeTurnos</c> (Slice 2)/<c>ServicioDeTurnos.CerrarAsync</c>
-/// (Slice 4) garantizan los mismos invariantes en el camino de servicio.
+/// Mapea <see cref="TurnoCaja"/> (design: Table Shapes — write path A). <c>ck_turnos_caja_cierre_consistente</c>
+/// es defensa en profundidad de <c>ServicioDeTurnos.CerrarAsync</c> (Slice 4), que garantiza el
+/// mismo invariante en el camino de servicio. <c>ck_turnos_caja_fondo_inicial_no_negativo</c> no
+/// tiene gemelo de dominio: <c>ServicioDeTurnos.AbrirAsync</c> confía solo en esta CHECK.
 /// </summary>
 public class TurnoCajaConfiguration : IEntityTypeConfiguration<TurnoCaja>
 {

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Ways.Domain.Articulos;
+using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.CuentaCorriente;
@@ -73,6 +74,13 @@ public interface IWaysDbContext
     DbSet<Ways.Domain.Stock.Stock> Stock { get; }
     DbSet<MovimientoStock> MovimientosStock { get; }
     DbSet<MovimientoCuentaCorriente> MovimientosCuentaCorriente { get; }
+
+    // stage-6-turnos-caja, Slice 2: ServicioDeTurnos es el primer consumidor de Application de
+    // estos 2 — Slice 1 solo adelantaba el modelo a la migración (design: Table Shapes A/B).
+    // ArqueosTurno/MovimientosTesoreria/Gastos siguen sin exponerse acá: sus primeros
+    // consumidores (ServicioDeTurnos.CerrarAsync/ServicioDeGastos) llegan en Slice 3/4.
+    DbSet<TurnoCaja> TurnosCaja { get; }
+    DbSet<MovimientoCaja> MovimientosCaja { get; }
 
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>
