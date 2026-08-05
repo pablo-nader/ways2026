@@ -114,6 +114,17 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         db.MediosPago.Add(medioCc);
         await db.SaveChangesAsync();
 
+        // stage-6-turnos-caja, Slice 5 (task 5.9): checkout ahora exige un turno abierto (409
+        // turno_no_abierto) — sembrado directo por EF, mismo criterio que el resto de este
+        // método, en vez de un round-trip HTTP extra por cada PrepararAsync.
+        db.TurnosCaja.Add(new Ways.Domain.Caja.TurnoCaja
+        {
+            IdTenant = resultado.IdTenant, IdPuntoVenta = resultado.IdPuntoVenta,
+            IdEmpleadoApertura = resultado.IdUsuarioAdmin, FechaApertura = ahora, FondoInicial = 0m,
+            Estado = Ways.Domain.Caja.EstadoTurno.Abierto, CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+
         var cf = await db.Clientes.FirstAsync(c => c.Numero == ReglaDeClientes.NumeroConsumidorFinal);
 
         return new Contexto(
@@ -897,10 +908,14 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(consultasConPocasLineas, consultasConMuchasLineas);
         Assert.Equal(consultasConPocasLineas, consultasConMuchisimasLineas);
 
-        // El techo en sí está bajo prueba (design: Technical Approach, "≤ 16 round trips"): una
-        // baja tiene que notarse acá y actualizar la constante a propósito, nunca colarse muda
-        // detrás de un "<=".
-        Assert.Equal(16, consultasConPocasLineas);
+        // El techo en sí está bajo prueba (design: Technical Approach, "≤ 16 round trips", ahora
+        // "≤ 17" — stage-6-turnos-caja design decisión 11): una baja tiene que notarse acá y
+        // actualizar la constante a propósito, nunca colarse muda detrás de un "<=". El +1 sobre
+        // el techo de stage 5 es ResolverTurnoAbiertoAsync (EF, sí dispara ReaderExecuting) — el
+        // FOR SHARE de EjecutarTransaccionAsync es un DbCommand crudo sobre la conexión
+        // subyacente, invisible a este interceptor (misma familia que UpsertStockAsync), así que
+        // no suma un segundo punto.
+        Assert.Equal(17, consultasConPocasLineas);
     }
 
     private async Task<int> EmitirYContarConsultasAsync(Contexto ctx, int idCliente, int cantidadDeLineas)
@@ -931,6 +946,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
                 npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
                 npgsql.MapEnum<MotivoStock>("motivo_stock");
                 npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
             .Options;
@@ -941,7 +957,9 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var contexto = new ContextoFijo(ctx.IdTenant, usuarioId: 1);
         var servicioDePrecios = new Ways.Application.Precios.ServicioDePrecios(db, reloj, contexto);
         var servicioDeOfertas = new ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas);
+        var lectorDeMovimientos = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
+        var servicioDeTurnos = new Ways.Application.Caja.ServicioDeTurnos(db, reloj, contexto, lectorDeMovimientos);
+        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos);
 
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null, lineas,

@@ -81,6 +81,17 @@ public class AjusteDeStockTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
             .Where(m => m.Comportamiento == ComportamientoMedioPago.Efectivo)
             .Select(m => m.Id).FirstAsync();
 
+        // stage-6-turnos-caja, Slice 5 (task 5.9): checkout ahora exige un turno abierto (409
+        // turno_no_abierto) — sembrado directo por EF, mismo criterio que el resto de este
+        // método, en vez de un round-trip HTTP extra por cada PrepararAsync.
+        db.TurnosCaja.Add(new Ways.Domain.Caja.TurnoCaja
+        {
+            IdTenant = resultado.IdTenant, IdPuntoVenta = resultado.IdPuntoVenta,
+            IdEmpleadoApertura = resultado.IdUsuarioAdmin, FechaApertura = ahora, FondoInicial = 0m,
+            Estado = Ways.Domain.Caja.EstadoTurno.Abierto, CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+
         return new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, admin, area.Id, idAlicuotaIva,
             lista.Id, idMedioEfectivo);
