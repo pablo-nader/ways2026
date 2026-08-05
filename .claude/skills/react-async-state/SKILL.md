@@ -72,14 +72,14 @@ where five judgment-day rounds each found a new variant of the same defect class
    a same-tick double click beats the `disabled` attribute re-render.
    Rethrows that signal failure to a caller are generation-gated like setters.
 
-10. **Un fix de recuperación se replica en TODAS las superficies hermanas del mismo PR.**
-    Cuando una pantalla gana un camino de recuperación de error (self-heal de un 409 de
-    carrera, refetch tras rechazo, aviso de estado stale), todo panel/form gemelo que el
-    mismo PR introduce con la misma interacción hereda el fix en el mismo commit.
-    Precedente: el self-heal de `turno_ya_abierto` se implementó en `Caja.tsx` y se omitió
-    en el `PanelGateTurno` gemelo de `Pos.tsx` dentro del mismo PR — mismo defecto,
-    encontrado dos veces por review. Grep por el código de error antes de commitear:
-    cada catch que lo maneja debe tener la misma semántica de recuperación.
+10. **An error-recovery fix is replicated across ALL sibling surfaces of the same PR.**
+    When one screen gains an error-recovery path (self-heal of a race 409, refetch
+    after a rejection, stale-state aviso), every twin panel/form the same PR introduces
+    with the same interaction inherits the fix in the same commit. Precedent: the
+    `turno_ya_abierto` self-heal was implemented in `Caja.tsx` and omitted in the twin
+    `PanelGateTurno` of `Pos.tsx` within the same PR — same defect, found twice by
+    review. Grep for the error code before committing: every catch that handles it
+    must share the same recovery semantics.
 
 ## Decision Gates
 
