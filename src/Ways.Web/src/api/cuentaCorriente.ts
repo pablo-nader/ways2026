@@ -15,7 +15,10 @@ import type {
   MedioPagoListado,
   MovimientoDeCuentaCorriente,
   PagoDeCuenta,
+  ResultadoDeReliquidacion,
+  SolicitudDeAjuste,
   SolicitudDePagoACuenta,
+  SolicitudDeReliquidacion,
 } from './tipos'
 
 function redondear(valor: number): number {
@@ -94,6 +97,20 @@ export const clienteDeCuentaCorriente = {
    * Open Turno — rechazado antes que cualquier otro procesamiento). */
   registrarPago: (idCliente: number, solicitud: SolicitudDePagoACuenta) =>
     api.post<ComprobanteEmitido>(`/clientes/${idCliente}/cuenta-corriente/pagos`, solicitud),
+  /** `POST /api/clientes/{id}/cuenta-corriente/ajustes` — 201 con el movimiento `Ajuste`. Sin
+   * turno (design: Open Questions — "provenance, not authority"), a diferencia de un pago. */
+  registrarAjuste: (idCliente: number, solicitud: SolicitudDeAjuste) =>
+    api.post<MovimientoDeCuentaCorriente>(`/clientes/${idCliente}/cuenta-corriente/ajustes`, solicitud),
+  /** `GET /api/clientes/{id}/cuenta-corriente/reliquidacion` — preview, sin lock, NUNCA
+   * autoritativo (design: API Surface): un consumo marcado entre este preview y el commit
+   * siguiente simplemente deja de aparecer, sin ninguna "reserva" del resultado. */
+  previsualizarReliquidacion: (idCliente: number) =>
+    api.get<ResultadoDeReliquidacion>(`/clientes/${idCliente}/cuenta-corriente/reliquidacion`),
+  /** `POST /api/clientes/{id}/cuenta-corriente/reliquidacion` — commit, irreversible (spec:
+   * Reliquidación Is Irreversible). Misma forma de respuesta que el preview (design: "never two
+   * formulas") — `idsMovimientosCubiertos` vacío + `delta === 0` es un no-op limpio. */
+  ejecutarReliquidacion: (idCliente: number, solicitud: SolicitudDeReliquidacion) =>
+    api.post<ResultadoDeReliquidacion>(`/clientes/${idCliente}/cuenta-corriente/reliquidacion`, solicitud),
 }
 
 /** Etiqueta de pantalla por tipo de movimiento — un `Ajuste` se distingue por `etiqueta` (manual
@@ -255,4 +272,61 @@ export function aSolicitudDePagoACuenta(
     vuelto: p.vuelto,
   }))
   return { idPuntoVenta, pagos: cuerpo, observaciones: observaciones.trim() === '' ? null : observaciones.trim() }
+}
+
+// ---- Ajuste manual: validación local + mapper ------------------------------------------------
+
+export const LONGITUD_MINIMA_DETALLE_AJUSTE = 5
+
+export type RechazoDeAjuste = { codigo: string; mensaje: string }
+
+/**
+ * Espejo pixel-a-pixel de `ReglaDeAjusteDeCuenta.Validar` (Ways.Domain.CuentaCorriente): `importe`
+ * no puede ser cero, `detalle` recortado tiene que tener al menos 5 caracteres. Nunca autoritativo
+ * — solo guía al supervisor antes de intentar el ajuste real.
+ */
+export function validarAjusteLocal(params: { importe: number; detalle: string }): RechazoDeAjuste | null {
+  const { importe, detalle } = params
+
+  if (!Number.isFinite(importe) || importe === 0) {
+    return { codigo: 'ajuste_importe_invalido', mensaje: 'El importe del ajuste no puede ser cero.' }
+  }
+
+  const detalleNormalizado = detalle.trim()
+  if (detalleNormalizado.length < LONGITUD_MINIMA_DETALLE_AJUSTE) {
+    return {
+      codigo: 'ajuste_detalle_requerido',
+      mensaje: `El detalle del ajuste es obligatorio y tiene que tener al menos ${LONGITUD_MINIMA_DETALLE_AJUSTE} caracteres.`,
+    }
+  }
+
+  return null
+}
+
+/** `importe` positivo aumenta la deuda, negativo la reduce (spec: Ajuste Requires A Detalle —
+ * "importe MAY be positive or negative") — el preview de saldo resultante es la misma suma que
+ * hace el servidor (`UPDATE clientes SET saldo = saldo + importe`), nunca autoritativo. */
+export function saldoResultanteDeAjuste(saldoActual: number, importe: number): number {
+  return redondear(saldoActual + importe)
+}
+
+/** Importe/detalle → `SolicitudDeAjuste` — recorta el detalle (mismo criterio que el resto de la
+ * web; el servidor también lo recorta, esto es solo para que el `POST` viaje ya prolijo). */
+export function aSolicitudDeAjuste(idPuntoVenta: number, importe: number, detalle: string): SolicitudDeAjuste {
+  return { idPuntoVenta, importe, detalle: detalle.trim() }
+}
+
+// ---- Reliquidación: mapper + lectura del resultado -------------------------------------------
+
+/** `idPuntoVenta` → `SolicitudDeReliquidacion` — sin ningún otro campo (design: API Surface). */
+export function aSolicitudDeReliquidacion(idPuntoVenta: number): SolicitudDeReliquidacion {
+  return { idPuntoVenta }
+}
+
+/** Un resultado de reliquidación (preview o commit) es un no-op limpio cuando no cubrió ningún
+ * consumo — distinguible de un error, nunca reportado como fallo (spec: A Run With No Eligible
+ * Consumos Is A No-Op). `delta === 0` solo no alcanza: un consumo cubierto con líneas
+ * no-precificables también puede aportar delta 0 sin ser un no-op de "nada para hacer". */
+export function reliquidacionEsNoOp(resultado: Pick<ResultadoDeReliquidacion, 'idsMovimientosCubiertos'>): boolean {
+  return resultado.idsMovimientosCubiertos.length === 0
 }
