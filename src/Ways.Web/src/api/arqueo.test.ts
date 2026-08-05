@@ -44,8 +44,8 @@ describe('conteosCompletos', () => {
     { idMedioPago: 2, importeEsperado: 300 },
   ]
 
-  it('false sin ningún medio arqueable (todavía no hay resumen cargado)', () => {
-    expect(conteosCompletos([], {})).toBe(false)
+  it('true sin ningún medio arqueable (turno sin actividad: legítimo, el servidor acepta conteos: []; "todavía no cargó el resumen" lo distingue el caller con resumen !== null, no esta función)', () => {
+    expect(conteosCompletos([], {})).toBe(true)
   })
 
   it('false si falta el conteo de un medio', () => {

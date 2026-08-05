@@ -21,9 +21,13 @@ export function conteoValido(valor: string): boolean {
 }
 
 /** Todos los medios arqueables (`resumen.medios`, la fuente de verdad del servidor sobre qué
- * declarar) tienen que tener un conteo válido antes de habilitar "Finalizar cierre". */
+ * declarar) tienen que tener un conteo válido antes de habilitar "Finalizar cierre". Un turno sin
+ * actividad tiene `medios` vacío y eso es legítimo (el servidor acepta `conteos: []`) — acá
+ * `every` sobre un array vacío es vacuously true, así que esta función NO distingue "todavía no
+ * cargó el resumen" de "cargó y no hay nada que arquear": esa distinción la hace el caller con
+ * `resumen !== null`. */
 export function conteosCompletos(medios: LineaDeResumen[], valores: Record<number, string>): boolean {
-  return medios.length > 0 && medios.every((m) => conteoValido(valores[m.idMedioPago] ?? ''))
+  return medios.every((m) => conteoValido(valores[m.idMedioPago] ?? ''))
 }
 
 /** Arma `SolicitudDeCierre.conteos` — exactamente un conteo por medio arqueable, en el mismo

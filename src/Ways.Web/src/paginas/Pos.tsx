@@ -129,7 +129,16 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
       })
       onAbierto()
     } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir el turno.')
+      if (e instanceof ErrorApi && e.codigo === 'turno_ya_abierto') {
+        // Autocuración (mismo criterio que `FormularioApertura` en Caja.tsx): otra
+        // pestaña/cajero ganó la carrera de apertura entre que se abrió este gate y el click. El
+        // turno YA está abierto, así que la continuación de éxito es la correcta — reintentar
+        // solo repetiría el mismo 409. El carrito y los pagos siguen intactos, el cajero vuelve a
+        // apretar "Cobrar" a mano (react-async-state regla 9: ningún reintento automático).
+        onAbierto()
+      } else {
+        setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir el turno.')
+      }
     } finally {
       abriendoRef.current = false
       setAbriendo(false)

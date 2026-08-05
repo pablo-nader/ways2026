@@ -932,6 +932,37 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
     expect(await screen.findByText('No hay stock suficiente.')).toBeInTheDocument()
     expect(screen.queryByText('No hay un turno abierto')).not.toBeInTheDocument()
   })
+
+  it('el panel del gate se autocura si la apertura rechaza con turno_ya_abierto (otra pestaña/cajero ganó la carrera): el gate se cierra, el carrito queda intacto y "Cobrar" no se reintenta solo', async () => {
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') {
+        return Promise.reject(new ErrorApi(409, 'turno_no_abierto', 'No hay un turno abierto en este punto de venta.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText('No hay un turno abierto')
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')).toHaveLength(1)
+
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos') {
+        return Promise.reject(new ErrorApi(409, 'turno_ya_abierto', 'Ya hay un turno abierto en este punto de venta.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+
+    // El gate se cierra igual que en el camino feliz (mismo `onAbierto`): el carrito sigue
+    // intacto y NINGÚN checkout nuevo se dispara solo — sigue habiendo un único POST /ventas
+    // acumulado, el del intento original que rebotó con el 409.
+    await screen.findByRole('button', { name: /Cobrar/ })
+    expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')).toHaveLength(1)
+  })
 })
 
 describe('Pos — checkout: split de pago con el mismo medio', () => {
