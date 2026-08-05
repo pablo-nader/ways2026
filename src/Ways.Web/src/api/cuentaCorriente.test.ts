@@ -10,6 +10,7 @@ import {
   filaPagoACuentaVacia,
   filasAPagosACuentaParaCalculo,
   medioFisicoParaPagoACuenta,
+  parsearDetalleDeActualizacionPrecios,
   rangoUltimoMes,
   reliquidacionEsNoOp,
   saldoResultanteDeAjuste,
@@ -423,5 +424,135 @@ describe('reliquidacionEsNoOp', () => {
 
   it('con delta distinto de cero y consumos cubiertos no es un no-op', () => {
     expect(reliquidacionEsNoOp(resultadoFixture({ delta: 45, idsMovimientosCubiertos: [1, 2] }))).toBe(false)
+  })
+})
+
+describe('parsearDetalleDeActualizacionPrecios', () => {
+  it('detalle PascalCase real (lo que emite JsonSerializer.Serialize en el backend, sin naming policy) se parsea completo, incl. líneas y motivo', () => {
+    const crudo = JSON.stringify([
+      {
+        IdMovimiento: 3,
+        IdComprobanteVenta: 10,
+        Delta: 55,
+        Lineas: [
+          {
+            IdArticulo: 1,
+            Cantidad: 2,
+            PrecioHistorico: 100,
+            PrecioActual: 120,
+            TotalHistorico: 200,
+            TotalDelDia: 240,
+            Delta: 40,
+            Motivo: null,
+          },
+          {
+            IdArticulo: null,
+            Cantidad: 1,
+            PrecioHistorico: 50,
+            PrecioActual: null,
+            TotalHistorico: 50,
+            TotalDelDia: null,
+            Delta: 0,
+            Motivo: 'Línea de concepto libre (sin artículo) — no re-precificable.',
+          },
+        ],
+      },
+    ])
+
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toEqual([
+      {
+        idMovimiento: 3,
+        idComprobanteVenta: 10,
+        delta: 55,
+        lineas: [
+          {
+            idArticulo: 1,
+            cantidad: 2,
+            precioHistorico: 100,
+            precioActual: 120,
+            totalHistorico: 200,
+            totalDelDia: 240,
+            delta: 40,
+            motivo: null,
+          },
+          {
+            idArticulo: null,
+            cantidad: 1,
+            precioHistorico: 50,
+            precioActual: null,
+            totalHistorico: 50,
+            totalDelDia: null,
+            delta: 0,
+            motivo: 'Línea de concepto libre (sin artículo) — no re-precificable.',
+          },
+        ],
+      },
+    ])
+  })
+
+  it('detalle camelCase (forma de la API, aceptada por robustez) también se parsea', () => {
+    const crudo = JSON.stringify([
+      {
+        idMovimiento: 3,
+        idComprobanteVenta: 10,
+        delta: 40,
+        lineas: [
+          {
+            idArticulo: 1,
+            cantidad: 2,
+            precioHistorico: 100,
+            precioActual: 120,
+            totalHistorico: 200,
+            totalDelDia: 240,
+            delta: 40,
+            motivo: null,
+          },
+        ],
+      },
+    ])
+
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toEqual([
+      {
+        idMovimiento: 3,
+        idComprobanteVenta: 10,
+        delta: 40,
+        lineas: [
+          {
+            idArticulo: 1,
+            cantidad: 2,
+            precioHistorico: 100,
+            precioActual: 120,
+            totalHistorico: 200,
+            totalDelDia: 240,
+            delta: 40,
+            motivo: null,
+          },
+        ],
+      },
+    ])
+  })
+
+  it('un campo requerido ausente (ni PascalCase ni camelCase) da null, nunca lanza', () => {
+    const crudo = JSON.stringify([{ IdMovimiento: 3, Delta: 55, Lineas: [] }]) // falta IdComprobanteVenta
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toBeNull()
+  })
+
+  it('un nivel superior que no es array da null', () => {
+    const crudo = JSON.stringify({ IdMovimiento: 3, IdComprobanteVenta: 10, Delta: 55, Lineas: [] })
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toBeNull()
+  })
+
+  it('un JSON malformado da null, nunca lanza', () => {
+    expect(parsearDetalleDeActualizacionPrecios('{esto no es json')).toBeNull()
+  })
+
+  it('Lineas ausente da null', () => {
+    const crudo = JSON.stringify([{ IdMovimiento: 3, IdComprobanteVenta: 10, Delta: 55 }])
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toBeNull()
+  })
+
+  it('Lineas que no es array da null', () => {
+    const crudo = JSON.stringify([{ IdMovimiento: 3, IdComprobanteVenta: 10, Delta: 55, Lineas: 'no-es-array' }])
+    expect(parsearDetalleDeActualizacionPrecios(crudo)).toBeNull()
   })
 })

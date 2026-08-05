@@ -737,7 +737,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     await abrirModalReliquidacion()
 
     const dialogo = screen.getByRole('dialog')
-    await within(dialogo).findByTestId('cc-reliq-delta-estimado')
+    expect(await within(dialogo).findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$40,00')
     expect(within(dialogo).getByRole('button', { name: 'Ejecutar reliquidación' })).toBeDisabled()
 
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
@@ -789,7 +789,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    await screen.findByTestId('cc-reliq-delta-estimado')
+    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$40,00')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
@@ -816,7 +816,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    await screen.findByTestId('cc-reliq-delta-estimado')
+    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$40,00')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
 
     const boton = screen.getByRole('button', { name: 'Ejecutar reliquidación' })
@@ -848,7 +848,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    await screen.findByTestId('cc-reliq-delta-estimado')
+    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$40,00')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
@@ -874,7 +874,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    await screen.findByTestId('cc-reliq-delta-estimado')
+    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$40,00')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
@@ -939,7 +939,28 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
 
 describe('CuentaCorriente — detalle de un movimiento ActualizacionPrecios en el ledger (Fix 1b)', () => {
   it('un detalle JSON válido se muestra como un resumen legible, nunca el JSON crudo', async () => {
-    const detalleCrudo = JSON.stringify([detalleConsumoFixture({ idMovimiento: 3, delta: 55 })])
+    // El backend guarda este campo con `JsonSerializer.Serialize(resultado.Detalle)` SIN el naming
+    // policy camelCase de la API — las claves llegan en PascalCase real (espejo de
+    // `DetalleDeConsumo`/`DetalleDeLinea` en `ReliquidadorDeConsumos.cs`), nunca camelCase.
+    const detalleCrudo = JSON.stringify([
+      {
+        IdMovimiento: 3,
+        IdComprobanteVenta: 10,
+        Delta: 55,
+        Lineas: [
+          {
+            IdArticulo: 1,
+            Cantidad: 2,
+            PrecioHistorico: 100,
+            PrecioActual: 120,
+            TotalHistorico: 200,
+            TotalDelDia: 240,
+            Delta: 40,
+            Motivo: null,
+          },
+        ],
+      },
+    ])
     mockearRutasBase((ruta) => {
       if (ruta.includes('/cuenta-corriente/reliquidacion')) return undefined
       if (ruta.includes('/cuenta-corriente')) {
