@@ -189,12 +189,12 @@ consumos or lines; the pago a cuenta ≤ 7. Guarded by the existing `DbCommand` 
 |---|---|---|
 | `GET /api/clientes/{id}/cuenta-corriente?desde=&hasta=&pagina=&tamanio=` | `OperacionDePos` | Header + page of movements in one payload (decision 9). No implicit date window — the screen sends last-month by default and clears it for "ver histórico" |
 | `POST /api/clientes/{id}/cuenta-corriente/pagos` | `OperacionDePos` | `{ idPuntoVenta, pagos: [{ idMedioPago, importe, referencia?, vuelto? }], observaciones? }` — **no importe field** → 201 with the RC comprobante |
-| `POST /api/clientes/{id}/cuenta-corriente/ajustes` | **`SupervisionDeOperacion`** | `{ idPuntoVenta, importe, detalle }` |
-| `GET /api/clientes/{id}/cuenta-corriente/reliquidacion` | **`SupervisionDeOperacion`** | Preview — same `ReliquidadorDeConsumos`, no lock, never authoritative |
-| `POST /api/clientes/{id}/cuenta-corriente/reliquidacion` | **`SupervisionDeOperacion`** | `{ idPuntoVenta }` → the movement or a no-op result |
+| `POST /api/clientes/{id}/cuenta-corriente/ajustes` | **`SupervisionDeCuentaCorriente`** | `{ idPuntoVenta, importe, detalle }` |
+| `GET /api/clientes/{id}/cuenta-corriente/reliquidacion` | **`SupervisionDeCuentaCorriente`** | Preview — same `ReliquidadorDeConsumos`, no lock, never authoritative |
+| `POST /api/clientes/{id}/cuenta-corriente/reliquidacion` | **`SupervisionDeCuentaCorriente`** | `{ idPuntoVenta }` → the movement or a no-op result |
 | `POST /api/ventas/{id}/anular` | `OperacionDePos` | Unchanged route; learns `Pago` and `409 consumo_reliquidado` |
 
-`Politicas.SupervisionDeOperacion` (Supervisor + Admin) is the new constant — named generically on
+`Politicas.SupervisionDeCuentaCorriente` (Supervisor + Admin) is the new constant — scoped to CC supervision per the spec files, on
 purpose so the deferred cierre tightening (stage-6 open question) can stack on it without a second
 policy. The stage-5 `SuperficieDeAutorizacionTests` allowlist gains the four new non-GET routes.
 **Reliquidación is not anulable structurally**: no route addresses a movimiento, and
@@ -207,7 +207,7 @@ policy. The stage-5 `SuperficieDeAutorizacionTests` allowlist gains the four new
 |---|---|---|
 | `fk_movimientos_cuenta_corriente_actualizacion` | Generic `fk_` prefix → `400 referencia_invalida` — **no code change** | Raw-SQL 23503 only. Unreachable normally: the id comes from step 7's `RETURNING` in the same transaction |
 | `ux_comprobantes_venta_numero`, `ux_tipos_comprobante_codigo` | Already mapped (stage 5 / stage 1) | The idempotent insert is proven on a **stage-6-migrated** database, not assumed |
-| New Domain codes: `cliente_sin_cuenta_corriente` (400), `medio_no_admite_pago_a_cuenta` (400), `pago_a_cuenta_sin_importe` (400), `detalle_requerido` (400), `consumo_reliquidado` (409) | Raised by pure Domain / the services, never by a constraint | Unit + integration per code |
+| New Domain codes: `cliente_sin_cuenta_corriente` (400), `pago_a_cuenta_sin_medios_fisicos` (400), `pago_a_cuenta_sin_importe` (400), `ajuste_detalle_requerido` (400), `consumo_reliquidado` (409) | Raised by pure Domain / the services, never by a constraint | Unit + integration per code |
 
 Genuinely racy surfaces, honestly: **three**, each with a rendezvous test — reliquidación × venta,
 two reliquidaciones, pago a cuenta × cierre. Everything else is schema defense.
@@ -246,7 +246,7 @@ two reliquidaciones, pago a cuenta × cierre. Everything else is schema defense.
 | `src/Ways.Infrastructure/…/MovimientoCuentaCorrienteConfiguration.cs` | Modify | Column, self-FK, alternate key, partial index |
 | `src/Ways.Infrastructure/…/Migraciones/*_CuentaCorrienteEtapa7.cs` | Create | Column + FK + index + the idempotent `RC` insert |
 | `src/Ways.Infrastructure/Persistencia/InicializadorDeBaseDeDatos.cs` | Modify | `RC` appended to `TiposComprobanteBase` (fresh databases) |
-| `src/Ways.Api/Endpoints/CuentaCorrienteEndpoints.cs`, `Seguridad/Politicas.cs` | Create/Modify | Five routes + `SupervisionDeOperacion` |
+| `src/Ways.Api/Endpoints/CuentaCorrienteEndpoints.cs`, `Seguridad/Politicas.cs` | Create/Modify | Five routes + `SupervisionDeCuentaCorriente` |
 | `src/Ways.Web/src/paginas/CuentaCorriente.tsx`, `src/api/cuentaCorriente.ts` | Create | Screen + pure mappers/preview mirror |
 | `src/Ways.Web/src/paginas/Clientes.tsx`, `src/App.tsx` | Modify | Per-row entry point + `/clientes/:id/cuenta-corriente` route |
 | `docs/10-modelo-de-datos.md` | Modify | §8 status note: etapa 7, the marker column, the financed-fraction deviation |
@@ -284,7 +284,7 @@ from a per-row action in `Clientes.tsx`): header (saldo / acuerdo — `"ilimitad
 reading `saldoResultante` per row, and three action modals. `src/api/cuentaCorriente.ts` holds the
 pure mappers and a **non-authoritative** disponibilidad mirror (same posture as `arqueo.ts`).
 Role gating uses the existing `usuario?.rolId` claim (`ROL.Supervisor | ROL.Admin`) to render the
-ajuste and reliquidación actions — cosmetic; `SupervisionDeOperacion` is the enforcement.
+ajuste and reliquidación actions — cosmetic; `SupervisionDeCuentaCorriente` is the enforcement.
 
 `react-async-state` obligations that carry weight here: rule 8 `key={idCliente}` on the subtree;
 rule 9 first-line re-entrancy guard + full-window disable on **reliquidación** (irreversible, and
