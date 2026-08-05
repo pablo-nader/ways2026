@@ -39,3 +39,46 @@ public sealed record PaginaDeTurnos(IReadOnlyList<TurnoListado> Items, int Total
 /// <summary>Proyección de <see cref="MovimientoCaja"/> ya persistido.</summary>
 public sealed record MovimientoRegistrado(
     int Id, int IdTurnoCaja, TipoMovimientoCaja Tipo, decimal Importe, string Motivo, int IdEmpleado, DateTimeOffset CreadoEl);
+
+// ---- Slice 4: derivación, resumen y cierre (design: The Cierre Transaction; Interfaces/Contracts) ----
+
+/// <summary>Un conteo declarado por el cajero — <c>(id_medio_pago, importe_declarado)</c>, el
+/// ÚNICO dato que el cliente envía (spec: Cierre Payload Carries Only Declared Counts).</summary>
+public readonly record struct ConteoDeclarado(int IdMedioPago, decimal ImporteDeclarado);
+
+/// <summary>Cuerpo de <c>POST /api/caja/turnos/{id}/cierre</c> (design: API Surface;
+/// Interfaces/Contracts) — sin ningún campo de total, subtotal o esperado (spec: No Request
+/// Shape Accepts A Total): <c>ImporteEsperado</c> SIEMPRE lo deriva el servidor.</summary>
+public sealed record SolicitudDeCierre(IReadOnlyList<ConteoDeclarado> Conteos, string? Observaciones);
+
+/// <summary>Una línea de <see cref="ResumenDeTurno"/> — proyección de
+/// <see cref="Ways.Domain.Caja.LineaDeArqueo"/>, la misma derivación que el cierre va a
+/// persistir (spec: Resumen Parcial Uses The Same Derivation As Cierre).</summary>
+public sealed record LineaDeResumen(int IdMedioPago, decimal ImporteEsperado);
+
+/// <summary>Respuesta de <c>GET /api/caja/turnos/{id}/resumen</c> (D6 parity, design: API
+/// Surface) — de solo lectura, nunca escribe nada.</summary>
+public sealed record ResumenDeTurno(int IdTurnoCaja, int IdMedioAncla, IReadOnlyList<LineaDeResumen> Medios);
+
+/// <summary>Una fila ya persistida de <see cref="ArqueoTurno"/> — con <c>Diferencia</c> incluida
+/// (columna <c>GENERATED ALWAYS</c>, design decisión 6).</summary>
+public sealed record LineaDeArqueoResumen(
+    int IdMedioPago, decimal ImporteEsperado, decimal ImporteDeclarado, decimal Diferencia);
+
+/// <summary>Respuesta de <c>POST /api/caja/turnos/{id}/cierre</c> y de
+/// <c>GET /api/caja/turnos/{id}</c> (design: API Surface — "Turno + its arqueos_turno, the
+/// Z-report payload"): mismos campos planos que <see cref="TurnoResumen"/> más
+/// <see cref="Arqueos"/> — la deserialización de <see cref="TurnoResumen"/> sobre este mismo JSON
+/// sigue funcionando (System.Text.Json ignora propiedades no mapeadas), así que las pruebas de
+/// Slice 2 contra <c>GET …/{id}</c> quedan intactas.</summary>
+public sealed record TurnoConArqueos(
+    int Id,
+    int IdPuntoVenta,
+    int IdEmpleadoApertura,
+    int? IdEmpleadoCierre,
+    DateTimeOffset FechaApertura,
+    DateTimeOffset? FechaCierre,
+    decimal FondoInicial,
+    EstadoTurno Estado,
+    string? Observaciones,
+    IReadOnlyList<LineaDeArqueoResumen> Arqueos);

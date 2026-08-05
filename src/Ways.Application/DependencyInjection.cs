@@ -47,7 +47,13 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeEscaneo>();
         services.AddScoped<ServicioDeVentas>();
         services.AddScoped<ServicioDeStock>();
+
+        // stage-6-turnos-caja, Slice 4: LectorDeMovimientosDelTurno es el único lector de la
+        // derivación (design decisión 5), compartido por ServicioDeTurnos.CerrarAsync y
+        // ServicioDeResumenDeTurno.
+        services.AddScoped<LectorDeMovimientosDelTurno>();
         services.AddScoped<ServicioDeTurnos>();
+        services.AddScoped<ServicioDeResumenDeTurno>();
         services.AddScoped<ServicioDeGastos>();
 
         services.AddScoped<ServicioDeAprovisionamiento>();

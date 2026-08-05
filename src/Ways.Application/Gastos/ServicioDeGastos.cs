@@ -96,10 +96,20 @@ public class ServicioDeGastos(
 
     // ---- persistencia -------------------------------------------------------------------------
 
+    /// <summary>task 4.17 (mismo guard que <c>ServicioDeTurnos.RegistrarMovimientoAsync</c>, reusado
+    /// vía <see cref="ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync"/> como PRIMER statement
+    /// de esta transacción de escritura): el turno ya vino resuelto como abierto (<see
+    /// cref="ServicioDeTurnos.ResolverTurnoAbiertoAsync"/>, arriba, ANTES de abrir esta
+    /// transacción) — sin este re-chequeo bajo <c>FOR SHARE</c>, un gasto concurrente a un
+    /// cierre podría comitear dentro de un turno cuyo arqueo YA se derivó (design decisión 1).</summary>
     private async Task<Gasto> InsertarGastoAsync(
         int idTenant, int idTurnoCaja, SolicitudDeGasto solicitud, int idEmpleado, DateTimeOffset momento,
         CancellationToken ct)
     {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        await servicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync(idTurnoCaja, ct);
+
         var gasto = new Gasto
         {
             IdTenant = idTenant,
@@ -121,6 +131,8 @@ public class ServicioDeGastos(
 
         db.Gastos.Add(gasto);
         await db.SaveChangesAsync(ct);
+
+        await transaccion.CommitAsync(ct);
 
         return gasto;
     }
