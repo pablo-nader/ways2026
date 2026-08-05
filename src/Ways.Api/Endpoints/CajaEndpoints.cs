@@ -25,7 +25,11 @@ public static class CajaEndpoints
         grupo.MapGet("/abierto", async (ServicioDeTurnos servicio, int idPuntoVenta, CancellationToken ct) =>
         {
             var turno = await servicio.ObtenerAbiertoAsync(idPuntoVenta, ct);
-            return Results.Ok(turno);
+            // Con turno null hay que emitir el literal JSON "null" a mano: tanto Ok(null) como
+            // Json(null) producen body vacío, y eso rompe el response.json() del cliente.
+            return turno is null
+                ? Results.Content("null", "application/json; charset=utf-8")
+                : Results.Json(turno);
         })
         .WithSummary("Fuente de verdad del gate seam de Pos.tsx: 200 con el turno abierto o 200 con null.");
 
