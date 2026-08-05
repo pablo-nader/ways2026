@@ -186,6 +186,12 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
 
         Assert.Null(emitido.Observaciones);
+
+        // Releer de la base: la respuesta se proyecta de la entidad trackeada, no prueba
+        // persistencia por sí sola.
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var fila = await db.ComprobantesVenta.SingleAsync(c => c.Id == emitido.Id);
+        Assert.Null(fila.Observaciones);
     }
 
     [Fact]

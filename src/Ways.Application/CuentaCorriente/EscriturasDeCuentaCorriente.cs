@@ -82,7 +82,7 @@ public static class EscriturasDeCuentaCorriente
 
     /// <summary>Defensa en profundidad, infraestructura pura (nunca un <c>ErrorDominio</c> 4xx):
     /// pinea acá, en el único escritor, la forma nullable por tipo que hoy solo garantizan los
-    /// llamadores (design: Table Shapes — write path C). Solo <see cref="TipoMovimientoCc.Consumo"/>
+    /// llamadores (design: decision 5 — movement shape per tipo). Solo <see cref="TipoMovimientoCc.Consumo"/>
     /// y <see cref="TipoMovimientoCc.Pago"/> tienen una forma única y fija (el resto — un
     /// <c>Ajuste</c> puede ser un contramovimiento de anulación o un ajuste manual — es
     /// estructuralmente dual, no viola nada acá).</summary>
