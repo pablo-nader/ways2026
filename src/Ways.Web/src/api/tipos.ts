@@ -576,6 +576,61 @@ export type ResultadoDeResolucion = {
   aplicadas: OfertaAplicada[]
 }
 
+// --- Caja: turnos, movimientos y resumen (stage-6-turnos-caja, Slice 6) ---
+// Espejo de `Ways.Application.Caja.Contratos` — apertura, movimientos físicos fuera de la venta
+// (retiro/refuerzo/apertura de cajón) y el resumen parcial (misma derivación que va a usar el
+// cierre, Slice 7). El turno SIEMPRE se resuelve server-side (spec: turnos-de-caja / Turno Is
+// Always Server-Resolved) — ningún contrato de acá acepta un `idTurnoCaja` como campo de entrada.
+
+export type EstadoTurno = 'Abierto' | 'Cerrado'
+
+/** Cuerpo de `POST /api/caja/turnos` — sin campo de empleado, `id_empleado_apertura` siempre
+ * sale de la sesión del lado del servidor. */
+export type SolicitudDeApertura = { idPuntoVenta: number; fondoInicial: number; observaciones: string | null }
+
+/** Proyección de un turno — respuesta de apertura, `GET …/abierto` y `GET …/{id}`. */
+export type TurnoResumen = {
+  id: number
+  idPuntoVenta: number
+  idEmpleadoApertura: number
+  idEmpleadoCierre: number | null
+  fechaApertura: string
+  fechaCierre: string | null
+  fondoInicial: number
+  estado: EstadoTurno
+  observaciones: string | null
+}
+
+export type TipoMovimientoCaja = 'Retiro' | 'Refuerzo' | 'AperturaCajon'
+
+export const TIPOS_MOVIMIENTO_CAJA: { valor: TipoMovimientoCaja; etiqueta: string }[] = [
+  { valor: 'Retiro', etiqueta: 'Retiro' },
+  { valor: 'Refuerzo', etiqueta: 'Refuerzo' },
+  { valor: 'AperturaCajon', etiqueta: 'Apertura de cajón' },
+]
+
+/** Cuerpo de `POST /api/caja/turnos/{id}/movimientos` — el turno lo identifica la ruta, nunca
+ * este cuerpo. */
+export type SolicitudDeMovimiento = { tipo: TipoMovimientoCaja; importe: number; motivo: string | null }
+
+export type MovimientoRegistrado = {
+  id: number
+  idTurnoCaja: number
+  tipo: TipoMovimientoCaja
+  importe: number
+  motivo: string
+  idEmpleado: number
+  creadoEl: string
+}
+
+export type LineaDeResumen = { idMedioPago: number; importeEsperado: number }
+
+/** Respuesta de `GET /api/caja/turnos/{id}/resumen` (espejo de `ResumenDeTurno`, Slice 4) — el
+ * `importeEsperado` derivado por medio y el medio ancla (efectivo), la misma derivación que el
+ * cierre va a persistir. Sin desglose de tickets ni de gastos por categoría: la derivación real
+ * (`ServicioDeResumenDeTurno`) no expone ese detalle, solo el total esperado por medio. */
+export type ResumenDeTurno = { idTurnoCaja: number; idMedioAncla: number; medios: LineaDeResumen[] }
+
 // --- POS: checkout (stage-5-pos-ventas, Slice 6 → wireado en Slice 7) ---
 // Espejo de `Ways.Application.Ventas.Contratos` (confirmado contra el DTO real de
 // `POST /api/ventas`, mergeado en Slice 4) — usado por `ventas.ts` (mappers) y `Pos.tsx`

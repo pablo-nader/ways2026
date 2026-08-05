@@ -39,6 +39,13 @@ export function Layout() {
                     </NavLink>
                   </li>
                 )}
+                {usuario && puedeOperarPos(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/caja">
+                      Caja
+                    </NavLink>
+                  </li>
+                )}
                 {usuario && puedeGestionarUsuarios(usuario.rolId) && (
                   <li className="nav-item">
                     <NavLink className="nav-link" to="/usuarios">
