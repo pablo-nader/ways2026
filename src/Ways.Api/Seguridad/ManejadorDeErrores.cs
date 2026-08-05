@@ -48,6 +48,23 @@ public class ManejadorDeErrores(
                 when string.Equals(uxComprobante, "ux_comprobantes_venta_numero", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe un comprobante con ese número en este punto de venta y tipo.", "numero_de_comprobante_duplicado"),
 
+            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops,
+            // design: Backstop Map — "ordering trap"): mismo tratamiento que
+            // ux_comprobantes_venta_numero de arriba — su nombre contiene "_numero", así que
+            // tiene que resolverse por nombre EXACTO acá, ANTES de ClasificarUnicidad (que lo
+            // clasificaría como "numero_duplicado", el mensaje de ux_clientes_numero).
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string uxCompra } }
+                when string.Equals(uxCompra, "ux_comprobantes_compra_numero_externo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe una compra con ese número de comprobante para este proveedor y tipo.", "compra_duplicada"),
+
+            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops,
+            // design: Backstop Map): orden es server-asignado dentro del replace-set (Slice 2) —
+            // exención documentada de prueba de carrera, misma familia que
+            // ux_items_comprobante_venta_orden.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string uxOrdenCompra } }
+                when string.Equals(uxOrdenCompra, "ux_items_comprobante_compra_orden", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en esta compra.", "orden_de_item_duplicado"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
@@ -133,6 +150,13 @@ public class ManejadorDeErrores(
             // reliquidación). En operación normal es inalcanzable — el id viene del RETURNING de
             // la misma transacción que la fila que apunta —, así que el único camino para
             // ejercitarla es un INSERT crudo fuera de banda (test de esquema, no de cliente HTTP).
+            //
+            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops):
+            // confirmado sin cambio de código — el mismo match por prefijo "fk_" ya cubre las FKs
+            // nuevas de esta slice (comprobantes_compra: tenant/proveedor/punto_venta/empleado/
+            // tipo_comprobante; items_comprobante_compra: tenant/comprobante/articulo/
+            // alicuota_iva; fk_movimientos_stock_comprobante_compra; fk_gastos_comprobante_compra)
+            // — todas siguen la convención fk_* del resto del esquema.
             DbUpdateException { InnerException: PostgresException { SqlState: "23503", ConstraintName: string fk } }
                 when fk.StartsWith("fk_", StringComparison.Ordinal) =>
                 LogYClasificarReferenciaInvalida(fk, log),
@@ -171,6 +195,20 @@ public class ManejadorDeErrores(
             DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckCaja } }
                 when ClasificarCheckDeCaja(ckCaja) is { } checkCaja =>
                 (checkCaja.EstadoHttp, checkCaja.Titulo, checkCaja.Codigo),
+
+            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops,
+            // design: Backstop Map): switch por nombre EXACTO detrás de un guard de prefijo
+            // "ck_comprobantes_compra_"/"ck_items_comprobante_compra_" — mismo criterio que
+            // ClasificarCheckDeOfertas ("ck_ofertas_"), no el de ClasificarCheckDeVentas/
+            // ClasificarCheckDeCaja (sin prefijo compartido). CalculadorDeCompra/ServicioDeCompras
+            // (Slice 2) ya validan estos cinco invariantes en el camino de servicio — bajo
+            // operación normal ninguna rama es alcanzable, quedan como backstop de una escritura
+            // cruda/fuera de banda.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckCompra } }
+                when (ckCompra.StartsWith("ck_comprobantes_compra_", StringComparison.Ordinal)
+                        || ckCompra.StartsWith("ck_items_comprobante_compra_", StringComparison.Ordinal))
+                    && ClasificarCheckDeCompras(ckCompra) is { } checkCompra =>
+                (checkCompra.EstadoHttp, checkCompra.Titulo, checkCompra.Codigo),
 
             // Backstop genérico (db-error-backstops, judgment-day slice 3 ronda 1): cualquier
             // valor numérico que desborda la precisión/escala de su columna (p.ej. un margen o
@@ -561,6 +599,41 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "La cadena de tesorería es inconsistente (final tiene que ser inicio + ingreso − egreso).",
                     "tesoreria_cadena_invalida"),
+
+            _ => null
+        };
+
+    /// <summary>stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops,
+    /// design: Backstop Map): switch por nombre EXACTO de las cinco CHECKs nuevas de
+    /// <c>comprobantes_compra</c>/<c>items_comprobante_compra</c>, detrás del guard de prefijo
+    /// del caso de arriba (el criterio de <c>ClasificarCheckDeOfertas</c>).</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarCheckDeCompras(string nombreDeCheck) =>
+        nombreDeCheck switch
+        {
+            "ck_comprobantes_compra_confirmada_completa" =>
+                (StatusCodes.Status400BadRequest,
+                    "La compra no puede confirmarse sin número de comprobante y fecha.",
+                    "compra_incompleta_para_confirmar"),
+
+            "ck_comprobantes_compra_totales_no_negativos" =>
+                (StatusCodes.Status400BadRequest,
+                    "Los totales de la compra no pueden ser negativos.",
+                    "totales_de_compra_invalidos"),
+
+            "ck_items_comprobante_compra_cantidad_positiva" =>
+                (StatusCodes.Status400BadRequest,
+                    "La cantidad de un ítem de compra tiene que ser positiva.",
+                    "cantidad_de_item_invalida"),
+
+            "ck_items_comprobante_compra_costo_no_negativo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El costo unitario de un ítem de compra no puede ser negativo.",
+                    "costo_de_item_invalido"),
+
+            "ck_items_comprobante_compra_importes_no_negativos" =>
+                (StatusCodes.Status400BadRequest,
+                    "Los importes de un ítem de compra no pueden ser negativos.",
+                    "importes_de_item_invalidos"),
 
             _ => null
         };
