@@ -377,7 +377,11 @@ describe('Caja — movimientos', () => {
 
     render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
-    expect(screen.getByText('Calculando…')).toBeInTheDocument()
+    // El badge "Turno abierto" se monta en el mismo commit que dispara el efecto de carga del
+    // resumen, pero ese efecto todavía no corrió: hay que esperar a "Calculando…" (no asumir que
+    // ya está), si no la aserción es una carrera contra el flush del efecto y flakea bajo carga
+    // (suite completa).
+    await screen.findByText('Calculando…')
 
     await userEvent.type(screen.getByLabelText('Importe'), '100')
     await userEvent.type(screen.getByLabelText('Motivo'), 'retiro de prueba')
