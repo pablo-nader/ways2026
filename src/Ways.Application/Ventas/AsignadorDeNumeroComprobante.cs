@@ -26,13 +26,34 @@ namespace Ways.Application.Ventas;
 ///
 /// Estática a propósito: sin estado propio, cada método recibe el <see cref="IWaysDbContext"/>
 /// del llamador de turno (mismo criterio que los dos asignadores hermanos). Llamado desde
-/// <c>ServicioDeVentas.AsignarNumeroComprometidoAsync</c>, en su PROPIA transacción chica,
-/// comprometida ANTES de la transacción que escribe el resto de la venta (design: Failure
-/// Semantics — corrección de esta slice para que "el número se consume aunque falle el resto"
-/// sea literal, ver el doc-comment de <c>ServicioDeVentas.EmitirAsync</c>), no dentro de ella.
+/// <see cref="AsignarComprometidoAsync"/>, en su PROPIA transacción chica, comprometida ANTES de
+/// la transacción que escribe el resto de la venta (design: Failure Semantics — corrección de
+/// esta slice para que "el número se consume aunque falle el resto" sea literal, ver el
+/// doc-comment de <c>ServicioDeVentas.EmitirAsync</c>), no dentro de ella.
 /// </summary>
 public static class AsignadorDeNumeroComprobante
 {
+    /// <summary>stage-7-cuenta-corriente (Slice 2, task 2.4, design decisión 7 — "numeración
+    /// untouched"): promovido de método privado de <c>ServicioDeVentas</c> a acá — pure move, sin
+    /// cambio de mecanismo. Abre y comitea su PROPIA transacción chica (ver el doc-comment de la
+    /// clase); el llamador la envuelve en su propio <c>CreateExecutionStrategy().ExecuteAsync</c>
+    /// (EnableRetryOnFailure exige que <c>BeginTransactionAsync</c> viva dentro de esa lambda).
+    /// Reusado tal cual por <c>ServicioDeVentas.EmitirAsync</c> (TX/NCX) y
+    /// <c>ServicioDeCuentaCorriente.RegistrarPagoAsync</c> (RC) — <c>numeraciones_comprobante</c>
+    /// ya está keyed por <c>(id_punto_venta, tipo_comprobante)</c>, así que RC obtiene su propia
+    /// serie sin ningún mecanismo nuevo.</summary>
+    public static async Task<long> AsignarComprometidoAsync(
+        IWaysDbContext db, int idTenant, int idPuntoVenta, string codigoTipoComprobante, CancellationToken ct = default)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        await AsegurarContadorAsync(db, idTenant, idPuntoVenta, codigoTipoComprobante, ct);
+        var numero = await AsignarSiguienteAsync(db, idPuntoVenta, codigoTipoComprobante, ct);
+
+        await transaccion.CommitAsync(ct);
+        return numero;
+    }
+
     public static async Task AsegurarContadorAsync(
         IWaysDbContext db, int idTenant, int idPuntoVenta, string tipoComprobante, CancellationToken ct = default)
     {

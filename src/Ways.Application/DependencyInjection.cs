@@ -4,6 +4,7 @@ using Ways.Application.Articulos;
 using Ways.Application.Caja;
 using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
+using Ways.Application.CuentaCorriente;
 using Ways.Application.Gastos;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
@@ -57,6 +58,10 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeTurnos>();
         services.AddScoped<ServicioDeResumenDeTurno>();
         services.AddScoped<ServicioDeGastos>();
+
+        // stage-7-cuenta-corriente (Slice 2): pago a cuenta (RC) — reusa
+        // ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync, se registra junto a la caja.
+        services.AddScoped<ServicioDeCuentaCorriente>();
 
         services.AddScoped<ServicioDeAprovisionamiento>();
         services.AddScoped<ServicioDeOrganizacion>();
