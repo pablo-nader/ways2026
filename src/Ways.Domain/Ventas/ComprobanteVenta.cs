@@ -31,8 +31,10 @@ public class ComprobanteVenta : EntidadTenant
 
     public int IdPuntoVenta { get; set; }
 
-    /// <summary>Siempre <c>NULL</c> en esta etapa (proposal decisión 1, design: Migration
-    /// Sequencing) — no hay <c>turnos_caja</c> todavía.</summary>
+    /// <summary>Resuelto server-side desde el turno abierto del punto de venta (stage 6,
+    /// <c>ServicioDeVentas.EmitirAsync</c>) — la promesa de esta etapa ya se cumple: toda venta
+    /// nueva lo lleva poblado. <c>NULL</c> permanece solo en los comprobantes emitidos en stage 5,
+    /// antes de que <c>turnos_caja</c> existiera (decisión 8: sin backfill).</summary>
     public int? IdTurnoCaja { get; set; }
 
     /// <summary><c>IContextoDeUsuario.UsuarioId</c> (design decisión 11) — quien opera la venta

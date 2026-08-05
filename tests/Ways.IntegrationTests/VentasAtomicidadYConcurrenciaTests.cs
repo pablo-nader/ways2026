@@ -111,6 +111,17 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
         db.MediosPago.Add(medioCc);
         await db.SaveChangesAsync();
 
+        // stage-6-turnos-caja, Slice 5 (task 5.9): checkout ahora exige un turno abierto (409
+        // turno_no_abierto) — sembrado directo por EF, mismo criterio que el resto de este
+        // método, en vez de un round-trip HTTP extra por cada PrepararAsync.
+        db.TurnosCaja.Add(new Ways.Domain.Caja.TurnoCaja
+        {
+            IdTenant = resultado.IdTenant, IdPuntoVenta = resultado.IdPuntoVenta,
+            IdEmpleadoApertura = resultado.IdUsuarioAdmin, FechaApertura = ahora, FondoInicial = 0m,
+            Estado = Ways.Domain.Caja.EstadoTurno.Abierto, CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+
         return new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, admin, area.Id, idAlicuotaIva,
             lista.Id, idMedioEfectivo, medioCc.Id);
@@ -566,7 +577,9 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
         var contexto = new ContextoDetector(ctx.IdTenant, usuarioId: 1);
         var servicioDePrecios = new Ways.Application.Precios.ServicioDePrecios(db, reloj, contexto);
         var servicioDeOfertas = new Ways.Application.Ofertas.ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas);
+        var lectorDeMovimientos = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
+        var servicioDeTurnos = new Ways.Application.Caja.ServicioDeTurnos(db, reloj, contexto, lectorDeMovimientos);
+        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos);
 
         var metodo = typeof(ServicioDeVentas).GetMethod(
             "BuscarPorNumeroComprometidoAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
