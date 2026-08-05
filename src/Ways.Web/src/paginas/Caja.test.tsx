@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Caja } from './Caja'
 import { ErrorApi } from '../api/cliente'
@@ -126,7 +127,7 @@ describe('Caja — apertura', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('No hay un turno abierto en este punto de venta.')
 
     await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
@@ -147,7 +148,7 @@ describe('Caja — apertura', () => {
       return undefined
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('No hay un turno abierto en este punto de venta.')
 
     await userEvent.type(screen.getByLabelText('Fondo inicial'), '-10')
@@ -173,7 +174,7 @@ describe('Caja — apertura', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('No hay un turno abierto en este punto de venta.')
     await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
 
@@ -190,6 +191,36 @@ describe('Caja — apertura', () => {
       await Promise.resolve()
     })
     await screen.findByText('Turno abierto')
+  })
+
+  it('autocuración del 409 turno_ya_abierto (task 7.8, judgment-day slice-6 finding): en vez de un error + formulario obsoleto, refetchea y muestra el turno que ganó la carrera', async () => {
+    let llamadasAbierto = 0
+    mockearRutasBase((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') {
+        llamadasAbierto += 1
+        // La primera consulta (montaje) no encuentra turno — por eso se muestra el formulario.
+        // La segunda (autocuración, tras el 409) sí lo encuentra: otra pestaña lo abrió primero.
+        return llamadasAbierto === 1
+          ? Promise.resolve<TurnoResumen | null>(null)
+          : Promise.resolve<TurnoResumen | null>(turnoFixture())
+      }
+      if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture())
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos') return Promise.reject(new ErrorApi(409, 'turno_ya_abierto', 'Ya hay un turno abierto en este punto de venta.'))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    render(<Caja />, { wrapper: MemoryRouter })
+    await screen.findByText('No hay un turno abierto en este punto de venta.')
+
+    await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+
+    await screen.findByText('Turno abierto')
+    expect(screen.queryByText('Ya hay un turno abierto en este punto de venta.')).not.toBeInTheDocument()
+    expect(llamadasAbierto).toBe(2)
   })
 })
 
@@ -215,7 +246,7 @@ describe('Caja — movimientos', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
     expect(screen.getByText('Calculando…')).toBeInTheDocument()
 
@@ -243,7 +274,7 @@ describe('Caja — movimientos', () => {
       return undefined
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
 
     await userEvent.type(screen.getByLabelText('Importe'), '100')
@@ -269,7 +300,7 @@ describe('Caja — movimientos', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
 
     await userEvent.selectOptions(screen.getByLabelText('Tipo de movimiento'), 'Apertura de cajón')
@@ -302,7 +333,7 @@ describe('Caja — movimientos', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
     await userEvent.type(screen.getByLabelText('Importe'), '100')
     await userEvent.type(screen.getByLabelText('Motivo'), 'retiro de prueba')
@@ -344,7 +375,7 @@ describe('Caja — movimientos', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
     expect(screen.getByText('Calculando…')).toBeInTheDocument()
 
@@ -386,7 +417,7 @@ describe('Caja — selector de punto de venta bloqueado durante una escritura en
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('No hay un turno abierto en este punto de venta.')
 
     await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
@@ -416,7 +447,7 @@ describe('Caja — selector de punto de venta bloqueado durante una escritura en
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
     await userEvent.type(screen.getByLabelText('Importe'), '100')
     await userEvent.type(screen.getByLabelText('Motivo'), 'retiro de prueba')
@@ -450,7 +481,7 @@ describe('Caja — turno nuevo no hereda el estado del anterior (react-async-sta
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
     await waitFor(() => expect(screen.getByText('$640,00')).toBeInTheDocument())
 
@@ -475,8 +506,23 @@ describe('Caja — errores', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />)
+    render(<Caja />, { wrapper: MemoryRouter })
 
     expect(await screen.findByText('No se pudo consultar el turno.')).toBeInTheDocument()
+  })
+})
+
+describe('Caja — navegación a cierre (Slice 7)', () => {
+  it('el panel del turno abierto ofrece "Cerrar turno" con el id del turno en la URL', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(turnoFixture())
+      if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture())
+      return undefined
+    })
+
+    render(<Caja />, { wrapper: MemoryRouter })
+    await screen.findByText('Turno abierto')
+
+    expect(screen.getByRole('link', { name: 'Cerrar turno' })).toHaveAttribute('href', '/caja/cierre?idTurno=501')
   })
 })

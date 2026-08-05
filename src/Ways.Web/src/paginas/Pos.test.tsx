@@ -855,6 +855,85 @@ describe('Pos — checkout', () => {
   })
 })
 
+describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', () => {
+  it('un 409 turno_no_abierto reemplaza el panel de cobro por la oferta de abrir turno, y tras abrirlo la venta NO se reintenta sola', async () => {
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') {
+        return Promise.reject(new ErrorApi(409, 'turno_no_abierto', 'No hay un turno abierto en este punto de venta.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText('No hay un turno abierto')).toBeInTheDocument()
+    expect(screen.queryByText('No hay un turno abierto en este punto de venta.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Cobrar/ })).not.toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')).toHaveLength(1)
+
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos') {
+        return Promise.resolve({
+          id: 900,
+          idPuntoVenta: 7,
+          idEmpleadoApertura: 3,
+          idEmpleadoCierre: null,
+          fechaApertura: '2026-08-04T12:00:00Z',
+          fechaCierre: null,
+          fondoInicial: 500,
+          estado: 'Abierto',
+          observaciones: null,
+        })
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+
+    // El carrito y el panel de pagos quedan tal cual: el cajero vuelve a apretar "Cobrar" a
+    // mano, ningún checkout NUEVO se dispara automáticamente al volver (sigue habiendo un único
+    // POST /ventas acumulado, el del intento original que rebotó con el 409).
+    await screen.findByRole('button', { name: /Cobrar/ })
+    expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')).toHaveLength(1)
+  })
+
+  it('un fondo inicial negativo en el panel del gate se rechaza localmente, sin disparar el POST de apertura', async () => {
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') {
+        return Promise.reject(new ErrorApi(409, 'turno_no_abierto', 'No hay un turno abierto en este punto de venta.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText('No hay un turno abierto')
+
+    await userEvent.type(screen.getByLabelText('Fondo inicial'), '-10')
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+
+    expect(await screen.findByText('El fondo inicial tiene que ser un número mayor o igual a 0.')).toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/caja/turnos')).toHaveLength(0)
+  })
+
+  it('un 409 con otro código sigue mostrando el error normal, sin activar el gate', async () => {
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') {
+        return Promise.reject(new ErrorApi(409, 'stock_insuficiente', 'No hay stock suficiente.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText('No hay stock suficiente.')).toBeInTheDocument()
+    expect(screen.queryByText('No hay un turno abierto')).not.toBeInTheDocument()
+  })
+})
+
 describe('Pos — checkout: split de pago con el mismo medio', () => {
   it('dos filas de Efectivo (split de pago) no colapsan: cada una envía su propio importe y vuelto', async () => {
     render(<Pos />)
