@@ -143,49 +143,49 @@ apertura live behind the partial unique index with a proven race,
 `movimientos_caja` live with motivo rules, shared turno-resolution helper
 in place. **Rollback**: new routes/service only.
 
-- [ ] 2.1 [P] Add `ReglaDeTurnos` (pure Domain): `estado` transitions
+- [x] 2.1 [P] Add `ReglaDeTurnos` (pure Domain): `estado` transitions
   (`abierto → cerrado` only, no reapertura). *(design decision 10; spec:
   turnos-de-caja / Turno Schema At Rest)*
-- [ ] 2.2 [P] Add `ReglaDeMovimientosDeCaja` (pure Domain): `importe` rule
+- [x] 2.2 [P] Add `ReglaDeMovimientosDeCaja` (pure Domain): `importe` rule
   (`apertura_cajon` ⇒ exactly `0`, else `> 0`), `motivo` rule (`NOT NULL`,
   `length(btrim) >= 5`, uniform across all 3 `tipo`). *(design decisions 8,
   10; spec: movimientos-de-caja / Motivo Required For Retiro And Refuerzo,
   Apertura De Cajón Follows Legacy F12 Parity)*
-- [ ] 2.3 Add `ServicioDeTurnos.AbrirAsync`: plain INSERT behind
+- [x] 2.3 Add `ServicioDeTurnos.AbrirAsync`: plain INSERT behind
   `ux_turnos_caja_abierto`, `EstrategiaSinReintento`, `23505` → `409
   turno_ya_abierto`. *(design decision 7; spec: turnos-de-caja / One Open
   Turno Per Punto De Venta)*
-- [ ] 2.4 Add `ServicioDeTurnos.ResolverTurnoAbiertoAsync` (shared resolver,
+- [x] 2.4 Add `ServicioDeTurnos.ResolverTurnoAbiertoAsync` (shared resolver,
   reused by Slice 3 and Slice 5): resolve the open turno from
   `idPuntoVenta`; `409 turno_no_abierto` when none exists. *(spec:
   turnos-de-caja / Turno Is Always Server-Resolved, Never Client-Supplied)*
-- [ ] 2.5 Add `ServicioDeTurnos.RegistrarMovimientoAsync`: resolve open
+- [x] 2.5 Add `ServicioDeTurnos.RegistrarMovimientoAsync`: resolve open
   turno, apply `ReglaDeMovimientosDeCaja`, insert `movimientos_caja` row.
   *(spec: movimientos-de-caja / Movimiento Schema At Rest, Movimiento
   Requires An Open Turno)*
-- [ ] 2.6 Add `CajaEndpoints`: `POST /api/caja/turnos`, `GET
+- [x] 2.6 Add `CajaEndpoints`: `POST /api/caja/turnos`, `GET
   /api/caja/turnos/abierto`, `GET /api/caja/turnos`, `GET
   /api/caja/turnos/{id}`, `POST /api/caja/turnos/{id}/movimientos` — all
   `OperacionDePos`. *(design: API Surface)*
-- [ ] 2.7 [P] Unit: `ReglaDeTurnos` transitions; `ReglaDeMovimientosDeCaja`
+- [x] 2.7 [P] Unit: `ReglaDeTurnos` transitions; `ReglaDeMovimientosDeCaja`
   exhaustive — importe/motivo per tipo incl. the 5-char boundary. *(spec:
   movimientos-de-caja, all 3 motivo/importe scenarios)*
-- [ ] 2.8 Integration (concurrency): rendezvous race — two concurrent
+- [x] 2.8 Integration (concurrency): rendezvous race — two concurrent
   aperturas at the same punto de venta ⇒ exactly one `201` + one `409
   turno_ya_abierto`; aperturas at different puntos de venta are
   independent. *(spec: turnos-de-caja / Concurrent aperturas race to
   exactly one winner, Aperturas at different puntos de venta)*
-- [ ] 2.9 Integration: retiro/refuerzo without motivo → `400
+- [x] 2.9 Integration: retiro/refuerzo without motivo → `400
   movimiento_de_caja_sin_motivo`; retiro with motivo accepted; apertura_cajon
   non-zero importe rejected; apertura_cajon short motivo → `400
   motivo_de_apertura_cajon_invalido`; apertura_cajon valid accepted;
   movimiento with no open turno → `409 turno_no_abierto`. *(spec:
   movimientos-de-caja, all 7 remaining scenarios)*
-- [ ] 2.10 [P] Integration: authorization — Vendedor opens a turno and
+- [x] 2.10 [P] Integration: authorization — Vendedor opens a turno and
   records a movimiento; `RolConocido.Root` rejected from both. *(spec:
   turnos-de-caja / Apertura And Cierre Authorization (apertura half);
   movimientos-de-caja / Movimiento Authorization)*
-- [ ] 2.11 Regression: Slice 1 suite unedited and green.
+- [x] 2.11 Regression: Slice 1 suite unedited and green.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ServicioDeTurnos|FullyQualifiedName~CajaEndpoints`
 
