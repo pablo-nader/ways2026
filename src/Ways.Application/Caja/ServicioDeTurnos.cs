@@ -227,8 +227,13 @@ public class ServicioDeTurnos(
         // 1. UPDATE ... WHERE estado = 'abierto' RETURNING id_punto_venta — lock EXCLUSIVO de
         // fila, PRIMER statement (design decisión 1), sostenido hasta el COMMIT. 0 filas: ¿existe
         // el turno? no -> 404; sí -> 409 turno_ya_cerrado (Orchestrator Decision 2, tasks.md —
-        // distinto de turno_no_abierto: el turno EXISTE, solo que ya no está abierto).
-        var idPuntoVenta = await MarcarCerradoAsync(idTenant, idTurnoCaja, idEmpleado, momento, ct);
+        // distinto de turno_no_abierto: el turno EXISTE, solo que ya no está abierto). El mismo
+        // UPDATE también acumula solicitud.Observaciones a continuación de las de la apertura,
+        // separadas por un salto de línea, sin pisar el texto existente.
+        var observacionesCierre = string.IsNullOrWhiteSpace(solicitud.Observaciones)
+            ? null
+            : solicitud.Observaciones.Trim();
+        var idPuntoVenta = await MarcarCerradoAsync(idTenant, idTurnoCaja, idEmpleado, momento, observacionesCierre, ct);
         if (idPuntoVenta is null)
         {
             var existe = await db.TurnosCaja.AnyAsync(t => t.Id == idTurnoCaja, ct);
@@ -303,9 +308,13 @@ public class ServicioDeTurnos(
     /// <c>estado</c> (mismo criterio que <c>MarcarAnuladoAsync</c> de <c>ServicioDeVentas</c>):
     /// <c>RETURNING id_punto_venta</c>, no <c>fondo_inicial</c> — <see
     /// cref="LectorDeMovimientosDelTurno"/> lo vuelve a leer por su cuenta (lo necesita también
-    /// para el resumen parcial sobre un turno TODAVÍA abierto, sin este RETURNING disponible).</summary>
+    /// para el resumen parcial sobre un turno TODAVÍA abierto, sin este RETURNING disponible).
+    /// Cuando <paramref name="observacionesCierre"/> no es nulo, el mismo UPDATE lo agrega a
+    /// continuación de las observaciones de la apertura (separadas por un salto de línea) sin
+    /// pisarlas; si es nulo, la columna queda intacta.</summary>
     private async Task<int?> MarcarCerradoAsync(
-        int idTenant, int idTurnoCaja, int idEmpleadoCierre, DateTimeOffset momento, CancellationToken ct)
+        int idTenant, int idTurnoCaja, int idEmpleadoCierre, DateTimeOffset momento, string? observacionesCierre,
+        CancellationToken ct)
     {
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
@@ -313,7 +322,9 @@ public class ServicioDeTurnos(
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccionCruda;
         comando.CommandText =
-            "UPDATE turnos_caja SET estado = $1, fecha_cierre = $2, id_empleado_cierre = $3 " +
+            "UPDATE turnos_caja SET estado = $1, fecha_cierre = $2, id_empleado_cierre = $3, " +
+            "observaciones = CASE WHEN $7::text IS NULL THEN observaciones " +
+            "ELSE COALESCE(observaciones || E'\n', '') || $7::text END " +
             "WHERE id_turno_caja = $4 AND id_tenant = $5 AND estado = $6 " +
             "RETURNING id_punto_venta";
 
@@ -323,6 +334,7 @@ public class ServicioDeTurnos(
         AgregarParametro(comando, idTurnoCaja);
         AgregarParametro(comando, idTenant);
         AgregarParametro(comando, EstadoTurno.Abierto);
+        AgregarParametro(comando, (object?)observacionesCierre ?? DBNull.Value);
 
         var resultado = await comando.ExecuteScalarAsync(ct);
         return resultado is null ? null : Convert.ToInt32(resultado);

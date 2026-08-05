@@ -8,8 +8,9 @@ namespace Ways.Domain.Tests.Caja;
 /// fórmula). Pura, sin base de datos: la exclusión de anulados NO se prueba acá porque ya pasó
 /// antes de llegar a este nivel (es <c>LectorDeMovimientosDelTurno</c>, Application, quien filtra
 /// <c>estado = emitido</c> al armar <see cref="ActividadDeMedio.Pagos"/>/<see
-/// cref="ActividadDeMedio.Vueltos"/>) — la cubre el escenario de integración (spec: Anulados Are
-/// Excluded From The Derivation).
+/// cref="ActividadDeMedio.Vueltos"/>) — la cubre
+/// <c>CajaCierreEndpointsTests.LosPagosYVueltosDeUnComprobanteAnuladoQuedanExcluidosDeLaDerivacion</c>
+/// (spec: Anulados Are Excluded From The Derivation).
 ///
 /// IDs sintéticos usados en todo el archivo: 1 = efectivo (ancla en la mayoría de los casos),
 /// 2 = tarjeta (electrónico), 3 = cuenta corriente.

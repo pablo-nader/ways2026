@@ -203,7 +203,8 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioTarjeta, importe: 300m);
 
         var solicitud = new SolicitudDeCierre(
-            [new ConteoDeclarado(ctx.IdMedioEfectivo, 1500m), new ConteoDeclarado(ctx.IdMedioTarjeta, 300m)], null);
+            [new ConteoDeclarado(ctx.IdMedioEfectivo, 1500m), new ConteoDeclarado(ctx.IdMedioTarjeta, 300m)],
+            "Cierre de prueba");
 
         var respuesta = await ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre", solicitud);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -218,10 +219,15 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal(1500m, efectivo.ImporteDeclarado);
         Assert.Equal(0m, efectivo.Diferencia);
 
+        // El UPDATE guardado del cierre agrega las observaciones a continuación de las de la
+        // apertura ("Apertura de prueba", sembrada por AbrirTurnoAsync), sin pisarlas.
+        Assert.Equal("Apertura de prueba\nCierre de prueba", resultado.Observaciones);
+
         // La respuesta de GET .../{id} también expone los mismos arqueos (design: API Surface —
         // "Turno + its arqueos_turno, the Z-report payload").
         var porId = await ctx.Admin.GetFromJsonAsync<TurnoConArqueos>($"/api/caja/turnos/{turno.Id}", OpcionesJson);
         Assert.Equal(2, porId!.Arqueos.Count);
+        Assert.Equal("Apertura de prueba\nCierre de prueba", porId.Observaciones);
     }
 
     // ---- task 4.16: una fila por medio con actividad, ninguna para CC ni sin actividad ----------
@@ -247,6 +253,42 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal(ctx.IdMedioEfectivo, resultado.Arqueos[0].IdMedioPago);
         Assert.DoesNotContain(resultado.Arqueos, a => a.IdMedioPago == idMedioSinActividad);
         Assert.DoesNotContain(resultado.Arqueos, a => a.IdMedioPago == idMedioCc);
+    }
+
+    // ---- task 4.3/4.14: los anulados quedan fuera de la derivación --------------------------------
+
+    /// <summary>spec: Anulados Are Excluded From The Derivation — <see
+    /// cref="LectorDeMovimientosDelTurno"/> filtra <c>estado = emitido</c> al armar pagos y
+    /// vueltos por medio (ver su comentario en el paso 1); acá se prueba punta a punta que un
+    /// comprobante anulado no aporta NI su pago NI su vuelto al <c>importe_esperado</c>, ni en el
+    /// resumen parcial ni en el cierre persistido.</summary>
+    [Fact]
+    public async Task LosPagosYVueltosDeUnComprobanteAnuladoQuedanExcluidosDeLaDerivacion()
+    {
+        var ctx = await PrepararAsync(nameof(LosPagosYVueltosDeUnComprobanteAnuladoQuedanExcluidosDeLaDerivacion));
+        var turno = await AbrirTurnoAsync(ctx);
+
+        await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, importe: 500m, vuelto: 20m);
+        await SembrarPagoAsync(
+            ctx, turno.Id, ctx.IdMedioEfectivo, importe: 300m, vuelto: 10m, estado: EstadoComprobante.Anulado);
+
+        var resumen = await ctx.Admin.GetFromJsonAsync<ResumenDeTurno>($"/api/caja/turnos/{turno.Id}/resumen", OpcionesJson);
+        Assert.NotNull(resumen);
+        var efectivo = resumen!.Medios.Single(m => m.IdMedioPago == ctx.IdMedioEfectivo);
+
+        // Solo el comprobante emitido aporta: 500 - 20 = 480; el anulado (300, vuelto 10) no suma
+        // ni resta nada.
+        Assert.Equal(480m, efectivo.ImporteEsperado);
+
+        var solicitud = new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 480m)], null);
+        var respuesta = await ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        var resultado = JsonSerializer.Deserialize<TurnoConArqueos>(cuerpo, OpcionesJson)!;
+        var arqueoEfectivo = resultado.Arqueos.Single(a => a.IdMedioPago == ctx.IdMedioEfectivo);
+        Assert.Equal(480m, arqueoEfectivo.ImporteEsperado);
+        Assert.Equal(0m, arqueoEfectivo.Diferencia);
     }
 
     // ---- ValidadorDeConteos: los tres rechazos ---------------------------------------------------
@@ -302,6 +344,50 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal("medio_no_arqueable", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>Fix judgment-day (juzgados A y B, Slice 4): antes de este fix, <c>declarados
+    /// .ToHashSet()</c> deduplicaba en silencio y el <c>ToDictionary</c> de
+    /// <c>ServicioDeTurnos.EjecutarCierreAsync</c> reventaba con un <c>ArgumentException</c> sin
+    /// controlar (500 genérico) ante un mismo <c>idMedioPago</c> declarado dos veces.</summary>
+    [Fact]
+    public async Task DeclararElMismoMedioDosVecesDaConteoDuplicadoYElTurnoSigueAbierto()
+    {
+        var ctx = await PrepararAsync(nameof(DeclararElMismoMedioDosVecesDaConteoDuplicadoYElTurnoSigueAbierto));
+        var turno = await AbrirTurnoAsync(ctx);
+        await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, importe: 100m);
+
+        var solicitud = new SolicitudDeCierre(
+            [new ConteoDeclarado(ctx.IdMedioEfectivo, 100m), new ConteoDeclarado(ctx.IdMedioEfectivo, 90m)], null);
+        var respuesta = await ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("conteo_duplicado", problema.GetProperty("codigo").GetString());
+
+        var porId = await ctx.Admin.GetFromJsonAsync<TurnoConArqueos>($"/api/caja/turnos/{turno.Id}", OpcionesJson);
+        Assert.Equal(EstadoTurno.Abierto, porId!.Estado);
+    }
+
+    /// <summary>Fix judgment-day (juez A, Slice 4): un conteo físico nunca puede ser negativo —
+    /// <c>ValidadorDeConteos.Validar</c> ahora lo rechaza antes de comparar contra los
+    /// arqueables.</summary>
+    [Fact]
+    public async Task DeclararUnConteoNegativoDaConteoInvalidoYElTurnoSigueAbierto()
+    {
+        var ctx = await PrepararAsync(nameof(DeclararUnConteoNegativoDaConteoInvalidoYElTurnoSigueAbierto));
+        var turno = await AbrirTurnoAsync(ctx);
+        await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, importe: 100m);
+
+        var solicitud = new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, -1m)], null);
+        var respuesta = await ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("conteo_invalido", problema.GetProperty("codigo").GetString());
+
+        var porId = await ctx.Admin.GetFromJsonAsync<TurnoConArqueos>($"/api/caja/turnos/{turno.Id}", OpcionesJson);
+        Assert.Equal(EstadoTurno.Abierto, porId!.Estado);
+    }
+
     // ---- 404 / 409 turno_ya_cerrado / ancla no única ---------------------------------------------
 
     [Fact]
@@ -325,6 +411,19 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         var respuesta = await ctxB.Admin.PostAsJsonAsync(
             $"/api/caja/turnos/{turnoDeA.Id}/cierre", new SolicitudDeCierre([], null));
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    [Fact]
+    public async Task ElResumenDeUnTurnoDeOtroTenantDevuelve404()
+    {
+        var ctxA = await PrepararAsync(nameof(ElResumenDeUnTurnoDeOtroTenantDevuelve404) + "-A");
+        var turnoDeA = await AbrirTurnoAsync(ctxA);
+
+        var ctxB = await PrepararAsync(nameof(ElResumenDeUnTurnoDeOtroTenantDevuelve404) + "-B");
+
+        var respuesta = await ctxB.Admin.GetAsync($"/api/caja/turnos/{turnoDeA.Id}/resumen");
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
@@ -422,9 +521,12 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         var primerTurno = await AbrirTurnoAsync(ctx);
         await RegistrarMovimientoAsync(ctx, primerTurno.Id, TipoMovimientoCaja.Retiro, 100m, "retiro de prueba");
         await RegistrarGastoAsync(ctx, ctx.IdMedioEfectivo, 40m);
+        // El importe esperado derivado da negativo (fondo 0 + retiro > pagos), pero un conteo
+        // FÍSICO nunca puede serlo (fix judgment-day, conteo_invalido) — se declara 0m, que no
+        // afecta la cadena de tesorería (ésta depende de insumos.Retiros/gastos, no del conteo).
         var primerCierre = await ctx.Admin.PostAsJsonAsync(
             $"/api/caja/turnos/{primerTurno.Id}/cierre",
-            new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, -140m)], null));
+            new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 0m)], null));
         Assert.Equal(HttpStatusCode.OK, primerCierre.StatusCode);
 
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
@@ -440,7 +542,7 @@ public class CajaCierreEndpointsTests(WaysApiFixture fixture) : IClassFixture<Wa
         await RegistrarMovimientoAsync(ctx, segundoTurno.Id, TipoMovimientoCaja.Retiro, 50m, "segundo retiro de prueba");
         var segundoCierre = await ctx.Admin.PostAsJsonAsync(
             $"/api/caja/turnos/{segundoTurno.Id}/cierre",
-            new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, -50m)], null));
+            new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 0m)], null));
         Assert.Equal(HttpStatusCode.OK, segundoCierre.StatusCode);
 
         await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
