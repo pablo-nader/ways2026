@@ -239,7 +239,7 @@ commit transaction and the preview share one formula, all three reliquidación
 racy surfaces are proven. **Rollback**: new files only — reliquidación simply
 cannot run again if reverted; no stage-5/6 behaviour depends on it.
 
-- [ ] 3.1 Create `src/Ways.Domain/CuentaCorriente/ReliquidadorDeConsumos.cs` +
+- [x] 3.1 Create `src/Ways.Domain/CuentaCorriente/ReliquidadorDeConsumos.cs` +
   records `LineaAReliquidar`, `ConsumoAReliquidar`, `ResultadoDeReliquidacion`,
   `DetalleDeConsumo`: `totalDelDia = round(cantidad × precioActual, 2,
   AwayFromZero)` (never `id_oferta IS NOT NULL` as the "offer applied"
@@ -248,7 +248,7 @@ cannot run again if reverted; no stage-5/6 behaviour depends on it.
   unpriceable lines (`IdArticulo NULL` or no vigente price) skipped with a
   motivo, never fatal. *(design: The Re-Pricing Derivation; pinned decisions
   "financed-fraction proration", "skip-unpriceable"; Interfaces/Contracts)*
-- [ ] 3.2 [P] Unit: `ReliquidadorDeConsumos` exhaustive — plain re-price
+- [x] 3.2 [P] Unit: `ReliquidadorDeConsumos` exhaustive — plain re-price
   up/down; offer reversion in both directions with the worked example
   (sold 900, current 1500, delta 600 = 500 re-pricing + 100 annulled
   discount) asserted numerically; `factor = 1` collapsing to the legacy
@@ -258,7 +258,7 @@ cannot run again if reverted; no stage-5/6 behaviour depends on it.
   Strategy — Unit (Domain); spec: reliquidacion-a-precio-del-dia / Offer-Line
   Discounts Are Reverted, Never Excluded, both scenarios; Re-Pricing Uses The
   Client's Current id_lista_precio)*
-- [ ] 3.3 Create `src/Ways.Application/CuentaCorriente/LectorDeConsumosReliquidables.cs`:
+- [x] 3.3 Create `src/Ways.Application/CuentaCorriente/LectorDeConsumosReliquidables.cs`:
   eligibility query (`tipo = 'consumo'`, `id_movimiento_actualizacion IS
   NULL`, `importe > 0`, comprobante `estado = 'emitido'`,
   `comprobante.total > 0`), ordered `fecha ASC`, `LIMIT 500`; items query;
@@ -268,7 +268,7 @@ cannot run again if reverted; no stage-5/6 behaviour depends on it.
   paragraph; pinned deviation "anulados-excluded eligibility"; spec:
   reliquidacion-a-precio-del-dia / Eligibility Scan Covers Not-Yet-
   Reliquidated Consumos Only)*
-- [ ] 3.4 Create `src/Ways.Application/CuentaCorriente/ServicioDeReliquidacion.cs`:
+- [x] 3.4 Create `src/Ways.Application/CuentaCorriente/ServicioDeReliquidacion.cs`:
   preview (no lock, calls the same `ReliquidadorDeConsumos`) + commit — the
   8-step transaction: `SELECT saldo, id_lista_precio FROM clientes … FOR
   UPDATE` (lock #1, **no turno**) → eligible-consumos scan → items query →
@@ -280,46 +280,46 @@ cannot run again if reverted; no stage-5/6 behaviour depends on it.
   (rowcount mismatch ⇒ throw, defense in depth). *(design decision 4 —
   pinned: "cliente FOR UPDATE first, no turno"; Transactions — RELIQUIDACIÓN,
   binding statement order)*
-- [ ] 3.5 Add `Politicas.SupervisionDeCuentaCorriente` constant
+- [x] 3.5 Add `Politicas.SupervisionDeCuentaCorriente` constant
   (Supervisor + Admin). Add `CuentaCorrienteEndpoints`: `GET
   /api/clientes/{id}/cuenta-corriente/reliquidacion` (preview) and `POST`
   (commit), both under `SupervisionDeCuentaCorriente`. Update
   `SuperficieDeAutorizacionTests` allowlist with the new POST route.
   *(Orchestrator Decision 2; spec: operacion-de-pos /
   SupervisionDeCuentaCorriente Policy Gates Reliquidación And Ajuste Manual)*
-- [ ] 3.6 Integration (derivation identity): `GET …/reliquidacion`
+- [x] 3.6 Integration (derivation identity): `GET …/reliquidacion`
   immediately before the `POST` returns a delta **byte-identical** to the
   committed movement's `importe`. *(design: Testing Strategy — Integration
   (derivation identity); the "never two formulas" contract)*
-- [ ] 3.7 Integration (atomicity): force a failure at each of the 8
+- [x] 3.7 Integration (atomicity): force a failure at each of the 8
   reliquidación steps ⇒ saldo, marker, and ledger all untouched. *(spec:
   reliquidacion-a-precio-del-dia / A fault-point failure rolls back the
   marker together with the movement)*
-- [ ] 3.8 Integration (concurrency): reliquidación × sale race for the same
+- [x] 3.8 Integration (concurrency): reliquidación × sale race for the same
   cliente — rendezvous test, no lost consumo, no double count; two
   concurrent reliquidaciones — the loser re-scans, finds an empty set,
   returns a clean no-op with exactly one movement written total. *(spec:
   reliquidacion-a-precio-del-dia / Concurrent Reliquidación And Sale…; design:
   Concurrency guarantees — "Two reliquidaciones")*
-- [ ] 3.9 Integration: running reliquidación twice writes exactly one
+- [x] 3.9 Integration: running reliquidación twice writes exactly one
   movement, the second run a clean no-op with `Cliente.Saldo` unchanged; a
   previously reliquidated consumo is skipped; re-pricing reads the client's
   current lista, not the sale-time lista. *(spec: reliquidacion-a-precio-
   del-dia / A Run With No Eligible Consumos Is A No-Op, Eligibility Scan…,
   Re-Pricing Uses The Client's Current id_lista_precio)*
-- [ ] 3.10 [P] Integration: two comprobantes / three lines write exactly one
+- [x] 3.10 [P] Integration: two comprobantes / three lines write exactly one
   `ActualizacionPrecios` movement with `importe` equal to the summed deltas;
   no reversal endpoint exists for `ActualizacionPrecios` (404). *(spec:
   reliquidacion-a-precio-del-dia / One ActualizacionPrecios Movement Per
   Run…, Reliquidación Is Irreversible…)*
-- [ ] 3.11 [P] Integration (budget): constant ≤ 8 queries over 2 / 50 / 200
+- [x] 3.11 [P] Integration (budget): constant ≤ 8 queries over 2 / 50 / 200
   eligible consumos. `DbCommand` interceptor test. *(design: Transactions —
   "Read budget")*
-- [ ] 3.12 [P] Integration (authorization): Vendedor rejected `403` from
+- [x] 3.12 [P] Integration (authorization): Vendedor rejected `403` from
   reliquidación; Supervisor and Admin both succeed (authorization-wise).
   *(spec: operacion-de-pos / Supervisor can run reliquidación…, Vendedor is
   rejected…)*
-- [ ] 3.13 Close the anulación×reliquidación TOCTOU (judgment-day slice-2
+- [x] 3.13 Close the anulación×reliquidación TOCTOU (judgment-day slice-2
   finding, judge A): `AnularAsync`'s `consumo_reliquidado` guard reads the
   movements via a plain unlocked SELECT before any row lock — a concurrent
   reliquidación committing its marker between that read and the reversal
@@ -330,7 +330,7 @@ cannot run again if reverted; no stage-5/6 behaviour depends on it.
   consumo_reliquidado` if it flipped). Rendezvous race test: anulación ×
   reliquidación of the same cliente ⇒ exactly one wins; never both.
   *(design: Concurrency guarantees — extends the enumerated racy surfaces)*
-- [ ] 3.14 Regression: Slices 1–2 suites unedited and green.
+- [x] 3.14 Regression: Slices 1–2 suites unedited and green.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ReliquidadorDeConsumos|FullyQualifiedName~ServicioDeReliquidacion`
 
