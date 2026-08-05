@@ -1,4 +1,5 @@
 using Ways.Domain.Caja;
+using Ways.Domain.Gastos;
 
 namespace Ways.Application.Caja;
 
@@ -56,9 +57,55 @@ public sealed record SolicitudDeCierre(IReadOnlyList<ConteoDeclarado> Conteos, s
 /// persistir (spec: Resumen Parcial Uses The Same Derivation As Cierre).</summary>
 public sealed record LineaDeResumen(int IdMedioPago, decimal ImporteEsperado);
 
+/// <summary>Un ticket límite del turno (legacy D6: "primer y último ticket") — número visible y
+/// fecha de emisión del <see cref="Ways.Domain.Ventas.ComprobanteVenta"/> correspondiente.
+/// Nunca aparece para un comprobante anulado (spec: Anulados Are Excluded From The
+/// Derivation, mismo criterio aplicado acá).</summary>
+public sealed record TicketLimite(long Numero, DateTimeOffset Fecha);
+
+/// <summary>Ingresos de un área dentro del turno (legacy D6, primer bloque: "por área") —
+/// agrupa <see cref="Ways.Domain.Ventas.ItemComprobanteVenta.Total"/> por
+/// <see cref="Ways.Domain.Ventas.ItemComprobanteVenta.IdArea"/>, el snapshot inmutable del
+/// ítem (nunca re-derivado de <c>articulos</c>, doc 10 principio 6) — mismo criterio de
+/// snapshot que ya rige <c>ItemEmitido</c>.</summary>
+public sealed record IngresoPorArea(int IdArea, string NombreArea, decimal Total);
+
+/// <summary>Egresos de una categoría de gasto dentro del turno (legacy D6, segundo bloque: "por
+/// tipo").</summary>
+public sealed record EgresoPorCategoria(CategoriaGasto Categoria, decimal Total);
+
+/// <summary>Egresos de un área dentro del turno (legacy D6, segundo bloque: "por área") — agrupa
+/// <see cref="Ways.Domain.Gastos.Gasto.Importe"/> por <see cref="Ways.Domain.Gastos.Gasto.IdArea"/>,
+/// que a diferencia de <see cref="Ways.Domain.Ventas.ItemComprobanteVenta.IdArea"/> es NULLABLE:
+/// <see cref="IdArea"/> null representa el bucket "Sin área" (gastos sin área declarada), nunca
+/// descartados.</summary>
+public sealed record EgresoPorArea(int? IdArea, string NombreArea, decimal Total);
+
+/// <summary>Egresos del turno (legacy D6, segundo bloque: "por área y por tipo") — gastos
+/// agrupados por categoría y por área más el total de retiros físicos (<c>movimientos_caja</c>
+/// tipo <see cref="TipoMovimientoCaja.Retiro"/>); nunca incluye <see
+/// cref="TipoMovimientoCaja.Refuerzo"/> ni <see cref="TipoMovimientoCaja.AperturaCajon"/>, que no
+/// son egresos. Con este bloque, D6 queda completo salvo "saldo" (uno de los medios de pago del
+/// primer bloque de D6, Ingresos), que depende de la etapa 7 y todavía no existe.</summary>
+public sealed record EgresosDeTurno(
+    IReadOnlyList<EgresoPorCategoria> PorCategoria, IReadOnlyList<EgresoPorArea> PorArea, decimal Retiros);
+
 /// <summary>Respuesta de <c>GET /api/caja/turnos/{id}/resumen</c> (D6 parity, design: API
-/// Surface) — de solo lectura, nunca escribe nada.</summary>
-public sealed record ResumenDeTurno(int IdTurnoCaja, int IdMedioAncla, IReadOnlyList<LineaDeResumen> Medios);
+/// Surface) — de solo lectura, nunca escribe nada. <see cref="Medios"/> es la MISMA derivación
+/// que el cierre va a persistir (spec: Resumen Parcial Uses The Same Derivation As Cierre,
+/// invariante intacto); <see cref="CantidadTickets"/>/<see cref="PrimerTicket"/>/<see
+/// cref="UltimoTicket"/>/<see cref="IngresosPorArea"/>/<see cref="Egresos"/> son contenido de
+/// reporte agregado ADITIVO (follow-up de la etapa 6, "Resumen parcial D6-content enrichment")
+/// — nunca alimentan <c>CalculadorDeArqueo</c> ni ninguna escritura.</summary>
+public sealed record ResumenDeTurno(
+    int IdTurnoCaja,
+    int IdMedioAncla,
+    IReadOnlyList<LineaDeResumen> Medios,
+    int CantidadTickets,
+    TicketLimite? PrimerTicket,
+    TicketLimite? UltimoTicket,
+    IReadOnlyList<IngresoPorArea> IngresosPorArea,
+    EgresosDeTurno Egresos);
 
 /// <summary>Una fila ya persistida de <see cref="ArqueoTurno"/> — con <c>Diferencia</c> incluida
 /// (columna <c>GENERATED ALWAYS</c>, design decisión 6).</summary>

@@ -50,8 +50,10 @@ public static class DependencyInjection
 
         // stage-6-turnos-caja, Slice 4: LectorDeMovimientosDelTurno es el único lector de la
         // derivación (design decisión 5), compartido por ServicioDeTurnos.CerrarAsync y
-        // ServicioDeResumenDeTurno.
+        // ServicioDeResumenDeTurno. LectorDeContenidoDeResumen (follow-up D6-content
+        // enrichment) es un lector HERMANO, solo consumido por ServicioDeResumenDeTurno.
         services.AddScoped<LectorDeMovimientosDelTurno>();
+        services.AddScoped<LectorDeContenidoDeResumen>();
         services.AddScoped<ServicioDeTurnos>();
         services.AddScoped<ServicioDeResumenDeTurno>();
         services.AddScoped<ServicioDeGastos>();

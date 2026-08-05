@@ -47,6 +47,11 @@ function resumenFixture(sobrescribir: Partial<ResumenDeTurno> = {}): ResumenDeTu
     idTurnoCaja: 501,
     idMedioAncla: 1,
     medios: [{ idMedioPago: 1, importeEsperado: 640 }],
+    cantidadTickets: 0,
+    primerTicket: null,
+    ultimoTicket: null,
+    ingresosPorArea: [],
+    egresos: { porCategoria: [], porArea: [], retiros: 0 },
     ...sobrescribir,
   }
 }

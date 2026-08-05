@@ -11,9 +11,13 @@ namespace Ways.Application.Caja;
 /// <see cref="LectorDeMovimientosDelTurno"/> + <see cref="CalculadorDeArqueo"/> que
 /// <c>ServicioDeTurnos.CerrarAsync</c>, de solo lectura, sin ninguna escritura: es la única
 /// garantía estructural de que el número que el cajero ve a mitad de turno es el que el cierre va
-/// a comparar (task 4.13, "byte-identical").
+/// a comparar (task 4.13, "byte-identical"). El contenido D6 (tickets, áreas, egresos) lo trae
+/// <see cref="LectorDeContenidoDeResumen"/>, un lector HERMANO deliberadamente separado (follow-up
+/// "Resumen parcial D6-content enrichment") — nunca toca <see cref="InsumosDeArqueo"/> ni
+/// <see cref="CalculadorDeArqueo"/>, así que la derivación del arqueo queda intacta.
 /// </summary>
-public class ServicioDeResumenDeTurno(IWaysDbContext db, LectorDeMovimientosDelTurno lector)
+public class ServicioDeResumenDeTurno(
+    IWaysDbContext db, LectorDeMovimientosDelTurno lector, LectorDeContenidoDeResumen lectorDeContenido)
 {
     public async Task<ResumenDeTurno> ObtenerAsync(int idTurnoCaja, CancellationToken ct = default)
     {
@@ -23,9 +27,13 @@ public class ServicioDeResumenDeTurno(IWaysDbContext db, LectorDeMovimientosDelT
         var idAncla = ResolvedorDeMedioDeCajaFisica.Resolver(insumos.Actividad);
         var lineas = CalculadorDeArqueo.Calcular(insumos, idAncla);
 
+        var contenido = await lectorDeContenido.LeerAsync(idTurnoCaja, ct);
+
         return new ResumenDeTurno(
             idTurnoCaja, idAncla,
-            lineas.Select(l => new LineaDeResumen(l.IdMedioPago, l.ImporteEsperado)).ToList());
+            lineas.Select(l => new LineaDeResumen(l.IdMedioPago, l.ImporteEsperado)).ToList(),
+            contenido.CantidadTickets, contenido.PrimerTicket, contenido.UltimoTicket, contenido.IngresosPorArea,
+            new EgresosDeTurno(contenido.EgresosPorCategoria, contenido.EgresosPorArea, insumos.Retiros));
     }
 
     private async Task ExigirTurnoExisteAsync(int idTurnoCaja, CancellationToken ct)
