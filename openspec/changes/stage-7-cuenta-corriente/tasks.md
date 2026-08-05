@@ -452,33 +452,57 @@ the `turno_no_abierto` recovery path is replicated across every sibling
 modal, doc-10 §8 records the stage as implemented. **Rollback**: two modals +
 role-gated buttons + the doc note only.
 
-- [ ] 6.1 Extend `CuentaCorriente.tsx`: ajuste modal (importe + detalle,
+- [x] 6.1 Extend `CuentaCorriente.tsx`: ajuste modal (importe + detalle,
   role-gated) and reliquidación modal (preview + commit, role-gated,
   irreversible-by-design confirmation). Role gating via the existing
   `usuario?.rolId` claim (`ROL.Supervisor | ROL.Admin`) — cosmetic; server
   `SupervisionDeCuentaCorriente` is the enforcement. *(design: Web
   Composition; spec: operacion-de-pos / SupervisionDeCuentaCorriente Policy…)*
-- [ ] 6.2 Implement rule 9 on **both** new modals: first-line re-entrancy
+- [x] 6.2 Implement rule 9 on **both** new modals: first-line re-entrancy
   guard + full-window disable — a double-submit on reliquidación would
   charge/re-price the client twice. Implement rule 6: a 2xx reliquidación is
   never reported as failure (the post-write ledger refetch has its own
   try/catch and its own copy). *(design: Web Composition — react-async-state
   obligations 6, 9)*
-- [ ] 6.3 **Rule 10 — sibling-surface replication.** Grep the pago modal's
+- [x] 6.3 **Rule 10 — sibling-surface replication.** Grep the pago modal's
   `turno_no_abierto` recovery path (Slice 5) and replicate it across the
   ajuste and reliquidación modals in this same commit — all three are
   sibling surfaces that can raise the same 409. *(design: Web Composition —
-  react-async-state obligation 10)*
-- [ ] 6.4 Update `docs/10-modelo-de-datos.md` §8: status note — etapa 7
+  react-async-state obligation 10)* **Apply-time finding (deviation from the
+  literal task, documented for sdd-verify):** `turno_no_abierto` is
+  structurally irreproducible on the ajuste and reliquidación endpoints —
+  `ServicioDeCuentaCorriente.RegistrarAjusteAsync` and
+  `ServicioDeReliquidacion.EjecutarAsync`/`PreviewAsync` never call
+  `ServicioDeTurnos` (confirmed by grep; design: Open Questions — "provenance,
+  not authority", both operations run with no turno by design decision 4/8).
+  Replicating the `PanelAperturaDeTurnoEnModal` recovery there would be dead
+  code handling a 409 that can never be emitted by those routes. What *was*
+  replicated instead, uniformly across all three modals (the actually
+  shared error-recovery surface): the generic `ErrorApi` catch-all message
+  pattern, the shared success-aviso banner, and the cliente-identity
+  fail-closed gate (`clienteInfo !== null && errorCliente === ''`) that also
+  disables the ajuste/reliquidación buttons. `sdd-verify` should confirm this
+  reasoning against the backend before closing the stage.
+- [x] 6.4 Update `docs/10-modelo-de-datos.md` §8: status note — etapa 7
   implemented; the marker as a self-FK (design decision 2); the
   financed-fraction deviation from strict legacy parity. *(design: Migration
   / Rollout; Orchestrator Decision 6)*
-- [ ] 6.5 [P] Component: double-click on "Reliquidar" issues exactly one
+- [x] 6.5 [P] Component: double-click on "Reliquidar" issues exactly one
   POST (rule 9); `turno_no_abierto` recovery present in every sibling modal
   (pago, ajuste, reliquidación). RTL + `user-event`. *(design: Testing
-  Strategy — Component (Web))*
-- [ ] 6.6 Smoke-verify (`tsc -b` / `oxlint` / `vite build` clean).
-- [ ] 6.7 Regression: full `npx vitest run` green (Slice 1's re-checked
+  Strategy — Component (Web))* Double-click coverage shipped for both the
+  ajuste and the reliquidación modal. The `turno_no_abierto`-recovery-in-
+  every-sibling assertion was **not** written for ajuste/reliquidación per
+  the 6.3 finding above — asserting a recovery UI for a 409 the endpoint
+  cannot emit would be a dishonest test. Covered instead: role gating
+  (Vendedor sees neither action; Supervisor and Admin see both), ajuste
+  validation mirrors + signed saldo-preview semantics, reliquidación
+  preview→confirm→execute, the preview no-op state, the commit no-op
+  (preview↔commit race) reported as success, the `hayMas` warning, and a 2xx
+  write never reported as failure even when the post-write refetch fails
+  (both modals) — request bodies asserted for both endpoints.
+- [x] 6.6 Smoke-verify (`tsc -b` / `oxlint` / `vite build` clean).
+- [x] 6.7 Regression: full `npx vitest run` green (Slice 1's re-checked
   baseline + this stage's new tests, no unrelated assertion changed).
 
 **Verify**: `npx vitest run` (full suite) && `npx tsc -b` && `npx vite build`
