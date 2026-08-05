@@ -261,10 +261,10 @@ public class ServicioDeCompras(
         // 1. UPDATE ... RETURNING — autoridad única de la transición (design decisión 1). El
         // lock de fila serializa dos confirmar concurrentes: el que pierde re-evalúa el WHERE
         // contra el estado YA COMITEADO por el ganador, 0 filas, nunca un 500 ni una doble
-        // escritura de stock. La RETURNING trae también id_tipo_comprobante/numero_externo/
-        // fecha_comprobante — los valores que ESTE lock vio, nunca los leídos antes de entrar a
-        // la transacción (design: Transactions — CONFIRMAR COMPRA): un PUT concurrente puede
-        // cambiar cualquiera de los tres entre el pre-chequeo de ConfirmarAsync y este lock. El
+        // escritura de stock. La RETURNING trae id_tipo_comprobante — el valor que ESTE lock
+        // vio, nunca el leído antes de entrar a la transacción (design: Transactions — CONFIRMAR
+        // COMPRA): un PUT concurrente puede cambiarlo entre el pre-chequeo de ConfirmarAsync y
+        // este lock, y discrimina_iva se resuelve recién acá adentro con ese valor. El
         // WHERE de este UPDATE exige además numero_externo/fecha_comprobante NOT NULL (ver el
         // doc-comment de ConfirmarHeaderAsync), así que 0 filas puede deberse a dos motivos
         // distintos que hay que reclasificar bajo lock: la compra ya no está en borrador, o
@@ -475,10 +475,11 @@ public class ServicioDeCompras(
     // ---- statements crudos: confirmar/anular (sibling raw SQL, ver el doc-comment de la clase) ----
 
     /// <summary>Fila devuelta por el UPDATE...RETURNING de <see cref="ConfirmarHeaderAsync"/> —
-    /// design: Transactions — CONFIRMAR COMPRA, paso 1. Los cinco valores son los que ESTE lock
-    /// vio, nunca los leídos antes de entrar a la transacción.</summary>
-    private readonly record struct EncabezadoConfirmado(
-        int IdProveedor, int IdPuntoVenta, int IdTipoComprobante, string? NumeroExterno, DateOnly? FechaComprobante);
+    /// design: Transactions — CONFIRMAR COMPRA, paso 1. Los valores son los que ESTE lock vio,
+    /// nunca los leídos antes de entrar a la transacción. Solo se devuelven las columnas que la
+    /// transacción consume: la completitud de numero_externo/fecha_comprobante ya la valida el
+    /// propio predicado del UPDATE, así que devolverlas sería código muerto.</summary>
+    private readonly record struct EncabezadoConfirmado(int IdPuntoVenta, int IdTipoComprobante);
 
     /// <summary>El predicado incluye <c>numero_externo</c>/<c>fecha_comprobante IS NOT NULL</c>
     /// además de <c>estado='borrador'</c> — validación bajo el mismo lock, resuelta por el propio
@@ -499,7 +500,7 @@ public class ServicioDeCompras(
             "UPDATE comprobantes_compra SET estado = 'confirmada'::estado_compra, fecha_recepcion = $1, updated_at = $1 " +
             "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'borrador'::estado_compra " +
             "AND numero_externo IS NOT NULL AND fecha_comprobante IS NOT NULL " +
-            "RETURNING id_proveedor, id_punto_venta, id_tipo_comprobante, numero_externo, fecha_comprobante";
+            "RETURNING id_punto_venta, id_tipo_comprobante";
 
         AgregarParametro(comando, momento);
         AgregarParametro(comando, id);
@@ -511,12 +512,7 @@ public class ServicioDeCompras(
             return null;
         }
 
-        return new EncabezadoConfirmado(
-            lector.GetInt32(0),
-            lector.GetInt32(1),
-            lector.GetInt32(2),
-            lector.IsDBNull(3) ? null : lector.GetString(3),
-            lector.IsDBNull(4) ? null : DateOnly.FromDateTime(lector.GetDateTime(4)));
+        return new EncabezadoConfirmado(lector.GetInt32(0), lector.GetInt32(1));
     }
 
     private static async Task<int?> MarcarAnuladaAsync(
