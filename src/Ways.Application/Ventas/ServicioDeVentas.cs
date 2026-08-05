@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Caja;
 using Ways.Application.Ofertas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -40,7 +41,8 @@ namespace Ways.Application.Ventas;
 /// forma de las consultas son todas propias de esta operación.
 /// </summary>
 public class ServicioDeVentas(
-    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeOfertas servicioDeOfertas)
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeOfertas servicioDeOfertas,
+    ServicioDeTurnos servicioDeTurnos)
 {
     public async Task<ComprobanteEmitido> EmitirAsync(SolicitudDeVenta solicitud, CancellationToken ct = default)
     {
@@ -61,6 +63,14 @@ public class ServicioDeVentas(
 
         var tipo = await ResolverTipoComprobanteAsync(solicitud.CodigoTipoComprobante, ct);
         var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+
+        // design decisión 11 (Slice 5): turno SIEMPRE resuelto server-side, inmediatamente
+        // después del punto de venta — un punto de venta apócrifo ya dio el 404 de ADR-8 arriba,
+        // así que esto es lo primero que puede rechazar con 409 turno_no_abierto, ANTES de
+        // cualquier consulta de precio/oferta (spec: Selling with no open turno fails before any
+        // pricing work).
+        var turno = await servicioDeTurnos.ResolverTurnoAbiertoAsync(puntoVenta.Id, ct);
+
         var cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
 
         var asociado = solicitud.IdComprobanteAsociado is { } idAsociado
@@ -132,7 +142,7 @@ public class ServicioDeVentas(
             .ToList();
 
         var plan = new PlanDeVenta(
-            idTenant, idEmpleado, tipo.Id, tipo.Codigo, momento, puntoVenta.Id, cliente.Id,
+            idTenant, idEmpleado, tipo.Id, tipo.Codigo, momento, puntoVenta.Id, turno.Id, cliente.Id,
             solicitud.IdComprobanteAsociado, items, totales.Subtotal, totales.DescuentoTotal, totales.Total,
             pagosDelPlan, cliente.LimiteCredito, cliente.CreditoIlimitado,
             NormalizarOpcional(solicitud.DireccionEntrega), NormalizarOpcional(solicitud.Observaciones));
@@ -340,6 +350,13 @@ public class ServicioDeVentas(
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
+        // 0. Guard del turno (design decisión 4; Slice 5 task 5.3): SELECT ... FOR SHARE OF t
+        // ANTES del UPDATE atómico del paso 1 — un EXISTS embebido en el WHERE de ese UPDATE
+        // leería el turno SIN lock, dejando pasar una anulación concurrente a un cierre que ya
+        // derivó el arqueo. 0 filas (el comprobante tiene id_turno_caja NULL, era stage-5) deja
+        // pasar sin lanzar (spec: Stage-5 NULL-turno comprobante stays anulable).
+        await ExigirTurnoNoCerradoAsync(conexion, transaccionCruda, idTenant, id, ct);
+
         // 1. Transición atómica emitido → anulado — un único UPDATE ... WHERE estado = 'emitido'
         // RETURNING (forward obligation, ADR-8: el segundo layer id_tenant en el WHERE es la
         // misma defensa barata que ActualizarSaldoClienteAsync, RLS ya aísla por tenant). Dos
@@ -416,6 +433,34 @@ public class ServicioDeVentas(
         return await ObtenerAsync(id, ct);
     }
 
+    /// <summary>Guard de turno (design decisión 4; Slice 5 task 5.3) — <c>FOR SHARE OF t</c>
+    /// contra el turno del comprobante, ANTES del UPDATE atómico de <see cref="MarcarAnuladoAsync"/>:
+    /// mismo criterio que <c>ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync</c>, un
+    /// <c>FOR SHARE</c> propio en vez de un <c>EXISTS</c> sin lock embebido en el WHERE del
+    /// UPDATE. 0 filas (el join no matchea — comprobante con <c>id_turno_caja NULL</c>) deja
+    /// pasar sin lanzar; <c>'cerrado'</c> lanza <c>409 turno_cerrado</c>; <c>'abierto'</c> deja
+    /// pasar.</summary>
+    private static async Task ExigirTurnoNoCerradoAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idComprobanteVenta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT t.estado::text FROM turnos_caja t " +
+            "JOIN comprobantes_venta c ON c.id_turno_caja = t.id_turno_caja AND c.id_tenant = t.id_tenant " +
+            "WHERE c.id_comprobante_venta = $1 AND c.id_tenant = $2 " +
+            "FOR SHARE OF t";
+
+        AgregarParametro(comando, idComprobanteVenta);
+        AgregarParametro(comando, idTenant);
+
+        var estado = (string?)await comando.ExecuteScalarAsync(ct);
+        if (estado == "cerrado")
+        {
+            throw new ErrorDominio("turno_cerrado", "El turno de este comprobante está cerrado.", 409);
+        }
+    }
+
     /// <summary>Único UPDATE atómico de la transición de estado — ver el doc-comment de
     /// <see cref="EjecutarAnulacionAsync"/> sobre por qué esto alcanza para serializar dos
     /// anulaciones concurrentes sin ningún lock explícito.</summary>
@@ -444,6 +489,15 @@ public class ServicioDeVentas(
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
+        // 0. Turno — re-chequeo bajo FOR SHARE, PRIMER statement (design decisiones 1 y 11;
+        // Slice 5 task 5.2): el turno ya vino resuelto como abierto arriba, ANTES de esta
+        // transacción — sin este re-chequeo, una venta concurrente a un cierre podría comitear
+        // dentro de un turno cuyo arqueo YA se derivó. Reusa
+        // ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync tal cual (mismo criterio que
+        // ServicioDeGastos.InsertarGastoAsync) — el IWaysDbContext es el mismo por scope de DI,
+        // así que ve esta misma transacción recién abierta.
+        await servicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync(plan.IdTurnoCaja, ct);
+
         // 1. Numeración — YA reservada y comprometida por AsignarNumeroComprometidoAsync, en su
         // propia transacción (ver el comentario de EmitirAsync). Esta transacción arranca
         // directo en el paso 2: el número que recibe como parámetro es un dato de solo lectura
@@ -456,7 +510,7 @@ public class ServicioDeVentas(
             Numero = numero,
             Fecha = plan.Momento,
             IdPuntoVenta = plan.IdPuntoVenta,
-            IdTurnoCaja = null,
+            IdTurnoCaja = plan.IdTurnoCaja,
             IdEmpleado = plan.IdEmpleado,
             IdCliente = plan.IdCliente,
             IdComprobanteAsociado = plan.IdComprobanteAsociado,
@@ -913,6 +967,7 @@ public class ServicioDeVentas(
         string CodigoTipoComprobante,
         DateTimeOffset Momento,
         int IdPuntoVenta,
+        int IdTurnoCaja,
         int IdCliente,
         int? IdComprobanteAsociado,
         IReadOnlyList<LineaDelPlan> Items,
