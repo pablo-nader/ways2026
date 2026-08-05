@@ -26,6 +26,17 @@ negative (decreases debt), submitted explicitly by the caller.
 - WHEN an ajuste of `importe = -50` is posted
 - THEN `Cliente.Saldo = 250`
 
+#### Scenario: A zero-importe ajuste is rejected
+- GIVEN an ajuste request with `importe = 0` and a valid detalle
+- WHEN it is submitted
+- THEN it is rejected with `ajuste_importe_invalido` before any write
+
+#### Scenario: An ajuste against the Consumidor Final is rejected
+- GIVEN the protected Consumidor Final cliente
+- WHEN an ajuste is submitted against it
+- THEN it is rejected with `cliente_sin_cuenta_corriente` — the CF has no
+  cuenta corriente to correct (same gate as pagos a cuenta)
+
 ### Requirement: Ajuste Is Distinct From The Anulación Contramovimiento
 
 Both a manual Ajuste and the stage-5 anulación contramovimiento persist as

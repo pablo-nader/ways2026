@@ -29,7 +29,7 @@ The header MUST return `saldo`, `acuerdo` (`limite_credito`, or the literal
 ### Requirement: Movement List With Running Balance
 
 The movement list MUST return every `movimientos_cuenta_corriente` row for
-the cliente ordered by `fecha`, each carrying its own `saldo_resultante`
+the cliente ordered by `fecha` DESCENDING (newest first — legacy F4 parity, doc-01:375; deterministic `id` tie-break), each carrying its own `saldo_resultante`
 snapshot — the running balance MUST be read directly from that column, never
 recomputed client-side.
 

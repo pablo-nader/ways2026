@@ -187,7 +187,7 @@ consumos or lines; the pago a cuenta ≤ 7. Guarded by the existing `DbCommand` 
 
 | Endpoint | Policy | Notes |
 |---|---|---|
-| `GET /api/clientes/{id}/cuenta-corriente?desde=&hasta=&pagina=&tamanio=` | `OperacionDePos` | Header + page of movements in one payload (decision 9). No implicit date window — the screen sends last-month by default and clears it for "ver histórico" |
+| `GET /api/clientes/{id}/cuenta-corriente?desde=&hasta=&historico=` | `OperacionDePos` | Header + movements in one payload (decision 9; no pagination — bound to tasks/spec at verify). No implicit date window — the screen sends last-month by default and clears it for "ver histórico" |
 | `POST /api/clientes/{id}/cuenta-corriente/pagos` | `OperacionDePos` | `{ idPuntoVenta, pagos: [{ idMedioPago, importe, referencia?, vuelto? }], observaciones? }` — **no importe field** → 201 with the RC comprobante |
 | `POST /api/clientes/{id}/cuenta-corriente/ajustes` | **`SupervisionDeCuentaCorriente`** | `{ idPuntoVenta, importe, detalle }` |
 | `GET /api/clientes/{id}/cuenta-corriente/reliquidacion` | **`SupervisionDeCuentaCorriente`** | Preview — same `ReliquidadorDeConsumos`, no lock, never authoritative |
