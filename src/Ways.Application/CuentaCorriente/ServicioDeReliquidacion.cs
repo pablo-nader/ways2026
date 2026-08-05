@@ -44,7 +44,11 @@ public class ServicioDeReliquidacion(
         }
 
         var precioPorArticulo = await ResolverPreciosAsync(consumos, cliente.IdListaPrecio, momento, ct);
-        return ReliquidadorDeConsumos.Calcular(consumos, precioPorArticulo);
+        var resultado = ReliquidadorDeConsumos.Calcular(consumos, precioPorArticulo);
+
+        // Delta cero ⇒ mismo criterio que EjecutarTransaccionAsync: el commit no marca nada, así
+        // que el preview tiene que anticipar esa misma respuesta (never two formulas).
+        return resultado.Delta == 0m ? resultado with { IdsMovimientosCubiertos = [] } : resultado;
     }
 
     /// <summary>Commit — design: Transactions, RELIQUIDACIÓN (8 pasos, orden pineado). La mitad
