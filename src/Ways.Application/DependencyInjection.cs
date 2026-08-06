@@ -4,6 +4,7 @@ using Ways.Application.Articulos;
 using Ways.Application.Caja;
 using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
+using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Gastos;
 using Ways.Application.Ofertas;
@@ -70,6 +71,11 @@ public static class DependencyInjection
 
         services.AddScoped<ServicioDeAprovisionamiento>();
         services.AddScoped<ServicioDeOrganizacion>();
+
+        // stage-8-compras-transferencias-inventario, Slice 2: el ciclo de vida entero de la
+        // compra — reusa ServicioDePrecios (AplicarPrecioSugeridoAsync), nunca
+        // ServicioDeStock/ServicioDeVentas (Slice 2 non-negotiable).
+        services.AddScoped<ServicioDeCompras>();
 
         return services;
     }
