@@ -230,7 +230,7 @@ only — nothing in stages 5–7 changes shape.
 - [x] 2.15 [P] Integration (budget): constant command count for a 2 / 20 /
   100-item compra's confirm and anular. `DbCommand` interceptor test.
   *(design: Transactions — "Read budget")*
-- [ ] 2.16 Run a **dedicated full judgment-day round** on this slice's diff
+- [x] 2.16 Run a **dedicated full judgment-day round** on this slice's diff
   alone before opening the PR — the project's newest guarded state machine.
   *(Orchestrator Decision 4)* **Not run by this apply batch** — judgment-day
   requires two independent blind review agents, which is an orchestration
