@@ -182,7 +182,13 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         "/api/gastos",
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): GET /api/compras
         // (listado) y GET /api/compras/{id} (detalle) — mismo criterio que "/api/gastos".
-        "/api/compras"
+        "/api/compras",
+        // stage-8-compras-transferencias-inventario (Slice 4, task 4.4): GET
+        // /api/proveedores/{id}/saldo — mapeada TOP-LEVEL bajo OperacionDePos (el AND-composition
+        // trap, ver ProveedoresEndpoints.cs). El prefijo también alcanza GET /api/proveedores
+        // (listado) y GET /api/proveedores/{id} (detalle), que siguen bajo GestionDeCatalogo —
+        // ambas ya cubiertas por PoliticasAlMenosTanEstrictasComoOperacionDePos de abajo.
+        "/api/proveedores"
     ];
 
     // Policies que, de aparecer en vez de OperacionDePos, siguen siendo un gate válido —
