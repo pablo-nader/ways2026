@@ -423,33 +423,62 @@ endpoint). **Start**: PR 4 merged/branch. **Finish**: the compras list and
 borrador editor (confirmar/anular/apply-price) work end to end for Admin,
 double-submit-proof. **Rollback**: new route + entry point only.
 
-- [ ] 5.1 [P] Add `src/Ways.Web/src/api/compras.ts`: pure request/response
+- [x] 5.1 [P] Add `src/Ways.Web/src/api/compras.ts`: pure request/response
   mappers, a **non-authoritative** totals mirror mirroring
   `CalculadorDeCompra` — server numbers always win (`dto-contract-honesty`).
   *(design: Web Composition)*
-- [ ] 5.2 Add `src/Ways.Web/src/paginas/Compras.tsx`: list + proveedor/
+- [x] 5.2 Add `src/Ways.Web/src/paginas/Compras.tsx`: list + proveedor/
   estado/fecha filters + payment status + entry point to the editor.
-  *(design: Web Composition)*
-- [ ] 5.3 Add `src/Ways.Web/src/paginas/CompraEditor.tsx` (`/compras/:id`):
-  header form + item grid (unidades/bultos/costoUnitario/descuento/
-  alícuota), the totals mirror, confirmar/anular actions, the
+  *(design: Web Composition)* **Deviation**: payment status per row is
+  populated only while the list is filtered by a single proveedor (fetches
+  that proveedor's `GET /api/proveedores/{id}/saldo`) — there is no bulk
+  saldo-by-page endpoint; an unfiltered list shows `—` in that column. The
+  full per-proveedor saldo panel is Slice 6's `Proveedores.tsx` scope.
+- [x] 5.3 Add `src/Ways.Web/src/paginas/CompraEditor.tsx` (`/compras/nueva`,
+  `/compras/:id`): header form + item grid (unidades/bultos/costoUnitario/
+  descuento/alícuota), the totals mirror, confirmar/anular actions (inline
+  irreversibility-confirm panels, `CierreDeCaja` precedent), the
   `precio_sugerido` panel + apply action. `react-async-state` rule 8
-  (`key={idCompra}`), rule 9 (first-line re-entrancy guard + full-window
-  disable on confirmar/anular/apply — all irreversible), rule 3 (generation
-  bumped before every write), rule 6 (a 2xx confirm is never reported as
-  failure), rule 7 (proveedores/tipos/alícuotas load failure ⇒ visible aviso
-  + genuinely disabled submit). *(design: Web Composition, obligations 3, 6,
-  7, 8, 9)*
-- [ ] 5.4 Wire the route in `App.tsx` under `GestionDeCatalogo` (Admin-only
-  nav, per decision 11's consistency note — no stage-7 nav/policy mismatch).
-  *(design: File Changes)*
-- [ ] 5.5 [P] Unit: `compras.ts` mappers + totals mirror asserted against the
-  `CalculadorDeCompra` formulas. *(web-descriptor-tests)*
-- [ ] 5.6 Component: double-click on "Confirmar" and on "Anular" each issue
+  (`key={idCompra ?? 'nuevo'}`), rule 9 (first-line re-entrancy guard +
+  full-window disable on confirmar/anular/apply — all irreversible), rule 3
+  (generation bumped before every write), rule 6 (a 2xx confirm/anular/apply
+  is never reported as failure), rule 7 (proveedores/tipos/alícuotas/puntos
+  de venta load failure ⇒ visible aviso + genuinely disabled submit; listas
+  de precio failure is non-blocking, only the apply-precio panel needs it).
+  *(design: Web Composition, obligations 3, 6, 7, 8, 9)*
+- [x] 5.4 Wire the route in `App.tsx` under `GestionDeCatalogo` (Admin-only
+  route AND nav — `rolesPermitidos={[ROL.Admin]}` on both `/compras` and
+  `/compras/:id`, not `OperacionDePos`, per decision 11's consistency note:
+  no stage-7 nav/policy mismatch where the backend read policy allowed a
+  role the web never gave an entry point to). *(design: File Changes)*
+- [x] 5.5 [P] Unit: `compras.ts` mappers + totals mirror asserted against the
+  `CalculadorDeCompra` formulas (`compras.test.ts`, 47 tests: cantidad from
+  unidades/bultos, both IVA regimes, ivaTotal NULL when not discriminating,
+  costoEfectivo with/without IVA, bonificación line, empty set, division by
+  zero guard, descuento > bruto rejection, request mapper trimming/filtering,
+  offset-aware `desde`/`hasta` query building). *(web-descriptor-tests)*
+- [x] 5.6 Component: double-click on "Confirmar" and on "Anular" each issue
   exactly one POST; an empty compras list renders an empty state, never a
   re-query; proveedores/tipos/alícuotas failing to load shows an aviso and
-  an actually-disabled submit. RTL + `user-event`, `vi.mock('../api/compras')`.
+  an actually-disabled submit; role gating (Vendedor hides every write
+  action, inputs disabled); numero_externo dedupe (`compra_duplicada`) and
+  stock-refusal (`compra_anulacion_stock_negativo`) errors rendered
+  verbatim; borrador replace-set PUT body shape asserted; list generation
+  gating (a stale response never overwrites a fresher one). RTL +
+  `user-event`. **Deviation**: mocks `../api/cliente` (`api.get/post/put`)
+  rather than `vi.mock('../api/compras')` — matches the project's
+  established convention (every existing page test mocks at that layer,
+  verified via grep; zero precedent for module-level API-client mocks) and
+  additionally exercises the real route strings built by `compras.ts`.
   *(design: Testing Strategy — Component Web)*
+- [x] 5.7 Regression: `npx vitest run` 322 → 371 (+49, all this slice's:
+  Compras.tsx/CompraEditor.tsx/compras.ts tests); `npx tsc -b` clean;
+  `npx oxlint` clean (0 new — the one pre-existing `AuthContext.tsx`
+  fast-refresh warning is untouched by this slice); `npx vite build` clean.
+  **Not run by this apply batch**: judgment-day (requires two independent
+  blind review agents, an orchestration action outside an executor's scope,
+  same posture as Slice 2 task 2.16) — recommend the orchestrator run it
+  next, before opening PR 5.
 
 **Verify**: `npx vitest run src/paginas/Compras.test.tsx src/paginas/CompraEditor.test.tsx src/api/compras.test.ts`
 
