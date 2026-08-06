@@ -1,4 +1,7 @@
+using System.Data;
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Domain.Common;
@@ -12,6 +15,12 @@ namespace Ways.Application.Gastos;
 /// Slice 3). Reutiliza <see cref="ServicioDeTurnos.ResolverTurnoAbiertoAsync"/> (tasks.md,
 /// Orchestrator Decision 3) en vez de escribir su propia consulta de turno abierto — mismo
 /// criterio que <c>ServicioDeVentas.EmitirAsync</c> (Slice 5).
+///
+/// stage-8-compras-transferencias-inventario, Slice 4 (design decisión 7): cuando la solicitud
+/// trae <c>idComprobanteCompra</c>, un <c>SELECT ... FOR SHARE</c> crudo sobre el header de la
+/// compra — DESPUÉS del lock de turno existente — cierra el TOCTOU contra una anulación
+/// concurrente de la misma compra (el mismo statement crudo/sibling raw SQL que
+/// <c>ServicioDeCompras</c>, ver su doc-comment de clase).
 /// </summary>
 public class ServicioDeGastos(
     IWaysDbContext db, ServicioDeTurnos servicioDeTurnos, IRelojDelSistema reloj, IContextoDeUsuario contexto)
@@ -27,6 +36,9 @@ public class ServicioDeGastos(
         var momento = reloj.Ahora;
 
         ExigirImporteValido(solicitud.Importe);
+        // spec: gastos / A Comprobante Compra Link Requires Categoria Proveedor — "rejected
+        // before reaching the database": chequeo de dominio puro, ANTES de cualquier consulta.
+        ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, solicitud.IdComprobanteCompra);
 
         await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
         var turno = await servicioDeTurnos.ResolverTurnoAbiertoAsync(solicitud.IdPuntoVenta, ct);
@@ -94,6 +106,19 @@ public class ServicioDeGastos(
         }
     }
 
+    /// <summary>spec: gastos / A Comprobante Compra Link Requires Categoria Proveedor — chequeo de
+    /// dominio puro, sin DB: un gasto ligado a una compra SIEMPRE tiene que ser de categoría
+    /// proveedor (la compra la paga un proveedor, nunca sueldos/viáticos/etc.).</summary>
+    private static void ExigirCategoriaCoherenteConLaCompra(CategoriaGasto categoria, int? idComprobanteCompra)
+    {
+        if (idComprobanteCompra is not null && categoria != CategoriaGasto.Proveedor)
+        {
+            throw new ErrorDominio(
+                "gasto_de_compra_debe_ser_de_proveedor",
+                "Un gasto ligado a una compra tiene que ser de categoría proveedor.", 400);
+        }
+    }
+
     // ---- persistencia -------------------------------------------------------------------------
 
     /// <summary>task 4.17 (mismo guard que <c>ServicioDeTurnos.RegistrarMovimientoAsync</c>, reusado
@@ -101,7 +126,11 @@ public class ServicioDeGastos(
     /// de esta transacción de escritura): el turno ya vino resuelto como abierto (<see
     /// cref="ServicioDeTurnos.ResolverTurnoAbiertoAsync"/>, arriba, ANTES de abrir esta
     /// transacción) — sin este re-chequeo bajo <c>FOR SHARE</c>, un gasto concurrente a un
-    /// cierre podría comitear dentro de un turno cuyo arqueo YA se derivó (design decisión 1).</summary>
+    /// cierre podría comitear dentro de un turno cuyo arqueo YA se derivó (design decisión 1).
+    ///
+    /// Slice 4 (design decisión 7): el guard de la compra ligada corre DESPUÉS de ese lock de
+    /// turno — mismo orden que el design pseudocódigo (Transactions — GASTO LIGADO A UNA
+    /// COMPRA).</summary>
     private async Task<Gasto> InsertarGastoAsync(
         int idTenant, int idTurnoCaja, SolicitudDeGasto solicitud, int idEmpleado, DateTimeOffset momento,
         CancellationToken ct)
@@ -109,6 +138,12 @@ public class ServicioDeGastos(
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
         await servicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync(idTurnoCaja, ct);
+
+        var idProveedor = solicitud.IdProveedor;
+        if (solicitud.IdComprobanteCompra is { } idComprobanteCompra)
+        {
+            idProveedor = await ExigirCompraLigableAsync(idComprobanteCompra, idTenant, solicitud.IdProveedor, ct);
+        }
 
         var gasto = new Gasto
         {
@@ -118,13 +153,14 @@ public class ServicioDeGastos(
             IdTurnoCaja = idTurnoCaja,
             IdEmpleado = idEmpleado,
             Categoria = solicitud.Categoria,
-            IdProveedor = solicitud.IdProveedor,
+            IdProveedor = idProveedor,
             IdArea = solicitud.IdArea,
             Concepto = solicitud.Concepto,
             Detalle = solicitud.Detalle,
             IdMedioPago = solicitud.IdMedioPago,
             NumeroFactura = solicitud.NumeroFactura,
             Importe = solicitud.Importe,
+            IdComprobanteCompra = solicitud.IdComprobanteCompra,
             CreatedAt = momento,
             UpdatedAt = momento
         };
@@ -135,6 +171,81 @@ public class ServicioDeGastos(
         await transaccion.CommitAsync(ct);
 
         return gasto;
+    }
+
+    /// <summary>design decisión 7: <c>SELECT ... FOR SHARE</c> crudo sobre el header de la compra
+    /// — cierra el TOCTOU contra una anulación concurrente de la MISMA compra. La anulación toma
+    /// el lock EXCLUSIVO del header como su propio primer statement (<c>ServicioDeCompras.
+    /// MarcarAnuladaAsync</c>): este gasto o bien bloquea y retoma viendo <c>anulada</c> ya
+    /// comiteada (<c>409 compra_anulada</c>), o gana la carrera y queda simplemente visible para
+    /// la anulación que llega después — ambos estados representables, ninguno corrupto. <c>estado
+    /// ::text</c> en vez del enum nativo, mismo criterio cauteloso que
+    /// <see cref="ServicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync"/>. Devuelve el
+    /// <c>id_proveedor</c> de la compra: se usa para derivarlo cuando el request no lo trae (spec:
+    /// gastos / A Comprobante Compra Link — <c>id_proveedor</c> ausente se deriva, distinto se
+    /// rechaza).</summary>
+    private async Task<int> ExigirCompraLigableAsync(
+        int idComprobanteCompra, int idTenant, int? idProveedorSolicitado, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccionCruda;
+        comando.CommandText =
+            "SELECT estado::text, id_proveedor FROM comprobantes_compra " +
+            "WHERE id_comprobante_compra = $1 AND id_tenant = $2 FOR SHARE";
+        AgregarParametro(comando, idComprobanteCompra);
+        AgregarParametro(comando, idTenant);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
+            throw ErrorDominio.NoEncontrado($"No existe la compra {idComprobanteCompra}.");
+        }
+
+        var estado = lector.GetString(0);
+        var idProveedorDeLaCompra = lector.GetInt32(1);
+
+        if (estado == "anulada")
+        {
+            throw new ErrorDominio("compra_anulada", "La compra ligada está anulada.", 409);
+        }
+
+        if (estado != "confirmada")
+        {
+            throw new ErrorDominio(
+                "compra_no_confirmada", "La compra ligada todavía no está confirmada.", 409);
+        }
+
+        if (idProveedorSolicitado is { } solicitado && solicitado != idProveedorDeLaCompra)
+        {
+            throw new ErrorDominio(
+                "proveedor_no_coincide_con_la_compra",
+                "El proveedor indicado no coincide con el proveedor de la compra.", 400);
+        }
+
+        return idProveedorDeLaCompra;
+    }
+
+    private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
+    {
+        var conexion = db.Database.GetDbConnection();
+
+        if (conexion.State != ConnectionState.Open)
+        {
+            await db.Database.OpenConnectionAsync(ct);
+        }
+
+        return conexion;
+    }
+
+    private static void AgregarParametro(DbCommand comando, object valor)
+    {
+        var parametro = comando.CreateParameter();
+        parametro.Value = valor;
+        comando.Parameters.Add(parametro);
     }
 
     // ---- resolución interna ---------------------------------------------------------------
@@ -169,5 +280,6 @@ public class ServicioDeGastos(
         gasto.IdMedioPago,
         gasto.NumeroFactura,
         gasto.Importe,
-        gasto.IdEmpleado);
+        gasto.IdEmpleado,
+        gasto.IdComprobanteCompra);
 }
