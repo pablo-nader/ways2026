@@ -8,6 +8,8 @@ import { CierreDeCaja } from './paginas/CierreDeCaja'
 import { Categorias } from './paginas/Categorias'
 import { CatalogosFiscales } from './paginas/CatalogosFiscales'
 import { Clientes } from './paginas/Clientes'
+import { Compras } from './paginas/Compras'
+import { CompraEditor } from './paginas/CompraEditor'
 import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { Empresas } from './paginas/Empresas'
 import { Inicio } from './paginas/Inicio'
@@ -125,6 +127,30 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Articulos />
+                </RutaProtegida>
+              }
+            />
+
+            {/* stage-8-compras-transferencias-inventario (Slice 5, design: Web Composition,
+                decisión 11): árbol propio, no la máquina genérica de catálogos — mismo criterio
+                que /proveedores/-articulos. La lectura (listado + detalle) sigue
+                Politicas.OperacionDePos, igual que /clientes/:id/cuenta-corriente — solo la
+                escritura (borrador/confirmar/anular/aplicar precio) es Admin-only, cosmético acá
+                y real en `GestionDeCatalogo` del lado del servidor (`puedeEscribir` en cada
+                pantalla oculta esas acciones para el resto de los roles). */}
+            <Route
+              path="/compras"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <Compras />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/compras/:id"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <CompraEditor />
                 </RutaProtegida>
               }
             />

@@ -864,3 +864,112 @@ export type ResultadoDeReliquidacion = {
   detalle: DetalleDeConsumo[]
   hayMas: boolean
 }
+
+// --- Compras (stage-8-compras-transferencias-inventario, Slice 5) --------------------------
+// Espejo de `Ways.Application.Compras.Contratos` — ningún request lleva `cantidad`, `total` ni
+// `delta` (design decisión 3): `CalculadorDeCompra` deriva todo eso server-side, el mirror de
+// `compras.ts` es puramente informativo (dto-contract-honesty: el servidor siempre gana).
+
+export type EstadoCompra = 'Borrador' | 'Confirmada' | 'Anulada'
+
+/** Una línea del cuerpo de `POST`/`PUT /api/compras` (espejo de `LineaDeCompraSolicitada`). */
+export type LineaDeCompraSolicitada = {
+  idArticulo: number
+  descripcion: string
+  unidades: number
+  bultos: number | null
+  unidadesPorBulto: number | null
+  costoUnitario: number
+  descuento: number
+  idAlicuotaIva: number
+  actualizaCosto: boolean
+}
+
+/** Cuerpo de `POST /api/compras` (crea un borrador) y `PUT /api/compras/{id}` (replace-set
+ * completo del header + los items — espejo de `SolicitudDeCompra`). */
+export type SolicitudDeCompra = {
+  idProveedor: number
+  idTipoComprobante: number
+  idPuntoVenta: number
+  numeroExterno: string | null
+  fechaComprobante: string | null
+  observaciones: string | null
+  items: LineaDeCompraSolicitada[]
+}
+
+/** Un item ya persistido, con su `precioSugerido` (espejo de `ItemDeCompra`). */
+export type ItemDeCompra = {
+  orden: number
+  idArticulo: number
+  descripcion: string
+  cantidad: number
+  bultos: number | null
+  unidadesPorBulto: number | null
+  costoUnitario: number
+  descuento: number
+  idAlicuotaIva: number
+  porcentajeIva: number
+  total: number
+  actualizaCosto: boolean
+  precioSugerido: number | null
+}
+
+/** Detalle completo de una compra (espejo de `CompraDetalle`). */
+export type CompraDetalle = {
+  id: number
+  idProveedor: number
+  idTipoComprobante: number
+  idPuntoVenta: number
+  numeroExterno: string | null
+  fechaComprobante: string | null
+  fechaRecepcion: string | null
+  subtotal: number
+  descuentoTotal: number
+  ivaTotal: number | null
+  total: number
+  observaciones: string | null
+  estado: EstadoCompra
+  items: ItemDeCompra[]
+}
+
+/** Fila de `GET /api/compras` — shape reducido (espejo de `CompraListada`). */
+export type CompraListada = {
+  id: number
+  idProveedor: number
+  idTipoComprobante: number
+  numeroExterno: string | null
+  estado: EstadoCompra
+  fechaRecepcion: string | null
+  total: number
+}
+
+/** Página de resultados de `GET /api/compras` (espejo de `PaginaDeCompras`). */
+export type PaginaDeCompras = { items: CompraListada[]; total: number; pagina: number; tamanio: number }
+
+/** Respuesta de `POST /api/compras/{id}/anular` — `gastosLigados` es la regla invertida
+ * (design decisión 6): la anulación NUNCA bloquea por gastos ligados, solo REPORTA cuántos pagos
+ * quedaron colgados de la compra anulada (espejo de `ResultadoAnulacion`). */
+export type ResultadoAnulacion = { compra: CompraDetalle; gastosLigados: number }
+
+/** Cuerpo de `POST /api/compras/{id}/precios` (espejo de `SolicitudDeAplicarPrecios`). */
+export type SolicitudDeAplicarPrecios = { idListaPrecio: number; confirmarReemplazo: boolean }
+
+/** Resultado por línea de aplicar `precioSugerido` — partial success es el contrato honesto
+ * (espejo de `ResultadoAplicarPrecio`). */
+export type ResultadoAplicarPrecio = { idArticulo: number; aplicado: boolean; precio: number | null; error: string | null }
+
+// --- Saldo de proveedor (stage-8, Slice 4 backend / Slice 5 web) ----------------------------
+// `GET /api/proveedores/{id}/saldo` — mapeado top-level, no dentro de `/api/proveedores`
+// (design: API Surface, "the AND-composition trap"). Espejo de `ServicioDeSaldoDeProveedor`.
+
+export type EstadoPago = 'Pagada' | 'Parcial' | 'Impaga'
+
+export type CompraConEstadoPago = {
+  idComprobanteCompra: number
+  numeroExterno: string | null
+  total: number
+  pagado: number
+  estadoPago: EstadoPago
+}
+
+export type SaldoDeProveedor = { idProveedor: number; saldo: number; compras: CompraConEstadoPago[] }

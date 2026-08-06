@@ -46,6 +46,17 @@ export function Layout() {
                     </NavLink>
                   </li>
                 )}
+                {/* stage-8-compras-transferencias-inventario (Slice 5, design: Web Composition,
+                    decisión 11): la lectura sigue Politicas.OperacionDePos, igual que la ruta —
+                    nav y ruta comparten la misma política de lectura; la escritura queda oculta
+                    dentro de la pantalla vía `puedeEscribir` (Admin-only, cosmético). */}
+                {usuario && puedeOperarPos(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/compras">
+                      Compras
+                    </NavLink>
+                  </li>
+                )}
                 {usuario && puedeGestionarUsuarios(usuario.rolId) && (
                   <li className="nav-item">
                     <NavLink className="nav-link" to="/usuarios">
