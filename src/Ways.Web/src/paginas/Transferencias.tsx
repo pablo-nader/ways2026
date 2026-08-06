@@ -102,13 +102,14 @@ type PropsFilaDeLinea = {
   linea: LineaDeTransferenciaFormulario
   disabled: boolean
   repetida: boolean
+  incompleta: boolean
   onCambio: (clave: number, cambios: Partial<LineaDeTransferenciaFormulario>) => void
   onQuitar: (clave: number) => void
 }
 
-function FilaDeLinea({ linea, disabled, repetida, onCambio, onQuitar }: PropsFilaDeLinea) {
+function FilaDeLinea({ linea, disabled, repetida, incompleta, onCambio, onQuitar }: PropsFilaDeLinea) {
   return (
-    <tr className={repetida ? 'table-danger' : undefined}>
+    <tr className={repetida ? 'table-danger' : incompleta ? 'table-warning text-muted' : undefined}>
       <td style={{ minWidth: 220 }}>
         <SelectorDeArticulo
           descripcion={linea.descripcion}
@@ -116,6 +117,7 @@ function FilaDeLinea({ linea, disabled, repetida, onCambio, onQuitar }: PropsFil
           onElegir={(a) => onCambio(linea.clave, { idArticulo: a.id, descripcion: a.nombre })}
         />
         {repetida && <div className="small text-danger">Artículo repetido en la transferencia.</div>}
+        {incompleta && !repetida && <div className="small text-warning-emphasis">Línea incompleta — no se va a transferir.</div>}
       </td>
       <td style={{ width: 120 }}>
         <input
@@ -180,7 +182,10 @@ export function Transferencias() {
   const [confirmado, setConfirmado] = useState(false)
   const [error, setError] = useState('')
   const [resultado, setResultado] = useState<ResultadoTransferencia | null>(null)
-  const generacionRef = useRef(0)
+  // Nombres de la última transferencia exitosa, tomados del formulario ANTES de resetearlo (regla
+  // 1: nunca se lee el estado ya limpiado) — la tabla de resultado cruza `#idArticulo` con el
+  // nombre elegido, nunca muestra un id crudo solo.
+  const [descripcionesTransferidas, setDescripcionesTransferidas] = useState<Record<number, string>>({})
 
   const ocupado = transfiriendo
 
@@ -202,6 +207,7 @@ export function Transferencias() {
 
   const repetidos = articulosRepetidosEnTransferencia(lineas)
   const lineasCompletas = lineas.filter(lineaTransferenciaCompleta)
+  const lineasIncompletas = lineas.length - lineasCompletas.length
   // Espejo de `transferencia_origen_igual_destino` (400) — feedback instantáneo, nunca
   // autoritativo: el servidor lo vuelve a validar.
   const origenIgualDestino = idPuntoVentaOrigen !== '' && idPuntoVentaDestino !== '' && idPuntoVentaOrigen === idPuntoVentaDestino
@@ -225,14 +231,18 @@ export function Transferencias() {
     transfiriendoRef.current = true
     setTransfiriendo(true)
     setError('')
-    generacionRef.current += 1
 
     try {
       const solicitud = aSolicitudDeTransferencia(idPuntoVentaOrigen, idPuntoVentaDestino, observaciones, lineas)
       const res = await clienteDeStock.transferir(solicitud)
       transfiriendoRef.current = false
       setTransfiriendo(false)
-      // regla 6: un 2xx nunca se reporta como fallo — la respuesta ES el resultado.
+      // regla 6: un 2xx nunca se reporta como fallo — la respuesta ES el resultado. Los nombres se
+      // capturan del formulario ANTES de resetearlo — el formulario queda bloqueado durante todo
+      // el `await` (regla 9), así que esta lectura sigue siendo la que se mandó en `solicitud`.
+      const descripciones: Record<number, string> = {}
+      for (const l of lineasCompletas) descripciones[Number(l.idArticulo)] = l.descripcion
+      setDescripcionesTransferidas(descripciones)
       setResultado(res)
       setConfirmado(false)
       setObservaciones('')
@@ -276,7 +286,7 @@ export function Transferencias() {
               <tbody>
                 {resultado.lineas.map((l) => (
                   <tr key={l.idArticulo}>
-                    <td>#{l.idArticulo}</td>
+                    <td>{descripcionesTransferidas[l.idArticulo] ?? `Artículo #${l.idArticulo}`} (#{l.idArticulo})</td>
                     <td className="text-end">{l.cantidadOrigen}</td>
                     <td className="text-end">{l.cantidadDestino}</td>
                   </tr>
@@ -359,6 +369,7 @@ export function Transferencias() {
                   linea={l}
                   disabled={ocupado || !referenciaOk}
                   repetida={l.idArticulo !== '' && repetidos.has(Number(l.idArticulo))}
+                  incompleta={!lineaTransferenciaCompleta(l)}
                   onCambio={cambiarLinea}
                   onQuitar={quitarLinea}
                 />
@@ -370,6 +381,12 @@ export function Transferencias() {
         <button type="button" className="btn btn-outline-secondary btn-sm rounded-0 mb-3" disabled={ocupado || !referenciaOk} onClick={agregarLinea}>
           + Agregar línea
         </button>
+
+        {lineasIncompletas > 0 && (
+          <div className="alert alert-warning rounded-0 py-1 px-2 small mb-3">
+            {lineasIncompletas} línea(s) incompleta(s) — no se van a transferir.
+          </div>
+        )}
 
         <div className="border p-3 mb-3">
           <div className="form-check my-2">

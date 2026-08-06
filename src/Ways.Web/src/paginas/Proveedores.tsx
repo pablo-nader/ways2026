@@ -6,6 +6,7 @@ import { clienteDeProveedores } from '../api/proveedores'
 import type { AltaProveedor, CondicionFiscalListado, PaginaDe, ProveedorListado, SaldoDeProveedor } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
 
 function formatearMoneda(valor: number): string {
   const signo = valor < 0 ? '-' : ''
@@ -62,14 +63,7 @@ function PanelSaldoDeProveedor({ idProveedor, razonSocial, onCerrar }: PropsPane
       {saldo && (
         <>
           <div className="mb-3">
-            <div className="small text-muted">Saldo (compras confirmadas menos gastos ligados)</div>
-            <div className="fs-5">{formatearMoneda(saldo.saldo)}</div>
-            {saldo.saldo < 0 && (
-              <div className="small text-warning-emphasis">
-                Saldo negativo: hay gastos de proveedor sin ligar a ninguna compra puntual — reducen el total, pero
-                no marcan ninguna compra específica como pagada (aproximación, no invariante).
-              </div>
-            )}
+            <ResumenSaldoDeProveedor saldo={saldo.saldo} />
           </div>
 
           <div className="table-responsive">

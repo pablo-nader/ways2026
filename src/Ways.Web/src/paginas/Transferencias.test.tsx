@@ -162,6 +162,8 @@ describe('Transferencias — flujo feliz', () => {
     })
 
     expect(await screen.findByText(/Transferencia registrada: Casa Central → Sucursal Norte/)).toBeInTheDocument()
+    // cruza el #id con el nombre elegido en el formulario (pre-reset), nunca un id crudo solo.
+    expect(screen.getByText('Fideos 500g (#10)')).toBeInTheDocument()
     expect(screen.getByText('12')).toBeInTheDocument()
     expect(screen.getByText('13')).toBeInTheDocument()
 
@@ -172,6 +174,51 @@ describe('Transferencias — flujo feliz', () => {
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
       observaciones: 'Reposición de sucursal',
+      lineas: [{ idArticulo: 10, cantidad: 8 }],
+    })
+  })
+})
+
+describe('Transferencias — líneas incompletas', () => {
+  it('una línea a medio llenar se marca en amarillo, suma al contador y el request la excluye', async () => {
+    mockearPuntosVenta()
+    let resolverTransferir: (valor: ResultadoTransferencia) => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/transferencias') return new Promise((resolve) => (resolverTransferir = resolve))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarLinea(usuario)
+
+    // segunda línea, a medio llenar: artículo elegido, sin cantidad.
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+    const buscadores = screen.getAllByPlaceholderText('Buscar artículo…')
+    await usuario.type(buscadores[1], 'fideos')
+    await screen.findByText('ART-10 — Fideos 500g')
+    await usuario.click(screen.getByText('ART-10 — Fideos 500g'))
+
+    expect(screen.getByText('Línea incompleta — no se va a transferir.')).toBeInTheDocument()
+    expect(screen.getByText('1 línea(s) incompleta(s) — no se van a transferir.')).toBeInTheDocument()
+
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
+
+    resolverTransferir({ idPuntoVentaOrigen: 1, idPuntoVentaDestino: 2, lineas: [{ idArticulo: 10, cantidadOrigen: 12, cantidadDestino: 13 }] })
+    await screen.findByText(/Transferencia registrada/)
+
+    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/transferencias')
+    expect(llamadas).toHaveLength(1)
+    const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
+    expect(cuerpo).toEqual({
+      idPuntoVentaOrigen: 1,
+      idPuntoVentaDestino: 2,
+      observaciones: 'obs',
       lineas: [{ idArticulo: 10, cantidad: 8 }],
     })
   })
