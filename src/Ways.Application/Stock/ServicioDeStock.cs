@@ -183,7 +183,7 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
     /// se deriva del lado del servidor bajo el mismo lock de fila que <c>AjustarAsync</c> usa
     /// (el upsert no-op de <see cref="BloquearYCrearSiFaltaStockAsync"/>), así que un conteo
     /// nunca puede pisar una venta que corrió entre el conteo físico y el submit.</summary>
-    public async Task<StockActual> ContarAsync(SolicitudDeConteo solicitud, CancellationToken ct = default)
+    public async Task<ResultadoConteo> ContarAsync(SolicitudDeConteo solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
@@ -200,7 +200,7 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
             await EjecutarConteoAsync(idTenant, idEmpleado, solicitud.IdPuntoVenta, solicitud.IdArticulo, contada, observaciones, momento, ct));
     }
 
-    private async Task<StockActual> EjecutarConteoAsync(
+    private async Task<ResultadoConteo> EjecutarConteoAsync(
         int idTenant, int idEmpleado, int idPuntoVenta, int idArticulo, decimal contada, string observaciones,
         DateTimeOffset momento, CancellationToken ct)
     {
@@ -217,7 +217,7 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
             // spec: "Zero-Difference Conteo Writes No Ledger Row" — commit sin escribir nada,
             // que además evita ck_movimientos_stock_cantidad_no_cero (nunca lo alcanza).
             await transaccion.CommitAsync(ct);
-            return new StockActual(idPuntoVenta, idArticulo, actual);
+            return new ResultadoConteo(idPuntoVenta, idArticulo, actual, actual, 0m, MovimientoRegistrado: false);
         }
 
         await InsertarMovimientoStockAsync(
@@ -237,7 +237,7 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         await transaccion.CommitAsync(ct);
 
-        return new StockActual(idPuntoVenta, idArticulo, final);
+        return new ResultadoConteo(idPuntoVenta, idArticulo, final, actual, delta, MovimientoRegistrado: delta != 0m);
     }
 
     /// <summary>Upsert no-op — <c>SET cantidad = stock.cantidad</c> — que crea la fila si falta

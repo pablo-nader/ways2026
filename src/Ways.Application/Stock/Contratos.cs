@@ -43,3 +43,15 @@ public sealed record LineaTransferida(int IdArticulo, decimal CantidadOrigen, de
 /// Total, Never A Delta): el servidor deriva el ajuste bajo el lock de la fila de <c>stock</c>.
 /// </summary>
 public sealed record SolicitudDeConteo(int IdPuntoVenta, int IdArticulo, decimal Contada, string Observaciones);
+
+/// <summary>
+/// Resultado de <c>POST /api/stock/conteos</c> (stage-8, judgment-day fix: la respuesta anterior
+/// (<see cref="StockActual"/>) era idéntica para el no-op de diferencia cero y para la rama que sí
+/// escribe un movimiento, así que el cliente no podía distinguir ambos casos sin volver a leer el
+/// stock — y esa segunda lectura puede correr después de una venta concurrente y mentir en
+/// cualquiera de las dos direcciones. Este contrato lleva la verdad tal como el servidor la
+/// escribió, bajo el mismo lock de fila que calculó <see cref="Delta"/>: nunca hace falta que el
+/// cliente adivine.
+/// </summary>
+public sealed record ResultadoConteo(
+    int IdPuntoVenta, int IdArticulo, decimal Cantidad, decimal CantidadAnterior, decimal Delta, bool MovimientoRegistrado);
