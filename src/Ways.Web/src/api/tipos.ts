@@ -973,3 +973,42 @@ export type CompraConEstadoPago = {
 }
 
 export type SaldoDeProveedor = { idProveedor: number; saldo: number; compras: CompraConEstadoPago[] }
+
+// --- Stock: transferencias y conteo de inventario (stage-8, Slice 6) -----------------------
+// Espejo de `Ways.Application.Stock.Contratos` — ningún request lleva un delta como input
+// (dto-contract-honesty): la transferencia manda una cantidad siempre POSITIVA por línea (el
+// signo por punto de venta lo decide el servidor), el conteo manda el TOTAL contado, nunca el
+// ajuste (server-derived bajo el lock de la fila de stock).
+
+/** Balance de `GET /api/stock` (espejo de `StockActual`) y respuesta de `POST /api/stock/conteos`
+ * — `cantidad` es `0` mientras no exista todavía una fila de `stock` para el par. */
+export type StockActual = { idPuntoVenta: number; idArticulo: number; cantidad: number }
+
+/** Una línea del cuerpo de `POST /api/stock/transferencias` — `cantidad` siempre positiva
+ * (espejo de `LineaDeTransferencia`). */
+export type LineaDeTransferencia = { idArticulo: number; cantidad: number }
+
+/** Cuerpo de `POST /api/stock/transferencias` (espejo de `SolicitudDeTransferencia`).
+ * `observaciones` es obligatoria, mismo criterio que el ajuste manual. */
+export type SolicitudDeTransferencia = {
+  idPuntoVentaOrigen: number
+  idPuntoVentaDestino: number
+  observaciones: string
+  lineas: LineaDeTransferencia[]
+}
+
+/** El stock resultante de un artículo en AMBOS puntos de venta tras la transacción (espejo de
+ * `LineaTransferida`). */
+export type LineaTransferida = { idArticulo: number; cantidadOrigen: number; cantidadDestino: number }
+
+/** Respuesta de `POST /api/stock/transferencias` (espejo de `ResultadoTransferencia`). */
+export type ResultadoTransferencia = {
+  idPuntoVentaOrigen: number
+  idPuntoVentaDestino: number
+  lineas: LineaTransferida[]
+}
+
+/** Cuerpo de `POST /api/stock/conteos` — `contada` es el TOTAL físicamente contado, nunca un
+ * delta (espejo de `SolicitudDeConteo`; spec: conteo-de-inventario / Conteo Input Is The Counted
+ * Total, Never A Delta). */
+export type SolicitudDeConteo = { idPuntoVenta: number; idArticulo: number; contada: number; observaciones: string }
