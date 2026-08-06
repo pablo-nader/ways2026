@@ -434,6 +434,19 @@ según margen del grupo/proveedor. `anulada` revierte con contramovimientos.
 > `WaysDbContextFactory.cs` — nunca también con `HasPostgresEnum`, mismo criterio que el
 > resto de los enums nativos del proyecto. La aritmética de la compra (`CalculadorDeCompra`),
 > el ciclo `borrador → confirmada → anulada` y la actualización de `costo_nominal` son Slice 2.
+>
+> **Estado (Etapa 8, stage-8-compras-transferencias-inventario): implementada — cierre del
+> ciclo completo.** `CalculadorDeCompra` (Slice 2) es la única aritmética de la compra —
+> `cantidad = unidades + bultos × unidades_por_bulto`, `costo_nominal` recibe el costo
+> efectivo **IVA-incluido** redondeado `AwayFromZero`, deduplicado por el `orden` más alto
+> cuando dos líneas repiten artículo. El ciclo `borrador → confirmada → anulada` corre en
+> `ServicioDeCompras`: el borrador es un replace-set completo bajo `FOR UPDATE`, confirmar es
+> una `UPDATE … RETURNING` estado-guardada como única autoridad de transición (el mismo listón
+> que `MarcarAnuladoAsync` en etapa 5), y anular revierte por contramovimientos, rechazado con
+> `409` si dejaría stock negativo. `precio_sugerido` se calcula con el `SugeridorDePrecio`
+> existente y se aplica por una acción explícita separada — nunca dentro del confirm (decisión
+> 3 de la propuesta). Anular una compra **no** revierte los gastos ya ligados: quedan como
+> historial de un pago real (decisión 6, sin motor de reversión de gastos en el proyecto).
 
 **Relación con gastos:** la compra registra la mercadería; el gasto registra la plata.
 `gastos` gana `id_comprobante_compra NULL`: pagarle al proveedor referencia la factura.
@@ -510,6 +523,19 @@ movimientos_stock (           -- [operativa]
 > `id_tenant` — porque la clave alterna requerida forzaría `id_tenant NOT NULL` en `usuarios`,
 > rompiendo el centinela NULL del staff de plataforma. `id_empleado` se deriva siempre del
 > contexto autenticado del servidor, nunca del cliente.
+>
+> **Estado (Etapa 8, stage-8-compras-transferencias-inventario): implementada — los tres
+> motivos reservados ya tienen escritor.** `motivo = compra` abre en `ServicioDeCompras`
+> (Slice 2, confirmar/anular). `motivo = transferencia` abre en
+> `ServicioDeStock.TransferirAsync` (Slice 3): una transacción, dos filas espejadas por
+> artículo (origen negativo, destino positivo), ordenadas en un único orden ascendente sobre
+> las `2N` claves `(id_articulo, id_punto_venta)` — el orden total que evita el deadlock
+> contra una transferencia inversa simultánea o un checkout concurrente. `motivo = inventario`
+> abre en `ServicioDeStock.ContarAsync` (Slice 3): el cliente manda el TOTAL contado, nunca un
+> delta — el servidor lo deriva bajo el mismo row lock que `AjustarAsync` usa, y un conteo sin
+> diferencia no escribe ninguna fila (evita `ck_movimientos_stock_cantidad_no_cero` en vez de
+> chocar contra ella). Ningún enum, columna ni invariante del esquema de arriba cambió de
+> forma — el trabajo de esta etapa fue enteramente de escritores nuevos, nunca de esquema.
 
 `stock.cantidad` es un cache mantenido en la misma transacción del movimiento.
 Transferencia entre locales: dos movimientos espejados — feature nueva que el legacy
@@ -678,7 +704,21 @@ erDiagram
 | 5 | Comprobantes de venta + pagos + stock + movimientos | **Vender** (paridad núcleo) |
 | 6 | Turnos de caja + arqueos + tesorería + gastos | Cerrar caja |
 | 7 | Cuenta corriente + reliquidación a precio del día | Paridad total con el legacy |
-| 8 | Comprobantes de compra + transferencias de stock | Superar al legacy |
+| 8 | Comprobantes de compra + transferencias de stock (implementada — stage-8-compras-transferencias-inventario) | Superar al legacy |
 
 El mapeo de migración del doc 03 se ajusta a estos nombres cuando se implemente cada
 etapa; los datos del legacy entran en la etapa 5 (ventas históricas → `items_comprobante_venta`).
+
+> **Cierre del programa (Etapa 8, stage-8-compras-transferencias-inventario): implementada —
+> última fila de esta tabla.** Comprobantes de compra (§5, ciclo `borrador → confirmada →
+> anulada`, `CalculadorDeCompra`, `precio_sugerido` como sugerencia nunca auto-aplicada),
+> transferencias de stock (§6, dos movimientos espejados en una transacción) y un conteo de
+> inventario mínimo (§6, decisión autónoma de alcance — motivo ya reservado por doc 10, sin
+> workflow de snapshot/variance completo) están todos implementados, con el saldo de proveedor
+> derivado (§5, `Σ compras confirmadas − Σ gastos ligados`, sin tabla ni ledger extra —
+> deliberadamente más simple que la cuenta corriente de clientes de la etapa 7, doc-10:408-409)
+> y la web correspondiente (`Compras`/`CompraEditor`/`Transferencias`/`ConteoDeInventario`,
+> panel de saldo en `Proveedores`). No hay etapa 9 en este documento: cualquier trabajo
+> remanente (inventario de conteo completo, una cuenta corriente de proveedores con ledger
+> propio, órdenes de compra, libro IVA compras) es un cambio post-paridad normal, no una etapa
+> nueva de este mapeo.
