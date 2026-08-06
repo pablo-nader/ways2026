@@ -447,7 +447,7 @@ double-submit-proof. **Rollback**: new route + entry point only.
   de precio failure is non-blocking, only the apply-precio panel needs it).
   *(design: Web Composition, obligations 3, 6, 7, 8, 9)*
 - [x] 5.4 Wire the route in `App.tsx` under `GestionDeCatalogo` (Admin-only
-  route AND nav — `rolesPermitidos={[ROL.Admin]}` on both `/compras` and
+  route AND nav — `rolesPermitidos={[ROL.Admin]} [STALE — corrected within the same PR pre-merge to [Vendedor, Supervisor, Admin] per the spec, judgment-day fix c871db9-class; see slice-5 state note]` on both `/compras` and
   `/compras/:id`, not `OperacionDePos`, per decision 11's consistency note:
   no stage-7 nav/policy mismatch where the backend read policy allowed a
   role the web never gave an entry point to). *(design: File Changes)*
