@@ -72,14 +72,18 @@ where five judgment-day rounds each found a new variant of the same defect class
    a same-tick double click beats the `disabled` attribute re-render.
    Rethrows that signal failure to a caller are generation-gated like setters.
 
-10. **An error-recovery fix is replicated across ALL sibling surfaces of the same PR.**
-    When one screen gains an error-recovery path (self-heal of a race 409, refetch
-    after a rejection, stale-state aviso), every twin panel/form the same PR introduces
-    with the same interaction inherits the fix in the same commit. Precedent: the
-    `turno_ya_abierto` self-heal was implemented in `Caja.tsx` and omitted in the twin
-    `PanelGateTurno` of `Pos.tsx` within the same PR — same defect, found twice by
-    review. Grep for the error code before committing: every catch that handles it
-    must share the same recovery semantics.
+10. **ANY correctness pattern established on one surface is replicated across ALL
+    sibling surfaces with the same interaction, in the same PR.** This covers
+    error-recovery paths (self-heal of a race 409, refetch after rejection, stale-state
+    aviso) AND data-honesty patterns (a filtered save mirrored in the totals/flags, an
+    authoritative-response render, a confirmation gate). Three occurrences prove the
+    class: the `turno_ya_abierto` self-heal implemented in `Caja.tsx` and omitted from
+    the twin `PanelGateTurno` in the same PR (stage 7); the incomplete-line
+    flags+counter built for `CompraEditor.tsx` and omitted from `Transferencias.tsx`
+    built days later with the identical grid (stage 8) — the silent-drop bug shipped
+    twice. Before committing a screen with a multi-line editor, a filtered request, or
+    an error-recovery catch: grep the marker (error code, filter predicate name,
+    counter copy) across `src/paginas` — every sibling must carry the same semantics.
 
 ## Decision Gates
 
