@@ -70,6 +70,14 @@ export function Layout() {
                         Artículos
                       </NavLink>
                     </li>
+                    {/* stage-8-compras-transferencias-inventario (Slice 5, design: Web
+                        Composition): Admin-only end to end — nav y ruta comparten la misma
+                        política (no repite el gap de nav/policy de stage-7). */}
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/compras">
+                        Compras
+                      </NavLink>
+                    </li>
                     <li className="nav-item">
                       <NavLink className="nav-link" to="/listas-precio">
                         Listas de precio

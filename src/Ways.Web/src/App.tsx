@@ -8,6 +8,8 @@ import { CierreDeCaja } from './paginas/CierreDeCaja'
 import { Categorias } from './paginas/Categorias'
 import { CatalogosFiscales } from './paginas/CatalogosFiscales'
 import { Clientes } from './paginas/Clientes'
+import { Compras } from './paginas/Compras'
+import { CompraEditor } from './paginas/CompraEditor'
 import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { Empresas } from './paginas/Empresas'
 import { Inicio } from './paginas/Inicio'
@@ -125,6 +127,28 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Articulos />
+                </RutaProtegida>
+              }
+            />
+
+            {/* stage-8-compras-transferencias-inventario (Slice 5, design: Web Composition):
+                árbol propio, no la máquina genérica de catálogos — mismo criterio que
+                /proveedores/-articulos. Admin-only END TO END (route + nav), la lectura del
+                backend admite Vendedor (Politicas.OperacionDePos) pero esta web no expone
+                ninguna entrada para ese rol, evitando el gap de nav/policy de stage-7. */}
+            <Route
+              path="/compras"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Compras />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/compras/:id"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <CompraEditor />
                 </RutaProtegida>
               }
             />
