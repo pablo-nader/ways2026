@@ -429,6 +429,35 @@ describe('CompraEditor — compra confirmada', () => {
     resolverAplicar([{ idArticulo: 10, aplicado: true, precio: 114.95, error: null }])
     await waitFor(() => expect(screen.getByRole('button', { name: 'Anular compra' })).toBeEnabled())
   })
+
+  it('con el panel de anular ya abierto y tildado, aplicar precio sugerido en vuelo bloquea el botón interno Anular (regla 9)', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada' })) : undefined))
+    let resolverAplicar: (valor: ResultadoAplicarPrecio[]) => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras/1/precios') return new Promise((resolve) => (resolverAplicar = resolve))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByRole('button', { name: 'Anular compra' })
+    await usuario.click(screen.getByRole('button', { name: 'Anular compra' }))
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero anular esta compra/))
+
+    const botonAnularFinal = screen.getByRole('button', { name: 'Anular' })
+    expect(botonAnularFinal).toBeEnabled()
+
+    await usuario.selectOptions(screen.getByLabelText('Lista de precios'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Aplicar' }))
+
+    expect(botonAnularFinal).toBeDisabled()
+
+    resolverAplicar([{ idArticulo: 10, aplicado: true, precio: 114.95, error: null }])
+    await waitFor(() => expect(botonAnularFinal).toBeEnabled())
+
+    const llamadasAnular = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/compras/1/anular')
+    expect(llamadasAnular).toHaveLength(0)
+  })
 })
 
 describe('CompraEditor — compra nueva', () => {

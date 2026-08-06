@@ -685,6 +685,7 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
 
   async function anular() {
     // regla 9: guard de reentrancia de primera línea.
+    if (ocupado) return
     if (anulandoRef.current) return
     if (!confirmadoParaAnular || idCompra === null) return
 
@@ -1077,7 +1078,7 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
                         <button
                           type="button"
                           className="btn btn-danger rounded-0"
-                          disabled={!confirmadoParaAnular || anulando}
+                          disabled={!confirmadoParaAnular || ocupado}
                           onClick={anular}
                         >
                           {anulando ? 'Anulando…' : 'Anular'}
