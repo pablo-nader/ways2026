@@ -214,6 +214,32 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(2000m, saldo.Compras[0].Total);
     }
 
+    /// <summary>design decisión 6, la regla invertida: "annulling is allowed, the linked gastos
+    /// stay linked (the link is history, not a claim of debt), the response reports how many
+    /// payments the operator has left dangling, and the derived saldo keeps counting them as
+    /// money paid — which they are". Backstop de regresión: si algún día alguien "arregla" esto
+    /// para descontar el gasto colgante de la anulación, este test lo tiene que romper.</summary>
+    [Fact]
+    public async Task UnGastoLigadoAUnaCompraLuegoAnuladaSigueDescontandoDelSaldo()
+    {
+        var ctx = await PrepararAsync(nameof(UnGastoLigadoAUnaCompraLuegoAnuladaSigueDescontandoDelSaldo));
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "saldo-dangling");
+        await AbrirTurnoAsync(ctx);
+        var gasto = await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 100m);
+        Assert.Equal(HttpStatusCode.Created, gasto.StatusCode);
+
+        var respuestaAnulacion = await ctx.Admin.PostAsync($"/api/compras/{compra.Id}/anular", null);
+        var cuerpoAnulacion = await respuestaAnulacion.Content.ReadAsStringAsync();
+        Assert.True(respuestaAnulacion.StatusCode == HttpStatusCode.OK, cuerpoAnulacion);
+        var resultadoAnulacion = JsonSerializer.Deserialize<ResultadoAnulacion>(cuerpoAnulacion, OpcionesJson)!;
+        Assert.Equal(1, resultadoAnulacion.GastosLigados);
+
+        var saldo = await ObtenerSaldoAsync(ctx);
+
+        Assert.Equal(-100m, saldo.Saldo);
+        Assert.Empty(saldo.Compras);
+    }
+
     [Fact]
     public async Task UnProveedorSinActividadTieneSaldoCero()
     {
@@ -280,6 +306,31 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(EstadoPago.Parcial, linea.EstadoPago);
         Assert.Equal(400m, linea.Pagado);
         Assert.Equal(600m, saldo.Saldo);
+    }
+
+    [Fact]
+    public async Task VariosGastosLigadosALaMismaCompraSeAcumulanHastaPagada()
+    {
+        var ctx = await PrepararAsync(nameof(VariosGastosLigadosALaMismaCompraSeAcumulanHastaPagada));
+        var compra = await CrearYConfirmarCompraDeTotalAsync(ctx, 1000m, "saldo-multi-gasto");
+        await AbrirTurnoAsync(ctx);
+        await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 300m);
+        await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 200m);
+
+        var saldoParcial = await ObtenerSaldoAsync(ctx);
+
+        var lineaParcial = Assert.Single(saldoParcial.Compras);
+        Assert.Equal(500m, lineaParcial.Pagado);
+        Assert.Equal(EstadoPago.Parcial, lineaParcial.EstadoPago);
+        Assert.Equal(500m, saldoParcial.Saldo);
+
+        await RegistrarGastoLigadoAsync(ctx, ctx.Admin, compra.Id, 500m);
+
+        var saldoPagada = await ObtenerSaldoAsync(ctx);
+
+        var lineaPagada = Assert.Single(saldoPagada.Compras);
+        Assert.Equal(1000m, lineaPagada.Pagado);
+        Assert.Equal(EstadoPago.Pagada, lineaPagada.EstadoPago);
     }
 
     // ---- task 4.11: proveedor detail expone el punto de entrada del saldo derivado -------------

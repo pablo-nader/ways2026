@@ -14,7 +14,8 @@ namespace Ways.Application.Compras;
 /// por-compra derivado de los gastos LIGADOS únicamente (spec: Per-Compra Payment Status From
 /// Linked Gastos Only).
 ///
-/// Exactamente 2 consultas (Data Flow del design), nunca N+1: la segunda agrupa TODOS los gastos
+/// Dos consultas agregadas más el guard de existencia del proveedor (Data Flow del design) — O(1),
+/// nunca N+1: la segunda consulta agregada agrupa TODOS los gastos
 /// de categoría proveedor del proveedor por <c>id_comprobante_compra</c> (incluida la fila NULL,
 /// que agrupa los gastos sin ligar) — de ahí sale tanto el total a restar del saldo como el
 /// desglose por-compra, en un solo <c>GROUP BY</c> (task 4.2: "a single grouped query... no
