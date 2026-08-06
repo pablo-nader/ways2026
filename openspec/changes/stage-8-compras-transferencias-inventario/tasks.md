@@ -254,62 +254,84 @@ live, the extended sum-invariant proven per punto de venta, three more racy
 surfaces closed. **Rollback**: two new methods + two new routes only —
 `AjustarAsync` unedited.
 
-- [ ] 3.1 Modify `src/Ways.Application/Stock/ServicioDeStock.cs`: the raw
+- [x] 3.1 Modify `src/Ways.Application/Stock/ServicioDeStock.cs`: the raw
   `InsertarMovimientoStockAsync`/`UpsertStockAsync` statements gain
   `motivo`/`idComprobanteCompra`/`idPuntoVentaDestino` parameters, backward
-  compatible with `AjustarAsync`. *(design: File Changes)*
-- [ ] 3.2 `ServicioDeStock.TransferirAsync`: pre-checks (articulos + both PVs
+  compatible with `AjustarAsync`. *(design: File Changes)* **Deviation**:
+  only `InsertarMovimientoStockAsync` gained the three parameters —
+  `UpsertStockAsync` writes to `stock`, which has no `motivo`/`id_*` columns,
+  so it stays unchanged (matches its sibling in `ServicioDeCompras`, which
+  also leaves `UpsertStockAsync`'s shape untouched). `idComprobanteCompra` is
+  always passed `null` from every `ServicioDeStock` caller — the invariant
+  pinned in Slice 1's `MovimientoStock.IdComprobanteCompra` doc-comment
+  ("nunca escrita fuera de `ServicioDeCompras`") holds structurally.
+- [x] 3.2 `ServicioDeStock.TransferirAsync`: pre-checks (articulos + both PVs
   resolved, `origen ≠ destino` `400`, `articulo_repetido` `400`,
   `observaciones` required), one **total order** over all `2N` keys sorted
   `(id_articulo, id_punto_venta)` ASC, per-key ledger `INSERT` + cache
   upsert, `delta < 0 AND nueva < 0 ⇒ 409`. *(design decision 9; Transactions
   — TRANSFERENCIA)*
-- [ ] 3.3 `ServicioDeStock.ContarAsync`: no-op upsert to lock+create-if-
+- [x] 3.3 `ServicioDeStock.ContarAsync`: no-op upsert to lock+create-if-
   missing, server-derived `delta = contada − actual`, `delta = 0 ⇒` commit
   with no write (`200`), else ledger `INSERT` (`motivo = inventario`) +
   upsert, defense-in-depth final-balance check. *(design decision 10;
   Transactions — CONTEO DE INVENTARIO)*
-- [ ] 3.4 Modify `StockEndpoints.cs`: `POST /api/stock/transferencias`,
+- [x] 3.4 Modify `StockEndpoints.cs`: `POST /api/stock/transferencias`,
   `POST /api/stock/conteos`, both `GestionDeCatalogo` over
   `OperacionDePos`. Update `SuperficieDeAutorizacionTests` allowlist.
-  *(design: API Surface)*
-- [ ] 3.5 [P] Integration: a single-item transfer moves both caches
+  *(design: API Surface)* Both routes stack `GestionDeCatalogo`, so (mirror
+  of Slice 2, task 2.7) they need no allowlist entry — a documenting comment
+  was added instead, same pattern as the compras routes.
+- [x] 3.5 [P] Integration: a single-item transfer moves both caches
   atomically; a multi-item transfer writes exactly `2N` rows atomically; a
   failure moves neither side. *(spec: transferencias-de-stock / Transferencia
   Writes Two Mirrored Movements)*
-- [ ] 3.6 [P] Integration: insufficient origin stock refused `409
+- [x] 3.6 [P] Integration: insufficient origin stock refused `409
   stock_insuficiente_para_transferencia`; a **sale** of the same articulo at
   the same PV still goes negative — the asymmetry proven in both directions.
   *(spec: transferencias-de-stock / Insufficient Origin Stock Is Refused)*
-- [ ] 3.7 [P] Integration: `origen = destino` rejected `400` before any
+- [x] 3.7 [P] Integration: `origen = destino` rejected `400` before any
   write; a `destino` from another tenant rejected as an invalid reference.
   *(spec: transferencias-de-stock / Origen And Destino Must Differ)*
-- [ ] 3.8 [P] Integration: a count above/below the cache produces the correct
+  **Deviation**: design's own New Domain Codes table lists a separate
+  `punto_venta_destino_invalido (400)` for this case; spec.md only pins
+  "treated as an invalid reference" without a code, and the orchestrator's
+  non-negotiables pin the test result as `404`. Implemented by reusing
+  `ResolverPuntoVentaAsync` (the same ADR-8 uniform-404 helper `AjustarAsync`
+  already uses for both origen/destino) instead of introducing the separate
+  400 code — less risk, one fewer untested code path.
+- [x] 3.8 [P] Integration: a count above/below the cache produces the correct
   signed movement; the conteo request contract carries only
   `cantidad_contada`, never a delta/ajuste field. *(spec: conteo-de-
   inventario / Conteo Input Is The Counted Total, Never A Delta)*
-- [ ] 3.9 [P] Integration: a matching count writes no row, cache unchanged,
+- [x] 3.9 [P] Integration: a matching count writes no row, cache unchanged,
   `200`. *(spec: conteo-de-inventario / Zero-Difference Conteo Writes No
   Ledger Row)*
-- [ ] 3.10 [P] Integration: conteo without `observaciones` rejected before
+- [x] 3.10 [P] Integration: conteo without `observaciones` rejected before
   the database; `motivo = inventario` is never produced by `/ajustes` and
   `motivo = ajuste` is never produced by `/conteos`. *(spec: conteo-de-
   inventario / Conteo Requires Observaciones And Is Distinct From Ajuste)*
-- [ ] 3.11 Integration (racy surfaces, forced rendezvous): transferencia ×
+- [x] 3.11 Integration (racy surfaces, forced rendezvous): transferencia ×
   checkout on the same `(articulo, pv)`; two concurrent conteos of the same
   articulo serialize on the row lock, no lost update. *(design: Backstop Map
   racy surface 3; spec: conteo-de-inventario / Concurrent Conteos)*
-- [ ] 3.12 Integration (extended sum-invariant): a mixed sequence of venta,
+- [x] 3.12 Integration (extended sum-invariant): a mixed sequence of venta,
   ajuste, compra, transferencia, inventario and anulación —
   `stock.cantidad` equals `SUM(movimientos_stock.cantidad)` per `(articulo,
   punto_venta)`, asserted independently per PV. *(spec: stock / Cantidad Is
   Always The Sum Of Its Movimientos; transferencias-de-stock / Sum-Invariant
   Holds Per Punto De Venta)*
-- [ ] 3.13 [P] Integration (authorization): Admin succeeds on transferencia
+- [x] 3.13 [P] Integration (authorization): Admin succeeds on transferencia
   and conteo; Vendedor `403` on both. *(spec: transferencias-de-stock /
   conteo-de-inventario / Authorization)*
-- [ ] 3.14 Regression: full stage 5–7 + Slices 1–2 suite green; the ajuste
-  path unedited.
+- [x] 3.14 Regression: full stage 5–7 + Slices 1–2 suite green; the ajuste
+  path unedited. Baselines re-checked at this slice's branch-cut and after
+  implementation: Domain 378/378, Application 212/212, Integration
+  636→655 (+19, all this slice's), vitest 322/322 (no web work in this
+  slice). `AjustarAsync`'s own logic/behavior is unchanged (its two raw
+  calls now pass the three new parameters with `Ajuste`/`null`/`null`);
+  `ServicioDeVentas.cs` and `CalculadorDeArqueo` are untouched (confirmed via
+  `git status`).
 
 **Verify**: `dotnet test --filter FullyQualifiedName~TransferirAsync|FullyQualifiedName~ContarAsync`
 
