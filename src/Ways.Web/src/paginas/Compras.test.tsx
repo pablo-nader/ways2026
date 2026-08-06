@@ -1,8 +1,9 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Compras } from './Compras'
+import { RutaProtegida } from '../auth/RutaProtegida'
 import { ROL } from '../api/tipos'
 import type { CompraListada, PaginaDeCompras, ProveedorListado, SaldoDeProveedor, TipoComprobanteListado, UsuarioAutenticado } from '../api/tipos'
 
@@ -105,6 +106,26 @@ function renderCompras() {
   return render(<Compras />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
 }
 
+/** Monta detrás del mismo gate de rol que `App.tsx` usa para `/compras` (decisión 11: la lectura
+ * sigue `Politicas.OperacionDePos`) — prueba que el rol realmente llega a la pantalla. */
+function renderComprasProtegido() {
+  return render(
+    <MemoryRouter initialEntries={['/compras']}>
+      <Routes>
+        <Route
+          path="/compras"
+          element={
+            <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+              <Compras />
+            </RutaProtegida>
+          }
+        />
+        <Route path="/" element={<div>Inicio (redirigido)</div>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta.startsWith('/proveedores?')) return Promise.resolve({ items: [proveedorFixture()], total: 1, pagina: 1, tamanio: 200 })
@@ -154,6 +175,16 @@ describe('Compras — listado', () => {
     usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
     rerender(<Compras />)
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Nueva compra' })).not.toBeInTheDocument())
+  })
+
+  it('un Vendedor llega a la ruta del listado (decisión 11); un Root queda afuera', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+    mockearRutasBase()
+
+    renderComprasProtegido()
+
+    expect(await screen.findByText('No hay compras que coincidan con los filtros.')).toBeInTheDocument()
+    expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
   })
 
   it('filtrar por proveedor carga su saldo y muestra el estado de pago por fila', async () => {

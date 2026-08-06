@@ -51,9 +51,10 @@ function claseDeBadgeDeEstado(estado: EstadoCompra): string {
  * Web Composition): filtros proveedor/estado/fecha, estado de pago por fila (solo cuando el
  * listado está filtrado por un proveedor puntual — el endpoint de saldo es por-proveedor, el
  * panel completo con su propio estado lo construye `Proveedores.tsx` en la Slice 6) y entrada al
- * editor de borrador. Ruta Admin-only end to end (design: "no stage-7 nav/policy mismatch") —
- * `puedeEscribir` queda como defensa en profundidad cosmética, la política real es
- * `GestionDeCatalogo` del lado del servidor.
+ * editor de borrador. La ruta sigue `Politicas.OperacionDePos` (decisión 11: la lectura queda
+ * abierta a Vendedor/Supervisor/Admin) — `puedeEscribir` oculta el botón "Nueva compra" como
+ * defensa en profundidad cosmética, la política de escritura real es `GestionDeCatalogo` del
+ * lado del servidor.
  */
 export function Compras() {
   const { usuario } = useAuth()
