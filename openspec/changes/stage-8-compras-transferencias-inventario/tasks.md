@@ -346,58 +346,71 @@ avoids the `AND`-composition trap, and `CalculadorDeArqueo` is proven
 byte-unchanged. **Rollback**: new files + a `FOR SHARE` guard + one nullable
 DTO field only.
 
-- [ ] 4.1 Modify `src/Ways.Application/Gastos/ServicioDeGastos.cs` +
+- [x] 4.1 Modify `src/Ways.Application/Gastos/ServicioDeGastos.cs` +
   `Contratos.cs`: optional `IdComprobanteCompra`; when present,
   `SELECT … FOR SHARE` on `comprobantes_compra` **after** the existing turno
   lock; `estado ≠ confirmada ⇒ 409` (`compra_anulada`/`compra_no_confirmada`);
   `categoria ≠ proveedor ⇒ 400`; `id_proveedor` derived when absent, mismatch
   `⇒ 400`. *(design decision 7; Transactions — GASTO LIGADO A UNA COMPRA)*
-- [ ] 4.2 Create `src/Ways.Application/Compras/ServicioDeSaldoDeProveedor.cs`:
+- [x] 4.2 Create `src/Ways.Application/Compras/ServicioDeSaldoDeProveedor.cs`:
   derived read `Σ compras confirmadas − Σ gastos (categoria = proveedor)`, a
   single grouped query for per-compra payment status across a page (no
-  N+1). *(design decision 11)*
-- [ ] 4.3 Add `GET /api/proveedores/{id}/saldo` **mapped top-level**, not
+  N+1). *(design decision 11)* **Deviation**: implemented as exactly 2
+  aggregate/grouped queries (compras confirmadas + gastos agrupados por
+  `id_comprobante_compra`, incluida la clave `NULL` de los sin ligar) — el
+  mismo `GROUP BY` alimenta tanto el total del saldo como el desglose
+  por-compra, sin una tercera consulta por fila.
+- [x] 4.3 Add `GET /api/proveedores/{id}/saldo` **mapped top-level**, not
   inside the `/api/proveedores` group (`GestionDeCatalogo`) — `OperacionDePos`.
   *(design: API Surface — the AND-composition trap)*
-- [ ] 4.4 Modify `GastosEndpoints.cs`: DTO learns optional
+- [x] 4.4 Modify `GastosEndpoints.cs`: DTO learns optional
   `idComprobanteCompra`. Update `SuperficieDeAutorizacionTests` allowlist
-  with the new top-level saldo route. *(design: File Changes)*
-- [ ] 4.5 [P] Integration: a gasto links to the compra it pays under the
+  with the new top-level saldo route. *(design: File Changes)* **Deviation**:
+  the field lives in `Contratos.cs` (Gastos) — `GastosEndpoints.cs` forwards
+  the DTO as-is and needed no code change; the allowlist update landed as a
+  new `PrefijosDeLecturaReGateados` entry (`"/api/proveedores"`), since the
+  saldo route is a GET, not a write route (the write allowlist doesn't apply).
+- [x] 4.5 [P] Integration: a gasto links to the compra it pays under the
   existing open-turno gate; a non-proveedor categoria cannot link `400`; a
   compra-linked gasto still requires an open turno `409 turno_no_abierto`.
   *(spec: gastos / A Comprobante Compra Link Requires Categoria Proveedor)*
-- [ ] 4.6 Integration (racy surface, forced rendezvous): gasto ligado ×
+- [x] 4.6 Integration (racy surface, forced rendezvous): gasto ligado ×
   anulación of the same compra — the `FOR SHARE` lock closes the TOCTOU,
   both outcomes representable, neither corrupt. *(design: Backstop Map racy
   surface 5; decision 7 rationale)*
-- [ ] 4.7 [P] Integration: saldo reflects confirmed compras net of gastos;
+- [x] 4.7 [P] Integration: saldo reflects confirmed compras net of gastos;
   borradores and anuladas excluded; zero-activity proveedor returns `0`.
   *(spec: saldo-de-proveedor / Saldo Is A Derived Read, Never Persisted)*
-- [ ] 4.8 [P] Integration: per-compra payment status (`pagada`/`parcial`/
+- [x] 4.8 [P] Integration: per-compra payment status (`pagada`/`parcial`/
   `impaga`) from **linked** gastos only; an unlinked gasto reduces total
   saldo but does not mark a specific compra as paid. *(spec: saldo-de-
   proveedor / Per-Compra Payment Status, Saldo Is An Approximation)*
-- [ ] 4.9 Integration (**the arqueo-untouched proof**, the design's own gate
+- [x] 4.9 Integration (**the arqueo-untouched proof**, the design's own gate
   condition): `CalculadorDeArqueo` source is byte-identical before and after
   this stage; a proveedor gasto linked to a confirmed compra changes the
   turno's `importe_esperado` by exactly its importe through the existing
   `SUM(gastos.importe on that medio)` term, with no new branch. *(spec:
   arqueo-de-cierre / A Proveedor Gasto Linked To A Compra Introduces No New
-  Derivation Term — both scenarios)*
-- [ ] 4.10 [P] Integration: a hard delete of a proveedor referenced by a
+  Derivation Term — both scenarios)* Byte-identity confirmed via
+  `git diff --stat` (empty) on `CalculadorDeArqueo.cs`.
+- [x] 4.10 [P] Integration: a hard delete of a proveedor referenced by a
   `comprobante_compra` is rejected at the schema layer, mapped by
   `db-error-backstops`. *(spec: proveedores / Proveedor Referenced By A
   Comprobante Compra Cannot Be Removed)*
-- [ ] 4.11 [P] Integration: proveedor detail exposes the derived saldo entry
+- [x] 4.11 [P] Integration: proveedor detail exposes the derived saldo entry
   point; a cross-tenant proveedor saldo read returns not-found. *(spec:
   proveedores / Proveedor Saldo Read Entry Point; saldo-de-proveedor /
   Cross-Tenant Proveedor Saldo Is Invisible)*
-- [ ] 4.12 [P] Integration (authorization surface): Vendedor reads the
+- [x] 4.12 [P] Integration (authorization surface): Vendedor reads the
   compra list and a proveedor's saldo; paying a compra keeps the unchanged
   `OperacionDePos` gasto gate. *(spec: operacion-de-pos delta, all four
   scenarios)*
-- [ ] 4.13 Regression: full suite green; the `CalculadorDeArqueo` source
-  file untouched.
+- [x] 4.13 Regression: full suite green; the `CalculadorDeArqueo` source
+  file untouched. Domain 378/378, Application 212/212, Integration
+  664→689 (+25, all this slice's), vitest unrun in this worktree (no
+  `node_modules` installed — an environment gap unrelated to this slice,
+  which touches zero `Ways.Web` files). `ServicioDeStock`/`ServicioDeVentas`
+  untouched (confirmed via `git diff --stat`).
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ServicioDeSaldoDeProveedor|FullyQualifiedName~CalculadorDeArqueo`
 
