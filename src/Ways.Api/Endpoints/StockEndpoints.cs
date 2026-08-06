@@ -29,6 +29,27 @@ public static class StockEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Ajuste manual de stock (admin-only) — motivo = ajuste.");
 
+        // stage-8-compras-transferencias-inventario (Slice 3, task 3.4, design: API Surface):
+        // transferencia entre puntos de venta — mismo apilado GestionDeCatalogo sobre
+        // OperacionDePos que /ajustes.
+        grupo.MapPost("/transferencias", async (ServicioDeStock servicio, SolicitudDeTransferencia solicitud, CancellationToken ct) =>
+        {
+            var resultado = await servicio.TransferirAsync(solicitud, ct);
+            return Results.Ok(resultado);
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Transferencia de stock entre puntos de venta (admin-only) — motivo = transferencia.");
+
+        // stage-8-compras-transferencias-inventario (Slice 3, task 3.4, design: API Surface):
+        // conteo de inventario — mismo apilado GestionDeCatalogo sobre OperacionDePos que /ajustes.
+        grupo.MapPost("/conteos", async (ServicioDeStock servicio, SolicitudDeConteo solicitud, CancellationToken ct) =>
+        {
+            var resultado = await servicio.ContarAsync(solicitud, ct);
+            return Results.Ok(resultado);
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Conteo de inventario (admin-only) — motivo = inventario.");
+
         return app;
     }
 }
