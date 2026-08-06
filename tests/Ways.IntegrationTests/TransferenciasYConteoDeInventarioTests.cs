@@ -611,8 +611,14 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
 
-        var actual = JsonSerializer.Deserialize<StockActual>(cuerpo, OpcionesJson)!;
+        var actual = JsonSerializer.Deserialize<ResultadoConteo>(cuerpo, OpcionesJson)!;
         Assert.Equal(45m, actual.Cantidad);
+
+        // judgment-day fix (stage-8 slice 6): la respuesta lleva la verdad de escritura del
+        // servidor, no una promesa que el cliente tenga que revalidar con una lectura aparte.
+        Assert.Equal(40m, actual.CantidadAnterior);
+        Assert.Equal(5m, actual.Delta);
+        Assert.True(actual.MovimientoRegistrado);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var movimiento = await db.MovimientosStock.SingleAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario);
@@ -632,8 +638,14 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
 
-        var actual = JsonSerializer.Deserialize<StockActual>(cuerpo, OpcionesJson)!;
+        var actual = JsonSerializer.Deserialize<ResultadoConteo>(cuerpo, OpcionesJson)!;
         Assert.Equal(33m, actual.Cantidad);
+
+        // judgment-day fix (stage-8 slice 6): mismo criterio que el conteo positivo — la
+        // dirección negativa del delta también tiene que salir tal cual del servidor.
+        Assert.Equal(40m, actual.CantidadAnterior);
+        Assert.Equal(-7m, actual.Delta);
+        Assert.True(actual.MovimientoRegistrado);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var movimiento = await db.MovimientosStock.SingleAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario);
@@ -668,8 +680,14 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
 
-        var actual = JsonSerializer.Deserialize<StockActual>(cuerpo, OpcionesJson)!;
+        var actual = JsonSerializer.Deserialize<ResultadoConteo>(cuerpo, OpcionesJson)!;
         Assert.Equal(40m, actual.Cantidad);
+
+        // judgment-day fix (stage-8 slice 6): un no-op de diferencia cero tiene que declararse
+        // como tal en la respuesta — nunca la misma forma que la rama que sí escribió.
+        Assert.Equal(40m, actual.CantidadAnterior);
+        Assert.Equal(0m, actual.Delta);
+        Assert.False(actual.MovimientoRegistrado);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario));
@@ -678,6 +696,25 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
             .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(40m, cantidad);
+
+        // judgment-day fix (stage-8 slice 6): un artículo que NUNCA tuvo una fila de stock
+        // también tiene que declarar cantidad_anterior = 0 tal cual la creación perezosa del
+        // upsert no-op de lock (BloquearYCrearSiFaltaStockAsync) — mismo criterio que
+        // StockActual.Cantidad para GET /api/stock, extendido acá al conteo.
+        var idArticuloNuncaStockeado = await SembrarArticuloConPrecioAsync(ctx, "articulo-conteo-nunca-stockeado", 10m);
+        var solicitudNuncaStockeado = new SolicitudDeConteo(
+            ctx.IdPuntoVentaOrigen, idArticuloNuncaStockeado, 0m, "Recuento de artículo sin stock previo");
+        var respuestaNuncaStockeado = await ctx.Admin.PostAsJsonAsync("/api/stock/conteos", solicitudNuncaStockeado);
+        var cuerpoNuncaStockeado = await respuestaNuncaStockeado.Content.ReadAsStringAsync();
+        Assert.True(respuestaNuncaStockeado.StatusCode == HttpStatusCode.OK, cuerpoNuncaStockeado);
+
+        var actualNuncaStockeado = JsonSerializer.Deserialize<ResultadoConteo>(cuerpoNuncaStockeado, OpcionesJson)!;
+        Assert.Equal(0m, actualNuncaStockeado.Cantidad);
+        Assert.Equal(0m, actualNuncaStockeado.CantidadAnterior);
+        Assert.Equal(0m, actualNuncaStockeado.Delta);
+        Assert.False(actualNuncaStockeado.MovimientoRegistrado);
+
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticuloNuncaStockeado && m.Motivo == MotivoStock.Inventario));
     }
 
     // ---- task 3.10: observaciones obligatorias, motivo distinto de ajuste --------------------------
