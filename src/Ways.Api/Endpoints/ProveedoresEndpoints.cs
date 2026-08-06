@@ -1,4 +1,5 @@
 using Ways.Api.Seguridad;
+using Ways.Application.Compras;
 using Ways.Application.Proveedores;
 
 namespace Ways.Api.Endpoints;
@@ -45,6 +46,19 @@ public static class ProveedoresEndpoints
             return Results.NoContent();
         })
         .WithSummary("Baja lógica del proveedor.");
+
+        // stage-8-compras-transferencias-inventario (Slice 4, task 4.3, design: API Surface — el
+        // trap de composición AND): mapeada TOP-LEVEL sobre `app`, nunca sobre `grupo` —
+        // apilarla ahí compondría con GestionDeCatalogo (AND) y dejaría la lectura Admin-only,
+        // contra spec: saldo-de-proveedor / Authorization And Scoping (un Vendedor tiene que
+        // poder leerla). Ninguna policy nueva: OperacionDePos sola, misma puerta que el listado
+        // de compras.
+        app.MapGet("/api/proveedores/{id:int}/saldo", (
+            ServicioDeSaldoDeProveedor servicio, int id, CancellationToken ct) =>
+            servicio.ObtenerAsync(id, ct))
+        .WithTags("Proveedores")
+        .RequireAuthorization(Politicas.OperacionDePos)
+        .WithSummary("Saldo derivado del proveedor: compras confirmadas menos gastos ligados.");
 
         return app;
     }

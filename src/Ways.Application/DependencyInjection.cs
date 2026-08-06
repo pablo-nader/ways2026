@@ -76,6 +76,9 @@ public static class DependencyInjection
         // compra — reusa ServicioDePrecios (AplicarPrecioSugeridoAsync), nunca
         // ServicioDeStock/ServicioDeVentas (Slice 2 non-negotiable).
         services.AddScoped<ServicioDeCompras>();
+        // stage-8-compras-transferencias-inventario, Slice 4: el saldo derivado del proveedor
+        // (design decisión 11) — dedicado, no extiende ServicioDeProveedores.
+        services.AddScoped<ServicioDeSaldoDeProveedor>();
 
         return services;
     }
