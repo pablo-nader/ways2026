@@ -237,7 +237,7 @@ genuinely empty database is left intact for the seeder, the stage-7 bug) **AND**
         INSERT movimientos_stock (motivo='transferencia', cantidad=delta,
                                   id_punto_venta=clave.pv, id_punto_venta_destino=destino)
         nueva := UPSERT stock (delta) RETURNING
-        delta < 0 AND nueva < 0 ⇒ throw 409 stock_insuficiente_para_transferir
+        delta < 0 AND nueva < 0 ⇒ throw 409 stock_insuficiente_para_transferencia
   COMMIT
 
 ── CONTEO DE INVENTARIO ──────────────────────────────────────────────────────────
@@ -312,7 +312,7 @@ non-GET route is added to the stage-5 `SuperficieDeAutorizacionTests` allowlist.
 | `ck_items_comprobante_compra_cantidad_positiva` / `_costo_no_negativo` / `_importes_no_negativos` | 23514 → 400 `cantidad_de_item_invalida` / `costo_de_item_invalido` / `importes_de_item_invalidos` | Raw SQL each. New `ClasificarCheckDeCompras` behind a `ck_comprobantes_compra_` / `ck_items_comprobante_compra_` prefix guard, exact-name switch inside — the `ck_ofertas_` pattern (`:184-195`), **not** a `Contains` family |
 | `fk_comprobantes_compra_*`, `fk_items_comprobante_compra_*`, `fk_movimientos_stock_comprobante_compra`, `fk_gastos_comprobante_compra` | 23503 → existing generic `fk_` branch → 400 `referencia_invalida` — **no code change** | Raw-SQL 23503 per FK |
 | `ck_movimientos_stock_cantidad_no_cero` | Already mapped (`:511-514`) | Becomes newly *relevant*: the conteo's zero-delta no-op is what keeps it unreachable — asserted by a test that a zero-difference conteo writes **no** row and returns 200 |
-| New Domain codes | `compra_no_es_borrador` (409), `compra_no_confirmada` (409), `compra_anulada` (409), `compra_sin_items` (400), `tipo_de_compra_invalido` (400), `stock_insuficiente_para_anular` (409), `stock_insuficiente_para_transferir` (409), `punto_venta_destino_invalido` (400), `articulo_repetido` (400), `contada_invalida` (400), `gasto_de_compra_debe_ser_de_proveedor` (400), `proveedor_no_coincide_con_la_compra` (400) | Unit + integration per code |
+| New Domain codes | `compra_no_es_borrador` (409), `compra_no_confirmada` (409), `compra_anulada` (409), `compra_sin_items` (400), `tipo_de_compra_invalido` (400), `stock_insuficiente_para_anular` (409), `stock_insuficiente_para_transferencia` (409), `punto_venta_destino_invalido` (400) — SUPERSEDED at apply: cross-tenant destino resolves via the ADR-8 uniform 404 (`ResolverPuntoVentaAsync`), see tasks 3.7, `articulo_repetido` (400), `contada_invalida` (400), `gasto_de_compra_debe_ser_de_proveedor` (400), `proveedor_no_coincide_con_la_compra` (400) | Unit + integration per code |
 
 **Genuinely racy surfaces, honestly: five**, each with a forced-rendezvous test
 (`ParametrosTests` precedent) — (1) double confirm of the same borrador; (2) confirm × borrador
