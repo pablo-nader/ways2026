@@ -6,6 +6,7 @@ import {
   clienteDeCompras,
   etiquetaDeEstadoCompra,
   itemAFormulario,
+  lineaCompletaParaEnvio,
   lineaDeCompraVacia,
   lineaFormularioACalculo,
   lineaConDescuentoInvalido,
@@ -155,15 +156,17 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
   const calculo = lineaFormularioACalculo(linea, porcentajePorAlicuota)
   const item = calcularTotalesDeCompra([calculo], discriminaIva).items[0]
   const descuentoInvalido = lineaConDescuentoInvalido(calculo)
+  const incompleta = !lineaCompletaParaEnvio(linea)
 
   return (
-    <tr>
+    <tr className={incompleta ? 'table-warning text-muted' : undefined}>
       <td style={{ minWidth: 220 }}>
         <SelectorDeArticulo
           descripcion={linea.descripcion}
           disabled={disabled}
           onElegir={(a) => onCambio(linea.clave, { idArticulo: a.id, descripcion: a.nombre })}
         />
+        {incompleta && <div className="small text-warning-emphasis">Línea incompleta — no se va a guardar.</div>}
       </td>
       <td style={{ width: 90 }}>
         <input
@@ -319,9 +322,10 @@ type PropsPanelAplicarPrecios = {
   disabled: boolean
   onAntesDeEscribir: () => void
   onAplicado: (resultados: ResultadoAplicarPrecio[]) => void
+  onError: () => void
 }
 
-function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, onAplicado }: PropsPanelAplicarPrecios) {
+function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, onAplicado, onError }: PropsPanelAplicarPrecios) {
   const [idListaPrecio, setIdListaPrecio] = useState<number | ''>(listas[0]?.id ?? '')
   const [confirmarReemplazo, setConfirmarReemplazo] = useState(false)
   const [aplicando, setAplicando] = useState(false)
@@ -340,6 +344,9 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
     aplicandoRef.current = true
     setAplicando(true)
     setError('')
+    // El flag de "en vuelo" también se levanta en el padre (`aplicandoPrecios`, plegado en
+    // `ocupado`): mientras esta escritura está en curso, anular (y cualquier otra acción que la
+    // pudiera supersedear) queda bloqueado — regla 9, gate simétrico con anulando.
     onAntesDeEscribir()
 
     try {
@@ -355,6 +362,7 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
       aplicandoRef.current = false
       setAplicando(false)
       setError(e instanceof ErrorApi ? e.message : 'No se pudo aplicar el precio sugerido.')
+      onError()
     }
   }
 
@@ -558,9 +566,14 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
   const tipoSeleccionado = (tipos ?? []).find((t) => t.id === encabezado.idTipoComprobante) ?? null
   const discriminaIva = tipoSeleccionado?.discriminaIva ?? false
 
+  // El mirror de totales se calcula SOLO sobre las líneas completas (`lineaCompletaParaEnvio`):
+  // es la misma fuente de verdad que decide qué líneas viajan en `aSolicitudDeCompra` — una fila a
+  // medio llenar nunca debe sumar al Subtotal en pantalla, porque tampoco se va a guardar.
+  const lineasCompletas = useMemo(() => lineas.filter(lineaCompletaParaEnvio), [lineas])
+  const lineasIncompletas = lineas.length - lineasCompletas.length
   const calculo = useMemo(
-    () => lineas.map((l) => lineaFormularioACalculo(l, porcentajePorAlicuota)),
-    [lineas, porcentajePorAlicuota],
+    () => lineasCompletas.map((l) => lineaFormularioACalculo(l, porcentajePorAlicuota)),
+    [lineasCompletas, porcentajePorAlicuota],
   )
   const totales = useMemo(() => calcularTotalesDeCompra(calculo, discriminaIva), [calculo, discriminaIva])
 
@@ -582,7 +595,12 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
   const [errorAnular, setErrorAnular] = useState('')
   const [resultadoAnulacion, setResultadoAnulacion] = useState<ResultadoAnulacion | null>(null)
 
-  const ocupado = guardando || confirmando || anulando
+  // El panel de aplicar precio sugerido es local a `PanelAplicarPrecios`, pero su "en vuelo" se
+  // levanta acá (regla 9): sin esto, `ocupado` no lo ve y anular puede dispararse con un aplicar
+  // todavía en curso — el gate queda asimétrico.
+  const [aplicandoPrecios, setAplicandoPrecios] = useState(false)
+
+  const ocupado = guardando || confirmando || anulando || aplicandoPrecios
 
   function cambiarLinea(clave: number, cambios: Partial<LineaDeCompraFormulario>) {
     if (ocupado) return
@@ -920,6 +938,12 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
               </div>
             </div>
 
+            {lineasIncompletas > 0 && (
+              <div className="alert alert-warning rounded-0 py-1 px-2 small mb-3">
+                {lineasIncompletas} línea(s) incompleta(s) — no se van a guardar.
+              </div>
+            )}
+
             <div className="d-flex gap-2 mb-3">
               {puedeEscribir && (
                 <button type="button" className="btn btn-primary rounded-0" disabled={!puedeGuardar} onClick={guardarBorrador}>
@@ -1069,10 +1093,13 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
                       disabled={ocupado}
                       onAntesDeEscribir={() => {
                         generacionRef.current += 1
+                        setAplicandoPrecios(true)
                       }}
                       onAplicado={() => {
+                        setAplicandoPrecios(false)
                         setAviso('Precios aplicados — revisá el detalle por línea abajo.')
                       }}
+                      onError={() => setAplicandoPrecios(false)}
                     />
                   )}
                 </>
@@ -1088,8 +1115,10 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
 /**
  * Editor de un comprobante de compra (stage-8-compras-transferencias-inventario, Slice 5, design:
  * Web Composition): `/compras/nueva` crea un borrador desde cero; `/compras/:id` lo edita
- * (borrador), lo confirma/anula (confirmada) o solo lo muestra (anulada). Ruta Admin-only end to
- * end (design: "no stage-7 nav/policy mismatch") — `GestionDeCatalogo` es la autoridad real.
+ * (borrador), lo confirma/anula (confirmada) o solo lo muestra (anulada). La ruta sigue
+ * `Politicas.OperacionDePos` (decisión 11: la lectura queda abierta a Vendedor/Supervisor/Admin,
+ * igual que `/clientes/:id/cuenta-corriente`) — `puedeEscribir` oculta las acciones de escritura,
+ * `GestionDeCatalogo` es la autoridad real del lado del servidor.
  */
 export function CompraEditor() {
   const { id } = useParams<{ id: string }>()

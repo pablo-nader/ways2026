@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CompraEditor } from './CompraEditor'
+import { RutaProtegida } from '../auth/RutaProtegida'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
 import type {
@@ -181,6 +182,27 @@ function renderEditor(idCompra: string | number = 1) {
   )
 }
 
+/** Monta detrás del mismo gate de rol que `App.tsx` usa para `/compras/:id` (decisión 11: la
+ * lectura sigue `Politicas.OperacionDePos`) — a diferencia de `renderEditor`, esto prueba que el
+ * rol realmente llega a la pantalla en vez de asumirlo. */
+function renderEditorProtegido(idCompra: string | number = 1) {
+  return render(
+    <MemoryRouter initialEntries={[`/compras/${idCompra}`]}>
+      <Routes>
+        <Route
+          path="/compras/:id"
+          element={
+            <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+              <CompraEditor />
+            </RutaProtegida>
+          }
+        />
+        <Route path="/" element={<div>Inicio (redirigido)</div>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
 /** Rutas de referencia compartidas por casi todos los tests — cada test suma encima las rutas de
  * compra que le hacen falta. */
 function mockearReferencia(sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined) {
@@ -336,6 +358,9 @@ describe('CompraEditor — compra confirmada', () => {
     await usuario.click(botonAnularFinal)
     await usuario.click(botonAnularFinal)
 
+    // regla 9, gate simétrico: anulando bloquea aplicar-precios mientras la anulación está en vuelo.
+    expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled()
+
     resolverAnular({ compra: compraFixture({ estado: 'Anulada' }), gastosLigados: 2 })
     expect(await screen.findByText(/Quedan 2 gasto\(s\) ligado\(s\)/)).toBeInTheDocument()
 
@@ -384,6 +409,26 @@ describe('CompraEditor — compra confirmada', () => {
     const [, cuerpo] = apiPostMock.mock.calls.find((call: unknown[]) => call[0] === '/compras/1/precios') as [string, Record<string, unknown>]
     expect(cuerpo).toEqual({ idListaPrecio: 1, confirmarReemplazo: false })
   })
+
+  it('aplicar precio sugerido en vuelo bloquea "Anular compra" (regla 9, gate simétrico con anulando)', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture({ estado: 'Confirmada' })) : undefined))
+    let resolverAplicar: (valor: ResultadoAplicarPrecio[]) => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/compras/1/precios') return new Promise((resolve) => (resolverAplicar = resolve))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByLabelText('Lista de precios')
+    await usuario.selectOptions(screen.getByLabelText('Lista de precios'), '1')
+    await usuario.click(screen.getByRole('button', { name: 'Aplicar' }))
+
+    expect(screen.getByRole('button', { name: 'Anular compra' })).toBeDisabled()
+
+    resolverAplicar([{ idArticulo: 10, aplicado: true, precio: 114.95, error: null }])
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Anular compra' })).toBeEnabled())
+  })
 })
 
 describe('CompraEditor — compra nueva', () => {
@@ -430,18 +475,52 @@ describe('CompraEditor — compra nueva', () => {
   })
 })
 
-describe('CompraEditor — role gating', () => {
-  it('un Vendedor ve el borrador de solo lectura, sin acciones de escritura', async () => {
-    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+describe('CompraEditor — líneas incompletas', () => {
+  it('una línea incompleta no entra en el total mostrado, y se avisa con un contador', async () => {
     mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    const usuario = userEvent.setup()
 
     renderEditor()
     await screen.findByDisplayValue('0003-00012345')
+    expect(screen.getByText('$1.149,50')).toBeInTheDocument()
 
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+
+    // la línea nueva no tiene artículo ni alícuota elegidos — queda incompleta a propósito, pero
+    // se le cargan unidades/costo para que, si el mirror la sumara, el total cambiaría.
+    const unidades = screen.getAllByLabelText('Unidades')
+    await usuario.type(unidades[1], '5')
+    const costo = screen.getAllByLabelText('Costo unitario')
+    await usuario.type(costo[1], '20')
+
+    expect(await screen.findByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
+    expect(screen.getByText('$1.149,50')).toBeInTheDocument()
+  })
+})
+
+describe('CompraEditor — role gating', () => {
+  it('un Vendedor llega a la ruta (decisión 11) y ve el borrador de solo lectura, sin acciones de escritura', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+
+    renderEditorProtegido()
+    await screen.findByDisplayValue('0003-00012345')
+
+    // el gate de rol de la ruta lo dejó pasar — no lo mandó a "/".
+    expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Guardar borrador' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Confirmar compra' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Proveedor')).toBeDisabled()
     expect(screen.getByLabelText('Costo unitario')).toBeDisabled()
+  })
+
+  it('un rol fuera de la lista (Root) es redirigido a "/" antes de llegar a la pantalla', async () => {
+    usuarioActual = usuarioFixture({ id: 99, usuario: 'root', mail: 'root@ways.test', rolId: ROL.Root, rol: 'Root', idTenant: null })
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+
+    renderEditorProtegido()
+
+    expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
   })
 })
 
