@@ -3,7 +3,7 @@ import { aSolicitudDeConteo, clienteDeStock, contadaValida } from '../api/stock'
 import { clienteDeArticulos } from '../api/articulos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
-import type { ArticuloListado, PuntoVentaListado } from '../api/tipos'
+import type { ArticuloListado, PuntoVentaListado, ResultadoConteo } from '../api/tipos'
 import { Box } from '../componentes/Box'
 
 // ---- Selector de artículo por búsqueda — duplicado de Transferencias.tsx/CompraEditor.tsx: no
@@ -88,15 +88,15 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
   )
 }
 
-type ResultadoConteoMostrado = { anterior: number; final: number; delta: number }
-
 /**
  * Conteo de inventario por artículo (stage-8-compras-transferencias-inventario, Slice 6, design:
  * Web Composition; POST /api/stock/conteos): el operador manda el TOTAL físicamente contado —
  * nunca un delta (spec: conteo-de-inventario / Conteo Input Is The Counted Total, Never A Delta)
- * — el servidor deriva el ajuste bajo el lock de la fila de stock. El "antes" que se muestra en
- * pantalla se trae de `GET /api/stock` apenas se elige artículo+punto de venta, y es lo que se usa
- * para mostrar el delta con signo — o el no-op honesto — después de un submit exitoso.
+ * — el servidor deriva el ajuste bajo el lock de la fila de stock. El "antes" que se trae de
+ * `GET /api/stock` apenas se elige artículo+punto de venta es puramente un dato de referencia en
+ * pantalla: el resultado que se renderiza después de un submit sale ÍNTEGRO de la respuesta de
+ * `POST /api/stock/conteos` (`ResultadoConteo`), nunca de ese pre-fetch — que puede haber quedado
+ * desactualizado por una venta concurrente (judgment-day stage-8 Slice 6).
  */
 export function ConteoDeInventario() {
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
@@ -165,7 +165,7 @@ export function ConteoDeInventario() {
   const [contando, setContando] = useState(false)
   const contandoRef = useRef(false)
   const [error, setError] = useState('')
-  const [resultado, setResultado] = useState<ResultadoConteoMostrado | null>(null)
+  const [resultado, setResultado] = useState<ResultadoConteo | null>(null)
 
   const puedeContar =
     referenciaOk &&
@@ -184,9 +184,6 @@ export function ConteoDeInventario() {
     setContando(true)
     setError('')
     setResultado(null)
-    // Capturado ANTES del await: es el "antes" honesto que se muestra junto al delta, no lo que
-    // `actual` termine valiendo después de la escritura.
-    const anterior = actual ?? 0
     generacionActualRef.current += 1
 
     try {
@@ -195,8 +192,10 @@ export function ConteoDeInventario() {
       contandoRef.current = false
       setContando(false)
       // regla 6: un 2xx nunca se reporta como fallo — el no-op de diferencia cero también es un
-      // 2xx honesto (spec: Zero-Difference Conteo Writes No Ledger Row), nunca un error.
-      setResultado({ anterior, final: respuesta.cantidad, delta: respuesta.cantidad - anterior })
+      // 2xx honesto (spec: Zero-Difference Conteo Writes No Ledger Row), nunca un error. La
+      // respuesta ES el resultado: nunca se deriva del `actual` pre-fetch, que puede haber
+      // quedado desactualizado por una venta concurrente.
+      setResultado(respuesta)
       setActual(respuesta.cantidad)
       setContada('')
       setObservaciones('')
@@ -218,10 +217,10 @@ export function ConteoDeInventario() {
         )}
 
         {resultado && (
-          <div className={`alert rounded-0 ${resultado.delta === 0 ? 'alert-secondary' : 'alert-success'}`}>
-            {resultado.delta === 0
+          <div className={`alert rounded-0 ${resultado.movimientoRegistrado ? 'alert-success' : 'alert-secondary'}`}>
+            {!resultado.movimientoRegistrado
               ? 'Sin diferencia — no se registró ningún movimiento.'
-              : `Diferencia registrada: ${resultado.delta > 0 ? '+' : ''}${resultado.delta} (motivo = inventario). Stock resultante: ${resultado.final}.`}
+              : `Diferencia registrada: ${resultado.delta > 0 ? '+' : ''}${resultado.delta} (antes ${resultado.cantidadAnterior} → ahora ${resultado.cantidad}).`}
           </div>
         )}
 

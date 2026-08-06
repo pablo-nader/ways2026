@@ -980,9 +980,24 @@ export type SaldoDeProveedor = { idProveedor: number; saldo: number; compras: Co
 // signo por punto de venta lo decide el servidor), el conteo manda el TOTAL contado, nunca el
 // ajuste (server-derived bajo el lock de la fila de stock).
 
-/** Balance de `GET /api/stock` (espejo de `StockActual`) y respuesta de `POST /api/stock/conteos`
- * — `cantidad` es `0` mientras no exista todavía una fila de `stock` para el par. */
+/** Balance de `GET /api/stock` (espejo de `StockActual`) — `cantidad` es `0` mientras no exista
+ * todavía una fila de `stock` para el par. */
 export type StockActual = { idPuntoVenta: number; idArticulo: number; cantidad: number }
+
+/** Respuesta de `POST /api/stock/conteos` (espejo de `ResultadoConteo`, judgment-day stage-8
+ * Slice 6): a diferencia de `StockActual`, lleva la verdad de escritura tal como el servidor la
+ * calculó bajo el mismo lock de fila que derivó el ajuste — `movimientoRegistrado` distingue el
+ * no-op de diferencia cero de la rama que sí escribió un movimiento, sin que el cliente tenga que
+ * releer `GET /api/stock` (esa segunda lectura puede correr después de una venta concurrente y
+ * mentir en cualquiera de las dos direcciones). */
+export type ResultadoConteo = {
+  idPuntoVenta: number
+  idArticulo: number
+  cantidad: number
+  cantidadAnterior: number
+  delta: number
+  movimientoRegistrado: boolean
+}
 
 /** Una línea del cuerpo de `POST /api/stock/transferencias` — `cantidad` siempre positiva
  * (espejo de `LineaDeTransferencia`). */

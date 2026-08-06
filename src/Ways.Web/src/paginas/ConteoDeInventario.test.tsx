@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConteoDeInventario } from './ConteoDeInventario'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ROL } from '../api/tipos'
-import type { ArticuloListado, PuntoVentaListado, StockActual, UsuarioAutenticado } from '../api/tipos'
+import type { ArticuloListado, PuntoVentaListado, ResultadoConteo, StockActual, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -137,7 +137,7 @@ beforeEach(() => {
 describe('ConteoDeInventario — flujo feliz', () => {
   it('muestra el stock actual al elegir punto de venta + artículo; doble click manda un solo POST y un conteo mayor produce un delta positivo', async () => {
     mockearBase({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
-    let resolverContar: (valor: StockActual) => void = () => {}
+    let resolverContar: (valor: ResultadoConteo) => void = () => {}
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/stock/conteos') return new Promise((resolve) => (resolverContar = resolve))
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
@@ -157,9 +157,9 @@ describe('ConteoDeInventario — flujo feliz', () => {
     await usuario.click(boton)
     await usuario.click(boton)
 
-    resolverContar({ idPuntoVenta: 1, idArticulo: 10, cantidad: 45 })
+    resolverContar({ idPuntoVenta: 1, idArticulo: 10, cantidad: 45, cantidadAnterior: 40, delta: 5, movimientoRegistrado: true })
 
-    expect(await screen.findByText('Diferencia registrada: +5 (motivo = inventario). Stock resultante: 45.')).toBeInTheDocument()
+    expect(await screen.findByText('Diferencia registrada: +5 (antes 40 → ahora 45).')).toBeInTheDocument()
 
     const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/conteos')
     expect(llamadas).toHaveLength(1)
@@ -170,7 +170,8 @@ describe('ConteoDeInventario — flujo feliz', () => {
   it('un conteo igual al stock actual se renderiza honestamente como no-op', async () => {
     mockearBase({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/stock/conteos') return Promise.resolve({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
+      if (ruta === '/stock/conteos')
+        return Promise.resolve({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40, cantidadAnterior: 40, delta: 0, movimientoRegistrado: false })
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
     })
     const usuario = userEvent.setup()
@@ -190,7 +191,8 @@ describe('ConteoDeInventario — flujo feliz', () => {
   it('un conteo menor al stock actual produce un delta negativo', async () => {
     mockearBase({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
     apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/stock/conteos') return Promise.resolve({ idPuntoVenta: 1, idArticulo: 10, cantidad: 33 })
+      if (ruta === '/stock/conteos')
+        return Promise.resolve({ idPuntoVenta: 1, idArticulo: 10, cantidad: 33, cantidadAnterior: 40, delta: -7, movimientoRegistrado: true })
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
     })
     const usuario = userEvent.setup()
@@ -204,7 +206,31 @@ describe('ConteoDeInventario — flujo feliz', () => {
     await usuario.type(screen.getByLabelText('Observaciones'), 'Faltante detectado')
     await usuario.click(screen.getByRole('button', { name: 'Contar' }))
 
-    expect(await screen.findByText('Diferencia registrada: -7 (motivo = inventario). Stock resultante: 33.')).toBeInTheDocument()
+    expect(await screen.findByText('Diferencia registrada: -7 (antes 40 → ahora 33).')).toBeInTheDocument()
+  })
+
+  it('la respuesta manda: un GET desactualizado (40) nunca pisa la verdad de escritura del servidor (movimientoRegistrado + delta + cantidadAnterior)', async () => {
+    // El GET previo dice 40 (posible venta concurrente de por medio); la respuesta del POST es la
+    // única fuente de verdad — acá reporta un movimiento real con anterior=35, delta=5.
+    mockearBase({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/conteos')
+        return Promise.resolve({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40, cantidadAnterior: 35, delta: 5, movimientoRegistrado: true })
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByText('40')
+
+    await usuario.type(screen.getByLabelText('Cantidad contada'), '40')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'Recuento con venta concurrente')
+    await usuario.click(screen.getByRole('button', { name: 'Contar' }))
+
+    expect(await screen.findByText('Diferencia registrada: +5 (antes 35 → ahora 40).')).toBeInTheDocument()
+    expect(screen.queryByText('Sin diferencia — no se registró ningún movimiento.')).not.toBeInTheDocument()
   })
 })
 

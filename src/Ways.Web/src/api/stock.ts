@@ -9,6 +9,7 @@
 import { api } from './cliente'
 import type {
   LineaDeTransferencia,
+  ResultadoConteo,
   ResultadoTransferencia,
   SolicitudDeConteo,
   SolicitudDeTransferencia,
@@ -22,7 +23,10 @@ export const clienteDeStock = {
     api.get<StockActual>(`/stock?idPuntoVenta=${idPuntoVenta}&idArticulo=${idArticulo}`),
   transferir: (solicitud: SolicitudDeTransferencia) =>
     api.post<ResultadoTransferencia>('/stock/transferencias', solicitud),
-  contar: (solicitud: SolicitudDeConteo) => api.post<StockActual>('/stock/conteos', solicitud),
+  /** `POST /api/stock/conteos` — la respuesta (`ResultadoConteo`) es la ÚNICA fuente de verdad
+   * de lo que se escribió; el `GET /api/stock` previo es solo un dato de referencia en pantalla,
+   * nunca lo que decide qué se renderiza después de un submit. */
+  contar: (solicitud: SolicitudDeConteo) => api.post<ResultadoConteo>('/stock/conteos', solicitud),
 }
 
 // ---- Formulario de transferencia: una línea editable por fila (mismo patrón que compras.ts) --
