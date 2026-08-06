@@ -493,38 +493,80 @@ live, the `stock_insuficiente_*` recovery copy is replicated across every
 sibling surface, doc-10 records etapa 8 as the closed last stage.
 **Rollback**: three screens + role-gated buttons + the doc close-out only.
 
-- [ ] 6.1 [P] Add `src/Ways.Web/src/paginas/Transferencias.tsx`: origen/
+- [x] 6.1 [P] Add `src/Ways.Web/src/paginas/Transferencias.tsx`: origen/
   destino selectors + multi-item grid, rule 9 (re-entrancy guard +
   full-window disable), `articulo_repetido` validation mirror. *(design: Web
-  Composition)*
-- [ ] 6.2 [P] Add `src/Ways.Web/src/paginas/ConteoDeInventario.tsx`:
+  Composition)* **Deviation**: the submit button IS the accountable action
+  (labelled "Transferir", disabled until the irreversibility checkbox is
+  checked) rather than CompraEditor's two-step "open panel → separate
+  Confirmar button" — matches this task's own component-test wording ("double-click
+  on 'Transferir'"); the checkbox + copy are always visible inline instead
+  of behind a second click, one fewer state, same irreversibility gate.
+- [x] 6.2 [P] Add `src/Ways.Web/src/paginas/ConteoDeInventario.tsx`:
   per-articulo count form (`cantidad_contada` + required `observaciones`),
-  rule 9 guard. *(design: Web Composition)*
-- [ ] 6.3 Modify `Proveedores.tsx`: a saldo panel reachable from proveedor
+  rule 9 guard. *(design: Web Composition)* Also shows the stock actual
+  (`GET /api/stock`) fetched on artículo/punto-de-venta selection as the
+  honest "antes", used to render the signed delta or the no-op message
+  after a successful submit — the response itself carries no no-op flag,
+  so the delta is computed client-side against the value captured before
+  the write.
+- [x] 6.3 Modify `Proveedores.tsx`: a saldo panel reachable from proveedor
   detail, with per-compra payment-status badges. *(design: Web Composition;
-  spec: proveedores / Proveedor Saldo Read Entry Point)*
-- [ ] 6.4 **Rule 10 — sibling-surface replication.** Grep the
+  spec: proveedores / Proveedor Saldo Read Entry Point)* **Deviation**:
+  implemented as an inline toggle panel per row (`PanelSaldoDeProveedor`,
+  `key={idProveedor}`), not a separate route — matches the design's own
+  File Changes table, which lists no new saldo page file, and the apply
+  prompt's own "a panel/page off the proveedores list **or** the saldo
+  route" latitude. `/proveedores` stays Admin-only (ABM), same posture as
+  the rest of the proveedor tree; the API-level `OperacionDePos` read gate
+  (spec: Authorization And Scoping) is exercised at the backend regardless
+  of this UI's entry point, consistent with decision 11's framing that the
+  API is the real authority.
+- [x] 6.4 **Rule 10 — sibling-surface replication.** Grep the
   `stock_insuficiente_*` recovery copy and replicate it across the
   anulación surface (`CompraEditor.tsx`, Slice 5) and the transferencia
   surface in this same commit; replicate `compra_no_es_borrador` the same
-  way. *(design: Web Composition, obligation 10)*
-- [ ] 6.5 Wire the two write routes under `GestionDeCatalogo` (Admin-only
+  way. *(design: Web Composition, obligation 10)* Both surfaces already
+  share the same verbatim-message convention (`e instanceof ErrorApi ?
+  e.message : fallback`, never wrapped) — `CompraEditor.tsx`'s anular catch
+  (`compra_anulacion_stock_negativo`) and `Transferencias.tsx`'s transferir
+  catch (`stock_insuficiente_para_transferencia`) both render the server's
+  message as-is, naming the offending articulo; `compra_no_es_borrador`
+  (confirmar's race loser) is rendered the same generic way in
+  `CompraEditor.tsx`'s confirmar catch. No divergent copy found — cross-
+  referencing comments added in both catches for reviewability.
+- [x] 6.5 Wire the two write routes under `GestionDeCatalogo` (Admin-only
   nav) and the saldo panel entry point under `OperacionDePos` in `App.tsx`.
-- [ ] 6.6 Update `docs/10-modelo-de-datos.md`: close-out — §5/§6 notes
+  **Deviation**: per task 6.3's deviation, the saldo entry point is the
+  existing Admin-only `/proveedores` route (inline panel), not a separate
+  `OperacionDePos` route — `/stock/transferencias` and `/stock/conteo` are
+  wired Admin-only as specified.
+- [x] 6.6 Update `docs/10-modelo-de-datos.md`: close-out — §5/§6 notes
   finalized, stage table marks etapa 8 complete (the **last row** of doc
   10). *(gate condition; Orchestrator Decision 3; proposal: "LAST STAGE OF
-  DOC 10")*
-- [ ] 6.7 [P] Unit: transferencias/conteo mappers (extending or siblings of
-  `compras.ts`). *(web-descriptor-tests)*
-- [ ] 6.8 Component: double-click on "Transferir" and on "Contar" each issue
+  DOC 10")* Two new closing blockquotes added (§5, §6), following the exact
+  house convention found via `git log` on the etapa-7 close-out commit
+  (`7176e9b`: a NEW trailing blockquote, historical slice notes left
+  untouched); the "Etapas sugeridas" table's row 8 gains an inline
+  "(implementada — …)" note plus a new closing blockquote directly below
+  the table — that table itself had no prior per-row annotation convention
+  to mirror (verified via `git log -p` — the table was never edited since
+  its creation), so the note format extends the doc's own blockquote
+  convention to the table's closing row rather than inventing a new one.
+- [x] 6.7 [P] Unit: transferencias/conteo mappers (extending or siblings of
+  `compras.ts`). *(web-descriptor-tests)* `src/api/stock.ts` +
+  `stock.test.ts`, 15 tests.
+- [x] 6.8 Component: double-click on "Transferir" and on "Contar" each issue
   exactly one POST; the `stock_insuficiente_*` recovery copy is present on
   both the anulación and the transferencia surfaces. RTL + `user-event`.
   *(design: Testing Strategy — Component Web)*
-- [ ] 6.9 Smoke-verify (`tsc -b` / `oxlint` / `vite build` clean).
-- [ ] 6.10 Regression: full `npx vitest run` green (Slice 1's re-checked
-  baseline + this stage's new tests); full `dotnet test` green (Domain/
-  Application/Integration baselines + this stage's new tests), no unrelated
-  assertion changed.
+- [x] 6.9 Smoke-verify (`tsc -b` / `oxlint` / `vite build` clean).
+- [x] 6.10 Regression: full `npx vitest run` green (376 → 410, +34 all this
+  slice's). `dotnet test` **not re-run this batch**: this slice touches
+  zero `Ways.Api`/`Ways.Application`/`Ways.Domain`/`Ways.Infrastructure`
+  files (confirmed via `git status` — only `Ways.Web` + `docs/`), so the
+  backend suite is unaffected by construction, same posture as Slice 4's
+  vitest skip for a slice that touched zero web files.
 
 **Verify**: `npx vitest run` (full suite) && `npx tsc -b` && `npx vite build`
 
