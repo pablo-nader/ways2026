@@ -62,6 +62,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): las cinco rutas de
         // escritura de compras (crear/editar/confirmar/anular/aplicar-precios) SÍ apilan
         // GestionDeCatalogo (design: API Surface) — no van en este allowlist. Nada nuevo acá.
+        // stage-8-compras-transferencias-inventario (Slice 3, task 3.4): POST
+        // /api/stock/transferencias y POST /api/stock/conteos SÍ apilan GestionDeCatalogo, mismo
+        // criterio que /api/stock/ajustes — tampoco van en este allowlist.
         // stage-7-cuenta-corriente (Slice 2, task 2.7): pago a cuenta (RC) — sin GestionDeCatalogo
         // apilado, mismo criterio que "/api/ventas/" (un Vendedor tiene que poder cobrar una
         // cuenta corriente).
