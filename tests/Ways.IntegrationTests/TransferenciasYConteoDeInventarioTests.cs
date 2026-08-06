@@ -319,6 +319,62 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         Assert.Equal(5m, cantidadDestino);
     }
 
+    // ---- atomicidad multi-línea con 409 de dominio (judgment-day fix 3) -----------------------------
+
+    /// <summary>Design decisión 9: el orden asc <c>(id_articulo, id_punto_venta)</c> hace que, en
+    /// una transferencia de tres líneas, el artículo1 (más chico) procese y "tenga éxito" en sus
+    /// dos claves ANTES de llegar al artículo2, cuyo origen no alcanza y dispara el 409. Como
+    /// las dos claves del artículo1 corrieron dentro de la MISMA transacción todavía sin commit,
+    /// el rollback las deshace también — cero filas de <c>movimientos_stock</c> sobreviven y el
+    /// stock de los tres artículos queda exactamente como estaba antes del request.</summary>
+    [Fact]
+    public async Task UnaFallaDeStockEnLaSegundaLineaRevierteTambienLaPrimeraLineaYaExitosa()
+    {
+        var ctx = await PrepararAsync(nameof(UnaFallaDeStockEnLaSegundaLineaRevierteTambienLaPrimeraLineaYaExitosa));
+
+        // Ids ascendentes por orden de creación — articulo1 < articulo2 < articulo3, así que el
+        // orden asc de ConstruirClavesOrdenadas procesa articulo1 completo antes de tocar
+        // articulo2.
+        var articulo1 = await SembrarArticuloConPrecioAsync(ctx, "articulo-multi-atomico-1", 10m);
+        var articulo2 = await SembrarArticuloConPrecioAsync(ctx, "articulo-multi-atomico-2", 10m);
+        var articulo3 = await SembrarArticuloConPrecioAsync(ctx, "articulo-multi-atomico-3", 10m);
+
+        await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaOrigen, articulo1, 20m);
+        await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaOrigen, articulo2, 3m); // insuficiente para 5
+        await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaOrigen, articulo3, 20m);
+
+        var solicitud = new SolicitudDeTransferencia(
+            ctx.IdPuntoVentaOrigen, ctx.IdPuntoVentaDestino, "Multi-línea con falla en la segunda",
+            [
+                new LineaDeTransferencia(articulo1, 5m),
+                new LineaDeTransferencia(articulo2, 5m),
+                new LineaDeTransferencia(articulo3, 5m)
+            ]);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/transferencias", solicitud);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("stock_insuficiente_para_transferencia", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(
+            m => (m.IdArticulo == articulo1 || m.IdArticulo == articulo2 || m.IdArticulo == articulo3)
+                 && m.Motivo == MotivoStock.Transferencia));
+
+        async Task<decimal> CantidadAsync(int idArticulo, int idPuntoVenta) =>
+            await db.Stock
+                .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == idPuntoVenta)
+                .Select(s => s.Cantidad).FirstOrDefaultAsync();
+
+        Assert.Equal(20m, await CantidadAsync(articulo1, ctx.IdPuntoVentaOrigen));
+        Assert.Equal(0m, await CantidadAsync(articulo1, ctx.IdPuntoVentaDestino));
+        Assert.Equal(3m, await CantidadAsync(articulo2, ctx.IdPuntoVentaOrigen));
+        Assert.Equal(20m, await CantidadAsync(articulo3, ctx.IdPuntoVentaOrigen));
+        Assert.Equal(0m, await CantidadAsync(articulo3, ctx.IdPuntoVentaDestino));
+    }
+
     // ---- task 3.6: asimetría back-office vs. checkout ----------------------------------------------
 
     [Fact]
@@ -341,6 +397,26 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
             .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
             .Select(s => s.Cantidad).FirstAsync();
         Assert.Equal(5m, cantidadOrigen);
+    }
+
+    // ---- borde exacto: transferir el total del origen (judgment-day fix 4) --------------------------
+
+    [Fact]
+    public async Task UnaTransferenciaPorElTotalExactoDelOrigenNoEsRechazadaYDejaElOrigenEnCero()
+    {
+        var ctx = await PrepararAsync(nameof(UnaTransferenciaPorElTotalExactoDelOrigenNoEsRechazadaYDejaElOrigenEnCero));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-transferencia-borde-cero", 10m);
+        await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, 8m);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/transferencias", SolicitudDeUnaLinea(ctx, idArticulo, 8m));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var cantidadOrigen = await db.Stock
+            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVentaOrigen)
+            .Select(s => s.Cantidad).FirstAsync();
+        Assert.Equal(0m, cantidadOrigen);
     }
 
     [Fact]
@@ -424,6 +500,101 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("articulo_repetido", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- lineas vacías o nulas (judgment-day fix 1) --------------------------------------------
+
+    [Fact]
+    public async Task UnaTransferenciaConLineasVaciasEsRechazada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaTransferenciaConLineasVaciasEsRechazada));
+
+        var solicitud = new SolicitudDeTransferencia(
+            ctx.IdPuntoVentaOrigen, ctx.IdPuntoVentaDestino, "Sin líneas", []);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/transferencias", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("transferencia_sin_lineas", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.Motivo == MotivoStock.Transferencia));
+    }
+
+    [Fact]
+    public async Task UnaTransferenciaConLineasNulasEsRechazadaSinExplotarEn500()
+    {
+        var ctx = await PrepararAsync(nameof(UnaTransferenciaConLineasNulasEsRechazadaSinExplotarEn500));
+
+        var cuerpoJson = JsonSerializer.Serialize(new
+        {
+            idPuntoVentaOrigen = ctx.IdPuntoVentaOrigen,
+            idPuntoVentaDestino = ctx.IdPuntoVentaDestino,
+            observaciones = "Lineas nulas",
+            lineas = (object?)null
+        });
+        using var contenido = new StringContent(cuerpoJson, System.Text.Encoding.UTF8, "application/json");
+        var respuesta = await ctx.Admin.PostAsync("/api/stock/transferencias", contenido);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("transferencia_sin_lineas", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.Motivo == MotivoStock.Transferencia));
+    }
+
+    // ---- cantidad_de_transferencia_invalida (judgment-day fix 2) --------------------------------
+
+    [Fact]
+    public async Task UnaTransferenciaConCantidadCeroEsRechazada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaTransferenciaConCantidadCeroEsRechazada));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-transferencia-cero", 10m);
+        await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, 20m);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/transferencias", SolicitudDeUnaLinea(ctx, idArticulo, 0m));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cantidad_de_transferencia_invalida", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Transferencia));
+    }
+
+    [Fact]
+    public async Task UnaTransferenciaConCantidadNegativaEsRechazada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaTransferenciaConCantidadNegativaEsRechazada));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-transferencia-negativa", 10m);
+        await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, 20m);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/transferencias", SolicitudDeUnaLinea(ctx, idArticulo, -5m));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cantidad_de_transferencia_invalida", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Transferencia));
+    }
+
+    [Fact]
+    public async Task UnaTransferenciaConMasDeTresDecimalesEsRechazada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaTransferenciaConMasDeTresDecimalesEsRechazada));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-transferencia-decimales", 10m);
+        await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, 20m);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/transferencias", SolicitudDeUnaLinea(ctx, idArticulo, 1.2345m));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cantidad_de_transferencia_invalida", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Transferencia));
     }
 
     // ---- task 3.8: conteo, delta con signo derivado del servidor -----------------------------------
@@ -524,6 +695,44 @@ public class TransferenciasYConteoDeInventarioTests(WaysApiFixture fixture) : IC
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("observaciones_requeridas", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario));
+    }
+
+    // ---- contada_invalida (judgment-day fix 2) -------------------------------------------------
+
+    [Fact]
+    public async Task UnConteoConContadaNegativaEsRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(UnConteoConContadaNegativaEsRechazado));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-conteo-negativa", 10m);
+        await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, 40m);
+
+        var solicitud = new SolicitudDeConteo(ctx.IdPuntoVentaOrigen, idArticulo, -1m, "Contada negativa");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/conteos", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("contada_invalida", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario));
+    }
+
+    [Fact]
+    public async Task UnConteoConMasDeTresDecimalesEsRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(UnConteoConMasDeTresDecimalesEsRechazado));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-conteo-decimales", 10m);
+        await CargarStockInicialAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, 40m);
+
+        var solicitud = new SolicitudDeConteo(ctx.IdPuntoVentaOrigen, idArticulo, 45.6789m, "Contada con demasiados decimales");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/conteos", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("contada_invalida", problema.GetProperty("codigo").GetString());
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario));

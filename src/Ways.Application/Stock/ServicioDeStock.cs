@@ -405,6 +405,12 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
     private static IReadOnlyList<LineaDeTransferencia> ExigirLineasDeTransferenciaValidas(
         IReadOnlyList<LineaDeTransferencia> lineas)
     {
+        if (lineas is null || lineas.Count == 0)
+        {
+            throw new ErrorDominio(
+                "transferencia_sin_lineas", "La transferencia no tiene líneas para procesar.", 400);
+        }
+
         var repetida = lineas.GroupBy(l => l.IdArticulo).FirstOrDefault(g => g.Count() > 1);
         if (repetida is not null)
         {
