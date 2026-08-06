@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { clienteDeCompras, etiquetaDeEstadoCompra, filtrosDeComprasVacios, type FiltrosDeCompras } from '../api/compras'
+import { clienteDeCompras, etiquetaDeEstadoCompra, etiquetaDeEstadoPago, filtrosDeComprasVacios, type FiltrosDeCompras } from '../api/compras'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
@@ -22,17 +22,6 @@ function formatearMoneda(valor: number): string {
 
 function formatearFecha(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString('es-AR') : '—'
-}
-
-function etiquetaDeEstadoPago(estado: EstadoPago): string {
-  switch (estado) {
-    case 'Pagada':
-      return 'Pagada'
-    case 'Parcial':
-      return 'Parcial'
-    case 'Impaga':
-      return 'Impaga'
-  }
 }
 
 function claseDeBadgeDeEstado(estado: EstadoCompra): string {
