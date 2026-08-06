@@ -209,6 +209,49 @@ describe('Compras — listado', () => {
     expect(await screen.findByText('Parcial')).toBeInTheDocument()
   })
 
+  it('un Vendedor filtrando por proveedor ve el saldo agregado (decisión: entrada Vendedor-reachable, no solo Admin vía /proveedores)', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+    const saldo: SaldoDeProveedor = {
+      idProveedor: 1,
+      saldo: 500,
+      compras: [{ idComprobanteCompra: 1, numeroExterno: '0003-00012345', total: 1149.5, pagado: 649.5, estadoPago: 'Parcial' }],
+    }
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/compras?')) return Promise.resolve(paginaFixture([compraListadaFixture()]))
+      if (ruta === '/proveedores/1/saldo') return Promise.resolve(saldo)
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderCompras()
+
+    await screen.findByText('0003-00012345')
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
+
+    expect(await screen.findByText('$500,00')).toBeInTheDocument()
+    expect(screen.queryByText(/Saldo negativo/)).not.toBeInTheDocument()
+  })
+
+  it('un saldo negativo filtrando por proveedor muestra el callout de gasto colgante', async () => {
+    const saldo: SaldoDeProveedor = {
+      idProveedor: 1,
+      saldo: -500,
+      compras: [{ idComprobanteCompra: 1, numeroExterno: '0003-00012345', total: 1149.5, pagado: 0, estadoPago: 'Impaga' }],
+    }
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/compras?')) return Promise.resolve(paginaFixture([compraListadaFixture()]))
+      if (ruta === '/proveedores/1/saldo') return Promise.resolve(saldo)
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderCompras()
+
+    await screen.findByText('0003-00012345')
+    await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
+
+    expect(await screen.findByText('-$500,00')).toBeInTheDocument()
+    expect(screen.getByText(/Saldo negativo: hay gastos de proveedor sin ligar/)).toBeInTheDocument()
+  })
+
   it('una respuesta de listado desactualizada nunca pisa la más reciente (generación)', async () => {
     let resolverPrimera: (valor: PaginaDeCompras) => void = () => {}
     const primera = new Promise<PaginaDeCompras>((resolve) => {

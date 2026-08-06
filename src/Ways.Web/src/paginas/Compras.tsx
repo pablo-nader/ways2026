@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { clienteDeCompras, etiquetaDeEstadoCompra, filtrosDeComprasVacios, type FiltrosDeCompras } from '../api/compras'
+import { clienteDeCompras, etiquetaDeEstadoCompra, etiquetaDeEstadoPago, filtrosDeComprasVacios, type FiltrosDeCompras } from '../api/compras'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
-import type { CompraListada, EstadoCompra, EstadoPago, PaginaDe, PaginaDeCompras, ProveedorListado, TipoComprobanteListado } from '../api/tipos'
+import type {
+  CompraListada,
+  EstadoCompra,
+  EstadoPago,
+  PaginaDe,
+  PaginaDeCompras,
+  ProveedorListado,
+  SaldoDeProveedor,
+  TipoComprobanteListado,
+} from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
 
 const OPCIONES_ESTADO: { valor: EstadoCompra | ''; etiqueta: string }[] = [
   { valor: '', etiqueta: 'Todos' },
@@ -24,17 +34,6 @@ function formatearFecha(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString('es-AR') : '—'
 }
 
-function etiquetaDeEstadoPago(estado: EstadoPago): string {
-  switch (estado) {
-    case 'Pagada':
-      return 'Pagada'
-    case 'Parcial':
-      return 'Parcial'
-    case 'Impaga':
-      return 'Impaga'
-  }
-}
-
 function claseDeBadgeDeEstado(estado: EstadoCompra): string {
   switch (estado) {
     case 'Borrador':
@@ -47,14 +46,17 @@ function claseDeBadgeDeEstado(estado: EstadoCompra): string {
 }
 
 /**
- * Listado de comprobantes de compra (stage-8-compras-transferencias-inventario, Slice 5, design:
- * Web Composition): filtros proveedor/estado/fecha, estado de pago por fila (solo cuando el
- * listado está filtrado por un proveedor puntual — el endpoint de saldo es por-proveedor, el
- * panel completo con su propio estado lo construye `Proveedores.tsx` en la Slice 6) y entrada al
- * editor de borrador. La ruta sigue `Politicas.OperacionDePos` (decisión 11: la lectura queda
- * abierta a Vendedor/Supervisor/Admin) — `puedeEscribir` oculta el botón "Nueva compra" como
- * defensa en profundidad cosmética, la política de escritura real es `GestionDeCatalogo` del
- * lado del servidor.
+ * Listado de comprobantes de compra (stage-8-compras-transferencias-inventario, Slice 5-6,
+ * design: Web Composition): filtros proveedor/estado/fecha, estado de pago por fila y saldo
+ * agregado del proveedor (solo cuando el listado está filtrado por un proveedor puntual — el
+ * endpoint de saldo es por-proveedor) y entrada al editor de borrador. La ruta sigue
+ * `Politicas.OperacionDePos` (decisión 11: la lectura queda abierta a Vendedor/Supervisor/Admin)
+ * — a diferencia de `/proveedores`, que es Admin-only, esta pantalla es el punto de entrada real
+ * al saldo para Vendedor/Supervisor (judgment-day stage-8 Slice 6: el saldo tiene que ser
+ * alcanzable por todo rol que opera `Politicas.OperacionDePos`, no solo Admin). Reusa la misma
+ * pieza presentacional (`ResumenSaldoDeProveedor`) que el panel completo de `Proveedores.tsx`.
+ * `puedeEscribir` oculta el botón "Nueva compra" como defensa en profundidad cosmética, la
+ * política de escritura real es `GestionDeCatalogo` del lado del servidor.
  */
 export function Compras() {
   const { usuario } = useAuth()
@@ -74,6 +76,7 @@ export function Compras() {
   const generacionRef = useRef(0)
 
   const [estadosPago, setEstadosPago] = useState<Record<number, EstadoPago>>({})
+  const [saldoProveedor, setSaldoProveedor] = useState<SaldoDeProveedor | null>(null)
 
   useEffect(() => {
     let vigente = true
@@ -134,6 +137,7 @@ export function Compras() {
 
   useEffect(() => {
     setEstadosPago({})
+    setSaldoProveedor(null)
     if (filtros.idProveedor === null) return
 
     let vigente = true
@@ -144,11 +148,16 @@ export function Compras() {
         const indice: Record<number, EstadoPago> = {}
         for (const c of saldo.compras) indice[c.idComprobanteCompra] = c.estadoPago
         setEstadosPago(indice)
+        setSaldoProveedor(saldo)
       })
       .catch(() => {
-        // El estado de pago es un enriquecimiento, no un dato crítico del listado — una falla acá
-        // no bloquea la tabla, la columna simplemente queda vacía para esas filas.
-        if (vigente) setEstadosPago({})
+        // El estado de pago y el saldo agregado son un enriquecimiento, no un dato crítico del
+        // listado — una falla acá no bloquea la tabla, la columna/el header simplemente quedan
+        // vacíos.
+        if (vigente) {
+          setEstadosPago({})
+          setSaldoProveedor(null)
+        }
       })
 
     return () => {
@@ -257,6 +266,12 @@ export function Compras() {
             />
           </div>
         </div>
+
+        {saldoProveedor && (
+          <div className="border p-3 mb-3 bg-white">
+            <ResumenSaldoDeProveedor saldo={saldoProveedor.saldo} />
+          </div>
+        )}
 
         {cargando && !pagina && <Cargando />}
 

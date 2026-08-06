@@ -81,6 +81,20 @@ export function Layout() {
                         Artículos
                       </NavLink>
                     </li>
+                    {/* stage-8-compras-transferencias-inventario (Slice 6, design: Web
+                        Composition, decisión 11): pantallas de escritura pura, sin contraparte
+                        de lectura — nav y ruta Admin-only end a end, mismo criterio que
+                        /proveedores/-articulos. */}
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/stock/transferencias">
+                        Transferencias
+                      </NavLink>
+                    </li>
+                    <li className="nav-item">
+                      <NavLink className="nav-link" to="/stock/conteo">
+                        Conteo de inventario
+                      </NavLink>
+                    </li>
                     <li className="nav-item">
                       <NavLink className="nav-link" to="/listas-precio">
                         Listas de precio

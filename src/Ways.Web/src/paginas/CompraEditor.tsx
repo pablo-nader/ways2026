@@ -679,6 +679,9 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
     } catch (e) {
       confirmandoRef.current = false
       setConfirmando(false)
+      // El perdedor de la carrera de doble confirm (409 compra_no_es_borrador) se muestra tal
+      // cual, mismo criterio verbatim que el resto de esta pantalla (react-async-state regla 10 —
+      // Transferencias.tsx replica la misma copia de recuperación para su sibling error).
       setErrorConfirmar(e instanceof ErrorApi ? e.message : 'No se pudo confirmar la compra.')
     }
   }
@@ -708,7 +711,10 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
       anulandoRef.current = false
       setAnulando(false)
       // El refusal por stock negativo (compra_anulacion_stock_negativo) nombra el artículo
-      // ofensivo en `e.message` — se muestra tal cual, sin envolver el mensaje del servidor.
+      // ofensivo en `e.message` — se muestra tal cual, sin envolver el mensaje del servidor
+      // (stage-8, Slice 6, react-async-state regla 10: misma copia de recuperación replicada en
+      // Transferencias.tsx para stock_insuficiente_para_transferencia — sibling surfaces, mismo
+      // criterio de "nombra el artículo, nunca lo envuelvas").
       setErrorAnular(e instanceof ErrorApi ? e.message : 'No se pudo anular la compra.')
     }
   }

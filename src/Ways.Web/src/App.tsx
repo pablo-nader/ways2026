@@ -10,6 +10,7 @@ import { CatalogosFiscales } from './paginas/CatalogosFiscales'
 import { Clientes } from './paginas/Clientes'
 import { Compras } from './paginas/Compras'
 import { CompraEditor } from './paginas/CompraEditor'
+import { ConteoDeInventario } from './paginas/ConteoDeInventario'
 import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { Empresas } from './paginas/Empresas'
 import { Inicio } from './paginas/Inicio'
@@ -23,6 +24,7 @@ import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
 import { Tenants } from './paginas/Tenants'
+import { Transferencias } from './paginas/Transferencias'
 import { Usuarios } from './paginas/Usuarios'
 import { descriptorListasPrecio } from './api/catalogos'
 import { ROL } from './api/tipos'
@@ -151,6 +153,26 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
                   <CompraEditor />
+                </RutaProtegida>
+              }
+            />
+
+            {/* stage-8-compras-transferencias-inventario (Slice 6, design: Web Composition): a
+                diferencia de /compras, estas dos pantallas son puro formulario de escritura, sin
+                contraparte de lectura — Admin-only end a end, mismo nav que /proveedores. */}
+            <Route
+              path="/stock/transferencias"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Transferencias />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/stock/conteo"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <ConteoDeInventario />
                 </RutaProtegida>
               }
             />

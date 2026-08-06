@@ -1,10 +1,109 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
+import { claseDeBadgeDeEstadoPago, clienteDeCompras, etiquetaDeEstadoPago } from '../api/compras'
 import { clienteDeProveedores } from '../api/proveedores'
-import type { AltaProveedor, CondicionFiscalListado, PaginaDe, ProveedorListado } from '../api/tipos'
+import type { AltaProveedor, CondicionFiscalListado, PaginaDe, ProveedorListado, SaldoDeProveedor } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
+
+function formatearMoneda(valor: number): string {
+  const signo = valor < 0 ? '-' : ''
+  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+// ---- Panel de saldo de proveedor (stage-8-compras-transferencias-inventario, Slice 6, design:
+// Web Composition; spec: proveedores / Proveedor Saldo Read Entry Point) ------------------------
+// Montado con `key={idProveedor}` desde el padre (react-async-state regla 8): cambiar de
+// proveedor remonta el panel entero, sin arrastrar el saldo del anterior mientras carga el nuevo.
+
+type PropsPanelSaldo = { idProveedor: number; razonSocial: string; onCerrar: () => void }
+
+function PanelSaldoDeProveedor({ idProveedor, razonSocial, onCerrar }: PropsPanelSaldo) {
+  const [saldo, setSaldo] = useState<SaldoDeProveedor | null>(null)
+  const [cargando, setCargando] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let vigente = true
+    setCargando(true)
+    setError('')
+
+    clienteDeCompras
+      .obtenerSaldoDeProveedor(idProveedor)
+      .then((datos) => {
+        if (vigente) setSaldo(datos)
+      })
+      .catch((e) => {
+        if (!vigente) return
+        setError(e instanceof ErrorApi ? e.message : 'No se pudo cargar el saldo del proveedor.')
+      })
+      .finally(() => {
+        if (vigente) setCargando(false)
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [idProveedor])
+
+  return (
+    <div className="border p-3 mb-4 bg-white">
+      <div className="d-flex justify-content-between align-items-start mb-2">
+        <strong>Saldo de {razonSocial}</strong>
+        <button type="button" className="btn btn-sm btn-outline-secondary rounded-0" onClick={onCerrar}>
+          Cerrar
+        </button>
+      </div>
+
+      {cargando && <Cargando />}
+      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+
+      {saldo && (
+        <>
+          <div className="mb-3">
+            <ResumenSaldoDeProveedor saldo={saldo.saldo} />
+          </div>
+
+          <div className="table-responsive">
+            <table className="table table-sm table-bordered align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Comprobante</th>
+                  <th className="text-end">Total</th>
+                  <th className="text-end">Pagado (ligado)</th>
+                  <th>Estado de pago</th>
+                </tr>
+              </thead>
+              <tbody>
+                {saldo.compras.map((c) => (
+                  <tr key={c.idComprobanteCompra}>
+                    <td>{c.numeroExterno ?? `#${c.idComprobanteCompra}`}</td>
+                    <td className="text-end">{formatearMoneda(c.total)}</td>
+                    <td className="text-end">{formatearMoneda(c.pagado)}</td>
+                    <td>
+                      <span className={`badge rounded-0 ${claseDeBadgeDeEstadoPago(c.estadoPago)}`}>
+                        {etiquetaDeEstadoPago(c.estadoPago)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {saldo.compras.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="text-center text-muted py-3">
+                      Este proveedor no tiene compras confirmadas.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
 
 type Formulario = {
   id: number | null
@@ -103,6 +202,7 @@ export function Proveedores() {
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const [proveedorSaldo, setProveedorSaldo] = useState<ProveedorListado | null>(null)
 
   const cargar = useCallback(async (termino: string) => {
     setCargando(true)
@@ -210,6 +310,15 @@ export function Proveedores() {
           />
         )}
 
+        {proveedorSaldo && (
+          <PanelSaldoDeProveedor
+            key={proveedorSaldo.id}
+            idProveedor={proveedorSaldo.id}
+            razonSocial={proveedorSaldo.razonSocial}
+            onCerrar={() => setProveedorSaldo(null)}
+          />
+        )}
+
         {cargando ? (
           <Cargando />
         ) : (
@@ -243,6 +352,13 @@ export function Proveedores() {
                       </span>
                     </td>
                     <td className="text-end text-nowrap">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-secondary rounded-0 me-1"
+                        onClick={() => setProveedorSaldo(p)}
+                      >
+                        Ver saldo
+                      </button>
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-primary rounded-0 me-1"

@@ -10,6 +10,7 @@ import { api } from './cliente'
 import type {
   CompraDetalle,
   EstadoCompra,
+  EstadoPago,
   ItemDeCompra,
   LineaDeCompraSolicitada,
   PaginaDeCompras,
@@ -94,6 +95,30 @@ export function etiquetaDeEstadoCompra(estado: EstadoCompra): string {
       return 'Confirmada'
     case 'Anulada':
       return 'Anulada'
+  }
+}
+
+/** Espejo de `EstadoPago` (`ServicioDeSaldoDeProveedor`) — compartido por `Compras.tsx` (columna
+ * de estado de pago) y el panel de saldo de `Proveedores.tsx` (Slice 6). */
+export function etiquetaDeEstadoPago(estado: EstadoPago): string {
+  switch (estado) {
+    case 'Pagada':
+      return 'Pagada'
+    case 'Parcial':
+      return 'Parcial'
+    case 'Impaga':
+      return 'Impaga'
+  }
+}
+
+export function claseDeBadgeDeEstadoPago(estado: EstadoPago): string {
+  switch (estado) {
+    case 'Pagada':
+      return 'text-bg-success'
+    case 'Parcial':
+      return 'text-bg-warning'
+    case 'Impaga':
+      return 'text-bg-secondary'
   }
 }
 
