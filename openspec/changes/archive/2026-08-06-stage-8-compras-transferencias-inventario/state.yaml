@@ -37,7 +37,8 @@ phases:
     notes: "PASS WITH WARNINGS (2026-08-06, main 371be17): 0 CRITICAL; 3 WARNINGS — all documentation drift, reconciled pre-archive (design anulacion-code annotated SUPERSEDED, tasks 5.4 stale note corrected, response-DTO note added to design); 4 SUGGESTIONS (coverage minors, listed for backlog). All suites exact and re-run live: 378/212/691/414; 121 dedicated stage-8 integration cases; every success criterion evidenced; lock-order matrix cycle-free across all new writers; arqueo byte-untouched verified via git log; doc-10 stage table rows 1-8 ALL CLOSED — the program-completion claim holds. Verdict: ready to archive — closing the doc-10 legacy-parity program."
     depends_on: [apply]
   archive:
-    status: pending
+    status: done
+    notes: "Archived 2026-08-06. Verdict carried from verify: PASS WITH WARNINGS (0 CRITICAL; doc-drift reconciled pre-archive; 4 coverage suggestions to backlog). 4 new capability specs merged into openspec/specs/ (comprobantes-compra, transferencias-de-stock, conteo-de-inventario, saldo-de-proveedor); 5 delta specs merged (stock, gastos, arqueo-de-cierre, proveedores, operacion-de-pos) preserving every untouched requirement. Change folder moved to openspec/changes/archive/2026-08-06-stage-8-compras-transferencias-inventario/. THIS ARCHIVE CLOSES THE DOC-10 LEGACY-PARITY PROGRAM: stages 1-8 all archived, no etapa 9 exists."
     depends_on: [verify]
 dependencies:
   spec: [propose]
