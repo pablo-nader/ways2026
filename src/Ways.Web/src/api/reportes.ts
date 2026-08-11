@@ -7,6 +7,7 @@
  */
 import { api } from './cliente'
 import type {
+  Comisiones,
   Granularidad,
   Rentabilidad,
   ResumenDeGastos,
@@ -95,6 +96,8 @@ export const clienteDeReportes = {
     const conEstimados = filtros.incluirEstimados ? `${query}&incluirEstimados=true` : query
     return api.get<Rentabilidad>(`/reportes/rentabilidad${conEstimados}`)
   },
+  comisiones: (filtros: FiltrosDeBreakdownConPv) =>
+    api.get<Comisiones>(`/reportes/comisiones${construirQueryDeBreakdownConPv(filtros)}`),
 }
 
 function aFechaIso(fecha: Date): string {

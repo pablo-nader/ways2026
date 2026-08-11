@@ -607,29 +607,53 @@ visible only to Admin. **Rollback**: revert this single branch — endpoint
 and card disappear, no migration, no persisted row to unwind (proposal
 Rollback Plan step 4).
 
-- [ ] 10.1 Extend `ServicioDeReportesDeVentas.cs` (reuses the net-sales
+- [x] 10.1 Extend `ServicioDeReportesDeVentas.cs` (reuses the net-sales
   filter): `ObtenerComisionesAsync` — group by `id_empleado`, `comision =
   neto_vendido_por_empleado × comision_porcentaje`, rate resolved via
   `ServicioDeParametros` (PV → empresa → default `0`). No write. *(spec
   rentabilidad-y-comisiones: Comisiones Is A Provisional, Non-Persisted
-  Report)*
-- [ ] 10.2 Extend `Contratos.cs` + `ReportesEndpoints.cs`: `GET /comisiones`
+  Report)* — reuses `ConsultarPorVendedorAsync` (`neto_vendido_por_empleado`
+  IS the existing por-vendedor aggregate) plus a new
+  `ResolverComisionPorcentajeAsync` (same PV → empresa → default precedence
+  as `ResolverZonaAsync`). `Comisiones.Provisional` always `true`.
+- [x] 10.2 Extend `Contratos.cs` + `ReportesEndpoints.cs`: `GET /comisiones`
   under `LecturaDeReportes` **+** `LecturaDeRentabilidad`.
-- [ ] 10.3 Extend `reportes.ts` + `Tablero.tsx`: comisiones card, Admin-only,
+- [x] 10.3 Extend `reportes.ts` + `Tablero.tsx`: comisiones card, Admin-only,
   literal `PROVISIONAL` badge, states the rate used. *(spec tablero:
-  Comisiones Card Is Labelled PROVISIONAL)*
-- [ ] 10.4 [P] `ReportesComisionesTests` — 4-test pattern + default rate `0`
+  Comisiones Card Is Labelled PROVISIONAL)* — `PanelDeComisiones` follows the
+  `usePanelDeReporte` pattern (own generation/`cargando`/`error`), gated by
+  `usuario && puedeVerComisiones(usuario.rolId)` in `Tablero` (no mount, no
+  fetch, for non-Admin — same construction as `PanelDeRentabilidad`). Rate
+  `0` renders an explicit "Comisiones desactivadas" message instead of a
+  table of `$0,00` rows (mutation-proof-tests evidence in
+  `Tablero.test.tsx`).
+- [x] 10.4 [P] `ReportesComisionesTests` — 4-test pattern + default rate `0`
   ⇒ every empleado's `comision = 0`; configured rate ⇒ non-zero and
   response labelled PROVISIONAL; no row written to any table (assert no
-  new row in any candidate table pre/post call).
-- [ ] 10.5 [P] Component test: PROVISIONAL text visible alongside computed
-  amounts; card absent for non-Admin.
-- [ ] 10.6 Complete `ReportesAutorizacionTests` for the full 9-route matrix.
-- [ ] 10.7 Gate guard: `dotnet ef migrations list` unchanged — final check
-  for the whole stage.
+  new row in any candidate table pre/post call). 7 tests; mutation evidence
+  recorded (`ServicioDeReportesDeVentas.cs` comment): the
+  `f.Neto * comisionPorcentaje / 100m` clause is the ONLY thing governing
+  both the configured-rate and the default-rate-0 outcome — mutated to
+  `f.Neto`, 4/7 tests failed (including the rate-0 test), reverted, all 7
+  pass again.
+- [x] 10.5 [P] Component test: PROVISIONAL text visible alongside computed
+  amounts; card absent for non-Admin. 5 tests in `Tablero.test.tsx`
+  (Supervisor/Vendedor absent + no fetch, Admin sees badge+rate+row, rate-0
+  off-state, PV filter reaches `/comisiones`); mutation evidence recorded
+  for the rate-0 branch (`{false ? ... : ...}` in place of
+  `datos.comisionPorcentaje === 0` → off-state test failed, reverted, green).
+- [x] 10.6 Complete `ReportesAutorizacionTests` for the full 9-route matrix.
+  New dedicated file, parameterized over the 9 routes: Vendedor/Root 403 on
+  all nine, Admin 200 on all nine, Supervisor 200 on the seven without
+  `LecturaDeRentabilidad` and 403 on `/rentabilidad` + `/comisiones` — 36
+  tests.
+- [x] 10.7 Gate guard: `dotnet ef migrations list` unchanged — final check
+  for the whole stage. Confirmed: same 18 migrations, last one
+  `20260811033540_CostoCongeladoEnVentaEtapa9` (stage 9) — no new file, `git
+  status` on `Migrations/` clean.
 - [ ] 10.8 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 10.9 Branch `feat/stage10-slice10-comisiones` off `main` (parent:
-  slice 7); PR; merge stacked-to-main.
+  slice 7); PR; merge stacked-to-main. Branch created; PR/merge pending.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ReportesComisiones` /
 `npm run test -- Tablero`

@@ -69,6 +69,17 @@ public static class ReportesEndpoints
             servicio.ObtenerPorMedioPagoAsync(idEmpresa, idPuntoVenta, desde, hasta, ct))
         .WithSummary("Ventas netas del período agrupadas por medio de pago (pagos_comprobante.id_medio_pago).");
 
+        // stage-10-agregacion-dashboard, Slice 10 (PROVISIONAL — droppable en su totalidad): mismo
+        // apilado de políticas que /rentabilidad (design decisión 7).
+        grupo.MapGet("/comisiones", (
+            ServicioDeReportesDeVentas servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
+            CancellationToken ct) =>
+            servicio.ObtenerComisionesAsync(idEmpresa, idPuntoVenta, desde, hasta, ct))
+        .RequireAuthorization(Politicas.LecturaDeRentabilidad)
+        .WithSummary(
+            "PROVISIONAL: comisión por vendedor = neto vendido × comision_porcentaje (default 0, " +
+            "un Admin configura la tasa desde Parámetros). Nada se persiste — calculado on the fly.");
+
         return app;
     }
 }
