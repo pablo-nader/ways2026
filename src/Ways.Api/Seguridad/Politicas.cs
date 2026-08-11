@@ -56,6 +56,20 @@ public static class Politicas
     /// legacy de esta etapa (el legacy no tiene ningún gate de rol sobre cuenta corriente).</summary>
     public const string SupervisionDeCuentaCorriente = "supervision_cuenta_corriente";
 
+    /// <summary>Supervisor o admin — la puerta de los reportes de gestión operativos/de volumen
+    /// bajo <c>/api/reportes/*</c> (stage-10-agregacion-dashboard; spec reportes-de-gestion:
+    /// LecturaDeReportes Policy Gates The Volume/Operational Reports). Vendedor y Root quedan
+    /// afuera. <c>/rentabilidad</c> y <c>/comisiones</c> apilan
+    /// <see cref="LecturaDeRentabilidad"/> encima de esta — ASP.NET Core compone políticas con
+    /// AND, mismo criterio que <see cref="OperacionDePos"/> + <see cref="GestionDeCatalogo"/>.</summary>
+    public const string LecturaDeReportes = "lectura_reportes";
+
+    /// <summary>Solo admin — la puerta del margen y las comisiones (stage-10-agregacion-dashboard;
+    /// spec rentabilidad-y-comisiones: LecturaDeRentabilidad Policy Admits Admin Only). El costo
+    /// es el dato más sensible del sistema; esta etapa no amplía quién lo ve. Se apila sobre
+    /// <see cref="LecturaDeReportes"/> en <c>/rentabilidad</c> y <c>/comisiones</c>.</summary>
+    public const string LecturaDeRentabilidad = "lectura_rentabilidad";
+
     public static AuthorizationBuilder AgregarPoliticasWays(this AuthorizationBuilder builder)
     {
         return builder
@@ -97,6 +111,15 @@ public static class Politicas
                         .RequireClaim(
                             ClaimsWays.RolId,
                             ((int)RolConocido.Supervisor).ToString(),
-                            ((int)RolConocido.Admin).ToString()));
+                            ((int)RolConocido.Admin).ToString()))
+            .AddPolicy(LecturaDeReportes, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(
+                            ClaimsWays.RolId,
+                            ((int)RolConocido.Supervisor).ToString(),
+                            ((int)RolConocido.Admin).ToString()))
+            .AddPolicy(LecturaDeRentabilidad, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(ClaimsWays.RolId, ((int)RolConocido.Admin).ToString()));
     }
 }
