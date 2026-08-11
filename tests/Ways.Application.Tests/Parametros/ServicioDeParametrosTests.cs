@@ -159,4 +159,48 @@ public class ServicioDeParametrosTests
         Assert.Equal("parametro_zona_horaria_invalida", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);
     }
+
+    [Fact]
+    public async Task EstablecerAsyncRechazaUnIdDeZonaNativoDeWindows()
+    {
+        var nombreDeBase = nameof(EstablecerAsyncRechazaUnIdDeZonaNativoDeWindows);
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("zona_horaria", "\"Argentina Standard Time\"", null)));
+
+        Assert.Equal("parametro_zona_horaria_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public async Task EstablecerAsyncAceptaUnaZonaIanaFueraDeLaListaCuradaDelFront()
+    {
+        var nombreDeBase = nameof(EstablecerAsyncAceptaUnaZonaIanaFueraDeLaListaCuradaDelFront);
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+
+        var parametro = await servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("zona_horaria", "\"America/Santiago\"", null));
+
+        Assert.Equal("\"America/Santiago\"", parametro.Valor);
+    }
+
+    [Fact]
+    public async Task EstablecerAsyncRechazaUnaZonaHorariaVacia()
+    {
+        var nombreDeBase = nameof(EstablecerAsyncRechazaUnaZonaHorariaVacia);
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("zona_horaria", "\"\"", null)));
+
+        Assert.Equal("parametro_zona_horaria_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
 }

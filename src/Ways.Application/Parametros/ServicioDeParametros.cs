@@ -142,7 +142,12 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj)
             var zona = (string)valor;
             try
             {
-                TimeZoneInfo.FindSystemTimeZoneById(zona);
+                // HasIanaId frena los ids nativos de Windows ("Argentina Standard Time"),
+                // que FindSystemTimeZoneById resuelve en ambos OS pero Postgres no entiende.
+                if (!TimeZoneInfo.FindSystemTimeZoneById(zona).HasIanaId)
+                {
+                    throw new TimeZoneNotFoundException(zona);
+                }
             }
             catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
             {

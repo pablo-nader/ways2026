@@ -62,4 +62,20 @@ public class ResolucionDeParametrosTests
         Assert.Equal("parametro_desconocido", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);
     }
+
+    [Fact]
+    public void ZonaHorariaResuelveASuDefaultSinFilasConfiguradas()
+    {
+        var resuelto = ResolucionDeParametros.Resolver("zona_horaria", [], idPuntoVenta: 3);
+
+        Assert.Equal("\"America/Argentina/Buenos_Aires\"", resuelto);
+    }
+
+    [Fact]
+    public void ComisionPorcentajeResuelveACeroSinFilasConfiguradas()
+    {
+        var resuelto = ResolucionDeParametros.Resolver("comision_porcentaje", [], idPuntoVenta: 3);
+
+        Assert.Equal("0", resuelto);
+    }
 }
