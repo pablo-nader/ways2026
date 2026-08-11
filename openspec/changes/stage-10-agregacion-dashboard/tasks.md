@@ -463,21 +463,58 @@ the branch; route/nav entries removed.
 breakdown panels (PV, vendedor, medio de pago, top artículos), each owning
 its own fetch and `cargando`. **Rollback**: revert the branch.
 
-- [ ] 8.1 Extend `reportes.ts`: client functions for `/por-punto-venta`,
-  `/por-vendedor`, `/por-medio-pago`, `/articulos/top`.
-- [ ] 8.2 Extend `Tablero.tsx`: filter bar wired to all panels (no panel
+- [x] 8.1 Extend `reportes.ts`: client functions for `/por-punto-venta`,
+  `/por-vendedor`, `/por-medio-pago`, `/articulos/top`. — all four
+  implemented. `articulosTop` reuses `construirQueryDeBreakdownConPv` (it
+  accepts `idPuntoVenta`, unlike `por-punto-venta`) and appends its own
+  `limite` parameter (`ReportesEndpoints.cs`: `int? limite`, optional).
+  `tipos.ts` mirrors `ArticuloTop`/`TopArticulos` field-for-field against
+  `Contratos.cs`.
+- [x] 8.2 Extend `Tablero.tsx`: filter bar wired to all panels (no panel
   fetches its own independent range — spec requirement); one panel per
   dimension, each with its own `useRef` generation token per
   `react-async-state` rule 10 (applies to **every** panel added in this PR,
   not just the first). *(spec tablero: Breakdown Panels Share Range And
-  Granularity Controls)*
-- [ ] 8.3 [P] Stale-response test per panel (4 tests): a superseded
+  Granularity Controls)* — all four panels implemented (por punto de venta,
+  por vendedor, por medio de pago, top artículos); each panel's generation
+  token lives in a shared `usePanelDeReporte` hook, one instance per panel,
+  never the page-level G1 pair (proven independent — see the panel-failure
+  test in `Tablero.test.tsx`). **Deviation**: `granularidad` is NOT
+  forwarded to any of the four breakdown panels — the shipped backend
+  contract (slice 3/4, out of scope to change here) does not read a
+  `granularidad` parameter on any of `/por-punto-venta`, `/por-vendedor`,
+  `/por-medio-pago` or `/articulos/top` (design: Endpoints — "granularidad
+  only on the two series"); these four are period-total subtotals/rankings,
+  not time buckets. `idPuntoVenta` is wired to `/por-vendedor`,
+  `/por-medio-pago` and `/articulos/top`, but deliberately never sent to
+  `/por-punto-venta` (design: "would be a contradiction" to filter by the
+  same field being grouped) — proven end-to-end in `Tablero.test.tsx`.
+  `limite` for `/articulos/top` is a fixed client-side default (`10`), no
+  "Top N" selector this slice.
+- [x] 8.3 [P] Stale-response test per panel (4 tests): a superseded
   in-flight fetch (range/granularity changed mid-request) never repaints a
   panel already re-scoped. *(spec: Changing granularity re-buckets every
-  panel)*
-- [x] 8.4 Run `judgment-day`; fix; re-judge until clean.
+  panel)* — 4 tests, one per panel; mutation evidence recorded
+  (`Tablero.test.tsx` comments): the shared generation guard in
+  `usePanelDeReporte` was deleted once, all four stale-response tests
+  failed, reverted, all four pass again. A separate mutation run on the
+  `valor: f.neto`/`valor: a.total` chart-data mapping (all four panels)
+  confirmed the same fail→revert→pass cycle (slice-7 precedent:
+  `neto`→`cantidadTx`/`cantidadPagos`, and `total`→`cantidad` for top
+  artículos). Two additional coverage gaps closed per judgment-day round 1
+  (Judge B, minors): a panel-independence test (one panel's fetch rejects,
+  sibling panels keep rendering their own data unaffected — no
+  cross-contamination of `usePanelDeReporte` instances) and a table-half
+  assertion per panel (money formatting, the `—` fallback for a null
+  `ticketPromedio`, and the `PV #id`/`Medio #id` lookup-miss fallback for an
+  id absent from the catalog fixture) — the chart's `data-serie` alone never
+  exercised the table's own rendering branches.
+- [x] 8.4 Run `judgment-day`; fix; re-judge until clean. *(Round 1: Judge A
+  REJECT/MAJOR on the 3-panel narrowing — resolved by completing the 4th
+  panel; Judge B's two coverage gaps folded into the same pass. Round 2:
+  Judge A APPROVE with the 4-panel contract verified.)*
 - [x] 8.5 Branch `feat/stage10-slice8-tablero-dimensiones` off `main`
-  (parent: slice 7); PR; merge stacked-to-main.
+  (parent: slice 7); PR #84; merged stacked-to-main.
 
 **Verify**: `npm run test -- Tablero`
 

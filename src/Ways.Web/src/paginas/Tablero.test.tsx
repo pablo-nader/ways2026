@@ -4,13 +4,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tablero } from './Tablero'
 import { rangoUltimosSieteDias } from '../api/reportes'
 import { ROL } from '../api/tipos'
-import type { EmpresaListado, ResumenDeGastos, ResumenDeVentas, UsuarioAutenticado } from '../api/tipos'
+import type {
+  EmpresaListado,
+  MedioPagoListado,
+  PuntoVentaListado,
+  ResumenDeGastos,
+  ResumenDeVentas,
+  TopArticulos,
+  UsuarioAutenticado,
+  VentasPorMedioPago,
+  VentasPorPuntoVenta,
+  VentasPorVendedor,
+} from '../api/tipos'
 import { RutaProtegida } from '../auth/RutaProtegida'
 
 const apiGetMock = vi.fn()
 
 // `recharts` se mockea igual que en los tests de los wrappers: bajo jsdom no renderiza
 // nada observable, y sin el stub el mapeo de datos al grafico queda sin asercion posible.
+// `BarChart`/`Bar` (Slice 8, paneles de desglose) se agregan al mismo mock que `LineChart`.
 vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: { children: import('react').ReactNode }) => (
     <div data-testid="responsive-container">{children}</div>
@@ -21,6 +33,12 @@ vi.mock('recharts', () => ({
     </div>
   ),
   Line: () => null,
+  BarChart: ({ data, children }: { data: unknown[]; children: import('react').ReactNode }) => (
+    <div data-testid="bar-chart" data-serie={JSON.stringify(data)}>
+      {children}
+    </div>
+  ),
+  Bar: () => null,
   XAxis: () => null,
   YAxis: () => null,
   Tooltip: () => null,
@@ -95,13 +113,84 @@ function gastosFixture(sobrescribir: Partial<ResumenDeGastos> = {}): ResumenDeGa
   }
 }
 
+const puntoVentaCentro: PuntoVentaListado = {
+  id: 10,
+  idTenant: 1,
+  idEmpresa: 1,
+  nombre: 'PV Centro',
+  domicilio: null,
+  horario: null,
+  whatsapp: null,
+  instagram: null,
+  facebook: null,
+  web: null,
+}
+
+const medioEfectivo: MedioPagoListado = {
+  id: 1,
+  nombre: 'Efectivo',
+  activo: true,
+  idEmpresa: null,
+  orden: 1,
+  comportamiento: 'Efectivo',
+  admiteVuelto: true,
+  requiereReferencia: false,
+  recargoPorcentaje: null,
+}
+
+function ventasPorPuntoVentaFixture(sobrescribir: Partial<VentasPorPuntoVenta> = {}): VentasPorPuntoVenta {
+  return {
+    desde: '2026-08-05',
+    hasta: '2026-08-11',
+    zonaHoraria: 'America/Argentina/Buenos_Aires',
+    filas: [{ idPuntoVenta: 10, neto: 1500, cantidadTx: 5, ticketPromedio: 500 }],
+    ...sobrescribir,
+  }
+}
+
+function ventasPorVendedorFixture(sobrescribir: Partial<VentasPorVendedor> = {}): VentasPorVendedor {
+  return {
+    desde: '2026-08-05',
+    hasta: '2026-08-11',
+    zonaHoraria: 'America/Argentina/Buenos_Aires',
+    filas: [{ idEmpleado: 9, neto: 800, cantidadTx: 3, ticketPromedio: 266.67 }],
+    ...sobrescribir,
+  }
+}
+
+function ventasPorMedioPagoFixture(sobrescribir: Partial<VentasPorMedioPago> = {}): VentasPorMedioPago {
+  return {
+    desde: '2026-08-05',
+    hasta: '2026-08-11',
+    zonaHoraria: 'America/Argentina/Buenos_Aires',
+    filas: [{ idMedioPago: 1, neto: 1200, cantidadPagos: 4 }],
+    ...sobrescribir,
+  }
+}
+
+function topArticulosFixture(sobrescribir: Partial<TopArticulos> = {}): TopArticulos {
+  return {
+    desde: '2026-08-05',
+    hasta: '2026-08-11',
+    zonaHoraria: 'America/Argentina/Buenos_Aires',
+    articulos: [{ idArticulo: 55, descripcion: 'Producto Estrella', cantidad: 12, total: 2400 }],
+    ...sobrescribir,
+  }
+}
+
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/empresas') return Promise.resolve([empresaUno])
+    if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaCentro])
+    if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioEfectivo])
     const propia = sobrescribir?.(ruta)
     if (propia) return propia
     if (ruta.startsWith('/reportes/ventas/resumen?')) return Promise.resolve(ventasFixture())
     if (ruta.startsWith('/reportes/gastos/resumen?')) return Promise.resolve(gastosFixture())
+    if (ruta.startsWith('/reportes/ventas/por-punto-venta?')) return Promise.resolve(ventasPorPuntoVentaFixture())
+    if (ruta.startsWith('/reportes/ventas/por-vendedor?')) return Promise.resolve(ventasPorVendedorFixture())
+    if (ruta.startsWith('/reportes/ventas/por-medio-pago?')) return Promise.resolve(ventasPorMedioPagoFixture())
+    if (ruta.startsWith('/reportes/articulos/top?')) return Promise.resolve(topArticulosFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -268,5 +357,285 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
         { etiqueta: '05/08', valor: 300 },
       ])
     })
+  })
+})
+
+describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-dashboard, Slice 8)', () => {
+  // Prueba el mapeo `valor: f.neto`/`valor: a.total` de los cuatro paneles (mutation-proof-tests):
+  // mismo precedente que la slice 7 (`neto` → `cantidadTx`). Mutación aplicada a los cuatro
+  // paneles (`Tablero.tsx`, `data={datos.filas.map(...)}` / `data={datos.articulos.map(...)}`) →
+  // cambiado `f.neto` por `f.cantidadTx`/`f.cantidadPagos` y `a.total` por `a.cantidad` → esta
+  // aserción falló (300/5/4/12 en vez de 1500/800/1200/2400) → revertido → vuelve a pasar.
+  it('cada panel manda su GraficoDeBarras con neto/total como valor, etiquetado por su propia dimensión', async () => {
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('bar-chart')).toHaveLength(4)
+    })
+
+    const barras = screen.getAllByTestId('bar-chart')
+    expect(JSON.parse(barras[0].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'PV Centro', valor: 1500 }])
+    expect(JSON.parse(barras[1].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'Vendedor #9', valor: 800 }])
+    expect(JSON.parse(barras[2].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'Efectivo', valor: 1200 }])
+    expect(JSON.parse(barras[3].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'Producto Estrella', valor: 2400 }])
+  })
+
+  // Mitad "tabla" de cada panel (Judge B, ronda 1): el data-serie del gráfico no prueba el
+  // formato de moneda, el fallback "—" de un ticket promedio null, ni el fallback de lookup-miss
+  // (`PV #id`/`Medio #id`) contra el catálogo — solo el texto renderizado de la tabla lo hace.
+  it('el panel por punto de venta renderiza la tabla: moneda, "—" para ticket promedio null, y "PV #id" para un id fuera del catálogo', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/ventas/por-punto-venta?')) {
+        return Promise.resolve(
+          ventasPorPuntoVentaFixture({
+            filas: [
+              { idPuntoVenta: 10, neto: 1500, cantidadTx: 5, ticketPromedio: null },
+              { idPuntoVenta: 99, neto: 700, cantidadTx: 2, ticketPromedio: 350 },
+            ],
+          }),
+        )
+      }
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    await screen.findByText('PV #99') // idPuntoVenta 99 no está en el catálogo mockeado
+
+    expect(screen.getByText('PV #99')).toBeInTheDocument()
+    expect(screen.getByText('$1.500,00')).toBeInTheDocument()
+    expect(screen.getByText('$700,00')).toBeInTheDocument()
+    expect(screen.getByText('$350,00')).toBeInTheDocument()
+    expect(screen.getByText('—')).toBeInTheDocument() // fila con ticketPromedio: null
+  })
+
+  it('el panel por vendedor renderiza la tabla: moneda y "—" para ticket promedio null', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/ventas/por-vendedor?')) {
+        return Promise.resolve(ventasPorVendedorFixture({ filas: [{ idEmpleado: 9, neto: 800, cantidadTx: 3, ticketPromedio: null }] }))
+      }
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+
+    expect(await screen.findByText('Vendedor #9')).toBeInTheDocument()
+    expect(screen.getByText('$800,00')).toBeInTheDocument()
+    expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
+  it('el panel por medio de pago renderiza la tabla: moneda y "Medio #id" para un id fuera del catálogo', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/ventas/por-medio-pago?')) {
+        return Promise.resolve(ventasPorMedioPagoFixture({ filas: [{ idMedioPago: 88, neto: 1200, cantidadPagos: 4 }] }))
+      }
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+
+    expect(await screen.findByText('Medio #88')).toBeInTheDocument() // idMedioPago 88 no está en el catálogo mockeado
+    expect(screen.getByText('$1.200,00')).toBeInTheDocument()
+  })
+
+  it('el panel top artículos renderiza la tabla: descripción, cantidad y moneda', async () => {
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+
+    expect(await screen.findByText('Producto Estrella')).toBeInTheDocument()
+    expect(screen.getByText('12')).toBeInTheDocument()
+    expect(screen.getByText('$2.400,00')).toBeInTheDocument()
+  })
+
+  // Independencia por panel (Judge B, ronda 1): un panel que falla no debe contaminar el
+  // busy/error de sus hermanos — cada uno trae su propia instancia de `usePanelDeReporte`.
+  it('un panel que falla no contamina el estado de los paneles hermanos', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/ventas/por-punto-venta?')) {
+        return Promise.reject(new Error('boom'))
+      }
+      return undefined
+    })
+
+    renderTablero()
+    await screen.findByText('Empresa Uno SA')
+
+    expect(await screen.findByText('No se pudo cargar el desglose por punto de venta.')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Reintentar' })).toHaveLength(1)
+
+    // los tres paneles hermanos, sin fallas propias, siguen mostrando su data normalmente
+    await waitFor(() => {
+      expect(screen.getByText('Vendedor #9')).toBeInTheDocument()
+      expect(screen.getByText('Efectivo')).toBeInTheDocument()
+      expect(screen.getByText('Producto Estrella')).toBeInTheDocument()
+    })
+  })
+
+  // Prueba la guarda de generación DE CADA PANEL (`usePanelDeReporte`, react-async-state regla 2):
+  // no es el par compartido de la card G1 (deviation registrada en tasks.md antes de la 7.6).
+  // Mutación aplicada UNA VEZ en el hook compartido (`if (generacionRef.current !== miGeneracion)
+  // return` borrada de las tres ramas) → los cuatro tests de esta sección fallaron (la respuesta
+  // obsoleta de cada panel pisó el valor ya re-scopeado) → revertido → los cuatro vuelven a pasar.
+  it('el panel por punto de venta descarta una respuesta obsoleta cuando "Hasta" cambia antes de que resuelva', async () => {
+    let resolverPrimera: (valor: VentasPorPuntoVenta) => void = () => {}
+    const primera = new Promise<VentasPorPuntoVenta>((resolve) => {
+      resolverPrimera = resolve
+    })
+    let llamadas = 0
+
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/ventas/por-punto-venta?')) {
+        llamadas += 1
+        if (llamadas === 1) return primera
+        return Promise.resolve(ventasPorPuntoVentaFixture({ filas: [{ idPuntoVenta: 10, neto: 9999, cantidadTx: 1, ticketPromedio: 9999 }] }))
+      }
+      return undefined
+    })
+
+    renderTablero()
+    await screen.findByText('Empresa Uno SA')
+
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+
+    await waitFor(() => {
+      const barras = screen.getAllByTestId('bar-chart')
+      expect(JSON.parse(barras[0].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'PV Centro', valor: 9999 }])
+    })
+
+    resolverPrimera(ventasPorPuntoVentaFixture({ filas: [{ idPuntoVenta: 10, neto: 1, cantidadTx: 1, ticketPromedio: 1 }] }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const barras = screen.getAllByTestId('bar-chart')
+    expect(JSON.parse(barras[0].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'PV Centro', valor: 9999 }])
+  })
+
+  it('el panel por vendedor descarta una respuesta obsoleta cuando "Hasta" cambia antes de que resuelva', async () => {
+    let resolverPrimera: (valor: VentasPorVendedor) => void = () => {}
+    const primera = new Promise<VentasPorVendedor>((resolve) => {
+      resolverPrimera = resolve
+    })
+    let llamadas = 0
+
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/ventas/por-vendedor?')) {
+        llamadas += 1
+        if (llamadas === 1) return primera
+        return Promise.resolve(ventasPorVendedorFixture({ filas: [{ idEmpleado: 9, neto: 9999, cantidadTx: 1, ticketPromedio: 9999 }] }))
+      }
+      return undefined
+    })
+
+    renderTablero()
+    await screen.findByText('Empresa Uno SA')
+
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+
+    await waitFor(() => {
+      const barras = screen.getAllByTestId('bar-chart')
+      expect(JSON.parse(barras[1].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'Vendedor #9', valor: 9999 }])
+    })
+
+    resolverPrimera(ventasPorVendedorFixture({ filas: [{ idEmpleado: 9, neto: 1, cantidadTx: 1, ticketPromedio: 1 }] }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const barras = screen.getAllByTestId('bar-chart')
+    expect(JSON.parse(barras[1].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'Vendedor #9', valor: 9999 }])
+  })
+
+  it('el panel por medio de pago descarta una respuesta obsoleta cuando "Hasta" cambia antes de que resuelva', async () => {
+    let resolverPrimera: (valor: VentasPorMedioPago) => void = () => {}
+    const primera = new Promise<VentasPorMedioPago>((resolve) => {
+      resolverPrimera = resolve
+    })
+    let llamadas = 0
+
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/ventas/por-medio-pago?')) {
+        llamadas += 1
+        if (llamadas === 1) return primera
+        return Promise.resolve(ventasPorMedioPagoFixture({ filas: [{ idMedioPago: 1, neto: 9999, cantidadPagos: 1 }] }))
+      }
+      return undefined
+    })
+
+    renderTablero()
+    await screen.findByText('Empresa Uno SA')
+
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+
+    await waitFor(() => {
+      const barras = screen.getAllByTestId('bar-chart')
+      expect(JSON.parse(barras[2].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'Efectivo', valor: 9999 }])
+    })
+
+    resolverPrimera(ventasPorMedioPagoFixture({ filas: [{ idMedioPago: 1, neto: 1, cantidadPagos: 1 }] }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const barras = screen.getAllByTestId('bar-chart')
+    expect(JSON.parse(barras[2].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'Efectivo', valor: 9999 }])
+  })
+
+  it('el panel top artículos descarta una respuesta obsoleta cuando "Hasta" cambia antes de que resuelva', async () => {
+    let resolverPrimera: (valor: TopArticulos) => void = () => {}
+    const primera = new Promise<TopArticulos>((resolve) => {
+      resolverPrimera = resolve
+    })
+    let llamadas = 0
+
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/articulos/top?')) {
+        llamadas += 1
+        if (llamadas === 1) return primera
+        return Promise.resolve(
+          topArticulosFixture({ articulos: [{ idArticulo: 55, descripcion: 'Producto Estrella', cantidad: 1, total: 9999 }] }),
+        )
+      }
+      return undefined
+    })
+
+    renderTablero()
+    await screen.findByText('Empresa Uno SA')
+
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+
+    await waitFor(() => {
+      const barras = screen.getAllByTestId('bar-chart')
+      expect(JSON.parse(barras[3].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'Producto Estrella', valor: 9999 }])
+    })
+
+    resolverPrimera(topArticulosFixture({ articulos: [{ idArticulo: 55, descripcion: 'Producto Estrella', cantidad: 1, total: 1 }] }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const barras = screen.getAllByTestId('bar-chart')
+    expect(JSON.parse(barras[3].dataset.serie ?? '[]')).toEqual([{ etiqueta: 'Producto Estrella', valor: 9999 }])
+  })
+
+  // Prueba `construirQueryDeBreakdown` vs `construirQueryDeBreakdownConPv` end-to-end (design:
+  // Endpoints — "idPuntoVenta en todo menos por-punto-venta, sería una contradicción"): filtrar
+  // por PV debe llegar a por-vendedor/por-medio-pago/articulos-top pero jamás a por-punto-venta.
+  it('el filtro de punto de venta viaja a por-vendedor, por-medio-pago y articulos/top, nunca a por-punto-venta', async () => {
+    mockearRutasBase()
+    renderTablero()
+    await screen.findByText('Empresa Uno SA')
+    await waitFor(() => expect(screen.getAllByTestId('bar-chart')).toHaveLength(4))
+
+    fireEvent.change(screen.getByLabelText('Punto de venta'), { target: { value: '10' } })
+
+    await waitFor(() => {
+      const rutas = apiGetMock.mock.calls.map((llamada) => llamada[0] as string)
+      expect(rutas.some((r) => r.startsWith('/reportes/ventas/por-vendedor?') && r.includes('idPuntoVenta=10'))).toBe(true)
+      expect(rutas.some((r) => r.startsWith('/reportes/ventas/por-medio-pago?') && r.includes('idPuntoVenta=10'))).toBe(true)
+      expect(rutas.some((r) => r.startsWith('/reportes/articulos/top?') && r.includes('idPuntoVenta=10'))).toBe(true)
+    })
+
+    const rutasPorPv = apiGetMock.mock.calls.map((llamada) => llamada[0] as string).filter((r) => r.startsWith('/reportes/ventas/por-punto-venta?'))
+    expect(rutasPorPv.every((r) => !r.includes('idPuntoVenta'))).toBe(true)
   })
 })

@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest'
-import { construirQueryDeReporte, rangoUltimosSieteDias } from './reportes'
-import type { FiltrosDeReporte } from './reportes'
+import { describe, expect, it, vi } from 'vitest'
+import type { FiltrosDeBreakdown, FiltrosDeBreakdownConPv, FiltrosDeReporte, FiltrosDeTopArticulos } from './reportes'
+
+const apiGetMock = vi.fn(() => Promise.resolve(undefined))
+
+vi.mock('./cliente', () => ({
+  api: { get: (...args: unknown[]) => apiGetMock(...(args as [])) },
+}))
+
+const { clienteDeReportes, construirQueryDeBreakdown, construirQueryDeBreakdownConPv, construirQueryDeReporte, rangoUltimosSieteDias } =
+  await import('./reportes')
 
 function filtrosFixture(sobrescribir: Partial<FiltrosDeReporte> = {}): FiltrosDeReporte {
   return {
@@ -11,6 +19,18 @@ function filtrosFixture(sobrescribir: Partial<FiltrosDeReporte> = {}): FiltrosDe
     granularidad: 'Dia',
     ...sobrescribir,
   }
+}
+
+function filtrosBreakdownFixture(sobrescribir: Partial<FiltrosDeBreakdown> = {}): FiltrosDeBreakdown {
+  return { idEmpresa: 1, desde: '2026-08-05', hasta: '2026-08-11', ...sobrescribir }
+}
+
+function filtrosBreakdownConPvFixture(sobrescribir: Partial<FiltrosDeBreakdownConPv> = {}): FiltrosDeBreakdownConPv {
+  return { idEmpresa: 1, idPuntoVenta: null, desde: '2026-08-05', hasta: '2026-08-11', ...sobrescribir }
+}
+
+function filtrosTopArticulosFixture(sobrescribir: Partial<FiltrosDeTopArticulos> = {}): FiltrosDeTopArticulos {
+  return { idEmpresa: 1, idPuntoVenta: null, desde: '2026-08-05', hasta: '2026-08-11', limite: null, ...sobrescribir }
 }
 
 describe('construirQueryDeReporte', () => {
@@ -29,6 +49,44 @@ describe('construirQueryDeReporte', () => {
   it('propaga la granularidad tal cual (nombre del enum de C#, no camelCase)', () => {
     expect(construirQueryDeReporte(filtrosFixture({ granularidad: 'Semana' }))).toContain('granularidad=Semana')
     expect(construirQueryDeReporte(filtrosFixture({ granularidad: 'Mes' }))).toContain('granularidad=Mes')
+  })
+})
+
+describe('construirQueryDeBreakdown', () => {
+  it('arma idEmpresa/desde/hasta, sin granularidad ni idPuntoVenta (el backend no los lee en estas rutas)', () => {
+    const query = construirQueryDeBreakdown(filtrosBreakdownFixture())
+
+    expect(query).toBe('?idEmpresa=1&desde=2026-08-05&hasta=2026-08-11')
+  })
+})
+
+describe('construirQueryDeBreakdownConPv', () => {
+  it('omite idPuntoVenta cuando es null', () => {
+    const query = construirQueryDeBreakdownConPv(filtrosBreakdownConPvFixture())
+
+    expect(query).toBe('?idEmpresa=1&desde=2026-08-05&hasta=2026-08-11')
+  })
+
+  it('agrega idPuntoVenta solo cuando está seteado', () => {
+    const query = construirQueryDeBreakdownConPv(filtrosBreakdownConPvFixture({ idPuntoVenta: 7 }))
+
+    expect(query).toContain('idPuntoVenta=7')
+  })
+})
+
+describe('clienteDeReportes.articulosTop', () => {
+  it('reutiliza construirQueryDeBreakdownConPv y omite limite cuando es null', async () => {
+    apiGetMock.mockClear()
+    await clienteDeReportes.articulosTop(filtrosTopArticulosFixture())
+
+    expect(apiGetMock).toHaveBeenCalledWith('/reportes/articulos/top?idEmpresa=1&desde=2026-08-05&hasta=2026-08-11')
+  })
+
+  it('agrega limite solo cuando está seteado, junto con idPuntoVenta', async () => {
+    apiGetMock.mockClear()
+    await clienteDeReportes.articulosTop(filtrosTopArticulosFixture({ idPuntoVenta: 7, limite: 10 }))
+
+    expect(apiGetMock).toHaveBeenCalledWith('/reportes/articulos/top?idEmpresa=1&idPuntoVenta=7&desde=2026-08-05&hasta=2026-08-11&limite=10')
   })
 })
 
