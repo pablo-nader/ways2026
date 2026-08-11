@@ -14,6 +14,8 @@ using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
+using Ways.Application.Exportacion;
+using Ways.Infrastructure.Exportacion;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
@@ -54,6 +56,7 @@ public static class DependencyInjection
 
         services.AddScoped<IWaysDbContext>(sp => sp.GetRequiredService<WaysDbContext>());
         services.AddSingleton<IHasheadorDeContrasenas, HasheadorPbkdf2>();
+        services.AddSingleton<IExportadorDeTabla, ExportadorXlsx>();
 
         // Migraciones y semilla (ADR-2, ADR-14): un WaysDbContext propio, atado a la
         // instancia inmutable TenantActualFijo.Plataforma — nunca a la sesión HTTP mutable
@@ -83,6 +86,7 @@ public static class DependencyInjection
             .PersistKeysToDbContext<WaysDbContext>();
 
         services.Configure<SemillaRoot>(configuration.GetSection(SemillaRoot.Seccion));
+        services.Configure<OpcionesDeExportacion>(configuration.GetSection(OpcionesDeExportacion.Seccion));
 
         return services;
     }
