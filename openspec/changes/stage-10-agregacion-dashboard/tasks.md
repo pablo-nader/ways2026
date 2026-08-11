@@ -531,20 +531,52 @@ its own fetch and `cargando`. **Rollback**: revert the branch.
 DOM for non-Admin, present with a mandatory coverage banner for Admin.
 **Rollback**: revert the branch.
 
-- [ ] 9.1 Extend `reportes.ts` + `tipos.ts`: client + mirror for
-  `/rentabilidad` (`Rentabilidad`, `CoberturaDeCosto`).
-- [ ] 9.2 Extend `Tablero.tsx`: rentabilidad panel gated by `useAuth` role
+- [x] 9.1 Extend `reportes.ts` + `tipos.ts`: client + mirror for
+  `/rentabilidad` (`Rentabilidad`, `CoberturaDeCosto`). — `Rentabilidad`,
+  `CoberturaDeCosto`, `RentabilidadPorArticulo` mirrored field-for-field
+  against `Contratos.cs`/`CoberturaDeCosto.cs` (already shipped backend,
+  slice 4); `clienteDeReportes.rentabilidad` + `FiltrosDeRentabilidad`
+  reuse `construirQueryDeBreakdownConPv` and append `incluirEstimados` only
+  when `true` (`dto-contract-honesty`/existing `incluirInactivos` pattern —
+  absent in the query string ⇒ excluded by default). `puedeVerRentabilidad`
+  added to `tipos.ts` mirroring `Politicas.LecturaDeRentabilidad`
+  (Admin-only), next to `puedeVerReportes`.
+- [x] 9.2 Extend `Tablero.tsx`: rentabilidad panel gated by `useAuth` role
   check — **not rendered at all** for Supervisor/Vendedor (no
   `display:none`); for Admin, always render the coverage banner above the
   figure, and when any revenue is excluded/unknown state it explicitly (no
   bare percentage). *(spec tablero: Margin Panel Is Invisible, Not
-  Disabled, For Non-Admin)*
-- [ ] 9.3 [P] Component tests: Supervisor session → no rentabilidad DOM
+  Disabled, For Non-Admin)* — `PanelDeRentabilidad` follows the slice-8
+  `usePanelDeReporte` pattern (own generation/`cargando`/`error`); the
+  panel column itself is wrapped in `usuario && puedeVerRentabilidad(usuario.rolId)`
+  in `Tablero`, so a non-Admin never mounts the component — no fetch fires,
+  not just no DOM node. `bannerDeCobertura` always returns text (never
+  `null`): a confirmation line at 100% coverage, "N% estimado excluido"/"N%
+  de costo desconocido" otherwise — never a bare margin percentage. The
+  panel owns a local `incluirEstimados` opt-in toggle (checkbox) that
+  re-fetches with `incluirEstimados=true`. Per-article breakdown
+  (`porArticulo`) is mirrored in `tipos.ts` for contract completeness but
+  not rendered — out of scope per this task's copy (banner + figure only).
+- [x] 9.3 [P] Component tests: Supervisor session → no rentabilidad DOM
   node; Admin session with partial coverage → banner text asserted per
-  coverage state (100% / partial / all-unknown).
+  coverage state (100% / partial / all-unknown). — 7 tests added to
+  `Tablero.test.tsx`: Supervisor and Vendedor absence (+ zero fetches to
+  `/reportes/rentabilidad` for Supervisor), the 3 coverage-banner states
+  (100% / partial 15%+5% matching the spec's own example / all-unknown
+  100%), the `incluirEstimados` toggle refetch, and per-panel error
+  isolation (mirrors the slice-8 "panel that fails doesn't contaminate
+  siblings" pattern). Mutation evidence recorded (comments in
+  `Tablero.test.tsx`): (1) the Admin-visibility gate deleted → the
+  Supervisor test failed (DOM node appeared) → reverted → passes; (2) the
+  "estimado excluido" banner clause deleted → the partial-coverage test
+  failed → reverted → passes; (3) the `margenPorcentaje === null` check
+  replaced with `?? 0` → the null-margin test failed ("0.0%" instead of
+  "—") → reverted → passes.
 - [ ] 9.4 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 9.5 Branch `feat/stage10-slice9-tablero-rentabilidad` off `main`
-  (parent: slice 8); PR; merge stacked-to-main.
+  (parent: slice 8); PR; merge stacked-to-main. — branch created off
+  `main` (post slice-8 merge); PR creation/merge is out of scope for
+  `sdd-apply` per this run's boundaries (no push/PR).
 
 **Verify**: `npm run test -- Tablero`
 
