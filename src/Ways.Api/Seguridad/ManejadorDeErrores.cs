@@ -551,6 +551,16 @@ public class ManejadorDeErrores(
                     "El movimiento de stock tiene que tener una cantidad distinta de cero.",
                     "movimiento_de_stock_sin_cantidad"),
 
+            "ck_items_comprobante_venta_costo_no_negativo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El costo de un item de venta no puede ser negativo.",
+                    "costo_de_item_invalido"),
+
+            "ck_items_comprobante_venta_estimado_con_costo" =>
+                (StatusCodes.Status400BadRequest,
+                    "Un item marcado como costo estimado tiene que tener un costo cargado.",
+                    "costo_estimado_sin_costo"),
+
             _ => null
         };
 
