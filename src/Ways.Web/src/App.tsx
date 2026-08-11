@@ -23,6 +23,7 @@ import { Pos } from './paginas/Pos'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
+import { Tablero } from './paginas/Tablero'
 import { Tenants } from './paginas/Tenants'
 import { Transferencias } from './paginas/Transferencias'
 import { Usuarios } from './paginas/Usuarios'
@@ -45,6 +46,19 @@ export function App() {
             }
           >
             <Route path="/" element={<Inicio />} />
+
+            {/* stage-10-agregacion-dashboard (Slice 7, design: Web Composition, spec tablero):
+                G1 parity — ventas y gastos de los últimos 7 días por defecto, ticket promedio.
+                Politicas.LecturaDeReportes del lado del servidor: Supervisor + Admin, ni
+                Vendedor ni Root. */}
+            <Route
+              path="/tablero"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <Tablero />
+                </RutaProtegida>
+              }
+            />
 
             {/* stage-5-pos-ventas (Slice 6, design: POS Screen Composition): pantalla dedicada,
                 admite Vendedor + Supervisor + Admin (Politicas.OperacionDePos) — no solo Admin

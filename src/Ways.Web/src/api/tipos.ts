@@ -93,6 +93,14 @@ export function puedeSupervisarCuentaCorriente(rolId: number) {
   return rolId === ROL.Supervisor || rolId === ROL.Admin
 }
 
+/** Espejo de `Politicas.LecturaDeReportes` (stage-10-agregacion-dashboard, Slice 1): supervisor o
+ * admin ven `Tablero` — vendedor y root quedan afuera, mismo criterio que
+ * `puedeSupervisarCuentaCorriente`. Puramente cosmético: el servidor vuelve a exigir la misma
+ * policy en cada endpoint de `/api/reportes`. */
+export function puedeVerReportes(rolId: number) {
+  return rolId === ROL.Supervisor || rolId === ROL.Admin
+}
+
 // --- Catálogos de tenant (ADR-11) ---
 
 export type ComportamientoMedioPago = 'Efectivo' | 'Electronico' | 'CuentaCorriente'
@@ -1053,3 +1061,55 @@ export type ResultadoTransferencia = {
  * delta (espejo de `SolicitudDeConteo`; spec: conteo-de-inventario / Conteo Input Is The Counted
  * Total, Never A Delta). */
 export type SolicitudDeConteo = { idPuntoVenta: number; idArticulo: number; contada: number; observaciones: string }
+
+// --- Reportes (stage-10-agregacion-dashboard, Slice 7): G1 parity — ventas/resumen y
+// gastos/resumen. Espejo de `Ways.Application.Reportes.Contratos` — mismos nombres de campo que
+// el backend serializa en camelCase, ningún dato de negocio recalculado en el cliente.
+
+/** Espejo del enum `Granularidad` (Ways.Domain.Reportes) — viaja como texto (`JsonStringEnumConverter`
+ * en `Program.cs`), nunca como ordinal. */
+export type Granularidad = 'Dia' | 'Semana' | 'Mes'
+
+/** Un bucket de la serie de ventas ya rellenada (sin huecos) — espejo de `BucketDeVentas`.
+ * `ticketPromedio` es `null`, nunca `0`, cuando el bucket no tuvo ningún TX. */
+export type BucketDeVentas = {
+  etiqueta: string
+  inicio: string
+  neto: number
+  cantidadTx: number
+  ticketPromedio: number | null
+}
+
+/** Respuesta de `GET /api/reportes/ventas/resumen` — espejo de `ResumenDeVentas`. `zonaHoraria`
+ * es la zona efectivamente resuelta y aplicada al bucketing (echo obligatorio, design decisión 5). */
+export type ResumenDeVentas = {
+  desde: string
+  hasta: string
+  granularidad: Granularidad
+  zonaHoraria: string
+  serie: BucketDeVentas[]
+  netoVendido: number
+  cantidadTx: number
+  ticketPromedio: number | null
+  cantidadNcx: number
+  netoNcx: number
+}
+
+/** Un bucket de la serie de gastos ya rellenada — espejo de `BucketDeGastos`, mismo criterio de
+ * gap-fill que `BucketDeVentas`. */
+export type BucketDeGastos = { etiqueta: string; inicio: string; importe: number }
+
+/** Desglose por categoría de `GET /api/reportes/gastos/resumen` — espejo de `GastoPorCategoria`. */
+export type GastoPorCategoria = { categoria: CategoriaGasto; importe: number; cantidadGastos: number }
+
+/** Respuesta de `GET /api/reportes/gastos/resumen` — espejo de `ResumenDeGastos`; sin NCX ni
+ * ticket promedio, `gastos` no tiene esa semántica. */
+export type ResumenDeGastos = {
+  desde: string
+  hasta: string
+  granularidad: Granularidad
+  zonaHoraria: string
+  serie: BucketDeGastos[]
+  importeTotal: number
+  porCategoria: GastoPorCategoria[]
+}

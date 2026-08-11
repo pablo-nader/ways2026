@@ -1,7 +1,14 @@
 import { NavLink, Outlet, useNavigate } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { DESCRIPTORES_DE_CATALOGO } from '../api/catalogos'
-import { ROL, puedeAprovisionarTenants, puedeGestionarCatalogos, puedeGestionarUsuarios, puedeOperarPos } from '../api/tipos'
+import {
+  ROL,
+  puedeAprovisionarTenants,
+  puedeGestionarCatalogos,
+  puedeGestionarUsuarios,
+  puedeOperarPos,
+  puedeVerReportes,
+} from '../api/tipos'
 
 export function Layout() {
   const { usuario, cerrarSesion } = useAuth()
@@ -54,6 +61,16 @@ export function Layout() {
                   <li className="nav-item">
                     <NavLink className="nav-link" to="/compras">
                       Compras
+                    </NavLink>
+                  </li>
+                )}
+                {/* stage-10-agregacion-dashboard (Slice 7, design: Web Composition): nav y ruta
+                    comparten Politicas.LecturaDeReportes — Supervisor + Admin, ni Vendedor ni
+                    Root. */}
+                {usuario && puedeVerReportes(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/tablero">
+                      Tablero
                     </NavLink>
                   </li>
                 )}

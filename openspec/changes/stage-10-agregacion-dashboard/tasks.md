@@ -404,28 +404,53 @@ consumes them. **Rollback**: `npm uninstall recharts`; revert the branch.
 promedio; route and nav wired for Supervisor + Admin. **Rollback**: revert
 the branch; route/nav entries removed.
 
-- [ ] 7.1 Create `src/Ways.Web/src/api/tipos.ts` mirrors for
+- [x] 7.1 Create `src/Ways.Web/src/api/tipos.ts` mirrors for
   `ResumenDeVentas`/`BucketDeVentas` (and `PARAMETROS_CONOCIDOS` untouched —
-  already typed in slice 1).
-- [ ] 7.2 Create `src/Ways.Web/src/api/reportes.ts`: client function for
-  `GET /reportes/ventas/resumen` (and gastos resumen, sharing the shape).
-- [ ] 7.3 Create `src/Ways.Web/src/paginas/Tablero.tsx`: defaults to last 7
+  already typed in slice 1). — also mirrors `ResumenDeGastos`/`BucketDeGastos`/
+  `GastoPorCategoria`/`Granularidad` (needed for the gastos card in the same
+  slice) and adds `puedeVerReportes` (espejo de `Politicas.LecturaDeReportes`).
+- [x] 7.2 Create `src/Ways.Web/src/api/reportes.ts`: client function for
+  `GET /reportes/ventas/resumen` (and gastos resumen, sharing the shape). —
+  `construirQueryDeReporte` (shared query builder, colocated tests) and
+  `rangoUltimosSieteDias` (default-range helper, colocated tests, takes
+  `ahora` as a parameter for testability).
+- [x] 7.3 Create `src/Ways.Web/src/paginas/Tablero.tsx`: defaults to last 7
   days on load; ventas series card (`<GraficoDeLineas>`), gastos series
   card, net sales total, gastos total, ticket promedio. Per
   `react-async-state` rules 2/4/9: one `useRef` generation token bumped
   before any filter mutates state, every post-`await` setter and every
   `finally` clearing `cargando` gated on it. *(spec tablero: Tablero Covers
-  Legacy G1 Parity By Default; success criterion 6)*
-- [ ] 7.4 Modify `src/Ways.Web/src/App.tsx` and
+  Legacy G1 Parity By Default; success criterion 6)* — empresa selector
+  follows the `Parametros.tsx` precedent (`clienteDeOrganizacion.listarEmpresas`);
+  `desde`/`hasta` are editable `DateOnly` inputs, no offset needed (unlike
+  `compras.ts`'s `timestamptz` filter); granularidad fixed to `Dia` this
+  slice (selector deferred to Slice 8). Carried-over debt from slice 6
+  judges paid here: `GraficoDeLineas`/`GraficoDeBarras` now require a
+  `titulo` prop (`role="img"` + `aria-label`) since Tablero is their first
+  real consumer.
+- [x] 7.4 Modify `src/Ways.Web/src/App.tsx` and
   `src/Ways.Web/src/componentes/Layout.tsx`: add the `/tablero` route
-  (`ROL.Supervisor`, `ROL.Admin`) and nav entry.
-- [ ] 7.5 [P] `Tablero.test.tsx`: default-load renders 7-day range and both
+  (`ROL.Supervisor`, `ROL.Admin`) and nav entry. — nav item gated by the new
+  `puedeVerReportes` helper, same pattern as `puedeSupervisarCuentaCorriente`.
+- [x] 7.5 [P] `Tablero.test.tsx`: default-load renders 7-day range and both
   totals; generation-token gating verified with a delayed-then-superseded
-  fetch; error path (API 500) renders a retry state, not a crash.
-- [ ] 7.6 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 7.7 Branch `feat/stage10-slice7-tablero-g1` off `main` (parent: slice
+  fetch; error path (API 500) renders a retry state, not a crash. — plus a
+  null-ticket-promedio rendering test, and role-gating tests (Supervisor
+  reaches `/tablero`; Vendedor and Root redirect to `/`) via `RutaProtegida`,
+  same pattern as `Compras.test.tsx`'s `renderComprasProtegido`.
+- Recorded deviation (slice 7, judged): the Tablero uses ONE page-level cargando/generation
+  pair because ventas+gastos are always fetched atomically from the same filter event. BINDING
+  for slice 8: each new breakdown panel owns its OWN fetch state (own generation ref, own busy
+  flag) — do NOT extend the shared pair (react-async-state rule 5; Judge A boundary warning).
+- [ ] 7.6 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+  sdd-apply — requires sub-agent delegation, out of the apply executor's
+  scope; orchestrator must run this before PR, same precedent as slices
+  2/3/4/5/6.)*
+- [x] 7.7 Branch `feat/stage10-slice7-tablero-g1` off `main` (parent: slice
   2 for the endpoint, slice 6 for the wrappers — both already on `main`);
-  PR; merge stacked-to-main.
+  PR; merge stacked-to-main. *(Branch created off `main`; three work-unit
+  commits applied on it. PR creation/merge explicitly out of scope per
+  apply boundaries — NOT done.)*
 
 **Verify**: `npm run test -- Tablero`
 

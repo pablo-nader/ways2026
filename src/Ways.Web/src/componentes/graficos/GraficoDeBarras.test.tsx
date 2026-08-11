@@ -32,21 +32,27 @@ describe('GraficoDeBarras', () => {
       { etiqueta: 'PV Norte', valor: 900 },
     ]
 
-    render(<GraficoDeBarras data={data} alto={240} />)
+    render(<GraficoDeBarras data={data} alto={240} titulo="Ventas por punto de venta" />)
 
     const chart = screen.getByTestId('bar-chart')
     expect(JSON.parse(chart.dataset.serie ?? '[]')).toEqual(data)
   })
 
   it('propaga el alto explícito al contenedor responsive', () => {
-    render(<GraficoDeBarras data={[]} alto={160} />)
+    render(<GraficoDeBarras data={[]} alto={160} titulo="Ventas por punto de venta" />)
 
     expect(screen.getByTestId('responsive-container')).toHaveAttribute('data-alto', '160')
   })
 
   it('renderiza sin datos sin crashear', () => {
-    render(<GraficoDeBarras data={[]} alto={200} />)
+    render(<GraficoDeBarras data={[]} alto={200} titulo="Ventas por punto de venta" />)
 
     expect(JSON.parse(screen.getByTestId('bar-chart').dataset.serie ?? 'null')).toEqual([])
+  })
+
+  it('expone un nombre accesible para lectores de pantalla', () => {
+    render(<GraficoDeBarras data={[]} alto={200} titulo="Ventas por punto de venta" />)
+
+    expect(screen.getByRole('img', { name: 'Ventas por punto de venta' })).toBeInTheDocument()
   })
 })
