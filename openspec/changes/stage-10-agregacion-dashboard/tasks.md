@@ -171,11 +171,11 @@ revert the branch; no state to unwind.
   ahead of slice 4's `ReportesAutorizacionTests`.
 - [x] 2.14 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   "No changes have been made to the model since the last migration."
-- [ ] 2.15 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+- [x] 2.15 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
   sdd-apply — requires sub-agent delegation, out of the apply executor's
   scope; orchestrator must run this before PR, same precedent as slice 6
   task 6.6.)*
-- [ ] 2.16 Branch `feat/stage10-slice2-ventas-resumen` off `main` (parent:
+- [x] 2.16 Branch `feat/stage10-slice2-ventas-resumen` off `main` (parent:
   slice 1's merged commit); PR; merge stacked-to-main. *(Branch created off
   `main` @ 116a71b. PR creation/merge explicitly out of scope per apply
   boundaries — NOT done.)*
