@@ -220,10 +220,10 @@ revert the branch; no state to unwind.
   separate predicate of their own to isolate from that confound.
 - [x] 3.5 Gate guard: `dotnet ef migrations list` unchanged, no diff in the
   model snapshot.
-- [ ] 3.6 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+- [x] 3.6 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
   sdd-apply — requires sub-agent delegation, out of the apply executor's
   scope; orchestrator must run this before PR, same precedent as slices 2/6.)*
-- [ ] 3.7 Branch `feat/stage10-slice3-ventas-por-dimension` off `main`
+- [x] 3.7 Branch `feat/stage10-slice3-ventas-por-dimension` off `main`
   (parent: slice 2's merged commit); PR; merge stacked-to-main. *(Branch
   created off the worktree's HEAD — slices 1/2/6 merged, matching "Start:
   slice 2 merged" — commit `398c5f5` applied on it. PR creation/merge
