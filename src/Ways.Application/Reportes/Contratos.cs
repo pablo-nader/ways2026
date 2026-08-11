@@ -106,3 +106,22 @@ public sealed record FilaVentasPorMedioPago(int IdMedioPago, decimal Neto, int C
 /// <summary>Respuesta de <c>GET /api/reportes/ventas/por-medio-pago</c>.</summary>
 public sealed record VentasPorMedioPago(
     DateOnly Desde, DateOnly Hasta, string ZonaHoraria, IReadOnlyList<FilaVentasPorMedioPago> Filas);
+
+/// <summary>Fila de <c>GET /api/reportes/comisiones</c> (stage-10 slice 10, PROVISIONAL —
+/// droppable en su totalidad), agrupada por <c>id_empleado</c> — mismo discriminador de vendedor
+/// que <see cref="FilaVentasPorVendedor"/> (design decisión 11), reusa exactamente su agregado de
+/// venta neta. <see cref="Comision"/> = <see cref="NetoVendido"/> × la tasa de la respuesta
+/// (<see cref="Comisiones.ComisionPorcentaje"/>) / 100.</summary>
+public sealed record ComisionPorEmpleado(int IdEmpleado, decimal NetoVendido, decimal Comision);
+
+/// <summary>Respuesta de <c>GET /api/reportes/comisiones</c> (spec rentabilidad-y-comisiones:
+/// Comisiones Is A Provisional, Non-Persisted Report). <see cref="ComisionPorcentaje"/> es la tasa
+/// efectivamente resuelta (<c>ParametroConocido.ComisionPorcentaje</c>, PV → empresa → default
+/// <c>0</c>) — echo obligatorio, mismo criterio que <see cref="ResumenDeVentas.ZonaHoraria"/>: con
+/// el default en <c>0</c> ninguna fila tiene comisión distinta de cero.
+/// <see cref="Provisional"/> viaja SIEMPRE en <c>true</c> — no existe una respuesta de este
+/// endpoint que no lo sea, la fórmula espera la decisión real del dueño del producto (design: Open
+/// Questions, "Commission rate scope").</summary>
+public sealed record Comisiones(
+    DateOnly Desde, DateOnly Hasta, string ZonaHoraria, decimal ComisionPorcentaje,
+    IReadOnlyList<ComisionPorEmpleado> Filas, bool Provisional);

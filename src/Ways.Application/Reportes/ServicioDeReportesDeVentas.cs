@@ -99,6 +99,40 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
         return new VentasPorMedioPago(desde, hasta, zonaId, filas);
     }
 
+    /// <summary>Reporte PROVISIONAL de comisiones (Slice 10, droppable en su totalidad — spec
+    /// rentabilidad-y-comisiones: Comisiones Is A Provisional, Non-Persisted Report). Reusa
+    /// exactamente <see cref="ConsultarPorVendedorAsync"/>: el neto por vendedor YA es el filtro
+    /// de venta neta que pide el spec (<c>neto_vendido_por_empleado</c>), así que la única pieza
+    /// propia de este reporte es resolver <c>comision_porcentaje</c> y multiplicar. Sin
+    /// escritura — ninguna fila se persiste en ninguna tabla, el cálculo es enteramente on the
+    /// fly.</summary>
+    public async Task<Comisiones> ObtenerComisionesAsync(
+        int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta, CancellationToken ct = default)
+    {
+        await ExigirEmpresaAsync(idEmpresa, ct);
+        var idsPuntoVenta = await ResolverPuntosDeVentaAsync(idEmpresa, idPuntoVenta, ct);
+        var (zonaId, zona) = await ResolverZonaAsync(idEmpresa, idPuntoVenta, ct);
+        var rango = RangoDeReporte.Crear(desde, hasta, Granularidad.Dia, zona);
+
+        var comisionPorcentaje = await ResolverComisionPorcentajeAsync(idEmpresa, idPuntoVenta, ct);
+        var filas = await ConsultarPorVendedorAsync(idsPuntoVenta, rango, ct);
+
+        // mutation-proof-tests: la multiplicación por `comisionPorcentaje / 100m` es la ÚNICA
+        // cláusula que gobierna tanto la tasa configurada como el default en 0 — no hay una rama
+        // condicional separada para "tasa cero", el mismo producto la resuelve. Mutación aplicada
+        // (reemplazado `f.Neto * comisionPorcentaje / 100m` por `f.Neto`, i.e. ignorar la tasa):
+        // 4 de 7 tests de ReportesComisionesTests fallaron —
+        // LaComisionCoincideConElCalculoAMano (500 esperado, 10000 obtenido),
+        // SinParametroConfiguradoLaTasaDefaultEsCeroYTodaComisionEsCero (0 esperado, 10000
+        // obtenido) y las dos pruebas del patrón de 4 que aciertan un `Comision` no-cero
+        // (soft-delete/anulado) — revertida, vuelven a pasar las 7.
+        var comisiones = filas
+            .Select(f => new ComisionPorEmpleado(f.IdEmpleado, f.Neto, f.Neto * comisionPorcentaje / 100m))
+            .ToList();
+
+        return new Comisiones(desde, hasta, zonaId, comisionPorcentaje, comisiones, Provisional: true);
+    }
+
     private async Task<int> ExigirEmpresaAsync(int idEmpresa, CancellationToken ct)
     {
         var idTenant = await db.Empresas
@@ -148,6 +182,16 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
         var resuelto = await parametros.ResolverAsync(ParametroConocido.ZonaHoraria.Clave, idEmpresa, idPuntoVenta, ct);
         var zonaId = JsonSerializer.Deserialize<string>(resuelto.Valor)!;
         return (zonaId, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
+    }
+
+    /// <summary>Misma precedencia PV → empresa → default que <see cref="ResolverZonaAsync"/>
+    /// (design decisión 5, aplicada acá a la tasa en vez de la zona) — default <c>0</c> declarado
+    /// en <c>ParametroConocido.ComisionPorcentaje</c> (spec: "Default rate yields zero
+    /// commission").</summary>
+    private async Task<decimal> ResolverComisionPorcentajeAsync(int idEmpresa, int? idPuntoVenta, CancellationToken ct)
+    {
+        var resuelto = await parametros.ResolverAsync(ParametroConocido.ComisionPorcentaje.Clave, idEmpresa, idPuntoVenta, ct);
+        return JsonSerializer.Deserialize<decimal>(resuelto.Valor);
     }
 
     /// <summary>LINQ plano (design: Raw-SQL Invariant Checklist filas 3-4) — <c>Tenant</c> y
