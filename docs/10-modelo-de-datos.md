@@ -721,4 +721,6 @@ etapa; los datos del legacy entran en la etapa 5 (ventas históricas → `items_
 > panel de saldo en `Proveedores`). No hay etapa 9 en este documento: cualquier trabajo
 > remanente (inventario de conteo completo, una cuenta corriente de proveedores con ledger
 > propio, órdenes de compra, libro IVA compras) es un cambio post-paridad normal, no una etapa
-> nueva de este mapeo.
+> nueva de este mapeo. El programa post-paridad (etapas 9 en adelante) vive en el
+> [doc 11](11-programa-post-paridad.md); las tablas nuevas que esas etapas introduzcan se
+> documentan en este documento al implementarse.
