@@ -266,25 +266,48 @@ branch.
 and `/gastos/resumen` live; the full role matrix confirmed across every
 route shipped so far. **Rollback**: revert the branch.
 
-- [ ] 5.1 Create `src/Ways.Application/Reportes/ServicioDeReportesDeEgresos.cs`:
+- [x] 5.1 Create `src/Ways.Application/Reportes/ServicioDeReportesDeEgresos.cs`:
   `ObtenerComprasPorProveedorAsync` — LINQ, `FechaRecepcion`, `Estado ==
   Confirmada`, `deleted_at IS NULL`, group by proveedor. *(spec: Compras
   Bucketed By Fecha De Recepción, Confirmada Only)*
-- [ ] 5.2 Same file: `ObtenerGastosResumenAsync` — reuses
+- [x] 5.2 Same file: `ObtenerGastosResumenAsync` — reuses
   `LectorDeSerieTemporal`'s gastos raw-SQL body (bucketed series) plus an
   optional `categoria` group. *(design: Raw-SQL Invariant Checklist —
-  `gastos/resumen`)*
-- [ ] 5.3 Extend `Contratos.cs` + `ReportesEndpoints.cs`: two routes under
+  `gastos/resumen`)* — categoria breakdown implemented as an additional LINQ
+  `GroupBy` over the same scope/range, always returned alongside the series
+  (`ResumenDeGastos.PorCategoria`); no on/off query parameter exists for it
+  because the spec names no such toggle (dto-contract-honesty: no unread
+  parameter was added).
+- [x] 5.3 Extend `Contratos.cs` + `ReportesEndpoints.cs`: two routes under
   `LecturaDeReportes`.
-- [ ] 5.4 [P] `ReportesEgresosTests` — 4-test pattern ×2, including a
+- [x] 5.4 [P] `ReportesEgresosTests` — 4-test pattern ×2, including a
   `borrador` compra excluded and a `fecha_comprobante`-only row still
-  bucketed by `fecha_recepcion`.
+  bucketed by `fecha_recepcion`. Both clause-proving tests (estado filter,
+  date-column choice) ship with recorded mutation evidence (mutate → FAIL →
+  revert → PASS) per `mutation-proof-tests`. Gastos' 4th leg substitutes the
+  (nonexistent) estado check with the categoria-breakdown clause, recorded
+  as a deviation in the same file's doc-comment.
 - [ ] 5.5 [P] Complete `ReportesAutorizacionTests` for all 9 (now 7 shipped +
-  2 pending in slice 10) routes shipped through slice 5.
-- [ ] 5.6 Gate guard: `dotnet ef migrations list` unchanged.
-- [ ] 5.7 Run `judgment-day`; fix; re-judge until clean.
+  2 pending in slice 10) routes shipped through slice 5. **NOT DONE AS
+  SPECIFIED** — `ReportesAutorizacionTests` (created by slice 4) does not
+  exist in this isolated worktree (slices 3/4/5 run in parallel tonight,
+  each branched from `main` before any of the three merge). Consolidated
+  instead into `ReportesEgresosTests.cs` (role matrix for the 2 routes this
+  slice ships), same precedent as slice 2 task 2.13. The orchestrator must
+  reconcile the three role-matrix additions into one
+  `ReportesAutorizacionTests` file when merging slices 3/4/5.
+- [x] 5.6 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  "No changes have been made to the model since the last migration."; no
+  migration files touched (`git status` clean on any Migrations path).
+- [ ] 5.7 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+  sdd-apply — requires sub-agent delegation, out of the apply executor's
+  scope; orchestrator must run this before PR, same precedent as slices 2/6.)*
 - [ ] 5.8 Branch `feat/stage10-slice5-egresos` off `main` (parent: slice 2,
-  independent of slices 3/4); PR; merge stacked-to-main.
+  independent of slices 3/4); PR; merge stacked-to-main. *(Branch
+  `feat/stage10-slice3-compras-gastos` created off `main` per the
+  orchestrator's launch instructions — note the branch-name mismatch with
+  this file's `feat/stage10-slice5-egresos`; PR creation/merge explicitly
+  out of scope per apply boundaries — NOT done.)*
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ReportesEgresos`
 
