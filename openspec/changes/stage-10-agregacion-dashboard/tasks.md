@@ -242,7 +242,7 @@ revert the branch; no state to unwind.
 respected, coverage mandatory in every response. **Rollback**: revert the
 branch.
 
-- [ ] 4.1 Create `src/Ways.Application/Reportes/ServicioDeReportesDeRentabilidad.cs`:
+- [x] 4.1 Create `src/Ways.Application/Reportes/ServicioDeReportesDeRentabilidad.cs`:
   `ObtenerTopArticulosAsync` — join `ItemsComprobanteVenta` ⋈ header, net-sales
   filter, group by `id_articulo`, sum `cantidad`/`total`, label from the
   line's `descripcion` snapshot (never re-join `articulos`). *(design
@@ -266,6 +266,13 @@ branch.
   `LecturaDeReportes` **+** `LecturaDeRentabilidad` (design decision 7 — AND
   composition, no new mechanism). — `GET /rentabilidad` only, wired and
   tested; `GET /articulos/top` out of scope (see 4.1).
+> Post-verify correction (2026-08-12): 4.1 and 4.5 WERE completed via the parallel
+> branch of PR #80 — the service landed as `ServicioDeReportesDeArticulos.cs` (judged
+> file-placement deviation), with `ReportesArticulosTopTests` (8 tests, mutation
+> evidence). 5.5's full 9-route × 4-role matrix landed in PR #86
+> (`ReportesAutorizacionTests`, 36 tests). The "NOT done" prose above/below predates
+> those merges; the checkboxes now reflect merged reality (verify CRITICAL resolved).
+
 - [x] 4.5 [P] `ReportesArticulosTopTests` — 4-test pattern + NCX-reduces-ranking
   check. — **NOT done**: depends on 4.1 (out of scope).
 - [x] 4.6 [P] `RentabilidadTests`: four seeded lines (real cost / estimated /
@@ -333,7 +340,7 @@ route shipped so far. **Rollback**: revert the branch.
   revert → PASS) per `mutation-proof-tests`. Gastos' 4th leg substitutes the
   (nonexistent) estado check with the categoria-breakdown clause, recorded
   as a deviation in the same file's doc-comment.
-- [ ] 5.5 [P] Complete `ReportesAutorizacionTests` for all 9 (now 7 shipped +
+- [x] 5.5 [P] Complete `ReportesAutorizacionTests` for all 9 (now 7 shipped +
   2 pending in slice 10) routes shipped through slice 5. **NOT DONE AS
   SPECIFIED** — `ReportesAutorizacionTests` (created by slice 4) does not
   exist in this isolated worktree (slices 3/4/5 run in parallel tonight,
