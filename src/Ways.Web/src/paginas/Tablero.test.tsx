@@ -9,6 +9,24 @@ import { RutaProtegida } from '../auth/RutaProtegida'
 
 const apiGetMock = vi.fn()
 
+// `recharts` se mockea igual que en los tests de los wrappers: bajo jsdom no renderiza
+// nada observable, y sin el stub el mapeo de datos al grafico queda sin asercion posible.
+vi.mock('recharts', () => ({
+  ResponsiveContainer: ({ children }: { children: import('react').ReactNode }) => (
+    <div data-testid="responsive-container">{children}</div>
+  ),
+  LineChart: ({ data, children }: { data: unknown[]; children: import('react').ReactNode }) => (
+    <div data-testid="line-chart" data-serie={JSON.stringify(data)}>
+      {children}
+    </div>
+  ),
+  Line: () => null,
+  XAxis: () => null,
+  YAxis: () => null,
+  Tooltip: () => null,
+  CartesianGrid: () => null,
+}))
+
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
@@ -234,5 +252,21 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     renderTableroProtegido()
 
     expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
+  })
+
+  it('mapea neto e importe como valor de las series de ventas y gastos', async () => {
+    mockearRutasBase()
+    renderTablero()
+
+    await waitFor(() => {
+      const charts = screen.getAllByTestId('line-chart')
+      expect(charts).toHaveLength(2)
+      expect(JSON.parse(charts[0].dataset.serie ?? '[]')).toEqual([
+        { etiqueta: '05/08', valor: 1000 },
+      ])
+      expect(JSON.parse(charts[1].dataset.serie ?? '[]')).toEqual([
+        { etiqueta: '05/08', valor: 300 },
+      ])
+    })
   })
 })

@@ -438,6 +438,10 @@ the branch; route/nav entries removed.
   null-ticket-promedio rendering test, and role-gating tests (Supervisor
   reaches `/tablero`; Vendedor and Root redirect to `/`) via `RutaProtegida`,
   same pattern as `Compras.test.tsx`'s `renderComprasProtegido`.
+- Recorded deviation (slice 7, judged): the Tablero uses ONE page-level cargando/generation
+  pair because ventas+gastos are always fetched atomically from the same filter event. BINDING
+  for slice 8: each new breakdown panel owns its OWN fetch state (own generation ref, own busy
+  flag) — do NOT extend the shared pair (react-async-state rule 5; Judge A boundary warning).
 - [ ] 7.6 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
   sdd-apply — requires sub-agent delegation, out of the apply executor's
   scope; orchestrator must run this before PR, same precedent as slices
