@@ -5,6 +5,7 @@ using Ways.Application.Parametros;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Reportes;
+using Ways.Domain.Ventas;
 
 namespace Ways.Application.Reportes;
 
@@ -56,6 +57,48 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
             desde, hasta, granularidad, zonaId, serie, netoVendido, cantidadTxTotal, ticketPromedio, cantidadNcx, netoNcx);
     }
 
+    /// <summary>Sin <c>idPuntoVenta</c> — sería una contradicción filtrar por el mismo eje que se
+    /// está agrupando (design: Interfaces / Contracts, dto-contract-honesty). Zona resuelta a
+    /// nivel empresa (spec: Ventas Breakdown Endpoints).</summary>
+    public async Task<VentasPorPuntoVenta> ObtenerPorPuntoVentaAsync(
+        int idEmpresa, DateOnly desde, DateOnly hasta, CancellationToken ct = default)
+    {
+        await ExigirEmpresaAsync(idEmpresa, ct);
+        var idsPuntoVenta = await ResolverPuntosDeVentaAsync(idEmpresa, null, ct);
+        var (zonaId, zona) = await ResolverZonaAsync(idEmpresa, null, ct);
+        var rango = RangoDeReporte.Crear(desde, hasta, Granularidad.Dia, zona);
+
+        var filas = await ConsultarPorPuntoVentaAsync(idsPuntoVenta, rango, ct);
+
+        return new VentasPorPuntoVenta(desde, hasta, zonaId, filas);
+    }
+
+    public async Task<VentasPorVendedor> ObtenerPorVendedorAsync(
+        int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta, CancellationToken ct = default)
+    {
+        await ExigirEmpresaAsync(idEmpresa, ct);
+        var idsPuntoVenta = await ResolverPuntosDeVentaAsync(idEmpresa, idPuntoVenta, ct);
+        var (zonaId, zona) = await ResolverZonaAsync(idEmpresa, idPuntoVenta, ct);
+        var rango = RangoDeReporte.Crear(desde, hasta, Granularidad.Dia, zona);
+
+        var filas = await ConsultarPorVendedorAsync(idsPuntoVenta, rango, ct);
+
+        return new VentasPorVendedor(desde, hasta, zonaId, filas);
+    }
+
+    public async Task<VentasPorMedioPago> ObtenerPorMedioPagoAsync(
+        int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta, CancellationToken ct = default)
+    {
+        await ExigirEmpresaAsync(idEmpresa, ct);
+        var idsPuntoVenta = await ResolverPuntosDeVentaAsync(idEmpresa, idPuntoVenta, ct);
+        var (zonaId, zona) = await ResolverZonaAsync(idEmpresa, idPuntoVenta, ct);
+        var rango = RangoDeReporte.Crear(desde, hasta, Granularidad.Dia, zona);
+
+        var filas = await ConsultarPorMedioPagoAsync(idsPuntoVenta, rango, ct);
+
+        return new VentasPorMedioPago(desde, hasta, zonaId, filas);
+    }
+
     private async Task<int> ExigirEmpresaAsync(int idEmpresa, CancellationToken ct)
     {
         var idTenant = await db.Empresas
@@ -105,5 +148,109 @@ public class ServicioDeReportesDeVentas(IWaysDbContext db, LectorDeSerieTemporal
         var resuelto = await parametros.ResolverAsync(ParametroConocido.ZonaHoraria.Clave, idEmpresa, idPuntoVenta, ct);
         var zonaId = JsonSerializer.Deserialize<string>(resuelto.Valor)!;
         return (zonaId, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
+    }
+
+    /// <summary>LINQ plano (design: Raw-SQL Invariant Checklist filas 3-4) — <c>Tenant</c> y
+    /// <c>BajaLogica</c> los aplica EF automáticamente vía sus query filters globales; acá se
+    /// espeletrean explícitamente <c>Estado != Anulado</c>, igual que el SQL crudo de
+    /// <see cref="LectorDeSerieTemporal"/> los espeletrea a mano. Sin el <c>Join</c> a
+    /// <c>tipos_comprobante</c> todavía — cada consumidor lo arma con una proyección anónima
+    /// propia: EF no logra traducir un <c>GroupBy</c> sobre la propiedad de un record con nombre
+    /// construido en el mismo <c>Join</c> (probado — <c>InvalidOperationException</c> "could not
+    /// be translated"), pero sí sobre la de un tipo anónimo, mismo patrón que
+    /// <c>LectorDeContenidoDeResumen.LeerAsync</c> paso 4.</summary>
+    private IQueryable<ComprobanteVenta> ComprobantesVentaDelPeriodo(
+        IReadOnlyCollection<int> idsPuntoVenta, RangoDeReporte rango) =>
+        db.ComprobantesVenta
+            .Where(cv => idsPuntoVenta.Contains(cv.IdPuntoVenta))
+            .Where(cv => cv.Estado != EstadoComprobante.Anulado)
+            .Where(cv => cv.Fecha >= rango.DesdeUtc && cv.Fecha < rango.HastaUtcExclusivo);
+
+    private async Task<IReadOnlyList<FilaVentasPorPuntoVenta>> ConsultarPorPuntoVentaAsync(
+        IReadOnlyCollection<int> idsPuntoVenta, RangoDeReporte rango, CancellationToken ct)
+    {
+        if (idsPuntoVenta.Count == 0)
+        {
+            return [];
+        }
+
+        var agregados = await ComprobantesVentaDelPeriodo(idsPuntoVenta, rango)
+            .Join(
+                db.TiposComprobante.Where(t => t.Clase == ClaseComprobante.Venta),
+                cv => cv.IdTipoComprobante, t => t.Id, (cv, t) => new { cv.IdPuntoVenta, cv.Total, t.Signo })
+            .GroupBy(x => x.IdPuntoVenta)
+            .Select(g => new
+            {
+                Clave = g.Key,
+                Neto = g.Sum(x => x.Total),
+                CantidadTx = g.Count(x => x.Signo > 0),
+                NetoTx = g.Sum(x => x.Signo > 0 ? x.Total : 0m)
+            })
+            .ToListAsync(ct);
+
+        return agregados
+            .Select(a => new FilaVentasPorPuntoVenta(
+                a.Clave, a.Neto, a.CantidadTx, a.CantidadTx > 0 ? a.NetoTx / a.CantidadTx : (decimal?)null))
+            .OrderBy(f => f.IdPuntoVenta)
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<FilaVentasPorVendedor>> ConsultarPorVendedorAsync(
+        IReadOnlyCollection<int> idsPuntoVenta, RangoDeReporte rango, CancellationToken ct)
+    {
+        if (idsPuntoVenta.Count == 0)
+        {
+            return [];
+        }
+
+        var agregados = await ComprobantesVentaDelPeriodo(idsPuntoVenta, rango)
+            .Join(
+                db.TiposComprobante.Where(t => t.Clase == ClaseComprobante.Venta),
+                cv => cv.IdTipoComprobante, t => t.Id, (cv, t) => new { cv.IdEmpleado, cv.Total, t.Signo })
+            .GroupBy(x => x.IdEmpleado)
+            .Select(g => new
+            {
+                Clave = g.Key,
+                Neto = g.Sum(x => x.Total),
+                CantidadTx = g.Count(x => x.Signo > 0),
+                NetoTx = g.Sum(x => x.Signo > 0 ? x.Total : 0m)
+            })
+            .ToListAsync(ct);
+
+        return agregados
+            .Select(a => new FilaVentasPorVendedor(
+                a.Clave, a.Neto, a.CantidadTx, a.CantidadTx > 0 ? a.NetoTx / a.CantidadTx : (decimal?)null))
+            .OrderBy(f => f.IdEmpleado)
+            .ToList();
+    }
+
+    /// <summary><c>pagos_comprobante.importe</c> nunca es negativo (CHECK
+    /// <c>ck_pagos_comprobante_importe_no_negativo</c>, <c>ValidadorDePagos</c> regla 0) — el
+    /// signo lo aporta el <c>Signo</c> del tipo de comprobante del encabezado, mismo discriminador
+    /// que las otras dos rutas, así que una NCX resta sin ninguna rama condicional (design
+    /// decisión 9).</summary>
+    private async Task<IReadOnlyList<FilaVentasPorMedioPago>> ConsultarPorMedioPagoAsync(
+        IReadOnlyCollection<int> idsPuntoVenta, RangoDeReporte rango, CancellationToken ct)
+    {
+        if (idsPuntoVenta.Count == 0)
+        {
+            return [];
+        }
+
+        var agregados = await ComprobantesVentaDelPeriodo(idsPuntoVenta, rango)
+            .Join(
+                db.TiposComprobante.Where(t => t.Clase == ClaseComprobante.Venta),
+                cv => cv.IdTipoComprobante, t => t.Id, (cv, t) => new { cv.Id, t.Signo })
+            .Join(db.PagosComprobante, cv => cv.Id, p => p.IdComprobanteVenta, (cv, p) => new { cv.Signo, p.IdMedioPago, p.Importe })
+            .GroupBy(x => x.IdMedioPago)
+            // mutation-proof-tests: la cláusula "x.Signo" es lo único que hace que una NCX reste
+            // acá (probado por PorMedioPagoUnaNcxReduceElSubtotalDelMedioSinRamaEspecial).
+            .Select(g => new { Clave = g.Key, Neto = g.Sum(x => x.Importe * x.Signo), CantidadPagos = g.Count() })
+            .ToListAsync(ct);
+
+        return agregados
+            .Select(a => new FilaVentasPorMedioPago(a.Clave, a.Neto, a.CantidadPagos))
+            .OrderBy(f => f.IdMedioPago)
+            .ToList();
     }
 }

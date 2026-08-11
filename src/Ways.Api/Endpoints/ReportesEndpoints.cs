@@ -52,6 +52,22 @@ public static class ReportesEndpoints
         .WithSummary(
             "Margen del período: costo estimado excluido por defecto (incluirEstimados=true para " +
             "sumarlo), costo desconocido siempre salteado. Cobertura obligatoria en toda respuesta.");
+        grupo.MapGet("/ventas/por-punto-venta", (
+            ServicioDeReportesDeVentas servicio, int idEmpresa, DateOnly desde, DateOnly hasta, CancellationToken ct) =>
+            servicio.ObtenerPorPuntoVentaAsync(idEmpresa, desde, hasta, ct))
+        .WithSummary("Ventas netas del período agrupadas por punto de venta — una fila por PV, sin idPuntoVenta.");
+
+        grupo.MapGet("/ventas/por-vendedor", (
+            ServicioDeReportesDeVentas servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
+            CancellationToken ct) =>
+            servicio.ObtenerPorVendedorAsync(idEmpresa, idPuntoVenta, desde, hasta, ct))
+        .WithSummary("Ventas netas del período agrupadas por vendedor (id_empleado emisor).");
+
+        grupo.MapGet("/ventas/por-medio-pago", (
+            ServicioDeReportesDeVentas servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
+            CancellationToken ct) =>
+            servicio.ObtenerPorMedioPagoAsync(idEmpresa, idPuntoVenta, desde, hasta, ct))
+        .WithSummary("Ventas netas del período agrupadas por medio de pago (pagos_comprobante.id_medio_pago).");
 
         return app;
     }
