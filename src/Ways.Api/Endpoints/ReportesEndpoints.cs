@@ -31,6 +31,13 @@ public static class ReportesEndpoints
             Granularidad granularidad, CancellationToken ct) =>
             servicio.ObtenerGastosResumenAsync(idEmpresa, idPuntoVenta, desde, hasta, granularidad, ct))
         .WithSummary("Gastos bucketeados por la zona horaria del punto de venta, con desglose por categoría.");
+        grupo.MapGet("/articulos/top", (
+            ServicioDeReportesDeArticulos servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
+            int? limite, CancellationToken ct) =>
+            servicio.ObtenerTopArticulosAsync(idEmpresa, idPuntoVenta, desde, hasta, limite, ct))
+        .WithSummary(
+            "Ranking de artículos por cantidad y monto neto vendido, ordenado por monto " +
+            "descendente. Sin costo ni margen: ver /rentabilidad.");
 
         return app;
     }
