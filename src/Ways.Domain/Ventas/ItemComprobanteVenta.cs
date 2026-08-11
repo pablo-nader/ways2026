@@ -14,9 +14,10 @@ namespace Ways.Domain.Ventas;
 /// <b>Snapshot inmutable</b> (doc 10 principio 6, spec: Snapshot Immutability of Items):
 /// <see cref="Descripcion"/>, <see cref="CodigoBarra"/>, <see cref="IdArea"/>,
 /// <see cref="PrecioUnitario"/>, <see cref="IdListaPrecio"/>, <see cref="IdOferta"/>,
-/// <see cref="IdAlicuotaIva"/>/<see cref="PorcentajeIva"/> se copian al emitir y nunca se
-/// re-derivan de <c>articulos</c>/<c>precios</c>/<c>ofertas</c> en una reimpresión. Ningún
-/// endpoint de edición existe — la única mutación del comprobante padre es la anulación.
+/// <see cref="IdAlicuotaIva"/>/<see cref="PorcentajeIva"/>, <see cref="CostoUnitario"/>/
+/// <see cref="CostoEsEstimado"/> se copian al emitir y nunca se re-derivan de
+/// <c>articulos</c>/<c>precios</c>/<c>ofertas</c> en una reimpresión. Ningún endpoint de edición
+/// existe — la única mutación del comprobante padre es la anulación.
 /// </summary>
 public class ItemComprobanteVenta : EntidadTenant
 {
@@ -56,4 +57,15 @@ public class ItemComprobanteVenta : EntidadTenant
     /// <summary><c>cantidad × precio_unitario − descuento</c> (<c>CalculadorDeTotales</c>,
     /// redondeo <c>MidpointRounding.AwayFromZero</c>).</summary>
     public decimal Total { get; set; }
+
+    /// <summary>Snapshot de <c>articulos.costo_nominal</c> al emitir, por unidad, sin signo
+    /// (igual que <see cref="PrecioUnitario"/>: el signo vive en <see cref="Cantidad"/>) y con
+    /// IVA incluido (stage 9, decisión 1). <c>NULL</c> = costo desconocido; nunca se colapsa a
+    /// cero. Jamás se expone en <c>ItemEmitido</c>/<c>ComprobanteEmitido</c>.</summary>
+    public decimal? CostoUnitario { get; set; }
+
+    /// <summary><c>true</c> únicamente en filas completadas por el backfill de la migración
+    /// <c>CostoCongeladoEnVentaEtapa9</c> (stage 9, decisión 2): una aproximación, no un costo
+    /// real capturado al emitir.</summary>
+    public bool CostoEsEstimado { get; set; }
 }

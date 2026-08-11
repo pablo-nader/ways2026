@@ -17,7 +17,18 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
 {
     public void Configure(EntityTypeBuilder<ItemComprobanteVenta> builder)
     {
-        builder.ToTable("items_comprobante_venta");
+        builder.ToTable("items_comprobante_venta", t =>
+        {
+            // stage 9: costo NULL es "desconocido", nunca colapsa a cero (decisión 4).
+            t.HasCheckConstraint(
+                "ck_items_comprobante_venta_costo_no_negativo",
+                "costo_unitario IS NULL OR costo_unitario >= 0");
+
+            // Una marca "estimado" sin costo es irrepresentable (decisión 2).
+            t.HasCheckConstraint(
+                "ck_items_comprobante_venta_estimado_con_costo",
+                "NOT costo_es_estimado OR costo_unitario IS NOT NULL");
+        });
 
         builder.HasKey(i => i.Id).HasName("pk_items_comprobante_venta");
 
@@ -56,6 +67,13 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
             .IsRequired();
 
         builder.Property(i => i.Total).HasColumnName("total").HasColumnType("numeric(14,2)").IsRequired();
+
+        builder.Property(i => i.CostoUnitario).HasColumnName("costo_unitario").HasColumnType("numeric(14,2)");
+
+        builder.Property(i => i.CostoEsEstimado)
+            .HasColumnName("costo_es_estimado")
+            .HasDefaultValue(false)
+            .IsRequired();
 
         builder.Property(i => i.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(i => i.UpdatedAt).HasColumnName("updated_at").IsRequired();
