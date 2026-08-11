@@ -374,6 +374,23 @@ Cambios de fondo respecto del legacy:
 El bug de "restaurar suma stock" muere por diseño: el stock solo se mueve por
 movimientos, y los movimientos no se editan.
 
+> **Estado (Etapa 9, stage-9-costo-congelado): implementada.** `items_comprobante_venta`
+> gana dos columnas adicionales al esquema de arriba, agregadas por la migración
+> `CostoCongeladoEnVentaEtapa9`: `costo_unitario numeric(14,2) NULL` — snapshot de
+> `articulos.costo_nominal` al emitir, por unidad, **sin signo** (igual que
+> `precio_unitario`: el signo vive en `cantidad`) y con IVA incluido; `NULL` = costo
+> desconocido, nunca se colapsa a `0` — y `costo_es_estimado boolean NOT NULL DEFAULT
+> false`, en `true` únicamente en filas completadas por el backfill de la propia migración.
+> Dos CHECKs nuevas: `ck_items_comprobante_venta_costo_no_negativo` (`costo_unitario IS
+> NULL OR costo_unitario >= 0`) y `ck_items_comprobante_venta_estimado_con_costo` (`NOT
+> costo_es_estimado OR costo_unitario IS NOT NULL`). El backfill de filas preexistentes
+> corre en modo plataforma (`SET LOCAL app.acceso = 'plataforma'`, dentro de la misma
+> migración) porque la tabla está bajo `FORCE ROW LEVEL SECURITY` y el rol de aplicación no
+> tiene `BYPASSRLS`; es idempotente por construcción. El costo **nunca** se expone en
+> `ItemEmitido`/`ComprobanteEmitido` ni en ningún payload del POS — es un dato server-side
+> para el margen de la etapa 10.
+>
+
 ## 5. Comprobantes de compra
 
 Hoy las compras se cargan como gastos sin detalle; esta es la pieza nueva completa.
