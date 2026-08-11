@@ -106,17 +106,17 @@ live behind `LecturaDeReportes`, business-day bucketing correct in the punto
 de venta's zone, ticket promedio excludes NCX on both sides. **Rollback**:
 revert the branch; no state to unwind.
 
-- [ ] 2.1 Create `src/Ways.Domain/Reportes/Granularidad.cs`: enum `Dia |
+- [x] 2.1 Create `src/Ways.Domain/Reportes/Granularidad.cs`: enum `Dia |
   Semana | Mes`.
-- [ ] 2.2 Create `src/Ways.Domain/Reportes/CoberturaDeCosto.cs`: the record
+- [x] 2.2 Create `src/Ways.Domain/Reportes/CoberturaDeCosto.cs`: the record
   from design *Interfaces / Contracts* (used by slice 4; created here so
   `Domain/Reportes/` ships as one unit per the design's file grouping).
-- [ ] 2.3 Create `src/Ways.Domain/Reportes/RangoDeReporte.cs`: DB-free type —
+- [x] 2.3 Create `src/Ways.Domain/Reportes/RangoDeReporte.cs`: DB-free type —
   `(DateOnly Desde, DateOnly Hasta, Granularidad, TimeZoneInfo)` →
   `DesdeUtc`, `HastaUtcExclusivo`, `Buckets()`; ISO week label via
   `ISOWeek.GetYear`/`GetWeekOfYear`; rejects `hasta < desde` and spans past
   366 days. *(design: Range resolution; Architecture Decision 4, 6)*
-- [ ] 2.4 Create `src/Ways.Application/Reportes/LectorDeSerieTemporal.cs`:
+- [x] 2.4 Create `src/Ways.Application/Reportes/LectorDeSerieTemporal.cs`:
   two `private const string` SQL bodies (ventas, gastos) copied structurally
   from `ServicioDeCategorias.cs:199-244`; one `EjecutarAsync` opened via
   `Db.Database.OpenConnectionAsync()` (never `GetDbConnection().OpenAsync()`);
@@ -124,43 +124,61 @@ revert the branch; no state to unwind.
   `id_tenant = $n`, `id_punto_venta = ANY($n)`; granularity inlined as a
   validated literal from a `switch` over `Granularidad`, zone bound as
   `$n`. *(design decisions 1–3, 8, 9; Timezone Mechanics SQL)*
-- [ ] 2.5 Create `src/Ways.Application/Reportes/Contratos.cs`:
+- [x] 2.5 Create `src/Ways.Application/Reportes/Contratos.cs`:
   `BucketDeVentas`, `ResumenDeVentas` records exactly as in design
   *Interfaces / Contracts* (`TicketPromedio` nullable, never `0`).
-- [ ] 2.6 Create `src/Ways.Application/Reportes/ServicioDeReportesDeVentas.cs`:
+- [x] 2.6 Create `src/Ways.Application/Reportes/ServicioDeReportesDeVentas.cs`:
   `ObtenerResumenAsync` — `Empresas.AnyAsync` → 404 (ADR-8);
   `PuntosVenta.Where(IdEmpresa)` → PV scope; resolve `zona_horaria` via
   `ServicioDeParametros`; build `RangoDeReporte`; call
   `LectorDeSerieTemporal`; left-join `Buckets()` against SQL rows in C# to
   fill gaps; compute `NetoVendido`/`CantidadTx`/`TicketPromedio`/
   `CantidadNcx`/`NetoNcx`. *(design decisions 4, 5; Data Flow)*
-- [ ] 2.7 Modify `src/Ways.Application/DependencyInjection.cs`: register
+- [x] 2.7 Modify `src/Ways.Application/DependencyInjection.cs`: register
   `ServicioDeReportesDeVentas` and `LectorDeSerieTemporal`.
-- [ ] 2.8 Create `src/Ways.Api/Endpoints/ReportesEndpoints.cs`:
+- [x] 2.8 Create `src/Ways.Api/Endpoints/ReportesEndpoints.cs`:
   `MapGroup("/api/reportes").RequireAuthorization(Politicas.LecturaDeReportes)`;
   `GET /ventas/resumen` (`idEmpresa`, `idPuntoVenta?`, `desde`, `hasta`,
   `granularidad`). *(design: Endpoints; dto-contract-honesty)*
-- [ ] 2.9 [P] Domain unit suite for `RangoDeReporte`: 22:30 ART sale buckets
+- [x] 2.9 [P] Domain unit suite for `RangoDeReporte`: 22:30 ART sale buckets
   to its own day (and to the next day under a UTC zone, proving the
   parameter is live); `hasta` inclusivity; ISO Monday-start with
   `2026-W01` year rollover; month boundaries; gap fill; invalid-range and
-  366-day guard. *(spec reportes-de-gestion: Business-Day Bucketing)*
-- [ ] 2.10 [P] Extend `WaysApiFixture` with a two-tenant report seeder
-  (comprobantes across tenants, estados, `deleted_at`).
-- [ ] 2.11 [P] `ReportesVentasResumenTests` — the 4-test pattern:
+  366-day guard. *(spec reportes-de-gestion: Business-Day Bucketing)* —
+  `RangoDeReporteTests.cs`, 10 tests.
+- [x] 2.10 [P] Two-tenant report seeder — implemented as a LOCAL helper
+  (`PrepararAsync`/`SembrarComprobanteAsync`) inside
+  `ReportesVentasResumenTests.cs` instead of extending `WaysApiFixture`:
+  every existing seeder in this test suite (`SaldoDeProveedorTests.
+  PrepararAsync`, `CajaResumenContenidoTests.PrepararAsync`) follows this
+  same per-file convention — `WaysApiFixture` itself has never carried
+  feature-specific seeding. Deviation recorded, not silent.
+- [x] 2.11 [P] `ReportesVentasResumenTests` — the 4-test pattern:
   cross-tenant absence, soft-delete absence, anulado absence, hand-computed
   fixture equality. *(spec reportes-de-gestion: Net Sales Has No Sign
   Branch; success criterion 1)*
-- [ ] 2.12 [P] `ReportesZonaHorariaTests`: same seed read with
-  `zona_horaria` = ART vs UTC returns different bucket assignment for a
-  22:30 sale. *(spec: A late-evening sale lands on its own business day)*
-- [ ] 2.13 [P] `ReportesSemanticaTests`: NCX reduces `NetoVendido` and leaves
+- [x] 2.12 [P] Timezone edge test: same seed read with `zona_horaria` = ART
+  vs UTC returns different bucket assignment for a 22:30 sale. *(spec: A
+  late-evening sale lands on its own business day)* — consolidated into
+  `ReportesVentasResumenTests.cs` (no separate `ReportesZonaHorariaTests`
+  file) to keep the slice's file count down under the review budget.
+- [x] 2.13 [P] NCX semantics test: NCX reduces `NetoVendido` and leaves
   `CantidadTx`/`TicketPromedio` untouched (600/3 = $200, not 550/4).
-  *(spec: Ticket Promedio Excludes NCX From Both Sides)*
-- [ ] 2.14 Gate guard: `dotnet ef migrations list` unchanged.
-- [ ] 2.15 Run `judgment-day`; fix; re-judge until clean.
+  *(spec: Ticket Promedio Excludes NCX From Both Sides)* — consolidated
+  into `ReportesVentasResumenTests.cs` (no separate `ReportesSemanticaTests`
+  file), same budget reasoning as 2.12. Role 403/200 matrix (Vendedor,
+  Root, Supervisor) and cross-tenant-empresa 404 added in the same file,
+  ahead of slice 4's `ReportesAutorizacionTests`.
+- [x] 2.14 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  "No changes have been made to the model since the last migration."
+- [ ] 2.15 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+  sdd-apply — requires sub-agent delegation, out of the apply executor's
+  scope; orchestrator must run this before PR, same precedent as slice 6
+  task 6.6.)*
 - [ ] 2.16 Branch `feat/stage10-slice2-ventas-resumen` off `main` (parent:
-  slice 1's merged commit); PR; merge stacked-to-main.
+  slice 1's merged commit); PR; merge stacked-to-main. *(Branch created off
+  `main` @ 116a71b. PR creation/merge explicitly out of scope per apply
+  boundaries — NOT done.)*
 
 **Verify**: `dotnet test --filter FullyQualifiedName~RangoDeReporte|FullyQualifiedName~ReportesVentasResumen|FullyQualifiedName~ReportesZonaHoraria|FullyQualifiedName~ReportesSemantica`
 
