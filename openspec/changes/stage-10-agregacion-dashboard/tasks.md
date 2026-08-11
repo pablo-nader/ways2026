@@ -89,9 +89,9 @@ revert the branch — additive only, no schema, no data required.
   independent of any endpoint.
 - [x] 1.8 Gate guard: confirm `dotnet ef migrations list` is unchanged and
   the model snapshot has no diff.
-- [ ] 1.9 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge
+- [x] 1.9 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge
   until clean.
-- [ ] 1.10 Branch `feat/stage10-slice1-parametros-y-politicas` off `main`;
+- [x] 1.10 Branch `feat/stage10-slice1-parametros-y-politicas` off `main`;
   PR per `branch-pr`; merge stacked-to-main.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~Parametros` /
