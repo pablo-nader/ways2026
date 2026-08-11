@@ -158,6 +158,34 @@ public class ReportesVentasResumenTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(0m, resumen.NetoVendido);
     }
 
+    /// <summary>El test de arriba pasa igual aunque se borre <c>AND cv.id_tenant = $2</c> del SQL:
+    /// tanto RLS (GUC de conexión) como la lista de puntos de venta resuelta por
+    /// <c>ServicioDeReportesDeVentas.ResolverPuntosDeVentaAsync</c> (siempre acotada a la empresa,
+    /// por lo tanto al tenant) ya lo enmascaran. Este test ejercita <see cref="LectorDeSerieTemporal"/>
+    /// directo, con un <see cref="WaysDbContext"/> en modo <c>Plataforma</c> (RLS bypasseada por
+    /// <c>app_es_plataforma()</c>) y una <c>idsPuntoVenta</c> armada a mano que incluye el punto de
+    /// venta del tenant B — así el único filtro de tenant que puede aplicar es el predicado
+    /// <c>id_tenant = $2</c> del propio SQL.</summary>
+    [Fact]
+    public async Task ElPredicadoDeIdTenantDelSqlExcluyeFilasDeOtroTenant()
+    {
+        var ctxA = await PrepararAsync(nameof(ElPredicadoDeIdTenantDelSqlExcluyeFilasDeOtroTenant) + "-A");
+        var ctxB = await PrepararAsync(nameof(ElPredicadoDeIdTenantDelSqlExcluyeFilasDeOtroTenant) + "-B");
+        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
+        var desdeUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 0, 0, 0, TimeSpan.Zero);
+
+        await SembrarComprobanteAsync(ctxB, mediodiaUtc, 999_999m);
+
+        await using var dbPlataforma = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var lector = new LectorDeSerieTemporal(dbPlataforma);
+
+        var filas = await lector.EjecutarVentasAsync(
+            Granularidad.Dia, "UTC", ctxA.IdTenant, [ctxA.IdPuntoVenta, ctxB.IdPuntoVenta], desdeUtc, desdeUtc.AddDays(1));
+
+        Assert.Empty(filas);
+    }
+
     [Fact]
     public async Task UnaFilaSoftDeletedNuncaApareceEnElResumen()
     {
@@ -217,21 +245,35 @@ public class ReportesVentasResumenTests(WaysApiFixture fixture) : IClassFixture<
         var instante = new DateTimeOffset(2026, 8, 6, 1, 30, 0, TimeSpan.Zero);
         await SembrarComprobanteAsync(ctx, instante, 500m);
 
+        // Rango de 3 días: con un solo día en el rango, hay un único bucket posible y el test no
+        // distingue si el bucketing por zona en verdad corrió en el SQL (timezone($1, cv.fecha))
+        // o si el date_trunc truncó en la zona de sesión de Postgres sin más. Con 3 días, la venta
+        // tiene que caer en el bucket correcto SEGÚN LA ZONA, no en cualquiera del rango.
+        var desde = new DateOnly(2026, 8, 4);
+        var hasta = new DateOnly(2026, 8, 6);
+
         var configuracionArt = await ctx.Admin.PutAsJsonAsync(
             "/api/parametros?idEmpresa=" + ctx.IdEmpresa,
             new ParametroAlta("zona_horaria", "\"America/Argentina/Buenos_Aires\"", null));
         Assert.Equal(HttpStatusCode.OK, configuracionArt.StatusCode);
 
-        var resumenArt = await ObtenerResumenAsync(ctx.Admin, ctx.IdEmpresa, new DateOnly(2026, 8, 5), new DateOnly(2026, 8, 5));
+        var resumenArt = await ObtenerResumenAsync(ctx.Admin, ctx.IdEmpresa, desde, hasta);
         Assert.Equal(500m, resumenArt.NetoVendido);
+        Assert.Equal(500m, BucketPor(resumenArt, "2026-08-05").Neto);
+        Assert.Equal(0m, BucketPor(resumenArt, "2026-08-06").Neto);
 
         var configuracionUtc = await ctx.Admin.PutAsJsonAsync(
             "/api/parametros?idEmpresa=" + ctx.IdEmpresa, new ParametroAlta("zona_horaria", "\"UTC\"", null));
         Assert.Equal(HttpStatusCode.OK, configuracionUtc.StatusCode);
 
-        var resumenUtc = await ObtenerResumenAsync(ctx.Admin, ctx.IdEmpresa, new DateOnly(2026, 8, 5), new DateOnly(2026, 8, 5));
-        Assert.Equal(0m, resumenUtc.NetoVendido);
+        var resumenUtc = await ObtenerResumenAsync(ctx.Admin, ctx.IdEmpresa, desde, hasta);
+        Assert.Equal(500m, resumenUtc.NetoVendido);
+        Assert.Equal(0m, BucketPor(resumenUtc, "2026-08-05").Neto);
+        Assert.Equal(500m, BucketPor(resumenUtc, "2026-08-06").Neto);
     }
+
+    private static BucketDeVentas BucketPor(ResumenDeVentas resumen, string etiqueta) =>
+        resumen.Serie.Single(b => b.Etiqueta == etiqueta);
 
     // ---- task 2.13: NCX se excluye de numerador Y denominador del ticket promedio ----------------
 
