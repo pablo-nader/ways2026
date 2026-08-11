@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'vitest'
-import { construirQueryDeBreakdown, construirQueryDeBreakdownConPv, construirQueryDeReporte, rangoUltimosSieteDias } from './reportes'
-import type { FiltrosDeBreakdown, FiltrosDeBreakdownConPv, FiltrosDeReporte } from './reportes'
+import { describe, expect, it, vi } from 'vitest'
+import type { FiltrosDeBreakdown, FiltrosDeBreakdownConPv, FiltrosDeReporte, FiltrosDeTopArticulos } from './reportes'
+
+const apiGetMock = vi.fn(() => Promise.resolve(undefined))
+
+vi.mock('./cliente', () => ({
+  api: { get: (...args: unknown[]) => apiGetMock(...(args as [])) },
+}))
+
+const { clienteDeReportes, construirQueryDeBreakdown, construirQueryDeBreakdownConPv, construirQueryDeReporte, rangoUltimosSieteDias } =
+  await import('./reportes')
 
 function filtrosFixture(sobrescribir: Partial<FiltrosDeReporte> = {}): FiltrosDeReporte {
   return {
@@ -19,6 +27,10 @@ function filtrosBreakdownFixture(sobrescribir: Partial<FiltrosDeBreakdown> = {})
 
 function filtrosBreakdownConPvFixture(sobrescribir: Partial<FiltrosDeBreakdownConPv> = {}): FiltrosDeBreakdownConPv {
   return { idEmpresa: 1, idPuntoVenta: null, desde: '2026-08-05', hasta: '2026-08-11', ...sobrescribir }
+}
+
+function filtrosTopArticulosFixture(sobrescribir: Partial<FiltrosDeTopArticulos> = {}): FiltrosDeTopArticulos {
+  return { idEmpresa: 1, idPuntoVenta: null, desde: '2026-08-05', hasta: '2026-08-11', limite: null, ...sobrescribir }
 }
 
 describe('construirQueryDeReporte', () => {
@@ -59,6 +71,22 @@ describe('construirQueryDeBreakdownConPv', () => {
     const query = construirQueryDeBreakdownConPv(filtrosBreakdownConPvFixture({ idPuntoVenta: 7 }))
 
     expect(query).toContain('idPuntoVenta=7')
+  })
+})
+
+describe('clienteDeReportes.articulosTop', () => {
+  it('reutiliza construirQueryDeBreakdownConPv y omite limite cuando es null', async () => {
+    apiGetMock.mockClear()
+    await clienteDeReportes.articulosTop(filtrosTopArticulosFixture())
+
+    expect(apiGetMock).toHaveBeenCalledWith('/reportes/articulos/top?idEmpresa=1&desde=2026-08-05&hasta=2026-08-11')
+  })
+
+  it('agrega limite solo cuando está seteado, junto con idPuntoVenta', async () => {
+    apiGetMock.mockClear()
+    await clienteDeReportes.articulosTop(filtrosTopArticulosFixture({ idPuntoVenta: 7, limite: 10 }))
+
+    expect(apiGetMock).toHaveBeenCalledWith('/reportes/articulos/top?idEmpresa=1&idPuntoVenta=7&desde=2026-08-05&hasta=2026-08-11&limite=10')
   })
 })
 

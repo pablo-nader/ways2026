@@ -10,6 +10,7 @@ import type {
   Granularidad,
   ResumenDeGastos,
   ResumenDeVentas,
+  TopArticulos,
   VentasPorMedioPago,
   VentasPorPuntoVenta,
   VentasPorVendedor,
@@ -61,6 +62,11 @@ export function construirQueryDeBreakdownConPv(filtros: FiltrosDeBreakdownConPv)
   return `?${parametros.toString()}`
 }
 
+/** `articulos/top` reutiliza el shape de `FiltrosDeBreakdownConPv` (acepta `idPuntoVenta`, a
+ * diferencia de `por-punto-venta`) y suma `limite` — único parámetro propio de esta ruta
+ * (`ReportesEndpoints.cs`: `int? limite`). */
+export type FiltrosDeTopArticulos = FiltrosDeBreakdownConPv & { limite: number | null }
+
 export const clienteDeReportes = {
   ventasResumen: (filtros: FiltrosDeReporte) =>
     api.get<ResumenDeVentas>(`/reportes/ventas/resumen${construirQueryDeReporte(filtros)}`),
@@ -72,6 +78,11 @@ export const clienteDeReportes = {
     api.get<VentasPorVendedor>(`/reportes/ventas/por-vendedor${construirQueryDeBreakdownConPv(filtros)}`),
   ventasPorMedioPago: (filtros: FiltrosDeBreakdownConPv) =>
     api.get<VentasPorMedioPago>(`/reportes/ventas/por-medio-pago${construirQueryDeBreakdownConPv(filtros)}`),
+  articulosTop: (filtros: FiltrosDeTopArticulos) => {
+    const query = construirQueryDeBreakdownConPv(filtros)
+    const conLimite = filtros.limite === null ? query : `${query}&limite=${filtros.limite}`
+    return api.get<TopArticulos>(`/reportes/articulos/top${conLimite}`)
+  },
 }
 
 function aFechaIso(fecha: Date): string {

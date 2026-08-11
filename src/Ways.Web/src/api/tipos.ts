@@ -1168,3 +1168,23 @@ export type VentasPorMedioPago = {
   zonaHoraria: string
   filas: FilaVentasPorMedioPago[]
 }
+
+/** Fila de `GET /api/reportes/articulos/top`, agrupada por `id_articulo` — espejo de
+ * `ArticuloTop`. `descripcion` es el snapshot de la línea, nunca un re-join contra `articulos`
+ * (design decisión 10). `cantidad`/`total` son netos: una NCX resta por construcción, sin rama
+ * de signo. */
+export type ArticuloTop = {
+  idArticulo: number
+  descripcion: string
+  cantidad: number
+  total: number
+}
+
+/** Respuesta de `GET /api/reportes/articulos/top` — espejo de `TopArticulos`. `articulos` viene
+ * ordenada por `total` descendente. */
+export type TopArticulos = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  articulos: ArticuloTop[]
+}
