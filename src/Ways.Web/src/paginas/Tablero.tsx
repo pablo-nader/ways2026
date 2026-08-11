@@ -26,9 +26,9 @@ const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('me
 
 /** `articulos/top` no trae un selector de "Top N" en esta slice — límite fijo, sensible para un
  * panel de tablero (ni tan corto que pierda contexto, ni tan largo que rompa el gráfico de
- * barras). *(ReportesEndpoints.cs: `limite` es `int?`, opcional — el backend resuelve su propio
- * default si no viaja; este valor es la elección del cliente, no un espejo de un default del
- * servidor)*. */
+ * barras). *(ReportesEndpoints.cs: `limite` es `int?`, opcional — sin límite el backend
+ * devuelve el ranking completo, no aplica un default propio; este valor es la elección del
+ * cliente)*. */
 const LIMITE_TOP_ARTICULOS = 10
 
 const GRANULARIDADES: { valor: Granularidad; etiqueta: string }[] = [
