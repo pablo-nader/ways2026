@@ -188,11 +188,12 @@ export type ParametroAlta = { clave: string; valor: string; idPuntoVenta: number
 export type ParametroResuelto = { clave: string; valor: string }
 
 /** Espejo de `ParametroConocido` (Ways.Domain.Catalogos): clave, tipo declarado y default
- * documentado — el editor solo acepta estas claves, igual que el backend. */
+ * documentado — el editor solo acepta estas claves, igual que el backend. `zona_horaria` es
+ * el primer tipo `'texto'`: el backend lo guarda como string JSON-quoteado (stage-10). */
 export const PARAMETROS_CONOCIDOS: {
   clave: string
   etiqueta: string
-  tipo: 'entero' | 'decimal'
+  tipo: 'entero' | 'decimal' | 'texto'
   porDefecto: string
 }[] = [
   { clave: 'tolerancia_pago', etiqueta: 'Tolerancia de pago ($)', tipo: 'decimal', porDefecto: '10' },
@@ -204,6 +205,31 @@ export const PARAMETROS_CONOCIDOS: {
     porDefecto: '5',
   },
   { clave: 'slots_tickets_espera', etiqueta: 'Tickets en espera (cantidad)', tipo: 'entero', porDefecto: '10' },
+  {
+    clave: 'zona_horaria',
+    etiqueta: 'Zona horaria',
+    tipo: 'texto',
+    porDefecto: 'America/Argentina/Buenos_Aires',
+  },
+  { clave: 'comision_porcentaje', etiqueta: 'Comisión (%)', tipo: 'decimal', porDefecto: '0' },
+]
+
+/** Zonas IANA ofrecidas en el editor de `zona_horaria` (design decisión 12): un `<select>`
+ * cerrado en vez de texto libre, para que un identificador inválido no pueda ni tipearse. */
+export const ZONAS_HORARIAS_OFRECIDAS: { id: string; etiqueta: string }[] = [
+  { id: 'America/Argentina/Buenos_Aires', etiqueta: 'Buenos Aires' },
+  { id: 'America/Argentina/Catamarca', etiqueta: 'Catamarca' },
+  { id: 'America/Argentina/Cordoba', etiqueta: 'Córdoba' },
+  { id: 'America/Argentina/Jujuy', etiqueta: 'Jujuy' },
+  { id: 'America/Argentina/La_Rioja', etiqueta: 'La Rioja' },
+  { id: 'America/Argentina/Mendoza', etiqueta: 'Mendoza' },
+  { id: 'America/Argentina/Rio_Gallegos', etiqueta: 'Río Gallegos' },
+  { id: 'America/Argentina/Salta', etiqueta: 'Salta' },
+  { id: 'America/Argentina/San_Juan', etiqueta: 'San Juan' },
+  { id: 'America/Argentina/San_Luis', etiqueta: 'San Luis' },
+  { id: 'America/Argentina/Tucuman', etiqueta: 'Tucumán' },
+  { id: 'America/Argentina/Ushuaia', etiqueta: 'Ushuaia' },
+  { id: 'UTC', etiqueta: 'UTC' },
 ]
 
 // --- Organización: lectura/edición (ServicioDeOrganizacion) ---
