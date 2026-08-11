@@ -1,5 +1,5 @@
 change: stage-11-exportacion-reportes
-phase: tasks
+phase: apply
 status: in-progress
 artifact_store: openspec
 execution_mode: delegated-autonomous
@@ -23,7 +23,8 @@ phases:
     artifact: null
     depends_on: [propose]
   tasks:
-    status: pending
+    status: done
+    artifact: tasks.md
     artifact: null
     depends_on: [spec, design]
   apply:
