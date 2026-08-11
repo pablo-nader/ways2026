@@ -110,6 +110,16 @@ export function puedeVerRentabilidad(rolId: number) {
   return rolId === ROL.Admin
 }
 
+/** Espejo de `Politicas.LecturaDeRentabilidad` aplicada a `GET /api/reportes/comisiones`
+ * (stage-10-agregacion-dashboard, Slice 10, PROVISIONAL): mismo policy admin-only que
+ * `puedeVerRentabilidad` — se apila sobre `LecturaDeReportes` igual que rentabilidad (design
+ * decisión 7) — nombrada aparte porque es un concern de UI distinto (tarjeta de comisiones, no el
+ * panel de margen). Puramente cosmético: el servidor vuelve a exigir la misma policy en
+ * `/api/reportes/comisiones`. */
+export function puedeVerComisiones(rolId: number) {
+  return rolId === ROL.Admin
+}
+
 // --- Catálogos de tenant (ADR-11) ---
 
 export type ComportamientoMedioPago = 'Efectivo' | 'Electronico' | 'CuentaCorriente'
@@ -1240,4 +1250,31 @@ export type Rentabilidad = {
   margenPorcentaje: number | null
   cobertura: CoberturaDeCosto
   porArticulo: RentabilidadPorArticulo[]
+}
+
+// --- Comisiones (stage-10-agregacion-dashboard, Slice 10): reporte PROVISIONAL — sin tabla
+// propia, calculado on the fly (espejo de `Ways.Application.Reportes.Contratos`, `Comisiones`/
+// `ComisionPorEmpleado`). Droppable en su totalidad (proposal Rollback Plan step 4).
+
+/** Fila de `GET /api/reportes/comisiones`, agrupada por `id_empleado` — espejo de
+ * `ComisionPorEmpleado`. `comision` = `netoVendido` × la tasa resuelta de la respuesta
+ * (`comisionPorcentaje`). */
+export type ComisionPorEmpleado = {
+  idEmpleado: number
+  netoVendido: number
+  comision: number
+}
+
+/** Respuesta de `GET /api/reportes/comisiones` — espejo de `Comisiones` (spec
+ * rentabilidad-y-comisiones: Comisiones Is A Provisional, Non-Persisted Report).
+ * `comisionPorcentaje` es la tasa efectivamente resuelta (echo obligatorio, mismo criterio que
+ * `zonaHoraria` en el resto de los reportes) — con el default `0` ninguna fila tiene comisión
+ * distinta de cero. `provisional` viaja SIEMPRE en `true`. */
+export type Comisiones = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  comisionPorcentaje: number
+  filas: ComisionPorEmpleado[]
+  provisional: boolean
 }

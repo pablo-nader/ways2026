@@ -5,6 +5,7 @@ import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rangoUltimosSieteDias } from '../api/reportes'
 import type {
   CoberturaDeCosto,
+  Comisiones,
   EmpresaListado,
   Granularidad,
   MedioPagoAlta,
@@ -18,7 +19,7 @@ import type {
   VentasPorPuntoVenta,
   VentasPorVendedor,
 } from '../api/tipos'
-import { puedeVerRentabilidad } from '../api/tipos'
+import { puedeVerComisiones, puedeVerRentabilidad } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -395,6 +396,70 @@ function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPan
   )
 }
 
+type PropsPanelDeComisiones = { idEmpresa: number; desde: string; hasta: string; idPuntoVenta: number | null }
+
+/**
+ * Card de comisiones (Slice 10, PROVISIONAL — droppable en su totalidad, spec
+ * rentabilidad-y-comisiones: Comisiones Is A Provisional, Non-Persisted Report): mismo gate de rol
+ * que `PanelDeRentabilidad` (`puedeVerComisiones`, Admin-only — un Supervisor/Vendedor ni siquiera
+ * monta este componente, sin fetch a `/comisiones`). El badge PROVISIONAL es el contrato del
+ * producto, no decoración: la fórmula espera la decisión real del dueño (design: Open Questions,
+ * "Commission rate scope") — viaja siempre visible junto a la tasa y a cada cifra calculada. Con
+ * la tasa resuelta en `0` (default) el panel NUNCA renderiza una tabla de filas en `$0,00` — eso
+ * simularía datos que no existen; en cambio muestra un estado "desactivado" explícito.
+ */
+function PanelDeComisiones({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanelDeComisiones) {
+  const cargarDatos = useCallback(
+    () => clienteDeReportes.comisiones({ idEmpresa, idPuntoVenta, desde, hasta }),
+    [idEmpresa, idPuntoVenta, desde, hasta],
+  )
+  const { datos, cargando, error, reintentar } = usePanelDeReporte<Comisiones>(
+    cargarDatos,
+    'No se pudo cargar las comisiones.',
+  )
+
+  return (
+    <div className="border p-3 bg-white h-100">
+      <div className="d-flex justify-content-between align-items-center">
+        <h6 className="mb-0">Comisiones</h6>
+        <span className="badge bg-warning text-dark">PROVISIONAL</span>
+      </div>
+      {error && <PanelDeError error={error} onReintentar={reintentar} />}
+      {cargando && !datos && <Cargando />}
+      {datos && (
+        <>
+          <p className="text-muted small mb-2">Tasa aplicada: {datos.comisionPorcentaje}%</p>
+          {datos.comisionPorcentaje === 0 ? (
+            <p className="text-muted small mb-0">
+              Comisiones desactivadas: la tasa configurada es 0%. Configure «Comisión (%)» en Parámetros para
+              activarlas.
+            </p>
+          ) : (
+            <table className="table table-sm mt-2 mb-0">
+              <thead>
+                <tr>
+                  <th>Vendedor</th>
+                  <th>Neto vendido</th>
+                  <th>Comisión</th>
+                </tr>
+              </thead>
+              <tbody>
+                {datos.filas.map((f) => (
+                  <tr key={f.idEmpleado}>
+                    <td>Vendedor #{f.idEmpleado}</td>
+                    <td>{formatearMoneda(f.netoVendido)}</td>
+                    <td>{formatearMoneda(f.comision)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 /**
  * Tablero (stage-10-agregacion-dashboard, Slice 7 — G1 parity; Slice 8 — filtro compartido +
  * paneles de desglose): serie de ventas, serie de gastos, netos y ticket promedio de los últimos
@@ -678,6 +743,14 @@ export function Tablero() {
               <div className="row g-3 mt-1">
                 <div className="col-md-6">
                   <PanelDeRentabilidad idEmpresa={idEmpresa} desde={desde} hasta={hasta} idPuntoVenta={idPuntoVenta} />
+                </div>
+              </div>
+            )}
+
+            {idEmpresa !== null && usuario && puedeVerComisiones(usuario.rolId) && (
+              <div className="row g-3 mt-1">
+                <div className="col-md-6">
+                  <PanelDeComisiones idEmpresa={idEmpresa} desde={desde} hasta={hasta} idPuntoVenta={idPuntoVenta} />
                 </div>
               </div>
             )}

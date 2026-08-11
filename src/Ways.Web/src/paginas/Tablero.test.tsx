@@ -5,6 +5,7 @@ import { Tablero } from './Tablero'
 import { rangoUltimosSieteDias } from '../api/reportes'
 import { ROL } from '../api/tipos'
 import type {
+  Comisiones,
   EmpresaListado,
   MedioPagoListado,
   PuntoVentaListado,
@@ -204,6 +205,22 @@ function rentabilidadFixture(sobrescribir: Partial<Rentabilidad> = {}): Rentabil
   }
 }
 
+// idEmpleado 42 (no 9, el de `ventasPorVendedorFixture`) y montos distintos de los que ya usan las
+// demás fixtures del archivo: el panel de comisiones convive con el panel de desglose por
+// vendedor y las cards G1 en la misma pantalla — valores únicos evitan que
+// `screen.getByText(...)` resuelva a un nodo ambiguo entre paneles.
+function comisionesFixture(sobrescribir: Partial<Comisiones> = {}): Comisiones {
+  return {
+    desde: '2026-08-05',
+    hasta: '2026-08-11',
+    zonaHoraria: 'America/Argentina/Buenos_Aires',
+    comisionPorcentaje: 5,
+    filas: [{ idEmpleado: 42, netoVendido: 3000, comision: 150 }],
+    provisional: true,
+    ...sobrescribir,
+  }
+}
+
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/empresas') return Promise.resolve([empresaUno])
@@ -218,6 +235,7 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
     if (ruta.startsWith('/reportes/ventas/por-medio-pago?')) return Promise.resolve(ventasPorMedioPagoFixture())
     if (ruta.startsWith('/reportes/articulos/top?')) return Promise.resolve(topArticulosFixture())
     if (ruta.startsWith('/reportes/rentabilidad?')) return Promise.resolve(rentabilidadFixture())
+    if (ruta.startsWith('/reportes/comisiones?')) return Promise.resolve(comisionesFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -931,5 +949,89 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
 
     expect(screen.queryByText('$1,00')).not.toBeInTheDocument()
     expect(screen.getByText('$9.999,00')).toBeInTheDocument()
+  })
+})
+
+describe('Tablero — Card de comisiones, PROVISIONAL (stage-10-agregacion-dashboard, Slice 10)', () => {
+  // Mismo gate que el panel de rentabilidad (mutation-proof-tests, mismo precedente de la Slice 9):
+  // sin `usuario && puedeVerComisiones(usuario.rolId)` envolviendo `PanelDeComisiones`, un
+  // Supervisor vería la card — la ausencia de nodo Y de fetch prueba que el componente ni se monta.
+  it('un Supervisor no ve la card de comisiones ni dispara su fetch', async () => {
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    await waitFor(() => expect(screen.getAllByTestId('bar-chart')).toHaveLength(4))
+
+    expect(screen.queryByText('Comisiones')).not.toBeInTheDocument()
+    expect(screen.queryByText('PROVISIONAL')).not.toBeInTheDocument()
+    const rutasDeComisiones = apiGetMock.mock.calls.map((llamada) => llamada[0] as string).filter((r) => r.startsWith('/reportes/comisiones'))
+    expect(rutasDeComisiones).toHaveLength(0)
+  })
+
+  it('un Vendedor tampoco ve la card de comisiones', async () => {
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'vendedor', rolId: ROL.Vendedor, rol: 'Vendedor' })
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    await waitFor(() => expect(screen.getAllByTestId('bar-chart')).toHaveLength(4))
+
+    expect(screen.queryByText('Comisiones')).not.toBeInTheDocument()
+  })
+
+  // Prueba el contrato del producto (spec tablero: Comisiones Card Is Labelled PROVISIONAL): el
+  // badge está SIEMPRE presente junto a la tasa aplicada y a la cifra calculada por vendedor —
+  // nunca una comisión mostrada sin la etiqueta.
+  it('un Admin ve la card con el badge PROVISIONAL, la tasa y la comisión calculada por vendedor', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Comisiones')
+    expect(screen.getByText('PROVISIONAL')).toBeInTheDocument()
+    expect(await screen.findByText('Tasa aplicada: 5%')).toBeInTheDocument()
+    expect(screen.getByText('Vendedor #42')).toBeInTheDocument()
+    expect(screen.getByText('$3.000,00')).toBeInTheDocument()
+    expect(screen.getByText('$150,00')).toBeInTheDocument()
+  })
+
+  // Hard constraint (droppable slice): tasa 0 (default) nunca renderiza una tabla de filas en
+  // $0,00 simulando datos — muestra un estado "desactivado" honesto en su lugar
+  // (mutation-proof-tests: mutación aplicada — reemplazada la rama `datos.comisionPorcentaje ===
+  // 0` de `PanelDeComisiones` por `false` (fuerza siempre la tabla) → este test falló mostrando
+  // "$0,00" y "Vendedor #42" en vez del mensaje "desactivadas" → revertida → vuelve a pasar).
+  it('con tasa 0 (default) la card muestra un estado desactivado, nunca una tabla de comisiones en $0,00', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/comisiones?')) {
+        return Promise.resolve(
+          comisionesFixture({ comisionPorcentaje: 0, filas: [{ idEmpleado: 42, netoVendido: 1000, comision: 0 }] }),
+        )
+      }
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('Comisiones')
+    expect(screen.getByText('PROVISIONAL')).toBeInTheDocument()
+    expect(await screen.findByText('Tasa aplicada: 0%')).toBeInTheDocument()
+    expect(screen.getByText(/Comisiones desactivadas/)).toBeInTheDocument()
+    expect(screen.queryByText('$0,00')).not.toBeInTheDocument()
+    expect(screen.queryByText('Vendedor #42')).not.toBeInTheDocument()
+  })
+
+  it('el filtro de punto de venta viaja a comisiones', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Comisiones')
+    fireEvent.change(screen.getByLabelText('Punto de venta'), { target: { value: String(puntoVentaCentro.id) } })
+
+    await waitFor(() => {
+      const rutas = apiGetMock.mock.calls.map((llamada) => llamada[0] as string)
+      expect(rutas.some((r) => r.startsWith('/reportes/comisiones?') && r.includes(`idPuntoVenta=${puntoVentaCentro.id}`))).toBe(true)
+    })
   })
 })
