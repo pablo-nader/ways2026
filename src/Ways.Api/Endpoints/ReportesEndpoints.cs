@@ -38,6 +38,20 @@ public static class ReportesEndpoints
         .WithSummary(
             "Ranking de artículos por cantidad y monto neto vendido, ordenado por monto " +
             "descendente. Sin costo ni margen: ver /rentabilidad.");
+        // stage-10-agregacion-dashboard, Slice 4 (design decisión 7): apila LecturaDeRentabilidad
+        // sobre LecturaDeReportes — ASP.NET Core compone políticas con AND, mismo criterio que
+        // StockEndpoints ("/ajustes" apilando GestionDeCatalogo sobre OperacionDePos).
+        grupo.MapGet("/rentabilidad", (
+            ServicioDeReportesDeRentabilidad servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
+            bool? incluirEstimados, CancellationToken ct) =>
+            // bool? (mismo criterio que incluirEliminados/incluirInactivos en el resto de la API):
+            // ausente en la query string ⇒ null ⇒ excluido por default (spec: Margin Excludes
+            // Estimated Cost Lines By Default), nunca un 400 por parámetro faltante.
+            servicio.ObtenerRentabilidadAsync(idEmpresa, idPuntoVenta, desde, hasta, incluirEstimados ?? false, ct))
+        .RequireAuthorization(Politicas.LecturaDeRentabilidad)
+        .WithSummary(
+            "Margen del período: costo estimado excluido por defecto (incluirEstimados=true para " +
+            "sumarlo), costo desconocido siempre salteado. Cobertura obligatoria en toda respuesta.");
 
         return app;
     }

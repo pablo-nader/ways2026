@@ -56,3 +56,20 @@ public sealed record ArticuloTop(int IdArticulo, string Descripcion, decimal Can
 /// <c>/rentabilidad</c>, bajo <c>LecturaDeRentabilidad</c>.</summary>
 public sealed record TopArticulos(
     DateOnly Desde, DateOnly Hasta, string ZonaHoraria, IReadOnlyList<ArticuloTop> Articulos);
+/// <summary>Desglose de margen por artículo dentro de un período de rentabilidad (stage-10 slice
+/// 4). Agrupa por <c>id_articulo</c> pero etiqueta con la <see cref="Descripcion"/> snapshot de la
+/// línea (design decisión 10: nunca re-join contra <c>articulos</c>) — <c>IdArticulo</c> es
+/// <c>null</c> en una línea de concepto libre. Solo incluye líneas efectivamente consideradas en el
+/// margen (design: Interfaces / Contracts); <see cref="MargenPorcentaje"/> es nullable, nunca
+/// <c>0</c>, con el mismo criterio que <see cref="ResumenDeVentas.TicketPromedio"/>.</summary>
+public sealed record RentabilidadPorArticulo(
+    int? IdArticulo, string Descripcion, decimal VentaConsiderada, decimal CostoConsiderado,
+    decimal Margen, decimal? MargenPorcentaje);
+
+/// <summary>Respuesta de <c>GET /api/reportes/rentabilidad</c> (design: Interfaces / Contracts).
+/// <see cref="Cobertura"/> viaja SIEMPRE (spec rentabilidad-y-comisiones: NULL Cost Is Never Treated
+/// As Zero, And Coverage Is Mandatory) — no existe una respuesta sin ella.</summary>
+public sealed record Rentabilidad(
+    DateOnly Desde, DateOnly Hasta, string ZonaHoraria,
+    decimal VentaConsiderada, decimal CostoConsiderado, decimal Margen, decimal? MargenPorcentaje,
+    CoberturaDeCosto Cobertura, IReadOnlyList<RentabilidadPorArticulo> PorArticulo);

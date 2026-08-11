@@ -93,6 +93,9 @@ public static class DependencyInjection
         // stage-10-agregacion-dashboard, Slice 5: top artículos — LINQ puro, sin costo/margen
         // (eso vive en ServicioDeReportesDeRentabilidad, slice 4, bajo LecturaDeRentabilidad).
         services.AddScoped<ServicioDeReportesDeArticulos>();
+        // stage-10-agregacion-dashboard, Slice 4: el margen — LINQ propio, sin dependencia de
+        // LectorDeSerieTemporal (no bucketea, design: Interfaces / Contracts Rentabilidad).
+        services.AddScoped<ServicioDeReportesDeRentabilidad>();
 
         return services;
     }
