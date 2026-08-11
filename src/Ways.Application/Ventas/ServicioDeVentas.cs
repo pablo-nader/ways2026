@@ -614,6 +614,7 @@ public class ServicioDeVentas(
                 PrecioUnitario = i.PrecioUnitario,
                 Descuento = i.Descuento,
                 Total = i.Total,
+                CostoUnitario = i.CostoUnitario,
                 CreatedAt = plan.Momento,
                 UpdatedAt = plan.Momento
             })
@@ -802,7 +803,7 @@ public class ServicioDeVentas(
                 articulo.Id, articulo.Nombre, linea.CodigoBarra, articulo.IdArea, idListaPrecio, idOferta,
                 articulo.IdAlicuotaIva, porcentajePorAlicuota[articulo.IdAlicuotaIva],
                 calculado.Cantidad, calculado.PrecioUnitario, calculado.Descuento, calculado.Total,
-                articulo.EsProducto));
+                articulo.EsProducto, articulo.CostoNominal));
         }
 
         return (items, totales);
@@ -971,7 +972,7 @@ public class ServicioDeVentas(
     private readonly record struct LineaDelPlan(
         int IdArticulo, string Descripcion, string? CodigoBarra, int IdArea, int IdListaPrecio, int? IdOferta,
         int IdAlicuotaIva, decimal PorcentajeIva, decimal Cantidad, decimal PrecioUnitario, decimal Descuento,
-        decimal Total, bool EsProducto);
+        decimal Total, bool EsProducto, decimal? CostoUnitario);
 
     private readonly record struct PagoDelPlan(
         int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto);
