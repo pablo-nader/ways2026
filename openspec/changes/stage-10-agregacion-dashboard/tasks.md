@@ -246,7 +246,7 @@ branch.
   `LecturaDeReportes` **+** `LecturaDeRentabilidad` (design decision 7 — AND
   composition, no new mechanism). — `GET /rentabilidad` only, wired and
   tested; `GET /articulos/top` out of scope (see 4.1).
-- [ ] 4.5 [P] `ReportesArticulosTopTests` — 4-test pattern + NCX-reduces-ranking
+- [x] 4.5 [P] `ReportesArticulosTopTests` — 4-test pattern + NCX-reduces-ranking
   check. — **NOT done**: depends on 4.1 (out of scope).
 - [x] 4.6 [P] `RentabilidadTests`: four seeded lines (real cost / estimated /
   `NULL` / cost `0`) — estimated excluded by default, included with the
@@ -270,11 +270,11 @@ branch.
   `dotnet ef migrations has-pending-model-changes` (Infrastructure as
   startup project): "No changes have been made to the model since the last
   migration."
-- [ ] 4.9 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+- [x] 4.9 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
   sdd-apply — requires sub-agent delegation, out of the apply executor's
   scope; orchestrator must run this before PR, same precedent as slices
   2/6.)*
-- [ ] 4.10 Branch `feat/stage10-slice4-articulos-y-margen` off `main`
+- [x] 4.10 Branch `feat/stage10-slice4-articulos-y-margen` off `main`
   (parent: slice 2, independent of slice 3); PR; merge stacked-to-main. —
   Branch `feat/stage10-slice4-rentabilidad` created off `main` @ 46ce29f
   instead (orchestrator-assigned name for the rentabilidad-only scope split
@@ -325,10 +325,10 @@ route shipped so far. **Rollback**: revert the branch.
 - [x] 5.6 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   "No changes have been made to the model since the last migration."; no
   migration files touched (`git status` clean on any Migrations path).
-- [ ] 5.7 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+- [x] 5.7 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
   sdd-apply — requires sub-agent delegation, out of the apply executor's
   scope; orchestrator must run this before PR, same precedent as slices 2/6.)*
-- [ ] 5.8 Branch `feat/stage10-slice5-egresos` off `main` (parent: slice 2,
+- [x] 5.8 Branch `feat/stage10-slice5-egresos` off `main` (parent: slice 2,
   independent of slices 3/4); PR; merge stacked-to-main. *(Branch
   `feat/stage10-slice3-compras-gastos` created off `main` per the
   orchestrator's launch instructions — note the branch-name mismatch with
