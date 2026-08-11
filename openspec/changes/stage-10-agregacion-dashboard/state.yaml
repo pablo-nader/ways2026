@@ -1,5 +1,5 @@
 change: stage-10-agregacion-dashboard
-phase: verify
+phase: archive
 status: in-progress
 artifact_store: openspec
 execution_mode: autonomous-overnight
@@ -31,7 +31,9 @@ phases:
     notes: "Completed 2026-08-12. 10/10 slices merged stacked-to-main (PRs 76,77,78,79,80,81,82,83,84,86 + 85): parametros+politicas, ventas/resumen (unico raw SQL), ventas por dimension, articulos/margen (2 PRs), egresos, graficos, tablero G1, tablero dimensiones (2 rondas), tablero rentabilidad (doble REJECT ronda 1 → doble APPROVE ronda 2), comisiones PROVISIONAL. Gate sin-cambios-de-schema SOSTENIDO: cero migraciones en toda la etapa. Suites al cierre: Domain 394, Application 219, Integration 823, vitest 476. Judgment-day por slice hasta ronda limpia; ~15 hallazgos reales pre-merge (2 MAJORs de produccion: banner de cobertura mintiendo con opt-in, panel top-articulos recortado sin registro; resto test-honesty por mutation-proof-tests). size:exception en la mayoria de los slices — desborde siempre de profundidad de tests, nunca de scope."
     depends_on: [tasks]
   verify:
-    status: pending
+    status: done
+    artifact: verify-report.md
+    notes: "PASS WITH WARNINGS (2026-08-12): 1 CRITICAL (tasks.md checkbox drift 4.1/5.5 — work merged in PRs 80/86; fixed by the orchestrator with corrective note, zero unchecked boxes remain), 3 WARNING, 2 SUGGESTION. 30/32 scored scenarios covered; granularidad scenario pre-recorded as stale-by-design for archive amendment. Gate held: migrations end at CostoCongeladoEnVentaEtapa9. Suites live-run: Domain 394, Application 219, Integration 823, vitest 476."
     depends_on: [apply]
   archive:
     status: pending
