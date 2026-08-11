@@ -10,11 +10,27 @@ public class ParametroConocidoTests
     [InlineData("vuelto_maximo")]
     [InlineData("importe_adicional_recarga")]
     [InlineData("slots_tickets_espera")]
-    public void LasCuatroClavesDeDoc10EstanRegistradas(string clave)
+    [InlineData("zona_horaria")]
+    [InlineData("comision_porcentaje")]
+    public void LasSeisClavesConocidasEstanRegistradas(string clave)
     {
         var conocido = ParametroConocido.Buscar(clave);
 
         Assert.Equal(clave, conocido.Clave);
+    }
+
+    [Fact]
+    public void ZonaHorariaDeclaraElDefaultComoStringJsonQuoteado()
+    {
+        Assert.Equal(typeof(string), ParametroConocido.ZonaHoraria.TipoClr);
+        Assert.Equal("\"America/Argentina/Buenos_Aires\"", ParametroConocido.ZonaHoraria.ValorPorDefecto);
+    }
+
+    [Fact]
+    public void ComisionPorcentajeDeclaraElDefaultEnCero()
+    {
+        Assert.Equal(typeof(decimal), ParametroConocido.ComisionPorcentaje.TipoClr);
+        Assert.Equal("0", ParametroConocido.ComisionPorcentaje.ValorPorDefecto);
     }
 
     [Fact]
