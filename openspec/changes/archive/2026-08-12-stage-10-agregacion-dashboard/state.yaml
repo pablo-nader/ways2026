@@ -1,6 +1,6 @@
 change: stage-10-agregacion-dashboard
 phase: archive
-status: in-progress
+status: archived
 artifact_store: openspec
 execution_mode: autonomous-overnight
 gate: "DB CHANGE GATE — EXERCISED AND APPROVED BY THE ORCHESTRATOR UNDER THE OWNER-DELEGATED OVERNIGHT MANDATE (2026-08-11): the no-schema-change model was formally evaluated (index-coverage justification checked against the existing composite indexes) and approved as proposed. CONDITION (binding): if sdd-apply finds itself writing ANY migration or schema object, the gate REOPENS and apply stops. Recorded for the owner morning report. Original gate text follows. — NOT APPLICABLE: THIS STAGE PROPOSES NO DATABASE CHANGE. The 'Modelo de datos propuesto' section of proposal.md states it explicitly and verbatim: no new table, view, materialized view, enum, column, constraint, index, FK or RLS policy; no change to any existing schema object; no migration; no data statement. The two new ParametroConocido keys (zona_horaria, comision_porcentaje) are CODE, not schema — ParametroConocido.cs:11-13 documents the registry as extensible without a migration ('agregar una clave nueva es agregar una entrada acá, no una migración'), and both keys declare defaults so ZERO parametros rows are required for the stage to work. INDEX REVIEW WAS PERFORMED AND CONCLUDED 'NONE NEEDED': the three new access patterns are already covered by ix_comprobantes_venta_punto_venta_fecha (id_punto_venta, id_tenant, fecha), ix_comprobantes_compra_punto_venta_fecha (id_punto_venta, id_tenant, fecha_recepcion), ix_gastos_punto_venta_fecha (id_punto_venta, id_tenant, fecha), plus ix_items_comprobante_venta_comprobante and ix_items_comprobante_venta_articulo for the item-level join/group. RECORDED FUTURE CANDIDATE, DELIBERATELY NOT PROPOSED: ix_comprobantes_venta_tenant_fecha (id_tenant, fecha) for empresa-wide range scans — only against a real EXPLAIN (ANALYZE) on production-shaped volume, as its own gated index-only slice. GATE REOPENS AUTOMATICALLY IF sdd-apply FINDS ITSELF WRITING A MIGRATION: any migration in this change is a scope violation, not an implementation detail, and must stop and return to the owner."
@@ -36,7 +36,9 @@ phases:
     notes: "PASS WITH WARNINGS (2026-08-12): 1 CRITICAL (tasks.md checkbox drift 4.1/5.5 — work merged in PRs 80/86; fixed by the orchestrator with corrective note, zero unchecked boxes remain), 3 WARNING, 2 SUGGESTION. 30/32 scored scenarios covered; granularidad scenario pre-recorded as stale-by-design for archive amendment. Gate held: migrations end at CostoCongeladoEnVentaEtapa9. Suites live-run: Domain 394, Application 219, Integration 823, vitest 476."
     depends_on: [apply]
   archive:
-    status: pending
+    status: done
+    artifact: archive-report.md
+    notes: "Archived 2026-08-12. 3 new capabilities merged verbatim (byte-identical), tablero with the ONE authorized granularity amendment (8 lines, verified confined), 2 parametros-operativos ADDED blocks appended verbatim. Deterministic copy + fidelity verification by the orchestrator before deleting originals."
     depends_on: [verify]
 dependencies:
   spec: [propose]

@@ -57,8 +57,8 @@ reabran sin motivo nuevo.
 
 | Etapa | Alcance | Desbloquea |
 |---|---|---|
-| 9 | Costo congelado en la línea de venta: `costo_unitario` en `items_comprobante_venta`, snapshot al emitir, backfill aproximado de lo ya vendido | Margen real y rentabilidad histórica |
-| 10 | Capa de agregación server-side + dashboard web con gráficos (ventas por período/vendedor/PV/medio de pago, ticket promedio, top artículos, compras, gastos, margen) | Medir el negocio (supera G1) |
+| 9 | Costo congelado en la línea de venta (implementada — `2026-08-11-stage-9-costo-congelado`, PR #75) | Margen real y rentabilidad histórica |
+| 10 | Capa de agregación + dashboard (implementada — `2026-08-12-stage-10-agregacion-dashboard`, PRs #76-#86) | Medir el negocio (supera G1) |
 | 11 | Infraestructura de exportación (Excel/CSV/PDF) + reportes descargables: Ver Cajas (G2), Caja General/Z (G3), ventas, compras, stock, estado de cuenta | Todo lo imprimible y descargable posterior |
 | 12 | Lotes y vencimientos con control FEFO: stock por lote, sugerencia al vender, alertas de próximos a vencer, decomiso | Operar el rubro perecedero sin pérdida ciega |
 | 13 | Stock inteligente: mínimos y punto de pedido por artículo + PV, alertas de bajo stock, lista de reposición por proveedor, sugerencia de compra | Comprar por dato y no por memoria |
