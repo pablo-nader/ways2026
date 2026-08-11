@@ -42,3 +42,17 @@ public sealed record GastoPorCategoria(CategoriaGasto Categoria, decimal Importe
 public sealed record ResumenDeGastos(
     DateOnly Desde, DateOnly Hasta, Granularidad Granularidad, string ZonaHoraria,
     IReadOnlyList<BucketDeGastos> Serie, decimal ImporteTotal, IReadOnlyList<GastoPorCategoria> PorCategoria);
+/// <summary>Una fila de <c>GET /api/reportes/articulos/top</c> (design decisión 10): agrupada por
+/// <c>id_articulo</c> pero etiquetada con el snapshot de <c>descripcion</c> de la línea más
+/// reciente del período — nunca re-unida contra <c>articulos</c> (doc-10 principio 6: la línea es
+/// inmutable, un artículo renombrado o dado de baja no debe alterar retroactivamente un reporte ya
+/// vendido). <see cref="Cantidad"/> y <see cref="Total"/> son netos: una NCX resta por
+/// construcción, sin rama de signo (spec: An NCX Line Reduces Its Article's Ranking Figures).</summary>
+public sealed record ArticuloTop(int IdArticulo, string Descripcion, decimal Cantidad, decimal Total);
+
+/// <summary>Respuesta de <c>GET /api/reportes/articulos/top</c>. <see cref="Articulos"/> viene
+/// ordenada por <see cref="ArticuloTop.Total"/> descendente (spec reportes-de-gestion: Top
+/// Artículos Ranks By Net Quantity And Revenue) — sin costo ni margen: eso vive en
+/// <c>/rentabilidad</c>, bajo <c>LecturaDeRentabilidad</c>.</summary>
+public sealed record TopArticulos(
+    DateOnly Desde, DateOnly Hasta, string ZonaHoraria, IReadOnlyList<ArticuloTop> Articulos);

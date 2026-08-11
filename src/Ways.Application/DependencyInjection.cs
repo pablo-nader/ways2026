@@ -90,6 +90,9 @@ public static class DependencyInjection
         // stage-10-agregacion-dashboard, Slice 5: ServicioDeReportesDeEgresos reusa
         // LectorDeSerieTemporal para gastos/resumen; compras/por-proveedor es LINQ puro.
         services.AddScoped<ServicioDeReportesDeEgresos>();
+        // stage-10-agregacion-dashboard, Slice 5: top artículos — LINQ puro, sin costo/margen
+        // (eso vive en ServicioDeReportesDeRentabilidad, slice 4, bajo LecturaDeRentabilidad).
+        services.AddScoped<ServicioDeReportesDeArticulos>();
 
         return services;
     }
