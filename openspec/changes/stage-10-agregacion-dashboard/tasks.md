@@ -226,35 +226,61 @@ branch.
   `ObtenerTopArticulosAsync` — join `ItemsComprobanteVenta` ⋈ header, net-sales
   filter, group by `id_articulo`, sum `cantidad`/`total`, label from the
   line's `descripcion` snapshot (never re-join `articulos`). *(design
-  decision 10; spec: Top Artículos Ranks By Net Quantity And Revenue)*
-- [ ] 4.2 Same file: `ObtenerRentabilidadAsync` — `SUM(total -
+  decision 10; spec: Top Artículos Ranks By Net Quantity And Revenue)* —
+  **NOT done in this batch**: the orchestrator narrowed this apply batch to
+  `/rentabilidad` only (parallel worktree scope split, three slices merging
+  the same night); `/articulos/top` remains open.
+- [x] 4.2 Same file: `ObtenerRentabilidadAsync` — `SUM(total -
   costo_unitario * cantidad)`, IVA-included both sides; `costo_es_estimado`
   lines excluded unless `incluirEstimados`; `costo_unitario IS NULL` lines
   skipped, never zeroed; build `CoberturaDeCosto` (lines/revenue included,
   excluded-as-estimated, skipped-as-unknown). *(design: Interfaces/Contracts
   `Rentabilidad`; spec rentabilidad-y-comisiones: Margin Excludes Estimated
-  Cost Lines By Default; NULL Cost Is Never Treated As Zero)*
-- [ ] 4.3 Extend `Contratos.cs`: `RentabilidadPorArticulo`, `Rentabilidad`
+  Cost Lines By Default; NULL Cost Is Never Treated As Zero)* — done; the
+  file created carries only `ObtenerRentabilidadAsync` (task 4.1's
+  `ObtenerTopArticulosAsync` out of scope, see above).
+- [x] 4.3 Extend `Contratos.cs`: `RentabilidadPorArticulo`, `Rentabilidad`
   records exactly as in design (`MargenPorcentaje` nullable, never `0`).
-- [ ] 4.4 Extend `ReportesEndpoints.cs`: `GET /articulos/top` (`limite`) under
+- [x] 4.4 Extend `ReportesEndpoints.cs`: `GET /articulos/top` (`limite`) under
   `LecturaDeReportes`; `GET /rentabilidad` (`incluirEstimados`) under
   `LecturaDeReportes` **+** `LecturaDeRentabilidad` (design decision 7 — AND
-  composition, no new mechanism).
+  composition, no new mechanism). — `GET /rentabilidad` only, wired and
+  tested; `GET /articulos/top` out of scope (see 4.1).
 - [ ] 4.5 [P] `ReportesArticulosTopTests` — 4-test pattern + NCX-reduces-ranking
-  check.
-- [ ] 4.6 [P] `RentabilidadTests`: four seeded lines (real cost / estimated /
+  check. — **NOT done**: depends on 4.1 (out of scope).
+- [x] 4.6 [P] `RentabilidadTests`: four seeded lines (real cost / estimated /
   `NULL` / cost `0`) — estimated excluded by default, included with the
   flag; `NULL` never counted as `0`; every coverage count/revenue field
   asserted for a 10-line mixed period (7 real / 2 estimated / 1 unknown).
-  *(spec: Coverage Reflects A Mixed Period)*
-- [ ] 4.7 [P] Extend `ReportesAutorizacionTests` (parameterized over the
+  *(spec: Coverage Reflects A Mixed Period)* — done, 12 tests, mutation
+  evidence recorded for the `costo_es_estimado` exclusion clause and the
+  `CostoUnitario IS NULL` guard (see apply-progress notes).
+- [x] 4.7 [P] Extend `ReportesAutorizacionTests` (parameterized over the
   route list, created here and grown in later slices): Vendedor → 403 on
   all current routes; Supervisor → 200 on volume routes, 403 on
-  `/rentabilidad`; Admin → 200 on all; Root → 403 on all.
-- [ ] 4.8 Gate guard: `dotnet ef migrations list` unchanged.
-- [ ] 4.9 Run `judgment-day`; fix; re-judge until clean.
+  `/rentabilidad`; Admin → 200 on all; Root → 403 on all. — **Deviation**:
+  no shared `ReportesAutorizacionTests` file created (would collide with the
+  sibling worktrees implementing slices 3/5 the same night). The
+  `/rentabilidad`-only role matrix (Vendedor/Root/Supervisor → 403, Admin →
+  200) is consolidated into `RentabilidadTests.cs` instead, same precedent
+  as slice 2's consolidation of its role tests into
+  `ReportesVentasResumenTests.cs`. A future slice must still create the
+  shared parameterized file once all routes are known.
+- [x] 4.8 Gate guard: `dotnet ef migrations list` unchanged. — confirmed via
+  `dotnet ef migrations has-pending-model-changes` (Infrastructure as
+  startup project): "No changes have been made to the model since the last
+  migration."
+- [ ] 4.9 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+  sdd-apply — requires sub-agent delegation, out of the apply executor's
+  scope; orchestrator must run this before PR, same precedent as slices
+  2/6.)*
 - [ ] 4.10 Branch `feat/stage10-slice4-articulos-y-margen` off `main`
-  (parent: slice 2, independent of slice 3); PR; merge stacked-to-main.
+  (parent: slice 2, independent of slice 3); PR; merge stacked-to-main. —
+  Branch `feat/stage10-slice4-rentabilidad` created off `main` @ 46ce29f
+  instead (orchestrator-assigned name for the rentabilidad-only scope split
+  — `articulos-y-margen`'s `/articulos/top` half remains a separate open
+  work unit). PR creation/merge explicitly out of scope per apply
+  boundaries — NOT done.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ReportesArticulosTop|FullyQualifiedName~Rentabilidad|FullyQualifiedName~ReportesAutorizacion`
 
