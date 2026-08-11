@@ -87,6 +87,10 @@ public static class DependencyInjection
         services.AddScoped<LectorDeSerieTemporal>();
         services.AddScoped<ServicioDeReportesDeVentas>();
 
+        // stage-10-agregacion-dashboard, Slice 5: ServicioDeReportesDeEgresos reusa
+        // LectorDeSerieTemporal para gastos/resumen; compras/por-proveedor es LINQ puro.
+        services.AddScoped<ServicioDeReportesDeEgresos>();
+
         return services;
     }
 }
