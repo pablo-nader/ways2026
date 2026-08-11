@@ -509,20 +509,21 @@ its own fetch and `cargando`. **Rollback**: revert the branch.
   `ticketPromedio`, and the `PV #id`/`Medio #id` lookup-miss fallback for an
   id absent from the catalog fixture) — the chart's `data-serie` alone never
   exercised the table's own rendering branches.
-- [ ] 8.4 Run `judgment-day`; fix; re-judge until clean. *(Round 1 run by the
-  orchestrator on the 3-panel narrowing — REJECT/MAJOR, resolved by
-  completing the 4th panel per this file's Finish criterion; round 2
-  pending, same precedent as slices 1–7: judgment-day itself is NOT run by
-  sdd-apply.)*
-- [ ] 8.5 Branch `feat/stage10-slice8-tablero-dimensiones` off `main`
-  (parent: slice 7); PR; merge stacked-to-main. *(Branch created off `main`
-  @ 39aec6c — slices 1–7 merged, matching "Start: slices 3 and 7 merged";
-  work-unit commits applied on it. PR creation/merge explicitly out of
-  scope per apply boundaries — NOT done.)*
+- [x] 8.4 Run `judgment-day`; fix; re-judge until clean. *(Round 1: Judge A
+  REJECT/MAJOR on the 3-panel narrowing — resolved by completing the 4th
+  panel; Judge B's two coverage gaps folded into the same pass. Round 2:
+  Judge A APPROVE with the 4-panel contract verified.)*
+- [x] 8.5 Branch `feat/stage10-slice8-tablero-dimensiones` off `main`
+  (parent: slice 7); PR #84; merged stacked-to-main.
 
 **Verify**: `npm run test -- Tablero`
 
 ---
+
+> Archive-time reconciliation (recorded at slice-8 close): specs/tablero/spec.md's scenario
+> "Changing granularity re-buckets every panel" is stale — by design (and shipped behavior)
+> granularidad only drives the two G1 series; the 4 breakdown panels are period subtotals.
+> Amend the spec scenario when merging deltas at archive.
 
 ## Slice 9: Tablero Rentabilidad (PR 9)
 
