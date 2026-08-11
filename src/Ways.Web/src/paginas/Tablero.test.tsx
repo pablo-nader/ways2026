@@ -148,6 +148,10 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     expect(screen.queryByText('$0,00')).not.toBeInTheDocument()
   })
 
+  // Prueba la guarda `if (generacionRef.current !== miGeneracion) return` del `.then` de
+  // `cargar` en Tablero.tsx (mutation-proof-tests): quitando esa línea este test falla
+  // (verificado — $1,00 de la respuesta obsoleta queda en pantalla en vez de $9.999,00),
+  // revertida vuelve a pasar.
   it('una respuesta desactualizada nunca pisa el rango ya cambiado (generación)', async () => {
     let resolverPrimeraVentas: (valor: ResumenDeVentas) => void = () => {}
     const primeraVentas = new Promise<ResumenDeVentas>((resolve) => {
