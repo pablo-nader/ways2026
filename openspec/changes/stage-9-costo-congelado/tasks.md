@@ -50,13 +50,13 @@ CHECKs mapped to 400s, doc-10 §4 updated, full suite green. **Rollback**:
 down-migration drops both CHECKs and both columns; every other object is
 untouched (proposal Rollback Plan step 3).
 
-- [ ] 1.1 Modify `src/Ways.Domain/Ventas/ItemComprobanteVenta.cs`: add
+- [x] 1.1 Modify `src/Ways.Domain/Ventas/ItemComprobanteVenta.cs`: add
   `CostoUnitario` (`decimal?`) and `CostoEsEstimado` (`bool`) properties
   after `Total`; extend the class doc-comment's frozen-snapshot list
   (`:14-19`) with both; give each property its own `<summary>` stating
   unsigned-per-unit, IVA-included, `NULL` = unknown, `0` = stated zero cost.
   *(design: File Changes; spec: Snapshot Immutability of Items)*
-- [ ] 1.2 Modify `src/Ways.Infrastructure/.../ItemComprobanteVentaConfiguration.cs`:
+- [x] 1.2 Modify `src/Ways.Infrastructure/.../ItemComprobanteVentaConfiguration.cs`:
   add `Property(x => x.CostoUnitario).HasColumnType("numeric(14,2)")`
   (nullable); add `Property(x => x.CostoEsEstimado).IsRequired()
   .HasDefaultValue(false)`; add two `HasCheckConstraint` calls —
@@ -65,7 +65,7 @@ untouched (proposal Rollback Plan step 3).
   `ck_items_comprobante_venta_estimado_con_costo`
   (`NOT costo_es_estimado OR costo_unitario IS NOT NULL`).
   *(design decision 6; proposal: Modelo de datos propuesto)*
-- [ ] 1.3 Create migration `CostoCongeladoEnVentaEtapa9`: **must reproduce
+- [x] 1.3 Create migration `CostoCongeladoEnVentaEtapa9`: **must reproduce
   the gate-approved model exactly — any deviation reopens the DB CHANGE
   GATE.** Order: (a) `AddColumn<decimal>("costo_unitario", …, nullable:
   true)`; (b) `AddColumn<bool>("costo_es_estimado", …, nullable: false,
@@ -81,53 +81,53 @@ untouched (proposal Rollback Plan step 3).
   no tenant interceptor on the deploy path, so `SET LOCAL` outside this
   block never applies). `Down`: drop both CHECKs, then both columns.
   *(design: Migration Shape; state.yaml gate)*
-- [ ] 1.4 Update `docs/10-modelo-de-datos.md` §4: schema note for
+- [x] 1.4 Update `docs/10-modelo-de-datos.md` §4: schema note for
   `costo_unitario`/`costo_es_estimado` on `items_comprobante_venta`, same
   trailing-blockquote convention as stages 5–8.
   *(proposal: Affected Areas)*
-- [ ] 1.5 Modify `src/Ways.Application/Ventas/ServicioDeVentas.cs`:
+- [x] 1.5 Modify `src/Ways.Application/Ventas/ServicioDeVentas.cs`:
   `LineaDelPlan` record (`:971-974`) gains `decimal? CostoUnitario`.
   *(design decision 1)*
-- [ ] 1.6 Same file, `MaterializarItems` (`:786-806`): assign
+- [x] 1.6 Same file, `MaterializarItems` (`:786-806`): assign
   `CostoUnitario = articulo.CostoNominal` in the same statement that already
   copies `articulo.Nombre`/`IdArea`/`IdAlicuotaIva` (`:801-805`) — **before**
   the retryable lambda, so a retry never re-reads a `costo_nominal` moved by
   a concurrent compra confirm. No new query: `articuloPorId` (`:96-98`)
   already materializes `CostoNominal`. *(design decision 1; Data Flow)*
-- [ ] 1.7 Same file, `EjecutarTransaccionAsync` step 3 (`:600-620`): set
+- [x] 1.7 Same file, `EjecutarTransaccionAsync` step 3 (`:600-620`): set
   `ItemComprobanteVenta.CostoUnitario` from `LineaDelPlan.CostoUnitario`.
   Do **not** assign `CostoEsEstimado` explicitly — it stays at its EF
   `HasDefaultValue(false)`. *(design decision 6)*
-- [ ] 1.8 Modify `src/Ways.Api/Seguridad/ManejadorDeErrores.cs`: add two
+- [x] 1.8 Modify `src/Ways.Api/Seguridad/ManejadorDeErrores.cs`: add two
   arms to `ClasificarCheckDeVentas` (`:531-555`), exact constraint name —
   `ck_items_comprobante_venta_costo_no_negativo` → 400
   `costo_de_item_invalido`; `ck_items_comprobante_venta_estimado_con_costo`
   → 400 `costo_estimado_sin_costo`. *(design decision 5; Backstop Map)*
-- [ ] 1.9 [P] Integration snapshot tests, new
+- [x] 1.9 [P] Integration snapshot tests, new
   `tests/Ways.IntegrationTests/CostoCongeladoTests.cs`: emission with
   `costo_nominal = 121.00` ⇒ line `(121.00, false)`; `costo_nominal = NULL`
   ⇒ `(NULL, false)`, never `0`; `costo_nominal = 0` ⇒ `(0, false)`,
   distinguishable from the NULL case; reprint via `GET /api/ventas/{id}`
   shows the frozen value unchanged after the live cost moves.
   *(spec: Snapshot Immutability of Items — both new scenarios)*
-- [ ] 1.10 [P] Integration NCX-sign test, same file: an NCX freezes its own
+- [x] 1.10 [P] Integration NCX-sign test, same file: an NCX freezes its own
   current cost (not the original TX's), and `costo_unitario × cantidad`
   comes out negative because `cantidad` is negative on the NCX; a cost that
   moved between the TX and the NCX is asserted as the accepted residual, not
   a bug. *(spec: Cost Snapshot Semantics, NCX Freeze, And No-Exposure)*
-- [ ] 1.11 Integration query-budget regression:
+- [x] 1.11 Integration query-budget regression:
   `VentasCheckoutTests.ElCheckoutEmiteUnaCantidadConstanteDeConsultasIndependienteDeLaCantidadDeLineas`
   passes at `Assert.Equal(17, …)` (`:918`) **with the line unedited** — any
   diff touching it is a design violation, not a test update.
   *(design decision 2)*
-- [ ] 1.12 [P] Integration backfill test, multi-tenant (the
+- [x] 1.12 [P] Integration backfill test, multi-tenant (the
   `ComprasTipoSeedTests` harness precedent): fresh database → migrate to
   `ComprasYTransferenciasEtapa8` → seed two tenants, each with a comprobante
   + item + a priced articulo, plus one line with `id_articulo NULL` and one
   whose articulo has no cost → `MigrateAsync()` → assert both tenants' rows
   are `(costo_nominal, true)` and the two gap rows stay `(NULL, false)`.
   *(design: Testing Strategy; spec: One-Shot Backfill — multi-tenant scenario)*
-- [ ] 1.13 Integration backfill test, **statement-level over `ways_app`**
+- [x] 1.13 Integration backfill test, **statement-level over `ways_app`**
   (design finding 2 — 1.12 alone is a false green: `WaysApiFixture` migrates
   as `ways_owner`, the container superuser, so RLS never applies there).
   Raw `NpgsqlConnection` over `fixture.AppConnectionString` (`ways_app`,
@@ -138,16 +138,16 @@ untouched (proposal Rollback Plan step 3).
   any step — an RLS-blocked `UPDATE` yields `0` rows, not a throw.
   *(design decision 4; Testing Strategy — "false green"; spec: One-Shot
   Backfill — idempotent re-run scenario)*
-- [ ] 1.14 [P] Integration CHECK backstops: one raw-SQL insert per
+- [x] 1.14 [P] Integration CHECK backstops: one raw-SQL insert per
   constraint asserting `SqlState == "23514"` and `ConstraintName`, plus a
   `ManejadorDeErroresVentasTests` arm per constraint asserting the
   translated domain code from 1.8. *(design: Backstop Map)*
-- [ ] 1.15 [P] Integration no-leakage proof: reflection over
+- [x] 1.15 [P] Integration no-leakage proof: reflection over
   `ItemEmitido`/`ComprobanteEmitido` asserting no member name contains
   `costo`; a raw-JSON assertion on the `POST /api/ventas` response body
   confirming no `costo` key at any level. *(spec: Cost Snapshot Semantics —
   "the emit response never carries cost"; proposal decision 5)*
-- [ ] 1.16 Regression: full Domain/Application/Integration/vitest suite
+- [x] 1.16 Regression: full Domain/Application/Integration/vitest suite
   green — no existing assertion altered other than the two doc/spec files
   from 1.4 and the pre-existing spec delta; `src/Ways.Web` untouched.
   *(proposal: Success Criteria)*
