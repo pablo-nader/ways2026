@@ -106,6 +106,10 @@ public class ExportadorXlsxTests
 
         Assert.Contains("Empresa de prueba", hoja.Cell(1, 1).GetString());
         Assert.Contains("PV 3", hoja.Cell(2, 1).GetString());
+        Assert.Contains("2026-08-01", hoja.Cell(3, 1).GetString());
+        Assert.Contains("2026-08-12", hoja.Cell(3, 1).GetString());
+        Assert.Contains("usuario-de-prueba", hoja.Cell(4, 1).GetString());
+        Assert.Contains("America/Argentina/Buenos_Aires", hoja.Cell(4, 1).GetString());
         Assert.True(hoja.Cell(5, 1).Value.IsBlank);
         Assert.Equal("Período", hoja.Cell(6, 1).GetString());
     }

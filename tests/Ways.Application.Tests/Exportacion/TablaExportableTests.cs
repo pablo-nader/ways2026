@@ -39,6 +39,16 @@ public class TablaExportableTests
     }
 
     [Fact]
+    public void UnaFilaConMasCeldasQueColumnasLanza()
+    {
+        IReadOnlyList<IReadOnlyList<Celda>> filas =
+            [[Celda.Texto("2026-08"), Celda.Moneda(1m), Celda.Moneda(2m)]];
+
+        Assert.Throws<ArgumentException>(() =>
+            new TablaExportable("Hoja", ContextoDePrueba, DosColumnas, filas));
+    }
+
+    [Fact]
     public void UnaCeldaDeTextoEnUnaColumnaDeMonedaLanza()
     {
         // Prueba puntual: "el mapper puso un string en la columna de plata" tiene que ser un
