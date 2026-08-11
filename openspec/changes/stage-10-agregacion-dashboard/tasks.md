@@ -582,7 +582,7 @@ DOM for non-Admin, present with a mandatory coverage banner for Admin.
   (fell through to the same false "100% real" claim via 0/0); (6)
   [judgment-day round 1] the shared generation guard in `usePanelDeReporte`
   removed → the new stale-response test for this panel failed.
-- [ ] 9.4 Run `judgment-day`; fix; re-judge until clean. — round 1: BOTH
+- [x] 9.4 Run `judgment-day`; fix; re-judge until clean. — round 1: BOTH
   judges REJECT (Judge A MAJOR: `bannerDeCobertura` falsely claimed "100%
   real" when `incluyeEstimados=true` and part of the margin was estimated,
   plus a minor on the `ventaTotal === 0` division-by-zero fallback; Judge B
@@ -590,7 +590,7 @@ DOM for non-Admin, present with a mandatory coverage banner for Admin.
   `incluirEstimados` toggle test only asserted the query param, not the
   rendered figure). All three fixed in this same branch — see 9.1-9.3
   notes above. Round 2 pending re-judge.
-- [ ] 9.5 Branch `feat/stage10-slice9-tablero-rentabilidad` off `main`
+- [x] 9.5 Branch `feat/stage10-slice9-tablero-rentabilidad` off `main`
   (parent: slice 8); PR; merge stacked-to-main. — branch created off
   `main` (post slice-8 merge); PR creation/merge is out of scope for
   `sdd-apply` per this run's boundaries (no push/PR).
