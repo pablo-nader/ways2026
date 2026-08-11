@@ -1,5 +1,5 @@
 change: stage-10-agregacion-dashboard
-phase: tasks
+phase: apply
 status: in-progress
 artifact_store: openspec
 execution_mode: autonomous-overnight
@@ -22,7 +22,8 @@ phases:
     artifact: design.md
     depends_on: [propose]
   tasks:
-    status: pending
+    status: done
+    artifact: tasks.md
     depends_on: [spec, design]
   apply:
     status: pending
