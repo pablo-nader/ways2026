@@ -651,8 +651,8 @@ Rollback Plan step 4).
   for the whole stage. Confirmed: same 18 migrations, last one
   `20260811033540_CostoCongeladoEnVentaEtapa9` (stage 9) — no new file, `git
   status` on `Migrations/` clean.
-- [ ] 10.8 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 10.9 Branch `feat/stage10-slice10-comisiones` off `main` (parent:
+- [x] 10.8 Run `judgment-day`; fix; re-judge until clean.
+- [x] 10.9 Branch `feat/stage10-slice10-comisiones` off `main` (parent:
   slice 7); PR; merge stacked-to-main. Branch created; PR/merge pending.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ReportesComisiones` /
