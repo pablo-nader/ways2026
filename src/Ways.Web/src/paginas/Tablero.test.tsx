@@ -782,13 +782,42 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
     expect(screen.queryByText('0.0%')).not.toBeInTheDocument()
   })
 
-  it('el toggle "Incluir costos estimados" dispara un refetch con incluirEstimados=true', async () => {
+  // Judgment-day ronda 1 (Judge B, MINOR + Judge A, MAJOR): el test original solo afirmaba el
+  // query param — nunca que la figura/banner en pantalla cambiara. Ahora la segunda respuesta trae
+  // una cifra y una cobertura DISTINTAS (margen $700/70%, 30% del período con costo estimado ahora
+  // incluido) y el test asegura que la UI refleja esa respuesta, no la primera.
+  it('el toggle "Incluir costos estimados" dispara un refetch y refleja la cifra/banner de la nueva respuesta', async () => {
     usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
-    mockearRutasBase()
+    let llamadas = 0
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/rentabilidad?')) {
+        llamadas += 1
+        if (llamadas === 1) return Promise.resolve(rentabilidadFixture())
+        return Promise.resolve(
+          rentabilidadFixture({
+            margen: 700,
+            margenPorcentaje: 70,
+            cobertura: {
+              lineasTotales: 10,
+              lineasConCostoReal: 7,
+              lineasConCostoEstimado: 3,
+              lineasSinCosto: 0,
+              ventaTotal: 1000,
+              ventaConCostoReal: 700,
+              ventaConCostoEstimado: 300,
+              ventaSinCosto: 0,
+              incluyeEstimados: true,
+            },
+          }),
+        )
+      }
+      return undefined
+    })
     renderTablero()
 
     await screen.findByText('Rentabilidad')
     expect(await screen.findByText('Cobertura de costo: 100% de la venta con costo real considerado.')).toBeInTheDocument()
+    expect(screen.getByText('$400,00')).toBeInTheDocument()
 
     fireEvent.click(screen.getByLabelText('Incluir costos estimados'))
 
@@ -796,6 +825,55 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
       const rutas = apiGetMock.mock.calls.map((llamada) => llamada[0] as string)
       expect(rutas.some((r) => r.startsWith('/reportes/rentabilidad?') && r.includes('incluirEstimados=true'))).toBe(true)
     })
+
+    // Judgment-day ronda 1 (Judge A, MAJOR — `bannerDeCobertura`): con `incluyeEstimados=true` y
+    // `ventaConCostoEstimado > 0` el banner debe nombrar ese tramo como "incluido", nunca caer en
+    // la afirmación "100% real" (falsa acá: 30% del margen mostrado es estimado). Mutación
+    // aplicada — revertida la distinción incluido/excluido de `bannerDeCobertura` (vuelve a tratar
+    // cualquier `incluyeEstimados=true` como "nada que reportar") → este test falló mostrando
+    // "Cobertura de costo: 100% de la venta con costo real considerado." en vez de "30% con costo
+    // estimado incluido" → revertida la mutación → vuelve a pasar.
+    expect(await screen.findByText('30% con costo estimado incluido')).toBeInTheDocument()
+    expect(screen.queryByText('Cobertura de costo: 100% de la venta con costo real considerado.')).not.toBeInTheDocument()
+    expect(await screen.findByText('$700,00')).toBeInTheDocument()
+    expect(screen.getByText('70.0%')).toBeInTheDocument()
+    expect(screen.queryByText('$400,00')).not.toBeInTheDocument()
+  })
+
+  // Judgment-day ronda 1 (Judge A, minor): un período sin ventas no tiene cobertura real que
+  // afirmar — antes de la corrección, `ventaTotal === 0` producía una división 0/0 que caía en el
+  // mismo fallback "100% real", una afirmación sin sentido para un período vacío.
+  it('un Admin ve "Sin ventas en el período." cuando la venta total del período es cero', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/rentabilidad?')) {
+        return Promise.resolve(
+          rentabilidadFixture({
+            ventaConsiderada: 0,
+            costoConsiderado: 0,
+            margen: 0,
+            margenPorcentaje: null,
+            cobertura: {
+              lineasTotales: 0,
+              lineasConCostoReal: 0,
+              lineasConCostoEstimado: 0,
+              lineasSinCosto: 0,
+              ventaTotal: 0,
+              ventaConCostoReal: 0,
+              ventaConCostoEstimado: 0,
+              ventaSinCosto: 0,
+              incluyeEstimados: false,
+            },
+          }),
+        )
+      }
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('Rentabilidad')
+    expect(await screen.findByText('Sin ventas en el período.')).toBeInTheDocument()
+    expect(screen.queryByText('Cobertura de costo: 100% de la venta con costo real considerado.')).not.toBeInTheDocument()
   })
 
   it('el panel de rentabilidad muestra su propio estado de error sin afectar a los paneles de desglose', async () => {
@@ -816,5 +894,42 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
       expect(screen.getByText('Efectivo')).toBeInTheDocument()
       expect(screen.getByText('Producto Estrella')).toBeInTheDocument()
     })
+  })
+
+  // Judgment-day ronda 1 (Judge B, MAJOR): faltaba el test de generación del panel de rentabilidad
+  // — mismo patrón que los cuatro paneles de desglose (Slice 8), la única entidad que no lo tenía
+  // todavía. Mutación aplicada — quitada la guarda `if (generacionRef.current !== miGeneracion)
+  // return` del `.then` compartido en `usePanelDeReporte` → este test falló ($1,00 de la respuesta
+  // obsoleta pisó los $9.999,00 ya re-scopeados) → revertido → vuelve a pasar (misma mutación ya
+  // probada para los cuatro paneles hermanos; este panel es ahora el quinto consumidor del hook).
+  it('el panel de rentabilidad descarta una respuesta obsoleta cuando "Hasta" cambia antes de que resuelva', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    let resolverPrimera: (valor: Rentabilidad) => void = () => {}
+    const primera = new Promise<Rentabilidad>((resolve) => {
+      resolverPrimera = resolve
+    })
+    let llamadas = 0
+
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/rentabilidad?')) {
+        llamadas += 1
+        if (llamadas === 1) return primera
+        return Promise.resolve(rentabilidadFixture({ margen: 9999, margenPorcentaje: 99 }))
+      }
+      return undefined
+    })
+
+    renderTablero()
+    await screen.findByText('Rentabilidad')
+
+    fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
+
+    expect(await screen.findByText('$9.999,00')).toBeInTheDocument()
+
+    resolverPrimera(rentabilidadFixture({ margen: 1, margenPorcentaje: 1 }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.queryByText('$1,00')).not.toBeInTheDocument()
+    expect(screen.getByText('$9.999,00')).toBeInTheDocument()
   })
 })

@@ -310,17 +310,26 @@ function PanelTopArticulos({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanel
 /** Texto del banner obligatorio de cobertura del panel de rentabilidad (spec tablero: Margin
  * Panel Is Invisible, Not Disabled, For Non-Admin — "a bare margin percentage MUST NOT be shown
  * alone"; design: "always renders the coverage banner above the figure"). Devuelve SIEMPRE un
- * texto, nunca `null`: con cobertura 100% confirma que no hay nada excluido; si hay estimado
- * excluido y/o costo desconocido, los nombra explícitamente — nunca un porcentaje de margen a
- * secas. El costo estimado solo cuenta como "excluido" cuando `incluyeEstimados` es `false`: una
- * vez que el caller optó por incluirlo, esa porción pasa a estar considerada en el margen. */
+ * texto, nunca `null`: con cobertura 100% real confirma que no hay nada excluido ni estimado; si
+ * hay estimado excluido, incluido u costo desconocido, los nombra explícitamente — nunca un
+ * porcentaje de margen a secas. `incluyeEstimados` decide la etiqueta del tramo estimado: `false`
+ * ⇒ "excluido" (no contribuye al margen mostrado); `true` ⇒ "incluido" (sí contribuye) — la
+ * frase "100% de la venta con costo real" solo es honesta cuando NINGUNA porción es estimada,
+ * incluida o no (judgment-day ronda 1, Judge A MAJOR: con `incluyeEstimados=true` y estimado > 0
+ * caía acá y afirmaba "100% real" siendo falso). Un período sin ventas (`ventaTotal === 0`) no
+ * tiene cobertura que reportar — copia neutra en vez de una división por cero disfrazada de 100%
+ * (Judge A minor). */
 function bannerDeCobertura(cobertura: CoberturaDeCosto): string {
   const { ventaTotal, ventaConCostoEstimado, ventaSinCosto, incluyeEstimados } = cobertura
-  const pctEstimadoExcluido = incluyeEstimados || ventaTotal === 0 ? 0 : (ventaConCostoEstimado / ventaTotal) * 100
-  const pctDesconocido = ventaTotal === 0 ? 0 : (ventaSinCosto / ventaTotal) * 100
+  if (ventaTotal === 0) return 'Sin ventas en el período.'
+
+  const pctEstimadoExcluido = incluyeEstimados ? 0 : (ventaConCostoEstimado / ventaTotal) * 100
+  const pctEstimadoIncluido = incluyeEstimados ? (ventaConCostoEstimado / ventaTotal) * 100 : 0
+  const pctDesconocido = (ventaSinCosto / ventaTotal) * 100
 
   const partes: string[] = []
   if (pctEstimadoExcluido > 0) partes.push(`${pctEstimadoExcluido.toFixed(0)}% estimado excluido`)
+  if (pctEstimadoIncluido > 0) partes.push(`${pctEstimadoIncluido.toFixed(0)}% con costo estimado incluido`)
   if (pctDesconocido > 0) partes.push(`${pctDesconocido.toFixed(0)}% de costo desconocido`)
 
   return partes.length === 0 ? 'Cobertura de costo: 100% de la venta con costo real considerado.' : partes.join(', ')
