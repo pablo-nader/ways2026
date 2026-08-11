@@ -34,21 +34,27 @@ describe('GraficoDeLineas', () => {
       { etiqueta: 'mar', valor: 200 },
     ]
 
-    render(<GraficoDeLineas data={data} alto={240} />)
+    render(<GraficoDeLineas data={data} alto={240} titulo="Ventas" />)
 
     const chart = screen.getByTestId('line-chart')
     expect(JSON.parse(chart.dataset.serie ?? '[]')).toEqual(data)
   })
 
   it('propaga el alto explícito al contenedor responsive', () => {
-    render(<GraficoDeLineas data={[]} alto={180} />)
+    render(<GraficoDeLineas data={[]} alto={180} titulo="Ventas" />)
 
     expect(screen.getByTestId('responsive-container')).toHaveAttribute('data-alto', '180')
   })
 
   it('renderiza sin datos sin crashear', () => {
-    render(<GraficoDeLineas data={[]} alto={200} />)
+    render(<GraficoDeLineas data={[]} alto={200} titulo="Ventas" />)
 
     expect(JSON.parse(screen.getByTestId('line-chart').dataset.serie ?? 'null')).toEqual([])
+  })
+
+  it('expone un nombre accesible para lectores de pantalla', () => {
+    render(<GraficoDeLineas data={[]} alto={200} titulo="Ventas de los últimos 7 días" />)
+
+    expect(screen.getByRole('img', { name: 'Ventas de los últimos 7 días' })).toBeInTheDocument()
   })
 })
