@@ -11,6 +11,7 @@ import type {
   PuntoVentaListado,
   ResumenDeGastos,
   ResumenDeVentas,
+  TopArticulos,
   VentasPorMedioPago,
   VentasPorPuntoVenta,
   VentasPorVendedor,
@@ -22,6 +23,13 @@ import { GraficoDeLineas } from '../componentes/graficos/GraficoDeLineas'
 import { aSerieDeGrafico } from '../componentes/graficos/series'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
+
+/** `articulos/top` no trae un selector de "Top N" en esta slice — límite fijo, sensible para un
+ * panel de tablero (ni tan corto que pierda contexto, ni tan largo que rompa el gráfico de
+ * barras). *(ReportesEndpoints.cs: `limite` es `int?`, opcional — el backend resuelve su propio
+ * default si no viaja; este valor es la elección del cliente, no un espejo de un default del
+ * servidor)*. */
+const LIMITE_TOP_ARTICULOS = 10
 
 const GRANULARIDADES: { valor: Granularidad; etiqueta: string }[] = [
   { valor: 'Dia', etiqueta: 'Día' },
@@ -247,15 +255,65 @@ function PanelPorMedioPago({ idEmpresa, desde, hasta, idPuntoVenta, mediosPago }
   )
 }
 
+type PropsPanelTopArticulos = { idEmpresa: number; desde: string; hasta: string; idPuntoVenta: number | null }
+
+function PanelTopArticulos({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanelTopArticulos) {
+  const cargarDatos = useCallback(
+    () => clienteDeReportes.articulosTop({ idEmpresa, idPuntoVenta, desde, hasta, limite: LIMITE_TOP_ARTICULOS }),
+    [idEmpresa, idPuntoVenta, desde, hasta],
+  )
+  const { datos, cargando, error, reintentar } = usePanelDeReporte<TopArticulos>(
+    cargarDatos,
+    'No se pudo cargar el ranking de artículos.',
+  )
+
+  return (
+    <div className="border p-3 bg-white h-100">
+      <h6>Top artículos</h6>
+      {error && <PanelDeError error={error} onReintentar={reintentar} />}
+      {cargando && !datos && <Cargando />}
+      {datos && (
+        <>
+          <GraficoDeBarras
+            data={datos.articulos.map((a) => ({ etiqueta: a.descripcion, valor: a.total }))}
+            alto={200}
+            titulo="Top artículos por monto neto vendido"
+          />
+          <table className="table table-sm mt-2 mb-0">
+            <thead>
+              <tr>
+                <th>Artículo</th>
+                <th>Cantidad</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {datos.articulos.map((a) => (
+                <tr key={a.idArticulo}>
+                  <td>{a.descripcion}</td>
+                  <td>{a.cantidad}</td>
+                  <td>{formatearMoneda(a.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
+
 /**
  * Tablero (stage-10-agregacion-dashboard, Slice 7 — G1 parity; Slice 8 — filtro compartido +
  * paneles de desglose): serie de ventas, serie de gastos, netos y ticket promedio de los últimos
  * 7 días por defecto, con `desde`/`hasta`/`granularidad`/punto de venta editables — el mismo
- * filtro alimenta la card G1 y los tres paneles de desglose (spec tablero: Breakdown Panels Share
- * Range And Granularity Controls). `granularidad` e `idPuntoVenta` solo los lee `ventas/resumen`
- * y `gastos/resumen`; `ventas/por-punto-venta` no lee `idPuntoVenta` (sería agrupar y filtrar por
- * el mismo campo — design: Endpoints) y ninguno de los tres breakdowns lee `granularidad` (no
- * bucketean por tiempo, cada fila ya es su propio subtotal del período completo).
+ * filtro alimenta la card G1 y los cuatro paneles de desglose — por punto de venta, por vendedor,
+ * por medio de pago, top artículos (spec tablero: Breakdown Panels Share Range And Granularity
+ * Controls). `granularidad` solo la lee `ventas/resumen`/`gastos/resumen`: ninguno de los cuatro
+ * breakdowns bucketea por tiempo, cada fila ya es su propio subtotal del período completo.
+ * `idPuntoVenta` viaja a todos salvo `ventas/por-punto-venta` (sería agrupar y filtrar por el
+ * mismo campo — design: Endpoints); `articulos/top` sí lo acepta, igual que por-vendedor/
+ * por-medio-pago (`ReportesEndpoints.cs`: `int? idPuntoVenta`).
  *
  * Per `react-async-state` reglas 2/4/9: un único `useRef` de generación se bumpea antes de cada
  * fetch (disparado por cambio de empresa/rango/granularidad/PV), cada setter posterior a un
@@ -496,13 +554,13 @@ export function Tablero() {
 
             {idEmpresa !== null && (
               <div className="row g-3 mt-1">
-                <div className="col-md-4">
+                <div className="col-md-3">
                   <PanelPorPuntoVenta idEmpresa={idEmpresa} desde={desde} hasta={hasta} puntosVenta={puntosVentaDeLaEmpresa} />
                 </div>
-                <div className="col-md-4">
+                <div className="col-md-3">
                   <PanelPorVendedor idEmpresa={idEmpresa} desde={desde} hasta={hasta} idPuntoVenta={idPuntoVenta} />
                 </div>
-                <div className="col-md-4">
+                <div className="col-md-3">
                   <PanelPorMedioPago
                     idEmpresa={idEmpresa}
                     desde={desde}
@@ -510,6 +568,9 @@ export function Tablero() {
                     idPuntoVenta={idPuntoVenta}
                     mediosPago={mediosPago}
                   />
+                </div>
+                <div className="col-md-3">
+                  <PanelTopArticulos idEmpresa={idEmpresa} desde={desde} hasta={hasta} idPuntoVenta={idPuntoVenta} />
                 </div>
               </div>
             )}
