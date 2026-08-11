@@ -20,7 +20,7 @@ export function GraficoDeLineas({ data, alto }: Props) {
         <XAxis dataKey="etiqueta" />
         <YAxis />
         <Tooltip />
-        <Line type="monotone" dataKey="valor" stroke="#2f6fed" dot={false} />
+        <Line type="monotone" dataKey="valor" stroke="#0d6efd" dot={false} />
       </LineChart>
     </ResponsiveContainer>
   )

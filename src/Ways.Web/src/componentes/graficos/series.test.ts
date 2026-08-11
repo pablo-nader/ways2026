@@ -30,6 +30,10 @@ describe('aSerieDeGrafico', () => {
     expect(aSerieDeGrafico([])).toEqual([])
   })
 
+  it('preserva los valores negativos tal cual (datos con NCX)', () => {
+    expect(aSerieDeGrafico([{ etiqueta: 'x', valor: -50 }])).toEqual([{ etiqueta: 'x', valor: -50 }]);
+  });
+
   it('preserva el orden de los buckets de entrada', () => {
     const serie = aSerieDeGrafico([
       { etiqueta: 'c', valor: 3 },

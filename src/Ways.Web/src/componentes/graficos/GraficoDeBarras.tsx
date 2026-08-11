@@ -19,7 +19,7 @@ export function GraficoDeBarras({ data, alto }: Props) {
         <XAxis dataKey="etiqueta" />
         <YAxis />
         <Tooltip />
-        <Bar dataKey="valor" fill="#2f6fed" />
+        <Bar dataKey="valor" fill="#0d6efd" />
       </BarChart>
     </ResponsiveContainer>
   )
