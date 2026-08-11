@@ -1,38 +1,284 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rangoUltimosSieteDias } from '../api/reportes'
-import type { EmpresaListado, ResumenDeGastos, ResumenDeVentas } from '../api/tipos'
+import type {
+  EmpresaListado,
+  Granularidad,
+  MedioPagoAlta,
+  MedioPagoListado,
+  PuntoVentaListado,
+  ResumenDeGastos,
+  ResumenDeVentas,
+  VentasPorMedioPago,
+  VentasPorPuntoVenta,
+  VentasPorVendedor,
+} from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { GraficoDeBarras } from '../componentes/graficos/GraficoDeBarras'
 import { GraficoDeLineas } from '../componentes/graficos/GraficoDeLineas'
 import { aSerieDeGrafico } from '../componentes/graficos/series'
+
+const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
+
+const GRANULARIDADES: { valor: Granularidad; etiqueta: string }[] = [
+  { valor: 'Dia', etiqueta: 'Día' },
+  { valor: 'Semana', etiqueta: 'Semana' },
+  { valor: 'Mes', etiqueta: 'Mes' },
+]
 
 function formatearMoneda(valor: number): string {
   return `$${valor.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 /**
- * Tablero (stage-10-agregacion-dashboard, Slice 7 — G1 parity): serie de ventas, serie de
- * gastos, netos y ticket promedio de los últimos 7 días por defecto, con `desde`/`hasta`
- * editables. La granularidad queda fija en `Dia` esta slice — el selector de granularidad y el
- * filtro por punto de venta llegan con los paneles de breakdown (Slice 8).
+ * Hook compartido de los paneles de desglose (Slice 8): cada instancia trae su PROPIA generación,
+ * `cargando` y `error` — nunca el par compartido de la card G1 (deviation registrada en tasks.md
+ * antes de la tarea 7.6, vinculante para esta slice: react-async-state regla 5/10). `cargarDatos`
+ * ya viene armado con sus propias dependencias vía `useCallback` del llamador, así que este hook
+ * solo depende de esa referencia — evita pasar un array de dependencias dinámico a `useCallback`.
+ */
+function usePanelDeReporte<T>(cargarDatos: () => Promise<T>, mensajeError: string) {
+  const [datos, setDatos] = useState<T | null>(null)
+  const [cargando, setCargando] = useState(false)
+  const [error, setError] = useState('')
+  const generacionRef = useRef(0)
+
+  const cargar = useCallback(() => {
+    const miGeneracion = (generacionRef.current += 1)
+    setCargando(true)
+    setError('')
+
+    cargarDatos()
+      .then((respuesta) => {
+        if (generacionRef.current !== miGeneracion) return
+        setDatos(respuesta)
+      })
+      .catch((e) => {
+        if (generacionRef.current !== miGeneracion) return
+        setDatos(null)
+        setError(e instanceof ErrorApi ? e.message : mensajeError)
+      })
+      .finally(() => {
+        if (generacionRef.current !== miGeneracion) return
+        setCargando(false)
+      })
+  }, [cargarDatos, mensajeError])
+
+  useEffect(() => {
+    cargar()
+  }, [cargar])
+
+  return { datos, cargando, error, reintentar: cargar }
+}
+
+function PanelDeError({ error, onReintentar }: { error: string; onReintentar: () => void }) {
+  return (
+    <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2 py-1 px-2 small">
+      <span>{error}</span>
+      <button type="button" className="btn btn-sm btn-outline-danger rounded-0" onClick={onReintentar}>
+        Reintentar
+      </button>
+    </div>
+  )
+}
+
+type PropsPanelPorPuntoVenta = { idEmpresa: number; desde: string; hasta: string; puntosVenta: PuntoVentaListado[] }
+
+function PanelPorPuntoVenta({ idEmpresa, desde, hasta, puntosVenta }: PropsPanelPorPuntoVenta) {
+  const cargarDatos = useCallback(
+    () => clienteDeReportes.ventasPorPuntoVenta({ idEmpresa, desde, hasta }),
+    [idEmpresa, desde, hasta],
+  )
+  const { datos, cargando, error, reintentar } = usePanelDeReporte<VentasPorPuntoVenta>(
+    cargarDatos,
+    'No se pudo cargar el desglose por punto de venta.',
+  )
+  const nombreDe = useCallback(
+    (id: number) => puntosVenta.find((pv) => pv.id === id)?.nombre ?? `PV #${id}`,
+    [puntosVenta],
+  )
+
+  return (
+    <div className="border p-3 bg-white h-100">
+      <h6>Ventas por punto de venta</h6>
+      {error && <PanelDeError error={error} onReintentar={reintentar} />}
+      {cargando && !datos && <Cargando />}
+      {datos && (
+        <>
+          <GraficoDeBarras
+            data={datos.filas.map((f) => ({ etiqueta: nombreDe(f.idPuntoVenta), valor: f.neto }))}
+            alto={200}
+            titulo="Ventas netas por punto de venta"
+          />
+          <table className="table table-sm mt-2 mb-0">
+            <thead>
+              <tr>
+                <th>Punto de venta</th>
+                <th>Neto</th>
+                <th>TX</th>
+                <th>Ticket promedio</th>
+              </tr>
+            </thead>
+            <tbody>
+              {datos.filas.map((f) => (
+                <tr key={f.idPuntoVenta}>
+                  <td>{nombreDe(f.idPuntoVenta)}</td>
+                  <td>{formatearMoneda(f.neto)}</td>
+                  <td>{f.cantidadTx}</td>
+                  <td>{f.ticketPromedio === null ? '—' : formatearMoneda(f.ticketPromedio)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
+
+type PropsPanelPorVendedor = { idEmpresa: number; desde: string; hasta: string; idPuntoVenta: number | null }
+
+function PanelPorVendedor({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanelPorVendedor) {
+  const cargarDatos = useCallback(
+    () => clienteDeReportes.ventasPorVendedor({ idEmpresa, idPuntoVenta, desde, hasta }),
+    [idEmpresa, idPuntoVenta, desde, hasta],
+  )
+  const { datos, cargando, error, reintentar } = usePanelDeReporte<VentasPorVendedor>(
+    cargarDatos,
+    'No se pudo cargar el desglose por vendedor.',
+  )
+
+  return (
+    <div className="border p-3 bg-white h-100">
+      <h6>Ventas por vendedor</h6>
+      {error && <PanelDeError error={error} onReintentar={reintentar} />}
+      {cargando && !datos && <Cargando />}
+      {datos && (
+        <>
+          <GraficoDeBarras
+            data={datos.filas.map((f) => ({ etiqueta: `Vendedor #${f.idEmpleado}`, valor: f.neto }))}
+            alto={200}
+            titulo="Ventas netas por vendedor"
+          />
+          <table className="table table-sm mt-2 mb-0">
+            <thead>
+              <tr>
+                <th>Vendedor</th>
+                <th>Neto</th>
+                <th>TX</th>
+                <th>Ticket promedio</th>
+              </tr>
+            </thead>
+            <tbody>
+              {datos.filas.map((f) => (
+                <tr key={f.idEmpleado}>
+                  <td>Vendedor #{f.idEmpleado}</td>
+                  <td>{formatearMoneda(f.neto)}</td>
+                  <td>{f.cantidadTx}</td>
+                  <td>{f.ticketPromedio === null ? '—' : formatearMoneda(f.ticketPromedio)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
+
+type PropsPanelPorMedioPago = {
+  idEmpresa: number
+  desde: string
+  hasta: string
+  idPuntoVenta: number | null
+  mediosPago: MedioPagoListado[]
+}
+
+function PanelPorMedioPago({ idEmpresa, desde, hasta, idPuntoVenta, mediosPago }: PropsPanelPorMedioPago) {
+  const cargarDatos = useCallback(
+    () => clienteDeReportes.ventasPorMedioPago({ idEmpresa, idPuntoVenta, desde, hasta }),
+    [idEmpresa, idPuntoVenta, desde, hasta],
+  )
+  const { datos, cargando, error, reintentar } = usePanelDeReporte<VentasPorMedioPago>(
+    cargarDatos,
+    'No se pudo cargar el desglose por medio de pago.',
+  )
+  const nombreDe = useCallback(
+    (id: number) => mediosPago.find((m) => m.id === id)?.nombre ?? `Medio #${id}`,
+    [mediosPago],
+  )
+
+  return (
+    <div className="border p-3 bg-white h-100">
+      <h6>Ventas por medio de pago</h6>
+      {error && <PanelDeError error={error} onReintentar={reintentar} />}
+      {cargando && !datos && <Cargando />}
+      {datos && (
+        <>
+          <GraficoDeBarras
+            data={datos.filas.map((f) => ({ etiqueta: nombreDe(f.idMedioPago), valor: f.neto }))}
+            alto={200}
+            titulo="Ventas netas por medio de pago"
+          />
+          <table className="table table-sm mt-2 mb-0">
+            <thead>
+              <tr>
+                <th>Medio de pago</th>
+                <th>Neto</th>
+                <th>Cant. de pagos</th>
+              </tr>
+            </thead>
+            <tbody>
+              {datos.filas.map((f) => (
+                <tr key={f.idMedioPago}>
+                  <td>{nombreDe(f.idMedioPago)}</td>
+                  <td>{formatearMoneda(f.neto)}</td>
+                  <td>{f.cantidadPagos}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Tablero (stage-10-agregacion-dashboard, Slice 7 — G1 parity; Slice 8 — filtro compartido +
+ * paneles de desglose): serie de ventas, serie de gastos, netos y ticket promedio de los últimos
+ * 7 días por defecto, con `desde`/`hasta`/`granularidad`/punto de venta editables — el mismo
+ * filtro alimenta la card G1 y los tres paneles de desglose (spec tablero: Breakdown Panels Share
+ * Range And Granularity Controls). `granularidad` e `idPuntoVenta` solo los lee `ventas/resumen`
+ * y `gastos/resumen`; `ventas/por-punto-venta` no lee `idPuntoVenta` (sería agrupar y filtrar por
+ * el mismo campo — design: Endpoints) y ninguno de los tres breakdowns lee `granularidad` (no
+ * bucketean por tiempo, cada fila ya es su propio subtotal del período completo).
  *
  * Per `react-async-state` reglas 2/4/9: un único `useRef` de generación se bumpea antes de cada
- * fetch (disparado por cambio de empresa/rango), cada setter posterior a un `await` y el
- * `finally` que apaga `cargando` están gateados contra esa generación — una respuesta de 7 días
- * desactualizada nunca pisa un rango que el usuario ya cambió. `cargando` cubre la ventana
- * completa (ventas + gastos se piden y aplican como una sola unidad, siempre disparados por el
- * mismo evento de filtro — no son entidades operables independientemente, a diferencia del
- * listado + saldo de `Compras.tsx`).
+ * fetch (disparado por cambio de empresa/rango/granularidad/PV), cada setter posterior a un
+ * `await` y el `finally` que apaga `cargando` están gateados contra esa generación — una
+ * respuesta desactualizada nunca pisa un filtro que el usuario ya cambió. `cargando` cubre la
+ * ventana completa de la card G1 (ventas + gastos se piden y aplican como una sola unidad,
+ * siempre disparados por el mismo evento de filtro — no son entidades operables
+ * independientemente, a diferencia del listado + saldo de `Compras.tsx`). Cada panel de
+ * desglose (Slice 8) es una entidad operable independiente y trae su PROPIA generación/`cargando`
+ * (`usePanelDeReporte`) — no extiende este par compartido (deviation registrada en tasks.md antes
+ * de la tarea 7.6, vinculante para esta slice).
  */
 export function Tablero() {
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
   const [idEmpresa, setIdEmpresa] = useState<number | null>(null)
+  const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[]>([])
+  const [mediosPago, setMediosPago] = useState<MedioPagoListado[]>([])
   const [errorEmpresas, setErrorEmpresas] = useState('')
 
   const [desde, setDesde] = useState(() => rangoUltimosSieteDias().desde)
   const [hasta, setHasta] = useState(() => rangoUltimosSieteDias().hasta)
+  const [granularidad, setGranularidad] = useState<Granularidad>('Dia')
+  const [idPuntoVenta, setIdPuntoVenta] = useState<number | null>(null)
 
   const [ventas, setVentas] = useState<ResumenDeVentas | null>(null)
   const [gastos, setGastos] = useState<ResumenDeGastos | null>(null)
@@ -42,12 +288,13 @@ export function Tablero() {
 
   useEffect(() => {
     let vigente = true
-    clienteDeOrganizacion
-      .listarEmpresas()
-      .then((lista) => {
+    Promise.all([clienteDeOrganizacion.listarEmpresas(), clienteDeOrganizacion.listarPuntosVenta(), clienteMediosPago.listar(false)])
+      .then(([listaEmpresas, listaPuntosVenta, listaMediosPago]) => {
         if (!vigente) return
-        setEmpresas(lista)
-        if (lista.length > 0) setIdEmpresa(lista[0].id)
+        setEmpresas(listaEmpresas)
+        setPuntosVenta(listaPuntosVenta)
+        setMediosPago(listaMediosPago)
+        if (listaEmpresas.length > 0) setIdEmpresa(listaEmpresas[0].id)
       })
       .catch((e) => {
         if (!vigente) return
@@ -66,7 +313,7 @@ export function Tablero() {
     setCargando(true)
     setError('')
 
-    const filtros = { idEmpresa, idPuntoVenta: null, desde, hasta, granularidad: 'Dia' as const }
+    const filtros = { idEmpresa, idPuntoVenta, desde, hasta, granularidad }
 
     Promise.all([clienteDeReportes.ventasResumen(filtros), clienteDeReportes.gastosResumen(filtros)])
       .then(([resumenVentas, resumenGastos]) => {
@@ -84,11 +331,13 @@ export function Tablero() {
         if (generacionRef.current !== miGeneracion) return
         setCargando(false)
       })
-  }, [idEmpresa, desde, hasta])
+  }, [idEmpresa, idPuntoVenta, desde, hasta, granularidad])
 
   useEffect(() => {
     cargar()
   }, [cargar])
+
+  const puntosVentaDeLaEmpresa = puntosVenta.filter((pv) => pv.idEmpresa === idEmpresa)
 
   return (
     <div className="container-fluid py-4">
@@ -111,7 +360,10 @@ export function Tablero() {
                   className="form-select rounded-0"
                   value={idEmpresa ?? ''}
                   disabled={cargando}
-                  onChange={(e) => setIdEmpresa(Number(e.target.value))}
+                  onChange={(e) => {
+                    setIdEmpresa(Number(e.target.value))
+                    setIdPuntoVenta(null)
+                  }}
                 >
                   {empresas.map((e) => (
                     <option key={e.id} value={e.id}>
@@ -145,6 +397,43 @@ export function Tablero() {
                   disabled={cargando}
                   onChange={(e) => setHasta(e.target.value)}
                 />
+              </div>
+              <div className="col-auto">
+                <label className="form-label" htmlFor="tablero-granularidad">
+                  Granularidad
+                </label>
+                <select
+                  id="tablero-granularidad"
+                  className="form-select rounded-0"
+                  value={granularidad}
+                  disabled={cargando}
+                  onChange={(e) => setGranularidad(e.target.value as Granularidad)}
+                >
+                  {GRANULARIDADES.map((g) => (
+                    <option key={g.valor} value={g.valor}>
+                      {g.etiqueta}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-auto">
+                <label className="form-label" htmlFor="tablero-punto-venta">
+                  Punto de venta
+                </label>
+                <select
+                  id="tablero-punto-venta"
+                  className="form-select rounded-0"
+                  value={idPuntoVenta ?? ''}
+                  disabled={cargando}
+                  onChange={(e) => setIdPuntoVenta(e.target.value === '' ? null : Number(e.target.value))}
+                >
+                  <option value="">Todos</option>
+                  {puntosVentaDeLaEmpresa.map((pv) => (
+                    <option key={pv.id} value={pv.id}>
+                      {pv.nombre}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -203,6 +492,26 @@ export function Tablero() {
                   </div>
                 </div>
               </>
+            )}
+
+            {idEmpresa !== null && (
+              <div className="row g-3 mt-1">
+                <div className="col-md-4">
+                  <PanelPorPuntoVenta idEmpresa={idEmpresa} desde={desde} hasta={hasta} puntosVenta={puntosVentaDeLaEmpresa} />
+                </div>
+                <div className="col-md-4">
+                  <PanelPorVendedor idEmpresa={idEmpresa} desde={desde} hasta={hasta} idPuntoVenta={idPuntoVenta} />
+                </div>
+                <div className="col-md-4">
+                  <PanelPorMedioPago
+                    idEmpresa={idEmpresa}
+                    desde={desde}
+                    hasta={hasta}
+                    idPuntoVenta={idPuntoVenta}
+                    mediosPago={mediosPago}
+                  />
+                </div>
+              </div>
             )}
           </>
         )}
