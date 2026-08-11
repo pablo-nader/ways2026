@@ -190,24 +190,44 @@ revert the branch; no state to unwind.
 `/por-medio-pago` live, LINQ-based, each row an independent subtotal.
 **Rollback**: revert the branch.
 
-- [ ] 3.1 Extend `ServicioDeReportesDeVentas.cs`: `ObtenerPorPuntoVentaAsync`,
+- [x] 3.1 Extend `ServicioDeReportesDeVentas.cs`: `ObtenerPorPuntoVentaAsync`,
   `ObtenerPorVendedorAsync` (group by `id_empleado`), `ObtenerPorMedioPagoAsync`
   (join `PagosComprobante` ⋈ `ComprobantesVenta`, group by `id_medio_pago`,
   header `Estado`/`deleted_at`). All plain LINQ — EF `Tenant`/`BajaLogica`
   filters apply automatically. *(design: Raw-SQL Invariant Checklist rows
-  3–4; spec: Ventas Breakdown Endpoints)*
-- [ ] 3.2 Extend `Contratos.cs` with the three response records (one row per
+  3–4; spec: Ventas Breakdown Endpoints)* — deviation recorded: the shared
+  `Join(...).GroupBy(x => x.SomeProperty)` pattern does not translate when
+  the join's result selector constructs a named record (EF
+  `InvalidOperationException`, "could not be translated"); anonymous-type
+  result selectors (same idiom as `LectorDeContenidoDeResumen`) do. Each
+  `Consultar*Async` builds its own anonymous projection instead of sharing
+  one typed helper record.
+- [x] 3.2 Extend `Contratos.cs` with the three response records (one row per
   dimension key, own subtotal — no implicit-whole percentage).
-- [ ] 3.3 Extend `ReportesEndpoints.cs`: three `GET` routes under the same
+- [x] 3.3 Extend `ReportesEndpoints.cs`: three `GET` routes under the same
   `LecturaDeReportes` group.
-- [ ] 3.4 [P] `ReportesVentasPorDimensionTests` — 4-test pattern ×3 (one per
+- [x] 3.4 [P] `ReportesVentasPorDimensionTests` — 4-test pattern ×3 (one per
   route) + NCX-sign check (an NCX reduces its vendedor's/PV's/medio's
   subtotal, no separate branch). *(spec: Grouping by vendedor sums each
-  empleado's TX independently)*
-- [ ] 3.5 Gate guard: `dotnet ef migrations list` unchanged.
-- [ ] 3.6 Run `judgment-day`; fix; re-judge until clean.
+  empleado's TX independently)* — 15 tests, all green. Mutation evidence
+  recorded for `por-medio-pago`'s `x.Importe * x.Signo` clause (the only
+  novel sign-application logic this slice adds — `pagos_comprobante.importe`
+  is never negative by CHECK, so the NCX sign has to come from the header's
+  `Signo`): mutated to `x.Importe` alone, the NCX test failed 350 vs
+  expected 250, reverted, green again. Cross-tenant checks for the three
+  routes are recorded as ordinary coverage, not mutation-proof — they reuse
+  `ResolverPuntosDeVentaAsync`'s scope (already proven by slice 2), with no
+  separate predicate of their own to isolate from that confound.
+- [x] 3.5 Gate guard: `dotnet ef migrations list` unchanged, no diff in the
+  model snapshot.
+- [ ] 3.6 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+  sdd-apply — requires sub-agent delegation, out of the apply executor's
+  scope; orchestrator must run this before PR, same precedent as slices 2/6.)*
 - [ ] 3.7 Branch `feat/stage10-slice3-ventas-por-dimension` off `main`
-  (parent: slice 2); PR; merge stacked-to-main.
+  (parent: slice 2's merged commit); PR; merge stacked-to-main. *(Branch
+  created off the worktree's HEAD — slices 1/2/6 merged, matching "Start:
+  slice 2 merged" — commit `398c5f5` applied on it. PR creation/merge
+  explicitly out of scope per apply boundaries — NOT done.)*
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ReportesVentasPorDimension`
 
