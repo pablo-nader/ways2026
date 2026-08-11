@@ -143,4 +143,26 @@ public class ManejadorDeErroresVentasTests
         // de la regla 0 de ValidadorDePagos a propósito (misma regla de negocio, backstop de
         // esquema de la misma validación).
     }
+
+    // ---- stage-9-costo-congelado (task 1.14, design: Backstop Map) --------------------------
+
+    [Fact]
+    public async Task CkItemsComprobanteVentaCostoNoNegativoSeTraduceA400CostoDeItemInvalido()
+    {
+        var postgres = CrearExcepcion("23514", "ck_items_comprobante_venta_costo_no_negativo");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("check", postgres));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, estado);
+        Assert.Equal("costo_de_item_invalido", codigo);
+    }
+
+    [Fact]
+    public async Task CkItemsComprobanteVentaEstimadoConCostoSeTraduceA400CostoEstimadoSinCosto()
+    {
+        var postgres = CrearExcepcion("23514", "ck_items_comprobante_venta_estimado_con_costo");
+        var (estado, codigo) = await ManejarAsync(new DbUpdateException("check", postgres));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, estado);
+        Assert.Equal("costo_estimado_sin_costo", codigo);
+    }
 }

@@ -29,7 +29,8 @@ namespace Ways.IntegrationTests;
 public class VentasStockBackstopTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private sealed record Prerequisitos(
-        int IdTenant, int IdPuntoVenta, int IdArticulo, int IdEmpleado, int IdCliente, int IdTipoComprobanteTx);
+        int IdTenant, int IdPuntoVenta, int IdArticulo, int IdEmpleado, int IdCliente, int IdTipoComprobanteTx,
+        int IdArea, int IdListaPrecio, int IdAlicuotaIva);
 
     private async Task<Prerequisitos> SembrarPrerequisitosAsync(string nombre)
     {
@@ -115,7 +116,34 @@ public class VentasStockBackstopTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         var idTipoComprobanteTx = await db.TiposComprobante.Where(t => t.Codigo == "TX").Select(t => t.Id).FirstAsync();
 
-        return new Prerequisitos(tenant.Id, puntoVenta.Id, articulo.Id, usuario.Id, cliente.Id, idTipoComprobanteTx);
+        return new Prerequisitos(
+            tenant.Id, puntoVenta.Id, articulo.Id, usuario.Id, cliente.Id, idTipoComprobanteTx,
+            area.Id, listaPrecio.Id, idAlicuotaIva);
+    }
+
+    private async Task<int> SembrarComprobanteAsync(Prerequisitos p)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+        var comprobante = new ComprobanteVenta
+        {
+            IdTenant = p.IdTenant,
+            IdTipoComprobante = p.IdTipoComprobanteTx,
+            Numero = Random.Shared.Next(1, 1_000_000),
+            Fecha = ahora,
+            IdPuntoVenta = p.IdPuntoVenta,
+            IdEmpleado = p.IdEmpleado,
+            IdCliente = p.IdCliente,
+            Subtotal = 100m,
+            DescuentoTotal = 0m,
+            Total = 100m,
+            Estado = EstadoComprobante.Emitido,
+            CreatedAt = ahora,
+            UpdatedAt = ahora
+        };
+        db.ComprobantesVenta.Add(comprobante);
+        await db.SaveChangesAsync();
+        return comprobante.Id;
     }
 
     // ---- ck_comprobantes_venta_numero_positivo ---------------------------------------------
@@ -326,5 +354,61 @@ public class VentasStockBackstopTests(WaysApiFixture fixture) : IClassFixture<Wa
         var excepcion = await Assert.ThrowsAsync<PostgresException>(InsertarAsync);
         Assert.Equal("23505", excepcion.SqlState);
         Assert.Equal("pk_stock", excepcion.ConstraintName);
+    }
+
+    // ---- stage-9-costo-congelado (task 1.14, design: Backstop Map): ambas CHECKs son
+    // inalcanzables desde todo camino de escritura verificado (ServicioDeArticulos.ExigirCostoValido
+    // y CalculadorDeCompra solo escriben costo_nominal >= 0; nada fuera del backfill escribe
+    // costo_es_estimado = true) — el respaldo de esquema existe igual porque un 23514 sin mapear
+    // en el checkout, el endpoint de mayor alcance del sistema, degradaría a 500. -------------
+
+    [Fact]
+    public async Task UnItemConCostoUnitarioNegativoViolaLaCheckDeCostoNoNegativo()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnItemConCostoUnitarioNegativoViolaLaCheckDeCostoNoNegativo));
+        var idComprobante = await SembrarComprobanteAsync(p);
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO items_comprobante_venta (id_tenant, id_comprobante_venta, orden, id_articulo, " +
+            "descripcion, id_area, id_lista_precio, id_alicuota_iva, porcentaje_iva, cantidad, " +
+            "precio_unitario, descuento, total, costo_unitario, costo_es_estimado, created_at, updated_at) " +
+            "VALUES ($1, $2, 1, $3, 'item-costo-negativo', $4, $5, $6, 0, 1, 100, 0, 100, -1, false, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdArticulo });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdArea });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdListaPrecio });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdAlicuotaIva });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_items_comprobante_venta_costo_no_negativo", excepcion.ConstraintName);
+    }
+
+    [Fact]
+    public async Task UnItemMarcadoEstimadoSinCostoViolaLaCheckDeEstimadoConCosto()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnItemMarcadoEstimadoSinCostoViolaLaCheckDeEstimadoConCosto));
+        var idComprobante = await SembrarComprobanteAsync(p);
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO items_comprobante_venta (id_tenant, id_comprobante_venta, orden, id_articulo, " +
+            "descripcion, id_area, id_lista_precio, id_alicuota_iva, porcentaje_iva, cantidad, " +
+            "precio_unitario, descuento, total, costo_unitario, costo_es_estimado, created_at, updated_at) " +
+            "VALUES ($1, $2, 1, $3, 'item-estimado-sin-costo', $4, $5, $6, 0, 1, 100, 0, 100, NULL, true, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdArticulo });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdArea });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdListaPrecio });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdAlicuotaIva });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_items_comprobante_venta_estimado_con_costo", excepcion.ConstraintName);
     }
 }
