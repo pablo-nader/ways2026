@@ -173,6 +173,9 @@ public class ReportesArticulosTopTests(WaysApiFixture fixture) : IClassFixture<W
     // ---- el patrón de 4 pruebas ------------------------------------------------------------------
 
     [Fact]
+    // Nota de honestidad (mutation-proof-tests): este test prueba el scoping por
+    // empresa/PV (la lista de PVs ya excluye al tenant B), NO el filtro Tenant de EF —
+    // ese queda cubierto por el 404 de empresa ajena, que lo ejercita sin confound.
     public async Task UnaFilaDeOtroTenantNuncaApareceEnElTop()
     {
         var ctxA = await PrepararAsync(nameof(UnaFilaDeOtroTenantNuncaApareceEnElTop) + "-A");
