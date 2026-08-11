@@ -107,11 +107,19 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj)
         }
     }
 
+    /// <summary>Valida el JSON contra el tipo CLR declarado (ADR-13) y, para
+    /// <c>zona_horaria</c>, además contra el catálogo IANA (design decisión 12): un
+    /// <c>null</c> deserializado (p.ej. <c>valorJson = "null"</c> para una clave string) se
+    /// rechaza acá en vez de guardarse — sin este chequeo, <c>JsonSerializer.Deserialize</c>
+    /// devuelve <c>null</c> sin tirar excepción y el valor inválido pasa. Una zona horaria
+    /// inválida se rechaza en la escritura (400) en vez de llegar a <c>date_trunc</c> en un
+    /// reporte y explotar como un 22023 de Postgres.</summary>
     private static void ValidarTipo(ParametroConocido conocido, string valorJson)
     {
+        object? valor;
         try
         {
-            JsonSerializer.Deserialize(valorJson, conocido.TipoClr);
+            valor = JsonSerializer.Deserialize(valorJson, conocido.TipoClr);
         }
         catch (JsonException)
         {
@@ -119,6 +127,35 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj)
                 "parametro_tipo_invalido",
                 $"El valor de '{conocido.Clave}' tiene que ser un {conocido.TipoClr.Name} válido.",
                 400);
+        }
+
+        if (valor is null)
+        {
+            throw new ErrorDominio(
+                "parametro_tipo_invalido",
+                $"El valor de '{conocido.Clave}' tiene que ser un {conocido.TipoClr.Name} válido.",
+                400);
+        }
+
+        if (conocido.Clave == ParametroConocido.ZonaHoraria.Clave)
+        {
+            var zona = (string)valor;
+            try
+            {
+                // HasIanaId frena los ids nativos de Windows ("Argentina Standard Time"),
+                // que FindSystemTimeZoneById resuelve en ambos OS pero Postgres no entiende.
+                if (!TimeZoneInfo.FindSystemTimeZoneById(zona).HasIanaId)
+                {
+                    throw new TimeZoneNotFoundException(zona);
+                }
+            }
+            catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+            {
+                throw new ErrorDominio(
+                    "parametro_zona_horaria_invalida",
+                    $"'{zona}' no es un identificador de zona horaria IANA válido.",
+                    400);
+            }
         }
     }
 }

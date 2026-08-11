@@ -54,40 +54,40 @@ deserialization and validates `zona_horaria` as a real IANA id,
 and `LecturaDeRentabilidad` policies exist and compose correctly. **Rollback**:
 revert the branch — additive only, no schema, no data required.
 
-- [ ] 1.1 Modify `src/Ways.Domain/Catalogos/ParametroConocido.cs`: add
+- [x] 1.1 Modify `src/Ways.Domain/Catalogos/ParametroConocido.cs`: add
   `ZonaHoraria` (`string`, default `"America/Argentina/Buenos_Aires"`,
   JSON-quoted) and `ComisionPorcentaje` (`decimal`, default `"0"`) to the
   registry array at `:30`. *(design: Timezone Mechanics; spec
   parametros-operativos: zona_horaria And comision_porcentaje Are Known Keys)*
-- [ ] 1.2 Modify `src/Ways.Application/Parametros/ServicioDeParametros.cs`:
+- [x] 1.2 Modify `src/Ways.Application/Parametros/ServicioDeParametros.cs`:
   harden `ValidarTipo` (`:110-123`) to reject a JSON `null` deserialization
   result instead of accepting it; add IANA validation for `zona_horaria` via
   `TimeZoneInfo.FindSystemTimeZoneById`, failing as 400 rather than letting a
   bad zone reach `date_trunc` as a Postgres 22023. *(design decision 12; spec
   parametros-operativos: First String-Typed Parametro Must Be Stored Quoted)*
-- [ ] 1.3 Modify `src/Ways.Api/Seguridad/Politicas.cs`: add
+- [x] 1.3 Modify `src/Ways.Api/Seguridad/Politicas.cs`: add
   `LecturaDeReportes` (`RequireClaim(RolId, Supervisor, Admin)`) and
   `LecturaDeRentabilidad` (`RequireClaim(RolId, Admin)`), same shape as
   `SupervisionDeCuentaCorriente` (`:57`). *(design decision 3, 7; spec
   reportes-de-gestion: LecturaDeReportes Policy; rentabilidad-y-comisiones:
   LecturaDeRentabilidad Policy Admits Admin Only)*
-- [ ] 1.4 Modify `src/Ways.Web/src/paginas/Parametros.tsx` (`:91,188-197`):
+- [x] 1.4 Modify `src/Ways.Web/src/paginas/Parametros.tsx` (`:91,188-197`):
   add `tipo: 'texto'` to `PARAMETROS_CONOCIDOS` for `zona_horaria`, render a
   `<select>` of offered IANA zones instead of the hardcoded
   `type="number"` + `JSON.stringify(Number(...))` path; keep
   `comision_porcentaje` on the existing numeric path. *(design decision 12)*
-- [ ] 1.5 [P] `ParametrosTests` (Application/Integration): quoted
+- [x] 1.5 [P] `ParametrosTests` (Application/Integration): quoted
   `zona_horaria` round-trips; unquoted value → 400; `null` deserialization →
   400; an invalid IANA id → 400. *(spec parametros-operativos, both
   requirements)*
-- [ ] 1.6 [P] Colocated `Parametros.test.tsx`: the zone `<select>` renders
+- [x] 1.6 [P] Colocated `Parametros.test.tsx`: the zone `<select>` renders
   and submits a quoted value; existing numeric-key flow unchanged. Per
   `web-descriptor-tests`.
-- [ ] 1.7 [P] `PoliticasTests` (or extend existing policy test file): claim
+- [x] 1.7 [P] `PoliticasTests` (or extend existing policy test file): claim
   matrix for `LecturaDeReportes` (Vendedor/Root rejected, Supervisor/Admin
   accepted) and `LecturaDeRentabilidad` (Admin only) at the policy level,
   independent of any endpoint.
-- [ ] 1.8 Gate guard: confirm `dotnet ef migrations list` is unchanged and
+- [x] 1.8 Gate guard: confirm `dotnet ef migrations list` is unchanged and
   the model snapshot has no diff.
 - [ ] 1.9 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge
   until clean.

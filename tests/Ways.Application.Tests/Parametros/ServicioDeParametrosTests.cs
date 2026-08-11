@@ -94,4 +94,113 @@ public class ServicioDeParametrosTests
 
         Assert.Equal("punto_venta_no_pertenece_a_la_empresa", error.Codigo);
     }
+
+    /// <summary>Stage-10 (design decisión 12): <c>zona_horaria</c> es el primer parámetro
+    /// string-tipado, y su valor tiene que guardarse JSON-quoteado — un identificador sin
+    /// comillas no es JSON válido para un <c>string</c>.</summary>
+    [Fact]
+    public async Task EstablecerAsyncAceptaZonaHorariaQuoteadaYLaDevuelveVerbatim()
+    {
+        var nombreDeBase = nameof(EstablecerAsyncAceptaZonaHorariaQuoteadaYLaDevuelveVerbatim);
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+
+        var resultado = await servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("zona_horaria", "\"America/Argentina/Cordoba\"", null));
+
+        Assert.Equal("\"America/Argentina/Cordoba\"", resultado.Valor);
+    }
+
+    [Fact]
+    public async Task EstablecerAsyncRechazaZonaHorariaSinComillas()
+    {
+        var nombreDeBase = nameof(EstablecerAsyncRechazaZonaHorariaSinComillas);
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("zona_horaria", "America/Argentina/Cordoba", null)));
+
+        Assert.Equal("parametro_tipo_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    /// <summary>Judgment-day trap que este endurecimiento cierra: <c>JsonSerializer.Deserialize
+    /// ("null", typeof(string))</c> devuelve <c>null</c> sin tirar excepción, así que
+    /// <c>ValidarTipo</c> lo aceptaba antes de este endurecimiento.</summary>
+    [Fact]
+    public async Task EstablecerAsyncRechazaUnaDeserializacionNull()
+    {
+        var nombreDeBase = nameof(EstablecerAsyncRechazaUnaDeserializacionNull);
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("zona_horaria", "null", null)));
+
+        Assert.Equal("parametro_tipo_invalido", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public async Task EstablecerAsyncRechazaUnaZonaHorariaQueNoEsUnIdIana()
+    {
+        var nombreDeBase = nameof(EstablecerAsyncRechazaUnaZonaHorariaQueNoEsUnIdIana);
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("zona_horaria", "\"No/Existe\"", null)));
+
+        Assert.Equal("parametro_zona_horaria_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public async Task EstablecerAsyncRechazaUnIdDeZonaNativoDeWindows()
+    {
+        var nombreDeBase = nameof(EstablecerAsyncRechazaUnIdDeZonaNativoDeWindows);
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("zona_horaria", "\"Argentina Standard Time\"", null)));
+
+        Assert.Equal("parametro_zona_horaria_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
+
+    [Fact]
+    public async Task EstablecerAsyncAceptaUnaZonaIanaFueraDeLaListaCuradaDelFront()
+    {
+        var nombreDeBase = nameof(EstablecerAsyncAceptaUnaZonaIanaFueraDeLaListaCuradaDelFront);
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+
+        var parametro = await servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("zona_horaria", "\"America/Santiago\"", null));
+
+        Assert.Equal("\"America/Santiago\"", parametro.Valor);
+    }
+
+    [Fact]
+    public async Task EstablecerAsyncRechazaUnaZonaHorariaVacia()
+    {
+        var nombreDeBase = nameof(EstablecerAsyncRechazaUnaZonaHorariaVacia);
+        var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
+
+        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
+            idEmpresaA, new ParametroAlta("zona_horaria", "\"\"", null)));
+
+        Assert.Equal("parametro_zona_horaria_invalida", error.Codigo);
+        Assert.Equal(400, error.EstadoHttp);
+    }
 }

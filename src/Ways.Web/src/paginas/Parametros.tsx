@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
-import { PARAMETROS_CONOCIDOS } from '../api/tipos'
+import { PARAMETROS_CONOCIDOS, ZONAS_HORARIAS_OFRECIDAS } from '../api/tipos'
 import type { EmpresaListado, ParametroAlta, ParametroListado, ParametroResuelto, PuntoVentaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -73,7 +73,16 @@ export function Parametros() {
     }
   }, [idEmpresa, cargarListado])
 
+  // Cambiar de clave resetea el valor tipeado: un `<select>` de zona horaria no puede arrancar
+  // en '' (no matchea ninguna opción), y un numérico arranca limpio para que el placeholder con
+  // el default declarado sea visible.
+  useEffect(() => {
+    const conocido = PARAMETROS_CONOCIDOS.find((p) => p.clave === clave)
+    setValorTexto(conocido?.tipo === 'texto' ? ZONAS_HORARIAS_OFRECIDAS[0].id : '')
+  }, [clave])
+
   const puntosVentaDeLaEmpresa = puntosVenta.filter((p) => p.idEmpresa === idEmpresa)
+  const conocidoSeleccionado = PARAMETROS_CONOCIDOS.find((p) => p.clave === clave)
 
   async function establecer(evento: FormEvent) {
     evento.preventDefault()
@@ -83,18 +92,23 @@ export function Parametros() {
     setError('')
     setAviso('')
 
-    const conocido = PARAMETROS_CONOCIDOS.find((p) => p.clave === clave)
-
     try {
+      const valor =
+        conocidoSeleccionado?.tipo === 'texto'
+          ? JSON.stringify(valorTexto)
+          : JSON.stringify(
+              conocidoSeleccionado?.tipo === 'entero' ? Math.trunc(Number(valorTexto)) : Number(valorTexto),
+            )
+
       const datos: ParametroAlta = {
         clave,
-        valor: JSON.stringify(conocido?.tipo === 'entero' ? Math.trunc(Number(valorTexto)) : Number(valorTexto)),
+        valor,
         idPuntoVenta: idPuntoVenta === '' ? null : Number(idPuntoVenta),
       }
 
       await api.put(`/parametros?idEmpresa=${idEmpresa}`, datos)
       setAviso(`Se guardó "${clave}".`)
-      setValorTexto('')
+      setValorTexto(conocidoSeleccionado?.tipo === 'texto' ? ZONAS_HORARIAS_OFRECIDAS[0].id : '')
       await cargarListado(idEmpresa)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar el parámetro.')
@@ -185,16 +199,32 @@ export function Parametros() {
                 <label className="form-label" htmlFor="p-valor">
                   Valor
                 </label>
-                <input
-                  id="p-valor"
-                  type="number"
-                  step={PARAMETROS_CONOCIDOS.find((p) => p.clave === clave)?.tipo === 'entero' ? '1' : '0.01'}
-                  className="form-control rounded-0"
-                  placeholder={`Default: ${PARAMETROS_CONOCIDOS.find((p) => p.clave === clave)?.porDefecto}`}
-                  value={valorTexto}
-                  onChange={(e) => setValorTexto(e.target.value)}
-                  required
-                />
+                {conocidoSeleccionado?.tipo === 'texto' ? (
+                  <select
+                    id="p-valor"
+                    className="form-select rounded-0"
+                    value={valorTexto}
+                    onChange={(e) => setValorTexto(e.target.value)}
+                    required
+                  >
+                    {ZONAS_HORARIAS_OFRECIDAS.map((z) => (
+                      <option key={z.id} value={z.id}>
+                        {z.etiqueta}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    id="p-valor"
+                    type="number"
+                    step={conocidoSeleccionado?.tipo === 'entero' ? '1' : '0.01'}
+                    className="form-control rounded-0"
+                    placeholder={`Default: ${conocidoSeleccionado?.porDefecto}`}
+                    value={valorTexto}
+                    onChange={(e) => setValorTexto(e.target.value)}
+                    required
+                  />
+                )}
               </div>
 
               <div className="col-md-3">
