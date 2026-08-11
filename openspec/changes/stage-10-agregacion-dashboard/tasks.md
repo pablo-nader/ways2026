@@ -475,13 +475,18 @@ its own fetch and `cargando`. **Rollback**: revert the branch.
   in-flight fetch (range/granularity changed mid-request) never repaints a
   panel already re-scoped. *(spec: Changing granularity re-buckets every
   panel)*
-- [ ] 8.4 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 8.5 Branch `feat/stage10-slice8-tablero-dimensiones` off `main`
+- [x] 8.4 Run `judgment-day`; fix; re-judge until clean.
+- [x] 8.5 Branch `feat/stage10-slice8-tablero-dimensiones` off `main`
   (parent: slice 7); PR; merge stacked-to-main.
 
 **Verify**: `npm run test -- Tablero`
 
 ---
+
+> Archive-time reconciliation (recorded at slice-8 close): specs/tablero/spec.md's scenario
+> "Changing granularity re-buckets every panel" is stale — by design (and shipped behavior)
+> granularidad only drives the two G1 series; the 4 breakdown panels are period subtotals.
+> Amend the spec scenario when merging deltas at archive.
 
 ## Slice 9: Tablero Rentabilidad (PR 9)
 
