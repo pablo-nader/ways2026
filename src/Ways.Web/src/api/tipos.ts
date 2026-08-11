@@ -1113,3 +1113,58 @@ export type ResumenDeGastos = {
   importeTotal: number
   porCategoria: GastoPorCategoria[]
 }
+
+// --- Reportes por dimensión (stage-10-agregacion-dashboard, Slice 8): sin granularidad ni
+// bucketing — cada fila es un subtotal propio del período completo, nunca un porcentaje de un
+// total implícito (espejo de `Contratos.cs`, mismo criterio de `netoVendido`/`ticketPromedio`
+// nullable que `BucketDeVentas`).
+
+/** Fila de `GET /api/reportes/ventas/por-punto-venta` — espejo de `FilaVentasPorPuntoVenta`. */
+export type FilaVentasPorPuntoVenta = {
+  idPuntoVenta: number
+  neto: number
+  cantidadTx: number
+  ticketPromedio: number | null
+}
+
+/** Respuesta de `GET /api/reportes/ventas/por-punto-venta` — espejo de `VentasPorPuntoVenta`. */
+export type VentasPorPuntoVenta = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  filas: FilaVentasPorPuntoVenta[]
+}
+
+/** Fila de `GET /api/reportes/ventas/por-vendedor`, agrupada por `id_empleado` (el vendedor
+ * emisor) — espejo de `FilaVentasPorVendedor`. */
+export type FilaVentasPorVendedor = {
+  idEmpleado: number
+  neto: number
+  cantidadTx: number
+  ticketPromedio: number | null
+}
+
+/** Respuesta de `GET /api/reportes/ventas/por-vendedor` — espejo de `VentasPorVendedor`. */
+export type VentasPorVendedor = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  filas: FilaVentasPorVendedor[]
+}
+
+/** Fila de `GET /api/reportes/ventas/por-medio-pago`, agrupada por
+ * `pagos_comprobante.id_medio_pago` — espejo de `FilaVentasPorMedioPago`. `cantidadPagos` cuenta
+ * filas de `pagos_comprobante`, no comprobantes (un pago dividido aporta una fila a cada medio). */
+export type FilaVentasPorMedioPago = {
+  idMedioPago: number
+  neto: number
+  cantidadPagos: number
+}
+
+/** Respuesta de `GET /api/reportes/ventas/por-medio-pago` — espejo de `VentasPorMedioPago`. */
+export type VentasPorMedioPago = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  filas: FilaVentasPorMedioPago[]
+}

@@ -1,11 +1,19 @@
 /**
- * Cliente HTTP de `GET /api/reportes/*` (stage-10-agregacion-dashboard, Slice 7 — G1 parity):
- * ventas/resumen y gastos/resumen. `desde`/`hasta` son `DateOnly` del lado del servidor, así que
- * viajan como `YYYY-MM-DD` sin ningún offset horario — a diferencia del filtro de `compras.ts`,
- * que filtra contra un `timestamptz` y sí necesita ese offset.
+ * Cliente HTTP de `GET /api/reportes/*` (stage-10-agregacion-dashboard, Slice 7 — G1 parity;
+ * Slice 8 — desglose por dimensión): ventas/resumen, gastos/resumen y los tres breakdowns de
+ * ventas. `desde`/`hasta` son `DateOnly` del lado del servidor, así que viajan como `YYYY-MM-DD`
+ * sin ningún offset horario — a diferencia del filtro de `compras.ts`, que filtra contra un
+ * `timestamptz` y sí necesita ese offset.
  */
 import { api } from './cliente'
-import type { Granularidad, ResumenDeGastos, ResumenDeVentas } from './tipos'
+import type {
+  Granularidad,
+  ResumenDeGastos,
+  ResumenDeVentas,
+  VentasPorMedioPago,
+  VentasPorPuntoVenta,
+  VentasPorVendedor,
+} from './tipos'
 
 export type FiltrosDeReporte = {
   idEmpresa: number
@@ -27,11 +35,43 @@ export function construirQueryDeReporte(filtros: FiltrosDeReporte): string {
   return `?${parametros.toString()}`
 }
 
+/** Filtro de los breakdowns por dimensión: sin `granularidad` — ninguno de los tres bucketea por
+ * tiempo, cada fila ya es un subtotal propio del período completo (dto-contract-honesty: el
+ * backend no lee ese parámetro en estas tres rutas). */
+export type FiltrosDeBreakdown = { idEmpresa: number; desde: string; hasta: string }
+
+/** `por-punto-venta` además NO acepta `idPuntoVenta` — sería una contradicción filtrar por el
+ * mismo campo que se está agrupando (design: Endpoints). Los otros dos breakdowns sí lo aceptan. */
+export type FiltrosDeBreakdownConPv = FiltrosDeBreakdown & { idPuntoVenta: number | null }
+
+export function construirQueryDeBreakdown(filtros: FiltrosDeBreakdown): string {
+  const parametros = new URLSearchParams()
+  parametros.set('idEmpresa', String(filtros.idEmpresa))
+  parametros.set('desde', filtros.desde)
+  parametros.set('hasta', filtros.hasta)
+  return `?${parametros.toString()}`
+}
+
+export function construirQueryDeBreakdownConPv(filtros: FiltrosDeBreakdownConPv): string {
+  const parametros = new URLSearchParams()
+  parametros.set('idEmpresa', String(filtros.idEmpresa))
+  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+  parametros.set('desde', filtros.desde)
+  parametros.set('hasta', filtros.hasta)
+  return `?${parametros.toString()}`
+}
+
 export const clienteDeReportes = {
   ventasResumen: (filtros: FiltrosDeReporte) =>
     api.get<ResumenDeVentas>(`/reportes/ventas/resumen${construirQueryDeReporte(filtros)}`),
   gastosResumen: (filtros: FiltrosDeReporte) =>
     api.get<ResumenDeGastos>(`/reportes/gastos/resumen${construirQueryDeReporte(filtros)}`),
+  ventasPorPuntoVenta: (filtros: FiltrosDeBreakdown) =>
+    api.get<VentasPorPuntoVenta>(`/reportes/ventas/por-punto-venta${construirQueryDeBreakdown(filtros)}`),
+  ventasPorVendedor: (filtros: FiltrosDeBreakdownConPv) =>
+    api.get<VentasPorVendedor>(`/reportes/ventas/por-vendedor${construirQueryDeBreakdownConPv(filtros)}`),
+  ventasPorMedioPago: (filtros: FiltrosDeBreakdownConPv) =>
+    api.get<VentasPorMedioPago>(`/reportes/ventas/por-medio-pago${construirQueryDeBreakdownConPv(filtros)}`),
 }
 
 function aFechaIso(fecha: Date): string {

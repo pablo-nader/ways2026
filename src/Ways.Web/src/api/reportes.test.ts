@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { construirQueryDeReporte, rangoUltimosSieteDias } from './reportes'
-import type { FiltrosDeReporte } from './reportes'
+import { construirQueryDeBreakdown, construirQueryDeBreakdownConPv, construirQueryDeReporte, rangoUltimosSieteDias } from './reportes'
+import type { FiltrosDeBreakdown, FiltrosDeBreakdownConPv, FiltrosDeReporte } from './reportes'
 
 function filtrosFixture(sobrescribir: Partial<FiltrosDeReporte> = {}): FiltrosDeReporte {
   return {
@@ -11,6 +11,14 @@ function filtrosFixture(sobrescribir: Partial<FiltrosDeReporte> = {}): FiltrosDe
     granularidad: 'Dia',
     ...sobrescribir,
   }
+}
+
+function filtrosBreakdownFixture(sobrescribir: Partial<FiltrosDeBreakdown> = {}): FiltrosDeBreakdown {
+  return { idEmpresa: 1, desde: '2026-08-05', hasta: '2026-08-11', ...sobrescribir }
+}
+
+function filtrosBreakdownConPvFixture(sobrescribir: Partial<FiltrosDeBreakdownConPv> = {}): FiltrosDeBreakdownConPv {
+  return { idEmpresa: 1, idPuntoVenta: null, desde: '2026-08-05', hasta: '2026-08-11', ...sobrescribir }
 }
 
 describe('construirQueryDeReporte', () => {
@@ -29,6 +37,28 @@ describe('construirQueryDeReporte', () => {
   it('propaga la granularidad tal cual (nombre del enum de C#, no camelCase)', () => {
     expect(construirQueryDeReporte(filtrosFixture({ granularidad: 'Semana' }))).toContain('granularidad=Semana')
     expect(construirQueryDeReporte(filtrosFixture({ granularidad: 'Mes' }))).toContain('granularidad=Mes')
+  })
+})
+
+describe('construirQueryDeBreakdown', () => {
+  it('arma idEmpresa/desde/hasta, sin granularidad ni idPuntoVenta (el backend no los lee en estas rutas)', () => {
+    const query = construirQueryDeBreakdown(filtrosBreakdownFixture())
+
+    expect(query).toBe('?idEmpresa=1&desde=2026-08-05&hasta=2026-08-11')
+  })
+})
+
+describe('construirQueryDeBreakdownConPv', () => {
+  it('omite idPuntoVenta cuando es null', () => {
+    const query = construirQueryDeBreakdownConPv(filtrosBreakdownConPvFixture())
+
+    expect(query).toBe('?idEmpresa=1&desde=2026-08-05&hasta=2026-08-11')
+  })
+
+  it('agrega idPuntoVenta solo cuando está seteado', () => {
+    const query = construirQueryDeBreakdownConPv(filtrosBreakdownConPvFixture({ idPuntoVenta: 7 }))
+
+    expect(query).toContain('idPuntoVenta=7')
   })
 })
 
