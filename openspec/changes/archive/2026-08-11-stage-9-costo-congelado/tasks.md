@@ -151,10 +151,10 @@ untouched (proposal Rollback Plan step 3).
   green — no existing assertion altered other than the two doc/spec files
   from 1.4 and the pre-existing spec delta; `src/Ways.Web` untouched.
   *(proposal: Success Criteria)*
-- [ ] 1.17 Run `judgment-day` (two independent blind review agents) on the
+- [x] 1.17 Run `judgment-day` (two independent blind review agents) on the
   slice diff; fix confirmed issues and re-judge until a clean round.
   *(protocolo-pr-solo-dev)*
-- [ ] 1.18 Branch `feat/stage9-slice1-costo-congelado` off `main`; open the
+- [x] 1.18 Branch `feat/stage9-slice1-costo-congelado` off `main`; open the
   PR per `branch-pr` convention; merge stacked-to-main (single PR — no
   parent PR to stack on for this slice).
 

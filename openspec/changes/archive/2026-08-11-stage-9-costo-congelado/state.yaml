@@ -1,6 +1,6 @@
 change: stage-9-costo-congelado
-phase: apply
-status: in-progress
+phase: archive
+status: archived
 artifact_store: openspec
 execution_mode: interactive
 gate: "DB CHANGE GATE — APPROVED BY THE OWNER (2026-08-11, in-session, explicit 'ok' after the orchestrator presented the model summary: two additive columns, two CHECKs, platform-mode backfill, reversible down; model approved EXACTLY as written below — any deviation during apply reopens the gate). Original gate text follows. NOT exercised by any agent for this change. The model summary is written verbatim in proposal.md under 'Modelo de datos propuesto' and MUST be presented by the orchestrator before any migration is generated or applied. MODEL (summary): ONE table affected, items_comprobante_venta ([operativa], tenant-scoped, doc-10:337-350), TWO ADDITIVE COLUMNS — costo_unitario numeric(14,2) NULL (snapshot of articulos.costo_nominal at emission; per unit, UNSIGNED like precio_unitario, IVA-INCLUDED like both sides already are; NULL = cost unknown) and costo_es_estimado boolean NOT NULL DEFAULT false (true only on backfilled rows). TWO NEW CHECKs mirroring the stage-8 naming: ck_items_comprobante_venta_costo_no_negativo (costo_unitario IS NULL OR costo_unitario >= 0) and ck_items_comprobante_venta_estimado_con_costo (NOT costo_es_estimado OR costo_unitario IS NOT NULL). NO new table, enum, index, FK, RLS policy; NO change to any existing column/constraint/index/policy. ONE-SHOT IDEMPOTENT BACKFILL inside the same migration (UPDATE ... FROM articulos matching (id_articulo, id_tenant) WHERE i.costo_unitario IS NULL AND a.costo_nominal IS NOT NULL), which MUST run in platform mode (SET LOCAL app.acceso = 'plataforma' inside the migration transaction) because every tenant table is FORCE ROW LEVEL SECURITY with USING (app_es_plataforma() OR id_tenant = app_tenant_actual()) and the app role is asserted to have no BYPASSRLS in Production — a plain UPDATE would match ZERO rows and report success. Soft-deleted articles are deliberately included. Down drops both CHECKs and both columns; fully reversible."
@@ -29,14 +29,20 @@ phases:
     depends_on: [spec, design]
     notes: "Written 2026-08-11. 18 tasks, one slice / one PR (feat/stage9-slice1-costo-congelado, stacked-to-main), ~250-400 lines. Review Workload Forecast: no chaining, under the 400-line budget, no decision pending (gate approved). Tasks 1.1-1.8 strictly sequential; 5 test tasks parallelizable. Task 1.3 (migration) must reproduce the gate-approved model VERBATIM; task 1.13 (statement-level ways_app backfill test) is the anti-false-green guard."
   apply:
-    status: pending
+    status: done
+    artifact: tasks.md (checkboxes) + PR #75
     depends_on: [tasks]
+    notes: "Completed 2026-08-11, PR #75 merged to main (eff30a2). 16/18 tasks by the apply agent, 1.17-1.18 by the orchestrator. Migration verbatim to the gate-approved model — zero deviations. Suites: Domain 378/378, Application 212/212, Integration 704/704 (691 baseline + 13 new). JUDGMENT-DAY: clean round FIRST PASS — 2/2 APPROVE. Judge A (production correctness): migration fidelity, non-retryable capture, exact-name CHECK dispatch before any Contains chain, RLS backfill semantics all verified clean; 1 MINOR doc fix applied (design.md deploy-path wording: app-boot auto-migrate DOES run with the platform interceptor; SET LOCAL kept for the CLI path). Judge B (test honesty): ran suites + LIVE MUTATION EXPERIMENT (deleted SET LOCAL from the migration; confirmed the naive multi-tenant test is the predicted false green and the ways_app statement-level test is the honest compensation); full spec-scenario-to-test mapping with no orphans; 1 MINOR informational (backfill SQL hand-duplicated in test, house precedent ComprasTipoSeedTests, paired doc-comments) — no action. AUTONOMOUS DECISION (overnight mandate): size:exception for the single PR (~1050 hand-authored lines vs 250-400 forecast; overage is test-harness depth, splitting would separate tests from the code they verify)."
   verify:
-    status: pending
+    status: done
+    artifact: verify-report.md
     depends_on: [apply]
+    notes: "PASS WITH WARNINGS (2026-08-11): 0 CRITICAL, 1 WARNING (tasks.md 1.17/1.18 checkbox drift — fixed by the orchestrator immediately), 0 SUGGESTION. Migration verbatim to the gate model; all design bindings confirmed; 8/8 spec scenarios covered by passing tests; suites live-run: Domain 378, Application 212, Integration 704."
   archive:
-    status: pending
+    status: done
+    artifact: archive-report.md
     depends_on: [verify]
+    notes: "Archived 2026-08-11. Delta merged verbatim into openspec/specs/comprobantes-venta/spec.md (2 MODIFIED in place, 2 ADDED appended); orchestrator ran the deterministic copy + substring-fidelity verification before deleting originals."
 dependencies:
   spec: [propose]
   design: [propose]
