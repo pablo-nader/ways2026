@@ -278,28 +278,33 @@ route shipped so far. **Rollback**: revert the branch.
 **Finish**: `recharts` installed, containment wrappers exist, no page yet
 consumes them. **Rollback**: `npm uninstall recharts`; revert the branch.
 
-- [ ] 6.1 Modify `src/Ways.Web/package.json`: add `recharts`. **Verify at
+- [x] 6.1 Modify `src/Ways.Web/package.json`: add `recharts`. **Verify at
   install**: license is MIT, version is React-19-compatible (peer-dep
   check), no transitive canvas/d3 conflict with existing deps. *(design
   decision 4; proposal decision 4)*
-- [ ] 6.2 Create `src/Ways.Web/src/componentes/graficos/series.ts`: pure
+- [x] 6.2 Create `src/Ways.Web/src/componentes/graficos/series.ts`: pure
   mapping helpers (report bucket → chart-friendly series shape), no
   `recharts` import.
-- [ ] 6.3 Create `src/Ways.Web/src/componentes/graficos/GraficoDeLineas.tsx`
+- [x] 6.3 Create `src/Ways.Web/src/componentes/graficos/GraficoDeLineas.tsx`
   and `GraficoDeBarras.tsx`: thin wrappers over `recharts`'
   `ResponsiveContainer`/`LineChart`/`BarChart`, own props (`data`, `alto`,
   no raw `recharts` prop pass-through). `recharts` MUST NOT be imported
   anywhere outside this folder. *(design decision 11; spec tablero: Recharts
   Is Contained To componentes/graficos)*
-- [ ] 6.4 [P] Colocated unit tests for `series.ts` per `web-descriptor-tests`
+- [x] 6.4 [P] Colocated unit tests for `series.ts` per `web-descriptor-tests`
   — every pure mapping helper, no DOM.
-- [ ] 6.5 [P] Colocated component tests for both wrappers with
+- [x] 6.5 [P] Colocated component tests for both wrappers with
   `vi.mock('recharts')` stubbing each chart to a `data-testid` node that
   serializes its `data` prop — assertions target the wrapper's mapping,
   never the library render. *(design: Web Composition — Vitest)*
-- [ ] 6.6 Run `judgment-day`; fix; re-judge until clean.
+- [ ] 6.6 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+  sdd-apply — requires sub-agent delegation, out of the apply executor's
+  scope; orchestrator must run this before PR.)*
 - [ ] 6.7 Branch `feat/stage10-slice6-graficos` off `main`; PR; merge
-  stacked-to-main (independent of the API slices' merge order).
+  stacked-to-main (independent of the API slices' merge order). *(Branch
+  `feat/stage10-slice6-graficos` created off `main`, commits `d75bda7` +
+  `c981c50` applied on it. PR creation/merge explicitly out of scope per
+  apply boundaries — NOT done.)*
 
 **Verify**: `npm run test -- graficos`
 
