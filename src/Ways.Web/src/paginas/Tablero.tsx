@@ -4,11 +4,13 @@ import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rangoUltimosSieteDias } from '../api/reportes'
 import type {
+  CoberturaDeCosto,
   EmpresaListado,
   Granularidad,
   MedioPagoAlta,
   MedioPagoListado,
   PuntoVentaListado,
+  Rentabilidad,
   ResumenDeGastos,
   ResumenDeVentas,
   TopArticulos,
@@ -16,6 +18,8 @@ import type {
   VentasPorPuntoVenta,
   VentasPorVendedor,
 } from '../api/tipos'
+import { puedeVerRentabilidad } from '../api/tipos'
+import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { GraficoDeBarras } from '../componentes/graficos/GraficoDeBarras'
@@ -303,6 +307,85 @@ function PanelTopArticulos({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanel
   )
 }
 
+/** Texto del banner obligatorio de cobertura del panel de rentabilidad (spec tablero: Margin
+ * Panel Is Invisible, Not Disabled, For Non-Admin — "a bare margin percentage MUST NOT be shown
+ * alone"; design: "always renders the coverage banner above the figure"). Devuelve SIEMPRE un
+ * texto, nunca `null`: con cobertura 100% confirma que no hay nada excluido; si hay estimado
+ * excluido y/o costo desconocido, los nombra explícitamente — nunca un porcentaje de margen a
+ * secas. El costo estimado solo cuenta como "excluido" cuando `incluyeEstimados` es `false`: una
+ * vez que el caller optó por incluirlo, esa porción pasa a estar considerada en el margen. */
+function bannerDeCobertura(cobertura: CoberturaDeCosto): string {
+  const { ventaTotal, ventaConCostoEstimado, ventaSinCosto, incluyeEstimados } = cobertura
+  const pctEstimadoExcluido = incluyeEstimados || ventaTotal === 0 ? 0 : (ventaConCostoEstimado / ventaTotal) * 100
+  const pctDesconocido = ventaTotal === 0 ? 0 : (ventaSinCosto / ventaTotal) * 100
+
+  const partes: string[] = []
+  if (pctEstimadoExcluido > 0) partes.push(`${pctEstimadoExcluido.toFixed(0)}% estimado excluido`)
+  if (pctDesconocido > 0) partes.push(`${pctDesconocido.toFixed(0)}% de costo desconocido`)
+
+  return partes.length === 0 ? 'Cobertura de costo: 100% de la venta con costo real considerado.' : partes.join(', ')
+}
+
+type PropsPanelDeRentabilidad = { idEmpresa: number; desde: string; hasta: string; idPuntoVenta: number | null }
+
+/**
+ * Panel de rentabilidad (Slice 9) — el único panel de `Tablero` que NO se monta para un rol
+ * distinto de Admin (spec tablero: Margin Panel Is Invisible, Not Disabled, For Non-Admin): el
+ * gate de rol vive en el `Tablero` que decide si este componente se renderiza, así que un
+ * `Supervisor`/`Vendedor` nunca dispara el `useEffect` de `usePanelDeReporte` — sin fetch a
+ * `/rentabilidad`, no solo sin nodo en el DOM. `incluirEstimados` es un toggle propio del panel
+ * (opt-in, spec rentabilidad-y-comisiones: Margin Excludes Estimated Cost Lines By Default):
+ * cambiarlo arma una nueva `cargarDatos` y dispara un refetch gateado por la misma generación que
+ * el resto de los paneles de desglose.
+ */
+function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanelDeRentabilidad) {
+  const [incluirEstimados, setIncluirEstimados] = useState(false)
+  const cargarDatos = useCallback(
+    () => clienteDeReportes.rentabilidad({ idEmpresa, idPuntoVenta, desde, hasta, incluirEstimados }),
+    [idEmpresa, idPuntoVenta, desde, hasta, incluirEstimados],
+  )
+  const { datos, cargando, error, reintentar } = usePanelDeReporte<Rentabilidad>(
+    cargarDatos,
+    'No se pudo cargar la rentabilidad.',
+  )
+
+  return (
+    <div className="border p-3 bg-white h-100">
+      <h6>Rentabilidad</h6>
+      <div className="form-check form-switch mb-2">
+        <input
+          id="tablero-rentabilidad-incluir-estimados"
+          className="form-check-input"
+          type="checkbox"
+          checked={incluirEstimados}
+          disabled={cargando}
+          onChange={(e) => setIncluirEstimados(e.target.checked)}
+        />
+        <label className="form-check-label small" htmlFor="tablero-rentabilidad-incluir-estimados">
+          Incluir costos estimados
+        </label>
+      </div>
+      {error && <PanelDeError error={error} onReintentar={reintentar} />}
+      {cargando && !datos && <Cargando />}
+      {datos && (
+        <>
+          <div className="alert alert-info rounded-0 py-1 px-2 small mb-2">{bannerDeCobertura(datos.cobertura)}</div>
+          <div className="row g-3 text-center">
+            <div className="col-6">
+              <div className="text-muted small">Margen</div>
+              <div className="fs-4">{formatearMoneda(datos.margen)}</div>
+            </div>
+            <div className="col-6">
+              <div className="text-muted small">Margen %</div>
+              <div className="fs-4">{datos.margenPorcentaje === null ? '—' : `${datos.margenPorcentaje.toFixed(1)}%`}</div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 /**
  * Tablero (stage-10-agregacion-dashboard, Slice 7 — G1 parity; Slice 8 — filtro compartido +
  * paneles de desglose): serie de ventas, serie de gastos, netos y ticket promedio de los últimos
@@ -325,8 +408,15 @@ function PanelTopArticulos({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanel
  * desglose (Slice 8) es una entidad operable independiente y trae su PROPIA generación/`cargando`
  * (`usePanelDeReporte`) — no extiende este par compartido (deviation registrada en tasks.md antes
  * de la tarea 7.6, vinculante para esta slice).
+ *
+ * Slice 9 — el panel de rentabilidad se monta condicionado por `puedeVerRentabilidad(usuario.rolId)`:
+ * para Supervisor/Vendedor ni siquiera se instancia (spec tablero: Margin Panel Is Invisible, Not
+ * Disabled, For Non-Admin) — el rol Admin es el único que ve el costo, la política más estricta
+ * de todo el tablero (spec rentabilidad-y-comisiones: LecturaDeRentabilidad Policy Admits Admin
+ * Only).
  */
 export function Tablero() {
+  const { usuario } = useAuth()
   const [empresas, setEmpresas] = useState<EmpresaListado[] | null>(null)
   const [idEmpresa, setIdEmpresa] = useState<number | null>(null)
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[]>([])
@@ -571,6 +661,14 @@ export function Tablero() {
                 </div>
                 <div className="col-md-3">
                   <PanelTopArticulos idEmpresa={idEmpresa} desde={desde} hasta={hasta} idPuntoVenta={idPuntoVenta} />
+                </div>
+              </div>
+            )}
+
+            {idEmpresa !== null && usuario && puedeVerRentabilidad(usuario.rolId) && (
+              <div className="row g-3 mt-1">
+                <div className="col-md-6">
+                  <PanelDeRentabilidad idEmpresa={idEmpresa} desde={desde} hasta={hasta} idPuntoVenta={idPuntoVenta} />
                 </div>
               </div>
             )}

@@ -8,6 +8,7 @@ import type {
   EmpresaListado,
   MedioPagoListado,
   PuntoVentaListado,
+  Rentabilidad,
   ResumenDeGastos,
   ResumenDeVentas,
   TopArticulos,
@@ -178,6 +179,31 @@ function topArticulosFixture(sobrescribir: Partial<TopArticulos> = {}): TopArtic
   }
 }
 
+function rentabilidadFixture(sobrescribir: Partial<Rentabilidad> = {}): Rentabilidad {
+  return {
+    desde: '2026-08-05',
+    hasta: '2026-08-11',
+    zonaHoraria: 'America/Argentina/Buenos_Aires',
+    ventaConsiderada: 1000,
+    costoConsiderado: 600,
+    margen: 400,
+    margenPorcentaje: 40,
+    cobertura: {
+      lineasTotales: 10,
+      lineasConCostoReal: 10,
+      lineasConCostoEstimado: 0,
+      lineasSinCosto: 0,
+      ventaTotal: 1000,
+      ventaConCostoReal: 1000,
+      ventaConCostoEstimado: 0,
+      ventaSinCosto: 0,
+      incluyeEstimados: false,
+    },
+    porArticulo: [],
+    ...sobrescribir,
+  }
+}
+
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/empresas') return Promise.resolve([empresaUno])
@@ -191,6 +217,7 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
     if (ruta.startsWith('/reportes/ventas/por-vendedor?')) return Promise.resolve(ventasPorVendedorFixture())
     if (ruta.startsWith('/reportes/ventas/por-medio-pago?')) return Promise.resolve(ventasPorMedioPagoFixture())
     if (ruta.startsWith('/reportes/articulos/top?')) return Promise.resolve(topArticulosFixture())
+    if (ruta.startsWith('/reportes/rentabilidad?')) return Promise.resolve(rentabilidadFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -637,5 +664,157 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
 
     const rutasPorPv = apiGetMock.mock.calls.map((llamada) => llamada[0] as string).filter((r) => r.startsWith('/reportes/ventas/por-punto-venta?'))
     expect(rutasPorPv.every((r) => !r.includes('idPuntoVenta'))).toBe(true)
+  })
+})
+
+describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slice 9)', () => {
+  // Prueba el gate `usuario && puedeVerRentabilidad(usuario.rolId)` que envuelve `PanelDeRentabilidad`
+  // en `Tablero.tsx` (spec tablero: Margin Panel Is Invisible, Not Disabled, For Non-Admin — "not
+  // rendered-and-disabled... absent"; mutation-proof-tests): mutación aplicada — reemplazado el
+  // gate por `true` (el panel se monta siempre) → este test falló (apareció "Rentabilidad" en el
+  // DOM y se disparó un fetch a `/reportes/rentabilidad`) → revertido → vuelve a pasar. No solo el
+  // nodo está ausente: al no montarse el componente, su `useEffect` de `usePanelDeReporte` nunca
+  // corre, así que tampoco hay fetch — "no fetch fired for non-Admin" se prueba por construcción,
+  // no por una guarda adicional en runtime.
+  it('un Supervisor no ve el panel de rentabilidad ni dispara su fetch', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Supervisor, rol: 'Supervisor' })
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    await waitFor(() => expect(screen.getAllByTestId('bar-chart')).toHaveLength(4))
+
+    expect(screen.queryByText('Rentabilidad')).not.toBeInTheDocument()
+    const rutasDeRentabilidad = apiGetMock.mock.calls.map((llamada) => llamada[0] as string).filter((r) => r.startsWith('/reportes/rentabilidad'))
+    expect(rutasDeRentabilidad).toHaveLength(0)
+  })
+
+  it('un Vendedor tampoco ve el panel de rentabilidad', async () => {
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'vendedor', rolId: ROL.Vendedor, rol: 'Vendedor' })
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    await waitFor(() => expect(screen.getAllByTestId('bar-chart')).toHaveLength(4))
+
+    expect(screen.queryByText('Rentabilidad')).not.toBeInTheDocument()
+  })
+
+  it('un Admin ve el panel de rentabilidad con cobertura 100%: banner de confirmación, sin excluir nada', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Rentabilidad')
+    expect(await screen.findByText('Cobertura de costo: 100% de la venta con costo real considerado.')).toBeInTheDocument()
+    expect(screen.getByText('$400,00')).toBeInTheDocument()
+    expect(screen.getByText('40.0%')).toBeInTheDocument()
+  })
+
+  // Cobertura parcial: mismo ejemplo textual que el spec (80% incluido, 15% estimado, 5%
+  // desconocido) — spec tablero: "shows the margin figure together with a banner stating '15%
+  // estimado excluido, 5% de costo desconocido'".
+  it('un Admin ve el banner de cobertura parcial: "15% estimado excluido, 5% de costo desconocido"', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/rentabilidad?')) {
+        return Promise.resolve(
+          rentabilidadFixture({
+            cobertura: {
+              lineasTotales: 20,
+              lineasConCostoReal: 16,
+              lineasConCostoEstimado: 3,
+              lineasSinCosto: 1,
+              ventaTotal: 1000,
+              ventaConCostoReal: 800,
+              ventaConCostoEstimado: 150,
+              ventaSinCosto: 50,
+              incluyeEstimados: false,
+            },
+          }),
+        )
+      }
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('Rentabilidad')
+    expect(await screen.findByText('15% estimado excluido, 5% de costo desconocido')).toBeInTheDocument()
+  })
+
+  // Todo desconocido: coverage 0% conocida, banner nombra el 100% desconocido — nunca "$0,00" ni
+  // un margen a secas sin banner (spec: "a bare margin percentage MUST NOT be shown alone").
+  it('un Admin ve el banner "100% de costo desconocido" cuando toda la venta es de costo desconocido', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/rentabilidad?')) {
+        return Promise.resolve(
+          rentabilidadFixture({
+            ventaConsiderada: 0,
+            costoConsiderado: 0,
+            margen: 0,
+            margenPorcentaje: null,
+            cobertura: {
+              lineasTotales: 5,
+              lineasConCostoReal: 0,
+              lineasConCostoEstimado: 0,
+              lineasSinCosto: 5,
+              ventaTotal: 200,
+              ventaConCostoReal: 0,
+              ventaConCostoEstimado: 0,
+              ventaSinCosto: 200,
+              incluyeEstimados: false,
+            },
+          }),
+        )
+      }
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('Rentabilidad')
+    expect(await screen.findByText('100% de costo desconocido')).toBeInTheDocument()
+    // Prueba el `datos.margenPorcentaje === null ? '—' : ...` de `PanelDeRentabilidad`
+    // (mutation-proof-tests, mismo criterio que `ticketPromedio`): mutación aplicada — reemplazado
+    // por `${(datos.margenPorcentaje ?? 0).toFixed(1)}%` (null tratado como 0) → este test falló
+    // ("0.0%" en pantalla en vez de "—") → revertido → vuelve a pasar.
+    expect(screen.getByText('—')).toBeInTheDocument()
+    expect(screen.queryByText('0.0%')).not.toBeInTheDocument()
+  })
+
+  it('el toggle "Incluir costos estimados" dispara un refetch con incluirEstimados=true', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Rentabilidad')
+    expect(await screen.findByText('Cobertura de costo: 100% de la venta con costo real considerado.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Incluir costos estimados'))
+
+    await waitFor(() => {
+      const rutas = apiGetMock.mock.calls.map((llamada) => llamada[0] as string)
+      expect(rutas.some((r) => r.startsWith('/reportes/rentabilidad?') && r.includes('incluirEstimados=true'))).toBe(true)
+    })
+  })
+
+  it('el panel de rentabilidad muestra su propio estado de error sin afectar a los paneles de desglose', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/rentabilidad?')) {
+        return Promise.reject(new Error('boom'))
+      }
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('Rentabilidad')
+    expect(await screen.findByText('No se pudo cargar la rentabilidad.')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByText('Vendedor #9')).toBeInTheDocument()
+      expect(screen.getByText('Efectivo')).toBeInTheDocument()
+      expect(screen.getByText('Producto Estrella')).toBeInTheDocument()
+    })
   })
 })

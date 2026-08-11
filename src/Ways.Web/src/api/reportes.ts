@@ -8,6 +8,7 @@
 import { api } from './cliente'
 import type {
   Granularidad,
+  Rentabilidad,
   ResumenDeGastos,
   ResumenDeVentas,
   TopArticulos,
@@ -67,6 +68,12 @@ export function construirQueryDeBreakdownConPv(filtros: FiltrosDeBreakdownConPv)
  * (`ReportesEndpoints.cs`: `int? limite`). */
 export type FiltrosDeTopArticulos = FiltrosDeBreakdownConPv & { limite: number | null }
 
+/** `rentabilidad` reutiliza el shape de `FiltrosDeBreakdownConPv` y suma `incluirEstimados` —
+ * único parámetro propio de esta ruta (`ReportesEndpoints.cs`: `bool? incluirEstimados`, ausente
+ * en la query string ⇒ excluido por default, spec rentabilidad-y-comisiones: Margin Excludes
+ * Estimated Cost Lines By Default). */
+export type FiltrosDeRentabilidad = FiltrosDeBreakdownConPv & { incluirEstimados: boolean }
+
 export const clienteDeReportes = {
   ventasResumen: (filtros: FiltrosDeReporte) =>
     api.get<ResumenDeVentas>(`/reportes/ventas/resumen${construirQueryDeReporte(filtros)}`),
@@ -82,6 +89,11 @@ export const clienteDeReportes = {
     const query = construirQueryDeBreakdownConPv(filtros)
     const conLimite = filtros.limite === null ? query : `${query}&limite=${filtros.limite}`
     return api.get<TopArticulos>(`/reportes/articulos/top${conLimite}`)
+  },
+  rentabilidad: (filtros: FiltrosDeRentabilidad) => {
+    const query = construirQueryDeBreakdownConPv(filtros)
+    const conEstimados = filtros.incluirEstimados ? `${query}&incluirEstimados=true` : query
+    return api.get<Rentabilidad>(`/reportes/rentabilidad${conEstimados}`)
   },
 }
 

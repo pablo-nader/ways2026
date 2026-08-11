@@ -101,6 +101,15 @@ export function puedeVerReportes(rolId: number) {
   return rolId === ROL.Supervisor || rolId === ROL.Admin
 }
 
+/** Espejo de `Politicas.LecturaDeRentabilidad` (stage-10-agregacion-dashboard, Slice 9): solo
+ * admin ve el panel de rentabilidad — ni siquiera supervisor entra acá, el costo es el número más
+ * sensible del sistema y esta etapa no amplía quién lo ve (spec rentabilidad-y-comisiones:
+ * LecturaDeRentabilidad Policy Admits Admin Only). Puramente cosmético: el servidor vuelve a
+ * exigir la misma policy en `/api/reportes/rentabilidad`. */
+export function puedeVerRentabilidad(rolId: number) {
+  return rolId === ROL.Admin
+}
+
 // --- Catálogos de tenant (ADR-11) ---
 
 export type ComportamientoMedioPago = 'Efectivo' | 'Electronico' | 'CuentaCorriente'
@@ -1187,4 +1196,48 @@ export type TopArticulos = {
   hasta: string
   zonaHoraria: string
   articulos: ArticuloTop[]
+}
+
+/** Cobertura del costo de un período de rentabilidad (stage-9-costo-congelado, tres estados:
+ * real / estimado / desconocido) — espejo de `CoberturaDeCosto`. Viaja SIEMPRE en la respuesta de
+ * `/rentabilidad` (spec rentabilidad-y-comisiones: NULL Cost Is Never Treated As Zero, And
+ * Coverage Is Mandatory); cada campo alimenta el banner obligatorio del panel (spec tablero:
+ * Margin Panel Is Invisible, Not Disabled, For Non-Admin). */
+export type CoberturaDeCosto = {
+  lineasTotales: number
+  lineasConCostoReal: number
+  lineasConCostoEstimado: number
+  lineasSinCosto: number
+  ventaTotal: number
+  ventaConCostoReal: number
+  ventaConCostoEstimado: number
+  ventaSinCosto: number
+  incluyeEstimados: boolean
+}
+
+/** Fila de margen por artículo dentro de `/rentabilidad`, agrupada por `id_articulo` — espejo de
+ * `RentabilidadPorArticulo`. `idArticulo` es `null` en una línea de concepto libre;
+ * `margenPorcentaje` es `null`, nunca `0`, mismo criterio que `ticketPromedio`. */
+export type RentabilidadPorArticulo = {
+  idArticulo: number | null
+  descripcion: string
+  ventaConsiderada: number
+  costoConsiderado: number
+  margen: number
+  margenPorcentaje: number | null
+}
+
+/** Respuesta de `GET /api/reportes/rentabilidad` — espejo de `Rentabilidad`. `margenPorcentaje`
+ * es `null`, nunca `0`, cuando `ventaConsiderada` es cero (denominador vacío, mismo criterio que
+ * `ResumenDeVentas.ticketPromedio`). */
+export type Rentabilidad = {
+  desde: string
+  hasta: string
+  zonaHoraria: string
+  ventaConsiderada: number
+  costoConsiderado: number
+  margen: number
+  margenPorcentaje: number | null
+  cobertura: CoberturaDeCosto
+  porArticulo: RentabilidadPorArticulo[]
 }
