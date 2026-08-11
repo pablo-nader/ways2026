@@ -124,9 +124,9 @@ its licence-audit fallback); DI registers it; no route yet consumes it.
 - [x] 1a.11 [P] `OpcionesDeExportacionTests`: production default is `25_000`.
 - [x] 1a.12 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   no pending changes; no migration files touched.
-- [ ] 1a.13 Run `judgment-day` on the slice diff; fix confirmed issues;
+- [x] 1a.13 Run `judgment-day` on the slice diff; fix confirmed issues;
   re-judge until clean.
-- [ ] 1a.14 Branch `feat/stage11-slice1a-seam` off `main`; PR per
+- [x] 1a.14 Branch `feat/stage11-slice1a-seam` off `main`; PR per
   `branch-pr`; merge stacked-to-main.
 
 **Test plan**: mapper-free unit suite (1a.9-1a.11) + the containment
