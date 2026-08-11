@@ -1,5 +1,5 @@
 change: stage-11-exportacion-reportes
-phase: propose
+phase: tasks
 status: in-progress
 artifact_store: openspec
 execution_mode: delegated-autonomous
@@ -15,11 +15,11 @@ phases:
     depends_on: []
     notes: "Written 2026-08-11 under DELEGATED TECHNICAL AUTHORITY (owner delegates technical decisions to the orchestrator with recorded rationale; genuinely product-weight calls get a conservative default plus an owner flag). ELEVEN autonomous decisions, each a founded recommendation with a conservative reversible bias and a code- or doc-verified provenance. Capabilities contract: 2 NEW (exportacion-de-reportes, historico-de-cajas), 3 MODIFIED (reportes-de-gestion, rentabilidad-y-comisiones, tesoreria). Nine-slice stacked-to-main plan, seam-first (1) then mechanical exports (2-3), then web download plumbing (4), then G2 (5-6), G3 (7), print views (8), and existencias last and droppable (9). A 'Proposal question round' section records 5 questions with the assumption taken for each; NONE of them touches the database. ONE OWNER FLAG: branding on generated files."
   spec:
-    status: pending
+    status: done
     artifact: null
     depends_on: [propose]
   design:
-    status: pending
+    status: done
     artifact: null
     depends_on: [propose]
   tasks:
