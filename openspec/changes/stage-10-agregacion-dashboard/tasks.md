@@ -297,10 +297,10 @@ consumes them. **Rollback**: `npm uninstall recharts`; revert the branch.
   `vi.mock('recharts')` stubbing each chart to a `data-testid` node that
   serializes its `data` prop — assertions target the wrapper's mapping,
   never the library render. *(design: Web Composition — Vitest)*
-- [ ] 6.6 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
+- [x] 6.6 Run `judgment-day`; fix; re-judge until clean. *(NOT run by
   sdd-apply — requires sub-agent delegation, out of the apply executor's
   scope; orchestrator must run this before PR.)*
-- [ ] 6.7 Branch `feat/stage10-slice6-graficos` off `main`; PR; merge
+- [x] 6.7 Branch `feat/stage10-slice6-graficos` off `main`; PR; merge
   stacked-to-main (independent of the API slices' merge order). *(Branch
   `feat/stage10-slice6-graficos` created off `main`, commits `d75bda7` +
   `c981c50` applied on it. PR creation/merge explicitly out of scope per
