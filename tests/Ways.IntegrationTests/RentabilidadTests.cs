@@ -260,18 +260,19 @@ public class RentabilidadTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         await SembrarLineaAsync(ctx, mediodiaUtc, total: 300m, cantidad: 1m, costoUnitario: 100m, idArticulo: idArticulo);
         // NCX real sobre el mismo artículo: cantidad y total negativos, costo SIN signo (design
         // decisión 4/9) → costo×cantidad también negativo, la línea resta 50 al margen total.
-        await SembrarLineaAsync(ctx, mediodiaUtc, total: -150m, cantidad: -1m, costoUnitario: 100m, esNcx: true, idArticulo: idArticulo);
+        // Costo distinto al de la TX: cada línea usa SU costo congelado (etapa 9), y con
+        // valores iguales este test no distinguiría un bug que acople la NCX a la TX.
+        await SembrarLineaAsync(ctx, mediodiaUtc, total: -150m, cantidad: -1m, costoUnitario: 120m, esNcx: true, idArticulo: idArticulo);
 
         var rentabilidad = await ObtenerRentabilidadAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
         Assert.Equal(150m, rentabilidad.VentaConsiderada);
-        Assert.Equal(0m, rentabilidad.CostoConsiderado);
-        Assert.Equal(150m, rentabilidad.Margen);
-        Assert.Equal(100m, rentabilidad.MargenPorcentaje);
+        Assert.Equal(-20m, rentabilidad.CostoConsiderado);
+        Assert.Equal(170m, rentabilidad.Margen);
 
         var porArticulo = Assert.Single(rentabilidad.PorArticulo);
         Assert.Equal(idArticulo, porArticulo.IdArticulo);
-        Assert.Equal(150m, porArticulo.Margen);
+        Assert.Equal(170m, porArticulo.Margen);
     }
 
     // ---- task 4.6: opt-in explícito de líneas estimadas (spec: Margin Excludes Estimated Cost
@@ -298,6 +299,9 @@ public class RentabilidadTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Equal(150m, conOptIn.VentaConsiderada);
         Assert.Equal(50m, conOptIn.Margen);
         Assert.True(conOptIn.Cobertura.IncluyeEstimados);
+        // El opt-in incluye la línea en el margen pero NUNCA la convierte en real.
+        Assert.Equal(1, conOptIn.Cobertura.LineasConCostoEstimado);
+        Assert.Equal(150m, conOptIn.Cobertura.VentaConCostoEstimado);
     }
 
     // ---- task 4.6: costo desconocido nunca se trata como cero (spec: NULL Cost Is Never Treated As
