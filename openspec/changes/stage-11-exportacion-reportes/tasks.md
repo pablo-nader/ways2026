@@ -67,7 +67,7 @@ its licence-audit fallback); DI registers it; no route yet consumes it.
 **Rollback**: revert the branch — one `PackageReference` and the
 `Exportacion/` folder, nothing downstream depends on it yet.
 
-- [ ] 1a.1 **Licence audit (binding, pinned command)**: run
+- [x] 1a.1 **Licence audit (binding, pinned command)**: run
   `dotnet list src/Ways.Infrastructure/Ways.Infrastructure.csproj package --include-transitive --format json`
   after adding the `ClosedXML` `PackageReference`; for each `(id, version)`
   read `<license>`/`<licenseUrl>` from
@@ -79,7 +79,7 @@ its licence-audit fallback); DI registers it; no route yet consumes it.
   swap in the PR body. *(proposal decision 1; design "Licence audit"; spec
   exportacion-de-reportes: Licence Audit Is Recorded Before The Exporter
   Ships)*
-- [ ] 1a.2 Create `src/Ways.Application/Exportacion/TablaExportable.cs` +
+- [x] 1a.2 Create `src/Ways.Application/Exportacion/TablaExportable.cs` +
   `Celda.cs` + `ColumnaExportable.cs` + `ContextoDeExportacion.cs`: typed
   cells (`TipoDeColumna { Texto, Entero, Decimal, Moneda, Cantidad, Fecha,
   FechaHora }`), `Celda` factories (`Celda.Moneda`, `Celda.Fecha`,
@@ -87,42 +87,42 @@ its licence-audit fallback); DI registers it; no route yet consumes it.
   zone-less `DateTime`), `TablaExportable`'s constructor validates every row
   has `Columnas.Count` cells and `fila[i].Tipo == Columnas[i].Tipo`, else
   throws. *(design decisions 1-3; Interfaces/Contracts)*
-- [ ] 1a.3 Create `src/Ways.Application/Exportacion/IExportadorDeTabla.cs`:
+- [x] 1a.3 Create `src/Ways.Application/Exportacion/IExportadorDeTabla.cs`:
   `TipoDeContenido { get; }` + `byte[] Generar(TablaExportable)`.
-- [ ] 1a.4 Create `src/Ways.Application/Exportacion/OpcionesDeExportacion.cs`:
+- [x] 1a.4 Create `src/Ways.Application/Exportacion/OpcionesDeExportacion.cs`:
   `TopeDeFilas` (default `25_000`), bound from configuration — **an option,
   not a `const`**, so the integration fixture can bind it low. *(design
   decision 5)*
-- [ ] 1a.5 Create `src/Ways.Application/Exportacion/NombreDeArchivo.cs`: pure
+- [x] 1a.5 Create `src/Ways.Application/Exportacion/NombreDeArchivo.cs`: pure
   static `Construir(reporte, alcance, desde, hasta)` — deterministic, ASCII
   by construction (ids, never names). *(design: Interfaces/Contracts; spec
   exportacion-de-reportes: XLSX Response Contract And Deterministic Naming)*
-- [ ] 1a.6 Create `src/Ways.Infrastructure/Exportacion/ExportadorXlsx.cs`:
+- [x] 1a.6 Create `src/Ways.Infrastructure/Exportacion/ExportadorXlsx.cs`:
   the only file naming the Excel library; sets a real numeric/date cell
   value plus a **column-level** number format (never a formatted string);
   writes the header block (rows 1-4, blank row 5, table header row 6).
   *(design decision 1; spec exportacion-de-reportes: In-Sheet Header Block)*
-- [ ] 1a.7 Modify `src/Ways.Infrastructure/Ways.Infrastructure.csproj` (one
+- [x] 1a.7 Modify `src/Ways.Infrastructure/Ways.Infrastructure.csproj` (one
   `PackageReference`, per 1a.1's outcome) and `DependencyInjection.cs`:
   `AddSingleton<IExportadorDeTabla, ExportadorXlsx>()` next to
   `HasheadorPbkdf2` (`:56`).
-- [ ] 1a.8 [P] `tests/Ways.Application.Tests/Exportacion/ContencionDelExportadorTests.cs`:
+- [x] 1a.8 [P] `tests/Ways.Application.Tests/Exportacion/ContencionDelExportadorTests.cs`:
   source-scan test walking `src/**/*.cs` from `ResolverRaizDelRepositorio()`,
   asserting exactly ONE file matches the adopted library's namespace and
   only `Ways.Infrastructure.csproj` carries its `PackageReference`. Scan
   root is `src/` only (test code reads workbooks back on purpose, decision
   8). *(design decision 4; spec exportacion-de-reportes: Excel Library
   Containment)*
-- [ ] 1a.9 [P] `TablaExportableTests`: hand-built rows with mismatched cell
+- [x] 1a.9 [P] `TablaExportableTests`: hand-built rows with mismatched cell
   count → throws; a `Texto`-typed cell holding a `Moneda` value at the wrong
   index → throws (proves "a mapper put a string in a money column" is a
   failing unit test, not a silent workbook cell); `null` cell values render
   as empty, never `0`/`"-"`. *(design decision 2)*
-- [ ] 1a.10 [P] `NombreDeArchivoTests`: determinism (two identical inputs →
+- [x] 1a.10 [P] `NombreDeArchivoTests`: determinism (two identical inputs →
   identical name), ASCII-only assertion, the `ventas_resumen_pv3_2026-08-01_
   2026-08-12.xlsx` example from the spec.
-- [ ] 1a.11 [P] `OpcionesDeExportacionTests`: production default is `25_000`.
-- [ ] 1a.12 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+- [x] 1a.11 [P] `OpcionesDeExportacionTests`: production default is `25_000`.
+- [x] 1a.12 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   no pending changes; no migration files touched.
 - [ ] 1a.13 Run `judgment-day` on the slice diff; fix confirmed issues;
   re-judge until clean.
