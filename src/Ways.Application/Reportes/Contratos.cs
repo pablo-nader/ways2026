@@ -73,3 +73,36 @@ public sealed record Rentabilidad(
     DateOnly Desde, DateOnly Hasta, string ZonaHoraria,
     decimal VentaConsiderada, decimal CostoConsiderado, decimal Margen, decimal? MargenPorcentaje,
     CoberturaDeCosto Cobertura, IReadOnlyList<RentabilidadPorArticulo> PorArticulo);
+/// <summary>Una fila de <c>ventas/por-punto-venta</c> — mismo criterio de <see cref="Neto"/> y
+/// <see cref="TicketPromedio"/> que <see cref="BucketDeVentas"/> (design decisión 9: <c>Neto</c>
+/// ya viene neto de NCX por construcción; <see cref="TicketPromedio"/> es <c>null</c>, nunca
+/// <c>0</c>, sin ningún TX en el punto de venta).</summary>
+public sealed record FilaVentasPorPuntoVenta(int IdPuntoVenta, decimal Neto, int CantidadTx, decimal? TicketPromedio);
+
+/// <summary>Respuesta de <c>GET /api/reportes/ventas/por-punto-venta</c> (spec reportes-de-gestion:
+/// Ventas Breakdown Endpoints By Punto De Venta, Vendedor, Medio De Pago) — cada fila reporta su
+/// propio subtotal, nunca un porcentaje de un total implícito.</summary>
+public sealed record VentasPorPuntoVenta(
+    DateOnly Desde, DateOnly Hasta, string ZonaHoraria, IReadOnlyList<FilaVentasPorPuntoVenta> Filas);
+
+/// <summary>Una fila de <c>ventas/por-vendedor</c>, agrupada por <c>id_empleado</c> (el vendedor
+/// emisor, design decisión 11: hoy es <c>IContextoDeUsuario.UsuarioId</c> — no existe tabla
+/// <c>empleados</c> separada todavía).</summary>
+public sealed record FilaVentasPorVendedor(int IdEmpleado, decimal Neto, int CantidadTx, decimal? TicketPromedio);
+
+/// <summary>Respuesta de <c>GET /api/reportes/ventas/por-vendedor</c>.</summary>
+public sealed record VentasPorVendedor(
+    DateOnly Desde, DateOnly Hasta, string ZonaHoraria, IReadOnlyList<FilaVentasPorVendedor> Filas);
+
+/// <summary>Una fila de <c>ventas/por-medio-pago</c>, agrupada por <c>pagos_comprobante.id_medio_pago</c>.
+/// <see cref="Neto"/> es <c>Σ (importe × signo del tipo de comprobante del encabezado)</c>: el
+/// importe de un pago nunca es negativo (CHECK <c>ck_pagos_comprobante_importe_no_negativo</c>),
+/// así que el signo lo aporta el encabezado — mismo discriminador que <c>ventas/resumen</c>
+/// (design decisión 9), ninguna rama condicional. <see cref="CantidadPagos"/> cuenta filas de
+/// <c>pagos_comprobante</c>, no comprobantes — un TX con pago dividido entre dos medios aporta una
+/// fila a cada uno.</summary>
+public sealed record FilaVentasPorMedioPago(int IdMedioPago, decimal Neto, int CantidadPagos);
+
+/// <summary>Respuesta de <c>GET /api/reportes/ventas/por-medio-pago</c>.</summary>
+public sealed record VentasPorMedioPago(
+    DateOnly Desde, DateOnly Hasta, string ZonaHoraria, IReadOnlyList<FilaVentasPorMedioPago> Filas);
