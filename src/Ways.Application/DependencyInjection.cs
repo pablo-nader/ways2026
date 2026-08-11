@@ -12,6 +12,7 @@ using Ways.Application.Organizacion;
 using Ways.Application.Parametros;
 using Ways.Application.Precios;
 using Ways.Application.Proveedores;
+using Ways.Application.Reportes;
 using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
@@ -79,6 +80,12 @@ public static class DependencyInjection
         // stage-8-compras-transferencias-inventario, Slice 4: el saldo derivado del proveedor
         // (design decisión 11) — dedicado, no extiende ServicioDeProveedores.
         services.AddScoped<ServicioDeSaldoDeProveedor>();
+
+        // stage-10-agregacion-dashboard, Slice 2: LectorDeSerieTemporal es la única superficie de
+        // SQL crudo de toda la etapa (design decisión 2) — ServicioDeReportesDeVentas es su
+        // primer consumidor.
+        services.AddScoped<LectorDeSerieTemporal>();
+        services.AddScoped<ServicioDeReportesDeVentas>();
 
         return services;
     }
