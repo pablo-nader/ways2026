@@ -75,6 +75,26 @@ public static class CajaEndpoints
             Results.Ok(await servicio.CerrarAsync(id, solicitud, ct)))
         .WithSummary("Cierre de turno: deriva el arqueo, lo persiste y encadena la tesorería — irreversible.");
 
+        // stage-11-exportacion-reportes, Slice 5a (design "The load-bearing refinement of the
+        // proposal is where the caja detail lives": la ruta MOVIÓ acá desde
+        // /api/reportes/cajas/{id} para que OperacionDePos se herede por co-locación en vez de
+        // pelearse con LecturaDeReportes; spec historico-de-cajas: G2 Detail Reuses ResumenDeTurno
+        // Plus Ticket And Gasto Listings). ServicioDeResumenDeTurno.ObtenerAsync corre TAL CUAL
+        // (misma derivación que /resumen, invariante intacto) + LectorDeLineasDelTurno, dos
+        // lecturas indexadas llanas — sin escritura, sin agregado nuevo.
+        grupo.MapGet("/{id:int}/detalle", async (
+            ServicioDeResumenDeTurno servicioDeResumen, LectorDeLineasDelTurno lectorDeLineas, int id, CancellationToken ct) =>
+        {
+            var resumen = await servicioDeResumen.ObtenerAsync(id, ct);
+            var tickets = await lectorDeLineas.LeerTicketsAsync(id, ct);
+            var gastos = await lectorDeLineas.LeerGastosAsync(id, ct);
+
+            return Results.Ok(new DetalleDeTurno(resumen, tickets, gastos));
+        })
+        .WithSummary(
+            "Detalle del turno (Z-report): el mismo resumen de /resumen más los tickets y gastos " +
+            "del turno — el cajero puede leer su propio cierre, mismo gate que /resumen.");
+
         return app;
     }
 }
