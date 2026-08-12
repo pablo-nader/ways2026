@@ -533,4 +533,71 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
+    // ---- task 2.7: el bloque de cobertura en el export de rentabilidad -----------------------------
+
+    /// <summary>7 líneas con costo real, 2 con costo estimado (incluido vía <c>incluirEstimados</c>
+    /// para que también aparezcan en <c>PorArticulo</c>, aunque la cobertura las cuenta siempre —
+    /// spec: Coverage Reflects A Mixed Period), 1 con costo desconocido — el encabezado del
+    /// workbook (fila 4) tiene que repetir los mismos tres conteos y sus subtotales de venta que
+    /// <see cref="CoberturaDeCosto"/> trae en la respuesta JSON (spec: An Admin's Rentabilidad
+    /// Export Carries The Coverage Block).</summary>
+    [Fact]
+    public async Task ElExportDeRentabilidadCargaElBloqueDeCobertura()
+    {
+        var ctx = await PrepararAsync(nameof(ElExportDeRentabilidadCargaElBloqueDeCobertura));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Articulo cobertura");
+
+        for (var i = 0; i < 7; i++)
+        {
+            await SembrarLineaAsync(ctx, idArticulo, $"real-{i}", 1m, 100m, costoUnitario: 40m);
+        }
+
+        for (var i = 0; i < 2; i++)
+        {
+            await SembrarLineaAsync(ctx, idArticulo, $"estimado-{i}", 1m, 50m, costoUnitario: 20m, costoEsEstimado: true);
+        }
+
+        await SembrarLineaAsync(ctx, idArticulo, "desconocido", 1m, 30m, costoUnitario: null);
+
+        var jsonRespuesta = await ctx.Admin.GetAsync(
+            $"/api/reportes/rentabilidad?{Rango(ctx.IdEmpresa)}&incluirEstimados=true");
+        Assert.Equal(HttpStatusCode.OK, jsonRespuesta.StatusCode);
+        var reporte = JsonSerializer.Deserialize<Rentabilidad>(await jsonRespuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
+
+        Assert.Equal(7, reporte.Cobertura.LineasConCostoReal);
+        Assert.Equal(2, reporte.Cobertura.LineasConCostoEstimado);
+        Assert.Equal(1, reporte.Cobertura.LineasSinCosto);
+
+        using var libro = await DescargarLibroAsync(
+            ctx.Admin, $"/api/reportes/rentabilidad/export?{Rango(ctx.IdEmpresa)}&incluirEstimados=true&formato=xlsx");
+        var hoja = libro.Worksheets.First();
+        var textoEncabezado = hoja.Cell(4, 1).GetString();
+
+        Assert.Contains("7", textoEncabezado);
+        Assert.Contains("2", textoEncabezado);
+        Assert.Contains("1", textoEncabezado);
+        Assert.Contains(reporte.Cobertura.VentaConCostoReal.ToString("0.00"), textoEncabezado);
+        Assert.Contains(reporte.Cobertura.VentaConCostoEstimado.ToString("0.00"), textoEncabezado);
+        Assert.Contains(reporte.Cobertura.VentaSinCosto.ToString("0.00"), textoEncabezado);
+    }
+
+    // ---- task 2.8: la etiqueta PROVISIONAL en el export de comisiones ------------------------------
+
+    [Fact]
+    public async Task ElExportDeComisionesLlevaLaEtiquetaProvisional()
+    {
+        var ctx = await PrepararAsync(nameof(ElExportDeComisionesLlevaLaEtiquetaProvisional));
+        await SembrarComprobanteAsync(ctx, 100m);
+
+        var jsonRespuesta = await ctx.Admin.GetAsync($"/api/reportes/comisiones?{Rango(ctx.IdEmpresa)}");
+        Assert.Equal(HttpStatusCode.OK, jsonRespuesta.StatusCode);
+        var reporte = JsonSerializer.Deserialize<Comisiones>(await jsonRespuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
+        Assert.True(reporte.Provisional);
+
+        using var libro = await DescargarLibroAsync(
+            ctx.Admin, $"/api/reportes/comisiones/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+        var hoja = libro.Worksheets.First();
+
+        Assert.Contains("PROVISIONAL", hoja.Cell(4, 1).GetString());
+    }
 }
