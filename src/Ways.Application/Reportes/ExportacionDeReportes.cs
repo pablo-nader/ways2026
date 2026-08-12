@@ -276,4 +276,26 @@ public static class ExportacionDeReportes
                     Celda.Moneda(f.Comision)
                 ])
                 .ToList());
+
+    private static readonly IReadOnlyList<ColumnaExportable> ColumnasExistencias =
+    [
+        new ColumnaExportable("Artículo", TipoDeColumna.Entero),
+        new ColumnaExportable("Nombre", TipoDeColumna.Texto),
+        new ColumnaExportable("Cantidad", TipoDeColumna.Cantidad)
+    ];
+
+    /// <summary>Slice 9 (proposal decisión 10): sin fila de totales — a diferencia de
+    /// <c>ventas/resumen</c>/<c>compras/por-proveedor</c>, sumar cantidades de artículos distintos
+    /// no produce una figura con significado propio.</summary>
+    public static TablaExportable De(Existencias respuesta, ContextoDeExportacion ctx) =>
+        new(
+            "Existencias", ctx, ColumnasExistencias,
+            respuesta.Filas
+                .Select(f => (IReadOnlyList<Celda>)
+                [
+                    Celda.Entero(f.IdArticulo),
+                    Celda.Texto(f.Nombre),
+                    Celda.Cantidad(f.Cantidad)
+                ])
+                .ToList());
 }

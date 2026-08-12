@@ -125,3 +125,18 @@ public sealed record ComisionPorEmpleado(int IdEmpleado, decimal NetoVendido, de
 public sealed record Comisiones(
     DateOnly Desde, DateOnly Hasta, string ZonaHoraria, decimal ComisionPorcentaje,
     IReadOnlyList<ComisionPorEmpleado> Filas, bool Provisional);
+
+/// <summary>Una fila de <c>GET /api/reportes/stock/existencias</c> (stage-11-exportacion-reportes,
+/// Slice 9; proposal decisión 10; design: "Two cap shapes, by report shape" — agregado acotado por
+/// construcción). A diferencia de <see cref="ArticuloTop"/> (que etiqueta con el snapshot congelado
+/// de una línea de venta), acá NO hay línea histórica que congelar — <c>stock</c> es estado
+/// ACTUAL, así que <see cref="Nombre"/> sale del join en vivo contra <c>articulos</c> (spec:
+/// Existencias Report Joins Stock To Artículos Under The Same Gate), nunca de un snapshot.</summary>
+public sealed record FilaExistencia(int IdArticulo, string Nombre, decimal Cantidad);
+
+/// <summary>Respuesta de <c>GET /api/reportes/stock/existencias</c>. Sin <c>desde</c>/<c>hasta</c>
+/// ni <c>ZonaHoraria</c> (a diferencia del resto de los reportes de esta etapa): el stock no tiene
+/// dimensión temporal, es una foto del estado actual — mínimos, punto de pedido y reposición
+/// quedan fuera de esta slice (proposal decisión 10: "give it the context it lacks here", reservado
+/// para Etapa 13).</summary>
+public sealed record Existencias(int IdPuntoVenta, IReadOnlyList<FilaExistencia> Filas);
