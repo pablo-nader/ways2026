@@ -573,9 +573,9 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         var hoja = libro.Worksheets.First();
         var textoEncabezado = hoja.Cell(4, 1).GetString();
 
-        Assert.Contains("7", textoEncabezado);
-        Assert.Contains("2", textoEncabezado);
-        Assert.Contains("1", textoEncabezado);
+        Assert.Contains($"{reporte.Cobertura.LineasConCostoReal} líneas con costo real", textoEncabezado);
+        Assert.Contains($"{reporte.Cobertura.LineasConCostoEstimado} con costo estimado", textoEncabezado);
+        Assert.Contains($"{reporte.Cobertura.LineasSinCosto} con costo desconocido", textoEncabezado);
         Assert.Contains(reporte.Cobertura.VentaConCostoReal.ToString("0.00"), textoEncabezado);
         Assert.Contains(reporte.Cobertura.VentaConCostoEstimado.ToString("0.00"), textoEncabezado);
         Assert.Contains(reporte.Cobertura.VentaSinCosto.ToString("0.00"), textoEncabezado);
