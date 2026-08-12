@@ -327,6 +327,52 @@ public static class ReportesEndpoints
         })
         .RequireAuthorization(Politicas.LecturaDeRentabilidad)
         .WithSummary("Export XLSX de /comisiones: mismos parámetros y figuras, etiquetado PROVISIONAL.");
+
+        // stage-11-exportacion-reportes, Slice 9 (proposal decisión 10, droppable a Etapa 13;
+        // spec reportes-de-gestion: Existencias Report Joins Stock To Artículos Under The Same
+        // Gate): gate heredado del grupo, sin política propia. Sin idArticulo (a diferencia de
+        // GET /api/stock) y sin idEmpresa (mismo criterio que /tesoreria): la ruta solo pide el
+        // punto de venta.
+        grupo.MapGet("/stock/existencias", (
+            ServicioDeReportesDeStock servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.ObtenerExistenciasAsync(idPuntoVenta, ct))
+        .WithSummary(
+            "Existencias de un punto de venta: stock ⋈ articulos, sin idArticulo requerido — a " +
+            "diferencia de GET /api/stock, que exige el par completo.");
+
+        // Sibling declarado inmediatamente después de su ruta fuente — hereda LecturaDeReportes
+        // por co-locación. AGREGADO (design decisión 6): la guarda corre sobre
+        // TablaExportable.Filas.Count ya mapeada, sin COUNT(*) propio. Sin desde/hasta: el stock
+        // no tiene dimensión temporal, así que el encabezado y el nombre de archivo usan la
+        // fecha del servidor (hoy) para ambos extremos del rango — mismo criterio "ids, no
+        // nombres" que el resto de NombreDeArchivo, adaptado a un reporte sin rango real.
+        grupo.MapGet("/stock/existencias/export", async (
+            ServicioDeReportesDeStock servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
+            int idPuntoVenta, string formato, CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var existencias = await servicio.ObtenerExistenciasAsync(idPuntoVenta, ct);
+
+            var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
+            var hoy = DateOnly.FromDateTime(
+                TimeZoneInfo.ConvertTime(reloj.Ahora, TimeZoneInfo.FindSystemTimeZoneById(zonaId)).Date);
+
+            var ctx = ContextoDeExportacionHttp.Construir(usuario, reloj, empresa, $"PV {idPuntoVenta}", hoy, hoy, zonaId);
+            var tabla = ExportacionDeReportes.De(existencias, ctx);
+
+            GuardaDeTope.Exigir(tabla.Filas.Count, opciones.Value.TopeDeFilas);
+
+            var bytes = exportador.Generar(tabla);
+            var nombre = NombreDeArchivo.Construir("existencias", $"pv{idPuntoVenta}", hoy, hoy);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary(
+            "Export XLSX de /stock/existencias: mismas filas, encabezado fechado a hoy (reporte " +
+            "de estado actual, sin rango).");
+
         // stage-11-exportacion-reportes, Slice 5a (design: G2/G3 — minimal aggregation; spec
         // historico-de-cajas: G2 Histórico Lists Closed Turnos Only, Role Split — Turno Detail
         // Under OperacionDePos, Cross-Turno Views Under LecturaDeReportes): gate heredado del

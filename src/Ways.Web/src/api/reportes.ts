@@ -8,6 +8,7 @@
 import { api } from './cliente'
 import type {
   Comisiones,
+  Existencias,
   Granularidad,
   PaginaDeHistoricoDeCajas,
   PaginaDeMovimientosTesoreria,
@@ -104,6 +105,8 @@ export const clienteDeReportes = {
     api.get<PaginaDeHistoricoDeCajas>(`/reportes/cajas${construirQueryDeHistoricoDeCajas(filtros)}`),
   tesoreria: (filtros: FiltrosDeTesoreria) =>
     api.get<PaginaDeMovimientosTesoreria>(`/reportes/tesoreria${construirQueryDeTesoreria(filtros)}`),
+  existencias: (idPuntoVenta: number) =>
+    api.get<Existencias>(`/reportes/stock/existencias?idPuntoVenta=${idPuntoVenta}`),
 }
 
 // ---- Offset local para desde/hasta de /cajas y /tesoreria (stage-11-exportacion-reportes,
@@ -206,6 +209,9 @@ export const rutasDeExportacion = {
   /** `desde`/`hasta` OBLIGATORIOS en `/tesoreria/export`, mismo criterio que `historicoDeCajas`. */
   tesoreria: (filtros: { idPuntoVenta: number; desde: string; hasta: string }) =>
     `/reportes/tesoreria/export${construirQueryDeAlcanceDeTesoreria(filtros)}&formato=xlsx`,
+  /** Sin `desde`/`hasta`: el stock no tiene rango, el nombre de archivo se fecha con el día del
+   * servidor (mismo criterio que la ruta JSON hermana). */
+  existencias: (idPuntoVenta: number) => `/reportes/stock/existencias/export?idPuntoVenta=${idPuntoVenta}&formato=xlsx`,
 }
 
 function aFechaIso(fecha: Date): string {

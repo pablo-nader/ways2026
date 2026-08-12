@@ -91,6 +91,15 @@ export function Layout() {
                     </NavLink>
                   </li>
                 )}
+                {/* stage-11-exportacion-reportes (Slice 9, droppable a Etapa 13): mismo gate que
+                    Tablero/Histórico de cajas/Tesorería. */}
+                {usuario && puedeVerReportes(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/reportes/existencias">
+                      Existencias
+                    </NavLink>
+                  </li>
+                )}
                 {usuario && puedeGestionarUsuarios(usuario.rolId) && (
                   <li className="nav-item">
                     <NavLink className="nav-link" to="/usuarios">
