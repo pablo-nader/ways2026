@@ -238,9 +238,17 @@ export function CierreDeCaja() {
                 </table>
               </div>
 
-              <Link className="btn btn-outline-secondary rounded-0" to="/caja">
-                Volver a caja
-              </Link>
+              {/* stage-11-exportacion-reportes (Slice 6b, design: Web Composition, "link from
+                  the just-closed turno to its Caja Z screen"): mismo gate OperacionDePos que
+                  /caja/turnos/:id/z, el cajero recién cerró este turno. */}
+              <div className="d-flex gap-2">
+                <Link className="btn btn-outline-secondary rounded-0" to="/caja">
+                  Volver a caja
+                </Link>
+                <Link className="btn btn-primary rounded-0" to={`/caja/turnos/${idTurno}/z`}>
+                  Ver Caja Z
+                </Link>
+              </div>
             </Box>
           </div>
         </div>

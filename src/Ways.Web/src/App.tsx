@@ -4,6 +4,7 @@ import { RutaProtegida } from './auth/RutaProtegida'
 import { Layout } from './componentes/Layout'
 import { Articulos } from './paginas/Articulos'
 import { Caja } from './paginas/Caja'
+import { CajaZ } from './paginas/CajaZ'
 import { CierreDeCaja } from './paginas/CierreDeCaja'
 import { Categorias } from './paginas/Categorias'
 import { CatalogosFiscales } from './paginas/CatalogosFiscales'
@@ -13,6 +14,7 @@ import { CompraEditor } from './paginas/CompraEditor'
 import { ConteoDeInventario } from './paginas/ConteoDeInventario'
 import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { Empresas } from './paginas/Empresas'
+import { HistoricoDeCajas } from './paginas/HistoricoDeCajas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
 import { NuevoTenant } from './paginas/NuevoTenant'
@@ -25,6 +27,7 @@ import { PuntosVenta } from './paginas/PuntosVenta'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
 import { Tablero } from './paginas/Tablero'
 import { Tenants } from './paginas/Tenants'
+import { Tesoreria } from './paginas/Tesoreria'
 import { Transferencias } from './paginas/Transferencias'
 import { Usuarios } from './paginas/Usuarios'
 import { descriptorListasPrecio } from './api/catalogos'
@@ -90,6 +93,37 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
                   <CierreDeCaja />
+                </RutaProtegida>
+              }
+            />
+            {/* stage-11-exportacion-reportes (Slice 6b, design: Web Composition): Caja Z —
+                mismo gate que /caja (Politicas.OperacionDePos), el cajero lee su propio cierre. */}
+            <Route
+              path="/caja/turnos/:id/z"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <CajaZ />
+                </RutaProtegida>
+              }
+            />
+            {/* stage-11-exportacion-reportes (Slice 6a, design: Web Composition, spec
+                historico-de-cajas: Role Split): G2 — mismo gate que /tablero
+                (Politicas.LecturaDeReportes), vista de gestión sobre turnos ajenos. */}
+            <Route
+              path="/caja/historico"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <HistoricoDeCajas />
+                </RutaProtegida>
+              }
+            />
+            {/* stage-11-exportacion-reportes (Slice 7, design: Web Composition, spec tesoreria):
+                G3 — mismo gate que /tablero (Politicas.LecturaDeReportes). */}
+            <Route
+              path="/caja/tesoreria"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <Tesoreria />
                 </RutaProtegida>
               }
             />

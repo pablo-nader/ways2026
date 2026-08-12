@@ -9,6 +9,8 @@ import { api } from './cliente'
 import type {
   Comisiones,
   Granularidad,
+  PaginaDeHistoricoDeCajas,
+  PaginaDeMovimientosTesoreria,
   Rentabilidad,
   ResumenDeGastos,
   ResumenDeVentas,
@@ -98,6 +100,88 @@ export const clienteDeReportes = {
   },
   comisiones: (filtros: FiltrosDeBreakdownConPv) =>
     api.get<Comisiones>(`/reportes/comisiones${construirQueryDeBreakdownConPv(filtros)}`),
+  historicoDeCajas: (filtros: FiltrosDeHistoricoDeCajas) =>
+    api.get<PaginaDeHistoricoDeCajas>(`/reportes/cajas${construirQueryDeHistoricoDeCajas(filtros)}`),
+  tesoreria: (filtros: FiltrosDeTesoreria) =>
+    api.get<PaginaDeMovimientosTesoreria>(`/reportes/tesoreria${construirQueryDeTesoreria(filtros)}`),
+}
+
+// ---- Offset local para desde/hasta de /cajas y /tesoreria (stage-11-exportacion-reportes,
+// Slices 6a/7): a diferencia de ventas/resumen (arriba, `DateOnly` del lado del servidor), estas
+// dos rutas filtran contra un `timestamptz` (`fecha_cierre`/`fecha`) — mismo criterio de offset
+// explícito que `compras.ts`/`cuentaCorriente.ts`. Duplicado a propósito: no hay un módulo
+// compartido de utilidades de fecha en esta web todavía. -------------------------------------
+function desplazamientoUtcLocal(anio: number, mes: number, dia: number): string {
+  const minutos = new Date(anio, mes - 1, dia).getTimezoneOffset()
+  const signo = minutos > 0 ? '-' : '+'
+  const minutosAbsolutos = Math.abs(minutos)
+  const horas = String(Math.floor(minutosAbsolutos / 60)).padStart(2, '0')
+  const restoMinutos = String(minutosAbsolutos % 60).padStart(2, '0')
+  return `${signo}${horas}:${restoMinutos}`
+}
+
+function fechaIsoConOffset(fechaIso: string, horaLimite: string): string {
+  const [anio, mes, dia] = fechaIso.split('-').map(Number)
+  return `${fechaIso}T${horaLimite}${desplazamientoUtcLocal(anio, mes, dia)}`
+}
+
+/** Filtro de `GET /api/reportes/cajas` — `idPuntoVenta` es opcional (a diferencia de
+ * `FiltrosDeTesoreria`): el histórico de cierres admite "Todos". */
+export type FiltrosDeHistoricoDeCajas = {
+  idPuntoVenta: number | null
+  desde: string
+  hasta: string
+  pagina: number
+  tamanio: number
+}
+
+export function filtrosDeHistoricoDeCajasVacios(): FiltrosDeHistoricoDeCajas {
+  const rango = rangoUltimosSieteDias()
+  return { idPuntoVenta: null, desde: rango.desde, hasta: rango.hasta, pagina: 1, tamanio: 25 }
+}
+
+/** Query compartido de `/cajas` y `/cajas/export` — `pagina`/`tamanio` NO viajan al export
+ * (`ListarCierresParaExportacionAsync` no los lee, dto-contract-honesty), así que quedan fuera de
+ * este helper y los agrega solo `construirQueryDeHistoricoDeCajas`. */
+function construirQueryDeAlcanceDeCajas(filtros: { idPuntoVenta: number | null; desde: string; hasta: string }): string {
+  const parametros = new URLSearchParams()
+  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
+  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
+  return `?${parametros.toString()}`
+}
+
+export function construirQueryDeHistoricoDeCajas(filtros: FiltrosDeHistoricoDeCajas): string {
+  const parametros = new URLSearchParams(construirQueryDeAlcanceDeCajas(filtros).slice(1))
+  parametros.set('pagina', String(filtros.pagina))
+  parametros.set('tamanio', String(filtros.tamanio))
+  return `?${parametros.toString()}`
+}
+
+/** Filtro de `GET /api/reportes/tesoreria` — `idPuntoVenta` es OBLIGATORIO (a diferencia de
+ * `FiltrosDeHistoricoDeCajas`): mezclar puntos de venta rompería el significado de la cadena
+ * inicio/final (design decisión 11), así que acá no existe la opción "Todos". */
+export type FiltrosDeTesoreria = {
+  idPuntoVenta: number
+  desde: string
+  hasta: string
+  pagina: number
+  tamanio: number
+}
+
+function construirQueryDeAlcanceDeTesoreria(filtros: { idPuntoVenta: number; desde: string; hasta: string }): string {
+  const parametros = new URLSearchParams()
+  parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
+  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
+  return `?${parametros.toString()}`
+}
+
+export function construirQueryDeTesoreria(filtros: FiltrosDeTesoreria): string {
+  const parametros = new URLSearchParams(construirQueryDeAlcanceDeTesoreria(filtros).slice(1))
+  parametros.set('pagina', String(filtros.pagina))
+  parametros.set('tamanio', String(filtros.tamanio))
+  return `?${parametros.toString()}`
 }
 
 /** Rutas de descarga (`/export`, stage-11 slice 4) de los tres paneles de `Tablero` que ya tienen
@@ -114,6 +198,14 @@ export const rutasDeExportacion = {
     const conEstimados = filtros.incluirEstimados ? `${query}&incluirEstimados=true` : query
     return `/reportes/rentabilidad/export${conEstimados}&formato=xlsx`
   },
+  /** `desde`/`hasta` son OBLIGATORIOS en `/cajas/export` (a diferencia de `/cajas`): un nombre de
+   * archivo determinístico necesita un rango acotado (mismo criterio que los exports de listado
+   * de Slice 3). `pagina`/`tamanio` no viajan — el export no pagina. */
+  historicoDeCajas: (filtros: { idPuntoVenta: number | null; desde: string; hasta: string }) =>
+    `/reportes/cajas/export${construirQueryDeAlcanceDeCajas(filtros)}&formato=xlsx`,
+  /** `desde`/`hasta` OBLIGATORIOS en `/tesoreria/export`, mismo criterio que `historicoDeCajas`. */
+  tesoreria: (filtros: { idPuntoVenta: number; desde: string; hasta: string }) =>
+    `/reportes/tesoreria/export${construirQueryDeAlcanceDeTesoreria(filtros)}&formato=xlsx`,
 }
 
 function aFechaIso(fecha: Date): string {

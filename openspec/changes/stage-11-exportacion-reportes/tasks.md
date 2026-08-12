@@ -707,19 +707,38 @@ equality.
 closed turnos with totals, download button wired, Supervisor/Admin nav
 entry. **Rollback**: revert the branch; route/nav entry removed.
 
-- [ ] 6a.1 Create `src/Ways.Web/src/paginas/HistoricoDeCajas.tsx`: table of
+> **APPLY-RUN NOTE (isolated worktree, branch
+> `feat/stage11-slice6-pantallas-caja`, explicit orchestrator instruction)**:
+> this batch merges Slices 6a + 6b + the deferred web sub-tasks of Slice 7
+> (7.5/7.6/7.12) into one apply run — "the three caja/tesorería screens
+> share nav wiring and patterns; batching them avoids three trivial PRs".
+> All backend routes were already live from prior batches
+> (`/api/reportes/cajas(+export)`, `/api/caja/turnos/{id}/detalle(+export)`,
+> `/api/reportes/tesoreria(+export)`) — zero backend changes this run.
+
+- [x] 6a.1 Create `src/Ways.Web/src/paginas/HistoricoDeCajas.tsx`: table of
   closed turnos (PV/fecha/esperado/declarado/diferencia), filter bar,
   `BotonDeDescarga` pointed at `/cajas/export`.
-- [ ] 6a.2 Modify `src/Ways.Web/src/App.tsx` and `componentes/Layout.tsx`:
+- [x] 6a.2 Modify `src/Ways.Web/src/App.tsx` and `componentes/Layout.tsx`:
   add the `/caja/historico` route (`LecturaDeReportes` role gate) and nav
   entry under Caja.
-- [ ] 6a.3 [P] `HistoricoDeCajas.test.tsx`: renders the listing; download
+- [x] 6a.3 [P] `HistoricoDeCajas.test.tsx`: renders the listing; download
   button busy-state per `react-async-state`; role-gating (Supervisor
   reaches the route, Vendedor redirects) via `RutaProtegida`. Per
-  `web-descriptor-tests`.
-- [ ] 6a.4 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 6a.5 Branch `feat/stage11-slice6a-historico-web` off `main` (parent:
-  slices 4 + 5a); PR; merge stacked-to-main.
+  `web-descriptor-tests`. — extended with a mapping test asserting every
+  column of two per-row-distinct fixtures (mutation-proof-tests rule 6)
+  and a stale-response/generation test (`react-async-state`).
+- [x] 6a.4 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
+  this `sdd-apply` run (explicit boundary: no push/PR); left for the
+  orchestrator's PR-validation phase, same precedent as every prior slice
+  (1b.13/2.9/3.9/5a.11/5b.10/7.13).
+- [x] 6a.5 Branch `feat/stage11-slice6a-historico-web` off `main` (parent:
+  slices 4 + 5a); PR; merge stacked-to-main. — branch
+  `feat/stage11-slice6-pantallas-caja` created off `main` per the
+  orchestrator's explicit instruction (isolated worktree; single branch
+  for the three-screen batch, name differs from the task's suggested
+  branch name, same precedent as 1b.14/2.10/3.10/5a.12/5b.11/7.14);
+  PR/merge left for the orchestrator.
 
 **Test plan**: descriptor tests, busy-state, role gating.
 
@@ -733,19 +752,42 @@ entry. **Rollback**: revert the branch; route/nav entry removed.
 renders `ResumenDeTurno` + ticket/gasto listings, download button, linked
 from the cierre-de-caja flow. **Rollback**: revert the branch.
 
-- [ ] 6b.1 Create `src/Ways.Web/src/paginas/CajaZ.tsx`: renders
+> **APPLY-RUN NOTE**: same batch as Slice 6a above (branch
+> `feat/stage11-slice6-pantallas-caja`). 6b.3's "nav entry" is deliberately
+> NOT added for `CajaZ` itself — it is a turno-detail screen reached only
+> via a link (from `HistoricoDeCajas`... no, from `CierreDeCaja`'s
+> just-closed-turno panel and from the URL), same convention as
+> `CompraEditor.tsx`/`CuentaCorriente.tsx`, neither of which has its own
+> top-level nav entry either. 6b.4's literal "a cross-turno attempt is
+> rejected" half does NOT exist to test at the UI layer either: the Slice
+> 5b apply run confirmed `Politicas.OperacionDePos` is a role-only gate
+> with no PV/turno-ownership claim (see 5b.8's note in the Slice 5b
+> section above) — same recorded gap, propagated to this UI test.
+
+- [x] 6b.1 Create `src/Ways.Web/src/paginas/CajaZ.tsx`: renders
   `DetalleDeTurno`, `BotonDeDescarga` pointed at `/{id}/detalle/export`.
-- [ ] 6b.2 Modify `src/Ways.Web/src/paginas/CierreDeCaja.tsx`: link from
+- [x] 6b.2 Modify `src/Ways.Web/src/paginas/CierreDeCaja.tsx`: link from
   the just-closed turno to its Caja Z screen.
-- [ ] 6b.3 Modify `App.tsx`/`Layout.tsx`: add the `/caja/turnos/:id/z`
-  route (`OperacionDePos` role gate) and nav entry.
-- [ ] 6b.4 [P] `CajaZ.test.tsx`: renders resumen + both listings; download
+- [x] 6b.3 Modify `App.tsx`/`Layout.tsx`: add the `/caja/turnos/:id/z`
+  route (`OperacionDePos` role gate) and nav entry. — route added; nav
+  entry deliberately omitted for the reason recorded in the APPLY-RUN NOTE
+  above (detail screen reached by link, not a top-level nav destination).
+- [x] 6b.4 [P] `CajaZ.test.tsx`: renders resumen + both listings; download
   busy-state; a Vendedor reaches their own turno's Z, a cross-turno
   attempt is rejected (mirrors the API's 5b.8 matrix at the UI layer). Per
-  `web-descriptor-tests`.
-- [ ] 6b.5 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 6b.6 Branch `feat/stage11-slice6b-caja-z-web` off `main` (parent:
-  slices 4 + 5b); PR; merge stacked-to-main.
+  `web-descriptor-tests`. — the 200 half is implemented
+  (`un Vendedor llega a la Caja Z de su propio turno`); the cross-turno
+  403 half does not exist to test (see APPLY-RUN NOTE above, same gap as
+  5b.8). Extended with a per-row mapping test (mutation-proof-tests rule
+  6, two medios/tickets/gastos rows with distinct values per column) and
+  a same-mounted-screen stale-response/generation test (turno navigation
+  via `useNavigate`, `react-async-state`).
+- [x] 6b.5 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
+  this `sdd-apply` run, same precedent as 6a.4.
+- [x] 6b.6 Branch `feat/stage11-slice6b-caja-z-web` off `main` (parent:
+  slices 4 + 5b); PR; merge stacked-to-main. — same single batch branch as
+  6a.5 (`feat/stage11-slice6-pantallas-caja`); PR/merge left for the
+  orchestrator.
 
 **Test plan**: descriptor tests, busy-state, Vendedor-own-turno/
 cross-turno matrix at the UI layer.
@@ -775,6 +817,13 @@ G3 read endpoint live, chain-ordered, exportable, `/caja/tesoreria` screen.
 > (unlike G2's optional one): mixing points of venta would break the
 > chain's own meaning (design decision 11) — a deviation from the literal
 > task wording ("by PV and date range") worth flagging for verify.
+>
+> **FOLLOW-UP APPLY-RUN NOTE (isolated worktree, branch
+> `feat/stage11-slice6-pantallas-caja`)**: 7.5/7.6/7.12 (the deferred web
+> screen, routing/nav, descriptor tests) IMPLEMENTED in this batch,
+> together with Slices 6a and 6b — see the APPLY-RUN NOTE at the top of
+> the Slice 6a section above for the three-screen batching rationale.
+> 7.13-7.14 (judgment-day, PR, merge) remain OUT OF SCOPE, same precedent.
 
 - [x] 7.1 Create `src/Ways.Application/Caja/ServicioDeTesoreria.cs`:
   `ListarAsync` — `MovimientosTesoreria` by PV and date range, `OrderBy(m
@@ -797,11 +846,20 @@ G3 read endpoint live, chain-ordered, exportable, `/caja/tesoreria` screen.
   appended immediately after `/tesoreria` (co-location); resolves
   empresa/zona via the existing `AlcanceDeListadoHttp.ResolverAsync`, no
   duplicated lookup.
-- [ ] 7.5 Create `src/Ways.Web/src/paginas/Tesoreria.tsx`: the book table
+- [x] 7.5 Create `src/Ways.Web/src/paginas/Tesoreria.tsx`: the book table
   (inicio/ingreso/egreso/final/concepto/empleado/fecha), `BotonDeDescarga`.
-  — DEFERRED (see APPLY-RUN NOTE above, "NO web").
-- [ ] 7.6 Modify `App.tsx`/`Layout.tsx`: `/caja/tesoreria` route
-  (`LecturaDeReportes`) and nav entry. — DEFERRED with 7.5.
+  — IMPLEMENTED in the Slice 6a/6b/7-web follow-up batch (isolated
+  worktree, branch `feat/stage11-slice6-pantallas-caja`, see the
+  APPLY-RUN NOTE at the top of the Slice 6a section above — the three
+  caja/tesorería screens were batched into one apply run). Column order
+  pinned as specified (inicio/ingreso/egreso/final/concepto/empleado/
+  fecha); no "Todos" option for punto de venta (required, design decisión
+  11); rows render in the backend's own chain order, no client sort.
+- [x] 7.6 Modify `App.tsx`/`Layout.tsx`: `/caja/tesoreria` route
+  (`LecturaDeReportes`) and nav entry. — IMPLEMENTED in the same follow-up
+  batch; nav entry placed next to `/caja/historico`, both gated by
+  `puedeVerReportes` (mirror of `Politicas.LecturaDeReportes`, same as
+  `/tablero`).
 - [x] 7.7 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
   pending changes. — confirmed clean (`--project src/Ways.Infrastructure
   --startup-project src/Ways.Infrastructure`).
@@ -830,9 +888,15 @@ G3 read endpoint live, chain-ordered, exportable, `/caja/tesoreria` screen.
   Vendedor Is Rejected From The Tesorería Book)* — `UnVendedorEsRechazado
   DelLibroDeTesoreria` (JSON) + `UnVendedorEsRechazadoDelExportDeTesoreria`
   (export); `UnSupervisorLeeElLibroDeTesoreria` (200) alongside.
-- [ ] 7.12 [P] `Tesoreria.test.tsx`: renders the book in chain order,
-  download busy-state, role gating. Per `web-descriptor-tests`. — DEFERRED
-  with 7.5/7.6.
+- [x] 7.12 [P] `Tesoreria.test.tsx`: renders the book in chain order,
+  download busy-state, role gating. Per `web-descriptor-tests`. —
+  IMPLEMENTED in the same follow-up batch as 7.5/7.6: renders a 3-row
+  chained fixture (`final` 60/100/55 (tres filas encadenadas con valores distintos por columna)-style, same shape as the backend's
+  own `TresFilasEncadenadasSeDevuelvenEnOrdenDeCadena` fixture) asserting
+  DOM row order matches array order with no client sort, per-row column
+  mapping with distinct values (mutation-proof-tests rule 6), download
+  busy-state/error-funnel wiring, role gating (Supervisor reaches the
+  route, Vendedor redirects), and a stale-response/generation test.
 - [x] 7.13 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
   this `sdd-apply` run (explicit boundary: no push/PR); left for the
   orchestrator's PR-validation phase, same precedent as 1b.13/5a.11.

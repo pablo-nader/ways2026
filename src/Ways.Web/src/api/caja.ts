@@ -7,6 +7,7 @@
  */
 import { api } from './cliente'
 import type {
+  DetalleDeTurno,
   MovimientoRegistrado,
   ResumenDeTurno,
   SolicitudDeApertura,
@@ -38,6 +39,18 @@ export const clienteDeCaja = {
    * Declared Counts). */
   cerrar: (idTurnoCaja: number, solicitud: SolicitudDeCierre) =>
     api.post<TurnoConArqueos>(`/caja/turnos/${idTurnoCaja}/cierre`, solicitud),
+  /** `GET /api/caja/turnos/{id}/detalle` (stage-11-exportacion-reportes, Slice 5a/6b, spec
+   * historico-de-cajas: G2 Detail Reuses ResumenDeTurno Plus Ticket And Gasto Listings) — el
+   * Z-report: mismo `ResumenDeTurno` que `/resumen` más los tickets y gastos del turno. Mismo
+   * gate `OperacionDePos` que `/resumen`: el cajero puede leer su propio cierre. */
+  obtenerDetalle: (idTurnoCaja: number) => api.get<DetalleDeTurno>(`/caja/turnos/${idTurnoCaja}/detalle`),
+}
+
+/** Rutas de descarga (`/export`, stage-11 slice 6b) del Z-report — sibling de `/detalle` bajo el
+ * mismo gate `OperacionDePos` heredado por co-locación (design: "The load-bearing refinement of
+ * the proposal is where the caja detail lives"). */
+export const rutasDeExportacionDeCaja = {
+  detalleDeTurno: (idTurnoCaja: number) => `/caja/turnos/${idTurnoCaja}/detalle/export?formato=xlsx`,
 }
 
 /** Longitud mínima del motivo, uniforme para los 3 tipos de movimiento (design decisión 8;

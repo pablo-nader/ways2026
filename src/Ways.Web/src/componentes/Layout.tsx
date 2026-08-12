@@ -74,6 +74,23 @@ export function Layout() {
                     </NavLink>
                   </li>
                 )}
+                {/* stage-11-exportacion-reportes (Slices 6a/7, design: "nav entries + routes
+                    gated like /tablero (puedeVerReportes) for cajas/tesorería"): mismo gate que
+                    Tablero — nunca el cajero (/caja), esta es la vista de gestión. */}
+                {usuario && puedeVerReportes(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/caja/historico">
+                      Histórico de cajas
+                    </NavLink>
+                  </li>
+                )}
+                {usuario && puedeVerReportes(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/caja/tesoreria">
+                      Tesorería
+                    </NavLink>
+                  </li>
+                )}
                 {usuario && puedeGestionarUsuarios(usuario.rolId) && (
                   <li className="nav-item">
                     <NavLink className="nav-link" to="/usuarios">
