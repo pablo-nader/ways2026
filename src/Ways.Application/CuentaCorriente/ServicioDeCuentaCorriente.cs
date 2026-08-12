@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
+using Ways.Application.Exportacion;
 using Ways.Application.Ventas;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
@@ -189,21 +190,10 @@ public class ServicioDeCuentaCorriente(
             hastaEfectivo = hasta;
         }
 
-        var consulta = db.MovimientosCuentaCorriente.Where(m => m.IdCliente == idCliente);
-        if (desdeEfectivo is { } desdeAplicado)
-        {
-            consulta = consulta.Where(m => m.Fecha >= desdeAplicado);
-        }
-
-        if (hastaEfectivo is { } hastaAplicado)
-        {
-            consulta = consulta.Where(m => m.Fecha <= hastaAplicado);
-        }
-
         // Newest-first (legacy: `ORDER BY fecha DESC`, doc-01:375 — "saldo corriendo hacia atrás
         // desde el saldo actual") y convención de resumen bancario. El cómputo del saldo (columna
         // saldo_resultante persistida) es ortogonal a este orden de display.
-        var filas = await consulta
+        var filas = await ConstruirQuery(idCliente, desdeEfectivo, hastaEfectivo)
             .OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id)
             .Select(m => new
             {
@@ -218,6 +208,68 @@ public class ServicioDeCuentaCorriente(
             .ToList();
 
         return new EstadoDeCuenta(header, movimientos, historico, desdeEfectivo, hastaEfectivo);
+    }
+
+    /// <summary>
+    /// stage-11-exportacion-reportes (Slice 3, design decisión 7): export del ledger — sin
+    /// <c>histórico</c> (una exportación es por definición un rango acotado, el tope de filas es
+    /// exactamente lo que ese modo evita) y con <paramref name="desde"/>/<paramref name="hasta"/>
+    /// SIEMPRE explícitos, a diferencia de <see cref="ObtenerEstadoDeCuentaAsync"/> que puede
+    /// aplicar el default de último mes. Header calculado igual, ledger mismo
+    /// <see cref="ConstruirQuery"/> — <c>Contar → refuse → lectura única con
+    /// <c>.Take(topeDeFilas + 1)</c></c>.</summary>
+    public async Task<EstadoDeCuenta> ObtenerEstadoDeCuentaParaExportacionAsync(
+        int idCliente, DateTimeOffset desde, DateTimeOffset hasta, int topeDeFilas, CancellationToken ct = default)
+    {
+        var cliente = await ResolverClienteAsync(idCliente, ct);
+
+        var disponibilidad = CalculadorDeEstadoDeCuenta.CalcularDisponibilidad(
+            cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado);
+        var header = new EstadoDeCuentaHeader(cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado, disponibilidad);
+
+        var query = ConstruirQuery(idCliente, desde, hasta);
+
+        var cantidad = await query.CountAsync(ct);
+        GuardaDeTope.Exigir(cantidad, topeDeFilas);
+
+        var filas = await query
+            .OrderByDescending(m => m.Fecha).ThenByDescending(m => m.Id)
+            .Take(topeDeFilas + 1)
+            .Select(m => new
+            {
+                m.Id, m.Fecha, m.Tipo, m.Importe, m.SaldoResultante, m.Detalle, m.IdComprobanteVenta
+            })
+            .ToListAsync(ct);
+
+        GuardaDeTope.Exigir(filas.Count, topeDeFilas);
+
+        var movimientos = filas
+            .Select(f => new MovimientoDeCuentaCorriente(
+                f.Id, f.Fecha, f.Tipo, f.Importe, f.SaldoResultante, f.Detalle, f.IdComprobanteVenta,
+                f.Tipo == TipoMovimientoCc.Ajuste ? CalculadorDeEstadoDeCuenta.EtiquetarAjuste(f.IdComprobanteVenta) : null))
+            .ToList();
+
+        return new EstadoDeCuenta(header, movimientos, Historico: false, desde, hasta);
+    }
+
+    /// <summary>Filtro compartido de <see cref="ObtenerEstadoDeCuentaAsync"/> y
+    /// <see cref="ObtenerEstadoDeCuentaParaExportacionAsync"/> (design decisión 7).</summary>
+    private IQueryable<MovimientoCuentaCorriente> ConstruirQuery(
+        int idCliente, DateTimeOffset? desde, DateTimeOffset? hasta)
+    {
+        var consulta = db.MovimientosCuentaCorriente.Where(m => m.IdCliente == idCliente);
+
+        if (desde is { } desdeAplicado)
+        {
+            consulta = consulta.Where(m => m.Fecha >= desdeAplicado);
+        }
+
+        if (hasta is { } hastaAplicado)
+        {
+            consulta = consulta.Where(m => m.Fecha <= hastaAplicado);
+        }
+
+        return consulta;
     }
 
     private async Task<ComprobanteEmitido> EjecutarTransaccionAsync(

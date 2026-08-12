@@ -3,6 +3,7 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Exportacion;
 using Ways.Application.Precios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -56,6 +57,54 @@ public class ServicioDeCompras(
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
+        var query = ConstruirQuery(idProveedor, estado, desde, hasta);
+
+        var total = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderByDescending(c => c.Id)
+            .Skip((pagina - 1) * tamanio)
+            .Take(tamanio)
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total))
+            .ToListAsync(ct);
+
+        return new PaginaDeCompras(items, total, pagina, tamanio);
+    }
+
+    /// <summary>stage-11-exportacion-reportes (Slice 3, design decisión 7): mismo criterio que
+    /// <c>ServicioDeVentas.ListarParaExportacionAsync</c> — <see cref="ConstruirQuery"/>
+    /// compartido, <c>Contar → refuse → lectura única con <c>.Take(topeDeFilas + 1)</c></c>. El
+    /// segundo <see cref="GuardaDeTope.Exigir"/> es el backstop de carrera contra un
+    /// <c>COUNT(*)</c> desactualizado.</summary>
+    public async Task<IReadOnlyList<CompraListada>> ListarParaExportacionAsync(
+        int? idProveedor,
+        EstadoCompra? estado,
+        DateTimeOffset? desde,
+        DateTimeOffset? hasta,
+        int topeDeFilas,
+        CancellationToken ct = default)
+    {
+        var query = ConstruirQuery(idProveedor, estado, desde, hasta);
+
+        var cantidad = await query.CountAsync(ct);
+        GuardaDeTope.Exigir(cantidad, topeDeFilas);
+
+        var items = await query
+            .OrderByDescending(c => c.Id)
+            .Take(topeDeFilas + 1)
+            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total))
+            .ToListAsync(ct);
+
+        GuardaDeTope.Exigir(items.Count, topeDeFilas);
+
+        return items;
+    }
+
+    /// <summary>Filtro compartido de <see cref="ListarAsync"/> y
+    /// <see cref="ListarParaExportacionAsync"/> (design decisión 7).</summary>
+    private IQueryable<ComprobanteCompra> ConstruirQuery(
+        int? idProveedor, EstadoCompra? estado, DateTimeOffset? desde, DateTimeOffset? hasta)
+    {
         var query = db.ComprobantesCompra.AsQueryable();
 
         if (idProveedor is { } p)
@@ -78,16 +127,7 @@ public class ServicioDeCompras(
             query = query.Where(c => c.FechaRecepcion <= h);
         }
 
-        var total = await query.CountAsync(ct);
-
-        var items = await query
-            .OrderByDescending(c => c.Id)
-            .Skip((pagina - 1) * tamanio)
-            .Take(tamanio)
-            .Select(c => new CompraListada(c.Id, c.IdProveedor, c.IdTipoComprobante, c.NumeroExterno, c.Estado, c.FechaRecepcion, c.Total))
-            .ToListAsync(ct);
-
-        return new PaginaDeCompras(items, total, pagina, tamanio);
+        return query;
     }
 
     // ---- borrador: crear + replace-set (design decisión 2) ---------------------------------------

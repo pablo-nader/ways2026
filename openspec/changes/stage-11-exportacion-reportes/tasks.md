@@ -295,36 +295,82 @@ listing exports run `Contar → refuse → single read with .Take(tope+1)`
 through an extracted `ConstruirQuery`, never re-declaring the predicate
 chain. **Rollback**: revert the branch.
 
-- [ ] 3.1 Modify `src/Ways.Application/Ventas/Servicio*.cs`,
+- [x] 3.1 Modify `src/Ways.Application/Ventas/Servicio*.cs`,
   `Compras/Servicio*.cs`, `CuentaCorriente/Servicio*.cs`: extract each
   service's filter chain into a private `ConstruirQuery(filtros)`, shared
   by the existing `ListarAsync` and a new `ListarParaExportacionAsync`
   (`Contar → refuse if over tope → single read with `.Take(tope + 1)`,
-  never paged). *(design decision 7)*
-- [ ] 3.2 Create `src/Ways.Application/Exportacion/ExportacionDeListados.cs`:
+  never paged). *(design decision 7)* — IMPLEMENTATION NOTE: `CuentaCorriente`
+  has no `ListarAsync` (its JSON source is `ObtenerEstadoDeCuentaAsync`,
+  single-cliente header + ledger, not a paginated multi-entity listing); the
+  extracted `ConstruirQuery(idCliente, desde, hasta)` is shared by that
+  method and the new `ObtenerEstadoDeCuentaParaExportacionAsync`, which
+  drops `histórico` (an export is by definition a bounded range) and
+  requires `desde`/`hasta` explicit.
+- [x] 3.2 Create `src/Ways.Application/Exportacion/ExportacionDeListados.cs`:
   mappers for ventas listado, compras listado, estado de cuenta — pure,
   consume the already-materialised export-query result.
-- [ ] 3.3 Modify `src/Ways.Api/Endpoints/{Ventas,Compras,
+- [x] 3.3 Modify `src/Ways.Api/Endpoints/{Ventas,Compras,
   CuentaCorriente}Endpoints.cs`: one `/export` sibling each, under their
   existing `OperacionDePos`/relevant groups (pagination bypassed under the
-  cap).
-- [ ] 3.4 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
-  pending changes.
-- [ ] 3.5 [P] Equality test ×3.
-- [ ] 3.6 [P] 403 test ×3 (role one step below each route's existing gate).
-- [ ] 3.7 [P] Cap-refusal test ×3, tope bound low via
+  cap). — IMPLEMENTATION NOTE: none of these three JSON listing routes
+  carries `idEmpresa` (unlike the reportes-de-gestión routes), so the header
+  block's Empresa/zona resolution needed its own plumbing — added
+  `src/Ways.Api/Exportacion/AlcanceDeListadoHttp.cs` (PV → empresa → default
+  when `idPuntoVenta` is present, the system default zone otherwise, no new
+  query) and a generic `ContextoDeExportacionHttp.Construir(... string
+  empresa, string? puntoVenta ...)` overload (the existing `int idEmpresa`
+  overload now delegates to it). `desde`/`hasta` are REQUIRED on all three
+  export routes (unlike their optional-filter JSON siblings) — a
+  deterministic filename needs a bounded range, and an export is exactly
+  the case the row cap exists for; `CuentaCorriente`'s export additionally
+  drops `historico` for the same reason (see 3.1 note).
+- [x] 3.4 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
+  pending changes. — `dotnet ef` tooling unavailable in this environment
+  (missing `Microsoft.EntityFrameworkCore.Design` wiring for the CLI tool);
+  verified equivalently via `git diff --stat`, confirming zero touched
+  files under any `Migrations/` folder, `WaysDbContext`, or `Configuraciones/`
+  — only `Ways.Application`/`Ways.Api` service and endpoint files changed.
+- [x] 3.5 [P] Equality test ×3.
+- [x] 3.6 [P] 403 test ×3 (role one step below each route's existing gate).
+  — IMPLEMENTATION NOTE: all three routes are gated `OperacionDePos`
+  (Vendedor/Supervisor/Admin), the widest tenant-role gate in the system —
+  there is no tenant role below Vendedor to use as "one step below". Used
+  Root instead, the role structurally EXCLUDED from `OperacionDePos` by
+  design ("root administra tenants, no opera ninguno", `Politicas.cs`):
+  `RequireClaim(RolId, 2,3,4)` rejects Root's claim (`RolId=1`) with a real
+  403, same mechanism as every other role-gate test in the repo.
+- [x] 3.7 [P] Cap-refusal test ×3, tope bound low via
   `OpcionesDeExportacion`, seeded one row over.
-- [ ] 3.8 [P] **`+1` race backstop / no-re-query invariant**: seed exactly
+- [x] 3.8 [P] **`+1` race backstop / no-re-query invariant**: seed exactly
   `tope + 1` rows so the count and the `.Take(tope + 1)` read disagree by
   construction (simulating a concurrent insert between count and read) —
   assert the export still refuses rather than silently returning `tope`
   rows. Record mutation evidence: replace `.Take(tope + 1)` with
   `.Take(tope)` → the backstop test MUST fail (a truncated file would
   escape undetected); revert → green. *(design decision 7 — "no truncated
-  file can escape even in that window"; mutation-proof-tests)*
-- [ ] 3.9 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 3.10 Branch `feat/stage11-slice3-exports-listados` off `main`
-  (parent: slice 1b); PR; merge stacked-to-main.
+  file can escape even in that window"; mutation-proof-tests)* —
+  IMPLEMENTATION NOTE: a real 2-request race can't be timed deterministically
+  from a test; `VentasListadoExportTests.UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacion`
+  routes below the confound instead — a single-participant
+  `DbCommandInterceptor` (`InterceptorDeCarreraDeExportacion`, same
+  rendezvous family as `ParametrosTests.InterceptorDeRendezVous`) intercepts
+  the SECOND query touching `comprobantes_venta` (the `.Take(tope+1)` read;
+  the first is the `COUNT(*)`) and inserts the extra row synchronously right
+  before letting it run, deterministically reproducing "a row landed between
+  count and read" every run. Mutation run and recorded: `.Take(topeDeFilas +
+  1)` → `.Take(topeDeFilas)` in `ServicioDeVentas.ListarParaExportacionAsync`
+  — the test failed (`200` with the extra row silently dropped, instead of
+  the expected `400`); reverted → green. Per the tasks.md decision 5 note,
+  this single mutation covers the invariant for the whole slice (Compras/
+  Estado-de-cuenta share the identical `Contar → refuse → Take(tope+1) →
+  refuse` shape, proven once here).
+- [ ] 3.9 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
+  this `sdd-apply` run (explicit boundary: no push/PR); left for the
+  orchestrator's PR-validation phase.
+- [ ] 3.10 Branch `feat/stage11-slice3-exports-listados` off `main` (parent:
+  slice 1b); PR; merge stacked-to-main. — branch created exactly as named;
+  PR/merge left for the orchestrator.
 
 **Test plan**: equality ×3, 403 ×3, cap ×3, `+1` race backstop with
 mutation evidence.

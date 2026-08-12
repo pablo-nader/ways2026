@@ -23,9 +23,29 @@ public static class ContextoDeExportacionHttp
         DateOnly hasta,
         string zonaHoraria,
         string? cobertura = null) =>
+        Construir(
+            usuario, reloj, idEmpresa.ToString(), idPuntoVenta is { } id ? $"PV {id}" : null, desde, hasta,
+            zonaHoraria, cobertura);
+
+    /// <summary>
+    /// Sobrecarga genérica (stage-11, Slice 3): los exports de listado (ventas/compras/estado de
+    /// cuenta) no tienen un <c>idEmpresa</c> propio en su ruta fuente — a diferencia de los
+    /// reportes de gestión, esas rutas nunca lo pidieron. <paramref name="empresa"/> ya viene
+    /// resuelto como texto por el caller ("Todas" cuando el listado no está acotado a una sola
+    /// empresa, el id cuando sí).
+    /// </summary>
+    public static ContextoDeExportacion Construir(
+        IContextoDeUsuario usuario,
+        IRelojDelSistema reloj,
+        string empresa,
+        string? puntoVenta,
+        DateOnly desde,
+        DateOnly hasta,
+        string zonaHoraria,
+        string? cobertura = null) =>
         new(
-            Empresa: idEmpresa.ToString(),
-            PuntoVenta: idPuntoVenta is { } id ? $"PV {id}" : null,
+            Empresa: empresa,
+            PuntoVenta: puntoVenta,
             Desde: desde,
             Hasta: hasta,
             ZonaHoraria: zonaHoraria,

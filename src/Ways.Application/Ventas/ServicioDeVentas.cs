@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.CuentaCorriente;
+using Ways.Application.Exportacion;
 using Ways.Application.Ofertas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -239,6 +240,73 @@ public class ServicioDeVentas(
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
+        var query = ConstruirQuery(idPuntoVenta, desde, hasta, idCliente, estado);
+
+        var total = await query.CountAsync(ct);
+
+        var crudos = await query
+            .OrderByDescending(c => c.Fecha)
+            .Skip((pagina - 1) * tamanio)
+            .Take(tamanio)
+            .Select(c => new { c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total })
+            .ToListAsync(ct);
+
+        // NumeroDeComprobante.Formatear no traduce a SQL: se arma en memoria, después de traer
+        // la página ya paginada/filtrada (nunca antes — evita materializar todo el listado).
+        var items = crudos
+            .Select(c => new ComprobanteListado(
+                c.Id, c.Numero, NumeroDeComprobante.Formatear(c.IdPuntoVenta, c.Numero), c.Estado, c.Fecha,
+                c.IdPuntoVenta, c.IdCliente, c.Total))
+            .ToList();
+
+        return new PaginaDeVentas(items, total, pagina, tamanio);
+    }
+
+    /// <summary>
+    /// stage-11-exportacion-reportes (Slice 3, design decisión 7): mismo <see cref="ConstruirQuery"/>
+    /// que <see cref="ListarAsync"/>, nunca un predicado redeclarado — <c>Contar → refuse →
+    /// lectura única con <c>.Take(topeDeFilas + 1)</c></c>, jamás paginada. El segundo
+    /// <see cref="GuardaDeTope.Exigir"/> es el backstop de carrera: si la lectura trae
+    /// <c>topeDeFilas + 1</c> filas, el <c>COUNT(*)</c> de arriba quedó desactualizado (una fila
+    /// se insertó entre las dos consultas) y esta exportación rechaza en vez de devolver un
+    /// archivo truncado (mutation-proof-tests: "no truncated file can escape even in that
+    /// window").
+    /// </summary>
+    public async Task<IReadOnlyList<ComprobanteListado>> ListarParaExportacionAsync(
+        int? idPuntoVenta,
+        DateTimeOffset? desde,
+        DateTimeOffset? hasta,
+        int? idCliente,
+        EstadoComprobante? estado,
+        int topeDeFilas,
+        CancellationToken ct = default)
+    {
+        var query = ConstruirQuery(idPuntoVenta, desde, hasta, idCliente, estado);
+
+        var cantidad = await query.CountAsync(ct);
+        GuardaDeTope.Exigir(cantidad, topeDeFilas);
+
+        var crudos = await query
+            .OrderByDescending(c => c.Fecha)
+            .Take(topeDeFilas + 1)
+            .Select(c => new { c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total })
+            .ToListAsync(ct);
+
+        GuardaDeTope.Exigir(crudos.Count, topeDeFilas);
+
+        return crudos
+            .Select(c => new ComprobanteListado(
+                c.Id, c.Numero, NumeroDeComprobante.Formatear(c.IdPuntoVenta, c.Numero), c.Estado, c.Fecha,
+                c.IdPuntoVenta, c.IdCliente, c.Total))
+            .ToList();
+    }
+
+    /// <summary>Filtro compartido de <see cref="ListarAsync"/> y
+    /// <see cref="ListarParaExportacionAsync"/> (design decisión 7): un solo lugar declara el
+    /// predicado, nunca dos copias que puedan derivar.</summary>
+    private IQueryable<ComprobanteVenta> ConstruirQuery(
+        int? idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta, int? idCliente, EstadoComprobante? estado)
+    {
         var query = db.ComprobantesVenta.AsQueryable();
 
         if (idPuntoVenta is { } pv)
@@ -266,24 +334,7 @@ public class ServicioDeVentas(
             query = query.Where(c => c.Estado == e);
         }
 
-        var total = await query.CountAsync(ct);
-
-        var crudos = await query
-            .OrderByDescending(c => c.Fecha)
-            .Skip((pagina - 1) * tamanio)
-            .Take(tamanio)
-            .Select(c => new { c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total })
-            .ToListAsync(ct);
-
-        // NumeroDeComprobante.Formatear no traduce a SQL: se arma en memoria, después de traer
-        // la página ya paginada/filtrada (nunca antes — evita materializar todo el listado).
-        var items = crudos
-            .Select(c => new ComprobanteListado(
-                c.Id, c.Numero, NumeroDeComprobante.Formatear(c.IdPuntoVenta, c.Numero), c.Estado, c.Fecha,
-                c.IdPuntoVenta, c.IdCliente, c.Total))
-            .ToList();
-
-        return new PaginaDeVentas(items, total, pagina, tamanio);
+        return query;
     }
 
     // ---- Anulación (Slice 5, design: Protection Rules — "A comprobante is anulado at most
