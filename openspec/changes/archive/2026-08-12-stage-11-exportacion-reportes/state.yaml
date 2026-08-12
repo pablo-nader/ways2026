@@ -1,6 +1,6 @@
 change: stage-11-exportacion-reportes
 phase: archive
-status: in-progress
+status: archived
 artifact_store: openspec
 execution_mode: delegated-autonomous
 gate: "DB CHANGE GATE — EXERCISED AND APPROVED BY THE ORCHESTRATOR UNDER DELEGATED AUTHORITY (2026-08-12): zero-schema-change model formally evaluated (index coverage verified against EF configurations). BINDING CONDITION: any migration during apply REOPENS the gate. Original text: DB CHANGE GATE — EXERCISED AND APPROVED BY THE ORCHESTRATOR UNDER THE OWNER-DELEGATED MANDATE: the no-schema-change model was formally evaluated (index-coverage justification checked against the EF configurations of every table this stage reads) and approved as proposed. CONDITION (binding): if sdd-apply finds itself writing ANY migration or schema object, the gate REOPENS and apply stops. Recorded for the owner report. — NOT APPLICABLE: THIS STAGE PROPOSES NO DATABASE CHANGE. The 'Modelo de datos propuesto' section of proposal.md states it verbatim: no new table, view, materialized view, enum, column, constraint, index, FK or RLS policy; no change to any existing schema object; no migration; no data statement. INDEX REVIEW WAS PERFORMED AND CONCLUDED 'NONE NEEDED' — every access pattern this stage introduces is already served by an existing index, read directly off the configurations: G2 histórico by ix_turnos_caja_punto_venta_fecha (TurnoCajaConfiguration.cs:75-76, id_punto_venta+id_tenant+fecha_apertura); G2 totals by ix_arqueos_turno_turno (ArqueoTurnoConfiguration.cs:54); G2 detail tickets by ix_comprobantes_venta_turno (ComprobanteVentaConfiguration.cs:105); G2 detail gastos by ix_gastos_turno (GastoConfiguration.cs:67); G2 retiros by ix_movimientos_caja_turno (MovimientoCajaConfiguration.cs:46); G3 tesorería book in chain order by ix_movimientos_tesoreria_punto_venta_id (MovimientoTesoreriaConfiguration.cs:53-54, id_punto_venta+id_tenant+id — exactly the legacy 'últimos 20 movimientos' access shape); existencias by ix_stock_punto_venta (StockConfiguration.cs:43). Every stage-10 report export reuses the stage-10 services verbatim and therefore inherits their already-approved index coverage. THE ONLY DEPENDENCY THIS STAGE ADDS IS A NUGET PACKAGE, NOT A SCHEMA OBJECT. GATE REOPENS AUTOMATICALLY IF sdd-apply FINDS ITSELF WRITING A MIGRATION: any migration in this change is a scope violation, not an implementation detail, and must stop and return to the owner."
@@ -40,7 +40,9 @@ phases:
     artifact: null
     depends_on: [apply]
   archive:
-    status: pending
+    status: done
+    artifact: archive-report.md
+    notes: "Archived 2026-08-12. 2 new capabilities merged byte-identical (exportacion-de-reportes, historico-de-cajas); 4 delta requirement blocks appended verbatim across reportes-de-gestion, rentabilidad-y-comisiones y tesoreria. Deterministic copy + substring-fidelity verification (count-asserted) by the orchestrator before deleting originals."
     artifact: null
     depends_on: [verify]
 dependencies:
