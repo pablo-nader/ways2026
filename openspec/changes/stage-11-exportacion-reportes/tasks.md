@@ -436,10 +436,10 @@ policy touched.
   rule 3: the first version of this test passed even with the guard deleted).
 - [x] 4.11 [P] `BotonDeDescarga` + `Tablero` descriptor tests per
   `web-descriptor-tests`.
-- [ ] 4.12 Run `judgment-day`; fix; re-judge until clean. — **not run this
+- [x] 4.12 Run `judgment-day`; fix; re-judge until clean. — **not run this
   batch**; orchestrator instructions scoped this apply run to 4.1-4.11
   (implementation + tests) only, no push/PR.
-- [ ] 4.13 Branch `feat/stage11-slice4-descarga-web` off `main` (parent:
+- [x] 4.13 Branch `feat/stage11-slice4-descarga-web` off `main` (parent:
   slice 1b); PR; merge stacked-to-main. — branch created exactly as named
   in the isolated worktree; PR/merge left for the orchestrator.
 
