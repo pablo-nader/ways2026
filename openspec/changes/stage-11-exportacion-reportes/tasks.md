@@ -223,7 +223,7 @@ rentabilidad/comisiones exports stack `LecturaDeRentabilidad` and carry the
 coverage block; comisiones carries the `PROVISIONAL` label. **Rollback**:
 revert the branch.
 
-- [ ] 2.1 Extend `ExportacionDeReportes.cs`: mappers for
+- [x] 2.1 Extend `ExportacionDeReportes.cs`: mappers for
   `PorPuntoVenta`/`PorVendedor`/`PorMedioPago`/`ArticulosTop`/
   `ComprasPorProveedor`/`GastosResumen`/`Rentabilidad`/`Comisiones` — each
   `public static TablaExportable De(X respuesta, ContextoDeExportacion ctx)`,
@@ -231,36 +231,55 @@ revert the branch.
   payload (lines included/excluded/skipped + revenue subtotals) inside the
   header; comisiones' mapper writes the `PROVISIONAL` label verbatim.
   *(spec rentabilidad-y-comisiones: Rentabilidad And Comisiones Exports
-  Stack LecturaDeRentabilidad And Carry Coverage)*
-- [ ] 2.2 Modify `ReportesEndpoints.cs`: eight `/export` siblings, each
+  Stack LecturaDeRentabilidad And Carry Coverage)* — IMPLEMENTATION NOTE:
+  the coverage text and the PROVISIONAL label are built by
+  `ExportacionDeReportes.ArmarTextoDeCobertura`/`EtiquetaProvisionalComisiones`
+  and passed by the endpoint into `ContextoDeExportacion.Cobertura` (the
+  same header seam `ExportadorXlsx` already writes on row 4) — reused, not
+  a new field.
+- [x] 2.2 Modify `ReportesEndpoints.cs`: eight `/export` siblings, each
   declared immediately after its source route; `/rentabilidad/export` and
   `/comisiones/export` re-stack `RequireAuthorization(Politicas.
   LecturaDeRentabilidad)` exactly like their JSON sources (AND composition,
   no new mechanism). *(design decision 7 — Raw-SQL/policy inheritance
   precedent; spec: Every Reportes De Gestión Route Has An Export Sibling)*
-- [ ] 2.3 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
+- [x] 2.3 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
   pending changes.
-- [ ] 2.4 [P] Equality test ×8 (one per new export).
-- [ ] 2.5 [P] 403 test ×8, role one step below each route's gate
+- [x] 2.4 [P] Equality test ×8 (one per new export).
+- [x] 2.5 [P] 403 test ×8, role one step below each route's gate
   (Vendedor for the six `LecturaDeReportes`-only routes; **Supervisor**
   for `/rentabilidad/export` and `/comisiones/export` — the stacked-policy
   mutation target). *(spec: A Supervisor Is Rejected On The Rentabilidad
   Export)*
-- [ ] 2.6 [P] **Stacked-policy mutation target**: delete
+- [x] 2.6 [P] **Stacked-policy mutation target**: delete
   `.RequireAuthorization(Politicas.LecturaDeRentabilidad)` on
   `/rentabilidad/export` → the Supervisor-403 test MUST fail (the group
   policy alone admits Supervisor); revert → green. Record in the PR body.
-  *(mutation-proof-tests)*
-- [ ] 2.7 [P] Coverage-block test on the rentabilidad export: a period with
+  *(mutation-proof-tests)* — Mutation run and recorded (see commit body of
+  `feat(reportes): agregar export XLSX a los ocho reportes restantes de
+  stage-10`): `.RequireAuthorization(Politicas.LecturaDeRentabilidad)`
+  commented out on `/rentabilidad/export` →
+  `UnSupervisorEsRechazadoEnElExportDeRentabilidad` failed (200 instead of
+  403); reverted → green (18/18).
+- [x] 2.7 [P] Coverage-block test on the rentabilidad export: a period with
   7 included / 2 estimated / 1 unknown lines → workbook header states the
   same three counts and revenue subtotals. *(spec: An Admin's Rentabilidad
   Export Carries The Coverage Block)*
-- [ ] 2.8 [P] `PROVISIONAL`-label test on the comisiones export, matching
+- [x] 2.8 [P] `PROVISIONAL`-label test on the comisiones export, matching
   the JSON response's label. *(spec: The Comisiones Export Is Labelled
   PROVISIONAL)*
-- [ ] 2.9 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 2.10 Branch `feat/stage11-slice2-exports-reportes` off `main`
-  (parent: slice 1b); PR; merge stacked-to-main.
+- [x] 2.9 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
+  this `sdd-apply` run (explicit boundary: no push/PR); left for the
+  orchestrator's PR-validation phase, same precedent as task 1b.13.
+- [x] 2.10 Branch `feat/stage11-slice2-exports-reportes` off `main`
+  (parent: slice 1b); PR; merge stacked-to-main. — branch
+  `feat/stage11-slice2-exports-rentabilidad` created per the orchestrator's
+  explicit instruction (name differs from the task's suggested branch
+  name, same precedent as 1b.14); two work-unit commits made (mappers +
+  endpoints + equality/403 tests, then the coverage-block/PROVISIONAL
+  tests split out per this slice's own pre-split note below — the diff
+  landed well above the ~380-line forecast, driven by test depth as
+  predicted); PR/merge left for the orchestrator.
 
 **Test plan**: equality ×8, 403 ×8 (with the Supervisor-vs-rentabilidad
 mutation target), coverage-block, PROVISIONAL-label.
