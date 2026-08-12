@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { FiltrosDeBreakdown, FiltrosDeBreakdownConPv, FiltrosDeReporte, FiltrosDeTopArticulos } from './reportes'
+import type {
+  FiltrosDeBreakdown,
+  FiltrosDeBreakdownConPv,
+  FiltrosDeRentabilidad,
+  FiltrosDeReporte,
+  FiltrosDeTopArticulos,
+} from './reportes'
 
 const apiGetMock = vi.fn(() => Promise.resolve(undefined))
 
@@ -7,8 +13,14 @@ vi.mock('./cliente', () => ({
   api: { get: (...args: unknown[]) => apiGetMock(...(args as [])) },
 }))
 
-const { clienteDeReportes, construirQueryDeBreakdown, construirQueryDeBreakdownConPv, construirQueryDeReporte, rangoUltimosSieteDias } =
-  await import('./reportes')
+const {
+  clienteDeReportes,
+  construirQueryDeBreakdown,
+  construirQueryDeBreakdownConPv,
+  construirQueryDeReporte,
+  rangoUltimosSieteDias,
+  rutasDeExportacion,
+} = await import('./reportes')
 
 function filtrosFixture(sobrescribir: Partial<FiltrosDeReporte> = {}): FiltrosDeReporte {
   return {
@@ -31,6 +43,10 @@ function filtrosBreakdownConPvFixture(sobrescribir: Partial<FiltrosDeBreakdownCo
 
 function filtrosTopArticulosFixture(sobrescribir: Partial<FiltrosDeTopArticulos> = {}): FiltrosDeTopArticulos {
   return { idEmpresa: 1, idPuntoVenta: null, desde: '2026-08-05', hasta: '2026-08-11', limite: null, ...sobrescribir }
+}
+
+function filtrosRentabilidadFixture(sobrescribir: Partial<FiltrosDeRentabilidad> = {}): FiltrosDeRentabilidad {
+  return { idEmpresa: 1, idPuntoVenta: null, desde: '2026-08-05', hasta: '2026-08-11', incluirEstimados: false, ...sobrescribir }
 }
 
 describe('construirQueryDeReporte', () => {
@@ -87,6 +103,34 @@ describe('clienteDeReportes.articulosTop', () => {
     await clienteDeReportes.articulosTop(filtrosTopArticulosFixture({ idPuntoVenta: 7, limite: 10 }))
 
     expect(apiGetMock).toHaveBeenCalledWith('/reportes/articulos/top?idEmpresa=1&idPuntoVenta=7&desde=2026-08-05&hasta=2026-08-11&limite=10')
+  })
+})
+
+describe('rutasDeExportacion', () => {
+  it('ventasResumen reutiliza construirQueryDeReporte y suma formato=xlsx al final', () => {
+    const ruta = rutasDeExportacion.ventasResumen(filtrosFixture())
+
+    expect(ruta).toBe('/reportes/ventas/resumen/export?idEmpresa=1&desde=2026-08-05&hasta=2026-08-11&granularidad=Dia&formato=xlsx')
+  })
+
+  it('gastosResumen reutiliza construirQueryDeReporte y suma formato=xlsx al final', () => {
+    const ruta = rutasDeExportacion.gastosResumen(filtrosFixture({ idPuntoVenta: 7 }))
+
+    expect(ruta).toBe(
+      '/reportes/gastos/resumen/export?idEmpresa=1&idPuntoVenta=7&desde=2026-08-05&hasta=2026-08-11&granularidad=Dia&formato=xlsx',
+    )
+  })
+
+  it('rentabilidad omite incluirEstimados cuando es false, igual que clienteDeReportes.rentabilidad', () => {
+    const ruta = rutasDeExportacion.rentabilidad(filtrosRentabilidadFixture())
+
+    expect(ruta).toBe('/reportes/rentabilidad/export?idEmpresa=1&desde=2026-08-05&hasta=2026-08-11&formato=xlsx')
+  })
+
+  it('rentabilidad agrega incluirEstimados=true cuando está tildado', () => {
+    const ruta = rutasDeExportacion.rentabilidad(filtrosRentabilidadFixture({ incluirEstimados: true }))
+
+    expect(ruta).toBe('/reportes/rentabilidad/export?idEmpresa=1&desde=2026-08-05&hasta=2026-08-11&incluirEstimados=true&formato=xlsx')
   })
 })
 
