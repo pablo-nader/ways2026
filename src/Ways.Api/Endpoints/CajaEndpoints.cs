@@ -1,5 +1,11 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Ways.Api.Exportacion;
 using Ways.Api.Seguridad;
+using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
+using Ways.Application.Exportacion;
+using Ways.Application.Parametros;
 
 namespace Ways.Api.Endpoints;
 
@@ -94,6 +100,55 @@ public static class CajaEndpoints
         .WithSummary(
             "Detalle del turno (Z-report): el mismo resumen de /resumen más los tickets y gastos " +
             "del turno — el cajero puede leer su propio cierre, mismo gate que /resumen.");
+
+        // stage-11-exportacion-reportes, Slice 5b (design's load-bearing refinement — la ruta vive
+        // acá para que OperacionDePos se herede por co-locación, spec historico-de-cajas: A Vendedor
+        // Downloads Their Own Turno's Z-Report): mismo par ServicioDeResumenDeTurno +
+        // LectorDeLineasDelTurno que /detalle, sin política propia. El guard de tope corre sobre
+        // TablaExportable.Filas.Count ya mapeado, sin COUNT(*): las líneas de UN turno no son un
+        // listado que crezca sin límite entre requests, a diferencia de /cajas/export.
+        grupo.MapGet("/{id:int}/detalle/export", async (
+            ServicioDeResumenDeTurno servicioDeResumen, LectorDeLineasDelTurno lectorDeLineas,
+            IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
+            int id, string formato, CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            // 404 ADR-8 si el turno no existe o es de otro tenant — misma resolución que /detalle,
+            // ANTES de leer punto de venta/fechas para el encabezado.
+            var resumen = await servicioDeResumen.ObtenerAsync(id, ct);
+            var tickets = await lectorDeLineas.LeerTicketsAsync(id, ct);
+            var gastos = await lectorDeLineas.LeerGastosAsync(id, ct);
+            var detalle = new DetalleDeTurno(resumen, tickets, gastos);
+
+            // El turno YA está confirmado existente por ObtenerAsync — lectura plana por PK para
+            // el encabezado (PV/rango), el único dato que ResumenDeTurno no trae (nunca duplica la
+            // derivación del arqueo).
+            var turno = await db.TurnosCaja
+                .Where(t => t.Id == id)
+                .Select(t => new { t.IdPuntoVenta, t.FechaApertura, t.FechaCierre })
+                .FirstAsync(ct);
+
+            var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, turno.IdPuntoVenta, ct);
+            var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
+            var desde = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(turno.FechaApertura, zona).Date);
+            var hasta = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(turno.FechaCierre ?? turno.FechaApertura, zona).Date);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, empresa, $"PV {turno.IdPuntoVenta}", desde, hasta, zonaId);
+            var tabla = ExportacionDeCaja.De(detalle, ctx, zona);
+
+            GuardaDeTope.Exigir(tabla.Filas.Count, opciones.Value.TopeDeFilas);
+
+            var bytes = exportador.Generar(tabla);
+            var nombre = NombreDeArchivo.Construir("caja_z", $"turno{id}", desde, hasta);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary(
+            "Export XLSX del Z-report: mismo resumen + tickets + gastos que /detalle, gate " +
+            "OperacionDePos heredado por co-locación — el cajero puede descargar su propio cierre.");
 
         return app;
     }

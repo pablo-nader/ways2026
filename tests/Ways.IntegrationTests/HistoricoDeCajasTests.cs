@@ -1,9 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using ClosedXML.Excel;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
+using Ways.Application.Exportacion;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Caja;
@@ -43,9 +47,16 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdEmpleadoAdmin, int IdCliente, int IdTipoComprobanteTx,
         int IdMedioEfectivo, HttpClient Admin, HttpClient Supervisor, HttpClient Vendedor);
 
-    private async Task<Contexto> PrepararAsync(string nombre)
+    /// <summary>Igual que <c>ReportesVentasResumenExportTests.PrepararAsync</c>: <paramref
+    /// name="factory"/> permite a las pruebas de tope (Slice 5b, export de <c>/cajas</c>) usar un
+    /// <c>WithWebHostBuilder</c> propio con <see cref="OpcionesDeExportacion.TopeDeFilas"/>
+    /// pisado, sin afectar al resto de esta clase (que sigue usando <c>fixture</c> directo).
+    /// </summary>
+    private async Task<Contexto> PrepararAsync(string nombre, WebApplicationFactory<Program>? factory = null)
     {
-        using var root = fixture.CreateClient();
+        factory ??= fixture;
+
+        using var root = factory.CreateClient();
         var loginRoot = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
@@ -55,13 +66,13 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
 
-        var admin = fixture.CreateClient();
+        var admin = factory.CreateClient();
         var loginAdmin = await admin.PostAsJsonAsync(
             "/api/auth/login", new SolicitudDeLogin(mailAdmin, resultado.PasswordTemporal));
         Assert.Equal(HttpStatusCode.OK, loginAdmin.StatusCode);
 
-        var supervisor = await CrearYLoguearAsync(admin, nombre, "supervisor", RolConocido.Supervisor);
-        var vendedor = await CrearYLoguearAsync(admin, nombre, "vendedor", RolConocido.Vendedor);
+        var supervisor = await CrearYLoguearAsync(admin, factory, nombre, "supervisor", RolConocido.Supervisor);
+        var vendedor = await CrearYLoguearAsync(admin, factory, nombre, "vendedor", RolConocido.Vendedor);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, resultado.IdTenant));
         var idMedioEfectivo = await db.MediosPago
@@ -75,14 +86,15 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
             idTipoComprobanteTx, idMedioEfectivo, admin, supervisor, vendedor);
     }
 
-    private async Task<HttpClient> CrearYLoguearAsync(HttpClient admin, string nombre, string sufijo, RolConocido rol)
+    private static async Task<HttpClient> CrearYLoguearAsync(
+        HttpClient admin, WebApplicationFactory<Program> factory, string nombre, string sufijo, RolConocido rol)
     {
         var corto = Guid.NewGuid().ToString("N")[..8];
         var mail = $"{nombre.ToLowerInvariant()}-{sufijo}@ways.test";
         var alta = await admin.PostAsJsonAsync("/api/usuarios", new CrearUsuario($"{sufijo}-{corto}", mail, (int)rol, PasswordOtroRol));
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
 
-        var cliente = fixture.CreateClient();
+        var cliente = factory.CreateClient();
         var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mail, PasswordOtroRol));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         return cliente;
@@ -278,5 +290,130 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         var respuesta = await ctx.Supervisor.GetAsync("/api/reportes/cajas");
 
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+    }
+
+    // ---- task 5a.9 / 5a.10 (mitad export, diferida de Slice 5a): GET /api/reportes/cajas/export --
+
+    private const string ContentTypeXlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    private static Task<HttpResponseMessage> LlamarExportDelHistoricoAsync(
+        HttpClient cliente, DateTimeOffset desde, DateTimeOffset hasta, int? idPuntoVenta = null, string formato = "xlsx") =>
+        cliente.GetAsync(
+            $"/api/reportes/cajas/export?desde={Uri.EscapeDataString(desde.ToString("O"))}" +
+            $"&hasta={Uri.EscapeDataString(hasta.ToString("O"))}" +
+            (idPuntoVenta is { } pv ? $"&idPuntoVenta={pv}" : string.Empty) + $"&formato={formato}");
+
+    /// <summary>task 5a.9 (spec: G2 Listing Export Figures Equal The JSON Listing): compara las
+    /// 8 columnas del workbook (Turno, Punto de venta, Apertura, Cierre, Esperado, Declarado,
+    /// Diferencia, Retiros) contra <see cref="FilaDeHistoricoDeCajas"/> TURNO POR TURNO (no solo
+    /// la suma) — un turno ausente del export o desviado en cualquiera de sus columnas queda
+    /// expuesto aunque el total combinado coincida por casualidad.</summary>
+    [Fact]
+    public async Task ElExportDelHistoricoEsIgualAlListadoJsonTurnoPorTurno()
+    {
+        var ctx = await PrepararAsync(nameof(ElExportDelHistoricoEsIgualAlListadoJsonTurnoPorTurno));
+
+        var turnoUno = await AbrirTurnoAsync(ctx, ctx.IdPuntoVenta, 500m);
+        await CerrarTurnoAsync(ctx, turnoUno.Id, [new ConteoDeclarado(ctx.IdMedioEfectivo, 470m)]);
+
+        var turnoDos = await AbrirTurnoAsync(ctx, ctx.IdPuntoVenta, 300m);
+        await CerrarTurnoAsync(ctx, turnoDos.Id, [new ConteoDeclarado(ctx.IdMedioEfectivo, 300m)]);
+
+        var listado = await ListarAsync(ctx.Admin);
+        Assert.NotNull(listado);
+        Assert.Equal(2, listado!.Items.Count);
+
+        var ahora = DateTimeOffset.UtcNow;
+        var respuesta = await LlamarExportDelHistoricoAsync(ctx.Admin, ahora.AddMinutes(-5), ahora.AddMinutes(5));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+
+        // Las 8 columnas completas, no solo Diferencia — Apertura/Cierre se comparan
+        // zone-converted (mismo patrón que VentasListadoExportTests) porque el mapper convierte
+        // el DateTimeOffset a America/Argentina/Buenos_Aires antes de escribir la celda.
+        var zona = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");
+        const int primeraFilaDeDatos = 7;
+        var filasPorTurno = new Dictionary<int, (
+            int IdPuntoVenta, DateTime Apertura, DateTime Cierre, decimal Esperado, decimal Declarado,
+            decimal Diferencia, decimal Retiros)>();
+        for (var fila = primeraFilaDeDatos; !hoja.Cell(fila, 1).Value.IsBlank; fila++)
+        {
+            filasPorTurno[hoja.Cell(fila, 1).GetValue<int>()] = (
+                hoja.Cell(fila, 2).GetValue<int>(),
+                hoja.Cell(fila, 3).GetValue<DateTime>(),
+                hoja.Cell(fila, 4).GetValue<DateTime>(),
+                hoja.Cell(fila, 5).GetValue<decimal>(),
+                hoja.Cell(fila, 6).GetValue<decimal>(),
+                hoja.Cell(fila, 7).GetValue<decimal>(),
+                hoja.Cell(fila, 8).GetValue<decimal>());
+        }
+
+        foreach (var item in listado.Items)
+        {
+            Assert.True(
+                filasPorTurno.TryGetValue(item.IdTurnoCaja, out var fila),
+                $"Falta el turno {item.IdTurnoCaja} en el export.");
+            Assert.Equal(item.IdPuntoVenta, fila.IdPuntoVenta);
+            // Truncado a segundos: el double de OLE Automation date que ClosedXML persiste no
+            // retiene la precisión de microsegundos de Postgres — sin el truncado, la comparación
+            // flakearía por redondeo del formato xlsx, no por un bug real (mismo criterio que el
+            // comentario de PreciosEndpointsTests sobre no comparar precisión distinta).
+            Assert.Equal(TruncarASegundos(TimeZoneInfo.ConvertTime(item.FechaApertura, zona).DateTime), TruncarASegundos(fila.Apertura));
+            Assert.Equal(TruncarASegundos(TimeZoneInfo.ConvertTime(item.FechaCierre, zona).DateTime), TruncarASegundos(fila.Cierre));
+            Assert.Equal(item.Esperado, fila.Esperado);
+            Assert.Equal(item.Declarado, fila.Declarado);
+            Assert.Equal(item.Diferencia, fila.Diferencia);
+            Assert.Equal(item.Egresos.Retiros, fila.Retiros);
+        }
+    }
+
+    private static DateTime TruncarASegundos(DateTime valor) => valor.AddTicks(-(valor.Ticks % TimeSpan.TicksPerSecond));
+
+    [Fact]
+    public async Task UnVendedorEsRechazadoDelExportDelHistorico()
+    {
+        var ctx = await PrepararAsync(nameof(UnVendedorEsRechazadoDelExportDelHistorico));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var respuesta = await LlamarExportDelHistoricoAsync(ctx.Vendedor, ahora.AddMinutes(-5), ahora.AddMinutes(5));
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    /// <summary>Cap guard del export del histórico — a diferencia del resto de los reportes
+    /// agregados de la etapa (design decisión 6), un turno NO es un catálogo acotado: reusa el
+    /// mismo patrón Contar → rechazar de <see cref="ServicioDeHistoricoDeCajas.ListarCierresParaExportacionAsync"/>
+    /// (design decisión 7). La cláusula (<c>GuardaDeTope.Exigir</c>) ya tiene evidencia de mutación
+    /// registrada en Slice 1b (función compartida, reusada tal cual acá) — esta prueba cubre el
+    /// comportamiento end-to-end del nuevo llamador, no repite la mutación de la cláusula
+    /// compartida.</summary>
+    [Fact]
+    public async Task UnaExportacionDelHistoricoQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 3)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDelHistoricoQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+
+        for (var i = 0; i < 4; i++)
+        {
+            var turno = await AbrirTurnoAsync(ctx, ctx.IdPuntoVenta, 100m);
+            await CerrarTurnoAsync(ctx, turno.Id, [new ConteoDeclarado(ctx.IdMedioEfectivo, 100m)]);
+        }
+
+        var ahora = DateTimeOffset.UtcNow;
+        var respuesta = await LlamarExportDelHistoricoAsync(ctx.Admin, ahora.AddMinutes(-5), ahora.AddMinutes(5));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("4", problema.GetProperty("title").GetString());
     }
 }

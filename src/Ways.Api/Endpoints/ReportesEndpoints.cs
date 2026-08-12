@@ -364,6 +364,22 @@ public static class ReportesEndpoints
             FormatoDeExportacion.Parsear(formato);
 
             var filas = await servicio.ListarParaExportacionAsync(
+        // stage-11-exportacion-reportes, Slice 5b (spec historico-de-cajas: G2 And G3 Endpoints
+        // Have Export Siblings Equal To Their JSON): a diferencia del resto de exports de esta
+        // etapa, un turno NO es un catálogo acotado — ServicioDeHistoricoDeCajas.
+        // ListarCierresParaExportacionAsync corre Contar → rechazar → Take(tope + 1) en vez de
+        // reusar el paginado (tope duro de 200) de /cajas, para que GuardaDeTope pueda dispararse
+        // de verdad más allá de esa página. `desde`/`hasta` OBLIGATORIOS, mismo criterio que los
+        // exports de listado de Slice 3: un nombre de archivo determinístico necesita un rango
+        // acotado. AlcanceDeListadoHttp resuelve Empresa/zona porque /cajas nunca tuvo idEmpresa.
+        grupo.MapGet("/cajas/export", async (
+            ServicioDeHistoricoDeCajas servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
+            int? idPuntoVenta, DateTimeOffset desde, DateTimeOffset hasta, string formato, CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var filas = await servicio.ListarCierresParaExportacionAsync(
                 idPuntoVenta, desde, hasta, opciones.Value.TopeDeFilas, ct);
 
             var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
@@ -381,6 +397,18 @@ public static class ReportesEndpoints
             return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
         })
         .WithSummary("Export XLSX de /tesoreria: mismos parámetros y figuras, mismo orden de cadena.");
+                usuario, reloj, empresa, idPuntoVenta is { } id ? $"PV {id}" : null, desdeFecha, hastaFecha, zonaId);
+            var tabla = ExportacionDeCaja.De(filas, ctx, zona);
+
+            var bytes = exportador.Generar(tabla);
+            var alcance = idPuntoVenta is { } pv ? $"pv{pv}" : "todos";
+            var nombre = NombreDeArchivo.Construir("cajas_historico", alcance, desdeFecha, hastaFecha);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary(
+            "Export XLSX de /cajas: mismos filtros y figuras, gate LecturaDeReportes heredado por " +
+            "co-locación. desde/hasta obligatorios (a diferencia de /cajas), rango acotado por diseño.");
 
         return app;
     }

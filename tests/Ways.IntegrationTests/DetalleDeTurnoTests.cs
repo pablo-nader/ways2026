@@ -1,12 +1,14 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Gastos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
+using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Gastos;
 using Ways.Domain.Usuarios;
@@ -147,6 +149,14 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
+    private static async Task RegistrarRetiroAsync(HttpClient cliente, int idTurno, decimal importe)
+    {
+        var respuesta = await cliente.PostAsJsonAsync(
+            $"/api/caja/turnos/{idTurno}/movimientos",
+            new SolicitudDeMovimiento(TipoMovimientoCaja.Retiro, importe, "Retiro de prueba"));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+    }
+
     // ---- task 5b.7: 4-test pattern -----------------------------------------------------------
 
     [Fact]
@@ -264,5 +274,87 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var respuesta = await ctx.Vendedor.GetAsync($"/api/caja/turnos/{turno.Id}/detalle");
 
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+    }
+
+    // ---- Slice 5b (diferida de 5b.4/5b.5): GET /api/caja/turnos/{id}/detalle/export -------------
+
+    private const string ContentTypeXlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    /// <summary>task 5b.9 (spec: G2 And G3 Endpoints Have Export Siblings Equal To Their JSON): el
+    /// workbook seccionado (medios de pago, tickets, gastos) se compara contra el MISMO
+    /// <see cref="DetalleDeTurno"/> que devuelve la ruta JSON — no solo un total combinado, el
+    /// esperado por medio y la lista completa de tickets/gastos.</summary>
+    [Fact]
+    public async Task ElExportDelDetalleEsIgualAlJsonParaElMismoTurno()
+    {
+        var ctx = await PrepararAsync(nameof(ElExportDelDetalleEsIgualAlJsonParaElMismoTurno));
+        var turno = await AbrirTurnoAsync(ctx, ctx.Admin, 500m);
+
+        await SembrarVentaAsync(ctx, turno.Id, 100m);
+        await SembrarVentaAsync(ctx, turno.Id, 200m);
+        await RegistrarGastoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 30m);
+        await RegistrarRetiroAsync(ctx.Admin, turno.Id, 25m);
+
+        // esperado efectivo = 500 (fondo) + 100 + 200 - 30 (gasto) - 25 (retiro) = 745.
+        await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 745m);
+
+        var detalle = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{turno.Id}/detalle", OpcionesJson);
+        Assert.NotNull(detalle);
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/caja/turnos/{turno.Id}/detalle/export?formato=xlsx");
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+
+        // El encabezado resuelve punto de venta/rango DESDE EL TURNO (no de query params — la
+        // ruta no recibe idPuntoVenta/desde/hasta): fila 2 del bloque tiene que nombrar el mismo
+        // PV que abrió/cerró el turno.
+        Assert.Contains($"PV {ctx.IdPuntoVenta}", hoja.Cell(2, 1).GetString());
+
+        const int primeraFilaDeDatos = 7;
+        var filas = new List<(string Seccion, string Detalle, decimal Importe)>();
+        for (var fila = primeraFilaDeDatos; !hoja.Cell(fila, 1).Value.IsBlank; fila++)
+        {
+            filas.Add((hoja.Cell(fila, 1).GetString(), hoja.Cell(fila, 2).GetString(), hoja.Cell(fila, 4).GetValue<decimal>()));
+        }
+
+        var esperadoEfectivo = detalle!.Resumen.Medios.Single(m => m.IdMedioPago == ctx.IdMedioEfectivo).ImporteEsperado;
+        Assert.Contains(
+            filas, f => f.Seccion == "Medios de pago" && f.Detalle == $"Medio {ctx.IdMedioEfectivo}" && f.Importe == esperadoEfectivo);
+
+        // Igualdad POR TICKET (no solo cantidad/suma agregada): cada ticket sembrado tiene que
+        // aparecer con su propio número visible e importe — los dos tickets sembrados arriba
+        // tienen totales distintos (100/200) para que una rotación de importes entre filas sea
+        // detectable.
+        var filasTickets = filas.Where(f => f.Seccion == "Tickets").ToList();
+        Assert.Equal(detalle.Tickets.Count, filasTickets.Count);
+        Assert.All(
+            detalle.Tickets,
+            ticket => Assert.Contains(filasTickets, f => f.Detalle == ticket.NumeroVisible && f.Importe == ticket.Total));
+
+        var filasGastos = filas.Where(f => f.Seccion == "Gastos").ToList();
+        Assert.Equal(detalle.Gastos.Count, filasGastos.Count);
+        Assert.All(
+            detalle.Gastos,
+            gasto => Assert.Contains(filasGastos, f => f.Detalle == gasto.Categoria.ToString() && f.Importe == gasto.Importe));
+
+        var filaRetiros = Assert.Single(filas, f => f.Seccion == "Retiros");
+        Assert.Equal(detalle.Resumen.Egresos.Retiros, filaRetiros.Importe);
+    }
+
+    [Fact]
+    public async Task UnVendedorDescargaElExportDelTurnoQueElMismoCerro()
+    {
+        var ctx = await PrepararAsync(nameof(UnVendedorDescargaElExportDelTurnoQueElMismoCerro));
+
+        var turno = await AbrirTurnoAsync(ctx, ctx.Vendedor, 100m);
+        await CerrarTurnoAsync(ctx.Vendedor, turno.Id, ctx.IdMedioEfectivo, 100m);
+
+        var respuesta = await ctx.Vendedor.GetAsync($"/api/caja/turnos/{turno.Id}/detalle/export?formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
     }
 }

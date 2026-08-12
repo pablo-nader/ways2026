@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Exportacion;
 using Ways.Domain.Caja;
 
 namespace Ways.Application.Caja;
@@ -27,9 +28,64 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
         pagina = Math.Max(pagina, 1);
         tamanio = Math.Clamp(tamanio, 1, 200);
 
-        // "histórico de cierres" (doc 01 G2) — solo turnos cerrados; un turno abierto NUNCA
-        // aparece acá (spec: An Open Turno Is Excluded From The Listing), tiene su propia lectura
-        // en /caja/turnos/abierto con totales parciales, no un cierre.
+        var query = ConstruirQuery(idPuntoVenta, desde, hasta);
+
+        var total = await query.CountAsync(ct);
+
+        var turnosDeLaPagina = await query
+            .OrderByDescending(t => t.FechaCierre)
+            .Skip((pagina - 1) * tamanio)
+            .Take(tamanio)
+            .Select(t => new TurnoBase(t.Id, t.IdPuntoVenta, t.FechaApertura, t.FechaCierre))
+            .ToListAsync(ct);
+
+        var items = await ArmarFilasAsync(turnosDeLaPagina, ct);
+
+        return new PaginaDeHistoricoDeCajas(items, total, pagina, tamanio);
+    }
+
+    /// <summary>
+    /// Export sibling (stage-11-exportacion-reportes, Slice 5b) — a diferencia del resto de
+    /// reportes agregados de la etapa (design decisión 6), un turno NO es un catálogo acotado como
+    /// un punto de venta, un vendedor o un medio de pago: se acumula sin límite, igual que una
+    /// venta. Reusar <see cref="ListarCierresAsync"/> tal cual (paginado, tope duro de 200 por el
+    /// <c>Math.Clamp</c> de arriba) truncaría en silencio cualquier exportación con más de 200
+    /// cierres sin que <see cref="GuardaDeTope"/> llegara a dispararse — exactamente el riesgo que
+    /// esta etapa existe para evitar. Este método corre el mismo patrón <c>Contar → rechazar →
+    /// Take(tope + 1) → rechazar</c> que <c>ServicioDeVentas.ListarParaExportacionAsync</c>
+    /// (design decisión 7), reusando el MISMO <see cref="ConstruirQuery"/> que <see
+    /// cref="ListarCierresAsync"/> — nunca una segunda declaración del predicado.
+    /// </summary>
+    public async Task<IReadOnlyList<FilaDeHistoricoDeCajas>> ListarCierresParaExportacionAsync(
+        int? idPuntoVenta,
+        DateTimeOffset? desde,
+        DateTimeOffset? hasta,
+        int topeDeFilas,
+        CancellationToken ct = default)
+    {
+        var query = ConstruirQuery(idPuntoVenta, desde, hasta);
+
+        var cantidad = await query.CountAsync(ct);
+        GuardaDeTope.Exigir(cantidad, topeDeFilas);
+
+        var turnos = await query
+            .OrderByDescending(t => t.FechaCierre)
+            .Take(topeDeFilas + 1)
+            .Select(t => new TurnoBase(t.Id, t.IdPuntoVenta, t.FechaApertura, t.FechaCierre))
+            .ToListAsync(ct);
+
+        GuardaDeTope.Exigir(turnos.Count, topeDeFilas);
+
+        return await ArmarFilasAsync(turnos, ct);
+    }
+
+    /// <summary>Filtro compartido de <see cref="ListarCierresAsync"/> y
+    /// <see cref="ListarCierresParaExportacionAsync"/> — "histórico de cierres" (doc 01 G2): solo
+    /// turnos cerrados, un turno abierto NUNCA aparece acá (spec: An Open Turno Is Excluded From
+    /// The Listing), tiene su propia lectura en <c>/caja/turnos/abierto</c> con totales parciales,
+    /// no un cierre.</summary>
+    private IQueryable<TurnoCaja> ConstruirQuery(int? idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta)
+    {
         var query = db.TurnosCaja.Where(t => t.Estado == EstadoTurno.Cerrado);
 
         if (idPuntoVenta is { } pv)
@@ -47,24 +103,20 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
             query = query.Where(t => t.FechaCierre <= h);
         }
 
-        var total = await query.CountAsync(ct);
+        return query;
+    }
 
-        var turnosDeLaPagina = await query
-            .OrderByDescending(t => t.FechaCierre)
-            .Skip((pagina - 1) * tamanio)
-            .Take(tamanio)
-            .Select(t => new { t.Id, t.IdPuntoVenta, t.FechaApertura, t.FechaCierre })
-            .ToListAsync(ct);
-
-        var ids = turnosDeLaPagina.Select(t => t.Id).ToList();
+    private async Task<List<FilaDeHistoricoDeCajas>> ArmarFilasAsync(IReadOnlyList<TurnoBase> turnos, CancellationToken ct)
+    {
+        var ids = turnos.Select(t => t.Id).ToList();
 
         if (ids.Count == 0)
         {
-            return new PaginaDeHistoricoDeCajas([], total, pagina, tamanio);
+            return [];
         }
 
-        // Totales — Σ de las filas YA persistidas del cierre, una consulta agrupada para toda la
-        // página (design: "un GroupBy sobre ArqueosTurno para los ids de la página").
+        // Totales — Σ de las filas YA persistidas del cierre, una consulta agrupada para todo el
+        // conjunto (design: "un GroupBy sobre ArqueosTurno para los ids de la página").
         var totalesPorTurno = await db.ArqueosTurno
             .Where(a => ids.Contains(a.IdTurnoCaja))
             .GroupBy(a => a.IdTurnoCaja)
@@ -79,7 +131,7 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
 
         var egresosPorTurno = await LeerEgresosDeLaPaginaAsync(ids, ct);
 
-        var items = turnosDeLaPagina
+        return turnos
             .Select(t =>
             {
                 var totales = totalesPorTurno.GetValueOrDefault(t.Id);
@@ -88,15 +140,15 @@ public class ServicioDeHistoricoDeCajas(IWaysDbContext db)
                 return new FilaDeHistoricoDeCajas(
                     t.Id, t.IdPuntoVenta, t.FechaApertura,
                     // ck_turnos_caja_cierre_consistente garantiza fecha_cierre no nula para un
-                    // turno cerrado — el filtro Estado == Cerrado de arriba ya lo exige.
+                    // turno cerrado — ConstruirQuery ya exige Estado == Cerrado.
                     t.FechaCierre!.Value,
                     totales?.Esperado ?? 0m, totales?.Declarado ?? 0m, totales?.Diferencia ?? 0m,
                     egresos);
             })
             .ToList();
-
-        return new PaginaDeHistoricoDeCajas(items, total, pagina, tamanio);
     }
+
+    private sealed record TurnoBase(int Id, int IdPuntoVenta, DateTimeOffset FechaApertura, DateTimeOffset? FechaCierre);
 
     /// <summary>Egresos de toda la página en tres consultas agrupadas de cantidad FIJA (nunca una
     /// por turno) — mismo criterio que <see cref="LectorDeContenidoDeResumen"/>, pero agrupando
