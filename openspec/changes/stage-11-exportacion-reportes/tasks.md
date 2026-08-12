@@ -985,32 +985,77 @@ disappear, no migration, no persisted row to unwind. **If the budget
 tightens, this slice is dropped whole to Etapa 13** (proposal decision 10)
 — recorded so dropping it is a decision, not an oversight.
 
-- [ ] 9.1 Create `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
+- [x] 9.1 Create `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
   stock joined to articulos for a punto de venta, covered by
   `ix_stock_punto_venta`. *(proposal decision 10; spec reportes-de-gestion:
-  Existencias Report Joins Stock To Artículos Under The Same Gate)*
-- [ ] 9.2 Modify `ReportesEndpoints.cs`: `GET /stock/existencias` under
+  Existencias Report Joins Stock To Artículos Under The Same Gate)* —
+  `ObtenerExistenciasAsync(idPuntoVenta)`: `Where(s => s.IdPuntoVenta ==
+  idPuntoVenta)` ⋈ `Articulos` (EF tenant/baja-lógica filters apply free on
+  the join), ordered by `IdArticulo`. No `idEmpresa` (same shape as
+  `ServicioDeTesoreria`) and no `desde`/`hasta` — stock has no time
+  dimension, unlike every other report in this stage.
+- [x] 9.2 Modify `ReportesEndpoints.cs`: `GET /stock/existencias` under
   `LecturaDeReportes` — no `idArticulo` required, unlike `GET /api/stock`.
-- [ ] 9.3 Extend `ExportacionDeReportes.cs`: `De` mapper for existencias.
-- [ ] 9.4 Modify `ReportesEndpoints.cs`: `GET /stock/existencias/export`
-  sibling.
-- [ ] 9.5 Create `src/Ways.Web/src/paginas/Existencias.tsx`: modest table
-  screen (punto de venta filter, `BotonDeDescarga`).
-- [ ] 9.6 Modify `App.tsx`/`Layout.tsx`: `/reportes/existencias` route
+- [x] 9.3 Extend `ExportacionDeReportes.cs`: `De` mapper for existencias. —
+  no totals row (summing quantities of different articulos has no meaning);
+  `Cantidad` column typed `Cantidad`, matching `articulos/top`.
+- [x] 9.4 Modify `ReportesEndpoints.cs`: `GET /stock/existencias/export`
+  sibling. — AGGREGATE cap shape (design decision 6): `GuardaDeTope` runs
+  on `TablaExportable.Filas.Count` after mapping, no `COUNT(*)`. Empresa/zona
+  resolved via `AlcanceDeListadoHttp` from `idPuntoVenta` (tesorería/cajas
+  pattern); `desde`/`hasta` of the header and the deterministic filename are
+  both pinned to the server's "today" (`reloj.Ahora`), since the report has
+  no real range.
+- [x] 9.5 Create `src/Ways.Web/src/paginas/Existencias.tsx`: modest table
+  screen (punto de venta filter, `BotonDeDescarga`). — no date filter, no
+  pagination (mirrors the JSON/export contract: no time dimension, aggregate
+  bounded by construction).
+- [x] 9.6 Modify `App.tsx`/`Layout.tsx`: `/reportes/existencias` route
   (`LecturaDeReportes`) and nav entry.
-- [ ] 9.7 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
-  pending changes.
-- [ ] 9.8 [P] The house 4-test pattern for the endpoint.
-- [ ] 9.9 [P] Equality test on the export vs the JSON listing.
-- [ ] 9.10 [P] 403 test: role one step below `LecturaDeReportes` (Vendedor)
-  rejected on both routes.
-- [ ] 9.11 [P] `no-idArticulo-required` test: 40 stocked articulos for a PV
+- [x] 9.7 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
+  pending changes. — confirmed clean (`--project`/`--startup-project
+  src/Ways.Infrastructure`, since `Ways.Api` doesn't reference
+  `Microsoft.EntityFrameworkCore.Design`).
+- [x] 9.8 [P] The house 4-test pattern for the endpoint. —
+  `ExistenciasTests.cs`: cross-tenant absence (honesty note: PV ids are
+  globally unique, ordinary coverage), cross-PV discrimination (mutation-proof
+  clause `Where(s => s.IdPuntoVenta == idPuntoVenta)`, mutation applied/
+  reverted — evidence below), soft-deleted articulo excluded from the live
+  join, fields-match-seeded-row.
+- [x] 9.9 [P] Equality test on the export vs the JSON listing. —
+  `ExistenciasExportTests.ElExportEsIgualAlEndpointJsonParaLasDosFilas`: TWO
+  articulos with distinct name+cantidad, ALL columns asserted per row
+  (mutation-proof-tests rule 6). Mutation applied/reverted — evidence below.
+- [x] 9.10 [P] 403 test: role one step below `LecturaDeReportes` (Vendedor)
+  rejected on both routes. — `UnVendedorEsRechazadoDeLasExistencias` (JSON)
+  + `UnVendedorEsRechazadoDelExportDeExistencias` (export); Supervisor-200
+  added on both routes for parity with every other reportes-de-gestión test
+  file.
+- [x] 9.11 [P] `no-idArticulo-required` test: 40 stocked articulos for a PV
   → all 40 rows returned with only `idPuntoVenta` supplied. *(spec:
-  Existencias Needs No idArticulo, Unlike GET /api/stock)*
-- [ ] 9.12 [P] `Existencias.test.tsx` per `web-descriptor-tests`.
-- [ ] 9.13 Run `judgment-day`; fix; re-judge until clean.
+  Existencias Needs No idArticulo, Unlike GET /api/stock)* —
+  `LasExistenciasDe40ArticulosVuelvenSinPedirIdArticulo`.
+- [x] 9.12 [P] `Existencias.test.tsx` per `web-descriptor-tests`. — mirrors
+  `Tesoreria.test.tsx`'s rigor (not a smoke test): initial PV load, empty
+  state without a re-query, row rendering + no-idArticulo query assertion,
+  PV-switch re-query, download route, stale-response generation guard, role
+  gating (Supervisor in / Vendedor redirected).
+- [ ] 9.13 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
+  this `sdd-apply` run (explicit boundary: no push/PR); left for the
+  orchestrator's PR-validation phase, same precedent as every prior slice
+  (1b.13/2.9/3.9/5a.11/5b.10/6a.4/7.13/8.5).
 - [ ] 9.14 Branch `feat/stage11-slice9-existencias` off `main` (parent:
-  slices 1b + 4); PR; merge stacked-to-main.
+  slices 1b + 4); PR; merge stacked-to-main. — branch created inside the
+  isolated worktree per the orchestrator's explicit instruction; the
+  worktree's pre-existing branch name (`worktree-agent-ac822c711ae33bb08`)
+  was kept as-is rather than renamed, after an earlier accidental
+  `git checkout -b feat/stage11-slice9-existencias` on the SHARED checkout
+  (`C:\ways`, not this worktree) was caught and abandoned — that shared
+  checkout is left switched to the stray, commit-less
+  `feat/stage11-slice9-existencias` branch (same tip as `main`, zero
+  divergence) and needs a `git checkout main` cleanup by whoever owns that
+  checkout. PR/merge left for the orchestrator, same precedent as
+  1b.14/2.10/3.10/5a.12/5b.11/6a.5/7.14/8.6.
 
 **Test plan**: 4-test pattern, equality, 403, no-idArticulo-required,
 descriptor tests.
