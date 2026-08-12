@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -248,11 +248,14 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     expect(await screen.findByText('7')).toBeInTheDocument() // cantidadTickets del turno 413
 
     // La respuesta stale del 412 trae cantidadTickets 99: si pisara el estado, el 7 desaparece.
-    resolverPrimera(detalleFixture({ resumen: resumenFixture({ idTurnoCaja: 412, cantidadTickets: 99 }) }))
-    await waitFor(() => {
-      expect(screen.getByText('7')).toBeInTheDocument()
-      expect(screen.queryByText('99')).not.toBeInTheDocument()
+    // El flush del microtask va DENTRO de act: waitFor solo pasaria en su primer tick,
+    // antes de que el .then stale aterrice, y saldria verde sin probar nada.
+    await act(async () => {
+      resolverPrimera(detalleFixture({ resumen: resumenFixture({ idTurnoCaja: 412, cantidadTickets: 99 }) }))
+      await primera
     })
+    expect(screen.getByText('7')).toBeInTheDocument()
+    expect(screen.queryByText('99')).not.toBeInTheDocument()
   })
 })
 
