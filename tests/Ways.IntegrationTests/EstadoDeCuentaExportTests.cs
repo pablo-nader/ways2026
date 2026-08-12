@@ -125,14 +125,17 @@ public class EstadoDeCuentaExportTests(WaysApiFixture fixture) : IClassFixture<W
         using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
+        var zona = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");
         const int primeraFilaDeDatos = 7;
         for (var i = 0; i < estado.Movimientos.Count; i++)
         {
             var movimiento = estado.Movimientos[i];
             var fila = hoja.Row(primeraFilaDeDatos + i);
+            Assert.Equal(TimeZoneInfo.ConvertTime(movimiento.Fecha, zona).DateTime, fila.Cell(1).GetValue<DateTime>());
             Assert.Equal(movimiento.Tipo.ToString(), fila.Cell(2).GetString());
             Assert.Equal(movimiento.Importe, fila.Cell(3).GetValue<decimal>());
             Assert.Equal(movimiento.SaldoResultante, fila.Cell(4).GetValue<decimal>());
+            Assert.Equal(movimiento.Detalle, fila.Cell(5).GetString());
         }
     }
 

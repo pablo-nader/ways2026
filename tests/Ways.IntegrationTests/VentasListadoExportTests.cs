@@ -82,13 +82,13 @@ public class VentasListadoExportTests(WaysApiFixture fixture) : IClassFixture<Wa
     /// <summary>Siembra directo, sin pasar por <c>ServicioDeVentas</c> — mismo criterio que
     /// <c>ReportesVentasResumenExportTests.SembrarComprobanteAsync</c>. Fecha fija a mediodía UTC
     /// (evita la ventana 00-03 UTC que corre el día en zonas horarias -03).</summary>
-    private async Task SembrarComprobanteAsync(Contexto ctx, DateOnly fecha, decimal total)
+    private async Task<int> SembrarComprobanteAsync(Contexto ctx, DateOnly fecha, decimal total)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
         var mediodia = new DateTimeOffset(fecha.Year, fecha.Month, fecha.Day, 12, 0, 0, TimeSpan.Zero);
 
-        db.ComprobantesVenta.Add(new ComprobanteVenta
+        var comprobante = new ComprobanteVenta
         {
             IdTenant = ctx.IdTenant,
             IdTipoComprobante = ctx.IdTipoComprobanteTx,
@@ -103,21 +103,25 @@ public class VentasListadoExportTests(WaysApiFixture fixture) : IClassFixture<Wa
             Estado = EstadoComprobante.Emitido,
             CreatedAt = ahora,
             UpdatedAt = ahora
-        });
+        };
+        db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
+
+        return comprobante.Id;
     }
 
-    private static string ConstruirQuery(int idPuntoVenta, DateOnly desde, DateOnly hasta, string? formato) =>
+    private static string ConstruirQuery(int idPuntoVenta, DateOnly desde, DateOnly hasta, string? formato, EstadoComprobante? estado = null) =>
         $"idPuntoVenta={idPuntoVenta}&desde={desde:yyyy-MM-dd}T00:00:00Z&hasta={hasta:yyyy-MM-dd}T23:59:59Z" +
-        (formato is null ? string.Empty : $"&formato={formato}");
+        (formato is null ? string.Empty : $"&formato={formato}") +
+        (estado is null ? string.Empty : $"&estado={estado}");
 
     private static Task<HttpResponseMessage> LlamarListadoAsync(
-        HttpClient cliente, int idPuntoVenta, DateOnly desde, DateOnly hasta) =>
-        cliente.GetAsync($"/api/ventas?{ConstruirQuery(idPuntoVenta, desde, hasta, null)}&tamanio=200");
+        HttpClient cliente, int idPuntoVenta, DateOnly desde, DateOnly hasta, EstadoComprobante? estado = null) =>
+        cliente.GetAsync($"/api/ventas?{ConstruirQuery(idPuntoVenta, desde, hasta, null, estado)}&tamanio=200");
 
     private static Task<HttpResponseMessage> LlamarExportAsync(
-        HttpClient cliente, int idPuntoVenta, DateOnly desde, DateOnly hasta, string formato = "xlsx") =>
-        cliente.GetAsync($"/api/ventas/export?{ConstruirQuery(idPuntoVenta, desde, hasta, formato)}");
+        HttpClient cliente, int idPuntoVenta, DateOnly desde, DateOnly hasta, string formato = "xlsx", EstadoComprobante? estado = null) =>
+        cliente.GetAsync($"/api/ventas/export?{ConstruirQuery(idPuntoVenta, desde, hasta, formato, estado)}");
 
     // ---- task 3.5: la exportación es igual al listado JSON --------------------------------------
 
@@ -147,17 +151,52 @@ public class VentasListadoExportTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         // Fila 6 = título de tabla; los datos empiezan en la fila 7, mismo orden que el listado
         // JSON (newest-first, ver ServicioDeVentas.ConstruirQuery).
+        var zona = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");
         const int primeraFilaDeDatos = 7;
         for (var i = 0; i < pagina.Items.Count; i++)
         {
             var item = pagina.Items[i];
             var fila = hoja.Row(primeraFilaDeDatos + i);
             Assert.Equal(item.NumeroVisible, fila.Cell(1).GetString());
+            Assert.Equal(TimeZoneInfo.ConvertTime(item.Fecha, zona).DateTime, fila.Cell(2).GetValue<DateTime>());
             Assert.Equal(item.IdPuntoVenta, fila.Cell(3).GetValue<int>());
             Assert.Equal(item.IdCliente, fila.Cell(4).GetValue<int>());
             Assert.Equal(item.Estado.ToString(), fila.Cell(5).GetString());
             Assert.Equal(item.Total, fila.Cell(6).GetValue<decimal>());
         }
+    }
+
+    /// <summary>
+    /// Cubre el filtro <c>estado</c> compartido por <c>ServicioDeVentas.ConstruirQuery</c> — sin
+    /// esta prueba, borrar el bloque <c>if (estado is { } e)</c> no lo detecta ninguna de las
+    /// otras equality tests (ninguna filtra por estado). Mutación aplicada: borrar el bloque del
+    /// filtro de estado en <c>ConstruirQuery</c> → esta prueba pasa de FALLAR (el anulado aparece
+    /// en ambas respuestas) a pasar al revertir.
+    /// </summary>
+    [Fact]
+    public async Task ElFiltroDeEstadoExcluyeElAnuladoTantoEnElListadoComoEnElExport()
+    {
+        var ctx = await PrepararAsync(nameof(ElFiltroDeEstadoExcluyeElAnuladoTantoEnElListadoComoEnElExport), fixture);
+        var dia = new DateOnly(2026, 8, 1);
+
+        await SembrarComprobanteAsync(ctx, dia, 100m);
+        var idAnulado = await SembrarComprobanteAsync(ctx, dia, 200m);
+        var anulacion = await ctx.Admin.PostAsync($"/api/ventas/{idAnulado}/anulacion", null);
+        Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
+
+        var jsonRespuesta = await LlamarListadoAsync(ctx.Admin, ctx.IdPuntoVenta, dia, dia, EstadoComprobante.Emitido);
+        Assert.Equal(HttpStatusCode.OK, jsonRespuesta.StatusCode);
+        var pagina = JsonSerializer.Deserialize<PaginaDeVentas>(await jsonRespuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
+        Assert.Single(pagina.Items);
+        Assert.DoesNotContain(pagina.Items, i => i.Id == idAnulado);
+
+        var exportRespuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta, dia, dia, estado: EstadoComprobante.Emitido);
+        Assert.Equal(HttpStatusCode.OK, exportRespuesta.StatusCode);
+
+        using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+        Assert.Equal(pagina.Items[0].NumeroVisible, hoja.Row(7).Cell(1).GetString());
+        Assert.Empty(hoja.Row(8).Cell(1).GetString());
     }
 
     // ---- task 3.6: 403 para el rol excluido de OperacionDePos ------------------------------------

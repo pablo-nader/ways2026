@@ -152,6 +152,7 @@ public class ComprasListadoExportTests(WaysApiFixture fixture) : IClassFixture<W
         using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
+        var zona = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");
         const int primeraFilaDeDatos = 7;
         for (var i = 0; i < pagina.Items.Count; i++)
         {
@@ -159,6 +160,7 @@ public class ComprasListadoExportTests(WaysApiFixture fixture) : IClassFixture<W
             var fila = hoja.Row(primeraFilaDeDatos + i);
             Assert.Equal(item.NumeroExterno, fila.Cell(1).GetString());
             Assert.Equal(item.IdProveedor, fila.Cell(2).GetValue<int>());
+            Assert.Equal(TimeZoneInfo.ConvertTime(item.FechaRecepcion!.Value, zona).DateTime, fila.Cell(3).GetValue<DateTime>());
             Assert.Equal(item.Estado.ToString(), fila.Cell(4).GetString());
             Assert.Equal(item.Total, fila.Cell(5).GetValue<decimal>());
         }
