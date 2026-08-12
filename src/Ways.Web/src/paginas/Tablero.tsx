@@ -368,7 +368,7 @@ function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPan
         <BotonDeDescarga
           ruta={rutasDeExportacion.rentabilidad({ idEmpresa, idPuntoVenta, desde, hasta, incluirEstimados })}
           etiqueta="Descargar"
-          onError={setErrorDescarga}
+          onError={setErrorDescarga} onInicio={() => setErrorDescarga('')}
         />
       </div>
       <div className="form-check form-switch mb-2">
@@ -690,12 +690,12 @@ export function Tablero() {
                   <BotonDeDescarga
                     ruta={rutasDeExportacion.ventasResumen({ idEmpresa, idPuntoVenta, desde, hasta, granularidad })}
                     etiqueta="Descargar ventas"
-                    onError={setErrorDescarga}
+                    onError={setErrorDescarga} onInicio={() => setErrorDescarga('')}
                   />
                   <BotonDeDescarga
                     ruta={rutasDeExportacion.gastosResumen({ idEmpresa, idPuntoVenta, desde, hasta, granularidad })}
                     etiqueta="Descargar gastos"
-                    onError={setErrorDescarga}
+                    onError={setErrorDescarga} onInicio={() => setErrorDescarga('')}
                   />
                 </div>
                 <div className="row g-3 mb-4">

@@ -1122,4 +1122,21 @@ describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
       ),
     )
   })
+
+  it('un retry exitoso limpia el banner de error de la descarga anterior', async () => {
+    mockearRutasBase()
+    const { ErrorApi } = await import('../api/cliente')
+    apiDescargarMock.mockRejectedValueOnce(new ErrorApi(403, 'prohibido', 'Sin permiso para exportar.'))
+    renderTablero()
+
+    const boton = await screen.findByRole('button', { name: 'Descargar ventas' })
+    fireEvent.click(boton)
+    expect(await screen.findByText('Sin permiso para exportar.')).toBeInTheDocument()
+
+    apiDescargarMock.mockResolvedValueOnce(undefined)
+    fireEvent.click(boton)
+    await waitFor(() => {
+      expect(screen.queryByText('Sin permiso para exportar.')).not.toBeInTheDocument()
+    })
+  })
 })

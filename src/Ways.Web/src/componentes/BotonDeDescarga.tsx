@@ -5,6 +5,8 @@ type PropsBotonDeDescarga = {
   ruta: string
   etiqueta?: string
   onError: (mensaje: string) => void
+  /** Se invoca al iniciar una descarga válida (tras la guarda) — limpia el error previo del caller. */
+  onInicio?: () => void
   className?: string
 }
 
@@ -16,7 +18,7 @@ type PropsBotonDeDescarga = {
  * navegan la SPA: se funnelean por `onError` al estado de la pantalla que monta el botón (proposal
  * decisión 8 — "a download that silently does nothing is this pattern's worst failure mode").
  */
-export function BotonDeDescarga({ ruta, etiqueta = 'Descargar', onError, className }: PropsBotonDeDescarga) {
+export function BotonDeDescarga({ ruta, etiqueta = 'Descargar', onError, onInicio, className }: PropsBotonDeDescarga) {
   const [descargando, setDescargando] = useState(false)
   const enVueloRef = useRef(false)
 
@@ -24,6 +26,7 @@ export function BotonDeDescarga({ ruta, etiqueta = 'Descargar', onError, classNa
     if (enVueloRef.current) return
     enVueloRef.current = true
     setDescargando(true)
+    onInicio?.()
 
     try {
       await api.descargar(ruta)
