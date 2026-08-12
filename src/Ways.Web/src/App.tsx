@@ -14,6 +14,7 @@ import { CompraEditor } from './paginas/CompraEditor'
 import { ConteoDeInventario } from './paginas/ConteoDeInventario'
 import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { Empresas } from './paginas/Empresas'
+import { Existencias } from './paginas/Existencias'
 import { HistoricoDeCajas } from './paginas/HistoricoDeCajas'
 import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
@@ -124,6 +125,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <Tesoreria />
+                </RutaProtegida>
+              }
+            />
+            {/* stage-11-exportacion-reportes (Slice 9, design: Web Composition, droppable a
+                Etapa 13): mismo gate que /tablero (Politicas.LecturaDeReportes) — vista de
+                gestión, no el balance del POS (Politicas.OperacionDePos de GET /api/stock). */}
+            <Route
+              path="/reportes/existencias"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <Existencias />
                 </RutaProtegida>
               }
             />

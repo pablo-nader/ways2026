@@ -845,6 +845,23 @@ export type PaginaDeMovimientosTesoreria = {
   tamanio: number
 }
 
+// --- Existencias (stage-11-exportacion-reportes, Slice 9 — droppable a Etapa 13) — espejo de
+// `Ways.Application.Reportes.Contratos`. Sin fecha/zona horaria: el stock es estado ACTUAL, no
+// tiene dimensión temporal (a diferencia del resto de los reportes de esta etapa).
+
+/** Fila de `GET /api/reportes/stock/existencias` — espejo de `FilaExistencia`. */
+export type FilaExistencia = {
+  idArticulo: number
+  nombre: string
+  cantidad: number
+}
+
+/** Respuesta de `GET /api/reportes/stock/existencias` — espejo de `Existencias`. */
+export type Existencias = {
+  idPuntoVenta: number
+  filas: FilaExistencia[]
+}
+
 // --- POS: checkout (stage-5-pos-ventas, Slice 6 → wireado en Slice 7) ---
 // Espejo de `Ways.Application.Ventas.Contratos` (confirmado contra el DTO real de
 // `POST /api/ventas`, mergeado en Slice 4) — usado por `ventas.ts` (mappers) y `Pos.tsx`
