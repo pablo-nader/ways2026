@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -216,8 +216,13 @@ describe('Existencias — reporte (stage-11-exportacion-reportes, Slice 9 — we
     await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
     expect(await screen.findByText('segunda-respuesta')).toBeInTheDocument()
 
-    resolverPrimera(existenciasFixture([filaFixture({ idArticulo: 1, nombre: 'primera-respuesta-vieja' })]))
-    await waitFor(() => expect(screen.queryByText('primera-respuesta-vieja')).not.toBeInTheDocument())
+    // El flush del microtask va DENTRO de act: un waitFor solo pasaría en su primer tick,
+    // antes de que el .then stale aterrice, y saldría verde sin probar nada.
+    await act(async () => {
+      resolverPrimera(existenciasFixture([filaFixture({ idArticulo: 1, nombre: 'primera-respuesta-vieja' })]))
+      await primera
+    })
+    expect(screen.queryByText('primera-respuesta-vieja')).not.toBeInTheDocument()
     expect(screen.getByText('segunda-respuesta')).toBeInTheDocument()
   })
 })
