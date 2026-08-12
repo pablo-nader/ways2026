@@ -8,6 +8,7 @@ using Ways.Application.Caja;
 using Ways.Application.Gastos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
+using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Gastos;
 using Ways.Domain.Usuarios;
@@ -148,6 +149,14 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
+    private static async Task RegistrarRetiroAsync(HttpClient cliente, int idTurno, decimal importe)
+    {
+        var respuesta = await cliente.PostAsJsonAsync(
+            $"/api/caja/turnos/{idTurno}/movimientos",
+            new SolicitudDeMovimiento(TipoMovimientoCaja.Retiro, importe, "Retiro de prueba"));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+    }
+
     // ---- task 5b.7: 4-test pattern -----------------------------------------------------------
 
     [Fact]
@@ -284,9 +293,10 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         await SembrarVentaAsync(ctx, turno.Id, 100m);
         await SembrarVentaAsync(ctx, turno.Id, 200m);
         await RegistrarGastoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 30m);
+        await RegistrarRetiroAsync(ctx.Admin, turno.Id, 25m);
 
-        // esperado efectivo = 500 (fondo) + 100 + 200 - 30 (gasto) = 770.
-        await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 770m);
+        // esperado efectivo = 500 (fondo) + 100 + 200 - 30 (gasto) - 25 (retiro) = 745.
+        await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 745m);
 
         var detalle = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{turno.Id}/detalle", OpcionesJson);
         Assert.NotNull(detalle);
@@ -314,13 +324,24 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Contains(
             filas, f => f.Seccion == "Medios de pago" && f.Detalle == $"Medio {ctx.IdMedioEfectivo}" && f.Importe == esperadoEfectivo);
 
+        // Igualdad POR TICKET (no solo cantidad/suma agregada): cada ticket sembrado tiene que
+        // aparecer con su propio número visible e importe — los dos tickets sembrados arriba
+        // tienen totales distintos (100/200) para que una rotación de importes entre filas sea
+        // detectable.
         var filasTickets = filas.Where(f => f.Seccion == "Tickets").ToList();
         Assert.Equal(detalle.Tickets.Count, filasTickets.Count);
-        Assert.Equal(detalle.Tickets.Sum(t => t.Total), filasTickets.Sum(f => f.Importe));
+        Assert.All(
+            detalle.Tickets,
+            ticket => Assert.Contains(filasTickets, f => f.Detalle == ticket.NumeroVisible && f.Importe == ticket.Total));
 
-        var gasto = Assert.Single(detalle.Gastos);
-        var filaGasto = Assert.Single(filas, f => f.Seccion == "Gastos");
-        Assert.Equal(gasto.Importe, filaGasto.Importe);
+        var filasGastos = filas.Where(f => f.Seccion == "Gastos").ToList();
+        Assert.Equal(detalle.Gastos.Count, filasGastos.Count);
+        Assert.All(
+            detalle.Gastos,
+            gasto => Assert.Contains(filasGastos, f => f.Detalle == gasto.Categoria.ToString() && f.Importe == gasto.Importe));
+
+        var filaRetiros = Assert.Single(filas, f => f.Seccion == "Retiros");
+        Assert.Equal(detalle.Resumen.Egresos.Retiros, filaRetiros.Importe);
     }
 
     [Fact]

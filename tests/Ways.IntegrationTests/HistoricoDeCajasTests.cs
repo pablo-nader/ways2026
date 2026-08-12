@@ -303,10 +303,11 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
             $"&hasta={Uri.EscapeDataString(hasta.ToString("O"))}" +
             (idPuntoVenta is { } pv ? $"&idPuntoVenta={pv}" : string.Empty) + $"&formato={formato}");
 
-    /// <summary>task 5a.9 (spec: G2 Listing Export Figures Equal The JSON Listing): compara la
-    /// columna <c>Diferencia</c> del workbook contra <see cref="FilaDeHistoricoDeCajas.Diferencia"/>
-    /// TURNO POR TURNO (no solo la suma) — un turno ausente del export o desviado en su propia
-    /// figura queda expuesto aunque el total combinado coincida por casualidad.</summary>
+    /// <summary>task 5a.9 (spec: G2 Listing Export Figures Equal The JSON Listing): compara las
+    /// 8 columnas del workbook (Turno, Punto de venta, Apertura, Cierre, Esperado, Declarado,
+    /// Diferencia, Retiros) contra <see cref="FilaDeHistoricoDeCajas"/> TURNO POR TURNO (no solo
+    /// la suma) — un turno ausente del export o desviado en cualquiera de sus columnas queda
+    /// expuesto aunque el total combinado coincida por casualidad.</summary>
     [Fact]
     public async Task ElExportDelHistoricoEsIgualAlListadoJsonTurnoPorTurno()
     {
@@ -331,21 +332,46 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
+        // Las 8 columnas completas, no solo Diferencia — Apertura/Cierre se comparan
+        // zone-converted (mismo patrón que VentasListadoExportTests) porque el mapper convierte
+        // el DateTimeOffset a America/Argentina/Buenos_Aires antes de escribir la celda.
+        var zona = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");
         const int primeraFilaDeDatos = 7;
-        var diferenciaPorTurno = new Dictionary<int, decimal>();
+        var filasPorTurno = new Dictionary<int, (
+            int IdPuntoVenta, DateTime Apertura, DateTime Cierre, decimal Esperado, decimal Declarado,
+            decimal Diferencia, decimal Retiros)>();
         for (var fila = primeraFilaDeDatos; !hoja.Cell(fila, 1).Value.IsBlank; fila++)
         {
-            diferenciaPorTurno[hoja.Cell(fila, 1).GetValue<int>()] = hoja.Cell(fila, 7).GetValue<decimal>();
+            filasPorTurno[hoja.Cell(fila, 1).GetValue<int>()] = (
+                hoja.Cell(fila, 2).GetValue<int>(),
+                hoja.Cell(fila, 3).GetValue<DateTime>(),
+                hoja.Cell(fila, 4).GetValue<DateTime>(),
+                hoja.Cell(fila, 5).GetValue<decimal>(),
+                hoja.Cell(fila, 6).GetValue<decimal>(),
+                hoja.Cell(fila, 7).GetValue<decimal>(),
+                hoja.Cell(fila, 8).GetValue<decimal>());
         }
 
         foreach (var item in listado.Items)
         {
             Assert.True(
-                diferenciaPorTurno.TryGetValue(item.IdTurnoCaja, out var diferencia),
+                filasPorTurno.TryGetValue(item.IdTurnoCaja, out var fila),
                 $"Falta el turno {item.IdTurnoCaja} en el export.");
-            Assert.Equal(item.Diferencia, diferencia);
+            Assert.Equal(item.IdPuntoVenta, fila.IdPuntoVenta);
+            // Truncado a segundos: el double de OLE Automation date que ClosedXML persiste no
+            // retiene la precisión de microsegundos de Postgres — sin el truncado, la comparación
+            // flakearía por redondeo del formato xlsx, no por un bug real (mismo criterio que el
+            // comentario de PreciosEndpointsTests sobre no comparar precisión distinta).
+            Assert.Equal(TruncarASegundos(TimeZoneInfo.ConvertTime(item.FechaApertura, zona).DateTime), TruncarASegundos(fila.Apertura));
+            Assert.Equal(TruncarASegundos(TimeZoneInfo.ConvertTime(item.FechaCierre, zona).DateTime), TruncarASegundos(fila.Cierre));
+            Assert.Equal(item.Esperado, fila.Esperado);
+            Assert.Equal(item.Declarado, fila.Declarado);
+            Assert.Equal(item.Diferencia, fila.Diferencia);
+            Assert.Equal(item.Egresos.Retiros, fila.Retiros);
         }
     }
+
+    private static DateTime TruncarASegundos(DateTime valor) => valor.AddTicks(-(valor.Ticks % TimeSpan.TicksPerSecond));
 
     [Fact]
     public async Task UnVendedorEsRechazadoDelExportDelHistorico()
