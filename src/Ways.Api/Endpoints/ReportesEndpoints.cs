@@ -4,6 +4,7 @@ using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Exportacion;
+using Ways.Application.Parametros;
 using Ways.Application.Reportes;
 using Ways.Domain.Reportes;
 
@@ -337,6 +338,49 @@ public static class ReportesEndpoints
         .WithSummary(
             "Histórico de cierres (turnos cerrados únicamente): totales sumados de los arqueos ya " +
             "persistidos, nunca re-derivados. Un turno abierto nunca aparece acá.");
+
+        // stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation, "G3:
+        // MovimientosTesoreria by PV, OrderBy(m => m.Id), paginated. Zero derivation."; spec
+        // tesoreria: Tesorería Book Has A Read/Listing Endpoint): gate heredado del grupo, sin
+        // política propia. idPuntoVenta es OBLIGATORIO (a diferencia de /cajas): mezclar puntos de
+        // venta rompería el significado de la cadena Inicio/Final (design decisión 11).
+        grupo.MapGet("/tesoreria", (
+            ServicioDeTesoreria servicio, int idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta,
+            int? pagina, int? tamanio, CancellationToken ct) =>
+            servicio.ListarAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
+        .WithSummary(
+            "Libro de tesorería encadenado de un punto de venta, ordenado por id (nunca por " +
+            "fecha): cero derivación, cada fila ya trae su inicio/final persistidos al cierre.");
+
+        // Sibling declarado inmediatamente después de su ruta fuente (design: Data Flow) — hereda
+        // LecturaDeReportes por co-locación. `desde`/`hasta` son OBLIGATORIOS acá (mismo criterio
+        // que /api/ventas/export): un export es por definición un rango acotado, y el nombre de
+        // archivo determinístico necesita ambas fechas.
+        grupo.MapGet("/tesoreria/export", async (
+            ServicioDeTesoreria servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
+            int idPuntoVenta, DateTimeOffset desde, DateTimeOffset hasta, string formato, CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var filas = await servicio.ListarParaExportacionAsync(
+                idPuntoVenta, desde, hasta, opciones.Value.TopeDeFilas, ct);
+
+            var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
+            var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
+            var desdeFecha = DateOnly.FromDateTime(desde.UtcDateTime);
+            var hastaFecha = DateOnly.FromDateTime(hasta.UtcDateTime);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, empresa, $"PV {idPuntoVenta}", desdeFecha, hastaFecha, zonaId);
+            var tabla = ExportacionDeCaja.De(filas, ctx, zona);
+
+            var bytes = exportador.Generar(tabla);
+            var nombre = NombreDeArchivo.Construir("tesoreria", $"pv{idPuntoVenta}", desdeFecha, hastaFecha);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary("Export XLSX de /tesoreria: mismos parámetros y figuras, mismo orden de cadena.");
 
         return app;
     }

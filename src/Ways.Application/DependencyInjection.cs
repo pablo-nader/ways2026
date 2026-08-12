@@ -104,6 +104,10 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeHistoricoDeCajas>();
         services.AddScoped<LectorDeLineasDelTurno>();
 
+        // stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation): G3, el
+        // libro de tesorería — cero derivación, solo lectura encadenada por Id.
+        services.AddScoped<ServicioDeTesoreria>();
+
         return services;
     }
 }

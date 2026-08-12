@@ -164,3 +164,31 @@ public sealed record DetalleDeTurno(
     ResumenDeTurno Resumen,
     IReadOnlyList<Ways.Application.Ventas.ComprobanteListado> Tickets,
     IReadOnlyList<Ways.Application.Gastos.GastoListado> Gastos);
+
+// ---- stage-11-exportacion-reportes, Slice 7 (design: G2/G3 — minimal aggregation, "G3:
+// MovimientosTesoreria by PV, OrderBy(m => m.Id), paginated. Zero derivation."; spec tesoreria:
+// Tesorería Book Has A Read/Listing Endpoint): G3, el libro encadenado ----
+
+/// <summary>Fila de <c>GET /api/reportes/tesoreria</c> — proyección de
+/// <see cref="MovimientoTesoreria"/> SIN <c>IdTenant</c> (nunca expuesto en una respuesta, doc 09),
+/// mismo criterio "mirror the entity's real columns" que <see cref="FilaDeHistoricoDeCajas"/>. Cero
+/// derivación: <see cref="Inicio"/>/<see cref="Final"/> ya vienen calculados y persistidos por
+/// <see cref="ServicioDeTurnos"/> al cierre (design decisión 6 de stage-6-turnos-caja) — este
+/// contrato solo los transporta.</summary>
+public sealed record MovimientoTesoreriaListado(
+    int Id,
+    int IdPuntoVenta,
+    DateTimeOffset Fecha,
+    TipoMovimientoTesoreria Tipo,
+    int? IdTurnoCaja,
+    string Concepto,
+    decimal Inicio,
+    decimal Ingreso,
+    decimal Egreso,
+    decimal Final,
+    int IdEmpleado);
+
+/// <summary>Página de <c>GET /api/reportes/tesoreria</c> — mismo shape que
+/// <see cref="PaginaDeHistoricoDeCajas"/>.</summary>
+public sealed record PaginaDeMovimientosTesoreria(
+    IReadOnlyList<MovimientoTesoreriaListado> Items, int Total, int Pagina, int Tamanio);
