@@ -920,20 +920,54 @@ correctly to PDF via the browser's own "Guardar como PDF", no dedicated
 print route or second fetch. **Rollback**: revert the branch — CSS/markup
 only, no data path touched.
 
-- [ ] 8.1 Modify `src/Ways.Web/src/paginas/CuentaCorriente.tsx`: add a
+- [x] 8.1 Modify `src/Ways.Web/src/paginas/CuentaCorriente.tsx`: add a
   print layout section + `d-print-none` on chrome (filters, nav, download
   button) — same component, same fetch, `@media print` only. *(design
-  decision 13 — no dedicated print route, no second fetch)*
-- [ ] 8.2 Modify `src/Ways.Web/src/paginas/CajaZ.tsx`: same treatment for
-  the turno detail print layout.
-- [ ] 8.3 Add/modify the shared print stylesheet (`@media print` rules:
+  decision 13 — no dedicated print route, no second fetch)* — an
+  "Imprimir" button (`window.print()`) was added to the toolbar (this
+  screen had no download button to reuse — Slice 4 wired `BotonDeDescarga`
+  into Tablero only, never into `CuentaCorriente`, contra the design's
+  File Changes table row); `d-print-none` applied to Imprimir/"Volver a
+  clientes", the filtros row, and the Ajuste-manual/Actualizar-precios/
+  Ingresar-pago button row (Saldo/Límite/Disponibilidad stay visible when
+  printed). Print-only header block shows Rango (desde–hasta or "Histórico
+  completo") and Generado (fecha/hora + usuario) — Cliente is already in
+  the `Box` title, which prints unchanged. Empresa/PV are NOT rendered:
+  neither is loaded client-side today (cuenta corriente is client-level,
+  not PV-scoped) and design decision 13 forbids a second fetch to get
+  them — recorded gap, not an oversight.
+- [x] 8.2 Modify `src/Ways.Web/src/paginas/CajaZ.tsx`: same treatment for
+  the turno detail print layout. — "Imprimir" added next to the existing
+  `BotonDeDescarga`, both `d-print-none`. Print-only header shows Generado
+  (fecha/hora + usuario) only — no Rango (a single turno, not a ranged
+  report) and no Empresa/PV (`DetalleDeTurno`/`ResumenDeTurno` carry
+  neither; same no-second-fetch constraint as 8.1).
+- [x] 8.3 Add/modify the shared print stylesheet (`@media print` rules:
   page margins, hide `d-print-none`, table borders for print legibility).
-- [ ] 8.4 [P] `d-print-none`-presence tests on both pages (per the design's
+  — new `src/Ways.Web/src/estilos/impresion.css`, imported from `main.tsx`;
+  also hides the app-wide nav (`#top`, `Layout.tsx`) by id, so no
+  `Layout.tsx` edit was needed — CSS-only, matching this slice's
+  "CSS/markup only" rollback note.
+- [x] 8.4 [P] `d-print-none`-presence tests on both pages (per the design's
   recorded exemption: print rendering itself has no automated assertion
-  beyond this presence check — verified by eye).
-- [ ] 8.5 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 8.6 Branch `feat/stage11-slice8-vistas-impresion` off `main` (parent:
-  slice 6b); PR; merge stacked-to-main.
+  beyond this presence check — verified by eye). — extended
+  `CuentaCorriente.test.tsx`/`CajaZ.test.tsx`: `d-print-none` presence on
+  Imprimir/Volver/Descargar/filtros/acciones, `window.print()` invoked on
+  click, and the print header renders the REAL screen values (mutation-proof-tests:
+  clause named — "rango/usuario come from state, not a hardcoded string" —
+  mutation run: hardcoding the rango/usuario in each component made the
+  corresponding test fail; reverted, green again).
+- [x] 8.5 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
+  this `sdd-apply` run (explicit boundary: no push/PR); left for the
+  orchestrator's PR-validation phase, same precedent as every prior slice
+  (1b.13/2.9/3.9/5a.11/5b.10/6a.4/7.13).
+- [x] 8.6 Branch `feat/stage11-slice8-vistas-impresion` off `main` (parent:
+  slice 6b); PR; merge stacked-to-main. — branch
+  `feat/stage11-slice8-print-views` created off `main` per the
+  orchestrator's explicit instruction (isolated worktree; name differs from
+  the task's suggested branch name, same precedent as
+  1b.14/2.10/3.10/5a.12/5b.11/6a.5/7.14); PR/merge left for the
+  orchestrator.
 
 **Test plan**: `d-print-none` presence only — print rendering is an
 explicitly recorded exemption (design Testing Strategy), verified by eye.
