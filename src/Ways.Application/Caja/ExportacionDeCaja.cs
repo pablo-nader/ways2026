@@ -42,14 +42,8 @@ public static class ExportacionDeCaja
             .ToList();
 
         return new TablaExportable("Tesorería", ctx, ColumnasTesoreria, celdas);
-/// Mappers puros de un response record de <c>Ways.Application.Caja</c> ya materializado a
-/// <see cref="TablaExportable"/> (design: Interfaces/Contracts — "un mapper por capability") — la
-/// etapa 11 nunca vuelve a consultar la base para exportar. <see cref="De(System.Collections.Generic.IReadOnlyList{FilaDeHistoricoDeCajas},ContextoDeExportacion,System.TimeZoneInfo)"/>
-/// llegó en Slice 5b (el listado G2 diferido de Slice 5a); <see cref="De(DetalleDeTurno,ContextoDeExportacion,System.TimeZoneInfo)"/>
-/// es el Z-report del turno, también Slice 5b.
-/// </summary>
-public static class ExportacionDeCaja
-{
+    }
+
     private static readonly IReadOnlyList<ColumnaExportable> ColumnasHistoricoDeCajas =
     [
         new ColumnaExportable("Turno", TipoDeColumna.Entero),
