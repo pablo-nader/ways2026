@@ -143,54 +143,69 @@ route.
 live, equal to its JSON endpoint, gated by co-location, refusing over-cap
 requests. **Rollback**: revert the branch; no state to unwind.
 
-- [ ] 1b.1 Create `src/Ways.Application/Exportacion/FormatoDeExportacion.cs`:
+- [x] 1b.1 Create `src/Ways.Application/Exportacion/FormatoDeExportacion.cs`:
   `Parsear(string)` → `ErrorDominio("formato_no_soportado", …, 400)` for
   anything but `xlsx`; missing `formato` stays a framework 400 (non-nullable
   required query param). *(design decision 9; spec exportacion-de-reportes:
   Export Route Convention And Policy Inheritance By Co-Location)*
-- [ ] 1b.2 Create `src/Ways.Application/Exportacion/GuardaDeTope.cs`:
+- [x] 1b.2 Create `src/Ways.Application/Exportacion/GuardaDeTope.cs`:
   `Exigir(TablaExportable, int topeDeFilas)` → `ErrorDominio(
   "exportacion_demasiado_grande", …, 400)` naming the actual row count when
   `Filas.Count > topeDeFilas`. Runs on the mapped table's row count for
   aggregates — no query at all. *(design decisions 5-6; spec
   exportacion-de-reportes: Row Cap Refuses, Never Truncates)*
-- [ ] 1b.3 Create `src/Ways.Api/Exportacion/ResultadoDeExportacion.cs`:
+- [x] 1b.3 Create `src/Ways.Api/Exportacion/ResultadoDeExportacion.cs`:
   `Content-Disposition: attachment; filename="…"; filename*=UTF-8''…` (ASCII
   + RFC 5987) plus
   `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`.
-- [ ] 1b.4 Create `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
+- [x] 1b.4 Create `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
   `De(ResumenDeVentas respuesta, ContextoDeExportacion ctx)` — pure mapper,
   no database: columns Período(Texto)/Neto(Moneda)/TX(Entero)/Ticket
   promedio(Moneda), one row per bucket + totals row, `TicketPromedio` null
   ⇒ empty cell. *(design: Data Flow; Interfaces/Contracts — mappers)*
-- [ ] 1b.5 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`: `GET
+- [x] 1b.5 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`: `GET
   /ventas/resumen/export` declared immediately after `/ventas/resumen`
   inside the same `MapGroup` (`LecturaDeReportes` inherited, no separate
   policy declared). *(design: Data Flow — end-to-end)*
-- [ ] 1b.6 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+- [x] 1b.6 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   no pending changes.
-- [ ] 1b.7 [P] **Equality test**: call the JSON route and the export with
+- [x] 1b.7 [P] **Equality test**: call the JSON route and the export with
   identical query strings, read the workbook back with ClosedXML, assert
   every figure matches. *(design decision 8; spec: No Re-Query — Exported
   Figures Equal Endpoint Figures)*
-- [ ] 1b.8 [P] **403 test**: a role one step below `LecturaDeReportes`
+- [x] 1b.8 [P] **403 test**: a role one step below `LecturaDeReportes`
   (Vendedor) is rejected on `/ventas/resumen/export`.
-- [ ] 1b.9 [P] **Cap-refusal mutation target**: bind `OpcionesDeExportacion.
+- [x] 1b.9 [P] **Cap-refusal mutation target**: bind `OpcionesDeExportacion.
   TopeDeFilas` to `3` in the integration fixture, seed `4` rows, assert
   `400 exportacion_demasiado_grande` naming `4`, no bytes returned. Record
   mutation evidence: delete the `if` in `GuardaDeTope.Exigir` → the test
   MUST fail; revert → green. *(design decision 5; mutation-proof-tests)*
-- [ ] 1b.10 [P] **At-cap success test**: exactly `3` seeded rows with the
+  — IMPLEMENTATION NOTE: `/ventas/resumen` is an aggregate (design decision
+  6), so `GuardaDeTope` guards `TablaExportable.Filas.Count`, not a
+  `COUNT(*)`; there is no business row to "seed" toward 4. Per the tasks.md
+  escape hatch for aggregates, the 4 exported rows come from the SERIES
+  LENGTH instead: a 3-day `Granularidad.Dia` range always yields 3 buckets
+  (gap-fill, stage-10 decision 4) + 1 totals row = 4 `Filas`, with `TopeDeFilas`
+  bound to `3` via `WithWebHostBuilder`. Mutation run and recorded (see
+  commit body): `if` neutered → test failed (200 instead of 400); reverted →
+  green.
+- [x] 1b.10 [P] **At-cap success test**: exactly `3` seeded rows with the
   fixture's tope bound to `3` → `200` with `3` data rows. *(spec: An
-  At-Cap Request Succeeds)*
-- [ ] 1b.11 [P] **Header block test**: rows 1-4 state empresa, PV or
+  At-Cap Request Succeeds)* — same series-length substitution as 1b.9: a
+  2-day range yields 2 buckets + 1 totals row = 3 `Filas`.
+- [x] 1b.11 [P] **Header block test**: rows 1-4 state empresa, PV or
   "Todos", the date range, and generation instant/zone/user; table header
   starts row 6.
-- [ ] 1b.12 [P] `FormatoDeExportacionTests`: `?formato=pdf` → `400
+- [x] 1b.12 [P] `FormatoDeExportacionTests`: `?formato=pdf` → `400
   formato_no_soportado`; `?formato=xlsx` parses.
-- [ ] 1b.13 Run `judgment-day`; fix; re-judge until clean.
+- [ ] 1b.13 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE
+  for this `sdd-apply` run (explicit boundary: no push/PR); left for the
+  orchestrator's PR-validation phase.
 - [ ] 1b.14 Branch `feat/stage11-slice1b-primer-export` off `main` (parent:
-  slice 1a); PR; merge stacked-to-main.
+  slice 1a); PR; merge stacked-to-main. — branch `feat/stage11-slice1b-
+  ruta-export` created per the orchestrator's explicit instruction (name
+  differs from the task's suggested branch name); PR/merge left for the
+  orchestrator.
 
 **Test plan**: equality (1b.7), 403 (1b.8), cap-refusal with mutation
 evidence (1b.9), at-cap (1b.10), header/coverage-shape (1b.11), formato
