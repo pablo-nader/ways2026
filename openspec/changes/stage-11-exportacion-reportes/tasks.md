@@ -501,7 +501,10 @@ revert the branch.
   `UnTurnoAbiertoQuedaExcluidoDelListadoJuntoAUnoCerradoDelMismoPuntoDeVenta`
   FAILED (500 — the open turno enters the projection and `FechaCierre!.Value`
   throws `NullReferenceException`, since an open turno never has
-  `fecha_cierre`); reverted → green (verified again after revert).
+  `fecha_cierre`); reverted → green (verified again after revert). The
+  Cerrado-filter evidence was strengthened in review with a non-crashing
+  mutation (estado broadened + null-coalesced `FechaCierre` → the
+  `DoesNotContain` assertion still discriminates, no NRE crash needed).
 - [ ] 5a.9 [P] Equality test on the export vs the JSON listing (combined
   `diferencia` sums equal). *(spec: G2 Listing Export Figures Equal The
   JSON Listing)* — DEFERRED with 5a.4/5a.5 (no export exists yet in this

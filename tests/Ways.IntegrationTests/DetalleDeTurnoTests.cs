@@ -217,6 +217,38 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(30m, gasto.Importe);
     }
 
+    /// <summary>judgment-day fix (Judge B, MAJOR, mutation-proven): el filtro por
+    /// <c>IdTurnoCaja</c> en <see cref="LectorDeLineasDelTurno"/> es lo único que separa el detalle
+    /// de DOS turnos del MISMO tenant — RLS y los fixtures de un solo turno no lo cubren. Se abren y
+    /// cierran dos turnos consecutivos del mismo PV, cada uno con su propio ticket y gasto (importes
+    /// únicos), y se verifica que el detalle del segundo turno solo trae sus propias filas.</summary>
+    [Fact]
+    public async Task ElDetalleDeUnTurnoExcluyeLasLineasDeOtroTurnoDelMismoTenant()
+    {
+        var ctx = await PrepararAsync(nameof(ElDetalleDeUnTurnoExcluyeLasLineasDeOtroTurnoDelMismoTenant));
+
+        var turnoA = await AbrirTurnoAsync(ctx, ctx.Admin, 0m);
+        await SembrarVentaAsync(ctx, turnoA.Id, 555m);
+        await RegistrarGastoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 45m);
+        await CerrarTurnoAsync(ctx.Admin, turnoA.Id, ctx.IdMedioEfectivo, 510m);
+
+        var turnoB = await AbrirTurnoAsync(ctx, ctx.Admin, 0m);
+        await SembrarVentaAsync(ctx, turnoB.Id, 321m);
+        await RegistrarGastoAsync(ctx, ctx.Admin, ctx.IdMedioEfectivo, 17m);
+        await CerrarTurnoAsync(ctx.Admin, turnoB.Id, ctx.IdMedioEfectivo, 304m);
+
+        var detalle = await ctx.Admin.GetFromJsonAsync<DetalleDeTurno>($"/api/caja/turnos/{turnoB.Id}/detalle", OpcionesJson);
+
+        Assert.NotNull(detalle);
+        var ticket = Assert.Single(detalle!.Tickets);
+        Assert.Equal(321m, ticket.Total);
+        Assert.DoesNotContain(detalle.Tickets, t => t.Total == 555m);
+
+        var gasto = Assert.Single(detalle.Gastos);
+        Assert.Equal(17m, gasto.Importe);
+        Assert.DoesNotContain(detalle.Gastos, g => g.Importe == 45m);
+    }
+
     // ---- task 5b.8: el Vendedor lee el Z-report del turno que él mismo cerró ------------------
 
     [Fact]
