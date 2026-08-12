@@ -674,34 +674,86 @@ cross-turno matrix at the UI layer.
 G3 read endpoint live, chain-ordered, exportable, `/caja/tesoreria` screen.
 **Rollback**: revert the branch.
 
-- [ ] 7.1 Create `src/Ways.Application/Caja/ServicioDeTesoreria.cs`:
+> **APPLY-RUN NOTE (isolated worktree, branch `feat/stage11-slice7-tesoreria`,
+> explicit orchestrator instruction)**: this batch's scope was the G3 backend
+> only — the JSON listing endpoint, its export sibling, and their tests
+> (7.1-7.4, 7.7-7.11) — per explicit boundary "NO web". `ExportacionDeCaja.cs`
+> did not exist yet (5a/5b deferred it, see their APPLY-RUN NOTEs), so 7.3
+> CREATES the file (with only the tesorería mapper) instead of extending it;
+> a future G2 batch adds its own `De` overload to the same file. **7.5, 7.6,
+> 7.12 (the web screen, routing/nav, descriptor tests) are explicitly OUT OF
+> SCOPE for this run**, deferred to a follow-up batch. **7.13-7.14
+> (judgment-day, PR, merge) are OUT OF SCOPE** (explicit boundary: no
+> push/PR) — left for the orchestrator's PR-validation phase, same
+> precedent as slice 1b/5a. `idPuntoVenta` is a REQUIRED route parameter
+> (unlike G2's optional one): mixing points of venta would break the
+> chain's own meaning (design decision 11) — a deviation from the literal
+> task wording ("by PV and date range") worth flagging for verify.
+
+- [x] 7.1 Create `src/Ways.Application/Caja/ServicioDeTesoreria.cs`:
   `ListarAsync` — `MovimientosTesoreria` by PV and date range, `OrderBy(m
   => m.Id)` (never by `fecha` — the chain's meaning is insertion order,
   design decision 11), paginated. Zero derivation. *(proposal decision 6;
-  spec tesoreria: Tesorería Book Has A Read/Listing Endpoint)*
-- [ ] 7.2 Modify `ReportesEndpoints.cs`: `GET /tesoreria` under
-  `LecturaDeReportes`.
-- [ ] 7.3 Extend `ExportacionDeCaja.cs`: `De` mapper for the tesorería book.
-- [ ] 7.4 Modify `ReportesEndpoints.cs`: `GET /tesoreria/export` sibling.
+  spec tesoreria: Tesorería Book Has A Read/Listing Endpoint)* — includes
+  `ListarParaExportacionAsync` sharing a private `ConstruirQuery` (design
+  decisión 7, same discipline as `ServicioDeVentas`); `Contratos.cs` extended
+  with `MovimientoTesoreriaListado`/`PaginaDeMovimientosTesoreria`, appended
+  at the end of the file (append-anchor discipline).
+- [x] 7.2 Modify `ReportesEndpoints.cs`: `GET /tesoreria` under
+  `LecturaDeReportes`. — appended after `/cajas`, at the end of the group
+  (append-anchor discipline, parallel sibling slice safe).
+- [x] 7.3 Extend `ExportacionDeCaja.cs`: `De` mapper for the tesorería book.
+  — CREATES the file (did not exist yet, see APPLY-RUN NOTE above), with
+  only the tesorería `De` overload; columns ordered
+  inicio/ingreso/egreso/final/concepto/empleado/fecha per task 7.5's pinned
+  order.
+- [x] 7.4 Modify `ReportesEndpoints.cs`: `GET /tesoreria/export` sibling. —
+  appended immediately after `/tesoreria` (co-location); resolves
+  empresa/zona via the existing `AlcanceDeListadoHttp.ResolverAsync`, no
+  duplicated lookup.
 - [ ] 7.5 Create `src/Ways.Web/src/paginas/Tesoreria.tsx`: the book table
   (inicio/ingreso/egreso/final/concepto/empleado/fecha), `BotonDeDescarga`.
+  — DEFERRED (see APPLY-RUN NOTE above, "NO web").
 - [ ] 7.6 Modify `App.tsx`/`Layout.tsx`: `/caja/tesoreria` route
-  (`LecturaDeReportes`) and nav entry.
-- [ ] 7.7 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
-  pending changes.
-- [ ] 7.8 [P] The house 4-test pattern for the endpoint.
-- [ ] 7.9 [P] **Chain-order assertion**: three chained rows with `final`
+  (`LecturaDeReportes`) and nav entry. — DEFERRED with 7.5.
+- [x] 7.7 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
+  pending changes. — confirmed clean (`--project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure`).
+- [x] 7.8 [P] The house 4-test pattern for the endpoint. — `TesoreriaTests.cs`:
+  cross-tenant absence, PV-filter discrimination (mutation-proof: `Where(m =>
+  m.IdPuntoVenta == idPuntoVenta)` replaced with `AsQueryable()` → the
+  discrimination test FAILED; reverted → green), date-range discrimination,
+  hand-computed fixture equality (full field set).
+- [x] 7.9 [P] **Chain-order assertion**: three chained rows with `final`
   values 60, 100, 145 → returned in that order, each row's `inicio` equal
-  to the previous row's `final`. *(spec: Book Preserves Chain Order)*
-- [ ] 7.10 [P] Equality test on the export vs the JSON book. *(spec: The
-  Book Has An Export Sibling Equal To Its JSON)*
-- [ ] 7.11 [P] 403 test: Vendedor rejected on both routes. *(spec: A
-  Vendedor Is Rejected From The Tesorería Book)*
+  to the previous row's `final`. *(spec: Book Preserves Chain Order)* —
+  `TresFilasEncadenadasSeDevuelvenEnOrdenDeCadena`. MUTATION RUN AND
+  RECORDED: `OrderBy(m => m.Id)` replaced with `OrderByDescending(m =>
+  m.Id)` in `ServicioDeTesoreria.ListarAsync` → test FAILED (rows returned
+  145/100/60, `Assert.Equal([id1,id2,id3], …)` mismatched); reverted →
+  green (re-verified).
+- [x] 7.10 [P] Equality test on the export vs the JSON book. *(spec: The
+  Book Has An Export Sibling Equal To Its JSON)* — `TesoreriaExportTests.
+  ElExportEsIgualAlLibroJsonFilaPorFila`, per-row comparison (inicio/
+  ingreso/egreso/final/concepto/empleado) via ClosedXML read-back. Cap
+  guard tests (`UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadReal`/
+  `…ExactamenteEnElTopeSeAcepta`) added too — `GuardaDeTope` itself already
+  has mutation evidence recorded in slice 1b/3 (shared code, not a new
+  clause), so no fresh mutation run was needed for the cap.
+- [x] 7.11 [P] 403 test: Vendedor rejected on both routes. *(spec: A
+  Vendedor Is Rejected From The Tesorería Book)* — `UnVendedorEsRechazado
+  DelLibroDeTesoreria` (JSON) + `UnVendedorEsRechazadoDelExportDeTesoreria`
+  (export); `UnSupervisorLeeElLibroDeTesoreria` (200) alongside.
 - [ ] 7.12 [P] `Tesoreria.test.tsx`: renders the book in chain order,
-  download busy-state, role gating. Per `web-descriptor-tests`.
-- [ ] 7.13 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 7.14 Branch `feat/stage11-slice7-tesoreria` off `main` (parent:
-  slices 1b + 4); PR; merge stacked-to-main.
+  download busy-state, role gating. Per `web-descriptor-tests`. — DEFERRED
+  with 7.5/7.6.
+- [ ] 7.13 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
+  this `sdd-apply` run (explicit boundary: no push/PR); left for the
+  orchestrator's PR-validation phase, same precedent as 1b.13/5a.11.
+- [x] 7.14 Branch `feat/stage11-slice7-tesoreria` off `main` (parent:
+  slices 1b + 4); PR; merge stacked-to-main. — branch created off `main`
+  per the orchestrator's explicit instruction (isolated worktree); PR/merge
+  left for the orchestrator, same precedent as 1b.14/5a.12.
 
 **Test plan**: 4-test pattern, chain-order assertion, equality, 403,
 descriptor tests.
