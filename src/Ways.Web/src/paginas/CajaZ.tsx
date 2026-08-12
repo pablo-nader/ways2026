@@ -3,6 +3,7 @@ import { useParams } from 'react-router'
 import { clienteDeCaja, rutasDeExportacionDeCaja } from '../api/caja'
 import { ErrorApi } from '../api/cliente'
 import type { DetalleDeTurno } from '../api/tipos'
+import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -33,6 +34,8 @@ export function CajaZ() {
   const { id } = useParams<{ id: string }>()
   const idTurno = id !== undefined ? Number(id) : Number.NaN
   const idTurnoValido = Number.isFinite(idTurno)
+
+  const { usuario } = useAuth()
 
   const [detalle, setDetalle] = useState<DetalleDeTurno | null>(null)
   const [cargando, setCargando] = useState(true)
@@ -80,14 +83,29 @@ export function CajaZ() {
         titulo={`Caja Z — turno #${idTurno}`}
         variante="inverse"
         herramientas={
-          <BotonDeDescarga
-            ruta={rutasDeExportacionDeCaja.detalleDeTurno(idTurno)}
-            etiqueta="Descargar"
-            onError={setErrorDescarga}
-            onInicio={() => setErrorDescarga('')}
-          />
+          <div className="d-flex gap-2">
+            <button type="button" className="btn btn-sm btn-outline-light rounded-0 d-print-none" onClick={() => window.print()}>
+              Imprimir
+            </button>
+            <BotonDeDescarga
+              ruta={rutasDeExportacionDeCaja.detalleDeTurno(idTurno)}
+              etiqueta="Descargar"
+              onError={setErrorDescarga}
+              onInicio={() => setErrorDescarga('')}
+              className="btn btn-sm btn-outline-secondary rounded-0 d-print-none"
+            />
+          </div>
         }
       >
+        {/* Vista de impresión (design decisión 13: mismo componente, `@media print`, sin ruta ni
+            fetch dedicados): equivalente del encabezado de los exports XLSX — generado por/cuándo.
+            El turno ya está en el título de `Box`, que se imprime igual. */}
+        <div className="d-none d-print-block mb-3">
+          <div className="small">
+            Generado: {new Date().toLocaleString('es-AR')} — {usuario?.usuario ?? '—'}
+          </div>
+        </div>
+
         {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
         {error && (
           <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">

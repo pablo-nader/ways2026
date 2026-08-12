@@ -1076,11 +1076,32 @@ function PantallaCuentaCorriente({
       <Box
         titulo={`Estado de cuenta — ${nombreDeCliente(idCliente, clienteInfo)}`}
         herramientas={
-          <Link className="btn btn-sm btn-outline-light rounded-0" to="/clientes">
-            Volver a clientes
-          </Link>
+          <div className="d-flex gap-2">
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-light rounded-0 d-print-none"
+              onClick={() => window.print()}
+            >
+              Imprimir
+            </button>
+            <Link className="btn btn-sm btn-outline-light rounded-0 d-print-none" to="/clientes">
+              Volver a clientes
+            </Link>
+          </div>
         }
       >
+        {/* Vista de impresión (design decisión 13: mismo componente, `@media print`, sin ruta ni
+            fetch dedicados): equivalente del encabezado que llevan los exports XLSX — rango y
+            generado por/cuándo. Cliente ya está en el título de `Box`, que se imprime igual. */}
+        <div className="d-none d-print-block mb-3">
+          <div className="small">
+            Rango: {historico ? 'Histórico completo' : `${desde} a ${hasta}`}
+          </div>
+          <div className="small">
+            Generado: {new Date().toLocaleString('es-AR')} — {usuario?.usuario ?? '—'}
+          </div>
+        </div>
+
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
         {errorEstado && <div className="alert alert-danger rounded-0">{errorEstado}</div>}
         {(errorCliente || errorMedios || errorPuntosVenta) && (
@@ -1108,7 +1129,7 @@ function PantallaCuentaCorriente({
                 <div>{formatearDisponibilidad(estado.header.disponibilidad)}</div>
               </div>
               <div className="col-md-3 text-md-end">
-                <div className="d-flex gap-2 justify-content-md-end flex-wrap">
+                <div className="d-flex gap-2 justify-content-md-end flex-wrap d-print-none">
                   {esSupervisorOAdmin && (
                     <>
                       <button
@@ -1153,7 +1174,7 @@ function PantallaCuentaCorriente({
               </div>
             </div>
 
-            <div className="row g-2 align-items-end mb-3">
+            <div className="row g-2 align-items-end mb-3 d-print-none">
               <div className="col-md-3">
                 <label className="form-label" htmlFor="cc-filtro-desde">
                   Desde
