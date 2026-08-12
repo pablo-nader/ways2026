@@ -57,7 +57,7 @@ public class ExportacionDeCajaTests
     [Fact]
     public void HistoricoSinFilasProduceUnaTablaVacia()
     {
-        var tabla = ExportacionDeCaja.De([], Contexto, ZonaBuenosAires);
+        var tabla = ExportacionDeCaja.De((IReadOnlyList<FilaDeHistoricoDeCajas>)[], Contexto, ZonaBuenosAires);
 
         Assert.Empty(tabla.Filas);
     }

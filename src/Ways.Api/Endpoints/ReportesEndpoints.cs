@@ -364,6 +364,24 @@ public static class ReportesEndpoints
             FormatoDeExportacion.Parsear(formato);
 
             var filas = await servicio.ListarParaExportacionAsync(
+                idPuntoVenta, desde, hasta, opciones.Value.TopeDeFilas, ct);
+
+            var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
+            var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
+            var desdeFecha = DateOnly.FromDateTime(desde.UtcDateTime);
+            var hastaFecha = DateOnly.FromDateTime(hasta.UtcDateTime);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, empresa, $"PV {idPuntoVenta}", desdeFecha, hastaFecha, zonaId);
+            var tabla = ExportacionDeCaja.De(filas, ctx, zona);
+
+            var bytes = exportador.Generar(tabla);
+            var nombre = NombreDeArchivo.Construir("tesoreria", $"pv{idPuntoVenta}", desdeFecha, hastaFecha);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary("Export XLSX de /tesoreria: mismos parámetros y figuras, mismo orden de cadena.");
+
         // stage-11-exportacion-reportes, Slice 5b (spec historico-de-cajas: G2 And G3 Endpoints
         // Have Export Siblings Equal To Their JSON): a diferencia del resto de exports de esta
         // etapa, un turno NO es un catálogo acotado — ServicioDeHistoricoDeCajas.
@@ -388,15 +406,6 @@ public static class ReportesEndpoints
             var hastaFecha = DateOnly.FromDateTime(hasta.UtcDateTime);
 
             var ctx = ContextoDeExportacionHttp.Construir(
-                usuario, reloj, empresa, $"PV {idPuntoVenta}", desdeFecha, hastaFecha, zonaId);
-            var tabla = ExportacionDeCaja.De(filas, ctx, zona);
-
-            var bytes = exportador.Generar(tabla);
-            var nombre = NombreDeArchivo.Construir("tesoreria", $"pv{idPuntoVenta}", desdeFecha, hastaFecha);
-
-            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
-        })
-        .WithSummary("Export XLSX de /tesoreria: mismos parámetros y figuras, mismo orden de cadena.");
                 usuario, reloj, empresa, idPuntoVenta is { } id ? $"PV {id}" : null, desdeFecha, hastaFecha, zonaId);
             var tabla = ExportacionDeCaja.De(filas, ctx, zona);
 
