@@ -53,6 +53,16 @@ so deleting the clause under test changes nothing the test can see.
    `ways_app` connection (NOSUPERUSER NOBYPASSRLS) at statement level, per the
    stage-9 precedent.
 
+6. **An equality test asserts EVERY column of EVERY row — or it is not an equality
+   test.** Five occurrences in one stage (stage 11: bucket rows unasserted, coverage
+   counts as digit substrings, date columns skipped ×2, per-ticket totals rotatable
+   with count+sum preserved, a whole section droppable) prove the pattern: partial
+   equality tests pass while the file lies. When a test's purpose is "export equals
+   endpoint" or "serialized equals source": loop over ALL rows, assert ALL cells,
+   with per-row discriminating values (two rows with DIFFERENT values per column, so
+   swaps and rotations are detectable — identical fixture values hide misassignment).
+   Aggregate assertions (count, sum) NEVER substitute for per-row assertions.
+
 ## Decision Gate
 
 | Situation | Action |
