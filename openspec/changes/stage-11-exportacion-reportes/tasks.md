@@ -387,46 +387,61 @@ mutation evidence.
 buttons. **Rollback**: revert the branch; buttons disappear, no route or
 policy touched.
 
-- [ ] 4.1 Modify `src/Ways.Web/src/api/cliente.ts`: extract
+- [x] 4.1 Modify `src/Ways.Web/src/api/cliente.ts`: extract
   `exigirRespuestaOk(respuesta)` out of `pedir` (`:52-69`) so both `pedir`
   and the new `descargar` share the 401/`ErrorApi` path. *(design decision
   12)*
-- [ ] 4.2 Modify `cliente.ts`: `api.descargar(ruta)` — `fetch` + blob,
+- [x] 4.2 Modify `cliente.ts`: `api.descargar(ruta)` — `fetch` + blob,
   `credentials: 'include'`, calls `exigirRespuestaOk`, reads the file name
   from `Content-Disposition` (`filename*` wins over `filename`), triggers a
   synthetic `<a>` click, revokes the object URL in a `setTimeout(…, 0)`
   after the click (not synchronously — revoking same-tick cancels the
   download in some browsers). *(proposal decision 8; design decision 12;
   design Open Questions — revoke timing)*
-- [ ] 4.3 Create `src/Ways.Web/src/componentes/BotonDeDescarga.tsx`: busy +
+- [x] 4.3 Create `src/Ways.Web/src/componentes/BotonDeDescarga.tsx`: busy +
   re-entrancy guard (disabled while in flight, exactly one `fetch` per
   click even under a double-click), errors funnelled out via `onError`
   surfacing `ErrorApi.message`. *(proposal decision 8 — "a download that
   silently does nothing is this pattern's worst failure mode")*
-- [ ] 4.4 Modify `src/Ways.Web/src/paginas/Tablero.tsx`: wire
+- [x] 4.4 Modify `src/Ways.Web/src/paginas/Tablero.tsx`: wire
   `BotonDeDescarga` into the existing ventas/gastos/rentabilidad panels,
   each pointing at its report's `/export` route. No new nav entry.
-- [ ] 4.5 [P] `descargar` happy path: object URL created **and** revoked
+  — **APPLY-RUN NOTE**: `rutasDeExportacion` (route-builder helpers, mirroring
+  `construirQueryDeReporte`) added to `reportes.ts` to build each panel's
+  `/export?…&formato=xlsx` route; ventas/gastos share the card's own
+  `errorDescarga` state (separate from the load `error`, so the "Reintentar"
+  button never appears next to a download failure), rentabilidad owns its
+  local `errorDescarga`. Comisiones panel intentionally left unwired — out of
+  this slice's scope per this task's literal panel list.
+- [x] 4.5 [P] `descargar` happy path: object URL created **and** revoked
   (flush timers to assert the revoke, per the design's Open Questions
   note).
-- [ ] 4.6 [P] **403 → `onError` funnel test**: `descargar` on a
+- [x] 4.6 [P] **403 → `onError` funnel test**: `descargar` on a
   403-returning route surfaces `ErrorApi.message` via `onError`, creates no
   object URL, and does **not** navigate the SPA away. *(proposal decision 8
   — the SPA-navigation failure mode)*
-- [ ] 4.7 [P] **401 → `alPerderLaSesion` funnel test**: `descargar` on a
+- [x] 4.7 [P] **401 → `alPerderLaSesion` funnel test**: `descargar` on a
   401-returning route fires the existing `alPerderLaSesion` observer, same
   as `pedir`.
-- [ ] 4.8 [P] **400 → panel error state test**: a cap-refusal 400 surfaces
+- [x] 4.8 [P] **400 → panel error state test**: a cap-refusal 400 surfaces
   in the page's existing error surface, not a raw JSON navigation.
-- [ ] 4.9 [P] `nombreDeArchivo` parsing test: `filename*` (RFC 5987, UTF-8)
+- [x] 4.9 [P] `nombreDeArchivo` parsing test: `filename*` (RFC 5987, UTF-8)
   wins over plain `filename` when both are present.
-- [ ] 4.10 [P] Double-click test: exactly one `fetch` fires; the button is
+- [x] 4.10 [P] Double-click test: exactly one `fetch` fires; the button is
   disabled for the duration (`react-async-state` busy-state discipline).
-- [ ] 4.11 [P] `BotonDeDescarga` + `Tablero` descriptor tests per
+  — **APPLY-RUN NOTE**: the two clicks are dispatched inside a single
+  `act()` (not two separate `fireEvent.click` calls) so no React re-render
+  runs between them — otherwise the test would prove the `disabled`
+  attribute, not the `useRef` re-entrancy guard it names (mutation-proof-tests
+  rule 3: the first version of this test passed even with the guard deleted).
+- [x] 4.11 [P] `BotonDeDescarga` + `Tablero` descriptor tests per
   `web-descriptor-tests`.
-- [ ] 4.12 Run `judgment-day`; fix; re-judge until clean.
+- [ ] 4.12 Run `judgment-day`; fix; re-judge until clean. — **not run this
+  batch**; orchestrator instructions scoped this apply run to 4.1-4.11
+  (implementation + tests) only, no push/PR.
 - [ ] 4.13 Branch `feat/stage11-slice4-descarga-web` off `main` (parent:
-  slice 1b); PR; merge stacked-to-main.
+  slice 1b); PR; merge stacked-to-main. — branch created exactly as named
+  in the isolated worktree; PR/merge left for the orchestrator.
 
 **Test plan**: the six vitest cases above (happy path, 403 funnel, 401
 funnel, 400 panel state, filename parsing, double-click) + descriptor
