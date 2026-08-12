@@ -1,4 +1,8 @@
+using Microsoft.Extensions.Options;
+using Ways.Api.Exportacion;
 using Ways.Api.Seguridad;
+using Ways.Application.Abstracciones;
+using Ways.Application.Exportacion;
 using Ways.Application.Reportes;
 using Ways.Domain.Reportes;
 
@@ -19,6 +23,37 @@ public static class ReportesEndpoints
         .WithSummary(
             "Ventas netas bucketeadas por la zona horaria del punto de venta: ticket promedio " +
             "excluye NCX de numerador y denominador.");
+
+        // stage-11-exportacion-reportes, Slice 1b (design decisión 4; spec exportacion-de-
+        // reportes: "Export Route Convention And Policy Inheritance By Co-Location"): sibling
+        // declarado inmediatamente después de su ruta fuente, dentro del mismo MapGroup — hereda
+        // LecturaDeReportes estructuralmente, sin política propia. El plomero de acá (formato,
+        // contexto, tope) es el que reusa cada export sibling de las slices siguientes.
+        grupo.MapGet("/ventas/resumen/export", async (
+            ServicioDeReportesDeVentas servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj,
+            int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta, Granularidad granularidad, string formato,
+            CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var resumen = await servicio.ObtenerResumenAsync(idEmpresa, idPuntoVenta, desde, hasta, granularidad, ct);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, idEmpresa, idPuntoVenta, desde, hasta, resumen.ZonaHoraria);
+            var tabla = ExportacionDeReportes.De(resumen, ctx);
+
+            GuardaDeTope.Exigir(tabla, opciones.Value.TopeDeFilas);
+
+            var bytes = exportador.Generar(tabla);
+            var alcance = idPuntoVenta is { } id ? $"pv{id}" : "todos";
+            var nombre = NombreDeArchivo.Construir("ventas_resumen", alcance, desde, hasta);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary(
+            "Export XLSX de /ventas/resumen: mismos parámetros y figuras, gate LecturaDeReportes " +
+            "heredado por co-locación.");
 
         grupo.MapGet("/compras/por-proveedor", (
             ServicioDeReportesDeEgresos servicio, int idEmpresa, int? idPuntoVenta, DateOnly desde, DateOnly hasta,
