@@ -12,9 +12,11 @@ namespace Ways.Application.Reportes;
 /// Sin <c>idArticulo</c> (spec: Existencias Needs No idArticulo, Unlike GET /api/stock) y sin
 /// <c>idEmpresa</c> (mismo criterio que <c>ServicioDeTesoreria</c>: la ruta solo pide
 /// <c>idPuntoVenta</c>, la empresa se resuelve del lado HTTP cuando hace falta para el export).
-/// Los filtros de <c>Tenant</c>/<c>BajaLogica</c> de EF aplican gratis sobre <c>articulos</c>
-/// (design decisión 1); <c>stock</c> usa su propio filtro de tenant manual
-/// (<c>WaysDbContext.AplicarFiltroDeTenantEnStock</c>) — ambos activos sobre este join.
+/// Los filtros globales de <c>Tenant</c>/<c>BajaLogica</c> de EF aplican gratis sobre
+/// <c>articulos</c>; <c>stock</c> usa su propio filtro de tenant manual
+/// (<c>WaysDbContext.AplicarFiltroDeTenantEnStock</c>) — ambos activos sobre este join. Trade-off
+/// deliberado: el stock de un artículo eliminado queda oculto del reporte (cubierto por
+/// <c>ExistenciasTests.UnArticuloEliminadoNuncaApareceEnLasExistencias</c>).
 /// </summary>
 public class ServicioDeReportesDeStock(IWaysDbContext db)
 {

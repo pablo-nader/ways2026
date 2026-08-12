@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using ClosedXML.Excel;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Exportacion;
 using Ways.Application.Organizacion;
@@ -38,9 +40,10 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         int IdTenant, int IdPuntoVenta, int IdArea, int IdAlicuotaIva,
         HttpClient Admin, HttpClient Supervisor, HttpClient Vendedor);
 
-    private async Task<Contexto> PrepararAsync(string nombre)
+    private async Task<Contexto> PrepararAsync(string nombre, WebApplicationFactory<Program>? factory = null)
     {
-        var root = fixture.CreateClient();
+        var host = factory ?? fixture;
+        var root = host.CreateClient();
         var loginRoot = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
@@ -50,13 +53,13 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
 
-        var admin = fixture.CreateClient();
+        var admin = host.CreateClient();
         var loginAdmin = await admin.PostAsJsonAsync(
             "/api/auth/login", new SolicitudDeLogin(mailAdmin, resultado.PasswordTemporal));
         Assert.Equal(HttpStatusCode.OK, loginAdmin.StatusCode);
 
-        var supervisor = await CrearYLoguearAsync(admin, nombre, "supervisor", RolConocido.Supervisor);
-        var vendedor = await CrearYLoguearAsync(admin, nombre, "vendedor", RolConocido.Vendedor);
+        var supervisor = await CrearYLoguearAsync(admin, host, nombre, "supervisor", RolConocido.Supervisor);
+        var vendedor = await CrearYLoguearAsync(admin, host, nombre, "vendedor", RolConocido.Vendedor);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, resultado.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -70,14 +73,15 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
             resultado.IdTenant, resultado.IdPuntoVenta, area.Id, idAlicuotaIva, admin, supervisor, vendedor);
     }
 
-    private async Task<HttpClient> CrearYLoguearAsync(HttpClient admin, string nombre, string sufijo, RolConocido rol)
+    private static async Task<HttpClient> CrearYLoguearAsync(
+        HttpClient admin, WebApplicationFactory<Program> host, string nombre, string sufijo, RolConocido rol)
     {
         var corto = Guid.NewGuid().ToString("N")[..8];
         var mail = $"{nombre.ToLowerInvariant()}-{sufijo}@ways.test";
         var alta = await admin.PostAsJsonAsync("/api/usuarios", new CrearUsuario($"{sufijo}-{corto}", mail, (int)rol, PasswordOtroRol));
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
 
-        var cliente = fixture.CreateClient();
+        var cliente = host.CreateClient();
         var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mail, PasswordOtroRol));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         return cliente;
@@ -165,10 +169,26 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
 
     // ---- spec: A Supervisor Exports Existencias — 200 con nombre de archivo determinístico -------
 
+    private sealed class RelojFijo(DateTimeOffset ahora) : IRelojDelSistema
+    {
+        public DateTimeOffset Ahora { get; } = ahora;
+    }
+
+    /// <summary>Reloj fijado a las 22:30 ART del 5/8 (01:30 UTC del 6/8): si el nombre de archivo
+    /// usara el día UTC crudo en lugar del día de la zona resuelta del punto de venta, caería en
+    /// el 6/8 — un día que todavía no empezó para ese punto de venta. Discrimina en cualquier
+    /// horario real de ejecución, a diferencia de comparar contra <c>DateTime.UtcNow</c> (que
+    /// reproduce el mismo bug que intenta probar).</summary>
     [Fact]
     public async Task UnSupervisorExportaLasExistenciasConUnNombreDeArchivoDeterministico()
     {
-        var ctx = await PrepararAsync(nameof(UnSupervisorExportaLasExistenciasConUnNombreDeArchivoDeterministico));
+        using var factoryConRelojFijo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddSingleton<IRelojDelSistema>(
+                    new RelojFijo(new DateTimeOffset(2026, 8, 6, 1, 30, 0, TimeSpan.Zero)))));
+
+        var ctx = await PrepararAsync(
+            nameof(UnSupervisorExportaLasExistenciasConUnNombreDeArchivoDeterministico), factoryConRelojFijo);
         var idArticulo = await SembrarArticuloAsync(ctx, "Yerba mate 1kg");
         await SembrarStockAsync(ctx, idArticulo, 5m);
 
@@ -176,9 +196,13 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
 
-        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
-        var nombreEsperado = NombreDeArchivo.Construir("existencias", $"pv{ctx.IdPuntoVenta}", hoy, hoy);
+        var diaDelPuntoDeVenta = new DateOnly(2026, 8, 5);
+        var nombreEsperado = NombreDeArchivo.Construir("existencias", $"pv{ctx.IdPuntoVenta}", diaDelPuntoDeVenta, diaDelPuntoDeVenta);
+        var diaUtcIncorrecto = new DateOnly(2026, 8, 6);
+        var nombreConDiaUtc = NombreDeArchivo.Construir("existencias", $"pv{ctx.IdPuntoVenta}", diaUtcIncorrecto, diaUtcIncorrecto);
+
         var disposicion = respuesta.Content.Headers.ContentDisposition?.ToString() ?? string.Empty;
+        Assert.DoesNotContain(nombreConDiaUtc, disposicion);
         Assert.Contains($"filename=\"{nombreEsperado}\"", disposicion);
         Assert.Contains($"filename*=UTF-8''{nombreEsperado}", disposicion);
     }
@@ -193,5 +217,33 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         var respuesta = await LlamarExportAsync(ctx.Vendedor, ctx.IdPuntoVenta);
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    // ---- cap guard test — mismo patrón que TesoreriaExportTests: tope acotado vía
+    // WithWebHostBuilder, cantidad real de filas en el mensaje de rechazo ---------------------------
+
+    [Fact]
+    public async Task UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 3)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+
+        for (var i = 0; i < 4; i++)
+        {
+            var idArticulo = await SembrarArticuloAsync(ctx, $"articulo-tope-{i}");
+            await SembrarStockAsync(ctx, idArticulo, 1m);
+        }
+
+        var respuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("4", problema.GetProperty("title").GetString());
     }
 }

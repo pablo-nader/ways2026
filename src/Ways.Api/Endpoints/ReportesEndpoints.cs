@@ -356,7 +356,8 @@ public static class ReportesEndpoints
             var existencias = await servicio.ObtenerExistenciasAsync(idPuntoVenta, ct);
 
             var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
-            var hoy = DateOnly.FromDateTime(reloj.Ahora.UtcDateTime);
+            var hoy = DateOnly.FromDateTime(
+                TimeZoneInfo.ConvertTime(reloj.Ahora, TimeZoneInfo.FindSystemTimeZoneById(zonaId)).Date);
 
             var ctx = ContextoDeExportacionHttp.Construir(usuario, reloj, empresa, $"PV {idPuntoVenta}", hoy, hoy, zonaId);
             var tabla = ExportacionDeReportes.De(existencias, ctx);
