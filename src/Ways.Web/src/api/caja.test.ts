@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { aSolicitudDeMovimiento, importeValidoParaTipo, motivoValido } from './caja'
+import { describe, expect, it, vi } from 'vitest'
+
+const apiGetMock = vi.fn(() => Promise.resolve(undefined))
+
+vi.mock('./cliente', () => ({
+  api: { get: (...args: unknown[]) => apiGetMock(...(args as [])) },
+}))
+
+const { aSolicitudDeMovimiento, clienteDeCaja, importeValidoParaTipo, motivoValido, rutasDeExportacionDeCaja } = await import('./caja')
 
 describe('motivoValido', () => {
   it('rechaza un motivo vacío', () => {
@@ -64,5 +71,23 @@ describe('aSolicitudDeMovimiento', () => {
     const resultado = aSolicitudDeMovimiento('Refuerzo', 'abc', 'motivo válido')
 
     expect(Number.isNaN(resultado.importe)).toBe(true)
+  })
+})
+
+// ---- stage-11-exportacion-reportes, Slice 6b: clienteDeCaja.obtenerDetalle + la ruta de export
+// del Z-report -----------------------------------------------------------------------------
+
+describe('clienteDeCaja.obtenerDetalle', () => {
+  it('pega contra GET /caja/turnos/{id}/detalle', async () => {
+    apiGetMock.mockClear()
+    await clienteDeCaja.obtenerDetalle(412)
+
+    expect(apiGetMock).toHaveBeenCalledWith('/caja/turnos/412/detalle')
+  })
+})
+
+describe('rutasDeExportacionDeCaja.detalleDeTurno', () => {
+  it('arma la ruta del export sibling con formato=xlsx', () => {
+    expect(rutasDeExportacionDeCaja.detalleDeTurno(412)).toBe('/caja/turnos/412/detalle/export?formato=xlsx')
   })
 })

@@ -760,6 +760,91 @@ export type LineaDeArqueoResumen = {
  * payload del comprobante Z) — mismos campos planos que `TurnoResumen` más `arqueos`. */
 export type TurnoConArqueos = TurnoResumen & { arqueos: LineaDeArqueoResumen[] }
 
+// --- Histórico de cajas (G2) y detalle de turno (stage-11-exportacion-reportes, Slice 5a/5b,
+// Slices 6a/6b web): espejo de `Ways.Application.Caja.Contratos` — turnos cerrados con totales
+// ya sumados de sus `arqueos_turno` persistidos (nunca re-derivados) y el detalle del turno
+// (mismo `ResumenDeTurno` que `/resumen` más los tickets y gastos leídos por
+// `LectorDeLineasDelTurno`).
+
+/** Fila de `GET /api/reportes/cajas` — espejo de `FilaDeHistoricoDeCajas`. */
+export type FilaDeHistoricoDeCajas = {
+  idTurnoCaja: number
+  idPuntoVenta: number
+  fechaApertura: string
+  fechaCierre: string
+  esperado: number
+  declarado: number
+  diferencia: number
+  egresos: EgresosDeTurno
+}
+
+/** Página de `GET /api/reportes/cajas` — espejo de `PaginaDeHistoricoDeCajas`. */
+export type PaginaDeHistoricoDeCajas = { items: FilaDeHistoricoDeCajas[]; total: number; pagina: number; tamanio: number }
+
+/** Un ticket del turno dentro de `DetalleDeTurno.tickets` — espejo reducido de
+ * `Ways.Application.Ventas.ComprobanteListado` (los mismos campos que `GET /api/ventas` lista,
+ * anulados excluidos por `LectorDeLineasDelTurno`). */
+export type TicketDeTurno = {
+  id: number
+  numero: number
+  numeroVisible: string
+  estado: EstadoComprobante
+  fecha: string
+  idPuntoVenta: number
+  idCliente: number
+  total: number
+}
+
+/** Un gasto del turno dentro de `DetalleDeTurno.gastos` — espejo de
+ * `Ways.Application.Gastos.GastoListado`. */
+export type GastoDeTurno = {
+  id: number
+  idPuntoVenta: number
+  fecha: string
+  categoria: CategoriaGasto
+  idMedioPago: number
+  importe: number
+}
+
+/** Respuesta de `GET /api/caja/turnos/{id}/detalle` — espejo de `DetalleDeTurno`: el mismo
+ * `ResumenDeTurno` que `/resumen` devuelve, sin tocarlo, más las dos listas del turno. */
+export type DetalleDeTurno = {
+  resumen: ResumenDeTurno
+  tickets: TicketDeTurno[]
+  gastos: GastoDeTurno[]
+}
+
+// --- Tesorería (G3): libro encadenado (stage-11-exportacion-reportes, Slice 7) — espejo de
+// `Ways.Application.Caja.Contratos`. `inicio`/`final` ya vienen calculados y persistidos al
+// cierre (design decisión 6 de stage-6-turnos-caja); este contrato solo los transporta.
+
+/** Espejo del enum `TipoMovimientoTesoreria` (Ways.Domain.Caja) — viaja como texto. */
+export type TipoMovimientoTesoreria = 'RetiroCaja' | 'Deposito' | 'Gasto' | 'Ajuste'
+
+/** Fila de `GET /api/reportes/tesoreria` — espejo de `MovimientoTesoreriaListado`, SIN
+ * `idTenant` (nunca expuesto en una respuesta, doc 09). */
+export type MovimientoTesoreriaListado = {
+  id: number
+  idPuntoVenta: number
+  fecha: string
+  tipo: TipoMovimientoTesoreria
+  idTurnoCaja: number | null
+  concepto: string
+  inicio: number
+  ingreso: number
+  egreso: number
+  final: number
+  idEmpleado: number
+}
+
+/** Página de `GET /api/reportes/tesoreria` — espejo de `PaginaDeMovimientosTesoreria`. */
+export type PaginaDeMovimientosTesoreria = {
+  items: MovimientoTesoreriaListado[]
+  total: number
+  pagina: number
+  tamanio: number
+}
+
 // --- POS: checkout (stage-5-pos-ventas, Slice 6 → wireado en Slice 7) ---
 // Espejo de `Ways.Application.Ventas.Contratos` (confirmado contra el DTO real de
 // `POST /api/ventas`, mergeado en Slice 4) — usado por `ventas.ts` (mappers) y `Pos.tsx`
