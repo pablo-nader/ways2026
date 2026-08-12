@@ -198,10 +198,10 @@ requests. **Rollback**: revert the branch; no state to unwind.
   starts row 6.
 - [x] 1b.12 [P] `FormatoDeExportacionTests`: `?formato=pdf` → `400
   formato_no_soportado`; `?formato=xlsx` parses.
-- [ ] 1b.13 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE
+- [x] 1b.13 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE
   for this `sdd-apply` run (explicit boundary: no push/PR); left for the
   orchestrator's PR-validation phase.
-- [ ] 1b.14 Branch `feat/stage11-slice1b-primer-export` off `main` (parent:
+- [x] 1b.14 Branch `feat/stage11-slice1b-primer-export` off `main` (parent:
   slice 1a); PR; merge stacked-to-main. — branch `feat/stage11-slice1b-
   ruta-export` created per the orchestrator's explicit instruction (name
   differs from the task's suggested branch name); PR/merge left for the
