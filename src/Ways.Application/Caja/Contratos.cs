@@ -132,3 +132,35 @@ public sealed record TurnoConArqueos(
     EstadoTurno Estado,
     string? Observaciones,
     IReadOnlyList<LineaDeArqueoResumen> Arqueos);
+
+// ---- stage-11-exportacion-reportes, Slice 5a (design: G2/G3 — minimal aggregation; spec
+// historico-de-cajas): G2 histórico de cierres y su detalle ----
+
+/// <summary>Fila de <c>GET /api/reportes/cajas</c> (spec: G2 Histórico Lists Closed Turnos Only,
+/// With Totals From Persisted Arqueos) — un turno <c>cerrado</c> con sus totales sumados de las
+/// filas YA PERSISTIDAS de <see cref="ArqueoTurno"/> (nunca <c>CalculadorDeArqueo</c>), más
+/// <see cref="Egresos"/> con la MISMA definición que <see cref="ResumenDeTurno.Egresos"/>.</summary>
+public sealed record FilaDeHistoricoDeCajas(
+    int IdTurnoCaja,
+    int IdPuntoVenta,
+    DateTimeOffset FechaApertura,
+    DateTimeOffset FechaCierre,
+    decimal Esperado,
+    decimal Declarado,
+    decimal Diferencia,
+    EgresosDeTurno Egresos);
+
+/// <summary>Página de <c>GET /api/reportes/cajas</c> — mismo shape que
+/// <see cref="PaginaDeTurnos"/>.</summary>
+public sealed record PaginaDeHistoricoDeCajas(
+    IReadOnlyList<FilaDeHistoricoDeCajas> Items, int Total, int Pagina, int Tamanio);
+
+/// <summary>Respuesta de <c>GET /api/caja/turnos/{id}/detalle</c> (spec: G2 Detail Reuses
+/// ResumenDeTurno Plus Ticket And Gasto Listings) — el MISMO <see cref="ResumenDeTurno"/> que
+/// <c>/resumen</c> devuelve, sin tocarlo, más las dos listas que <see cref="LectorDeLineasDelTurno"/>
+/// lee: los tickets del turno (<see cref="Ways.Application.Ventas.ComprobanteListado"/>, anulados
+/// excluidos) y sus gastos (<see cref="Ways.Application.Gastos.GastoListado"/>).</summary>
+public sealed record DetalleDeTurno(
+    ResumenDeTurno Resumen,
+    IReadOnlyList<Ways.Application.Ventas.ComprobanteListado> Tickets,
+    IReadOnlyList<Ways.Application.Gastos.GastoListado> Gastos);

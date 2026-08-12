@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using Ways.Api.Exportacion;
 using Ways.Api.Seguridad;
 using Ways.Application.Abstracciones;
+using Ways.Application.Caja;
 using Ways.Application.Exportacion;
 using Ways.Application.Reportes;
 using Ways.Domain.Reportes;
@@ -325,6 +326,17 @@ public static class ReportesEndpoints
         })
         .RequireAuthorization(Politicas.LecturaDeRentabilidad)
         .WithSummary("Export XLSX de /comisiones: mismos parámetros y figuras, etiquetado PROVISIONAL.");
+        // stage-11-exportacion-reportes, Slice 5a (design: G2/G3 — minimal aggregation; spec
+        // historico-de-cajas: G2 Histórico Lists Closed Turnos Only, Role Split — Turno Detail
+        // Under OperacionDePos, Cross-Turno Views Under LecturaDeReportes): gate heredado del
+        // grupo, sin política propia — vista de gestión sobre turnos ajenos, nunca la del cajero.
+        grupo.MapGet("/cajas", (
+            ServicioDeHistoricoDeCajas servicio, int? idPuntoVenta, DateTimeOffset? desde, DateTimeOffset? hasta,
+            int? pagina, int? tamanio, CancellationToken ct) =>
+            servicio.ListarCierresAsync(idPuntoVenta, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
+        .WithSummary(
+            "Histórico de cierres (turnos cerrados únicamente): totales sumados de los arqueos ya " +
+            "persistidos, nunca re-derivados. Un turno abierto nunca aparece acá.");
 
         return app;
     }

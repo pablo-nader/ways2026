@@ -444,7 +444,16 @@ stubbed.
 `arqueos_turno`, exportable, gated `LecturaDeReportes`. **Rollback**:
 revert the branch.
 
-- [ ] 5a.1 Create `src/Ways.Application/Caja/ServicioDeHistoricoDeCajas.cs`:
+> **APPLY-RUN NOTE (isolated worktree, branch `feat/stage11-slice5a-ver-cajas`,
+> explicit orchestrator instruction)**: this batch's actual scope was the G2
+> listing JSON endpoint (5a.1-5a.3, 5a.6-5a.8, 5a.10 below) **plus the G2
+> turno detalle JSON endpoint pulled forward from Slice 5b** (5b.1-5b.3,
+> checked off in that section below) — "first link of the caja chain" per
+> the orchestrator's brief. **Both exports (5a.4/5a.5 here, 5b.4/5b.5/5b.6
+> below) are explicitly OUT OF SCOPE for this run** ("NO exports yet"),
+> deferred to a follow-up batch. `ExportacionDeCaja.cs` does not exist yet.
+
+- [x] 5a.1 Create `src/Ways.Application/Caja/ServicioDeHistoricoDeCajas.cs`:
   `ListarCierresAsync` — `TurnosCaja.Where(t => t.Estado ==
   EstadoTurno.Cerrado)` filtered by PV/fecha, then one `GroupBy` over
   `ArqueosTurno` for the page's ids: Σ `ImporteEsperado`, Σ
@@ -452,35 +461,66 @@ revert the branch.
   `CalculadorDeArqueo` is never invoked. Egresos reuse the existing
   `EgresosDeTurno` definition. *(proposal decision 6; design "G2/G3 —
   minimal aggregation"; spec historico-de-cajas: G2 Histórico Lists Closed
-  Turnos Only)*
-- [ ] 5a.2 Extend `src/Ways.Application/Caja/Contratos.cs`: the listing
-  response record (per-turno esperado/declarado/diferencia + egresos).
-- [ ] 5a.3 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`: `GET
-  /cajas` under `LecturaDeReportes`.
+  Turnos Only)* — IMPLEMENTATION NOTE: egresos are computed for the WHOLE
+  page in 3 grouped queries (gastos por categoría, gastos por área, retiros),
+  never one query per turno — same "fixed number of grouped queries"
+  discipline as `LectorDeContenidoDeResumen`. Filtered by `FechaCierre`
+  (desde/hasta), not `FechaApertura` — a "histórico de cierres" filters by
+  when it closed.
+- [x] 5a.2 Extend `src/Ways.Application/Caja/Contratos.cs`: the listing
+  response record (per-turno esperado/declarado/diferencia + egresos). —
+  `FilaDeHistoricoDeCajas` + `PaginaDeHistoricoDeCajas`, appended at the end
+  of the file.
+- [x] 5a.3 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`: `GET
+  /cajas` under `LecturaDeReportes`. — appended after `/comisiones`, at the
+  end of the group (append-anchor discipline, parallel sibling slice safe).
 - [ ] 5a.4 Create `src/Ways.Application/Caja/ExportacionDeCaja.cs`: `De`
   mapper for the G2 listing, pure, consumes `ListarCierresAsync`'s
-  response.
-- [ ] 5a.5 Modify `ReportesEndpoints.cs`: `GET /cajas/export` sibling.
-- [ ] 5a.6 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
-- [ ] 5a.7 [P] The house 4-test pattern: cross-tenant absence,
+  response. — DEFERRED (see APPLY-RUN NOTE above).
+- [ ] 5a.5 Modify `ReportesEndpoints.cs`: `GET /cajas/export` sibling. —
+  DEFERRED (see APPLY-RUN NOTE above).
+- [x] 5a.6 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. — confirmed clean (`--project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure`, the `Ways.Api` startup project
+  lacks `EntityFrameworkCore.Design`).
+- [x] 5a.7 [P] The house 4-test pattern: cross-tenant absence,
   soft-deleted/open-turno absence, estado discrimination, hand-computed
-  fixture equality (Σ arqueos matches the listing row).
-- [ ] 5a.8 [P] **Open-turnos-exclusion mutation target**: seed one `abierto`
+  fixture equality (Σ arqueos matches the listing row). —
+  `HistoricoDeCajasTests.cs`: cross-tenant absence, PV-filter discrimination,
+  hand-computed two-medio equality (efectivo con diferencia + tarjeta
+  exacto), Supervisor-200.
+- [x] 5a.8 [P] **Open-turnos-exclusion mutation target**: seed one `abierto`
   + one `cerrado` turno for the same PV, assert the row set (not just a
   count) excludes the open one and the totals are the closed turno's alone.
   Record mutation evidence: delete `Where(t => t.Estado ==
   EstadoTurno.Cerrado)` → the test MUST fail (the open turno appears with
   partial totals); revert → green. *(spec: An Open Turno Is Excluded From
-  The Listing; mutation-proof-tests)*
+  The Listing; mutation-proof-tests)* — MUTATION RUN AND RECORDED:
+  `Where(t => t.Estado == EstadoTurno.Cerrado)` replaced with `AsQueryable()`
+  in `ServicioDeHistoricoDeCajas.ListarCierresAsync` → test
+  `UnTurnoAbiertoQuedaExcluidoDelListadoJuntoAUnoCerradoDelMismoPuntoDeVenta`
+  FAILED (500 — the open turno enters the projection and `FechaCierre!.Value`
+  throws `NullReferenceException`, since an open turno never has
+  `fecha_cierre`); reverted → green (verified again after revert). The
+  Cerrado-filter evidence was strengthened in review with a non-crashing
+  mutation (estado broadened + null-coalesced `FechaCierre` → the
+  `DoesNotContain` assertion still discriminates, no NRE crash needed).
 - [ ] 5a.9 [P] Equality test on the export vs the JSON listing (combined
   `diferencia` sums equal). *(spec: G2 Listing Export Figures Equal The
-  JSON Listing)*
-- [ ] 5a.10 [P] 403 test: Vendedor rejected on `/cajas` and `/cajas/export`.
-  *(spec: A Vendedor Is Rejected From The G2 Histórico Listing)*
-- [ ] 5a.11 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 5a.12 Branch `feat/stage11-slice5a-cajas-listado` off `main` (parent:
-  slice 1b); PR; merge stacked-to-main.
+  JSON Listing)* — DEFERRED with 5a.4/5a.5 (no export exists yet in this
+  batch).
+- [x] 5a.10 [P] 403 test: Vendedor rejected on `/cajas` and `/cajas/export`.
+  *(spec: A Vendedor Is Rejected From The G2 Histórico Listing)* — JSON half
+  (`/cajas`) done: `UnVendedorEsRechazadoDelHistoricoListado`. Export half
+  DEFERRED with 5a.4/5a.5.
+- [x] 5a.11 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE
+  for this `sdd-apply` run (explicit boundary: no push/PR); left for the
+  orchestrator's PR-validation phase, same precedent as 1b.13.
+- [x] 5a.12 Branch `feat/stage11-slice5a-cajas-listado` off `main` (parent:
+  slice 1b); PR; merge stacked-to-main. — branch `feat/stage11-slice5a-ver-
+  cajas` created off `main` per the orchestrator's explicit instruction
+  (isolated worktree; name differs from the task's suggested branch name,
+  same precedent as 1b.14); PR/merge left for the orchestrator.
 
 **Test plan**: 4-test pattern, open-turno mutation with evidence, equality,
 403.
@@ -496,16 +536,31 @@ revert the branch.
 listings, exportable, gated `OperacionDePos` (same as `/resumen`).
 **Rollback**: revert the branch.
 
-- [ ] 5b.1 Create `src/Ways.Application/Caja/LectorDeLineasDelTurno.cs`:
+> **APPLY-RUN NOTE**: 5b.1-5b.3 (the JSON detail endpoint) were implemented
+> and checked off by the Slice 5a apply run above (branch
+> `feat/stage11-slice5a-ver-cajas`), pulled forward per explicit orchestrator
+> instruction — "first link of the caja chain". Checkbox marking for THIS
+> section stays scoped to that apply run's actual output; do not re-implement
+> `LectorDeLineasDelTurno.cs`, `DetalleDeTurno`, or the `/{id}/detalle` route.
+> 5b.4-5b.11 (the export sibling + its tests + judgment-day + PR) remain
+> fully pending — a future batch's job.
+
+- [x] 5b.1 Create `src/Ways.Application/Caja/LectorDeLineasDelTurno.cs`:
   two plain indexed reads — `ComprobantesVenta.Where(c => c.IdTurnoCaja ==
   id)` (anulados excluded, matching the resumen) and `Gastos.Where(g =>
   g.IdTurnoCaja == id)`. *(proposal decision 6; spec historico-de-cajas:
-  G2 Detail Reuses ResumenDeTurno Plus Ticket And Gasto Listings)*
-- [ ] 5b.2 Extend `Contratos.cs`: `DetalleDeTurno(ResumenDeTurno, Tickets,
-  Gastos)` — additive, `/resumen` untouched. *(design decision 10)*
-- [ ] 5b.3 Modify `src/Ways.Api/Endpoints/CajaEndpoints.cs`: new route `GET
+  G2 Detail Reuses ResumenDeTurno Plus Ticket And Gasto Listings)* —
+  implemented by the Slice 5a apply run (see APPLY-RUN NOTE above); reuses
+  the existing `ComprobanteListado`/`GastoListado` DTOs instead of a third
+  contract for the same row shape.
+- [x] 5b.2 Extend `Contratos.cs`: `DetalleDeTurno(ResumenDeTurno, Tickets,
+  Gastos)` — additive, `/resumen` untouched. *(design decision 10)* —
+  implemented by the Slice 5a apply run (see APPLY-RUN NOTE above).
+- [x] 5b.3 Modify `src/Ways.Api/Endpoints/CajaEndpoints.cs`: new route `GET
   /{id}/detalle` under `OperacionDePos`, calling `ServicioDeResumenDeTurno.
-  ObtenerAsync` verbatim + `LectorDeLineasDelTurno`.
+  ObtenerAsync` verbatim + `LectorDeLineasDelTurno`. — implemented by the
+  Slice 5a apply run (see APPLY-RUN NOTE above); appended at the end of the
+  `/api/caja/turnos` group (append-anchor discipline).
 - [ ] 5b.4 Extend `ExportacionDeCaja.cs`: `De` mapper for `DetalleDeTurno`.
 - [ ] 5b.5 Modify `CajaEndpoints.cs`: `GET /{id}/detalle/export` sibling,
   `OperacionDePos` inherited by co-location. *(design's load-bearing
@@ -513,14 +568,27 @@ listings, exportable, gated `OperacionDePos` (same as `/resumen`).
   precisely so this policy is inherited, not fought)*
 - [ ] 5b.6 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   no pending changes.
-- [ ] 5b.7 [P] The house 4-test pattern for the detail endpoint.
-- [ ] 5b.8 [P] **Vendedor-200 / cross-turno-403 matrix**: the Vendedor who
+- [x] 5b.7 [P] The house 4-test pattern for the detail endpoint. —
+  `DetalleDeTurnoTests.cs` (JSON half; implemented by the Slice 5a apply
+  run): cross-tenant 404, anulados excluded from `Tickets` (matches the
+  resumen's own filter), hand-computed equality (`Resumen` matches
+  `/resumen` byte-for-byte on the derived figure, `Tickets`/`Gastos` have
+  exactly the seeded rows).
+- [x] 5b.8 [P] **Vendedor-200 / cross-turno-403 matrix**: the Vendedor who
   closed turno `412` gets `200` on `/412/detalle(/export)`; the same
   Vendedor gets `403` attempting a different vendedor's turno detail (if
   `OperacionDePos` scopes by PV, verify the actual scoping boundary against
   `CajaEndpoints.cs:10-12` rather than assuming turno ownership). *(spec:
-  A Vendedor Downloads Their Own Turno's Z-Report)*
-- [ ] 5b.9 [P] Equality test on the export vs the JSON detail.
+  A Vendedor Downloads Their Own Turno's Z-Report)* — VERIFIED AND SCOPE
+  CORRECTED (implemented by the Slice 5a apply run): `Politicas.OperacionDePos`
+  (`Politicas.cs`) is role-only (Vendedor/Supervisor/Admin), no PV or turno-
+  ownership claim — CONFIRMED BY READING THE POLICY DEFINITION, not assumed.
+  There is no structural boundary to produce a cross-turno 403, so that half
+  of the matrix does not exist to test; only the 200 half is implemented:
+  `UnVendedorLeeElDetalleDelTurnoQueElMismoCerro`. The export half
+  (`/412/detalle/export`) is DEFERRED with 5b.4/5b.5.
+- [ ] 5b.9 [P] Equality test on the export vs the JSON detail. — DEFERRED
+  (no export exists yet in this batch).
 - [ ] 5b.10 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 5b.11 Branch `feat/stage11-slice5b-cajas-detalle` off `main` (parent:
   slices 1b + 5a); PR; merge stacked-to-main.

@@ -97,6 +97,13 @@ public static class DependencyInjection
         // LectorDeSerieTemporal (no bucketea, design: Interfaces / Contracts Rentabilidad).
         services.AddScoped<ServicioDeReportesDeRentabilidad>();
 
+        // stage-11-exportacion-reportes, Slice 5a (design: G2/G3 — minimal aggregation):
+        // ServicioDeHistoricoDeCajas es la única agregación nueva de la slice (G2 histórico);
+        // LectorDeLineasDelTurno son dos lecturas indexadas llanas para el detalle del turno
+        // (G2 detail), consumidas junto a ServicioDeResumenDeTurno, ya registrado arriba.
+        services.AddScoped<ServicioDeHistoricoDeCajas>();
+        services.AddScoped<LectorDeLineasDelTurno>();
+
         return services;
     }
 }
