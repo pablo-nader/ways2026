@@ -21,6 +21,7 @@ import type {
 import { RutaProtegida } from '../auth/RutaProtegida'
 
 const apiGetMock = vi.fn()
+const apiDescargarMock = vi.fn()
 
 // `recharts` se mockea igual que en los tests de los wrappers: bajo jsdom no renderiza
 // nada observable, y sin el stub el mapeo de datos al grafico queda sin asercion posible.
@@ -53,6 +54,7 @@ vi.mock('../api/cliente', () => ({
     post: vi.fn(),
     put: vi.fn(),
     delete: vi.fn(),
+    descargar: (...args: unknown[]) => apiDescargarMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
@@ -266,6 +268,8 @@ function renderTableroProtegido() {
 
 beforeEach(() => {
   apiGetMock.mockReset()
+  apiDescargarMock.mockReset()
+  apiDescargarMock.mockResolvedValue(undefined)
   usuarioActual = usuarioFixture()
 })
 
@@ -1033,5 +1037,89 @@ describe('Tablero — Card de comisiones, PROVISIONAL (stage-10-agregacion-dashb
       const rutas = apiGetMock.mock.calls.map((llamada) => llamada[0] as string)
       expect(rutas.some((r) => r.startsWith('/reportes/comisiones?') && r.includes(`idPuntoVenta=${puntoVentaCentro.id}`))).toBe(true)
     })
+  })
+})
+
+describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
+  it('la card G1 tiene botones de descarga de ventas y gastos, cada uno apuntando a su ruta /export con los filtros vigentes', async () => {
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    const rangoEsperado = rangoUltimosSieteDias()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Descargar ventas' }))
+    await waitFor(() =>
+      expect(apiDescargarMock).toHaveBeenCalledWith(
+        `/reportes/ventas/resumen/export?idEmpresa=1&desde=${rangoEsperado.desde}&hasta=${rangoEsperado.hasta}&granularidad=Dia&formato=xlsx`,
+      ),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Descargar gastos' }))
+    await waitFor(() =>
+      expect(apiDescargarMock).toHaveBeenCalledWith(
+        `/reportes/gastos/resumen/export?idEmpresa=1&desde=${rangoEsperado.desde}&hasta=${rangoEsperado.hasta}&granularidad=Dia&formato=xlsx`,
+      ),
+    )
+  })
+
+  // El aviso de descarga es un estado propio (`errorDescarga`), separado del `error` de carga:
+  // si compartiera ese estado, el botón "Reintentar" que viaja con él recargaría el reporte en
+  // vez de reintentar la descarga — un "Reintentar" engañoso.
+  it('un error 403 de descarga aparece en su propio aviso, sin ofrecer "Reintentar"', async () => {
+    mockearRutasBase()
+    const { ErrorApi } = await import('../api/cliente')
+    apiDescargarMock.mockRejectedValue(new ErrorApi(403, 'prohibido', 'No tenés permiso para exportar este reporte.'))
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    fireEvent.click(await screen.findByRole('button', { name: 'Descargar ventas' }))
+
+    expect(await screen.findByText('No tenés permiso para exportar este reporte.')).toBeInTheDocument()
+    expect(screen.queryAllByText('Reintentar')).toHaveLength(0)
+  })
+
+  // task 4.8: un 400 de rechazo por tope de filas (`exportacion_demasiado_grande`) surge en el
+  // aviso existente de la página, nunca como una navegación de la SPA a un JSON crudo.
+  it('un 400 por tope de filas surge en el aviso de descarga del panel, no navega a un JSON crudo', async () => {
+    mockearRutasBase()
+    const { ErrorApi } = await import('../api/cliente')
+    apiDescargarMock.mockRejectedValue(
+      new ErrorApi(400, 'exportacion_demasiado_grande', 'El export supera el tope de 25000 filas.'),
+    )
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    fireEvent.click(await screen.findByRole('button', { name: 'Descargar gastos' }))
+
+    expect(await screen.findByText('El export supera el tope de 25000 filas.')).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
+  })
+
+  it('el panel de rentabilidad (Admin) tiene su propio botón de descarga, con incluirEstimados reflejando el toggle', async () => {
+    usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Rentabilidad')
+    const rangoEsperado = rangoUltimosSieteDias()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Descargar' }))
+    await waitFor(() =>
+      expect(apiDescargarMock).toHaveBeenCalledWith(
+        `/reportes/rentabilidad/export?idEmpresa=1&desde=${rangoEsperado.desde}&hasta=${rangoEsperado.hasta}&formato=xlsx`,
+      ),
+    )
+
+    fireEvent.click(screen.getByLabelText('Incluir costos estimados'))
+    await waitFor(() => expect(screen.getByLabelText('Incluir costos estimados')).toBeChecked())
+
+    apiDescargarMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Descargar' }))
+    await waitFor(() =>
+      expect(apiDescargarMock).toHaveBeenCalledWith(
+        `/reportes/rentabilidad/export?idEmpresa=1&desde=${rangoEsperado.desde}&hasta=${rangoEsperado.hasta}&incluirEstimados=true&formato=xlsx`,
+      ),
+    )
   })
 })

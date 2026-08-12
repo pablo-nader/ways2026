@@ -100,6 +100,22 @@ export const clienteDeReportes = {
     api.get<Comisiones>(`/reportes/comisiones${construirQueryDeBreakdownConPv(filtros)}`),
 }
 
+/** Rutas de descarga (`/export`, stage-11 slice 4) de los tres paneles de `Tablero` que ya tienen
+ * su ruta `/export` mergeada: ventas resumen y gastos resumen (card G1) y rentabilidad. Reutilizan
+ * el mismo query string que su ruta JSON hermana — `formato=xlsx` es el único parámetro propio de
+ * la descarga (spec exportación-de-reportes: `formato` es requerido, único valor legal `xlsx`). */
+export const rutasDeExportacion = {
+  ventasResumen: (filtros: FiltrosDeReporte) =>
+    `/reportes/ventas/resumen/export${construirQueryDeReporte(filtros)}&formato=xlsx`,
+  gastosResumen: (filtros: FiltrosDeReporte) =>
+    `/reportes/gastos/resumen/export${construirQueryDeReporte(filtros)}&formato=xlsx`,
+  rentabilidad: (filtros: FiltrosDeRentabilidad) => {
+    const query = construirQueryDeBreakdownConPv(filtros)
+    const conEstimados = filtros.incluirEstimados ? `${query}&incluirEstimados=true` : query
+    return `/reportes/rentabilidad/export${conEstimados}&formato=xlsx`
+  },
+}
+
 function aFechaIso(fecha: Date): string {
   const anio = fecha.getFullYear()
   const mes = String(fecha.getMonth() + 1).padStart(2, '0')

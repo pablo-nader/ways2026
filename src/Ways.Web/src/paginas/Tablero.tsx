@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
-import { clienteDeReportes, rangoUltimosSieteDias } from '../api/reportes'
+import { clienteDeReportes, rangoUltimosSieteDias, rutasDeExportacion } from '../api/reportes'
 import type {
   CoberturaDeCosto,
   Comisiones,
@@ -21,6 +21,7 @@ import type {
 } from '../api/tipos'
 import { puedeVerComisiones, puedeVerRentabilidad } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
+import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { GraficoDeBarras } from '../componentes/graficos/GraficoDeBarras'
@@ -350,6 +351,7 @@ type PropsPanelDeRentabilidad = { idEmpresa: number; desde: string; hasta: strin
  */
 function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPanelDeRentabilidad) {
   const [incluirEstimados, setIncluirEstimados] = useState(false)
+  const [errorDescarga, setErrorDescarga] = useState('')
   const cargarDatos = useCallback(
     () => clienteDeReportes.rentabilidad({ idEmpresa, idPuntoVenta, desde, hasta, incluirEstimados }),
     [idEmpresa, idPuntoVenta, desde, hasta, incluirEstimados],
@@ -361,7 +363,14 @@ function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPan
 
   return (
     <div className="border p-3 bg-white h-100">
-      <h6>Rentabilidad</h6>
+      <div className="d-flex justify-content-between align-items-center mb-2">
+        <h6 className="mb-0">Rentabilidad</h6>
+        <BotonDeDescarga
+          ruta={rutasDeExportacion.rentabilidad({ idEmpresa, idPuntoVenta, desde, hasta, incluirEstimados })}
+          etiqueta="Descargar"
+          onError={setErrorDescarga}
+        />
+      </div>
       <div className="form-check form-switch mb-2">
         <input
           id="tablero-rentabilidad-incluir-estimados"
@@ -375,6 +384,7 @@ function PanelDeRentabilidad({ idEmpresa, desde, hasta, idPuntoVenta }: PropsPan
           Incluir costos estimados
         </label>
       </div>
+      {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
       {error && <PanelDeError error={error} onReintentar={reintentar} />}
       {cargando && !datos && <Cargando />}
       {datos && (
@@ -506,6 +516,9 @@ export function Tablero() {
   const [gastos, setGastos] = useState<ResumenDeGastos | null>(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
+  /** Error de descarga (stage-11 slice 4) — separado de `error` (carga de ventas/gastos) para no
+   * ofrecer un botón "Reintentar" que en realidad reintenta la carga, no la descarga. */
+  const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
 
   useEffect(() => {
@@ -670,8 +683,21 @@ export function Tablero() {
 
             {cargando && !ventas && !gastos && <Cargando />}
 
-            {ventas && gastos && (
+            {ventas && gastos && idEmpresa !== null && (
               <>
+                {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorDescarga}</div>}
+                <div className="d-flex gap-2 mb-2">
+                  <BotonDeDescarga
+                    ruta={rutasDeExportacion.ventasResumen({ idEmpresa, idPuntoVenta, desde, hasta, granularidad })}
+                    etiqueta="Descargar ventas"
+                    onError={setErrorDescarga}
+                  />
+                  <BotonDeDescarga
+                    ruta={rutasDeExportacion.gastosResumen({ idEmpresa, idPuntoVenta, desde, hasta, granularidad })}
+                    etiqueta="Descargar gastos"
+                    onError={setErrorDescarga}
+                  />
+                </div>
                 <div className="row g-3 mb-4">
                   <div className="col-md-3">
                     <div className="border p-3 bg-white text-center">
