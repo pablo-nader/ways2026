@@ -139,26 +139,40 @@ public class ReportesVentasResumenExportTests(WaysApiFixture fixture) : IClassFi
 
     // ---- task 1b.7: la exportación es igual al endpoint JSON para los mismos parámetros --------
 
+    /// <summary>Rango de 2 días ⇒ 2 buckets (granularidad Día): cada fila de bucket se compara
+    /// contra su entrada de <see cref="ResumenDeVentas.Serie"/> EN ORDEN (fila 7 = fila 6 = título
+    /// de tabla + serie[0], fila 8 = serie[1]), más la fila de totales (fila 9) contra las figuras
+    /// de nivel respuesta — un solo bucket comparado dejaba pasar mutaciones que solo afectan al
+    /// mapeo por-bucket (orden invertido, un valor corrido) porque la fila de totales las absorbe.
+    /// Mutación aplicada en <c>ExportacionDeReportes.De</c> (a) <c>.Reverse()</c> antes del
+    /// <c>Select</c>: esta prueba pasó de verde a rojo (bucket[0] esperado vs. bucket[1] real en
+    /// fila 7); revertida, vuelve a pasar. (b) <c>Celda.Moneda(bucket.Neto + 1m)</c>: mismo
+    /// resultado (Neto de fila 7/8 desviado en 1); revertida, vuelve a pasar.</summary>
     [Fact]
     public async Task ElExportEsIgualAlEndpointJsonParaLosMismosParametros()
     {
         var ctx = await PrepararAsync(nameof(ElExportEsIgualAlEndpointJsonParaLosMismosParametros), fixture);
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
-        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
+        var ayer = hoy.AddDays(-1);
+        var mediodiaAyerUtc = new DateTimeOffset(ayer.Year, ayer.Month, ayer.Day, 12, 0, 0, TimeSpan.Zero);
+        var mediodiaHoyUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
 
-        await SembrarComprobanteAsync(ctx, mediodiaUtc, 100m);
-        await SembrarComprobanteAsync(ctx, mediodiaUtc, 200m);
-        await SembrarComprobanteAsync(ctx, mediodiaUtc, 300m);
+        await SembrarComprobanteAsync(ctx, mediodiaAyerUtc, 100m);
+        await SembrarComprobanteAsync(ctx, mediodiaAyerUtc, 50m);
+        await SembrarComprobanteAsync(ctx, mediodiaHoyUtc, 200m);
+        await SembrarComprobanteAsync(ctx, mediodiaHoyUtc, 300m);
+        await SembrarComprobanteAsync(ctx, mediodiaHoyUtc, 400m);
 
-        var jsonRespuesta = await LlamarResumenAsync(ctx.Admin, ctx.IdEmpresa, ctx.IdPuntoVenta, hoy, hoy, Granularidad.Dia);
+        var jsonRespuesta = await LlamarResumenAsync(ctx.Admin, ctx.IdEmpresa, ctx.IdPuntoVenta, ayer, hoy, Granularidad.Dia);
         Assert.Equal(HttpStatusCode.OK, jsonRespuesta.StatusCode);
         var resumen = JsonSerializer.Deserialize<ResumenDeVentas>(await jsonRespuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
+        Assert.Equal(2, resumen.Serie.Count);
 
-        var exportRespuesta = await LlamarExportAsync(ctx.Admin, ctx.IdEmpresa, ctx.IdPuntoVenta, hoy, hoy, Granularidad.Dia);
+        var exportRespuesta = await LlamarExportAsync(ctx.Admin, ctx.IdEmpresa, ctx.IdPuntoVenta, ayer, hoy, Granularidad.Dia);
         Assert.Equal(HttpStatusCode.OK, exportRespuesta.StatusCode);
         Assert.Equal(ContentTypeXlsx, exportRespuesta.Content.Headers.ContentType?.MediaType);
 
-        var nombreEsperado = NombreDeArchivo.Construir("ventas_resumen", $"pv{ctx.IdPuntoVenta}", hoy, hoy);
+        var nombreEsperado = NombreDeArchivo.Construir("ventas_resumen", $"pv{ctx.IdPuntoVenta}", ayer, hoy);
         var disposicion = exportRespuesta.Content.Headers.ContentDisposition?.ToString() ?? string.Empty;
         Assert.Contains($"filename=\"{nombreEsperado}\"", disposicion);
         Assert.Contains($"filename*=UTF-8''{nombreEsperado}", disposicion);
@@ -166,11 +180,20 @@ public class ReportesVentasResumenExportTests(WaysApiFixture fixture) : IClassFi
         using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
-        // Rango de un día ⇒ un único bucket ⇒ la fila de totales es la fila 8 (fila 7 = el
-        // bucket, fila 6 = título de tabla). Se lee la fila de TOTALES, no la del bucket: es la
-        // que expone las mismas tres figuras (NetoVendido/CantidadTx/TicketPromedio) que el JSON
-        // reporta a nivel de respuesta.
-        var filaDeTotales = hoja.Row(8);
+        // Primera fila de datos es la 7 (fila 6 = título de tabla) — una fila por bucket, EN
+        // ORDEN, seguida de la fila de totales.
+        const int primeraFilaDeDatos = 7;
+        for (var i = 0; i < resumen.Serie.Count; i++)
+        {
+            var bucket = resumen.Serie[i];
+            var filaDeBucket = hoja.Row(primeraFilaDeDatos + i);
+            Assert.Equal(bucket.Etiqueta, filaDeBucket.Cell(1).GetString());
+            Assert.Equal(bucket.Neto, filaDeBucket.Cell(2).GetValue<decimal>());
+            Assert.Equal(bucket.CantidadTx, filaDeBucket.Cell(3).GetValue<int>());
+            Assert.Equal(bucket.TicketPromedio, (decimal?)filaDeBucket.Cell(4).GetValue<decimal>());
+        }
+
+        var filaDeTotales = hoja.Row(primeraFilaDeDatos + resumen.Serie.Count);
         Assert.Equal(resumen.NetoVendido, filaDeTotales.Cell(2).GetValue<decimal>());
         Assert.Equal(resumen.CantidadTx, filaDeTotales.Cell(3).GetValue<int>());
         Assert.Equal(resumen.TicketPromedio, (decimal?)filaDeTotales.Cell(4).GetValue<decimal>());
@@ -189,6 +212,25 @@ public class ReportesVentasResumenExportTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
+    /// <summary>Complementa <c>FormatoDeExportacionTests</c> (unitaria, sin fixture): un caso a
+    /// nivel HTTP que atraviesa el pipeline real (routing, binding, middleware de errores) y
+    /// confirma que <see cref="FormatoDeExportacion.Parsear"/> corta la request ANTES de tocar el
+    /// servicio de reportes, con el <c>codigo</c> de dominio propagado en el ProblemDetails.</summary>
+    [Fact]
+    public async Task UnFormatoNoSoportadoRechazaConProblemDetailsAtravesDelPipelineHttp()
+    {
+        var ctx = await PrepararAsync(nameof(UnFormatoNoSoportadoRechazaConProblemDetailsAtravesDelPipelineHttp), fixture);
+        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var respuesta = await LlamarExportAsync(ctx.Admin, ctx.IdEmpresa, ctx.IdPuntoVenta, hoy, hoy, Granularidad.Dia, formato: "pdf");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("formato_no_soportado", problema.GetProperty("codigo").GetString());
+    }
+
     // ---- task 1b.11: el encabezado identifica alcance y generador --------------------------------
 
     [Fact]
@@ -204,7 +246,7 @@ public class ReportesVentasResumenExportTests(WaysApiFixture fixture) : IClassFi
         using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
-        Assert.Contains($"Empresa {ctx.IdEmpresa}", hoja.Cell(1, 1).GetString());
+        Assert.Contains($"Empresa: {ctx.IdEmpresa}", hoja.Cell(1, 1).GetString());
         Assert.Contains($"PV {ctx.IdPuntoVenta}", hoja.Cell(2, 1).GetString());
         Assert.Contains("2026-08-01", hoja.Cell(3, 1).GetString());
         Assert.Contains("admin", hoja.Cell(4, 1).GetString(), StringComparison.OrdinalIgnoreCase);

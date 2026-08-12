@@ -43,7 +43,7 @@ public static class ReportesEndpoints
                 usuario, reloj, idEmpresa, idPuntoVenta, desde, hasta, resumen.ZonaHoraria);
             var tabla = ExportacionDeReportes.De(resumen, ctx);
 
-            GuardaDeTope.Exigir(tabla, opciones.Value.TopeDeFilas);
+            GuardaDeTope.Exigir(tabla.Filas.Count, opciones.Value.TopeDeFilas);
 
             var bytes = exportador.Generar(tabla);
             var alcance = idPuntoVenta is { } id ? $"pv{id}" : "todos";

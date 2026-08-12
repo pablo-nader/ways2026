@@ -10,10 +10,13 @@ namespace Ways.Application.Tests.Exportacion;
 /// </summary>
 public class FormatoDeExportacionTests
 {
-    [Fact]
-    public void UnFormatoNoSoportadoRechazaConElCodigoDeDominio()
+    [Theory]
+    [InlineData("pdf")]
+    [InlineData("csv")]
+    [InlineData("XLS")]
+    public void UnFormatoNoSoportadoRechazaConElCodigoDeDominio(string valor)
     {
-        var error = Assert.Throws<ErrorDominio>(() => FormatoDeExportacion.Parsear("pdf"));
+        var error = Assert.Throws<ErrorDominio>(() => FormatoDeExportacion.Parsear(valor));
 
         Assert.Equal("formato_no_soportado", error.Codigo);
         Assert.Equal(400, error.EstadoHttp);
