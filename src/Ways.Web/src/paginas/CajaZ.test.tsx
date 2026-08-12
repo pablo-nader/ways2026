@@ -210,7 +210,7 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/caja/turnos/412/detalle') return primera
       if (ruta === '/caja/turnos/413/detalle') {
-        return Promise.resolve(detalleFixture({ resumen: resumenFixture({ idTurnoCaja: 413 }) }))
+        return Promise.resolve(detalleFixture({ resumen: resumenFixture({ idTurnoCaja: 413, cantidadTickets: 7 }) }))
       }
       return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
     })
@@ -245,8 +245,14 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     await usuario.click(screen.getByText('ir al turno 413'))
     expect(await screen.findByText('Caja Z — turno #413')).toBeInTheDocument()
 
-    resolverPrimera(detalleFixture({ resumen: resumenFixture({ idTurnoCaja: 412 }) }))
-    await waitFor(() => expect(screen.getByText('Caja Z — turno #413')).toBeInTheDocument())
+    expect(await screen.findByText('7')).toBeInTheDocument() // cantidadTickets del turno 413
+
+    // La respuesta stale del 412 trae cantidadTickets 99: si pisara el estado, el 7 desaparece.
+    resolverPrimera(detalleFixture({ resumen: resumenFixture({ idTurnoCaja: 412, cantidadTickets: 99 }) }))
+    await waitFor(() => {
+      expect(screen.getByText('7')).toBeInTheDocument()
+      expect(screen.queryByText('99')).not.toBeInTheDocument()
+    })
   })
 })
 

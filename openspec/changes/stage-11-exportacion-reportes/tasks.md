@@ -891,7 +891,7 @@ G3 read endpoint live, chain-ordered, exportable, `/caja/tesoreria` screen.
 - [x] 7.12 [P] `Tesoreria.test.tsx`: renders the book in chain order,
   download busy-state, role gating. Per `web-descriptor-tests`. —
   IMPLEMENTED in the same follow-up batch as 7.5/7.6: renders a 3-row
-  chained fixture (`final` 60/100/145-style, same shape as the backend's
+  chained fixture (`final` 60/100/55 (tres filas encadenadas con valores distintos por columna)-style, same shape as the backend's
   own `TresFilasEncadenadasSeDevuelvenEnOrdenDeCadena` fixture) asserting
   DOM row order matches array order with no client sort, per-row column
   mapping with distinct values (mutation-proof-tests rule 6), download
