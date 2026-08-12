@@ -240,9 +240,10 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     {
         var ctx = await PrepararAsync(nameof(UnaCompraSoftDeletedNuncaApareceEnElReporteDeCompras));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodia = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
 
-        await SembrarCompraAsync(ctx, DateTimeOffset.UtcNow, 999_999m, EstadoCompra.Confirmada, eliminado: true);
-        await SembrarCompraAsync(ctx, DateTimeOffset.UtcNow, 100m, EstadoCompra.Confirmada);
+        await SembrarCompraAsync(ctx, mediodia, 999_999m, EstadoCompra.Confirmada, eliminado: true);
+        await SembrarCompraAsync(ctx, mediodia, 100m, EstadoCompra.Confirmada);
 
         var reporte = await ObtenerComprasAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
@@ -351,10 +352,11 @@ public class ReportesEgresosTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     {
         var ctx = await PrepararAsync(nameof(UnGastoSoftDeletedNuncaApareceEnElResumenDeGastos));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodia = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
         var turno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
 
-        await SembrarGastoAsync(ctx, turno, DateTimeOffset.UtcNow, 5000m, CategoriaGasto.Otros, eliminado: true);
-        await SembrarGastoAsync(ctx, turno, DateTimeOffset.UtcNow, 100m, CategoriaGasto.Otros);
+        await SembrarGastoAsync(ctx, turno, mediodia, 5000m, CategoriaGasto.Otros, eliminado: true);
+        await SembrarGastoAsync(ctx, turno, mediodia, 100m, CategoriaGasto.Otros);
 
         var resumen = await ObtenerGastosAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 

@@ -161,11 +161,12 @@ public class ReportesComisionesTests(WaysApiFixture fixture) : IClassFixture<Way
     {
         var ctx = await PrepararAsync(nameof(UnaVentaSoftDeletedNuncaApareceEnLasComisiones));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
         var idTipoTx = await IdTipoComprobanteTxAsync(ctx);
         await ConfigurarComisionAsync(ctx, "10");
 
-        await SembrarComprobanteAsync(ctx, idTipoTx, DateTimeOffset.UtcNow, 999_999m, eliminado: true);
-        await SembrarComprobanteAsync(ctx, idTipoTx, DateTimeOffset.UtcNow, 100m);
+        await SembrarComprobanteAsync(ctx, idTipoTx, mediodiaUtc, 999_999m, eliminado: true);
+        await SembrarComprobanteAsync(ctx, idTipoTx, mediodiaUtc, 100m);
 
         var comisiones = await ObtenerComisionesAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
@@ -179,11 +180,12 @@ public class ReportesComisionesTests(WaysApiFixture fixture) : IClassFixture<Way
     {
         var ctx = await PrepararAsync(nameof(UnaVentaAnuladaNuncaApareceEnLasComisiones));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
         var idTipoTx = await IdTipoComprobanteTxAsync(ctx);
         await ConfigurarComisionAsync(ctx, "10");
 
-        await SembrarComprobanteAsync(ctx, idTipoTx, DateTimeOffset.UtcNow, 999_999m, estado: EstadoComprobante.Anulado);
-        await SembrarComprobanteAsync(ctx, idTipoTx, DateTimeOffset.UtcNow, 250m);
+        await SembrarComprobanteAsync(ctx, idTipoTx, mediodiaUtc, 999_999m, estado: EstadoComprobante.Anulado);
+        await SembrarComprobanteAsync(ctx, idTipoTx, mediodiaUtc, 250m);
 
         var comisiones = await ObtenerComisionesAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
@@ -223,11 +225,12 @@ public class ReportesComisionesTests(WaysApiFixture fixture) : IClassFixture<Way
     {
         var ctx = await PrepararAsync(nameof(SinParametroConfiguradoLaTasaDefaultEsCeroYTodaComisionEsCero));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
         var idTipoTx = await IdTipoComprobanteTxAsync(ctx);
 
         // Sin ConfigurarComisionAsync: ninguna fila de `parametros` para esta clave — el default
         // declarado en ParametroConocido.ComisionPorcentaje ("0") es lo único que puede resolver.
-        await SembrarComprobanteAsync(ctx, idTipoTx, DateTimeOffset.UtcNow, 10_000m);
+        await SembrarComprobanteAsync(ctx, idTipoTx, mediodiaUtc, 10_000m);
 
         var comisiones = await ObtenerComisionesAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 

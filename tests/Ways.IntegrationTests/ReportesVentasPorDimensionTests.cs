@@ -211,9 +211,10 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
     {
         var ctx = await PrepararAsync(nameof(PorPuntoVentaExcluyeUnaFilaSoftDeleted));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
 
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 999_999m, eliminado: true);
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 100m);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 999_999m, eliminado: true);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 100m);
 
         var reporte = await ObtenerPorPuntoVentaAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
@@ -226,9 +227,10 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
     {
         var ctx = await PrepararAsync(nameof(PorPuntoVentaExcluyeUnComprobanteAnulado));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
 
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 999_999m, estado: EstadoComprobante.Anulado);
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 250m);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 999_999m, estado: EstadoComprobante.Anulado);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 250m);
 
         var reporte = await ObtenerPorPuntoVentaAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
@@ -316,9 +318,10 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
     {
         var ctx = await PrepararAsync(nameof(PorVendedorExcluyeUnaFilaSoftDeleted));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
 
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 999_999m, eliminado: true);
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 100m);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 999_999m, eliminado: true);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 100m);
 
         var reporte = await ObtenerPorVendedorAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
@@ -331,9 +334,10 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
     {
         var ctx = await PrepararAsync(nameof(PorVendedorExcluyeUnComprobanteAnulado));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
 
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 999_999m, estado: EstadoComprobante.Anulado);
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 250m);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 999_999m, estado: EstadoComprobante.Anulado);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 250m);
 
         var reporte = await ObtenerPorVendedorAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
@@ -419,11 +423,12 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
     {
         var ctx = await PrepararAsync(nameof(PorMedioPagoExcluyeUnPagoDeUnEncabezadoSoftDeleted));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
 
-        var idEliminado = await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 999_999m, eliminado: true);
+        var idEliminado = await SembrarComprobanteAsync(ctx, mediodiaUtc, 999_999m, eliminado: true);
         await SembrarPagoAsync(ctx, idEliminado, ctx.IdMedioPagoEfectivo, 999_999m);
 
-        var idVisible = await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 100m);
+        var idVisible = await SembrarComprobanteAsync(ctx, mediodiaUtc, 100m);
         await SembrarPagoAsync(ctx, idVisible, ctx.IdMedioPagoEfectivo, 100m);
 
         var reporte = await ObtenerPorMedioPagoAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
@@ -437,11 +442,12 @@ public class ReportesVentasPorDimensionTests(WaysApiFixture fixture) : IClassFix
     {
         var ctx = await PrepararAsync(nameof(PorMedioPagoExcluyeUnPagoDeUnComprobanteAnulado));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
 
-        var idAnulado = await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 999_999m, estado: EstadoComprobante.Anulado);
+        var idAnulado = await SembrarComprobanteAsync(ctx, mediodiaUtc, 999_999m, estado: EstadoComprobante.Anulado);
         await SembrarPagoAsync(ctx, idAnulado, ctx.IdMedioPagoEfectivo, 999_999m);
 
-        var idVisible = await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 250m);
+        var idVisible = await SembrarComprobanteAsync(ctx, mediodiaUtc, 250m);
         await SembrarPagoAsync(ctx, idVisible, ctx.IdMedioPagoEfectivo, 250m);
 
         var reporte = await ObtenerPorMedioPagoAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);

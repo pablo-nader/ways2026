@@ -191,9 +191,10 @@ public class ReportesVentasResumenTests(WaysApiFixture fixture) : IClassFixture<
     {
         var ctx = await PrepararAsync(nameof(UnaFilaSoftDeletedNuncaApareceEnElResumen));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
 
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 999_999m, eliminado: true);
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 100m);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 999_999m, eliminado: true);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 100m);
 
         var resumen = await ObtenerResumenAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
@@ -205,9 +206,10 @@ public class ReportesVentasResumenTests(WaysApiFixture fixture) : IClassFixture<
     {
         var ctx = await PrepararAsync(nameof(UnComprobanteAnuladoNuncaApareceEnElResumen));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        var mediodiaUtc = new DateTimeOffset(hoy.Year, hoy.Month, hoy.Day, 12, 0, 0, TimeSpan.Zero);
 
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 999_999m, estado: EstadoComprobante.Anulado);
-        await SembrarComprobanteAsync(ctx, DateTimeOffset.UtcNow, 250m);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 999_999m, estado: EstadoComprobante.Anulado);
+        await SembrarComprobanteAsync(ctx, mediodiaUtc, 250m);
 
         var resumen = await ObtenerResumenAsync(ctx.Admin, ctx.IdEmpresa, hoy, hoy);
 
