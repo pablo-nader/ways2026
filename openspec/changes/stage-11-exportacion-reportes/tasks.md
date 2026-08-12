@@ -1040,11 +1040,11 @@ tightens, this slice is dropped whole to Etapa 13** (proposal decision 10)
   state without a re-query, row rendering + no-idArticulo query assertion,
   PV-switch re-query, download route, stale-response generation guard, role
   gating (Supervisor in / Vendedor redirected).
-- [ ] 9.13 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
+- [x] 9.13 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
   this `sdd-apply` run (explicit boundary: no push/PR); left for the
   orchestrator's PR-validation phase, same precedent as every prior slice
   (1b.13/2.9/3.9/5a.11/5b.10/6a.4/7.13/8.5).
-- [ ] 9.14 Branch `feat/stage11-slice9-existencias` off `main` (parent:
+- [x] 9.14 Branch `feat/stage11-slice9-existencias` off `main` (parent:
   slices 1b + 4); PR; merge stacked-to-main. — branch created inside the
   isolated worktree per the orchestrator's explicit instruction; the
   worktree's pre-existing branch name (`worktree-agent-ac822c711ae33bb08`)
