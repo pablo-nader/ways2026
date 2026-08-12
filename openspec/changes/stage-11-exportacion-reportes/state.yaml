@@ -1,5 +1,5 @@
 change: stage-11-exportacion-reportes
-phase: apply
+phase: verify
 status: in-progress
 artifact_store: openspec
 execution_mode: delegated-autonomous
@@ -28,7 +28,9 @@ phases:
     artifact: null
     depends_on: [spec, design]
   apply:
-    status: pending
+    status: done
+    artifact: tasks.md (checkboxes) + PRs 87-98
+    notes: "Completed 2026-08-12. 12/12 slices merged stacked-to-main (PRs 87-98): seam+licencia (ClosedXML aprobada, 8 transitivos MIT/Apache con pin exacto), patron de ruta, 8 exports de reportes, exports de listados con ConstruirQuery + race interceptor, plomeria de descarga web, Ver Cajas G2 + detalle, exports de caja + Z-report, tesoreria G3, 3 pantallas, print views, existencias. Gate cero-schema SOSTENIDO toda la etapa. Suites al cierre: Domain 394, Application 257, Integration 896, vitest 544. Judgment-day por slice: ~20 hallazgos confirmados pre-merge, 2 MAJORs de PRODUCCION (banner... no: el hoy UTC del export de existencias — la clase de la ventana llegando al filename — y el resto test-honesty), 3 REJECTs de ronda 1 (slices 1b-equality, 5b-workbooks, 9-reloj), la skill mutation-proof-tests crecio de 5 a 7 reglas. INCIDENTE: main roto ~30 min por resolucion naive de conflicto de archivo-creado-por-ambas-ramas + exit codes tragados por pipes (PR 95) — reparado deterministicamente, 3 reglas permanentes en memoria. Flakiness ambiental confirmada 2 veces mas (variable counts, re-run verde)."
     artifact: null
     depends_on: [tasks]
   verify:
