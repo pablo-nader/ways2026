@@ -1,4 +1,9 @@
+using Microsoft.Extensions.Options;
+using Ways.Api.Exportacion;
 using Ways.Api.Seguridad;
+using Ways.Application.Abstracciones;
+using Ways.Application.Exportacion;
+using Ways.Application.Parametros;
 using Ways.Application.Ventas;
 using Ways.Domain.Ventas;
 
@@ -49,6 +54,42 @@ public static class VentasEndpoints
             CancellationToken ct) =>
             servicio.ListarAsync(idPuntoVenta, desde, hasta, idCliente, estado, pagina ?? 1, tamanio ?? 25, ct))
         .WithSummary("Lista comprobantes de venta con filtros y paginado.");
+
+        // stage-11-exportacion-reportes (Slice 3, design decisión 7): sibling declarado
+        // inmediatamente después de su ruta fuente — hereda OperacionDePos por co-locación, sin
+        // política propia. `desde`/`hasta` son OBLIGATORIOS acá (a diferencia del listado JSON):
+        // un export es por definición un rango acotado, y el nombre de archivo determinístico
+        // necesita ambas fechas (spec exportacion-de-reportes: XLSX Response Contract And
+        // Deterministic Naming).
+        grupo.MapGet("/export", async (
+            ServicioDeVentas servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
+            int? idPuntoVenta, DateTimeOffset desde, DateTimeOffset hasta, int? idCliente, EstadoComprobante? estado,
+            string formato, CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var filas = await servicio.ListarParaExportacionAsync(
+                idPuntoVenta, desde, hasta, idCliente, estado, opciones.Value.TopeDeFilas, ct);
+
+            var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
+            var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
+            var desdeFecha = DateOnly.FromDateTime(desde.UtcDateTime);
+            var hastaFecha = DateOnly.FromDateTime(hasta.UtcDateTime);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, empresa, idPuntoVenta is { } id ? $"PV {id}" : null, desdeFecha, hastaFecha, zonaId);
+            var tabla = ExportacionDeListados.De(filas, ctx, zona);
+
+            var bytes = exportador.Generar(tabla);
+            var alcance = idPuntoVenta is { } pv ? $"pv{pv}" : "todos";
+            var nombre = NombreDeArchivo.Construir("ventas_listado", alcance, desdeFecha, hastaFecha);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary(
+            "Export XLSX de GET /api/ventas: mismo filtro, sin paginado bajo el tope, gate " +
+            "OperacionDePos heredado por co-locación.");
 
         return app;
     }

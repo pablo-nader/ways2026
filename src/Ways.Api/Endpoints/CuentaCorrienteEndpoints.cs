@@ -1,5 +1,9 @@
+using Microsoft.Extensions.Options;
+using Ways.Api.Exportacion;
 using Ways.Api.Seguridad;
+using Ways.Application.Abstracciones;
 using Ways.Application.CuentaCorriente;
+using Ways.Application.Exportacion;
 
 namespace Ways.Api.Endpoints;
 
@@ -61,6 +65,39 @@ public static class CuentaCorrienteEndpoints
             bool? historico, CancellationToken ct) =>
             Results.Ok(await servicio.ObtenerEstadoDeCuentaAsync(idCliente, desde, hasta, historico ?? false, ct)))
         .WithSummary("Estado de cuenta: header (saldo/acuerdo/disponibilidad) + movimientos con saldo corrido.");
+
+        // stage-11-exportacion-reportes (Slice 3, design decisión 7): sibling declarado
+        // inmediatamente después de su ruta fuente — hereda OperacionDePos por co-locación.
+        // `desde`/`hasta` OBLIGATORIOS y sin `historico` (design: un export es por definición
+        // un rango acotado, exactamente lo que histórico evita) — mismo criterio que
+        // /api/ventas/export.
+        grupo.MapGet("/export", async (
+            ServicioDeCuentaCorriente servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj,
+            int idCliente, DateTimeOffset desde, DateTimeOffset hasta, string formato, CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var estado = await servicio.ObtenerEstadoDeCuentaParaExportacionAsync(
+                idCliente, desde, hasta, opciones.Value.TopeDeFilas, ct);
+
+            var zona = TimeZoneInfo.FindSystemTimeZoneById(AlcanceDeListadoHttp.ZonaPorDefecto);
+            var desdeFecha = DateOnly.FromDateTime(desde.UtcDateTime);
+            var hastaFecha = DateOnly.FromDateTime(hasta.UtcDateTime);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, $"Cliente {idCliente}", puntoVenta: null, desdeFecha, hastaFecha,
+                AlcanceDeListadoHttp.ZonaPorDefecto);
+            var tabla = ExportacionDeListados.De(estado.Movimientos, ctx, zona);
+
+            var bytes = exportador.Generar(tabla);
+            var nombre = NombreDeArchivo.Construir("estado_de_cuenta", $"cliente{idCliente}", desdeFecha, hastaFecha);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary(
+            "Export XLSX del ledger: mismo rango, sin histórico, gate OperacionDePos heredado " +
+            "por co-locación.");
 
         return app;
     }

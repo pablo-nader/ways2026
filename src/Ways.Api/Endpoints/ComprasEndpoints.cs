@@ -1,5 +1,9 @@
+using Microsoft.Extensions.Options;
+using Ways.Api.Exportacion;
 using Ways.Api.Seguridad;
+using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
+using Ways.Application.Exportacion;
 using Ways.Domain.Compras;
 
 namespace Ways.Api.Endpoints;
@@ -28,6 +32,38 @@ public static class ComprasEndpoints
             CancellationToken ct) =>
             servicio.ListarAsync(idProveedor, estado, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
         .WithSummary("Lista comprobantes de compra con filtros y paginado.");
+
+        // stage-11-exportacion-reportes (Slice 3, design decisión 7): sibling declarado
+        // inmediatamente después de su ruta fuente — hereda OperacionDePos por co-locación.
+        // Sin idPuntoVenta (el listado JSON tampoco lo tiene): Empresa/zona usan el default de
+        // AlcanceDeListadoHttp, no una consulta nueva.
+        grupo.MapGet("/export", async (
+            ServicioDeCompras servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj,
+            int? idProveedor, EstadoCompra? estado, DateTimeOffset desde, DateTimeOffset hasta, string formato,
+            CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var filas = await servicio.ListarParaExportacionAsync(
+                idProveedor, estado, desde, hasta, opciones.Value.TopeDeFilas, ct);
+
+            var zona = TimeZoneInfo.FindSystemTimeZoneById(AlcanceDeListadoHttp.ZonaPorDefecto);
+            var desdeFecha = DateOnly.FromDateTime(desde.UtcDateTime);
+            var hastaFecha = DateOnly.FromDateTime(hasta.UtcDateTime);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, "Todas", puntoVenta: null, desdeFecha, hastaFecha, AlcanceDeListadoHttp.ZonaPorDefecto);
+            var tabla = ExportacionDeListados.De(filas, ctx, zona);
+
+            var bytes = exportador.Generar(tabla);
+            var nombre = NombreDeArchivo.Construir("compras_listado", "todas", desdeFecha, hastaFecha);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary(
+            "Export XLSX de GET /api/compras: mismo filtro, sin paginado bajo el tope, gate " +
+            "OperacionDePos heredado por co-locación.");
 
         grupo.MapGet("/{id:int}", (ServicioDeCompras servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))
