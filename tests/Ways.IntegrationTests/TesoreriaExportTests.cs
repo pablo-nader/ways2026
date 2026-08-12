@@ -148,6 +148,7 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         // Fila 6 = título de tabla; los datos empiezan en la fila 7, mismo orden de cadena que el
         // libro JSON (inicio/ingreso/egreso/final/concepto/empleado/fecha, design: Slice 7 task 7.5).
+        var zonaArgentina = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");
         const int primeraFilaDeDatos = 7;
         for (var i = 0; i < libro.Items.Count; i++)
         {
@@ -159,6 +160,7 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             Assert.Equal(item.Final, fila.Cell(4).GetValue<decimal>());
             Assert.Equal(item.Concepto, fila.Cell(5).GetString());
             Assert.Equal(item.IdEmpleado, fila.Cell(6).GetValue<int>());
+            Assert.Equal(TimeZoneInfo.ConvertTime(item.Fecha, zonaArgentina).DateTime, fila.Cell(7).GetValue<DateTime>());
         }
     }
 

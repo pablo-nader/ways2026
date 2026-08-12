@@ -185,16 +185,21 @@ public class TesoreriaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
     {
         var ctx = await PrepararAsync(nameof(ElFiltroDeFechaExcluyeMovimientosFueraDelRango));
         var dentro = new DateOnly(2026, 8, 5);
-        var fuera = new DateOnly(2026, 8, 20);
+        var fueraPorHasta = new DateOnly(2026, 8, 20);
+        // Una fila ANTERIOR a `desde`: sin ella, la cota inferior queda sin discriminar
+        // (borrar el bloque `desde` pasaba verde — hallazgo de judgment-day).
+        var fueraPorDesde = new DateOnly(2026, 7, 20);
 
         var idDentro = await SembrarMovimientoAsync(ctx, ctx.IdPuntoVenta, dentro, 0m, 100m, 0m, 100m);
-        var idFuera = await SembrarMovimientoAsync(ctx, ctx.IdPuntoVenta, fuera, 100m, 50m, 0m, 150m);
+        var idFueraPorHasta = await SembrarMovimientoAsync(ctx, ctx.IdPuntoVenta, fueraPorHasta, 100m, 50m, 0m, 150m);
+        var idFueraPorDesde = await SembrarMovimientoAsync(ctx, ctx.IdPuntoVenta, fueraPorDesde, 0m, 30m, 0m, 30m);
 
         var libro = await ListarAsync(ctx.Admin, ctx.IdPuntoVenta, new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 10));
 
         Assert.NotNull(libro);
         Assert.Contains(libro!.Items, m => m.Id == idDentro);
-        Assert.DoesNotContain(libro.Items, m => m.Id == idFuera);
+        Assert.DoesNotContain(libro.Items, m => m.Id == idFueraPorHasta);
+        Assert.DoesNotContain(libro.Items, m => m.Id == idFueraPorDesde);
     }
 
     [Fact]
