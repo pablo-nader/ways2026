@@ -1,0 +1,39 @@
+/*
+ * Vistas de impresión (stage-11-exportacion-reportes, Slice 8, design decisión 13): el mismo
+ * componente que se ve en pantalla se imprime vía el "Guardar como PDF" del navegador — no hay
+ * ruta ni fetch dedicados a impresión. Estas reglas solo aplican bajo `@media print`; en pantalla
+ * no tienen ningún efecto.
+ */
+@media print {
+  /* La barra de navegación de la app (`Layout.tsx`, id fijo `#top`) nunca forma parte del
+     documento impreso, en cualquier pantalla. */
+  #top {
+    display: none !important;
+  }
+
+  /* Bootstrap 5 ya trae `.d-print-none`; se refuerza acá para que la intención de ocultar
+     filtros/nav-en-pantalla/botones de acción quede documentada junto al resto de las reglas de
+     impresión de la pantalla, sin depender solo del utility importado. */
+  .d-print-none {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  @page {
+    margin: 12mm;
+  }
+
+  /* Legibilidad en blanco y negro: bordes explícitos por celda en vez de depender del rayado de
+     `table-striped`, que puede no imprimirse según la configuración del navegador. */
+  table {
+    border-collapse: collapse;
+  }
+
+  table th,
+  table td {
+    border: 1px solid #000 !important;
+  }
+}

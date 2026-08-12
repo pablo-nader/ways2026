@@ -997,3 +997,56 @@ describe('CuentaCorriente — detalle de un movimiento ActualizacionPrecios en e
     expect(await screen.findByText('{esto no es json')).toBeInTheDocument()
   })
 })
+
+/**
+ * Vista de impresión (stage-11-exportacion-reportes, Slice 8, design decisión 13: mismo
+ * componente, `@media print`, sin ruta ni fetch dedicados — print rendering en sí es una
+ * exención registrada, verificada a ojo). Estos tests cubren lo único automatizable: el bloque de
+ * impresión muestra los valores REALES de contexto (nunca un placeholder) y el chrome que no debe
+ * imprimirse lleva `d-print-none`.
+ */
+describe('CuentaCorriente — vista de impresión (Slice 8)', () => {
+  it('el bloque de impresión muestra el rango real de filtros y quién/cuándo lo generó', async () => {
+    mockearRutasBase()
+    usuarioActual = usuarioFixture({ usuario: 'cajera_ana' })
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+
+    const inputDesde = screen.getByLabelText('Desde') as HTMLInputElement
+    const inputHasta = screen.getByLabelText('Hasta') as HTMLInputElement
+
+    expect(screen.getByText(`Rango: ${inputDesde.value} a ${inputHasta.value}`)).toBeInTheDocument()
+    expect(screen.getByText(/Generado:.*— cajera_ana/)).toBeInTheDocument()
+  })
+
+  it('"Ver histórico completo" cambia el bloque de impresión de un rango de fechas a "Histórico completo"', async () => {
+    mockearRutasBase()
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+    expect(screen.getByText(/^Rango: \d{4}-\d{2}-\d{2} a \d{4}-\d{2}-\d{2}$/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByLabelText('Ver histórico completo'))
+
+    expect(await screen.findByText('Rango: Histórico completo')).toBeInTheDocument()
+  })
+
+  it('el botón Imprimir dispara window.print() y el resto del chrome de pantalla queda marcado d-print-none', async () => {
+    mockearRutasBase()
+    const imprimirSpy = vi.fn()
+    window.print = imprimirSpy
+    renderPantalla()
+
+    await screen.findByText('$500,00')
+
+    const botonImprimir = screen.getByRole('button', { name: 'Imprimir' })
+    expect(botonImprimir).toHaveClass('d-print-none')
+    await userEvent.click(botonImprimir)
+    expect(imprimirSpy).toHaveBeenCalledTimes(1)
+
+    expect(screen.getByRole('link', { name: 'Volver a clientes' })).toHaveClass('d-print-none')
+    expect(screen.getByLabelText('Desde').closest('.row')).toHaveClass('d-print-none')
+    expect(screen.getByRole('button', { name: 'Ingresar pago' }).closest('.d-flex')).toHaveClass('d-print-none')
+  })
+})

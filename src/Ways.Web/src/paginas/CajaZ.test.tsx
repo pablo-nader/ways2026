@@ -284,3 +284,42 @@ describe('CajaZ — role gating (spec historico-de-cajas: A Vendedor Downloads T
     expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
   })
 })
+
+/**
+ * Vista de impresión (stage-11-exportacion-reportes, Slice 8, design decisión 13: mismo
+ * componente, `@media print`, sin ruta ni fetch dedicados — print rendering en sí es una
+ * exención registrada, verificada a ojo). Cubre lo único automatizable: el bloque de impresión
+ * muestra quién/cuándo lo generó con el usuario REAL de la sesión, y el chrome que no debe
+ * imprimirse (Imprimir, Descargar) lleva `d-print-none`.
+ */
+describe('CajaZ — vista de impresión (Slice 8)', () => {
+  it('el bloque de impresión muestra quién generó la vista con el usuario real de la sesión', async () => {
+    usuarioActual = usuarioFixture({ usuario: 'cajero_luis' })
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/412/detalle') return Promise.resolve(detalleFixture())
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    renderCajaZ()
+
+    expect(await screen.findByText(/Generado:.*— cajero_luis/)).toBeInTheDocument()
+  })
+
+  it('el botón Imprimir dispara window.print() y tanto Imprimir como Descargar quedan marcados d-print-none', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos/412/detalle') return Promise.resolve(detalleFixture())
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const imprimirSpy = vi.fn()
+    window.print = imprimirSpy
+    renderCajaZ()
+
+    await screen.findByText('Caja Z — turno #412')
+
+    const botonImprimir = screen.getByRole('button', { name: 'Imprimir' })
+    expect(botonImprimir).toHaveClass('d-print-none')
+    await userEvent.click(botonImprimir)
+    expect(imprimirSpy).toHaveBeenCalledTimes(1)
+
+    expect(screen.getByRole('button', { name: 'Descargar' })).toHaveClass('d-print-none')
+  })
+})
