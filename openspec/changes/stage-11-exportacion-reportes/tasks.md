@@ -747,7 +747,7 @@ G3 read endpoint live, chain-ordered, exportable, `/caja/tesoreria` screen.
 - [ ] 7.12 [P] `Tesoreria.test.tsx`: renders the book in chain order,
   download busy-state, role gating. Per `web-descriptor-tests`. — DEFERRED
   with 7.5/7.6.
-- [ ] 7.13 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
+- [x] 7.13 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
   this `sdd-apply` run (explicit boundary: no push/PR); left for the
   orchestrator's PR-validation phase, same precedent as 1b.13/5a.11.
 - [x] 7.14 Branch `feat/stage11-slice7-tesoreria` off `main` (parent:
