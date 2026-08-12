@@ -684,10 +684,10 @@ listings, exportable, gated `OperacionDePos` (same as `/resumen`).
   the Tickets section (count + Σ Total), and the Gastos section (importe)
   against the SAME `DetalleDeTurno` the JSON route returns; also asserts
   the header's PV line resolves from the turno itself, not a query param.
-- [ ] 5b.10 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE
+- [x] 5b.10 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE
   for this `sdd-apply` run (explicit boundary: no push/PR); left for the
   orchestrator's PR-validation phase, same precedent as 1b.13/2.9/3.9/5a.11.
-- [ ] 5b.11 Branch `feat/stage11-slice5b-cajas-detalle` off `main` (parent:
+- [x] 5b.11 Branch `feat/stage11-slice5b-cajas-detalle` off `main` (parent:
   slices 1b + 5a); PR; merge stacked-to-main. — branch
   `feat/stage11-slice5b-exports-caja` created off `main` per the
   orchestrator's explicit instruction (isolated worktree; name differs from
