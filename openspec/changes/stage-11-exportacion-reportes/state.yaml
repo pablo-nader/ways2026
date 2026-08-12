@@ -1,5 +1,5 @@
 change: stage-11-exportacion-reportes
-phase: verify
+phase: archive
 status: in-progress
 artifact_store: openspec
 execution_mode: delegated-autonomous
@@ -34,7 +34,9 @@ phases:
     artifact: null
     depends_on: [tasks]
   verify:
-    status: pending
+    status: done
+    artifact: verify-report.md
+    notes: "PASS WITH WARNINGS (2026-08-12): 0 CRITICAL, 2 WARNING, 3 SUGGESTION. All 29 spec scenarios covered; 4 suites at exact counts (394/257/896/544); zero-schema gate held; containment test passing; no PDF/CSV libs. W1 (licence table under-itemized in PR 87) REMEDIATED with an itemized comment on the PR; W2 (G2 listing race-backstop mutation test) accepted with the 5b-round proportionality rationale, carried to backlog. SUGGESTION-1 (N/A zona) documented in tasks.md post-verify; S2/S3 to backlog."
     artifact: null
     depends_on: [apply]
   archive:

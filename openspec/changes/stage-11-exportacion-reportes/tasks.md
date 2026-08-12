@@ -288,6 +288,11 @@ mutation target), coverage-block, PROVISIONAL-label.
 
 ---
 
+> Post-verify note (Slice 2, recorded here for the archive): ComprasPorProveedor's export
+> shows "N/A" for zona horaria — its JSON contract never echoes ZonaHoraria and resolving it
+> separately would violate the No-Re-Query rule (judged spec-correct in Slice 2's round).
+> Follow-up belongs to the JSON contract itself, tracked in the archive report's backlog.
+
 ## Slice 3: Ventas/Compras/Estado-De-Cuenta Exports (PR 3)
 
 **Start**: slice 1b merged (parallel to 2, 4, 5a, 7, 9). **Finish**:
