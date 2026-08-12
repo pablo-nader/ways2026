@@ -63,6 +63,13 @@ so deleting the clause under test changes nothing the test can see.
    swaps and rotations are detectable — identical fixture values hide misassignment).
    Aggregate assertions (count, sum) NEVER substitute for per-row assertions.
 
+7. **Async assertions have their own confound: a retrying matcher can pass on its
+   first tick, BEFORE the stale microtask lands.** A `waitFor` asserting "old value
+   still there, new value absent" exits green immediately if the mutation's effect
+   hasn't flushed yet — proving nothing. Resolve the stale promise INSIDE `act`
+   (awaiting it) and assert synchronously after the flush. (Occurrence: CajaZ stale
+   test, stage 11 — survived its own strengthening until the flush was forced.)
+
 ## Decision Gate
 
 | Situation | Action |
