@@ -365,10 +365,10 @@ chain. **Rollback**: revert the branch.
   this single mutation covers the invariant for the whole slice (Compras/
   Estado-de-cuenta share the identical `Contar → refuse → Take(tope+1) →
   refuse` shape, proven once here).
-- [ ] 3.9 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
+- [x] 3.9 Run `judgment-day`; fix; re-judge until clean. — OUT OF SCOPE for
   this `sdd-apply` run (explicit boundary: no push/PR); left for the
   orchestrator's PR-validation phase.
-- [ ] 3.10 Branch `feat/stage11-slice3-exports-listados` off `main` (parent:
+- [x] 3.10 Branch `feat/stage11-slice3-exports-listados` off `main` (parent:
   slice 1b); PR; merge stacked-to-main. — branch created exactly as named;
   PR/merge left for the orchestrator.
 
