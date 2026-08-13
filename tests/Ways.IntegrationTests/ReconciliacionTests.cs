@@ -11,6 +11,7 @@ using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
 using Ways.Infrastructure.Multitenancy;
 
@@ -112,14 +113,83 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
 
-    private async Task SembrarStockAsync(Contexto ctx, int idArticulo, decimal cantidad)
+    private Task SembrarStockAsync(Contexto ctx, int idArticulo, decimal cantidad) =>
+        SembrarStockAsync(ctx, idArticulo, ctx.IdPuntoVenta, cantidad);
+
+    private async Task SembrarStockAsync(Contexto ctx, int idArticulo, int idPuntoVenta, decimal cantidad)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         db.Stock.Add(new Stock
         {
-            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = cantidad
+            IdArticulo = idArticulo, IdPuntoVenta = idPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = cantidad
         });
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>Vecino inelegible (a) para el SCOPE negativo (judgment-day ronda 2, juez B
+    /// MAJOR): mismo shape que <see cref="SembrarArticuloConLoteEfectivoAsync"/> pero con
+    /// <c>controla_lote = false</c> — el par que el filtro <c>where articulo.ControlaLote</c> de
+    /// <c>ReconciliarAsync</c> tiene que excluir del scope amplio.</summary>
+    private async Task<int> SembrarArticuloSinControlarLoteAsync(Contexto ctx, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var articulo = new Articulo
+        {
+            IdTenant = ctx.IdTenant, CodigoInterno = $"{nombre}-{Guid.NewGuid():N}", Nombre = nombre,
+            IdArea = ctx.IdArea, IdAlicuotaIva = ctx.IdAlicuotaIva, UnidadVenta = UnidadVenta.Unidad,
+            EsProducto = true, ControlaLote = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Articulos.Add(articulo);
+        await db.SaveChangesAsync();
+
+        return articulo.Id;
+    }
+
+    /// <summary>Vecino inelegible (b) para el SCOPE negativo: una empresa NUEVA del mismo
+    /// tenant, sin fila de <c>lotes_habilitado</c> (default declarado "false", nunca escrito acá
+    /// a propósito) con su propio punto de venta — el par que el guard de
+    /// <c>lotes_habilitado</c> efectivo en el loop de <c>ReconciliarAsync</c> tiene que
+    /// excluir.</summary>
+    private async Task<int> SembrarPuntoVentaSinLotesHabilitadosAsync(Contexto ctx, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var empresa = new Empresa
+        {
+            IdTenant = ctx.IdTenant, RazonSocial = $"{nombre}-empresa", CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Empresas.Add(empresa);
+        await db.SaveChangesAsync();
+
+        var puntoVenta = new PuntoVenta
+        {
+            IdTenant = ctx.IdTenant, IdEmpresa = empresa.Id, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.PuntosVenta.Add(puntoVenta);
+        await db.SaveChangesAsync();
+
+        return puntoVenta.Id;
+    }
+
+    /// <summary>Segundo PV de la MISMA empresa que <c>ctx.IdPuntoVenta</c> (hereda
+    /// <c>lotes_habilitado</c> efectivo true sin fila propia) — usado para el test del branch
+    /// <c>idPuntoVenta</c>-only de <c>ReconciliarAsync</c> (task 4.12).</summary>
+    private async Task<int> SembrarSegundoPuntoDeVentaAsync(Contexto ctx, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var puntoVenta = new PuntoVenta
+        {
+            IdTenant = ctx.IdTenant, IdEmpresa = ctx.IdEmpresa, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.PuntosVenta.Add(puntoVenta);
+        await db.SaveChangesAsync();
+
+        return puntoVenta.Id;
     }
 
     private static async Task<ResultadoDeReconciliacion> ReconciliarAsync(Contexto ctx, int? idArticulo, int? idPuntoVenta)
@@ -426,5 +496,123 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var stockLote = await db.StockLotes.SingleAsync(
             sl => sl.IdArticulo == articulo.Id && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == loteSinIdentificar.Id);
         Assert.Equal(17m, stockLote.Cantidad);
+    }
+
+    // ---- task 4.11 (judgment-day ronda 2, juez B MAJOR): SCOPE negativo con evidencia de mutación ----
+
+    /// <summary>SCOPE negativo: sin el filtro <c>where articulo.ControlaLote</c> en
+    /// <c>ReconciliarAsync</c> Y sin el guard de <c>lotes_habilitado</c> efectivo en su loop de
+    /// pares, los 7 tests de 4.5-4.10 pasan igual (7/7 verdes) porque ninguno siembra, EN EL
+    /// MISMO TENANT junto a un par elegible, un artículo con <c>controla_lote = false</c> ni un
+    /// PV de una empresa sin <c>lotes_habilitado</c>. Este test siembra ambos vecinos
+    /// inelegibles junto a un par elegible y corre la reconciliación de scope amplio (body vacío
+    /// — <c>idArticulo</c>/<c>idPuntoVenta</c> ambos <c>null</c>), luego assertea por PAR EXACTO
+    /// (nunca un conteo agregado) que ninguno de los dos vecinos escribió una fila de
+    /// reclasificación, con el lado positivo (el par elegible) asertado con conteo &gt; 0 para
+    /// que la prueba no pase en un escenario vacío.
+    ///
+    /// EVIDENCIA DE MUTACIÓN #1 (APPLY-RUN NOTE): borrado el filtro
+    /// <c>where articulo.ControlaLote</c> de <c>ReconciliarAsync</c> → build → este test cae RED
+    /// en la aserción del artículo sin control (<c>movimientosSinControl</c> pasa de 0 a 2 filas
+    /// de reclasificación, y <c>ParesReconciliados</c> pasa de 1 a 2) → revertida la mutación,
+    /// build, mismo filtro: GREEN.
+    ///
+    /// EVIDENCIA DE MUTACIÓN #2 (APPLY-RUN NOTE): borrado el guard
+    /// <c>if (!JsonSerializer.Deserialize&lt;bool&gt;(lotesHabilitadoJson)) continue;</c> del
+    /// loop de pares de <c>ReconciliarAsync</c> → build → este test cae RED en la aserción del PV
+    /// sin <c>lotes_habilitado</c> (<c>movimientosPvSinLotes</c> pasa de 0 a 2 filas de
+    /// reclasificación, y <c>ParesReconciliados</c> pasa de 1 a 2) → revertida la mutación,
+    /// build, mismo filtro: GREEN, 8/8 en <c>ReconciliacionTests</c>.</summary>
+    [Fact]
+    public async Task LaReconciliacionDeScopeAmplioNuncaTocaUnArticuloSinControlarLoteNiUnPvSinLotesHabilitados()
+    {
+        var ctx = await PrepararAsync(nameof(LaReconciliacionDeScopeAmplioNuncaTocaUnArticuloSinControlarLoteNiUnPvSinLotesHabilitados));
+        await HabilitarLotesAsync(ctx);
+
+        var idArticuloElegible = await SembrarArticuloConLoteEfectivoAsync(ctx, "articulo-scope-elegible");
+        await SembrarStockAsync(ctx, idArticuloElegible, 30m);
+
+        var idArticuloSinControl = await SembrarArticuloSinControlarLoteAsync(ctx, "articulo-scope-sin-control");
+        await SembrarStockAsync(ctx, idArticuloSinControl, 30m);
+
+        var idPuntoVentaSinLotes = await SembrarPuntoVentaSinLotesHabilitadosAsync(ctx, "PV sin lotes");
+        var idArticuloPvSinLotes = await SembrarArticuloConLoteEfectivoAsync(ctx, "articulo-scope-pv-sin-lotes");
+        await SembrarStockAsync(ctx, idArticuloPvSinLotes, idPuntoVentaSinLotes, 30m);
+
+        var resultado = await ReconciliarAsync(ctx, idArticulo: null, idPuntoVenta: null);
+
+        Assert.Equal(1, resultado.ParesReconciliados);
+        Assert.Equal(0, resultado.ParesSinResiduo);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var movimientosElegible = await db.MovimientosStock.CountAsync(
+            m => m.IdArticulo == idArticuloElegible && m.IdPuntoVenta == ctx.IdPuntoVenta && m.Motivo == MotivoStock.Reclasificacion);
+        Assert.True(movimientosElegible > 0, "el par elegible tiene que haberse reconciliado (evidencia positiva).");
+        Assert.Equal(2, movimientosElegible);
+
+        var movimientosSinControl = await db.MovimientosStock.CountAsync(
+            m => m.IdArticulo == idArticuloSinControl && m.IdPuntoVenta == ctx.IdPuntoVenta && m.Motivo == MotivoStock.Reclasificacion);
+        Assert.Equal(0, movimientosSinControl);
+
+        var movimientosPvSinLotes = await db.MovimientosStock.CountAsync(
+            m => m.IdArticulo == idArticuloPvSinLotes && m.IdPuntoVenta == idPuntoVentaSinLotes && m.Motivo == MotivoStock.Reclasificacion);
+        Assert.Equal(0, movimientosPvSinLotes);
+    }
+
+    // ---- task 4.12 (judgment-day ronda 2, juez B secundario): agregación y branch idPuntoVenta-only ----
+
+    /// <summary>Cobertura de agregación: dos pares reconciliables en UNA sola corrida de scope
+    /// amplio — <c>ParesReconciliados</c>/<c>ParesSinResiduo</c> tienen que reflejar los DOS,
+    /// nunca solo uno (una agregación rota podría devolver 1/0 o pisarse un contador con el
+    /// otro).</summary>
+    [Fact]
+    public async Task UnaCorridaConDosParesReconciliablesAgregaAmbosEnElResultado()
+    {
+        var ctx = await PrepararAsync(nameof(UnaCorridaConDosParesReconciliablesAgregaAmbosEnElResultado));
+        await HabilitarLotesAsync(ctx);
+
+        var idArticuloUno = await SembrarArticuloConLoteEfectivoAsync(ctx, "articulo-agregacion-uno");
+        await SembrarStockAsync(ctx, idArticuloUno, 10m);
+
+        var idArticuloDos = await SembrarArticuloConLoteEfectivoAsync(ctx, "articulo-agregacion-dos");
+        await SembrarStockAsync(ctx, idArticuloDos, 22m);
+
+        var resultado = await ReconciliarAsync(ctx, idArticulo: null, idPuntoVenta: null);
+
+        Assert.Equal(2, resultado.ParesReconciliados);
+        Assert.Equal(0, resultado.ParesSinResiduo);
+    }
+
+    /// <summary>Branch <c>idPuntoVenta</c>-only (<c>idArticulo</c> <c>null</c>): la reconciliación
+    /// pedida sobre un único PV tiene que tocar SOLO ese PV, aunque el tenant tenga otro par
+    /// elegible en un PV distinto de la misma empresa.</summary>
+    [Fact]
+    public async Task UnaReconciliacionAcotadaSoloAIdPuntoVentaNoTocaOtroPuntoDeVenta()
+    {
+        var ctx = await PrepararAsync(nameof(UnaReconciliacionAcotadaSoloAIdPuntoVentaNoTocaOtroPuntoDeVenta));
+        await HabilitarLotesAsync(ctx);
+
+        var idArticuloEnPrimerPv = await SembrarArticuloConLoteEfectivoAsync(ctx, "articulo-pv-only-uno");
+        await SembrarStockAsync(ctx, idArticuloEnPrimerPv, 14m);
+
+        var idSegundoPuntoVenta = await SembrarSegundoPuntoDeVentaAsync(ctx, "Local pv-only 2");
+        var idArticuloEnSegundoPv = await SembrarArticuloConLoteEfectivoAsync(ctx, "articulo-pv-only-dos");
+        await SembrarStockAsync(ctx, idArticuloEnSegundoPv, idSegundoPuntoVenta, 9m);
+
+        var resultado = await ReconciliarAsync(ctx, idArticulo: null, idPuntoVenta: ctx.IdPuntoVenta);
+
+        Assert.Equal(1, resultado.ParesReconciliados);
+        Assert.Equal(0, resultado.ParesSinResiduo);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var movimientosPrimerPv = await db.MovimientosStock.CountAsync(
+            m => m.IdArticulo == idArticuloEnPrimerPv && m.IdPuntoVenta == ctx.IdPuntoVenta && m.Motivo == MotivoStock.Reclasificacion);
+        Assert.Equal(2, movimientosPrimerPv);
+
+        var movimientosSegundoPv = await db.MovimientosStock.CountAsync(
+            m => m.IdArticulo == idArticuloEnSegundoPv && m.IdPuntoVenta == idSegundoPuntoVenta && m.Motivo == MotivoStock.Reclasificacion);
+        Assert.Equal(0, movimientosSegundoPv);
     }
 }
