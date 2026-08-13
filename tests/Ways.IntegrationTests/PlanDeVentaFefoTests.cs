@@ -625,19 +625,18 @@ public class PlanDeVentaFefoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal("lote_invalido", problema.GetProperty("codigo").GetString());
     }
 
-    // ---- judgment-day slice 7, FIX 5 (WARNING 5) — response fresco vs relectura -------------------
+    // ---- judgment-day slice 7, FIX 5 (WARNING 5) — response fresco vs relectura, JD-FIX carryover
+    // actualizado en slice 8 (task 8.2 lo persiste) --------------------------------------------
 
-    /// <summary>Límite honesto de esta slice (ver el doc-comment de <c>Proyectar</c> en
-    /// <c>ServicioDeVentas.cs</c>, APPLY-RUN NOTE de la task 7.3): el checkout FRESCO devuelve
-    /// <c>id_lote</c> desde el plan (no persistido todavía), pero una relectura vía
-    /// <c>ObtenerAsync</c> cae al valor YA persistido en <c>items_comprobante_venta.id_lote</c>,
-    /// que esta slice todavía no escribe — <c>null</c> hasta slice 8. (Al llegar slice 8, este test
-    /// SE ACTUALIZA para esperar el mismo <c>IdLote</c> en ambas lecturas — ver la nota del bloque
-    /// Slice 8 en tasks.md.)</summary>
+    /// <summary>JD-FIX carryover (slice 7, FIX 5): desde que slice 8 persiste <c>id_lote</c> en
+    /// <c>items_comprobante_venta</c> (task 8.2), el contraste fresco-vs-relectura de FIX 5 dejó de
+    /// ser cierto — este test se ACTUALIZA para esperar el MISMO <c>IdLote</c> en ambas lecturas (ver
+    /// el doc-comment de <c>Proyectar</c> en <c>ServicioDeVentas.cs</c>, actualizado en esta misma
+    /// slice) y pierde el sufijo "HastaSlice8" del nombre.</summary>
     [Fact]
-    public async Task ElCheckoutFrescoDevuelveIdLotePeroLaRelecturaTodaviaLoDevuelveNullHastaSlice8()
+    public async Task ElCheckoutFrescoYLaRelecturaDevuelvenElMismoIdLote()
     {
-        var ctx = await PrepararAsync(nameof(ElCheckoutFrescoDevuelveIdLotePeroLaRelecturaTodaviaLoDevuelveNullHastaSlice8));
+        var ctx = await PrepararAsync(nameof(ElCheckoutFrescoYLaRelecturaDevuelvenElMismoIdLote));
         var idArticulo = await SembrarArticuloAsync(ctx, "articulo-fix5-contraste", 100m, controlaLote: true);
         var idLote = await SembrarLoteAsync(ctx, idArticulo, "L1", VencimientoLejanoFuturo);
         await SembrarStockLoteAsync(ctx, idArticulo, idLote, 10m);
@@ -652,6 +651,6 @@ public class PlanDeVentaFefoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var releido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoRelectura, OpcionesJson)!;
 
         var itemReleido = Assert.Single(releido.Items);
-        Assert.Null(itemReleido.IdLote);
+        Assert.Equal(idLote, itemReleido.IdLote);
     }
 }

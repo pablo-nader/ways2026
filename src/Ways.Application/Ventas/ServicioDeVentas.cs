@@ -526,13 +526,20 @@ public class ServicioDeVentas(
 
         // 2. Movimientos de stock inversos — uno por cada movimiento ORIGINAL de motivo = venta
         // de este comprobante (nunca recalculado desde items: ver el doc-comment de
-        // AnularAsync). Orden ascendente por id_articulo, mismo criterio anti-deadlock que
-        // EjecutarTransaccionAsync paso 5 (design decisión 2), aunque acá no hay otra venta
+        // AnularAsync). Orden ascendente (id_articulo, id_lote), mismo criterio anti-deadlock que
+        // EjecutarTransaccionAsync paso 5 (design decisión 2/8/9), aunque acá no hay otra venta
         // concurrente compitiendo por las mismas filas — se mantiene por consistencia de
-        // convención, no por necesidad estricta.
+        // convención, no por necesidad estricta. `id_lote` viaja YA en el movimiento original —
+        // etapa 12, slice 8, task 8.3: la reversa lo copia estructuralmente (design: "Exactness is
+        // structural, not derived"), sin re-derivar desde items_comprobante_venta ni volver a
+        // resolver FEFO. El `ThenBy(IdLote)` de abajo es un IQueryable: el orden de los NULLs queda
+        // en manos de la traducción SQL del provider (Postgres por default hace NULLS LAST en ASC),
+        // no de una comparación en memoria — acá es convención, no defensivo, por eso no repite el
+        // `ThenBy(HasValue).ThenBy(?? 0)` explícito del paso 5.
         var movimientosOriginales = await db.MovimientosStock
             .Where(m => m.IdComprobanteVenta == id && m.Motivo == MotivoStock.Venta)
             .OrderBy(m => m.IdArticulo)
+            .ThenBy(m => m.IdLote)
             .ToListAsync(ct);
 
         foreach (var original in movimientosOriginales)
@@ -541,9 +548,15 @@ public class ServicioDeVentas(
 
             await InsertarMovimientoStockAsync(
                 conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa,
-                MotivoStock.Anulacion, id, idEmpleado, momento, ct);
+                MotivoStock.Anulacion, id, idEmpleado, momento, original.IdLote, ct);
 
             await UpsertStockAsync(conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa, ct);
+
+            if (original.IdLote is { } idLote)
+            {
+                await UpsertStockLoteAsync(
+                    conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, idLote, inversa, ct);
+            }
         }
 
         // 3. Contramovimiento de cuenta corriente — uno por cada consumo/pago ORIGINAL de este
@@ -769,6 +782,11 @@ public class ServicioDeVentas(
                 Descuento = i.Descuento,
                 Total = i.Total,
                 CostoUnitario = i.CostoUnitario,
+                // Etapa 12, slice 8, task 8.2 (design: "Item snapshot"): congelado desde el plan
+                // FEFO ya resuelto en la fase de decisión (Slice 7) — nunca re-derivado, legal
+                // bajo "Snapshot Immutability of Items" porque se agrega AL snapshot y no existe
+                // endpoint de edición.
+                IdLote = i.IdLote,
                 CreatedAt = plan.Momento,
                 UpdatedAt = plan.Momento
             })
@@ -794,21 +812,36 @@ public class ServicioDeVentas(
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-        // 5. Stock — ORDEN ASCENDENTE por id_articulo (design decisión 2, no negociable): el
-        // upsert de abajo toma su propio row lock de forma implícita, así que dos ventas que
-        // comparten artículos en orden distinto se deadlockearían sin este orden total. Un
-        // artículo con EsProducto = false es un servicio (doc 10 §3: "false = servicio: no toca
-        // stock") — se salta ENTERO, ni movimiento ni upsert, en vez de escribir un movimiento
-        // sin sentido para algo que nunca tuvo una fila en stock.
-        foreach (var item in plan.Items.Where(i => i.EsProducto).OrderBy(i => i.IdArticulo))
+        // 5. Stock — ORDEN ASCENDENTE por (id_articulo, id_lote NULLS FIRST) (design decisión 2/8/9,
+        // no negociable): el upsert de abajo toma su propio row lock de forma implícita, así que
+        // dos ventas que comparten artículos/lotes en orden distinto se deadlockearían sin este
+        // orden total. `ThenBy(HasValue).ThenBy(?? 0)` en vez de `ThenBy(IdLote ?? 0)` a secas
+        // (decisión 9): el segundo es una correctness claim que solo funciona porque las columnas
+        // identity arrancan en 1; el primero declara la intención (NULLS FIRST) sin depender de la
+        // configuración de una secuencia — es el mutation target de la task 8.7. Un artículo con
+        // EsProducto = false es un servicio (doc 10 §3: "false = servicio: no toca stock") — se
+        // salta ENTERO, ni movimiento ni upsert, en vez de escribir un movimiento sin sentido para
+        // algo que nunca tuvo una fila en stock. El upsert agregado (`stock`, id_lote NULL) corre
+        // SIEMPRE, primero; el upsert de `stock_lotes` solo cuando el item resolvió un lote.
+        foreach (var item in plan.Items
+                     .Where(i => i.EsProducto)
+                     .OrderBy(i => i.IdArticulo)
+                     .ThenBy(i => i.IdLote.HasValue)
+                     .ThenBy(i => i.IdLote ?? 0))
         {
             var delta = -item.Cantidad;
 
             await InsertarMovimientoStockAsync(
                 conexion, transaccionCruda, plan.IdTenant, item.IdArticulo, plan.IdPuntoVenta, delta,
-                MotivoStock.Venta, comprobante.Id, plan.IdEmpleado, plan.Momento, ct);
+                MotivoStock.Venta, comprobante.Id, plan.IdEmpleado, plan.Momento, item.IdLote, ct);
 
             await UpsertStockAsync(conexion, transaccionCruda, plan.IdTenant, item.IdArticulo, plan.IdPuntoVenta, delta, ct);
+
+            if (item.IdLote is { } idLote)
+            {
+                await UpsertStockLoteAsync(
+                    conexion, transaccionCruda, plan.IdTenant, item.IdArticulo, plan.IdPuntoVenta, idLote, delta, ct);
+            }
         }
 
         // 6. Cuenta corriente — un pago por vez, en el orden pedido (raw ADO: un
@@ -1007,14 +1040,14 @@ public class ServicioDeVentas(
     private static async Task InsertarMovimientoStockAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
         decimal cantidad, MotivoStock motivo, int idComprobanteVenta, int idEmpleado, DateTimeOffset creadoEl,
-        CancellationToken ct)
+        int? idLote, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "INSERT INTO movimientos_stock " +
-            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_venta, id_empleado, creado_el) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)";
+            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_venta, id_empleado, creado_el, id_lote) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
 
         AgregarParametro(comando, idTenant);
         AgregarParametro(comando, idArticulo);
@@ -1024,6 +1057,7 @@ public class ServicioDeVentas(
         AgregarParametro(comando, idComprobanteVenta);
         AgregarParametro(comando, idEmpleado);
         AgregarParametro(comando, creadoEl);
+        AgregarParametroNulo(comando, idLote);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -1053,6 +1087,34 @@ public class ServicioDeVentas(
         await comando.ExecuteScalarAsync(ct);
     }
 
+    /// <summary>Etapa 12, slice 8 (design: "Write site 1" — "UpsertStockLoteAsync: la MISMA forma
+    /// que UpsertStockAsync, una clave más"): mismo shape que
+    /// <see cref="Ways.Application.Compras.ServicioDeCompras"/>'s sibling (Slice 5) y
+    /// <c>ServicioDeLotes.ResolverOCrearAsync</c> (Slice 3) — <c>INSERT ... ON CONFLICT DO UPDATE
+    /// ... RETURNING</c>, nunca <c>DO NOTHING</c>. Sin chequeo de negativo acá (a diferencia de
+    /// compras): revertir una venta siempre SUMA de vuelta, nunca puede dejar el saldo negativo.</summary>
+    private static async Task UpsertStockLoteAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
+        int idLote, decimal delta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
+            "VALUES ($1, $2, $3, $4, $5) " +
+            "ON CONFLICT (id_articulo, id_punto_venta, id_lote) DO UPDATE " +
+            "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
+            "RETURNING cantidad";
+
+        AgregarParametro(comando, idArticulo);
+        AgregarParametro(comando, idPuntoVenta);
+        AgregarParametro(comando, idLote);
+        AgregarParametro(comando, idTenant);
+        AgregarParametro(comando, delta);
+
+        await comando.ExecuteScalarAsync(ct);
+    }
+
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
     {
         var conexion = db.Database.GetDbConnection();
@@ -1069,6 +1131,17 @@ public class ServicioDeVentas(
     {
         var parametro = comando.CreateParameter();
         parametro.Value = valor;
+        comando.Parameters.Add(parametro);
+    }
+
+    /// <summary>Mismo criterio que <c>ServicioDeCompras.AgregarParametroNulo</c>/
+    /// <c>ServicioDeStock.AgregarParametroNulo</c> — <c>id_lote</c> es el primer parámetro nullable
+    /// que esta clase envía por statement crudo (etapa 12, slice 8); <see cref="AgregarParametro"/>
+    /// nunca necesitó <c>DBNull.Value</c> hasta ahora.</summary>
+    private static void AgregarParametroNulo(DbCommand comando, object? valor)
+    {
+        var parametro = comando.CreateParameter();
+        parametro.Value = valor ?? DBNull.Value;
         comando.Parameters.Add(parametro);
     }
 
@@ -1132,13 +1205,14 @@ public class ServicioDeVentas(
             ?? throw new InvalidOperationException(
                 "ServicioDeVentas requiere un actor de tenant; OperacionDePos no admite plataforma.");
 
-    /// <summary>Design decisión (stage-12 slice 7): la transacción todavía NO persiste
-    /// <c>id_lote</c> en <c>items_comprobante_venta</c> (esa escritura es de slice 8) — para el
-    /// checkout recién emitido, <paramref name="planItems"/> trae el lote ya resuelto en la fase
-    /// de decisión (mismo orden/índice que <paramref name="items"/>, uno a uno vía
-    /// <c>Orden</c>) y lo proyecta acá; para una relectura sin plan a mano (reprint,
-    /// idempotencia de <see cref="BuscarPorNumeroComprometidoAsync"/>) cae al valor ya persistido
-    /// en la entidad — NULL hasta que slice 8 lo escriba.</summary>
+    /// <summary>Design decisión (stage-12 slice 7, actualizada en slice 8): para el checkout recién
+    /// emitido, <paramref name="planItems"/> trae el lote ya resuelto en la fase de decisión (mismo
+    /// orden/índice que <paramref name="items"/>, uno a uno vía <c>Orden</c>) y lo proyecta acá; para
+    /// una relectura sin plan a mano (reprint, idempotencia de
+    /// <see cref="BuscarPorNumeroComprometidoAsync"/>) cae al valor ya persistido en la entidad —
+    /// desde slice 8 ambos caminos devuelven el MISMO <c>id_lote</c> (el snapshot de
+    /// <c>items_comprobante_venta.id_lote</c> ya se escribe en <see cref="EjecutarTransaccionAsync"/>),
+    /// el fallback queda solo por si algún día <paramref name="planItems"/> falta.</summary>
     private static ComprobanteEmitido Proyectar(
         ComprobanteVenta comprobante, IReadOnlyList<ItemComprobanteVenta> items, IReadOnlyList<PagoComprobante> pagos,
         IReadOnlyList<LineaDelPlan>? planItems = null) => new(

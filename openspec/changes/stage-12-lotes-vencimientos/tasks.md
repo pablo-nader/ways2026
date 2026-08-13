@@ -949,46 +949,131 @@ the exact lot. **Rollback**: revert the branch.
 stops being true — UPDATE it to assert the SAME `IdLote` on both the fresh
 checkout response and the `ObtenerAsync` re-read (drop the `Assert.Null` on
 the re-read, replace with `Assert.Equal(idLote, itemReleido.IdLote)`); rename
-away the "HastaSlice8" suffix once updated.
+away the "HastaSlice8" suffix once updated. *(APPLY-RUN NOTE: done — renamed
+to `ElCheckoutFrescoYLaRelecturaDevuelvenElMismoIdLote`, asserts
+`Assert.Equal(idLote, itemReleido.IdLote)`. `ServicioDeVentas.Proyectar`'s
+doc-comment updated too — it previously documented the slice-7 limitation as
+permanent; now records that both paths return the same value since slice 8.
+`Contratos.cs`'s `ItemEmitido` doc-comment updated for the same reason.)*
 
-- [ ] 8.1 Modify `ServicioDeVentas.cs`: `EjecutarTransaccionAsync` step 5 —
+- [x] 8.1 Modify `ServicioDeVentas.cs`: `EjecutarTransaccionAsync` step 5 —
   loop `OrderBy(IdArticulo).ThenBy(IdLote)`; `InsertarMovimientoStockAsync`
   gains `idLote`; `UpsertStockAsync` (aggregate, `id_lote NULL`, always
   first); if `item.IdLote` present, `UpsertStockLoteAsync` (new private
   method, same `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` shape as
-  `UpsertStockAsync`).
-- [ ] 8.2 Modify the `AddRange` items block: `ItemComprobanteVenta.IdLote =
+  `UpsertStockAsync`). *(APPLY-RUN NOTE: the loop's secondary/tertiary key
+  is `.ThenBy(i => i.IdLote.HasValue).ThenBy(i => i.IdLote ?? 0)` — decisión
+  9's explicit NULLS-FIRST pattern, not the plain `.ThenBy(IdLote)` design's
+  own pseudocode shows — chosen because task 8.7 names this EXACT substring
+  as its mutation target for "the checkout ordering". `InsertarMovimientoStockAsync`
+  gained `int? idLote` + a new `AgregarParametroNulo` helper (first nullable
+  raw param this class ever sent, same pattern as `ServicioDeCompras`/
+  `ServicioDeStock`'s siblings of the same name).)*
+- [x] 8.2 Modify the `AddRange` items block: `ItemComprobanteVenta.IdLote =
   i.IdLote` — frozen snapshot, never re-derived.
-- [ ] 8.3 Modify `ServicioDeVentas.cs`: `EjecutarAnulacionAsync` reorders
+- [x] 8.3 Modify `ServicioDeVentas.cs`: `EjecutarAnulacionAsync` reorders
   `.OrderBy(m => m.IdArticulo).ThenBy(m => m.IdLote)`, the inverse movement
   copies `original.IdLote`, the `stock_lotes` upsert mirrors it — no
-  lookup, no re-derivation.
-- [ ] 8.4 [P] Invariant test: `stock.cantidad` and `stock_lotes.cantidad`
+  lookup, no re-derivation. *(APPLY-RUN NOTE: plain `.ThenBy(m => m.IdLote)`
+  here, not the HasValue pattern — this `OrderBy`/`ThenBy` runs over an
+  `IQueryable<MovimientoStock>` (SQL-translated), matching the EXACT
+  precedent already reviewed clean at slice 6's
+  `ServicioDeCompras.EjecutarAnulacionAsync` for the identical shape.)*
+- [x] 8.4 [P] Invariant test: `stock.cantidad` and `stock_lotes.cantidad`
   both correct after a venta + anulación sequence.
-- [ ] 8.5 [P] **Mutation target**: `ItemComprobanteVenta.IdLote = i.IdLote`
+  (`StockYStockLotesQuedanCorrectosTrasVentaYAnulacion`)
+- [x] 8.5 [P] **Mutation target**: `ItemComprobanteVenta.IdLote = i.IdLote`
   replaced with `null` → the exact-anulación test (asserting the reversal's
   `id_lote` **and** the resulting per-lot balance) MUST fail; revert →
   green. *(spec comprobantes-venta: "A lot-effective line freezes its
   resolved lot onto the snapshot", "Anulación of a lot-bearing sale
   reverses the exact lot"; mutation-proof-tests)* Record evidence.
-- [ ] 8.6 [P] Lock-order test: the `stock` row upserts before any
+  *(APPLY-RUN NOTE: `UnaVentaLoteEfectivaCongelaElSnapshotYSuAnulacionRevierteElLoteExacto`
+  asserts THREE things in one run: (1) the persisted snapshot
+  `items_comprobante_venta.id_lote` — this is the ONE the mutation actually
+  breaks, since `EjecutarAnulacionAsync` reads its own reversal lot from
+  `movimientos_stock` (the ledger), never from the item snapshot, so (2) the
+  reversal's `id_lote` and (3) the restored per-lot balance stay green even
+  under the mutation — documented explicitly so the next reader doesn't
+  mistake "anulación still passes" for "the mutation is dead". Mutation
+  applied — `IdLote = i.IdLote` → `IdLote = null` in the `AddRange`
+  projection; build, filter on the test: RED
+  (`Assert.Equal(idLote, itemPersistido.IdLote)` failed, `Expected: {idLote}
+  / Actual: null`). Reverted, same filter: GREEN, full
+  `VentaEscrituraLoteTests`/`PlanDeVentaFefoTests` (20/20).)*
+- [x] 8.6 [P] Lock-order test: the `stock` row upserts before any
   `stock_lotes` row for the same `(articulo, PV)`. *(spec stock: "A
   checkout locks stock before stock_lotes for the same pair")*
-- [ ] 8.7 [P] **Mutation target (half A, deadlock)**: `.ThenBy(c =>
+  (`UnCheckoutBloqueaStockAntesQueStockLotesParaElMismoPar`.) *(APPLY-RUN
+  NOTE — non-obvious discovery: both `InsertarMovimientoStockAsync`/
+  `UpsertStockAsync`/`UpsertStockLoteAsync` run on a raw `DbCommand` created
+  directly via `conexion.CreateCommand()` off the connection EF already
+  opened — this NEVER goes through EF Core's `DbCommandInterceptor`
+  pipeline (confirmed empirically: a `ScalarExecuting` override never
+  fires), and Npgsql's own `NpgsqlLoggingConfiguration.InitializeLogging`
+  is a process-wide, call-once API that must run before ANY connection
+  opens — by the time a test can call it, `WaysApiFixture` has already
+  opened connections and Npgsql has already cached a null logger (confirmed
+  empirically: zero log lines ever arrived). Neither interception technique
+  observes these statements. The test instead races a REAL Postgres lock:
+  a second raw connection (RLS-authenticated with the same
+  `set_config('app.tenant_id', ...)` GUC `InterceptorDeContextoDeTenant`
+  sets — a plain unauthenticated raw connection sees ZERO rows of
+  `stock_lotes` and its `FOR UPDATE` silently locks nothing) holds
+  `stock_lotes`'s row open under `FOR UPDATE`; the checkout is fired
+  concurrently and necessarily blocks trying to touch that same row; a
+  third connection polls `pg_locks` for the checkout's own backend pid
+  until it sees `stock`'s table-level `RowExclusiveLock` already `granted`
+  at the same moment the checkout has an ungranted lock pending (Postgres
+  represents "blocked on another transaction's row" as an ungranted
+  `transactionid` `ShareLock`, never as an ungranted `tuple` lock on the
+  contested relation — confirmed by dumping the full `pg_locks` state
+  mid-block). Releasing the held lock lets the checkout complete; final
+  `stock.cantidad` asserted too.)*
+- [x] 8.7 [P] **Mutation target (half A, deadlock)**: `.ThenBy(c =>
   c.IdLote.HasValue).ThenBy(c => c.IdLote ?? 0)` in the checkout ordering —
   delete it and confirm the ordering test now fails on a hand-built key
   set. The **joint** checkout-vs-reverse-transfer deadlock proof itself is
   deferred to slice 10 (task 10.12), once `ServicioDeStock`'s transfer
   write also exists — recorded as an explicit cross-slice dependency, not a
-  gap.
-- [ ] 8.8 [P] Non-lot-articulo regression: no lot on the item or the
+  gap. *(APPLY-RUN NOTE: "hand-built key set" implemented as a real,
+  achievable production scenario rather than an artificial in-memory
+  fixture — `LosMovimientosDeDosLotesDelMismoArticuloSeEscribenEnOrdenAscendentePorIdLote`
+  submits TWO lines of the SAME lot-effective articulo, each with a
+  DIFFERENT explicit `idLote`, in DESCENDING id order (higher id first);
+  `.NET`'s stable sort means that without the `ThenBy` pair, the write order
+  would silently follow submission order instead of ascending `id_lote`.
+  Mutation applied — the two `ThenBy` calls deleted from the step-5 loop,
+  leaving only `.OrderBy(i => i.IdArticulo)`; build, filter on the test:
+  RED (`Assert.Equal(idLoteMenor, movimientos[0].IdLote)` failed, `Expected:
+  1 / Actual: 2` — the higher-id lot landed first, exactly the submission
+  order). Reverted, same filter: GREEN, full suite (20/20).)*
+- [x] 8.8 [P] Non-lot-articulo regression: no lot on the item or the
   movement. *(spec comprobantes-venta: "A non-lot articulo's item never
   carries a lot"; spec stock: "A non-lot articulo's movement never carries
-  a lot")*
-- [ ] 8.9 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
-- [ ] 8.10 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 8.11 Branch `feat/stage12-slice8-venta-escritura` off `main` (parent:
+  a lot")* (`UnArticuloSinControlDeLoteNuncaLlevaIdLoteEnItemNiMovimiento`.)
+- [x] 8.9 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. *(Verified after the slice's changes — no
+  `Migraciones/`/`Configuraciones/` file touched, per the DB CHANGE GATE;
+  run via `--project src/Ways.Infrastructure --startup-project
+  src/Ways.Infrastructure`. Output: "No changes have been made to the model
+  since the last migration.")*
+- [x] 8.10 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  two REJECT rounds, both with real findings on the hottest writer.
+  Round 1 — judge B: the "hoist first IdLote onto every reversal movement"
+  mutation survived 176 tests (every anulación test sold ONE line; balances
+  stayed correct, the ledger's per-movement lot attribution corrupted
+  silently). Fix 7b4b98a: multi-line and mixed anulación tests killing the
+  exact mutation from both angles. Round 2 — judge B APPROVE; judge A
+  (first pass): MAJOR — nothing proved the aggregate ACCUMULATES across two
+  lines of the same articulo (a group-by-articulo "optimization" using only
+  the last delta survived), plus stale design pseudocode and the
+  provider-dependent NULLS ordering of the anulación read left implicit.
+  Fix a600c52: 8.7 test extended (seeded aggregate, discriminant deltas,
+  exact final stock 12m; mutation Expected-12/Actual-15 recorded), design
+  write-site-1 pseudocode reconciled, provider note added. Round 3 — judge
+  A APPROVE with arithmetic verification of the mutation evidence.)*
+- [x] 8.11 Branch `feat/stage12-slice8-venta-escritura` off `main` (parent:
   slice 7); PR; merge stacked-to-main.
 
 **Test plan**: invariant (8.4), snapshot mutation (8.5), lock order (8.6),
