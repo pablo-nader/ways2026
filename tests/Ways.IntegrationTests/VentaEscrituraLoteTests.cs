@@ -534,7 +534,14 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
     /// <summary>spec comprobantes-venta: "A non-lot-effective line never carries a lot"; spec stock:
     /// "A non-lot articulo's movement never carries a lot". <c>lotes_habilitado</c> sigue ON a nivel
     /// empresa (seteado por <see cref="PrepararAsync"/>) — lo único que decide acá es
-    /// <c>controla_lote = false</c> del artículo (decisión 2, <c>ControlEfectivo</c>).</summary>
+    /// <c>controla_lote = false</c> del artículo (decisión 2, <c>ControlEfectivo</c>).
+    ///
+    /// Caveat (judgment-day slice 8, juez B, nota no bloqueante): una mutación que fuerce un
+    /// <c>id_lote</c> ajeno sobre el movimiento de este artículo muere PRIMERO en la FK compuesta
+    /// <c>fk_movimientos_stock_lote</c> (<c>IdLote, IdArticulo, IdTenant</c>) — el lote forzado no
+    /// existe para ESTE artículo, así que Postgres rechaza el INSERT antes de que la aserción de
+    /// abajo llegue a evaluarse; es el mismo patrón de defensa doble que <c>pk_stock</c> (backstop
+    /// del schema primero, aserción de C# como segunda capa).</summary>
     [Fact]
     public async Task UnArticuloSinControlDeLoteNuncaLlevaIdLoteEnItemNiMovimiento()
     {
@@ -554,5 +561,135 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         var movimiento = await db.MovimientosStock
             .SingleAsync(m => m.IdComprobanteVenta == emitido.Id && m.Motivo == MotivoStock.Venta);
         Assert.Null(movimiento.IdLote);
+    }
+
+    // ---- task 8.9 (judgment-day slice 8, FIX 1): mutation target — fidelidad por-movimiento del
+    // id_lote en la anulación multi-línea ------------------------------------------------------
+
+    /// <summary>Mutation target (judgment-day slice 8, juez B REJECT: "hoistear el primer IdLote
+    /// visto y pasarlo a TODOS los contramovimientos" sobrevive los 176 tests existentes porque
+    /// ningún test de anulación previo vende más de una línea del mismo artículo). Dos líneas del
+    /// MISMO artículo, cada una con un lote EXPLÍCITO distinto (mismo fixture que la task 8.7) →
+    /// anular → CADA contramovimiento de anulación debe llevar SU <c>id_lote</c> original — no el
+    /// del primer movimiento visto en el <c>foreach</c> del paso 2 — y el saldo por lote de AMBOS
+    /// lotes debe volver exacto.
+    ///
+    /// EVIDENCIA DE MUTACIÓN (regla permanente 6 de este apply): en <c>EjecutarAnulacionAsync</c>
+    /// (paso 2), <c>original.IdLote</c> pasado a <c>InsertarMovimientoStockAsync</c> reemplazado
+    /// por un <c>primerLoteVisto</c> hoisteado ANTES del <c>foreach</c> y fijado una única vez en
+    /// la primera iteración (mutación exacta del juez B); build, filtro
+    /// <c>FullyQualifiedName~LaAnulacionMultilineaRevierteCadaMovimientoConSuPropioIdLote</c>: RED
+    /// — el iterador procesa primero el movimiento de <c>idLoteMenor</c> (orden ascendente por
+    /// <c>id_lote</c>, task 8.7), así que <c>primerLoteVisto</c> quedó fijo en ese valor y lo
+    /// heredó también el contramovimiento del lote mayor: <c>Assert.Equal(idLoteMayor,
+    /// movimientoLoteMayor.IdLote)</c> falló (<c>Expected: idLoteMayor / Actual: idLoteMenor</c>).
+    /// Los saldos por lote (<c>stockLoteMayor</c>/<c>stockLoteMenor</c>) NO se ven afectados por
+    /// esta mutación puntual — <c>UpsertStockLoteAsync</c> sigue leyendo <c>original.IdLote</c> sin
+    /// tocar, solo el <c>id_lote</c> grabado en <c>movimientos_stock</c> queda infiel — por eso la
+    /// aserción del ledger es la que efectivamente mata la mutación, no la del agregado. Revertido,
+    /// mismo filtro: GREEN, junto con la suite completa de este archivo.</summary>
+    [Fact]
+    public async Task LaAnulacionMultilineaRevierteCadaMovimientoConSuPropioIdLote()
+    {
+        var ctx = await PrepararAsync(nameof(LaAnulacionMultilineaRevierteCadaMovimientoConSuPropioIdLote));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-anulacion-multilote", 100m, controlaLote: true);
+        var idLoteMenor = await SembrarLoteAsync(ctx, idArticulo, "L-ANUL-MENOR", VencimientoLejanoFuturoAlterno);
+        var idLoteMayor = await SembrarLoteAsync(ctx, idArticulo, "L-ANUL-MAYOR", VencimientoLejanoFuturo);
+        Assert.True(idLoteMenor < idLoteMayor);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLoteMenor, 10m);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLoteMayor, 10m);
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, ctx.IdCliente, "TX", null,
+            [
+                new LineaDeVenta(idArticulo, 3m, null, idLoteMayor),
+                new LineaDeVenta(idArticulo, 2m, null, idLoteMenor)
+            ],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 500m, null, 0m)],
+            null, null);
+
+        var emitido = await EmitirAsync(ctx, solicitud);
+        Assert.Equal(2, emitido.Items.Count);
+
+        await AnularAsync(ctx, emitido.Id);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var movimientoLoteMayor = await db.MovimientosStock.SingleAsync(
+            m => m.IdComprobanteVenta == emitido.Id && m.Motivo == MotivoStock.Anulacion && m.Cantidad == 3m);
+        Assert.Equal(idLoteMayor, movimientoLoteMayor.IdLote);
+
+        var movimientoLoteMenor = await db.MovimientosStock.SingleAsync(
+            m => m.IdComprobanteVenta == emitido.Id && m.Motivo == MotivoStock.Anulacion && m.Cantidad == 2m);
+        Assert.Equal(idLoteMenor, movimientoLoteMenor.IdLote);
+
+        var stockLoteMayor = await db.StockLotes
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLoteMayor)
+            .Select(sl => sl.Cantidad).FirstAsync();
+        Assert.Equal(10m, stockLoteMayor);
+
+        var stockLoteMenor = await db.StockLotes
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLoteMenor)
+            .Select(sl => sl.Cantidad).FirstAsync();
+        Assert.Equal(10m, stockLoteMenor);
+    }
+
+    /// <summary>Mutation target (judgment-day slice 8, FIX 1, extensión mixta): una venta MIXTA —
+    /// una línea de un artículo lote-efectivo y otra línea de un artículo SIN control de lote — al
+    /// anularse debe dejar el contramovimiento de la línea con lote con SU <c>id_lote</c> y el de
+    /// la línea sin lote con <c>id_lote</c> null. La mutación del juez B (hoistear el primer
+    /// <c>IdLote</c> visto) también se prueba acá desde el ángulo inverso: si la línea CON lote se
+    /// procesa primero (orden ascendente por <c>id_articulo</c>, este artículo se sembró primero),
+    /// el hoist filtraría ese id_lote hacia el contramovimiento que debe quedar null.
+    ///
+    /// EVIDENCIA DE MUTACIÓN (regla permanente 6 de este apply): misma mutación exacta del juez B
+    /// aplicada a <c>EjecutarAnulacionAsync</c> (ver evidencia completa en
+    /// <see cref="LaAnulacionMultilineaRevierteCadaMovimientoConSuPropioIdLote"/>); build, filtro
+    /// <c>FullyQualifiedName~LaAnulacionDeUnaVentaMixtaRevierteLaLineaConLoteYLaLineaSinLoteCadaUnaConSuIdLote</c>:
+    /// RED — pero NO como fallo de aserción: <c>AnularAsync</c> devolvió <c>500</c> y
+    /// <c>Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo)</c> abortó el test, porque
+    /// el <c>idLote</c> hoisteado (el del artículo CON lote, primero en el orden) se intentó grabar
+    /// en el contramovimiento del artículo SIN lote — combinación que no existe y viola la FK
+    /// compuesta <c>fk_movimientos_stock_lote</c> (Postgres 23503) antes de que cualquier aserción
+    /// de C# corra. Confirma, desde el ángulo inverso, el mismo backstop de schema documentado en
+    /// <see cref="UnArticuloSinControlDeLoteNuncaLlevaIdLoteEnItemNiMovimiento"/> — acá la mutación
+    /// muere en la base, no en la aserción. Revertido, mismo filtro: GREEN.</summary>
+    [Fact]
+    public async Task LaAnulacionDeUnaVentaMixtaRevierteLaLineaConLoteYLaLineaSinLoteCadaUnaConSuIdLote()
+    {
+        var ctx = await PrepararAsync(nameof(LaAnulacionDeUnaVentaMixtaRevierteLaLineaConLoteYLaLineaSinLoteCadaUnaConSuIdLote));
+        var idArticuloConLote = await SembrarArticuloAsync(ctx, "articulo-mixto-con-lote", 100m, controlaLote: true);
+        var idArticuloSinLote = await SembrarArticuloAsync(ctx, "articulo-mixto-sin-lote", 100m, controlaLote: false);
+        var idLote = await SembrarLoteAsync(ctx, idArticuloConLote, "L-MIXTO", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticuloConLote, idLote, 10m);
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, ctx.IdCliente, "TX", null,
+            [
+                new LineaDeVenta(idArticuloConLote, 3m, null, idLote),
+                new LineaDeVenta(idArticuloSinLote, 2m, null, null)
+            ],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 500m, null, 0m)],
+            null, null);
+
+        var emitido = await EmitirAsync(ctx, solicitud);
+        Assert.Equal(2, emitido.Items.Count);
+
+        await AnularAsync(ctx, emitido.Id);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var movimientoConLote = await db.MovimientosStock.SingleAsync(
+            m => m.IdComprobanteVenta == emitido.Id && m.Motivo == MotivoStock.Anulacion && m.IdArticulo == idArticuloConLote);
+        Assert.Equal(idLote, movimientoConLote.IdLote);
+
+        var movimientoSinLote = await db.MovimientosStock.SingleAsync(
+            m => m.IdComprobanteVenta == emitido.Id && m.Motivo == MotivoStock.Anulacion && m.IdArticulo == idArticuloSinLote);
+        Assert.Null(movimientoSinLote.IdLote);
+
+        var stockLote = await db.StockLotes
+            .Where(sl => sl.IdArticulo == idArticuloConLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Select(sl => sl.Cantidad).FirstAsync();
+        Assert.Equal(10m, stockLote);
     }
 }
