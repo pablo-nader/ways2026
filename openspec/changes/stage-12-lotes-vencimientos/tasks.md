@@ -866,7 +866,7 @@ unchanged. **Rollback**: revert the branch.
   Design package reference). Output: "No changes have been made to the
   model since the last migration." Expected — this slice adds no schema,
   only C#/records.)*
-- [ ] 7.14 Run `judgment-day`; fix; re-judge until clean. *(JD-FIX NOTE,
+- [x] 7.14 Run `judgment-day`; fix; re-judge until clean. *(JD-FIX NOTE,
   primera ronda: 5 hallazgos confirmados — CRITICAL 1 (`ElegirFefo` elegía el
   vencido con orden fecha ASC puro, sin preferir no-vencidos — resuelto por
   decisión 15, registrada en `state.yaml`), CRITICAL 2 (el fallback
@@ -883,7 +883,7 @@ unchanged. **Rollback**: revert the branch.
   se registra ACÁ, en `tasks.md`, además de comunicarse al orquestador — la
   resolución de ESTE desvío es exactamente la decisión 15 implementada en
   esta misma ronda de fixes.)*
-- [ ] 7.15 Branch `feat/stage12-slice7-venta-plan-fefo` off `main` (parent:
+- [x] 7.15 Branch `feat/stage12-slice7-venta-plan-fefo` off `main` (parent:
   slice 3); PR; merge stacked-to-main.
 
 **Test plan**: query count ×2 (7.4, 7.10), FEFO resolution ×4 (7.5-7.9),

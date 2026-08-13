@@ -57,7 +57,7 @@ public static class ReglaDeLotes
     /// lote del artículo tiene saldo positivo — el llamador resuelve (o crea, get-or-create) el
     /// lote sin identificar en su lugar (design decisión 7), esta función nunca lo crea.
     ///
-    /// Decisión 15 (judgment-day del slice 7, spec lotes-y-vencimientos: "FEFO MUST pre-select a
+    /// Decisión 15 (judgment-day del slice 7, spec comprobantes-venta: "FEFO MUST pre-select a
     /// non-expired lot whenever one exists with positive balance"): entre los lotes con saldo
     /// positivo, la SELECCIÓN se particiona primero por vencimiento respecto de
     /// <paramref name="hoy"/> — los NO vencidos (el sin-identificar, sin fecha, cuenta como no
