@@ -243,8 +243,12 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
     /// <summary>Upsert no-op — <c>SET cantidad = stock.cantidad</c> — que crea la fila si falta
     /// (con <c>cantidad = 0</c>) Y toma el row lock en el mismo statement, sin escribir ningún
     /// delta todavía (design decisión 5: "the conteo uses the same primitive as a no-op upsert to
-    /// create-if-missing and lock in one statement, then derives the delta").</summary>
-    private static async Task<decimal> BloquearYCrearSiFaltaStockAsync(
+    /// create-if-missing and lock in one statement, then derives the delta").
+    /// <para>Etapa 12, Slice 4 (design: Reconciliation — "BloquearYCrearSiFaltaStockAsync ya
+    /// existe para esto exacto"): <c>internal</c> a propósito, no un duplicado — la fila agregada
+    /// del par de reconciliación (design decisión 13, paso 2) toma el MISMO lock no-op que
+    /// <c>ContarAsync</c>, reusado directamente desde <c>ServicioDeLotes.ReconciliarAsync</c>.</para></summary>
+    internal static async Task<decimal> BloquearYCrearSiFaltaStockAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();

@@ -407,7 +407,7 @@ idempotently; `POST /api/stock/lotes/reconciliacion` re-runs it on demand.
 **Rollback**: revert the branch — the trigger hooks are the only coupling
 point, both additive.
 
-- [ ] 4.1 Extend `ServicioDeLotes.cs`: `ReconciliarAsync(idArticulo?,
+- [x] 4.1 Extend `ServicioDeLotes.cs`: `ReconciliarAsync(idArticulo?,
   idPuntoVenta?)` — one transaction **per pair**, ascending: (1)
   `ResolverSinIdentificarAsync` (lotes before stock, decision 3);
   (2) `BloquearYCrearSiFaltaStockAsync` (aggregate lock first); (3)
@@ -415,41 +415,78 @@ point, both additive.
   FOR UPDATE`; (4) `residuo = agregado - sumaLotes`; (5) `residuo == 0` ⇒
   commit, write nothing; (6) else, two `movimientos_stock` rows
   (`motivo = reclasificacion`, net zero) + `UpsertStockLoteAsync` on the
-  sin-identificar lot. `stock` is **never** touched.
-- [ ] 4.2 Modify `src/Ways.Application/Articulos/ServicioDeArticulos.cs`:
+  sin-identificar lot. `stock` is **never** touched. *(APPLY-RUN NOTE:
+  `BloquearYCrearSiFaltaStockAsync` visibility widened `private → internal`
+  in `ServicioDeStock.cs` (reused, not duplicated, per the design text
+  naming it). Step 3's literal SQL is invalid Postgres — `FOR UPDATE`
+  cannot combine with an aggregate in the same `SELECT` ("FOR UPDATE is not
+  allowed with aggregate functions") — implemented as a subquery that locks
+  rows ascending by `id_lote` first, then sums in the outer query; same
+  lock order, valid SQL. Scope resolution (`idArticulo`/`idPuntoVenta`
+  both `null`) is resolved in SQL: every `stock` row whose articulo has
+  `controla_lote = true` AND whose PV's empresa resolves
+  `lotes_habilitado` effective `true`; a broader-than-strictly-necessary
+  scope is safe because every already-reconciled pair is a no-op (design
+  decisión 13).)*
+- [x] 4.2 Modify `src/Ways.Application/Articulos/ServicioDeArticulos.cs`:
   detect `controla_lote false → true` on save; trigger
   `ReconciliarAsync(idArticulo, null)` scoped to every PV of every
-  lot-enabled empresa of the tenant.
-- [ ] 4.3 Modify `src/Ways.Application/Parametros/ServicioDeParametros.cs`:
+  lot-enabled empresa of the tenant. *(APPLY-RUN NOTE: `ControlaLote` added
+  to `AltaArticulo`/`EdicionArticulo`/`ArticuloListado` — Contratos.cs had
+  no field for it yet, task 4.2's trigger needs a client-settable value to
+  detect the flip on. `CrearAsync` sets it without triggering
+  reconciliation (a brand-new articulo has no preexisting stock, any run
+  would be a no-op by construction). `ServicioDeLotes` injected as a new
+  constructor dependency.)*
+- [x] 4.3 Modify `src/Ways.Application/Parametros/ServicioDeParametros.cs`:
   detect `lotes_habilitado false → true` on save; trigger
   `ReconciliarAsync(null, ...)` scoped to already-`controla_lote`-flagged
-  articulos × that empresa's PVs.
-- [ ] 4.4 Modify `StockEndpoints.cs`: `POST /api/stock/lotes/reconciliacion`
+  articulos × that empresa's PVs. *(APPLY-RUN NOTE: flip detected by
+  comparing the touched row's raw value before/after `EstablecerAsync`
+  (design: Reconciliation — "Scope resolution"), not a hierarchy-resolved
+  effective value — matches the two other clave-agnostic call sites
+  already in this file.)*
+- [x] 4.4 Modify `StockEndpoints.cs`: `POST /api/stock/lotes/reconciliacion`
   (`GestionDeCatalogo`), `SolicitudDeReconciliacion`,
   `ResultadoDeReconciliacion`.
-- [ ] 4.5 [P] Net-zero proof: reconciliation writes a pair summing to
+- [x] 4.5 [P] Net-zero proof: reconciliation writes a pair summing to
   zero, `stock.cantidad` unaffected, sin-identificar `stock_lotes.cantidad`
   becomes the residue. *(spec: "Activation reconciles existing stock into
   the sin-identificar lot")*
-- [ ] 4.6 [P] **Mutation target**: delete the `residuo == 0 ⇒ write
+- [x] 4.6 [P] **Mutation target**: delete the `residuo == 0 ⇒ write
   nothing` guard → the idempotence test (asserting the `movimientos_stock`
   **row count** is unchanged on a second run) MUST fail; revert → green.
   *(spec: "A second reconciliation run is a no-op"; mutation-proof-tests)*
-  Record evidence.
-- [ ] 4.7 [P] Self-heal test: sell into an unreconciled pair (drives the
+  Record evidence. *(APPLY-RUN NOTE: mutation applied — `if (residuo ==
+  0m)` in `ServicioDeLotes.ReconciliarParAsync` replaced by `if (false)`;
+  build, filter `UnaSegundaReconciliacionSobreElMismoParEsUnNoOpQueNoDuplicaMovimientos`:
+  RED — not via the row-count assertion but earlier, a `500 error_interno`
+  (`ck_movimientos_stock_cantidad_no_cero`): the second run tried to write
+  a `cantidad = 0` reclasificación row, exactly the row the guard exists to
+  prevent — the strongest possible mutation evidence, a real Postgres CHECK
+  catching it. Reverted, build, same filter: GREEN; full
+  `ReconciliacionTests`: GREEN, 7/7.)*
+- [x] 4.7 [P] Self-heal test: sell into an unreconciled pair (drives the
   sin-identificar lot negative), then reconcile, assert `SUM(stock_lotes) =
-  stock.cantidad` afterward.
-- [ ] 4.8 [P] `motivo`-discrimination test: reconciliation rows always
+  stock.cantidad` afterward. *(APPLY-RUN NOTE: slices 7/8's lot-aware venta
+  write path doesn't exist yet on this branch — the test simulates it
+  directly, writing a `movimientos_stock` row + decrementing `stock`/
+  `stock_lotes(sin-identificar)` by hand, same shape the real write path
+  will produce.)*
+- [x] 4.8 [P] `motivo`-discrimination test: reconciliation rows always
   `motivo = reclasificacion`, never `ajuste`. *(spec: "Reclasificación
   never uses motivo ajuste")*
-- [ ] 4.9 [P] Zero-residue-never-violates-CHECK test. *(spec: "A
+- [x] 4.9 [P] Zero-residue-never-violates-CHECK test. *(spec: "A
   zero-cantidad reclasificación row never violates the non-zero CHECK")*
-- [ ] 4.10 [P] Activation-trigger tests: `controla_lote` flip via
+- [x] 4.10 [P] Activation-trigger tests: `controla_lote` flip via
   `ServicioDeArticulos` triggers reconciliation across every PV of
   lot-enabled empresas; `lotes_habilitado` flip via `ServicioDeParametros`
   triggers reconciliation across already-flagged articulos.
-- [ ] 4.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
+- [x] 4.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. *(Verified after the slice's changes — no
+  `Migraciones/`/`Configuraciones/` file touched, per the DB CHANGE GATE;
+  run via `--project src/Ways.Infrastructure --startup-project
+  src/Ways.Infrastructure`, `WaysDbContextFactory` design-time factory.)*
 - [ ] 4.12 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 4.13 Branch `feat/stage12-slice4-reconciliacion` off `main` (parent:
   slice 3); PR; merge stacked-to-main.

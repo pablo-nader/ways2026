@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Stock;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 
@@ -15,8 +16,14 @@ namespace Ways.Application.Parametros;
 /// <see cref="ITenantActual"/>/ADR-10: no hay "empresa actual" en la sesión todavía (la
 /// selección de empresa/punto de venta es una etapa operativa posterior), así que
 /// <paramref name="idEmpresa"/>/<c>idPuntoVenta</c> viajan explícitos en cada llamada.
+///
+/// stage-12-lotes-vencimientos, Slice 4 (design: Reconciliation triggers): un flip de
+/// <c>lotes_habilitado</c> <c>false → true</c> en <see cref="EstablecerAsync"/> dispara
+/// <see cref="ServicioDeLotes.ReconciliarAsync"/> — la transición se detecta comparando el
+/// valor CRUDO de la fila tocada (antes/después), no un valor "efectivo" resuelto por
+/// jerarquía (design: Reconciliation — "Scope resolution").
 /// </summary>
-public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj)
+public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, ServicioDeLotes servicioDeLotes)
 {
     public async Task<ParametroResuelto> ResolverAsync(
         string clave, int idEmpresa, int? idPuntoVenta, CancellationToken ct = default)
@@ -63,6 +70,12 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj)
         var existente = await db.Parametros.FirstOrDefaultAsync(
             p => p.IdEmpresa == idEmpresa && p.Clave == datos.Clave && p.IdPuntoVenta == datos.IdPuntoVenta, ct);
 
+        // Task 4.3 (design: Reconciliation triggers): capturado ANTES de escribir — una fila
+        // ausente vale el default declarado ("false" para lotes_habilitado), mismo criterio de
+        // resolución que ResolucionDeParametros usa para cualquier otra clave.
+        var esLotesHabilitado = string.Equals(datos.Clave, ParametroConocido.LotesHabilitado.Clave, StringComparison.OrdinalIgnoreCase);
+        var valorAnteriorLotesHabilitado = esLotesHabilitado && existente is not null && DeserializarBool(existente.Valor);
+
         var ahora = reloj.Ahora;
 
         if (existente is null)
@@ -86,8 +99,20 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj)
 
         await db.SaveChangesAsync(ct);
 
+        // Task 4.3 (design: Reconciliation triggers — "lotes_habilitado flipped false → true"):
+        // alcance = todo el tenant; ReconciliarAsync ya filtra en SQL a los artículos
+        // controla_lote=true cuyo PV pertenece a una empresa con lotes_habilitado efectivo
+        // true — un re-run que también toca otras empresas ya habilitadas es un no-op seguro
+        // (design decisión 13), nunca un costo de corrección.
+        if (esLotesHabilitado && !valorAnteriorLotesHabilitado && DeserializarBool(datos.Valor))
+        {
+            await servicioDeLotes.ReconciliarAsync(idArticulo: null, idPuntoVenta: null, ct);
+        }
+
         return new ParametroListado(existente.Id, existente.Clave, existente.Valor, existente.IdPuntoVenta);
     }
+
+    private static bool DeserializarBool(string valorJson) => JsonSerializer.Deserialize<bool>(valorJson);
 
     /// <summary>Sin cambio de esquema (decisión del usuario, judgment-day slice 3 ronda 1):
     /// <c>id_punto_venta</c> no tiene FK a <c>empresas</c> — solo a <c>puntos_venta</c> — así

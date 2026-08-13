@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Common;
@@ -27,8 +28,15 @@ namespace Ways.Application.Articulos;
 /// <see cref="ActualizarAsync"/> completo contra el proveedor InMemory, a diferencia de
 /// <see cref="CrearAsync"/> (mismo "transaction-blocked-provider caveat" que
 /// <c>ServicioDeClientesTests</c>).
+///
+/// stage-12-lotes-vencimientos, Slice 4 (design: Reconciliation triggers): un flip de
+/// <see cref="Articulo.ControlaLote"/> <c>false → true</c> en <see cref="ActualizarAsync"/>
+/// dispara <see cref="ServicioDeLotes.ReconciliarAsync"/> — primera escritura de dominio de
+/// stock que hace un ABM de catálogo (flagged for the owner, no bloqueante, design: Open
+/// Questions).
 /// </summary>
-public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto)
+public class ServicioDeArticulos(
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes)
 {
     public async Task<PaginaDe<ArticuloListado>> ListarAsync(
         string? busqueda = null,
@@ -78,7 +86,7 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
                 a.Id, a.CodigoInterno, a.Nombre, a.Descripcion, a.IdArea, a.IdCategoria, a.IdMarca,
                 a.IdGrupo, a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto,
                 a.EsProducto, a.CostoLista, a.DescuentoProveedor, a.CostoNominal, a.DisponibleParaTodas,
-                Array.Empty<int>(), a.Activo))
+                Array.Empty<int>(), a.Activo, a.ControlaLote))
             .ToListAsync(ct);
 
         return new PaginaDe<ArticuloListado>(items, total, pagina, tamanio);
@@ -183,6 +191,7 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
                 CostoNominal = datos.CostoNominal,
                 DisponibleParaTodas = datos.DisponibleParaTodas,
                 Activo = datos.Activo,
+                ControlaLote = datos.ControlaLote,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             };
@@ -198,6 +207,9 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
 
             await transaccion.CommitAsync(ct);
 
+            // Sin reconciliación acá (a diferencia de ActualizarAsync): un artículo recién creado
+            // no puede tener stock preexistente, así que cualquier corrida sería un no-op —
+            // design decisión 13, el residuo de un par sin fila de stock siempre es cero.
             return Proyectar(articulo, datos.DisponibleParaTodas ? Array.Empty<int>() : (IReadOnlyList<int>?)idsEmpresas ?? Array.Empty<int>());
         });
     }
@@ -240,6 +252,10 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
 
         var idTenant = ExigirTenantDeLaSesion();
 
+        // Task 4.2 (design: Reconciliation triggers): capturado ANTES de sobrescribir el campo —
+        // es el único momento en que "antes" y "después" conviven en memoria.
+        var controlaLoteAnterior = articulo.ControlaLote;
+
         articulo.Nombre = nombre;
         articulo.Descripcion = descripcion;
         articulo.IdArea = datos.IdArea;
@@ -256,6 +272,7 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
         articulo.CostoNominal = datos.CostoNominal;
         articulo.DisponibleParaTodas = datos.DisponibleParaTodas;
         articulo.Activo = datos.Activo;
+        articulo.ControlaLote = datos.ControlaLote;
         articulo.UpdatedAt = reloj.Ahora;
 
         // Reemplaza el subconjunto entero (INSERT/DELETE físico, sin historial que preservar —
@@ -270,6 +287,15 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
         }
 
         await db.SaveChangesAsync(ct);
+
+        // Task 4.2 (design: Reconciliation triggers — "articulos.controla_lote flipped false →
+        // true"): alcance = ese artículo, todas las PV (ReconciliarAsync ya filtra a las de
+        // empresas con lotes_habilitado efectivo). Un flip a false no reconcilia nada (spec: "the
+        // false → true transition... a flip to false reconciles nothing").
+        if (!controlaLoteAnterior && datos.ControlaLote)
+        {
+            await servicioDeLotes.ReconciliarAsync(articulo.Id, idPuntoVenta: null, ct);
+        }
 
         return Proyectar(articulo, datos.DisponibleParaTodas ? Array.Empty<int>() : (IReadOnlyList<int>?)idsEmpresas ?? Array.Empty<int>());
     }
@@ -669,5 +695,6 @@ public class ServicioDeArticulos(IWaysDbContext db, IRelojDelSistema reloj, ICon
     private static ArticuloListado Proyectar(Articulo a, IReadOnlyList<int> idsEmpresas) => new(
         a.Id, a.CodigoInterno, a.Nombre, a.Descripcion, a.IdArea, a.IdCategoria, a.IdMarca, a.IdGrupo,
         a.IdProveedorHabitual, a.IdAlicuotaIva, a.UnidadVenta, a.UnidadesPorBulto, a.EsProducto,
-        a.CostoLista, a.DescuentoProveedor, a.CostoNominal, a.DisponibleParaTodas, idsEmpresas, a.Activo);
+        a.CostoLista, a.DescuentoProveedor, a.CostoNominal, a.DisponibleParaTodas, idsEmpresas, a.Activo,
+        a.ControlaLote);
 }

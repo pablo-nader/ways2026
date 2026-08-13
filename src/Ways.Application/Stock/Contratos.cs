@@ -76,3 +76,21 @@ public sealed record SolicitudDeLote(int IdArticulo, string? Codigo, DateOnly Fe
 public sealed record LoteListado(
     int IdLote, int IdArticulo, string Codigo, DateOnly? FechaVencimiento, bool EsSinIdentificar,
     decimal Cantidad, EstadoDeVencimiento Estado, bool Sugerido);
+
+/// <summary>
+/// Cuerpo de <c>POST /api/stock/lotes/reconciliacion</c> (stage-12-lotes-vencimientos, Slice 4;
+/// design: API Surface). Ambos campos son opcionales y acotan el alcance — <c>null</c> en los
+/// dos significa "todo el tenant" (<see cref="Stock.ServicioDeLotes.ReconciliarAsync"/> ya filtra
+/// a los pares con <c>controla_lote</c> efectivo, así que un re-run amplio es seguro, nunca
+/// destructivo: cada par ya reconciliado es un no-op, design decisión 13).
+/// </summary>
+public sealed record SolicitudDeReconciliacion(int? IdArticulo, int? IdPuntoVenta);
+
+/// <summary>
+/// Resultado de <c>POST /api/stock/lotes/reconciliacion</c>. <see cref="ParesReconciliados"/>
+/// cuenta los pares <c>(articulo, punto de venta)</c> que efectivamente escribieron el par neto
+/// cero de <c>reclasificacion</c> (residuo distinto de cero); <see cref="ParesSinResiduo"/> los
+/// que ya estaban al día (residuo cero, no-op — spec: "A second reconciliation run is a no-op").
+/// La suma de ambos es el total de pares dentro del alcance pedido.
+/// </summary>
+public sealed record ResultadoDeReconciliacion(int ParesReconciliados, int ParesSinResiduo);

@@ -43,6 +43,15 @@ public class ServicioDeLotesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         public DateTimeOffset Ahora => ahora;
     }
 
+    private sealed class ContextoFijo(int idTenant, int usuarioId) : IContextoDeUsuario
+    {
+        public bool EstaAutenticado => true;
+        public int UsuarioId => usuarioId;
+        public string NombreUsuario => "actor-de-prueba";
+        public RolConocido Rol => RolConocido.Admin;
+        public int? IdTenant { get; } = idTenant;
+    }
+
     private async Task<Contexto> PrepararAsync(string nombre)
     {
         using var root = fixture.CreateClient();
@@ -110,8 +119,9 @@ public class ServicioDeLotesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await using var dbA = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         await using var dbB = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var reloj = new RelojFijo(DateTimeOffset.UtcNow);
-        var servicioA = new ServicioDeLotes(dbA, reloj);
-        var servicioB = new ServicioDeLotes(dbB, reloj);
+        var contexto = new ContextoFijo(ctx.IdTenant, usuarioId: 1);
+        var servicioA = new ServicioDeLotes(dbA, reloj, contexto);
+        var servicioB = new ServicioDeLotes(dbB, reloj, contexto);
 
         var solicitud = new SolicitudDeLote(idArticulo, "L-RACE-APP", new DateOnly(2030, 12, 31));
 
@@ -361,7 +371,8 @@ public class ServicioDeLotesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await db.SaveChangesAsync();
 
         var reloj = new RelojFijo(ahora);
-        var servicio = new ServicioDeLotes(db, reloj);
+        var contexto = new ContextoFijo(ctx.IdTenant, usuarioId: 1);
+        var servicio = new ServicioDeLotes(db, reloj, contexto);
 
         var saldos = await servicio.LeerSaldosAsync(
             ctx.IdPuntoVenta, [idArticulo], [lotePedidoSaldoCero.Id], CancellationToken.None);

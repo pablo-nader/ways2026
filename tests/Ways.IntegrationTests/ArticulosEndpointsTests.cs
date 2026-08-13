@@ -910,5 +910,6 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         CostoNominal: articulo.CostoNominal,
         DisponibleParaTodas: articulo.DisponibleParaTodas,
         IdsEmpresas: null,
-        Activo: articulo.Activo);
+        Activo: articulo.Activo,
+        ControlaLote: articulo.ControlaLote);
 }

@@ -69,6 +69,18 @@ public static class StockEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Alta manual de un lote (admin-only) — 409 lote_duplicado si el código ya existe.");
 
+        // stage-12-lotes-vencimientos (Slice 4, task 4.4, design: API Surface): re-run manual de
+        // la reconciliación — mismo apilado GestionDeCatalogo sobre OperacionDePos que /ajustes.
+        // Idempotente (design decisión 13): un alcance vacío/ya reconciliado devuelve conteos en
+        // cero, nunca un error.
+        grupo.MapPost("/lotes/reconciliacion", async (ServicioDeLotes servicio, SolicitudDeReconciliacion solicitud, CancellationToken ct) =>
+        {
+            var resultado = await servicio.ReconciliarAsync(solicitud.IdArticulo, solicitud.IdPuntoVenta, ct);
+            return Results.Ok(resultado);
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Re-run manual de la reconciliación de lotes (admin-only) — motivo = reclasificacion.");
+
         return app;
     }
 }
