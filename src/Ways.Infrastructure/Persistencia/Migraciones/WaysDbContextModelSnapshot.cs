@@ -184,6 +184,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasDatabaseName("ix_articulos_alicuota_iva");
 
                     b.HasIndex("IdTenant")
+                        .HasDatabaseName("ix_articulos_tenant");
+
+                    b.HasIndex(new[] { "IdTenant" }, "ix_articulos_controla_lote")
                         .HasDatabaseName("ix_articulos_controla_lote")
                         .HasFilter("controla_lote AND deleted_at IS NULL");
 

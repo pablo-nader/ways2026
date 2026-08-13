@@ -115,7 +115,10 @@ public class ArticuloConfiguration : IEntityTypeConfiguration<Articulo>
 
         // Etapa 12 (proposal decisión 1, gate §E): sirve tanto el conjunto de reconciliación
         // (ServicioDeLotes.ReconciliarAsync, slice 4) como el listado de artículos lot-effective.
-        builder.HasIndex(a => a.IdTenant)
+        // Overload nombrado: mismo property set que ix_articulos_tenant, pero es un índice
+        // distinto (parcial) — sin el nombre explícito, EF los trata como el mismo slot de
+        // metadata y uno pisa al otro.
+        builder.HasIndex(a => a.IdTenant, "ix_articulos_controla_lote")
             .HasDatabaseName("ix_articulos_controla_lote")
             .HasFilter("controla_lote AND deleted_at IS NULL");
 
