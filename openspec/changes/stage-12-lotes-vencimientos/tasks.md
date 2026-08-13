@@ -730,24 +730,53 @@ revert the branch.
 > compra_anulacion_lotes_pendiente guard added at slice-5 judgment-day with
 > the exact per-lot reversal.
 
-- [ ] 6.1 Modify `ServicioDeCompras.cs`: `EjecutarAnulacionAsync` reorders
+- [x] 6.1 Modify `ServicioDeCompras.cs`: `EjecutarAnulacionAsync` reorders
   `.OrderBy(m => m.IdArticulo).ThenBy(m => m.IdLote)`, copies
   `original.IdLote`; **two** mandatory checks — aggregate `nueva < 0` AND
   per-lot `nuevaDelLote < 0` — both raise `409
-  compra_anulacion_stock_negativo`.
-- [ ] 6.2 [P] **Mutation target**: `if (clave.IdLote is not null && delta <
-  0 && nueva < 0) throw` — delete the `if` → the per-lot insufficiency test
-  (seeded with a **sufficient aggregate** across two lots) MUST fail;
-  revert → green. *(spec: "Anulación refused by a lot-level underflow
-  despite a sufficient aggregate"; mutation-proof-tests)* Record evidence.
-- [ ] 6.3 [P] Exact reversal test. *(spec: "Anulación reverses a
-  lot-bearing item into its exact lot")*
-- [ ] 6.4 [P] Aggregate refusal regression, unaffected by the lot
+  compra_anulacion_stock_negativo`. *(APPLY-RUN NOTE: replaces the interim
+  `compra_anulacion_lotes_pendiente` guard from slice 5 FIX 4 in full — the
+  guard block and its now-superseded doc-comments are removed. The per-lot
+  `UpsertStockLoteAsync` upsert + check run right after the aggregate
+  `UpsertStockAsync` + check, inside the same per-movement loop iteration,
+  so a rejection at either level rolls back the whole `EjecutarAnulacionAsync`
+  transaction via the outer `using`.)*
+- [x] 6.2 [P] **Mutation target**: the per-lot `if (nuevaDelLote < 0m)
+  throw` guard — delete the `if` → the per-lot insufficiency test (seeded
+  with a **sufficient aggregate** across two lots) MUST fail; revert →
+  green. *(spec: "Anulación refused by a lot-level underflow despite a
+  sufficient aggregate"; mutation-proof-tests)* Record evidence.
+  *(APPLY-RUN NOTE: mutation applied — the per-lot guard's condition
+  replaced with `if (false)` in `EjecutarAnulacionAsync`; build, filter
+  `AnularUnaCompraEsRechazadaPorUnLoteInsuficienteAunConAgregadoSuficiente`:
+  RED — anulación returned `200 OK`/`Anulada` instead of `409
+  compra_anulacion_stock_negativo` (the aggregate-only check alone did not
+  catch the lot-7 underflow, aggregate stayed at 60 ≥ 0). Reverted, build,
+  same filter: GREEN; full `ComprasRecepcionDeLotesTests` +
+  `ComprasAnulacionYConcurrenciaTests`: GREEN, 31/31.)*
+- [x] 6.3 [P] Exact reversal test. *(spec: "Anulación reverses a
+  lot-bearing item into its exact lot")* *(APPLY-RUN NOTE:
+  `AnularUnaCompraConLoteResueltoRevierteElLoteExacto` — replaces the slice-5
+  interim guard test `AnularUnaCompraConLoteResueltoEsRechazadaSinRevertirNada`
+  per the slice-5 judgment-day FIX-4 note; asserts the inverse movimiento's
+  `id_lote`, the aggregate `stock.cantidad`, and `stock_lotes.cantidad` for
+  the lot all land at zero after anulación.)*
+- [x] 6.4 [P] Aggregate refusal regression, unaffected by the lot
   dimension. *(spec: "Anulación refused when the goods were already sold")*
-- [ ] 6.5 [P] `costo_nominal`-not-reverted regression (unaffected by this
-  slice).
-- [ ] 6.6 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
+  *(APPLY-RUN NOTE: no new test — the existing
+  `ComprasAnulacionYConcurrenciaTests.AnulacionEsRechazadaCuandoLaMercaderiaYaFueVendida`
+  (lot-less articulo, pre-dates this slice) exercises this scenario
+  end-to-end; re-ran the full suite after 6.1's reorder/copy changes to
+  confirm it is byte-identically unaffected — GREEN, 15/15.)*
+- [x] 6.5 [P] `costo_nominal`-not-reverted regression (unaffected by this
+  slice). *(APPLY-RUN NOTE: no new test — the existing
+  `ComprasAnulacionYConcurrenciaTests.CostoNominalNoSeRevierteAlAnular`
+  covers this; confirmed GREEN in the same full-suite run as 6.4.)*
+- [x] 6.6 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. *(Confirmed via `--project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure`: "No changes have been made to
+  the model since the last migration." No `Migraciones/`/`Configuraciones/`
+  file touched by this slice.)*
 - [ ] 6.7 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 6.8 Branch `feat/stage12-slice6-compra-anulacion` off `main` (parent:
   slice 5); PR; merge stacked-to-main.

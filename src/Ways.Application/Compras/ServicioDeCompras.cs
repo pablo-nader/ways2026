@@ -520,41 +520,26 @@ public class ServicioDeCompras(
             throw new ErrorDominio("compra_no_confirmada", "La compra no está confirmada.", 409);
         }
 
-        // 1.b Guard interino de anulación con lotes (etapa 12, slice 5, judgment-day FIX 4):
-        // la reversa de acá abajo (paso 2) solo revierte el agregado (movimientos_stock/stock) —
-        // si algún item de esta compra resolvió un lote, dejar stock_lotes sin revertir
-        // corrompería el invariante 2 en silencio (200 OK con stock_lotes inflado). Preferible
-        // rechazar que corromper: interino hasta que slice 6 (task 6.1) implemente la reversa
-        // EXACTA por lote y reemplace este guard.
-        var tieneItemsConLote = await db.ItemsComprobanteCompra
-            .AnyAsync(i => i.IdComprobanteCompra == id && i.IdLote != null, ct);
-        if (tieneItemsConLote)
-        {
-            throw new ErrorDominio(
-                "compra_anulacion_lotes_pendiente",
-                "Esta compra tiene ítems con lote resuelto; la anulación con reversa exacta por lote " +
-                "todavía no está implementada (queda para slice 6).",
-                409);
-        }
-
         // 2. El ledger ORIGINAL, nunca recalculado desde items (design: doc-comment de
-        // ServicioDeVentas.AnularAsync, mismo criterio acá).
+        // ServicioDeVentas.AnularAsync, mismo criterio acá). Orden ascendente (id_articulo,
+        // id_lote) — etapa 12, slice 6, mismo criterio de lock que el confirmar (decisión 8/9).
         var movimientosOriginales = await db.MovimientosStock
             .Where(m => m.IdComprobanteCompra == id && m.Motivo == MotivoStock.Compra)
             .OrderBy(m => m.IdArticulo)
+            .ThenBy(m => m.IdLote)
             .ToListAsync(ct);
 
         foreach (var original in movimientosOriginales)
         {
             var inversa = -original.Cantidad;
 
-            // idLote: null acá a propósito — la anulación lot-aware (copiar original.IdLote,
-            // upsert de stock_lotes, chequeo de negativo por lote) es Slice 6 (task 6.1), fuera
-            // del scope de este slice. Este slice solo agrega el parámetro compartido por
-            // InsertarMovimientoStockAsync para no romper la firma del confirmar.
+            // Reversa EXACTA por lote (etapa 12, slice 6, reemplaza el guard interino de slice 5
+            // FIX 4): el movimiento original ya trae su propio id_lote — la reversa lo copia
+            // estructuralmente, sin re-derivar nada (design: "Exactness is structural, not
+            // derived").
             await InsertarMovimientoStockAsync(
                 conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa,
-                MotivoStock.Anulacion, id, idEmpleado, momento, idLote: null, ct);
+                MotivoStock.Anulacion, id, idEmpleado, momento, original.IdLote, ct);
 
             var nueva = await UpsertStockAsync(
                 conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa, ct);
@@ -565,6 +550,26 @@ public class ServicioDeCompras(
                     "compra_anulacion_stock_negativo",
                     $"El artículo {original.IdArticulo} quedaría con stock negativo al anular esta compra.",
                     409);
+            }
+
+            // Chequeo por lote (spec comprobantes-compra: "the negative-balance refusal MUST also
+            // apply at the lot level... even if the articulo's aggregate stock.cantidad would stay
+            // non-negative") — un agregado suficiente puede esconder un lote específico ya vendido
+            // por debajo de la cantidad que esta anulación intenta devolverle.
+            if (original.IdLote is { } idLoteReversa)
+            {
+                var nuevaDelLote = await UpsertStockLoteAsync(
+                    conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, idLoteReversa,
+                    inversa, ct);
+
+                if (nuevaDelLote < 0m)
+                {
+                    throw new ErrorDominio(
+                        "compra_anulacion_stock_negativo",
+                        $"El lote {idLoteReversa} del artículo {original.IdArticulo} quedaría con stock " +
+                        "negativo al anular esta compra.",
+                        409);
+                }
             }
         }
 

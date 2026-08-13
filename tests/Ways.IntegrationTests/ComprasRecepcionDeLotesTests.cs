@@ -49,7 +49,8 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
 
     private sealed record Contexto(
         int IdTenant, int IdEmpresa, int IdPuntoVenta, HttpClient Admin, int IdProveedor, int IdArticuloLote,
-        int IdAlicuotaIva21, int IdTipoCFA, int IdMedioEfectivo, string MailAdmin, string PasswordAdmin);
+        int IdAlicuotaIva21, int IdTipoCFA, int IdMedioEfectivo, string MailAdmin, string PasswordAdmin,
+        int IdUsuarioAdmin);
 
     private async Task<Contexto> PrepararAsync(string nombre)
     {
@@ -139,7 +140,7 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
 
         return new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, admin, proveedor.Id, articuloLote.Id,
-            idAlicuotaIva21, idTipoCFA, idMedioEfectivo, mailAdmin, resultado.PasswordTemporal);
+            idAlicuotaIva21, idTipoCFA, idMedioEfectivo, mailAdmin, resultado.PasswordTemporal, resultado.IdUsuarioAdmin);
     }
 
     private static SolicitudDeCompra SolicitudConLote(
@@ -557,46 +558,124 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id));
     }
 
-    // ---- judgment-day (juez A, MUST-FIX F2) FIX 4: guard interino de anulación con lotes ----------
+    // ---- task 6.3: reversa exacta por lote (reemplaza el guard interino de slice 5 FIX 4) --------
 
-    /// <summary>Guard interino conservador (<c>EjecutarAnulacionAsync</c>, ~línea 531) — la reversa
-    /// de esta slice es agregado-only (design: doc-comment de la clase, "idLote: null acá a
-    /// propósito"), así que anular una compra con ítems con lote resuelto se rechaza ANTES de
-    /// tocar nada, en vez de dejar <c>stock_lotes</c> inflado en silencio. Slice 6 (task 6.1)
-    /// reemplaza este guard por la reversa exacta por lote.</summary>
+    /// <summary>Etapa 12, slice 6, task 6.1 — reemplaza el guard interino
+    /// (<c>compra_anulacion_lotes_pendiente</c>) documentado en el judgment-day de slice 5 (FIX 4)
+    /// por la reversa EXACTA: el movimiento inverso copia <c>original.IdLote</c> (sin re-derivar,
+    /// design: "Exactness is structural, not derived") y <c>stock_lotes</c> del lote se revierte en
+    /// la misma transacción. (spec comprobantes-compra: "Anulación reverses a lot-bearing item into
+    /// its exact lot")</summary>
     [Fact]
-    public async Task AnularUnaCompraConLoteResueltoEsRechazadaSinRevertirNada()
+    public async Task AnularUnaCompraConLoteResueltoRevierteElLoteExacto()
     {
-        var ctx = await PrepararAsync(nameof(AnularUnaCompraConLoteResueltoEsRechazadaSinRevertirNada));
-        var creada = await CrearBorradorAsync(ctx, SolicitudConLote(ctx, "L-ANULACION", VencimientoLejanoFuturo, unidades: 12m));
+        var ctx = await PrepararAsync(nameof(AnularUnaCompraConLoteResueltoRevierteElLoteExacto));
+        var creada = await CrearBorradorAsync(ctx, SolicitudConLote(ctx, "L-REVERSA", VencimientoLejanoFuturo, unidades: 12m));
         var confirmada = await ConfirmarAsync(ctx, creada.Id);
-        Assert.NotNull(confirmada.Items[0].IdLote);
+        var idLote = confirmada.Items[0].IdLote;
+        Assert.NotNull(idLote);
 
         var respuesta = await AnularRawAsync(ctx, creada.Id);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
-
-        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
-        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
-        Assert.Equal("compra_anulacion_lotes_pendiente", problema.GetProperty("codigo").GetString());
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
 
-        // Aserción completa: NADA se revirtió — ni el estado, ni stock, ni stock_lotes, ni
-        // movimientos_stock.
-        Assert.Equal(EstadoCompra.Confirmada, (await db.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
-        Assert.Equal(
-            0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id && m.Motivo == MotivoStock.Anulacion));
+        Assert.Equal(EstadoCompra.Anulada, (await db.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
+
+        var movimientoAnulacion = await db.MovimientosStock
+            .SingleAsync(m => m.IdComprobanteCompra == creada.Id && m.Motivo == MotivoStock.Anulacion);
+        Assert.Equal(idLote, movimientoAnulacion.IdLote);
+        Assert.Equal(-12m, movimientoAnulacion.Cantidad);
 
         var cantidadStock = await db.Stock
             .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdPuntoVenta == ctx.IdPuntoVenta)
             .Select(s => s.Cantidad).FirstAsync();
-        Assert.Equal(12m, cantidadStock);
+        Assert.Equal(0m, cantidadStock);
 
-        var idLote = confirmada.Items[0].IdLote!.Value;
         var cantidadStockLote = await db.StockLotes
             .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
             .Select(sl => sl.Cantidad).FirstAsync();
-        Assert.Equal(12m, cantidadStockLote);
+        Assert.Equal(0m, cantidadStockLote);
+    }
+
+    // ---- task 6.2: mutation target — el chequeo POR LOTE, no solo el agregado ---------------------
+
+    /// <summary>Mutation target (spec: "Anulación refused by a lot-level underflow despite a
+    /// sufficient aggregate"; mutation-proof-tests). Regla 3 de mutation-proof-tests, matar el
+    /// confound del agregado: sembramos el mismo artículo con SALDO SUFICIENTE en el agregado
+    /// repartido en DOS lotes (lote L-7 con 50 recibidas, lote L-9 con 100 recibidas, agregado =
+    /// 150) — si el chequeo por lote se borrara, el chequeo agregado por sí solo NO detectaría el
+    /// problema, porque el agregado nunca queda negativo. Una venta simulada (mismo patrón que la
+    /// prueba self-heal de <c>ReconciliacionTests</c>, task 4.7 — el escritor de venta lot-aware es
+    /// Slice 7/8, todavía no aterriza en esta rama) saca 40 unidades ESPECÍFICAMENTE del lote L-7
+    /// (deja <c>stock_lotes</c> de L-7 en 10, agregado en 110). Anular la compra que recibió L-7 (50
+    /// unidades) dejaría el agregado en 60 (positivo, el chequeo agregado lo aprobaría) pero el
+    /// lote L-7 en -40 — solo el chequeo por lote lo detecta.</summary>
+    [Fact]
+    public async Task AnularUnaCompraEsRechazadaPorUnLoteInsuficienteAunConAgregadoSuficiente()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnaCompraEsRechazadaPorUnLoteInsuficienteAunConAgregadoSuficiente));
+
+        var compraLote7 = await CrearBorradorAsync(ctx, SolicitudConLote(ctx, "L-7", VencimientoLejanoFuturo, unidades: 50m));
+        var confirmadaLote7 = await ConfirmarAsync(ctx, compraLote7.Id);
+        var idLote7 = confirmadaLote7.Items[0].IdLote!.Value;
+
+        var compraLote9 = await CrearBorradorAsync(ctx, SolicitudConLote(ctx, "L-9", VencimientoLejanoFuturo, unidades: 100m));
+        await ConfirmarAsync(ctx, compraLote9.Id);
+
+        // Venta simulada: 40 unidades salen específicamente del lote 7 (patrón self-heal de
+        // ReconciliacionTests task 4.7 — sin escritor de venta lot-aware todavía en esta rama).
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            db.MovimientosStock.Add(new MovimientoStock
+            {
+                IdTenant = ctx.IdTenant, IdArticulo = ctx.IdArticuloLote, IdPuntoVenta = ctx.IdPuntoVenta, Cantidad = -40m,
+                Motivo = MotivoStock.Venta, IdLote = idLote7, IdEmpleado = ctx.IdUsuarioAdmin, CreadoEl = ahora
+            });
+
+            var stock = await db.Stock.SingleAsync(s => s.IdArticulo == ctx.IdArticuloLote && s.IdPuntoVenta == ctx.IdPuntoVenta);
+            stock.Cantidad -= 40m;
+
+            var stockLote7 = await db.StockLotes.SingleAsync(
+                sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote7);
+            stockLote7.Cantidad -= 40m;
+
+            await db.SaveChangesAsync();
+        }
+
+        await using (var dbAntes = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var agregadoAntes = await dbAntes.Stock
+                .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdPuntoVenta == ctx.IdPuntoVenta)
+                .Select(s => s.Cantidad).FirstAsync();
+            Assert.Equal(110m, agregadoAntes);
+        }
+
+        var respuesta = await AnularRawAsync(ctx, compraLote7.Id);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal("compra_anulacion_stock_negativo", problema.GetProperty("codigo").GetString());
+
+        await using var db2 = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        // Rollback completo: ni el estado, ni el agregado, ni el lote 7 cambiaron.
+        Assert.Equal(EstadoCompra.Confirmada, (await db2.ComprobantesCompra.FirstAsync(c => c.Id == compraLote7.Id)).Estado);
+        Assert.Equal(
+            0, await db2.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == compraLote7.Id && m.Motivo == MotivoStock.Anulacion));
+
+        var agregadoDespues = await db2.Stock
+            .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Select(s => s.Cantidad).FirstAsync();
+        Assert.Equal(110m, agregadoDespues);
+
+        var stockLote7Despues = await db2.StockLotes
+            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote7)
+            .Select(sl => sl.Cantidad).FirstAsync();
+        Assert.Equal(10m, stockLote7Despues);
     }
 
     /// <summary>Regresión del guard interino de FIX 4: un artículo que NO controla lote (mismo
