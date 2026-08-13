@@ -373,6 +373,58 @@ public static class ReportesEndpoints
             "Export XLSX de /stock/existencias: mismas filas, encabezado fechado a hoy (reporte " +
             "de estado actual, sin rango).");
 
+        // stage-12-lotes-vencimientos, Slice 13 (design decisión 15/16, spec lotes-y-vencimientos:
+        // "Vencimientos Report Resolves 'Hoy' In The Punto De Venta's Own Zona Horaria, With An
+        // Export Sibling"): gate heredado del grupo (LecturaDeReportes). "hoy" y
+        // dias_alerta_vencimiento se resuelven DENTRO del servicio (ResolverContextoAsync) —
+        // gobiernan tanto este JSON como /resumen y /export, nunca solo un encabezado HTTP.
+        grupo.MapGet("/stock/vencimientos", (
+            ServicioDeReportesDeStock servicio, int idPuntoVenta, int? dias, CancellationToken ct) =>
+            servicio.ObtenerVencimientosAsync(idPuntoVenta, dias, ct))
+        .WithSummary(
+            "Lotes con saldo positivo de un punto de venta, clasificados vencido/por_vencer/" +
+            "vigente/sin_fecha en la zona horaria del punto de venta — dias por defecto: " +
+            "dias_alerta_vencimiento.");
+
+        // Tile de Tablero (design: API Surface) — reusa la misma clasificación que el JSON de
+        // arriba, nunca una segunda query de agregación (ObtenerResumenDeVencimientosAsync).
+        grupo.MapGet("/stock/vencimientos/resumen", (
+            ServicioDeReportesDeStock servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.ObtenerResumenDeVencimientosAsync(idPuntoVenta, ct))
+        .WithSummary("Tile de Tablero: conteos de vencido/por_vencer/sin_fecha del punto de venta.");
+
+        // Sibling declarado inmediatamente después de su ruta fuente — hereda LecturaDeReportes
+        // por co-locación. LISTADO (design decisión 17): el tope de filas ya lo exige el servicio
+        // (Contar → rechazar → Take(tope + 1)) antes de volver acá, mismo shape que /cajas/export
+        // — sin un GuardaDeTope adicional en este nivel, el servicio ya la corrió dos veces.
+        // AlcanceDeListadoHttp resuelve solo la ETIQUETA de empresa del encabezado: la zona
+        // efectivamente usada para clasificar es la que devuelve el propio servicio
+        // (vencimientos.ZonaHoraria), nunca una segunda resolución que pudiera divergir.
+        grupo.MapGet("/stock/vencimientos/export", async (
+            ServicioDeReportesDeStock servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
+            int idPuntoVenta, int? dias, string formato, CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var vencimientos = await servicio.ObtenerVencimientosParaExportacionAsync(
+                idPuntoVenta, dias, opciones.Value.TopeDeFilas, ct);
+
+            var (empresa, _) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, empresa, $"PV {idPuntoVenta}", vencimientos.Hoy, vencimientos.Hoy, vencimientos.ZonaHoraria);
+            var tabla = ExportacionDeReportes.De(vencimientos, ctx);
+
+            var bytes = exportador.Generar(tabla);
+            var nombre = NombreDeArchivo.Construir("vencimientos", $"pv{idPuntoVenta}", vencimientos.Hoy, vencimientos.Hoy);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary(
+            "Export XLSX de /stock/vencimientos: mismas filas, tope de filas exigido antes de " +
+            "generar el archivo (design decisión 17).");
+
         // stage-11-exportacion-reportes, Slice 5a (design: G2/G3 — minimal aggregation; spec
         // historico-de-cajas: G2 Histórico Lists Closed Turnos Only, Role Split — Turno Detail
         // Under OperacionDePos, Cross-Turno Views Under LecturaDeReportes): gate heredado del

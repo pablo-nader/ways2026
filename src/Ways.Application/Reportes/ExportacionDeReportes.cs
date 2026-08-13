@@ -298,4 +298,37 @@ public static class ExportacionDeReportes
                     Celda.Cantidad(f.Cantidad)
                 ])
                 .ToList());
+
+    private static readonly IReadOnlyList<ColumnaExportable> ColumnasVencimientos =
+    [
+        new ColumnaExportable("Artículo", TipoDeColumna.Entero),
+        new ColumnaExportable("Nombre", TipoDeColumna.Texto),
+        new ColumnaExportable("Lote", TipoDeColumna.Entero),
+        new ColumnaExportable("Código de lote", TipoDeColumna.Texto),
+        new ColumnaExportable("Vencimiento", TipoDeColumna.Fecha),
+        new ColumnaExportable("Cantidad", TipoDeColumna.Cantidad),
+        new ColumnaExportable("Estado", TipoDeColumna.Texto)
+    ];
+
+    /// <summary>stage-12-lotes-vencimientos, Slice 13 (design decisión 17): LISTADO, no agregado —
+    /// el tope de filas ya lo exigió <c>ServicioDeReportesDeStock.ObtenerVencimientosParaExportacionAsync</c>
+    /// (Contar → rechazar → <c>.Take(tope + 1)</c>) ANTES de llegar acá; este mapper sigue siendo
+    /// puro y sin re-consultar la base (design decisión 11 heredada, "No Re-Query"). Sin fila de
+    /// totales: sumar cantidades de lotes de artículos distintos no produce una figura con
+    /// significado propio, mismo criterio que <see cref="Existencias"/>.</summary>
+    public static TablaExportable De(Vencimientos respuesta, ContextoDeExportacion ctx) =>
+        new(
+            "Vencimientos", ctx, ColumnasVencimientos,
+            respuesta.Filas
+                .Select(f => (IReadOnlyList<Celda>)
+                [
+                    Celda.Entero(f.IdArticulo),
+                    Celda.Texto(f.Articulo),
+                    Celda.Entero(f.IdLote),
+                    Celda.Texto(f.CodigoLote),
+                    Celda.Fecha(f.FechaVencimiento),
+                    Celda.Cantidad(f.Cantidad),
+                    Celda.Texto(f.Estado.ToString())
+                ])
+                .ToList());
 }
