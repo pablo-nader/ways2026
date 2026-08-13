@@ -32,7 +32,9 @@ public sealed record SolicitudDeVenta(
 /// tiene efecto para una línea lote-efectiva (<c>ControlaLote AND lotesHabilitado</c>): omitido,
 /// <see cref="ServicioDeVentas"/> aplica el default FEFO; un cliente legado que ni siquiera
 /// conoce el campo transacciona igual (spec comprobantes-venta: "A client that knows nothing
-/// about lots still transacts correctly").</summary>
+/// about lots still transacts correctly"). Provisto sobre una línea SIN lote efectivo, el campo
+/// no tiene destino real: se rechaza 400 lote_invalido en vez de ignorarse en silencio
+/// (dto-contract-honesty, judgment-day del slice 7).</summary>
 public sealed record LineaDeVenta(int IdArticulo, decimal Cantidad, string? CodigoBarra, int? IdLote = null);
 
 /// <summary>Un medio de pago del checkout (design: Checkout Contract). A diferencia de

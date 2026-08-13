@@ -525,4 +525,133 @@ public class PlanDeVentaFefoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Null(itemSinLote.CodigoLote);
         Assert.False(itemSinLote.LoteVencido);
     }
+
+    // ---- judgment-day slice 7, FIX 1 (CRITICAL 1) — decisión 15: ElegirFefo prefiere no vencidos ---
+
+    /// <summary>Repro exacto del juez B: un lote VENCIDO (2020-01-15) y uno VIGENTE (2099-12-31),
+    /// AMBOS con saldo positivo, <c>idLote</c> omitido. El orden FEFO base (fecha ASC pura)
+    /// elegiría el vencido, por vencer antes — decisión 15 exige que la partición no-vencido gane
+    /// primero. <para>EVIDENCIA DE MUTACIÓN: se revirtió <c>ReglaDeLotes.ElegirFefo</c> a la
+    /// partición vieja (<c>OrdenarFefo(conSaldoPositivo)[0]</c>, fecha ASC pura, sin partición por
+    /// vencimiento) — build, mismo filtro: este test cae RED (<c>item.IdLote</c> esperado
+    /// <c>idVigente</c>, actual <c>idVencido</c>). Restaurada la partición de decisión 15, build,
+    /// mismo filtro: GREEN.</para></summary>
+    [Fact]
+    public async Task UnIdLoteOmitidoConVencidoYVigenteAmbosConSaldoEligeElVigente()
+    {
+        var ctx = await PrepararAsync(nameof(UnIdLoteOmitidoConVencidoYVigenteAmbosConSaldoEligeElVigente));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-fefo-decision-15", 100m, controlaLote: true);
+        var idVencido = await SembrarLoteAsync(ctx, idArticulo, "L-VENCIDO", VencimientoLejanoPasado);
+        var idVigente = await SembrarLoteAsync(ctx, idArticulo, "L-VIGENTE", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticulo, idVencido, 10m);
+        await SembrarStockLoteAsync(ctx, idArticulo, idVigente, 10m);
+
+        var emitido = await EmitirAsync(ctx, SolicitudSimple(ctx, idArticulo, 1m, idLote: null));
+
+        var item = Assert.Single(emitido.Items);
+        Assert.Equal(idVigente, item.IdLote);
+        Assert.Equal("L-VIGENTE", item.CodigoLote);
+        Assert.False(item.LoteVencido);
+    }
+
+    // ---- judgment-day slice 7, FIX 2 (CRITICAL 2) — fallback sin-identificar sin lote con saldo ---
+
+    /// <summary>Artículo lote-efectivo sin ningún lote con saldo positivo (acá, directamente sin
+    /// ningún lote sembrado — la otra mitad válida de la condición, "o sin lotes"): el plan
+    /// resuelve el sin-identificar vía get-or-create perezoso (<c>ResolverSinIdentificarAsync</c>),
+    /// nunca revienta ni deja la línea sin lote.</summary>
+    [Fact]
+    public async Task UnArticuloSinNingunLoteConSaldoResuelveElSinIdentificarPorGetOrCreate()
+    {
+        var ctx = await PrepararAsync(nameof(UnArticuloSinNingunLoteConSaldoResuelveElSinIdentificarPorGetOrCreate));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-fefo-sin-lotes", 100m, controlaLote: true);
+
+        var emitido = await EmitirAsync(ctx, SolicitudSimple(ctx, idArticulo, 1m, idLote: null));
+
+        var item = Assert.Single(emitido.Items);
+        Assert.Equal(ReglaDeLotes.CodigoSinIdentificar, item.CodigoLote);
+        Assert.NotNull(item.IdLote);
+        Assert.False(item.LoteVencido);
+    }
+
+    // ---- judgment-day slice 7, FIX 3 (HIGH 3) — LoteVencido asertado en true ---------------------
+
+    /// <summary>Un <c>idLote</c> explícito de un lote VENCIDO se HONRA (spec: "A supplied idLote
+    /// is honoured even when it is not the FEFO pick") — a diferencia de todos los tests previos
+    /// de esta clase, que solo aserteaban <c>LoteVencido == false</c>, este es el primero que
+    /// asserta <c>true</c>.</summary>
+    [Fact]
+    public async Task UnIdLoteProvistoDeUnLoteVencidoDevuelveLoteVencidoEnTrue()
+    {
+        var ctx = await PrepararAsync(nameof(UnIdLoteProvistoDeUnLoteVencidoDevuelveLoteVencidoEnTrue));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-fefo-vencido-honrado", 100m, controlaLote: true);
+        var idVencido = await SembrarLoteAsync(ctx, idArticulo, "L-VENCIDO-HONRADO", VencimientoLejanoPasado);
+        await SembrarStockLoteAsync(ctx, idArticulo, idVencido, 10m);
+
+        var emitido = await EmitirAsync(ctx, SolicitudSimple(ctx, idArticulo, 1m, idLote: idVencido));
+
+        var item = Assert.Single(emitido.Items);
+        Assert.Equal(idVencido, item.IdLote);
+        Assert.Equal("L-VENCIDO-HONRADO", item.CodigoLote);
+        Assert.True(item.LoteVencido);
+    }
+
+    // ---- judgment-day slice 7, FIX 4 (WARNING 4) — idLote sobre línea sin lote efectivo -----------
+
+    /// <summary>dto-contract-honesty: un <c>idLote</c> mandado sobre una línea de un artículo que
+    /// NO controla lote no tiene destino real — antes se ignoraba en silencio, ahora se rechaza
+    /// con el mismo código que un idLote inválido (el campo no puede aterrizar en ningún lado).</summary>
+    [Fact]
+    public async Task UnIdLoteSobreUnaLineaSinLoteEfectivoEsRechazadoConLoteInvalido()
+    {
+        var ctx = await PrepararAsync(nameof(UnIdLoteSobreUnaLineaSinLoteEfectivoEsRechazadoConLoteInvalido));
+        var idArticuloConLote = await SembrarArticuloAsync(ctx, "articulo-fix4-con-lote", 100m, controlaLote: true);
+        var idArticuloSinLote = await SembrarArticuloAsync(ctx, "articulo-fix4-sin-lote", 50m, controlaLote: false);
+        var idLote = await SembrarLoteAsync(ctx, idArticuloConLote, "L1", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticuloConLote, idLote, 10m);
+
+        // El idLote va sobre la línea SIN lote efectivo — inválido, aunque el id exista y sea real
+        // (es de OTRO artículo que sí controla lote).
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, ctx.IdCliente, "TX", null,
+            [new LineaDeVenta(idArticuloSinLote, 1m, null, idLote)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("lote_invalido", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- judgment-day slice 7, FIX 5 (WARNING 5) — response fresco vs relectura -------------------
+
+    /// <summary>Límite honesto de esta slice (ver el doc-comment de <c>Proyectar</c> en
+    /// <c>ServicioDeVentas.cs</c>, APPLY-RUN NOTE de la task 7.3): el checkout FRESCO devuelve
+    /// <c>id_lote</c> desde el plan (no persistido todavía), pero una relectura vía
+    /// <c>ObtenerAsync</c> cae al valor YA persistido en <c>items_comprobante_venta.id_lote</c>,
+    /// que esta slice todavía no escribe — <c>null</c> hasta slice 8. (Al llegar slice 8, este test
+    /// SE ACTUALIZA para esperar el mismo <c>IdLote</c> en ambas lecturas — ver la nota del bloque
+    /// Slice 8 en tasks.md.)</summary>
+    [Fact]
+    public async Task ElCheckoutFrescoDevuelveIdLotePeroLaRelecturaTodaviaLoDevuelveNullHastaSlice8()
+    {
+        var ctx = await PrepararAsync(nameof(ElCheckoutFrescoDevuelveIdLotePeroLaRelecturaTodaviaLoDevuelveNullHastaSlice8));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-fix5-contraste", 100m, controlaLote: true);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L1", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLote, 10m);
+
+        var emitido = await EmitirAsync(ctx, SolicitudSimple(ctx, idArticulo, 1m, idLote: null));
+        var itemFresco = Assert.Single(emitido.Items);
+        Assert.Equal(idLote, itemFresco.IdLote);
+
+        var respuestaRelectura = await ctx.Admin.GetAsync($"/api/ventas/{emitido.Id}");
+        var cuerpoRelectura = await respuestaRelectura.Content.ReadAsStringAsync();
+        Assert.True(respuestaRelectura.StatusCode == HttpStatusCode.OK, cuerpoRelectura);
+        var releido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoRelectura, OpcionesJson)!;
+
+        var itemReleido = Assert.Single(releido.Items);
+        Assert.Null(itemReleido.IdLote);
+    }
 }

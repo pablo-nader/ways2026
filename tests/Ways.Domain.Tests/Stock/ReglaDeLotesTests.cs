@@ -49,22 +49,83 @@ public class ReglaDeLotesTests
 
     // ---- ElegirFefo (spec: default de línea sin idLote) ---------------------------------------
 
+    private static readonly DateOnly Hoy = new(2026, 8, 12);
+
     [Fact]
     public void ElegirFefoDevuelveNullCuandoNingunSaldoEsPositivo()
     {
         SaldoDeLote[] saldos = [Saldo(idLote: 1, cantidad: 0m), Saldo(idLote: 2, cantidad: -3m)];
 
-        Assert.Null(ReglaDeLotes.ElegirFefo(saldos));
+        Assert.Null(ReglaDeLotes.ElegirFefo(saldos, Hoy));
     }
 
     [Fact]
     public void ElegirFefoDevuelveElPrimeroDelOrdenFefoEntreLosDeSaldoPositivo()
     {
+        // Ambos vencimientos NO vencidos respecto de Hoy — misma partición, gana el más cercano
+        // (comportamiento FEFO base, sin interferencia de la partición de decisión 15).
         var sinSaldo = Saldo(idLote: 1, fechaVencimiento: new DateOnly(2026, 7, 1), cantidad: 0m);
-        var conSaldoMasCercano = Saldo(idLote: 2, fechaVencimiento: new DateOnly(2026, 8, 1), cantidad: 5m);
-        var conSaldoMasLejano = Saldo(idLote: 3, fechaVencimiento: new DateOnly(2026, 9, 1), cantidad: 5m);
+        var conSaldoMasCercano = Saldo(idLote: 2, fechaVencimiento: new DateOnly(2027, 8, 1), cantidad: 5m);
+        var conSaldoMasLejano = Saldo(idLote: 3, fechaVencimiento: new DateOnly(2027, 9, 1), cantidad: 5m);
 
-        var elegido = ReglaDeLotes.ElegirFefo([sinSaldo, conSaldoMasLejano, conSaldoMasCercano]);
+        var elegido = ReglaDeLotes.ElegirFefo([sinSaldo, conSaldoMasLejano, conSaldoMasCercano], Hoy);
+
+        Assert.Equal(2, elegido!.Value.IdLote);
+    }
+
+    // ---- ElegirFefo — decisión 15 (judgment-day slice 7): partición no-vencido antes que vencido ---
+
+    [Fact]
+    public void ElegirFefoPrefiereElVigenteAunqueElVencidoVenzaAntesEnElOrdenFefoBase()
+    {
+        // Orden FEFO puro (solo fecha ASC) elegiría el vencido, por vencer antes — decisión 15
+        // exige que la partición no-vencido gane primero.
+        var vencido = Saldo(idLote: 1, fechaVencimiento: new DateOnly(2020, 1, 15), cantidad: 5m);
+        var vigente = Saldo(idLote: 2, fechaVencimiento: new DateOnly(2099, 12, 31), cantidad: 5m);
+
+        var elegido = ReglaDeLotes.ElegirFefo([vencido, vigente], Hoy);
+
+        Assert.Equal(2, elegido!.Value.IdLote);
+    }
+
+    [Fact]
+    public void ElegirFefoEligeElVencidoCuandoEsLaUnicaParticionConSaldo()
+    {
+        // "Nunca bloquea" (decisión 12): si la única partición con saldo positivo es la de
+        // vencidos, se elige el vencido igual — el llamador adjunta el warning LoteVencido.
+        var vencidoA = Saldo(idLote: 1, fechaVencimiento: new DateOnly(2020, 1, 15), cantidad: 5m);
+        var vencidoB = Saldo(idLote: 2, fechaVencimiento: new DateOnly(2021, 6, 1), cantidad: 5m);
+
+        var elegido = ReglaDeLotes.ElegirFefo([vencidoA, vencidoB], Hoy);
+
+        Assert.Equal(1, elegido!.Value.IdLote);
+    }
+
+    [Fact]
+    public void ElegirFefoPrefiereElSinIdentificarPorSobreUnVigenteDentroDeLaParticionNoVencida()
+    {
+        // El sin-identificar (sin fecha) nunca está vencido (EstaVencido), así que cae en la
+        // misma partición no-vencido que el vigente — y OrdenarFefo lo sigue poniendo primero
+        // (es_sin_identificar DESC) dentro de esa partición, decisión 4 intacta.
+        var sinIdentificar = Saldo(idLote: 1, esSinIdentificar: true, cantidad: 5m);
+        var vigente = Saldo(idLote: 2, fechaVencimiento: new DateOnly(2099, 12, 31), cantidad: 5m);
+        var vencido = Saldo(idLote: 3, fechaVencimiento: new DateOnly(2020, 1, 15), cantidad: 5m);
+
+        var elegido = ReglaDeLotes.ElegirFefo([vencido, vigente, sinIdentificar], Hoy);
+
+        Assert.Equal(1, elegido!.Value.IdLote);
+    }
+
+    [Fact]
+    public void ElegirFefoDesempataDentroDeLaParticionNoVencidaPorVencimientoAscendenteYLuegoPorId()
+    {
+        var vencido = Saldo(idLote: 1, fechaVencimiento: new DateOnly(2020, 1, 15), cantidad: 5m);
+        var noVencidoLejano = Saldo(idLote: 4, fechaVencimiento: new DateOnly(2099, 12, 31), cantidad: 5m);
+        var noVencidoCercanoIdMayor = Saldo(idLote: 3, fechaVencimiento: new DateOnly(2027, 1, 1), cantidad: 5m);
+        var noVencidoCercanoIdMenor = Saldo(idLote: 2, fechaVencimiento: new DateOnly(2027, 1, 1), cantidad: 5m);
+
+        var elegido = ReglaDeLotes.ElegirFefo(
+            [vencido, noVencidoLejano, noVencidoCercanoIdMayor, noVencidoCercanoIdMenor], Hoy);
 
         Assert.Equal(2, elegido!.Value.IdLote);
     }

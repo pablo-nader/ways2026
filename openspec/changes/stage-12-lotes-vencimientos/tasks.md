@@ -866,12 +866,34 @@ unchanged. **Rollback**: revert the branch.
   Design package reference). Output: "No changes have been made to the
   model since the last migration." Expected — this slice adds no schema,
   only C#/records.)*
-- [ ] 7.14 Run `judgment-day`; fix; re-judge until clean.
+- [ ] 7.14 Run `judgment-day`; fix; re-judge until clean. *(JD-FIX NOTE,
+  primera ronda: 5 hallazgos confirmados — CRITICAL 1 (`ElegirFefo` elegía el
+  vencido con orden fecha ASC puro, sin preferir no-vencidos — resuelto por
+  decisión 15, registrada en `state.yaml`), CRITICAL 2 (el fallback
+  sin-identificar sin ningún lote con saldo carecía de cobertura de
+  integración), HIGH 3 (`LoteVencido == true` nunca se aserteaba en ningún
+  test, solo el caso `false`), WARNING 4 (un `idLote` sobre una línea sin
+  lote efectivo se ignoraba en silencio — ahora `400 lote_invalido`),
+  WARNING 5 (sin test que contrastara el `IdLote` del response fresco contra
+  la relectura, que hoy cae a `null` hasta slice 8). Regla de proceso
+  reforzada tras esta ronda: el "desvío 3" que el apply de esta slice
+  reportó al orquestador (FEFO no saltaba lotes vencidos, deferido a este
+  judgment-day) nunca quedó anotado en el repo — solo en el mensaje al
+  orquestador; el juez B lo encontró por grep. A partir de acá, todo desvío
+  se registra ACÁ, en `tasks.md`, además de comunicarse al orquestador — la
+  resolución de ESTE desvío es exactamente la decisión 15 implementada en
+  esta misma ronda de fixes.)*
 - [ ] 7.15 Branch `feat/stage12-slice7-venta-plan-fefo` off `main` (parent:
   slice 3); PR; merge stacked-to-main.
 
 **Test plan**: query count ×2 (7.4, 7.10), FEFO resolution ×4 (7.5-7.9),
-compatibility (7.11), mixed cart (7.12).
+compatibility (7.11), mixed cart (7.12). *(JD-FIX round 1 additions:
+decisión-15 repro ×1 (vencido+vigente ambos con saldo, elige el vigente),
+fallback sin-identificar sin ningún lote con saldo ×1, `LoteVencido == true`
+asertado ×1, `idLote` sobre línea sin lote efectivo → `400` ×1,
+response-fresco-vs-relectura ×1 — más 2 tests nuevos en
+`ServicioDeLotesTests` (decisión 15 vía el picker) y 4 hechos nuevos de
+partición en `ReglaDeLotesTests` (Domain).)*
 
 **Verify**: `dotnet test --filter FullyQualifiedName~PlanDeVentaFefo`
 
@@ -882,6 +904,14 @@ compatibility (7.11), mixed cart (7.12).
 **Start**: slice 7 merged. **Finish**: per-lot writes land inside the
 pinned lock order; the item snapshot freezes `id_lote`; anulación reverses
 the exact lot. **Rollback**: revert the branch.
+
+**JD-FIX carryover (slice 7, FIX 5)**: once this slice persists `id_lote` on
+`items_comprobante_venta`, `PlanDeVentaFefoTests
+.ElCheckoutFrescoDevuelveIdLotePeroLaRelecturaTodaviaLoDevuelveNullHastaSlice8`
+stops being true — UPDATE it to assert the SAME `IdLote` on both the fresh
+checkout response and the `ObtenerAsync` re-read (drop the `Assert.Null` on
+the re-read, replace with `Assert.Equal(idLote, itemReleido.IdLote)`); rename
+away the "HastaSlice8" suffix once updated.
 
 - [ ] 8.1 Modify `ServicioDeVentas.cs`: `EjecutarTransaccionAsync` step 5 —
   loop `OrderBy(IdArticulo).ThenBy(IdLote)`; `InsertarMovimientoStockAsync`

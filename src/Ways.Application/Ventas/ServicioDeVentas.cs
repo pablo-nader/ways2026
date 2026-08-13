@@ -125,6 +125,22 @@ public class ServicioDeVentas(
                 && ReglaDeLotes.ControlEfectivo(articuloPorId[x.Item.IdArticulo].ControlaLote, lotesHabilitado))
             .ToList();
 
+        // dto-contract-honesty (WARNING 4 del judgment-day de esta slice): un idLote en una línea
+        // SIN lote efectivo no tiene destino — antes se ignoraba en silencio. Un cliente que lo
+        // manda ahí está en un error real (artículo no controla lote, o el módulo está apagado),
+        // así que se rechaza con el mismo código que un idLote inválido, en vez de tragárselo.
+        var indicesConLoteEfectivo = lineasConLote.Select(x => x.Indice).ToHashSet();
+        for (var indice = 0; indice < lineas.Count; indice++)
+        {
+            if (!indicesConLoteEfectivo.Contains(indice) && lineas[indice].IdLote is not null)
+            {
+                throw new ErrorDominio(
+                    "lote_invalido",
+                    $"El artículo {lineas[indice].IdArticulo} no tiene lote efectivo; no admite idLote.",
+                    400);
+            }
+        }
+
         if (lineasConLote.Count > 0)   // ← la ÚNICA query nueva del camino caliente: 16 → 17 (spec
                                         // lotes-y-vencimientos: "Module on with a lot-controlled
                                         // articulo nets zero round-trip change")
@@ -170,7 +186,7 @@ public class ServicioDeVentas(
 
                     loteResuelto = saldosDelArticulo[posicion];
                 }
-                else if (ReglaDeLotes.ElegirFefo(saldosDelArticulo) is { } elegido)
+                else if (ReglaDeLotes.ElegirFefo(saldosDelArticulo, hoy) is { } elegido)
                 {
                     loteResuelto = elegido;
                 }

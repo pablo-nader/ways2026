@@ -393,7 +393,6 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         var saldos = await LeerSaldosAsync(idPuntoVenta, [idArticulo], [], ct);
         var ordenados = ReglaDeLotes.OrdenarFefo(saldos);
-        var sugerido = ReglaDeLotes.ElegirFefo(saldos);
 
         // Honestidad documental: "hoy" acá es UTC naive (interino por diseño en este slice 3),
         // no la zona_horaria del PV. El reporte de vencimientos del slice 13 SÍ resuelve "hoy"
@@ -401,6 +400,11 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         // picker admin no necesita esa precisión, mismo criterio de honestidad que
         // diasAlertaPorDefecto en CrearAsync.
         var hoy = DateOnly.FromDateTime(reloj.Ahora.UtcDateTime);
+
+        // Decisión 15 (judgment-day del slice 7): el Sugerido del picker tiene que ser
+        // consistente con la selección real del server (ServicioDeVentas) — mismo "hoy", mismo
+        // ElegirFefo particionado por no-vencido primero.
+        var sugerido = ReglaDeLotes.ElegirFefo(saldos, hoy);
         var diasAlerta = await ResolverDiasAlertaAsync(puntoVenta.IdEmpresa, idPuntoVenta, ct);
 
         return ordenados
