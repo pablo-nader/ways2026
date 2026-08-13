@@ -65,10 +65,16 @@ same transaction MUST resolve (get-or-create) the `lotes` row against
 `ux_lotes_articulo_codigo`, freeze `items_comprobante_compra.id_lote` to it,
 insert the `movimientos_stock` row with that `id_lote`, and upsert
 `stock_lotes` for that lot — all inside the same transaction as the
-aggregate write. A get-or-create race under concurrent confirms MUST be
-resolved via the `23505` backstop on `ux_lotes_articulo_codigo`, translating
-the constraint violation into a reuse of the existing lot rather than a
-failed confirm.
+aggregate write. A get-or-create race under concurrent confirms MUST
+self-resolve atomically: the `ON CONFLICT ... DO UPDATE ... RETURNING`
+statement targets `ux_lotes_articulo_codigo` directly (design decision 4), so
+Postgres serializes the race on the conflict target and the "loser" reuses
+the winner's row — no exception surfaces on this path, and both confirms
+succeed against the same lot. (Amended at slice-5 judgment-day: the original
+wording claimed a `23505` backstop here; empirically no `23505` is ever
+raised on the get-or-create path — that backstop belongs to the admin alta
+path, a plain `INSERT` covered by `lotes-y-vencimientos`'s `409
+lote_duplicado` scenario.)
 (Previously: silent on the lot resolution step — confirm was aggregate-only
 until this stage.)
 
@@ -116,13 +122,14 @@ until this stage.)
 - THEN confirmar is rejected with `409 lote_vencimiento_incompatible` and no
   write occurs
 
-#### Scenario: A concurrent get-or-create race resolves to one lot via the 23505 backstop
+#### Scenario: A concurrent get-or-create race self-resolves to one lot
 - GIVEN two confirms for the same `(articulo 40, codigo_lote "L-002")` race
   each other
 - WHEN both attempt to create the `lotes` row concurrently
-- THEN Postgres raises `23505` for the loser, the backstop translates it
-  into reusing the winner's row, and both confirms succeed against the same
-  lot
+- THEN the `ON CONFLICT` target on `ux_lotes_articulo_codigo` serializes the
+  race inside Postgres, no exception surfaces, exactly one `lotes` row
+  exists afterward, and both confirms succeed against that same lot
+  *(amended at slice-5 judgment-day — see the requirement note above)*
 
 ### Requirement: Anulación Reverses By Contramovimientos, Refused When It Would Go Negative
 

@@ -4,7 +4,10 @@ namespace Ways.Application.Compras;
 
 /// <summary>Una línea del cuerpo de <c>POST/PUT /api/compras</c> (design: Interfaces/Contracts)
 /// — ningún request lleva <c>cantidad</c>, <c>total</c> ni <c>delta</c> (design decisión 3):
-/// <c>CalculadorDeCompra</c> deriva todo eso server-side.</summary>
+/// <c>CalculadorDeCompra</c> deriva todo eso server-side. <see cref="CodigoLote"/>/<see
+/// cref="FechaVencimiento"/> (etapa 12, slice 5) son input crudo de recepción — se persisten tal
+/// cual mientras la compra es borrador y solo se resuelven contra <c>lotes</c> al confirmar
+/// (design: Write site 2 — "nothing is resolved at draft time").</summary>
 public sealed record LineaDeCompraSolicitada(
     int IdArticulo,
     string Descripcion,
@@ -14,7 +17,9 @@ public sealed record LineaDeCompraSolicitada(
     decimal CostoUnitario,
     decimal Descuento,
     int IdAlicuotaIva,
-    bool ActualizaCosto = true);
+    bool ActualizaCosto = true,
+    string? CodigoLote = null,
+    DateOnly? FechaVencimiento = null);
 
 /// <summary>Cuerpo de <c>POST /api/compras</c> (crea un borrador) y de <c>PUT
 /// /api/compras/{id}</c> (design decisión 2: replace-set completo del header + los items — un
@@ -31,7 +36,10 @@ public sealed record SolicitudDeCompra(
 /// <summary>Un item ya persistido, con su <c>precioSugerido</c> (design: API Surface — "Header +
 /// items + precioSugerido per item"). Sin <c>unidades</c> propio: solo <see cref="Cantidad"/>
 /// (ya derivada) y los dos inputs de auditoría (<see cref="Bultos"/>/<see
-/// cref="UnidadesPorBulto"/>) se persisten (design: Table Shapes — B).</summary>
+/// cref="UnidadesPorBulto"/>) se persisten (design: Table Shapes — B). <see cref="CodigoLote"/>/
+/// <see cref="FechaVencimiento"/> son el input crudo de borrador; <see cref="IdLote"/> es el lote
+/// resuelto (get-or-create), <c>NULL</c> mientras la compra es borrador y para artículos que no
+/// controlan lote (etapa 12, slice 5).</summary>
 public sealed record ItemDeCompra(
     int Orden,
     int IdArticulo,
@@ -45,7 +53,10 @@ public sealed record ItemDeCompra(
     decimal PorcentajeIva,
     decimal Total,
     bool ActualizaCosto,
-    decimal? PrecioSugerido);
+    decimal? PrecioSugerido,
+    string? CodigoLote,
+    DateOnly? FechaVencimiento,
+    int? IdLote);
 
 /// <summary>Detalle completo de una compra — respuesta de <c>GET /api/compras/{id}</c>,
 /// <c>POST /api/compras</c>, <c>PUT /api/compras/{id}</c>, <c>POST …/confirmar</c>.</summary>

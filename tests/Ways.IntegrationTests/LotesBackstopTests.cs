@@ -426,6 +426,13 @@ public class LotesBackstopTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal("ck_lotes_codigo_no_vacio", excepcion.ConstraintName);
     }
 
+    /// <summary>judgment-day (slice 5, FIX 1b): esta CHECK ahora tiene mapeo HTTP —
+    /// <c>ManejadorDeErrores.ClasificarCheckDeCompras</c> traduce <c>ck_items_comprobante_compra_lote_input</c>
+    /// a 400 <c>lote_input_incompleto</c>, backstop del guard primario de
+    /// <c>ServicioDeCompras.ValidarVencimientosDeRecepcion</c> (FIX 1a). Esta prueba sigue siendo
+    /// SQL crudo a propósito — verifica la CHECK de esquema en sí (SQLSTATE + ConstraintName), no
+    /// el mapeo HTTP; la prueba end-to-end del mapeo vive en
+    /// ComprasRecepcionDeLotesTests.CrearBorradorConCodigoDeLoteSinFechaDeVencimientoDa400LoteInputIncompletoNunca500.</summary>
     [Fact]
     public async Task UnItemDeCompraConCodigoDeLoteSinVencimientoViolaLaCheckDeLoteInput()
     {

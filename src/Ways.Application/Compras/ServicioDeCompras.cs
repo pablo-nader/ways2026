@@ -1,10 +1,12 @@
 using System.Data;
 using System.Data.Common;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Exportacion;
 using Ways.Application.Precios;
+using Ways.Application.Stock;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
@@ -28,6 +30,13 @@ namespace Ways.Application.Compras;
 /// clase (sibling raw SQL), duplicados a propósito del shape de
 /// <c>ServicioDeStock.InsertarMovimientoStockAsync</c>/<c>UpsertStockAsync</c> en vez de
 /// compartir un helper: <c>ServicioDeStock</c> gana esos parámetros recién en Slice 3.
+///
+/// stage-12-lotes-vencimientos, Slice 5 (design: Write site 2 — recepción): <see
+/// cref="ServicioDeLotes"/> se consume por su API pública ESTÁTICA
+/// (<c>ServicioDeLotes.ResolverOCrearAsync</c>, mismo criterio que el APPLY-RUN NOTE de la task
+/// 3.1 — no requiere una instancia inyectada) bajo la misma <c>conexion</c>/<c>transaccionCruda</c>
+/// que ya sostiene el lock del header (design decisión 3: lotes antes que stock). <c>ServicioDeLotes</c>
+/// NO se modifica desde acá — API pública tal como quedó en Slice 3.
 /// </summary>
 public class ServicioDeCompras(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDePrecios servicioDePrecios)
@@ -138,6 +147,11 @@ public class ServicioDeCompras(
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
+        // Etapa 12, slice 5 (spec comprobantes-compra: "Expired Reception Is Refused") — chequeo
+        // puro, sin base de datos, ANTES de cualquier lectura: fecha_vencimiento en el pasado se
+        // rechaza al guardar, no solo al confirmar.
+        ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
+
         var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
         var (lineas, calculada) = Calcular(solicitud.Items, tipo.DiscriminaIva, porcentajePorAlicuota, margenes);
 
@@ -163,7 +177,7 @@ public class ServicioDeCompras(
         db.ComprobantesCompra.Add(comprobante);
         await db.SaveChangesAsync(ct);
 
-        var itemsEntidad = MaterializarItems(comprobante.Id, idTenant, lineas, calculada, momento);
+        var itemsEntidad = MaterializarItems(comprobante.Id, idTenant, lineas, calculada, solicitud.Items, momento);
         db.ItemsComprobanteCompra.AddRange(itemsEntidad);
         await db.SaveChangesAsync(ct);
 
@@ -178,6 +192,9 @@ public class ServicioDeCompras(
     {
         var idTenant = ExigirTenantDeLaSesion();
         var momento = reloj.Ahora;
+
+        // Etapa 12, slice 5: mismo chequeo que CrearBorradorAsync — un PUT también es un "save".
+        ValidarVencimientosDeRecepcion(solicitud.Items, DateOnly.FromDateTime(momento.UtcDateTime));
 
         var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
         var (lineas, calculada) = Calcular(solicitud.Items, tipo.DiscriminaIva, porcentajePorAlicuota, margenes);
@@ -229,7 +246,7 @@ public class ServicioDeCompras(
         comprobante.Total = calculada.Total;
         comprobante.UpdatedAt = momento;
 
-        var itemsNuevos = MaterializarItems(id, idTenant, lineas, calculada, momento);
+        var itemsNuevos = MaterializarItems(id, idTenant, lineas, calculada, solicitud.Items, momento);
         db.ItemsComprobanteCompra.AddRange(itemsNuevos);
 
         await db.SaveChangesAsync(ct);
@@ -350,15 +367,84 @@ public class ServicioDeCompras(
         var tipo = await db.TiposComprobante.FirstAsync(t => t.Id == encabezado.IdTipoComprobante, ct);
         var discriminaIva = tipo.DiscriminaIva;
 
-        // 3. Un movimiento + upsert de stock por item, orden ascendente id_articulo (design:
-        // Transactions — lock order discipline).
-        foreach (var item in items)
+        // 2.b Resolución de lotes (etapa 12, slice 5; design decisión 3: lotes ANTES que stock) —
+        // bajo el MISMO lock del header que el paso 1 ya tomó, antes del primer lock de stock del
+        // paso 3. Orden ascendente (id_articulo, codigo_lote) para que dos confirmaciones
+        // concurrentes que comparten códigos de lote tomen esas filas en el mismo orden.
+        var idsArticulo = items.Select(i => i.IdArticulo).Distinct().ToList();
+
+        // EsLoteEfectivo necesita controla_lote por artículo y lotes_habilitado de la empresa del
+        // encabezado — ambos FUERA del presupuesto de comandos del checkout (design: Write site
+        // 2), esta clase no comparte ese presupuesto.
+        var idEmpresa = await db.PuntosVenta
+            .Where(pv => pv.Id == encabezado.IdPuntoVenta)
+            .Select(pv => pv.IdEmpresa)
+            .FirstAsync(ct);
+        var controlaLotePorArticulo = await db.Articulos
+            .Where(a => idsArticulo.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, a => a.ControlaLote, ct);
+        var lotesHabilitado = await ResolverLotesHabilitadoAsync(idEmpresa, encabezado.IdPuntoVenta, ct);
+
+        // Honestidad documental: "hoy" acá es UTC naive (interino por diseño, mismo criterio que
+        // ServicioDeLotes.ListarAsync/CrearAsync — slice 3) y no la zona_horaria del PV. El
+        // reporte de vencimientos (slice 13) SÍ resuelve "hoy" en la zona_horaria del PV; este
+        // rechequeo de confirmación no necesita esa precisión.
+        var hoy = DateOnly.FromDateTime(momento.UtcDateTime);
+
+        var itemsLoteEfectivos = items
+            .Where(i => ReglaDeLotes.ControlEfectivo(controlaLotePorArticulo.GetValueOrDefault(i.IdArticulo), lotesHabilitado))
+            .OrderBy(i => i.IdArticulo)
+            .ThenBy(i => i.CodigoLote);
+
+        foreach (var item in itemsLoteEfectivos)
+        {
+            if (item.FechaVencimiento is null)
+            {
+                throw new ErrorDominio(
+                    "lote_requerido",
+                    $"El artículo {item.IdArticulo} controla lote; la línea necesita codigo_lote/fecha_vencimiento para confirmarse.",
+                    400);
+            }
+
+            // Rechequeo al confirmar (spec: "This check MUST fire when the line is saved or
+            // edited, not only at confirm") — el guardado del borrador ya lo probó una vez, pero
+            // el reloj pudo avanzar entre el último save y este confirm.
+            if (ReglaDeLotes.EstaVencido(item.FechaVencimiento, hoy))
+            {
+                throw new ErrorDominio(
+                    "lote_vencido_en_recepcion",
+                    $"La fecha de vencimiento del artículo {item.IdArticulo} ya pasó; una recepción no puede " +
+                    "ingresar mercadería vencida.",
+                    409);
+            }
+
+            item.IdLote = await ServicioDeLotes.ResolverOCrearAsync(
+                conexion, transaccionCruda, idTenant, item.IdArticulo, item.CodigoLote, item.FechaVencimiento.Value,
+                momento, ct);
+        }
+
+        // Congela item.IdLote (entidades trackeadas por el read set del paso 2) antes del loop de
+        // stock, que lo lee en memoria para el orden y el upsert — sin esto los UPDATEs de
+        // id_lote nunca se emitirían.
+        await db.SaveChangesAsync(ct);
+
+        // 3. Un movimiento + upsert de stock por item, orden ascendente (id_articulo, id_lote)
+        // (design decisión 8/9; Transactions — lock order discipline). El upsert agregado corre
+        // SIEMPRE, lot-effective o no (byte-idéntico al camino previo a esta etapa cuando no lo
+        // es); el upsert de stock_lotes solo cuando el item resolvió un lote.
+        foreach (var item in items.OrderBy(i => i.IdArticulo).ThenBy(i => i.IdLote))
         {
             await InsertarMovimientoStockAsync(
                 conexion, transaccionCruda, idTenant, item.IdArticulo, encabezado.IdPuntoVenta, item.Cantidad,
-                MotivoStock.Compra, id, idEmpleado, momento, ct);
+                MotivoStock.Compra, id, idEmpleado, momento, item.IdLote, ct);
 
             await UpsertStockAsync(conexion, transaccionCruda, idTenant, item.IdArticulo, encabezado.IdPuntoVenta, item.Cantidad, ct);
+
+            if (item.IdLote is { } idLote)
+            {
+                await UpsertStockLoteAsync(
+                    conexion, transaccionCruda, idTenant, item.IdArticulo, encabezado.IdPuntoVenta, idLote, item.Cantidad, ct);
+            }
         }
 
         // 4. costo_nominal — solo actualiza_costo AND costo_unitario > 0, deduplicado con el
@@ -434,6 +520,23 @@ public class ServicioDeCompras(
             throw new ErrorDominio("compra_no_confirmada", "La compra no está confirmada.", 409);
         }
 
+        // 1.b Guard interino de anulación con lotes (etapa 12, slice 5, judgment-day FIX 4):
+        // la reversa de acá abajo (paso 2) solo revierte el agregado (movimientos_stock/stock) —
+        // si algún item de esta compra resolvió un lote, dejar stock_lotes sin revertir
+        // corrompería el invariante 2 en silencio (200 OK con stock_lotes inflado). Preferible
+        // rechazar que corromper: interino hasta que slice 6 (task 6.1) implemente la reversa
+        // EXACTA por lote y reemplace este guard.
+        var tieneItemsConLote = await db.ItemsComprobanteCompra
+            .AnyAsync(i => i.IdComprobanteCompra == id && i.IdLote != null, ct);
+        if (tieneItemsConLote)
+        {
+            throw new ErrorDominio(
+                "compra_anulacion_lotes_pendiente",
+                "Esta compra tiene ítems con lote resuelto; la anulación con reversa exacta por lote " +
+                "todavía no está implementada (queda para slice 6).",
+                409);
+        }
+
         // 2. El ledger ORIGINAL, nunca recalculado desde items (design: doc-comment de
         // ServicioDeVentas.AnularAsync, mismo criterio acá).
         var movimientosOriginales = await db.MovimientosStock
@@ -445,9 +548,13 @@ public class ServicioDeCompras(
         {
             var inversa = -original.Cantidad;
 
+            // idLote: null acá a propósito — la anulación lot-aware (copiar original.IdLote,
+            // upsert de stock_lotes, chequeo de negativo por lote) es Slice 6 (task 6.1), fuera
+            // del scope de este slice. Este slice solo agrega el parámetro compartido por
+            // InsertarMovimientoStockAsync para no romper la firma del confirmar.
             await InsertarMovimientoStockAsync(
                 conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa,
-                MotivoStock.Anulacion, id, idEmpleado, momento, ct);
+                MotivoStock.Anulacion, id, idEmpleado, momento, idLote: null, ct);
 
             var nueva = await UpsertStockAsync(
                 conexion, transaccionCruda, idTenant, original.IdArticulo, original.IdPuntoVenta, inversa, ct);
@@ -593,14 +700,14 @@ public class ServicioDeCompras(
     private static async Task InsertarMovimientoStockAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
         decimal cantidad, MotivoStock motivo, int idComprobanteCompra, int idEmpleado, DateTimeOffset creadoEl,
-        CancellationToken ct)
+        int? idLote, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "INSERT INTO movimientos_stock " +
-            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_compra, id_empleado, creado_el) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)";
+            "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_compra, id_empleado, creado_el, id_lote) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
 
         AgregarParametro(comando, idTenant);
         AgregarParametro(comando, idArticulo);
@@ -610,6 +717,7 @@ public class ServicioDeCompras(
         AgregarParametro(comando, idComprobanteCompra);
         AgregarParametro(comando, idEmpleado);
         AgregarParametro(comando, creadoEl);
+        AgregarParametroNulo(comando, idLote);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -634,6 +742,36 @@ public class ServicioDeCompras(
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El upsert de stock no devolvió ninguna fila.");
+
+        return Convert.ToDecimal(resultado);
+    }
+
+    /// <summary>Etapa 12, slice 5 (design: Write site 2 — "UpsertStockLoteAsync: la MISMA forma
+    /// que UpsertStockAsync, una clave más") — sibling raw SQL propio de esta clase, mismo shape
+    /// que <c>ServicioDeVentas.UpsertStockLoteAsync</c> (Slice 8) y
+    /// <c>ServicioDeLotes.ResolverOCrearAsync</c> (Slice 3): <c>INSERT ... ON CONFLICT DO UPDATE
+    /// ... RETURNING</c>, nunca <c>DO NOTHING</c>.</summary>
+    private static async Task<decimal> UpsertStockLoteAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
+        int idLote, decimal delta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
+            "VALUES ($1, $2, $3, $4, $5) " +
+            "ON CONFLICT (id_articulo, id_punto_venta, id_lote) DO UPDATE " +
+            "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
+            "RETURNING cantidad";
+
+        AgregarParametro(comando, idArticulo);
+        AgregarParametro(comando, idPuntoVenta);
+        AgregarParametro(comando, idLote);
+        AgregarParametro(comando, idTenant);
+        AgregarParametro(comando, delta);
+
+        var resultado = await comando.ExecuteScalarAsync(ct)
+            ?? throw new InvalidOperationException("El upsert de stock_lotes no devolvió ninguna fila.");
 
         return Convert.ToDecimal(resultado);
     }
@@ -671,6 +809,16 @@ public class ServicioDeCompras(
     {
         var parametro = comando.CreateParameter();
         parametro.Value = valor;
+        comando.Parameters.Add(parametro);
+    }
+
+    /// <summary>Mismo criterio que <c>ServicioDeStock.AgregarParametroNulo</c> — <c>id_lote</c> es
+    /// el primer parámetro nullable que esta clase envía por statement crudo (etapa 12, slice 5);
+    /// <see cref="AgregarParametro"/> nunca necesitó <c>DBNull.Value</c> hasta ahora.</summary>
+    private static void AgregarParametroNulo(DbCommand comando, object? valor)
+    {
+        var parametro = comando.CreateParameter();
+        parametro.Value = valor ?? DBNull.Value;
         comando.Parameters.Add(parametro);
     }
 
@@ -753,8 +901,15 @@ public class ServicioDeCompras(
         return (lineas, calculada);
     }
 
+    /// <summary>Etapa 12, slice 5 (design: Write site 2 — "codigo_lote y fecha_vencimiento pasan
+    /// derecho por MaterializarItems, sin resolución"): <paramref name="solicitudItems"/> viaja en
+    /// paralelo a <paramref name="lineas"/>/<paramref name="calculada"/> (mismo orden, mismo
+    /// índice — <c>Calcular</c> los produjo a partir de la misma lista) solo para llevar el input
+    /// crudo de lote hasta la entidad; <c>CalculadorDeCompra</c> (Domain, aritmética pura) no
+    /// necesita saber que existen.</summary>
     private static List<ItemComprobanteCompra> MaterializarItems(
-        int idComprobante, int idTenant, IReadOnlyList<LineaDeCompra> lineas, CompraCalculada calculada, DateTimeOffset momento)
+        int idComprobante, int idTenant, IReadOnlyList<LineaDeCompra> lineas, CompraCalculada calculada,
+        IReadOnlyList<LineaDeCompraSolicitada> solicitudItems, DateTimeOffset momento)
     {
         var items = new List<ItemComprobanteCompra>(lineas.Count);
 
@@ -762,6 +917,7 @@ public class ServicioDeCompras(
         {
             var linea = lineas[i];
             var item = calculada.Items[i];
+            var solicitudItem = solicitudItems[i];
 
             items.Add(new ItemComprobanteCompra
             {
@@ -780,12 +936,51 @@ public class ServicioDeCompras(
                 Total = item.Total,
                 ActualizaCosto = linea.ActualizaCosto,
                 PrecioSugerido = item.PrecioSugerido,
+                CodigoLote = NormalizarOpcional(solicitudItem.CodigoLote),
+                FechaVencimiento = solicitudItem.FechaVencimiento,
                 CreatedAt = momento,
                 UpdatedAt = momento
             });
         }
 
         return items;
+    }
+
+    /// <summary>Chequeo puro (spec comprobantes-compra: "Expired Reception Is Refused") — corre
+    /// ANTES de cualquier lectura de base de datos, en cada guardado de borrador (creación o
+    /// edición), no solo al confirmar. Deliberadamente incondicional a <c>controla_lote</c>: el
+    /// esquema (<c>ck_items_comprobante_compra_lote_input</c>) ya permite que cualquier línea
+    /// cargue <c>fecha_vencimiento</c>, y el spec no condiciona este rechazo a que el artículo sea
+    /// lot-effective en ese momento.
+    ///
+    /// Guard primario (judgment-day, slice 5, FIX 1a): un <c>codigo_lote</c> no vacío sin
+    /// <c>fecha_vencimiento</c> jamás puede resolver a un lote válido (<c>ResolverOCrearAsync</c>
+    /// exige fecha) — se rechaza acá, ANTES de tocar la base, con el mismo código
+    /// (<c>lote_input_incompleto</c>) que el backstop de esquema
+    /// <c>ck_items_comprobante_compra_lote_input</c> traduce en <c>ManejadorDeErrores</c> por si
+    /// algún camino futuro esquiva este guard.</summary>
+    private static void ValidarVencimientosDeRecepcion(IReadOnlyList<LineaDeCompraSolicitada> items, DateOnly hoy)
+    {
+        foreach (var item in items)
+        {
+            if (!string.IsNullOrWhiteSpace(item.CodigoLote) && item.FechaVencimiento is null)
+            {
+                throw new ErrorDominio(
+                    "lote_input_incompleto",
+                    $"El artículo {item.IdArticulo} trae codigo_lote sin fecha_vencimiento; ambos son " +
+                    "requeridos juntos.",
+                    400);
+            }
+
+            if (item.FechaVencimiento is { } fecha && ReglaDeLotes.EstaVencido(fecha, hoy))
+            {
+                throw new ErrorDominio(
+                    "lote_vencido_en_recepcion",
+                    $"La fecha de vencimiento del artículo {item.IdArticulo} ya pasó; una recepción no puede " +
+                    "ingresar mercadería vencida.",
+                    409);
+            }
+        }
     }
 
     private async Task<TipoComprobante> ResolverTipoDeCompraAsync(int idTipoComprobante, CancellationToken ct)
@@ -814,6 +1009,21 @@ public class ServicioDeCompras(
         await db.ComprobantesCompra.FirstOrDefaultAsync(c => c.Id == id, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe la compra {id}.");
 
+    /// <summary>Etapa 12, slice 5 — mismo patrón que
+    /// <c>ServicioDeLotes.ResolverDiasAlertaAsync</c> (Slice 3): una query filtrada por clave y
+    /// empresa, delegando la precedencia PV &gt; empresa a <c>ResolucionDeParametros.Resolver</c>.
+    /// Fuera del presupuesto de comandos del checkout — esta clase no lo comparte.</summary>
+    private async Task<bool> ResolverLotesHabilitadoAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    {
+        var candidatos = await db.Parametros
+            .Where(p => p.Clave == ParametroConocido.LotesHabilitado.Clave && p.IdEmpresa == idEmpresa
+                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
+            .ToListAsync(ct);
+
+        var valorJson = ResolucionDeParametros.Resolver(ParametroConocido.LotesHabilitado.Clave, candidatos, idPuntoVenta);
+        return JsonSerializer.Deserialize<bool>(valorJson);
+    }
+
     private static string? NormalizarOpcional(string? valor)
     {
         var limpio = valor?.Trim();
@@ -835,6 +1045,6 @@ public class ServicioDeCompras(
             .Select(i => new ItemDeCompra(
                 i.Orden, i.IdArticulo, i.Descripcion, i.Cantidad, i.Bultos, i.UnidadesPorBulto,
                 i.CostoUnitario, i.Descuento, i.IdAlicuotaIva, i.PorcentajeIva, i.Total, i.ActualizaCosto,
-                i.PrecioSugerido))
+                i.PrecioSugerido, i.CodigoLote, i.FechaVencimiento, i.IdLote))
             .ToList());
 }

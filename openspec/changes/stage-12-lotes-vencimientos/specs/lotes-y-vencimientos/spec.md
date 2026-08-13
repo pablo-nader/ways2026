@@ -50,9 +50,20 @@ against.
 - GIVEN an active lot `(articulo 40, codigo "L-001")` already exists
 - WHEN a second lot with the same `(articulo, codigo)` is inserted
   concurrently by two reception requests
-- THEN Postgres raises `23505` on `ux_lotes_articulo_codigo`, get-or-create's
-  backstop translates it to the existing row, and exactly one `lotes` row
-  survives
+- THEN the get-or-create race self-resolves atomically — the
+  `INSERT ... ON CONFLICT (id_tenant, id_articulo, codigo) DO UPDATE ...
+  RETURNING` statement targets `ux_lotes_articulo_codigo` directly, so
+  Postgres serializes the race on the conflict target and the "loser" reuses
+  the winner's row with no exception surfacing on this path; both requests
+  succeed and exactly one `lotes` row survives. (Amended at slice-5
+  judgment-day — decision 14: the original wording claimed a `23505` +
+  backstop translation here; empirically no `23505` is ever raised on the
+  get-or-create path — that backstop belongs to the admin alta path instead
+  (`ServicioDeLotes.CrearAsync`, `POST /api/stock/lotes`, a plain `INSERT`
+  with no `ON CONFLICT`), which still raises a genuine `23505` on
+  `ux_lotes_articulo_codigo` and is still translated to `409 lote_duplicado`
+  by `ManejadorDeErrores` — proven by
+  `ServicioDeLotesTests.DosPostConcurrentesAApiStockLotesConElMismoCodigoDanExactamenteUnCreadoYUnConflicto`.)
 
 ### Requirement: A Lot's Expiry Is Immutable Once Created
 

@@ -533,49 +533,183 @@ compra's draft carries lot input untouched; confirm resolves (get-or-create)
 lots under the header lock, before the stock loop; per-lot movement and
 balance write in the same transaction. **Rollback**: revert the branch.
 
-- [ ] 5.1 Modify `src/Ways.Application/Compras/ServicioDeCompras.cs`:
+- [x] 5.1 Modify `src/Ways.Application/Compras/ServicioDeCompras.cs`:
   `CrearAsync`/`ActualizarBorradorAsync` pass `codigo_lote`/
   `fecha_vencimiento` straight through `MaterializarItems` — **no
   resolution at draft time** (replace-set semantics would litter `lotes`
-  with never-confirmed rows).
-- [ ] 5.2 Modify `ServicioDeCompras.cs`: validate `fecha_vencimiento` is
+  with never-confirmed rows). *(APPLY-RUN NOTE: `MaterializarItems` gained
+  a third parallel list parameter (`IReadOnlyList<LineaDeCompraSolicitada>
+  solicitudItems`, same order/index as `lineas`/`calculada`) instead of
+  threading `CodigoLote`/`FechaVencimiento` through the Domain
+  `LineaDeCompra`/`CalculadorDeCompra` — the calculator is pure arithmetic
+  and the task list never names it for this slice; `Contratos.cs` gained
+  the two fields on `LineaDeCompraSolicitada` (request) and
+  `CodigoLote`/`FechaVencimiento`/`IdLote` on `ItemDeCompra` (response),
+  both with a documented one-fate trace per `dto-contract-honesty`.)*
+- [x] 5.2 Modify `ServicioDeCompras.cs`: validate `fecha_vencimiento` is
   not in the past on every borrador save/edit → `409
   lote_vencido_en_recepcion` (fires at save time, not only confirm — spec
-  ADDED requirement).
-- [ ] 5.3 Modify `ServicioDeCompras.cs`: `EjecutarConfirmarAsync` gains a
+  ADDED requirement). *(APPLY-RUN NOTE: `ValidarVencimientosDeRecepcion` is
+  a pure, DB-free static check called from `CrearBorradorAsync` and
+  `ActualizarBorradorAsync` before any read — deliberately unconditional on
+  `controla_lote`/`lotes_habilitado` since the CHECK constraint
+  `ck_items_comprobante_compra_lote_input` doesn't gate on effectiveness
+  either and the spec scenario doesn't condition the rejection on it.)*
+- [x] 5.3 Modify `ServicioDeCompras.cs`: `EjecutarConfirmarAsync` gains a
   resolution block between the item read (under the header lock) and the
   stock loop — `lotes` before `stock`, decision 3 — `ORDER BY id_articulo,
   codigo_lote` ascending, `servicioDeLotes.ResolverOCrearAsync` per
   lot-effective item, `item.IdLote` frozen. The stock loop reorders
   `OrderBy(IdArticulo).ThenBy(IdLote)` and writes both caches per line.
-- [ ] 5.4 Modify `ServicioDeCompras.cs`: `EsLoteEfectivo` reads
+  *(APPLY-RUN NOTE: `ServicioDeLotes.ResolverOCrearAsync` is invoked
+  STATICALLY — `ServicioDeLotes.ResolverOCrearAsync(...)`, no injected
+  instance — same criterion as the task 3.1 apply-run note; `ServicioDeLotes`
+  itself was NOT modified, consumed as-is from `main`. The resolution loop
+  also re-checks `EstaVencido` at confirm time (defense-in-depth alongside
+  5.2's save-time check, per the design pseudocode) and throws `400
+  lote_requerido` when a lot-effective item carries no `fecha_vencimiento`
+  at all (not explicitly named by 5.5-5.12 but present in the design
+  pseudocode; covered by an extra test, see 5.6-5.8 note). `item.IdLote`
+  mutations are flushed via one extra `db.SaveChangesAsync(ct)` right after
+  the resolution loop, before the stock loop reads them in memory for
+  ordering — required because `items` is EF-tracked and nothing else in
+  `EjecutarConfirmarAsync` previously called `SaveChangesAsync`.
+  `InsertarMovimientoStockAsync` gained a required `int? idLote` parameter
+  (shared by confirm AND anulación); the anulación call site
+  (`EjecutarAnulacionAsync`, Slice 6's territory) passes `idLote: null`
+  explicitly with a doc-comment — lot-aware anulación is task 6.1, out of
+  this slice's scope. Added `UpsertStockLoteAsync` (same
+  `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` shape as `UpsertStockAsync`)
+  and `AgregarParametroNulo` (first nullable raw-SQL param this class ever
+  sent).)*
+- [x] 5.4 Modify `ServicioDeCompras.cs`: `EsLoteEfectivo` reads
   `controla_lote` per articulo (reused from the existing `costo_nominal`
   context read) plus one parametro resolution — both outside the checkout
-  round-trip budget.
-- [ ] 5.5 [P] Invariant test: `stock_lotes.cantidad = SUM(movimientos with
+  round-trip budget. *(APPLY-RUN NOTE: implemented as an inline filter
+  (`items.Where(i => ReglaDeLotes.ControlEfectivo(...))`) inside the 5.3
+  resolution block rather than a standalone `EsLoteEfectivo` method — no
+  existing `costo_nominal` articulo read survives to confirm time in this
+  codebase (`ResolverContextoAsync`'s `articuloPorId` is a draft-time-only
+  local, discarded before confirm), so this is a FRESH
+  `db.Articulos.Where(a => idsArticulo.Contains(a.Id))` read at confirm,
+  plus `ResolverLotesHabilitadoAsync` (new helper, same
+  `ResolucionDeParametros.Resolver` pattern as
+  `ServicioDeLotes.ResolverDiasAlertaAsync`) for the empresa's
+  `lotes_habilitado`. Both correctly sit outside `ContadorDeComandos`'s
+  budget — `ComprasAnulacionYConcurrenciaTests`'s existing
+  `ConfirmarEmiteUnaCantidadConstanteDeConsultasIndependienteDeLaCantidadDeItems`
+  test (constant-count, not a fixed ceiling) still passes unmodified.)*
+- [x] 5.5 [P] Invariant test: `stock_lotes.cantidad = SUM(movimientos with
   that lot)` holds after a compra. *(spec lotes-y-vencimientos: Stock Lotes
-  Balance And Its Two Invariants — compra leg)*
-- [ ] 5.6 [P] Get-or-create-and-freeze test. *(spec comprobantes-compra:
+  Balance And Its Two Invariants — compra leg)* *(APPLY-RUN NOTE:
+  `StockLotesCantidadEsLaSumaDeSusMovimientosTrasDosCompras` — two
+  confirmed compras of the SAME lot (30 + 20 units) so the SUM check is
+  non-trivial, not a single-movement coincidence.)*
+- [x] 5.6 [P] Get-or-create-and-freeze test. *(spec comprobantes-compra:
   "Confirmar get-or-creates a lot and freezes it onto the item")*
-- [ ] 5.7 [P] Reuse-existing-lot test. *(spec: "Confirmar reuses an
-  existing lot with a matching expiry")*
-- [ ] 5.8 [P] Conflicting-expiry refusal → `409
+  *(APPLY-RUN NOTE: `ConfirmarGetOrCreaUnLoteYLoCongelaSobreElItem`. Also
+  added `ConfirmarRechazaUnItemLoteEfectivoSinFechaDeVencimientoConLoteRequerido`
+  — not named by the slice's test plan but exercises the `lote_requerido`
+  guard task 5.3 implements per the design pseudocode; asserts `400` and
+  full rollback (borrador state, zero movimientos).)*
+- [x] 5.7 [P] Reuse-existing-lot test. *(spec: "Confirmar reuses an
+  existing lot with a matching expiry")* *(APPLY-RUN NOTE:
+  `ConfirmarReusaUnLoteExistenteConVencimientoCoincidente` — the "existing
+  lot" is a REAL prior reception (a first confirmed compra), not a raw-SQL
+  seed, so the reuse path is exercised exactly as production traffic would
+  hit it.)*
+- [x] 5.8 [P] Conflicting-expiry refusal → `409
   lote_vencimiento_incompatible`. *(spec: "Confirmar rejects a conflicting
-  expiry for an existing codigo")*
-- [ ] 5.9 [P] **`db-error-backstops`**: two concurrent confirms racing the
+  expiry for an existing codigo")* *(APPLY-RUN NOTE:
+  `ConfirmarRechazaUnVencimientoEnConflictoParaElMismoCodigo` — asserts full
+  rollback too: the second compra stays `borrador`, `IdLote` stays null,
+  zero movimientos, and the `lotes` table still shows exactly one row for
+  that código (the conflicting insert never landed).)*
+- [x] 5.9 [P] **`db-error-backstops`**: two concurrent confirms racing the
   same `(articulo, codigo_lote)` → SQLSTATE `23505` asserted, backstop
   resolves both confirms to the same lot. *(spec: "A concurrent
   get-or-create race resolves to one lot via the 23505 backstop")*
-- [ ] 5.10 [P] Concurrency test, write-site 2: purchase confirm vs.
+  *(APPLY-RUN NOTE — SPEC INACCURACY FOUND AND DOCUMENTED, code untouched:
+  ran the literal race — `DosConfirmacionesConcurrentesSobreElMismoCodigoDeLoteResuelvenAlMismoLote`,
+  two independent confirms, two independent connections, same
+  `(articulo, codigo_lote)` — against real Postgres. Observed: BOTH
+  confirms return `200 OK`, NO exception of any kind surfaces, both resolve
+  to the SAME `id_lote`, `stock_lotes.cantidad` sums correctly (20). This
+  contradicts the spec scenario's literal claim ("Postgres raises 23505 for
+  the loser, the backstop translates it") but is EXACTLY what design
+  decision 4 documents and what Slice 3's own doc-comment on
+  `DosCrearAsyncConcurrentesDelMismoCodigoChocanConSqlstate23505AntesDelMapeo`
+  already establishes: `ResolverOCrearAsync`'s `ON CONFLICT (id_tenant,
+  id_articulo, codigo) WHERE deleted_at IS NULL DO UPDATE ... RETURNING`
+  target matches `ux_lotes_articulo_codigo` EXACTLY (`LoteConfiguration.cs`),
+  so Postgres resolves the race internally via the INSERT-ON-CONFLICT
+  wait-then-retry protocol — no 23505 is ever raised to the client for
+  THIS conflict target, by design ("There is therefore no retry-read loop
+  in this design, and saying so is more honest than writing one that can
+  never fire"). The higher-level business requirement ("both confirms
+  succeed against the same lot") IS satisfied — just not via a
+  `ManejadorDeErrores` backstop, because none is needed. Recommend the
+  orchestrator amend the spec scenario's mechanism wording in a future
+  pass (same pattern as slice 2's task 2.10 spec amendment) — flagging
+  here rather than editing `specs/comprobantes-compra/spec.md` unilaterally
+  since spec amendment authority was reserved to orchestrator decisions in
+  this stage's prior slices.)*
+- [x] 5.10 [P] Concurrency test, write-site 2: purchase confirm vs.
   checkout of the same articulo+lots, both complete, no `40P01`.
-- [ ] 5.11 [P] Draft-capture test: lot input persists without resolving.
+  *(APPLY-RUN NOTE — SCOPE NARROWED, documented: this worktree has only
+  slices 1-3 merged, so `ServicioDeVentas` (checkout) is NOT yet lot-aware
+  (Slice 7/8, not present) — it cannot race for "the same lot" because it
+  never touches `lotes`/`stock_lotes` at all yet. Implemented
+  `ConfirmarYCheckoutDelMismoArticuloEnParaleloNuncaDan40P01`: races a
+  lot-effective compra confirm (new `lotes`-lock-then-`stock`-lock order)
+  against a checkout of the SAME articulo+PV via TODAY's aggregate-only
+  checkout path — proves the NEW lock step this slice adds to confirm
+  didn't introduce a deadlock against the other major stock writer. No
+  `lotes`-vs-`lotes` cross-write-site contention is possible yet by
+  construction (checkout doesn't hold that lock), so a rendezvous-forced
+  interleave wasn't needed — a plain `Task.WhenAll` against real pool
+  timing was sufficient and honest. The genuine "same lot" joint proof is
+  deferred to whichever of Slice 7/8 lands, mirroring the note-7 cross-slice
+  dependency pattern already used for the checkout-vs-transfer deadlock
+  test in this same tasks.md.)*
+- [x] 5.11 [P] Draft-capture test: lot input persists without resolving.
   *(spec: "A borrador line captures lot input without resolving it")*
-- [ ] 5.12 [P] Expired-reception tests. *(spec: "A reception line with a
-  past expiry is refused", "A future expiry is accepted")*
-- [ ] 5.13 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
-- [ ] 5.14 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 5.15 Branch `feat/stage12-slice5-recepcion` off `main` (parent:
+  *(APPLY-RUN NOTE: `UnaLineaDeBorradorCapturaElInputDeLoteSinResolverlo` —
+  asserts both the HTTP response AND the raw persisted row, plus zero
+  `lotes`/`movimientos_stock` rows for that código.)*
+- [x] 5.12 [P] Expired-reception tests. *(spec: "A reception line with a
+  past expiry is refused", "A future expiry is accepted")* *(APPLY-RUN
+  NOTE: three tests, not two — past-on-create
+  (`UnaLineaConVencimientoPasadoEsRechazadaAlGuardarElBorrador`),
+  future-on-create
+  (`UnaLineaConVencimientoFuturoEsAceptadaAlGuardarElBorrador`), and
+  past-on-EDIT
+  (`UnaLineaConVencimientoPasadoEsRechazadaAlEditarElBorrador`, spec: "fires
+  when the line is saved OR EDITED") — all with FIXED far dates (2020-01-15
+  past / 2099-12-31 future, per permanent rule 3), no pinned clock, no
+  boundary-day assertion.)*
+- [x] 5.13 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. *(APPLY-RUN NOTE: ran via
+  `--project src/Ways.Infrastructure --startup-project src/Ways.Infrastructure`
+  — `Ways.Api` lacks the `Microsoft.EntityFrameworkCore.Design` package
+  reference the tool needs; `Ways.Infrastructure` has it. Output: "No
+  changes have been made to the model since the last migration." Confirmed
+  clean both by diff (`Migraciones/`/`Configuraciones/` untouched by this
+  slice — verified via `git status`) and by the tool itself.)*
+- [x] 5.14 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  round 1 double REJECT — judge A: cross-spec contradiction (the sibling
+  lotes-y-vencimientos spec still promised a 23505 on the get-or-create
+  race after decision 14) and the anulación-of-a-lot-tracked-compra hole
+  (aggregate reversed, stock_lotes silently left inflated, 200 OK);
+  judge B: CRITICAL — codigo_lote without fecha via the API returned a raw
+  500 (CHECK unmapped in ManejadorDeErrores, no app guard) — plus the
+  confirm-time expiry re-check had zero test coverage. Fix batch
+  7a507dd/28af7da: two-layer 400 lote_input_incompleto (app guard +
+  ManejadorDeErrores backstop, proven layer by layer), interim 409
+  compra_anulacion_lotes_pendiente guard (slice 6 replaces it), re-check
+  test via owner-connection date mutation, sibling spec amended. Round 2
+  double APPROVE, serialized B→A.)*
+- [x] 5.15 Branch `feat/stage12-slice5-recepcion` off `main` (parent:
   slice 3); PR; merge stacked-to-main.
 
 **Test plan**: invariant 2 (5.5), get-or-create ×3 (5.6-5.8), race backstop
@@ -591,6 +725,10 @@ expired-reception ×2 (5.12).
 **Start**: slice 5 merged. **Finish**: anulación reverses the exact lot
 snapshot; refusal checks both the aggregate **and** the lot. **Rollback**:
 revert the branch.
+
+> Note (judgment-day, slice 5, FIX 4): 6.1 must REPLACE the interim 409
+> compra_anulacion_lotes_pendiente guard added at slice-5 judgment-day with
+> the exact per-lot reversal.
 
 - [ ] 6.1 Modify `ServicioDeCompras.cs`: `EjecutarAnulacionAsync` reorders
   `.OrderBy(m => m.IdArticulo).ThenBy(m => m.IdLote)`, copies
