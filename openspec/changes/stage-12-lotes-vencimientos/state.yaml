@@ -221,6 +221,16 @@ dependencies:
   verify: [apply]
   archive: [verify]
 decisiones_tomadas:
+  - "14 — SEMANTICA REAL DE LA CARRERA DEL GET-OR-CREATE (resuelta por el orquestador en el
+    judgment-day del slice 5): el escenario del spec de comprobantes-compra prometia
+    '23505 + backstop' para dos confirms concurrentes, pero empiricamente NINGUN 23505
+    surge en ese camino — el ON CONFLICT ... DO UPDATE ... RETURNING apunta directo a
+    ux_lotes_articulo_codigo y Postgres serializa la carrera adentro (design decision 4):
+    el perdedor reusa la fila del ganador sin excepcion. El 23505 real vive en el alta
+    admin (INSERT plano -> 409 lote_duplicado, cubierto en slice 3). Se enmendo el SPEC
+    (requirement + escenario, con nota de auditoria); el codigo y el test empirico del
+    apply quedan como estan. Mismo patron que la decision 13: la implementacion tenia
+    razon, el spec exageraba el mecanismo."
   - "13 — SEMANTICA DE BORDE DEL VENCIMIENTO (resuelta por el orquestador en el judgment-day
     del slice 2): LA FECHA DE VENCIMIENTO ES INCLUSIVA — un lote con fecha_vencimiento == hoy
     NO esta vencido (clasifica por_vencer); vencido = fecha_vencimiento < hoy ESTRICTO
