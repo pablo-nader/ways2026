@@ -212,23 +212,23 @@ DB-free Domain rule; `ServicioDeVentas`'s parametro read is batched
 2→1 (three keys, one query); the query-count guard reads `16`.
 **Rollback**: revert the branch — no schema, no writer wired to lots yet.
 
-- [ ] 2.1 Modify `src/Ways.Domain/Catalogos/ParametroConocido.cs`: add
+- [x] 2.1 Modify `src/Ways.Domain/Catalogos/ParametroConocido.cs`: add
   `LotesHabilitado` (`bool`, default `false`), `DiasAlertaVencimiento`
   (`int`, default `30`), both registered in `PorClave`. *(no migration —
   stage-10 pattern)*
-- [ ] 2.2 Create `src/Ways.Domain/Stock/ReglaDeLotes.cs`: `SaldoDeLote`
+- [x] 2.2 Create `src/Ways.Domain/Stock/ReglaDeLotes.cs`: `SaldoDeLote`
   record, `EstadoDeVencimiento` enum (`Vencido`/`PorVencer`/`Vigente`/
   `SinFecha`), `CodigoSinIdentificar` constant, `ControlEfectivo`,
   `OrdenarFefo`, `ElegirFefo`, `DerivarCodigo`, `Clasificar`, `EstaVencido`
   — pure, no `IWaysDbContext`. *(design decision 1)*
-- [ ] 2.3 Modify `src/Ways.Application/Ventas/ServicioDeVentas.cs`:
+- [x] 2.3 Modify `src/Ways.Application/Ventas/ServicioDeVentas.cs`:
   `ResolverParametrosDeVentaAsync` — single `WHERE clave IN (...)` query for
   `tolerancia_pago`/`vuelto_maximo`/`lotes_habilitado`; per-clave
   `.Where(p => p.Clave == c.Clave)` filter **before** delegating to
   `ResolucionDeParametros.Resolver` (design decision 2 — the named mutation
   target: `Resolver` filters by PV but not by clave, so a naive multi-key
   candidate set corrupts cross-parametro).
-- [ ] 2.4 [P] Domain unit suite (`PoliticaDeRoles` pattern, no DB, 5
+- [x] 2.4 [P] Domain unit suite (`PoliticaDeRoles` pattern, no DB, 5
   facts): `ControlEfectivo` truth table *(spec lotes-y-vencimientos:
   Effective Lot Control Is `controla_lote` AND `lotes_habilitado`)*;
   `OrdenarFefo` with a sin-identificar lot + two dated lots + a tie on
@@ -238,23 +238,30 @@ DB-free Domain rule; `ServicioDeVentas`'s parametro read is batched
   ISO-formats the expiry *(spec: "A lot is created with a server-derived
   codigo")*; `Clasificar` at all four boundaries (`hoy-1`, `hoy`,
   `hoy+dias`, `hoy+dias+1`, `null`).
-- [ ] 2.5 [P] **Mutation target**: `candidatos.Where(p => p.Clave ==
+- [x] 2.5 [P] **Mutation target**: `candidatos.Where(p => p.Clave ==
   c.Clave)` — delete it; two-key test where `tolerancia_pago` has a
   PV-scoped row and `vuelto_maximo` only an empresa row, both values
   asserted correctly (must fail once deleted). *(spec parametros-operativos:
   The Batched Query Still Resolves Punto De Venta Overrides Correctly;
   mutation-proof-tests)* Record mutation evidence in the PR body.
-- [ ] 2.6 [P] Query-count test: the batched parametro read issues exactly
+  *(APPLY-RUN NOTE: mutation applied — `.Where(p => p.Clave == c.Clave)`
+  replaced by unfiltered `candidatos` in `ResolverParametrosDeVentaAsync` —
+  `ElCheckoutResuelveVueltoMaximoDeEmpresaAunConUnaFilaDePuntoDeVentaDeOtraClave`
+  went RED (`500 error_interno`: the lone PV-scoped `tolerancia_pago` row
+  leaks into `lotes_habilitado`'s resolution too, `JsonException` on `bool`
+  deserialization of `"15"`); reverted, same test back to GREEN alongside
+  the full `VentasCheckoutTests` suite (27/27).)*
+- [x] 2.6 [P] Query-count test: the batched parametro read issues exactly
   **1** query for the three keys. *(spec parametros-operativos: A Single
   Batched Query Resolves All Three Keys)*
-- [ ] 2.7 [P] `ContadorDeComandos` regression: the existing constant moves
+- [x] 2.7 [P] `ContadorDeComandos` regression: the existing constant moves
   deliberately `17 → 16`. *(spec lotes-y-vencimientos: Module Off Issues
   One Fewer Parametro Round-Trip Than The Baseline)*
-- [ ] 2.8 [P] `parametros-operativos` scenarios: `lotes_habilitado` resolves
+- [x] 2.8 [P] `parametros-operativos` scenarios: `lotes_habilitado` resolves
   `false` with no configured row; an empresa-level row turns the module on
   for every PV of that empresa; `dias_alerta_vencimiento` defaults to `30`;
   a PV-level override wins.
-- [ ] 2.9 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
+- [x] 2.9 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
   pending changes.
 - [ ] 2.10 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 2.11 Branch `feat/stage12-slice2-activacion` off `main` (parent:

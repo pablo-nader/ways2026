@@ -908,14 +908,178 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(consultasConPocasLineas, consultasConMuchasLineas);
         Assert.Equal(consultasConPocasLineas, consultasConMuchisimasLineas);
 
-        // El techo en sí está bajo prueba (design: Technical Approach, "≤ 16 round trips", ahora
-        // "≤ 17" — stage-6-turnos-caja design decisión 11): una baja tiene que notarse acá y
-        // actualizar la constante a propósito, nunca colarse muda detrás de un "<=". El +1 sobre
-        // el techo de stage 5 es ResolverTurnoAbiertoAsync (EF, sí dispara ReaderExecuting) — el
+        // El techo en sí está bajo prueba (design: Technical Approach, "≤ 16 round trips", subió
+        // a "≤ 17" en stage-6-turnos-caja design decisión 11, y BAJA a "16" en stage-12 slice 2
+        // (design decisión 2 / task 2.7): una baja tiene que notarse acá y actualizar la
+        // constante a propósito, nunca colarse muda detrás de un "<=". El +1 de stage 6 sobre el
+        // techo de stage 5 es ResolverTurnoAbiertoAsync (EF, sí dispara ReaderExecuting) — el
         // FOR SHARE de EjecutarTransaccionAsync es un DbCommand crudo sobre la conexión
         // subyacente, invisible a este interceptor (misma familia que UpsertStockAsync), así que
-        // no suma un segundo punto.
-        Assert.Equal(17, consultasConPocasLineas);
+        // no suma un segundo punto. El -1 de stage 12 es
+        // ServicioDeVentas.ResolverParametrosDeVentaAsync: tolerancia_pago + vuelto_maximo +
+        // lotes_habilitado ahora resuelven en UNA query batcheada (`WHERE clave IN (...)`) en vez
+        // de las dos separadas de antes de esta etapa — agrega una clave sin agregar un round
+        // trip, y de paso resta uno.
+        Assert.Equal(16, consultasConPocasLineas);
+    }
+
+    // ---- stage-12 slice 2 (design decisión 2 / tasks 2.5-2.6): parametro read batcheado -------
+
+    [Fact]
+    public async Task ElCheckoutResuelveLosTresParametrosDeVentaEnUnaSolaConsultaBatcheada()
+    {
+        var ctx = await PrepararAsync(nameof(ElCheckoutResuelveLosTresParametrosDeVentaEnUnaSolaConsultaBatcheada));
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Parametros Batch", limiteCredito: 1_000_000m);
+
+        var consultasDeParametros = await EmitirYContarConsultasDeParametrosAsync(ctx, idCliente);
+
+        // Spec parametros-operativos: "A Single Batched Query Resolves All Three Keys" —
+        // tolerancia_pago, vuelto_maximo y lotes_habilitado en una sola query
+        // `WHERE clave IN (...)`, nunca tres round trips separados.
+        Assert.Equal(1, consultasDeParametros);
+    }
+
+    /// <summary>Mutation target nombrado por design decisión 2
+    /// (<c>ResolverParametrosDeVentaAsync</c>'s per-clave <c>.Where(p => p.Clave == c.Clave)</c>):
+    /// una fila de <c>tolerancia_pago</c> a nivel punto de venta y una fila de
+    /// <c>vuelto_maximo</c> solo a nivel empresa, mezcladas en el mismo candidate set batcheado.
+    /// <c>ResolucionDeParametros.Resolver</c> filtra por punto de venta pero NO por clave — sin
+    /// el <c>Where</c> por clave, la fila de punto de venta de <c>tolerancia_pago</c> es la
+    /// ÚNICA con <c>id_punto_venta</c> coincidente en todo el candidate set, así que "gana" la
+    /// resolución de <c>vuelto_maximo</c> Y de <c>lotes_habilitado</c> por igual — el vuelto
+    /// pedido acá (20, válido contra el <c>vuelto_maximo</c> real de 25) queda expuesto a esa
+    /// corrupción cruzada.
+    ///
+    /// Evidencia de mutación (mutation-proof-tests regla 2, apply de slice 2): con
+    /// <c>.Where(p => p.Clave == c.Clave)</c> borrado de <c>ResolverParametrosDeVentaAsync</c>
+    /// (reemplazado por <c>candidatos</c> sin filtrar), este test corrió y dio <c>500
+    /// error_interno</c> (rojo) — <c>lotes_habilitado</c> intentó deserializar el valor de
+    /// <c>tolerancia_pago</c> ("15") como <c>bool</c> y tiró <c>JsonException</c> antes de llegar
+    /// a <c>ValidadorDePagos</c>. Revertido el borrado, vuelve a <c>201 Created</c> (verde). No
+    /// se debilitó ninguna otra capa para lograrlo — la prueba llama al endpoint real de punta a
+    /// punta.</summary>
+    [Fact]
+    public async Task ElCheckoutResuelveVueltoMaximoDeEmpresaAunConUnaFilaDePuntoDeVentaDeOtraClave()
+    {
+        var ctx = await PrepararAsync(nameof(ElCheckoutResuelveVueltoMaximoDeEmpresaAunConUnaFilaDePuntoDeVentaDeOtraClave));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-parametros-cruzados", 100m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Parametros Cruzados", limiteCredito: 1_000_000m);
+
+        var ahora = DateTimeOffset.UtcNow;
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            db.Parametros.AddRange(
+                new Parametro
+                {
+                    IdTenant = ctx.IdTenant, IdEmpresa = ctx.IdEmpresa, IdPuntoVenta = null,
+                    Clave = "tolerancia_pago", Valor = "5", CreatedAt = ahora, UpdatedAt = ahora
+                },
+                new Parametro
+                {
+                    IdTenant = ctx.IdTenant, IdEmpresa = ctx.IdEmpresa, IdPuntoVenta = ctx.IdPuntoVenta,
+                    Clave = "tolerancia_pago", Valor = "15", CreatedAt = ahora, UpdatedAt = ahora
+                },
+                new Parametro
+                {
+                    IdTenant = ctx.IdTenant, IdEmpresa = ctx.IdEmpresa, IdPuntoVenta = null,
+                    Clave = "vuelto_maximo", Valor = "25", CreatedAt = ahora, UpdatedAt = ahora
+                });
+            await db.SaveChangesAsync();
+        }
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 120m, null, 20m)],
+            null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+
+        var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+        Assert.Equal(100m, emitido.Total);
+        Assert.Equal(20m, emitido.Pagos[0].Vuelto);
+    }
+
+    private async Task<int> EmitirYContarConsultasDeParametrosAsync(Contexto ctx, int idCliente)
+    {
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, $"parametros-batch-{Guid.NewGuid():N}", 10m);
+
+        var contadorDeParametros = new ContadorDeConsultasSobreTabla("parametros");
+        var tenantActual = new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant);
+
+        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
+            .UseNpgsql(fixture.AppConnectionString, npgsql =>
+            {
+                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<MotivoStock>("motivo_stock");
+                npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
+            })
+            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contadorDeParametros)
+            .Options;
+
+        await using var db = new WaysDbContext(opciones, tenantActual);
+
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var contexto = new ContextoFijo(ctx.IdTenant, usuarioId: 1);
+        var servicioDePrecios = new Ways.Application.Precios.ServicioDePrecios(db, reloj, contexto);
+        var servicioDeOfertas = new ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
+        var lectorDeMovimientos = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
+        var servicioDeTurnos = new Ways.Application.Caja.ServicioDeTurnos(db, reloj, contexto, lectorDeMovimientos);
+        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos);
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 10m, null, 0m)],
+            null, null);
+
+        await servicioDeVentas.EmitirAsync(solicitud);
+
+        return contadorDeParametros.Consultas;
+    }
+
+    /// <summary>Igual que <see cref="ContadorDeComandos"/> pero filtrado a los comandos cuyo
+    /// texto referencia una tabla puntual — usado para aislar la query de <c>parametros</c> del
+    /// resto de las que dispara un checkout completo (task 2.6).</summary>
+    private sealed class ContadorDeConsultasSobreTabla(string tabla) : DbCommandInterceptor
+    {
+        public int Consultas { get; private set; }
+
+        private bool Coincide(DbCommand command) =>
+            command.CommandText.Contains(tabla, StringComparison.OrdinalIgnoreCase);
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            if (Coincide(command))
+            {
+                Consultas++;
+            }
+
+            return base.ReaderExecuting(command, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Coincide(command))
+            {
+                Consultas++;
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 
     private async Task<int> EmitirYContarConsultasAsync(Contexto ctx, int idCliente, int cantidadDeLineas)
