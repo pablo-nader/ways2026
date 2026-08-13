@@ -133,8 +133,11 @@ public class VencimientosExportTests(WaysApiFixture fixture) : IClassFixture<Way
         return lote.Id;
     }
 
-    private static Task<HttpResponseMessage> LlamarExportAsync(HttpClient cliente, int idPuntoVenta, string formato = "xlsx") =>
-        cliente.GetAsync($"/api/reportes/stock/vencimientos/export?idPuntoVenta={idPuntoVenta}&formato={formato}");
+    private static Task<HttpResponseMessage> LlamarExportAsync(
+        HttpClient cliente, int idPuntoVenta, string formato = "xlsx", int? dias = null) =>
+        cliente.GetAsync(
+            $"/api/reportes/stock/vencimientos/export?idPuntoVenta={idPuntoVenta}&formato={formato}"
+            + (dias is { } valorDias ? $"&dias={valorDias}" : string.Empty));
 
     // ---- task 13.8: equality fila-por-fila, columnas discriminantes (mutation-proof-tests regla 6) --
 
@@ -235,5 +238,50 @@ public class VencimientosExportTests(WaysApiFixture fixture) : IClassFixture<Way
         var respuesta = await LlamarExportAsync(ctx.Vendedor, ctx.IdPuntoVenta);
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    // ---- JD-FIX (judgment-day slice 13, juez B MAJOR): cobertura del override dias= --------------
+
+    /// <summary>JD-FIX NOTE (judgment-day slice 13, juez B MAJOR): la misma rama
+    /// <c>dias ?? await ResolverDiasAlertaAsync(...)</c> se repite en
+    /// <c>ObtenerVencimientosParaExportacionAsync</c> — sin test tampoco. Se propaga el mismo
+    /// <c>dias=45</c> explícito al JSON y al export (mismo lote a 40 días de "hoy", que con
+    /// dias=45 clasifica <c>por_vencer</c>): la igualdad fila-por-fila entre ambos endpoints se
+    /// mantiene con el override, evidencia de que <c>ObtenerVencimientosParaExportacionAsync</c>
+    /// también respeta el parámetro y no solo el default resuelto.</summary>
+    [Fact]
+    public async Task ElExportPropagaElOverrideDeDiasYClasificaIgualQueElJson()
+    {
+        var ctx = await PrepararAsync(nameof(ElExportPropagaElOverrideDeDiasYClasificaIgualQueElJson));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Yogur bebible frutilla 900ml");
+
+        // Reloj real (sin pinear): la fecha de vencimiento se ancla a "hoy real + 40 días" para no
+        // depender de un reloj fijo — dias=45 explícito -> por_vencer (40 <= 45); el default (30)
+        // habría dado vigente, así el test discrimina que el export usó el override, no el default.
+        var hoyReal = DateOnly.FromDateTime(DateTime.UtcNow);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, hoyReal.AddDays(40), cantidad: 3m, codigo: "L-EXPORT-OVERRIDE");
+
+        var jsonRespuesta = await ctx.Admin.GetAsync(
+            $"/api/reportes/stock/vencimientos?idPuntoVenta={ctx.IdPuntoVenta}&dias=45");
+        Assert.Equal(HttpStatusCode.OK, jsonRespuesta.StatusCode);
+        var vencimientos = JsonSerializer.Deserialize<Vencimientos>(
+            await jsonRespuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
+        var filaJson = Assert.Single(vencimientos.Filas);
+        Assert.Equal(idLote, filaJson.IdLote);
+        Assert.Equal(EstadoDeVencimiento.PorVencer, filaJson.Estado);
+
+        var exportRespuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta, dias: 45);
+        var cuerpoError = exportRespuesta.IsSuccessStatusCode ? string.Empty : await exportRespuesta.Content.ReadAsStringAsync();
+        Assert.True(exportRespuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+
+        using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+        const int primeraFilaDeDatos = 7;
+        var fila = hoja.Row(primeraFilaDeDatos);
+
+        Assert.Equal(filaJson.IdArticulo, fila.Cell(1).GetValue<int>());
+        Assert.Equal(filaJson.IdLote, fila.Cell(3).GetValue<int>());
+        Assert.Equal(filaJson.Estado.ToString(), fila.Cell(7).GetString());
+        Assert.True(hoja.Cell(primeraFilaDeDatos + vencimientos.Filas.Count, 1).Value.IsBlank);
     }
 }

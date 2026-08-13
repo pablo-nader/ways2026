@@ -138,8 +138,10 @@ public class VencimientosReporteTests(WaysApiFixture fixture) : IClassFixture<Wa
         return lote.Id;
     }
 
-    private static Task<HttpResponseMessage> LlamarReporteAsync(HttpClient cliente, int idPuntoVenta) =>
-        cliente.GetAsync($"/api/reportes/stock/vencimientos?idPuntoVenta={idPuntoVenta}");
+    private static Task<HttpResponseMessage> LlamarReporteAsync(HttpClient cliente, int idPuntoVenta, int? dias = null) =>
+        cliente.GetAsync(
+            $"/api/reportes/stock/vencimientos?idPuntoVenta={idPuntoVenta}"
+            + (dias is { } valorDias ? $"&dias={valorDias}" : string.Empty));
 
     // ---- task 13.5: MUTATION TARGET — TimeZoneInfo.ConvertTime(reloj.Ahora, zona) reemplazado
     // por reloj.Ahora.UtcDateTime tiene que hacer fallar este test --------------------------------
@@ -252,5 +254,50 @@ public class VencimientosReporteTests(WaysApiFixture fixture) : IClassFixture<Wa
         var respuesta = await LlamarReporteAsync(ctx.Vendedor, ctx.IdPuntoVenta);
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    // ---- JD-FIX (judgment-day slice 13, juez B MAJOR): cobertura del override dias= --------------
+
+    /// <summary>JD-FIX NOTE (judgment-day slice 13, juez B MAJOR): la rama
+    /// <c>dias ?? await ResolverDiasAlertaAsync(...)</c> en <c>ObtenerVencimientosAsync</c> no
+    /// tenía NINGÚN test — todos los tests existentes ejercitaban solo el default resuelto
+    /// (<c>dias</c> ausente). Un mismo lote (vencimiento a 40 días de "hoy") clasifica distinto
+    /// según el horizonte aplicado: con el default (<c>dias_alerta_vencimiento</c> = 30) es
+    /// <c>vigente</c> (40 &gt; 30); con <c>dias=45</c> explícito por query string es
+    /// <c>por_vencer</c> (40 &lt;= 45). Mutation target: el operador <c>??</c> del override en
+    /// <c>ObtenerVencimientosAsync</c>. Mutación aplicada (reemplazado
+    /// <c>dias ?? await ResolverDiasAlertaAsync(idEmpresa, idPuntoVenta, ct)</c> por
+    /// <c>await ResolverDiasAlertaAsync(idEmpresa, idPuntoVenta, ct)</c>, ignorando el parámetro):
+    /// este test pasó de esperar <c>PorVencer</c>/<c>DiasDeAlerta == 45</c> con el override y
+    /// obtener <c>Vigente</c>/<c>DiasDeAlerta == 30</c> — FALLÓ — a pasar al revertir.</summary>
+    [Fact]
+    public async Task ElOverrideDeDiasExplicitoCambiaLaClasificacionRespectoDelDefault()
+    {
+        using var factoryConRelojFijo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddSingleton<IRelojDelSistema>(
+                    new RelojFijo(new DateTimeOffset(2026, 8, 12, 15, 0, 0, TimeSpan.Zero)))));
+
+        var ctx = await PrepararAsync(
+            nameof(ElOverrideDeDiasExplicitoCambiaLaClasificacionRespectoDelDefault), factoryConRelojFijo);
+        var idArticulo = await SembrarArticuloAsync(ctx, "Yogur descremado 500g");
+
+        // hoy resuelto = 2026-08-12. Vencimiento a 40 días: default (dias_alerta=30) -> vigente
+        // (40 > 30); dias=45 explícito -> por_vencer (40 <= 45).
+        await SembrarLoteAsync(ctx, idArticulo, new DateOnly(2026, 9, 21), cantidad: 5m, codigo: "L-OVERRIDE");
+
+        var respuestaDefault = await LlamarReporteAsync(ctx.Admin, ctx.IdPuntoVenta);
+        Assert.Equal(HttpStatusCode.OK, respuestaDefault.StatusCode);
+        var vencimientosDefault = JsonSerializer.Deserialize<Vencimientos>(
+            await respuestaDefault.Content.ReadAsStringAsync(), OpcionesJson)!;
+        Assert.Equal(30, vencimientosDefault.DiasDeAlerta);
+        Assert.Equal(EstadoDeVencimiento.Vigente, Assert.Single(vencimientosDefault.Filas).Estado);
+
+        var respuestaOverride = await LlamarReporteAsync(ctx.Admin, ctx.IdPuntoVenta, dias: 45);
+        Assert.Equal(HttpStatusCode.OK, respuestaOverride.StatusCode);
+        var vencimientosOverride = JsonSerializer.Deserialize<Vencimientos>(
+            await respuestaOverride.Content.ReadAsStringAsync(), OpcionesJson)!;
+        Assert.Equal(45, vencimientosOverride.DiasDeAlerta);
+        Assert.Equal(EstadoDeVencimiento.PorVencer, Assert.Single(vencimientosOverride.Filas).Estado);
     }
 }
