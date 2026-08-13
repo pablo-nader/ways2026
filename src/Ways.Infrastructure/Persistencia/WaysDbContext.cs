@@ -110,6 +110,13 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<ComprobanteCompra> ComprobantesCompra => Set<ComprobanteCompra>();
     public DbSet<ItemComprobanteCompra> ItemsComprobanteCompra => Set<ItemComprobanteCompra>();
 
+    // stage-12-lotes-vencimientos, Slice 1 (schema + seed gate, DB CHANGE GATE aprobado con
+    // enmiendas): modelo adelantado a la migración, mismo trámite que ComprobanteCompra/
+    // ItemComprobanteCompra en stage-8 Slice 1 — sin exponer en IWaysDbContext todavía, slice 3
+    // (ServicioDeLotes) es el primer consumidor de Application.
+    public DbSet<Lote> Lotes => Set<Lote>();
+    public DbSet<StockLote> StockLotes => Set<StockLote>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>
@@ -147,6 +154,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnOfertaLista(modelBuilder);
         AplicarFiltroDeTenantEnNumeracionComprobante(modelBuilder);
         AplicarFiltroDeTenantEnStock(modelBuilder);
+        AplicarFiltroDeTenantEnStockLote(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoStock(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCuentaCorriente(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCaja(modelBuilder);
@@ -524,6 +532,25 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         // completo en vez de renombrar el DbSet (que sí matchea doc 10: la tabla es "stock",
         // invariante en singular, igual que su propiedad acá).
         var propiedadIdTenant = Expression.Property(parametro, nameof(Ways.Domain.Stock.Stock.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-12-lotes-vencimientos (Slice 1, design decisión 20): <see cref="StockLote"/>
+    /// PK-only, sin auditoría (proposal gate §B, mismo criterio que <see cref="Stock"/>) —
+    /// necesita la variante escrita a mano, mismo criterio que
+    /// <see cref="AplicarFiltroDeTenantEnStock"/>. <see cref="Lote"/> SÍ hereda
+    /// <see cref="EntidadTenant"/> (gate §A), así que el loop por convención de
+    /// <see cref="AplicarFiltroDeTenant"/> ya lo cubre — no necesita variante propia.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnStockLote(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(StockLote))!;
+
+        var parametro = Expression.Parameter(typeof(StockLote), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(StockLote.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

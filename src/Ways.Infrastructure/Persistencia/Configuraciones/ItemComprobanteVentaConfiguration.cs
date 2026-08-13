@@ -4,6 +4,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Stock;
 using Ways.Domain.Ventas;
 
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
@@ -75,6 +76,10 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
             .HasDefaultValue(false)
             .IsRequired();
 
+        // Etapa 12 (proposal decisión 8, gate §F): snapshot del lote, columna creada acá,
+        // escrita recién en slice 8.
+        builder.Property(i => i.IdLote).HasColumnName("id_lote");
+
         builder.Property(i => i.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(i => i.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(i => i.DeletedAt).HasColumnName("deleted_at");
@@ -92,6 +97,9 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
         builder.HasIndex(i => new { i.IdListaPrecio, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_lista_precio");
         builder.HasIndex(i => new { i.IdOferta, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_oferta");
         builder.HasIndex(i => i.IdAlicuotaIva).HasDatabaseName("ix_items_comprobante_venta_alicuota_iva");
+
+        // Etapa 12 (proposal decisión 8, gate §F): soporte de fk_items_comprobante_venta_lote.
+        builder.HasIndex(i => new { i.IdLote, i.IdArticulo, i.IdTenant }).HasDatabaseName("ix_items_comprobante_venta_lote");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -139,6 +147,17 @@ public class ItemComprobanteVentaConfiguration : IEntityTypeConfiguration<ItemCo
             .WithMany()
             .HasForeignKey(i => i.IdAlicuotaIva)
             .HasConstraintName("fk_items_comprobante_venta_alicuota_iva")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Etapa 12 (proposal decisión 8, gate §F, gate amendment 2): MATCH SIMPLE (default de
+        // Postgres) — IdArticulo es nullable acá (líneas de concepto libre, doc 10 §4), pero una
+        // línea con lote necesariamente referencia un artículo; la FK se evalúa solo cuando las
+        // tres columnas son no-NULL, la aplicación valida ese emparejamiento.
+        builder.HasOne<Lote>()
+            .WithMany()
+            .HasForeignKey(i => new { i.IdLote, i.IdArticulo, i.IdTenant })
+            .HasPrincipalKey(l => new { l.Id, l.IdArticulo, l.IdTenant })
+            .HasConstraintName("fk_items_comprobante_venta_lote")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

@@ -47,6 +47,16 @@ public class MovimientoStock
     /// espejadas de una transferencia llevan acá el destino (design decisión 5 del proposal).</summary>
     public int? IdPuntoVentaDestino { get; set; }
 
+    /// <summary>Etapa 12 (proposal decisión 5, gate §C): dimensión de lote del movimiento, con
+    /// FK compuesta <c>fk_movimientos_stock_lote</c> sobre <c>(id_lote, id_articulo, id_tenant)</c>
+    /// contra la clave alterna de <see cref="Lote"/> — Postgres garantiza a nivel de esquema que
+    /// el lote de un movimiento pertenece a su mismo artículo. <c>NOT NULL</c> exigido para
+    /// movimientos de un artículo lot-effective y siempre <c>NULL</c> para uno que no lo es —
+    /// invariante cruzado entre tablas (no una CHECK), probado con un test de integración
+    /// dedicado (design decisión 5). Columna creada en esta slice, escrita recién a partir de las
+    /// slices 4-12 (ningún escritor nuevo en esta slice: schema + seed gate).</summary>
+    public int? IdLote { get; set; }
+
     public int IdEmpleado { get; set; }
 
     public string? Observaciones { get; set; }

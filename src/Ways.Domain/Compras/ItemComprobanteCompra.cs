@@ -63,4 +63,23 @@ public class ItemComprobanteCompra : EntidadTenant
     /// nunca aplicada por la confirmación (design decisión 3). <c>NULL</c> solo si el artículo
     /// no tiene margen configurado.</summary>
     public decimal? PrecioSugerido { get; set; }
+
+    /// <summary>Etapa 12 (proposal gate §G): input de lote a nivel de borrador — capturado tal
+    /// cual mientras la compra es <see cref="EstadoCompra.Borrador"/>, sin resolver contra
+    /// <c>lotes</c> todavía (las líneas de borrador se reemplazan físicamente en cada edición,
+    /// resolver temprano ensuciaría <c>lotes</c> con filas de borradores que nunca confirman).
+    /// <c>NULL</c> si la línea no lleva código de lote (artículo no lot-effective, o el operador
+    /// todavía no lo cargó).</summary>
+    public string? CodigoLote { get; set; }
+
+    /// <summary>Input de vencimiento a nivel de borrador, acompaña a <see cref="CodigoLote"/> —
+    /// <c>ck_items_comprobante_compra_lote_input</c> exige que si hay código también haya fecha
+    /// (un código sin vencimiento nunca puede resolver a una fila válida de <c>lotes</c>).</summary>
+    public DateOnly? FechaVencimiento { get; set; }
+
+    /// <summary>Resuelto (get-or-create) recién al confirmar, contra
+    /// <c>ux_lotes_articulo_codigo</c> (slice 5, <c>ServicioDeCompras.EjecutarConfirmarAsync</c>).
+    /// <c>NULL</c> mientras la compra es borrador y para artículos que no son lot-effective.
+    /// Snapshot desde ese momento — es lo que hace exacta la anulación.</summary>
+    public int? IdLote { get; set; }
 }
