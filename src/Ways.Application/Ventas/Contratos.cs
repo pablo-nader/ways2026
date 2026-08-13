@@ -48,9 +48,9 @@ public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Refer
 /// se completan para una línea lote-efectiva: el lote resuelto en la fase de decisión (FEFO
 /// default u honrado si vino explícito), su código proyectado, y si su vencimiento ya pasó
 /// (warning, nunca bloqueo — spec: "Expired Lot Sale Warns, Never Blocks"). NULL/false para una
-/// línea sin lote. Nota de límite de esta slice: la escritura de <c>id_lote</c> en
-/// <c>items_comprobante_venta</c> es de slice 8 — acá el dato viaja en el plan/response, todavía
-/// no en la fila persistida.</summary>
+/// línea sin lote. Desde slice 8, <c>id_lote</c> también se persiste como snapshot congelado en
+/// <c>items_comprobante_venta.id_lote</c> — una relectura (reprint) devuelve el mismo valor que el
+/// checkout fresco.</summary>
 public sealed record ItemEmitido(
     int Orden,
     int? IdArticulo,
