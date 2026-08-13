@@ -1058,8 +1058,22 @@ permanent; now records that both paths return the same value since slice 8.
   run via `--project src/Ways.Infrastructure --startup-project
   src/Ways.Infrastructure`. Output: "No changes have been made to the model
   since the last migration.")*
-- [ ] 8.10 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 8.11 Branch `feat/stage12-slice8-venta-escritura` off `main` (parent:
+- [x] 8.10 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  two REJECT rounds, both with real findings on the hottest writer.
+  Round 1 — judge B: the "hoist first IdLote onto every reversal movement"
+  mutation survived 176 tests (every anulación test sold ONE line; balances
+  stayed correct, the ledger's per-movement lot attribution corrupted
+  silently). Fix 7b4b98a: multi-line and mixed anulación tests killing the
+  exact mutation from both angles. Round 2 — judge B APPROVE; judge A
+  (first pass): MAJOR — nothing proved the aggregate ACCUMULATES across two
+  lines of the same articulo (a group-by-articulo "optimization" using only
+  the last delta survived), plus stale design pseudocode and the
+  provider-dependent NULLS ordering of the anulación read left implicit.
+  Fix a600c52: 8.7 test extended (seeded aggregate, discriminant deltas,
+  exact final stock 12m; mutation Expected-12/Actual-15 recorded), design
+  write-site-1 pseudocode reconciled, provider note added. Round 3 — judge
+  A APPROVE with arithmetic verification of the mutation evidence.)*
+- [x] 8.11 Branch `feat/stage12-slice8-venta-escritura` off `main` (parent:
   slice 7); PR; merge stacked-to-main.
 
 **Test plan**: invariant (8.4), snapshot mutation (8.5), lock order (8.6),
