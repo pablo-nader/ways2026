@@ -704,20 +704,34 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         db.Usuarios.Add(usuario);
         await db.SaveChangesAsync();
 
-        var articuloConCosto = new Articulo
+        // Esquema todavía en stage 8 acá: SQL crudo con columnas explícitas, inmune a columnas
+        // que etapas posteriores agregan a articulos (controla_lote de la etapa 12 no existe todavía).
+        int idArticuloConCosto;
+        int idArticuloSinCosto;
+        await using (var crudaArticulos = new NpgsqlConnection(cadenaConexion))
         {
-            IdTenant = tenant.Id, CodigoInterno = $"{nombre}-con-costo", Nombre = $"{nombre}-con-costo",
-            IdArea = area.Id, IdAlicuotaIva = alicuota.Id, UnidadVenta = UnidadVenta.Unidad, EsProducto = true,
-            CostoNominal = 60.00m, CreatedAt = ahora, UpdatedAt = ahora
-        };
-        var articuloSinCosto = new Articulo
-        {
-            IdTenant = tenant.Id, CodigoInterno = $"{nombre}-sin-costo", Nombre = $"{nombre}-sin-costo",
-            IdArea = area.Id, IdAlicuotaIva = alicuota.Id, UnidadVenta = UnidadVenta.Unidad, EsProducto = true,
-            CostoNominal = null, CreatedAt = ahora, UpdatedAt = ahora
-        };
-        db.Articulos.AddRange(articuloConCosto, articuloSinCosto);
-        await db.SaveChangesAsync();
+            await crudaArticulos.OpenAsync();
+
+            async Task<int> InsertarArticuloAsync(string codigo, decimal? costoNominal)
+            {
+                await using var comando = crudaArticulos.CreateCommand();
+                comando.CommandText =
+                    "INSERT INTO articulos (id_tenant, codigo_interno, nombre, id_area, id_alicuota_iva, " +
+                    "unidad_venta, es_producto, costo_nominal, created_at, updated_at) " +
+                    "VALUES ($1, $2, $2, $3, $4, 'unidad'::unidad_venta, true, $5, now(), now()) " +
+                    "RETURNING id_articulo";
+                comando.Parameters.Add(new NpgsqlParameter { Value = tenant.Id });
+                comando.Parameters.Add(new NpgsqlParameter { Value = codigo });
+                comando.Parameters.Add(new NpgsqlParameter { Value = area.Id });
+                comando.Parameters.Add(new NpgsqlParameter { Value = alicuota.Id });
+                comando.Parameters.Add(new NpgsqlParameter { Value = (object?)costoNominal ?? DBNull.Value });
+                var resultado = await comando.ExecuteScalarAsync();
+                return (int)resultado!;
+            }
+
+            idArticuloConCosto = await InsertarArticuloAsync($"{nombre}-con-costo", 60.00m);
+            idArticuloSinCosto = await InsertarArticuloAsync($"{nombre}-sin-costo", null);
+        }
 
         var comprobante = new ComprobanteVenta
         {
@@ -753,11 +767,11 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
                 await comando.ExecuteNonQueryAsync();
             }
 
-            await InsertarItemAsync(articuloConCosto.Id, "linea-con-costo");
-            await InsertarItemAsync(articuloSinCosto.Id, "linea-sin-costo");
+            await InsertarItemAsync(idArticuloConCosto, "linea-con-costo");
+            await InsertarItemAsync(idArticuloSinCosto, "linea-sin-costo");
             await InsertarItemAsync(null, "linea-concepto-libre");
         }
 
-        return (comprobante.Id, articuloConCosto.Id, articuloSinCosto.Id);
+        return (comprobante.Id, idArticuloConCosto, idArticuloSinCosto);
     }
 }
