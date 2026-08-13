@@ -221,6 +221,17 @@ dependencies:
   verify: [apply]
   archive: [verify]
 decisiones_tomadas:
+  - "13 — SEMANTICA DE BORDE DEL VENCIMIENTO (resuelta por el orquestador en el judgment-day
+    del slice 2): LA FECHA DE VENCIMIENTO ES INCLUSIVA — un lote con fecha_vencimiento == hoy
+    NO esta vencido (clasifica por_vencer); vencido = fecha_vencimiento < hoy ESTRICTO
+    (ReglaDeLotes.EstaVencido). El juez A detecto que el escenario de zona horaria del spec
+    delta decia lo contrario del design; auditado, el THEN del spec ademas contradecia la
+    intencion de su propio escenario (el bug de UTC naive ADELANTA el vencimiento un dia).
+    Se enmendo el SPEC, no el codigo. Fundamento: semantica retail estandar (vence HOY =
+    vendible HOY con urgencia por_vencer), consistencia con el rechazo de recepcion (409
+    lote_vencido_en_recepcion rechaza fechas EN EL PASADO, no la de hoy), y sesgo
+    conservador (no bloquear/estigmatizar mercaderia legalmente vendible). Propaga a los
+    tres write sites, al reporte y al warning del POS via el unico helper ReglaDeLotes."
   - "1 — CONTROL DE LOTE POR ARTICULO, BINARIO Y OBLIGATORIO DONDE ESTA PRENDIDO:
     articulos.controla_lote boolean NOT NULL DEFAULT false, la forma exacta de EsProducto.
     Se RECHAZA el enum de tres valores (no aplica/opcional/obligatorio): 'opcional' es la
