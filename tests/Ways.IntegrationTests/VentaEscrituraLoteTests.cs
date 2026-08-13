@@ -491,7 +491,22 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
     /// <c>FullyQualifiedName~LosMovimientosDeDosLotesDelMismoArticuloSeEscribenEnOrdenAscendentePorIdLote</c>:
     /// RED — <c>Assert.Equal(idLoteMenor, movimientos[0].IdLote)</c> falló (<c>Expected: {idLoteMenor}
     /// / Actual: {idLoteMayor}</c>): el sort estable preservó el orden de ENVÍO (mayor primero), tal
-    /// como predice el doc-comment. Revertido, mismo filtro: GREEN.</summary>
+    /// como predice el doc-comment. Revertido, mismo filtro: GREEN.
+    ///
+    /// Extensión (judgment-day slice 8, ronda 2, juez A MAJOR): las dos líneas también asertan el
+    /// agregado <c>stock.cantidad</c> final, sembrado con un valor inicial y cantidades DISTINTAS
+    /// por línea (3 vs. 5) — discriminante contra una "optimización" que agrupe por
+    /// <c>id_articulo</c> y llame <c>UpsertStockAsync</c> UNA sola vez con el delta de la ÚLTIMA
+    /// línea en vez de re-emitirlo por línea (design decisión 8: "re-issuing is a re-lock ... zero
+    /// contention"; la alternativa agrupada es la que el design explícitamente rechaza).
+    ///
+    /// EVIDENCIA DE MUTACIÓN (agregado, regla permanente 6): paso 5 de <c>EjecutarTransaccionAsync</c>
+    /// mutado para agrupar <c>plan.Items</c> por <c>IdArticulo</c> y llamar <c>UpsertStockAsync</c>
+    /// una única vez por artículo con <c>-grupo.Last().Cantidad</c> (delta de la línea de
+    /// <c>idLoteMenor</c>, la última enviada) en vez de re-emitirlo en cada iteración; build, mismo
+    /// filtro: RED — <c>Assert.Equal(12m, stock)</c> falló (<c>Expected: 12 / Actual: 15</c>): el
+    /// agregado solo restó 5 (delta de la última línea), no 8 (3+5, la suma de ambas). Revertido,
+    /// mismo filtro: GREEN.</summary>
     [Fact]
     public async Task LosMovimientosDeDosLotesDelMismoArticuloSeEscribenEnOrdenAscendentePorIdLote()
     {
@@ -503,16 +518,20 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         var idLoteMenor = await SembrarLoteAsync(ctx, idArticulo, "L-MENOR", VencimientoLejanoFuturoAlterno);
         var idLoteMayor = await SembrarLoteAsync(ctx, idArticulo, "L-MAYOR", VencimientoLejanoFuturo);
         Assert.True(idLoteMenor < idLoteMayor);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 20m);
         await SembrarStockLoteAsync(ctx, idArticulo, idLoteMenor, 10m);
         await SembrarStockLoteAsync(ctx, idArticulo, idLoteMayor, 10m);
 
+        // Cantidades DISTINTAS por línea (3 vs. 5, discriminantes) — si el agregado se upsertea una
+        // sola vez por artículo con el delta de la última línea, en vez de una vez por línea, el
+        // stock final delata cuál delta ganó.
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, ctx.IdCliente, "TX", null,
             [
-                new LineaDeVenta(idArticulo, 1m, null, idLoteMayor),
-                new LineaDeVenta(idArticulo, 1m, null, idLoteMenor)
+                new LineaDeVenta(idArticulo, 3m, null, idLoteMayor),
+                new LineaDeVenta(idArticulo, 5m, null, idLoteMenor)
             ],
-            [new PagoDeVenta(ctx.IdMedioEfectivo, 200m, null, 0m)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 800m, null, 0m)],
             null, null);
 
         var emitido = await EmitirAsync(ctx, solicitud);
@@ -526,7 +545,23 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
 
         Assert.Equal(2, movimientos.Count);
         Assert.Equal(idLoteMenor, movimientos[0].IdLote);
+        Assert.Equal(5m, movimientos[0].Cantidad * -1);
         Assert.Equal(idLoteMayor, movimientos[1].IdLote);
+        Assert.Equal(3m, movimientos[1].Cantidad * -1);
+
+        var stock = await db.Stock.Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Select(s => s.Cantidad).FirstAsync();
+        Assert.Equal(12m, stock);
+
+        var stockLoteMenor = await db.StockLotes
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLoteMenor)
+            .Select(sl => sl.Cantidad).FirstAsync();
+        Assert.Equal(5m, stockLoteMenor);
+
+        var stockLoteMayor = await db.StockLotes
+            .Where(sl => sl.IdArticulo == idArticulo && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLoteMayor)
+            .Select(sl => sl.Cantidad).FirstAsync();
+        Assert.Equal(7m, stockLoteMayor);
     }
 
     // ---- task 8.8: regresión — artículo sin control de lote nunca lleva id_lote --------------------

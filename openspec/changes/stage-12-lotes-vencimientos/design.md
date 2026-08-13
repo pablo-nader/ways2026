@@ -278,7 +278,8 @@ private async Task<(decimal Tolerancia, decimal Vuelto, bool LotesHabilitado)> R
 ```csharp
 foreach (var item in plan.Items.Where(i => i.EsProducto)
                                .OrderBy(i => i.IdArticulo)
-                               .ThenBy(i => i.IdLote))            // decisión 8/9
+                               .ThenBy(i => i.IdLote.HasValue)    // NULLS FIRST — decisión 9
+                               .ThenBy(i => i.IdLote ?? 0))       // decisión 8/9 (reconciled at slice-8 judgment-day: matches write-site 3's explicit NULLS-FIRST form and the shipped code)
 {
     var delta = -item.Cantidad;
 

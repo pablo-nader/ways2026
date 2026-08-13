@@ -532,7 +532,10 @@ public class ServicioDeVentas(
         // convención, no por necesidad estricta. `id_lote` viaja YA en el movimiento original —
         // etapa 12, slice 8, task 8.3: la reversa lo copia estructuralmente (design: "Exactness is
         // structural, not derived"), sin re-derivar desde items_comprobante_venta ni volver a
-        // resolver FEFO.
+        // resolver FEFO. El `ThenBy(IdLote)` de abajo es un IQueryable: el orden de los NULLs queda
+        // en manos de la traducción SQL del provider (Postgres por default hace NULLS LAST en ASC),
+        // no de una comparación en memoria — acá es convención, no defensivo, por eso no repite el
+        // `ThenBy(HasValue).ThenBy(?? 0)` explícito del paso 5.
         var movimientosOriginales = await db.MovimientosStock
             .Where(m => m.IdComprobanteVenta == id && m.Motivo == MotivoStock.Venta)
             .OrderBy(m => m.IdArticulo)
