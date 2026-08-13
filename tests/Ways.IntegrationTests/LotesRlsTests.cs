@@ -2,10 +2,18 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
+using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Clientes;
+using Ways.Domain.Compras;
+using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
+using Ways.Domain.Usuarios;
+using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 
 namespace Ways.IntegrationTests;
 
@@ -22,6 +30,39 @@ namespace Ways.IntegrationTests;
 public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
     private sealed record Escenario(int IdTenant, int IdArticulo, int IdPuntoVenta, int IdLote);
+
+    /// <summary>Judgment-day fix (juez B, MAJOR): un <see cref="WaysDbContext"/> sobre
+    /// <c>ways_owner</c> (bypassea RLS) para que las dos pruebas de "el filtro de EF nunca
+    /// devuelve filas ajenas" prueben genuinamente el query filter — sobre <c>ways_app</c>
+    /// RLS filtra igual aunque el filtro de EF no exista, así esas pruebas no distinguían
+    /// nada (comprobado comentando <c>SetQueryFilter</c> y viendo los 8 tests pasar
+    /// igual).</summary>
+    private WaysDbContext CrearContextoDeOwner(ITenantActual tenantActual)
+    {
+        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
+            .UseNpgsql(fixture.OwnerConnectionString, npgsql =>
+            {
+                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<MotivoStock>("motivo_stock");
+                npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<EstadoTurno>("estado_turno");
+                npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
+                npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
+                npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                npgsql.MapEnum<EstadoCompra>("estado_compra");
+            })
+            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
+            .Options;
+
+        return new WaysDbContext(opciones, tenantActual);
+    }
 
     private async Task<Escenario> SembrarEscenarioAsync(string nombre)
     {
@@ -162,17 +203,33 @@ public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
 
     /// <summary>Proof a nivel EF (LINQ): <see cref="Lote"/> hereda <c>EntidadTenant</c>, así que
     /// el filtro genérico de <c>WaysDbContext.AplicarFiltroDeTenant</c> la cubre sin filtro
-    /// manual.</summary>
+    /// manual.
+    ///
+    /// Judgment-day fix (juez B, MAJOR): corre sobre <c>ways_owner</c> (bypassea RLS,
+    /// <see cref="CrearContextoDeOwner"/>), no sobre <c>ways_app</c> — bajo <c>ways_app</c>
+    /// RLS excluye la fila ajena igual aunque el query filter de EF no exista, así que la
+    /// prueba original no probaba nada del filtro. Seed cross-tenant (dos escenarios
+    /// completos) más el control de <c>count &gt; 0</c> del propio tenant evita que la
+    /// prueba pase en vacío.
+    ///
+    /// Evidencia de mutación: comentando <c>entidad.SetQueryFilter("Tenant", filtro);</c> en
+    /// <c>WaysDbContext.AplicarFiltroDeTenant</c> y corriendo el filtro
+    /// <c>--filter "FullyQualifiedName~LotesRlsTests"</c>, este test (y el análogo de
+    /// <c>stock_lotes</c>) fallaron: <c>visibleAjeno</c> pasó a ser <c>true</c> (mutant
+    /// caught). Revertida la mutación, la suite vuelve a estar verde.</summary>
     [Fact]
     public async Task ElFiltroDeEfNuncaDevuelveLotesDeOtroTenant()
     {
-        var escenario = await SembrarEscenarioAsync(nameof(ElFiltroDeEfNuncaDevuelveLotesDeOtroTenant));
-        var tenantB = await SembrarTenantBAsync(nameof(ElFiltroDeEfNuncaDevuelveLotesDeOtroTenant) + "-B");
+        var escenarioA = await SembrarEscenarioAsync(nameof(ElFiltroDeEfNuncaDevuelveLotesDeOtroTenant) + "-A");
+        var escenarioB = await SembrarEscenarioAsync(nameof(ElFiltroDeEfNuncaDevuelveLotesDeOtroTenant) + "-B");
 
-        await using var sesionB = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, tenantB.Id));
-        var visible = await sesionB.Lotes.AnyAsync(l => l.Id == escenario.IdLote);
+        await using var sesionB = CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, escenarioB.IdTenant));
 
-        Assert.False(visible);
+        var visibleAjeno = await sesionB.Lotes.AnyAsync(l => l.Id == escenarioA.IdLote);
+        Assert.False(visibleAjeno);
+
+        var visiblePropio = await sesionB.Lotes.AnyAsync(l => l.Id == escenarioB.IdLote);
+        Assert.True(visiblePropio);
     }
 
     // ---- stock_lotes --------------------------------------------------------------------------
@@ -254,17 +311,31 @@ public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
     }
 
     /// <summary>Proof a nivel EF (LINQ) — <see cref="StockLote"/> usa el filtro manual (design
-    /// decisión 20, no hereda <c>EntidadTenant</c>).</summary>
+    /// decisión 20, no hereda <c>EntidadTenant</c>).
+    ///
+    /// Judgment-day fix (juez B, MAJOR): mismo criterio que
+    /// <see cref="ElFiltroDeEfNuncaDevuelveLotesDeOtroTenant"/> — corre sobre
+    /// <c>ways_owner</c> para que solo el query filter de EF pueda excluir la fila ajena.
+    ///
+    /// Evidencia de mutación: comentando <c>entidad.SetQueryFilter("Tenant", filtro);</c> en
+    /// <c>WaysDbContext.AplicarFiltroDeTenantEnStockLote</c> y corriendo el filtro
+    /// <c>--filter "FullyQualifiedName~LotesRlsTests"</c>, este test falló:
+    /// <c>visibleAjeno</c> pasó a ser <c>true</c> (mutant caught). Revertida la mutación, la
+    /// suite vuelve a estar verde.</summary>
     [Fact]
     public async Task ElFiltroDeEfNuncaDevuelveStockLotesDeOtroTenant()
     {
-        var escenario = await SembrarEscenarioAsync(nameof(ElFiltroDeEfNuncaDevuelveStockLotesDeOtroTenant));
-        var tenantB = await SembrarTenantBAsync(nameof(ElFiltroDeEfNuncaDevuelveStockLotesDeOtroTenant) + "-B");
+        var escenarioA = await SembrarEscenarioAsync(nameof(ElFiltroDeEfNuncaDevuelveStockLotesDeOtroTenant) + "-A");
+        var escenarioB = await SembrarEscenarioAsync(nameof(ElFiltroDeEfNuncaDevuelveStockLotesDeOtroTenant) + "-B");
 
-        await using var sesionB = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, tenantB.Id));
-        var visible = await sesionB.StockLotes.AnyAsync(s =>
-            s.IdArticulo == escenario.IdArticulo && s.IdPuntoVenta == escenario.IdPuntoVenta && s.IdLote == escenario.IdLote);
+        await using var sesionB = CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, escenarioB.IdTenant));
 
-        Assert.False(visible);
+        var visibleAjeno = await sesionB.StockLotes.AnyAsync(s =>
+            s.IdArticulo == escenarioA.IdArticulo && s.IdPuntoVenta == escenarioA.IdPuntoVenta && s.IdLote == escenarioA.IdLote);
+        Assert.False(visibleAjeno);
+
+        var visiblePropio = await sesionB.StockLotes.AnyAsync(s =>
+            s.IdArticulo == escenarioB.IdArticulo && s.IdPuntoVenta == escenarioB.IdPuntoVenta && s.IdLote == escenarioB.IdLote);
+        Assert.True(visiblePropio);
     }
 }
