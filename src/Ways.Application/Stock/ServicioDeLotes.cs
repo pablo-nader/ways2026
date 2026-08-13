@@ -385,8 +385,19 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
     /// <summary><c>GET /api/stock/lotes</c> — feed del picker (design decisión 19): reusa la
     /// misma query acotada de <see cref="LeerSaldosAsync"/> (sin lotes pedidos explícitos, es un
     /// listado, no una validación) y agrega <c>estado</c>/<c>sugerido</c> server-side — el FEFO
-    /// nunca se recomputa en TypeScript.</summary>
-    public async Task<IReadOnlyList<LoteListado>> ListarAsync(int idPuntoVenta, int idArticulo, CancellationToken ct)
+    /// nunca se recomputa en TypeScript.
+    ///
+    /// <paramref name="idComprobanteAsociado"/> (stage-12 slice 9, task 9.2; design: "NCX",
+    /// decisión 8 del proposal): cuando el picker se abre para una línea de devolución que
+    /// referencia un comprobante original, la sugerencia sale del SNAPSHOT de esa venta — el
+    /// lote que realmente salió por esa línea (<c>items_comprobante_venta.id_lote</c>), no un
+    /// pick FEFO que no significa nada para mercadería que vuelve. Sin comprobante asociado (o
+    /// sin match del artículo en ese comprobante — el articulo no era lote-efectivo en la venta
+    /// original, o nunca estuvo en ella), cae al mismo FEFO que ya usa el checkout (decisión
+    /// 15) — "si no [hay snapshot], desde los lotes existentes del artículo" (spec: "idLote is
+    /// required even without an associated comprobante").</summary>
+    public async Task<IReadOnlyList<LoteListado>> ListarAsync(
+        int idPuntoVenta, int idArticulo, int? idComprobanteAsociado, CancellationToken ct)
     {
         var puntoVenta = await ResolverPuntoVentaAsync(idPuntoVenta, ct);
         await ResolverArticuloAsync(idArticulo, ct);
@@ -401,17 +412,26 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         // diasAlertaPorDefecto en CrearAsync.
         var hoy = DateOnly.FromDateTime(reloj.Ahora.UtcDateTime);
 
+        int? idLoteSugerido = idComprobanteAsociado is { } idAsociado
+            ? await db.ItemsComprobanteVenta
+                .Where(i => i.IdComprobanteVenta == idAsociado && i.IdArticulo == idArticulo)
+                .Select(i => i.IdLote)
+                .FirstOrDefaultAsync(ct)
+            : null;
+
         // Decisión 15 (judgment-day del slice 7): el Sugerido del picker tiene que ser
         // consistente con la selección real del server (ServicioDeVentas) — mismo "hoy", mismo
-        // ElegirFefo particionado por no-vencido primero.
-        var sugerido = ReglaDeLotes.ElegirFefo(saldos, hoy);
+        // ElegirFefo particionado por no-vencido primero. Solo se usa como fallback del snapshot
+        // de arriba (o directamente, sin comprobante asociado).
+        idLoteSugerido ??= ReglaDeLotes.ElegirFefo(saldos, hoy)?.IdLote;
+
         var diasAlerta = await ResolverDiasAlertaAsync(puntoVenta.IdEmpresa, idPuntoVenta, ct);
 
         return ordenados
             .Select(s => new LoteListado(
                 s.IdLote, s.IdArticulo, s.Codigo, s.FechaVencimiento, s.EsSinIdentificar, s.Cantidad,
                 ReglaDeLotes.Clasificar(s.FechaVencimiento, hoy, diasAlerta),
-                Sugerido: sugerido is not null && sugerido.Value.IdLote == s.IdLote))
+                Sugerido: idLoteSugerido == s.IdLote))
             .ToList();
     }
 
