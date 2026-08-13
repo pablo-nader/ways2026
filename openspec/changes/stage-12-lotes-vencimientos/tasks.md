@@ -156,34 +156,34 @@ rows rewritten.
 - [x] 1.17 Update `docs/10-modelo-de-datos.md` §6: add `lotes` and
   `stock_lotes` table entries and the two new `motivo_stock` values, tagged
   `Estado (Etapa 12)` per the doc's existing annotation convention.
-- [ ] 1.18 [P] Migration-apply test: fresh testcontainer DB applies
+- [x] 1.18 [P] Migration-apply test: fresh testcontainer DB applies
   cleanly; both tables, all six columns, both enum values exist post-`Up()`.
-- [ ] 1.19 [P] RLS tests ×2 over the **`ways_app`** connection (NOSUPERUSER
+- [x] 1.19 [P] RLS tests ×2 over the **`ways_app`** connection (NOSUPERUSER
   NOBYPASSRLS, `mutation-proof-tests` rule 5): `lotes` and `stock_lotes`
   cross-tenant `SELECT`/`INSERT`/`UPDATE` at statement level, asserting row
   counts for silent 0-row cases and `42501` where an error is raised.
-- [ ] 1.20 [P] **`db-error-backstops`**: two concurrent inserts racing
+- [x] 1.20 [P] **`db-error-backstops`**: two concurrent inserts racing
   `ux_lotes_articulo_codigo` → SQLSTATE `23505` asserted, backstop
   translates to the existing row, exactly one `lotes` row survives. *(spec
   lotes-y-vencimientos: The Same Articulo And Codigo Cannot Be Created
   Twice)*
-- [ ] 1.21 [P] **`db-error-backstops`**, documented exemption: raw-SQL proof
+- [x] 1.21 [P] **`db-error-backstops`**, documented exemption: raw-SQL proof
   that `ux_lotes_sin_identificar` fires `23505` on a second
   `es_sin_identificar = true` row for the same articulo — no application
   route races this index directly (get-or-create serializes on
   `ux_lotes_articulo_codigo` first, per design decision 5), so the proof is
   a direct constraint test, not an end-to-end race.
-- [ ] 1.22 [P] `23503` regression ×4 FKs (`fk_movimientos_stock_lote`,
+- [x] 1.22 [P] `23503` regression ×4 FKs (`fk_movimientos_stock_lote`,
   `fk_items_comprobante_venta_lote`, `fk_items_comprobante_compra_lote`,
   `fk_stock_lotes_lote`): a lot referenced with a mismatched articulo is
   rejected. *(spec stock: A Movement Referencing A Foreign Articulo's Lot
   Is Unrepresentable)*
-- [ ] 1.23 [P] CHECK constraint tests: `ck_lotes_vencimiento_segun_tipo`,
+- [x] 1.23 [P] CHECK constraint tests: `ck_lotes_vencimiento_segun_tipo`,
   `ck_lotes_codigo_no_vacio`, `ck_items_comprobante_compra_lote_input`.
   *(spec lotes-y-vencimientos: A Blank Codigo Is Unrepresentable, A Dated
   Lot Without An Expiry Is Unrepresentable; spec comprobantes-compra: A Lot
   Code Without An Expiry Is Unrepresentable)*
-- [ ] 1.24 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+- [x] 1.24 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   no pending changes after this migration (confirms the EF model matches
   exactly the gate-approved schema, nothing more).
 - [ ] 1.25 Run `judgment-day` on the slice diff; fix confirmed issues;
