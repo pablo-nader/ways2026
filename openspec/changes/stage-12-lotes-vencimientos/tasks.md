@@ -650,6 +650,10 @@ expired-reception ×2 (5.12).
 snapshot; refusal checks both the aggregate **and** the lot. **Rollback**:
 revert the branch.
 
+> Note (judgment-day, slice 5, FIX 4): 6.1 must REPLACE the interim 409
+> compra_anulacion_lotes_pendiente guard added at slice-5 judgment-day with
+> the exact per-lot reversal.
+
 - [ ] 6.1 Modify `ServicioDeCompras.cs`: `EjecutarAnulacionAsync` reorders
   `.OrderBy(m => m.IdArticulo).ThenBy(m => m.IdLote)`, copies
   `original.IdLote`; **two** mandatory checks — aggregate `nueva < 0` AND
