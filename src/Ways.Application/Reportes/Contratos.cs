@@ -1,5 +1,6 @@
 using Ways.Domain.Gastos;
 using Ways.Domain.Reportes;
+using Ways.Domain.Stock;
 
 namespace Ways.Application.Reportes;
 
@@ -140,3 +141,30 @@ public sealed record FilaExistencia(int IdArticulo, string Nombre, decimal Canti
 /// quedan fuera de esta slice (proposal decisión 10: "give it the context it lacks here", reservado
 /// para Etapa 13).</summary>
 public sealed record Existencias(int IdPuntoVenta, IReadOnlyList<FilaExistencia> Filas);
+
+/// <summary>Fila de <c>GET /api/reportes/stock/vencimientos</c> (stage-12-lotes-vencimientos,
+/// Slice 13; design decisión 15/16). Solo lotes con <c>stock_lotes.cantidad</c> positivo (spec
+/// lotes-y-vencimientos: "A zero-balance lot never appears in the report") — <see cref="Articulo"/>
+/// sale del join en vivo, mismo criterio que <see cref="FilaExistencia.Nombre"/> (estado actual,
+/// nunca un snapshot). <see cref="FechaVencimiento"/> es <c>null</c> exactamente para el lote sin
+/// identificar, que clasifica <see cref="EstadoDeVencimiento.SinFecha"/> y SE INCLUYE en el
+/// reporte (nunca excluido — la omisión mentiría por defecto sobre el total).</summary>
+public sealed record FilaDeVencimiento(
+    int IdArticulo, string Articulo, int IdLote, string CodigoLote, DateOnly? FechaVencimiento,
+    decimal Cantidad, EstadoDeVencimiento Estado);
+
+/// <summary>Respuesta de <c>GET /api/reportes/stock/vencimientos</c>. <see cref="Hoy"/> y
+/// <see cref="ZonaHoraria"/> son la fecha y la zona efectivamente resueltas para clasificar cada
+/// fila — echo obligatorio (mismo criterio que <see cref="ResumenDeVentas.ZonaHoraria"/>): "hoy"
+/// se calcula en la zona horaria del punto de venta, NUNCA en UTC (spec: "'Hoy' Is Resolved In The
+/// Punto De Venta's Own Zona Horaria, Not UTC" — vinculante). <see cref="DiasDeAlerta"/> es el
+/// horizonte efectivamente aplicado: el parámetro <c>dias</c> de la query si vino, si no el
+/// <c>dias_alerta_vencimiento</c> resuelto (PV → empresa → default).</summary>
+public sealed record Vencimientos(
+    int IdPuntoVenta, DateOnly Hoy, int DiasDeAlerta, string ZonaHoraria, IReadOnlyList<FilaDeVencimiento> Filas);
+
+/// <summary>Respuesta de <c>GET /api/reportes/stock/vencimientos/resumen</c> — el tile de Tablero
+/// (spec: "a Tablero tile MUST surface the counts of vencido, por_vencer, and sin_fecha"). Mismos
+/// tres conteos que <see cref="Vencimientos.Filas"/> agrupados por <see cref="FilaDeVencimiento.Estado"/>
+/// — nunca una query de agregación separada, para que el tile y el reporte no puedan divergir.</summary>
+public sealed record ResumenDeVencimientos(int IdPuntoVenta, int Vencidos, int PorVencer, int SinFecha);

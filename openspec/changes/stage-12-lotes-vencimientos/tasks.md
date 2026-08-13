@@ -1235,44 +1235,80 @@ invariants ×3 (12.12).
 states resolved in the PV's own zona horaria, with an `/export` sibling and
 a `/resumen` tile feed. **Rollback**: revert the branch.
 
-- [ ] 13.1 Modify `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
+- [x] 13.1 Modify `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
   `ObtenerVencimientosAsync` — lot rows with positive `stock_lotes.cantidad`,
   classified via `ReglaDeLotes.Clasificar` (four states incl. `SinFecha`),
   ordered `fecha_vencimiento ASC NULLS LAST`, `dias` defaults to the
   resolved `dias_alerta_vencimiento`; `ResolverZonaAsync` resolves "hoy" in
   the PV's own `zona_horaria`, never UTC.
-- [ ] 13.2 Modify the same file: `ObtenerResumenDeVencimientosAsync` —
+- [x] 13.2 Modify the same file: `ObtenerResumenDeVencimientosAsync` —
   Tablero tile counts (`vencido`/`por_vencer`/`sin_fecha`).
-- [ ] 13.3 Modify `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
+- [x] 13.3 Modify `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
   `De(Vencimientos, ctx)` mapper — **listing shape** (design decision 17):
   `COUNT(*) → refuse → single read with .Take(tope + 1)`, never an
   aggregate-row-count guard.
-- [ ] 13.4 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`: `GET
+  *(Deviation, non-functional: the COUNT/refuse/Take pipeline lives in
+  `ServicioDeReportesDeStock.ObtenerVencimientosParaExportacionAsync`, not
+  inside the mapper itself — `De(Vencimientos, ctx)` stays pure/no-DB,
+  matching this file's own documented "No Re-Query" invariant and the exact
+  precedent of `ServicioDeHistoricoDeCajas.ListarCierresParaExportacionAsync`
+  / `ServicioDeCuentaCorriente.ObtenerEstadoDeCuentaParaExportacionAsync`.
+  The end-to-end shape — Count → refuse → Take(tope+1) → refuse — is
+  unchanged; only which layer executes the SQL differs from a literal
+  reading of the task line.)*
+- [x] 13.4 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`: `GET
   /reportes/stock/vencimientos` (`LecturaDeReportes`), `GET
   .../vencimientos/export` (co-located, inherited policy), `GET
   .../vencimientos/resumen`.
-- [ ] 13.5 [P] **Mutation target**: `TimeZoneInfo.ConvertTime(reloj.Ahora,
+- [x] 13.5 [P] **Mutation target**: `TimeZoneInfo.ConvertTime(reloj.Ahora,
   zona)` replaced with `reloj.Ahora.UtcDateTime` → the non-UTC
   classification test MUST fail (the lot flips `PorVencer → Vencido`);
   revert → green. *(spec: "'Hoy' is resolved in the punto de venta's own
   zona horaria, not UTC"; mutation-proof-tests)* Record evidence.
-- [ ] 13.6 [P] Classification-boundary tests: `vencido`/`por_vencer`/
+  **Evidence**: `VencimientosReporteTests.LaClasificacionSeResuelveEnLaZonaHorariaDelPuntoDeVentaNoEnUtc`
+  — reloj pinned to `2026-08-13T01:30:00Z` (same instant as the spec
+  scenario), PV zona `America/Argentina/Buenos_Aires` (default), lot
+  `fecha_vencimiento = 2026-08-12`. Mutation applied to
+  `ServicioDeReportesDeStock.ResolverContextoAsync` (`TimeZoneInfo.ConvertTime(reloj.Ahora,
+  zona).DateTime` → `reloj.Ahora.UtcDateTime`): test FAILED — `Hoy` expected
+  `12/08/2026`, actual `13/08/2026` (the lot would flip `PorVencer` →
+  `Vencido`). Reverted → all 8 filtered tests green. The lock-step (dias,
+  boundary-inclusive) domain-level `Clasificar` boundary math itself was
+  already covered by `ReglaDeLotesTests` from an earlier slice; this
+  mutation isolates the zone-conversion clause specifically, at the
+  integration/HTTP level.
+- [x] 13.6 [P] Classification-boundary tests: `vencido`/`por_vencer`/
   `vigente`/`sin_fecha`-counts-in-totals. *(spec: "A lot past its expiry
   classifies as vencido", "A lot within the alert horizon classifies as
   por_vencer", "A lot beyond the horizon classifies as vigente", "The
   sin-identificar lot appears in the report as sin_fecha and counts toward
-  the totals")*
-- [ ] 13.7 [P] Zero-balance-lot-excluded test. *(spec: "A zero-balance lot
-  never appears in the report")*
-- [ ] 13.8 [P] Export equality, cell by cell (`mutation-proof-tests` rule
+  the totals")* **Test**: `VencimientosReporteTests.ClasificaLosCuatroEstadosYElSinFechaCuentaEnLosTotales`
+  — 4 lots (`vencido`/`por_vencer`/`vigente`/`sin_fecha`, dias_alerta default
+  30, boundary dates matching `ReglaDeLotesTests`), asserts each row's
+  `Estado` plus the `/resumen` tile counts (1/1/1) consistent with the
+  report.
+- [x] 13.7 [P] Zero-balance-lot-excluded test. *(spec: "A zero-balance lot
+  never appears in the report")* **Test**: `VencimientosReporteTests.UnLoteConSaldoCeroNuncaApareceEnElReporte`.
+- [x] 13.8 [P] Export equality, cell by cell (`mutation-proof-tests` rule
   6): different values per row and column so a swap is detectable. *(spec:
-  "The export sibling's figures equal the JSON endpoint's")*
-- [ ] 13.9 [P] Cap + `+1` race backstop (listing shape, stage-11
-  precedent): `COUNT(*) → refuse` with the actual row count named.
-- [ ] 13.10 [P] 403 test. *(spec: "A Vendedor is rejected from the
-  vencimientos report and its export")*
-- [ ] 13.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
+  "The export sibling's figures equal the JSON endpoint's")* **Test**:
+  `VencimientosExportTests.ElExportEsIgualAlEndpointJsonFilaPorFilaEnTodasLasColumnas`
+  — 2 lots with distinct values on every column (one dated, one
+  sin-identificar to cover the blank-date cell), all 7 columns compared per
+  row.
+- [x] 13.9 [P] Cap + `+1` race backstop (listing shape, stage-11
+  precedent): `COUNT(*) → refuse` with the actual row count named. **Test**:
+  `VencimientosExportTests.UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadReal`
+  — tope forced to 3 via `WithWebHostBuilder`, 4 lots seeded, asserts `400
+  exportacion_demasiado_grande` naming `4`.
+- [x] 13.10 [P] 403 test. *(spec: "A Vendedor is rejected from the
+  vencimientos report and its export")* **Tests**:
+  `VencimientosReporteTests.UnVendedorEsRechazadoDelReporteDeVencimientos`,
+  `VencimientosExportTests.UnVendedorEsRechazadoDelExportDeVencimientos`.
+- [x] 13.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. Confirmed clean: "No changes have been made to the
+  model since the last migration." (this slice touches only Application/Api
+  layers — no `Ways.Domain`/EF configuration edits).
 - [ ] 13.12 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 13.13 Branch `feat/stage12-slice13-vencimientos` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
