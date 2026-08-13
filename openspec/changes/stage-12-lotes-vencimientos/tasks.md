@@ -504,8 +504,18 @@ point, both additive.
   `Migraciones/`/`Configuraciones/` file touched, per the DB CHANGE GATE;
   run via `--project src/Ways.Infrastructure --startup-project
   src/Ways.Infrastructure`, `WaysDbContextFactory` design-time factory.)*
-- [ ] 4.12 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 4.13 Branch `feat/stage12-slice4-reconciliacion` off `main` (parent:
+- [x] 4.12 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  round 1 double REJECT — judge A: MAJOR undocumented partial-failure
+  contract on both flip triggers, plus a CRITICAL that resolved as a FALSE
+  ALARM (the live mutation it observed was judge B's own authorized probe
+  running concurrently; round 2 was serialized B→A to remove that race);
+  judge B: MAJOR, both ReconciliarAsync scope filters survived deletion —
+  the trigger tests never seeded negative cases. Fix batch
+  ac75137/9b0836b/f40d1f3: contract comments at both call sites + 3 new
+  tests (negative-scope, multi-pair exact counts, idPuntoVenta-only branch)
+  with per-filter mutation evidence. Round 2 double APPROVE; judge A
+  blob-hash-verified ServicioDeLotes.cs unchanged since 32bd1de.)*
+- [x] 4.13 Branch `feat/stage12-slice4-reconciliacion` off `main` (parent:
   slice 3); PR; merge stacked-to-main.
 
 **Test plan**: net-zero proof (4.5), idempotence mutation (4.6), self-heal
