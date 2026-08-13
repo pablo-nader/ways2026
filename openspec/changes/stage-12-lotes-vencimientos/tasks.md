@@ -186,9 +186,16 @@ rows rewritten.
 - [x] 1.24 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   no pending changes after this migration (confirms the EF model matches
   exactly the gate-approved schema, nothing more).
-- [ ] 1.25 Run `judgment-day` on the slice diff; fix confirmed issues;
-  re-judge until clean.
-- [ ] 1.26 Branch `feat/stage12-slice1-esquema` off `main`; PR **flagged
+- [x] 1.25 Run `judgment-day` on the slice diff; fix confirmed issues;
+  re-judge until clean. *(APPLY-RUN NOTE: round 1 double REJECT — judge A:
+  BLOCKER, duplicate `HasIndex(IdTenant)` metadata slot silently dropped
+  `ix_articulos_tenant` from the model; judge B: BLOCKER, `Down()` threw
+  `NotSupportedException` on enum-label removal, proven live on postgres:17,
+  plus MAJOR, the two EF-filter tests were vacuous under the RLS confound —
+  proven by mutation. Fix batch bf45913/d0be19c/b7aa957 with per-fix mutation
+  evidence; round 2 double APPROVE, including a fresh snapshot-drift mutation
+  probe on the partial index filter.)*
+- [x] 1.26 Branch `feat/stage12-slice1-esquema` off `main`; PR **flagged
   `size:exception`** per design decision 21; merge stacked-to-main.
 
 **Test plan**: migration apply, RLS ×2, `23505` backstop ×2, `23503`
