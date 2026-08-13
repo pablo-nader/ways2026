@@ -28,8 +28,12 @@ public sealed record SolicitudDeVenta(
 /// contabilidad. Sin <c>precioUnitario</c>/<c>descuento</c>/<c>total</c> (design decisión 3).
 /// <see cref="CodigoBarra"/> es el que devolvió el escaneo — snapshot informativo en el item, no
 /// se re-valida contra <c>codigos_barra</c> en el checkout (ya se validó en
-/// <c>GET /api/articulos/escaneo</c>).</summary>
-public sealed record LineaDeVenta(int IdArticulo, decimal Cantidad, string? CodigoBarra);
+/// <c>GET /api/articulos/escaneo</c>). <see cref="IdLote"/> (stage-12 slice 7) es opcional y solo
+/// tiene efecto para una línea lote-efectiva (<c>ControlaLote AND lotesHabilitado</c>): omitido,
+/// <see cref="ServicioDeVentas"/> aplica el default FEFO; un cliente legado que ni siquiera
+/// conoce el campo transacciona igual (spec comprobantes-venta: "A client that knows nothing
+/// about lots still transacts correctly").</summary>
+public sealed record LineaDeVenta(int IdArticulo, decimal Cantidad, string? CodigoBarra, int? IdLote = null);
 
 /// <summary>Un medio de pago del checkout (design: Checkout Contract). A diferencia de
 /// <see cref="LineaDeVenta"/>, SÍ lleva dinero: <see cref="Importe"/>/<see cref="Vuelto"/> son lo
@@ -37,7 +41,14 @@ public sealed record LineaDeVenta(int IdArticulo, decimal Cantidad, string? Codi
 /// los valida, no los calcula.</summary>
 public sealed record PagoDeVenta(int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto);
 
-/// <summary>Un item ya emitido — snapshot inmutable (spec: Snapshot Immutability of Items).</summary>
+/// <summary>Un item ya emitido — snapshot inmutable (spec: Snapshot Immutability of Items).
+/// <see cref="IdLote"/>/<see cref="CodigoLote"/>/<see cref="LoteVencido"/> (stage-12 slice 7) solo
+/// se completan para una línea lote-efectiva: el lote resuelto en la fase de decisión (FEFO
+/// default u honrado si vino explícito), su código proyectado, y si su vencimiento ya pasó
+/// (warning, nunca bloqueo — spec: "Expired Lot Sale Warns, Never Blocks"). NULL/false para una
+/// línea sin lote. Nota de límite de esta slice: la escritura de <c>id_lote</c> en
+/// <c>items_comprobante_venta</c> es de slice 8 — acá el dato viaja en el plan/response, todavía
+/// no en la fila persistida.</summary>
 public sealed record ItemEmitido(
     int Orden,
     int? IdArticulo,
@@ -51,7 +62,10 @@ public sealed record ItemEmitido(
     decimal Cantidad,
     decimal PrecioUnitario,
     decimal Descuento,
-    decimal Total);
+    decimal Total,
+    int? IdLote = null,
+    string? CodigoLote = null,
+    bool LoteVencido = false);
 
 /// <summary>Un pago ya emitido.</summary>
 public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Referencia, decimal Vuelto);

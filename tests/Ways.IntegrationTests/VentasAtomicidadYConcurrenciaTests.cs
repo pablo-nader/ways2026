@@ -579,7 +579,8 @@ public class VentasAtomicidadYConcurrenciaTests(WaysApiFixture fixture) : IClass
         var servicioDeOfertas = new Ways.Application.Ofertas.ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
         var lectorDeMovimientos = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
         var servicioDeTurnos = new Ways.Application.Caja.ServicioDeTurnos(db, reloj, contexto, lectorDeMovimientos);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos);
+        var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
+        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
 
         var metodo = typeof(ServicioDeVentas).GetMethod(
             "BuscarPorNumeroComprometidoAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;

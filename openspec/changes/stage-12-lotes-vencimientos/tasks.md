@@ -767,46 +767,105 @@ round-trip budget verified `16 → 17` only when the cart holds a
 lot-controlled articulo. **No writes yet** — the transaction shape is
 unchanged. **Rollback**: revert the branch.
 
-- [ ] 7.1 Modify `src/Ways.Application/Ventas/ServicioDeVentas.cs`:
+- [x] 7.1 Modify `src/Ways.Application/Ventas/ServicioDeVentas.cs`:
   `EmitirAsync` decide phase — immediately after `MaterializarItems`
   (`articuloPorId` already loaded), compute `lineasConLote`; if non-empty,
   call `servicioDeLotes.LeerSaldosAsync(puntoVenta.Id, articulos,
-  lotesPedidos)` — the one new round trip.
-- [ ] 7.2 Modify `ServicioDeVentas.cs`: per-line resolution —
+  lotesPedidos)` — the one new round trip. *(APPLY-RUN NOTE:
+  `lineasConLote` is computed right after `ResolverParametrosDeVentaAsync`
+  (immediately follows `MaterializarItems` in the existing sequence, and is
+  the only source of `lotesHabilitado` — previously discarded with `_`, now
+  consumed); `ServicioDeLotes` is injected as a constructor dependency
+  (`servicioDeLotes`, DI-registered since slice 3) rather than invoked
+  statically, since `LeerSaldosAsync` is an instance method (unlike
+  `ResolverOCrearAsync`/`ResolverSinIdentificarAsync`, which stay static and
+  are called directly off the type per the slice 5 apply-run precedent).*)*
+- [x] 7.2 Modify `ServicioDeVentas.cs`: per-line resolution —
   `ReglaDeLotes.ElegirFefo` over saldos; a supplied `idLote` is validated
   against `saldos` (exists, belongs to the articulo, not soft-deleted) or
   rejected `400 lote_invalido`; an omitted `idLote` defaults via
   `ElegirFefo`, a `null` result (no lot with positive balance) resolves the
   sin-identificar lot via `ResolverSinIdentificarAsync` (raw
-  `ExecuteScalarAsync`, invisible to the round-trip counter).
-- [ ] 7.3 Modify `LineaDeVenta`/`PlanDeVenta`/`ItemEmitido` contracts:
+  `ExecuteScalarAsync`, invisible to the round-trip counter). *(APPLY-RUN
+  NOTE: "not soft-deleted" needs no extra code — `db.Lotes`'s global
+  `deleted_at IS NULL` query filter already excludes a soft-deleted row
+  from `LeerSaldosAsync`'s result set, so `FindIndex` naturally returns -1
+  for it, same 400 as a nonexistent/foreign-articulo id.)*
+- [x] 7.3 Modify `LineaDeVenta`/`PlanDeVenta`/`ItemEmitido` contracts:
   `LineaDeVenta.IdLote` (optional input), `ItemEmitido.IdLote`/
   `CodigoLote`/`LoteVencido` (output); the plan carries the resolved lot,
-  immutable once decided.
-- [ ] 7.4 [P] Query-count test: module on + ≥1 lot-controlled articulo in
+  immutable once decided. *(APPLY-RUN NOTE: the private `LineaDelPlan`
+  record struct gained the same three trailing optional fields — that is
+  literally "the plan", per design. Since the transaction does NOT persist
+  `id_lote` in this slice (slice 8), `Proyectar` gained an optional
+  `planItems` parameter: the fresh-checkout call site
+  (`EjecutarTransaccionAsync`) passes `plan.Items` (zipped to
+  `itemsEntidad` by `Orden`, 1-based, same order) so `ItemEmitido` carries
+  the decide-phase lot even though the DB row does not yet; the two
+  read-back call sites (`BuscarPorNumeroComprometidoAsync`/`ObtenerAsync`)
+  omit it and fall back to the persisted (currently always-NULL) entity
+  field — an accepted, documented slice-8 dependency, not a bug.)*
+- [x] 7.4 [P] Query-count test: module on + ≥1 lot-controlled articulo in
   cart → `17`. *(spec lotes-y-vencimientos: "Module on with a
-  lot-controlled articulo nets zero round-trip change")*
-- [ ] 7.5 [P] Omitted-`idLote`-picks-FEFO test. *(spec: "An omitted idLote
-  resolves to the nearest-expiry dated lot")*
-- [ ] 7.6 [P] End-to-end sin-identificar-first proof (Domain-level mutation
+  lot-controlled articulo nets zero round-trip change")* *(APPLY-RUN NOTE:
+  `PlanDeVentaFefoTests.ElCheckoutEmiteDiecisieteConsultasConUnArticuloConLoteEnElCarrito`
+  — 17 confirmed, plus a table-filtered counter asserting exactly 1
+  `lotes`/`stock_lotes` query.)*
+- [x] 7.5 [P] Omitted-`idLote`-picks-FEFO test. *(spec: "An omitted idLote
+  resolves to the nearest-expiry dated lot")* *(APPLY-RUN NOTE:
+  `UnIdLoteOmitidoResuelveAlLoteDeVencimientoMasCercano`.)*
+- [x] 7.6 [P] End-to-end sin-identificar-first proof (Domain-level mutation
   target already in slice 2; this is the write-path confirmation). *(spec:
-  "The sin-identificar lot is offered before every dated lot")*
-- [ ] 7.7 [P] Supplied-`idLote`-honoured test. *(spec: "A supplied idLote
-  is honoured even when it is not the FEFO pick")*
-- [ ] 7.8 [P] Invalid-`idLote` test → `400 lote_invalido`. *(spec: "An
-  invalid supplied idLote is rejected")*
-- [ ] 7.9 [P] No-auto-split test. *(spec: "A lot running short still
-  completes the line, never auto-splitting")*
-- [ ] 7.10 [P] Regression: module on, no lot-controlled articulo in cart →
+  "The sin-identificar lot is offered before every dated lot")* *(APPLY-RUN
+  NOTE: `ElLoteSinIdentificarSeOfreceAntesQueCualquierLoteConFecha` — no
+  new mutation evidence recorded here, per the task's own framing (already
+  proven at Domain level in slice 2's `OrdenarFefo`/`ElegirFefo` suite);
+  this is confirmation-only.)*
+- [x] 7.7 [P] Supplied-`idLote`-honoured test. *(spec: "A supplied idLote
+  is honoured even when it is not the FEFO pick")* *(APPLY-RUN NOTE:
+  `UnIdLoteProvistoSeHonraAunqueNoSeaElPickFefo`.)*
+- [x] 7.8 [P] Invalid-`idLote` test → `400 lote_invalido`. *(spec: "An
+  invalid supplied idLote is rejected")* *(APPLY-RUN NOTE: two tests —
+  `UnIdLoteInvalidoEsRechazadoConLoteInvalido` (nonexistent id) and
+  `UnIdLoteDeOtroArticuloEsRechazadoConLoteInvalido` (real id, wrong
+  articulo). Mutation evidence (permanent rule 6): the `if (posicion < 0)
+  throw ...` guard in `ServicioDeVentas.EmitirAsync` was commented out,
+  rebuilt, and both tests re-run — both went RED
+  (`500`/`ArgumentOutOfRangeException` instead of `400 lote_invalido`);
+  guard restored, rebuilt, both tests GREEN again. No other layer was
+  weakened to produce the failure.)*
+- [x] 7.9 [P] No-auto-split test. *(spec: "A lot running short still
+  completes the line, never auto-splitting")* *(APPLY-RUN NOTE:
+  `UnLoteCortoCompletaLaLineaSinAutoSplit` — FEFO lot has balance 3, line
+  requests 5; asserts the response's single item still resolves to that one
+  lot for the full quantity 5 (no second `ItemEmitido` row). The negative
+  `stock_lotes.cantidad = -2` outcome itself is NOT asserted here — that
+  write does not exist yet in this slice (slice 8's `UpsertStockLoteAsync`
+  invariant test, task 8.4).)*
+- [x] 7.10 [P] Regression: module on, no lot-controlled articulo in cart →
   still `16`, no FEFO query. *(spec: "Module on with no lot-controlled
-  articulo in the cart issues no FEFO query")*
-- [ ] 7.11 [P] Legacy-client compatibility test. *(spec comprobantes-venta:
+  articulo in the cart issues no FEFO query")* *(APPLY-RUN NOTE:
+  `ElCheckoutEmiteDieciseisConsultasSinArticuloConLoteEnElCarrito` — 16
+  confirmed, plus the table-filtered counter asserting 0 `lotes`/
+  `stock_lotes` queries.)*
+- [x] 7.11 [P] Legacy-client compatibility test. *(spec comprobantes-venta:
   "A client that knows nothing about lots still transacts correctly")*
-- [ ] 7.12 [P] Mixed-cart test (lot-controlled + non-lot line in one
+  *(APPLY-RUN NOTE: `UnClienteLegadoSinIdLoteTransaccionaCorrectamente` —
+  posts a hand-built raw JSON body whose `lineas[0]` object has NO `idLote`
+  property at all (not even `null`), to simulate a client that has never
+  heard of the field; the sale succeeds and the FEFO default applies
+  silently.)*
+- [x] 7.12 [P] Mixed-cart test (lot-controlled + non-lot line in one
   cart). *(spec: "A cart with a lot-controlled and a non-lot articulo mixes
-  both paths")*
-- [ ] 7.13 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
+  both paths")* *(APPLY-RUN NOTE:
+  `UnCarritoMixtoDeArticuloConLoteYSinLoteResuelveAmbosCaminos`.)*
+- [x] 7.13 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. *(APPLY-RUN NOTE: ran via
+  `--project src/Ways.Infrastructure --startup-project src/Ways.Infrastructure`
+  (same reason as the slice 5 apply-run note — `Ways.Api` lacks the EF
+  Design package reference). Output: "No changes have been made to the
+  model since the last migration." Expected — this slice adds no schema,
+  only C#/records.)*
 - [ ] 7.14 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 7.15 Branch `feat/stage12-slice7-venta-plan-fefo` off `main` (parent:
   slice 3); PR; merge stacked-to-main.
