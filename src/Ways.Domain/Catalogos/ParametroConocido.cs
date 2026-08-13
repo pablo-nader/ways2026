@@ -40,11 +40,24 @@ public sealed record ParametroConocido(string Clave, Type TipoClr, string ValorP
     public static readonly ParametroConocido ComisionPorcentaje =
         new("comision_porcentaje", typeof(decimal), "0");
 
+    /// <summary>Interruptor del módulo de lotes a nivel empresa (stage-12, design: Interfaces /
+    /// Contracts): control efectivo de un artículo es este parámetro AND
+    /// <c>articulos.controla_lote</c> (<see cref="Stock.ReglaDeLotes.ControlEfectivo"/>). Sin
+    /// migración — mismo patrón que <see cref="ZonaHoraria"/>/<see cref="ComisionPorcentaje"/>
+    /// en stage-10.</summary>
+    public static readonly ParametroConocido LotesHabilitado =
+        new("lotes_habilitado", typeof(bool), "false");
+
+    /// <summary>Horizonte de alerta de "próximo a vencer" consumido por el reporte de
+    /// vencimientos (stage-12, design decisión 15). Default <c>30</c> días.</summary>
+    public static readonly ParametroConocido DiasAlertaVencimiento =
+        new("dias_alerta_vencimiento", typeof(int), "30");
+
     private static readonly IReadOnlyDictionary<string, ParametroConocido> PorClave =
         new[]
         {
             ToleranciaPago, VueltoMaximo, ImporteAdicionalRecarga, SlotsTicketsEspera,
-            ZonaHoraria, ComisionPorcentaje
+            ZonaHoraria, ComisionPorcentaje, LotesHabilitado, DiasAlertaVencimiento
         }.ToDictionary(p => p.Clave, p => p, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Devuelve el registro de <paramref name="clave"/>, o rechaza con un error de

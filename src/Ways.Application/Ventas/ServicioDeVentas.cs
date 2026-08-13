@@ -105,12 +105,15 @@ public class ServicioDeVentas(
 
         var (items, totales) = MaterializarItems(tipo.Signo, lineas, resolucion, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio);
 
-        // 2 consultas: tolerancia_pago + vuelto_maximo, resueltas directo (sin el pre-chequeo
-        // de pertenencia de ServicioDeParametros.ResolverAsync — puntoVenta ya se resolvió
-        // arriba, así que idEmpresa ya es de confianza) para mantener el presupuesto pineado
-        // por design (Technical Approach: "≤ 16 round trips").
-        var toleranciaPago = await ResolverParametroAsync(ParametroConocido.ToleranciaPago, puntoVenta.IdEmpresa, puntoVenta.Id, ct);
-        var vueltoMaximo = await ResolverParametroAsync(ParametroConocido.VueltoMaximo, puntoVenta.IdEmpresa, puntoVenta.Id, ct);
+        // 1 consulta batcheada (stage-12, design decisión 2 / spec parametros-operativos: "A
+        // Single Batched Query Resolves All Three Keys"): tolerancia_pago + vuelto_maximo +
+        // lotes_habilitado, resueltas directo (sin el pre-chequeo de pertenencia de
+        // ServicioDeParametros.ResolverAsync — puntoVenta ya se resolvió arriba, así que
+        // idEmpresa ya es de confianza). Reemplaza las 2 consultas separadas de antes de esta
+        // etapa — 17 → 16 round trips (task 2.7). `lotesHabilitado` lo consume recién el plan
+        // FEFO de slice 7 (design: "Write site 1"); acá se descarta a propósito.
+        var (toleranciaPago, vueltoMaximo, _) =
+            await ResolverParametrosDeVentaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
 
         // 1 consulta: medios de pago pedidos.
         var idsMedioPago = pagos.Select(p => p.IdMedioPago).Distinct().ToList();
@@ -781,16 +784,44 @@ public class ServicioDeVentas(
             ?? throw new InvalidOperationException("El tenant actual no tiene un Consumidor Final sembrado.");
     }
 
-    private async Task<decimal> ResolverParametroAsync(
-        ParametroConocido conocido, int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    /// <summary>Las tres claves que el checkout necesita, en UNA sola query <c>WHERE clave IN
+    /// (...)</c> (stage-12, design decisión 2 / spec parametros-operativos: "ServicioDeVentas
+    /// Batches Its Parametro Reads Into One Query") — reemplaza las dos consultas separadas de
+    /// <c>tolerancia_pago</c>/<c>vuelto_maximo</c> de antes de esta etapa, agregando
+    /// <c>lotes_habilitado</c> sin sumar un tercer round trip.
+    ///
+    /// <c>ResolucionDeParametros.Resolver</c> filtra los candidatos por punto de venta pero NO
+    /// por clave (fue escrita para un candidate set de una sola clave) — pasarle el set
+    /// multi-clave completo corrompería la resolución cruzada (una fila de <c>tolerancia_pago</c>
+    /// con el mismo <c>id_punto_venta</c> "gana" la resolución de <c>vuelto_maximo</c>). El
+    /// <c>Where(p => p.Clave == c.Clave)</c> de abajo es el target de mutación nombrado por el
+    /// design (mutation-proof-tests): borrarlo tiene que tirar en rojo la prueba de
+    /// <c>VentasCheckoutTests</c> que mezcla una fila de punto de venta de
+    /// <c>tolerancia_pago</c> con una fila solo de empresa de <c>vuelto_maximo</c>. Evidencia de
+    /// mutación registrada en ese archivo, junto al test.</summary>
+    private async Task<(decimal ToleranciaPago, decimal VueltoMaximo, bool LotesHabilitado)> ResolverParametrosDeVentaAsync(
+        int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
+        ParametroConocido[] conocidos =
+            [ParametroConocido.ToleranciaPago, ParametroConocido.VueltoMaximo, ParametroConocido.LotesHabilitado];
+        var claves = conocidos.Select(c => c.Clave).ToList();
+
         var candidatos = await db.Parametros
-            .Where(p => p.Clave == conocido.Clave && p.IdEmpresa == idEmpresa
+            .Where(p => claves.Contains(p.Clave) && p.IdEmpresa == idEmpresa
                 && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
             .ToListAsync(ct);
 
-        var valorJson = ResolucionDeParametros.Resolver(conocido.Clave, candidatos, idPuntoVenta);
-        return JsonSerializer.Deserialize<decimal>(valorJson);
+        var resueltoPorClave = conocidos.ToDictionary(
+            c => c.Clave,
+            c => ResolucionDeParametros.Resolver(
+                c.Clave,
+                candidatos.Where(p => p.Clave == c.Clave).ToList(),
+                idPuntoVenta));
+
+        return (
+            JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.ToleranciaPago.Clave]),
+            JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.VueltoMaximo.Clave]),
+            JsonSerializer.Deserialize<bool>(resueltoPorClave[ParametroConocido.LotesHabilitado.Clave]));
     }
 
     /// <summary>Corre <see cref="CalculadorDeTotales"/> (pura) sobre las líneas ya resueltas y

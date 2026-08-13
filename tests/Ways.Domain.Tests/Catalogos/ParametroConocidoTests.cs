@@ -12,11 +12,27 @@ public class ParametroConocidoTests
     [InlineData("slots_tickets_espera")]
     [InlineData("zona_horaria")]
     [InlineData("comision_porcentaje")]
-    public void LasSeisClavesConocidasEstanRegistradas(string clave)
+    [InlineData("lotes_habilitado")]
+    [InlineData("dias_alerta_vencimiento")]
+    public void LasOchoClavesConocidasEstanRegistradas(string clave)
     {
         var conocido = ParametroConocido.Buscar(clave);
 
         Assert.Equal(clave, conocido.Clave);
+    }
+
+    [Fact]
+    public void LotesHabilitadoDeclaraElDefaultEnFalse()
+    {
+        Assert.Equal(typeof(bool), ParametroConocido.LotesHabilitado.TipoClr);
+        Assert.Equal("false", ParametroConocido.LotesHabilitado.ValorPorDefecto);
+    }
+
+    [Fact]
+    public void DiasAlertaVencimientoDeclaraElDefaultEn30()
+    {
+        Assert.Equal(typeof(int), ParametroConocido.DiasAlertaVencimiento.TipoClr);
+        Assert.Equal("30", ParametroConocido.DiasAlertaVencimiento.ValorPorDefecto);
     }
 
     [Fact]

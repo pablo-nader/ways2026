@@ -339,8 +339,15 @@ sin-identificar residue would understate its own totals.)
   `fecha_vencimiento = 2026-08-12`
 - WHEN the vencimientos report is requested
 - THEN "hoy" resolves to `2026-08-12` in that zona_horaria (not `2026-08-13`
-  as a naive UTC read would produce), and that lot classifies `vencido`, not
-  `por_vencer`
+  as a naive UTC read would produce), and that lot classifies `por_vencer`,
+  not `vencido` — the expiry date is inclusive: a lot expiring today is still
+  sellable today, and `vencido` means `fecha_vencimiento < hoy` strictly. A
+  naive UTC read would have tipped it into `vencido` a day early, which is
+  exactly the bug this scenario pins. (Amended at slice-2 judgment-day:
+  the original THEN said `vencido`, contradicting both design.md's boundary
+  table and this scenario's own zone-resolution intent; orchestrator decision
+  — retail semantics, conservative bias — resolved the boundary as strict
+  `<`, implemented in `ReglaDeLotes.EstaVencido`.)
 
 #### Scenario: The sin-identificar lot appears in the report as sin_fecha and counts toward the totals
 - GIVEN a lot-effective articulo at a punto de venta has a sin-identificar
