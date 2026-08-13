@@ -466,6 +466,23 @@ point, both additive.
   prevent — the strongest possible mutation evidence, a real Postgres CHECK
   catching it. Reverted, build, same filter: GREEN; full
   `ReconciliacionTests`: GREEN, 7/7.)*
+  *(judgment-day ronda 2 note — juez A CRITICAL, falsa alarma: la mutación
+  en vivo que juez A observó (una fila `Reclasificacion` → `Ajuste`) era el
+  probe 2(c) de juez B corriendo en paralelo, único mutador autorizado del
+  worktree en ese momento — no una fuga real. Clase de falsa alarma ya
+  documentada en la memoria del proyecto (revisiones judgment-day corriendo
+  en paralelo sobre el mismo worktree pueden observarse mutuamente). En
+  ronda 2 la verificación de juez A corre DESPUÉS de juez B para eliminar
+  la ventana de colisión.)*
+  *(judgment-day ronda 2 note — juez A MINOR, resuelto empíricamente: la
+  evidencia de este ítem 4.6 depende del CHECK `ck_movimientos_stock_cantidad_no_cero`
+  para caer RED (según lo documentado arriba). El probe de juez B (fix 2,
+  evidencia de mutación #1/#2 sobre el filtro `ControlaLote` y el guard de
+  `lotes_habilitado` en `ReconciliarAsync`) mostró que, sin ese CHECK, el
+  assert de conteo de la línea ~212 (`Assert.Equal(2, ...MovimientosStock
+  ...)`) igualmente caza la mutación por sí solo — contó 4 filas en vez de
+  2. La aserción de conteo es independiente del CHECK; nota registrada, sin
+  cambio de código.)*
 - [x] 4.7 [P] Self-heal test: sell into an unreconciled pair (drives the
   sin-identificar lot negative), then reconcile, assert `SUM(stock_lotes) =
   stock.cantidad` afterward. *(APPLY-RUN NOTE: slices 7/8's lot-aware venta

@@ -176,7 +176,7 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
     /// <summary>Segundo PV de la MISMA empresa que <c>ctx.IdPuntoVenta</c> (hereda
     /// <c>lotes_habilitado</c> efectivo true sin fila propia) — usado para el test del branch
-    /// <c>idPuntoVenta</c>-only de <c>ReconciliarAsync</c> (task 4.12).</summary>
+    /// <c>idPuntoVenta</c>-only de <c>ReconciliarAsync</c> (judgment-day ronda 2, juez B).</summary>
     private async Task<int> SembrarSegundoPuntoDeVentaAsync(Contexto ctx, string nombre)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
@@ -498,7 +498,7 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(17m, stockLote.Cantidad);
     }
 
-    // ---- task 4.11 (judgment-day ronda 2, juez B MAJOR): SCOPE negativo con evidencia de mutación ----
+    // ---- judgment-day ronda 2, juez B MAJOR: SCOPE negativo con evidencia de mutación -----------
 
     /// <summary>SCOPE negativo: sin el filtro <c>where articulo.ControlaLote</c> en
     /// <c>ReconciliarAsync</c> Y sin el guard de <c>lotes_habilitado</c> efectivo en su loop de
@@ -560,7 +560,7 @@ public class ReconciliacionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(0, movimientosPvSinLotes);
     }
 
-    // ---- task 4.12 (judgment-day ronda 2, juez B secundario): agregación y branch idPuntoVenta-only ----
+    // ---- judgment-day ronda 2, juez B secundario: agregación y branch idPuntoVenta-only -----------
 
     /// <summary>Cobertura de agregación: dos pares reconciliables en UNA sola corrida de scope
     /// amplio — <c>ParesReconciliados</c>/<c>ParesSinResiduo</c> tienen que reflejar los DOS,
