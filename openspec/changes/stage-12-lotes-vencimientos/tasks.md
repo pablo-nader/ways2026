@@ -1239,7 +1239,9 @@ a `/resumen` tile feed. **Rollback**: revert the branch.
   `ObtenerVencimientosAsync` — lot rows with positive `stock_lotes.cantidad`,
   classified via `ReglaDeLotes.Clasificar` (four states incl. `SinFecha`),
   ordered `fecha_vencimiento ASC NULLS LAST`, `dias` defaults to the
-  resolved `dias_alerta_vencimiento`; `ResolverZonaAsync` resolves "hoy" in
+  resolved `dias_alerta_vencimiento`; `ResolverZonaAsync` *(shipped as
+  `ResolverContextoAsync` — broader name, it also resolves `idEmpresa` for
+  the dias chain; rename noted at judgment-day, judge A MINOR-1)* resolves "hoy" in
   the PV's own `zona_horaria`, never UTC.
 - [x] 13.2 Modify the same file: `ObtenerResumenDeVencimientosAsync` —
   Tablero tile counts (`vencido`/`por_vencer`/`sin_fecha`).
@@ -1309,8 +1311,17 @@ a `/resumen` tile feed. **Rollback**: revert the branch.
   no pending changes. Confirmed clean: "No changes have been made to the
   model since the last migration." (this slice touches only Application/Api
   layers — no `Ways.Domain`/EF configuration edits).
-- [ ] 13.12 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 13.13 Branch `feat/stage12-slice13-vencimientos` off `main` (parent:
+- [x] 13.12 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  round 1 — judge B APPROVE-with-MAJOR: the `dias ?? resolved` override
+  branch had zero coverage on both report and export; all 8 mutation probes
+  killed (zone flip, boundary, sin_fecha exclusion, zero-balance, cell swap,
+  row drop, cap truncation, tile miscount). Fix 59474d7: 2 override tests
+  with mutation evidence. Round 2 judge B APPROVE; judge A APPROVE with 4
+  MINORs — rename note added above; accepted debt: the export-dias test
+  uses UtcNow with a 5-day safety margin instead of RelojFijo (verified
+  safe across the 00-03 UTC window by both judges), and the report's
+  ORDER BY has no id tiebreaker (display-only, spec-silent).)*
+- [x] 13.13 Branch `feat/stage12-slice13-vencimientos` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
 
 **Test plan**: non-UTC mutation (13.5), classification ×4 (13.6),
