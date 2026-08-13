@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Parametros;
+using Ways.Application.Stock;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
 
@@ -23,10 +25,32 @@ public class ServicioDeParametrosTests
         public DateTimeOffset Ahora { get; } = ahora;
     }
 
+    private sealed class ContextoFijo(int idTenant) : IContextoDeUsuario
+    {
+        public bool EstaAutenticado => true;
+        public int UsuarioId => 999;
+        public string NombreUsuario => "actor-de-prueba";
+        public RolConocido Rol => RolConocido.Admin;
+        public int? IdTenant { get; } = idTenant;
+    }
+
     private static WaysDbContext CrearContexto(string nombreDeBase) =>
         new(
             new DbContextOptionsBuilder<WaysDbContext>().UseInMemoryDatabase(nombreDeBase).Options,
             new TenantActualFijo(ModoDeAcceso.Tenant, 1));
+
+    /// <summary>stage-12-lotes-vencimientos, Slice 4: ninguno de los tests de este archivo
+    /// establece <c>lotes_habilitado</c>, así que <c>ServicioDeLotes.ReconciliarAsync</c> nunca
+    /// se dispara acá — el InMemory provider, que no soporta <c>BeginTransactionAsync</c>, nunca
+    /// llega a ese camino. El disparador real se prueba en <c>ReconciliacionTests</c>
+    /// (Ways.IntegrationTests), contra Postgres.</summary>
+    private static ServicioDeParametros CrearServicio(string nombreDeBase)
+    {
+        var db = CrearContexto(nombreDeBase);
+        var reloj = new RelojFijo(Ahora);
+        var contexto = new ContextoFijo(idTenant: 1);
+        return new ServicioDeParametros(db, reloj, new ServicioDeLotes(db, reloj, contexto));
+    }
 
     private static async Task<(int IdEmpresaA, int IdPuntoVentaDeA, int IdEmpresaB, int IdPuntoVentaDeB)>
         SembrarDosEmpresasConSuPuntoDeVentaAsync(string nombreDeBase)
@@ -58,7 +82,7 @@ public class ServicioDeParametrosTests
         var nombreDeBase = nameof(EstablecerAsyncRechazaUnPuntoDeVentaDeOtraEmpresa);
         var (idEmpresaA, _, _, idPuntoVentaDeB) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
 
-        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+        var servicio = CrearServicio(nombreDeBase);
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
             idEmpresaA, new ParametroAlta("tolerancia_pago", "15", idPuntoVentaDeB)));
@@ -73,7 +97,7 @@ public class ServicioDeParametrosTests
         var nombreDeBase = nameof(EstablecerAsyncAceptaUnPuntoDeVentaDeLaMismaEmpresa);
         var (idEmpresaA, idPuntoVentaDeA, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
 
-        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+        var servicio = CrearServicio(nombreDeBase);
 
         var resultado = await servicio.EstablecerAsync(
             idEmpresaA, new ParametroAlta("tolerancia_pago", "15", idPuntoVentaDeA));
@@ -87,7 +111,7 @@ public class ServicioDeParametrosTests
         var nombreDeBase = nameof(ResolverAsyncRechazaUnPuntoDeVentaDeOtraEmpresa);
         var (idEmpresaA, _, _, idPuntoVentaDeB) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
 
-        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+        var servicio = CrearServicio(nombreDeBase);
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ResolverAsync(
             "tolerancia_pago", idEmpresaA, idPuntoVentaDeB));
@@ -104,7 +128,7 @@ public class ServicioDeParametrosTests
         var nombreDeBase = nameof(EstablecerAsyncAceptaZonaHorariaQuoteadaYLaDevuelveVerbatim);
         var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
 
-        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+        var servicio = CrearServicio(nombreDeBase);
 
         var resultado = await servicio.EstablecerAsync(
             idEmpresaA, new ParametroAlta("zona_horaria", "\"America/Argentina/Cordoba\"", null));
@@ -118,7 +142,7 @@ public class ServicioDeParametrosTests
         var nombreDeBase = nameof(EstablecerAsyncRechazaZonaHorariaSinComillas);
         var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
 
-        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+        var servicio = CrearServicio(nombreDeBase);
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
             idEmpresaA, new ParametroAlta("zona_horaria", "America/Argentina/Cordoba", null)));
@@ -136,7 +160,7 @@ public class ServicioDeParametrosTests
         var nombreDeBase = nameof(EstablecerAsyncRechazaUnaDeserializacionNull);
         var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
 
-        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+        var servicio = CrearServicio(nombreDeBase);
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
             idEmpresaA, new ParametroAlta("zona_horaria", "null", null)));
@@ -151,7 +175,7 @@ public class ServicioDeParametrosTests
         var nombreDeBase = nameof(EstablecerAsyncRechazaUnaZonaHorariaQueNoEsUnIdIana);
         var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
 
-        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+        var servicio = CrearServicio(nombreDeBase);
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
             idEmpresaA, new ParametroAlta("zona_horaria", "\"No/Existe\"", null)));
@@ -166,7 +190,7 @@ public class ServicioDeParametrosTests
         var nombreDeBase = nameof(EstablecerAsyncRechazaUnIdDeZonaNativoDeWindows);
         var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
 
-        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+        var servicio = CrearServicio(nombreDeBase);
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
             idEmpresaA, new ParametroAlta("zona_horaria", "\"Argentina Standard Time\"", null)));
@@ -181,7 +205,7 @@ public class ServicioDeParametrosTests
         var nombreDeBase = nameof(EstablecerAsyncAceptaUnaZonaIanaFueraDeLaListaCuradaDelFront);
         var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
 
-        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+        var servicio = CrearServicio(nombreDeBase);
 
         var parametro = await servicio.EstablecerAsync(
             idEmpresaA, new ParametroAlta("zona_horaria", "\"America/Santiago\"", null));
@@ -195,7 +219,7 @@ public class ServicioDeParametrosTests
         var nombreDeBase = nameof(EstablecerAsyncRechazaUnaZonaHorariaVacia);
         var (idEmpresaA, _, _, _) = await SembrarDosEmpresasConSuPuntoDeVentaAsync(nombreDeBase);
 
-        var servicio = new ServicioDeParametros(CrearContexto(nombreDeBase), new RelojFijo(Ahora));
+        var servicio = CrearServicio(nombreDeBase);
 
         var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EstablecerAsync(
             idEmpresaA, new ParametroAlta("zona_horaria", "\"\"", null)));

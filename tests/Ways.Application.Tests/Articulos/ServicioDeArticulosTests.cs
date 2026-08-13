@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
+using Ways.Application.Stock;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
@@ -48,11 +49,19 @@ public class ServicioDeArticulosTests
     private static WaysDbContext CrearContexto(string nombreDeBase, ITenantActual tenantActual) =>
         new(new DbContextOptionsBuilder<WaysDbContext>().UseInMemoryDatabase(nombreDeBase).Options, tenantActual);
 
-    private static ServicioDeArticulos CrearServicio(string nombreDeBase, int idTenant) =>
-        new(
-            CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)),
-            new RelojFijo(Ahora),
-            new ContextoFijo(idTenant));
+    private static ServicioDeArticulos CrearServicio(string nombreDeBase, int idTenant)
+    {
+        var db = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var reloj = new RelojFijo(Ahora);
+        var contexto = new ContextoFijo(idTenant);
+
+        // stage-12-lotes-vencimientos, Slice 4: sin fila de stock sembrada en ninguno de estos
+        // tests, ReconciliarAsync retorna antes de abrir transacción (pares.Count == 0) — el
+        // InMemory provider, que NO soporta BeginTransactionAsync (doc-comment de la clase),
+        // nunca llega a ese camino acá. El disparador real (con Stock) se prueba en
+        // ReconciliacionTests (Ways.IntegrationTests), contra Postgres.
+        return new ServicioDeArticulos(db, reloj, contexto, new ServicioDeLotes(db, reloj, contexto));
+    }
 
     private static async Task<(int IdArea, int IdAlicuotaIva)> SembrarCatalogosAsync(string nombreDeBase, int idTenant)
     {
@@ -140,7 +149,8 @@ public class ServicioDeArticulosTests
             CostoNominal: null,
             DisponibleParaTodas: true,
             IdsEmpresas: null,
-            Activo: true);
+            Activo: true,
+            ControlaLote: false);
 
     [Fact]
     public async Task CrearSinIdAreaEsRechazado()
