@@ -263,8 +263,14 @@ DB-free Domain rule; `ServicioDeVentas`'s parametro read is batched
   a PV-level override wins.
 - [x] 2.9 Gate guard: `dotnet ef migrations has-pending-model-changes` → no
   pending changes.
-- [ ] 2.10 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 2.11 Branch `feat/stage12-slice2-activacion` off `main` (parent:
+- [x] 2.10 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  round 1 — judge B APPROVE with 6/6 mutations killed and strict-equality
+  guards confirmed; judge A REJECT with 1 MAJOR: the spec's timezone scenario
+  said `fecha == hoy` classifies `vencido`, contradicting design.md AND the
+  scenario's own naive-UTC intent. Orchestrator decision 13: expiry date is
+  inclusive, `vencido` = `fecha < hoy` strict — SPEC amended (cc1d10f), code
+  untouched. Round 2 — judge A APPROVE, blob-hash-verified no code drift.)*
+- [x] 2.11 Branch `feat/stage12-slice2-activacion` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
 
 **Test plan**: Domain suite (2.4), parametro-filter mutation (2.5), query
