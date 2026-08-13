@@ -1,3 +1,5 @@
+using Ways.Domain.Stock;
+
 namespace Ways.Application.Stock;
 
 /// <summary>
@@ -55,3 +57,22 @@ public sealed record SolicitudDeConteo(int IdPuntoVenta, int IdArticulo, decimal
 /// </summary>
 public sealed record ResultadoConteo(
     int IdPuntoVenta, int IdArticulo, decimal Cantidad, decimal CantidadAnterior, decimal Delta, bool MovimientoRegistrado);
+
+/// <summary>
+/// Cuerpo de <c>POST /api/stock/lotes</c> (stage-12-lotes-vencimientos, Slice 3; design: API
+/// Surface; Interfaces/Contracts). Alta manual de un lote FECHADO — <see cref="Codigo"/> es
+/// opcional (se deriva del vencimiento cuando se omite, <c>ReglaDeLotes.DerivarCodigo</c>) y NO
+/// puede ser el código reservado del lote sin identificar (<c>400
+/// codigo_de_lote_reservado</c>): ese lote solo lo crea la reconciliación, nunca esta vía.
+/// </summary>
+public sealed record SolicitudDeLote(int IdArticulo, string? Codigo, DateOnly FechaVencimiento);
+
+/// <summary>
+/// Fila de <c>GET /api/stock/lotes</c> y resultado de <c>POST /api/stock/lotes</c>
+/// (stage-12-lotes-vencimientos, Slice 3; design decisión 19). <see cref="Sugerido"/> es el pick
+/// FEFO server-computed (<c>ReglaDeLotes.ElegirFefo</c>) — el picker del POS lo renderiza, nunca
+/// lo recalcula.
+/// </summary>
+public sealed record LoteListado(
+    int IdLote, int IdArticulo, string Codigo, DateOnly? FechaVencimiento, bool EsSinIdentificar,
+    decimal Cantidad, EstadoDeVencimiento Estado, bool Sugerido);

@@ -100,6 +100,12 @@ public interface IWaysDbContext
     DbSet<ComprobanteCompra> ComprobantesCompra { get; }
     DbSet<ItemComprobanteCompra> ItemsComprobanteCompra { get; }
 
+    // stage-12-lotes-vencimientos, Slice 3: ServicioDeLotes es el primer consumidor de
+    // Application de estos 2 — Slice 1 solo adelantaba el modelo a la migración (proposal gate
+    // §A/§B).
+    DbSet<Lote> Lotes { get; }
+    DbSet<StockLote> StockLotes { get; }
+
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>
     /// y <c>BeginTransactionAsync</c> no tienen un equivalente más angosto en este proyecto.

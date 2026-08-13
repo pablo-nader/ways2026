@@ -50,6 +50,25 @@ public static class StockEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Conteo de inventario (admin-only) — motivo = inventario.");
 
+        // stage-12-lotes-vencimientos (Slice 3, task 3.3, design: API Surface): feed del picker
+        // FEFO — hereda OperacionDePos del grupo, cualquier rol autenticado puede consultarlo.
+        grupo.MapGet("/lotes", async (ServicioDeLotes servicio, int idPuntoVenta, int idArticulo, CancellationToken ct) =>
+        {
+            var lotes = await servicio.ListarAsync(idPuntoVenta, idArticulo, ct);
+            return Results.Ok(lotes);
+        })
+        .WithSummary("Lotes de un artículo en un punto de venta, con saldo, estado y sugerido FEFO.");
+
+        // stage-12-lotes-vencimientos (Slice 3, task 3.3, design: API Surface): alta manual de un
+        // lote — mismo apilado GestionDeCatalogo sobre OperacionDePos que /ajustes.
+        grupo.MapPost("/lotes", async (ServicioDeLotes servicio, SolicitudDeLote solicitud, CancellationToken ct) =>
+        {
+            var lote = await servicio.CrearAsync(solicitud, ct);
+            return Results.Created($"/api/stock/lotes/{lote.IdLote}", lote);
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Alta manual de un lote (admin-only) — 409 lote_duplicado si el código ya existe.");
+
         return app;
     }
 }

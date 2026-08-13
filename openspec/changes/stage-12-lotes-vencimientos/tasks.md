@@ -287,7 +287,7 @@ suite (2.8).
 get-or-create and reads bounded saldos; `GET/POST /api/stock/lotes` live.
 **Rollback**: revert the branch — no other write site depends on this yet.
 
-- [ ] 3.1 Create `src/Ways.Application/Stock/ServicioDeLotes.cs`:
+- [x] 3.1 Create `src/Ways.Application/Stock/ServicioDeLotes.cs`:
   `ResolverOCrearAsync` — `INSERT ... ON CONFLICT (ux_lotes_articulo_codigo)
   DO UPDATE SET updated_at = lotes.updated_at ... RETURNING id_lote,
   fecha_vencimiento` (no-op `DO UPDATE`, never `DO NOTHING` — design
@@ -297,38 +297,100 @@ get-or-create and reads bounded saldos; `GET/POST /api/stock/lotes` live.
   retry-read loop. `ResolverSinIdentificarAsync`. `LeerSaldosAsync` — one
   query, `lotes ⟕ stock_lotes` bounded to `cantidad <> 0 OR
   es_sin_identificar OR id_lote IN (@lotesPedidos)`. `ListarAsync`,
-  `CrearAsync` (admin alta).
-- [ ] 3.2 Extend `src/Ways.Application/Stock/Contratos.cs`:
+  `CrearAsync` (admin alta). *(APPLY-RUN NOTE: `ResolverOCrearAsync`/
+  `ResolverSinIdentificarAsync` came out `static` — CA1822 (error in
+  `.editorconfig`) forces it, same shape as
+  `ServicioDeStock.InsertarMovimientoStockAsync`/`UpsertStockAsync`; callers
+  from slices 5/7/8/10 invoke them as `ServicioDeLotes.ResolverOCrearAsync(...)`.
+  `IWaysDbContext` gained `DbSet<Lote> Lotes`/`DbSet<StockLote> StockLotes`
+  — Slice 1 mapped them in `WaysDbContext` but never exposed them past
+  Infrastructure; this is the first Application consumer, no migration.)*
+- [x] 3.2 Extend `src/Ways.Application/Stock/Contratos.cs`:
   `SolicitudDeLote`, `LoteListado` (with `Sugerido`).
-- [ ] 3.3 Modify `src/Ways.Api/Endpoints/StockEndpoints.cs`: `GET
+- [x] 3.3 Modify `src/Ways.Api/Endpoints/StockEndpoints.cs`: `GET
   /api/stock/lotes?idPuntoVenta&idArticulo` (`OperacionDePos`, carries
   `sugerido` per `ElegirFefo`); `POST /api/stock/lotes`
   (`GestionDeCatalogo`, admin alta, `409 lote_duplicado`).
-- [ ] 3.4 Modify `ServicioDeLotes.CrearAsync`: reject a client-supplied
+- [x] 3.4 Modify `ServicioDeLotes.CrearAsync`: reject a client-supplied
   `codigo` equal to `ReglaDeLotes.CodigoSinIdentificar` with `400
   codigo_de_lote_reservado`.
-- [ ] 3.5 [P] **`db-error-backstops`**: two concurrent `POST
+- [x] 3.5 [P] **`db-error-backstops`**: two concurrent `POST
   /api/stock/lotes` with the same código ⇒ exactly one `201` + one `409
   lote_duplicado`, SQLSTATE `23505` asserted before the mapping runs.
-- [ ] 3.6 [P] Immutability tests: matching-expiry reuse *(spec: "A second
+  *(APPLY-RUN NOTE: two tests — `DosCrearAsyncConcurrentesDelMismoCodigoChocanConSqlstate23505AntesDelMapeo`
+  calls `ServicioDeLotes.CrearAsync` directly from two independent
+  `WaysDbContext`s and asserts the raw `DbUpdateException`/`PostgresException`
+  (SqlState `23505`, ConstraintName `ux_lotes_articulo_codigo`) BEFORE
+  `ManejadorDeErrores` (HTTP-only) ever runs; `DosPostConcurrentesAApiStockLotesConElMismoCodigoDanExactamenteUnCreadoYUnConflicto`
+  races the real endpoint, asserting exactly one `201` + one `409
+  lote_duplicado`. `mutation-proof-tests` evidence on the second: temporarily
+  deleted the exact-name `ux_lotes_articulo_codigo` arm in
+  `ManejadorDeErrores` — the "_codigo" generic `ClasificarUnicidad` fallback
+  caught it first and returned `codigo_duplicado`, the exact ordering-trap
+  documented in the Slice-1 doc-comment; test went RED
+  (`Expected: "lote_duplicado" / Actual: "codigo_duplicado"`); reverted, back
+  to GREEN across the full `ServicioDeLotesTests`/`Lotes*`/`ManejadorDeErrores*`
+  suite (74/74).)*
+- [x] 3.6 [P] Immutability tests: matching-expiry reuse *(spec: "A second
   reception with a matching expiry reuses the lot")*; conflicting-expiry
   refusal → `409 lote_vencimiento_incompatible` *(spec: "A second reception
   with a conflicting expiry is refused")*.
-- [ ] 3.7 [P] `codigo_de_lote_reservado` test: client supplies
+- [x] 3.7 [P] `codigo_de_lote_reservado` test: client supplies
   `codigo = "SIN-IDENTIFICAR"` → `400`.
-- [ ] 3.8 [P] Sin-identificar idempotence: created once, reused across two
+- [x] 3.8 [P] Sin-identificar idempotence: created once, reused across two
   puntos de venta. *(spec: "The sin-identificar lot is created once and
-  reused")*
-- [ ] 3.9 [P] `LeerSaldosAsync` bounded-query test: returns lots with
+  reused")* *(APPLY-RUN NOTE: `ResolverSinIdentificarAsync` takes no
+  `idPuntoVenta` — the sin-identificar lot is tenant-wide per articulo, not
+  PV-scoped (`lotes` has no PV column) — so the test simulates two
+  independent write sites of two different PVs calling it sequentially on
+  the same raw connection and asserts the same `idLote` both times.)*
+- [x] 3.9 [P] `LeerSaldosAsync` bounded-query test: returns lots with
   nonzero balance + explicitly requested lots + the sin-identificar lot;
-  excludes a zero-balance, non-requested dated lot.
-- [ ] 3.10 [P] Role tests: `POST /api/stock/lotes` rejects a non-Admin
+  excludes a zero-balance, non-requested dated lot. *(APPLY-RUN NOTE: split
+  in two — `GetLotesDevuelveSaldoNoCeroYSinIdentificarExcluyendoUnFechadoDeSaldoCeroNoPedido`
+  end to end via `GET /api/stock/lotes` (also proves the endpoint wiring and
+  the `estado`/`sugerido` projection, dto-contract-honesty); `LeerSaldosAsyncIncluyeUnLoteDeSaldoCeroCuandoFueExplicitamentePedido`
+  calls `ServicioDeLotes.LeerSaldosAsync` directly for the "explicitly
+  requested" branch, which the picker GET route never exercises (no
+  `idsLotePedidos` parameter — only slices 5/7/8/10's writers pass that
+  list). `mutation-proof-tests` evidence, three mutations on the bounded
+  `WHERE` clause in `LeerSaldosAsync`, each run→RED→revert→GREEN: (1)
+  deleted `|| lote.EsSinIdentificar` → sin-identificar-always-included test
+  failed (`Expected: 2 / Actual: 1`); (2) deleted `|| idsLotePedidos.Contains(lote.Id)`
+  → explicitly-requested test failed (empty collection); (3) widened
+  `stockLote != null && stockLote.Cantidad != 0m` to `stockLote != null` →
+  the zero-balance dated lot leaked in (`Expected: 2 / Actual: 3`). All
+  three reverted, full suite back to green (74/74).)*
+- [x] 3.10 [P] Role tests: `POST /api/stock/lotes` rejects a non-Admin
   role.
-- [ ] 3.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
-- [ ] 3.12 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 3.13 Branch `feat/stage12-slice3-servicio-de-lotes` off `main`
-  (parent: slices 1+2); PR; merge stacked-to-main.
+- [x] 3.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. *(Verified clean before AND after the slice's
+  changes — no `Migraciones/`/`Configuraciones/` file touched, per the
+  DB CHANGE GATE.)*
+- [x] 3.12 Run `judgment-day`; fix; re-judge until clean. *(FIX 1 — juez A,
+  honestidad documental: doc-comment en `ListarAsync`/`CrearAsync`
+  declarando "hoy" UTC-naive interino por diseño en este slice 3, mismo
+  criterio que `diasAlertaPorDefecto`. FIX 2 — juez B, mutación
+  sobreviviente en `Sugerido` (`ServicioDeLotes.cs:162`): nuevo test con
+  ≥2 lotes fechados de vencimientos distintos + sin-identificar,
+  `sugerido` assertado en las CUATRO filas; mutación aplicada→RED→
+  revertida→GREEN. FIX 3 — juez B, cobertura de `estado` vía HTTP con
+  vencimientos fijos lejanos (`2020-01-15` vencido, `2099-12-31` vigente),
+  independiente de la hora de corrida. FIX 4 — juez B, blind spot: test
+  del código server-derivado (`POST /api/stock/lotes` sin `codigo`).
+  DEUDA MENOR ANOTADA (no en este batch): los caminos de fallo
+  `referencia_invalida`/404 de los endpoints de lotes quedan sin test
+  dedicado — patrón ya cubierto por suites hermanas del repo
+  (`LotesBackstopTests` y equivalentes de otros stocks); no bloquea el
+  merge de este slice.)*
+- [x] 3.13 Branch `feat/stage12-slice3-servicio-de-lotes` off `main`
+  (parent: slices 1+2); PR; merge stacked-to-main. *(APPLY-RUN NOTE: round 1
+  double REJECT — judge A: MAJOR, missing honesty doc-comment on the
+  UTC-naive `hoy` behind `LoteListado.Estado`; judge B: MAJOR, the
+  `Sugerido = last-of-order` mutation survived because the only
+  multi-candidate test made first and last coincide, plus `Estado` and
+  derived-código had zero HTTP coverage. Fix batch f21f408/6dee921; round 2
+  double APPROVE with all three re-mutations RED→revert→GREEN.)*
 
 **Test plan**: race backstop (3.5), immutability ×2 (3.6), reserved-código
 (3.7), sin-identificar idempotence (3.8), bounded-query (3.9), role (3.10).
