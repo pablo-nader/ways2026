@@ -777,8 +777,17 @@ revert the branch.
   --startup-project src/Ways.Infrastructure`: "No changes have been made to
   the model since the last migration." No `Migraciones/`/`Configuraciones/`
   file touched by this slice.)*
-- [ ] 6.7 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 6.8 Branch `feat/stage12-slice6-compra-anulacion` off `main` (parent:
+- [x] 6.7 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  FIRST CLEAN ROUND-1 of the stage — double APPROVE. Judge B re-ran the 6.2
+  mutation plus 4 new probes (inexact reversal, order flip, aggregate-check
+  removal, doubled reversal delta) — all caught except the order flip, which
+  is the known cross-slice anti-deadlock dependency deferred to slice 8's
+  joint proof (slice-5 precedent). Judge A verified ledger-sourced reversal
+  (never re-derived), double check via RETURNING with no TOCTOU, and full
+  removal of the interim guard. Recorded debt (both judges, SUGGESTION): no
+  dedicated mixed-compra (lot + non-lot items) end-to-end anulación test —
+  structurally the union of two covered paths, per-line independent loop.)*
+- [x] 6.8 Branch `feat/stage12-slice6-compra-anulacion` off `main` (parent:
   slice 5); PR; merge stacked-to-main.
 
 **Test plan**: per-lot insufficiency mutation (6.2), exact reversal (6.3),
