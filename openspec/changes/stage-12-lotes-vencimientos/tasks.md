@@ -632,8 +632,20 @@ balance write in the same transaction. **Rollback**: revert the branch.
   changes have been made to the model since the last migration." Confirmed
   clean both by diff (`Migraciones/`/`Configuraciones/` untouched by this
   slice — verified via `git status`) and by the tool itself.)*
-- [ ] 5.14 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 5.15 Branch `feat/stage12-slice5-recepcion` off `main` (parent:
+- [x] 5.14 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  round 1 double REJECT — judge A: cross-spec contradiction (the sibling
+  lotes-y-vencimientos spec still promised a 23505 on the get-or-create
+  race after decision 14) and the anulación-of-a-lot-tracked-compra hole
+  (aggregate reversed, stock_lotes silently left inflated, 200 OK);
+  judge B: CRITICAL — codigo_lote without fecha via the API returned a raw
+  500 (CHECK unmapped in ManejadorDeErrores, no app guard) — plus the
+  confirm-time expiry re-check had zero test coverage. Fix batch
+  7a507dd/28af7da: two-layer 400 lote_input_incompleto (app guard +
+  ManejadorDeErrores backstop, proven layer by layer), interim 409
+  compra_anulacion_lotes_pendiente guard (slice 6 replaces it), re-check
+  test via owner-connection date mutation, sibling spec amended. Round 2
+  double APPROVE, serialized B→A.)*
+- [x] 5.15 Branch `feat/stage12-slice5-recepcion` off `main` (parent:
   slice 3); PR; merge stacked-to-main.
 
 **Test plan**: invariant 2 (5.5), get-or-create ×3 (5.6-5.8), race backstop
