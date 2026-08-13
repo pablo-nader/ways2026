@@ -673,6 +673,17 @@ public class ManejadorDeErrores(
                     "Los importes de un ítem de compra no pueden ser negativos.",
                     "importes_de_item_invalidos"),
 
+            // stage-12-lotes-vencimientos (Slice 5, judgment-day, FIX 1b): backstop de
+            // ck_items_comprobante_compra_lote_input — ServicioDeCompras.ValidarVencimientosDeRecepcion
+            // (guard primario, FIX 1a) ya rechaza esto ANTES de tocar la base en el camino normal
+            // (Crear/ActualizarBorradorAsync); esta rama queda como defensa de esquema pura ante
+            // cualquier camino futuro que la esquive, mismo código de dominio
+            // (lote_input_incompleto) para que el cliente nunca distinga cuál capa lo atajó.
+            "ck_items_comprobante_compra_lote_input" =>
+                (StatusCodes.Status400BadRequest,
+                    "Un ítem con codigo_lote tiene que traer también fecha_vencimiento.",
+                    "lote_input_incompleto"),
+
             _ => null
         };
 }

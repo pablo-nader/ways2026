@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
 using Ways.Application.Organizacion;
@@ -174,6 +175,9 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
         Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
         return JsonSerializer.Deserialize<CompraDetalle>(cuerpo, OpcionesJson)!;
     }
+
+    private static async Task<HttpResponseMessage> AnularRawAsync(Contexto ctx, int id) =>
+        await ctx.Admin.PostAsync($"/api/compras/{id}/anular", null);
 
     // ---- task 5.5: invariante — stock_lotes.cantidad = SUM(movimientos con ese lote) -----------
 
@@ -491,5 +495,148 @@ public class ComprasRecepcionDeLotesTests(WaysApiFixture fixture) : IClassFixtur
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(EstadoCompra.Borrador, (await db.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id));
+    }
+
+    // ---- judgment-day (juez B) FIX 1: codigo_lote sin fecha vía API nunca da 500 -------------------
+
+    /// <summary>Guard de aplicación (<c>ValidarVencimientosDeRecepcion</c>, FIX 1a) — corre en
+    /// <c>CrearBorradorAsync</c>, ANTES de cualquier lectura de base, así que nunca llega siquiera
+    /// a ejercitar el backstop de esquema (<c>ck_items_comprobante_compra_lote_input</c>, FIX 1b)
+    /// en el camino normal.</summary>
+    [Fact]
+    public async Task CrearBorradorConCodigoDeLoteSinFechaDeVencimientoDa400LoteInputIncompletoNunca500()
+    {
+        var ctx = await PrepararAsync(nameof(CrearBorradorConCodigoDeLoteSinFechaDeVencimientoDa400LoteInputIncompletoNunca500));
+
+        var respuesta = await CrearBorradorRawAsync(ctx, SolicitudConLote(ctx, "L-SIN-FECHA", null));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+
+        Assert.True(respuesta.StatusCode == HttpStatusCode.BadRequest, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal("lote_input_incompleto", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.ComprobantesCompra.CountAsync(c => c.IdProveedor == ctx.IdProveedor));
+    }
+
+    // ---- judgment-day (juez B) FIX 2: re-check de vencido al confirmar, borrador que vence entre save y confirm ----
+
+    /// <summary>El borrador se guarda con una fecha FUTURA válida (pasa el guard de
+    /// <c>CrearBorradorAsync</c>), y después se muta esa fecha a PASADA directo en la base vía la
+    /// conexión owner de la fixture — esquivando <c>ValidarVencimientosDeRecepcion</c> a propósito
+    /// (esa validación solo corre en <c>Crear/ActualizarBorradorAsync</c>, nunca en un UPDATE
+    /// crudo), simulando el borrador que vence ENTRE el save y el confirm (spec: "This check MUST
+    /// fire when the line is saved or edited, not only at confirm" — el rechequeo de
+    /// <c>EjecutarConfirmarAsync</c>, ~líneas 409-419, es la otra mitad de esa garantía).</summary>
+    [Fact]
+    public async Task ConfirmarRechazaUnLoteQueVencioEntreElSaveYElConfirm()
+    {
+        var ctx = await PrepararAsync(nameof(ConfirmarRechazaUnLoteQueVencioEntreElSaveYElConfirm));
+        var creada = await CrearBorradorAsync(ctx, SolicitudConLote(ctx, "L-VENCE-ENTRE", VencimientoLejanoFuturo));
+
+        await using (var owner = new NpgsqlConnection(fixture.OwnerConnectionString))
+        {
+            await owner.OpenAsync();
+            await using var comando = owner.CreateCommand();
+            comando.CommandText =
+                "UPDATE items_comprobante_compra SET fecha_vencimiento = $1 WHERE id_comprobante_compra = $2";
+            comando.Parameters.Add(new NpgsqlParameter { Value = VencimientoLejanoPasado });
+            comando.Parameters.Add(new NpgsqlParameter { Value = creada.Id });
+            await comando.ExecuteNonQueryAsync();
+        }
+
+        var respuesta = await ConfirmarRawAsync(ctx, creada.Id);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal("lote_vencido_en_recepcion", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(EstadoCompra.Borrador, (await db.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id));
+    }
+
+    // ---- judgment-day (juez A, MUST-FIX F2) FIX 4: guard interino de anulación con lotes ----------
+
+    /// <summary>Guard interino conservador (<c>EjecutarAnulacionAsync</c>, ~línea 531) — la reversa
+    /// de esta slice es agregado-only (design: doc-comment de la clase, "idLote: null acá a
+    /// propósito"), así que anular una compra con ítems con lote resuelto se rechaza ANTES de
+    /// tocar nada, en vez de dejar <c>stock_lotes</c> inflado en silencio. Slice 6 (task 6.1)
+    /// reemplaza este guard por la reversa exacta por lote.</summary>
+    [Fact]
+    public async Task AnularUnaCompraConLoteResueltoEsRechazadaSinRevertirNada()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnaCompraConLoteResueltoEsRechazadaSinRevertirNada));
+        var creada = await CrearBorradorAsync(ctx, SolicitudConLote(ctx, "L-ANULACION", VencimientoLejanoFuturo, unidades: 12m));
+        var confirmada = await ConfirmarAsync(ctx, creada.Id);
+        Assert.NotNull(confirmada.Items[0].IdLote);
+
+        var respuesta = await AnularRawAsync(ctx, creada.Id);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal("compra_anulacion_lotes_pendiente", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        // Aserción completa: NADA se revirtió — ni el estado, ni stock, ni stock_lotes, ni
+        // movimientos_stock.
+        Assert.Equal(EstadoCompra.Confirmada, (await db.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
+        Assert.Equal(
+            0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteCompra == creada.Id && m.Motivo == MotivoStock.Anulacion));
+
+        var cantidadStock = await db.Stock
+            .Where(s => s.IdArticulo == ctx.IdArticuloLote && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Select(s => s.Cantidad).FirstAsync();
+        Assert.Equal(12m, cantidadStock);
+
+        var idLote = confirmada.Items[0].IdLote!.Value;
+        var cantidadStockLote = await db.StockLotes
+            .Where(sl => sl.IdArticulo == ctx.IdArticuloLote && sl.IdPuntoVenta == ctx.IdPuntoVenta && sl.IdLote == idLote)
+            .Select(sl => sl.Cantidad).FirstAsync();
+        Assert.Equal(12m, cantidadStockLote);
+    }
+
+    /// <summary>Regresión del guard interino de FIX 4: un artículo que NO controla lote (mismo
+    /// tenant, módulo de lotes ON a nivel empresa) sigue confirmando y anulando byte-idéntico al
+    /// camino agregado-only previo a esta etapa — <c>item.IdLote</c> nunca se pobla, así que el
+    /// guard nuevo nunca dispara.</summary>
+    [Fact]
+    public async Task AnularUnaCompraDeUnArticuloQueNoControlaLoteSigueFuncionando()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnaCompraDeUnArticuloQueNoControlaLoteSigueFuncionando));
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idArea = await db.Areas.Where(a => a.IdTenant == ctx.IdTenant).Select(a => a.Id).FirstAsync();
+        var articuloSinLote = new Articulo
+        {
+            IdTenant = ctx.IdTenant, CodigoInterno = $"sin-lote-{Guid.NewGuid():N}", Nombre = "Articulo sin lote",
+            IdArea = idArea, IdAlicuotaIva = ctx.IdAlicuotaIva21, UnidadVenta = UnidadVenta.Unidad, EsProducto = true,
+            ControlaLote = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Articulos.Add(articuloSinLote);
+        await db.SaveChangesAsync();
+
+        var solicitud = new SolicitudDeCompra(
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, $"NE-{Guid.NewGuid():N}", DateOnly.FromDateTime(DateTime.UtcNow), null,
+            [new LineaDeCompraSolicitada(articuloSinLote.Id, "Item sin lote", 8m, null, null, 50m, 0m, ctx.IdAlicuotaIva21, true)]);
+
+        var creada = await CrearBorradorAsync(ctx, solicitud);
+        var confirmada = await ConfirmarAsync(ctx, creada.Id);
+        Assert.Null(confirmada.Items[0].IdLote);
+
+        var respuesta = await AnularRawAsync(ctx, creada.Id);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        await using var dbFinal = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(EstadoCompra.Anulada, (await dbFinal.ComprobantesCompra.FirstAsync(c => c.Id == creada.Id)).Estado);
+        var cantidad = await dbFinal.Stock
+            .Where(s => s.IdArticulo == articuloSinLote.Id && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Select(s => s.Cantidad).FirstAsync();
+        Assert.Equal(0m, cantidad);
     }
 }

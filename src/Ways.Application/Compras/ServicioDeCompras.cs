@@ -520,6 +520,23 @@ public class ServicioDeCompras(
             throw new ErrorDominio("compra_no_confirmada", "La compra no está confirmada.", 409);
         }
 
+        // 1.b Guard interino de anulación con lotes (etapa 12, slice 5, judgment-day FIX 4):
+        // la reversa de acá abajo (paso 2) solo revierte el agregado (movimientos_stock/stock) —
+        // si algún item de esta compra resolvió un lote, dejar stock_lotes sin revertir
+        // corrompería el invariante 2 en silencio (200 OK con stock_lotes inflado). Preferible
+        // rechazar que corromper: interino hasta que slice 6 (task 6.1) implemente la reversa
+        // EXACTA por lote y reemplace este guard.
+        var tieneItemsConLote = await db.ItemsComprobanteCompra
+            .AnyAsync(i => i.IdComprobanteCompra == id && i.IdLote != null, ct);
+        if (tieneItemsConLote)
+        {
+            throw new ErrorDominio(
+                "compra_anulacion_lotes_pendiente",
+                "Esta compra tiene ítems con lote resuelto; la anulación con reversa exacta por lote " +
+                "todavía no está implementada (queda para slice 6).",
+                409);
+        }
+
         // 2. El ledger ORIGINAL, nunca recalculado desde items (design: doc-comment de
         // ServicioDeVentas.AnularAsync, mismo criterio acá).
         var movimientosOriginales = await db.MovimientosStock
@@ -934,11 +951,27 @@ public class ServicioDeCompras(
     /// edición), no solo al confirmar. Deliberadamente incondicional a <c>controla_lote</c>: el
     /// esquema (<c>ck_items_comprobante_compra_lote_input</c>) ya permite que cualquier línea
     /// cargue <c>fecha_vencimiento</c>, y el spec no condiciona este rechazo a que el artículo sea
-    /// lot-effective en ese momento.</summary>
+    /// lot-effective en ese momento.
+    ///
+    /// Guard primario (judgment-day, slice 5, FIX 1a): un <c>codigo_lote</c> no vacío sin
+    /// <c>fecha_vencimiento</c> jamás puede resolver a un lote válido (<c>ResolverOCrearAsync</c>
+    /// exige fecha) — se rechaza acá, ANTES de tocar la base, con el mismo código
+    /// (<c>lote_input_incompleto</c>) que el backstop de esquema
+    /// <c>ck_items_comprobante_compra_lote_input</c> traduce en <c>ManejadorDeErrores</c> por si
+    /// algún camino futuro esquiva este guard.</summary>
     private static void ValidarVencimientosDeRecepcion(IReadOnlyList<LineaDeCompraSolicitada> items, DateOnly hoy)
     {
         foreach (var item in items)
         {
+            if (!string.IsNullOrWhiteSpace(item.CodigoLote) && item.FechaVencimiento is null)
+            {
+                throw new ErrorDominio(
+                    "lote_input_incompleto",
+                    $"El artículo {item.IdArticulo} trae codigo_lote sin fecha_vencimiento; ambos son " +
+                    "requeridos juntos.",
+                    400);
+            }
+
             if (item.FechaVencimiento is { } fecha && ReglaDeLotes.EstaVencido(fecha, hoy))
             {
                 throw new ErrorDominio(
