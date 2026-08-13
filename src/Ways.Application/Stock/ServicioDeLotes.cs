@@ -152,6 +152,11 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj)
         var ordenados = ReglaDeLotes.OrdenarFefo(saldos);
         var sugerido = ReglaDeLotes.ElegirFefo(saldos);
 
+        // Honestidad documental: "hoy" acá es UTC naive (interino por diseño en este slice 3),
+        // no la zona_horaria del PV. El reporte de vencimientos del slice 13 SÍ resuelve "hoy"
+        // en la zona_horaria del PV (requisito vinculante del spec lotes-y-vencimientos) — este
+        // picker admin no necesita esa precisión, mismo criterio de honestidad que
+        // diasAlertaPorDefecto en CrearAsync.
         var hoy = DateOnly.FromDateTime(reloj.Ahora.UtcDateTime);
         var diasAlerta = await ResolverDiasAlertaAsync(puntoVenta.IdEmpresa, idPuntoVenta, ct);
 
@@ -201,6 +206,10 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj)
         db.Lotes.Add(lote);
         await db.SaveChangesAsync(ct);
 
+        // Honestidad documental: "hoy" acá es UTC naive (interino por diseño en este slice 3),
+        // no la zona_horaria del PV — mismo criterio que ListarAsync. El reporte de
+        // vencimientos del slice 13 SÍ resuelve "hoy" en la zona_horaria del PV (requisito
+        // vinculante del spec lotes-y-vencimientos).
         var hoy = DateOnly.FromDateTime(ahora.UtcDateTime);
 
         // Sin punto de venta en el request (alta de catálogo, no de un movimiento): el horizonte

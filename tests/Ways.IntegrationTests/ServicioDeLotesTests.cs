@@ -393,4 +393,108 @@ public class ServicioDeLotesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
+
+    // ---- judgment-day slice 3, FIX 2/FIX 3: sugerido multi-candidato + estado vía HTTP ------------
+
+    /// <summary>FIX 2 (juez B, mutación sobreviviente): siembra TRES lotes fechados con saldo
+    /// positivo y vencimientos fijos distintos, más el sin-identificar, y assertea
+    /// <c>sugerido</c> en las CUATRO filas (regla 6) — no solo en la que gana. Cubre también FIX 3
+    /// (juez B): <c>estado</c> vía HTTP con vencimientos fijos lejanos, independientes de la hora
+    /// de corrida (<c>2020-01-15</c> siempre <c>vencido</c>; <c>2099-12-31</c> siempre
+    /// <c>vigente</c>, muy por fuera del horizonte de alerta de 30 días default — sin ventana de
+    /// flaky en 00-03 UTC; el intermedio <c>2050-06-15</c> no se assertea por estado a propósito).
+    /// <para>Evidencia de mutación (FIX 2): aplicada la mutación del juez B en
+    /// <c>ServicioDeLotes.cs:162</c> (<c>Sugerido: ... ordenados[^1].IdLote == s.IdLote</c> en vez
+    /// de <c>sugerido.Value.IdLote == s.IdLote</c>) el pick pasa a ser la ÚLTIMA fila del orden
+    /// FEFO (sin-identificar primero, después ascendente por vencimiento) — acá
+    /// <c>loteVigente</c> (2099-12-31) en vez de <c>loteVencido</c> (2020-01-15). Build + filtro
+    /// <c>~ServicioDeLotesTests</c> con la mutación aplicada: este test cae RED
+    /// (<c>vencido.Sugerido</c> esperado <c>true</c>/actual <c>false</c>; <c>vigente.Sugerido</c>
+    /// esperado <c>false</c>/actual <c>true</c>). Revertida la mutación, build, mismo filtro:
+    /// GREEN, 10/10.</para></summary>
+    [Fact]
+    public async Task GetLotesConVariosFechadosSugiereSoloElDeVencimientoMasProximoYEstadoEsIndependienteDelReloj()
+    {
+        var ctx = await PrepararAsync(nameof(GetLotesConVariosFechadosSugiereSoloElDeVencimientoMasProximoYEstadoEsIndependienteDelReloj));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-multi-candidato");
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var loteVencido = new Lote
+        {
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, Codigo = "L-MULTI-VENCIDO",
+            FechaVencimiento = new DateOnly(2020, 1, 15), EsSinIdentificar = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        var loteMedio = new Lote
+        {
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, Codigo = "L-MULTI-MEDIO",
+            FechaVencimiento = new DateOnly(2050, 6, 15), EsSinIdentificar = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        var loteVigente = new Lote
+        {
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, Codigo = "L-MULTI-VIGENTE",
+            FechaVencimiento = new DateOnly(2099, 12, 31), EsSinIdentificar = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        var loteSinIdentificar = new Lote
+        {
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, Codigo = ReglaDeLotes.CodigoSinIdentificar,
+            FechaVencimiento = null, EsSinIdentificar = true, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Lotes.AddRange(loteVencido, loteMedio, loteVigente, loteSinIdentificar);
+        await db.SaveChangesAsync();
+
+        db.StockLotes.AddRange(
+            new StockLote { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteVencido.Id, IdTenant = ctx.IdTenant, Cantidad = 5m },
+            new StockLote { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteMedio.Id, IdTenant = ctx.IdTenant, Cantidad = 3m },
+            new StockLote { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteVigente.Id, IdTenant = ctx.IdTenant, Cantidad = 2m });
+        // loteSinIdentificar deliberadamente sin fila de stock_lotes: saldo 0, incluido igual (decisión 6).
+        await db.SaveChangesAsync();
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/stock/lotes?idPuntoVenta={ctx.IdPuntoVenta}&idArticulo={idArticulo}");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        var lotes = JsonSerializer.Deserialize<List<LoteListado>>(cuerpo, OpcionesJson)!;
+        Assert.Equal(4, lotes.Count);
+
+        var vencido = lotes.Single(l => l.IdLote == loteVencido.Id);
+        var medio = lotes.Single(l => l.IdLote == loteMedio.Id);
+        var vigente = lotes.Single(l => l.IdLote == loteVigente.Id);
+        var sinIdentificar = lotes.Single(l => l.IdLote == loteSinIdentificar.Id);
+
+        // FIX 2: sugerido EXACTAMENTE en el de vencimiento más próximo, false en las otras TRES filas (regla 6).
+        Assert.True(vencido.Sugerido);
+        Assert.False(medio.Sugerido);
+        Assert.False(vigente.Sugerido);
+        Assert.False(sinIdentificar.Sugerido);
+
+        // FIX 3: estado vía HTTP, independiente de la hora de corrida.
+        Assert.Equal(EstadoDeVencimiento.Vencido, vencido.Estado);
+        Assert.Equal(EstadoDeVencimiento.Vigente, vigente.Estado);
+    }
+
+    // ---- judgment-day slice 3, FIX 4: camino de código derivado (blind spot) ----------------------
+
+    /// <summary>spec lotes-y-vencimientos: "A lot is created with a server-derived codigo" — omitir
+    /// <c>codigo</c> en el alta hace que el server lo derive vía <c>ReglaDeLotes.DerivarCodigo</c>
+    /// (ISO del vencimiento). Vencimiento fijo para que el código esperado sea
+    /// determinístico.</summary>
+    [Fact]
+    public async Task PostLotesSinCodigoDerivaElCodigoIsoDelVencimiento()
+    {
+        var ctx = await PrepararAsync(nameof(PostLotesSinCodigoDerivaElCodigoIsoDelVencimiento));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-codigo-derivado");
+
+        var fechaVencimiento = new DateOnly(2031, 3, 7);
+        var solicitud = new SolicitudDeLote(idArticulo, Codigo: null, fechaVencimiento);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/lotes", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+
+        var lote = JsonSerializer.Deserialize<LoteListado>(cuerpo, OpcionesJson)!;
+        Assert.Equal(ReglaDeLotes.DerivarCodigo(fechaVencimiento), lote.Codigo);
+        Assert.Equal("2031-03-07", lote.Codigo);
+    }
 }
