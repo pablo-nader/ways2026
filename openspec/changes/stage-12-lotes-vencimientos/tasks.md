@@ -383,8 +383,14 @@ get-or-create and reads bounded saldos; `GET/POST /api/stock/lotes` live.
   dedicado — patrón ya cubierto por suites hermanas del repo
   (`LotesBackstopTests` y equivalentes de otros stocks); no bloquea el
   merge de este slice.)*
-- [ ] 3.13 Branch `feat/stage12-slice3-servicio-de-lotes` off `main`
-  (parent: slices 1+2); PR; merge stacked-to-main.
+- [x] 3.13 Branch `feat/stage12-slice3-servicio-de-lotes` off `main`
+  (parent: slices 1+2); PR; merge stacked-to-main. *(APPLY-RUN NOTE: round 1
+  double REJECT — judge A: MAJOR, missing honesty doc-comment on the
+  UTC-naive `hoy` behind `LoteListado.Estado`; judge B: MAJOR, the
+  `Sugerido = last-of-order` mutation survived because the only
+  multi-candidate test made first and last coincide, plus `Estado` and
+  derived-código had zero HTTP coverage. Fix batch f21f408/6dee921; round 2
+  double APPROVE with all three re-mutations RED→revert→GREEN.)*
 
 **Test plan**: race backstop (3.5), immutability ×2 (3.6), reserved-código
 (3.7), sin-identificar idempotence (3.8), bounded-query (3.9), role (3.10).
