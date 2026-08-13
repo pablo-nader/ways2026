@@ -324,39 +324,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 name: "controla_lote",
                 table: "articulos");
 
-            migrationBuilder.AlterDatabase()
-                .Annotation("Npgsql:Enum:categoria_gasto", "impuestos,otros,proveedor,servicios,sueldos,viaticos")
-                .Annotation("Npgsql:Enum:clase_comprobante", "compra,venta")
-                .Annotation("Npgsql:Enum:comportamiento_medio_pago", "cuenta_corriente,efectivo,electronico")
-                .Annotation("Npgsql:Enum:estado_compra", "anulada,borrador,confirmada")
-                .Annotation("Npgsql:Enum:estado_comprobante", "anulado,emitido")
-                .Annotation("Npgsql:Enum:estado_tenant", "activo,baja,suspendido")
-                .Annotation("Npgsql:Enum:estado_turno", "abierto,cerrado")
-                .Annotation("Npgsql:Enum:estado_usuario", "activo,bloqueado,inactivo")
-                .Annotation("Npgsql:Enum:modo_lista", "derivada,fija")
-                .Annotation("Npgsql:Enum:motivo_stock", "ajuste,anulacion,compra,inventario,transferencia,venta")
-                .Annotation("Npgsql:Enum:tipo_documento", "cuil,cuit,dni,otro,pasaporte")
-                .Annotation("Npgsql:Enum:tipo_movimiento_caja", "apertura_cajon,refuerzo,retiro")
-                .Annotation("Npgsql:Enum:tipo_movimiento_cc", "actualizacion_precios,ajuste,consumo,pago")
-                .Annotation("Npgsql:Enum:tipo_movimiento_tesoreria", "ajuste,deposito,gasto,retiro_caja")
-                .Annotation("Npgsql:Enum:unidad_venta", "peso,unidad")
-                .Annotation("Npgsql:PostgresExtension:citext", ",,")
-                .OldAnnotation("Npgsql:Enum:categoria_gasto", "impuestos,otros,proveedor,servicios,sueldos,viaticos")
-                .OldAnnotation("Npgsql:Enum:clase_comprobante", "compra,venta")
-                .OldAnnotation("Npgsql:Enum:comportamiento_medio_pago", "cuenta_corriente,efectivo,electronico")
-                .OldAnnotation("Npgsql:Enum:estado_compra", "anulada,borrador,confirmada")
-                .OldAnnotation("Npgsql:Enum:estado_comprobante", "anulado,emitido")
-                .OldAnnotation("Npgsql:Enum:estado_tenant", "activo,baja,suspendido")
-                .OldAnnotation("Npgsql:Enum:estado_turno", "abierto,cerrado")
-                .OldAnnotation("Npgsql:Enum:estado_usuario", "activo,bloqueado,inactivo")
-                .OldAnnotation("Npgsql:Enum:modo_lista", "derivada,fija")
-                .OldAnnotation("Npgsql:Enum:motivo_stock", "ajuste,anulacion,compra,decomiso,inventario,reclasificacion,transferencia,venta")
-                .OldAnnotation("Npgsql:Enum:tipo_documento", "cuil,cuit,dni,otro,pasaporte")
-                .OldAnnotation("Npgsql:Enum:tipo_movimiento_caja", "apertura_cajon,refuerzo,retiro")
-                .OldAnnotation("Npgsql:Enum:tipo_movimiento_cc", "actualizacion_precios,ajuste,consumo,pago")
-                .OldAnnotation("Npgsql:Enum:tipo_movimiento_tesoreria", "ajuste,deposito,gasto,retiro_caja")
-                .OldAnnotation("Npgsql:Enum:unidad_venta", "peso,unidad")
-                .OldAnnotation("Npgsql:PostgresExtension:citext", ",,");
+            // Sin reversa del enum motivo_stock (decisión 9 del proposal): Postgres no soporta
+            // DROP VALUE, así que 'decomiso'/'reclasificacion' quedan como miembros muertos
+            // documentados tras el rollback — el resto de la reversa (FKs, tablas, índices,
+            // CHECK, columnas) sí se ejecuta.
         }
     }
 }
