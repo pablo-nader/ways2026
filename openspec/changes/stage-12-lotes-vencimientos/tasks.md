@@ -367,7 +367,22 @@ get-or-create and reads bounded saldos; `GET/POST /api/stock/lotes` live.
   no pending changes. *(Verified clean before AND after the slice's
   changes — no `Migraciones/`/`Configuraciones/` file touched, per the
   DB CHANGE GATE.)*
-- [ ] 3.12 Run `judgment-day`; fix; re-judge until clean.
+- [x] 3.12 Run `judgment-day`; fix; re-judge until clean. *(FIX 1 — juez A,
+  honestidad documental: doc-comment en `ListarAsync`/`CrearAsync`
+  declarando "hoy" UTC-naive interino por diseño en este slice 3, mismo
+  criterio que `diasAlertaPorDefecto`. FIX 2 — juez B, mutación
+  sobreviviente en `Sugerido` (`ServicioDeLotes.cs:162`): nuevo test con
+  ≥2 lotes fechados de vencimientos distintos + sin-identificar,
+  `sugerido` assertado en las CUATRO filas; mutación aplicada→RED→
+  revertida→GREEN. FIX 3 — juez B, cobertura de `estado` vía HTTP con
+  vencimientos fijos lejanos (`2020-01-15` vencido, `2099-12-31` vigente),
+  independiente de la hora de corrida. FIX 4 — juez B, blind spot: test
+  del código server-derivado (`POST /api/stock/lotes` sin `codigo`).
+  DEUDA MENOR ANOTADA (no en este batch): los caminos de fallo
+  `referencia_invalida`/404 de los endpoints de lotes quedan sin test
+  dedicado — patrón ya cubierto por suites hermanas del repo
+  (`LotesBackstopTests` y equivalentes de otros stocks); no bloquea el
+  merge de este slice.)*
 - [ ] 3.13 Branch `feat/stage12-slice3-servicio-de-lotes` off `main`
   (parent: slices 1+2); PR; merge stacked-to-main.
 
