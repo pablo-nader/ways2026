@@ -68,4 +68,12 @@ public class ItemComprobanteVenta : EntidadTenant
     /// <c>CostoCongeladoEnVentaEtapa9</c> (stage 9, decisión 2): una aproximación, no un costo
     /// real capturado al emitir.</summary>
     public bool CostoEsEstimado { get; set; }
+
+    /// <summary>Etapa 12 (proposal decisión 8, gate §F): snapshot del lote resuelto al emitir —
+    /// congelado, nunca re-derivado (doc 10 principio 6), legal bajo "Snapshot Immutability of
+    /// Items" porque se AGREGA al snapshot y no existe endpoint de edición. Es lo que hace exacta
+    /// la anulación: la reversión lee el <see cref="IdLote"/> de la propia fila, sin lookup ni
+    /// ambigüedad. <c>NULL</c> para un artículo que no es lot-effective. Columna creada en esta
+    /// slice, escrita recién en slice 8 (<c>ServicioDeVentas</c>).</summary>
+    public int? IdLote { get; set; }
 }

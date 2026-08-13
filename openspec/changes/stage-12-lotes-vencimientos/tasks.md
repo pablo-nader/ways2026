@@ -91,23 +91,23 @@ maps the new `23505` target. **No writer touches these columns yet.**
 **Rollback**: revert the branch — every element is additive/nullable, zero
 rows rewritten.
 
-- [ ] 1.1 Create `src/Ways.Domain/Stock/Lote.cs`: `EntidadTenant`,
+- [x] 1.1 Create `src/Ways.Domain/Stock/Lote.cs`: `EntidadTenant`,
   `IdArticulo`, `Codigo`, `FechaVencimiento`, `EsSinIdentificar`. *(proposal
   gate §A)*
-- [ ] 1.2 Create `src/Ways.Domain/Stock/StockLote.cs`: PK-only,
+- [x] 1.2 Create `src/Ways.Domain/Stock/StockLote.cs`: PK-only,
   `IdArticulo`/`IdPuntoVenta`/`IdLote`/`IdTenant`/`Cantidad`, no audit
   columns — the `Stock` precedent. *(proposal gate §B)*
-- [ ] 1.3 Modify `src/Ways.Domain/Stock/MotivoStock.cs`: add `Decomiso`,
+- [x] 1.3 Modify `src/Ways.Domain/Stock/MotivoStock.cs`: add `Decomiso`,
   `Reclasificacion`.
-- [ ] 1.4 Modify `src/Ways.Domain/Stock/MovimientoStock.cs`: add
+- [x] 1.4 Modify `src/Ways.Domain/Stock/MovimientoStock.cs`: add
   `int? IdLote`.
-- [ ] 1.5 Modify `src/Ways.Domain/Articulos/Articulo.cs`: add
+- [x] 1.5 Modify `src/Ways.Domain/Articulos/Articulo.cs`: add
   `bool ControlaLote` (default `false`).
-- [ ] 1.6 Modify `src/Ways.Domain/Ventas/ItemComprobanteVenta.cs`: add
+- [x] 1.6 Modify `src/Ways.Domain/Ventas/ItemComprobanteVenta.cs`: add
   `int? IdLote` (snapshot field, no re-derivation).
-- [ ] 1.7 Modify `src/Ways.Domain/Compras/ItemComprobanteCompra.cs`: add
+- [x] 1.7 Modify `src/Ways.Domain/Compras/ItemComprobanteCompra.cs`: add
   `string? CodigoLote`, `DateOnly? FechaVencimiento`, `int? IdLote`.
-- [ ] 1.8 Create `.../Configuraciones/LoteConfiguration.cs`: `pk_lotes`;
+- [x] 1.8 Create `.../Configuraciones/LoteConfiguration.cs`: `pk_lotes`;
   alternate key `ux_lotes_id_articulo_tenant`; `fk_lotes_tenant`,
   `fk_lotes_articulo`; `ck_lotes_vencimiento_segun_tipo`,
   `ck_lotes_codigo_no_vacio`; unique partial indexes
@@ -115,40 +115,40 @@ rows rewritten.
   `ux_lotes_sin_identificar` (`WHERE es_sin_identificar AND deleted_at IS NULL`);
   `ix_lotes_tenant`, `ix_lotes_articulo`, `ix_lotes_vencimiento`. All names
   explicit — EF's PascalCase default is always overridden.
-- [ ] 1.9 Create `.../Configuraciones/StockLoteConfiguration.cs`:
+- [x] 1.9 Create `.../Configuraciones/StockLoteConfiguration.cs`:
   `pk_stock_lotes (id_articulo, id_punto_venta, id_lote)`;
   `fk_stock_lotes_tenant`, `fk_stock_lotes_lote` (composite against
   `ux_lotes_id_articulo_tenant`), `fk_stock_lotes_punto_venta`;
   `ix_stock_lotes_tenant`, `ix_stock_lotes_punto_venta`,
   `ix_stock_lotes_lote`. **No CHECK on `cantidad`** (deliberate — negative
   balance is legal at the counter, `stock` parity).
-- [ ] 1.10 Modify `ArticuloConfiguration.cs`: `controla_lote boolean NOT
+- [x] 1.10 Modify `ArticuloConfiguration.cs`: `controla_lote boolean NOT
   NULL DEFAULT false`; `ix_articulos_controla_lote (id_tenant) WHERE
   controla_lote AND deleted_at IS NULL`.
-- [ ] 1.11 Modify `MovimientoStockConfiguration.cs`: `id_lote integer NULL`;
+- [x] 1.11 Modify `MovimientoStockConfiguration.cs`: `id_lote integer NULL`;
   `fk_movimientos_stock_lote (id_lote, id_articulo, id_tenant)` against
   `lotes`'s alternate key; `ix_movimientos_stock_lote`.
-- [ ] 1.12 Modify `ItemComprobanteVentaConfiguration.cs`: `id_lote integer
+- [x] 1.12 Modify `ItemComprobanteVentaConfiguration.cs`: `id_lote integer
   NULL`; `fk_items_comprobante_venta_lote` (3-column composite, gate
   amendment 2, `MATCH SIMPLE`); `ix_items_comprobante_venta_lote`.
-- [ ] 1.13 Modify `ItemComprobanteCompraConfiguration.cs`: `codigo_lote text
+- [x] 1.13 Modify `ItemComprobanteCompraConfiguration.cs`: `codigo_lote text
   NULL`, `fecha_vencimiento date NULL`, `id_lote integer NULL`;
   `fk_items_comprobante_compra_lote` (gate amendment 2);
   `ix_items_comprobante_compra_lote`;
   `ck_items_comprobante_compra_lote_input`.
-- [ ] 1.14 Modify `WaysDbContext.cs`: `DbSet<Lote>`, `DbSet<StockLote>`,
+- [x] 1.14 Modify `WaysDbContext.cs`: `DbSet<Lote>`, `DbSet<StockLote>`,
   `AplicarFiltroDeTenantEnStockLote` mirroring
   `AplicarFiltroDeTenantEnStock` (decision 20 — `stock_lotes` has no audit
   columns, so it needs the hand-rolled filter, not `EntidadTenant`'s global
   one), register both configurations.
-- [ ] 1.15 Create `.../Migraciones/…_LotesYVencimientosEtapa12.cs`:
+- [x] 1.15 Create `.../Migraciones/…_LotesYVencimientosEtapa12.cs`:
   statement order per design — `AlterDatabase` (enum diff) first,
   `CreateTable lotes`, `CreateTable stock_lotes`, `AddColumn ×6` with FKs +
   indexes, `HabilitarRlsDeTenant("lotes")` +
   `HabilitarRlsDeTenant("stock_lotes")`. **No `Sql()` statement in this
   migration may name `'decomiso'`/`'reclasificacion'`** (PG forbids using an
   `ADD VALUE` enum member in the same transaction that added it).
-- [ ] 1.16 Modify `src/Ways.Api/Seguridad/ManejadorDeErrores.cs`: `23505` on
+- [x] 1.16 Modify `src/Ways.Api/Seguridad/ManejadorDeErrores.cs`: `23505` on
   `ux_lotes_articulo_codigo` → `409 lote_duplicado`; document the
   `ux_lotes_sin_identificar` backstop exemption (no live route races it —
   proven by raw SQL only, `pk_stock` precedent). `23503` needs no change

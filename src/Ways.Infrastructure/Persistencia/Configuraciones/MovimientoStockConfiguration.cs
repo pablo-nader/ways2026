@@ -52,6 +52,10 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
 
         builder.Property(m => m.IdPuntoVentaDestino).HasColumnName("id_punto_venta_destino");
 
+        // Etapa 12 (proposal decisión 5, gate §C): columna creada acá, escrita recién desde
+        // slice 4.
+        builder.Property(m => m.IdLote).HasColumnName("id_lote");
+
         builder.Property(m => m.IdEmpleado).HasColumnName("id_empleado").IsRequired();
         builder.Property(m => m.Observaciones).HasColumnName("observaciones").HasColumnType("text");
 
@@ -75,6 +79,10 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
         builder.HasIndex(m => new { m.IdPuntoVenta, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_punto_venta");
         builder.HasIndex(m => new { m.IdPuntoVentaDestino, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_punto_venta_destino");
         builder.HasIndex(m => m.IdEmpleado).HasDatabaseName("ix_movimientos_stock_empleado");
+
+        // Etapa 12 (proposal decisión 5, gate §C): soporte de fk_movimientos_stock_lote y
+        // reconstrucción del ledger por lote.
+        builder.HasIndex(m => new { m.IdLote, m.IdArticulo, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_lote");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -117,6 +125,15 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
             .HasForeignKey(m => new { m.IdComprobanteCompra, m.IdTenant })
             .HasPrincipalKey(c => new { c.Id, c.IdTenant })
             .HasConstraintName("fk_movimientos_stock_comprobante_compra")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Etapa 12 (proposal decisión 5, gate §C): garantiza a nivel de base que el lote del
+        // movimiento pertenece a su mismo artículo.
+        builder.HasOne<Lote>()
+            .WithMany()
+            .HasForeignKey(m => new { m.IdLote, m.IdArticulo, m.IdTenant })
+            .HasPrincipalKey(l => new { l.Id, l.IdArticulo, l.IdTenant })
+            .HasConstraintName("fk_movimientos_stock_lote")
             .OnDelete(DeleteBehavior.Restrict);
 
         // id_empleado: FK SIMPLE (no compuesta), misma deviación deliberada que

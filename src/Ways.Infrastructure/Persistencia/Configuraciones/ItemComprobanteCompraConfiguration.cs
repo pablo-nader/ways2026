@@ -4,6 +4,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Compras;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Stock;
 
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
@@ -27,6 +28,12 @@ public class ItemComprobanteCompraConfiguration : IEntityTypeConfiguration<ItemC
             t.HasCheckConstraint(
                 "ck_items_comprobante_compra_importes_no_negativos",
                 "descuento >= 0 AND total >= 0");
+
+            // Etapa 12 (proposal gate §G): un código de lote sin vencimiento nunca puede
+            // resolver a una fila válida de `lotes` — se rechaza en la puerta.
+            t.HasCheckConstraint(
+                "ck_items_comprobante_compra_lote_input",
+                "(codigo_lote IS NULL AND fecha_vencimiento IS NULL) OR fecha_vencimiento IS NOT NULL");
         });
 
         builder.HasKey(i => i.Id).HasName("pk_items_comprobante_compra");
@@ -73,6 +80,12 @@ public class ItemComprobanteCompraConfiguration : IEntityTypeConfiguration<ItemC
 
         builder.Property(i => i.PrecioSugerido).HasColumnName("precio_sugerido").HasColumnType("numeric(14,2)");
 
+        // Etapa 12 (proposal gate §G): input de borrador, capturado tal cual — nunca resuelto
+        // antes de Confirmar (slice 5).
+        builder.Property(i => i.CodigoLote).HasColumnName("codigo_lote").HasColumnType("text");
+        builder.Property(i => i.FechaVencimiento).HasColumnName("fecha_vencimiento").HasColumnType("date");
+        builder.Property(i => i.IdLote).HasColumnName("id_lote");
+
         builder.Property(i => i.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(i => i.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(i => i.DeletedAt).HasColumnName("deleted_at");
@@ -87,6 +100,9 @@ public class ItemComprobanteCompraConfiguration : IEntityTypeConfiguration<ItemC
         builder.HasIndex(i => new { i.IdComprobanteCompra, i.IdTenant }).HasDatabaseName("ix_items_comprobante_compra_comprobante");
         builder.HasIndex(i => new { i.IdArticulo, i.IdTenant }).HasDatabaseName("ix_items_comprobante_compra_articulo");
         builder.HasIndex(i => i.IdAlicuotaIva).HasDatabaseName("ix_items_comprobante_compra_alicuota_iva");
+
+        // Etapa 12 (proposal gate §G): soporte de fk_items_comprobante_compra_lote.
+        builder.HasIndex(i => new { i.IdLote, i.IdArticulo, i.IdTenant }).HasDatabaseName("ix_items_comprobante_compra_lote");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -113,6 +129,15 @@ public class ItemComprobanteCompraConfiguration : IEntityTypeConfiguration<ItemC
             .WithMany()
             .HasForeignKey(i => i.IdAlicuotaIva)
             .HasConstraintName("fk_items_comprobante_compra_alicuota_iva")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Etapa 12 (proposal gate §G, gate amendment 2): a diferencia de la de venta, IdArticulo
+        // es NOT NULL acá, así que la FK queda completamente exigida en cuanto IdLote se setea.
+        builder.HasOne<Lote>()
+            .WithMany()
+            .HasForeignKey(i => new { i.IdLote, i.IdArticulo, i.IdTenant })
+            .HasPrincipalKey(l => new { l.Id, l.IdArticulo, l.IdTenant })
+            .HasConstraintName("fk_items_comprobante_compra_lote")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

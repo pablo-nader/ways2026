@@ -65,6 +65,34 @@ public class ManejadorDeErrores(
                 when string.Equals(uxOrdenCompra, "ux_items_comprobante_compra_orden", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en esta compra.", "orden_de_item_duplicado"),
 
+            // stage-12-lotes-vencimientos (Slice 1, task 1.16, db-error-backstops, design
+            // decisión 5): ux_lotes_articulo_codigo tiene que resolverse por nombre EXACTO,
+            // ANTES de llegar a ClasificarUnicidad (el caso genérico de más abajo) — su nombre
+            // contiene la substring "_codigo" (la rama genérica "_codigo" de ClasificarUnicidad
+            // lo atraparía primero y lo clasificaría como "codigo_duplicado", el mensaje
+            // genérico), mismo "ordering trap" que ux_comprobantes_venta_numero/
+            // ux_comprobantes_compra_numero_externo de arriba. La carrera es real: get-or-create
+            // (slice 3, ServicioDeLotes.ResolverOCrearAsync) usa un INSERT ... ON CONFLICT DO
+            // UPDATE que resuelve la carrera normal sin tocar nunca esta rama; esta rama es el
+            // backstop de una escritura cruda/fuera de banda o de un `POST /api/stock/lotes`
+            // (slice 3) concurrente con el mismo código.
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string uxLote } }
+                when string.Equals(uxLote, "ux_lotes_articulo_codigo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un lote con ese código para este artículo.", "lote_duplicado"),
+
+            // stage-12-lotes-vencimientos (Slice 1, task 1.16, design decisión 5): exención
+            // documentada de prueba de carrera, mismo patrón que pk_stock/
+            // pk_numeraciones_comprobante — ningún camino de escritura de esta slice ni de las
+            // siguientes hace un INSERT crudo contra este índice: el lote sin identificar se
+            // crea siempre a través de ux_lotes_articulo_codigo primero (design decisión 5, el
+            // código reservado SIN-IDENTIFICAR serializa la creación en ESE índice), así que
+            // ux_lotes_sin_identificar nunca puede chocar por el camino de servicio. Defensa de
+            // esquema pura, alcanzable solo por un INSERT crudo/fuera de banda, probada con SQL
+            // directo (task 1.21).
+            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string uxSinIdentificar } }
+                when string.Equals(uxSinIdentificar, "ux_lotes_sin_identificar", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un lote sin identificar para este artículo.", "lote_sin_identificar_duplicado"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,

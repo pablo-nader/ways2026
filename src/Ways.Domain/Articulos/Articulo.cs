@@ -56,4 +56,14 @@ public class Articulo : EntidadTenant
     public bool DisponibleParaTodas { get; set; } = true;
 
     public bool Activo { get; set; } = true;
+
+    /// <summary>Etapa 12 (proposal decisión 1, gate §E): <c>true</c> ⇒ todo movimiento de stock
+    /// de este artículo (venta, compra, transferencia, ajuste, conteo, decomiso, anulación)
+    /// tiene que llevar un lote — el control efectivo también exige el parámetro de empresa
+    /// <c>lotes_habilitado</c> (<c>ReglaDeLotes.ControlEfectivo</c>, slice 2). Tenant-wide,
+    /// mismo criterio que <see cref="EsProducto"/>: un booleano en <c>articulos</c> que decide
+    /// si un camino de código entero aplica, ya cargado por todo llamador que lo necesita.
+    /// Default <c>false</c> — byte-idéntico al comportamiento de hoy para cualquier fila
+    /// existente.</summary>
+    public bool ControlaLote { get; set; }
 }
