@@ -517,10 +517,35 @@ movimientos_stock (           -- [operativa]
     cantidad numeric(12,3),                  -- con signo: venta −, compra +, anulación inversa
     motivo   motivo_stock,                   -- enum: venta | compra | anulacion | ajuste
                                              --     | transferencia | inventario
+                                             --     | decomiso | reclasificacion (Etapa 12)
     id_comprobante_venta NULL, id_comprobante_compra NULL,
     id_punto_venta_destino NULL,             -- transferencias entre locales (nuevo)
+    id_lote NULL,                            -- dimensión de lote (Etapa 12)
     id_empleado, observaciones, creado_el
 );
+
+lotes (                        -- [catálogo — tenant-wide, sin id_empresa, como articulos] (Etapa 12)
+    id_lote, id_tenant, id_articulo,
+    codigo text NOT NULL,                    -- server-derivado del vencimiento ISO si se omite
+    fecha_vencimiento date NULL,             -- NULL si y solo si es_sin_identificar
+    es_sin_identificar boolean NOT NULL DEFAULT false,
+    created_at, updated_at, deleted_at
+);
+-- Clave natural: UNIQUE (id_tenant, id_articulo, codigo) WHERE deleted_at IS NULL
+--   (ux_lotes_articulo_codigo) — target del get-or-create.
+-- A lo sumo un lote sin identificar por artículo: UNIQUE (id_tenant, id_articulo)
+--   WHERE es_sin_identificar AND deleted_at IS NULL (ux_lotes_sin_identificar).
+-- fecha_vencimiento es inmutable una vez creado el lote — una segunda recepción con
+-- fecha distinta se rechaza (409 lote_vencimiento_incompatible) en vez de sobrescribir.
+
+stock_lotes (                  -- [operativa] (Etapa 12)
+    id_articulo, id_punto_venta, id_lote, id_tenant,
+    cantidad numeric(12,3) NOT NULL DEFAULT 0,          -- cache del libro, por lote
+    PRIMARY KEY (id_articulo, id_punto_venta, id_lote)
+);
+-- PK-only, sin auditoría — mismo criterio que `stock`. Sin CHECK sobre cantidad: un saldo
+-- de lote negativo está permitido en el mostrador (legacy parity), refusado solo en
+-- caminos de back-office (transferencia, decomiso).
 ```
 
 > **Estado (Etapa 5, Slice 3):** `stock` y `movimientos_stock` implementadas — `motivo` solo
@@ -553,6 +578,18 @@ movimientos_stock (           -- [operativa]
 > diferencia no escribe ninguna fila (evita `ck_movimientos_stock_cantidad_no_cero` en vez de
 > chocar contra ella). Ningún enum, columna ni invariante del esquema de arriba cambió de
 > forma — el trabajo de esta etapa fue enteramente de escritores nuevos, nunca de esquema.
+>
+> **Estado (Etapa 12, Slice 1 — esquema, sin escritor):** `lotes`/`stock_lotes` nuevas, con RLS
+> propia; seis columnas aditivas (`movimientos_stock.id_lote`, `articulos.controla_lote`,
+> `items_comprobante_venta.id_lote`, `items_comprobante_compra.codigo_lote`/
+> `fecha_vencimiento`/`id_lote`) y dos valores nuevos de `motivo_stock` (`decomiso`,
+> `reclasificacion`) — ambos agregados vía `ALTER TYPE ... ADD VALUE`, sin escritor todavía
+> (ningún `Sql()` de la migración que los agrega puede nombrarlos, PG lo prohíbe dentro de la
+> misma transacción). `stock.cantidad = SUM(movimientos)` sigue intacto; se agrega el segundo
+> invariante `stock_lotes.cantidad = SUM(movimientos con ese id_lote)`. Ningún dato existente se
+> reescribe: `controla_lote` default `false`, todo lo demás nullable. Los escritores reales
+> (get-or-create, reconciliación, recepción, venta, transferencia, ajuste, conteo, decomiso)
+> aterrizan en las slices 2-12.
 
 `stock.cantidad` es un cache mantenido en la misma transacción del movimiento.
 Transferencia entre locales: dos movimientos espejados — feature nueva que el legacy

@@ -153,7 +153,7 @@ rows rewritten.
   `ux_lotes_sin_identificar` backstop exemption (no live route races it —
   proven by raw SQL only, `pk_stock` precedent). `23503` needs no change
   (the existing `fk_` prefix arm covers the four new FKs).
-- [ ] 1.17 Update `docs/10-modelo-de-datos.md` §6: add `lotes` and
+- [x] 1.17 Update `docs/10-modelo-de-datos.md` §6: add `lotes` and
   `stock_lotes` table entries and the two new `motivo_stock` values, tagged
   `Estado (Etapa 12)` per the doc's existing annotation convention.
 - [ ] 1.18 [P] Migration-apply test: fresh testcontainer DB applies
