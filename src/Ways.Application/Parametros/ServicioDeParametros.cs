@@ -104,6 +104,16 @@ public class ServicioDeParametros(IWaysDbContext db, IRelojDelSistema reloj, Ser
         // controla_lote=true cuyo PV pertenece a una empresa con lotes_habilitado efectivo
         // true — un re-run que también toca otras empresas ya habilitadas es un no-op seguro
         // (design decisión 13), nunca un costo de corrección.
+        //
+        // Contrato de fallo parcial (diseño aceptado, sin transacción ambiente entre el
+        // SaveChangesAsync de arriba y este ReconciliarAsync): el flip de lotes_habilitado ya
+        // quedó COMMITEADO antes de este punto. Si ReconciliarAsync falla a mitad de camino
+        // (algunos pares (artículo, PV) del tenant ya reconciliados, otros no), el request
+        // devuelve un 500 genérico y el flip queda commiteado con reconciliación incompleta. No
+        // hay rollback del flip ni señal adicional que distinga "reconciliación completa" de
+        // "parcial" — la recuperación es el self-healing por construcción de ReconciliarParAsync
+        // (residuo recomputado desde el estado actual en la próxima corrida) o un POST manual a
+        // /api/stock/lotes/reconciliacion sobre el mismo alcance.
         if (esLotesHabilitado && !valorAnteriorLotesHabilitado && DeserializarBool(datos.Valor))
         {
             await servicioDeLotes.ReconciliarAsync(idArticulo: null, idPuntoVenta: null, ct);

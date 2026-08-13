@@ -292,6 +292,16 @@ public class ServicioDeArticulos(
         // true"): alcance = ese artículo, todas las PV (ReconciliarAsync ya filtra a las de
         // empresas con lotes_habilitado efectivo). Un flip a false no reconcilia nada (spec: "the
         // false → true transition... a flip to false reconciles nothing").
+        //
+        // Contrato de fallo parcial (diseño aceptado, sin transacción ambiente entre el
+        // SaveChangesAsync de arriba y este ReconciliarAsync): el flip de controla_lote ya quedó
+        // COMMITEADO antes de este punto. Si ReconciliarAsync falla a mitad de camino (algunos
+        // pares (artículo, PV) ya reconciliados, otros no), el request devuelve un 500 genérico y
+        // el flip queda commiteado con reconciliación incompleta. No hay rollback del flip ni
+        // señal adicional que distinga "reconciliación completa" de "parcial" — la recuperación es
+        // el self-healing por construcción de ReconciliarParAsync (residuo recomputado desde el
+        // estado actual en la próxima corrida) o un POST manual a
+        // /api/stock/lotes/reconciliacion sobre el mismo alcance.
         if (!controlaLoteAnterior && datos.ControlaLote)
         {
             await servicioDeLotes.ReconciliarAsync(articulo.Id, idPuntoVenta: null, ct);
