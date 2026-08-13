@@ -1,0 +1,439 @@
+change: stage-12-lotes-vencimientos
+phase: tasks
+status: in-progress
+artifact_store: openspec
+execution_mode: automatic-autonomous
+delivery_strategy: auto-chain
+chain_strategy: stacked-to-main
+db_gate: APPROVED-WITH-AMENDMENTS
+db_gate_approval: >-
+  APROBADO 2026-08-12 por el orquestador bajo mandato autonomo delegado, evaluacion FORMAL
+  del 'Modelo de datos propuesto' contra doc 10 y doc 09, verificada contra el codigo real
+  (ItemComprobanteVentaConfiguration, ItemComprobanteVenta.IdArticulo nullable,
+  ItemComprobanteCompra.IdArticulo NOT NULL, helper HabilitarRlsDeTenant existente en 5
+  migraciones, tabla de categorias doc-09:82-87). VEREDICTO POR CRITERIO — Naming: OK
+  (espanol snake_case plural, PK id_lote, ck_/fk_/ix_/ux_ nombrados explicitos, override del
+  default PascalCase de EF). Scoping: OK CON ENMIENDA 1 — la categoria de lotes es
+  TENANT-WIDE (id_tenant SIN id_empresa, sigue al articulo como precios), NO 'Catalogo'
+  (que lleva id_empresa NULL); el modelo fisico ya era correcto, se corrigio la
+  clasificacion nominal en proposal.md. stock_lotes operativa como stock: OK. CHECKs: OK
+  (ck_lotes_vencimiento_segun_tipo XOR correcto; ck_lotes_codigo_no_vacio;
+  ck_items_comprobante_compra_lote_input; ausencia DELIBERADA de CHECK en
+  stock_lotes.cantidad = paridad con stock, negativo permitido en mostrador). Indices: OK
+  (parciales con WHERE deleted_at IS NULL; ux_lotes_sin_identificar unico parcial;
+  ix_lotes_vencimiento para el reporte; soportes de FK explicitos). RLS: OK (ambas tablas
+  nuevas via HabilitarRlsDeTenant, FORCE, patron identico a las 5 migraciones previas;
+  stock_lotes ademas con filtro de tenant hand-rolled en WaysDbContext, precedente Stock).
+  ENMIENDA 2 (vinculante, aplicada a proposal.md secciones F y G): las FKs de id_lote en
+  items_comprobante_venta e items_comprobante_compra pasan de (id_lote,id_tenant) a la
+  compuesta de 3 columnas (id_lote,id_articulo,id_tenant) contra la alternate key existente
+  ux_lotes_id_articulo_tenant — reutiliza la unica AK (evita que EF cree una segunda AK
+  (id_lote,id_tenant) sobre lotes) y lleva la coherencia lote/articulo al nivel de DB tambien
+  en los snapshots; MATCH SIMPLE cubre id_articulo NULL (lineas de concepto libre) porque una
+  linea con lote siempre referencia articulo y la aplicacion valida ese par. ENMIENDA 3
+  (nota vinculante para design/apply): el get-or-create contra ux_lotes_articulo_codigo y
+  el par de indices unicos de lotes requieren su backstop de traduccion de error y test de
+  carrera con SQLSTATE 23505 asertado (skill db-error-backstops), y el upsert de stock_lotes
+  hereda la disciplina RETURNING. La nota de migracion PG17 (ALTER TYPE ADD VALUE no usable
+  en la misma transaccion) queda como criterio de verify. Alcance congelado: cualquier objeto
+  de esquema fuera de la seccion enmendada reabre el gate.
+db_gate_scope: >-
+  THE STAGE PROPOSES REAL SCHEMA CHANGE. The 'Modelo de datos propuesto' section of
+  proposal.md is the gate contract and is self-sufficient at table level: 2 NEW tables
+  (lotes [catalogo tenant-wide, como articulos, EntidadTenant, RLS lotes_tenant FORCE];
+  stock_lotes [operativa, PK-only como stock, filtro de tenant hand-rolled, RLS
+  stock_lotes_tenant FORCE]); 2 NEW motivo_stock enum values (decomiso, reclasificacion);
+  6 additive columns (movimientos_stock.id_lote nullable + FK compuesta
+  (id_lote,id_articulo,id_tenant) + ix_movimientos_stock_lote; articulos.controla_lote
+  boolean NOT NULL DEFAULT false + ix_articulos_controla_lote parcial;
+  items_comprobante_venta.id_lote nullable snapshot + FK + indice;
+  items_comprobante_compra.codigo_lote/fecha_vencimiento/id_lote + FK + indice +
+  ck_items_comprobante_compra_lote_input). ZERO cambio de forma en stock. ZERO backfill,
+  ZERO data statement sobre filas existentes, ZERO vista/trigger/funcion. Un solo migration:
+  LotesYVencimientosEtapa12. NOTA VINCULANTE DE MIGRACION (PG17): ALTER TYPE ... ADD VALUE
+  esta permitido dentro de transaccion desde PG12 pero el valor nuevo NO puede usarse en la
+  misma transaccion — la migracion agrega los dos valores y no debe referenciarlos en ningun
+  Sql()/seed propio. LA APROBACION DEL GATE OCURRE ANTES DE spec/design; cualquier objeto de
+  esquema que sdd-apply escriba y que no este en esa seccion es violacion de alcance y
+  reabre el gate.
+phases:
+  explore:
+    status: done
+    artifact: explore.md
+    depends_on: []
+    notes: >-
+      Mapa completo del terreno: modelo de stock sin dimension de lote, TRES sitios de
+      escritura raw-SQL independientes sin helper compartido (ServicioDeVentas,
+      ServicioDeCompras, ServicioDeStock — duplicacion deliberada, documentada en el
+      doc-comment de ServicioDeCompras), 9 'Constraints Any Design Must Respect', evidencia
+      por decision abierta, y el hallazgo elevado hacia arriba: NO EXISTE NINGUNA
+      INFRAESTRUCTURA DE PUSH/NOTIFICACION en src (grep de notificacion|alerta|Notification|
+      Alert|SendGrid|SmtpClient|IEmailSender devuelve cero).
+  propose:
+    status: done
+    artifact: proposal.md
+    depends_on: [explore]
+    notes: >-
+      Escrito 2026-08-12 bajo AUTORIDAD TECNICA DELEGADA, sesgo conservador y reversible.
+      DOCE decisiones autonomas, cada una con contexto, opciones con tradeoffs, decision y
+      costo explicito de revertirla. Seccion 'Modelo de datos propuesto' gate-ready
+      (columnas, tipos, nullability, PK, FKs compuestas con tenant, CHECKs nombrados,
+      indices nombrados, categoria de scoping doc 09 y policy RLS por tabla). Contrato de
+      capabilities: 1 NUEVA (lotes-y-vencimientos), 6 MODIFICADAS (stock,
+      transferencias-de-stock, comprobantes-venta, comprobantes-compra,
+      conteo-de-inventario, parametros-operativos). reportes-de-gestion NO se modifica: el
+      reporte de vencimientos lo posee de punta a punta la capability nueva (precedente de
+      stage-11, no smearing). Plan tentativo de 11 slices stacked-to-main, ~3900 lineas.
+      Ronda de preguntas de proposal con 6 preguntas y su asuncion registrada.
+  spec:
+    status: done
+    artifact: specs/
+    depends_on: [propose]
+    notes: >-
+      7 delta specs bajo specs/: 1 NUEVA capability completa
+      (lotes-y-vencimientos, 10 requirements/39 escenarios) + 6 deltas sobre
+      capabilities existentes (stock 4 req/17 esc; transferencias-de-stock 4
+      req/11 esc; comprobantes-venta 5 req/24 esc; comprobantes-compra 4
+      req/19 esc; conteo-de-inventario 4 req/11 esc; parametros-operativos 2
+      req/6 esc). TOTAL: 33 requirements, 127 escenarios GIVEN/WHEN/THEN,
+      todos testeables con codigos de error exactos (409
+      lote_vencimiento_incompatible, 409 stock_insuficiente_para_decomiso,
+      409 transferencia_lote_vencido, 409 lote_vencido_en_recepcion, 409
+      stock_insuficiente_para_transferencia extendido a nivel lote, 409
+      compra_anulacion_stock_negativo extendido a nivel lote). Formato:
+      capability nueva = spec.md completo (precedente exportacion-de-reportes
+      de stage-11); capabilities existentes = '# Delta for X' con ##
+      MODIFIED/ADDED Requirements restableciendo el texto completo del
+      requirement + '(Previously: ...)' (precedente stage-8 stock delta).
+      DOS SUPUESTOS DE NIVEL SPEC registrados: (1) la politica de
+      autorizacion del reporte de vencimientos se asumio
+      Politicas.LecturaDeReportes por precedente directo de existencias
+      (stage-11) — el proposal no la fija explicitamente; (2) el codigo de
+      error de la degradacion pre-aprobada de conteo (decision 11) se
+      inventa como '409 conteo_lote_no_soportado' siguiendo la convencion
+      snake_case del resto de la etapa — el proposal describe la conducta
+      pero no nombra el codigo. Ninguno bloquea design/tasks.
+      AMENDED post-design: 3 refinamientos spec-affecting de design.md
+      incorporados a los deltas — (1) lotes-y-vencimientos/spec.md: el
+      reporte de vencimientos clasifica en CUATRO estados
+      (vencido/por_vencer/vigente/sin_fecha, decision 16 del design) en vez
+      de tres; el lote sin-identificar (fecha_vencimiento NULL) aparece como
+      sin_fecha y cuenta en los totales del PV (un reporte que lo omite
+      miente por omision) — +1 escenario, tile del Tablero ahora tambien
+      surface sin_fecha; (2) conteo-de-inventario/spec.md:
+      SolicitudDeConteo.Contada pasa a decimal? con semantica
+      exactly-one-of Contada/Lotes (decision 18, dto-contract-honesty), 400
+      conteo_contada_y_lotes tanto si vienen ambos como si no viene ninguno
+      — +2 escenarios en el requirement renombrado 'Conteo Input Is Exactly
+      One Of A Counted Total Or A Per-Lot Breakdown, Never A Delta'; (3)
+      transferencias-de-stock/spec.md: la clave de deteccion de renglon
+      duplicado (codigo articulo_repetido, reusado de stage-8) se ensancha
+      de IdArticulo a (IdArticulo, IdLote) evaluada DESPUES del defaulting
+      FEFO (decision 11 del design) — nuevo requirement ADDED con 3
+      escenarios (lotes distintos aceptados, mismo lote explicito
+      rechazado, mismo lote resuelto post-FEFO con ambas lineas omitiendo
+      idLote rechazado). Los dos supuestos de nivel spec (LecturaDeReportes
+      para vencimientos; 409 conteo_lote_no_soportado) fueron CONVALIDADOS
+      por el design — no contradichos, sin cambios. CONTEOS FINALES POST-
+      AMENDMENT: lotes-y-vencimientos 10 req/40 esc (+1); stock 4 req/17
+      esc (sin cambio); transferencias-de-stock 5 req/14 esc (+1 req, +3
+      esc); comprobantes-venta 5 req/24 esc (sin cambio); comprobantes-
+      compra 4 req/19 esc (sin cambio); conteo-de-inventario 4 req/13 esc
+      (+2 esc); parametros-operativos 2 req/6 esc (sin cambio). TOTAL: 34
+      requirements (antes 33), 133 escenarios (antes 127).
+  design:
+    status: done
+    artifact: design.md
+    notes: >-
+      21 decisiones numeradas (opus). Claves: ReglaDeLotes pura en Domain (FEFO, control
+      efectivo, clasificacion de vencimiento); jerarquia de lock de dos niveles — lotes
+      SIEMPRE antes que stock/stock_lotes (lotes no tiene id_punto_venta, no puede entrar a
+      la tupla); el orden pinneado es de ADQUISICION DE LOCKS, no de escritura de valores
+      (eso hace implementable conteo por lote y reconciliacion sin primitiva nueva);
+      get-or-create con ON CONFLICT ... DO UPDATE no-op ... RETURNING (nunca DO NOTHING,
+      el check de inmutabilidad corre BAJO el lock, sin retry-read loop); sin-identificar
+      con codigo reservado 'SIN-IDENTIFICAR' (un solo conflict target lo serializa,
+      ux_lotes_sin_identificar queda como backstop puro de schema); conteo adquiere TODOS
+      los locks en orden pinneado primero (upserts no-op) y despues aplica deltas;
+      reconciliacion por par (articulo,PV) — batch no atomico, self-healing, stock jamas
+      tocado; export de vencimientos es LISTADO (COUNT->refuse->Take(tope+1)).
+      HALLAZGO REAL: ResolucionDeParametros.Resolver filtra por IdPuntoVenta pero NO por
+      Clave — con el set batcheado de 3 claves devolveria la fila PV-scoped de OTRA clave;
+      corrupcion silenciosa cross-parametro; target de mutacion nombrado.
+      SLICING REFINADO 11->15 (~4650 lineas), 4 frentes paralelos en archivos disjuntos
+      tras el slice 3: [4] lotes, [5->6] compras, [7->8->9] ventas, [10->11->12] stock.
+      SLICE 1 = size:exception DECLARADA (~430, la migracion unica del gate no se parte).
+      3 refinamientos spec-affecting devueltos a spec: EstadoDeVencimiento.SinFecha (4ta
+      clase — el reporte debe sumar al saldo o miente por omision); SolicitudDeConteo.Contada
+      a decimal? exactly-one-of (dto-contract-honesty); clave de duplicado de transferencia
+      ensanchada a (IdArticulo, IdLote) DESPUES del defaulting FEFO. Sin blocker de modelo:
+      el gate queda cerrado.
+    depends_on: [propose]
+  tasks:
+    status: done
+    artifact: tasks.md
+    depends_on: [spec, design]
+    notes: >-
+      15 slices, stacked-to-main, 15 PRs (design's refined slicing). Tasks por slice:
+      1-esquema 26 (size:exception, migracion unica, ~430L); 2-activacion 11 (~260L);
+      3-servicio-de-lotes 13 (~300L); 4-reconciliacion 13 (~330L); 5-recepcion 15
+      (~330L); 6-compra-anulacion 8 (~180L); 7-venta-plan-fefo 15 (~280L);
+      8-venta-escritura 11 (~330L); 9-ncx 12 (~200L); 10-transferencias 15 (~360L);
+      11-ajuste-decomiso 13 (~280L); 12-conteo 15 (~250L); 13-vencimientos 13
+      (~320L); 14-web-operacion 11 (~400L); 15-web-backoffice 13 (~400L). TOTAL
+      ~204 tasks, ~4650 lineas estimadas. Los 34 requirements/133 escenarios de los
+      7 delta specs quedan citados por nombre en tasks de test especificas, ninguno
+      sin cobertura. Skills obligatorias aplicadas: mutation-proof-tests (9 targets
+      nombrados en design.md, cada uno ubicado en exactamente un slice, con
+      evidencia de mutacion registrada por task); db-error-backstops (23505 sobre
+      ux_lotes_articulo_codigo probado en slices 1/3/5 con SQLSTATE asertado;
+      ux_lotes_sin_identificar con exencion documentada + prueba raw-SQL en slice
+      1); react-async-state y web-descriptor-tests en slices 14-15;
+      dto-contract-honesty en todo DTO nuevo. Dependencia cross-frente explicita
+      registrada: el test conjunto de deadlock checkout-vs-transferencia-inversa
+      (spec stock, ADDED) se abre a medias en slice 8 (mutacion del lado checkout)
+      y se cierra en slice 10 (task 10.12, una vez existe tambien el lado
+      transferencia) — slice 10 es downstream de slice 8 en todo orden de merge
+      valido. Task explicita de actualizacion de docs/10-modelo-de-datos.md §6
+      incluida en slice 1 (task 1.17). REVIEW WORKLOAD FORECAST VINCULANTE: ~4650
+      lineas totales; riesgo de presupuesto 400 = ALTO (slice 1 size:exception
+      declarada ~430; slices 10/14/15 Medium, las que vigilar en apply); PRs
+      encadenados = Si; decision necesaria antes de apply = No, YA RESUELTA
+      (auto-chain + stacked-to-main, delivery_strategy/chain_strategy de state.yaml
+      honrados sin reabrir la pregunta).
+  apply:
+    status: pending
+    artifact: null
+    depends_on: [tasks]
+  verify:
+    status: pending
+    artifact: null
+    depends_on: [apply]
+  archive:
+    status: pending
+    artifact: null
+    depends_on: [verify]
+dependencies:
+  spec: [propose]
+  design: [propose]
+  tasks: [spec, design]
+  apply: [tasks]
+  verify: [apply]
+  archive: [verify]
+decisiones_tomadas:
+  - "1 — CONTROL DE LOTE POR ARTICULO, BINARIO Y OBLIGATORIO DONDE ESTA PRENDIDO:
+    articulos.controla_lote boolean NOT NULL DEFAULT false, la forma exacta de EsProducto.
+    Se RECHAZA el enum de tres valores (no aplica/opcional/obligatorio): 'opcional' es la
+    unica opcion sin invariante honesto — una dimension que a veces se llena no es una
+    dimension, es ruido que vuelve inasertable SUM(stock_lotes)=stock.cantidad. Reversible:
+    apagar el boolean devuelve el articulo a comportamiento agregado al instante, la
+    historia de lotes queda; ensanchar a enum despues es un backfill mecanico."
+  - "2 — ACTIVACION POR EMPRESA VIA PARAMETRO, RECONCILIADA CON EL FLAG TENANT-WIDE POR AND,
+    Y GRATIS: lotes_habilitado (bool, default false) como ParametroConocido nuevo (sin
+    migracion, patron stage-10). CONTROL EFECTIVO = articulos.controla_lote AND
+    lotes_habilitado — cierra el mismatch de scoping EN EL CAMINO DE ESCRITURA, no solo en
+    la UI. Y la lectura de parametros de ServicioDeVentas se BATCHEA a una sola query (WHERE
+    clave IN (...)): el hot path pasa de 2 round-trips de parametros a 1, o sea el flag del
+    modulo NO SOLO ES GRATIS, SE PAGA SOLO. Delta de round-trips: modulo apagado -1; modulo
+    prendido sin articulo con lote en el carrito -1 (controla_lote ya viene en el mapa de
+    articulos cargado para pricing, no hay query de sondeo); modulo prendido con articulo
+    con lote 0 (-1 batch, +1 lectura de saldos por lote para el plan FEFO). Residuo honesto:
+    en un tenant multi-empresa con catalogo compartido el flag es VISIBLE en todas pero
+    EFECTIVO solo donde el parametro esta prendido. Reversible: una fila de parametros."
+  - "3 — STOCK PREEXISTENTE: LOTE 'SIN IDENTIFICAR' VIA PAR DE MOVIMIENTOS reclasificacion
+    NETO CERO, NO UN BACKFILL DE MIGRACION. Trampa aritmetica resuelta: como
+    stock.cantidad=SUM(movimientos), cualquier fila mueve el agregado — por eso la
+    reconciliacion escribe un PAR (id_lote NULL, -X) + (id_lote L, +X) sobre el mismo
+    (articulo, PV): agregado provablemente intacto, saldo del lote exacto, ledger
+    append-only, auditable. Es la MISMA FORMA ESPEJADA que ya usan las transferencias,
+    aplicada sobre el eje de lote en vez del eje de punto de venta. Corre sincronica y
+    transaccionalmente cuando el control de lote se vuelve efectivo, es IDEMPOTENTE (residuo
+    cero no escribe nada, esquivando ck_movimientos_stock_cantidad_no_cero igual que
+    ContarAsync) y re-ejecutable desde un endpoint admin. Motivo propio y no 'ajuste' por el
+    principio de trazabilidad que la spec de conteo-de-inventario ya fijo; el nombre
+    'reclasificacion' es general A PROPOSITO: tambien cubre la correccion de un lote mal
+    etiquetado (lote->lote, neto cero). Reversible: nada que deshacer, el agregado nunca se
+    toco."
+  - "4 — FEFO ES UN DEFAULT CALCULADO SERVER-SIDE, NUNCA UNA IMPOSICION; UN LOTE POR LINEA;
+    EL MOSTRADOR NUNCA SE BLOQUEA. idLote es OPCIONAL en el request: si falta, el servidor
+    elige FEFO en la fase de decision (antes de abrir la transaccion, constraint 5), asi un
+    cliente que no sabe de lotes sigue transaccionando bien; si viene, se valida y SE
+    HONRA — el operador tiene el paquete fisico en la mano y obligarlo a registrar otro lote
+    convertiria el dato propio del sistema en mentira. ORDEN FEFO: es_sin_identificar DESC,
+    fecha_vencimiento ASC, id_lote ASC — el sin-identificar va PRIMERO porque al activar ES
+    el stock fisico mas viejo y dejarlo ultimo lo volveria inmortal (nunca drena, nunca
+    aparece en el reporte porque no tiene fecha, envenena todo saldo para siempre). Un lote
+    por linea: si el lote FEFO no cubre, la venta pasa igual (el lote puede ir negativo,
+    paridad legacy) y el POS SUGIERE partir la linea. Reversible: imponer FEFO despues es
+    una regla de validacion sobre datos que esta etapa ya produce."
+  - "5 — LEDGER: id_lote NULLABLE ADITIVO + CACHE PARALELO stock_lotes; stock NO CAMBIA.
+    Se rechaza re-clavar stock (rompe la PK de la tabla mas caliente y su invariante
+    spec-asertada) y se rechaza derivar saldos del ledger en lectura (FEFO escanearia
+    historia en cada checkout y desaparece la primitiva de concurrencia: no hay fila que
+    lockear). stock_lotes es PK-only con el MISMO INSERT ... ON CONFLICT DO UPDATE ...
+    RETURNING, o sea hereda el row-lock-as-serialization sin primitiva nueva. DOS
+    INVARIANTES: (1) sin cambios, stock.cantidad = SUM(movimientos) por (articulo,PV) sobre
+    OCHO motivos — los pares reclasificacion suman cero y no la perturban; (2) nuevo,
+    stock_lotes.cantidad = SUM(movimientos con ese id_lote), y para un (articulo,PV) con
+    lote efectivo y reconciliado, SUM sobre lotes = stock.cantidad. 'id_lote NOT NULL cuando
+    el articulo controla lote' es un condicional entre tablas: NO es CHECK, es invariante de
+    aplicacion con test de integracion dedicado; la alternativa de libro (columna redundante
+    controla_lote en movimientos_stock + FK a clave unica (id_articulo,controla_lote) +
+    CHECK) se RECHAZA para v1 por agregar una columna a la tabla mas caliente y obligar a
+    los tres escritores a cargarla, y queda registrada como valvula de escape si el
+    invariante se viola alguna vez en produccion. Reversible: todo aditivo y nullable."
+  - "6 — ORDEN DE LOCK: UN SOLO ORDEN LEXICOGRAFICO (id_articulo, id_punto_venta, id_lote
+    NULLS FIRST) CON LA FILA AGREGADA PRIMERO, IDENTICO EN LOS TRES SITIOS DE ESCRITURA.
+    Concretamente: por cada (articulo, PV) en orden ascendente, primero upsert de stock,
+    despues upsert de sus filas de stock_lotes en id_lote ascendente. Dos tablas, un orden,
+    sin ciclo — porque el orden es propiedad de la TUPLA DE CLAVE, no de la tabla. Las
+    transferencias conservan su regla (un solo orden sobre las 2N claves, nunca 'todo origen
+    y despues todo destino'); la tupla solo gana un tercer componente. LA DUPLICACION NO SE
+    REFACTORIZA: tres escritores, tres implementaciones de la misma regla, tres suites — es
+    la posicion declarada del codigo y esta no es la etapa para unificar la logica mas
+    sensible a concurrencia del sistema. Mitigacion: la regla se enuncia UNA VEZ en la spec y
+    cada sitio tiene su propio test de concurrencia. Es la decision cuya MALA
+    implementacion es cara (deadlock en produccion), no la reversion."
+  - "7 — EN UNA TRANSFERENCIA EL LOTE VIAJA; SUFICIENCIA SE RECHAZA POR LOTE. El mismo
+    id_lote se decrementa en origen y se incrementa en destino — un lote es identidad de la
+    MERCADERIA, no de la UBICACION (por eso lotes no tiene id_punto_venta y el saldo vive en
+    stock_lotes). Se rechaza la alternativa de mover cantidad agregada y re-bucketear en el
+    sin-identificar del destino: destruiria la informacion de vencimiento en cada movimiento
+    interno, o sea justo lo que la etapa existe para preservar. El endurecimiento de
+    back-office se extiende al lote: se rechaza (409) si dejaria el LOTE de origen negativo
+    aunque el agregado alcance. Reversible: una rama en un servicio."
+  - "8 — ANULACION EXACTA POR SNAPSHOT; NCX CON LOTE EXPLICITO; id_comprobante_asociado SIGUE
+    SIENDO OPCIONAL. items_comprobante_venta.id_lote es campo de SNAPSHOT (congelado al
+    emitir, nunca re-derivado — legal bajo 'Snapshot Immutability of Items', se AGREGA al
+    snapshot y no existe endpoint de edicion): eso hace la anulacion trivialmente exacta.
+    Para NCX se RECHAZA volver obligatorio id_comprobante_asociado (cambiaria un
+    comportamiento spec-ado de comprobantes-venta por una razon tangencial y volveria
+    indevolvible la mercaderia vendida antes de prender el modulo) y se RECHAZA un lote
+    'devoluciones' dedicado (inventa un vencimiento desconocido justo cuando el cliente
+    entrego un paquete con la fecha impresa). Decision: la linea NCX de un articulo con lote
+    efectivo LLEVA idLote explicito; el POS lo SUGIERE desde el snapshot del comprobante
+    asociado cuando existe, si no desde los lotes existentes del articulo (el paquete
+    devuelto tiene la fecha impresa: es la unica fuente de verdad que realmente existe), y si
+    el operador no puede identificarlo el lote sin-identificar es la VALVULA DE ESCAPE — el
+    mostrador nunca se bloquea. Reversible: una validacion."
+  - "9 — decomiso ES UN MOTIVO DE PRIMERA CLASE, NO UN SABOR DE ajuste, Y SE NIEGA A IR
+    NEGATIVO. Endpoint dedicado POST /api/stock/decomiso (Admin, GestionDeCatalogo sobre
+    OperacionDePos), idLote obligatorio para articulos con lote efectivo, observaciones
+    no vacia, cantidad POSITIVA del cliente que el servidor niega (misma disciplina de 'nada
+    de delta firmado por el cliente' que impone ContarAsync), y rechazo 409
+    stock_insuficiente_para_decomiso si dejaria el lote negativo. Razon: LA MERMA POR
+    VENCIMIENTO ES UN NUMERO DE RESULTADO QUE EL DUEÑO QUIERE VER, y enterrada dentro de
+    ajuste es inreportable sin parsear observaciones libre — exactamente la enfermedad tipo=95
+    que el principio 4 del doc 10 existe para evitar; la spec de conteo-de-inventario ya
+    sento el precedente separando inventario de ajuste 'for traceability' con un argumento
+    mas debil. decomiso NO se restringe a lotes vencidos (rotura y perdida son reales).
+    ESTE ES EL UNICO ARTEFACTO GENUINAMENTE IRREVERSIBLE DE LA ETAPA: Postgres no puede
+    DROPear un valor de enum — revertir deja decomiso y reclasificacion como miembros muertos
+    de motivo_stock, residuo en un tipo, sin daño de datos."
+  - "10 — LAS ALERTAS SON PULL: REPORTE + HERMANO /export + TILE DEL TABLERO. NO SE CONSTRUYE
+    INFRAESTRUCTURA DE PUSH. GET /api/reportes/stock/vencimientos?idPuntoVenta&dias= (dias
+    default = nuevo parametro dias_alerta_vencimiento, 30), clasificando vencido/por_vencer/
+    vigente, con su hermano /export?formato=xlsx por co-locacion segun el estandar de la casa
+    de stage-11 — ESA ES la planilla de vencimientos / control de gondola de doc-11:155, al
+    costo de un mapping y una linea de ruta. 'HOY' SE RESUELVE EN LA zona_horaria DEL PUNTO
+    DE VENTA, nunca en hora de servidor/UTC: es exactamente la clase de bug de produccion que
+    la ronda judgment-day del slice 9 de stage-11 cazo y que despues necesito el commit de
+    endurecimiento 08e7707. Push implicaria dependencia de mail/SMS, scheduler, estado de
+    entrega, reintentos/bounces, preferencias por usuario y baja — una etapa entera de
+    infraestructura decidida a ciegas para cero usuarios actuales. HANDOFF EXPLICITO A LA
+    ETAPA 13: el canal de alertas compartido que hereda ES PULL; si quiere push, lo decide
+    con un segundo caso de uso real en la mano."
+  - "11 — EL CONTEO DE UN ARTICULO CON LOTE EFECTIVO CUENTA POR LOTE; LA REGLA 'NUNCA UN
+    DELTA' NO CAMBIA. Dejarlo agregado NO es neutral: moveria stock.cantidad sin tocar ningun
+    saldo de lote y romperia el invariante 2 en silencio — no hacer nada es la unica opcion
+    realmente insegura. El request lleva el total contado POR LOTE, el servidor deriva el
+    delta de cada lote bajo el row lock de ese lote (la forma exacta de ContarAsync un nivel
+    abajo), el delta agregado es la suma de los deltas por lote, y un lote sin diferencia no
+    escribe fila. Ademas asi se cuenta fisicamente un perecedero: por la fecha en la gondola.
+    Se RECHAZA volcar la diferencia al lote sin-identificar (fabricaria saldo no identificado
+    a partir de un error de conteo: convierte una medicion en contaminacion). DEGRADACION
+    PRE-APROBADA si el slice 8 se pasa de presupuesto: rechazar el conteo de articulos con
+    lote efectivo con un 409 limpio — una etapa que entrega un rechazo es estrictamente mejor
+    que una que entrega una divergencia silenciosa."
+  - "12 — UN LOTE VENCIDO BLOQUEA EL BACK OFFICE Y AVISA EN EL MOSTRADOR. Aplicacion literal
+    del principio que la spec de transferencias-de-stock ya enuncia (las operaciones de
+    mostrador nunca bloquean por stock; las de back-office que reducen stock si). Venta/NCX:
+    PERMITIDO con flag de warning en la respuesta y aviso prominente en el POS, preseleccionando
+    un lote no vencido cuando exista — un bloqueo duro en la caja significa cola, llamada al
+    encargado y, realistamente, la venta igual con el lote equivocado registrado, que es peor
+    que una verdad registrada. Transferencia: RECHAZADA (409 transferencia_lote_vencido).
+    Recepcion con fecha_vencimiento pasada: RECHAZADA (409 lote_vencido_en_recepcion) — recibir
+    mercaderia ya vencida es un problema con el proveedor a resolver en la puerta. Reversible:
+    tres validaciones independientes."
+notes:
+  - "CUARTA ETAPA DEL PROGRAMA POST-PARIDAD (docs/11-programa-post-paridad.md, etapa 12 =
+    doc-11:142-163). Depende de stage-11-exportacion-reportes (archivada 2026-08-12) para el
+    hermano /export de la planilla de vencimientos, de stage-8 para los tres sitios de
+    escritura que extiende, de stage-10 para el Tablero y zona_horaria, y de stage-5 para
+    stock/movimientos_stock y el invariante de suma. DESBLOQUEA la etapa 13, que segun
+    doc-11:180-183 hereda de esta el canal de alertas compartido — esta etapa lo fija como
+    PULL (decision 10)."
+  - "LA RESTRICCION QUE GOBIERNA TODA LA ETAPA NO ES LA TABLA DE LOTES, ES EL INTERRUPTOR DE
+    APAGADO. doc-11:148 es literal: 'el POS no puede pagar el costo de una dimension extra
+    que no usa'. Se cumple ramificando en articulos.controla_lote (columna que llega dentro
+    de una query que la venta YA hace, para pricing) y batcheando la lectura de parametros
+    (2 queries -> 1). El hot path queda MAS BARATO que antes de la etapa, y es verificable
+    contando queries: hay un criterio de exito que lo asserta con un test de conteo de
+    round-trips, no por inspeccion."
+  - "CONTRATO DE CAPABILITIES para sdd-spec — NUEVA (1): 'lotes-y-vencimientos' (identidad de
+    lote e inmutabilidad de su vencimiento, saldo stock_lotes y sus dos invariantes, control
+    de lote efectivo, contrato del default FEFO, lote sin-identificar y reconciliacion
+    reclasificacion, circuito decomiso, reporte de vencimientos y su export, y el requisito
+    VINCULANTE 'modulo apagado = costo cero' con su criterio de conteo de queries).
+    MODIFICADAS (6): 'stock' (id_lote en el ledger, dos motivos nuevos, invariante de suma
+    reenunciado sobre ocho motivos, ajuste lot-aware), 'transferencias-de-stock' (el lote
+    viaja, orden de lock extendido, rechazo de suficiencia por lote, rechazo de lote
+    vencido), 'comprobantes-venta' (id_lote como campo de snapshot, reglas de lote en NCX,
+    anulacion exacta), 'comprobantes-compra' (input de lote en borrador, get-or-create al
+    confirmar, rechazo de anulacion por lote, rechazo de recepcion vencida),
+    'conteo-de-inventario' (total contado POR LOTE, 'nunca un delta' intacto),
+    'parametros-operativos' (lotes_habilitado y dias_alerta_vencimiento, sin migracion).
+    NO MODIFICADA: 'reportes-de-gestion' — siguiendo el precedente de stage-11 (los exports
+    de listados los poseia end-to-end la capability nueva en vez de untarse sobre cuatro
+    specs), el reporte de vencimientos lo posee 'lotes-y-vencimientos' de punta a punta."
+  - "RIESGO NUMERO UNO: DEADLOCK entre un checkout y una transferencia una vez que la unidad
+    de lock gana un tercer componente — intermitente, solo en produccion, y los tres sitios
+    de escritura NO comparten helper (duplicacion deliberada, doc-comment de ServicioDeCompras
+    la declara 'Slice 2 non-negotiable'). Mitigacion: un solo orden enunciado una vez en la
+    spec + un test de concurrencia POR SITIO, no una asercion compartida. Riesgo dos: que los
+    tres escritores implementen la regla de lote distinto — por eso los limites de slice
+    siguen a los escritores (4, 5, 7, 8) y la regla pura vive en un helper de Domain aunque
+    los cuerpos raw-SQL sigan duplicados por diseño."
+  - "OUT OF SCOPE EXPLICITO: cualquier infraestructura de push (mail, scheduler, tabla de
+    notificaciones, job runner) — no existe nada de eso en src; numeros de serie/trazabilidad
+    unitaria; lineas de venta multi-lote; costeo o margen por lote (el costo sigue siendo por
+    articulo, modelo de stage 9 intacto); horizonte de alerta por articulo; lote en gastos,
+    tesoreria o cuenta corriente; workflow de conteo total con congelamiento/varianza (la
+    exclusion vigente de conteo-de-inventario NO se reabre); volver obligatorio
+    id_comprobante_asociado en NCX; superficie de recall hacia el cliente. Y los pendientes
+    reservados del dueño: formula de comisiones, margen para Supervisor, modelo de lectura de
+    OperacionDePos, cierre de caja por rol, branding de exports — intactos."
+  - "ENTREGA: 11 SLICES TENTATIVOS, STACKED-TO-MAIN, judgment-day por slice segun
+    protocolo-pr-solo-dev. REVIEW WORKLOAD FORECAST PRELIMINAR: ~3900 lineas totales; PRs
+    encadenados RECOMENDADOS = Si; riesgo de presupuesto de 400 lineas = ALTO (slices 1, 4,
+    5, 8, 10 y 11 al tope, con puntos de corte pre-identificados); decision necesaria antes
+    de apply = Si, YA RESUELTA (auto-chain + stacked-to-main). El forecast vinculante lo
+    produce sdd-tasks. Como en todas las etapas previas, se espera que el desborde venga de
+    PROFUNDIDAD DE TESTS, no de alcance."
+  - "CARRYOVER RELEVANTE: ways_owner es superusuario en el testcontainer, lo que debilita todo
+    test a nivel migracion en el repo — a diferencia de stage-11 (cero migracion), ESTA ETAPA
+    SI LO TOCA: es la primera desde la 9 en enviar una migracion real con RLS sobre tablas
+    nuevas, asi que la debilidad afecta cuan fuerte se pueden testear las policies nuevas.
+    Registrado para sdd-design. Siguen abiertos y sin tocar: gap de concurrencia del
+    replace-set de articulos_empresas y el micro-gate del CHECK de importe (ambos de stage
+    8), y la ausencia de regla de lint para los limites de contencion (stage 10/11)."
+  - "IDIOMA DE ARTEFACTOS: prosa en ingles con identificadores de dominio en castellano,
+    igual que todo change archivado en openspec/ (etapas 1-11) y que openspec/specs/, para
+    que los deltas de spec se fusionen sin costura de idioma."
+  - "FLAGS PARA EL DUEÑO (no bloquean spec/design, todos con asuncion registrada en la seccion
+    'Proposal question round' de proposal.md): (1) ¿PUEDE UN CAJERO VENDER DE UN LOTE VENCIDO?
+    asumido SI CON AVISO PROMINENTE — es la llamada de mas peso de producto de la etapa;
+    (2) FEFO sugerencia vs imposicion, asumido SUGERENCIA; (3) el lote sin-identificar
+    primero o ultimo en el orden FEFO, asumido PRIMERO; (4) conteo por lote vs rechazo,
+    asumido POR LOTE con el rechazo pre-aprobado como degradacion; (5) alertas pull sin canal
+    push, asumido SI; (6) un lote por linea de venta forzando el split, asumido SI."
