@@ -55,12 +55,29 @@ public static class ReglaDeLotes
 
     /// <summary>Lote por defecto de una línea sin <c>idLote</c> explícito. <c>null</c> ⇒ ningún
     /// lote del artículo tiene saldo positivo — el llamador resuelve (o crea, get-or-create) el
-    /// lote sin identificar en su lugar (design decisión 7), esta función nunca lo crea.</summary>
-    public static SaldoDeLote? ElegirFefo(IEnumerable<SaldoDeLote> saldosDelArticulo)
+    /// lote sin identificar en su lugar (design decisión 7), esta función nunca lo crea.
+    ///
+    /// Decisión 15 (judgment-day del slice 7, spec comprobantes-venta: "FEFO MUST pre-select a
+    /// non-expired lot whenever one exists with positive balance"): entre los lotes con saldo
+    /// positivo, la SELECCIÓN se particiona primero por vencimiento respecto de
+    /// <paramref name="hoy"/> — los NO vencidos (el sin-identificar, sin fecha, cuenta como no
+    /// vencido, <see cref="EstaVencido"/>) van antes que los vencidos — y solo DESPUÉS se aplica
+    /// el orden FEFO base (<see cref="OrdenarFefo"/>) dentro de cada partición. "Nunca bloquea"
+    /// queda intacto: si la única partición con saldo es la de vencidos, se elige el vencido (el
+    /// llamador adjunta el warning <c>LoteVencido</c>). Esto NO toca <see cref="OrdenarFefo"/> —
+    /// el orden de LISTADO del picker sigue siendo el mismo, solo cambia el PICK.</summary>
+    public static SaldoDeLote? ElegirFefo(IEnumerable<SaldoDeLote> saldosDelArticulo, DateOnly hoy)
     {
         var conSaldoPositivo = saldosDelArticulo.Where(s => s.Cantidad > 0m).ToList();
+        if (conSaldoPositivo.Count == 0)
+        {
+            return null;
+        }
 
-        return conSaldoPositivo.Count == 0 ? null : OrdenarFefo(conSaldoPositivo)[0];
+        var noVencidos = conSaldoPositivo.Where(s => !EstaVencido(s.FechaVencimiento, hoy)).ToList();
+        var particionElegida = noVencidos.Count > 0 ? noVencidos : conSaldoPositivo;
+
+        return OrdenarFefo(particionElegida)[0];
     }
 
     /// <summary>Código server-derivado a partir del vencimiento ISO (spec: "A lot is created

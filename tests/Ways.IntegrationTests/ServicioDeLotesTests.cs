@@ -418,11 +418,14 @@ public class ServicioDeLotesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     /// <c>ServicioDeLotes.cs:162</c> (<c>Sugerido: ... ordenados[^1].IdLote == s.IdLote</c> en vez
     /// de <c>sugerido.Value.IdLote == s.IdLote</c>) el pick pasa a ser la ÚLTIMA fila del orden
     /// FEFO (sin-identificar primero, después ascendente por vencimiento) — acá
-    /// <c>loteVigente</c> (2099-12-31) en vez de <c>loteVencido</c> (2020-01-15). Build + filtro
-    /// <c>~ServicioDeLotesTests</c> con la mutación aplicada: este test cae RED
-    /// (<c>vencido.Sugerido</c> esperado <c>true</c>/actual <c>false</c>; <c>vigente.Sugerido</c>
-    /// esperado <c>false</c>/actual <c>true</c>). Revertida la mutación, build, mismo filtro:
-    /// GREEN, 10/10.</para></summary>
+    /// <c>loteVigente</c> (2099-12-31) en vez del ganador esperado. Build + filtro
+    /// <c>~ServicioDeLotesTests</c> con la mutación aplicada: este test cae RED. Revertida la
+    /// mutación, build, mismo filtro: GREEN.</para>
+    /// <para>Actualizado en el judgment-day del slice 7 (decisión 15): con los TRES lotes fechados
+    /// con saldo positivo, la partición no-vencido gana primero — <c>loteVencido</c> (2020-01-15)
+    /// queda EXCLUIDO del pick pese a vencer antes en el orden FEFO base; el ganador es
+    /// <c>loteMedio</c> (2050-06-15), el más próximo DENTRO de la partición no-vencido
+    /// (<c>loteVigente</c>, 2099-12-31, sigue en esa partición pero vence más lejos).</para></summary>
     [Fact]
     public async Task GetLotesConVariosFechadosSugiereSoloElDeVencimientoMasProximoYEstadoEsIndependienteDelReloj()
     {
@@ -474,15 +477,62 @@ public class ServicioDeLotesTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var vigente = lotes.Single(l => l.IdLote == loteVigente.Id);
         var sinIdentificar = lotes.Single(l => l.IdLote == loteSinIdentificar.Id);
 
-        // FIX 2: sugerido EXACTAMENTE en el de vencimiento más próximo, false en las otras TRES filas (regla 6).
-        Assert.True(vencido.Sugerido);
-        Assert.False(medio.Sugerido);
+        // Decisión 15 (slice 7): sugerido EXACTAMENTE en el más próximo DENTRO de la partición
+        // no-vencido (loteMedio) — el vencido queda excluido del pick pese a vencer antes.
+        Assert.False(vencido.Sugerido);
+        Assert.True(medio.Sugerido);
         Assert.False(vigente.Sugerido);
         Assert.False(sinIdentificar.Sugerido);
 
         // FIX 3: estado vía HTTP, independiente de la hora de corrida.
         Assert.Equal(EstadoDeVencimiento.Vencido, vencido.Estado);
         Assert.Equal(EstadoDeVencimiento.Vigente, vigente.Estado);
+    }
+
+    // ---- judgment-day slice 7, FIX 1 (CRITICAL 1) — decisión 15 vía el picker (GET /api/stock/lotes) ---
+
+    /// <summary>Repro exacto del juez B, ahora desde el picker: solo un lote VENCIDO
+    /// (2020-01-15) y uno VIGENTE (2099-12-31), ambos con saldo positivo — sin un tercer candidato
+    /// "medio" que enmascare el efecto. El <c>Sugerido</c> del picker tiene que ser consistente
+    /// con la selección real del server (decisión 12/15): el vigente, nunca el vencido.</summary>
+    [Fact]
+    public async Task GetLotesConVencidoYVigenteAmbosConSaldoSugiereElVigente()
+    {
+        var ctx = await PrepararAsync(nameof(GetLotesConVencidoYVigenteAmbosConSaldoSugiereElVigente));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-picker-decision-15");
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var loteVencido = new Lote
+        {
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, Codigo = "L-PICKER-VENCIDO",
+            FechaVencimiento = new DateOnly(2020, 1, 15), EsSinIdentificar = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        var loteVigente = new Lote
+        {
+            IdTenant = ctx.IdTenant, IdArticulo = idArticulo, Codigo = "L-PICKER-VIGENTE",
+            FechaVencimiento = new DateOnly(2099, 12, 31), EsSinIdentificar = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Lotes.AddRange(loteVencido, loteVigente);
+        await db.SaveChangesAsync();
+
+        db.StockLotes.AddRange(
+            new StockLote { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteVencido.Id, IdTenant = ctx.IdTenant, Cantidad = 5m },
+            new StockLote { IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdLote = loteVigente.Id, IdTenant = ctx.IdTenant, Cantidad = 5m });
+        await db.SaveChangesAsync();
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/stock/lotes?idPuntoVenta={ctx.IdPuntoVenta}&idArticulo={idArticulo}");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        var lotes = JsonSerializer.Deserialize<List<LoteListado>>(cuerpo, OpcionesJson)!;
+
+        var vencido = lotes.Single(l => l.IdLote == loteVencido.Id);
+        var vigente = lotes.Single(l => l.IdLote == loteVigente.Id);
+
+        Assert.False(vencido.Sugerido);
+        Assert.True(vigente.Sugerido);
     }
 
     // ---- judgment-day slice 3, FIX 4: camino de código derivado (blind spot) ----------------------

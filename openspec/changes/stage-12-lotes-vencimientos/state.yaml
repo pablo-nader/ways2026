@@ -458,3 +458,15 @@ notes:
     primero o ultimo en el orden FEFO, asumido PRIMERO; (4) conteo por lote vs rechazo,
     asumido POR LOTE con el rechazo pre-aprobado como degradacion; (5) alertas pull sin canal
     push, asumido SI; (6) un lote por linea de venta forzando el split, asumido SI."
+  - "15 — LA SELECCION FEFO PREFIERE LOTES NO VENCIDOS (resuelta en el judgment-day del slice
+    7): el spec de comprobantes-venta exige 'FEFO MUST pre-select a non-expired lot whenever
+    one exists with positive balance' y el juez B probo en vivo que ElegirFefo elegia el
+    vencido (orden por fecha ascendente puro). Resolucion: la SELECCION se particiona — entre
+    los lotes con saldo positivo, primero los NO vencidos (el sin-identificar, sin fecha,
+    cuenta como no vencido y conserva su primer lugar por decision 4), despues los vencidos;
+    dentro de cada particion rige el orden FEFO base (es_sin_identificar DESC, fecha ASC, id
+    ASC). 'Nunca bloquea' intacto: si solo hay vencidos con saldo, se elige el vencido (con
+    warning LoteVencido). OrdenarFefo (el orden de LISTADO del picker) no cambia; cambia SOLO
+    ElegirFefo, que gana el parametro hoy. Consumidores actualizados: ServicioDeVentas (plan)
+    y ServicioDeLotes.ListarAsync (Sugerido — la sugerencia del picker debe ser consistente
+    con la seleccion del server, decision 12)."

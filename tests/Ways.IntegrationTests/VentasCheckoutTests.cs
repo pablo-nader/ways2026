@@ -1035,7 +1035,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var servicioDeOfertas = new ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
         var lectorDeMovimientos = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
         var servicioDeTurnos = new Ways.Application.Caja.ServicioDeTurnos(db, reloj, contexto, lectorDeMovimientos);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos);
+        var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
+        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
 
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null,
@@ -1123,7 +1124,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var servicioDeOfertas = new ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
         var lectorDeMovimientos = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
         var servicioDeTurnos = new Ways.Application.Caja.ServicioDeTurnos(db, reloj, contexto, lectorDeMovimientos);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos);
+        var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
+        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
 
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null, lineas,

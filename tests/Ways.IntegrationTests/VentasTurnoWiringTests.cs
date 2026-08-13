@@ -297,7 +297,8 @@ public class VentasTurnoWiringTests(WaysApiFixture fixture) : IClassFixture<Ways
         var servicioDeOfertas = new Ways.Application.Ofertas.ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
         var lector = new LectorDeMovimientosDelTurno(db);
         var servicioDeTurnos = new ServicioDeTurnos(db, reloj, contexto, lector);
-        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos);
+        var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
+        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
 
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null,

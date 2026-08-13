@@ -8,6 +8,7 @@ using Ways.Application.Caja;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
 using Ways.Application.Ofertas;
+using Ways.Application.Stock;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
@@ -44,7 +45,7 @@ namespace Ways.Application.Ventas;
 /// </summary>
 public class ServicioDeVentas(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeOfertas servicioDeOfertas,
-    ServicioDeTurnos servicioDeTurnos)
+    ServicioDeTurnos servicioDeTurnos, ServicioDeLotes servicioDeLotes)
 {
     public async Task<ComprobanteEmitido> EmitirAsync(SolicitudDeVenta solicitud, CancellationToken ct = default)
     {
@@ -110,10 +111,109 @@ public class ServicioDeVentas(
         // lotes_habilitado, resueltas directo (sin el pre-chequeo de pertenencia de
         // ServicioDeParametros.ResolverAsync — puntoVenta ya se resolvió arriba, así que
         // idEmpresa ya es de confianza). Reemplaza las 2 consultas separadas de antes de esta
-        // etapa — 17 → 16 round trips (task 2.7). `lotesHabilitado` lo consume recién el plan
-        // FEFO de slice 7 (design: "Write site 1"); acá se descarta a propósito.
-        var (toleranciaPago, vueltoMaximo, _) =
+        // etapa — 17 → 16 round trips (task 2.7). `lotesHabilitado` alimenta el plan FEFO de
+        // slice 7, inmediatamente abajo.
+        var (toleranciaPago, vueltoMaximo, lotesHabilitado) =
             await ResolverParametrosDeVentaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
+
+        // stage-12 slice 7 (design: "Write site 1", decide phase) — decidir si hay línea
+        // lote-efectiva es GRATIS: articuloPorId ya está cargado arriba (MaterializarItems),
+        // lotesHabilitado ya resolvió en la query batcheada de arriba. Cero queries de sondeo.
+        var lineasConLote = items
+            .Select((item, indice) => (Item: item, Indice: indice))
+            .Where(x => x.Item.EsProducto
+                && ReglaDeLotes.ControlEfectivo(articuloPorId[x.Item.IdArticulo].ControlaLote, lotesHabilitado))
+            .ToList();
+
+        // dto-contract-honesty (WARNING 4 del judgment-day de esta slice): un idLote en una línea
+        // SIN lote efectivo no tiene destino — antes se ignoraba en silencio. Un cliente que lo
+        // manda ahí está en un error real (artículo no controla lote, o el módulo está apagado),
+        // así que se rechaza con el mismo código que un idLote inválido, en vez de tragárselo.
+        var indicesConLoteEfectivo = lineasConLote.Select(x => x.Indice).ToHashSet();
+        for (var indice = 0; indice < lineas.Count; indice++)
+        {
+            if (!indicesConLoteEfectivo.Contains(indice) && lineas[indice].IdLote is not null)
+            {
+                throw new ErrorDominio(
+                    "lote_invalido",
+                    $"El artículo {lineas[indice].IdArticulo} no tiene lote efectivo; no admite idLote.",
+                    400);
+            }
+        }
+
+        if (lineasConLote.Count > 0)   // ← la ÚNICA query nueva del camino caliente: 16 → 17 (spec
+                                        // lotes-y-vencimientos: "Module on with a lot-controlled
+                                        // articulo nets zero round-trip change")
+        {
+            var idsArticuloConLote = lineasConLote.Select(x => x.Item.IdArticulo).Distinct().ToList();
+            var idsLotePedidos = lineasConLote
+                .Select(x => lineas[x.Indice].IdLote)
+                .Where(idLote => idLote is not null)
+                .Select(idLote => idLote!.Value)
+                .Distinct()
+                .ToList();
+
+            var saldos = await servicioDeLotes.LeerSaldosAsync(puntoVenta.Id, idsArticuloConLote, idsLotePedidos, ct);
+            var saldosPorArticulo = saldos.ToLookup(s => s.IdArticulo);
+
+            // Honestidad documental: "hoy" acá es UTC naive (interino por diseño, mismo criterio
+            // que ServicioDeCompras.EjecutarConfirmarAsync / ServicioDeLotes.ListarAsync/CrearAsync
+            // — slice 3), no la zona_horaria del PV. LoteVencido es un warning de decisión 12,
+            // nunca un bloqueo.
+            var hoy = DateOnly.FromDateTime(momento.UtcDateTime);
+            var itemsResueltos = items.ToList();
+
+            foreach (var (item, indice) in lineasConLote)
+            {
+                var saldosDelArticulo = saldosPorArticulo[item.IdArticulo].ToList();
+                var idLotePedido = lineas[indice].IdLote;
+
+                SaldoDeLote loteResuelto;
+                if (idLotePedido is { } idLote)
+                {
+                    // Un idLote provisto se valida contra `saldos` (existe, es del artículo, no
+                    // borrado — el filtro global de EF sobre Lotes ya excluye soft-deleted, así
+                    // que un id borrado simplemente no aparece acá) o se rechaza (spec
+                    // lotes-y-vencimientos: "An invalid supplied idLote is rejected").
+                    var posicion = saldosDelArticulo.FindIndex(s => s.IdLote == idLote);
+                    if (posicion < 0)
+                    {
+                        throw new ErrorDominio(
+                            "lote_invalido",
+                            $"El lote {idLote} no existe, no pertenece al artículo {item.IdArticulo} o fue eliminado.",
+                            400);
+                    }
+
+                    loteResuelto = saldosDelArticulo[posicion];
+                }
+                else if (ReglaDeLotes.ElegirFefo(saldosDelArticulo, hoy) is { } elegido)
+                {
+                    loteResuelto = elegido;
+                }
+                else
+                {
+                    // Ningún lote con saldo positivo (design decisión 7) — get-or-create perezoso
+                    // del lote sin identificar, statement crudo, invisible al contador de
+                    // presupuesto (misma familia que UpsertStockAsync).
+                    var conexionParaLotes = await ObtenerConexionAbiertaAsync(ct);
+                    var idSinIdentificar = await ServicioDeLotes.ResolverSinIdentificarAsync(
+                        conexionParaLotes, transaccion: null, idTenant, item.IdArticulo, momento, ct);
+
+                    loteResuelto = new SaldoDeLote(
+                        item.IdArticulo, idSinIdentificar, ReglaDeLotes.CodigoSinIdentificar,
+                        EsSinIdentificar: true, FechaVencimiento: null, Cantidad: 0m);
+                }
+
+                itemsResueltos[indice] = item with
+                {
+                    IdLote = loteResuelto.IdLote,
+                    CodigoLote = loteResuelto.Codigo,
+                    LoteVencido = ReglaDeLotes.EstaVencido(loteResuelto.FechaVencimiento, hoy)
+                };
+            }
+
+            items = itemsResueltos;
+        }
 
         // 1 consulta: medios de pago pedidos.
         var idsMedioPago = pagos.Select(p => p.IdMedioPago).Distinct().ToList();
@@ -742,7 +842,7 @@ public class ServicioDeVentas(
 
         await transaccion.CommitAsync(ct);
 
-        return Proyectar(comprobante, itemsEntidad, pagosEntidad);
+        return Proyectar(comprobante, itemsEntidad, pagosEntidad, plan.Items);
     }
 
     // ---- Resolución de datos, fuera de la transacción ----------------------------------------
@@ -1032,8 +1132,16 @@ public class ServicioDeVentas(
             ?? throw new InvalidOperationException(
                 "ServicioDeVentas requiere un actor de tenant; OperacionDePos no admite plataforma.");
 
+    /// <summary>Design decisión (stage-12 slice 7): la transacción todavía NO persiste
+    /// <c>id_lote</c> en <c>items_comprobante_venta</c> (esa escritura es de slice 8) — para el
+    /// checkout recién emitido, <paramref name="planItems"/> trae el lote ya resuelto en la fase
+    /// de decisión (mismo orden/índice que <paramref name="items"/>, uno a uno vía
+    /// <c>Orden</c>) y lo proyecta acá; para una relectura sin plan a mano (reprint,
+    /// idempotencia de <see cref="BuscarPorNumeroComprometidoAsync"/>) cae al valor ya persistido
+    /// en la entidad — NULL hasta que slice 8 lo escriba.</summary>
     private static ComprobanteEmitido Proyectar(
-        ComprobanteVenta comprobante, IReadOnlyList<ItemComprobanteVenta> items, IReadOnlyList<PagoComprobante> pagos) => new(
+        ComprobanteVenta comprobante, IReadOnlyList<ItemComprobanteVenta> items, IReadOnlyList<PagoComprobante> pagos,
+        IReadOnlyList<LineaDelPlan>? planItems = null) => new(
         comprobante.Id, comprobante.Numero,
         NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
         comprobante.Estado, comprobante.Fecha, comprobante.IdPuntoVenta, comprobante.IdCliente,
@@ -1041,9 +1149,14 @@ public class ServicioDeVentas(
         comprobante.DireccionEntrega, comprobante.Observaciones,
         items
             .OrderBy(i => i.Orden)
-            .Select(i => new ItemEmitido(
-                i.Orden, i.IdArticulo, i.Descripcion, i.CodigoBarra, i.IdArea, i.IdListaPrecio, i.IdOferta,
-                i.IdAlicuotaIva, i.PorcentajeIva, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total))
+            .Select(i =>
+            {
+                var planItem = planItems?[i.Orden - 1];
+                return new ItemEmitido(
+                    i.Orden, i.IdArticulo, i.Descripcion, i.CodigoBarra, i.IdArea, i.IdListaPrecio, i.IdOferta,
+                    i.IdAlicuotaIva, i.PorcentajeIva, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total,
+                    planItem?.IdLote ?? i.IdLote, planItem?.CodigoLote, planItem?.LoteVencido ?? false);
+            })
             .ToList(),
         pagos
             .Select(p => new PagoEmitido(p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto))
@@ -1054,7 +1167,8 @@ public class ServicioDeVentas(
     private readonly record struct LineaDelPlan(
         int IdArticulo, string Descripcion, string? CodigoBarra, int IdArea, int IdListaPrecio, int? IdOferta,
         int IdAlicuotaIva, decimal PorcentajeIva, decimal Cantidad, decimal PrecioUnitario, decimal Descuento,
-        decimal Total, bool EsProducto, decimal? CostoUnitario);
+        decimal Total, bool EsProducto, decimal? CostoUnitario,
+        int? IdLote = null, string? CodigoLote = null, bool LoteVencido = false);
 
     private readonly record struct PagoDelPlan(
         int IdMedioPago, ComportamientoMedioPago Comportamiento, decimal Importe, string? Referencia, decimal Vuelto);

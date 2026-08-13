@@ -215,3 +215,11 @@ stock.
 - WHEN a sale line for articulo 40 omits `idLote`
 - THEN the server selects the non-expired lot, and the response carries no
   expired-lot warning for that line
+
+#### Scenario: A supplied idLote on a non-lot-effective line is rejected (Added at slice-7 judgment-day)
+- GIVEN a sale line for an articulo that is NOT lot-effective (`controla_lote
+  = false`, or the module is off for the empresa)
+- WHEN the line carries a non-null `idLote`
+- THEN the request is rejected with `400 lote_invalido` before reaching the
+  database — the field has no destination on that line, so it is never
+  silently ignored
