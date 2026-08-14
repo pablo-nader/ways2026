@@ -402,7 +402,24 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         var puntoVenta = await ResolverPuntoVentaAsync(idPuntoVenta, ct);
         await ResolverArticuloAsync(idArticulo, ct);
 
-        var saldos = await LeerSaldosAsync(idPuntoVenta, [idArticulo], [], ct);
+        // El idLote del snapshot NCX (si hay comprobante asociado) se resuelve ANTES de leer
+        // saldos y se pasa como idsLotePedidos (mismo espejo que el write path de
+        // ServicioDeVentas, design decisión 6): un lote agotado en el PV — el caso típico de
+        // devolución, salió por esa línea y ahora vuelve — igual tiene que entrar al listado con
+        // saldo 0 y quedar marcado Sugerido, nunca desaparecer por el filtro acotado de
+        // LeerSaldosAsync.
+        // Tiebreaker determinista: si el comprobante asociado tiene dos líneas del mismo artículo
+        // (lotes distintos), gana el id de item más chico — la primera línea del comprobante.
+        int? idLoteSugerido = idComprobanteAsociado is { } idAsociado
+            ? await db.ItemsComprobanteVenta
+                .Where(i => i.IdComprobanteVenta == idAsociado && i.IdArticulo == idArticulo)
+                .OrderBy(i => i.Id)
+                .Select(i => i.IdLote)
+                .FirstOrDefaultAsync(ct)
+            : null;
+
+        var idsLotePedidos = idLoteSugerido is { } idLotePedido ? new[] { idLotePedido } : [];
+        var saldos = await LeerSaldosAsync(idPuntoVenta, [idArticulo], idsLotePedidos, ct);
         var ordenados = ReglaDeLotes.OrdenarFefo(saldos);
 
         // Honestidad documental: "hoy" acá es UTC naive (interino por diseño en este slice 3),
@@ -411,13 +428,6 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         // picker admin no necesita esa precisión, mismo criterio de honestidad que
         // diasAlertaPorDefecto en CrearAsync.
         var hoy = DateOnly.FromDateTime(reloj.Ahora.UtcDateTime);
-
-        int? idLoteSugerido = idComprobanteAsociado is { } idAsociado
-            ? await db.ItemsComprobanteVenta
-                .Where(i => i.IdComprobanteVenta == idAsociado && i.IdArticulo == idArticulo)
-                .Select(i => i.IdLote)
-                .FirstOrDefaultAsync(ct)
-            : null;
 
         // Decisión 15 (judgment-day del slice 7): el Sugerido del picker tiene que ser
         // consistente con la selección real del server (ServicioDeVentas) — mismo "hoy", mismo

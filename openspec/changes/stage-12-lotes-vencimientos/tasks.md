@@ -1116,6 +1116,23 @@ articulo requires an explicit `idLote`; the response carries a
   projection, single source of truth (`idLoteSugerido == s.IdLote`)
   regardless of which branch resolved it. Only call site
   (`StockEndpoints.cs`) updated; no other caller in `src/` or `tests/`.)*
+  *(JD-FIX NOTE, slice 9 judgment-day ronda 1, juez A: dos hallazgos.
+  MAJOR — `idLoteSugerido` del snapshot se resolvía DESPUÉS de
+  `LeerSaldosAsync` con `idsLotePedidos` vacío: un lote agotado en el PV (el
+  caso típico de devolución, saldo 0 tras la venta original) ni se listaba
+  ni se sugería. Fix: se resuelve el `idLote` del snapshot ANTES de
+  `LeerSaldosAsync` y se pasa como `idsLotePedidos` — mismo espejo que el
+  write path de `ServicioDeVentas` (design decisión 6). Test:
+  `NcxLoteTests.ElLoteSugeridoDelSnapshotApareceListadoAunqueSuSaldoEnElPvSeaCero`
+  (mutación: revertir a "resolver después con lista vacía" → RED, el lote
+  agotado no aparece en la colección; revertido → GREEN). MINOR — la query
+  del snapshot no tenía `OrderBy`: con dos líneas del mismo artículo en el
+  comprobante asociado (lotes distintos), el pick era no-determinista. Fix:
+  `OrderBy(i => i.Id)` — gana el id de item más chico, la primera línea del
+  comprobante. Sin test dedicado (a criterio del costo: el seed de
+  dos-líneas-mismo-artículo no aporta más que el comentario in-code);
+  determinismo-por-construcción documentado acá y en el doc-comment de
+  `ServicioDeLotes.ListarAsync`.)*
 - [x] 9.3 Modify `ServicioDeVentas.cs`: `ItemEmitido.LoteVencido =
   ReglaDeLotes.EstaVencido(...)` computed for TX and NCX lines alike; an
   expired-lot sale/return is accepted with the flag set, never blocked.

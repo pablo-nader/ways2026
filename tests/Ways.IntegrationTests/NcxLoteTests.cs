@@ -331,6 +331,52 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
         Assert.Equal(idLoteCercano, sugerido.IdLote);
     }
 
+    /// <summary>judgment-day slice 9 (juez A, MAJOR): el lote sugerido del snapshot tenía que
+    /// resolverse ANTES de <c>LeerSaldosAsync</c> y pasarse en <c>idsLotePedidos</c> — el caso
+    /// TÍPICO de devolución es justo el que rompía: el lote del comprobante original se vendió
+    /// COMPLETO (saldo 0 en el PV) y ahora vuelven unidades. Sin el fix, ese lote ni aparece
+    /// listado ni sugerido, violando "idLote is suggested from the associated comprobante's
+    /// snapshot" del spec. L-OTRO (saldo &gt; 0, sin relación con el comprobante) es el control
+    /// discriminante: tiene que listarse con <c>Sugerido = false</c>.
+    ///
+    /// <para>Evidencia de mutación registrada (jd-fix, slice 9 juez A): se revirtió el fix
+    /// (resolver <c>idLoteSugerido</c> DESPUÉS de <c>LeerSaldosAsync</c> con
+    /// <c>idsLotePedidos</c> vacío, como estaba antes); build; filtro
+    /// <c>FullyQualifiedName~ElLoteSugeridoDelSnapshotApareceListadoAunqueSuSaldoEnElPvSeaCero</c>
+    /// → RED (<c>Assert.Contains</c> del lote agotado en <c>lotes</c> falló: el lote no aparecía
+    /// en absoluto, filtrado por <c>LeerSaldosAsync</c> al no tener saldo ni estar en
+    /// <c>idsLotePedidos</c>). Revertido; mismo filtro → GREEN; suite completa de esta clase →
+    /// GREEN.</para></summary>
+    [Fact]
+    public async Task ElLoteSugeridoDelSnapshotApareceListadoAunqueSuSaldoEnElPvSeaCero()
+    {
+        var ctx = await PrepararAsync(nameof(ElLoteSugeridoDelSnapshotApareceListadoAunqueSuSaldoEnElPvSeaCero));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-agotado", 100m, controlaLote: true);
+        var idLoteAgotado = await SembrarLoteAsync(ctx, idArticulo, "L-AGOTADO", VencimientoLejanoFuturo);
+        var idLoteOtro = await SembrarLoteAsync(ctx, idArticulo, "L-OTRO", VencimientoLejanoFuturoAlterno);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLoteAgotado, 5m);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLoteOtro, 5m);
+
+        // La venta original agota COMPLETO el lote elegido — saldo 0 en el PV tras la TX, el
+        // escenario típico de devolución.
+        var original = await EmitirAsync(ctx, SolicitudTx(ctx, idArticulo, 5m, idLote: idLoteAgotado));
+        Assert.Equal(idLoteAgotado, Assert.Single(original.Items).IdLote);
+        Assert.Equal(0m, await LeerStockLoteAsync(ctx, idArticulo, idLoteAgotado));
+
+        var respuesta = await ctx.Admin.GetAsync(
+            $"/api/stock/lotes?idPuntoVenta={ctx.IdPuntoVenta}&idArticulo={idArticulo}&idComprobanteAsociado={original.Id}");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        var lotes = JsonSerializer.Deserialize<List<LoteListado>>(cuerpo, OpcionesJson)!;
+
+        var loteAgotadoListado = Assert.Single(lotes, l => l.IdLote == idLoteAgotado);
+        Assert.Equal(0m, loteAgotadoListado.Cantidad);
+        Assert.True(loteAgotadoListado.Sugerido);
+
+        var loteOtroListado = Assert.Single(lotes, l => l.IdLote == idLoteOtro);
+        Assert.False(loteOtroListado.Sugerido);
+    }
+
     // ---- task 9.6 — el lote sin identificar es una elección explícita válida en una devolución ----
 
     /// <summary>spec comprobantes-venta: "idLote is required even without an associated
