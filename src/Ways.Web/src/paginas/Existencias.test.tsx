@@ -397,6 +397,33 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     expect(screen.queryByLabelText('Mínimo de Fideos guiseros 500g')).not.toBeInTheDocument()
   })
 
+  it('dos clicks en Guardar en el MISMO tick mandan un solo PUT — el guard de reentrancia de `guardarFila` sobrevive al re-render del `disabled` (judgment-day round 2, FINDING 3)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/existencias?')) return Promise.resolve(existenciasFixture(dosFilasFixture()))
+      return undefined
+    })
+    apiPutMock.mockImplementation(() => new Promise<MinimosDeStock>(() => {})) // nunca resuelve — no importa para este test
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Aceite de girasol 900ml')
+    await usuario.click(screen.getAllByRole('button', { name: 'Editar' })[0])
+    await usuario.type(screen.getByLabelText('Mínimo de Aceite de girasol 900ml'), '5')
+
+    const botonGuardar = screen.getByRole('button', { name: 'Guardar' })
+    // Mismo patrón del mutation target 3.6 ("abrir la fila B..."): dos `fireEvent.click` dentro de
+    // UN solo `act()`, sin `await` (ni render) entre medio — el atributo `disabled` de Guardar
+    // TODAVÍA no reflejó `guardando` cuando se despacha el segundo click, así que solo el guard
+    // síncrono de primera línea de `guardarFila` (no el atributo, que un `userEvent.click` awaited
+    // no-opea sobre un botón ya disabled) puede evitar el segundo PUT.
+    act(() => {
+      fireEvent.click(botonGuardar)
+      fireEvent.click(botonGuardar)
+    })
+
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+  })
+
   it('reposición menor que el mínimo deshabilita Guardar con un aviso, sin llegar a mandar el PUT', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/stock/existencias?')) return Promise.resolve(existenciasFixture(dosFilasFixture()))
@@ -520,6 +547,63 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByText('Arroz largo fino 1kg')).not.toBeInTheDocument()
+  })
+
+  it('cambiar de punto de venta sin guardar una fila agregada por el picker no deja el ref fantasma corrompiendo la grilla nueva (judgment-day round 2, FINDING 1, MAJOR fix-caused)', async () => {
+    const idArticuloFantasma = articuloFixture().id // 50 — coincide a propósito con la fila PERSISTIDA de PV Norte
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta.startsWith('/reportes/stock/existencias?idPuntoVenta=11'))
+        return Promise.resolve(existenciasFixture([filaFixture({ idArticulo: idArticuloFantasma, nombre: 'Arroz persistido en Norte' })], 11))
+      if (ruta.startsWith('/reportes/stock/existencias?')) return Promise.resolve(existenciasFixture())
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+    await usuario.type(screen.getByLabelText('Buscar artículo para agregar'), 'arroz')
+    await usuario.click(await screen.findByText('ART-50 — Arroz largo fino 1kg'))
+    // Fila local sin guardar en PV Centro (idPuntoVenta 10) — `filaLocalSinGuardarRef.current := 50`.
+    expect(await screen.findByText('Arroz largo fino 1kg')).toBeInTheDocument()
+
+    // Cambia de PV SIN guardar: `cargar()` reemplaza la grilla entera con la de PV Norte, que trae
+    // una fila PERSISTIDA con el MISMO idArticulo (50) que el ref fantasma todavía recuerda.
+    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
+    expect(await screen.findByText('Arroz persistido en Norte')).toBeInTheDocument()
+
+    // Editar + Cancelar sobre esa fila PERSISTIDA: si el ref no se limpió al recargar, `cancelarEdicion`
+    // la matchea por idArticulo y la borra — corrompiendo una fila real del nuevo punto de venta.
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.getByText('Arroz persistido en Norte')).toBeInTheDocument()
+  })
+
+  it('cancelar Editar sobre una fila agregada por el picker y YA GUARDADA no la borra de la grilla (judgment-day round 2, FINDING 2)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+    apiPutMock.mockResolvedValue(minimosFixture({ idArticulo: articuloFixture().id, cantidad: 0, minimo: null, reposicion: null, estado: 'SinMinimo' }))
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+    await usuario.type(screen.getByLabelText('Buscar artículo para agregar'), 'arroz')
+    await usuario.click(await screen.findByText('ART-50 — Arroz largo fino 1kg'))
+    await screen.findByText('Arroz largo fino 1kg')
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Editar' })).toHaveLength(2)) // vuelve a modo lectura tras guardar
+
+    const filas = screen.getAllByRole('row')
+    const filaArroz = within(filas.find((f) => within(f).queryByText('Arroz largo fino 1kg') !== null)!)
+    await usuario.click(filaArroz.getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.getByText('Arroz largo fino 1kg')).toBeInTheDocument()
   })
 })
 

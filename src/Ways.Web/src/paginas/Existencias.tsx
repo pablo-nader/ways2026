@@ -169,6 +169,12 @@ export function Existencias() {
 
   const cargar = useCallback(() => {
     if (idPuntoVenta === null) return
+    // Judgment-day round 2 (FINDING 1, MAJOR fix-caused): `cargar` siempre reemplaza la grilla
+    // completa (mount inicial, cambio de punto de venta, botón Reintentar) — el `ref` de la fila
+    // local sin guardar de la carga ANTERIOR queda huérfano si no se limpia acá. Sin este clear,
+    // `cancelarEdicion` puede matchear por `idArticulo` una fila PERSISTIDA de la nueva grilla que
+    // coincide por casualidad con el `idArticulo` fantasma, y borrarla.
+    filaLocalSinGuardarRef.current = null
     const miGeneracion = (generacionRef.current += 1)
     setCargando(true)
     setError('')
