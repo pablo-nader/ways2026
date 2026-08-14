@@ -862,9 +862,10 @@ functions.
   #6 SUGGESTION (dead `Contexto.Vendedor` setup — closed with test
   `UnVendedorEsRechazadoDelReporteDeRotacion`, mirror of 4.11); #7
   SUGGESTION (incoherent narrative in the 5.10 doc-comment — corrected to
-  the real observed value, Expected 5 / Actual 20). All five new
-  6 new integration tests confirmed FAIL under their named mutation and
-  PASS on revert. Filtered suite `~Rotacion|~Reposicion` green: 60/60
+  the real observed value, Expected 5 / Actual 20). Five of the 6 new
+  integration tests confirmed FAIL under their named mutation and PASS on
+  revert (the sixth, the Vendedor-403 mirror, is an auth-gate test with no
+  named mutation). Filtered suite `~Rotacion|~Reposicion` green: 60/60
   (29 `Ways.Domain.Tests` + 31 `Ways.IntegrationTests`, up from 25
   integration baseline + 6 new).)*
 - [ ] 5.22 Branch `feat/stage13-slice5-rotacion` off `main` (parent:
