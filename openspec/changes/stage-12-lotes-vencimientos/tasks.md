@@ -1680,8 +1680,74 @@ across all eight motivos. **Rollback**: revert the branch.
   to the model since the last migration." No `Migraciones/`/`Configuraciones/`
   file touched by this slice, per the DB CHANGE GATE — `Contratos.cs`/
   `ServicioDeStock.cs` are Application-layer, no EF model surface.)*
-- [ ] 12.14 Run `judgment-day`; fix; re-judge until clean. *(Orchestrator
-  scope — not run by this apply batch per the launch contract.)*
+> **JUDGMENT-DAY FIX NOTE (12.14, ronda 1, juez B)**: 2 gaps confirmados —
+> uno BLOCKER de correctitud, uno secundario:
+>
+> 1. (BLOCKER) `ContarAsync`/`EjecutarConteoAsync` no chequeaba
+>    `ReglaDeLotes.ControlEfectivo` antes de aceptar una `Contada` agregada:
+>    un POST con solo `Contada` para un artículo lote-efectivo devolvía 200,
+>    movía `stock.cantidad` y dejaba `stock_lotes` intacto — invariante 3
+>    roto en silencio (probado empíricamente: 40→50 agregado, lotes quedan
+>    en 40). El `409 conteo_lote_no_soportado` de la task 12.4 es la
+>    degradación pre-aprobada para "el per-lot conteo no está implementado"
+>    — no cubre este caso, donde SÍ está implementado. Fix:
+>    `ExigirFormaDeConteoCoincideConControlDeLote`, guard en `ContarAsync`
+>    ANTES de cualquier lock — `400 conteo_requiere_lotes` (código nuevo,
+>    honesto, distinto del `409` de la degradación) para `Contada` contra
+>    un artículo lote-efectivo; simetría inversa `400 conteo_no_aplica_lotes`
+>    para `Lotes` contra un artículo SIN lote efectivo (¿ya existía? no —
+>    mismo tratamiento que `lote_no_aplica` de `ResolverIdLoteEfectivoAsync`).
+>    Spec `conteo-de-inventario` ENMENDADO (dos escenarios nuevos bajo
+>    "Conteo Of A Lot-Effective Articulo...", marcados "Amended at slice-12
+>    judgment-day"). Tests nuevos en `ConteoPorLoteTests.cs`:
+>    `UnConteoAgregadoParaUnArticuloLoteEfectivoEsRechazado` (delta NO cero
+>    a propósito — expone la escritura real si el guard fallara; la 12.11
+>    original probaba delta CERO, que nunca llega a escribir nada
+>    independientemente de la forma del conteo, escondiendo el gap) y
+>    `UnConteoPorLoteParaUnArticuloSinLoteEfectivoEsRechazado`. La 12.11
+>    original (`UnConteoAgregadoDeContadaIgualALaActualSigueSinEscribirNada`)
+>    usaba (incorrectamente) `SembrarArticuloLoteEfectivoAsync` para un
+>    escenario que su propio doc-comment describía como "sin control de
+>    lote efectivo" — corregida a un nuevo helper
+>    `SembrarArticuloSinLoteAsync` (`ControlaLote = false`), ahora
+>    consistente con su propio contrato. Evidencia de mutación: guard
+>    anulado (`if (false && ...)`) → `UnConteoAgregadoParaUnArticuloLoteEfectivoEsRechazado`
+>    **FALLÓ** (200 real vs. 400 esperado); revertido, **GREEN**.
+> 2. (secundario) `ExigirLotesDeConteoValidos` no validaba existencia/
+>    pertenencia del `idLote` del desglose por lote — un `idLote` inexistente
+>    solo se descubría dentro de la FK cruda del upsert no-op de
+>    `BloquearYCrearSiFaltaStockLoteAsync`, un 500 crudo. Fix:
+>    `ExigirLotesDeConteoExistenAsync`, SELECT-first contra
+>    `ServicioDeLotes.LeerSaldosAsync` (mismo criterio que
+>    `ResolverIdLoteEfectivoAsync`), ANTES de la transacción → `400
+>    lote_invalido`. Test nuevo: `UnConteoPorLoteConUnIdLoteInexistenteEsRechazado`.
+>    Evidencia de mutación: validación anulada (`if (false && ...)`) → el
+>    test **FALLÓ** empíricamente con `500 InternalServerError` /
+>    `SqlState 23503`, `fk_stock_lotes_lote` — exactamente el crudo que el
+>    fix previene; revertido, **GREEN**.
+>
+> Nota adicional sin código (hallazgo 2(e) del juez B): el orden ascendente
+> de adquisición del conteo por lote está under-tested para el orden
+> cross-request concurrente entre dos conteos simultáneos del mismo par —
+> mismo convoy-masking ya documentado en el slice 10 (una única transacción
+> observada a la vez basta para probar el orden intra-request; el orden
+> cross-request queda como convención probada por diseño, no por prueba
+> directa, mismo criterio aceptado en slices previos).
+>
+> El gap sistémico de `ManejadorDeErrores` con excepciones ADO crudas (no
+> `DbUpdateException`) — el mismo mecanismo detrás del hallazgo 2 de arriba
+> — es repo-wide, no específico de este slice: se registra como follow-up
+> del orquestador (chip ya spawneado), no se resuelve acá.
+>
+> Filtro `~ConteoPorLoteTests`: 12/12 (9 + 3 nuevos). Filtro
+> `~InvarianteStockYStockLotesTests`: 3/3. Regresión combinada
+> `~AjusteDeStockTests|~AjusteDecomisoLoteTests|~TransferenciaLoteTests|~TransferenciasYConteoDeInventarioTests`:
+> 71/71. `has-pending-model-changes`: sin cambios pendientes. Árbol limpio
+> tras el commit.
+
+- [x] 12.14 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN
+  NOTE: ronda 1, juez B, 2 gaps confirmados y corregidos — ver nota arriba.
+  Re-judge de la ronda 2 queda a cargo del orquestador.)*
 - [ ] 12.15 Branch `feat/stage12-slice12-conteo` off `main` (parent:
   slice 11); PR; merge stacked-to-main. *(Orchestrator scope.)*
 

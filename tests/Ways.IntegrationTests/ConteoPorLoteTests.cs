@@ -111,6 +111,34 @@ public class ConteoPorLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         return articulo.Id;
     }
 
+    /// <summary>Judgment-day fix (juez B, FIX 1): contraparte SIN control efectivo de lote —
+    /// <c>ControlaLote = false</c>, a diferencia de <see cref="SembrarArticuloLoteEfectivoAsync"/>.
+    /// Necesaria porque la 12.11 usaba (incorrectamente) un artículo lote-efectivo para su
+    /// escenario de regresión del camino agregado.</summary>
+    private async Task<int> SembrarArticuloSinLoteAsync(Contexto ctx, string nombre, decimal precio)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var articulo = new Articulo
+        {
+            IdTenant = ctx.IdTenant, CodigoInterno = $"{nombre}-{Guid.NewGuid():N}", Nombre = nombre,
+            IdArea = ctx.IdArea, IdAlicuotaIva = ctx.IdAlicuotaIva, UnidadVenta = UnidadVenta.Unidad,
+            EsProducto = true, ControlaLote = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Articulos.Add(articulo);
+        await db.SaveChangesAsync();
+
+        db.Precios.Add(new Precio
+        {
+            IdTenant = ctx.IdTenant, IdArticulo = articulo.Id, IdListaPrecio = ctx.IdListaPrecio, Monto = precio,
+            VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+
+        return articulo.Id;
+    }
+
     private async Task<int> SembrarLoteAsync(Contexto ctx, int idArticulo, string codigo, DateOnly? fechaVencimiento, bool esSinIdentificar = false)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
@@ -382,14 +410,18 @@ public class ConteoPorLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
 
     /// <summary>spec: "A matching count writes nothing" — regresión del camino agregado
     /// (<c>Contada</c>, artículo SIN lote efectivo) tras el ensanchamiento a <c>decimal?</c> /
-    /// exactly-one-of de esta slice: sigue siendo un no-op byte-idéntico al de slices previos.</summary>
+    /// exactly-one-of de esta slice: sigue siendo un no-op byte-idéntico al de slices previos.
+    /// Judgment-day fix (juez B, FIX 1): esta versión usa <see cref="SembrarArticuloSinLoteAsync"/> —
+    /// la original usaba (incorrectamente) un artículo lote-efectivo, lo que escondía el bug del
+    /// FIX 1 (delta cero nunca llega a escribir nada, sea cual sea la forma del conteo, así que el
+    /// gap de correctitud quedaba invisible acá; ver
+    /// <see cref="UnConteoAgregadoParaUnArticuloLoteEfectivoEsRechazado"/> para el caso con delta
+    /// NO cero que sí lo exponía).</summary>
     [Fact]
     public async Task UnConteoAgregadoDeContadaIgualALaActualSigueSinEscribirNada()
     {
         var ctx = await PrepararAsync(nameof(UnConteoAgregadoDeContadaIgualALaActualSigueSinEscribirNada));
-        var idArticulo = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-conteo-agregado-regresion", 10m);
-        // Sin lotes/stock_lotes sembrados a propósito: este es el camino agregado puro
-        // (Contada), el mismo contrato que un artículo sin control de lote efectivo usa.
+        var idArticulo = await SembrarArticuloSinLoteAsync(ctx, "articulo-conteo-agregado-regresion", 10m);
         await SembrarStockAgregadoAsync(ctx, idArticulo, 40m);
 
         var solicitud = new SolicitudDeConteo(ctx.IdPuntoVenta, idArticulo, 40m, "Recuento sin diferencias");
@@ -403,6 +435,87 @@ public class ConteoPorLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario));
         Assert.Equal(40m, await LeerStockAsync(ctx, idArticulo));
+    }
+
+    /// <summary>spec conteo-de-inventario (Amended at slice-12 judgment-day, juez B FIX 1): un
+    /// total agregado (<c>Contada</c>) contra un artículo lote-efectivo se rechaza con <c>400
+    /// conteo_requiere_lotes</c> ANTES de cualquier lock — nunca movió <c>stock.cantidad</c> sin
+    /// tocar <c>stock_lotes</c> (el bug empírico: 40→50 agregado, lotes quedan en 40, invariante 3
+    /// roto en silencio). Delta explícitamente NO cero para que la escritura real quede expuesta si
+    /// el guard llegara a fallar.</summary>
+    [Fact]
+    public async Task UnConteoAgregadoParaUnArticuloLoteEfectivoEsRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(UnConteoAgregadoParaUnArticuloLoteEfectivoEsRechazado));
+        var idArticulo = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-conteo-agregado-rechazado", 10m);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L-AGREGADO-RECHAZADO", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLote, 40m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 40m);
+
+        var solicitud = new SolicitudDeConteo(ctx.IdPuntoVenta, idArticulo, 50m, "Total agregado sobre lote-efectivo");
+        var respuesta = await ContarRawAsync(ctx, solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("conteo_requiere_lotes", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario));
+        Assert.Equal(40m, await LeerStockAsync(ctx, idArticulo));
+        Assert.Equal(40m, await LeerStockLoteAsync(ctx, idArticulo, idLote));
+    }
+
+    /// <summary>Simetría inversa del FIX 1: un desglose por lote (<c>Lotes</c>) contra un artículo
+    /// SIN control efectivo de lote no tiene destino — rechazado con <c>400
+    /// conteo_no_aplica_lotes</c>, mismo criterio que <c>lote_no_aplica</c> en
+    /// <c>ResolverIdLoteEfectivoAsync</c>.</summary>
+    [Fact]
+    public async Task UnConteoPorLoteParaUnArticuloSinLoteEfectivoEsRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(UnConteoPorLoteParaUnArticuloSinLoteEfectivoEsRechazado));
+        var idArticulo = await SembrarArticuloSinLoteAsync(ctx, "articulo-conteo-lotes-sin-lote-efectivo", 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 40m);
+
+        var solicitud = new SolicitudDeConteo(
+            ctx.IdPuntoVenta, idArticulo, null, "Desglose sobre articulo sin lote efectivo",
+            [new ConteoDeLote(999_999, 10m)]);
+        var respuesta = await ContarRawAsync(ctx, solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("conteo_no_aplica_lotes", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario));
+        Assert.Equal(40m, await LeerStockAsync(ctx, idArticulo));
+    }
+
+    // ---- judgment-day fix (juez B, FIX 2): idLote inválido en conteo por lote ---------------------
+
+    /// <summary>Un <c>idLote</c> inexistente en el desglose por lote se rechaza con <c>400
+    /// lote_invalido</c> ANTES de cualquier lock — nunca un 500 crudo de FK dentro del upsert
+    /// no-op de <c>BloquearYCrearSiFaltaStockLoteAsync</c>.</summary>
+    [Fact]
+    public async Task UnConteoPorLoteConUnIdLoteInexistenteEsRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(UnConteoPorLoteConUnIdLoteInexistenteEsRechazado));
+        var idArticulo = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-conteo-lote-inexistente", 10m);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L-LOTE-INEXISTENTE", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLote, 12m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 12m);
+
+        var solicitud = new SolicitudDeConteo(
+            ctx.IdPuntoVenta, idArticulo, null, "Lote inexistente", [new ConteoDeLote(999_999, 10m)]);
+        var respuesta = await ContarRawAsync(ctx, solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("lote_invalido", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario));
+        Assert.Equal(12m, await LeerStockLoteAsync(ctx, idArticulo, idLote));
+        Assert.Equal(12m, await LeerStockAsync(ctx, idArticulo));
     }
 
     // ---- task 12.5: lock-acquisition-order ----------------------------------------------------------
