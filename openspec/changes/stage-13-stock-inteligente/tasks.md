@@ -907,29 +907,54 @@ by proveedor habitual, with a download button and a nav entry.
 **Rollback**: revert the branch — a new, additive screen; nothing else
 depends on it.
 
-- [ ] 6.1 Modify `src/Ways.Web/src/api/{tipos,reportes}.ts`: mirror
+- [x] 6.1 Modify `src/Ways.Web/src/api/{tipos,reportes}.ts`: mirror
   `FilaDeReposicion` (with the two rotation fields), `Reposicion`,
   `FilaDeRotacion`, `Rotacion`; `clienteDeReportes.reposicion`,
   `clienteDeReportes.rotacion`; `rutasDeExportacion.reposicion`.
-- [ ] 6.2 Create the pure helper `agruparPorProveedor(filas) →
+- [x] 6.2 Create the pure helper `agruparPorProveedor(filas) →
   { idProveedor, proveedor, filas }[]` — a **fold over the already-ordered
-  list** (no client-side sort — decision 4).
-- [ ] 6.3 Create `src/Ways.Web/src/paginas/Reposicion.tsx`: PV selector,
+  list** (no client-side sort — decision 4). *(colocated at
+  `src/Ways.Web/src/paginas/agruparPorProveedor.ts` — same "standalone pure
+  helper module in `paginas/`" precedent as `etiquetaParaValorFaltante.ts`;
+  groups CONSECUTIVE rows sharing `idProveedor`, never a second sort, since
+  the server already guarantees a single trailing *Sin proveedor* run)*
+- [x] 6.3 Create `src/Ways.Web/src/paginas/Reposicion.tsx`: PV selector,
   fetches `clienteDeReportes.reposicion(idPuntoVenta, null)`,
   `BotonDeDescarga` pointing at `rutasDeExportacion.reposicion(idPuntoVenta)`
   (the `Existencias.tsx` shape verbatim). Header per group shows the
   proveedor and its row count; `sugerido` renders `—` when null, never `0`.
-- [ ] 6.4 Modify `src/Ways.Web/src/App.tsx` and
+  **APPLY NOTE**: `rutasDeExportacion.reposicion` takes `(idPuntoVenta,
+  dias)` (mirroring `vencimientos`'s signature, since the backend route
+  accepts `dias` too) — the page always calls it with `dias = null`, exactly
+  like `clienteDeReportes.reposicion(idPuntoVenta, null)`; no `dias` control
+  is exposed in this slice's UI (design's Reposicion.tsx composition note
+  never asks for one). Columns shipped: Artículo, Cantidad, Mínimo,
+  Reposición, Sugerido — the two rotation fields
+  (`consumoDiarioPromedio`/`diasDeCobertura`) are on the DTO for slice 7's
+  `Sugerido` column on `Existencias.tsx`, never displayed here (design's
+  Reposicion.tsx section only asks for `sugerido`).
+- [x] 6.4 Modify `src/Ways.Web/src/App.tsx` and
   `src/Ways.Web/src/componentes/Layout.tsx`: one route, one nav entry
-  alongside `/reportes/stock/vencimientos`.
-- [ ] 6.5 [P] Descriptor tests for `agruparPorProveedor`: two proveedores
+  alongside `/reportes/stock/vencimientos`. Route `/reportes/stock/reposicion`,
+  same `RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}` gate as
+  `/reportes/stock/vencimientos`; nav entry "Reposición" placed immediately
+  after "Vencimientos" under the same `puedeVerReportes` gate.
+- [x] 6.5 [P] Descriptor tests for `agruparPorProveedor`: two proveedores
   in server order, a *Sin proveedor* bucket landing **last**, a single row,
-  the empty list. *(web-descriptor-tests)*
-- [ ] 6.6 [P] Component test: `sugerido` renders `—` for a null value,
+  the empty list. *(web-descriptor-tests)* Implemented in
+  `agruparPorProveedor.test.ts` — 4 tests, all four scenarios covered.
+- [x] 6.6 [P] Component test: `sugerido` renders `—` for a null value,
   never `0` — the cell an operator would otherwise misread as "buy
-  nothing".
-- [ ] 6.7 Gate guard: `has-pending-model-changes` clean, zero migration
-  files in the diff.
+  nothing". Implemented in `Reposicion.test.tsx` (`'sugerido renderiza —
+  cuando es null, nunca 0'`), plus 4 more component tests (first-PV load
+  with no `?dias=`, group header text, download button wiring, empty state).
+- [x] 6.7 Gate guard: `has-pending-model-changes` clean, zero migration
+  files in the diff. **VERIFIED**: `dotnet ef migrations
+  has-pending-model-changes --project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure` → "No changes have been made to
+  the model since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
+  files). Web-only slice, as expected.
 - [ ] 6.8 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 6.9 Branch `feat/stage13-slice6-web-reposicion` off `main` (parent:
   slices 4+5); PR; merge stacked-to-main.
