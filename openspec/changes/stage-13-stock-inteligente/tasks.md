@@ -387,7 +387,7 @@ contract.
 cut: the report/export boundary — ship the JSON endpoint (4.1-4.3, 4.5-4.9)
 first, the export sibling (4.4, 4.10) is the cut point if this overflows.
 
-- [ ] 4.1 Modify `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
+- [x] 4.1 Modify `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
   private `ConstruirQueryDeReposicion(idPuntoVenta)`:
   ```csharp
   from s in db.Stock
@@ -404,7 +404,7 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   authoritative regardless of the proveedor's own empresa scoping (design
   decision 3). Postgres orders `NULL` last in `ASC` by default, so no
   explicit `NULLS LAST` is needed for *Sin proveedor* to land last.
-- [ ] 4.2 Modify `ServicioDeReportesDeStock.cs`:
+- [x] 4.2 Modify `ServicioDeReportesDeStock.cs`:
   `ObtenerReposicionAsync(idPuntoVenta, dias?, ct)` —
   `ResolverContextoAsync` → `(idEmpresa, zonaId, hoy)`; `diasDeRotacion :=
   dias ?? dias_rotacion` through `ExigirVentanaValida` (`400
@@ -414,33 +414,41 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   empty-set short-circuit is wired here so slice 5 only has to fill it in);
   project `Sugerido` via `ReglaDeReposicion.Sugerido(cantidad, reposicion)`
   per row — pure, no rotation dependency.
-- [ ] 4.3 Modify `src/Ways.Application/Reportes/Contratos.cs`:
+  *(apply note: design's Application Service Surfaces section labels
+  `ResolverDiasRotacionAsync` "privados, slice 5" alongside
+  `ResolverDiasCoberturaAsync`, but resolving `dias ?? dias_rotacion` is
+  literally required by this task's text — added the resolver here,
+  `ResolverDiasAlertaAsync`-shaped, and left `ResolverDiasCoberturaAsync`
+  for slice 5, whose only consumer — `MinimoSugerido` — doesn't exist yet.
+  Not a scope deviation: the design's grouping note and this task's literal
+  requirement disagree, and the task text governs.)*
+- [x] 4.3 Modify `src/Ways.Application/Reportes/Contratos.cs`:
   `FilaDeReposicion(IdArticulo, Articulo, Cantidad, Minimo, Reposicion?,
   Sugerido?, IdProveedor?, Proveedor?)` — no rotation fields in this slice;
   `Reposicion(IdPuntoVenta, Hoy, DiasDeRotacion, ZonaHoraria, Filas)`.
   `dto-contract-honesty`: doc-comment `Sugerido` as null-not-zero when
   `Reposicion` unset; doc-comment that `ConsumoDiarioPromedio`/
   `DiasDeCobertura` are **added by slice 5**, not omitted by oversight.
-- [ ] 4.4 Modify `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
+- [x] 4.4 Modify `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
   one `De(Reposicion, ctx)` mapper — the aggregate cap shape (guard on
   `TablaExportable.Filas.Count` after mapping, no `COUNT(*)`), the same
   method backs both the JSON and the export (design decision 13 — no
   `ObtenerReposicionParaExportacionAsync` twin).
-- [ ] 4.5 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`:
+- [x] 4.5 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`:
   `GET /reportes/stock/reposicion?idPuntoVenta[&dias]` and
   `GET /reportes/stock/reposicion/export?…&formato=xlsx`, both under
   `Politicas.LecturaDeReportes` (inherited).
-- [ ] 4.6 [P] **Mutation target**: `s.Minimo != null` — delete it — a
+- [x] 4.6 [P] **Mutation target**: `s.Minimo != null` — delete it — a
   seeded articulo with `minimo = null, cantidad = 0` must **not** appear;
   the mutation must make it appear. *(spec `reposicion-de-stock`: "Minimo
   Is A Fixed, Owner-Set Reorder Point…", scenario 1; mutation-proof-tests)*
-- [ ] 4.7 [P] **Mutation target**: `candidatos.DefaultIfEmpty()` → inner
+- [x] 4.7 [P] **Mutation target**: `candidatos.DefaultIfEmpty()` → inner
   join — the *Sin proveedor* row must disappear once mutated.
   *(mutation-proof-tests)*
-- [ ] 4.8 [P] **Mutation target**: `orderby a.IdProveedorHabitual, a.Id` —
+- [x] 4.8 [P] **Mutation target**: `orderby a.IdProveedorHabitual, a.Id` —
   delete the first key — the row-sequence assertion (9.9's *Sin proveedor*
   no longer last) must fail. *(mutation-proof-tests)*
-- [ ] 4.9 [P] Discriminating-seed integration test, one PV, every field of
+- [x] 4.9 [P] Discriminating-seed integration test, one PV, every field of
   every row asserted with different values per row/column, row order
   asserted as a sequence: an articulo `cantidad = minimo` (**appears**);
   `cantidad = minimo + 0.001` (absent); `minimo = null, cantidad = 0`
@@ -453,14 +461,14 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   Low-Stock Boundary Is Inclusive" all 3 scenarios, "Reposición Report Is
   The Alert And The Purchase Suggestion…" scenarios 1-3;
   mutation-proof-tests rules 4 and 6)*
-- [ ] 4.10 [P] Export equality: identical query string on `/reposicion` and
+- [x] 4.10 [P] Export equality: identical query string on `/reposicion` and
   `/reposicion/export`, every cell of every row compared, including the
   *Sin proveedor* row's empty proveedor cell and a null `sugerido` cell
   rendering **empty, not `0`**; plus a cap refusal (`TopeDeFilas` lowered)
   that **refuses rather than truncates**. *(spec `reposicion-de-stock`:
   "The Reposición Export Sibling Is Catalog-Bounded, Never Truncated", both
   scenarios; mutation-proof-tests rule 6)*
-- [ ] 4.11 [P] Authorization: a Vendedor gets `403` on the reposición
+- [x] 4.11 [P] Authorization: a Vendedor gets `403` on the reposición
   report and its export. *(spec `reposicion-de-stock`: "Reposición Report…",
   scenario "A Vendedor is rejected from the reposición report and its
   export")*

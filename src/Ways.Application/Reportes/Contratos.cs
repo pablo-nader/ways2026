@@ -168,3 +168,33 @@ public sealed record Vencimientos(
 /// tres conteos que <see cref="Vencimientos.Filas"/> agrupados por <see cref="FilaDeVencimiento.Estado"/>
 /// — nunca una query de agregación separada, para que el tile y el reporte no puedan divergir.</summary>
 public sealed record ResumenDeVencimientos(int IdPuntoVenta, int Vencidos, int PorVencer, int SinFecha);
+
+/// <summary>Fila de <c>GET /api/reportes/stock/reposicion</c> (stage-13-stock-inteligente, Slice 4;
+/// design: Interfaces / Contracts, decisión 3). Solo existe porque <c>minimo IS NOT NULL AND
+/// cantidad &lt;= minimo</c> (spec reposicion-de-stock: The Low-Stock Boundary Is Inclusive), así
+/// que <see cref="Minimo"/> viaja NO nullable — no hay fila sin mínimo. <c>dto-contract-honesty</c>:
+/// <list type="bullet">
+/// <item><see cref="Sugerido"/> — <see cref="Ways.Domain.Stock.ReglaDeReposicion.Sugerido"/>
+/// aplicada a <see cref="Cantidad"/>/<see cref="Reposicion"/>: <c>null</c> (JAMÁS <c>0</c>) cuando
+/// <see cref="Reposicion"/> es <c>null</c> (spec: sugerido Is Null, Never Zero, When Reposicion Is
+/// Unset).</item>
+/// <item><see cref="IdProveedor"/>/<see cref="Proveedor"/> — ambos <c>null</c> ⇒ la fila cae en el
+/// grupo <c>"Sin proveedor"</c> (design decisión 3: el LEFT JOIN nunca la excluye), nunca
+/// filtrada.</item>
+/// <item><see cref="ConsumoDiarioPromedio"/>/<see cref="DiasDeCobertura"/> — AUSENTES por diseño en
+/// esta slice, no por omisión: la slice 5 los agrega cuando <c>LeerConsumoAsync</c> exista (design:
+/// "The four rotation fields do NOT exist in slice 4").</item>
+/// </list></summary>
+public sealed record FilaDeReposicion(
+    int IdArticulo, string Articulo, decimal Cantidad, decimal Minimo, decimal? Reposicion,
+    decimal? Sugerido, int? IdProveedor, string? Proveedor);
+
+/// <summary>Respuesta de <c>GET /api/reportes/stock/reposicion</c>. <see cref="Hoy"/> y
+/// <see cref="ZonaHoraria"/> son la fecha y la zona resueltas para el punto de venta — mismo
+/// criterio de echo obligatorio que <see cref="Vencimientos.Hoy"/>/<see cref="Vencimientos.ZonaHoraria"/>,
+/// aunque esta slice todavía no las usa para clasificar nada (la ventana de rotación llega en la
+/// slice 5). <see cref="DiasDeRotacion"/> es el horizonte efectivamente resuelto: el parámetro
+/// <c>dias</c> de la query si vino, si no <c>dias_rotacion</c> (default 30).</summary>
+public sealed record Reposicion(
+    int IdPuntoVenta, DateOnly Hoy, int DiasDeRotacion, string ZonaHoraria,
+    IReadOnlyList<FilaDeReposicion> Filas);

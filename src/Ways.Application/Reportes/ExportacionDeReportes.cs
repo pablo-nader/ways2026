@@ -331,4 +331,40 @@ public static class ExportacionDeReportes
                     Celda.Texto(f.Estado.ToString())
                 ])
                 .ToList());
+
+    private static readonly IReadOnlyList<ColumnaExportable> ColumnasReposicion =
+    [
+        new ColumnaExportable("Artículo", TipoDeColumna.Entero),
+        new ColumnaExportable("Nombre", TipoDeColumna.Texto),
+        new ColumnaExportable("Cantidad", TipoDeColumna.Cantidad),
+        new ColumnaExportable("Mínimo", TipoDeColumna.Cantidad),
+        new ColumnaExportable("Reposición", TipoDeColumna.Cantidad),
+        new ColumnaExportable("Sugerido", TipoDeColumna.Cantidad),
+        new ColumnaExportable("Proveedor", TipoDeColumna.Texto)
+    ];
+
+    /// <summary>stage-13-stock-inteligente, Slice 4 (design decisión 13): la MISMA firma respalda
+    /// el JSON y el export — no existe un <c>ObtenerReposicionParaExportacionAsync</c> gemelo, así
+    /// que las figuras del export son estructuralmente las del endpoint, nunca dos consultas que
+    /// puedan divergir. Sin fila de totales (mismo criterio que <see cref="Existencias"/>/
+    /// <see cref="Vencimientos"/>): sumar cantidades de artículos distintos no tiene significado
+    /// propio. <c>Celda.Cantidad(null)</c> (<c>Reposición</c>/<c>Sugerido</c> sin configurar) y
+    /// <c>Celda.Texto(null)</c> (<c>Proveedor</c> del grupo "Sin proveedor") ya renderizan vacío por
+    /// diseño de <see cref="Celda"/> — nunca <c>0</c> ni una cadena forzada (spec: sugerido es
+    /// <c>null</c>, nunca cero).</summary>
+    public static TablaExportable De(Reposicion respuesta, ContextoDeExportacion ctx) =>
+        new(
+            "Reposición", ctx, ColumnasReposicion,
+            respuesta.Filas
+                .Select(f => (IReadOnlyList<Celda>)
+                [
+                    Celda.Entero(f.IdArticulo),
+                    Celda.Texto(f.Articulo),
+                    Celda.Cantidad(f.Cantidad),
+                    Celda.Cantidad(f.Minimo),
+                    Celda.Cantidad(f.Reposicion),
+                    Celda.Cantidad(f.Sugerido),
+                    Celda.Texto(f.Proveedor)
+                ])
+                .ToList());
 }

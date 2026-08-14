@@ -425,6 +425,50 @@ public static class ReportesEndpoints
             "Export XLSX de /stock/vencimientos: mismas filas, tope de filas exigido antes de " +
             "generar el archivo (design decisión 17).");
 
+        // stage-13-stock-inteligente, Slice 4 (design decisión 1/2/3, spec reposicion-de-stock:
+        // "Reposición Report Is The Alert And The Purchase Suggestion..."): gate heredado del
+        // grupo. Sin campos de rotación todavía (slice 5) — dias es opcional, mismo criterio que
+        // vencimientos?dias=.
+        grupo.MapGet("/stock/reposicion", (
+            ServicioDeReportesDeStock servicio, int idPuntoVenta, int? dias, CancellationToken ct) =>
+            servicio.ObtenerReposicionAsync(idPuntoVenta, dias, ct))
+        .WithSummary(
+            "Alerta y sugerencia de compra: stock ⋈ articulos ⟕ proveedores donde minimo IS NOT " +
+            "NULL AND cantidad <= minimo, agrupable por proveedor habitual (Sin proveedor incluido, " +
+            "nunca omitido). Sin campos de rotación en esta slice — llegan en la etapa siguiente.");
+
+        // Sibling declarado inmediatamente después de su ruta fuente — hereda LecturaDeReportes
+        // por co-locación. AGREGADO acotado por catálogo (design decisión 13, mismo shape que
+        // /stock/existencias/export): la guarda corre sobre TablaExportable.Filas.Count ya
+        // mapeada, sin COUNT(*) propio, y sin ObtenerReposicionParaExportacionAsync separado — el
+        // mismo ObtenerReposicionAsync respalda ambas rutas.
+        grupo.MapGet("/stock/reposicion/export", async (
+            ServicioDeReportesDeStock servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
+            int idPuntoVenta, int? dias, string formato, CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var reposicion = await servicio.ObtenerReposicionAsync(idPuntoVenta, dias, ct);
+
+            var (empresa, _) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
+
+            var ctx = ContextoDeExportacionHttp.Construir(
+                usuario, reloj, empresa, $"PV {idPuntoVenta}", reposicion.Hoy, reposicion.Hoy, reposicion.ZonaHoraria);
+            var tabla = ExportacionDeReportes.De(reposicion, ctx);
+
+            GuardaDeTope.Exigir(tabla.Filas.Count, opciones.Value.TopeDeFilas);
+
+            var bytes = exportador.Generar(tabla);
+            var nombre = NombreDeArchivo.Construir("reposicion", $"pv{idPuntoVenta}", reposicion.Hoy, reposicion.Hoy);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary(
+            "Export XLSX de /stock/reposicion: mismas filas y figuras (design decisión 13), tope " +
+            "de filas exigido tras mapear — agregado acotado por catálogo, mismo criterio que " +
+            "/stock/existencias/export.");
+
         // stage-11-exportacion-reportes, Slice 5a (design: G2/G3 — minimal aggregation; spec
         // historico-de-cajas: G2 Histórico Lists Closed Turnos Only, Role Split — Turno Detail
         // Under OperacionDePos, Cross-Turno Views Under LecturaDeReportes): gate heredado del
