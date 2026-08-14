@@ -187,6 +187,33 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
             .FirstOrDefaultAsync();
     }
 
+    private async Task SembrarStockAgregadoAsync(Contexto ctx, int idArticulo, decimal cantidad)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        db.Stock.Add(new Stock
+        {
+            IdArticulo = idArticulo, IdPuntoVenta = ctx.IdPuntoVenta, IdTenant = ctx.IdTenant, Cantidad = cantidad
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<decimal> LeerStockAgregadoAsync(Contexto ctx, int idArticulo)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        return await db.Stock
+            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Select(s => s.Cantidad)
+            .FirstOrDefaultAsync();
+    }
+
+    private static async Task<ComprobanteEmitido> AnularAsync(Contexto ctx, int id)
+    {
+        var respuesta = await ctx.Admin.PostAsync($"/api/ventas/{id}/anulacion", null);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        return JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+    }
+
     private static SolicitudDeVenta SolicitudTx(Contexto ctx, int idArticulo, decimal cantidad, int? idLote) =>
         new(
             ctx.IdPuntoVenta, ctx.IdCliente, "TX", null,
@@ -376,5 +403,64 @@ public class NcxLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.Equal("lote_invalido", cuerpo.GetProperty("codigo").GetString());
+    }
+
+    // ---- gap de cobertura (judgment-day slice 9, juez B) — anulación de una NCX lot-bearing -------
+
+    /// <summary>Gap de cobertura señalado por juez B (judgment-day slice 9): ningún test anulaba un
+    /// comprobante NCX con lote — toda la cobertura de "anulación + lote" (<see cref="VentaEscrituraLoteTests"/>,
+    /// Slice 8) ejercita exclusivamente TX. <c>EjecutarAnulacionAsync</c> es el MISMO código para los
+    /// dos tipos (lee <c>movimientos_stock</c> filtrando por <c>Motivo = MotivoStock.Venta</c>, sin
+    /// distinguir TX de NCX) y ya fue auditado como correcto — esto cierra la red del lado NCX
+    /// específicamente. Una NCX lot-bearing SUMA stock al lote (retorno); su anulación debe REVERTIR
+    /// esa suma con signo negativo, dejando stock y stock_lotes en el valor EXACTO pre-NCX (5, un
+    /// valor discriminante, no cero — así un revert que "olvide" restar y solo deje el post-NCX no
+    /// pasa por casualidad).
+    ///
+    /// EVIDENCIA DE MUTACIÓN (apply-run, judgment-day slice 9): en <c>EjecutarAnulacionAsync</c>, el
+    /// guard <c>if (original.IdLote is { } idLote)</c> que envuelve el <c>UpsertStockLoteAsync</c> del
+    /// espejo por-lote se mutó a <c>if (original.IdLote is { } idLote &amp;&amp; inversa >= 0)</c> —
+    /// salteando el upsert espejo exactamente cuando la reversa (<c>inversa = -original.Cantidad</c>)
+    /// es NEGATIVA. Ese es, estructuralmente, el caso EXCLUSIVO de anular una NCX: una NCX SUMA stock
+    /// (<c>original.Cantidad &gt; 0</c>), así que su contramovimiento siempre RESTA (<c>inversa &lt;
+    /// 0</c>); anular una TX es el espejo (<c>original.Cantidad &lt; 0</c>, <c>inversa &gt; 0</c>),
+    /// así que esta condición nunca toca ese camino — es la mutación que aísla el gap sin tocar
+    /// ninguna aserción de <see cref="VentaEscrituraLoteTests"/>. Build; filtro
+    /// <c>FullyQualifiedName~LaAnulacionDeUnaNcxLoteEfectivaRevierteElLoteExactoConSignoCorrecto</c>:
+    /// RED — <c>Assert.Equal(5m, stockLotePostAnulacion)</c> falló (<c>Expected: 5 / Actual: 8</c>,
+    /// el valor post-NCX sin revertir; el <c>stock</c> agregado sí volvió a 5 porque
+    /// <c>UpsertStockAsync</c> no está guardado por esta condición). Revertido; mismo filtro: GREEN;
+    /// suite completa de esta clase y de <see cref="VentaEscrituraLoteTests"/>: GREEN (la mutación
+    /// nunca las tocó, confirmando que el gap era real y específico de NCX).</summary>
+    [Fact]
+    public async Task LaAnulacionDeUnaNcxLoteEfectivaRevierteElLoteExactoConSignoCorrecto()
+    {
+        var ctx = await PrepararAsync(nameof(LaAnulacionDeUnaNcxLoteEfectivaRevierteElLoteExactoConSignoCorrecto));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-ncx-anulacion", 100m, controlaLote: true);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L-NCX-ANUL", VencimientoLejanoFuturo);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 5m);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLote, 5m);
+
+        var emitido = await EmitirAsync(ctx, SolicitudNcx(ctx, idArticulo, 3m, idLote: idLote));
+        var item = Assert.Single(emitido.Items);
+        Assert.Equal(idLote, item.IdLote);
+        Assert.Equal(-3m, item.Cantidad);
+
+        Assert.Equal(8m, await LeerStockLoteAsync(ctx, idArticulo, idLote));
+        Assert.Equal(8m, await LeerStockAgregadoAsync(ctx, idArticulo));
+
+        var anulado = await AnularAsync(ctx, emitido.Id);
+        Assert.Equal(EstadoComprobante.Anulado, anulado.Estado);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var movimientoAnulacion = await db.MovimientosStock
+                .SingleAsync(m => m.IdComprobanteVenta == emitido.Id && m.Motivo == MotivoStock.Anulacion);
+            Assert.Equal(idLote, movimientoAnulacion.IdLote);
+            Assert.Equal(-3m, movimientoAnulacion.Cantidad);
+        }
+
+        Assert.Equal(5m, await LeerStockAgregadoAsync(ctx, idArticulo));
+        Assert.Equal(5m, await LeerStockLoteAsync(ctx, idArticulo, idLote));
     }
 }
