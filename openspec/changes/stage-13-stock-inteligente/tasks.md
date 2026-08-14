@@ -841,8 +841,16 @@ functions.
   the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
   files).
-- [ ] 5.21 Run `judgment-day`; fix; re-judge until clean. *(judgment-day round
-  1, juez B — 7 findings confirmed and closed: #1 MAJOR
+- [x] 5.21 Run `judgment-day`; fix; re-judge until clean. *(CLEAN 2026-08-14:
+  judge B's scoped re-judgment re-applied all 6 named mutations — every one
+  killed by exactly its dedicated test with the predicted failure mode
+  (incl. the live 500 `error_interno` confirmation of the soft-delete
+  guard) — zero fix-caused defects beyond one prose slip corrected by the
+  orchestrator; judge A's fresh read-only pass returned ZERO findings,
+  independently re-deriving the netting predicate against the raw-ADO
+  write paths of ventas/compras, the window arithmetic, the query-count-6
+  claim, and every DTO field's fate. JUDGMENT: APPROVED. Round 1, juez B —
+  7 findings confirmed and closed: #1 MAJOR
   (`ResolverDiasCoberturaAsync`/`ObtenerRotacionAsync` never routed
   `dias_cobertura_objetivo` through `ReglaDeReposicion.ExigirVentanaValida`,
   making the designed 400 unreachable and letting a stored `<= 0` value
@@ -868,7 +876,7 @@ functions.
   named mutation). Filtered suite `~Rotacion|~Reposicion` green: 60/60
   (29 `Ways.Domain.Tests` + 31 `Ways.IntegrationTests`, up from 25
   integration baseline + 6 new).)*
-- [ ] 5.22 Branch `feat/stage13-slice5-rotacion` off `main` (parent:
+- [x] 5.22 Branch `feat/stage13-slice5-rotacion` off `main` (parent:
   slice 4); PR; merge stacked-to-main.
 
 **APPLY NOTE (Verify line, no mismatch this time)**: unlike slices 2 and 4,
