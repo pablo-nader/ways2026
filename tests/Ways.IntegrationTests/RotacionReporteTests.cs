@@ -275,10 +275,10 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     /// <c>id_comprobante_compra</c>, INCLUIDA). Consumo esperado: 8 − 3 = 5 — las cuatro magnitudes
     /// (15, 8, 3, 5) son todas distintas, así que ninguna combinación accidental de otro subconjunto
     /// puede producir el mismo resultado. Mutación aplicada (borrar <c>&amp;&amp;
-    /// m.IdComprobanteCompra == null</c> de <c>LeerConsumoAsync</c>): este test pasó de esperar
-    /// <c>5</c> y obtener <c>-10</c> (la reversión de la compra, −15, se sumaba negando a +15 en el
-    /// total incluido, netamente 8−3+15=20... el valor exacto observado se registra en el resumen de
-    /// apply) — FALLÓ — a pasar al revertir.</summary>
+    /// m.IdComprobanteCompra == null</c> de <c>LeerConsumoAsync</c>): la reversión de la compra
+    /// (<c>-15</c>, motivo <c>anulacion</c>) queda incluida junto a las otras dos filas, neto
+    /// <c>-8 + 3 + (-15) = -20</c>, <c>-neto = 20</c> — este test pasó de esperar <c>5</c> y
+    /// obtener <c>20</c> — FALLÓ — a pasar al revertir.</summary>
     [Fact]
     public async Task LaRotacionNoNeteaLaAnulacionDeUnaCompraDentroDeLasVentas()
     {
@@ -534,6 +534,171 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(7, rotacion.DiasCoberturaObjetivo);
 
         Assert.Null(await LeerMinimoPersistidoAsync(ctx, idArticulo));
+    }
+
+    // ---- judgment-day round 1, slice 5, juez B, hallazgo #1 (MAJOR): dias_cobertura_objetivo <= 0 --
+
+    /// <summary>Nombra la cláusula bajo prueba (mutation-proof-tests): la llamada a
+    /// <c>ReglaDeReposicion.ExigirVentanaValida(diasDeCoberturaObjetivo, "dias_cobertura_invalido")</c>
+    /// dentro de <c>ObtenerRotacionAsync</c> — antes del fix, ningún test pasaba por ella (a
+    /// diferencia de <c>dias_rotacion</c>, <c>dias_cobertura_objetivo</c> nunca acepta un
+    /// <c>?dias=</c> de query, solo el parámetro almacenado) y un <c>dias_cobertura_objetivo = 0</c>
+    /// persistido fabricaba un <c>minimoSugerido</c> igual a <c>0</c> en vez de rechazar con 400.
+    /// Mutación aplicada (borrar el <c>ExigirVentanaValida</c> agregado): este test pasó de FALLAR
+    /// (200 en lugar de 400) a pasar al revertir.</summary>
+    [Fact]
+    public async Task UnDiasDeCoberturaObjetivoInvalidoEsRechazadoConCuatrocientos()
+    {
+        var ctx = await PrepararAsync(nameof(UnDiasDeCoberturaObjetivoInvalidoEsRechazadoConCuatrocientos));
+
+        var alta = await ctx.Admin.PutAsJsonAsync(
+            $"/api/parametros?idEmpresa={ctx.IdEmpresa}",
+            new ParametroAlta("dias_cobertura_objetivo", "0", null));
+        Assert.Equal(HttpStatusCode.OK, alta.StatusCode);
+
+        var respuesta = await LlamarRotacionAsync(ctx.Admin, ctx.IdPuntoVenta);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("dias_cobertura_invalido", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- judgment-day round 1, slice 5, juez B, hallazgo #2 (WARNING): clamp a 0, nunca negativo --
+
+    /// <summary>Nombra la cláusula bajo prueba (mutation-proof-tests): <c>Math.Max(0m, -par.Value)</c>
+    /// en <c>ObtenerRotacionAsync</c> — el contrato documentado en <see cref="FilaDeRotacion"/>
+    /// ("recortado a 0 — nunca negativo — cuando las devoluciones superan a las ventas") no tenía
+    /// test propio. Venta de 3 unidades (cantidad <c>-3</c>) y anulación-de-venta de 8 unidades
+    /// (cantidad <c>+8</c>, sin <c>id_comprobante_compra</c>) ⇒ neto <c>= -3 + 8 = +5</c> (las
+    /// devoluciones superan a las ventas dentro de la ventana). El artículo SÍ tiene historia
+    /// calificante (design decisión 14) — la fila existe, pero <c>ConsumoEnVentana</c> Y
+    /// <c>ConsumoDiarioPromedio</c> clampean a <c>0</c>, NUNCA a <c>5</c> (que sería
+    /// <c>Math.Abs(neto)</c>, la mutación bajo prueba). Mutación aplicada (reemplazar
+    /// <c>Math.Max(0m, -par.Value)</c> por <c>Math.Abs(par.Value)</c>): este test pasó de FALLAR
+    /// (esperaba <c>0</c>, obtuvo <c>5</c>) a pasar al revertir.</summary>
+    [Fact]
+    public async Task UnaVentanaConDevolucionesNetasPositivasClampeaElConsumoAZeroNuncaNegativo()
+    {
+        var ctx = await PrepararAsync(nameof(UnaVentanaConDevolucionesNetasPositivasClampeaElConsumoAZeroNuncaNegativo));
+        var idArticulo = await SembrarArticuloAsync(ctx, "rotacion-devoluciones-netas");
+        await SembrarStockAsync(ctx, idArticulo, cantidad: 20m, minimo: null);
+
+        var ahora = DateTimeOffset.UtcNow;
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -3m, MotivoStock.Venta, ahora);
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: 8m, MotivoStock.Anulacion, ahora.AddMinutes(1), idComprobanteCompra: null);
+
+        var rotacion = await ObtenerRotacionAsync(ctx.Admin, ctx.IdPuntoVenta);
+
+        var fila = Assert.Single(rotacion.Filas, f => f.IdArticulo == idArticulo);
+        Assert.Equal(0m, fila.ConsumoEnVentana);
+        Assert.Equal(0m, fila.ConsumoDiarioPromedio);
+    }
+
+    // ---- judgment-day round 1, slice 5, juez B, hallazgo #3 (WARNING): bordes exactos de la ventana
+
+    /// <summary>Nombra las cláusulas bajo prueba (mutation-proof-tests): <c>m.CreadoEl >= desdeUtc</c>
+    /// (borde inferior INCLUSIVO) y <c>m.CreadoEl &lt; hastaUtcExclusivo</c> (borde superior
+    /// EXCLUSIVO) de <c>LeerConsumoAsync</c> — el test 5.11 pinnea la ZONA horaria pero ningún
+    /// movimiento cae exactamente en un borde. Mismo reloj fijo que 5.11 (mediodía UTC del
+    /// 2026-08-14), <c>dias=1</c> ⇒ ventana <c>[2026-08-14T03:00Z, 2026-08-15T03:00Z)</c>. Un
+    /// movimiento EXACTAMENTE en <c>desdeUtc</c> (cantidad <c>-7</c>, INCLUIDO) y otro EXACTAMENTE
+    /// en <c>hastaUtcExclusivo</c> (cantidad <c>-11</c>, EXCLUIDO) — magnitudes distintas. Mutación
+    /// del borde inferior (<c>&gt;=</c> → <c>&gt;</c>): el movimiento en <c>desdeUtc</c> queda
+    /// afuera, el artículo pierde toda historia calificada y desaparece de <c>Filas</c> —
+    /// <c>Assert.Single</c> FALLA. Mutación del borde superior (<c>&lt;</c> → <c>&lt;=</c>): el
+    /// movimiento en <c>hastaUtcExclusivo</c> entra, <c>ConsumoEnVentana</c> pasa de <c>7</c> a
+    /// <c>18</c> — FALLA. Ambas mutaciones revertidas, el test vuelve a pasar.</summary>
+    [Fact]
+    public async Task LaVentanaDeRotacionIncluyeElBordeInferiorYExcluyeElBordeSuperiorExactos()
+    {
+        using var factoryConRelojFijo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddSingleton<IRelojDelSistema>(
+                    new RelojFijo(new DateTimeOffset(2026, 8, 14, 12, 0, 0, TimeSpan.Zero)))));
+
+        var ctx = await PrepararAsync(
+            nameof(LaVentanaDeRotacionIncluyeElBordeInferiorYExcluyeElBordeSuperiorExactos), factoryConRelojFijo);
+        var idArticulo = await SembrarArticuloAsync(ctx, "rotacion-borde-exacto");
+        await SembrarStockAsync(ctx, idArticulo, cantidad: 20m, minimo: null);
+
+        await SembrarMovimientoAsync(
+            ctx, idArticulo, cantidad: -7m, MotivoStock.Venta, new DateTimeOffset(2026, 8, 14, 3, 0, 0, TimeSpan.Zero));
+        await SembrarMovimientoAsync(
+            ctx, idArticulo, cantidad: -11m, MotivoStock.Venta, new DateTimeOffset(2026, 8, 15, 3, 0, 0, TimeSpan.Zero));
+
+        var rotacion = await ObtenerRotacionAsync(ctx.Admin, ctx.IdPuntoVenta, dias: 1);
+
+        var fila = Assert.Single(rotacion.Filas, f => f.IdArticulo == idArticulo);
+        Assert.Equal(7m, fila.ConsumoEnVentana);
+    }
+
+    // ---- judgment-day round 1, slice 5, juez B, hallazgo #4 (WARNING): DiasDeCobertura usa Cantidad
+
+    /// <summary>Nombra el argumento bajo prueba (mutation-proof-tests): <c>f.Cantidad</c> (NUNCA
+    /// <c>f.Minimo</c>) como primer argumento de <c>ReglaDeReposicion.DiasDeCobertura</c> dentro de
+    /// <c>ObtenerReposicionAsync</c> — ningún test previo asertaba un valor concreto de
+    /// <c>DiasDeCobertura</c>. Cantidad <c>10</c>, mínimo <c>100</c> (bajo mínimo, alerta), consumo
+    /// total <c>60</c> sobre la ventana default de 30 días ⇒ <c>consumoDiarioPromedio = 2</c> ⇒
+    /// <c>DiasDeCobertura = cantidad / consumo = 10 / 2 = 5</c> — DISTINTO del que saldría con
+    /// <c>minimo</c> como argumento (<c>100 / 2 = 50</c>). Mutación aplicada (<c>f.Cantidad</c> →
+    /// <c>f.Minimo</c>): este test pasó de FALLAR (esperaba <c>5</c>, obtuvo <c>50</c>) a pasar al
+    /// revertir.</summary>
+    [Fact]
+    public async Task LaCoberturaDeDiasSeCalculaSobreCantidadNuncaSobreMinimo()
+    {
+        var ctx = await PrepararAsync(nameof(LaCoberturaDeDiasSeCalculaSobreCantidadNuncaSobreMinimo));
+        var idArticulo = await SembrarArticuloAsync(ctx, "rotacion-cobertura-cantidad");
+        await SembrarStockAsync(ctx, idArticulo, cantidad: 10m, minimo: 100m);
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -60m, MotivoStock.Venta, DateTimeOffset.UtcNow);
+
+        var reposicion = await ObtenerReposicionAsync(ctx.Admin, ctx.IdPuntoVenta);
+
+        var fila = Assert.Single(reposicion.Filas, f => f.IdArticulo == idArticulo);
+        Assert.Equal(2m, fila.ConsumoDiarioPromedio);
+        Assert.Equal(5m, fila.DiasDeCobertura);
+    }
+
+    // ---- judgment-day round 1, slice 5, juez B, hallazgo #5 (WARNING): artículo soft-deleted -------
+
+    /// <summary>Nombra la cláusula bajo prueba (mutation-proof-tests): <c>.Where(par =>
+    /// nombres.ContainsKey(par.Key))</c> en <c>ObtenerRotacionAsync</c> — el ledger de
+    /// <c>movimientos_stock</c> es append-only y no conoce baja lógica (mismo trade-off que
+    /// <c>ExistenciasTests.UnArticuloEliminadoNuncaApareceEnLasExistencias</c>), así que un artículo
+    /// con ventas calificadas en la ventana que luego se da de baja debe DESAPARECER de
+    /// <c>Filas</c> con 200, nunca reventar con <c>KeyNotFoundException</c> (500) al indexar
+    /// <c>nombres[par.Key]</c>. Secuencia: venta dentro de la ventana → <c>DELETE
+    /// /api/articulos/{id}</c> (camino real del API, baja lógica) → <c>GET /rotacion</c>. Mutación
+    /// aplicada (borrar el <c>.Where(...)</c>): este test pasó de FALLAR (500/KeyNotFoundException
+    /// en vez de 200) a pasar al revertir.</summary>
+    [Fact]
+    public async Task UnArticuloDadoDeBajaConHistoriaCalificadaDesapareceDeLaRotacionSinReventar()
+    {
+        var ctx = await PrepararAsync(nameof(UnArticuloDadoDeBajaConHistoriaCalificadaDesapareceDeLaRotacionSinReventar));
+        var idArticulo = await SembrarArticuloAsync(ctx, "rotacion-baja-con-historia");
+        await SembrarStockAsync(ctx, idArticulo, cantidad: 5m, minimo: null);
+        await SembrarMovimientoAsync(ctx, idArticulo, cantidad: -6m, MotivoStock.Venta, DateTimeOffset.UtcNow);
+
+        var baja = await ctx.Admin.DeleteAsync($"/api/articulos/{idArticulo}");
+        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+
+        var respuesta = await LlamarRotacionAsync(ctx.Admin, ctx.IdPuntoVenta);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        var rotacion = JsonSerializer.Deserialize<Rotacion>(cuerpo, OpcionesJson)!;
+
+        Assert.DoesNotContain(rotacion.Filas, f => f.IdArticulo == idArticulo);
+    }
+
+    // ---- judgment-day round 1, slice 5, juez B, hallazgo #6 (SUGGESTION): 403, espejo de 4.11 ------
+
+    [Fact]
+    public async Task UnVendedorEsRechazadoDelReporteDeRotacion()
+    {
+        var ctx = await PrepararAsync(nameof(UnVendedorEsRechazadoDelReporteDeRotacion));
+
+        var respuesta = await LlamarRotacionAsync(ctx.Vendedor, ctx.IdPuntoVenta);
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
     // ---- task 5.19: ninguna de las dos rutas de rotación escribe stock.minimo automáticamente ------

@@ -841,7 +841,32 @@ functions.
   the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
   files).
-- [ ] 5.21 Run `judgment-day`; fix; re-judge until clean.
+- [ ] 5.21 Run `judgment-day`; fix; re-judge until clean. *(judgment-day round
+  1, juez B — 7 findings confirmed and closed: #1 MAJOR
+  (`ResolverDiasCoberturaAsync`/`ObtenerRotacionAsync` never routed
+  `dias_cobertura_objetivo` through `ReglaDeReposicion.ExigirVentanaValida`,
+  making the designed 400 unreachable and letting a stored `<= 0` value
+  fabricate a zero/negative `minimoSugerido` — fixed by wrapping the
+  resolved value with `ExigirVentanaValida(_, "dias_cobertura_invalido")`
+  at the single resolution point; test
+  `UnDiasDeCoberturaObjetivoInvalidoEsRechazadoConCuatrocientos`); #2
+  WARNING (the `FilaDeRotacion` clamp-to-zero contract had no test; test
+  `UnaVentanaConDevolucionesNetasPositivasClampeaElConsumoAZeroNuncaNegativo`);
+  #3 WARNING (window boundaries untested at the exact instant; test
+  `LaVentanaDeRotacionIncluyeElBordeInferiorYExcluyeElBordeSuperiorExactos`);
+  #4 WARNING (`DiasDeCobertura(f.Cantidad, …)` wiring untested; test
+  `LaCoberturaDeDiasSeCalculaSobreCantidadNuncaSobreMinimo`); #5 WARNING
+  (soft-deleted articulo with qualifying history untested — the
+  `nombres.ContainsKey` guard was already correct, just unproven; test
+  `UnArticuloDadoDeBajaConHistoriaCalificadaDesapareceDeLaRotacionSinReventar`);
+  #6 SUGGESTION (dead `Contexto.Vendedor` setup — closed with test
+  `UnVendedorEsRechazadoDelReporteDeRotacion`, mirror of 4.11); #7
+  SUGGESTION (incoherent narrative in the 5.10 doc-comment — corrected to
+  the real observed value, Expected 5 / Actual 20). All five new
+  6 new integration tests confirmed FAIL under their named mutation and
+  PASS on revert. Filtered suite `~Rotacion|~Reposicion` green: 60/60
+  (29 `Ways.Domain.Tests` + 31 `Ways.IntegrationTests`, up from 25
+  integration baseline + 6 new).)*
 - [ ] 5.22 Branch `feat/stage13-slice5-rotacion` off `main` (parent:
   slice 4); PR; merge stacked-to-main.
 

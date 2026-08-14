@@ -187,7 +187,8 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
         var (idEmpresa, zonaId, hoy) = await ResolverContextoAsync(idPuntoVenta, ct);
         var diasDeRotacion = ReglaDeReposicion.ExigirVentanaValida(
             dias ?? await ResolverDiasRotacionAsync(idEmpresa, idPuntoVenta, ct), "dias_rotacion_invalido");
-        var diasDeCoberturaObjetivo = await ResolverDiasCoberturaAsync(idEmpresa, idPuntoVenta, ct);
+        var diasDeCoberturaObjetivo = ReglaDeReposicion.ExigirVentanaValida(
+            await ResolverDiasCoberturaAsync(idEmpresa, idPuntoVenta, ct), "dias_cobertura_invalido");
 
         var (desdeUtc, hastaUtc) = ReglaDeReposicion.VentanaDeRotacion(hoy, diasDeRotacion, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
         var consumo = await LeerConsumoAsync(idPuntoVenta, idsArticulo: null, desdeUtc, hastaUtc, ct);
