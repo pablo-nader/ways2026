@@ -644,17 +644,68 @@ here, since 3.13 is explicitly the orchestrator's task.
   other file touched). `npm run build` (`tsc -b && vite build`) → clean.
   `git status --porcelain` clean, no stray `MUTATION` markers
   (`grep -rn "MUTATION"` on both touched files → empty).
+  **ROUND A (judgment-day, judge A ledger, scoped fix-agent run)**: 1
+  CRITICAL + 2 WARNING confirmed and closed.
+  **CONFIRMED CRITICAL (Finding 1)**: `filaLocalSinGuardarRef`'s success-path
+  clear in `guardarFila` was unconditional — `agregarFila(X)` sets the ref to
+  X and appends the ghost row, then opening and saving a DIFFERENT
+  preexisting row Y (allowed: `abrirFila` only checks `guardandoRef`, not
+  `filaEnEdicion`) cleared the ref to `null` regardless of which row it just
+  saved, orphaning X (`cancelarEdicion` matches by identity against
+  `filaEnEdicion`, so it could no longer find X to remove it). Fixed by
+  gating the clear on identity: `if (fila.idArticulo ===
+  filaLocalSinGuardarRef.current) filaLocalSinGuardarRef.current = null`.
+  `cancelarEdicion`'s own removal already matched by identity, so no other
+  change was needed. **EVIDENCE**: mutated the clear back to unconditional
+  (`filaLocalSinGuardarRef.current = null`), ran `npx vitest run
+  Existencias -t "FINDING 1 CRITICAL"` → **FAILED** (`Arroz largo fino 1kg`
+  still in the document after Cancelar — the ghost survived, proving the
+  orphan); reverted via targeted edit (not `git checkout --`, to avoid
+  wiping the other two round-A fixes staged in the same uncommitted file) →
+  23/23 green in `Existencias.test.tsx`.
+  **CONFIRMED WARNING (Finding 2, precedent-matching write-role gate)**:
+  `Existencias.tsx` had no client-side write-role gate even though `PUT
+  /api/stock/minimos` is Admin-only server-side (`GestionDeCatalogo`) while
+  the route itself admits Supervisor+Admin (`Politicas.LecturaDeReportes`).
+  Replicated the exact `CompraEditor.tsx:492` precedent: `puedeEscribir =
+  usuario !== null && usuario.rolId === ROL.Admin`, hiding the Editar
+  buttons, Guardar/Cancelar, and the `SelectorDeArticuloParaAlta` add-row
+  when `false`; reading (all columns) stays open to Supervisor. Test
+  fixture default switched from Supervisor to Admin (same convention as
+  `CompraEditor.test.tsx`) since most of this file's tests exercise write
+  actions; the "role gating" describe's Supervisor test now sets the role
+  explicitly. **EVIDENCE**: mutated `puedeEscribir` to a hardcoded `true`,
+  ran `npx vitest run Existencias -t "FINDING 2"` → **FAILED** (the
+  Supervisor-render test found an "Editar" button that should have been
+  hidden); reverted via targeted edit → 23/23 green.
+  **CONFIRMED WARNING (Finding 3, `disabled` attribute missing on rendered
+  result buttons)**: `SelectorDeArticuloParaAlta`'s search-result buttons
+  never received the `disabled` prop (only the search input did) — the
+  click was stopped by `agregarFila`'s `guardandoRef` guard, but the
+  rendered attribute lied. Wired `disabled={disabled}` onto the result
+  buttons. Extended the existing full-window "TODA la ventana queda
+  attribute-disabled" test (task 3.5) to leave a result visible before
+  triggering an in-flight PUT, then assert that result button is
+  `toBeDisabled()`. **EVIDENCE**: removed the `disabled` prop from the
+  result buttons, ran `npx vitest run Existencias -t "TODA la ventana"` →
+  **FAILED** (`Received element is not disabled`); reverted via targeted
+  edit → 23/23 green.
+  Full suite after all reverts: `grep -rn "MUTATION"` on both touched files
+  → empty; `npx vitest run` → 35 files, 639/639 green (full repo suite,
+  web-only change — no other file touched); `npm run build` (`tsc -b &&
+  vite build`) → clean, 0 type errors.
 - [ ] 3.13 Branch `feat/stage13-slice3-web-minimos` off `main` (parent:
   slices 1+2); PR; merge stacked-to-main.
 
 **Test plan**: mutation target (3.6), coercion descriptors (3.7), no-refetch
 (3.8), stale-read-discarded (3.9), double-click + supersede-blocked (3.10),
 phantom-ref-on-reload + saved-row-cancel + same-tick save guard (3.12 round
-2, FINDINGS 1/2/3).
+2, FINDINGS 1/2/3), ghost-row-identity-gated-clear + write-role gate +
+result-button `disabled` attribute (3.12 round A, FINDINGS 1/2/3).
 
-**Verify**: `npm run test -- Existencias` — 20/20 green (full suite:
-`npx vitest run` → 35 files, 636/636 green — updated post-`judgment-day`
-round 2, see the apply notes on tasks 3.5/3.10/3.12). `npm run lint`
+**Verify**: `npm run test -- Existencias` — 23/23 green (full suite:
+`npx vitest run` → 35 files, 639/639 green — updated post-`judgment-day`
+round A, see the apply notes on task 3.12). `npm run lint`
 (oxlint) → clean (one pre-existing, unrelated warning in `AuthContext.tsx`).
 `npm run build` (`tsc -b && vite build`) → clean.
 

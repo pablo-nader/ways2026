@@ -30,13 +30,17 @@ vi.mock('../api/cliente', () => ({
   },
 }))
 
+// Judgment-day round A (FINDING 2): el default es Admin porque la mayoría de los tests de este
+// archivo ejercitan las acciones de escritura (Editar/Guardar/agregar fila), gateadas por
+// `puedeEscribir` — mismo criterio que `CompraEditor.test.tsx`. Los tests de rol (`describe`
+// "role gating") sobrescriben `usuarioActual` explícitamente cuando necesitan otro rol.
 function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
   return {
     id: 9,
-    usuario: 'supervisor',
-    mail: 'supervisor@ways.test',
-    rolId: ROL.Supervisor,
-    rol: 'Supervisor',
+    usuario: 'admin',
+    mail: 'admin@ways.test',
+    rolId: ROL.Admin,
+    rol: 'Admin',
     ultimaConexion: null,
     idTenant: 1,
     ...sobrescribir,
@@ -444,6 +448,7 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
 
   it('mientras una fila guarda, TODA la ventana queda attribute-disabled — no solo la fila en edición (decisión 15 / tarea 3.5)', async () => {
     mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
       if (ruta.startsWith('/reportes/stock/existencias?')) return Promise.resolve(existenciasFixture(dosFilasFixture()))
       return undefined
     })
@@ -458,6 +463,12 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     renderExistencias()
 
     await screen.findByText('Aceite de girasol 900ml')
+    // Deja resultados del picker visibles (sin elegir ninguno) ANTES de disparar el guardado —
+    // judgment-day round A, FINDING 3: el `disabled` de esos botones de resultado, no solo el del
+    // input de búsqueda.
+    await usuario.type(screen.getByLabelText('Buscar artículo para agregar'), 'arroz')
+    const botonResultado = await screen.findByText('ART-50 — Arroz largo fino 1kg')
+
     await usuario.click(screen.getAllByRole('button', { name: 'Editar' })[0]) // abre A
     await usuario.type(screen.getByLabelText('Mínimo de Aceite de girasol 900ml'), '5')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
@@ -471,6 +482,7 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     expect(screen.getByRole('button', { name: 'Descargar' })).toBeDisabled()
     expect(screen.getByLabelText('Buscar artículo para agregar')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled() // el propio Guardar en vuelo
+    expect(botonResultado.closest('button')).toBeDisabled() // FINDING 3: el atributo, no solo el guard de `agregarFila`
 
     resolverPut(minimosFixture({ idArticulo: 1, cantidad: 12, minimo: 5, reposicion: null, estado: 'Bajo' }))
     await screen.findByText('Bajo')
@@ -605,10 +617,51 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
 
     expect(screen.getByText('Arroz largo fino 1kg')).toBeInTheDocument()
   })
+
+  it('agregar una fila fantasma X y guardar una fila Y preexistente distinta no la huerfaniza — Cancelar todavía la saca (judgment-day round A, FINDING 1 CRITICAL)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+    apiPutMock.mockResolvedValue(minimosFixture({ idArticulo: 100, cantidad: 42.5, minimo: 5, reposicion: null, estado: 'Bajo' }))
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+
+    // Agrega X (idArticulo 50, "Arroz largo fino 1kg") por el picker — fila fantasma, se abre sola
+    // para edición: `filaLocalSinGuardarRef.current := 50`.
+    await usuario.type(screen.getByLabelText('Buscar artículo para agregar'), 'arroz')
+    await usuario.click(await screen.findByText('ART-50 — Arroz largo fino 1kg'))
+    expect(await screen.findByText('Arroz largo fino 1kg')).toBeInTheDocument()
+
+    // Con X todavía en edición (y sin guardar), abre Y — la fila PREEXISTENTE "Yerba mate 1kg"
+    // (idArticulo 100) — y la guarda de punta a punta. `abrirFila` no exige que ninguna otra fila
+    // esté cerrada, solo que no haya un guardado en vuelo.
+    await usuario.click(screen.getByRole('button', { name: 'Editar' })) // única "Editar" visible: X muestra Guardar/Cancelar
+    await usuario.type(screen.getByLabelText('Mínimo de Yerba mate 1kg'), '5')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    expect(apiPutMock).toHaveBeenCalledWith('/stock/minimos', { idPuntoVenta: 10, idArticulo: 100, minimo: 5, reposicion: null })
+    await screen.findByText('Bajo')
+
+    // El fantasma X NO se lo llevó el clear del success-path de Y: sigue renderizado.
+    expect(screen.getByText('Arroz largo fino 1kg')).toBeInTheDocument()
+
+    // Reabre X y Cancelar: como nunca se guardó, tiene que desaparecer de la grilla.
+    const filas = screen.getAllByRole('row')
+    const filaArroz = within(filas.find((f) => within(f).queryByText('Arroz largo fino 1kg') !== null)!)
+    await usuario.click(filaArroz.getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByText('Arroz largo fino 1kg')).not.toBeInTheDocument()
+  })
 })
 
 describe('Existencias — role gating (spec: A Supervisor Exports Existencias)', () => {
   it('un Supervisor llega a /reportes/existencias', async () => {
+    usuarioActual = usuarioFixture({ id: 9, usuario: 'supervisor', mail: 'supervisor@ways.test', rolId: ROL.Supervisor, rol: 'Supervisor' })
     mockearRutasBase()
     renderExistenciasProtegido()
 
@@ -624,5 +677,28 @@ describe('Existencias — role gating (spec: A Supervisor Exports Existencias)',
 
     expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('Existencias')).not.toBeInTheDocument())
+  })
+})
+
+describe('Existencias — gate de escritura (judgment-day round A, FINDING 2)', () => {
+  it('un Supervisor lee las columnas pero no ve ninguna acción de escritura: ni "Editar" ni el picker de alta', async () => {
+    usuarioActual = usuarioFixture({ id: 9, usuario: 'supervisor', mail: 'supervisor@ways.test', rolId: ROL.Supervisor, rol: 'Supervisor' })
+    mockearRutasBase()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+    expect(screen.getByText('42,5')).toBeInTheDocument() // la lectura de columnas sigue intacta
+    expect(screen.queryByRole('button', { name: 'Editar' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Buscar artículo para agregar')).not.toBeInTheDocument()
+  })
+
+  it('un Admin sí ve "Editar" y el picker de alta', async () => {
+    usuarioActual = usuarioFixture({ id: 1, usuario: 'admin', mail: 'admin@ways.test', rolId: ROL.Admin, rol: 'Admin' })
+    mockearRutasBase()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+    expect(screen.getByRole('button', { name: 'Editar' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Buscar artículo para agregar')).toBeInTheDocument()
   })
 })

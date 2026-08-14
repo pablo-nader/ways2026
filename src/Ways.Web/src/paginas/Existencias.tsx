@@ -4,7 +4,9 @@ import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rutasDeExportacion } from '../api/reportes'
 import { aSolicitudDeMinimos, clienteDeStock, reposicionMenorQueMinimo, umbralTextoValido } from '../api/stock'
+import { ROL } from '../api/tipos'
 import type { ArticuloListado, EstadoDeReposicion, Existencias as ExistenciasRespuesta, FilaExistencia, PuntoVentaListado } from '../api/tipos'
+import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
@@ -95,6 +97,7 @@ function SelectorDeArticuloParaAlta({ disabled, onElegir }: PropsSelectorDeArtic
               key={a.id}
               type="button"
               className="list-group-item list-group-item-action py-1 px-2 small"
+              disabled={disabled}
               onClick={() => {
                 onElegir(a)
                 setTermino('')
@@ -115,9 +118,13 @@ function SelectorDeArticuloParaAlta({ disabled, onElegir }: PropsSelectorDeArtic
  * Slice 3, design: Web Composition; decisiones 15/16) — pantalla del punto de venta: `stock` ⋈
  * `articulos`, con edición inline de `minimo`/`reposicion` fila-por-fila y alta de artículos nuevos
  * al grupo gestionado. Misma política que `/tablero` (`Politicas.LecturaDeReportes`: Supervisor +
- * Admin en lectura; `PUT /api/stock/minimos` es Admin-only del lado del servidor).
+ * Admin en lectura; `PUT /api/stock/minimos` es Admin-only del lado del servidor) —
+ * `puedeEscribir` oculta las acciones de escritura, `GestionDeCatalogo` es la autoridad real del
+ * lado del servidor (mismo patrón que `CompraEditor.tsx`).
  */
 export function Existencias() {
+  const { usuario } = useAuth()
+  const puedeEscribir = usuario !== null && usuario.rolId === ROL.Admin
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
   const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
 
@@ -260,7 +267,11 @@ export function Existencias() {
           ),
         }
       })
-      filaLocalSinGuardarRef.current = null
+      // Judgment-day round A (FINDING 1, CRITICAL): este clear gatea por IDENTIDAD — si el
+      // usuario abrió OTRA fila (Y) mientras la fantasma (X) seguía sin guardar, guardar Y no
+      // puede pisar el ref de X: eso la huerfanizaría (`cancelarEdicion` matchea por identidad
+      // contra `filaEnEdicion`, así que ya no la encontraría para sacarla de la grilla).
+      if (fila.idArticulo === filaLocalSinGuardarRef.current) filaLocalSinGuardarRef.current = null
       setFilaEnEdicion(null)
     } catch (e) {
       if (tokenDeEscrituraRef.current === miToken) {
@@ -418,35 +429,36 @@ export function Existencias() {
                             </td>
                             <td>{ETIQUETA_ESTADO[fila.estado]}</td>
                             <td className="text-end" style={{ minWidth: 170 }}>
-                              {enEdicion ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    className="btn btn-primary btn-sm rounded-0 me-1"
-                                    disabled={!puedeGuardar || guardandoEstaFila}
-                                    onClick={() => guardarFila(fila)}
-                                  >
-                                    {guardandoEstaFila ? 'Guardando…' : 'Guardar'}
-                                  </button>
+                              {puedeEscribir &&
+                                (enEdicion ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary btn-sm rounded-0 me-1"
+                                      disabled={!puedeGuardar || guardandoEstaFila}
+                                      onClick={() => guardarFila(fila)}
+                                    >
+                                      {guardandoEstaFila ? 'Guardando…' : 'Guardar'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-outline-secondary btn-sm rounded-0"
+                                      disabled={guardando !== null}
+                                      onClick={cancelarEdicion}
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </>
+                                ) : (
                                   <button
                                     type="button"
                                     className="btn btn-outline-secondary btn-sm rounded-0"
                                     disabled={guardando !== null}
-                                    onClick={cancelarEdicion}
+                                    onClick={() => abrirFila(fila)}
                                   >
-                                    Cancelar
+                                    Editar
                                   </button>
-                                </>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="btn btn-outline-secondary btn-sm rounded-0"
-                                  disabled={guardando !== null}
-                                  onClick={() => abrirFila(fila)}
-                                >
-                                  Editar
-                                </button>
-                              )}
+                                ))}
                             </td>
                           </tr>
                           {enEdicion && errorGuardado && (
@@ -469,10 +481,12 @@ export function Existencias() {
                   </tbody>
                 </table>
 
-                <div className="mt-2">
-                  <label className="form-label small text-muted d-block mb-1">Agregar artículo</label>
-                  <SelectorDeArticuloParaAlta disabled={guardando !== null} onElegir={agregarFila} />
-                </div>
+                {puedeEscribir && (
+                  <div className="mt-2">
+                    <label className="form-label small text-muted d-block mb-1">Agregar artículo</label>
+                    <SelectorDeArticuloParaAlta disabled={guardando !== null} onElegir={agregarFila} />
+                  </div>
+                )}
               </div>
             )}
           </>
