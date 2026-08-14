@@ -379,15 +379,21 @@ function PanelDeVencimientos({ idPuntoVenta }: PropsPanelDeVencimientos) {
           <div className="row g-2 text-center">
             <div className="col-4">
               <div className="text-muted small">Vencidos</div>
-              <div className="fs-5 text-danger">{datos.vencidos}</div>
+              <div className="fs-5 text-danger" data-testid="vencimientos-tile-vencidos">
+                {datos.vencidos}
+              </div>
             </div>
             <div className="col-4">
               <div className="text-muted small">Por vencer</div>
-              <div className="fs-5 text-warning-emphasis">{datos.porVencer}</div>
+              <div className="fs-5 text-warning-emphasis" data-testid="vencimientos-tile-por-vencer">
+                {datos.porVencer}
+              </div>
             </div>
             <div className="col-4">
               <div className="text-muted small">Sin fecha</div>
-              <div className="fs-5 text-secondary">{datos.sinFecha}</div>
+              <div className="fs-5 text-secondary" data-testid="vencimientos-tile-sin-fecha">
+                {datos.sinFecha}
+              </div>
             </div>
           </div>
         )

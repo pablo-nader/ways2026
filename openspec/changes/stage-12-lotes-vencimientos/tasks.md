@@ -1983,7 +1983,35 @@ branch — no backend change.
   src/Ways.Infrastructure --startup-project src/Ways.Infrastructure`, same
   precedent as slices 4/5: "No changes have been made to the model since
   the last migration.")*
-- [ ] 15.12 Run `judgment-day`; fix; re-judge until clean.
+- [x] 15.12 Run `judgment-day`; fix; re-judge until clean. *(Ronda 1, Judge
+  B, dos MAJOR fixed: (1) `Tablero.test.tsx` — el tile de vencimientos
+  asertaba los tres conteos por presencia suelta (`within(tile).getByText`),
+  sin atar cada valor a SU métrica; un swap vencidos↔porVencer en
+  `PanelDeVencimientos` no lo detectaba. Fix: `data-testid` por métrica
+  (`vencimientos-tile-vencidos`/`-por-vencer`/`-sin-fecha`) + aserciones
+  `toHaveTextContent` atadas 1:1. Mutación aplicada (swap) → RED → revertida
+  → GREEN. (2) `articulosRepetidosEnTransferencia` (stock.ts) dedupeaba por
+  `idArticulo` a secas y bloqueaba una transferencia legal: el backend
+  acepta dos líneas del mismo artículo con lotes explícitos DISTINTOS
+  (decisión 11) — la operación real de depósito que el picker de lote
+  existe para habilitar. Fix: la clave espeja `(idArticulo, idLote)` —
+  mismo lote explícito repetido O ambas líneas en Auto/FEFO bloquean (el
+  cliente no puede adivinar si el server las resolvería al mismo lote),
+  lotes explícitos distintos o explícito+Auto pasan el gate cliente (el
+  servidor arbitra con `400 articulo_repetido`, mostrado por el funnel de
+  error existente, no tragado). El Set devuelto pasó de `idArticulo` a
+  `clave` de línea — dos líneas del mismo artículo ya pueden coexistir sin
+  conflicto, así que "repetido" no puede marcarse por artículo. Tests: 4
+  casos discriminantes en `stock.test.ts` (unit) + 2 en `Transferencias.
+  test.tsx` (component, caso c botón habilitado / caso d 400 visible).
+  Mutación aplicada (idArticulo-solo) → RED en los 4 tests unit + 2
+  component → revertida → GREEN. DISCOVERY fuera de alcance, no tocado:
+  `proximaClaveRef` (Transferencias.tsx) arranca en `1`, el mismo valor
+  que la `clave` de la fila inicial (`lineaDeTransferenciaVacia(1)`) — el
+  primer click de "+ Agregar línea" produce una `clave` duplicada
+  (colisión de `key` de React). Bug preexistente en HEAD, ajeno a los dos
+  fixes de esta ronda — los tests nuevos lo esquivan quitando la fila
+  inicial antes de agregar líneas frescas; no reabierto acá.)*
 - [ ] 15.13 Branch `feat/stage12-slice15-web-backoffice` off `main`
   (parent: slices 12+13); PR; merge stacked-to-main.
 

@@ -488,7 +488,7 @@ export function Transferencias() {
                   linea={l}
                   idPuntoVentaOrigen={idPuntoVentaOrigen}
                   disabled={ocupado || !referenciaOk}
-                  repetida={l.idArticulo !== '' && repetidos.has(Number(l.idArticulo))}
+                  repetida={repetidos.has(l.clave)}
                   incompleta={!lineaTransferenciaCompleta(l)}
                   onCambio={cambiarLinea}
                   onQuitar={quitarLinea}

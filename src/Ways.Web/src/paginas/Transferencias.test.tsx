@@ -483,3 +483,88 @@ describe('Transferencias — picker de lote', () => {
     errorSpy.mockRestore()
   })
 })
+
+describe('Transferencias — repetidos por lote (judgment-day fix, Slice 15)', () => {
+  // Helper: arma dos filas del MISMO artículo lote-efectivo con `clave` propia y distinta.
+  // NO usa "+ Agregar línea" sobre la fila inicial: `proximaClaveRef` arranca en `1`, el mismo
+  // valor que `lineaDeTransferenciaVacia(1)` de la fila inicial (bug preexistente en HEAD, ajeno
+  // a este fix — detectado durante el apply, fuera de alcance de esta ronda) — la primera línea
+  // agregada colisionaría de clave con la inicial. Se arranca quitando la fila inicial y agregando
+  // dos filas frescas, así cada una recibe una `clave` realmente distinta.
+  async function completarDosLineasMismoArticulo(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.click(screen.getByRole('button', { name: 'Quitar' }))
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+
+    const buscadores = screen.getAllByPlaceholderText('Buscar artículo…')
+    await usuario.type(buscadores[0], 'fideos')
+    await screen.findByText('ART-10 — Fideos 500g')
+    await usuario.click(screen.getByText('ART-10 — Fideos 500g'))
+    await usuario.type(screen.getAllByLabelText('Cantidad')[0], '8')
+
+    await usuario.type(buscadores[1], 'fideos')
+    await screen.findByText('ART-10 — Fideos 500g')
+    await usuario.click(screen.getByText('ART-10 — Fideos 500g'))
+    await usuario.type(screen.getAllByLabelText('Cantidad')[1], '3')
+  }
+
+  // (c) — el MAJOR original: la UI bloqueaba una transferencia legal (dos líneas del mismo
+  // artículo con lotes explícitos DISTINTOS, la operación real de depósito que el picker existe
+  // para habilitar). Espeja `(idArticulo, idLote)` — la clave real de unicidad del backend
+  // (decisión 11) — en vez de `idArticulo` a secas.
+  it('(c) dos líneas del mismo artículo con lotes explícitos DISTINTOS no bloquean el envío', async () => {
+    mockearPuntosVentaConLote()
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarDosLineasMismoArticulo(usuario)
+
+    const lotes = await waitFor(() => screen.getAllByLabelText('Lote'))
+    await waitFor(() => expect(lotes[0]).toHaveValue('41'))
+    await waitFor(() => expect(lotes[1]).toHaveValue('41'))
+    await usuario.selectOptions(lotes[1], '42') // segunda línea con un lote explícito DISTINTO
+
+    expect(screen.queryByText('Artículo repetido en la transferencia.')).not.toBeInTheDocument()
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    expect(screen.getByRole('button', { name: 'Transferir' })).not.toBeDisabled()
+  })
+
+  // (d) — mismo artículo, una línea con lote explícito y otra en Auto (FEFO): el cliente no
+  // bloquea (no puede computar el pick FEFO de la línea Auto para compararlo, decisión 19), pero
+  // si el servidor los resuelve al mismo lote arbitra con un 400 `articulo_repetido` — este test
+  // prueba que ese refusal aparece en el aviso existente, nunca se traga.
+  it('(d) mismo artículo con lote explícito + Auto pasa el gate cliente; un 400 articulo_repetido del servidor se muestra, no se traga', async () => {
+    mockearPuntosVentaConLote()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/transferencias') {
+        return Promise.reject(new ErrorApi(400, 'articulo_repetido', 'El artículo 10 aparece más de una vez en la transferencia.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarDosLineasMismoArticulo(usuario)
+
+    const lotes = await waitFor(() => screen.getAllByLabelText('Lote'))
+    await waitFor(() => expect(lotes[0]).toHaveValue('41'))
+    await waitFor(() => expect(lotes[1]).toHaveValue('41'))
+    await usuario.selectOptions(lotes[1], '') // segunda línea vuelve a "Auto (FEFO)"
+
+    expect(screen.queryByText('Artículo repetido en la transferencia.')).not.toBeInTheDocument()
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    expect(screen.getByRole('button', { name: 'Transferir' })).not.toBeDisabled()
+
+    await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
+
+    expect(await screen.findByText('El artículo 10 aparece más de una vez en la transferencia.')).toBeInTheDocument()
+  })
+})

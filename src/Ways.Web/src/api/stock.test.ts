@@ -63,13 +63,16 @@ describe('lineaTransferenciaCompleta', () => {
 })
 
 describe('articulosRepetidosEnTransferencia', () => {
-  it('detecta un artículo que aparece en más de una línea completa', () => {
+  // stage-12-lotes-vencimientos (Slice 15, judgment-day fix): el Set devuelto ahora es de
+  // `clave` (identidad de la fila), no de `idArticulo` — dos líneas del mismo artículo pueden
+  // coexistir sin conflicto (caso c), así que "repetido" ya no puede marcarse por artículo a secas.
+  it('detecta un artículo sin control de lote (ambas líneas en Auto) que aparece en más de una línea completa', () => {
     const repetidos = articulosRepetidosEnTransferencia([
       lineaFixture({ clave: 1, idArticulo: 10 }),
       lineaFixture({ clave: 2, idArticulo: 10 }),
       lineaFixture({ clave: 3, idArticulo: 20 }),
     ])
-    expect(repetidos).toEqual(new Set([10]))
+    expect(repetidos).toEqual(new Set([1, 2]))
   })
 
   it('ignora las líneas incompletas al detectar repetidos', () => {
@@ -82,6 +85,48 @@ describe('articulosRepetidosEnTransferencia', () => {
 
   it('sin repetidos devuelve un set vacío', () => {
     const repetidos = articulosRepetidosEnTransferencia([lineaFixture({ idArticulo: 10 }), lineaFixture({ clave: 2, idArticulo: 20 })])
+    expect(repetidos.size).toBe(0)
+  })
+
+  // (a) mismo (idArticulo, idLote explícito) en dos líneas → repetido — choca contra la
+  // restricción real del backend `(idArticulo, idLote)` (decisión 11).
+  it('(a) dos líneas del mismo artículo con el MISMO lote explícito se marcan repetidas', () => {
+    const repetidos = articulosRepetidosEnTransferencia([
+      lineaFixture({ clave: 1, idArticulo: 10, idLote: 41 }),
+      lineaFixture({ clave: 2, idArticulo: 10, idLote: 41 }),
+    ])
+    expect(repetidos).toEqual(new Set([1, 2]))
+  })
+
+  // (b) mismo artículo, ambas líneas en Auto/FEFO → repetido — el cliente no puede saber si el
+  // servidor las resolvería al mismo lote; bloquear acá es honesto.
+  it('(b) dos líneas del mismo artículo AMBAS en Auto (FEFO) se marcan repetidas', () => {
+    const repetidos = articulosRepetidosEnTransferencia([
+      lineaFixture({ clave: 1, idArticulo: 10, idLote: '' }),
+      lineaFixture({ clave: 2, idArticulo: 10, idLote: '' }),
+    ])
+    expect(repetidos).toEqual(new Set([1, 2]))
+  })
+
+  // (c) mismo artículo con lotes explícitos DISTINTOS → PERMITIDO — operación real de depósito
+  // que el picker de lote existe para habilitar (el MAJOR original: la UI bloqueaba esto).
+  it('(c) dos líneas del mismo artículo con lotes explícitos DISTINTOS NO se marcan repetidas', () => {
+    const repetidos = articulosRepetidosEnTransferencia([
+      lineaFixture({ clave: 1, idArticulo: 10, idLote: 41 }),
+      lineaFixture({ clave: 2, idArticulo: 10, idLote: 42 }),
+    ])
+    expect(repetidos.size).toBe(0)
+  })
+
+  // (d) mismo artículo, una línea con lote explícito y otra en Auto → PERMITIDO client-side — el
+  // cliente no puede computar el pick FEFO de la línea Auto para compararlo; si el servidor
+  // resuelve al mismo lote, arbitra con un 400 `articulo_repetido` (verificado en
+  // Transferencias.test.tsx: el funnel de error existente lo muestra, no se traga).
+  it('(d) mismo artículo, una línea con lote explícito y otra en Auto (FEFO) NO se marcan repetidas', () => {
+    const repetidos = articulosRepetidosEnTransferencia([
+      lineaFixture({ clave: 1, idArticulo: 10, idLote: 41 }),
+      lineaFixture({ clave: 2, idArticulo: 10, idLote: '' }),
+    ])
     expect(repetidos.size).toBe(0)
   })
 })

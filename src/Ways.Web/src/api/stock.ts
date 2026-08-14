@@ -70,23 +70,59 @@ export function lineaTransferenciaCompleta(l: LineaDeTransferenciaFormulario): b
  * repetido en un mismo request") — feedback instantáneo, nunca autoritativo: el servidor vuelve a
  * validarlo. Solo mira las líneas completas — una fila a medio llenar nunca cuenta como repetida.
  *
- * stage-12-lotes-vencimientos (Slice 15): la clave de detección sigue siendo SOLO `idArticulo` —
- * la restricción real de unicidad del backend es por `(idArticulo, idLote)` (decisión 11), pero
- * dos líneas del mismo artículo con lotes DISTINTOS explícitos son válidas del lado del servidor;
- * acá se preserva el comportamiento previo (un artículo repetido siempre se avisa) porque dos
- * líneas del mismo artículo sin lote explícito (ambas dejando que el servidor FEFO-resuelva)
- * competirían por el mismo lote sugerido en la práctica. */
+ * stage-12-lotes-vencimientos (Slice 15, judgment-day fix): la clave real de unicidad del backend
+ * es `(idArticulo, idLote)` (decisión 11) — dedupear por `idArticulo` a secas bloqueaba una
+ * transferencia legal (dos líneas del mismo artículo con lotes explícitos DISTINTOS, la operación
+ * real que el picker de lote existe para habilitar). Acá se espeja esa clave con lo único que el
+ * cliente PUEDE saber sin adivinar el FEFO del servidor (decisión 19: "el server manda"):
+ * - Dos líneas completas con el MISMO `(idArticulo, idLote explícito)` → repetido (choca contra la
+ *   restricción real del backend).
+ * - Dos o más líneas del mismo artículo, TODAS con lote en "Auto (FEFO)" → repetido: el cliente no
+ *   puede saber si el servidor las resolvería al mismo lote, pero bloquear acá es honesto — el
+ *   servidor las rechazaría igual con `400 articulo_repetido` en el caso más probable.
+ * - Mismo artículo con lotes explícitos DISTINTOS → PERMITIDO (válido en el backend).
+ * - Mismo artículo, una línea con lote explícito y otra en Auto → PERMITIDO client-side (el
+ *   cliente no puede computar el pick FEFO de la línea Auto para compararlo); si el servidor
+ *   resuelve al mismo lote igual, arbitra con un `400 articulo_repetido` que el funnel de error
+ *   existente (`ErrorApi.message` en el catch de `transferir`) muestra tal cual, sin tragarlo.
+ *
+ * Devuelve las `clave` (no los `idArticulo`) de las líneas efectivamente en conflicto — a
+ * diferencia del `idArticulo` a secas, dos líneas del mismo artículo pueden coexistir sin
+ * conflicto (lotes distintos), así que marcar por artículo ya no alcanza para decidir qué fila
+ * mostrar en rojo. */
 export function articulosRepetidosEnTransferencia(lineas: LineaDeTransferenciaFormulario[]): Set<number> {
-  const conteoPorArticulo = new Map<number, number>()
+  const porArticulo = new Map<number, LineaDeTransferenciaFormulario[]>()
   for (const l of lineas.filter(lineaTransferenciaCompleta)) {
     const id = Number(l.idArticulo)
-    conteoPorArticulo.set(id, (conteoPorArticulo.get(id) ?? 0) + 1)
+    const grupo = porArticulo.get(id) ?? []
+    grupo.push(l)
+    porArticulo.set(id, grupo)
   }
-  const repetidos = new Set<number>()
-  for (const [id, cantidad] of conteoPorArticulo) {
-    if (cantidad > 1) repetidos.add(id)
+
+  const repetidas = new Set<number>()
+  for (const grupo of porArticulo.values()) {
+    if (grupo.length < 2) continue
+
+    const autoFefo = grupo.filter((l) => l.idLote === '')
+    if (autoFefo.length > 1) {
+      for (const l of autoFefo) repetidas.add(l.clave)
+    }
+
+    const porLoteExplicito = new Map<number, LineaDeTransferenciaFormulario[]>()
+    for (const l of grupo) {
+      if (l.idLote === '') continue
+      const idLote = Number(l.idLote)
+      const g = porLoteExplicito.get(idLote) ?? []
+      g.push(l)
+      porLoteExplicito.set(idLote, g)
+    }
+    for (const g of porLoteExplicito.values()) {
+      if (g.length > 1) {
+        for (const l of g) repetidas.add(l.clave)
+      }
+    }
   }
-  return repetidos
+  return repetidas
 }
 
 export function aLineasDeTransferencia(lineas: LineaDeTransferenciaFormulario[]): LineaDeTransferencia[] {

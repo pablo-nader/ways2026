@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tablero } from './Tablero'
@@ -1172,15 +1172,13 @@ describe('Tablero — tile de vencimientos (stage-12-lotes-vencimientos, Slice 1
       expect(rutas.some((r) => r.startsWith('/reportes/stock/vencimientos/resumen?') && r.includes('idPuntoVenta=10'))).toBe(true)
     })
 
-    // Query acotado al tile — varios paneles hermanos ya muestran '5'/'1' sueltos en sus propias
-    // tablas, así que un `getByText` global colisionaría.
-    const titulo = await screen.findByText('Vencimientos')
-    const tile = titulo.closest('div.border')
-    if (!tile) throw new Error('No se encontró el tile de vencimientos')
+    // Cada valor atado a SU métrica por `data-testid` (no por presencia suelta en el tile):
+    // un swap vencidos↔porVencer en `PanelDeVencimientos` debe hacer fallar este test, no pasarlo
+    // por accidente porque ambos valores están "en algún lado" del tile.
     await waitFor(() => {
-      expect(within(tile as HTMLElement).getByText('2')).toBeInTheDocument() // vencidos
-      expect(within(tile as HTMLElement).getByText('5')).toBeInTheDocument() // por vencer
-      expect(within(tile as HTMLElement).getByText('1')).toBeInTheDocument() // sin fecha
+      expect(screen.getByTestId('vencimientos-tile-vencidos')).toHaveTextContent('2')
+      expect(screen.getByTestId('vencimientos-tile-por-vencer')).toHaveTextContent('5')
+      expect(screen.getByTestId('vencimientos-tile-sin-fecha')).toHaveTextContent('1')
     })
     expect(screen.getByRole('link', { name: 'Ver reporte' })).toHaveAttribute('href', '/reportes/stock/vencimientos')
   })
