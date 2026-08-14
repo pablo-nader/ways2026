@@ -1293,8 +1293,23 @@ the branch.
 > Filtro `~TransferenciaLote`: 15/15 (13 previos + 2 nuevos). Regresión
 > `~TransferenciasYConteo`: 28/28. `has-pending-model-changes`: sin cambios
 > pendientes (fix puramente de capa Application, sin tocar el modelo).
-- [ ] 10.14 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 10.15 Branch `feat/stage12-slice10-transferencias` off `main`
+- [x] 10.14 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  this slice's apply died mid-run with the host process; the rescued wip had
+  two defects the continuation caught — comments claiming a lock tie-break
+  the code lacked (restored) and FALSE mutation evidence for 10.4 (the
+  shared aggregate row is a natural lock convoy; judge B later derived the
+  STRUCTURAL proof that a lot-row deadlock cycle is impossible by
+  construction, validated cross-articulo ×3 under mutation — the tie-break
+  stands as cross-write-site convention, honestly documented). Judge B:
+  APPROVE ×2 with 5 standard mutations killed + 2 coverage gaps closed
+  (mixed transfer, lote_invalido). Judge A: REJECT round 1 with a MAJOR
+  contract drift — LineaTransferida had silently dropped the design-mandated
+  IdLote and the per-articulo aggregation collapsed multi-lot lines in the
+  response; fixed in 5703a29 (per-(articulo,lote) rows, field-by-field
+  3-row test, FEFO-to-expired 409 test); APPROVE round 2 with hand-derived
+  arithmetic verification. Latent Web risk (key={l.idArticulo} in
+  Transferencias.tsx) recorded for slice 14/15.)*
+- [x] 10.15 Branch `feat/stage12-slice10-transferencias` off `main`
   (parent: slice 3); PR; merge stacked-to-main.
 
 **Test plan**: deadlock mutation (10.4), A→B/B→A concurrency (10.5),
