@@ -52,12 +52,16 @@ public static class StockEndpoints
 
         // stage-12-lotes-vencimientos (Slice 3, task 3.3, design: API Surface): feed del picker
         // FEFO — hereda OperacionDePos del grupo, cualquier rol autenticado puede consultarlo.
-        grupo.MapGet("/lotes", async (ServicioDeLotes servicio, int idPuntoVenta, int idArticulo, CancellationToken ct) =>
+        // Slice 9 (task 9.2): idComprobanteAsociado opcional — cuando el picker se abre para una
+        // línea de devolución, la sugerencia sale del snapshot de esa venta en vez de FEFO.
+        grupo.MapGet(
+            "/lotes",
+            async (ServicioDeLotes servicio, int idPuntoVenta, int idArticulo, int? idComprobanteAsociado, CancellationToken ct) =>
         {
-            var lotes = await servicio.ListarAsync(idPuntoVenta, idArticulo, ct);
+            var lotes = await servicio.ListarAsync(idPuntoVenta, idArticulo, idComprobanteAsociado, ct);
             return Results.Ok(lotes);
         })
-        .WithSummary("Lotes de un artículo en un punto de venta, con saldo, estado y sugerido FEFO.");
+        .WithSummary("Lotes de un artículo en un punto de venta, con saldo, estado y sugerido (FEFO o snapshot de devolución).");
 
         // stage-12-lotes-vencimientos (Slice 3, task 3.3, design: API Surface): alta manual de un
         // lote — mismo apilado GestionDeCatalogo sobre OperacionDePos que /ajustes.

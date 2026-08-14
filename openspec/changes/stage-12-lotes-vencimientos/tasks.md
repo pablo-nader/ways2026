@@ -1089,33 +1089,142 @@ ordering mutation half (8.7), non-lot regression (8.8).
 articulo requires an explicit `idLote`; the response carries a
 `loteVencido` warning, never a block. **Rollback**: revert the branch.
 
-- [ ] 9.1 Modify `ServicioDeVentas.cs`: NCX validation — lot-effective
+- [x] 9.1 Modify `ServicioDeVentas.cs`: NCX validation — lot-effective
   articulo without `idLote` → `400 lote_requerido` before the transaction;
   FEFO defaulting is refused for NCX lines (returns are not "oldest
-  first").
-- [ ] 9.2 Modify the POS-facing contract: suggestion source — from
+  first"). *(APPLY-RUN NOTE: single guard clause inserted at the top of
+  the per-line lot resolution loop —
+  `if (idLotePedido is null && tipo.Signo < 0) throw ... "lote_requerido" ...`
+  — placed BEFORE the existing `idLotePedido is { }` / `ElegirFefo` /
+  lazy-sin-identificar branches, so an omitted `idLote` on an NCX line
+  never reaches FEFO. Entirely inside the decide phase (already before
+  `EjecutarTransaccionAsync` opens), so "before the transaction" is
+  structural, not an extra check. `tipo.Signo` was already resolved
+  earlier in `EmitirAsync` (TX +1 / NCX −1, `ReglaDeComprobantes` — "nunca
+  cero"), no new read.)*
+- [x] 9.2 Modify the POS-facing contract: suggestion source — from
   `id_comprobante_asociado`'s item snapshot when present, else the
   articulo's existing lots; the sin-identificar lot stays a valid explicit
-  choice.
-- [ ] 9.3 Modify `ServicioDeVentas.cs`: `ItemEmitido.LoteVencido =
+  choice. *(APPLY-RUN NOTE: `GET /api/stock/lotes` gained an optional
+  `int? idComprobanteAsociado` query param (no new DTO field — query
+  string only); `ServicioDeLotes.ListarAsync` resolves `idLoteSugerido`
+  from `items_comprobante_venta.id_lote` of that comprobante for the
+  requested articulo when the param is present, falling back to
+  `ReglaDeLotes.ElegirFefo` (decisión 15) when absent OR when the snapshot
+  lookup returns no row/a null lot (defensive — an articulo that wasn't
+  lot-effective in the original sale). One `LoteListado.Sugerido`
+  projection, single source of truth (`idLoteSugerido == s.IdLote`)
+  regardless of which branch resolved it. Only call site
+  (`StockEndpoints.cs`) updated; no other caller in `src/` or `tests/`.)*
+  *(JD-FIX NOTE, slice 9 judgment-day ronda 1, juez A: dos hallazgos.
+  MAJOR — `idLoteSugerido` del snapshot se resolvía DESPUÉS de
+  `LeerSaldosAsync` con `idsLotePedidos` vacío: un lote agotado en el PV (el
+  caso típico de devolución, saldo 0 tras la venta original) ni se listaba
+  ni se sugería. Fix: se resuelve el `idLote` del snapshot ANTES de
+  `LeerSaldosAsync` y se pasa como `idsLotePedidos` — mismo espejo que el
+  write path de `ServicioDeVentas` (design decisión 6). Test:
+  `NcxLoteTests.ElLoteSugeridoDelSnapshotApareceListadoAunqueSuSaldoEnElPvSeaCero`
+  (mutación: revertir a "resolver después con lista vacía" → RED, el lote
+  agotado no aparece en la colección; revertido → GREEN). MINOR — la query
+  del snapshot no tenía `OrderBy`: con dos líneas del mismo artículo en el
+  comprobante asociado (lotes distintos), el pick era no-determinista. Fix:
+  `OrderBy(i => i.Id)` — gana el id de item más chico, la primera línea del
+  comprobante. Sin test dedicado (a criterio del costo: el seed de
+  dos-líneas-mismo-artículo no aporta más que el comentario in-code);
+  determinismo-por-construcción documentado acá y en el doc-comment de
+  `ServicioDeLotes.ListarAsync`.)*
+- [x] 9.3 Modify `ServicioDeVentas.cs`: `ItemEmitido.LoteVencido =
   ReglaDeLotes.EstaVencido(...)` computed for TX and NCX lines alike; an
   expired-lot sale/return is accepted with the flag set, never blocked.
-- [ ] 9.4 [P] `lote_requerido`-on-NCX test. *(spec comprobantes-venta: "An
+  *(APPLY-RUN NOTE: already true on this branch since Slice 7/8 —
+  `EmitirAsync`'s lot-resolution loop is the SAME code path for TX and
+  NCX (only `tipo.Signo` distinguishes them, consumed by 9.1's new
+  guard), and `LoteVencido = ReglaDeLotes.EstaVencido(loteResuelto.FechaVencimiento, hoy)`
+  already ran unconditionally for every lot-effective line. No code
+  change beyond 9.1's guard; verified end-to-end from the NCX side by
+  task 9.7's test, cited below — TX side already covered by Slice 7.)*
+- [x] 9.4 [P] `lote_requerido`-on-NCX test. *(spec comprobantes-venta: "An
   NCX line for a lot-effective articulo requires idLote")*
-- [ ] 9.5 [P] Suggested-`idLote`-from-snapshot test. *(spec: "idLote is
+  `NcxLoteTests.UnaLineaNcxDeArticuloLoteEfectivoSinIdLoteEsRechazadaConLoteRequerido`.
+  **Mutation target** (skill mutation-proof-tests, named explicitly for
+  this slice by the orchestrator, not in design.md's canonical table):
+  the exact clause `if (idLotePedido is null && tipo.Signo < 0)` — proves
+  BOTH halves of 9.1 (`lote_requerido` fires AND FEFO never silently
+  defaults for NCX) in one assertion, since deleting the guard makes the
+  line fall through to `ElegirFefo`, which resolves and returns `201
+  Created` instead of `400`. *(APPLY-RUN NOTE: mutation applied — the
+  condition replaced by `if (false)`; build; filter
+  `FullyQualifiedName~UnaLineaNcxDeArticuloLoteEfectivoSinIdLoteEsRechazadaConLoteRequerido`
+  → RED (`Assert.Equal() Failure: Expected: BadRequest / Actual:
+  Created` — the line resolved via FEFO to the single lot with stock);
+  reverted; same filter → GREEN; full `NcxLoteTests` +
+  `PlanDeVentaFefoTests` + `VentaEscrituraLoteTests` + `VentasCheckoutTests`
+  + `ServicioDeLotesTests` regression → GREEN, 67/67.)*
+- [x] 9.5 [P] Suggested-`idLote`-from-snapshot test. *(spec: "idLote is
   suggested from the associated comprobante's snapshot")*
-- [ ] 9.6 [P] Standalone-devolución-sin-identificar-accepted test. *(spec:
+  `NcxLoteTests.UnaLineaNcxConIdComprobanteAsociadoSugiereElLoteDelSnapshotNoFefo`
+  — seeds two lots (`L-CERCANO`, the FEFO default pick; `L-LEJANO`,
+  explicitly chosen for the original TX), asserts the picker's `Sugerido`
+  matches the snapshot lot (`L-LEJANO`), not FEFO's pick — a test that
+  would pass under either source could not distinguish the two, so the
+  fixture deliberately makes them disagree. Companion contrast test
+  `ElMismoPickerSinIdComprobanteAsociadoSigueSugiriendoFefo` (not on the
+  task list, added for honesty) proves the same endpoint still defaults
+  to FEFO when `idComprobanteAsociado` is omitted — the snapshot source
+  is conditional on the param, never the new default.
+- [x] 9.6 [P] Standalone-devolución-sin-identificar-accepted test. *(spec:
   "idLote is required even without an associated comprobante")*
-- [ ] 9.7 [P] Return-into-expired-lot-permitted test. *(spec: "Returning
+  `NcxLoteTests.UnaDevolucionStandaloneAceptaElLoteSinIdentificarComoValvulaDeEscape`
+  — sin-identificar lot seeded directly (same convention as Slice 7's
+  `ElLoteSinIdentificarSeOfreceAntesQueCualquierLoteConFecha`), submitted
+  as an explicit `idLote`; asserts `201`, `IdLote`/`CodigoLote` on the
+  response AND the persisted `stock_lotes` balance (proves the write
+  path, not just the response shape).
+- [x] 9.7 [P] Return-into-expired-lot-permitted test. *(spec: "Returning
   into an expired lot is permitted")*
-- [ ] 9.8 [P] Expired-lot-sale-warns-never-blocks test. *(spec: "A sale of
-  an explicitly expired lot succeeds with a warning")*
-- [ ] 9.9 [P] FEFO-prefers-non-expired-lot test. *(spec: "FEFO prefers a
-  non-expired lot when one has stock")*
-- [ ] 9.10 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
-- [ ] 9.11 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 9.12 Branch `feat/stage12-slice9-ncx` off `main` (parent: slice 8);
+  `NcxLoteTests.RetornarAUnLoteVencidoEsPermitidoYQuedaMarcadoConWarning` —
+  also the end-to-end NCX-side proof of task 9.3 (`LoteVencido = true`,
+  request still succeeds `201`, `stock_lotes` balance increases by the
+  returned quantity — no negativity guard applies to a return, mirrors
+  `UpsertStockLoteAsync`'s doc-comment).
+- [x] 9.8 [P] Expired-lot-sale-warns-never-blocks test. *(spec: "A sale of
+  an explicitly expired lot succeeds with a warning")* Already covered —
+  cited, not duplicated:
+  `PlanDeVentaFefoTests.UnIdLoteProvistoDeUnLoteVencidoDevuelveLoteVencidoEnTrue`
+  (Slice 7) explicitly supplies an expired lot with positive balance on a
+  TX line and asserts `201 Created` + `LoteVencido == true`. TX and NCX
+  share the exact same resolution/assignment code (task 9.3), so no
+  NCX-specific duplicate is needed; task 9.7's test is the NCX-side
+  analogue for the return direction.
+- [x] 9.9 [P] FEFO-prefers-non-expired-lot test. *(spec: "FEFO prefers a
+  non-expired lot when one has stock")* Already covered — cited, not
+  duplicated:
+  `PlanDeVentaFefoTests.UnIdLoteOmitidoConVencidoYVigenteAmbosConSaldoEligeElVigente`
+  (Slice 7, decisión 15) omits `idLote` with both an expired and a
+  non-expired lot in stock and asserts the non-expired lot wins with
+  `LoteVencido == false`. FEFO defaulting is exclusively a TX-path
+  concern after 9.1 (NCX never reaches `ElegirFefo` when `idLote` is
+  omitted — it throws `lote_requerido` first), so this scenario has no
+  NCX equivalent to add.
+- [x] 9.10 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. *(Verified via
+  `--project src/Ways.Infrastructure --startup-project src/Ways.Infrastructure`
+  — "No changes have been made to the model since the last migration."
+  No `Migraciones/`/`Configuraciones/` file touched by this slice, per
+  the DB CHANGE GATE.)*
+- [x] 9.11 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  judge B round 1 APPROVE with a real coverage gap (no test annulled a
+  lot-bearing NCX — closed by 54a4a6f with a surgical sign-isolating
+  mutation, Expected-5/Actual-8); judge A round 1 REJECT with a MAJOR
+  product bug: the snapshot-suggested lot vanished from the picker when its
+  balance hit zero — the MAINLINE devolución case — because idLoteSugerido
+  resolved AFTER LeerSaldosAsync with empty idsLotePedidos. Fix c09db6f:
+  pre-saldos resolution threaded through idsLotePedidos (exact mirror of
+  the write path, design decision 6) + deterministic OrderBy tiebreaker on
+  the snapshot query. Round 2: both judges APPROVE; judge A verified the
+  fix hunk-by-hunk and blob-checked scope. One cosmetic nit recorded
+  (doc-comment says Assert.Contains, actual is Assert.Single).)*
+- [x] 9.12 Branch `feat/stage12-slice9-ncx` off `main` (parent: slice 8);
   PR; merge stacked-to-main.
 
 **Test plan**: `lote_requerido` (9.4), suggestion (9.5), sin-identificar

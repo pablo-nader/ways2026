@@ -168,6 +168,21 @@ public class ServicioDeVentas(
                 var saldosDelArticulo = saldosPorArticulo[item.IdArticulo].ToList();
                 var idLotePedido = lineas[indice].IdLote;
 
+                // stage-12 slice 9 (design: "NCX", decisión 8 del proposal): el default FEFO se
+                // RECHAZA en una línea de nota de crédito (tipo.Signo < 0) — "el más viejo
+                // primero" no significa nada para mercadería que VUELVE; el paquete físico
+                // devuelto tiene su propia fecha impresa. La sugerencia del picker (task 9.2) le
+                // da al operador un idLote candidato, pero el request tiene que traerlo explícito
+                // — el lote sin-identificar sigue siendo una elección explícita válida (la válvula
+                // de escape cuando no se puede identificar el paquete físico).
+                if (idLotePedido is null && tipo.Signo < 0)
+                {
+                    throw new ErrorDominio(
+                        "lote_requerido",
+                        $"La línea de devolución del artículo {item.IdArticulo} requiere un idLote explícito.",
+                        400);
+                }
+
                 SaldoDeLote loteResuelto;
                 if (idLotePedido is { } idLote)
                 {
