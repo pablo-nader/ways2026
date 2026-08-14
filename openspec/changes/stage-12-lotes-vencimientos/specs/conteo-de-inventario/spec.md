@@ -163,9 +163,10 @@ per-lot path, not a missing-feature fallback.)
   endpoint DOES support the per-lot contract
 - WHEN a conteo request for articulo 40 supplies a single aggregate
   `cantidad_contada = 50` (no `lotes`)
-- THEN it is rejected with `400 conteo_requiere_lotes` before reaching the
-  database, no `movimientos_stock` row is written, and `stock.cantidad`
-  stays `40`
+- THEN it is rejected with `400 conteo_requiere_lotes` before any lock is
+  acquired (the guard runs after the read-only articulo/parametro
+  resolution SELECTs but before any row lock or write), no
+  `movimientos_stock` row is written, and `stock.cantidad` stays `40`
 
 #### Scenario: A per-lot conteo of an articulo WITHOUT lot-effective control is refused
 (Amended at slice-12 judgment-day, juez B FIX 1 — inverse symmetry: a
@@ -175,5 +176,7 @@ lot-effective, same criterion as `lote_no_aplica` in
 - GIVEN articulo 41 is NOT lot-effective
 - WHEN a conteo request for articulo 41 supplies a `lotes` breakdown (no
   `cantidad_contada`)
-- THEN it is rejected with `400 conteo_no_aplica_lotes` before reaching the
-  database, and no `movimientos_stock` row is written
+- THEN it is rejected with `400 conteo_no_aplica_lotes` before any lock is
+  acquired, and no `movimientos_stock` row is written *(wording aligned at
+  judge-A round: the guard follows the read-only resolution SELECTs, unlike
+  the truly zero-DB exactly-one-of check)*

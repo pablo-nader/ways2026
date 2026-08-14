@@ -1746,10 +1746,21 @@ across all eight motivos. **Rollback**: revert the branch.
 > tras el commit.
 
 - [x] 12.14 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN
-  NOTE: ronda 1, juez B, 2 gaps confirmados y corregidos — ver nota arriba.
-  Re-judge de la ronda 2 queda a cargo del orquestador.)*
-- [ ] 12.15 Branch `feat/stage12-slice12-conteo` off `main` (parent:
-  slice 11); PR; merge stacked-to-main. *(Orchestrator scope.)*
+  NOTE: judge B round 1 REJECT with a genuine BLOCKER — aggregate `Contada`
+  against a lot-effective articulo returned 200 and silently broke
+  invariant 3 (stock 40→50, stock_lotes stayed 40), the exact divergence
+  decision 11 exists to prevent; the original 12.11 test HID it by seeding
+  lot-effective with a zero delta. Plus the raw-500 on an unknown conteo
+  idLote. Fix 7b88759: ExigirFormaDeConteoCoincideConControlDeLote (400
+  conteo_requiere_lotes / 400 conteo_no_aplica_lotes, spec amended) +
+  SELECT-first lote validation (400 lote_invalido) + the 12.11 test
+  corrected. Judge B round 2 APPROVE (empirical re-probe: 400 and invariant
+  intact). Judge A APPROVE with 2 MINORs: spec wording "before reaching the
+  database" tightened to "before any lock" in this branch; recorded debt —
+  the per-lot path lacks the aggregate path's defense-in-depth
+  final!=contada loud check (consistency suggestion, very low risk).)*
+- [x] 12.15 Branch `feat/stage12-slice12-conteo` off `main` (parent:
+  slice 11); PR; merge stacked-to-main.
 
 **Test plan**: acquisition order (12.5), zero-diff per lot (12.6),
 exactly-one-of ×2 (12.7), aggregate-from-per-lot (12.8), no-fabrication
