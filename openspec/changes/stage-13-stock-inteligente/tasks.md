@@ -764,8 +764,20 @@ here, since 3.13 is explicitly the orchestrator's task.
   Full suite after revert: `npx vitest run` → 35 files, 641/641 green
   (full repo suite, web-only change — no other file touched); `npm run
   build` (`tsc -b && vite build`) → clean, 0 type errors.
-- [ ] 3.13 Branch `feat/stage13-slice3-web-minimos` off `main` (parent:
-  slices 1+2); PR; merge stacked-to-main.
+- [x] 3.13 Branch `feat/stage13-slice3-web-minimos` off `main` (parent:
+  slices 1+2); PR; merge stacked-to-main. *(FINAL VERDICT 2026-08-14:
+  JUDGMENT: APPROVED at HEAD `678f1c2` after the longest judgment-day of
+  the program — judge B round 1 (2 MAJORs: deleted checklist items,
+  unfalsifiable full-window disable; +4 deterministic WARNINGs), two
+  scoped B re-judgments (round 2 caught a MAJOR fix-caused stale-ref
+  corruption LIVE), and three judge-A rounds on the ghost-row mechanism
+  (unconditional clear → picker unGated on filaEnEdicion → picker
+  reappearing with a benched ghost), closed structurally with the
+  filaFantasma state mirror (a ref never governs render). Judge B's final
+  hygiene pass over the post-approval delta: 4 re-mutations killed exactly
+  their tests, puedeEscribir hollowing ruled out empirically (16 failed
+  under a forced false — none vacuous). Both ledgers clean on the final
+  candidate.)*
 
 **Test plan**: mutation target (3.6), coercion descriptors (3.7), no-refetch
 (3.8), stale-read-discarded (3.9), double-click + supersede-blocked (3.10),
