@@ -377,6 +377,26 @@ editing, blocked supersede, add-row, no post-write refetch.
 cut: ship the grid + inline edit first; the articulo add-row (3.4) is the
 cut point if the slice overflows during apply.
 
+**APPLY NOTE — budget overflow, cut point NOT exercised (deliberate, recorded
+per the instruction to never cut silently)**: the actual diff came in at 6
+files changed, **644 insertions(+), 23 deletions(-) = 667 authored changed
+lines** (`git diff --shortstat main..HEAD -- src/Ways.Web`), above both the
+~380-line estimate and the 400-line budget guard. The pre-identified cut
+(drop 3.4, the add-row) was NOT taken: by the time the overflow became
+measurable, 3.1-3.11 were already implemented as one cohesive, fully green,
+fully committed unit (35 test files, 629/629 vitest green; `dotnet build`
+clean; gate guard clean), and un-shipping a working, tested add-row would
+have discarded verified work rather than avoided writing it. A meaningful
+share of the overflow is test code (`Existencias.test.tsx` alone is +171/-13
+— five new tests plus the mutation-target evidence work in 3.6, which itself
+needed an extra probe-and-revert cycle once the naive test construction
+turned out not to exercise the named clause, per `mutation-proof-tests` rule
+3). This is flagged here for the orchestrator's PR-creation step (task
+3.13, out of `sdd-apply`'s scope): slice 3, as delivered, needs either a
+`size:exception` acknowledgment on this single PR, or a split into two
+child PRs (e.g., grid+edit vs. add-row) at PR-creation time — not decided
+here, since 3.13 is explicitly the orchestrator's task.
+
 - [x] 3.1 Modify `src/Ways.Web/src/api/{tipos,stock}.ts`: mirror
   `EstadoDeReposicion`, `FilaExistencia` (+3 fields), `SolicitudDeMinimos`,
   `MinimosDeStock`; `clienteDeStock.escribirMinimos`.
