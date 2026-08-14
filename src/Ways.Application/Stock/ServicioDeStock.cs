@@ -549,20 +549,40 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
     /// <summary>Design decisión 10: el cliente manda el TOTAL contado, nunca un delta. El delta
     /// se deriva del lado del servidor bajo el mismo lock de fila que <c>AjustarAsync</c> usa
     /// (el upsert no-op de <see cref="BloquearYCrearSiFaltaStockAsync"/>), así que un conteo
-    /// nunca puede pisar una venta que corrió entre el conteo físico y el submit.</summary>
+    /// nunca puede pisar una venta que corrió entre el conteo físico y el submit.
+    ///
+    /// Etapa 12, slice 12 (design decisión 18 — exactly-one-of; decisión 12 — conteo por lote):
+    /// <see cref="SolicitudDeConteo.Contada"/>/<see cref="SolicitudDeConteo.Lotes"/> son mutuamente
+    /// excluyentes, validado ANTES de resolver referencias (<c>400 conteo_contada_y_lotes</c>, ni
+    /// siquiera un SELECT si el request está mal formado). La degradación pre-aprobada del
+    /// proposal (decisión 11 — <c>409 conteo_lote_no_soportado</c>) NO se implementa en este
+    /// slice: el conteo por lote se entrega completo, así que esa rama queda documentada acá pero
+    /// deliberadamente sin código muerto (design: "keep the 409 branch reachable only if a future
+    /// regression removes per-lot support" — no aplica hoy).</summary>
     public async Task<ResultadoConteo> ContarAsync(SolicitudDeConteo solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
         var idEmpleado = contexto.UsuarioId;
         var momento = reloj.Ahora;
 
-        var contada = ExigirContadaValida(solicitud.Contada);
+        ExigirExactamenteUnaFormaDeConteo(solicitud.Contada, solicitud.Lotes);
         var observaciones = ExigirObservaciones(solicitud.Observaciones);
 
         await ResolverArticuloAsync(solicitud.IdArticulo, ct);
         await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        if (solicitud.Lotes is { Count: > 0 } lotes)
+        {
+            var lotesValidados = ExigirLotesDeConteoValidos(lotes);
+            return await estrategia.ExecuteAsync(async () =>
+                await EjecutarConteoPorLoteAsync(
+                    idTenant, idEmpleado, solicitud.IdPuntoVenta, solicitud.IdArticulo, lotesValidados, observaciones,
+                    momento, ct));
+        }
+
+        var contada = ExigirContadaValida(solicitud.Contada!.Value);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarConteoAsync(idTenant, idEmpleado, solicitud.IdPuntoVenta, solicitud.IdArticulo, contada, observaciones, momento, ct));
     }
@@ -607,6 +627,79 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         return new ResultadoConteo(idPuntoVenta, idArticulo, final, actual, delta, MovimientoRegistrado: delta != 0m);
     }
 
+    /// <summary>Etapa 12, slice 12 (design decisión 12 — "the per-lot conteo acquires all its locks
+    /// first ..., derives every delta, and only then writes"): split ADQUISICIÓN/APLICACIÓN. El
+    /// agregado no puede escribirse hasta conocer TODOS los deltas por lote (su delta es la SUMA de
+    /// ellos) pero el orden pineado lo exige PRIMERO — la única salida sin inventar un segundo
+    /// protocolo de lock es tomar cada lock (agregado, después cada lote ascendente) como un
+    /// upsert no-op ANTES de escribir ningún delta, y recién ahí aplicar. Los locks ya tomados
+    /// vuelven irrelevante el orden de la fase de aplicación para la concurrencia — se mantiene
+    /// ascendente por determinismo del resultado, no por lock order.</summary>
+    private async Task<ResultadoConteo> EjecutarConteoPorLoteAsync(
+        int idTenant, int idEmpleado, int idPuntoVenta, int idArticulo, IReadOnlyList<ConteoDeLote> lotes,
+        string observaciones, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // ---- ADQUISICIÓN: todos los locks, en el orden pineado (agregado, después cada lote
+        // ascendente por id_lote) — ningún delta escrito todavía.
+        var actualAgregado = await BloquearYCrearSiFaltaStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, ct);
+
+        var lotesAscendentes = lotes.OrderBy(l => l.IdLote).ToList();
+        var actualPorLote = new Dictionary<int, decimal>();
+        foreach (var lote in lotesAscendentes)
+        {
+            actualPorLote[lote.IdLote] = await BloquearYCrearSiFaltaStockLoteAsync(
+                conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, lote.IdLote, ct);
+        }
+
+        // ---- APLICACIÓN: todos los locks ya están tomados. Un lote sin diferencia no escribe fila
+        // (spec: "A lot with no difference writes no row even when a sibling lot differs") — y
+        // nunca se fabrica saldo en el sin-identificar para absorber una diferencia (spec: "A
+        // lot-effective conteo never writes into the sin-identificar lot"): el delta SIEMPRE se
+        // escribe con el id_lote exacto que lo originó.
+        var resultadosPorLote = new List<LoteContado>(lotesAscendentes.Count);
+        var deltaAgregado = 0m;
+        var cantidadAgregadaFinal = actualAgregado;
+
+        foreach (var lote in lotesAscendentes)
+        {
+            var actualDelLote = actualPorLote[lote.IdLote];
+            var deltaDelLote = lote.Contada - actualDelLote;
+
+            if (deltaDelLote == 0m)
+            {
+                resultadosPorLote.Add(new LoteContado(lote.IdLote, actualDelLote, actualDelLote, 0m, MovimientoRegistrado: false));
+                continue;
+            }
+
+            await InsertarMovimientoStockAsync(
+                conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, deltaDelLote, MotivoStock.Inventario,
+                idEmpleado, observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, lote.IdLote, ct);
+
+            var finalDelLote = await UpsertStockLoteAsync(
+                conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, lote.IdLote, deltaDelLote, ct);
+
+            // El agregado acumula la SUMA de los deltas por lote (design decisión 12) — un upsert
+            // por lote con diferencia, nunca uno solo con el total al final: mismo criterio de
+            // "re-lock de una fila que esta transacción ya tiene" que Write site 3 usa en
+            // transferencias (decisión 8).
+            cantidadAgregadaFinal = await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, deltaDelLote, ct);
+
+            deltaAgregado += deltaDelLote;
+            resultadosPorLote.Add(new LoteContado(lote.IdLote, finalDelLote, actualDelLote, deltaDelLote, MovimientoRegistrado: true));
+        }
+
+        await transaccion.CommitAsync(ct);
+
+        return new ResultadoConteo(
+            idPuntoVenta, idArticulo, cantidadAgregadaFinal, actualAgregado, deltaAgregado,
+            MovimientoRegistrado: deltaAgregado != 0m, resultadosPorLote);
+    }
+
     /// <summary>Upsert no-op — <c>SET cantidad = stock.cantidad</c> — que crea la fila si falta
     /// (con <c>cantidad = 0</c>) Y toma el row lock en el mismo statement, sin escribir ningún
     /// delta todavía (design decisión 5: "the conteo uses the same primitive as a no-op upsert to
@@ -633,6 +726,34 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El upsert no-op de stock no devolvió ninguna fila.");
+
+        return Convert.ToDecimal(resultado);
+    }
+
+    /// <summary>Etapa 12, slice 12 (design decisión 12 — "the stock_lotes twin is a copy with a
+    /// third key"): mismo upsert no-op que <see cref="BloquearYCrearSiFaltaStockAsync"/> un nivel
+    /// arriba, sobre <c>stock_lotes</c> — crea la fila del lote si falta (<c>cantidad = 0</c>) Y
+    /// toma su row lock en el mismo statement, sin escribir ningún delta todavía.</summary>
+    private static async Task<decimal> BloquearYCrearSiFaltaStockLoteAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta, int idLote,
+        CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
+            "VALUES ($1, $2, $3, $4, 0) " +
+            "ON CONFLICT (id_articulo, id_punto_venta, id_lote) DO UPDATE " +
+            "SET cantidad = stock_lotes.cantidad " +
+            "RETURNING cantidad";
+
+        AgregarParametro(comando, idArticulo);
+        AgregarParametro(comando, idPuntoVenta);
+        AgregarParametro(comando, idLote);
+        AgregarParametro(comando, idTenant);
+
+        var resultado = await comando.ExecuteScalarAsync(ct)
+            ?? throw new InvalidOperationException("El upsert no-op de stock_lotes no devolvió ninguna fila.");
 
         return Convert.ToDecimal(resultado);
     }
@@ -877,6 +998,48 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         }
 
         return contada;
+    }
+
+    /// <summary>Etapa 12, slice 12 (design decisión 18 — exactly-one-of; dto-contract-honesty):
+    /// validación puramente en memoria, ANTES de resolver referencias — un request mal formado no
+    /// amerita ni un SELECT. Un <see cref="SolicitudDeConteo.Lotes"/> vacío (<c>[]</c>) cuenta como
+    /// "ausente", mismo criterio que <c>null</c>: ninguna de las dos formas del conteo trajo un
+    /// valor accionable.</summary>
+    private static void ExigirExactamenteUnaFormaDeConteo(decimal? contada, IReadOnlyList<ConteoDeLote>? lotes)
+    {
+        var tieneContada = contada is not null;
+        var tieneLotes = lotes is { Count: > 0 };
+
+        if (tieneContada == tieneLotes)
+        {
+            throw new ErrorDominio(
+                "conteo_contada_y_lotes",
+                "El conteo tiene que traer exactamente uno de cantidad contada o desglose por lote, nunca ambos ni ninguno.",
+                400);
+        }
+    }
+
+    /// <summary>Etapa 12, slice 12 (design decisión 12): <c>conteo_lote_repetido</c> se rechaza
+    /// ANTES de cualquier lock — mismo criterio "en memoria primero" que <see cref="ExigirLineasDeTransferenciaValidas"/>.
+    /// Reusa <see cref="ExigirContadaValida"/> por línea: el total contado de un lote es la MISMA
+    /// magnitud física que el total agregado un nivel arriba, misma disciplina de signo/precisión.</summary>
+    private static IReadOnlyList<ConteoDeLote> ExigirLotesDeConteoValidos(IReadOnlyList<ConteoDeLote> lotes)
+    {
+        foreach (var lote in lotes)
+        {
+            ExigirContadaValida(lote.Contada);
+        }
+
+        var repetido = lotes.GroupBy(l => l.IdLote).FirstOrDefault(g => g.Count() > 1);
+        if (repetido is not null)
+        {
+            throw new ErrorDominio(
+                "conteo_lote_repetido",
+                $"El lote {repetido.Key} aparece más de una vez en el desglose del conteo.",
+                400);
+        }
+
+        return lotes;
     }
 
     private int ExigirTenantDeLaSesion() =>
