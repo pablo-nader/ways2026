@@ -315,6 +315,14 @@ pre-stage-13 shape.
   same two-row equality test now compares all 6 columns per row, with one
   row `SinMinimo` (both new fields null → blank cell) and one `Bajo` (both
   populated), so both `Celda.Cantidad(decimal?)` branches are exercised.
+  **judgment-day round 1**: a surviving header-label mutant was found —
+  swapping the `"Mínimo"`/`"Reposición"` header titles in `ColumnasExistencias`
+  still passed the suite because the equality test only read data cells by
+  position from `primeraFilaDeDatos`, never the header row. Closed by adding
+  one assert in `ElExportEsIgualAlEndpointJsonParaLasDosFilas` that reads all
+  six header texts from the header row (`filaDeEncabezados = 6`) in exact
+  order; confirmed the header-swap mutation now fails the suite, reverted,
+  suite green again.
 - [x] 2.10 [P] Round-trip: `PUT /api/stock/minimos` then
   `GET /existencias` returns the same persisted pair — the first end-to-end
   test that can exercise both routes together, now that the report exposes

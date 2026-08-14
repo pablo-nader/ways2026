@@ -167,8 +167,16 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
-        // Fila 6 = título de tabla, los datos empiezan en la fila 7 — EN ORDEN (OrderBy(IdArticulo)
-        // del lado del servicio), ambas filas con TODAS sus columnas comparadas.
+        // Fila 6 = título de tabla (headers), los datos empiezan en la fila 7 — EN ORDEN
+        // (OrderBy(IdArticulo) del lado del servicio), ambas filas con TODAS sus columnas
+        // comparadas. El header es lo que ata cada celda de datos a su columna: sin este assert un
+        // swap de labels ("Mínimo"/"Reposición") pasa inadvertido porque el test de igualdad de
+        // abajo solo lee celdas por posición.
+        const int filaDeEncabezados = 6;
+        Assert.Equal(
+            ["Artículo", "Nombre", "Cantidad", "Mínimo", "Reposición", "Estado"],
+            Enumerable.Range(1, 6).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
+
         const int primeraFilaDeDatos = 7;
         for (var i = 0; i < existencias.Filas.Count; i++)
         {

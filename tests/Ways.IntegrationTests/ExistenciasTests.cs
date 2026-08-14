@@ -247,7 +247,7 @@ public class ExistenciasTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         await SembrarStockAsync(ctx, ctx.IdPuntoVenta, idSinMinimo, cantidad: 0m, minimo: null, reposicion: null);
 
         var idOk = await SembrarArticuloAsync(ctx, "articulo-ok");
-        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, idOk, cantidad: 20m, minimo: 5m, reposicion: null);
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, idOk, cantidad: 20m, minimo: 7m, reposicion: 30m);
 
         var existencias = await ObtenerExistenciasAsync(ctx.Admin, ctx.IdPuntoVenta);
         Assert.Equal(3, existencias.Filas.Count);
@@ -263,8 +263,8 @@ public class ExistenciasTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         Assert.Equal(EstadoDeReposicion.SinMinimo, filaSinMinimo.Estado);
 
         var filaOk = existencias.Filas.Single(f => f.IdArticulo == idOk);
-        Assert.Equal(5m, filaOk.Minimo);
-        Assert.Null(filaOk.Reposicion);
+        Assert.Equal(7m, filaOk.Minimo);
+        Assert.Equal(30m, filaOk.Reposicion);
         Assert.Equal(EstadoDeReposicion.Ok, filaOk.Estado);
     }
 
