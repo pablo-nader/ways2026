@@ -41,12 +41,22 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
         // es lo único que discrimina un punto de venta del otro — mezclar dos PVs del mismo tenant
         // en una sola respuesta rompería el significado del reporte tanto como en
         // ServicioDeTesoreria (design decisión 11, misma familia de bug).
-        var filas = await db.Stock
+        var crudas = await db.Stock
             .Where(s => s.IdPuntoVenta == idPuntoVenta)
-            .Join(db.Articulos, s => s.IdArticulo, a => a.Id, (s, a) => new { a.Id, a.Nombre, s.Cantidad })
+            .Join(
+                db.Articulos, s => s.IdArticulo, a => a.Id,
+                (s, a) => new { a.Id, a.Nombre, s.Cantidad, s.Minimo, s.Reposicion })
             .OrderBy(x => x.Id)
-            .Select(x => new FilaExistencia(x.Id, x.Nombre, x.Cantidad))
             .ToListAsync(ct);
+
+        // stage-13-stock-inteligente, Slice 2 (design decisión 2): existencias clasifica TODA fila
+        // stockeada vía ReglaDeReposicion.Clasificar — el mismo borde que reposición (slice 4) y el
+        // write path (slice 1) ya usan, nunca una segunda definición del boundary bajo/sin_minimo/ok.
+        var filas = crudas
+            .Select(x => new FilaExistencia(
+                x.Id, x.Nombre, x.Cantidad, x.Minimo, x.Reposicion,
+                ReglaDeReposicion.Clasificar(x.Cantidad, x.Minimo)))
+            .ToList();
 
         return new Existencias(idPuntoVenta, filas);
     }

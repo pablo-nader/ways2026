@@ -132,14 +132,24 @@ public sealed record Comisiones(
 /// construcción). A diferencia de <see cref="ArticuloTop"/> (que etiqueta con el snapshot congelado
 /// de una línea de venta), acá NO hay línea histórica que congelar — <c>stock</c> es estado
 /// ACTUAL, así que <see cref="Nombre"/> sale del join en vivo contra <c>articulos</c> (spec:
-/// Existencias Report Joins Stock To Artículos Under The Same Gate), nunca de un snapshot.</summary>
-public sealed record FilaExistencia(int IdArticulo, string Nombre, decimal Cantidad);
+/// Existencias Report Joins Stock To Artículos Under The Same Gate), nunca de un snapshot.
+///
+/// stage-13-stock-inteligente, Slice 2 (dto-contract-honesty — destino de cada campo nuevo):
+/// <see cref="Minimo"/> y <see cref="Reposicion"/> se leen directo de la fila <c>stock</c> ya
+/// unida (el mismo par que <c>PUT /api/stock/minimos</c> persiste, nunca re-derivado). Ambos
+/// son de solo lectura acá — escribirlos es <c>PUT /api/stock/minimos</c>, bajo
+/// <c>Politicas.GestionDeCatalogo</c>, una policy distinta de la de este reporte. <see
+/// cref="Estado"/> se deriva vía <see cref="ReglaDeReposicion.Clasificar"/> sobre
+/// <see cref="Cantidad"/>/<see cref="Minimo"/> — nunca una segunda definición del borde
+/// <c>bajo</c>/<c>sin_minimo</c>/<c>ok</c> (design decisión 2, spec reportes-de-gestion: "Existencias
+/// Report Joins Stock To Artículos Under The Same Gate").</summary>
+public sealed record FilaExistencia(
+    int IdArticulo, string Nombre, decimal Cantidad,
+    decimal? Minimo, decimal? Reposicion, EstadoDeReposicion Estado);
 
 /// <summary>Respuesta de <c>GET /api/reportes/stock/existencias</c>. Sin <c>desde</c>/<c>hasta</c>
 /// ni <c>ZonaHoraria</c> (a diferencia del resto de los reportes de esta etapa): el stock no tiene
-/// dimensión temporal, es una foto del estado actual — mínimos, punto de pedido y reposición
-/// quedan fuera de esta slice (proposal decisión 10: "give it the context it lacks here", reservado
-/// para Etapa 13).</summary>
+/// dimensión temporal, es una foto del estado actual.</summary>
 public sealed record Existencias(int IdPuntoVenta, IReadOnlyList<FilaExistencia> Filas);
 
 /// <summary>Fila de <c>GET /api/reportes/stock/vencimientos</c> (stage-12-lotes-vencimientos,

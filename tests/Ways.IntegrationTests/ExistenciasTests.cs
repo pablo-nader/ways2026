@@ -5,10 +5,12 @@ using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Organizacion;
 using Ways.Application.Reportes;
+using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 
@@ -22,6 +24,12 @@ namespace Ways.IntegrationTests;
 /// <c>IWaysDbContext.Stock</c>/<c>Articulos</c> (nunca a través de <c>ServicioDeStock</c>, que
 /// exige un movimiento): esta clase prueba la LECTURA del reporte, no la escritura del caché de
 /// stock — ya cubierta por las pruebas de stage-5/8.
+///
+/// stage-13-stock-inteligente, Slice 2 (tasks 2.4-2.10): agrega las tres columnas de reposición —
+/// la clasificación de tres estados (2.4/2.5, mutation target sobre la llamada a
+/// <c>ReglaDeReposicion.Clasificar</c> en la proyección), la regresión de "sin idArticulo" con las
+/// columnas nuevas presentes (2.6), la lectura de Supervisor confirmando el 403 de escritura desde
+/// este vantage point (2.8) y el round-trip PUT→GET (2.10).
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ExistenciasTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -30,7 +38,11 @@ public class ExistenciasTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
     private const string MailRoot = "test@test.com";
     private const string PasswordOtroRol = "otro-rol-password-larga";
 
-    private static readonly JsonSerializerOptions OpcionesJson = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions OpcionesJson = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
 
     private sealed record Contexto(
         int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdArea, int IdAlicuotaIva,
@@ -110,12 +122,15 @@ public class ExistenciasTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         return articulo.Id;
     }
 
-    private async Task SembrarStockAsync(Contexto ctx, int idPuntoVenta, int idArticulo, decimal cantidad)
+    private async Task SembrarStockAsync(
+        Contexto ctx, int idPuntoVenta, int idArticulo, decimal cantidad,
+        decimal? minimo = null, decimal? reposicion = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         db.Stock.Add(new Ways.Domain.Stock.Stock
         {
-            IdTenant = ctx.IdTenant, IdPuntoVenta = idPuntoVenta, IdArticulo = idArticulo, Cantidad = cantidad
+            IdTenant = ctx.IdTenant, IdPuntoVenta = idPuntoVenta, IdArticulo = idArticulo, Cantidad = cantidad,
+            Minimo = minimo, Reposicion = reposicion
         });
         await db.SaveChangesAsync();
     }
@@ -209,7 +224,51 @@ public class ExistenciasTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
         Assert.Equal(42.5m, fila.Cantidad);
     }
 
-    // ---- task 9.11: no-idArticulo-required (spec: Existencias Needs No idArticulo) --------------
+    // ---- task 2.4/2.5: los tres estados de ReglaDeReposicion.Clasificar en la proyección ---------
+
+    /// <summary>Nombra la cláusula bajo prueba (mutation-proof-tests, task 2.4): la llamada a
+    /// <c>ReglaDeReposicion.Clasificar(x.Cantidad, x.Minimo)</c> dentro de la proyección de
+    /// <c>ObtenerExistenciasAsync</c>. Mutación aplicada (hard-code <c>EstadoDeReposicion.Ok</c> en
+    /// vez de la llamada real): esta prueba pasó de FALLAR (las tres filas clasifican <c>Ok</c> en
+    /// vez de <c>Bajo</c>/<c>SinMinimo</c>/<c>Ok</c> respectivamente) a pasar al revertir —
+    /// evidencia registrada en el resumen de apply. Tres artículos con valores de
+    /// cantidad/mínimo/reposición TODOS distintos (mutation-proof-tests regla 6), así que un swap
+    /// de fila también sería detectable. (spec reportes-de-gestion: "An articulo at or below its
+    /// minimo classifies bajo" / "…classifies sin_minimo, never bajo" / "…classifies ok")</summary>
+    [Fact]
+    public async Task LosTresEstadosDeReposicionClasificanCorrectamenteEnExistencias()
+    {
+        var ctx = await PrepararAsync(nameof(LosTresEstadosDeReposicionClasificanCorrectamenteEnExistencias));
+
+        var idBajo = await SembrarArticuloAsync(ctx, "articulo-bajo");
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, idBajo, cantidad: 5m, minimo: 5m, reposicion: 20m);
+
+        var idSinMinimo = await SembrarArticuloAsync(ctx, "articulo-sin-minimo");
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, idSinMinimo, cantidad: 0m, minimo: null, reposicion: null);
+
+        var idOk = await SembrarArticuloAsync(ctx, "articulo-ok");
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, idOk, cantidad: 20m, minimo: 5m, reposicion: null);
+
+        var existencias = await ObtenerExistenciasAsync(ctx.Admin, ctx.IdPuntoVenta);
+        Assert.Equal(3, existencias.Filas.Count);
+
+        var filaBajo = existencias.Filas.Single(f => f.IdArticulo == idBajo);
+        Assert.Equal(5m, filaBajo.Minimo);
+        Assert.Equal(20m, filaBajo.Reposicion);
+        Assert.Equal(EstadoDeReposicion.Bajo, filaBajo.Estado);
+
+        var filaSinMinimo = existencias.Filas.Single(f => f.IdArticulo == idSinMinimo);
+        Assert.Null(filaSinMinimo.Minimo);
+        Assert.Null(filaSinMinimo.Reposicion);
+        Assert.Equal(EstadoDeReposicion.SinMinimo, filaSinMinimo.Estado);
+
+        var filaOk = existencias.Filas.Single(f => f.IdArticulo == idOk);
+        Assert.Equal(5m, filaOk.Minimo);
+        Assert.Null(filaOk.Reposicion);
+        Assert.Equal(EstadoDeReposicion.Ok, filaOk.Estado);
+    }
+
+    // ---- task 9.11 / 2.6: no-idArticulo-required, regresión con las tres columnas nuevas ---------
 
     [Fact]
     public async Task LasExistenciasDe40ArticulosVuelvenSinPedirIdArticulo()
@@ -228,6 +287,56 @@ public class ExistenciasTests(WaysApiFixture fixture) : IClassFixture<WaysApiFix
 
         var existencias = JsonSerializer.Deserialize<Existencias>(await respuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
         Assert.Equal(40, existencias.Filas.Count);
+        // Slice 2 (task 2.6): las 40 filas quedan sin mínimo configurado — cada una clasifica
+        // SinMinimo, nunca Bajo (spec: "An articulo with no minimo classifies sin_minimo, never bajo").
+        Assert.All(existencias.Filas, f =>
+        {
+            Assert.Null(f.Minimo);
+            Assert.Null(f.Reposicion);
+            Assert.Equal(EstadoDeReposicion.SinMinimo, f.Estado);
+        });
+    }
+
+    // ---- task 2.8: Supervisor lee las columnas de reposición y confirma el 403 de escritura -------
+
+    [Fact]
+    public async Task UnSupervisorLeeLasColumnasDeReposicionYEsRechazadoDeEscribirlas()
+    {
+        var ctx = await PrepararAsync(nameof(UnSupervisorLeeLasColumnasDeReposicionYEsRechazadoDeEscribirlas));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-supervisor-lectura");
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, idArticulo, cantidad: 3m, minimo: 5m, reposicion: 25m);
+
+        var existencias = await ObtenerExistenciasAsync(ctx.Supervisor, ctx.IdPuntoVenta);
+        var fila = Assert.Single(existencias.Filas);
+        Assert.Equal(5m, fila.Minimo);
+        Assert.Equal(25m, fila.Reposicion);
+        Assert.Equal(EstadoDeReposicion.Bajo, fila.Estado);
+
+        var escritura = await ctx.Supervisor.PutAsJsonAsync(
+            "/api/stock/minimos", new SolicitudDeMinimos(ctx.IdPuntoVenta, idArticulo, 10m, null));
+        Assert.Equal(HttpStatusCode.Forbidden, escritura.StatusCode);
+    }
+
+    // ---- task 2.10: round-trip PUT /api/stock/minimos → GET /existencias devuelve el par persistido
+
+    [Fact]
+    public async Task UnRoundTripDeEscrituraYLecturaDevuelveElParPersistido()
+    {
+        var ctx = await PrepararAsync(nameof(UnRoundTripDeEscrituraYLecturaDevuelveElParPersistido));
+        var idArticulo = await SembrarArticuloAsync(ctx, "articulo-round-trip");
+
+        var escritura = await ctx.Admin.PutAsJsonAsync(
+            "/api/stock/minimos", new SolicitudDeMinimos(ctx.IdPuntoVenta, idArticulo, 8m, 30m));
+        Assert.Equal(HttpStatusCode.OK, escritura.StatusCode);
+
+        var existencias = await ObtenerExistenciasAsync(ctx.Admin, ctx.IdPuntoVenta);
+        var fila = Assert.Single(existencias.Filas);
+        Assert.Equal(idArticulo, fila.IdArticulo);
+        Assert.Equal(0m, fila.Cantidad);
+        Assert.Equal(8m, fila.Minimo);
+        Assert.Equal(30m, fila.Reposicion);
+        // cantidad queda en 0 (create-at-zero) y 0 <= 8 ⇒ Bajo, no Ok.
+        Assert.Equal(EstadoDeReposicion.Bajo, fila.Estado);
     }
 
     // ---- task 9.10: rol un escalón debajo del gate ------------------------------------------------

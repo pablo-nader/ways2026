@@ -12,6 +12,7 @@ using Ways.Application.Reportes;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 
@@ -24,6 +25,10 @@ namespace Ways.IntegrationTests;
 /// deja pasar mutaciones de mapeo, hallazgo repetido cinco veces en esta misma etapa), más el rol
 /// un escalón debajo del gate y el nombre de archivo determinístico del spec (A Supervisor Exports
 /// Existencias).
+///
+/// stage-13-stock-inteligente, Slice 2 (task 2.9, spec: "The existencias export carries the same
+/// reorder columns"): agrega la igualdad de las tres columnas nuevas — mínimo, reposición y estado
+/// — celda por celda contra el JSON.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -34,7 +39,11 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
     private const string ContentTypeXlsx =
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-    private static readonly JsonSerializerOptions OpcionesJson = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions OpcionesJson = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
 
     private sealed record Contexto(
         int IdTenant, int IdPuntoVenta, int IdArea, int IdAlicuotaIva,
@@ -103,12 +112,14 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         return articulo.Id;
     }
 
-    private async Task SembrarStockAsync(Contexto ctx, int idArticulo, decimal cantidad)
+    private async Task SembrarStockAsync(
+        Contexto ctx, int idArticulo, decimal cantidad, decimal? minimo = null, decimal? reposicion = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         db.Stock.Add(new Ways.Domain.Stock.Stock
         {
-            IdTenant = ctx.IdTenant, IdPuntoVenta = ctx.IdPuntoVenta, IdArticulo = idArticulo, Cantidad = cantidad
+            IdTenant = ctx.IdTenant, IdPuntoVenta = ctx.IdPuntoVenta, IdArticulo = idArticulo, Cantidad = cantidad,
+            Minimo = minimo, Reposicion = reposicion
         });
         await db.SaveChangesAsync();
     }
@@ -120,13 +131,19 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
 
     /// <summary>Nombra el objetivo de mutación (mutation-proof-tests regla 6): el call site de
     /// <c>ExportacionDeReportes.De(Existencias, ContextoDeExportacion)</c> dentro del endpoint
-    /// <c>/stock/existencias/export</c>. Dos artículos con nombre Y cantidad distintos, ambas filas
-    /// comparadas contra el workbook — un test de una sola fila (el patrón que
-    /// <c>ExportacionDeReportesTests</c> usa para los otros ocho mappers de la Slice 2) no habría
-    /// detectado un <c>.Reverse()</c> ni un swap de columnas. Mutación aplicada
-    /// (<c>.Reverse()</c> antes del <c>.Select</c> en el mapper de <c>Existencias</c>): este test
-    /// pasó de FALLAR (fila 7 esperada = artículo A, fila 7 real = artículo B) a pasar al revertir
-    /// — evidencia registrada en el resumen de apply.</summary>
+    /// <c>/stock/existencias/export</c>. Dos artículos con TODOS los campos distintos (nombre,
+    /// cantidad, mínimo, reposición, estado), ambas filas con las SEIS columnas comparadas contra
+    /// el workbook — un test de una sola fila o de columnas salteadas no habría detectado un
+    /// <c>.Reverse()</c> ni un swap de columnas. Mutación aplicada (<c>.Reverse()</c> antes del
+    /// <c>.Select</c> en el mapper de <c>Existencias</c>): este test pasó de FALLAR (fila 7
+    /// esperada = artículo A, fila 7 real = artículo B) a pasar al revertir — evidencia registrada
+    /// en el resumen de apply.
+    ///
+    /// stage-13-stock-inteligente, Slice 2 (task 2.9, spec: "The existencias export carries the
+    /// same reorder columns"): el artículo A queda <c>SinMinimo</c> (mínimo/reposición ambos
+    /// <c>null</c> — celda vacía, nunca <c>0</c>) y el artículo B queda <c>Bajo</c> con ambos
+    /// campos poblados, así que las dos ramas de <c>Celda.Cantidad(decimal?)</c> quedan
+    /// ejercidas.</summary>
     [Fact]
     public async Task ElExportEsIgualAlEndpointJsonParaLasDosFilas()
     {
@@ -135,7 +152,7 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         var idArticuloA = await SembrarArticuloAsync(ctx, "Aceite de girasol 900ml");
         await SembrarStockAsync(ctx, idArticuloA, 12m);
         var idArticuloB = await SembrarArticuloAsync(ctx, "Fideos guiseros 500g");
-        await SembrarStockAsync(ctx, idArticuloB, 87.5m);
+        await SembrarStockAsync(ctx, idArticuloB, 87.5m, minimo: 90m, reposicion: 150m);
 
         var jsonRespuesta = await ctx.Admin.GetAsync($"/api/reportes/stock/existencias?idPuntoVenta={ctx.IdPuntoVenta}");
         Assert.Equal(HttpStatusCode.OK, jsonRespuesta.StatusCode);
@@ -160,11 +177,27 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
             Assert.Equal(esperado.IdArticulo, fila.Cell(1).GetValue<int>());
             Assert.Equal(esperado.Nombre, fila.Cell(2).GetString());
             Assert.Equal(esperado.Cantidad, fila.Cell(3).GetValue<decimal>());
+            AssertCeldaDecimalNullable(fila.Cell(4), esperado.Minimo);
+            AssertCeldaDecimalNullable(fila.Cell(5), esperado.Reposicion);
+            Assert.Equal(esperado.Estado.ToString(), fila.Cell(6).GetString());
         }
 
         // Sin fila de totales (design: existencias no suma cantidades de artículos distintos) — la
         // fila siguiente a la última fila de datos tiene que estar vacía.
         Assert.True(hoja.Cell(primeraFilaDeDatos + existencias.Filas.Count, 1).Value.IsBlank);
+    }
+
+    /// <summary>Celda vacía para <c>null</c> (nunca <c>0</c> — design decisión 2), valor exacto en
+    /// caso contrario.</summary>
+    private static void AssertCeldaDecimalNullable(IXLCell celda, decimal? esperado)
+    {
+        if (esperado is null)
+        {
+            Assert.True(celda.Value.IsBlank);
+            return;
+        }
+
+        Assert.Equal(esperado.Value, celda.GetValue<decimal>());
     }
 
     // ---- spec: A Supervisor Exports Existencias — 200 con nombre de archivo determinístico -------
