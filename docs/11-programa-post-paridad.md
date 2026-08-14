@@ -60,7 +60,7 @@ reabran sin motivo nuevo.
 | 9 | Costo congelado en la línea de venta (implementada — `2026-08-11-stage-9-costo-congelado`, PR #75) | Margen real y rentabilidad histórica |
 | 10 | Capa de agregación + dashboard (implementada — `2026-08-12-stage-10-agregacion-dashboard`, PRs #76-#86) | Medir el negocio (supera G1) |
 | 11 | Infraestructura de exportación + reportes descargables (implementada — `2026-08-12-stage-11-exportacion-reportes`, PRs #87-#98: XLSX con ClosedXML auditada, 16 exports, G2/G3, print views) | Todo lo imprimible y descargable posterior |
-| 12 | Lotes y vencimientos con control FEFO: stock por lote, sugerencia al vender, alertas de próximos a vencer, decomiso | Operar el rubro perecedero sin pérdida ciega |
+| 12 | Lotes y vencimientos con control FEFO (implementada — `2026-08-14-stage-12-lotes-vencimientos`, PRs #99-#114: lotes/stock_lotes con RLS, FEFO no-vencidos-primero, decomiso, reconciliación neto cero, reporte de vencimientos con zona del PV, POS/compras/transferencias/conteo/back-office con lote) | Operar el rubro perecedero sin pérdida ciega |
 | 13 | Stock inteligente: mínimos y punto de pedido por artículo + PV, alertas de bajo stock, lista de reposición por proveedor, sugerencia de compra | Comprar por dato y no por memoria |
 | 14 | Auditoría y trazabilidad de operaciones sensibles (precios, anulaciones, ajustes de stock, roles, reliquidaciones) | Responder "quién hizo esto y cuándo" |
 | 15 | Cuenta corriente de proveedores con ledger propio: movimientos inmutables, pagos parciales, historial | Simetría con la CC de clientes (Etapa 7) |

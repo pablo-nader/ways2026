@@ -227,9 +227,19 @@ phases:
       structurally unkillable by a live test, honestly documented rather than faked), 0
       CRITICAL, 6 SUGGESTION-level debts consolidated for archive.
   archive:
-    status: pending
-    artifact: null
+    status: done
+    artifact: archive-report.md
     depends_on: [verify]
+    notes: >-
+      Archive report written 2026-08-14, content-only phase (orchestrator performs the
+      deterministic change-folder copy/move separately). 7 delta specs merged into
+      openspec/specs/ — lotes-y-vencimientos as a new capability (mechanical cp, diff -r
+      verified empty), the other 6 as MODIFIED/ADDED merges into existing main specs
+      (stock, transferencias-de-stock, comprobantes-venta, comprobantes-compra,
+      conteo-de-inventario, parametros-operativos). Verify's WARNING-1 (doc-10 stale
+      status note) confirmed remediated in commit b998486, prior to this archive pass;
+      WARNING-2 (id_lote ThenBy mutation not independently killable) carried to archive
+      backlog as an accepted, honestly-documented negative finding, not a defect.
 dependencies:
   spec: [propose]
   design: [propose]

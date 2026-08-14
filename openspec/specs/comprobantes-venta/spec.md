@@ -58,11 +58,14 @@ CHECKs: `ck_items_comprobante_venta_costo_no_negativo`
 
 Every `items_comprobante_venta` row MUST copy `descripcion`, `codigo_barra`,
 `id_area`, `precio_unitario`, `id_lista_precio`, `id_oferta`, `descuento`,
-`id_alicuota_iva`, `porcentaje_iva`, `costo_unitario`, `costo_es_estimado` at
-emission time. No endpoint MUST ever update an item after emission — a
-reprint MUST NOT re-join `articulos`, `precios`, or `ofertas`.
-(Previously: the frozen list did not include `costo_unitario` /
-`costo_es_estimado`; added by stage 9.)
+`id_alicuota_iva`, `porcentaje_iva`, `costo_unitario`, `costo_es_estimado`,
+and — for a lot-effective articulo line — `id_lote` at emission time. `id_lote`
+MUST be frozen at emission and never re-derived; it is what makes anulación
+exact (the reversal reads the item's own lot, with no lookup and no
+ambiguity). No endpoint MUST ever update an item after emission — a
+reprint MUST NOT re-join `articulos`, `precios`, `ofertas`, or `lotes`.
+(Previously: the frozen list did not include `id_lote` — the column did not
+exist until stage 12.)
 
 #### Scenario: Reprint is unaffected by a later catalog change
 - GIVEN a comprobante emitted with an item snapshot `precio_unitario = 150.00`
@@ -85,6 +88,18 @@ reprint MUST NOT re-join `articulos`, `precios`, or `ofertas`.
 - THEN the item persists `costo_unitario = NULL`, `costo_es_estimado = false` —
   distinct from an articulo with `costo_nominal = 0`, which persists
   `costo_unitario = 0`
+
+#### Scenario: A lot-effective line freezes its resolved lot onto the snapshot
+- GIVEN a sale line for a lot-effective articulo resolves to `id_lote = 7`
+  (FEFO-defaulted or supplied)
+- WHEN the item is persisted
+- THEN `items_comprobante_venta.id_lote = 7`, and a later price/lot change
+  does not alter it on reprint
+
+#### Scenario: A non-lot articulo's item never carries a lot
+- GIVEN a sale line for an articulo with `controla_lote = false`
+- WHEN the item is persisted
+- THEN `items_comprobante_venta.id_lote` is NULL
 
 ### Requirement: RC Joins The POS-Emittable Tipos, Non-Fiscal
 
@@ -242,7 +257,16 @@ series.)
 A devolución MUST be emitted as a comprobante of tipo NCX (`signo` negative)
 through the same checkout flow, with negative-quantity or negative-total
 lines. `id_comprobante_asociado` is optional but MUST be populated when the
-devolución references an original comprobante.
+devolución references an original comprobante — this stage does NOT make it
+mandatory for lot-controlled lines. For a lot-effective articulo, an NCX
+line MUST carry an explicit `idLote`. The POS MUST suggest it — from the
+associated comprobante's item snapshot when `id_comprobante_asociado` is
+present, otherwise from the articulo's existing lots — but the suggestion is
+never auto-applied without operator confirmation; the sin-identificar lot
+remains a valid, always-available choice when the operator cannot identify
+the physical lot. Returning into an expired lot MUST be permitted.
+(Previously: silent on the lot dimension of NCX lines — no lot reference
+existed on `items_comprobante_venta` until stage 12.)
 
 #### Scenario: Standalone devolución without an original
 - GIVEN a devolución with no referenced comprobante
@@ -253,6 +277,30 @@ devolución references an original comprobante.
 - GIVEN an original TX comprobante `id = 501`
 - WHEN a devolución is emitted against it
 - THEN the new NCX comprobante's `id_comprobante_asociado = 501`
+
+#### Scenario: An NCX line for a lot-effective articulo requires idLote
+- GIVEN articulo 40 is lot-effective
+- WHEN an NCX line for articulo 40 is submitted with no `idLote`
+- THEN it is rejected before reaching the database
+
+#### Scenario: idLote is suggested from the associated comprobante's snapshot
+- GIVEN an original TX comprobante `id = 501` whose item for articulo 40
+  carries `id_lote = 7`
+- WHEN a devolución referencing `id_comprobante_asociado = 501` is prepared
+  in the POS
+- THEN the suggested `idLote` for the returned line is `7`
+
+#### Scenario: idLote is required even without an associated comprobante
+- GIVEN a standalone devolución (no `id_comprobante_asociado`) for a
+  lot-effective articulo
+- WHEN the operator cannot identify the physical lot
+- THEN the sin-identificar lot is accepted as `idLote`, and the request
+  succeeds
+
+#### Scenario: Returning into an expired lot is permitted
+- GIVEN lot 9 of articulo 40 has `fecha_vencimiento` in the past
+- WHEN a devolución line supplies `idLote = 9`
+- THEN it is accepted — the returned units are honestly recorded as expired
 
 ### Requirement: Anulación Reverses Stock and CC, Never Restores by Editing, and Is Blocked By A Closed Turno
 
@@ -265,8 +313,12 @@ with `id_articulo NOT NULL`, and insert a `contramovimiento` in
 `movimientos_cuenta_corriente` if the original comprobante produced a
 `consumo` (CC sale) or a `pago` (RC) row — the reversal direction matches
 the original row's sign. No `restaurar` endpoint MUST exist at any point.
+For a lot-bearing item (`id_lote NOT NULL`), the inverse movement MUST carry
+the **exact same `id_lote`** read from the item's own snapshot — no lookup,
+no FEFO re-evaluation, no ambiguity — and MUST update that lot's
+`stock_lotes` cache in the same transaction.
 (Previously: the contramovimiento clause was scoped to a CC-sale consumo
-only; RC anulación had no reversal path.)
+only, and the inverse stock movement carried no lot dimension.)
 
 #### Scenario: Anulación reverses stock movements
 - GIVEN a comprobante whose sale decremented stock by 3 units of an articulo
@@ -308,6 +360,14 @@ only; RC anulación had no reversal path.)
 - GIVEN an RC comprobante whose turno is now `cerrado`
 - WHEN anulación is requested
 - THEN it is rejected with `409 turno_cerrado`, same as any other comprobante
+
+#### Scenario: Anulación of a lot-bearing sale reverses the exact lot
+- GIVEN a sale item persisted `id_lote = 7`, having decremented
+  `stock_lotes.cantidad` for lot 7 by 4
+- WHEN the comprobante is anulado
+- THEN the inverse `movimientos_stock` row carries `id_lote = 7` (read from
+  the item snapshot, not re-derived), and `stock_lotes.cantidad` for lot 7
+  increases by 4
 
 ### Requirement: OperacionDePos Authorization For Emission and Anulación
 
@@ -410,3 +470,59 @@ and report success. The backfill MUST be idempotent by construction.
 - WHEN the backfill statement runs again
 - THEN the row is unchanged, because `WHERE costo_unitario IS NULL` excludes
   it
+
+### Requirement: FEFO Lot Is Decided In The Read Phase And Frozen On The Item
+
+For a lot-effective articulo line, `idLote` on the checkout request MUST be
+optional. When omitted, `ServicioDeVentas.EmitirAsync` MUST select the FEFO
+lot in its decide-then-commit read phase, before the transaction opens —
+never inside the retryable transaction lambda. When `idLote` is supplied,
+the server MUST validate it and honour it. The per-lot `movimientos_stock`
+write MUST occur inside the pinned stock-write lock order (`stock`
+capability: `id_articulo, id_punto_venta, id_lote NULLS FIRST`).
+
+#### Scenario: A cart with a lot-controlled and a non-lot articulo mixes both paths
+- GIVEN a cart with one line for a lot-effective articulo (no `idLote`
+  supplied) and one line for a non-lot articulo
+- WHEN checkout runs
+- THEN the FEFO lot for the first line is resolved before the transaction
+  opens, the second line's stock decrement carries no lot dimension, and
+  both writes commit in the same transaction
+
+#### Scenario: A client that knows nothing about lots still transacts correctly
+- GIVEN a legacy client submits a sale line for a lot-effective articulo
+  with no `idLote` field in the payload
+- WHEN checkout runs
+- THEN the server silently applies its FEFO default and the sale succeeds
+
+### Requirement: Expired Lot Sale Warns, Never Blocks
+
+A sale or NCX line resolving (by FEFO default or explicit `idLote`) to a
+lot whose `fecha_vencimiento` is in the past MUST be accepted. The response
+MUST carry a warning flag identifying the expired line so the POS can
+display it prominently. FEFO MUST pre-select a non-expired lot whenever one
+exists with positive balance, so an expired-lot sale only happens when the
+operator explicitly overrides the default or when no non-expired lot has
+stock.
+
+#### Scenario: A sale of an explicitly expired lot succeeds with a warning
+- GIVEN lot 9 of articulo 40 has `fecha_vencimiento` in the past and
+  positive balance, and it is the only lot with stock
+- WHEN a sale line for articulo 40 is checked out
+- THEN the sale succeeds and the response marks that line with an expired-lot
+  warning
+
+#### Scenario: FEFO prefers a non-expired lot when one has stock
+- GIVEN articulo 40 has an expired lot with positive balance and a
+  non-expired lot also with positive balance
+- WHEN a sale line for articulo 40 omits `idLote`
+- THEN the server selects the non-expired lot, and the response carries no
+  expired-lot warning for that line
+
+#### Scenario: A supplied idLote on a non-lot-effective line is rejected (Added at slice-7 judgment-day)
+- GIVEN a sale line for an articulo that is NOT lot-effective (`controla_lote
+  = false`, or the module is off for the empresa)
+- WHEN the line carries a non-null `idLote`
+- THEN the request is rejected with `400 lote_invalido` before reaching the
+  database — the field has no destination on that line, so it is never
+  silently ignored
