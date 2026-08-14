@@ -208,6 +208,41 @@ describe('Transferencias — flujo feliz', () => {
   })
 })
 
+describe('Transferencias — clave de línea (judgment-day fix, Slice 15)', () => {
+  it('agregar una línea inmediatamente tras el mount no colisiona de clave con la fila inicial', async () => {
+    // `proximaClaveRef` arrancaba en `1`, el mismo valor que la fila inicial: la primera línea
+    // agregada recibía una `clave` duplicada (colisión de key de React; `cambiarLinea`/`quitarLinea`,
+    // que matchean por `clave`, tocarían ambas filas). Igual criterio de "señal discriminante" que
+    // el test de arriba: se espía `console.error` y se afirma la ausencia del warning de React.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockearPuntosVenta()
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+
+    const buscadores = screen.getAllByPlaceholderText('Buscar artículo…')
+    expect(buscadores).toHaveLength(2)
+    await usuario.type(buscadores[1], 'fideos')
+    await screen.findByText('ART-10 — Fideos 500g')
+    await usuario.click(screen.getByText('ART-10 — Fideos 500g'))
+    await usuario.type(screen.getAllByLabelText('Cantidad')[1], '3')
+
+    // Comportamiento observable: si la `clave` colisionara, editar la fila nueva también
+    // habría tocado la fila inicial (mismo `clave` en el `.map` de `cambiarLinea`).
+    expect(buscadores[0]).toHaveValue('')
+    expect(screen.getAllByLabelText('Cantidad')[0]).toHaveValue(null)
+
+    const huboWarningDeClave = errorSpy.mock.calls.some((call) =>
+      call.some((arg) => typeof arg === 'string' && arg.includes('same key')),
+    )
+    expect(huboWarningDeClave).toBe(false)
+
+    errorSpy.mockRestore()
+  })
+})
+
 describe('Transferencias — líneas incompletas', () => {
   it('una línea a medio llenar se marca en amarillo, suma al contador y el request la excluye', async () => {
     mockearPuntosVenta()
@@ -485,15 +520,10 @@ describe('Transferencias — picker de lote', () => {
 })
 
 describe('Transferencias — repetidos por lote (judgment-day fix, Slice 15)', () => {
-  // Helper: arma dos filas del MISMO artículo lote-efectivo con `clave` propia y distinta.
-  // NO usa "+ Agregar línea" sobre la fila inicial: `proximaClaveRef` arranca en `1`, el mismo
-  // valor que `lineaDeTransferenciaVacia(1)` de la fila inicial (bug preexistente en HEAD, ajeno
-  // a este fix — detectado durante el apply, fuera de alcance de esta ronda) — la primera línea
-  // agregada colisionaría de clave con la inicial. Se arranca quitando la fila inicial y agregando
-  // dos filas frescas, así cada una recibe una `clave` realmente distinta.
+  // Helper: arma dos filas del MISMO artículo lote-efectivo con `clave` propia y distinta —
+  // la fila inicial y la agregada con "+ Agregar línea" (el `proximaClaveRef` arranca ya
+  // consumido por la fila inicial, ver fix del judgment-day de este slice).
   async function completarDosLineasMismoArticulo(usuario: ReturnType<typeof userEvent.setup>) {
-    await usuario.click(screen.getByRole('button', { name: 'Quitar' }))
-    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
 
     const buscadores = screen.getAllByPlaceholderText('Buscar artículo…')

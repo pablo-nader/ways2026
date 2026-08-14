@@ -287,7 +287,11 @@ export function Transferencias() {
   const [idPuntoVentaDestino, setIdPuntoVentaDestino] = useState<number | ''>('')
   const [observaciones, setObservaciones] = useState('')
   const proximaClaveRef = useRef(1)
-  const [lineas, setLineas] = useState<LineaDeTransferenciaFormulario[]>([lineaDeTransferenciaVacia(1)])
+  // Inicializador perezoso que consume el ref (mismo patrón que CuentaCorriente.tsx y Pos.tsx):
+  // evita que la fila inicial y la primera agregada compartan `clave` (colisión de key de React).
+  const [lineas, setLineas] = useState<LineaDeTransferenciaFormulario[]>(() => [
+    lineaDeTransferenciaVacia(proximaClaveRef.current++),
+  ])
 
   const [transfiriendo, setTransfiriendo] = useState(false)
   const transfiriendoRef = useRef(false)

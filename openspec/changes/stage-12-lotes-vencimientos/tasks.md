@@ -2012,6 +2012,24 @@ branch — no backend change.
   (colisión de `key` de React). Bug preexistente en HEAD, ajeno a los dos
   fixes de esta ronda — los tests nuevos lo esquivan quitando la fila
   inicial antes de agregar líneas frescas; no reabierto acá.)*
+
+  *(Ronda 2, mini-fix: se verificó el origen del `proximaClaveRef` discovery
+  de la ronda 1 — el bug ya existía en `main` (`feat(stock): agregar
+  pantallas de transferencias...`), este slice no lo introdujo, solo lo
+  heredó y lo esquivó en los tests. Fix real: `CuentaCorriente.tsx` y
+  `Pos.tsx` ya resuelven este mismo patrón correctamente con un
+  inicializador perezoso de `useState` que consume el ref
+  (`() => [algoVacio(ref.current++)]`); `Transferencias.tsx` en cambio
+  sembraba la fila inicial con un literal `lineaDeTransferenciaVacia(1)`
+  sin tocar el ref. Alineado al patrón ya establecido en el codebase.
+  Simplificado el helper `completarDosLineasMismoArticulo` (ya no necesita
+  quitar la fila inicial) y agregado un test nuevo que agrega una línea
+  justo tras el mount y verifica, por comportamiento observable (la fila
+  inicial no se modifica al editar la nueva) + ausencia del warning de
+  React de `key` duplicada, que las claves ya no colisionan. Mutación
+  aplicada (revertir al literal `lineaDeTransferenciaVacia(1)`) → RED en el
+  test nuevo + 2 tests existentes de la ronda 1 (que ahora sí ejercitan el
+  camino real sin el rodeo) → revertida → GREEN.)*
 - [ ] 15.13 Branch `feat/stage12-slice15-web-backoffice` off `main`
   (parent: slices 12+13); PR; merge stacked-to-main.
 
