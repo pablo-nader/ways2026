@@ -1436,43 +1436,56 @@ expired-transfer ×2 (10.9), duplicate-line ×3 (10.10), single order
 /api/stock/decomiso` is a first-class, Admin-only, never-negative write
 path. **Rollback**: revert the branch.
 
-- [ ] 11.1 Modify `ServicioDeStock.cs`: `EjecutarAjusteAsync` — a
+- [x] 11.1 Modify `ServicioDeStock.cs`: `EjecutarAjusteAsync` — a
   lot-effective articulo requires `idLote` (`400 lote_requerido`), a
   non-lot articulo refuses it (`400 lote_no_aplica`); aggregate upsert then
   lot upsert, in that order; no negativity refusal (ajuste is the
   correction operation).
-- [ ] 11.2 Create `EjecutarDecomisoAsync` in `ServicioDeStock.cs`
+- [x] 11.2 Create `EjecutarDecomisoAsync` in `ServicioDeStock.cs`
   (structurally `EjecutarAjusteAsync` with three deltas): `motivo =
   Decomiso`; client-supplied `cantidad` is positive, negated server-side;
   the `RETURNING` of the lot upsert (or aggregate for a non-lot articulo)
   checked `< 0` → `409 stock_insuficiente_para_decomiso`; `observaciones`
   mandatory (`ExigirObservaciones` reused verbatim).
-- [ ] 11.3 Modify `StockEndpoints.cs`: `POST /api/stock/decomiso`,
+- [x] 11.3 Modify `StockEndpoints.cs`: `POST /api/stock/decomiso`,
   `Politicas.GestionDeCatalogo` stacked over `OperacionDePos`.
-- [ ] 11.4 [P] **Mutation target**:
+- [x] 11.4 [P] **Mutation target**:
   `.RequireAuthorization(Politicas.GestionDeCatalogo)` deleted on
   `/stock/decomiso` → the Vendedor-403 test MUST fail (the group's
   `OperacionDePos` alone admits Vendedor); revert → green. *(spec:
   "Vendedor is blocked from decomiso"; mutation-proof-tests)* Record
   evidence.
-- [ ] 11.5 [P] `stock_insuficiente_para_decomiso` test. *(spec: "A decomiso
+- [x] 11.5 [P] `stock_insuficiente_para_decomiso` test. *(spec: "A decomiso
   that would go negative is refused")*
-- [ ] 11.6 [P] Sign-discipline test: positive client `cantidad` negated
+- [x] 11.6 [P] Sign-discipline test: positive client `cantidad` negated
   server-side. *(spec: "A positive client cantidad is negated by the
   server")*
-- [ ] 11.7 [P] Decomiso-of-lot-effective-requires-`idLote` test. *(spec:
+- [x] 11.7 [P] Decomiso-of-lot-effective-requires-`idLote` test. *(spec:
   "A decomiso of a lot-effective articulo requires idLote")*
-- [ ] 11.8 [P] Non-expired-lot decomiso allowed. *(spec: "Decomiso applies
+- [x] 11.8 [P] Non-expired-lot decomiso allowed. *(spec: "Decomiso applies
   to a non-expired lot too")*
-- [ ] 11.9 [P] Observaciones-required test. *(spec: "Decomiso without
+- [x] 11.9 [P] Observaciones-required test. *(spec: "Decomiso without
   observaciones is rejected")*
-- [ ] 11.10 [P] Ajuste lot-aware tests. *(spec stock: "Ajuste of a
+- [x] 11.10 [P] Ajuste lot-aware tests. *(spec stock: "Ajuste of a
   lot-effective articulo requires idLote and updates both caches", "Ajuste
   of a lot-effective articulo without idLote is rejected")*
-- [ ] 11.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+- [x] 11.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   no pending changes.
-- [ ] 11.12 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 11.13 Branch `feat/stage12-slice11-ajuste-decomiso` off `main`
+- [x] 11.12 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  judge B round 1 APPROVE-with-findings — 5 mutations killed cleanly but 3
+  coverage gaps confirmed by SURVIVING mutations: the aggregate branch of
+  decomiso (no-lot articulo) was dead code to the tests, invalid-cantidad
+  validation was never exercised via /decomiso, and nothing proved an ajuste
+  CAN leave a negative balance (its central difference from decomiso). Fix
+  d36554a: 7 new tests (11→18), each verified by re-running the surviving
+  mutation to RED. Judge B round 2 APPROVE with surgical-precision kills
+  (1/18, 2/18, 2/18 — no collateral). Judge A APPROVE with 3 MINORs:
+  ExigirObservaciones message says "ajuste" on the decomiso path
+  (pre-existing since stage 5, follow-up ticket); the stock spec's multi-lot
+  scenario was mislabeled "ajuste" — amended to "conteo" in this branch
+  (single-IdLote request shape confirmed); cantidad-code reuse cosmetic and
+  documented.)*
+- [x] 11.13 Branch `feat/stage12-slice11-ajuste-decomiso` off `main`
   (parent: slice 10); PR; merge stacked-to-main.
 
 **Test plan**: 403 mutation (11.4), insufficiency (11.5), sign discipline
@@ -1480,6 +1493,81 @@ path. **Rollback**: revert the branch.
 ajuste ×2 (11.10).
 
 **Verify**: `dotnet test --filter FullyQualifiedName~Decomiso|FullyQualifiedName~AjusteLote`
+
+> **APPLY-RUN NOTE (tasks 11.1-11.11, sdd-apply)**: nuevo archivo
+> `tests/Ways.IntegrationTests/AjusteDecomisoLoteTests.cs` (11 tests),
+> `ServicioDeStock.AjustarAsync`/`EjecutarAjusteAsync` ganan la dimensión de
+> lote vía `ResolverIdLoteEfectivoAsync` (helper compartido con
+> `DecomisarAsync`, reusa `ServicioDeLotes.LeerSaldosAsync` para validar un
+> `idLote` explícito — existe/pertenece al artículo/no borrado — antes de la
+> transacción, mismo criterio que `TransferirAsync`); `DecomisarAsync` +
+> `EjecutarDecomisoAsync` nuevos, motivo `Decomiso` de primera clase; nuevo
+> endpoint `POST /api/stock/decomiso`. `Contratos.cs`:
+> `SolicitudDeAjusteDeStock` gana `IdLote` opcional (posicional al final, no
+> rompe los call-sites existentes); nuevo `SolicitudDeDecomiso`.
+>
+> Cobertura más allá de los 8 tests enumerados en el test plan: 3 tests
+> extra para los guards `lote_no_aplica` (ajuste) y `lote_invalido`
+> (decomiso) — código ya escrito por `ResolverIdLoteEfectivoAsync` (mismo
+> guard que `TransferirAsync` usa para `lote_invalido`) que hubiera quedado
+> sin cobertura si me ceñía estrictamente a la lista de 8; y un decomiso de
+> lote VENCIDO como contraparte del "no vencido" de la task 11.8, probando
+> que la fecha nunca entra en la decisión en ninguno de los dos sentidos.
+> `ExigirCantidadDeDecomisoValida` (cantidad > 0, hasta 3 decimales) reusa
+> el código `cantidad_de_ajuste_invalida`/`cantidad_invalida` de
+> `ExigirCantidadValida` — no hay código nuevo para esto en la lista de la
+> etapa (design.md "New domain error codes").
+>
+> Evidencia de mutación (11.4): borrado
+> `.RequireAuthorization(Politicas.GestionDeCatalogo)` de `/decomiso` en
+> `StockEndpoints.cs` — build, filtro
+> `FullyQualifiedName~UnVendedorEsBloqueadoDelDecomiso`: el test **FALLÓ**
+> (`200 OK` en vez de `403 Forbidden` — el Vendedor pasa con solo
+> `OperacionDePos` del grupo). Revertido el mutante, build, corrida de
+> nuevo: **GREEN**.
+>
+> Filtro `~AjusteDecomisoLoteTests`: 11/11. Regresión `~AjusteDeStockTests`:
+> 10/10. Regresión `~TransferenciaLoteTests`: 15/15. Regresión
+> `~TransferenciasYConteoDeInventarioTests`: 28/28. Corrida combinada de los
+> tres archivos de regresión + el nuevo: 53/53 (10 + 15 + 28, sin contar el
+> archivo nuevo en esa corrida puntual).
+> `has-pending-model-changes`: sin cambios pendientes, antes y después de
+> los edits (gate cerrado — los valores de enum `Decomiso` ya existen desde
+> el slice 1).
+
+> **JUDGMENT-DAY FIX NOTE (11.12, ronda 2, juez B)**: 3 gaps confirmados, los
+> 3 sobre código ya escrito en el slice pero sin cobertura — 7 tests nuevos
+> en `AjusteDecomisoLoteTests.cs` (11 → 18):
+>
+> 1. Decomiso de artículo SIN lote efectivo (rama `else`/`else if` de
+>    `EjecutarDecomisoAsync`, código muerto para tests hasta esta ronda):
+>    `UnDecomisoDeUnArticuloSinLoteEfectivoEsAceptado` (200, agregado baja,
+>    movimiento con `id_lote = null`) y
+>    `UnDecomisoDeUnArticuloSinLoteEfectivoQueDejariaElAgregadoNegativoEsRechazado`
+>    (409 `stock_insuficiente_para_decomiso` sobre el agregado). Evidencia:
+>    unconditional `throw` en la rama `else` — ambos **FALLARON** (200/409
+>    reales vs. 409 forzado); revertido, **GREEN**.
+> 2. Cantidad inválida en decomiso:
+>    `UnDecomisoConCantidadCeroONegativaEsRechazado` (Theory, cantidad 0 y
+>    -5 → 400 `cantidad_de_ajuste_invalida`) y
+>    `UnDecomisoConMasDeTresDecimalesEsRechazado` (400 `cantidad_invalida`).
+>    Evidencia: anulado el `if (cantidad <= 0)` de
+>    `ExigirCantidadDeDecomisoValida` (`if (false)`) — ambos casos del
+>    Theory **FALLARON** (200/500 en vez de 400); revertido, **GREEN**.
+> 3. El ajuste PUEDE dejar negativo (diferencia central con decomiso):
+>    `UnAjusteQueDejaSaldoNegativoEsAceptado` (200, saldo de lote Y agregado
+>    negativo persistido exacto, -2). Evidencia: agregado temporalmente un
+>    `if (nuevaDelLote < 0m) throw ...` a `EjecutarAjusteAsync` — el test
+>    **FALLÓ** (409 en vez de 200); revertido, **GREEN**.
+>
+> Hallazgo menor (barato, helper ya existía):
+> `UnDecomisoDeUnArticuloSinLoteConIdLoteProvistoEsRechazado` — guard
+> simétrico de `lote_no_aplica` en decomiso, mismo criterio que el
+> equivalente de ajuste.
+>
+> Filtro `~AjusteDecomisoLoteTests`: 18/18. Regresión `~AjusteDeStockTests`:
+> 10/10. `has-pending-model-changes`: sin cambios pendientes (solo se tocó
+> el archivo de tests). Árbol limpio tras el commit.
 
 ---
 

@@ -165,11 +165,16 @@ not refactored away.
   retry strategy) with no deadlock, because both build the same ascending
   `(id_articulo, id_punto_venta, id_lote NULLS FIRST)` order over their keys
 
-#### Scenario: A multi-lot ajuste locks lots in ascending id_lote order
-- GIVEN an ajuste touching lots 3 and 9 of the same articulo and punto de
+#### Scenario: A multi-lot conteo locks lots in ascending id_lote order
+- GIVEN a conteo touching lots 3 and 9 of the same articulo and punto de
   venta in one request
-- WHEN the transaction writes
-- THEN lot 3 upserts before lot 9
+- WHEN the transaction acquires its locks
+- THEN lot 3's row locks before lot 9's
+  *(Amended at slice-11 judgment-day, judge A MINOR-2: the original scenario
+  said "ajuste", but `SolicitudDeAjusteDeStock` carries a single `IdLote` —
+  one lot per request, per design's write-site-3 shape. The only stock-write
+  request carrying a lot LIST is `SolicitudDeConteo` (slice 12), which is
+  where the multi-lot ascending lock order actually lives.)*
 
 ## Purpose Update (informational — apply manually at archive)
 
