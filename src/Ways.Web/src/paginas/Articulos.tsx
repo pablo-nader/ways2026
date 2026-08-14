@@ -49,6 +49,7 @@ type Formulario = {
   disponibleParaTodas: boolean
   idsEmpresas: number[]
   activo: boolean
+  controlaLote: boolean
 }
 
 function formularioVacio(): Formulario {
@@ -72,6 +73,7 @@ function formularioVacio(): Formulario {
     disponibleParaTodas: true,
     idsEmpresas: [],
     activo: true,
+    controlaLote: false,
   }
 }
 
@@ -96,6 +98,7 @@ function aFormulario(a: ArticuloListado): Formulario {
     disponibleParaTodas: a.disponibleParaTodas,
     idsEmpresas: a.idsEmpresas,
     activo: a.activo,
+    controlaLote: a.controlaLote,
   }
 }
 
@@ -128,6 +131,7 @@ function camposComunes(f: Formulario) {
     disponibleParaTodas: f.disponibleParaTodas,
     idsEmpresas: f.disponibleParaTodas ? null : f.idsEmpresas,
     activo: f.activo,
+    controlaLote: f.controlaLote,
   }
 }
 
@@ -898,6 +902,24 @@ function FormularioArticulo({
               />
               <label className="form-check-label" htmlFor="art-activo">
                 Activo
+              </label>
+            </div>
+          </div>
+
+          {/* stage-12-lotes-vencimientos (Slice 15, espejo de `Articulo.ControlaLote`): control
+              efectivo de lote es este flag AND `lotes_habilitado` de la empresa (Parámetros) —
+              acá solo se edita el flag propio del artículo, el servidor resuelve el AND. */}
+          <div className="col-md-3 d-flex align-items-end">
+            <div className="form-check">
+              <input
+                id="art-controla-lote"
+                type="checkbox"
+                className="form-check-input rounded-0"
+                checked={valor.controlaLote}
+                onChange={(e) => onCambio({ ...valor, controlaLote: e.target.checked })}
+              />
+              <label className="form-check-label" htmlFor="art-controla-lote">
+                Controla lote / vencimiento
               </label>
             </div>
           </div>
