@@ -234,9 +234,11 @@ public class ReposicionReporteTests(WaysApiFixture fixture) : IClassFixture<Ways
     /// un único punto de venta, cinco filas ESPERADAS (cada una con valores distintos de
     /// <c>Cantidad</c>/<c>Minimo</c>/<c>Reposicion</c>/<c>Sugerido</c> — mutation-proof-tests regla
     /// 6, ningún swap ni rotación pasa desapercibido) y cuatro escenarios de ausencia. El orden se
-    /// asegura por proveedor creciente (NULLS LAST): proveedor A → proveedor B (eliminado, cae bajo
-    /// "Sin proveedor" mismo con <c>IdProveedor</c> apuntando al FK crudo) → proveedor C →
-    /// proveedor D → sin proveedor (FK NULL, siempre último).</summary>
+    /// asegura primero por presencia de proveedor efectivo, luego por FK creciente dentro de cada
+    /// bucket (orchestrator decision 12, tasks.md): proveedor A → proveedor C → proveedor D
+    /// (proveedores activos, FK creciente) → proveedor B (eliminado, cae al MISMO bucket final
+    /// "Sin proveedor" que la fila sin FK — <c>IdProveedor</c>/<c>Proveedor</c> ambos <c>null</c>,
+    /// nunca el FK crudo) → sin proveedor (FK NULL, siempre último dentro del bucket).</summary>
     [Fact]
     public async Task ElSeedDiscriminanteCubreLosNueveEscenariosDeLaSpec()
     {
@@ -292,7 +294,8 @@ public class ReposicionReporteTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.DoesNotContain(artOtroPv, idsPresentes);
         Assert.DoesNotContain(artOtroTenant, idsPresentes);
 
-        // Secuencia exacta — proveedor creciente, NULLS LAST.
+        // Secuencia exacta — bucket "con proveedor efectivo" (FK creciente) primero, bucket
+        // "Sin proveedor" (FK soft-deleted o FK NULL, FK creciente dentro del bucket) al final.
         var fila1 = reposicion.Filas[0];
         Assert.Equal(artMinimoCero, fila1.IdArticulo);
         Assert.Equal("seed-minimo-cero", fila1.Articulo);
@@ -304,36 +307,37 @@ public class ReposicionReporteTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal("Proveedor A", fila1.Proveedor);
 
         var fila2 = reposicion.Filas[1];
-        Assert.Equal(artProveedorEliminado, fila2.IdArticulo);
-        Assert.Equal("seed-proveedor-eliminado", fila2.Articulo);
-        Assert.Equal(1m, fila2.Cantidad);
-        Assert.Equal(3m, fila2.Minimo);
-        Assert.Equal(50m, fila2.Reposicion);
-        Assert.Equal(49m, fila2.Sugerido);
-        // IdProveedor viaja como el FK crudo (design decisión 3, ConstruirQueryDeReposicion:
-        // a.IdProveedorHabitual, no p.Id) — el filtro de baja lógica de EF solo anula el NOMBRE.
-        Assert.Equal(provB, fila2.IdProveedor);
-        Assert.Null(fila2.Proveedor);
+        Assert.Equal(artIgual, fila2.IdArticulo);
+        Assert.Equal("seed-cantidad-igual-minimo", fila2.Articulo);
+        Assert.Equal(5m, fila2.Cantidad);
+        Assert.Equal(5m, fila2.Minimo);
+        Assert.Equal(20m, fila2.Reposicion);
+        Assert.Equal(15m, fila2.Sugerido);
+        Assert.Equal(provC, fila2.IdProveedor);
+        Assert.Equal("Proveedor C", fila2.Proveedor);
 
         var fila3 = reposicion.Filas[2];
-        Assert.Equal(artIgual, fila3.IdArticulo);
-        Assert.Equal("seed-cantidad-igual-minimo", fila3.Articulo);
-        Assert.Equal(5m, fila3.Cantidad);
-        Assert.Equal(5m, fila3.Minimo);
-        Assert.Equal(20m, fila3.Reposicion);
-        Assert.Equal(15m, fila3.Sugerido);
-        Assert.Equal(provC, fila3.IdProveedor);
-        Assert.Equal("Proveedor C", fila3.Proveedor);
+        Assert.Equal(artReposicionUnset, fila3.IdArticulo);
+        Assert.Equal("seed-reposicion-unset", fila3.Articulo);
+        Assert.Equal(2m, fila3.Cantidad);
+        Assert.Equal(12m, fila3.Minimo);
+        Assert.Null(fila3.Reposicion);
+        Assert.Null(fila3.Sugerido);
+        Assert.Equal(provD, fila3.IdProveedor);
+        Assert.Equal("Proveedor D", fila3.Proveedor);
 
         var fila4 = reposicion.Filas[3];
-        Assert.Equal(artReposicionUnset, fila4.IdArticulo);
-        Assert.Equal("seed-reposicion-unset", fila4.Articulo);
-        Assert.Equal(2m, fila4.Cantidad);
-        Assert.Equal(12m, fila4.Minimo);
-        Assert.Null(fila4.Reposicion);
-        Assert.Null(fila4.Sugerido);
-        Assert.Equal(provD, fila4.IdProveedor);
-        Assert.Equal("Proveedor D", fila4.Proveedor);
+        Assert.Equal(artProveedorEliminado, fila4.IdArticulo);
+        Assert.Equal("seed-proveedor-eliminado", fila4.Articulo);
+        Assert.Equal(1m, fila4.Cantidad);
+        Assert.Equal(3m, fila4.Minimo);
+        Assert.Equal(50m, fila4.Reposicion);
+        Assert.Equal(49m, fila4.Sugerido);
+        // IdProveedor null pese al FK vivo (design decisión 3 + orchestrator decision 12,
+        // tasks.md): un proveedor soft-deleted resuelve p == null igual que un FK NULL, así que
+        // cae en el MISMO bucket final "Sin proveedor" — el FK crudo nunca viaja al cliente.
+        Assert.Null(fila4.IdProveedor);
+        Assert.Null(fila4.Proveedor);
 
         var fila5 = reposicion.Filas[4];
         Assert.Equal(artSinProveedor, fila5.IdArticulo);
@@ -344,6 +348,41 @@ public class ReposicionReporteTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(96m, fila5.Sugerido);
         Assert.Null(fila5.IdProveedor);
         Assert.Null(fila5.Proveedor);
+    }
+
+    // ---- task 4.2: MUTATION TARGET — ReglaDeReposicion.ExigirVentanaValida(?dias=) -----------------
+
+    /// <summary>Nombra la cláusula bajo prueba (mutation-proof-tests): la llamada a
+    /// <c>ReglaDeReposicion.ExigirVentanaValida</c> dentro de <c>ObtenerReposicionAsync</c> — sin
+    /// ella, un <c>?dias=0</c> (o negativo) nunca rechaza. Mutación aplicada (borrar la llamada):
+    /// este test pasó de FALLAR (200 en lugar de 400) a pasar al revertir — evidencia de mutación
+    /// registrada en el resumen de apply (judgment-day round 1, hallazgo confirmado #2).</summary>
+    [Fact]
+    public async Task UnDiasDeRotacionInvalidoEsRechazadoConCuatrocientos()
+    {
+        var ctx = await PrepararAsync(nameof(UnDiasDeRotacionInvalidoEsRechazadoConCuatrocientos));
+
+        var respuesta = await LlamarReporteAsync(ctx.Admin, ctx.IdPuntoVenta, dias: 0);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("dias_rotacion_invalido", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Eco del horizonte efectivamente resuelto en <see cref="Reposicion.DiasDeRotacion"/>
+    /// — mata también el mutante "DiasDeRotacion hard-codeado": un <c>?dias=45</c> explícito viaja
+    /// tal cual, y con <c>dias</c> omitido la respuesta ecoa el default de <c>dias_rotacion</c>
+    /// (<c>30</c>).</summary>
+    [Fact]
+    public async Task LaRespuestaEcoaElDiasDeRotacionEfectivamenteResuelto()
+    {
+        var ctx = await PrepararAsync(nameof(LaRespuestaEcoaElDiasDeRotacionEfectivamenteResuelto));
+
+        var conDiasExplicito = await ObtenerReposicionAsync(ctx.Admin, ctx.IdPuntoVenta, dias: 45);
+        Assert.Equal(45, conDiasExplicito.DiasDeRotacion);
+
+        var conDiasOmitido = await ObtenerReposicionAsync(ctx.Admin, ctx.IdPuntoVenta);
+        Assert.Equal(30, conDiasOmitido.DiasDeRotacion);
     }
 
     // ---- task 4.11: 403 (mitad reporte) -------------------------------------------------------------

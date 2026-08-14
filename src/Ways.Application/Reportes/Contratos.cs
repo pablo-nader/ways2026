@@ -180,7 +180,10 @@ public sealed record ResumenDeVencimientos(int IdPuntoVenta, int Vencidos, int P
 /// Unset).</item>
 /// <item><see cref="IdProveedor"/>/<see cref="Proveedor"/> — ambos <c>null</c> ⇒ la fila cae en el
 /// grupo <c>"Sin proveedor"</c> (design decisión 3: el LEFT JOIN nunca la excluye), nunca
-/// filtrada.</item>
+/// filtrada. Un <c>id_proveedor_habitual</c> que apunta a un proveedor soft-deleted proyecta
+/// <see cref="IdProveedor"/> <c>null</c> también — el FK crudo NUNCA viaja al cliente cuando el
+/// proveedor referenciado no resuelve (orchestrator decision 12, tasks.md stage-13): un solo
+/// bucket "Sin proveedor", nunca un FK colgante ni un segundo bucket a mitad de lista.</item>
 /// <item><see cref="ConsumoDiarioPromedio"/>/<see cref="DiasDeCobertura"/> — AUSENTES por diseño en
 /// esta slice, no por omisión: la slice 5 los agrega cuando <c>LeerConsumoAsync</c> exista (design:
 /// "The four rotation fields do NOT exist in slice 4").</item>

@@ -70,6 +70,38 @@
 11. **Doc-11 backlog re-registration (decision 5) is a slice-1 task**, not a
     closing sweep — the same discipline stage 12 used for its own doc-10
     update from within a slice (its task 1.17).
+12. **`judgment-day` round 1, slice 4 — judge B's WARNING (inferential) on
+    the soft-deleted-proveedor ordering, RESOLVED.** Task 4.1's pinned
+    snippet projects `IdProveedor` as the raw FK (`a.IdProveedorHabitual`)
+    and orders by `a.IdProveedorHabitual, a.Id` alone. Under that snippet, a
+    row whose `id_proveedor_habitual` points at a soft-deleted proveedor
+    resolves `Proveedor == null` (name lookup fails, EF's baja-lógica global
+    filter) but `IdProveedor` still carries the live FK value — so the row's
+    ORDER KEY disagrees with its DISPLAY GROUP: it sorts by FK position
+    (mid-list, between whichever real proveedores bracket that FK) while
+    displaying as "Sin proveedor". `design.md`'s decision 3 is explicit that
+    a soft-deleted proveedor's row "lands under Sin proveedor" — that letter
+    is authoritative over the pinned snippet, which the task text itself
+    frames as a **draft**, not a locked contract. Left as coded, slice 6's
+    `agruparPorProveedor` fold (a plain fold over the already-sorted rows,
+    no sort of its own — see slice 6's tasks) would emit a SECOND "Sin
+    proveedor" bucket wherever the soft-deleted row's FK happened to sort,
+    splitting one logical group into two on screen.
+    **Resolution**: `ConstruirQueryDeReposicion` now projects
+    `IdProveedor := p == null ? null : (int?)a.IdProveedorHabitual` (the
+    dangling FK never travels to the client — `dto-contract-honesty`
+    doc-comment updated on `FilaDeReposicion` in `Contratos.cs`) and orders
+    `orderby (p == null), a.IdProveedorHabitual, a.Id` — every row with no
+    EFFECTIVE proveedor (FK null OR FK pointing at a soft-deleted/missing
+    proveedor) falls into ONE trailing bucket; within that bucket, FK then
+    Id keeps the order deterministic. **Slice 6 inherits a trivial
+    single-null-bucket fold** — `agruparPorProveedor` never has to merge two
+    "Sin proveedor" groups because there is structurally only one row-run to
+    fold into it. Evidence: mutating the `orderby` back to
+    `a.IdProveedorHabitual, a.Id` (dropping the presence key) makes the
+    discriminating-seed test's (task 4.9) row-sequence assert FAIL — the
+    soft-deleted-proveedor row returns to the middle of the list; reverting
+    restores green. See the inline note on task 4.1 below.
 
 ---
 
@@ -404,6 +436,14 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   authoritative regardless of the proveedor's own empresa scoping (design
   decision 3). Postgres orders `NULL` last in `ASC` by default, so no
   explicit `NULLS LAST` is needed for *Sin proveedor* to land last.
+  *(apply note — `judgment-day` round 1, decision 12: the snippet above is
+  the DRAFT this task pinned, not the shipped code. A soft-deleted
+  proveedor's FK disagreeing with its display group (order key ≠ display
+  group) is a real defect against design decision 3's "lands under Sin
+  proveedor" — fixed by projecting `IdProveedor := p == null ? null :
+  (int?)a.IdProveedorHabitual` and ordering `orderby (p == null),
+  a.IdProveedorHabitual, a.Id`. See decision 12 above for the full
+  rationale and mutation evidence.)*
 - [x] 4.2 Modify `ServicioDeReportesDeStock.cs`:
   `ObtenerReposicionAsync(idPuntoVenta, dias?, ct)` —
   `ResolverContextoAsync` → `(idEmpresa, zonaId, hoy)`; `diasDeRotacion :=
@@ -422,6 +462,18 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   for slice 5, whose only consumer — `MinimoSugerido` — doesn't exist yet.
   Not a scope deviation: the design's grouping note and this task's literal
   requirement disagree, and the task text governs.)*
+  *(judgment-day round 1, confirmed MAJOR #2: the `ExigirVentanaValida` call
+  wired here shipped with ZERO test coverage — every existing test omitted
+  `?dias=`, so deleting the guard call left all 8 tests green, and the
+  `DiasDeRotacion` echo was equally unasserted (a hard-coded value would
+  have passed too). Closed by adding
+  `UnDiasDeRotacionInvalidoEsRechazadoConCuatrocientos` (`?dias=0` → 400
+  `dias_rotacion_invalido`) and
+  `LaRespuestaEcoaElDiasDeRotacionEfectivamenteResuelto` (`?dias=45` echoes
+  `45`; `dias` omitted echoes the `dias_rotacion` default `30`) to
+  `ReposicionReporteTests.cs`. Mutation evidence: deleting the
+  `ExigirVentanaValida` call makes the first new test FAIL (200 instead of
+  400); reverting restores green.)*
 - [x] 4.3 Modify `src/Ways.Application/Reportes/Contratos.cs`:
   `FilaDeReposicion(IdArticulo, Articulo, Cantidad, Minimo, Reposicion?,
   Sugerido?, IdProveedor?, Proveedor?)` — no rotation fields in this slice;
@@ -485,7 +537,18 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   rendering **empty, not `0`**; plus a cap refusal (`TopeDeFilas` lowered)
   that **refuses rather than truncates**. *(spec `reposicion-de-stock`:
   "The Reposición Export Sibling Is Catalog-Bounded, Never Truncated", both
-  scenarios; mutation-proof-tests rule 6)*
+  scenarios; mutation-proof-tests rule 6)* *(judgment-day round 1, confirmed
+  MAJOR #1: the row-equality test read only data rows starting at row 7 and
+  never asserted row 6 (`FilaDeTituloDeTabla` in `ExportadorXlsx.cs`), so a
+  header-label swap in `ColumnasReposicion` (`ExportacionDeReportes.cs`)
+  shipped with zero coverage — all 3 export tests stayed green under the
+  mutation. Closed by adding the header-row assertion (reads cells
+  `(6,1)..(6,7)`, compares against the 7 `ColumnasReposicion` titles in
+  order) to `ElExportEsIgualAlEndpointJsonEnTodasLasColumnasIncluidasLasCeldasVacias`,
+  the same pattern `ExistenciasExportTests.ElExportEsIgualAlEndpointJsonParaLasDosFilas`
+  already established on `main`. Mutation evidence: swapping two titles in
+  `ColumnasReposicion` makes the new header assert FAIL; reverting restores
+  green.)*
 - [x] 4.11 [P] Authorization: a Vendedor gets `403` on the reposición
   report and its export. *(spec `reposicion-de-stock`: "Reposición Report…",
   scenario "A Vendedor is rejected from the reposición report and its

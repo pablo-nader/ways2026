@@ -168,9 +168,17 @@ public class ReposicionExportTests(WaysApiFixture fixture) : IClassFixture<WaysA
         using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
-        // Fila 6 = título de tabla, los datos empiezan en la fila 7 — mismo layout que
-        // Existencias/Vencimientos. Orden: proveedor ASC NULLS LAST, así que A (con proveedor)
-        // precede a B (Sin proveedor).
+        // Fila 6 = título de tabla (headers), los datos empiezan en la fila 7 — mismo layout que
+        // Existencias/Vencimientos (patrón: ExistenciasExportTests.ElExportEsIgualAlEndpointJsonParaLasDosFilas).
+        // El header es lo que ata cada celda de datos a su columna: sin este assert un swap de
+        // labels ("Reposición"/"Sugerido") pasa inadvertido porque el test de igualdad de abajo
+        // solo lee celdas por posición (judgment-day round 1, hallazgo confirmado #1).
+        const int filaDeEncabezados = 6;
+        Assert.Equal(
+            ["Artículo", "Nombre", "Cantidad", "Mínimo", "Reposición", "Sugerido", "Proveedor"],
+            Enumerable.Range(1, 7).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
+
+        // Orden: proveedor ASC NULLS LAST, así que A (con proveedor) precede a B (Sin proveedor).
         const int primeraFilaDeDatos = 7;
         for (var i = 0; i < reposicion.Filas.Count; i++)
         {

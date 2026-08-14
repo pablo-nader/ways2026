@@ -152,8 +152,12 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     ///                                   documenta).
     ///   <c>candidatos.DefaultIfEmpty()</c> → sin el LEFT JOIN, las filas "Sin proveedor"
     ///                                   desaparecen en silencio (design decisión 3).
-    ///   <c>orderby a.IdProveedorHabitual, a.Id</c> (primer campo) → sin él, "Sin proveedor" deja de
-    ///                                   ordenar siempre último.
+    ///   <c>orderby (p == null), a.IdProveedorHabitual, a.Id</c> (primer campo) → sin la clave de
+    ///                                   presencia, una fila cuyo proveedor está soft-deleted
+    ///                                   (FK apuntando a un id vivo pero <c>p == null</c> por el
+    ///                                   filtro global de baja lógica) vuelve a ordenar por su FK
+    ///                                   crudo en lugar de caer al bucket final "Sin proveedor"
+    ///                                   (orchestrator decision 12, tasks.md).
     /// <c>s.Minimo != null</c> se conserva por legibilidad/intención documental (nombra
     /// explícitamente decisión 1 del proposal: "minimo NULL ⇒ no gestionado"), pero se verificó con
     /// <c>ToQueryString()</c> que Npgsql la traduce a un <c>IS NOT NULL</c> aditivo — REDUNDANTE
@@ -170,17 +174,22 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     /// el record — EF no traduce un <c>OrderBy</c> sobre la propiedad de un objeto recién construido
     /// (mismo obstáculo que <see cref="ConstruirQueryDeVencimientos"/> ya documenta). Postgres
     /// ordena NULL último en ASC por default, así que "Sin proveedor" cae al final sin <c>NULLS
-    /// LAST</c> explícito.</summary>
+    /// LAST</c> explícito. <c>IdProveedor</c>/orderby usan <c>p == null</c>, nunca el FK crudo de
+    /// <c>a.IdProveedorHabitual</c>, como clave de presencia: un FK que apunta a un proveedor
+    /// soft-deleted resuelve <c>p == null</c> igual que un FK NULL, así que ambos casos caen en el
+    /// MISMO bucket final "Sin proveedor" — nunca un FK colgante viajando al cliente ni una
+    /// segunda fila "Sin proveedor" a mitad de lista (orchestrator decision 12, tasks.md;
+    /// design decisión 3 es la letra autoritativa sobre el snippet pinneado de la task 4.1).</summary>
     private IQueryable<FilaCrudaDeReposicion> ConstruirQueryDeReposicion(int idPuntoVenta) =>
         from s in db.Stock
         where s.IdPuntoVenta == idPuntoVenta && s.Minimo != null && s.Cantidad <= s.Minimo
         join a in db.Articulos on s.IdArticulo equals a.Id
         join p in db.Proveedores on a.IdProveedorHabitual equals p.Id into candidatos
         from p in candidatos.DefaultIfEmpty()
-        orderby a.IdProveedorHabitual, a.Id
+        orderby (p == null), a.IdProveedorHabitual, a.Id
         select new FilaCrudaDeReposicion(
             a.Id, a.Nombre, s.Cantidad, s.Minimo!.Value, s.Reposicion,
-            a.IdProveedorHabitual, p == null ? null : p.RazonSocial);
+            p == null ? null : (int?)a.IdProveedorHabitual, p == null ? null : p.RazonSocial);
 
     /// <summary>Proyección cruda de <c>stock_lotes ⋈ lotes ⋈ articulos</c> (spec: "lot rows...
     /// with a positive stock_lotes.cantidad") — <c>Cantidad &gt; 0</c> estrictamente, nunca
