@@ -250,7 +250,7 @@ export function ConteoDeInventario() {
     setCargandoLotes(true)
 
     clienteDeStock
-      .lotes(idPuntoVenta, idArticulo)
+      .listarLotes(idPuntoVenta, idArticulo)
       .then((lista) => {
         if (!vigente || generacionLotesRef.current !== miGeneracion) return
         setLineasDeLote(lista.map(lineaDeConteoDeLoteVacia))

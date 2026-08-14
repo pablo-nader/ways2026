@@ -28,6 +28,9 @@ function lineaFixture(sobrescribir: Partial<LineaDeCompraFormulario> = {}): Line
     descuento: '50',
     idAlicuotaIva: 3,
     actualizaCosto: true,
+    controlaLote: false,
+    codigoLote: '',
+    fechaVencimiento: '',
     ...sobrescribir,
   }
 }
@@ -47,6 +50,9 @@ function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
     total: 950,
     actualizaCosto: true,
     precioSugerido: 114.95,
+    codigoLote: null,
+    fechaVencimiento: null,
+    idLote: null,
     ...sobrescribir,
   }
 }
@@ -73,6 +79,9 @@ describe('lineaDeCompraVacia / itemAFormulario', () => {
       descuento: '',
       idAlicuotaIva: '',
       actualizaCosto: true,
+      controlaLote: false,
+      codigoLote: '',
+      fechaVencimiento: '',
     })
   })
 
@@ -89,6 +98,18 @@ describe('lineaDeCompraVacia / itemAFormulario', () => {
     expect(linea.unidades).toBe('2')
     expect(linea.bultos).toBe('3')
     expect(linea.unidadesPorBulto).toBe('6')
+  })
+
+  it('itemAFormulario infiere controlaLote de un dato de lote ya persistido (stage-12-lotes-vencimientos, Slice 14)', () => {
+    const conLote = itemAFormulario(1, itemFixture({ codigoLote: 'L-01', fechaVencimiento: '2026-12-01' }))
+    expect(conLote.controlaLote).toBe(true)
+    expect(conLote.codigoLote).toBe('L-01')
+    expect(conLote.fechaVencimiento).toBe('2026-12-01')
+
+    const sinLote = itemAFormulario(1, itemFixture({ codigoLote: null, fechaVencimiento: null, idLote: null }))
+    expect(sinLote.controlaLote).toBe(false)
+    expect(sinLote.codigoLote).toBe('')
+    expect(sinLote.fechaVencimiento).toBe('')
   })
 })
 
@@ -112,6 +133,18 @@ describe('lineaCompletaParaEnvio', () => {
   it('sin costo unitario tipeado no está completa', () => {
     expect(lineaCompletaParaEnvio(lineaFixture({ costoUnitario: '' }))).toBe(false)
   })
+
+  it('un artículo que controla lote sin fecha de vencimiento no está completa (espejo del 400 lote_requerido del confirm)', () => {
+    expect(lineaCompletaParaEnvio(lineaFixture({ controlaLote: true, fechaVencimiento: '' }))).toBe(false)
+  })
+
+  it('un artículo que controla lote con fecha de vencimiento (sin código, se deriva) está completa', () => {
+    expect(lineaCompletaParaEnvio(lineaFixture({ controlaLote: true, codigoLote: '', fechaVencimiento: '2026-12-01' }))).toBe(true)
+  })
+
+  it('un artículo que no controla lote nunca exige fecha de vencimiento', () => {
+    expect(lineaCompletaParaEnvio(lineaFixture({ controlaLote: false, fechaVencimiento: '' }))).toBe(true)
+  })
 })
 
 describe('aLineaSolicitada', () => {
@@ -126,6 +159,8 @@ describe('aLineaSolicitada', () => {
       descuento: 50,
       idAlicuotaIva: 3,
       actualizaCosto: true,
+      codigoLote: null,
+      fechaVencimiento: null,
     })
   })
 
@@ -137,6 +172,15 @@ describe('aLineaSolicitada', () => {
     const linea = aLineaSolicitada(lineaFixture({ bultos: '3', unidadesPorBulto: '6' }))
     expect(linea.bultos).toBe(3)
     expect(linea.unidadesPorBulto).toBe(6)
+  })
+
+  it('codigoLote/fechaVencimiento vacíos recortan a null; tipeados viajan tal cual', () => {
+    expect(aLineaSolicitada(lineaFixture({ codigoLote: '', fechaVencimiento: '' })).codigoLote).toBeNull()
+    expect(aLineaSolicitada(lineaFixture({ codigoLote: '', fechaVencimiento: '' })).fechaVencimiento).toBeNull()
+
+    const linea = aLineaSolicitada(lineaFixture({ codigoLote: '  L-01  ', fechaVencimiento: '2026-12-01' }))
+    expect(linea.codigoLote).toBe('L-01')
+    expect(linea.fechaVencimiento).toBe('2026-12-01')
   })
 })
 

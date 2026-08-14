@@ -9,8 +9,10 @@ import type { LineaCarrito } from './carrito'
 import type {
   ArticuloEscaneado,
   ComprobanteEmitido,
+  EstadoDeVencimiento,
   LineaDeResolucion,
   LineaDeVenta,
+  LoteListado,
   PagoDeVenta,
   ResultadoDeResolucion,
   SolicitudDeVenta,
@@ -86,6 +88,12 @@ export function calcularSubtotalPrevia(lineas: LineaCarrito[], precios: Record<n
   }, 0)
 }
 
+/** Selección explícita de lote por línea del carrito, indexada por `idArticulo`
+ * (stage-12-lotes-vencimientos, Slice 14) — una línea AUSENTE acá viaja con `idLote: null`, el
+ * camino feliz de cero tecleo (design decisión 19): mostrar el `sugerido` resaltado en el picker
+ * no cuenta como elección, solo tocar el select la registra. */
+export type LotesSeleccionados = Record<number, number>
+
 /**
  * Carrito confirmado → `SolicitudDeVenta` (design: Checkout Contract), invocado por `Pos.tsx`
  * al cobrar. Sin precios en `LineaDeVenta` a propósito (design decisión 3: "no precioUnitario,
@@ -97,6 +105,7 @@ export function aSolicitudDeVenta(params: {
   codigoTipoComprobante: 'TX' | 'NCX'
   idComprobanteAsociado: number | null
   lineas: LineaCarrito[]
+  lotesSeleccionados: LotesSeleccionados
   pagos: PagoDeVenta[]
   direccionEntrega: string | null
   observaciones: string | null
@@ -105,6 +114,7 @@ export function aSolicitudDeVenta(params: {
     idArticulo: l.idArticulo,
     cantidad: l.cantidad,
     codigoBarra: l.codigoBarra,
+    idLote: params.lotesSeleccionados[l.idArticulo] ?? null,
   }))
 
   return {
@@ -116,5 +126,31 @@ export function aSolicitudDeVenta(params: {
     pagos: params.pagos,
     direccionEntrega: params.direccionEntrega,
     observaciones: params.observaciones,
+  }
+}
+
+// ---- Picker de lote del carrito (stage-12-lotes-vencimientos, Slice 14) -----------------------
+
+function etiquetaDeEstadoDeVencimiento(estado: EstadoDeVencimiento): string {
+  switch (estado) {
+    case 'Vencido':
+      return 'vencido'
+    case 'PorVencer':
+      return 'por vencer'
+    case 'Vigente':
+      return 'vigente'
+    case 'SinFecha':
+      return 'sin fecha'
+  }
+}
+
+/** `LoteListado` → opción del `<select>` del picker — pura y testeable sin DOM (design decisión
+ * 19: `sugerido` es server-authored, acá solo se traduce a texto, nunca se recalcula FEFO). */
+export function opcionDeLote(l: LoteListado): { valor: string; etiqueta: string } {
+  const marca = l.sugerido ? ' — sugerido' : ''
+  const codigo = l.esSinIdentificar ? 'Sin identificar' : l.codigo
+  return {
+    valor: String(l.idLote),
+    etiqueta: `${codigo} — ${etiquetaDeEstadoDeVencimiento(l.estado)} — saldo ${l.cantidad}${marca}`,
   }
 }

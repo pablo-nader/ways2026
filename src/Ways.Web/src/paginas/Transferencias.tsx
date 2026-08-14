@@ -140,7 +140,7 @@ function SelectorDeLote({ idPuntoVenta, idArticulo, idLote, disabled, onCambio }
     setError('')
 
     clienteDeStock
-      .lotes(idPuntoVenta, idArticulo)
+      .listarLotes(idPuntoVenta, idArticulo)
       .then((lista) => {
         if (!vigente || generacionRef.current !== miGeneracion) return
         setLotes(lista)

@@ -483,9 +483,11 @@ export type ArticuloListado = {
   disponibleParaTodas: boolean
   idsEmpresas: number[]
   activo: boolean
-  /** stage-12-lotes-vencimientos (Slice 15, espejo de `Articulo.ControlaLote`): control efectivo
-   * de lote de este artículo es este flag AND `lotes_habilitado` de la empresa
-   * (`ReglaDeLotes.ControlEfectivo`) — acá viaja solo el flag propio del artículo. */
+  /** stage-12-lotes-vencimientos (Slices 14/15, espejo de `Articulo.ControlaLote`): acá viaja
+   * solo el flag propio del artículo; el control EFECTIVO es este flag AND `lotes_habilitado`
+   * de la empresa (`ReglaDeLotes.ControlEfectivo`, decisión 2 del proposal). El toggle de
+   * edición vive en el editor de `Articulos.tsx`; el picker del POS no necesita este flag
+   * porque `GET /api/stock/lotes` ya resuelve todo server-side. */
   controlaLote: boolean
 }
 
@@ -885,7 +887,10 @@ export type Existencias = {
 // `POST /api/ventas`, mergeado en Slice 4) — usado por `ventas.ts` (mappers) y `Pos.tsx`
 // (wireado en Slice 7).
 
-export type LineaDeVenta = { idArticulo: number; cantidad: number; codigoBarra: string | null }
+/** `idLote` (stage-12-lotes-vencimientos, Slice 14): `null` es el camino feliz de cero tecleo
+ * (design decisión 19) — el servidor resuelve FEFO solo; solo viaja no-nulo cuando el cajero
+ * eligió explícitamente un lote distinto del sugerido en el picker. */
+export type LineaDeVenta = { idArticulo: number; cantidad: number; codigoBarra: string | null; idLote: number | null }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
 
 export type SolicitudDeVenta = {
@@ -916,6 +921,12 @@ export type ItemEmitido = {
   precioUnitario: number
   descuento: number
   total: number
+  /** stage-12-lotes-vencimientos (Slice 14): `null`/`false` para una línea sin lote — el ticket
+   * y la reimpresión muestran lo mismo (`items_comprobante_venta.id_lote` es el snapshot
+   * congelado). `loteVencido` es un warning, nunca un bloqueo (design decisión 12). */
+  idLote: number | null
+  codigoLote: string | null
+  loteVencido: boolean
 }
 
 /** Pago ya emitido — espejo de `PagoEmitido`. */
@@ -1056,6 +1067,12 @@ export type LineaDeCompraSolicitada = {
   descuento: number
   idAlicuotaIva: number
   actualizaCosto: boolean
+  /** stage-12-lotes-vencimientos (Slice 14): input crudo de recepción para un artículo
+   * lote-efectivo — nada se resuelve a esta altura (design: "nothing is resolved at draft
+   * time"), solo se persiste tal cual mientras la compra es borrador. `null` para un artículo
+   * que no controla lote (el servidor los ignora, `ReglaDeLotes.ControlEfectivo`). */
+  codigoLote: string | null
+  fechaVencimiento: string | null
 }
 
 /** Cuerpo de `POST /api/compras` (crea un borrador) y `PUT /api/compras/{id}` (replace-set
@@ -1085,6 +1102,12 @@ export type ItemDeCompra = {
   total: number
   actualizaCosto: boolean
   precioSugerido: number | null
+  /** `codigoLote`/`fechaVencimiento`: mismo input crudo de `LineaDeCompraSolicitada`, ya
+   * persistido. `idLote` es el lote resuelto (get-or-create) — `null` mientras la compra es
+   * borrador y para un artículo que no controla lote (stage-12-lotes-vencimientos, Slice 14). */
+  codigoLote: string | null
+  fechaVencimiento: string | null
+  idLote: number | null
 }
 
 /** Detalle completo de una compra (espejo de `CompraDetalle`). */
@@ -1211,10 +1234,9 @@ export type SolicitudDeTransferencia = {
 }
 
 /** El stock resultante de un artículo en AMBOS puntos de venta tras la transacción (espejo de
- * `LineaTransferida`). stage-12-lotes-vencimientos (Slice 15, misma forma exacta que agrega el
- * Slice 14): `idLote` viaja igual que `ItemEmitido.idLote` — la clave de agregación del backend
- * es `(idArticulo, idLote)`, no solo `idArticulo`: dos líneas del mismo artículo con lotes
- * distintos son filas separadas. */
+ * `LineaTransferida`). `idLote` (stage-12-lotes-vencimientos, Slice 10): el backend lo manda con
+ * clave de agregación `(idArticulo, idLote)` — dos líneas del mismo artículo con lotes distintos
+ * son filas separadas; la columna de lote de la grilla de `Transferencias.tsx` es del Slice 15. */
 export type LineaTransferida = { idArticulo: number; idLote: number | null; cantidadOrigen: number; cantidadDestino: number }
 
 /** Respuesta de `POST /api/stock/transferencias` (espejo de `ResultadoTransferencia`). */

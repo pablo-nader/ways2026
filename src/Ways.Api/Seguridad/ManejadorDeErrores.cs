@@ -21,269 +21,25 @@ public class ManejadorDeErrores(
         {
             ErrorDominio e => (e.EstadoHttp, e.Message, e.Codigo),
 
-            // Backstop de la carrera entre el chequeo previo de `ServicioDeUsuarios` y el
-            // `SaveChangesAsync`: dos requests concurrentes pueden pasar el chequeo y chocar
-            // recién acá. Traduce el mismo 409 de negocio en vez de dejar pasar un 500 genérico
-            // (que además sería un oráculo de enumeración cross-tenant: 409 vs 500 delataría si
-            // el mail ya existe en otro tenant).
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: "ux_usuarios_mail" } } =>
-                (StatusCodes.Status409Conflict, "El mail ya está en uso.", "mail_duplicado"),
+            // Camino EF SaveChangesAsync: Npgsql envuelve la excepción en DbUpdateException.
+            // ClasificarPostgresException (helper compartido, más abajo) es la ÚNICA fuente de
+            // verdad de la clasificación — este brazo y el de abajo (camino raw-ADO) llaman
+            // exactamente al mismo método, misma prioridad de resolución, mismo resultado para
+            // el mismo SqlState/ConstraintName.
+            DbUpdateException { InnerException: PostgresException pgEnvuelta }
+                when ClasificarPostgresException(pgEnvuelta, log) is { } backstopEf =>
+                backstopEf,
 
-            // Mismo backstop que el de arriba, para la otra unicidad de `usuarios`
-            // (`usuario` por tenant, ADR-7): la misma carrera entre el chequeo previo de
-            // `ServicioDeUsuarios` y el `SaveChangesAsync` puede chocar acá.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: "ux_usuarios_usuario" } } =>
-                (StatusCodes.Status409Conflict, "El usuario ya existe.", "usuario_duplicado"),
-
-            // stage-5-pos-ventas (Slice 3, task 3.10, db-error-backstops, design: Backstop Map
-            // — "ordering trap"): ux_comprobantes_venta_numero tiene que resolverse ANTES de
-            // llegar a ClasificarUnicidad (el caso genérico de más abajo) — su nombre contiene
-            // "_numero", así que la rama genérica de esa substring (backstop de
-            // ux_clientes_numero, "Ya existe un cliente con ese número") lo atraparía primero y
-            // lo clasificaría mal. Exact-match acá, ARRIBA del caso genérico, mismo criterio
-            // que el trap "_codigo_interno"/"codigos_barra" vs. "_codigo" dentro de esa
-            // función — la diferencia es que ese trap se resuelve DENTRO de ClasificarUnicidad
-            // (mismo Contains-chain) y este tiene que resolverse ANTES de siquiera llamarla.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string uxComprobante } }
-                when string.Equals(uxComprobante, "ux_comprobantes_venta_numero", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status409Conflict, "Ya existe un comprobante con ese número en este punto de venta y tipo.", "numero_de_comprobante_duplicado"),
-
-            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops,
-            // design: Backstop Map — "ordering trap"): mismo tratamiento que
-            // ux_comprobantes_venta_numero de arriba — su nombre contiene "_numero", así que
-            // tiene que resolverse por nombre EXACTO acá, ANTES de ClasificarUnicidad (que lo
-            // clasificaría como "numero_duplicado", el mensaje de ux_clientes_numero).
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string uxCompra } }
-                when string.Equals(uxCompra, "ux_comprobantes_compra_numero_externo", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status409Conflict, "Ya existe una compra con ese número de comprobante para este proveedor y tipo.", "compra_duplicada"),
-
-            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops,
-            // design: Backstop Map): orden es server-asignado dentro del replace-set (Slice 2) —
-            // exención documentada de prueba de carrera, misma familia que
-            // ux_items_comprobante_venta_orden.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string uxOrdenCompra } }
-                when string.Equals(uxOrdenCompra, "ux_items_comprobante_compra_orden", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en esta compra.", "orden_de_item_duplicado"),
-
-            // stage-12-lotes-vencimientos (Slice 1, task 1.16, db-error-backstops, design
-            // decisión 5): ux_lotes_articulo_codigo tiene que resolverse por nombre EXACTO,
-            // ANTES de llegar a ClasificarUnicidad (el caso genérico de más abajo) — su nombre
-            // contiene la substring "_codigo" (la rama genérica "_codigo" de ClasificarUnicidad
-            // lo atraparía primero y lo clasificaría como "codigo_duplicado", el mensaje
-            // genérico), mismo "ordering trap" que ux_comprobantes_venta_numero/
-            // ux_comprobantes_compra_numero_externo de arriba. La carrera es real: get-or-create
-            // (slice 3, ServicioDeLotes.ResolverOCrearAsync) usa un INSERT ... ON CONFLICT DO
-            // UPDATE que resuelve la carrera normal sin tocar nunca esta rama; esta rama es el
-            // backstop de una escritura cruda/fuera de banda o de un `POST /api/stock/lotes`
-            // (slice 3) concurrente con el mismo código.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string uxLote } }
-                when string.Equals(uxLote, "ux_lotes_articulo_codigo", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status409Conflict, "Ya existe un lote con ese código para este artículo.", "lote_duplicado"),
-
-            // stage-12-lotes-vencimientos (Slice 1, task 1.16, design decisión 5): exención
-            // documentada de prueba de carrera, mismo patrón que pk_stock/
-            // pk_numeraciones_comprobante — ningún camino de escritura de esta slice ni de las
-            // siguientes hace un INSERT crudo contra este índice: el lote sin identificar se
-            // crea siempre a través de ux_lotes_articulo_codigo primero (design decisión 5, el
-            // código reservado SIN-IDENTIFICAR serializa la creación en ESE índice), así que
-            // ux_lotes_sin_identificar nunca puede chocar por el camino de servicio. Defensa de
-            // esquema pura, alcanzable solo por un INSERT crudo/fuera de banda, probada con SQL
-            // directo (task 1.21).
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string uxSinIdentificar } }
-                when string.Equals(uxSinIdentificar, "ux_lotes_sin_identificar", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status409Conflict, "Ya existe un lote sin identificar para este artículo.", "lote_sin_identificar_duplicado"),
-
-            // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
-            // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
-            // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
-            // que ya codifica qué se duplicó) en vez de repetir un caso por índice.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string ux } }
-                when ClasificarUnicidad(ux) is { } familia =>
-                (StatusCodes.Status409Conflict, familia.Titulo, familia.Codigo),
-
-            // Backstop de defensa en profundidad (judgment-day ronda 1, item 3, stage-3-slice-2):
-            // el .Distinct() del servicio ya evita el duplicado en el camino normal, pero esta
-            // es la constraint real ante cualquier duplicado que lo esquive (p.ej. una carrera
-            // entre dos PUT concurrentes sobre el mismo artículo). PK_articulos_empresas usa la
-            // convención por default de EF (PascalCase, "PK_"), a diferencia del resto del
-            // esquema (snake_case, doc 10) — match case-insensitive para no depender de esa
-            // inconsistencia de nombre.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string pk } }
-                when string.Equals(pk, "pk_articulos_empresas", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status409Conflict, "La empresa ya está en el subconjunto de disponibilidad del artículo.", "empresa_duplicada_en_subset"),
-
-            // Backstop de la constraint que cierra la baja irreversible del Consumidor Final
-            // (stage-2-clientes-proveedores, design decision 4, task 1.12): ReglaDeClientes.
-            // ValidarNoConsumidorFinal ya bloquea el camino normal de ServicioDeClientes —
-            // esto es el backstop ante un UPDATE/DELETE que la esquive directamente.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: "ck_clientes_cf_protegido" } } =>
-                (StatusCodes.Status409Conflict, "El cliente Consumidor Final no se puede editar ni eliminar.", "consumidor_final_protegido"),
-
-            // Backstop de esquema (judgment-day, slice 3 ronda 2, item 2; GATE-APROBADO
-            // 2026-08-03) para "vigente_hasta > vigente_desde" en precios — ServicioDePrecios.
-            // AbrirNuevoPrecioAsync ya lo garantiza en el camino de servicio (mismo código de
-            // dominio, ver el chequeo simétrico contra la fila activa/el predecesor); esto cubre
-            // una escritura cruda/fuera de banda que lo bypasee (misma familia que
-            // ck_clientes_cf_protegido).
-            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: "ck_precios_ventana_valida" } } =>
-                (StatusCodes.Status400BadRequest, "vigente_hasta no puede ser anterior a vigente_desde.", "vigente_desde_invalido"),
-
-            // Backstop genérico para las FKs compuestas nuevas (fk_*_empresa, fk_categorias_padre,
-            // fk_parametros_punto_venta, …): una referencia a una fila que no existe (o que
-            // pertenece a otro tenant, invisible bajo RLS) llega acá como 23503 en vez de
-            // dejar pasar un 500 — p.ej. un IdCategoriaPadre de otro tenant.
-            //
-            // El match por prefijo también atrapa FKs administradas por la plataforma (no solo
-            // las alimentadas por input de cliente) — tradeoff deliberado (judgment-day, slice 3
-            // ronda 2): preferimos convertir un eventual 500 no logueado en un 400 logueado
-            // (ver el LogWarning de abajo) antes que mantener una lista cerrada de FKs que hay
-            // que actualizar a mano en cada migración nueva.
-            //
-            // stage-3-articulos-y-precios (task 1.10, db-error-backstops): confirmado sin
-            // cambio de código — el match por prefijo "fk_" de abajo ya cubre las 16 FKs nuevas
-            // de esta etapa (fk_articulos_tenant/area/categoria/marca/grupo/proveedor_habitual/
-            // alicuota_iva, fk_articulos_empresas_tenant/articulo/empresa,
-            // fk_codigos_barra_tenant/articulo, fk_precios_tenant/articulo/lista_precio,
-            // fk_numeraciones_articulos_tenant): todas siguen la convención fk_* del resto del
-            // esquema, así que no hace falta un caso nuevo acá.
-            //
-            // stage-4-ofertas (Slice 1, task 1.7): confirmado sin cambio de código — el mismo
-            // match por prefijo "fk_" ya cubre las 8 FKs nuevas de esta etapa
-            // (fk_ofertas_tenant/empresa/articulo/grupo/categoria,
-            // fk_ofertas_listas_tenant/oferta/lista_precio).
-            //
-            // stage-5-pos-ventas (Slice 3, task 3.13): confirmado sin cambio de código — el
-            // mismo match por prefijo "fk_" ya cubre las FKs nuevas de las seis tablas de esta
-            // slice (comprobantes_venta: tenant/punto_venta/cliente/empleado/tipo_comprobante/
-            // comprobante_asociado; items_comprobante_venta: tenant/comprobante/articulo/area/
-            // lista_precio/oferta/alicuota_iva; pagos_comprobante: tenant/comprobante/
-            // medio_pago; stock: tenant/articulo/punto_venta; movimientos_stock: tenant/
-            // articulo/punto_venta/punto_venta_destino/comprobante_venta/empleado;
-            // movimientos_cuenta_corriente: tenant/cliente/punto_venta/empleado/
-            // comprobante_venta/pago_comprobante) — todas siguen la convención fk_* del resto
-            // del esquema.
-            //
-            // stage-6-turnos-caja (Slice 1, task 1.7): confirmado sin cambio de código — el
-            // mismo match por prefijo "fk_" ya cubre las FKs nuevas de las cinco tablas de esta
-            // slice (turnos_caja: tenant/punto_venta/empleado_apertura/empleado_cierre;
-            // movimientos_caja: tenant/turno/empleado; arqueos_turno: tenant/turno/medio_pago;
-            // movimientos_tesoreria: tenant/punto_venta/turno/empleado; gastos: tenant/
-            // punto_venta/turno/empleado/proveedor/area/medio_pago) y también
-            // fk_comprobantes_venta_turno — todas siguen la convención fk_* del resto del
-            // esquema.
-            //
-            // stage-7-cuenta-corriente (Slice 1, task 1.8, design: Backstop Map): confirmado sin
-            // cambio de código — el mismo match por prefijo "fk_" ya cubre
-            // fk_movimientos_cuenta_corriente_actualizacion (el self-FK del marcador de
-            // reliquidación). En operación normal es inalcanzable — el id viene del RETURNING de
-            // la misma transacción que la fila que apunta —, así que el único camino para
-            // ejercitarla es un INSERT crudo fuera de banda (test de esquema, no de cliente HTTP).
-            //
-            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops):
-            // confirmado sin cambio de código — el mismo match por prefijo "fk_" ya cubre las FKs
-            // nuevas de esta slice (comprobantes_compra: tenant/proveedor/punto_venta/empleado/
-            // tipo_comprobante; items_comprobante_compra: tenant/comprobante/articulo/
-            // alicuota_iva; fk_movimientos_stock_comprobante_compra; fk_gastos_comprobante_compra)
-            // — todas siguen la convención fk_* del resto del esquema.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23503", ConstraintName: string fk } }
-                when fk.StartsWith("fk_", StringComparison.Ordinal) =>
-                LogYClasificarReferenciaInvalida(fk, log),
-
-            // stage-5-pos-ventas (Slice 3, task 3.11, db-error-backstops, design: Backstop Map):
-            // pk_stock — exención documentada de prueba de carrera, misma familia que
-            // pk_numeraciones_comprobante: el único escritor de stock (Slice 4/5, INSERT ...
-            // ON CONFLICT DO UPDATE) nunca puede disparar 23505 por construcción. Defensa de
-            // esquema pura, alcanzable solo por un INSERT crudo/fuera de banda, probada con SQL
-            // directo.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string pkStock } }
-                when string.Equals(pkStock, "pk_stock", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status409Conflict, "Ya existe stock cargado para ese artículo en ese punto de venta.", "stock_duplicado"),
-
-            // stage-5-pos-ventas (Slice 3, task 3.12, db-error-backstops, design: Backstop Map):
-            // las cuatro CHECKs de comprobantes_venta/pagos_comprobante/movimientos_stock
-            // no comparten un prefijo común (a diferencia de "ck_ofertas_"), así que el guard
-            // de esta rama llama directo a ClasificarCheckDeVentas (switch por nombre EXACTO,
-            // nunca Contains) en vez de filtrar por StartsWith primero. ValidadorDePagos/
-            // ReglaDeComprobantes/el camino de escritura de movimientos_stock (Slice 4/5) ya
-            // validan los cuatro invariantes en el servicio — bajo operación normal ninguna de
-            // las cuatro ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
-            // de banda (misma familia que ClasificarCheckDeOfertas).
-            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckVenta } }
-                when ClasificarCheckDeVentas(ckVenta) is { } checkVenta =>
-                (checkVenta.EstadoHttp, checkVenta.Titulo, checkVenta.Codigo),
-
-            // stage-6-turnos-caja (Slice 1, task 1.7, db-error-backstops, design: Backstop Map):
-            // switch por nombre EXACTO de las seis CHECKs nuevas de turnos_caja/movimientos_caja/
-            // gastos/movimientos_tesoreria — sin prefijo compartido entre las cuatro tablas
-            // (mismo motivo que ClasificarCheckDeVentas). ReglaDeTurnos/ReglaDeMovimientosDeCaja
-            // (Slice 2), ServicioDeGastos (Slice 3) y ServicioDeTurnos.CerrarAsync (Slice 4) ya
-            // validan estos invariantes en el camino de servicio — bajo operación normal ninguna
-            // de las seis ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
-            // de banda.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckCaja } }
-                when ClasificarCheckDeCaja(ckCaja) is { } checkCaja =>
-                (checkCaja.EstadoHttp, checkCaja.Titulo, checkCaja.Codigo),
-
-            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops,
-            // design: Backstop Map): switch por nombre EXACTO detrás de un guard de prefijo
-            // "ck_comprobantes_compra_"/"ck_items_comprobante_compra_" — mismo criterio que
-            // ClasificarCheckDeOfertas ("ck_ofertas_"), no el de ClasificarCheckDeVentas/
-            // ClasificarCheckDeCaja (sin prefijo compartido). CalculadorDeCompra/ServicioDeCompras
-            // (Slice 2) ya validan estos cinco invariantes en el camino de servicio — bajo
-            // operación normal ninguna rama es alcanzable, quedan como backstop de una escritura
-            // cruda/fuera de banda.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckCompra } }
-                when (ckCompra.StartsWith("ck_comprobantes_compra_", StringComparison.Ordinal)
-                        || ckCompra.StartsWith("ck_items_comprobante_compra_", StringComparison.Ordinal))
-                    && ClasificarCheckDeCompras(ckCompra) is { } checkCompra =>
-                (checkCompra.EstadoHttp, checkCompra.Titulo, checkCompra.Codigo),
-
-            // Backstop genérico (db-error-backstops, judgment-day slice 3 ronda 1): cualquier
-            // valor numérico que desborda la precisión/escala de su columna (p.ej. un margen o
-            // un límite de crédito por encima de lo que valida la capa de servicio) llega acá
-            // como 22003 en vez de dejar pasar un 500 — no está atado a una constraint puntual
-            // porque numeric_value_out_of_range aplica por igual a cualquier columna numeric(p,s).
-            DbUpdateException { InnerException: PostgresException { SqlState: "22003" } } =>
-                (StatusCodes.Status400BadRequest, "El valor numérico está fuera de rango.", "valor_fuera_de_rango"),
-
-            // stage-4-ofertas (Slice 1, task 1.7, db-error-backstops, design decision 8):
-            // switch por nombre EXACTO detrás de un guard de prefijo "ck_ofertas_" — a
-            // diferencia de ClasificarUnicidad (match por Contains/sufijo), acá no hay riesgo
-            // de colisión de substring porque los cuatro nombres son literales completos y
-            // mutuamente exclusivos. Agregado DESPUÉS de las dos ramas exactas existentes
-            // (ck_clientes_cf_protegido/ck_precios_ventana_valida): cero cambio de
-            // comportamiento para esas dos. ReglaDeOfertas ya valida los cuatro invariantes en
-            // el camino de servicio (Slice 1, dominio; Slice 2, ServicioDeOfertas) — bajo
-            // operación normal ninguna de las cuatro ramas de abajo es alcanzable, quedan como
-            // backstop de una escritura cruda/fuera de banda (misma familia que las dos ramas
-            // de arriba).
-            DbUpdateException { InnerException: PostgresException { SqlState: "23514", ConstraintName: string ckOferta } }
-                when ckOferta.StartsWith("ck_ofertas_", StringComparison.Ordinal)
-                    && ClasificarCheckDeOfertas(ckOferta) is { } checkOferta =>
-                (checkOferta.EstadoHttp, checkOferta.Titulo, checkOferta.Codigo),
-
-            // stage-4-ofertas (Slice 1, task 1.7): pk_ofertas_listas — la única superficie
-            // genuinamente racy de esta etapa (design: Backstop Map). El replace-set de
-            // ServicioDeOfertas (Slice 2: delete-all + insert transaccional, ids .Distinct()ed)
-            // ya evita el duplicado en el camino normal; esto cubre dos PUT concurrentes que
-            // reemplazan el mismo set de listas de una oferta y chocan acá — misma familia que
-            // pk_articulos_empresas.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string pkOfertasListas } }
-                when string.Equals(pkOfertasListas, "pk_ofertas_listas", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status409Conflict, "La lista de precios ya está en el subconjunto de targeting de la oferta.", "oferta_lista_duplicada"),
-
-            // stage-5-pos-ventas (Slice 2, task 2.6, db-error-backstops, design: Backstop Map):
-            // pk_numeraciones_comprobante — exención documentada de prueba de carrera. A
-            // diferencia de pk_ofertas_listas/PK_articulos_empresas (que SÍ tienen un camino de
-            // escritura normal que puede chocar), el único escritor de esta tabla
-            // (AsignadorDeNumeroComprobante) inserta con ON CONFLICT DO NOTHING — nunca puede
-            // disparar 23505 por construcción. Esta rama queda como defensa de esquema pura,
-            // alcanzable solo por un INSERT crudo/fuera de banda que bypasee el asignador
-            // (misma familia que pk_stock, Slice 3), probada con SQL directo, no con una
-            // carrera real.
-            DbUpdateException { InnerException: PostgresException { SqlState: "23505", ConstraintName: string pkNumeracion } }
-                when string.Equals(pkNumeracion, "pk_numeraciones_comprobante", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status409Conflict, "Ya existe una numeración para ese punto de venta y tipo de comprobante.", "numeracion_duplicada"),
+            // fix(raw-ado): camino raw-ADO (conexion.CreateCommand() en ServicioDeVentas/
+            // ServicioDeCompras/ServicioDeStock/ServicioDeLotes) — Npgsql tira PostgresException
+            // PELADA, nunca envuelta en DbUpdateException (esa envoltura es específica de
+            // SaveChangesAsync). Sin este brazo, cualquier violación de constraint disparada
+            // desde uno de esos statements crudos caía derecho al catch-all de abajo como 500
+            // error_interno — detectado dos veces en el judgment-day de la etapa 12
+            // (ck_movimientos_stock_cantidad_no_cero y fk_stock_lotes_lote). Mismo helper que el
+            // brazo de arriba: un solo lugar de verdad para los dos caminos de escritura.
+            PostgresException pgCruda when ClasificarPostgresException(pgCruda, log) is { } backstopCrudo =>
+                backstopCrudo,
 
             // Defensa en profundidad genérica (judgment-day, item 2, stage-4-ofertas): EF
             // interpreta un UPDATE/DELETE que afecta 0 filas de las esperadas (en vez de la 1
@@ -292,15 +48,14 @@ public class ManejadorDeErrores(
             // que otro escritor ya borró y comiteó primero. Sin este caso, eso llegaba como 500
             // crudo en vez de un 409 traducido.
             //
-            // Colocado ACÁ, DESPUÉS de todos los casos `DbUpdateException { InnerException:
-            // PostgresException {...} }` de arriba y ANTES del catch-all `_`, en vez de arriba de
-            // todo junto a `ErrorDominio`: como `DbUpdateConcurrencyException` DERIVA de
+            // Colocado ACÁ, DESPUÉS del brazo `DbUpdateException { InnerException:
+            // PostgresException }` de arriba y ANTES del catch-all `_`, en vez de arriba de todo
+            // junto a `ErrorDominio`: como `DbUpdateConcurrencyException` DERIVA de
             // `DbUpdateException`, esta posición es la única que estructuralmente GARANTIZA que
-            // nunca puede eclipsar ninguno de esos casos más específicos (cada uno de ellos exige
-            // además un `InnerException` de tipo `PostgresException` con un `SqlState`/
-            // `ConstraintName` puntual — si alguna vez `DbUpdateConcurrencyException` llegara a
-            // traer ese mismo shape de `InnerException`, el switch ya lo habría resuelto arriba
-            // antes de llegar acá). Genérico a propósito (no ofertas-específico): cualquier
+            // nunca puede eclipsar ese caso más específico (que exige además un `InnerException`
+            // de tipo `PostgresException` clasificable — si alguna vez `DbUpdateConcurrencyException`
+            // llegara a traer ese mismo shape de `InnerException`, el switch ya lo habría resuelto
+            // arriba antes de llegar acá). Genérico a propósito (no ofertas-específico): cualquier
             // replace-set/edición concurrente que EF detecte como "0 filas afectadas" en
             // cualquier tabla cae acá con el mismo código estable.
             DbUpdateConcurrencyException =>
@@ -330,6 +85,243 @@ public class ManejadorDeErrores(
             }
         });
     }
+
+    /// <summary>fix(raw-ado): único punto de clasificación de un <see cref="PostgresException"/>
+    /// por SqlState/ConstraintName — extraído del switch de <see cref="TryHandleAsync"/> para que
+    /// el camino EF (<c>DbUpdateException.InnerException</c>) y el camino raw-ADO (excepción
+    /// pelada) llamen exactamente al mismo método, misma prioridad de resolución. Cada <c>when</c>
+    /// de acá abajo es EL MISMO chequeo que tenía el `case` original — solo se movió de matchear
+    /// contra <c>DbUpdateException { InnerException: PostgresException {...} }</c> a matchear
+    /// directo contra <paramref name="pg"/>; el orden entre casos (crítico para los "ordering
+    /// trap" documentados en cada uno: exact-match ANTES que el Contains-chain genérico de
+    /// <see cref="ClasificarUnicidad"/>) es IDÉNTICO al que tenía el switch antes de esta
+    /// extracción — cero cambio de comportamiento en el camino EF, que es el único que corría
+    /// hasta ahora.</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarPostgresException(
+        PostgresException pg, ILogger log) =>
+        pg switch
+        {
+            // Backstop de la carrera entre el chequeo previo de `ServicioDeUsuarios` y el
+            // `SaveChangesAsync`: dos requests concurrentes pueden pasar el chequeo y chocar
+            // recién acá. Traduce el mismo 409 de negocio en vez de dejar pasar un 500 genérico
+            // (que además sería un oráculo de enumeración cross-tenant: 409 vs 500 delataría si
+            // el mail ya existe en otro tenant).
+            { SqlState: "23505", ConstraintName: "ux_usuarios_mail" } =>
+                (StatusCodes.Status409Conflict, "El mail ya está en uso.", "mail_duplicado"),
+
+            // Mismo backstop que el de arriba, para la otra unicidad de `usuarios`
+            // (`usuario` por tenant, ADR-7): la misma carrera entre el chequeo previo de
+            // `ServicioDeUsuarios` y el `SaveChangesAsync` puede chocar acá.
+            { SqlState: "23505", ConstraintName: "ux_usuarios_usuario" } =>
+                (StatusCodes.Status409Conflict, "El usuario ya existe.", "usuario_duplicado"),
+
+            // stage-5-pos-ventas (Slice 3, task 3.10, db-error-backstops, design: Backstop Map
+            // — "ordering trap"): ux_comprobantes_venta_numero tiene que resolverse ANTES de
+            // llegar a ClasificarUnicidad (el caso genérico de más abajo) — su nombre contiene
+            // "_numero", así que la rama genérica de esa substring (backstop de
+            // ux_clientes_numero, "Ya existe un cliente con ese número") lo atraparía primero y
+            // lo clasificaría mal. Exact-match acá, ARRIBA del caso genérico, mismo criterio
+            // que el trap "_codigo_interno"/"codigos_barra" vs. "_codigo" dentro de esa
+            // función — la diferencia es que ese trap se resuelve DENTRO de ClasificarUnicidad
+            // (mismo Contains-chain) y este tiene que resolverse ANTES de siquiera llamarla.
+            { SqlState: "23505", ConstraintName: string uxComprobante }
+                when string.Equals(uxComprobante, "ux_comprobantes_venta_numero", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un comprobante con ese número en este punto de venta y tipo.", "numero_de_comprobante_duplicado"),
+
+            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops,
+            // design: Backstop Map — "ordering trap"): mismo tratamiento que
+            // ux_comprobantes_venta_numero de arriba — su nombre contiene "_numero", así que
+            // tiene que resolverse por nombre EXACTO acá, ANTES de ClasificarUnicidad (que lo
+            // clasificaría como "numero_duplicado", el mensaje de ux_clientes_numero).
+            { SqlState: "23505", ConstraintName: string uxCompra }
+                when string.Equals(uxCompra, "ux_comprobantes_compra_numero_externo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe una compra con ese número de comprobante para este proveedor y tipo.", "compra_duplicada"),
+
+            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops,
+            // design: Backstop Map): orden es server-asignado dentro del replace-set (Slice 2) —
+            // exención documentada de prueba de carrera, misma familia que
+            // ux_items_comprobante_venta_orden.
+            { SqlState: "23505", ConstraintName: string uxOrdenCompra }
+                when string.Equals(uxOrdenCompra, "ux_items_comprobante_compra_orden", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en esta compra.", "orden_de_item_duplicado"),
+
+            // stage-12-lotes-vencimientos (Slice 1, task 1.16, db-error-backstops, design
+            // decisión 5): ux_lotes_articulo_codigo tiene que resolverse por nombre EXACTO,
+            // ANTES de llegar a ClasificarUnicidad (el caso genérico de más abajo) — su nombre
+            // contiene la substring "_codigo" (la rama genérica "_codigo" de ClasificarUnicidad
+            // lo atraparía primero y lo clasificaría como "codigo_duplicado", el mensaje
+            // genérico), mismo "ordering trap" que ux_comprobantes_venta_numero/
+            // ux_comprobantes_compra_numero_externo de arriba. La carrera es real: get-or-create
+            // (slice 3, ServicioDeLotes.ResolverOCrearAsync) usa un INSERT ... ON CONFLICT DO
+            // UPDATE que resuelve la carrera normal sin tocar nunca esta rama; esta rama es el
+            // backstop de una escritura cruda/fuera de banda o de un `POST /api/stock/lotes`
+            // (slice 3) concurrente con el mismo código.
+            { SqlState: "23505", ConstraintName: string uxLote }
+                when string.Equals(uxLote, "ux_lotes_articulo_codigo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un lote con ese código para este artículo.", "lote_duplicado"),
+
+            // stage-12-lotes-vencimientos (Slice 1, task 1.16, design decisión 5): exención
+            // documentada de prueba de carrera, mismo patrón que pk_stock/
+            // pk_numeraciones_comprobante — ningún camino de escritura de esta slice ni de las
+            // siguientes hace un INSERT crudo contra este índice: el lote sin identificar se
+            // crea siempre a través de ux_lotes_articulo_codigo primero (design decisión 5, el
+            // código reservado SIN-IDENTIFICAR serializa la creación en ESE índice), así que
+            // ux_lotes_sin_identificar nunca puede chocar por el camino de servicio. Defensa de
+            // esquema pura, alcanzable solo por un INSERT crudo/fuera de banda, probada con SQL
+            // directo (task 1.21).
+            { SqlState: "23505", ConstraintName: string uxSinIdentificar }
+                when string.Equals(uxSinIdentificar, "ux_lotes_sin_identificar", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un lote sin identificar para este artículo.", "lote_sin_identificar_duplicado"),
+
+            // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
+            // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
+            // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
+            // que ya codifica qué se duplicó) en vez de repetir un caso por índice.
+            { SqlState: "23505", ConstraintName: string ux }
+                when ClasificarUnicidad(ux) is { } familia =>
+                (StatusCodes.Status409Conflict, familia.Titulo, familia.Codigo),
+
+            // Backstop de defensa en profundidad (judgment-day ronda 1, item 3, stage-3-slice-2):
+            // el .Distinct() del servicio ya evita el duplicado en el camino normal, pero esta
+            // es la constraint real ante cualquier duplicado que lo esquive (p.ej. una carrera
+            // entre dos PUT concurrentes sobre el mismo artículo). PK_articulos_empresas usa la
+            // convención por default de EF (PascalCase, "PK_"), a diferencia del resto del
+            // esquema (snake_case, doc 10) — match case-insensitive para no depender de esa
+            // inconsistencia de nombre.
+            { SqlState: "23505", ConstraintName: string pk }
+                when string.Equals(pk, "pk_articulos_empresas", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "La empresa ya está en el subconjunto de disponibilidad del artículo.", "empresa_duplicada_en_subset"),
+
+            // Backstop de la constraint que cierra la baja irreversible del Consumidor Final
+            // (stage-2-clientes-proveedores, design decision 4, task 1.12): ReglaDeClientes.
+            // ValidarNoConsumidorFinal ya bloquea el camino normal de ServicioDeClientes —
+            // esto es el backstop ante un UPDATE/DELETE que la esquive directamente.
+            { SqlState: "23514", ConstraintName: "ck_clientes_cf_protegido" } =>
+                (StatusCodes.Status409Conflict, "El cliente Consumidor Final no se puede editar ni eliminar.", "consumidor_final_protegido"),
+
+            // Backstop de esquema (judgment-day, slice 3 ronda 2, item 2; GATE-APROBADO
+            // 2026-08-03) para "vigente_hasta > vigente_desde" en precios — ServicioDePrecios.
+            // AbrirNuevoPrecioAsync ya lo garantiza en el camino de servicio (mismo código de
+            // dominio, ver el chequeo simétrico contra la fila activa/el predecesor); esto cubre
+            // una escritura cruda/fuera de banda que lo bypasee (misma familia que
+            // ck_clientes_cf_protegido).
+            { SqlState: "23514", ConstraintName: "ck_precios_ventana_valida" } =>
+                (StatusCodes.Status400BadRequest, "vigente_hasta no puede ser anterior a vigente_desde.", "vigente_desde_invalido"),
+
+            // Backstop genérico para las FKs compuestas nuevas (fk_*_empresa, fk_categorias_padre,
+            // fk_parametros_punto_venta, …): una referencia a una fila que no existe (o que
+            // pertenece a otro tenant, invisible bajo RLS) llega acá como 23503 en vez de
+            // dejar pasar un 500 — p.ej. un IdCategoriaPadre de otro tenant.
+            //
+            // El match por prefijo también atrapa FKs administradas por la plataforma (no solo
+            // las alimentadas por input de cliente) — tradeoff deliberado (judgment-day, slice 3
+            // ronda 2): preferimos convertir un eventual 500 no logueado en un 400 logueado
+            // (ver el LogWarning de abajo) antes que mantener una lista cerrada de FKs que hay
+            // que actualizar a mano en cada migración nueva. Cubre, sin cambio de código,
+            // TODAS las FKs `fk_*` de cada etapa nueva del esquema (articulos, ofertas,
+            // pos-ventas, turnos-caja, cuenta-corriente, compras-transferencias-inventario,
+            // lotes-vencimientos, …) — el match es por convención de nombre, no por lista cerrada.
+            { SqlState: "23503", ConstraintName: string fk } when fk.StartsWith("fk_", StringComparison.Ordinal) =>
+                LogYClasificarReferenciaInvalida(fk, log),
+
+            // stage-5-pos-ventas (Slice 3, task 3.11, db-error-backstops, design: Backstop Map):
+            // pk_stock — exención documentada de prueba de carrera, misma familia que
+            // pk_numeraciones_comprobante: el único escritor de stock (Slice 4/5, INSERT ...
+            // ON CONFLICT DO UPDATE) nunca puede disparar 23505 por construcción. Defensa de
+            // esquema pura, alcanzable solo por un INSERT crudo/fuera de banda, probada con SQL
+            // directo.
+            { SqlState: "23505", ConstraintName: string pkStock }
+                when string.Equals(pkStock, "pk_stock", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe stock cargado para ese artículo en ese punto de venta.", "stock_duplicado"),
+
+            // stage-5-pos-ventas (Slice 3, task 3.12, db-error-backstops, design: Backstop Map):
+            // las cuatro CHECKs de comprobantes_venta/pagos_comprobante/movimientos_stock
+            // no comparten un prefijo común (a diferencia de "ck_ofertas_"), así que el guard
+            // de esta rama llama directo a ClasificarCheckDeVentas (switch por nombre EXACTO,
+            // nunca Contains) en vez de filtrar por StartsWith primero. ValidadorDePagos/
+            // ReglaDeComprobantes/el camino de escritura de movimientos_stock (Slice 4/5) ya
+            // validan los cuatro invariantes en el servicio — bajo operación normal ninguna de
+            // las cuatro ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
+            // de banda (misma familia que ClasificarCheckDeOfertas).
+            { SqlState: "23514", ConstraintName: string ckVenta }
+                when ClasificarCheckDeVentas(ckVenta) is { } checkVenta =>
+                (checkVenta.EstadoHttp, checkVenta.Titulo, checkVenta.Codigo),
+
+            // stage-6-turnos-caja (Slice 1, task 1.7, db-error-backstops, design: Backstop Map):
+            // switch por nombre EXACTO de las seis CHECKs nuevas de turnos_caja/movimientos_caja/
+            // gastos/movimientos_tesoreria — sin prefijo compartido entre las cuatro tablas
+            // (mismo motivo que ClasificarCheckDeVentas). ReglaDeTurnos/ReglaDeMovimientosDeCaja
+            // (Slice 2), ServicioDeGastos (Slice 3) y ServicioDeTurnos.CerrarAsync (Slice 4) ya
+            // validan estos invariantes en el camino de servicio — bajo operación normal ninguna
+            // de las seis ramas es alcanzable, quedan como backstop de una escritura cruda/fuera
+            // de banda.
+            { SqlState: "23514", ConstraintName: string ckCaja }
+                when ClasificarCheckDeCaja(ckCaja) is { } checkCaja =>
+                (checkCaja.EstadoHttp, checkCaja.Titulo, checkCaja.Codigo),
+
+            // stage-8-compras-transferencias-inventario (Slice 1, task 1.10, db-error-backstops,
+            // design: Backstop Map): switch por nombre EXACTO detrás de un guard de prefijo
+            // "ck_comprobantes_compra_"/"ck_items_comprobante_compra_" — mismo criterio que
+            // ClasificarCheckDeOfertas ("ck_ofertas_"), no el de ClasificarCheckDeVentas/
+            // ClasificarCheckDeCaja (sin prefijo compartido). CalculadorDeCompra/ServicioDeCompras
+            // (Slice 2) ya validan estos cinco invariantes en el camino de servicio — bajo
+            // operación normal ninguna rama es alcanzable, quedan como backstop de una escritura
+            // cruda/fuera de banda.
+            { SqlState: "23514", ConstraintName: string ckCompra }
+                when (ckCompra.StartsWith("ck_comprobantes_compra_", StringComparison.Ordinal)
+                        || ckCompra.StartsWith("ck_items_comprobante_compra_", StringComparison.Ordinal))
+                    && ClasificarCheckDeCompras(ckCompra) is { } checkCompra =>
+                (checkCompra.EstadoHttp, checkCompra.Titulo, checkCompra.Codigo),
+
+            // Backstop genérico (db-error-backstops, judgment-day slice 3 ronda 1): cualquier
+            // valor numérico que desborda la precisión/escala de su columna (p.ej. un margen o
+            // un límite de crédito por encima de lo que valida la capa de servicio) llega acá
+            // como 22003 en vez de dejar pasar un 500 — no está atado a una constraint puntual
+            // porque numeric_value_out_of_range aplica por igual a cualquier columna numeric(p,s).
+            { SqlState: "22003" } =>
+                (StatusCodes.Status400BadRequest, "El valor numérico está fuera de rango.", "valor_fuera_de_rango"),
+
+            // stage-4-ofertas (Slice 1, task 1.7, db-error-backstops, design decision 8):
+            // switch por nombre EXACTO detrás de un guard de prefijo "ck_ofertas_" — a
+            // diferencia de ClasificarUnicidad (match por Contains/sufijo), acá no hay riesgo
+            // de colisión de substring porque los cuatro nombres son literales completos y
+            // mutuamente exclusivos. Agregado DESPUÉS de las dos ramas exactas existentes
+            // (ck_clientes_cf_protegido/ck_precios_ventana_valida): cero cambio de
+            // comportamiento para esas dos. ReglaDeOfertas ya valida los cuatro invariantes en
+            // el camino de servicio (Slice 1, dominio; Slice 2, ServicioDeOfertas) — bajo
+            // operación normal ninguna de las cuatro ramas de abajo es alcanzable, quedan como
+            // backstop de una escritura cruda/fuera de banda (misma familia que las dos ramas
+            // de arriba).
+            { SqlState: "23514", ConstraintName: string ckOferta }
+                when ckOferta.StartsWith("ck_ofertas_", StringComparison.Ordinal)
+                    && ClasificarCheckDeOfertas(ckOferta) is { } checkOferta =>
+                (checkOferta.EstadoHttp, checkOferta.Titulo, checkOferta.Codigo),
+
+            // stage-4-ofertas (Slice 1, task 1.7): pk_ofertas_listas — la única superficie
+            // genuinamente racy de esta etapa (design: Backstop Map). El replace-set de
+            // ServicioDeOfertas (Slice 2: delete-all + insert transaccional, ids .Distinct()ed)
+            // ya evita el duplicado en el camino normal; esto cubre dos PUT concurrentes que
+            // reemplazan el mismo set de listas de una oferta y chocan acá — misma familia que
+            // pk_articulos_empresas.
+            { SqlState: "23505", ConstraintName: string pkOfertasListas }
+                when string.Equals(pkOfertasListas, "pk_ofertas_listas", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "La lista de precios ya está en el subconjunto de targeting de la oferta.", "oferta_lista_duplicada"),
+
+            // stage-5-pos-ventas (Slice 2, task 2.6, db-error-backstops, design: Backstop Map):
+            // pk_numeraciones_comprobante — exención documentada de prueba de carrera. A
+            // diferencia de pk_ofertas_listas/PK_articulos_empresas (que SÍ tienen un camino de
+            // escritura normal que puede chocar), el único escritor de esta tabla
+            // (AsignadorDeNumeroComprobante) inserta con ON CONFLICT DO NOTHING — nunca puede
+            // disparar 23505 por construcción. Esta rama queda como defensa de esquema pura,
+            // alcanzable solo por un INSERT crudo/fuera de banda que bypasee el asignador
+            // (misma familia que pk_stock, Slice 3), probada con SQL directo, no con una
+            // carrera real.
+            { SqlState: "23505", ConstraintName: string pkNumeracion }
+                when string.Equals(pkNumeracion, "pk_numeraciones_comprobante", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe una numeración para ese punto de venta y tipo de comprobante.", "numeracion_duplicada"),
+
+            _ => null
+        };
 
     /// <summary>Agrupa los índices únicos nuevos por familia a partir del sufijo de su
     /// nombre — evita repetir un caso por índice para <c>ux_areas_nombre_*</c>,

@@ -137,6 +137,15 @@ export type LineaDeCompraFormulario = {
   descuento: string
   idAlicuotaIva: number | ''
   actualizaCosto: boolean
+  /** stage-12-lotes-vencimientos (Slice 14): capturado del `ArticuloListado.controlaLote`
+   * elegido en `SelectorDeArticulo` — decide si `fechaVencimiento` entra al conteo de líneas
+   * incompletas (`lineaCompletaParaEnvio`, espejo del `lote_requerido` server-side). Al reabrir
+   * un borrador existente se infiere de si la línea YA trae dato de lote (`itemAFormulario`):
+   * una línea lote-efectiva todavía no tocada no se detecta hasta que el operador la edite — el
+   * servidor sigue siendo la autoridad final al confirmar. */
+  controlaLote: boolean
+  codigoLote: string
+  fechaVencimiento: string
 }
 
 export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
@@ -151,6 +160,9 @@ export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
     descuento: '',
     idAlicuotaIva: '',
     actualizaCosto: true,
+    controlaLote: false,
+    codigoLote: '',
+    fechaVencimiento: '',
   }
 }
 
@@ -170,6 +182,11 @@ export function itemAFormulario(clave: number, item: ItemDeCompra): LineaDeCompr
     descuento: String(item.descuento),
     idAlicuotaIva: item.idAlicuotaIva,
     actualizaCosto: item.actualizaCosto,
+    // Heurística documentada arriba (`LineaDeCompraFormulario.controlaLote`): un dato de lote ya
+    // persistido prueba que el artículo controla lote; su ausencia no prueba lo contrario.
+    controlaLote: item.idLote !== null || item.codigoLote !== null || item.fechaVencimiento !== null,
+    codigoLote: item.codigoLote ?? '',
+    fechaVencimiento: item.fechaVencimiento ?? '',
   }
 }
 
@@ -182,8 +199,17 @@ function numeroONulo(valor: string): number | null {
   return valor.trim() === '' ? null : Number(valor)
 }
 
+/** Mismo chequeo que `ServicioDeCompras` hace al confirmar (`lote_requerido`, 400) para un
+ * artículo lote-efectivo: `fechaVencimiento` es obligatoria, `codigoLote` no (se deriva del
+ * vencimiento si se omite — `ReglaDeLotes.DerivarCodigo`, design decisión 4). */
 export function lineaCompletaParaEnvio(l: LineaDeCompraFormulario): boolean {
-  return l.idArticulo !== '' && l.idAlicuotaIva !== '' && l.unidades.trim() !== '' && l.costoUnitario.trim() !== ''
+  return (
+    l.idArticulo !== '' &&
+    l.idAlicuotaIva !== '' &&
+    l.unidades.trim() !== '' &&
+    l.costoUnitario.trim() !== '' &&
+    (!l.controlaLote || l.fechaVencimiento.trim() !== '')
+  )
 }
 
 /** Fila de formulario → `LineaDeCompraSolicitada` — solo se envían las filas completas
@@ -199,6 +225,8 @@ export function aLineaSolicitada(l: LineaDeCompraFormulario): LineaDeCompraSolic
     descuento: l.descuento.trim() === '' ? 0 : numero(l.descuento),
     idAlicuotaIva: Number(l.idAlicuotaIva),
     actualizaCosto: l.actualizaCosto,
+    codigoLote: l.codigoLote.trim() === '' ? null : l.codigoLote.trim(),
+    fechaVencimiento: l.fechaVencimiento === '' ? null : l.fechaVencimiento,
   }
 }
 

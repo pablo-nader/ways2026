@@ -29,11 +29,12 @@ export const clienteDeStock = {
    * de lo que se escribió; el `GET /api/stock` previo es solo un dato de referencia en pantalla,
    * nunca lo que decide qué se renderiza después de un submit. */
   contar: (solicitud: SolicitudDeConteo) => api.post<ResultadoConteo>('/stock/conteos', solicitud),
-  /** stage-12-lotes-vencimientos (Slice 15, espejo de `GET /api/stock/lotes`): feed del picker de
-   * lote, con `sugerido` (FEFO server-computed) — el picker lo pre-selecciona, nunca lo
-   * recalcula del lado del cliente (design decisión 19). Sin `idComprobanteAsociado` acá: esa
-   * variante (sugerencia desde el snapshot de una devolución) es del picker del POS, Slice 14. */
-  lotes: (idPuntoVenta: number, idArticulo: number) =>
+  /** `GET /api/stock/lotes` — feed del picker (stage-12-lotes-vencimientos, Slices 14/15, design
+   * decisión 19): `sugerido` es FEFO server-computed y el picker lo pre-selecciona, nunca lo
+   * recalcula del lado del cliente. Se pide bajo demanda, nunca de arranque para cada línea —
+   * el camino feliz (omitir `idLote`) no necesita esta llamada. La variante con
+   * `idComprobanteAsociado` (sugerencia desde el snapshot de una devolución) vive en el POS. */
+  listarLotes: (idPuntoVenta: number, idArticulo: number) =>
     api.get<LoteListado[]>(`/stock/lotes?idPuntoVenta=${idPuntoVenta}&idArticulo=${idArticulo}`),
 }
 

@@ -6,9 +6,10 @@ import {
   aSolicitudDeVenta,
   calcularSubtotalPrevia,
   indexarResolucionPorArticulo,
+  opcionDeLote,
   previaDeLinea,
 } from './ventas'
-import type { ArticuloEscaneado, PagoDeVenta, ResultadoDeResolucion } from './tipos'
+import type { ArticuloEscaneado, LoteListado, PagoDeVenta, ResultadoDeResolucion } from './tipos'
 
 function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {}): ArticuloEscaneado {
   return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, ...sobrescribir }
@@ -130,6 +131,7 @@ describe('aSolicitudDeVenta', () => {
       codigoTipoComprobante: 'TX',
       idComprobanteAsociado: null,
       lineas,
+      lotesSeleccionados: {},
       pagos,
       direccionEntrega: null,
       observaciones: null,
@@ -140,7 +142,7 @@ describe('aSolicitudDeVenta', () => {
       idCliente: 1,
       codigoTipoComprobante: 'TX',
       idComprobanteAsociado: null,
-      lineas: [{ idArticulo: 1, cantidad: 2, codigoBarra: '7790001234567' }],
+      lineas: [{ idArticulo: 1, cantidad: 2, codigoBarra: '7790001234567', idLote: null }],
       pagos,
       direccionEntrega: null,
       observaciones: null,
@@ -155,6 +157,7 @@ describe('aSolicitudDeVenta', () => {
       codigoTipoComprobante: 'NCX',
       idComprobanteAsociado: 42,
       lineas: [lineaFixture({ cantidad: -2 })],
+      lotesSeleccionados: {},
       pagos: [],
       direccionEntrega: null,
       observaciones: null,
@@ -163,5 +166,69 @@ describe('aSolicitudDeVenta', () => {
     expect(resultado.codigoTipoComprobante).toBe('NCX')
     expect(resultado.idComprobanteAsociado).toBe(42)
     expect(resultado.lineas[0].cantidad).toBe(-2)
+  })
+
+  it('camino feliz (design decisión 19): una línea sin selección explícita viaja con idLote null', () => {
+    const resultado = aSolicitudDeVenta({
+      idPuntoVenta: 7,
+      idCliente: 1,
+      codigoTipoComprobante: 'TX',
+      idComprobanteAsociado: null,
+      lineas: [lineaFixture({ idArticulo: 1 })],
+      lotesSeleccionados: {},
+      pagos: [],
+      direccionEntrega: null,
+      observaciones: null,
+    })
+
+    expect(resultado.lineas[0].idLote).toBeNull()
+  })
+
+  it('una elección explícita de lote viaja en idLote de esa línea', () => {
+    const resultado = aSolicitudDeVenta({
+      idPuntoVenta: 7,
+      idCliente: 1,
+      codigoTipoComprobante: 'TX',
+      idComprobanteAsociado: null,
+      lineas: [lineaFixture({ idArticulo: 1 }), lineaFixture({ idArticulo: 2 })],
+      lotesSeleccionados: { 1: 55 },
+      pagos: [],
+      direccionEntrega: null,
+      observaciones: null,
+    })
+
+    expect(resultado.lineas[0].idLote).toBe(55)
+    expect(resultado.lineas[1].idLote).toBeNull()
+  })
+})
+
+describe('opcionDeLote', () => {
+  function loteFixture(sobrescribir: Partial<LoteListado> = {}): LoteListado {
+    return {
+      idLote: 3,
+      idArticulo: 1,
+      codigo: '2026-11-30',
+      fechaVencimiento: '2026-11-30',
+      esSinIdentificar: false,
+      cantidad: 12,
+      estado: 'Vigente',
+      sugerido: false,
+      ...sobrescribir,
+    }
+  }
+
+  it('arma la etiqueta con código, estado y saldo', () => {
+    const opcion = opcionDeLote(loteFixture())
+    expect(opcion).toEqual({ valor: '3', etiqueta: '2026-11-30 — vigente — saldo 12' })
+  })
+
+  it('un lote sugerido lo marca en la etiqueta — nunca lo resuelve de nuevo', () => {
+    const opcion = opcionDeLote(loteFixture({ sugerido: true }))
+    expect(opcion.etiqueta).toMatch(/— sugerido$/)
+  })
+
+  it('el lote sin identificar muestra su propio texto en vez del código reservado', () => {
+    const opcion = opcionDeLote(loteFixture({ esSinIdentificar: true, codigo: 'SIN-IDENTIFICAR', fechaVencimiento: null }))
+    expect(opcion.etiqueta).toBe('Sin identificar — vigente — saldo 12')
   })
 })

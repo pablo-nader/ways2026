@@ -1882,31 +1882,124 @@ FEFO and completes the happy path with zero keystrokes; the compra editor
 captures lot input per line. **Rollback**: revert the branch — no backend
 change.
 
-- [ ] 14.1 Modify `src/Ways.Web/src/paginas/Pos.tsx`: lot picker component
+- [x] 14.1 Modify `src/Ways.Web/src/paginas/Pos.tsx`: lot picker component
   fed by `GET /api/stock/lotes` (pre-selected via `sugerido`); a line for a
   lot-effective articulo omits `idLote` by default; `loteVencido` renders
   as a prominent warning, never a block.
-- [ ] 14.2 Modify `src/Ways.Web/src/paginas/CompraEditor.tsx`: lot input
+  - Deviation: the picker is click-triggered per cart line (a "Elegir
+    lote" button), not auto-fetched on add — `ArticuloEscaneado` has no
+    `controlaLote` (adding it would be a backend change, out of scope per
+    this slice's own Rollback note), so there is no client-side signal to
+    decide up front whether a line needs the picker at all. An empty
+    `GET /api/stock/lotes` response is ambiguous (not lot-effective, OR
+    lot-effective with no lots yet) but resolves to the same correct
+    action either way: leave `idLote` omitted, the server FEFO-picks or
+    creates the sin-identificar lot. Lot selections are cleared on point
+    of venta change (balances are PV-scoped) and reset after checkout.
+- [x] 14.2 Modify `src/Ways.Web/src/paginas/CompraEditor.tsx`: lot input
   fields (`codigoLote`, `fechaVencimiento`) per draft line for a
   lot-effective articulo; the incomplete-line counter includes them.
-- [ ] 14.3 Modify `src/Ways.Web/src/api/tipos.ts` / `catalogos.ts`:
+  - Deviation: `controlaLote` per line is captured from the chosen
+    `ArticuloListado` at search-selection time (exact). For a REOPENED
+    draft, `itemAFormulario` infers it from whether the persisted item
+    already carries lot data (`idLote`/`codigoLote`/`fechaVencimiento`
+    non-null) — a real signal, but a lot-effective articulo whose line was
+    saved before any lot data was entered is not detected until the
+    operator touches it again. The server's `lote_requerido` 400 at
+    confirm remains the correctness backstop in that gap; a batch
+    `clienteDeArticulos.obtener()` lookup per reopened line was considered
+    and dropped to keep this slice's diff proportional to its ~400-line
+    budget.
+- [x] 14.3 Modify `src/Ways.Web/src/api/tipos.ts` / `catalogos.ts`:
   mirrored contracts — `LineaDeVenta.idLote`, `ItemEmitido.idLote`/
   `codigoLote`/`loteVencido`, `LineaDeCompraSolicitada.codigoLote`/
   `fechaVencimiento`, `LoteListado`, `controlaLote` descriptor field.
-- [ ] 14.4 [P] Picker `sugerido`-preselection test.
-- [ ] 14.5 [P] **Stale-response test** (`mutation-proof-tests` rule 7): a
+  - Deviation: `controlaLote` landed on `ArticuloListado` in `tipos.ts`
+    (read-only mirror consumed by `CompraEditor.tsx`), NOT in
+    `catalogos.ts` — `Articulos.tsx` is a hand-built ABM screen outside the
+    `DescriptorDeCatalogo` machine (same escape hatch as `categorias`), so
+    there is no descriptor to extend there. The write-side toggle
+    (`AltaArticulo`/`EdicionArticulo.controlaLote` + the editor UI) stays
+    Slice 15's, per the coordination note in this task's brief. Also
+    mirrored `LineaTransferida.idLote` (backend already sends it since
+    Slice 10) and `ItemDeCompra.codigoLote`/`fechaVencimiento`/`idLote` —
+    both needed for `CompraEditor.tsx` to round-trip a persisted draft.
+- [x] 14.4 [P] Picker `sugerido`-preselection test.
+- [x] 14.5 [P] **Stale-response test** (`mutation-proof-tests` rule 7): a
   stale picker fetch resolves after the operator changed line — resolved
   inside `act`, asserted synchronously after the flush.
-- [ ] 14.6 [P] Double-click test: exactly one `fetch` on the picker despite
+  - Concretized as: fetch starts for PV #1, the operator switches the
+    punto de venta before it resolves (lot balances are PV-scoped), the
+    PV #1 response lands after — asserted to never paint (`Pos.test.tsx`).
+- [x] 14.6 [P] Double-click test: exactly one `fetch` on the picker despite
   a double-click (`react-async-state` busy/re-entrancy guard).
-- [ ] 14.7 [P] Incomplete-line counter test on `CompraEditor` (lot fields
+- [x] 14.7 [P] Incomplete-line counter test on `CompraEditor` (lot fields
   count toward incompleteness).
-- [ ] 14.8 [P] `web-descriptor-tests` for the `Pos.tsx` picker and
-  `CompraEditor`'s lot input, colocated `*.test.tsx`.
-- [ ] 14.9 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes (web-only slice).
-- [ ] 14.10 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 14.11 Branch `feat/stage12-slice14-web-operacion` off `main` (parent:
+- [x] 14.8 [P] `web-descriptor-tests` for the `Pos.tsx` picker and
+  `CompraEditor`'s lot input, colocated `*.test.tsx`; plus a pure
+  `opcionDeLote` mapping unit test in `ventas.test.ts` (no DOM).
+- [x] 14.9 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes (web-only slice). Verified.
+- [x] 14.10 Run `judgment-day`; fix; re-judge until clean. *(JD-FIX NOTE,
+  slice 14 judgment-day ronda 1, juez B: 4 hallazgos confirmados, todos
+  arreglados.*
+  - *MAJOR 2a — the picker preselection fixture put the `sugerido` lot
+    LAST, so "pick the suggested one" and "pick the last one" were
+    indistinguishable. Fixed: `Pos.test.tsx`'s preselection test now uses
+    3 lots with `sugerido` in the MIDDLE — a "pick the last" mutant goes
+    RED against this fixture (verified, then reverted).*
+  - *MAJOR 2b — `SelectorDeLote`'s `cargandoRef.current` re-entrancy guard
+    clause was dead: the button's native `disabled` wins the race before
+    a same-tick double-click ever reaches the ref check, and the removed
+    test comment's claim to the contrary was empirically false. Fixed:
+    dropped the `cargandoRef` ref entirely from `Pos.tsx` (the clause was
+    its only reader); the double-click test's comment in `Pos.test.tsx`
+    now states the true defense (`disabled` on the native button).*
+  - *MAJOR 2f — zero coverage for `loteVencido: true` on an emitted
+    ticket item. Fixed: added a "Pos — ticket: warning de lote vencido"
+    describe block in `Pos.test.tsx` asserting the "⚠ Lote vencido" text
+    renders when `true` and is absent when `false` — a mutant gating the
+    warning on `false` goes RED (verified, then reverted).*
+  - *MINOR — `SelectorDeLote`'s `/stock/lotes` rejection branch
+    (`No se pudieron cargar los lotes.`) had no test. Fixed: added a
+    rejection-path test to the picker describe block.*
+  - *Full suite after fixes: 564/564 vitest tests green (was 561), `npx
+    tsc -b` clean, `oxlint` clean (one pre-existing unrelated warning in
+    `AuthContext.tsx`).)*
+  - *(JD-FIX NOTE, slice 14 judgment-day ronda 2, juez A: 1 MAJOR + 3
+    MINOR confirmados, todos arreglados.*
+    - *MAJOR — `CompraEditor.tsx`'s `FilaDeItem.onElegir` only merged the
+      new artículo's identity; a previous artículo's `codigoLote`/
+      `fechaVencimiento` survived the swap and travelled in the save
+      payload — the server's `lote_requerido` validation is deliberately
+      unconditional and would persist the stale lot data
+      (react-async-state regla 8, subtree keyed by entity). Fixed: `onElegir`
+      now resets `codigoLote`/`fechaVencimiento` to `''` whenever the
+      chosen `idArticulo` differs from the line's current one. Two tests
+      added to `CompraEditor.test.tsx`: artículo A (lote-efectivo, loaded)
+      → artículo C (no controla lote) asserts the PUT payload carries
+      `codigoLote: null, fechaVencimiento: null`; artículo A → artículo B
+      (both lote-efectivos) asserts the inputs reset visually to `''`. A
+      revert-and-rerun against the original one-liner sent both new tests
+      RED (payload kept `'LOTE-A'`/`'2026-06-01'`), verified then restored.*
+    - *MINOR — the "⚠ Lote vencido" ticket warning already had a comment
+      citing design decisión 12, but didn't contrast it with the picker's
+      pre-submit hint (`opcionDeLote`'s plain-text "vencido" option
+      label). Fixed: comment in `Pos.tsx` now names both surfaces and why
+      the ticket one is deliberately louder.*
+    - *MINOR — `TablaDeItemsDeSoloLectura` (compra confirmada/anulada)
+      showed `codigoLote` but not `fechaVencimiento`, even though the
+      field is already mirrored on `ItemDeCompra`. Fixed: added a
+      "Vencimiento" column next to "Lote"; `colSpan` on the empty-state
+      row bumped 9 → 10.*
+    - *MINOR — the loteVencido ticket test only asserted the warning text,
+      not that `codigoLote` renders in the same row. Fixed: extended the
+      assertion in `Pos.test.tsx` to also check `within(fila)` for `Lote
+      2026-01-01`.*
+    - *Full suite after fixes: 566/566 vitest tests green (was 564), `npx
+      tsc -b` clean, `oxlint` clean (same pre-existing unrelated warning
+      in `AuthContext.tsx`).)*
+- [x] 14.11 Branch `feat/stage12-slice14-web-operacion` off `main` (parent:
   slices 5+8); PR; merge stacked-to-main.
 
 **Test plan**: preselection (14.4), stale-response (14.5), double-click
