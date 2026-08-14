@@ -686,6 +686,48 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
 
     expect(screen.queryByText('Arroz largo fino 1kg')).not.toBeInTheDocument()
   })
+
+  it('agregar X, abrir y cancelar Y (fila persistida distinta) NO reaparece el picker con X vivo — reabrir y cancelar X sí lo reaparece (judgment-day ronda A-3, residual FINDING 1 CRITICAL, tercera variante)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+
+    // Agrega X (idArticulo 50, "Arroz largo fino 1kg") por el picker — fila fantasma benched:
+    // `filaLocalSinGuardarRef.current := 50`, `filaFantasma := 50`, `filaEnEdicion := 50`.
+    await usuario.type(screen.getByLabelText('Buscar artículo para agregar'), 'arroz')
+    await usuario.click(await screen.findByText('ART-50 — Arroz largo fino 1kg'))
+    expect(await screen.findByText('Arroz largo fino 1kg')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Buscar artículo para agregar')).not.toBeInTheDocument()
+
+    // Con X todavía en edición sin guardar, abre Y — la fila PREEXISTENTE "Yerba mate 1kg"
+    // (idArticulo 100) — y la CANCELA (no la guarda): `abrirFila` solo chequea `guardandoRef`, así
+    // que X queda benched sin tocarse. `cancelarEdicion` no matchea (100 !== 50, el ref sigue en
+    // 50) y pone `filaEnEdicion := null`.
+    await usuario.click(screen.getByRole('button', { name: 'Editar' })) // única "Editar" visible: X muestra Guardar/Cancelar — abre Y
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' })) // única "Cancelar" visible: Y en edición — la cancela
+
+    // Regresión exacta de la tercera variante: `filaEnEdicion === null` ya no alcanza para mostrar
+    // el picker — el fantasma X sigue vivo (`filaFantasma` todavía en 50), así que el picker tiene
+    // que seguir AUSENTE del DOM.
+    expect(screen.queryByLabelText('Buscar artículo para agregar')).not.toBeInTheDocument()
+    expect(screen.getByText('Yerba mate 1kg')).toBeInTheDocument() // Y nunca se tocó
+    expect(screen.getByText('Arroz largo fino 1kg')).toBeInTheDocument() // X sigue vivo, sin guardar
+
+    // Reabre X y Cancelar: se remueve de la grilla, ref y estado del fantasma se limpian, y el
+    // picker por fin reaparece.
+    const filas = screen.getAllByRole('row')
+    const filaArroz = within(filas.find((f) => within(f).queryByText('Arroz largo fino 1kg') !== null)!)
+    await usuario.click(filaArroz.getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByText('Arroz largo fino 1kg')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Buscar artículo para agregar')).toBeInTheDocument()
+  })
 })
 
 describe('Existencias — role gating (spec: A Supervisor Exports Existencias)', () => {

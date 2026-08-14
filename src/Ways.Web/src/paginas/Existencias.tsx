@@ -142,6 +142,12 @@ export function Existencias() {
   // persiste — este ref recuerda el `idArticulo` de esa fila local mientras sigue sin guardarse,
   // para que `cancelarEdicion` pueda sacarla de la grilla en vez de dejarla huérfana.
   const filaLocalSinGuardarRef = useRef<number | null>(null)
+  // Judgment-day ronda A-3 (residual del FINDING 1 CRITICAL): espejo de estado del ref de arriba,
+  // mismo patrón que `guardando`/`guardandoRef` — el ref sirve para guards síncronos, pero mutarlo
+  // NO re-renderiza, así que el picker no puede gatear su visibilidad por el ref solo. Este estado
+  // es la única fuente de verdad para el render: "existe un fantasma sin guardar" (a diferencia de
+  // `filaEnEdicion`, que solo dice cuál fila está abierta, no si quedó un fantasma benched).
+  const [filaFantasma, setFilaFantasma] = useState<number | null>(null)
   const [minimoTexto, setMinimoTexto] = useState('')
   const [reposicionTexto, setReposicionTexto] = useState('')
   const [guardando, setGuardando] = useState<number | null>(null) // idArticulo en vuelo — atributo `disabled`
@@ -182,6 +188,7 @@ export function Existencias() {
     // `cancelarEdicion` puede matchear por `idArticulo` una fila PERSISTIDA de la nueva grilla que
     // coincide por casualidad con el `idArticulo` fantasma, y borrarla.
     filaLocalSinGuardarRef.current = null
+    setFilaFantasma(null) // espejo de estado (patrón guardandoRef): sin esto el picker no reaparecería
     const miGeneracion = (generacionRef.current += 1)
     setCargando(true)
     setError('')
@@ -233,6 +240,7 @@ export function Existencias() {
       const idALimpiar = filaLocalSinGuardarRef.current
       setExistencias((prev) => (prev === null ? prev : { ...prev, filas: prev.filas.filter((f) => f.idArticulo !== idALimpiar) }))
       filaLocalSinGuardarRef.current = null
+      setFilaFantasma(null) // espejo de estado (patrón guardandoRef): sin esto el picker no reaparecería
     }
     setFilaEnEdicion(null)
     setErrorGuardado('')
@@ -271,7 +279,10 @@ export function Existencias() {
       // usuario abrió OTRA fila (Y) mientras la fantasma (X) seguía sin guardar, guardar Y no
       // puede pisar el ref de X: eso la huerfanizaría (`cancelarEdicion` matchea por identidad
       // contra `filaEnEdicion`, así que ya no la encontraría para sacarla de la grilla).
-      if (fila.idArticulo === filaLocalSinGuardarRef.current) filaLocalSinGuardarRef.current = null
+      if (fila.idArticulo === filaLocalSinGuardarRef.current) {
+        filaLocalSinGuardarRef.current = null
+        setFilaFantasma(null) // espejo de estado (patrón guardandoRef): sin esto el picker no reaparecería
+      }
       setFilaEnEdicion(null)
     } catch (e) {
       if (tokenDeEscrituraRef.current === miToken) {
@@ -306,6 +317,7 @@ export function Existencias() {
     }
     setExistencias((prev) => (prev === null ? prev : { ...prev, filas: [...prev.filas, nuevaFila] }))
     filaLocalSinGuardarRef.current = nuevaFila.idArticulo
+    setFilaFantasma(nuevaFila.idArticulo) // espejo de estado (patrón guardandoRef): gobierna el render del picker
     abrirFila(nuevaFila)
   }
 
@@ -481,13 +493,15 @@ export function Existencias() {
                   </tbody>
                 </table>
 
-                {/* Judgment-day ronda final A (residual del FINDING 1 CRITICAL): el gate por identidad
-                    del clear en `guardarFila` no alcanza — `agregarFila` sigue pisando el slot único
-                    del ref sin chequear un fantasma previo. Fix estructural: el picker desaparece
-                    mientras haya CUALQUIER fila en edición, así nunca puede coexistir un segundo
-                    fantasma sin guardar (agregar abre la fila en edición y el picker se esconde hasta
-                    guardar o cancelar). */}
-                {puedeEscribir && filaEnEdicion === null && (
+                {/* Judgment-day ronda A-3 (residual del FINDING 1 CRITICAL, tercera variante): gatear
+                    solo por `filaEnEdicion === null` no alcanza — un fantasma puede quedar "benched"
+                    (agregado pero sin guardar) mientras se abre y cancela OTRA fila persistida, y ese
+                    camino deja `filaEnEdicion` en `null` con el fantasma todavía vivo, reapareciendo
+                    el picker y permitiendo que un segundo alta pise el slot único del ref. La condición
+                    correcta es "no existe NINGÚN fantasma sin guardar" — no "no hay fila en edición" —,
+                    así que el render usa `filaFantasma` (estado), nunca el ref (mutar un ref no
+                    re-renderiza). */}
+                {puedeEscribir && filaEnEdicion === null && filaFantasma === null && (
                   <div className="mt-2">
                     <label className="form-label small text-muted d-block mb-1">Agregar artículo</label>
                     <SelectorDeArticuloParaAlta disabled={guardando !== null} onElegir={agregarFila} />

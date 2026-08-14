@@ -725,6 +725,45 @@ here, since 3.13 is explicitly the orchestrator's task.
   revert: `npx vitest run` → 35 files, 640/640 green (full repo suite,
   web-only change — no other file touched); `npm run build` (`tsc -b &&
   vite build`) → clean, 0 type errors.
+  **ROUND A-3 (judgment-day, judge A ledger, scoped fix-agent run,
+  additional round)**: 1 CRITICAL residual confirmed and closed — third
+  variant of the same class. Round A's structural fix (`filaEnEdicion ===
+  null` gates the picker) still leaves a path open: add X via the picker
+  (X opens for edit, `filaEnEdicion = X`, picker hidden) → `abrirFila` on
+  a persisted row Y only checks `guardandoRef`, not any ghost state, so
+  Editar on Y is allowed while X is still unsaved (`filaEnEdicion = Y`, X
+  benched) → Cancelar Y: the identity match against
+  `filaLocalSinGuardarRef` correctly fails (Y ≠ X), so nothing is removed,
+  and `filaEnEdicion` goes back to `null` → the picker's render condition
+  (`filaEnEdicion === null`) is now satisfied even though the unsaved
+  ghost X is still alive in the grid → the picker reappears → adding a
+  second row W lets `agregarFila` overwrite the ref's single slot →  X is
+  now permanently orphaned. **Root cause**: the correct render condition
+  is "no unsaved ghost exists", not "no row is being edited" — those are
+  different predicates, and round A's fix conflated them.
+  `filaLocalSinGuardarRef` (a `ref`) cannot govern render either way:
+  mutating a ref does not trigger a re-render, so any render-time
+  condition has to read committed React state. **Fix**: added
+  `filaFantasma` (`useState<number | null>`), an exact state mirror of
+  `filaLocalSinGuardarRef` — same pattern already used for
+  `guardando`/`guardandoRef` in this same component (the ref is for
+  synchronous guards, the state is for render). Every write to the ref
+  (`agregarFila`'s set, the identity-gated clear in `guardarFila`'s
+  success path, the removal in `cancelarEdicion`, and the reset in
+  `cargar`) now has an adjacent write to `filaFantasma`, each with a
+  one-line comment naming the mirror. Picker render condition became
+  `puedeEscribir && filaEnEdicion === null && filaFantasma === null`.
+  Added the judge's exact required sequence as a new test: add X via the
+  picker → Editar the persisted row Y → Cancelar Y → assert the picker is
+  still absent (`queryByLabelText` null) → reopen X → Cancelar X → X is
+  removed and the picker reappears. **EVIDENCE**: reverted the render
+  condition to `filaEnEdicion === null` only (leaving `filaFantasma`
+  unused), ran `npx vitest run Existencias -t "abrir y cancelar Y"` →
+  **FAILED** (picker present after cancelling Y); reverted via `git
+  checkout --` → clean working tree, fix restored from the prior commit.
+  Full suite after revert: `npx vitest run` → 35 files, 641/641 green
+  (full repo suite, web-only change — no other file touched); `npm run
+  build` (`tsc -b && vite build`) → clean, 0 type errors.
 - [ ] 3.13 Branch `feat/stage13-slice3-web-minimos` off `main` (parent:
   slices 1+2); PR; merge stacked-to-main.
 
@@ -734,9 +773,9 @@ phantom-ref-on-reload + saved-row-cancel + same-tick save guard (3.12 round
 2, FINDINGS 1/2/3), ghost-row-identity-gated-clear + write-role gate +
 result-button `disabled` attribute (3.12 round A, FINDINGS 1/2/3).
 
-**Verify**: `npm run test -- Existencias` — 24/24 green (full suite:
-`npx vitest run` → 35 files, 640/640 green — updated post-`judgment-day`
-round A final, see the apply notes on task 3.12). `npm run lint`
+**Verify**: `npm run test -- Existencias` — 25/25 green (full suite:
+`npx vitest run` → 35 files, 641/641 green — updated post-`judgment-day`
+round A-3, see the apply notes on task 3.12). `npm run lint`
 (oxlint) → clean (one pre-existing, unrelated warning in `AuthContext.tsx`).
 `npm run build` (`tsc -b && vite build`) → clean.
 
