@@ -335,8 +335,19 @@ pre-stage-13 shape.
   the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
   files).
-- [ ] 2.12 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 2.13 Branch `feat/stage13-slice2-existencias-minimos` off `main`
+- [x] 2.12 Run `judgment-day`; fix; re-judge until clean. *(CLEAN ROUND 2
+  2026-08-14. Round 1: judge B static + LIVE mutation pass — 9 mutations,
+  8 killed, 1 SURVIVOR (header-label swap in `ColumnasExistencias`, MAJOR)
+  plus a WARNING (seed doc-comment overclaiming all-distinct values). Fix
+  commit `067e95c`: six-header-text assert at `filaDeEncabezados = 6` +
+  genuinely all-distinct classification seed (minimo {5,null,7}, reposicion
+  {20,null,30}), mutation evidence re-recorded. Scoped re-judgment by judge
+  B: re-applied the exact mutant → suite FAILS at the new assert; adjacent
+  hard-coded-label probe also killed; zero fix-caused defects. Judge A fresh
+  read-only pass over the corrected frozen diff at `067e95c`: ZERO findings.
+  JUDGMENT: APPROVED — 1 confirmed-and-fixed MAJOR, 1 fixed WARNING, 0
+  contradictions.)*
+- [x] 2.13 Branch `feat/stage13-slice2-existencias-minimos` off `main`
   (parent: slice 1); PR; merge stacked-to-main.
 
 **APPLY NOTE (Verify line filter mismatch)**: this slice's `Verify` line
