@@ -1,0 +1,492 @@
+change: stage-13-stock-inteligente
+phase: tasks
+status: done
+artifact_store: openspec
+execution_mode: automatic-autonomous
+delivery_strategy: auto-chain
+chain_strategy: stacked-to-main
+db_gate: SIN-CAMBIOS-DE-SCHEMA-RATIFICADO
+db_gate_approval: >-
+  RATIFICADO 2026-08-14 por el orquestador bajo mandato autonomo delegado: veredicto
+  'sin cambios de schema' EJERCIDO FORMALMENTE — se verifico la seccion 'Modelo de datos
+  propuesto' del proposal (A: columnas existentes activadas en su lugar, sin migrar;
+  B: dos claves de ParametroConocido patron sin-migracion probado en etapas 10/12;
+  C: no-decisiones deliberadas coherentes con precedentes aprobados) y el fundamento
+  contra el codigo real citado abajo. Alcance congelado: cualquier DDL de sdd-apply
+  ABRE el gate; criterio de verify vinculante el has-pending-model-changes limpio.
+  Declaracion original del proposal: NO CORRESPONDE GATE DE MIGRACION — la etapa no crea, altera ni elimina NINGUN objeto de
+  esquema. Veredicto declarado 2026-08-14 bajo mandato autonomo delegado, mismo patron que las
+  etapas 10 y 11 (cero migracion). FUNDAMENTO VERIFICADO CONTRA EL CODIGO REAL: stock.minimo y
+  stock.reposicion YA EXISTEN desde la migracion 20260804143427_VentasStockYCuentaCorrienteEtapa5
+  con la forma exacta que la etapa necesita — numeric(12,3) nullable sobre una fila con
+  PRIMARY KEY (id_articulo, id_punto_venta), o sea POR ARTICULO Y POR PUNTO DE VENTA
+  (StockConfiguration.cs:35-36, Stock.cs:24-32, doc-10:508-513); nadie las escribe ni las lee
+  hoy (explore.md seccion 1). La agrupacion por proveedor usa articulos.id_proveedor_habitual,
+  FK existente y circuito completo desde la etapa 3. La rotacion es lectura pura sobre
+  movimientos_stock. Scoping doc-09: stock es OPERATIVA (id_tenant + id_punto_venta), asi que
+  los parametros de reposicion quedan aislados por el filtro de tenant hand-rolled existente
+  mas RLS, sin abrir ninguna pregunta de scoping nueva. UNICO artefacto declarado: DOS claves
+  de ParametroConocido (dias_rotacion int default 30; dias_cobertura_objetivo int default 7)
+  SIN migracion y SIN data statement, patron identico a zona_horaria/comision_porcentaje
+  (etapa 10) y lotes_habilitado/dias_alerta_vencimiento (etapa 12). NO-DECISIONES DELIBERADAS
+  Y RELEVANTES AL GATE, registradas en la seccion C del 'Modelo de datos propuesto': (a) NO se
+  agrega CHECK (minimo >= 0) ni CHECK (reposicion >= minimo) — se validan en la capa de
+  aplicacion (400 minimo_negativo, 400 reposicion_menor_que_minimo), siguiendo el precedente
+  de la ausencia DELIBERADA de CHECK en stock_lotes.cantidad aprobada en el gate de la etapa 12
+  y del micro-gate del CHECK de importe que sigue abierto desde la etapa 8; agregar un CHECK
+  convertiria una etapa de cero migracion en una etapa de migracion por una validacion que el
+  servicio hace igual; (b) NO se agrega indice — la query de alerta filtra id_punto_venta y
+  evalua minimo IS NOT NULL AND cantidad <= minimo sobre un conjunto ya acotado por el catalogo
+  (la misma cota que ObtenerExistenciasAsync escanea sin paginar hoy, cubierta por
+  ix_stock_punto_venta); un indice parcial sobre minimo IS NOT NULL queda registrado como la
+  primera migracion obvia SI un catalogo real vuelve medible el scan; (c) stock NO cambia de
+  forma ni de PK. ALCANCE CONGELADO: cualquier DDL que escriba sdd-apply es violacion de
+  alcance y ABRE el gate por primera vez. Criterio de verify vinculante:
+  'dotnet ef migrations has-pending-model-changes' limpio y CERO archivos de migracion nuevos.
+db_gate_scope: >-
+  ZERO SCHEMA CHANGE. No table, no column, no index, no constraint, no enum value, no view, no
+  trigger, no function, no data statement, no migration file. stock: NONE (dos columnas
+  nullable existentes ganan lector y escritor). movimientos_stock: NONE (solo lectura, para la
+  rotacion). articulos/proveedores: NONE (id_proveedor_habitual leida via FK existente).
+  parametros: NONE (2 entradas de registro, ninguna fila requerida). La seccion 'Modelo de
+  datos propuesto' de proposal.md es el contrato: es autosuficiente y su contenido es la
+  declaracion de que no hay nada que aprobar.
+phases:
+  explore:
+    status: done
+    artifact: explore.md
+    depends_on: []
+    notes: >-
+      Hallazgos clave: minimo/reposicion dormidas desde la etapa 5 con la forma exacta por
+      articulo+PV (cero migracion necesaria); el canal de alertas PULL de la etapa 12 mapeado
+      en sus tres capas reusables (servicio con reuso del reporte para el tile, endpoints por
+      co-locacion, PanelDeVencimientos en el Tablero); dos shapes de export distinguidos
+      (agregado acotado por catalogo vs listado que crece); stock en transito estructuralmente
+      CERO hasta la etapa 16 (no hay estado intermedio, transferencia y compra son
+      transaccion unica); id_proveedor_habitual NO dormida, circuito completo desde la etapa 3;
+      tension UX real del minimo por-PV contra un editor de articulo tenant-wide; y el scope
+      no pedido pero real: el backlog de doc-11:367 asigna a ESTA etapa el workflow completo
+      de conteo snapshot/variance que conteo-de-inventario/spec.md excluye explicitamente.
+      Veredicto preliminar de gate: probable SIN migracion.
+  propose:
+    status: done
+    artifact: proposal.md
+    depends_on: [explore]
+    notes: >-
+      Escrito 2026-08-14 bajo AUTORIDAD TECNICA DELEGADA, sesgo conservador y reversible. OCHO
+      decisiones autonomas, cada una con contexto, opciones con tradeoffs, decision y costo
+      explicito de revertirla. VEREDICTO DE GATE: SIN CAMBIOS DE SCHEMA (seccion 'Modelo de
+      datos propuesto' escrita igual, gate-ready, para declarar el cero y registrar las
+      no-decisiones de CHECK e indice). Contrato de capabilities: 1 NUEVA
+      (reposicion-de-stock), 3 MODIFICADAS (stock con UN requirement ADDED sobre el invariante;
+      reportes-de-gestion por las columnas nuevas de existencias; parametros-operativos por 2
+      claves). NO modificadas: exportacion-de-reportes (consumidor), articulos,
+      conteo-de-inventario (su exclusion NO se reabre), y toda spec de camino de escritura.
+      Plan tentativo de 7 slices stacked-to-main, ~2260 lineas, con degradacion pre-aprobada
+      declarada (slice 7: si desborda, se entrega el tile y se cae la columna minimoSugerido).
+      Ronda de preguntas con 8 preguntas y su asuncion registrada.
+  spec:
+    status: done
+    artifact: specs/
+    depends_on: [propose]
+    notes: >-
+      4 archivos bajo specs/: reposicion-de-stock/spec.md (NUEVA capability,
+      spec completo), stock/spec.md (delta MODIFICADA — 1 requirement
+      ADDED, 2 escenarios: el write path de minimo/reposicion crea la fila
+      en cantidad=0 sin movimientos_stock, satisface el invariante SUM
+      trivialmente), reportes-de-gestion/spec.md (delta MODIFICADA — 1
+      requirement MODIFIED con bloque completo copiado del spec base y
+      editado, 7 escenarios: 2 originales preservados + 5 nuevos para
+      minimo/reposicion/estado bajo|ok|sin_minimo y el export con las
+      mismas columnas), parametros-operativos/spec.md (delta MODIFICADA —
+      1 requirement ADDED, 4 escenarios: dias_rotacion default 30 y
+      dias_cobertura_objetivo default 7, sin migracion, mismo patron que
+      zona_horaria/comision_porcentaje y lotes_habilitado/
+      dias_alerta_vencimiento). NO se tocaron exportacion-de-reportes,
+      articulos, conteo-de-inventario, lotes-y-vencimientos ni ninguna
+      spec de camino de escritura, por contrato del proposal.
+
+      AMENDED post-design: 3 refinamientos spec-affecting de design.md
+      aplicados sobre reposicion-de-stock/spec.md (unico archivo tocado en
+      la enmienda). (1) requirement 'PUT /api/stock/minimos...' ampliado
+      con el guard de 3 decimales — 400 minimo_invalido aplica a minimo Y
+      a reposicion (sin el guard Postgres redondea en silencio el input
+      del operador al truncar a numeric(12,3), mismo criterio que
+      cantidad_de_ajuste_invalida en ajuste/decomiso) — +2 escenarios. (2)
+      requirement 'Rotation Excludes...' ampliado para declarar que
+      GET /reportes/stock/reposicion Y GET /reportes/stock/rotacion
+      aceptan ?dias= opcional con default dias_rotacion (espejo exacto de
+      vencimientos?dias=, la leccion del MAJOR del slice 13 de la etapa
+      12) — +1 escenario de override; se agrego ademas un requirement
+      NUEVO completo para GET /api/reportes/stock/rotacion (la ruta que
+      alimenta minimoSugerido para el editor, decision 14 del design, no
+      declarada explicitamente hasta ahora) — +1 requirement, +2
+      escenarios (ausencia-no-cero, override de dias). (3) requirement del
+      tile /resumen re-especificado con sus tres metricas nombradas —
+      bajoMinimo / sinStock (cantidad <= 0, fijada por el design) /
+      sinProveedor (resuelta por el orquestador — articulos bajo minimo
+      sin proveedor habitual; accionable: cargar el proveedor; se
+      descarta sinSugerencia porque mezcla dos causas distintas — sin
+      proveedor vs. sin reposicion configurada — detras de un solo
+      numero) — +1 escenario discriminante (el conteo original de 1
+      escenario pasa a 2). Se agrego ademas una seccion '## Notes
+      (non-normative, documented from design.md)' — SIN requirement
+      nuevo — con las 2 nuances del design: el denominador de rotacion es
+      la ventana NOMINAL (dias_rotacion), no los dias reales desde el
+      primer movimiento del articulo, aceptado porque la rotacion es
+      advisory y nunca gatea la alerta; y transferencia-out NUNCA cuenta
+      como consumo, ni siquiera el lado saliente hacia otro punto de
+      venta (un PV deposito que solo despacha mostrara rotacion cero,
+      respuesta correcta a "que compraron aca", no un bug).
+
+      CONTEOS FINALES (post-enmienda): reposicion-de-stock/spec.md paso de
+      7 requirements/23 escenarios a 8 requirements/29 escenarios (+1
+      requirement, +6 escenarios). Total del change: 11 requirements (8
+      reposicion-de-stock + 1 stock + 1 reportes-de-gestion + 1
+      parametros-operativos), 42 escenarios (29+2+7+4).
+  design:
+    status: done
+    artifact: design.md
+    depends_on: [propose]
+    notes: >-
+      17 decisiones numeradas (opus). Claves: ReglaDeReposicion pura en Domain; dos shapes
+      sobre una regla (existencias clasifica TODO con SinMinimo/Bajo/Ok; reposicion devuelve
+      SOLO Bajo); LEFT JOIN a proveedores (soft-deleted cae en "Sin proveedor") con orden por
+      ids NULLS-LAST estructural; LA TRAMPA DEL NETEO resuelta con -SUM(cantidad) (no ABS):
+      la NCX viaja positiva por el camino de venta y la negacion netea devoluciones sin caso
+      especial — mutacion nombrada; write path = UN INSERT ON CONFLICT DO UPDATE con cantidad
+      EN VALUES (crea en 0) y AUSENTE del SET — el invariante sobrevive por la forma del
+      statement, cero movimientos; PUT full-replace (null limpia); el tile llama el metodo
+      COMPLETO del reporte; minimoSugerido en GET /reportes/stock/rotacion propio donde
+      sin-historia = no-fila. Fork del SQL crudo DISUELTO verificado contra codigo. Web:
+      edicion inline una fila a la vez, supersede BLOQUEADO (regla 9), sin refetch post-write.
+      3 refinamientos spec-affecting devueltos a spec (400 minimo_invalido; ?dias= en rutas de
+      rotacion; metrica tercera del tile resuelta por el orquestador como sinProveedor por
+      accionabilidad). Nuances: denominador de rotacion = ventana nominal (contenido: la
+      rotacion jamas gatea la alerta); transferencia-out NO es consumo. Sin blocker; gate
+      sigue SIN-SCHEMA.
+  tasks:
+    status: done
+    artifact: tasks.md
+    depends_on: [spec, design]
+    notes: >-
+      7 slices (design.md's re-scoped plan, not the proposal's tentative
+      one), stacked-to-main, mapped 1:1 to design's Slicing table:
+      1 minimos-api (~320), 2 existencias-minimos (~230), 3 web-minimos
+      (~380), 4 reposicion (~350), 5 rotacion (~340), 6 web-reposicion
+      (~330), 7 tile-y-sugerencia droppable (~300). Total ~2250. Merge
+      order: 1 blocks everything; [2→3] and [4→5→6] disjoint and
+      parallel; 7 needs 3+4+5. All 42 spec scenarios (11 requirements
+      across the 4 delta specs) placed in exactly one slice each,
+      cross-checked against the running total. All 12 named mutation
+      targets from design.md's table placed in exactly one slice
+      (Orchestrator Decision 7), including the 4 explicitly requested by
+      the orchestrator: the -SUM neteo filter with
+      anulacion-sin-id_comprobante_compra (slice 5), the SET-sin-cantidad
+      of the upsert (slice 1), the <= boundary (slice 1), the
+      null-nunca-cero del sugerido (slice 1 Domain + slice 4 read model),
+      the ?dias= override (slice 4/5), the 3-decimal guard (slice 1), the
+      tile testids per metric (slice 7, stage-12 slice-15 lesson), and the
+      supersede bloqueado / regla 9 (slice 3). Gate guard task
+      (has-pending-model-changes limpio + cero migraciones) placed in
+      EVERY slice including the three web-only ones (3, 6, 7).
+      db-error-backstops declared explicitly NOT APPLICABLE (zero new
+      constraints, Orchestrator Decision 6). doc-11 backlog line 367
+      re-registration is task 1.6, inside slice 1, not a closing sweep.
+
+      CONFLICT FOUND AND RESOLVED (Orchestrator Decision 5, recorded in
+      tasks.md itself): design.md's decision 9 and its Contratos section
+      still name the tile's third metric `sinSugerencia` — that text
+      predates the sdd-spec amendment round. The RATIFIED spec
+      (specs/reposicion-de-stock/spec.md, "The Tablero Tile Reuses The
+      Report Method…") and state.yaml's own spec-phase note both use
+      `sinProveedor`, resolved by the orchestrator during sdd-spec
+      specifically because sinSugerencia conflates two distinct causes
+      (no proveedor vs. no reposicion configured) behind one number. Every
+      slice-7 task (ResumenDeReposicion contract, the fold, the tile's
+      data-testid reposicion-tile-sin-proveedor) uses the spec's
+      sinProveedor, NOT design.md's stale sinSugerencia — flagged
+      explicitly so sdd-apply does not silently follow the older text.
+
+      Review Workload Forecast (BINDING, produced this phase): ~2250
+      lines, chained PRs YES, stacked-to-main, size:exception NOT
+      anticipated, 400-line budget risk MEDIUM (slices 3 and 4 closest to
+      cap, pre-identified cuts named per-slice: slice 3 at the add-row
+      boundary, slice 4 at the report/export boundary), decision needed
+      before apply: NO (auto-chain + stacked-to-main already resolved in
+      state.yaml, honoured unchanged).
+  apply:
+    status: pending
+    artifact: tasks.md + PRs
+    depends_on: [tasks]
+  verify:
+    status: pending
+    artifact: verify-report.md
+    depends_on: [apply]
+  archive:
+    status: pending
+    artifact: archive-report.md
+    depends_on: [verify]
+dependencies:
+  spec: [propose]
+  design: [propose]
+  tasks: [spec, design]
+  apply: [tasks]
+  verify: [apply]
+  archive: [verify]
+decisiones_tomadas:
+  - "1 — EL MINIMO ES UN VALOR FIJO QUE FIJA EL DUEÑO, CON LA SUGERENCIA POR ROTACION VISIBLE
+    AL LADO; NUNCA UN UMBRAL CALCULADO. Se RECHAZA el umbral calculado: se mueve solo todos los
+    dias, un articulo alerta hoy y no manana sin causa visible para el usuario, no queda valor
+    almacenado que auditar, un articulo nuevo sin historia no tiene umbral y uno estacional lo
+    ve colapsar fuera de temporada. TRES REGLAS QUE LO VUELVEN HONESTO: (a) minimo IS NULL
+    significa NO GESTIONADO y nunca alerta — es lo que hace que el dia uno sea silencioso en
+    vez de catastrofico (un default 0 habria hecho alertar cada articulo sin stock desde el
+    deploy); (b) el borde es cantidad <= minimo, NO < — un punto de pedido es el nivel al que
+    se pide, alcanzarlo ES la senal, y ademas vuelve util minimo = 0 ('avisame cuando llegue a
+    cero') en vez de inutil ('avisame recien cuando ya este negativo'); enunciado explicito
+    porque la temporada de judgment-day de la etapa 12 probo que los bordes implicitos se
+    implementan de tres formas distintas (su decision 13); (c) reposicion es el NIVEL OBJETIVO,
+    no un segundo umbral: minimo dice CUANDO, reposicion dice HASTA CUANTO. minimoSugerido =
+    consumo diario x dias_cobertura_objetivo, SE MUESTRA y NUNCA se persiste sin accion
+    explicita del Admin. Reversible: cambiar a umbral calculado despues es una comparacion en
+    una query, y la columna sobrevive como override por fila; el camino inverso exigiria
+    inventar la historia que nunca se guardo."
+  - "2 — LAS ALERTAS SIGUEN SIENDO PULL. EL SEGUNDO CASO DE USO NO CAMBIA EL ARGUMENTO, FORTALECE
+    LA SUPERFICIE. La etapa 12 (su decision 10) difirio push 'con un segundo caso de uso real en
+    la mano': ese caso ya esta (vencimientos + bajo stock) y esta proposal lo resuelve. COSTO
+    REAL DE PUSH, PRECIADO: dependencia de transporte con configuracion y secretos por tenant,
+    scheduler o job runner (nada en src corre fuera de un request), modelo de estado de entrega,
+    reintentos y bounces, preferencias de suscripcion y baja por usuario, regla de deduplicacion
+    para que el mismo articulo no alerte todas las mananas para siempre, y revision de seguridad
+    de correo saliente en un sistema multi-tenant. Es una etapa, no un slice, y se decidiria a
+    ciegas: hay UN operador y cero evidencia de que la mirada diaria al Tablero este fallando.
+    Lo que SI cambian dos consumidores: el Tablero deja de ser una curiosidad de la etapa 12 con
+    un tile y pasa a ser LA BANDEJA DE ALERTAS — dos tiles, una mirada, ambos con reporte y
+    export. TRIPWIRES NOMBRADOS QUE REABREN LA DECISION: (1) una persona que deba reaccionar y
+    no abra el back office a diario; (2) cualquier etapa que necesite scheduler/job runner POR
+    SUS PROPIAS RAZONES (candidatas realistas: etapa 16 por el ciclo de vida de OC, etapa 14 por
+    retencion de auditoria) — ahi el costo marginal de push colapsa; (3) un incidente registrado
+    de 'nos enteramos tarde'. Reversible: los reportes de esta etapa SON el payload de cualquier
+    push futuro; no hay que deshacer nada para agregarlo."
+  - "3 — LA SUGERENCIA DE COMPRA ES UN LISTADO ACCIONABLE AGRUPADO POR PROVEEDOR; NO GENERA
+    ORDEN NI BORRADOR. La etapa 16 posee las ordenes de compra (doc-11:232, backlog linea 369) y
+    no existe entidad de OC. Se RECHAZA sembrar un comprobante_compra en borrador (que si es
+    tecnicamente posible desde la etapa 8): la etapa 13 pasaria a poseer un camino de escritura
+    de ServicioDeCompras contra su propia restriccion dura, necesitaria un costo unitario por
+    linea que esta etapa no tiene por que decidir, una cantidad equivocada se vuelve un ARTEFACTO
+    REAL que alguien tiene que borrar, y la etapa 16 va a modelar el pedido en serio dejando dos
+    puertas de entrada compitiendo. DOS REGLAS DE HONESTIDAD: (a) las filas cuyo articulo no
+    tiene id_proveedor_habitual se agrupan bajo 'Sin proveedor' y NUNCA se omiten — una lista de
+    reposicion que descarta en silencio los articulos sin proveedor miente por omision, el mismo
+    criterio exacto que llevo a la etapa 12 a agregar el cuarto estado sin_fecha al reporte de
+    vencimientos en vez de filtrar esas filas; (b) la cantidad sugerida es NULL cuando reposicion
+    no esta seteada, JAMAS 0 — un cero en la columna 'cuanto comprar' es una respuesta fabricada
+    a una pregunta que el sistema no puede responder (dto-contract-honesty). Reversible: agregar
+    'generar borrador/OC desde esta lista' despues es puramente aditivo sobre un read model que
+    ya calcula cantidad y agrupacion."
+  - "4 — 'STOCK EN TRANSITO' SE OMITE DE LA FORMULA, NO SE HARDCODEA EN CERO. Probado en
+    explore.md seccion 5: MotivoStock no tiene estado intermedio, la transferencia escribe sus
+    dos filas espejadas EN UNA SOLA TRANSACCION (no hay ventana con mercaderia en camino) y la
+    compra postea todos sus movimientos al Confirmar (la recepcion parcial es explicitamente
+    etapa 16, doc-11:232). Un campo que siempre vale 0 es una API con forma de mentira: todo
+    consumidor lo trata como significativo, el web pinta una columna de ceros, y cuando la etapa
+    16 le de un calculo real el significado cambia EN SILENCIO bajo quienes ya le creian. FORMULA
+    QUE SE ENVIA Y SE DOCUMENTA: sugerido = reposicion IS NULL ? null : max(0, reposicion -
+    cantidad), con nota registrada en el Purpose de la capability de que '- en_transito' es el
+    termino que agrega la etapa 16. EDGE CASE ADYACENTE DECIDIDO JUNTO: las compras EN BORRADOR
+    NO cuentan como entrante — un borrador no es un compromiso, no tiene fecha esperada de
+    arribo y puede no confirmarse nunca; contarlo SUPRIMIRIA una alerta por mercaderia que
+    jamas llega, el peor modo de falla de una alerta de reposicion. Reversible: un sustraendo en
+    una expresion y un campo en un DTO."
+  - "5 — EL WORKFLOW COMPLETO DE CONTEO (SNAPSHOT/FREEZE/VARIANZA) SE SEPARA DE ESTA ETAPA Y SE
+    RE-REGISTRA EN EL DOC 11. EXPLICITO Y POR ESCRITO, NO POR SILENCIO. Dimensionado honesto:
+    necesita tabla header conteos + items_conteo con esperado/contado/diferencia, un enum nuevo
+    de estado, un paso de aplicacion que escribe N movimientos inventario EN UNA TRANSACCION
+    respetando el orden de lock pinneado — que desde la etapa 12 es (id_articulo, id_punto_venta,
+    id_lote NULLS FIRST) y debe manejar articulos con lote efectivo POR LOTE —, un reporte de
+    varianza con su export y una pantalla de conteo multi-sesion: realistamente 1200-1600 lineas
+    en 4-5 slices Y UNA MIGRACION QUE REABRE EL GATE, para una etapa cuyo resto necesita CERO
+    cambio de esquema. Ademas arrastra una BIFURCACION DE PRODUCTO SIN RESOLVER que esta etapa no
+    tiene mandato para settlear: el sistema no deja de vender mientras alguien cuenta — la
+    varianza se calcula contra el snapshot congelado (y entonces las ventas del intervalo se
+    absorben en la diferencia y el conteo esta mal) o contra el stock vivo al aplicar (y entonces
+    el snapshot es decorativo). SE RECHAZA absorberlo como slice final droppable: NECESITA
+    MIGRACION, y una migracion dentro de un slice droppable significa abrir el gate de DB por
+    algo que puede caerse — lo peor de los dos mundos. Se separa como change propio (nombre de
+    trabajo stage-13b-conteo-por-planilla), secuenciado despues de esta etapa y cerca de la
+    etapa 14, con la que comparte mas ADN (reconstruir la verdad de lo que paso) que con la
+    reposicion. LA DECISION NO ESTA COMPLETA HASTA QUE LO ESTE EL REGISTRO: una task del slice 1
+    actualiza la tabla de backlog de docs/11-programa-post-paridad.md (linea 367), misma
+    disciplina con que la etapa 12 actualizo el doc 10 seccion 6 desde un slice (su task 1.17).
+    La exclusion vigente en conteo-de-inventario/spec.md NO se reabre."
+  - "6 — EL MINIMO SE EDITA EN LA GRILLA DE EXISTENCIAS, QUE PASA A SER LA PANTALLA DE STOCK POR
+    PUNTO DE VENTA. NO EN EL EDITOR DE ARTICULO. Se RECHAZA una seccion dentro de Articulos.tsx:
+    un editor tenant-wide sosteniendo el valor de UN punto de venta es exactamente el mismatch de
+    scoping que la etapa 12 cerro con su decision 2, y mostrar N filas de PV dentro del formulario
+    de articulo convierte el editor de catalogo en una pantalla de stock. Se RECHAZA una pantalla
+    nueva de 'Minimos' por duplicada: renderizaria la misma lista, del mismo unico PV, con el
+    mismo selector que Existencias.tsx. CUATRO REGLAS QUE LO VUELVEN SEGURO: (a) el reporte queda
+    de solo lectura y la escritura es un endpoint aparte bajo otra politica — GET
+    /api/reportes/stock/existencias sigue en LecturaDeReportes (Supervisor + Admin) y PUT
+    /api/stock/minimos exige GestionDeCatalogo apilada sobre OperacionDePos, igual que /ajustes,
+    /transferencias, /conteos y /decomiso: UN SUPERVISOR VE LAS COLUMNAS Y NO PUEDE EDITARLAS,
+    regla testeable y no convencion de UI; (b) escribir un minimo para un articulo SIN fila de
+    stock CREA la fila con cantidad = 0 y escribe CERO filas de movimientos_stock — el invariante
+    cantidad = SUM(movimientos) se cumple trivialmente en 0 = 0; las dos implementaciones ingenuas
+    (fallar por 'no hay fila' o fabricar un movimiento de ajuste en cero) estan mal, una
+    inutilmente y la otra destructivamente (ck_movimientos_stock_cantidad_no_cero la rechazaria
+    igual); ESTE es el unico requirement ADDED sobre la capability stock; (c) llegar a un articulo
+    que todavia no esta en la grilla usa una fila de busqueda/alta de articulo (el patron de picker
+    que ya usan POS y CompraEditor), NO un join ensanchado — el reporte conserva su significado
+    exacto ('que hay stockeado aca') en vez de volverse en silencio 'todo el catalogo, casi todo
+    vacio'; (d) validaciones: minimo/reposicion >= 0 (400 minimo_negativo) y reposicion nunca por
+    debajo de minimo cuando ambos estan seteados (400 reposicion_menor_que_minimo) — un objetivo
+    de reposicion por debajo del punto de pedido no es una configuracion, es un tipeo; ambas en la
+    capa de aplicacion, NO como CHECK (ver gate). Residuo honesto registrado: N puntos de venta x
+    M articulos valores a mantener a mano; la copia masiva entre PVs queda DIFERIDA a proposito
+    hasta ver el volumen real. Reversible: mover el editor despues es un cambio solo-web sobre una
+    API sin cambios."
+  - "7 — LA ROTACION SE CALCULA EN LINQ DENTRO DE ServicioDeReportesDeStock. NI ARCHIVO NUEVO DE
+    SQL CRUDO, NI EXTENSION DE LectorDeSerieTemporal. LA BIFURCACION SE DISUELVE AL MIRARLA: el
+    SQL crudo de la etapa 10 fue forzado por dos necesidades concretas — un literal
+    date_trunc('{granularidad}', ...) que habia que inlinear desde un switch validado, y el
+    bucketing timezone($1, fecha) adentro de la query. La rotacion NO NECESITA NINGUNA DE LAS DOS:
+    es una ventana unica, no una serie temporal — un WHERE sobre un rango, un GROUP BY por
+    id_articulo, un SUM. Eso es LINQ plano sobre db.MovimientosStock, estructuralmente identico a
+    ObtenerExistenciasAsync, y hereda los filtros globales de EF y los GUCs de RLS a nivel conexion
+    sin una sola linea de manejo de conexion a mano. Asi la convencion 'un solo archivo de SQL
+    crudo' de la etapa 10 se honra NO AGREGANDO UN SEGUNDO, y LectorDeSerieTemporal (cuyos dos
+    cuerpos SQL son de comprobantes_venta y gastos) conserva su cohesion. TRES REGLAS
+    DEFINICIONALES, CADA UNA UN BUG REAL SI QUEDA IMPLICITA: (a) QUE CUENTA COMO CONSUMO: motivo =
+    venta MAS las filas motivo = anulacion con id_comprobante_compra IS NULL — no es pedanteria:
+    desde la etapa 8 la anulacion de una COMPRA tambien escribe motivo = anulacion, y la spec de
+    stock fija que id_comprobante_compra se puebla exactamente en las filas compra y en las
+    anulacion que las revierten, asi que filtrar solo motivo IN (venta, anulacion) NETEARIA
+    REVERSIONES DE COMPRA DENTRO DE LAS VENTAS; ajuste, inventario, decomiso, transferencia y
+    reclasificacion NO son consumo y se excluyen; (b) la ventana se resuelve en la zona_horaria del
+    punto de venta, calculada en C# desde el 'hoy' que ResolverContextoAsync ya produce (etapa 12,
+    decision 15) y pasada como instantes — es la clase de bug de la slice 9 de la etapa 11 que
+    necesito el commit de endurecimiento 08e7707, y queda como criterio de verify vinculante; (c)
+    la rotacion es ADVISORY y nunca gatilla una alerta: una cifra equivocada confunde a un humano
+    que lee una sugerencia, pero no puede disparar una alerta falsa ni suprimir una verdadera,
+    porque la alerta compara cantidad contra el minimo almacenado y nada mas (decision 1) — esa
+    contencion es deliberada y acota el radio de explosion de la unica aritmetica no trivial de la
+    etapa. Reversible: si una superficie futura necesita rotacion EN EL TIEMPO (por semana), ahi si
+    se vuelve un tercer cuerpo SQL en LectorDeSerieTemporal, con la justificacion de granularidad y
+    zona que hoy no existe."
+  - "8 — NO HAY AVISO SINCRONICO DE BAJO MINIMO EN EL POS. EL PRESUPUESTO DEL CHECKOUT QUEDA
+    BLINDADO. Observacion tecnica honesta primero: PODRIA ser casi gratis — el INSERT ... ON
+    CONFLICT DO UPDATE ... RETURNING del checkout ya devuelve la fila de stock, y agregar minimo a
+    la lista del RETURNING cuesta CERO round-trips extra. O sea que este NO es un argumento de
+    costo, es un argumento de producto. POR QUE NO IGUAL: (a) el aviso llegaria DESPUES de commitear
+    la venta — el RETURNING ocurre dentro de la transaccion que ya vendio la mercaderia, asi que le
+    dice al cajero algo sobre lo que no puede actuar en el mostrador; (b) EL CAJERO NO ES QUIEN
+    REPONE: un aviso dirigido a alguien que no puede responderlo es ruido; (c) la etapa 12 ya puso
+    un warning loteVencido en esa misma superficie, y un segundo aviso NO ACCIONABLE al lado de uno
+    accionable ENTRENA AL OPERADOR A DESCARTAR LOS DOS — la regresion de UX mas cara y la mas
+    invisible para cualquier suite; (d) cambiaria el SQL del camino de escritura mas caliente y su
+    DTO de respuesta por una preocupacion de back office, gastando la credibilidad de un presupuesto
+    blindado en algo que el tile del Tablero cubre dentro de la misma jornada. Criterio de exito que
+    lo verifica en vez de prometerlo: el conteo de round-trips del checkout no cambia respecto de
+    pre-etapa-13, por test (patron de la etapa 12). Reversible: una columna en un RETURNING y un
+    campo nullable en la respuesta del checkout — registrado con precision para que un dueño futuro
+    sepa que es un cambio de un slice y no una decision de arquitectura que le quedo cerrada."
+notes:
+  - "QUINTA ETAPA DEL PROGRAMA POST-PARIDAD (docs/11-programa-post-paridad.md, etapa 13 =
+    doc-11:165-188). Contraparte directa de la etapa 12: una controla lo que se vence, esta lo que
+    falta. Depende de la etapa 5 (stock/movimientos_stock, las dos columnas dormidas y el
+    invariante de suma), de la 8 (id_comprobante_compra en el ledger, sin la cual el filtro de
+    motivos de la rotacion no podria distinguir una anulacion de venta de una de compra), de la 10
+    (Tablero, zona_horaria y el precedente de ResolverContextoAsync), de la 11 (TablaExportable /
+    IExportadorDeTabla / hermano /export) y de la 12 (canal PULL, forma del PanelDeVencimientos,
+    plantilla de tres capas y la distincion listado vs agregado acotado que le dice al export cual
+    shape de tope usar). De la etapa 3 hereda articulos.id_proveedor_habitual, completa y ya leida
+    por ServicioDeCompras."
+  - "LO QUE GOBIERNA LA ETAPA NO ES EL UMBRAL, ES LA HONESTIDAD ARITMETICA. Toda la etapa es
+    superficie de lectura mas una escritura chica de Admin; nada crea una fuente de verdad nueva y
+    nada puede corromper una. El unico lugar donde hace falta cuidado real es cuales movimientos
+    cuentan como consumo, que significa una sugerencia cuando faltan sus insumos, y que hace un
+    reporte con las filas que no puede clasificar. La temporada de judgment-day de la etapa 12
+    probo que los bugs caros de una superficie de solo lectura son los de una cifra PLAUSIBLE Y
+    EQUIVOCADA, no los de una cifra ausente."
+  - "CONTRATO DE CAPABILITIES para sdd-spec — NUEVA (1): 'reposicion-de-stock' (semantica de
+    minimo/reposicion con NULL = no gestionado y el borde <=, el camino de escritura Admin-only y
+    su regla de no-movimiento, la definicion de rotacion con su filtro de motivos y su ventana con
+    zona, la formula de sugerencia y sus NULLs honestos, el reporte de reposicion con su hermano
+    /export y su tile de Tablero). MODIFICADAS (3): 'stock' (UN requirement ADDED: la fila de stock
+    carga parametros de reposicion que NO son un hecho del ledger, asi que escribirlos crea la fila
+    cuando falta y NO debe insertar movimientos_stock — es una afirmacion sobre el invariante propio
+    de stock, por eso vive ahi y no en la capability nueva), 'reportes-de-gestion' (el requirement
+    de existencias se reenuncia incluyendo minimo/reposicion/estado en la respuesta y su export),
+    'parametros-operativos' (2 claves nuevas, sin migracion). NO MODIFICADAS:
+    'exportacion-de-reportes' (esta etapa es consumidora del contrato, no enmendante), 'articulos'
+    (solo lee id_proveedor_habitual), 'conteo-de-inventario' (su exclusion SIGUE VIGENTE, decision
+    5), 'lotes-y-vencimientos' y toda spec de camino de escritura (comprobantes-venta,
+    comprobantes-compra, transferencias-de-stock)."
+  - "RIESGO NUMERO UNO, Y ES DE PRODUCTO, NO TECNICO: que nadie configure ningun minimo y la etapa
+    entregue una pantalla vacia. Mitigacion en tres puntos: NULL = no gestionado hace que el dia uno
+    sea silencioso en vez de ruidoso; el editor se entrega en el SLICE 3, no al final; y
+    minimoSugerido elimina el problema de la hoja en blanco. Riesgo dos: una cifra plausible y
+    equivocada — cada regla aritmetica es un escenario de spec nombrado (exclusion de la anulacion
+    de compra, borde exacto en cantidad == minimo, sugerido NULL en vez de 0, 'Sin proveedor' nunca
+    descartado). Riesgo tres: fatiga de alertas por stock legalmente negativo (paridad legacy) —
+    acotado porque solo aparecen los articulos con minimo configurado, o sea que el operador opta
+    articulo por articulo."
+  - "OUT OF SCOPE EXPLICITO: cualquier infraestructura de push (decision 2, con tripwires
+    nombrados); generacion de orden o de borrador de compra (decision 3, etapa 16); 'stock en
+    transito' como campo (decision 4); el workflow completo de conteo snapshot/freeze/varianza
+    (decision 5, separado y RE-REGISTRADO en doc 11, no dropeado en silencio); aviso sincronico de
+    bajo minimo en el POS (decision 8); reposicion consolidada multi-punto-de-venta; operaciones
+    masivas sobre minimos (copiar de otro PV, import masivo, recalculo por porcentaje); persistir
+    automaticamente el minimo calculado; punto de pedido por lote (un lote es identidad de
+    vencimiento, no unidad de reposicion); costo o precio estimado en la lista de reposicion;
+    actualizacion masiva de costos (doc-11:378 la menciona como posible mejora DENTRO de esta
+    etapa — NO SE TOMA: es un camino de escritura de compras con semantica de precios, ajeno a la
+    reposicion, y violaria la restriccion de caminos de escritura de la etapa; queda registrada
+    para que no se pierda). Y los pendientes reservados del dueño: formula de comisiones, margen
+    para Supervisor, modelo de lectura de OperacionDePos, cierre de caja por rol, branding de
+    exports — intactos."
+  - "ENTREGA: 7 SLICES TENTATIVOS, STACKED-TO-MAIN, judgment-day por slice segun
+    protocolo-pr-solo-dev. Orden: 1 minimos-api, 2 existencias-minimos, 3 web-minimos, 4
+    reposicion, 5 rotacion, 6 web-reposicion, 7 tile-y-sugerencia. El editor llega en el slice 3 A
+    PROPOSITO: despues de el la etapa ya es usable de punta a punta. DEGRADACION PRE-APROBADA
+    (patron de la decision 11 de la etapa 12): si el slice 7 desborda, SE ENTREGA EL TILE Y SE CAE
+    LA COLUMNA minimoSugerido — el tile es el canal de alertas que esta etapa existe para extender,
+    la sugerencia es la capa asistiva y el minimo fijo queda plenamente usable sin ella; caerla es
+    una reduccion documentada, nunca silenciosa. REVIEW WORKLOAD FORECAST PRELIMINAR: ~2260 lineas
+    totales; PRs encadenados = Si; riesgo de presupuesto de 400 lineas = MEDIO (slices 4 y 6 son los
+    mas cerca del tope, con puntos de corte pre-identificados); size:exception anticipada = NO (a
+    diferencia de la etapa 12, ningun slice carga una migracion impartible); decision necesaria
+    antes de apply = No, YA RESUELTA (auto-chain + stacked-to-main honrados desde state.yaml). Como
+    en todas las etapas previas, se espera que el desborde venga de PROFUNDIDAD DE TESTS, no de
+    alcance. El forecast vinculante lo produce sdd-tasks."
+  - "PLAN DE ROLLBACK: la etapa mas barata de abandonar del programa post-paridad hasta ahora, y es
+    una propiedad DELIBERADA del enfoque. Por slice: codigo aditivo sobre esquema sin cambios;
+    revertir deja las dos columnas de stock dormidas exactamente como estuvieron desde la etapa 5.
+    En runtime: poner todos los minimo en NULL silencia la feature entera sin tocar una cantidad, un
+    movimiento ni otra fila. Etapa completa: revertir el codigo — NO HAY MIGRACION QUE DESHACER NI
+    ARTEFACTO IRREVERSIBLE DE NINGUN TIPO, a diferencia de la etapa 12 cuyos valores de enum
+    motivo_stock Postgres no puede dropear."
+  - "CARRYOVER: la debilidad de ways_owner como superusuario del testcontainer NO ES RELEVANTE en
+    esta etapa (cero migracion, cero policy de RLS nueva), a diferencia de la 12. Siguen abiertos y
+    sin tocar: el gap de concurrencia del replace-set de articulos_empresas y el micro-gate del
+    CHECK de importe (ambos de la etapa 8), la ausencia de regla de lint para los limites de
+    contencion (etapas 10/11), y el backlog completo de la etapa 12 (target de mutacion del ThenBy
+    de id_lote, wording de ExigirObservaciones en decomiso, tests 404 de los endpoints de lotes) —
+    ninguno intersecta esta etapa."
+  - "IDIOMA DE ARTEFACTOS: prosa en ingles con identificadores de dominio en castellano, igual que
+    todo change archivado en openspec/ (etapas 1-12) y que openspec/specs/, para que los deltas de
+    spec se fusionen sin costura de idioma."
+  - "FLAGS PARA EL DUEÑO (no bloquean spec/design, todos con asuncion registrada en la seccion
+    'Proposal question round' de proposal.md): (1) ¿EL PUNTO DE PEDIDO ES UN NUMERO QUE FIJA EL
+    DUEÑO, con el calculo solo como sugerencia? asumido SI — es la llamada de mas peso de producto
+    de la etapa; (2) ¿un articulo sin minimo configurado queda en silencio? asumido SI (NULL = no
+    gestionado); (3) ¿'bajo minimo' incluye al articulo exactamente EN el minimo? asumido SI
+    (cantidad <= minimo); (4) ¿la lista genera un borrador de compra o queda como listado +
+    planilla? asumido LISTADO + PLANILLA; (5) ¿el workflow completo de conteo entra en esta etapa?
+    asumido NO, separado y re-registrado en doc 11; (6) ¿el cajero ve el aviso de bajo minimo en el
+    mostrador? asumido NO; (7) ¿editar el minimo por PV desde Existencias es el hogar correcto?
+    asumido SI, con el residuo honesto de N x M valores a mano; (8) ¿las alertas siguen siendo pull
+    sin canal de correo/notificacion? asumido SI, ahora con el segundo caso de uso en la mano como
+    pedia la etapa 12, y con tres tripwires nombrados."
