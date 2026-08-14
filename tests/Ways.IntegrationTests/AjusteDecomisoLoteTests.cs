@@ -255,6 +255,38 @@ public class AjusteDecomisoLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(40m, await LeerStockAsync(ctx, idArticulo));
     }
 
+    // ---- judgment-day (juez B): el ajuste PUEDE dejar negativo, a diferencia del decomiso -------
+
+    /// <summary>spec stock: "no negativity refusal" para el ajuste (a diferencia del único rechazo
+    /// que conoce <c>DecomisarAsync</c>) — un ajuste que deja el lote Y el agregado NEGATIVOS se
+    /// acepta con 200 y el saldo negativo queda persistido exacto.
+    ///
+    /// EVIDENCIA DE MUTACIÓN (juez B): agregado temporalmente un chequeo de negatividad a
+    /// <c>EjecutarAjusteAsync</c> (mismo <c>if (nuevaDelLote &lt; 0m) throw ...</c> que usa el
+    /// decomiso) — build, filtro
+    /// <c>FullyQualifiedName~UnAjusteQueDejaSaldoNegativoEsAceptado</c>: este test <b>FALLÓ</b>
+    /// (409 en vez de 200 — la rama muerta habría bloqueado la corrección de un saldo negativo).
+    /// Revertido el mutante, corrida de nuevo: <b>GREEN</b>.</summary>
+    [Fact]
+    public async Task UnAjusteQueDejaSaldoNegativoEsAceptado()
+    {
+        var ctx = await PrepararAsync(nameof(UnAjusteQueDejaSaldoNegativoEsAceptado));
+        var idArticulo = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-ajuste-negativo", 10m);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L-AJUSTE-NEGATIVO", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLote, 3m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 3m);
+
+        var solicitud = new SolicitudDeAjusteDeStock(ctx.IdPuntoVenta, idArticulo, -5m, "Corrección a negativo", idLote);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/ajustes", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        var actual = JsonSerializer.Deserialize<StockActual>(cuerpo, OpcionesJson)!;
+        Assert.Equal(-2m, actual.Cantidad);
+        Assert.Equal(-2m, await LeerStockLoteAsync(ctx, idArticulo, idLote));
+        Assert.Equal(-2m, await LeerStockAsync(ctx, idArticulo));
+    }
+
     // ---- gap de cobertura (dto-contract-honesty): guard simétrico de lote_no_aplica ------------
 
     /// <summary>spec stock (guard simétrico del anterior): un <c>idLote</c> provisto sobre un
@@ -308,6 +340,64 @@ public class AjusteDecomisoLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(idLote, movimiento.IdLote);
     }
 
+    // ---- judgment-day (juez B): cantidad inválida en decomiso ----------------------------------
+
+    /// <summary>spec lotes-y-vencimientos: "the client MUST send a positive cantidad" —
+    /// <c>ExigirCantidadDeDecomisoValida</c> rechaza cero y negativo con <c>400
+    /// cantidad_de_ajuste_invalida</c>, antes de tocar la base.
+    ///
+    /// EVIDENCIA DE MUTACIÓN (juez B): anulado el <c>if (cantidad &lt;= 0)</c> de
+    /// <c>ExigirCantidadDeDecomisoValida</c> — build, filtro
+    /// <c>FullyQualifiedName~UnDecomisoConCantidadCeroOatNegativaEsRechazado</c>: este test
+    /// <b>FALLÓ</b> (la cantidad cero/negativa del cliente pasaba sin chequeo). Revertido el
+    /// mutante, corrida de nuevo: <b>GREEN</b>.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public async Task UnDecomisoConCantidadCeroONegativaEsRechazado(decimal cantidad)
+    {
+        var ctx = await PrepararAsync($"{nameof(UnDecomisoConCantidadCeroONegativaEsRechazado)}-{cantidad}");
+        var idArticulo = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-decomiso-cant-invalida", 10m);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L-CANT-INVALIDA", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLote, 20m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 20m);
+
+        var solicitud = new SolicitudDeDecomiso(ctx.IdPuntoVenta, idArticulo, idLote, cantidad, "Cantidad inválida");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/decomiso", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cantidad_de_ajuste_invalida", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Decomiso));
+        Assert.Equal(20m, await LeerStockAsync(ctx, idArticulo));
+    }
+
+    /// <summary>spec lotes-y-vencimientos / ck_movimientos_stock_cantidad — misma disciplina de
+    /// precisión que <c>ExigirCantidadValida</c>: más de 3 decimales se rechaza con <c>400
+    /// cantidad_invalida</c>.</summary>
+    [Fact]
+    public async Task UnDecomisoConMasDeTresDecimalesEsRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(UnDecomisoConMasDeTresDecimalesEsRechazado));
+        var idArticulo = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-decomiso-4-decimales", 10m);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L-4-DECIMALES", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, idArticulo, idLote, 20m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 20m);
+
+        var solicitud = new SolicitudDeDecomiso(ctx.IdPuntoVenta, idArticulo, idLote, 5.1234m, "Cuatro decimales");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/decomiso", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cantidad_invalida", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Decomiso));
+        Assert.Equal(20m, await LeerStockAsync(ctx, idArticulo));
+    }
+
     // ---- task 11.7: idLote requerido en decomiso -----------------------------------------------
 
     /// <summary>spec lotes-y-vencimientos: "A decomiso of a lot-effective articulo requires
@@ -352,6 +442,83 @@ public class AjusteDecomisoLoteTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("lote_invalido", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- judgment-day (juez B): decomiso de artículo SIN lote efectivo (rama else, código muerto
+    // para tests hasta esta ronda) -----------------------------------------------------------------
+
+    /// <summary>spec lotes-y-vencimientos: un artículo SIN lote efectivo también admite decomiso —
+    /// baja el agregado, el movimiento queda con <c>motivo = Decomiso</c> e <c>id_lote = null</c>.
+    ///
+    /// EVIDENCIA DE MUTACIÓN (juez B): forzado un <c>throw</c> incondicional en la rama
+    /// <c>else</c> de <c>EjecutarDecomisoAsync</c> (la que corre cuando <c>idLote is null</c>) —
+    /// build, filtro <c>FullyQualifiedName~UnDecomisoDeUnArticuloSinLoteEfectivoEsAceptado</c>:
+    /// este test <b>FALLÓ</b> (la rama era código muerto para la suite hasta ahora). Revertido el
+    /// mutante, corrida de nuevo: <b>GREEN</b>.</summary>
+    [Fact]
+    public async Task UnDecomisoDeUnArticuloSinLoteEfectivoEsAceptado()
+    {
+        var ctx = await PrepararAsync(nameof(UnDecomisoDeUnArticuloSinLoteEfectivoEsAceptado));
+        var idArticulo = await SembrarArticuloSinLoteAsync(ctx, "articulo-decomiso-sin-lote-ok", 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 20m);
+
+        var solicitud = new SolicitudDeDecomiso(ctx.IdPuntoVenta, idArticulo, null, 5m, "Rotura, artículo sin lote");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/decomiso", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        Assert.Equal(15m, await LeerStockAsync(ctx, idArticulo));
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var movimiento = await db.MovimientosStock.SingleAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Decomiso);
+        Assert.Equal(-5m, movimiento.Cantidad);
+        Assert.Null(movimiento.IdLote);
+    }
+
+    /// <summary>Contraparte 409 de la anterior: mismo <c>stock_insuficiente_para_decomiso</c> que
+    /// el camino lote-efectivo, pero evaluado sobre el agregado (rama <c>else if (nuevaAgregada
+    /// &lt; 0m)</c> de <c>EjecutarDecomisoAsync</c>).</summary>
+    [Fact]
+    public async Task UnDecomisoDeUnArticuloSinLoteEfectivoQueDejariaElAgregadoNegativoEsRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(UnDecomisoDeUnArticuloSinLoteEfectivoQueDejariaElAgregadoNegativoEsRechazado));
+        var idArticulo = await SembrarArticuloSinLoteAsync(ctx, "articulo-decomiso-sin-lote-insuf", 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 3m);
+
+        var solicitud = new SolicitudDeDecomiso(ctx.IdPuntoVenta, idArticulo, null, 5m, "Rotura mayor al saldo agregado");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/decomiso", solicitud);
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("stock_insuficiente_para_decomiso", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Decomiso));
+        Assert.Equal(3m, await LeerStockAsync(ctx, idArticulo));
+    }
+
+    /// <summary>Hallazgo menor del juez B: guard simétrico de <c>lote_no_aplica</c> en decomiso —
+    /// mismo criterio que <c>UnAjusteDeUnArticuloSinLoteConIdLoteProvistoEsRechazado</c>, barato
+    /// porque <c>ResolverIdLoteEfectivoAsync</c> ya es compartido por ambos servicios.</summary>
+    [Fact]
+    public async Task UnDecomisoDeUnArticuloSinLoteConIdLoteProvistoEsRechazado()
+    {
+        var ctx = await PrepararAsync(nameof(UnDecomisoDeUnArticuloSinLoteConIdLoteProvistoEsRechazado));
+        var idArticuloSinLote = await SembrarArticuloSinLoteAsync(ctx, "articulo-decomiso-sin-lote-idlote", 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticuloSinLote, 20m);
+
+        var idArticuloConLote = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-ajeno-decomiso-idlote", 10m);
+        var idLoteAjeno = await SembrarLoteAsync(ctx, idArticuloConLote, "L-AJENO-DECOMISO-IDLOTE", VencimientoLejanoFuturo);
+
+        var solicitud = new SolicitudDeDecomiso(ctx.IdPuntoVenta, idArticuloSinLote, idLoteAjeno, 5m, "Idlote ajeno en decomiso");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/decomiso", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("lote_no_aplica", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticuloSinLote && m.Motivo == MotivoStock.Decomiso));
     }
 
     // ---- task 11.5: stock_insuficiente_para_decomiso -------------------------------------------

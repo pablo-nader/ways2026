@@ -1522,6 +1522,40 @@ ajuste ×2 (11.10).
 > los edits (gate cerrado — los valores de enum `Decomiso` ya existen desde
 > el slice 1).
 
+> **JUDGMENT-DAY FIX NOTE (11.12, ronda 2, juez B)**: 3 gaps confirmados, los
+> 3 sobre código ya escrito en el slice pero sin cobertura — 7 tests nuevos
+> en `AjusteDecomisoLoteTests.cs` (11 → 18):
+>
+> 1. Decomiso de artículo SIN lote efectivo (rama `else`/`else if` de
+>    `EjecutarDecomisoAsync`, código muerto para tests hasta esta ronda):
+>    `UnDecomisoDeUnArticuloSinLoteEfectivoEsAceptado` (200, agregado baja,
+>    movimiento con `id_lote = null`) y
+>    `UnDecomisoDeUnArticuloSinLoteEfectivoQueDejariaElAgregadoNegativoEsRechazado`
+>    (409 `stock_insuficiente_para_decomiso` sobre el agregado). Evidencia:
+>    unconditional `throw` en la rama `else` — ambos **FALLARON** (200/409
+>    reales vs. 409 forzado); revertido, **GREEN**.
+> 2. Cantidad inválida en decomiso:
+>    `UnDecomisoConCantidadCeroONegativaEsRechazado` (Theory, cantidad 0 y
+>    -5 → 400 `cantidad_de_ajuste_invalida`) y
+>    `UnDecomisoConMasDeTresDecimalesEsRechazado` (400 `cantidad_invalida`).
+>    Evidencia: anulado el `if (cantidad <= 0)` de
+>    `ExigirCantidadDeDecomisoValida` (`if (false)`) — ambos casos del
+>    Theory **FALLARON** (200/500 en vez de 400); revertido, **GREEN**.
+> 3. El ajuste PUEDE dejar negativo (diferencia central con decomiso):
+>    `UnAjusteQueDejaSaldoNegativoEsAceptado` (200, saldo de lote Y agregado
+>    negativo persistido exacto, -2). Evidencia: agregado temporalmente un
+>    `if (nuevaDelLote < 0m) throw ...` a `EjecutarAjusteAsync` — el test
+>    **FALLÓ** (409 en vez de 200); revertido, **GREEN**.
+>
+> Hallazgo menor (barato, helper ya existía):
+> `UnDecomisoDeUnArticuloSinLoteConIdLoteProvistoEsRechazado` — guard
+> simétrico de `lote_no_aplica` en decomiso, mismo criterio que el
+> equivalente de ajuste.
+>
+> Filtro `~AjusteDecomisoLoteTests`: 18/18. Regresión `~AjusteDeStockTests`:
+> 10/10. `has-pending-model-changes`: sin cambios pendientes (solo se tocó
+> el archivo de tests). Árbol limpio tras el commit.
+
 ---
 
 ## Slice 12: Conteo (PR 12)
