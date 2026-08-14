@@ -423,6 +423,19 @@ describe('Transferencias — picker de lote', () => {
   })
 
   it('mutation-proof: dos filas del resultado con el mismo artículo y lotes distintos NUNCA colisionan (clave compuesta)', async () => {
+    // La clave discriminante real de esta mutación es el warning de React de claves duplicadas
+    // en un `.map` — un `key={l.idArticulo}` a secas NO produce contenido visiblemente erróneo
+    // en un primer render controlado (cada `<tr>` sigue derivando su texto de sus propias
+    // props), así que un assert de solo-contenido pasa igual con la mutación aplicada — el
+    // confound que `mutation-proof-tests` regla 3 exige rodear. Acá se espía `console.error` y
+    // se afirma la AUSENCIA del warning "Encountered two children with the same key", que SÍ es
+    // la señal que React emite exclusivamente cuando la clave colisiona.
+    // *(Mutación aplicada→observada→revertida en este apply run: revertir la clave compuesta a
+    // `key={l.idArticulo}` deja pasar el assert de contenido de abajo intacto, pero el spy de
+    // `console.error` capta el warning "Encountered two children with the same key" que este
+    // test existe para prevenir — confirmado localmente, revertido, verde de nuevo.)*
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
     mockearPuntosVentaConLote()
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/stock/transferencias')
@@ -449,8 +462,7 @@ describe('Transferencias — picker de lote', () => {
 
     await screen.findByText(/Transferencia registrada/)
 
-    // Con `key={l.idArticulo}` a secas, React colapsaría estas dos filas del mismo artículo en
-    // una — acá deben coexistir las DOS, con sus cantidades propias intactas.
+    // Contenido: las DOS filas coexisten, con sus cantidades propias intactas.
     const filas = screen.getAllByRole('row').filter((fila) => fila.textContent?.includes('Fideos 500g'))
     expect(filas).toHaveLength(2)
     expect(filas[0].textContent).toContain('41')
@@ -459,5 +471,15 @@ describe('Transferencias — picker de lote', () => {
     expect(filas[1].textContent).toContain('42')
     expect(filas[1].textContent).toContain('7')
     expect(filas[1].textContent).toContain('8')
+
+    // La señal discriminante real: React NUNCA advierte de claves duplicadas con la clave
+    // compuesta — esta es la aserción que la mutación (revertir a `key={l.idArticulo}`) hace
+    // fallar.
+    const huboWarningDeClave = errorSpy.mock.calls.some((call) =>
+      call.some((arg) => typeof arg === 'string' && arg.includes('same key')),
+    )
+    expect(huboWarningDeClave).toBe(false)
+
+    errorSpy.mockRestore()
   })
 })

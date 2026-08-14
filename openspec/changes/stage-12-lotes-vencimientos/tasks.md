@@ -1943,7 +1943,15 @@ branch — no backend change.
   per-line picker pre-selects `sugerido` (design decisión 19) and can be
   cleared back to "Auto (FEFO)"; `LineaDeTransferenciaFormulario` gained a
   UI-only `controlaLote` field (never sent to the backend) to decide
-  per-row whether the picker renders.)*
+  per-row whether the picker renders. `mutation-proof-tests` evidence on
+  the composite key: a plain content-only assertion (two rows, correct
+  cantidades) passed EVEN with the mutation reverted to `key={l.idArticulo}`
+  — a first controlled render never shows stale content, the exact
+  confound rule 3 warns about. Re-routed below the confound: spy on
+  `console.error` and assert the ABSENCE of React's "Encountered two
+  children with the same key" warning, which fires ONLY on the collision.
+  Mutation applied → RED (warning captured, assertion failed) → reverted →
+  GREEN, full `Transferencias.test.tsx` suite 12/12.)*
 - [x] 15.6 Modify `src/Ways.Web/src/paginas/ConteoDeInventario.tsx`:
   per-lot counted-total input UI, exactly-one-of enforcement mirrored
   client-side. *(APPLY-RUN NOTE: the aggregate "Cantidad contada" field and
