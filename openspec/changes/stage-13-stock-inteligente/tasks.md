@@ -285,52 +285,110 @@ already exercises — never a second definition. **Rollback**: revert the
 branch — the report reverts to silent on the two columns, exactly its
 pre-stage-13 shape.
 
-- [ ] 2.1 Modify `src/Ways.Application/Reportes/Contratos.cs`:
+- [x] 2.1 Modify `src/Ways.Application/Reportes/Contratos.cs`:
   `FilaExistencia` gains `Minimo`, `Reposicion`, `Estado`. `dto-contract-honesty`:
   doc-comment each — read straight off the `stock` row already joined,
   `Estado` derived via `ReglaDeReposicion.Clasificar`, never a report-local
   reimplementation of the boundary.
-- [ ] 2.2 Modify `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
+- [x] 2.2 Modify `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
   `ObtenerExistenciasAsync`'s projection calls `ReglaDeReposicion.Clasificar(
   s.Cantidad, s.Minimo)` for `Estado`, and includes `s.Minimo`/`s.Reposicion`
   in the existing row shape. *(design decision 2 — existencias classifies
   **every** stocked row; reposición, slice 4, returns **only** `Bajo`)*
-- [ ] 2.3 Modify `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
+  **APPLY NOTE**: `Clasificar` is a C# static method, not SQL-translatable —
+  the LINQ query now materializes the raw join (`ToListAsync`) first and
+  classifies in a second, in-memory `Select` (LINQ-to-Objects). No behavior
+  deviation: still one query, no second round trip, matches design's "the
+  comparison never leaves C#" principle (design §Technical Approach, point 2).
+- [x] 2.3 Modify `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
   `ColumnasExistencias` gains the same 3 columns, same order as the JSON.
-- [ ] 2.4 [P] **Mutation target**: the `ReglaDeReposicion.Clasificar` call
+- [x] 2.4 [P] **Mutation target**: the `ReglaDeReposicion.Clasificar` call
   in the existencias projection — hard-code `EstadoDeReposicion.Ok` — the
   `SinMinimo`/`Bajo`/`Ok` row assertions (2.5) must fail.
-  *(mutation-proof-tests)*
-- [ ] 2.5 [P] Three-state row assertions: `cantidad = minimo` classifies
+  *(mutation-proof-tests)* **EVIDENCE**: mutated to
+  `EstadoDeReposicion.Ok /* MUTATION 2.4 */`, ran
+  `LosTresEstadosDeReposicionClasificanCorrectamenteEnExistencias` →
+  FAILED (`Assert.Equal() Failure: Values differ Expected: Bajo Actual: Ok`
+  at `ExistenciasTests.cs:258`), reverted, ran the full `~Existencias`
+  filter → 14/14 green, `git status`/`git diff --stat` clean (revert matched
+  committed bytes exactly).
+- [x] 2.5 [P] Three-state row assertions: `cantidad = minimo` classifies
   `bajo`; `minimo = null, cantidad = 0` classifies `sin_minimo` (never
   `bajo`); `cantidad` above `minimo` classifies `ok`. *(spec
   `reportes-de-gestion`: scenarios "An articulo at or below its minimo
   classifies bajo", "…classifies sin_minimo, never bajo", "…classifies ok")*
-- [ ] 2.6 [P] Integration: existencias needs no `idArticulo` (regression,
+  Implemented as `ExistenciasTests.LosTresEstadosDeReposicionClasificanCorrectamenteEnExistencias`
+  (three articulos, all fields distinct — mutation-proof-tests rule 6).
+- [x] 2.6 [P] Integration: existencias needs no `idArticulo` (regression,
   re-asserted with the three new columns present). *(spec
   `reportes-de-gestion`: scenario "Existencias needs no idArticulo")*
-- [ ] 2.7 [P] Integration: a Supervisor exports existencias with the
+  `LasExistenciasDe40ArticulosVuelvenSinPedirIdArticulo` extended with
+  `Assert.All(...)` over the 40 rows: `Minimo`/`Reposicion` null, `Estado
+  == SinMinimo`.
+- [x] 2.7 [P] Integration: a Supervisor exports existencias with the
   widened table (regression). *(spec `reportes-de-gestion`: scenario "A
   Supervisor exports existencias")*
-- [ ] 2.8 [P] Integration: a Supervisor **reads** the reorder columns on
+  Pre-existing `UnSupervisorExportaLasExistenciasConUnNombreDeArchivoDeterministico`
+  still green unmodified — 200 + deterministic filename regression confirmed
+  under the widened `FilaExistencia`/export mapper; the cell-level widened
+  assertions live in 2.9.
+- [x] 2.8 [P] Integration: a Supervisor **reads** the reorder columns on
   `GET /existencias` (`200`, columns present) and gets `403` re-confirmed
   on `PUT /minimos` from this route's vantage point. *(spec
   `reportes-de-gestion`: scenario "A Supervisor reads the reorder columns
   but cannot write them" — closes the read half left open by slice 1's
-  1.17)*
-- [ ] 2.9 [P] Export equality: the widened workbook carries the same
+  1.17)* Implemented as
+  `ExistenciasTests.UnSupervisorLeeLasColumnasDeReposicionYEsRechazadoDeEscribirlas`.
+- [x] 2.9 [P] Export equality: the widened workbook carries the same
   `minimo`/`reposicion`/`estado` values as the JSON, cell by cell. *(spec
   `reportes-de-gestion`: scenario "The existencias export carries the same
-  reorder columns"; `mutation-proof-tests` rule 6)*
-- [ ] 2.10 [P] Round-trip: `PUT /api/stock/minimos` then
+  reorder columns"; `mutation-proof-tests` rule 6)* Extended the existing
+  `ElExportEsIgualAlEndpointJsonParaLasDosFilas` (rather than a new test) —
+  same two-row equality test now compares all 6 columns per row, with one
+  row `SinMinimo` (both new fields null → blank cell) and one `Bajo` (both
+  populated), so both `Celda.Cantidad(decimal?)` branches are exercised.
+  **judgment-day round 1**: a surviving header-label mutant was found —
+  swapping the `"Mínimo"`/`"Reposición"` header titles in `ColumnasExistencias`
+  still passed the suite because the equality test only read data cells by
+  position from `primeraFilaDeDatos`, never the header row. Closed by adding
+  one assert in `ElExportEsIgualAlEndpointJsonParaLasDosFilas` that reads all
+  six header texts from the header row (`filaDeEncabezados = 6`) in exact
+  order; confirmed the header-swap mutation now fails the suite, reverted,
+  suite green again.
+- [x] 2.10 [P] Round-trip: `PUT /api/stock/minimos` then
   `GET /existencias` returns the same persisted pair — the first end-to-end
   test that can exercise both routes together, now that the report exposes
-  the fields.
-- [ ] 2.11 Gate guard: `has-pending-model-changes` clean, zero migration
-  files in the diff.
-- [ ] 2.12 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 2.13 Branch `feat/stage13-slice2-existencias-minimos` off `main`
+  the fields. Implemented as
+  `ExistenciasTests.UnRoundTripDeEscrituraYLecturaDevuelveElParPersistido`.
+- [x] 2.11 Gate guard: `has-pending-model-changes` clean, zero migration
+  files in the diff. **VERIFIED**: `dotnet ef migrations
+  has-pending-model-changes --project src/Ways.Infrastructure --startup-project
+  src/Ways.Infrastructure` → "No changes have been made to the model since
+  the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
+  files).
+- [x] 2.12 Run `judgment-day`; fix; re-judge until clean. *(CLEAN ROUND 2
+  2026-08-14. Round 1: judge B static + LIVE mutation pass — 9 mutations,
+  8 killed, 1 SURVIVOR (header-label swap in `ColumnasExistencias`, MAJOR)
+  plus a WARNING (seed doc-comment overclaiming all-distinct values). Fix
+  commit `067e95c`: six-header-text assert at `filaDeEncabezados = 6` +
+  genuinely all-distinct classification seed (minimo {5,null,7}, reposicion
+  {20,null,30}), mutation evidence re-recorded. Scoped re-judgment by judge
+  B: re-applied the exact mutant → suite FAILS at the new assert; adjacent
+  hard-coded-label probe also killed; zero fix-caused defects. Judge A fresh
+  read-only pass over the corrected frozen diff at `067e95c`: ZERO findings.
+  JUDGMENT: APPROVED — 1 confirmed-and-fixed MAJOR, 1 fixed WARNING, 0
+  contradictions.)*
+- [x] 2.13 Branch `feat/stage13-slice2-existencias-minimos` off `main`
   (parent: slice 1); PR; merge stacked-to-main.
+
+**APPLY NOTE (Verify line filter mismatch)**: this slice's `Verify` line
+below reads `FullyQualifiedName~ExistenciasReport`, but no test class named
+`ExistenciasReport*` exists — the actual classes are `ExistenciasTests` and
+`ExistenciasExportTests` (same names stage-11 slice 9 already used). Ran
+`FullyQualifiedName~Existencias` instead, which matches both real classes
+(14 tests, all green) — recorded per instruction to never silently deviate;
+not a task, so not re-numbered.
 
 **Test plan**: mutation target (2.4), three-state assertions (2.5),
 regressions ×2 (2.6-2.7), Supervisor read (2.8), export equality (2.9),
