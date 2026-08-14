@@ -496,6 +496,9 @@ here, since 3.13 is explicitly the orchestrator's task.
   → empty output (zero files); `git status --porcelain` shows only 6
   `src/Ways.Web/**` files modified; `dotnet build --no-restore` → 0
   errors.
+- [ ] 3.12 Run `judgment-day`; fix; re-judge until clean.
+- [ ] 3.13 Branch `feat/stage13-slice3-web-minimos` off `main` (parent:
+  slices 1+2); PR; merge stacked-to-main.
 
 **Test plan**: mutation target (3.6), coercion descriptors (3.7), no-refetch
 (3.8), stale-read-discarded (3.9), double-click + supersede-blocked (3.10).
