@@ -469,6 +469,20 @@ public static class ReportesEndpoints
             "de filas exigido tras mapear — agregado acotado por catálogo, mismo criterio que " +
             "/stock/existencias/export.");
 
+        // stage-13-stock-inteligente, Slice 5 (design decisión 14, spec reposicion-de-stock:
+        // "GET /api/reportes/stock/rotacion Feeds The Suggested-Minimo Column..."): gate heredado
+        // del grupo. Feed INDEPENDIENTE de minimoSugerido — no depende de minimo, agrega sobre
+        // TODO el catálogo del PV (design decisión 12); un artículo sin movimiento calificado en
+        // la ventana está AUSENTE, nunca una fila en cero. dias opcional, mismo criterio que
+        // /stock/reposicion?dias=.
+        grupo.MapGet("/stock/rotacion", (
+            ServicioDeReportesDeStock servicio, int idPuntoVenta, int? dias, CancellationToken ct) =>
+            servicio.ObtenerRotacionAsync(idPuntoVenta, dias, ct))
+        .WithSummary(
+            "Feed de minimoSugerido para el editor: una fila por artículo con al menos un " +
+            "movimiento calificado (venta o su anulación, nunca la anulación de una compra) en " +
+            "la ventana de rotación — ausente, nunca en cero, cuando no rota.");
+
         // stage-11-exportacion-reportes, Slice 5a (design: G2/G3 — minimal aggregation; spec
         // historico-de-cajas: G2 Histórico Lists Closed Turnos Only, Role Split — Turno Detail
         // Under OperacionDePos, Cross-Turno Views Under LecturaDeReportes): gate heredado del

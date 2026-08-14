@@ -194,20 +194,59 @@ public sealed record ResumenDeVencimientos(int IdPuntoVenta, int Vencidos, int P
 /// <see cref="IdProveedor"/> <c>null</c> también — el FK crudo NUNCA viaja al cliente cuando el
 /// proveedor referenciado no resuelve (orchestrator decision 12, tasks.md stage-13): un solo
 /// bucket "Sin proveedor", nunca un FK colgante ni un segundo bucket a mitad de lista.</item>
-/// <item><see cref="ConsumoDiarioPromedio"/>/<see cref="DiasDeCobertura"/> — AUSENTES por diseño en
-/// esta slice, no por omisión: la slice 5 los agrega cuando <c>LeerConsumoAsync</c> exista (design:
-/// "The four rotation fields do NOT exist in slice 4").</item>
+/// <item><see cref="ConsumoDiarioPromedio"/>/<see cref="DiasDeCobertura"/> — stage-13, Slice 5:
+/// <see cref="Ways.Domain.Stock.ReglaDeReposicion.ConsumoDiario"/>/<see
+/// cref="Ways.Domain.Stock.ReglaDeReposicion.DiasDeCobertura"/> aplicadas sobre el consumo que
+/// <c>LeerConsumoAsync</c> lee de <c>movimientos_stock</c> en la ventana de rotación — AMBOS
+/// <c>null</c> (JAMÁS <c>0</c>) cuando el artículo no tiene ningún movimiento calificado en la
+/// ventana (spec: "A zero-history articulo shows no suggestion rather than a suggestion of
+/// zero"), nunca una segunda definición de "consumo" distinta de la que usa <c>GET
+/// /reportes/stock/rotacion</c> (design decisión 5).</item>
 /// </list></summary>
 public sealed record FilaDeReposicion(
     int IdArticulo, string Articulo, decimal Cantidad, decimal Minimo, decimal? Reposicion,
-    decimal? Sugerido, int? IdProveedor, string? Proveedor);
+    decimal? Sugerido, int? IdProveedor, string? Proveedor,
+    decimal? ConsumoDiarioPromedio, decimal? DiasDeCobertura);
 
 /// <summary>Respuesta de <c>GET /api/reportes/stock/reposicion</c>. <see cref="Hoy"/> y
 /// <see cref="ZonaHoraria"/> son la fecha y la zona resueltas para el punto de venta — mismo
-/// criterio de echo obligatorio que <see cref="Vencimientos.Hoy"/>/<see cref="Vencimientos.ZonaHoraria"/>,
-/// aunque esta slice todavía no las usa para clasificar nada (la ventana de rotación llega en la
-/// slice 5). <see cref="DiasDeRotacion"/> es el horizonte efectivamente resuelto: el parámetro
+/// criterio de echo obligatorio que <see cref="Vencimientos.Hoy"/>/<see cref="Vencimientos.ZonaHoraria"/>;
+/// desde la slice 5 también gobiernan la ventana de rotación de cada fila (<see
+/// cref="Ways.Domain.Stock.ReglaDeReposicion.VentanaDeRotacion"/>), nunca una segunda resolución de
+/// "hoy". <see cref="DiasDeRotacion"/> es el horizonte efectivamente resuelto: el parámetro
 /// <c>dias</c> de la query si vino, si no <c>dias_rotacion</c> (default 30).</summary>
 public sealed record Reposicion(
     int IdPuntoVenta, DateOnly Hoy, int DiasDeRotacion, string ZonaHoraria,
     IReadOnlyList<FilaDeReposicion> Filas);
+
+/// <summary>Fila de <c>GET /api/reportes/stock/rotacion</c> (stage-13-stock-inteligente, Slice 5;
+/// design: Interfaces / Contracts, decisión 14). Solo existe porque el artículo tiene AL MENOS UN
+/// movimiento calificado (<c>venta</c> o <c>anulacion</c> de venta) en la ventana — un artículo sin
+/// historia NO ES UNA FILA de esta lista, la ausencia es la respuesta honesta (nunca una fila con
+/// <see cref="MinimoSugerido"/> <c>0</c>; design decisión 14). <c>dto-contract-honesty</c>:
+/// <see cref="ConsumoEnVentana"/> es <c>-SUM(movimientos_stock.cantidad)</c> sobre las filas
+/// calificadas de la ventana (design decisión 6, la trampa del neteo: venta negativa, anulación de
+/// venta positiva, anulación de COMPRA excluida vía <c>id_comprobante_compra IS NOT NULL</c>),
+/// recortado a <c>0</c> — nunca negativo — cuando las devoluciones superan a las ventas (mismo
+/// criterio de <see cref="Ways.Domain.Stock.ReglaDeReposicion.ConsumoDiario"/>: un consumo negativo
+/// no es una magnitud de negocio, pero la fila SÍ existe porque hubo historia calificada);
+/// <see cref="ConsumoDiarioPromedio"/> es <see cref="ConsumoEnVentana"/> dividido por
+/// <c>dias_rotacion</c> efectivo (nunca negativo — recortado a 0 si las devoluciones superan a las
+/// ventas); <see cref="MinimoSugerido"/> es <see cref="ConsumoDiarioPromedio"/> ×
+/// <c>dias_cobertura_objetivo</c> (<see cref="Ways.Domain.Stock.ReglaDeReposicion.MinimoSugerido"/>),
+/// una SUGERENCIA que ningún camino automatizado escribe en <c>stock.minimo</c> (spec
+/// reposicion-de-stock: "minimoSugerido is never written to minimo automatically").</summary>
+public sealed record FilaDeRotacion(
+    int IdArticulo, string Articulo, decimal ConsumoEnVentana, decimal ConsumoDiarioPromedio,
+    decimal MinimoSugerido);
+
+/// <summary>Respuesta de <c>GET /api/reportes/stock/rotacion</c>. <see cref="Hoy"/>/<see
+/// cref="ZonaHoraria"/>/<see cref="DiasDeRotacion"/> son el mismo eco obligatorio que <see
+/// cref="Reposicion"/> — misma ventana, misma definición de consumo (design decisión 5, nunca una
+/// segunda). <see cref="DiasCoberturaObjetivo"/> es el horizonte de cobertura efectivamente
+/// resuelto (<c>dias_cobertura_objetivo</c>, PV → empresa → default 7) que <see
+/// cref="FilaDeRotacion.MinimoSugerido"/> multiplica — echo obligatorio, mismo criterio que
+/// <see cref="DiasDeRotacion"/>: una sugerencia cuyo horizonte es invisible no es auditable.</summary>
+public sealed record Rotacion(
+    int IdPuntoVenta, DateOnly Hoy, int DiasDeRotacion, int DiasCoberturaObjetivo, string ZonaHoraria,
+    IReadOnlyList<FilaDeRotacion> Filas);

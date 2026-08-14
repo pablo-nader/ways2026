@@ -37,9 +37,15 @@ namespace Ways.Application.Reportes;
 /// agrega <see cref="ObtenerReposicionAsync"/> — la alerta y la sugerencia de compra son la misma
 /// lista (<c>minimo IS NOT NULL AND cantidad &lt;= minimo</c>), agregado acotado por el catálogo
 /// como existencias (mismo shape de export: guarda sobre <c>TablaExportable.Filas.Count</c> ya
-/// mapeada, sin <c>ObtenerReposicionParaExportacionAsync</c> propio — decisión 13). Sin campos de
-/// rotación todavía: la slice 5 completa <see cref="FilaDeReposicion"/> con
-/// <c>ConsumoDiarioPromedio</c>/<c>DiasDeCobertura</c> vía <c>LeerConsumoAsync</c>.
+/// mapeada, sin <c>ObtenerReposicionParaExportacionAsync</c> propio — decisión 13).
+///
+/// stage-13-stock-inteligente, Slice 5 (design decisión 5/6/7/12, spec reposicion-de-stock:
+/// "Rotation Excludes Purchase-Reversal Anulaciones And Is Advisory-Only"): agrega <see
+/// cref="LeerConsumoAsync"/> — LA definición de consumo, dos llamadores (<see
+/// cref="ObtenerReposicionAsync"/>, que ahora completa <c>ConsumoDiarioPromedio</c>/<c>
+/// DiasDeCobertura</c> por fila, y <see cref="ObtenerRotacionAsync"/>, el feed independiente de
+/// <c>minimoSugerido</c> para el editor). Plain LINQ sobre <c>db.MovimientosStock</c> — cero SQL
+/// crudo, <c>LectorDeSerieTemporal</c> intocado (design decisión 7 del proposal).
 /// </summary>
 public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros parametros, IRelojDelSistema reloj)
 {
@@ -121,12 +127,11 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
         return new Vencimientos(idPuntoVenta, hoy, diasDeAlerta, zonaId, Clasificar(filas, hoy, diasDeAlerta));
     }
 
-    /// <summary>stage-13-stock-inteligente, Slice 4 (design decisión 12; task 4.2): la alerta y la
-    /// sugerencia de compra son la MISMA lista — <see cref="ConstruirQueryDeReposicion"/> se
-    /// evalúa una única vez, sin campos de rotación todavía (esos llegan en la slice 5, que
-    /// completa la rama <c>crudas.Count &gt; 0</c> de abajo con <c>LeerConsumoAsync</c>).
-    /// El corto-circuito de la fila 0 se cablea ACÁ (decisión 12) para que la slice 5 no tenga
-    /// que reestructurar el método, solo llenar la rama que hoy es un mapeo puro.</summary>
+    /// <summary>stage-13-stock-inteligente, Slice 4/5 (design decisión 12; task 4.2/5.2): la
+    /// alerta y la sugerencia de compra son la MISMA lista — <see cref="ConstruirQueryDeReposicion"/>
+    /// se evalúa una única vez. El corto-circuito de la fila 0 (decisión 12) evita que una fila
+    /// vacía dispare la query de rotación: un PV sin mínimos configurados cuesta exactamente UNA
+    /// query (la de acá arriba), nunca <see cref="LeerConsumoAsync"/>.</summary>
     public async Task<Reposicion> ObtenerReposicionAsync(
         int idPuntoVenta, int? dias, CancellationToken ct = default)
     {
@@ -141,16 +146,83 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
             return new Reposicion(idPuntoVenta, hoy, diasDeRotacion, zonaId, []);
         }
 
-        // Sugerido es puro (ReglaDeReposicion.Sugerido no depende de rotación) — la slice 5 solo
-        // agrega ConsumoDiarioPromedio/DiasDeCobertura a esta misma proyección, nunca una segunda.
+        // Slice 5: misma ventana y misma definición de consumo que ObtenerRotacionAsync (design
+        // decisión 5) — LeerConsumoAsync acotado a los ids de ESTAS filas (decisión 12: nunca todo
+        // el catálogo del PV, el set "bajo mínimo" ya es chico por construcción).
+        var (desdeUtc, hastaUtc) = ReglaDeReposicion.VentanaDeRotacion(hoy, diasDeRotacion, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
+        var consumo = await LeerConsumoAsync(
+            idPuntoVenta, crudas.Select(f => f.IdArticulo).ToList(), desdeUtc, hastaUtc, ct);
+
+        // Sugerido es puro (ReglaDeReposicion.Sugerido no depende de rotación); ConsumoDiarioPromedio/
+        // DiasDeCobertura sí — honestos en null (nunca 0) cuando el artículo no calificó ningún
+        // movimiento en la ventana (spec: "A zero-history articulo shows no suggestion...").
         var filas = crudas
-            .Select(f => new FilaDeReposicion(
-                f.IdArticulo, f.Articulo, f.Cantidad, f.Minimo, f.Reposicion,
-                ReglaDeReposicion.Sugerido(f.Cantidad, f.Reposicion),
-                f.IdProveedorHabitual, f.Proveedor))
+            .Select(f =>
+            {
+                var netoConsumido = consumo.TryGetValue(f.IdArticulo, out var neto) ? -neto : (decimal?)null;
+                var consumoDiarioPromedio = ReglaDeReposicion.ConsumoDiario(netoConsumido, diasDeRotacion);
+
+                return new FilaDeReposicion(
+                    f.IdArticulo, f.Articulo, f.Cantidad, f.Minimo, f.Reposicion,
+                    ReglaDeReposicion.Sugerido(f.Cantidad, f.Reposicion),
+                    f.IdProveedorHabitual, f.Proveedor,
+                    consumoDiarioPromedio, ReglaDeReposicion.DiasDeCobertura(f.Cantidad, consumoDiarioPromedio));
+            })
             .ToList();
 
         return new Reposicion(idPuntoVenta, hoy, diasDeRotacion, zonaId, filas);
+    }
+
+    /// <summary>stage-13-stock-inteligente, Slice 5 (design decisión 14; task 5.4): el feed
+    /// independiente de <c>minimoSugerido</c> para el editor — a diferencia de <see
+    /// cref="ObtenerReposicionAsync"/>, NO depende de <c>minimo</c>: agrega sobre TODO el catálogo
+    /// del PV (decisión 12, "el único lugar donde ese costo es el punto"), pero solo emite una fila
+    /// por artículo con AL MENOS UN movimiento calificado en la ventana — la ausencia es la
+    /// respuesta para un artículo sin historia, nunca una fila con <c>minimoSugerido = 0</c>
+    /// (decisión 14). Misma definición de consumo y misma resolución de ventana que <see
+    /// cref="ObtenerReposicionAsync"/> (design decisión 5): nunca una segunda.</summary>
+    public async Task<Rotacion> ObtenerRotacionAsync(
+        int idPuntoVenta, int? dias, CancellationToken ct = default)
+    {
+        var (idEmpresa, zonaId, hoy) = await ResolverContextoAsync(idPuntoVenta, ct);
+        var diasDeRotacion = ReglaDeReposicion.ExigirVentanaValida(
+            dias ?? await ResolverDiasRotacionAsync(idEmpresa, idPuntoVenta, ct), "dias_rotacion_invalido");
+        var diasDeCoberturaObjetivo = ReglaDeReposicion.ExigirVentanaValida(
+            await ResolverDiasCoberturaAsync(idEmpresa, idPuntoVenta, ct), "dias_cobertura_invalido");
+
+        var (desdeUtc, hastaUtc) = ReglaDeReposicion.VentanaDeRotacion(hoy, diasDeRotacion, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
+        var consumo = await LeerConsumoAsync(idPuntoVenta, idsArticulo: null, desdeUtc, hastaUtc, ct);
+
+        if (consumo.Count == 0)
+        {
+            return new Rotacion(idPuntoVenta, hoy, diasDeRotacion, diasDeCoberturaObjetivo, zonaId, []);
+        }
+
+        // El ledger es append-only: un artículo dado de baja después de sus movimientos sigue
+        // calificando en LeerConsumoAsync (que no conoce baja lógica), pero el filtro global de
+        // EF sobre Articulo sí lo excluye acá — mismo trade-off ya documentado que
+        // ExistenciasTests.UnArticuloEliminadoNuncaApareceEnLasExistencias (design: Open
+        // Questions), nunca una excepción por nombre ausente.
+        var idsArticulo = consumo.Keys.ToList();
+        var nombres = await db.Articulos
+            .Where(a => idsArticulo.Contains(a.Id))
+            .Select(a => new { a.Id, a.Nombre })
+            .ToDictionaryAsync(a => a.Id, a => a.Nombre, ct);
+
+        var filas = consumo
+            .Where(par => nombres.ContainsKey(par.Key))
+            .Select(par =>
+            {
+                var consumoEnVentana = Math.Max(0m, -par.Value);
+                var consumoDiarioPromedio = ReglaDeReposicion.ConsumoDiario(consumoEnVentana, diasDeRotacion)!.Value;
+                var minimoSugerido = ReglaDeReposicion.MinimoSugerido(consumoDiarioPromedio, diasDeCoberturaObjetivo)!.Value;
+
+                return new FilaDeRotacion(par.Key, nombres[par.Key], consumoEnVentana, consumoDiarioPromedio, minimoSugerido);
+            })
+            .OrderBy(f => f.IdArticulo)
+            .ToList();
+
+        return new Rotacion(idPuntoVenta, hoy, diasDeRotacion, diasDeCoberturaObjetivo, zonaId, filas);
     }
 
     /// <summary>Cláusulas bajo prueba (mutation-proof-tests, en orden de daño si se pierden):
@@ -256,12 +328,63 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
         return JsonSerializer.Deserialize<int>(resuelto.Valor);
     }
 
-    /// <summary>Slice 4 — mismo patrón que <see cref="ResolverDiasAlertaAsync"/>. La slice 5 agrega
-    /// el resolver gemelo de <c>dias_cobertura_objetivo</c>, todavía sin consumidor acá.</summary>
+    /// <summary>Slice 4 — mismo patrón que <see cref="ResolverDiasAlertaAsync"/>.</summary>
     private async Task<int> ResolverDiasRotacionAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
         var resuelto = await parametros.ResolverAsync(ParametroConocido.DiasRotacion.Clave, idEmpresa, idPuntoVenta, ct);
         return JsonSerializer.Deserialize<int>(resuelto.Valor);
+    }
+
+    /// <summary>Slice 5 — resolver gemelo de <see cref="ResolverDiasRotacionAsync"/>, para el
+    /// horizonte de cobertura que <see cref="ObtenerRotacionAsync"/> multiplica por el consumo
+    /// diario promedio (<see cref="Ways.Domain.Stock.ReglaDeReposicion.MinimoSugerido"/>). A
+    /// diferencia de <c>dias_rotacion</c>, ninguna ruta acepta un <c>?dias=</c> que lo
+    /// sobrescriba — solo el parámetro resuelto (spec: "dias_cobertura_objetivo feeds
+    /// minimoSugerido, never minimo directly").</summary>
+    private async Task<int> ResolverDiasCoberturaAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    {
+        var resuelto = await parametros.ResolverAsync(ParametroConocido.DiasCoberturaObjetivo.Clave, idEmpresa, idPuntoVenta, ct);
+        return JsonSerializer.Deserialize<int>(resuelto.Valor);
+    }
+
+    /// <summary>Slice 5 (design decisión 5/6/7; task 5.1): LA definición de consumo, con dos
+    /// llamadores (<see cref="ObtenerReposicionAsync"/>, <see cref="ObtenerRotacionAsync"/>) —
+    /// nunca una segunda. Cláusula bajo prueba (mutation-proof-tests): <c>m.Motivo ==
+    /// MotivoStock.Anulacion &amp;&amp; m.IdComprobanteCompra == null</c> — sin el segundo
+    /// término, la anulación de una COMPRA (que también escribe <c>motivo = anulacion</c> desde la
+    /// etapa 8) se netea silenciosamente dentro de las ventas (la trampa del neteo, design
+    /// decisión 6). <paramref name="idsArticulo"/> nulo agrega sobre TODO el catálogo del PV — el
+    /// caso de <see cref="ObtenerRotacionAsync"/>, el único lugar donde ese costo es el punto
+    /// (design decisión 12); <see cref="ObtenerReposicionAsync"/> siempre pasa la lista acotada
+    /// de artículos ya bajo mínimo. Plain LINQ sobre <c>db.MovimientosStock</c> — cero SQL crudo,
+    /// hereda los filtros globales de tenant/baja-lógica de EF gratis, mismo criterio que <see
+    /// cref="ObtenerExistenciasAsync"/> (design decisión 7 del proposal: el fork con
+    /// <c>LectorDeSerieTemporal</c> no aplica acá — una ventana de instantes, sin bucketing).
+    /// El llamador NIEGA el neto (<c>-neto</c>): las filas de venta llevan <c>cantidad</c>
+    /// negativa, la anulación de venta positiva, y una NCX viaja como venta con <c>cantidad</c>
+    /// POSITIVA (<c>ServicioDeVentas</c> ya la negó) — <c>-SUM</c> neteas devoluciones sin una
+    /// rama de signo.</summary>
+    private async Task<IReadOnlyDictionary<int, decimal>> LeerConsumoAsync(
+        int idPuntoVenta, IReadOnlyList<int>? idsArticulo, DateTimeOffset desdeUtc, DateTimeOffset hastaUtcExclusivo,
+        CancellationToken ct)
+    {
+        var query = db.MovimientosStock
+            .Where(m => m.IdPuntoVenta == idPuntoVenta
+                     && m.CreadoEl >= desdeUtc && m.CreadoEl < hastaUtcExclusivo
+                     && (m.Motivo == MotivoStock.Venta
+                         || (m.Motivo == MotivoStock.Anulacion && m.IdComprobanteCompra == null)));
+
+        if (idsArticulo is not null)
+        {
+            query = query.Where(m => idsArticulo.Contains(m.IdArticulo));
+        }
+
+        var filas = await query
+            .GroupBy(m => m.IdArticulo)
+            .Select(g => new { IdArticulo = g.Key, Neto = g.Sum(m => m.Cantidad) })
+            .ToListAsync(ct);
+
+        return filas.ToDictionary(f => f.IdArticulo, f => f.Neto);
     }
 
     private sealed record FilaCruda(
