@@ -9,6 +9,7 @@
 import { api } from './cliente'
 import type {
   LineaDeTransferencia,
+  LoteListado,
   ResultadoConteo,
   ResultadoTransferencia,
   SolicitudDeConteo,
@@ -27,6 +28,11 @@ export const clienteDeStock = {
    * de lo que se escribió; el `GET /api/stock` previo es solo un dato de referencia en pantalla,
    * nunca lo que decide qué se renderiza después de un submit. */
   contar: (solicitud: SolicitudDeConteo) => api.post<ResultadoConteo>('/stock/conteos', solicitud),
+  /** `GET /api/stock/lotes` — feed del picker (stage-12-lotes-vencimientos, Slice 14, design
+   * decisión 19). Se pide bajo demanda (click en "Elegir lote"), nunca de arranque para cada
+   * línea del carrito — el camino feliz (omitir `idLote`) no necesita esta llamada. */
+  listarLotes: (idPuntoVenta: number, idArticulo: number) =>
+    api.get<LoteListado[]>(`/stock/lotes?idPuntoVenta=${idPuntoVenta}&idArticulo=${idArticulo}`),
 }
 
 // ---- Formulario de transferencia: una línea editable por fila (mismo patrón que compras.ts) --

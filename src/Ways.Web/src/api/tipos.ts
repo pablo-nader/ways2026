@@ -470,6 +470,12 @@ export type ArticuloListado = {
   disponibleParaTodas: boolean
   idsEmpresas: number[]
   activo: boolean
+  /** stage-12-lotes-vencimientos (Slice 14): mirror de solo lectura — el toggle de edición
+   * (`AltaArticulo`/`EdicionArticulo`) es del editor de `Articulos.tsx` (Slice 15). Acá solo se
+   * lee para decidir si una línea de venta/compra de este artículo pide lote (`ControlEfectivo`
+   * = `controlaLote` AND `lotesHabilitado` del parámetro, decisión 2 del proposal — el picker del
+   * POS no necesita este flag porque `GET /api/stock/lotes` ya resuelve todo server-side). */
+  controlaLote: boolean
 }
 
 /** `codigoInterno: null` deja que el servidor lo autogenere desde el contador atómico del
@@ -867,7 +873,10 @@ export type Existencias = {
 // `POST /api/ventas`, mergeado en Slice 4) — usado por `ventas.ts` (mappers) y `Pos.tsx`
 // (wireado en Slice 7).
 
-export type LineaDeVenta = { idArticulo: number; cantidad: number; codigoBarra: string | null }
+/** `idLote` (stage-12-lotes-vencimientos, Slice 14): `null` es el camino feliz de cero tecleo
+ * (design decisión 19) — el servidor resuelve FEFO solo; solo viaja no-nulo cuando el cajero
+ * eligió explícitamente un lote distinto del sugerido en el picker. */
+export type LineaDeVenta = { idArticulo: number; cantidad: number; codigoBarra: string | null; idLote: number | null }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
 
 export type SolicitudDeVenta = {
@@ -898,6 +907,12 @@ export type ItemEmitido = {
   precioUnitario: number
   descuento: number
   total: number
+  /** stage-12-lotes-vencimientos (Slice 14): `null`/`false` para una línea sin lote — el ticket
+   * y la reimpresión muestran lo mismo (`items_comprobante_venta.id_lote` es el snapshot
+   * congelado). `loteVencido` es un warning, nunca un bloqueo (design decisión 12). */
+  idLote: number | null
+  codigoLote: string | null
+  loteVencido: boolean
 }
 
 /** Pago ya emitido — espejo de `PagoEmitido`. */
@@ -1038,6 +1053,12 @@ export type LineaDeCompraSolicitada = {
   descuento: number
   idAlicuotaIva: number
   actualizaCosto: boolean
+  /** stage-12-lotes-vencimientos (Slice 14): input crudo de recepción para un artículo
+   * lote-efectivo — nada se resuelve a esta altura (design: "nothing is resolved at draft
+   * time"), solo se persiste tal cual mientras la compra es borrador. `null` para un artículo
+   * que no controla lote (el servidor los ignora, `ReglaDeLotes.ControlEfectivo`). */
+  codigoLote: string | null
+  fechaVencimiento: string | null
 }
 
 /** Cuerpo de `POST /api/compras` (crea un borrador) y `PUT /api/compras/{id}` (replace-set
@@ -1067,6 +1088,12 @@ export type ItemDeCompra = {
   total: number
   actualizaCosto: boolean
   precioSugerido: number | null
+  /** `codigoLote`/`fechaVencimiento`: mismo input crudo de `LineaDeCompraSolicitada`, ya
+   * persistido. `idLote` es el lote resuelto (get-or-create) — `null` mientras la compra es
+   * borrador y para un artículo que no controla lote (stage-12-lotes-vencimientos, Slice 14). */
+  codigoLote: string | null
+  fechaVencimiento: string | null
+  idLote: number | null
 }
 
 /** Detalle completo de una compra (espejo de `CompraDetalle`). */
@@ -1168,8 +1195,10 @@ export type SolicitudDeTransferencia = {
 }
 
 /** El stock resultante de un artículo en AMBOS puntos de venta tras la transacción (espejo de
- * `LineaTransferida`). */
-export type LineaTransferida = { idArticulo: number; cantidadOrigen: number; cantidadDestino: number }
+ * `LineaTransferida`). `idLote` (stage-12-lotes-vencimientos, Slice 10): el backend ya lo manda
+ * desde ese slice — mirror de solo lectura, la columna de lote en la grilla de `Transferencias.tsx`
+ * es del Slice 15. */
+export type LineaTransferida = { idArticulo: number; idLote: number | null; cantidadOrigen: number; cantidadDestino: number }
 
 /** Respuesta de `POST /api/stock/transferencias` (espejo de `ResultadoTransferencia`). */
 export type ResultadoTransferencia = {
@@ -1182,6 +1211,29 @@ export type ResultadoTransferencia = {
  * delta (espejo de `SolicitudDeConteo`; spec: conteo-de-inventario / Conteo Input Is The Counted
  * Total, Never A Delta). */
 export type SolicitudDeConteo = { idPuntoVenta: number; idArticulo: number; contada: number; observaciones: string }
+
+// --- Lotes y vencimientos (stage-12-lotes-vencimientos, Slice 14): espejo de
+// `Ways.Domain.Stock.EstadoDeVencimiento`/`Ways.Application.Stock.Contratos.LoteListado` — el
+// picker del POS/la recepción de compra NUNCA recalculan FEFO (design decisión 19), solo
+// renderizan lo que el servidor ya resolvió.
+
+/** Viaja como texto (`JsonStringEnumConverter`), nunca como ordinal — mismo criterio que
+ * `Granularidad`. */
+export type EstadoDeVencimiento = 'Vencido' | 'PorVencer' | 'Vigente' | 'SinFecha'
+
+/** Fila de `GET /api/stock/lotes` (picker) — espejo de `LoteListado`. `sugerido` es el pick FEFO
+ * server-computed (`ReglaDeLotes.ElegirFefo`, decisión 19): el picker lo resalta, nunca lo
+ * recalcula — omitir `idLote` al vender/transferir hace que el servidor elija el mismo lote. */
+export type LoteListado = {
+  idLote: number
+  idArticulo: number
+  codigo: string
+  fechaVencimiento: string | null
+  esSinIdentificar: boolean
+  cantidad: number
+  estado: EstadoDeVencimiento
+  sugerido: boolean
+}
 
 // --- Reportes (stage-10-agregacion-dashboard, Slice 7): G1 parity — ventas/resumen y
 // gastos/resumen. Espejo de `Ways.Application.Reportes.Contratos` — mismos nombres de campo que
