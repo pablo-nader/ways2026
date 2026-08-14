@@ -1923,32 +1923,58 @@ change.
 the lot column on transfers/conteo all ship. **Rollback**: revert the
 branch — no backend change.
 
-- [ ] 15.1 Create `src/Ways.Web/src/paginas/Vencimientos.tsx`: report
+- [x] 15.1 Create `src/Ways.Web/src/paginas/Vencimientos.tsx`: report
   screen — filters, four-state classification badges (incl. `sin_fecha`),
   download button.
-- [ ] 15.2 Modify `src/Ways.Web/src/App.tsx` + `componentes/Layout.tsx`:
+- [x] 15.2 Modify `src/Ways.Web/src/App.tsx` + `componentes/Layout.tsx`:
   `/reportes/stock/vencimientos` route (`LecturaDeReportes`) + nav entry.
-- [ ] 15.3 Modify `src/Ways.Web/src/paginas/Articulos.tsx`: `controlaLote`
+- [x] 15.3 Modify `src/Ways.Web/src/paginas/Articulos.tsx`: `controlaLote`
   toggle on the articulo editor.
-- [ ] 15.4 Modify `src/Ways.Web/src/paginas/Parametros.tsx`:
-  `lotesHabilitado` + `diasAlertaVencimiento` toggles.
-- [ ] 15.5 Modify `src/Ways.Web/src/paginas/Transferencias.tsx`: lot column
-  + picker per line, incomplete-line counter extended.
-- [ ] 15.6 Modify `src/Ways.Web/src/paginas/ConteoDeInventario.tsx`:
+- [x] 15.4 Modify `src/Ways.Web/src/paginas/Parametros.tsx`:
+  `lotesHabilitado` + `diasAlertaVencimiento` toggles. *(APPLY-RUN NOTE:
+  `PARAMETROS_CONOCIDOS` gained a fourth `tipo` — `'booleano'` — the first
+  boolean-typed entry of the registry; `Parametros.tsx` gained a checkbox
+  branch alongside the existing texto/entero branches, JSON-serializing the
+  raw `true`/`false` literal, never a quoted string.)*
+- [x] 15.5 Modify `src/Ways.Web/src/paginas/Transferencias.tsx`: lot column
+  + picker per line, incomplete-line counter extended. *(APPLY-RUN NOTE:
+  closed the slice-10 debt — `key={l.idArticulo}` on the result table
+  replaced by a composite `${idArticulo}-${idLote ?? 'sin-lote'}` key; the
+  per-line picker pre-selects `sugerido` (design decisión 19) and can be
+  cleared back to "Auto (FEFO)"; `LineaDeTransferenciaFormulario` gained a
+  UI-only `controlaLote` field (never sent to the backend) to decide
+  per-row whether the picker renders.)*
+- [x] 15.6 Modify `src/Ways.Web/src/paginas/ConteoDeInventario.tsx`:
   per-lot counted-total input UI, exactly-one-of enforcement mirrored
-  client-side.
-- [ ] 15.7 Modify `src/Ways.Web/src/paginas/Tablero.tsx`: vencimientos tile
-  (counts + link), completing slice 13's backend groundwork.
-- [ ] 15.8 [P] `web-descriptor-tests` for `Vencimientos.tsx`,
+  client-side. *(APPLY-RUN NOTE: the aggregate "Cantidad contada" field and
+  the per-lot grid are structurally mutually exclusive in the render tree
+  — never both mounted — which is the client-side mirror of the backend's
+  `400 conteo_contada_y_lotes`; an incomplete-lot counter mirrors
+  `Transferencias.tsx`'s pattern, per react-async-state rule 10.)*
+- [x] 15.7 Modify `src/Ways.Web/src/paginas/Tablero.tsx`: vencimientos tile
+  (counts + link), completing slice 13's backend groundwork. *(APPLY-RUN
+  NOTE: the tile requires a concrete punto de venta — `/vencimientos/resumen`
+  doesn't accept "Todos" — and shows a neutral aviso instead of a query
+  with a manufactured PV when none is chosen.)*
+- [x] 15.8 [P] `web-descriptor-tests` for `Vencimientos.tsx`,
   `Articulos.tsx` (`controlaLote`), `Parametros.tsx` (2 toggles),
   `Transferencias.tsx`, `ConteoDeInventario.tsx`, the Tablero tile.
-- [ ] 15.9 [P] Incomplete-line-counter test replicated across both
+- [x] 15.9 [P] Incomplete-line-counter test replicated across both
   `Transferencias` and `ConteoDeInventario` grids (mirrors slice 14.7's
   `CompraEditor` pattern).
-- [ ] 15.10 [P] `controlaLote` coercion test (`'' → null`, `aAlta`/
-  `aValores` boolean coercion).
-- [ ] 15.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes (web-only slice).
+- [x] 15.10 [P] `controlaLote` coercion test (`aAlta`/`aEdicion` boolean
+  coercion). *(APPLY-RUN NOTE — task wording amended: `controlaLote` is a
+  plain boolean toggle (`e.target.checked`), not a nullable field — the
+  `'' → null` half of the task's literal wording doesn't apply to this
+  field's shape (no empty-string state is representable by a checkbox).
+  Delivered instead: three tests proving the checkbox never leaks a string/
+  `"on"`/`1` — `true`/`false` travel as JSON booleans end-to-end through
+  `aEdicion`, both toggled and left untouched.)*
+- [x] 15.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes (web-only slice). *(Verified via `--project
+  src/Ways.Infrastructure --startup-project src/Ways.Infrastructure`, same
+  precedent as slices 4/5: "No changes have been made to the model since
+  the last migration.")*
 - [ ] 15.12 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 15.13 Branch `feat/stage12-slice15-web-backoffice` off `main`
   (parent: slices 12+13); PR; merge stacked-to-main.
