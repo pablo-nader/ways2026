@@ -70,6 +70,38 @@
 11. **Doc-11 backlog re-registration (decision 5) is a slice-1 task**, not a
     closing sweep — the same discipline stage 12 used for its own doc-10
     update from within a slice (its task 1.17).
+12. **`judgment-day` round 1, slice 4 — judge B's WARNING (inferential) on
+    the soft-deleted-proveedor ordering, RESOLVED.** Task 4.1's pinned
+    snippet projects `IdProveedor` as the raw FK (`a.IdProveedorHabitual`)
+    and orders by `a.IdProveedorHabitual, a.Id` alone. Under that snippet, a
+    row whose `id_proveedor_habitual` points at a soft-deleted proveedor
+    resolves `Proveedor == null` (name lookup fails, EF's baja-lógica global
+    filter) but `IdProveedor` still carries the live FK value — so the row's
+    ORDER KEY disagrees with its DISPLAY GROUP: it sorts by FK position
+    (mid-list, between whichever real proveedores bracket that FK) while
+    displaying as "Sin proveedor". `design.md`'s decision 3 is explicit that
+    a soft-deleted proveedor's row "lands under Sin proveedor" — that letter
+    is authoritative over the pinned snippet, which the task text itself
+    frames as a **draft**, not a locked contract. Left as coded, slice 6's
+    `agruparPorProveedor` fold (a plain fold over the already-sorted rows,
+    no sort of its own — see slice 6's tasks) would emit a SECOND "Sin
+    proveedor" bucket wherever the soft-deleted row's FK happened to sort,
+    splitting one logical group into two on screen.
+    **Resolution**: `ConstruirQueryDeReposicion` now projects
+    `IdProveedor := p == null ? null : (int?)a.IdProveedorHabitual` (the
+    dangling FK never travels to the client — `dto-contract-honesty`
+    doc-comment updated on `FilaDeReposicion` in `Contratos.cs`) and orders
+    `orderby (p == null), a.IdProveedorHabitual, a.Id` — every row with no
+    EFFECTIVE proveedor (FK null OR FK pointing at a soft-deleted/missing
+    proveedor) falls into ONE trailing bucket; within that bucket, FK then
+    Id keeps the order deterministic. **Slice 6 inherits a trivial
+    single-null-bucket fold** — `agruparPorProveedor` never has to merge two
+    "Sin proveedor" groups because there is structurally only one row-run to
+    fold into it. Evidence: mutating the `orderby` back to
+    `a.IdProveedorHabitual, a.Id` (dropping the presence key) makes the
+    discriminating-seed test's (task 4.9) row-sequence assert FAIL — the
+    soft-deleted-proveedor row returns to the middle of the list; reverting
+    restores green. See the inline note on task 4.1 below.
 
 ---
 
@@ -807,7 +839,7 @@ contract.
 cut: the report/export boundary — ship the JSON endpoint (4.1-4.3, 4.5-4.9)
 first, the export sibling (4.4, 4.10) is the cut point if this overflows.
 
-- [ ] 4.1 Modify `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
+- [x] 4.1 Modify `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
   private `ConstruirQueryDeReposicion(idPuntoVenta)`:
   ```csharp
   from s in db.Stock
@@ -824,7 +856,15 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   authoritative regardless of the proveedor's own empresa scoping (design
   decision 3). Postgres orders `NULL` last in `ASC` by default, so no
   explicit `NULLS LAST` is needed for *Sin proveedor* to land last.
-- [ ] 4.2 Modify `ServicioDeReportesDeStock.cs`:
+  *(apply note — `judgment-day` round 1, decision 12: the snippet above is
+  the DRAFT this task pinned, not the shipped code. A soft-deleted
+  proveedor's FK disagreeing with its display group (order key ≠ display
+  group) is a real defect against design decision 3's "lands under Sin
+  proveedor" — fixed by projecting `IdProveedor := p == null ? null :
+  (int?)a.IdProveedorHabitual` and ordering `orderby (p == null),
+  a.IdProveedorHabitual, a.Id`. See decision 12 above for the full
+  rationale and mutation evidence.)*
+- [x] 4.2 Modify `ServicioDeReportesDeStock.cs`:
   `ObtenerReposicionAsync(idPuntoVenta, dias?, ct)` —
   `ResolverContextoAsync` → `(idEmpresa, zonaId, hoy)`; `diasDeRotacion :=
   dias ?? dias_rotacion` through `ExigirVentanaValida` (`400
@@ -834,33 +874,71 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   empty-set short-circuit is wired here so slice 5 only has to fill it in);
   project `Sugerido` via `ReglaDeReposicion.Sugerido(cantidad, reposicion)`
   per row — pure, no rotation dependency.
-- [ ] 4.3 Modify `src/Ways.Application/Reportes/Contratos.cs`:
+  *(apply note: design's Application Service Surfaces section labels
+  `ResolverDiasRotacionAsync` "privados, slice 5" alongside
+  `ResolverDiasCoberturaAsync`, but resolving `dias ?? dias_rotacion` is
+  literally required by this task's text — added the resolver here,
+  `ResolverDiasAlertaAsync`-shaped, and left `ResolverDiasCoberturaAsync`
+  for slice 5, whose only consumer — `MinimoSugerido` — doesn't exist yet.
+  Not a scope deviation: the design's grouping note and this task's literal
+  requirement disagree, and the task text governs.)*
+  *(judgment-day round 1, confirmed MAJOR #2: the `ExigirVentanaValida` call
+  wired here shipped with ZERO test coverage — every existing test omitted
+  `?dias=`, so deleting the guard call left all 8 tests green, and the
+  `DiasDeRotacion` echo was equally unasserted (a hard-coded value would
+  have passed too). Closed by adding
+  `UnDiasDeRotacionInvalidoEsRechazadoConCuatrocientos` (`?dias=0` → 400
+  `dias_rotacion_invalido`) and
+  `LaRespuestaEcoaElDiasDeRotacionEfectivamenteResuelto` (`?dias=45` echoes
+  `45`; `dias` omitted echoes the `dias_rotacion` default `30`) to
+  `ReposicionReporteTests.cs`. Mutation evidence: deleting the
+  `ExigirVentanaValida` call makes the first new test FAIL (200 instead of
+  400); reverting restores green.)*
+- [x] 4.3 Modify `src/Ways.Application/Reportes/Contratos.cs`:
   `FilaDeReposicion(IdArticulo, Articulo, Cantidad, Minimo, Reposicion?,
   Sugerido?, IdProveedor?, Proveedor?)` — no rotation fields in this slice;
   `Reposicion(IdPuntoVenta, Hoy, DiasDeRotacion, ZonaHoraria, Filas)`.
   `dto-contract-honesty`: doc-comment `Sugerido` as null-not-zero when
   `Reposicion` unset; doc-comment that `ConsumoDiarioPromedio`/
   `DiasDeCobertura` are **added by slice 5**, not omitted by oversight.
-- [ ] 4.4 Modify `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
+- [x] 4.4 Modify `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
   one `De(Reposicion, ctx)` mapper — the aggregate cap shape (guard on
   `TablaExportable.Filas.Count` after mapping, no `COUNT(*)`), the same
   method backs both the JSON and the export (design decision 13 — no
   `ObtenerReposicionParaExportacionAsync` twin).
-- [ ] 4.5 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`:
+- [x] 4.5 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`:
   `GET /reportes/stock/reposicion?idPuntoVenta[&dias]` and
   `GET /reportes/stock/reposicion/export?…&formato=xlsx`, both under
   `Politicas.LecturaDeReportes` (inherited).
-- [ ] 4.6 [P] **Mutation target**: `s.Minimo != null` — delete it — a
-  seeded articulo with `minimo = null, cantidad = 0` must **not** appear;
-  the mutation must make it appear. *(spec `reposicion-de-stock`: "Minimo
-  Is A Fixed, Owner-Set Reorder Point…", scenario 1; mutation-proof-tests)*
-- [ ] 4.7 [P] **Mutation target**: `candidatos.DefaultIfEmpty()` → inner
+- [x] 4.6 [P] **Mutation target — DISPROVEN, evidence recorded, not a
+  silent skip**: `s.Minimo != null` — deleted it, ran the seeded-articulo
+  test (`minimo = null, cantidad = 0`), and the row stayed **absent** —
+  the mutation did NOT make it appear. Root cause confirmed via
+  `ConstruirQueryDeReposicion(...).ToQueryString()` on both versions:
+  Npgsql translates `s.Minimo != null` to an additive `s.minimo IS NOT
+  NULL`, but `s.cantidad <= s.minimo` alone already excludes every
+  `minimo`-NULL row through SQL's three-valued logic (`x <= NULL` is
+  always unknown, for any `x`) — the explicit null check is row-admission
+  REDUNDANT for this query shape, so no seed can turn it into a
+  discriminating mutation target (`mutation-proof-tests` rule 3 exhausted:
+  the confound is SQL's own NULL semantics, not another layer to route
+  around). The clause stays in the code for documentary intent (design
+  decision 1, "minimo NULL ⇒ unmanaged") — its doc-comment in
+  `ConstruirQueryDeReposicion` and the test's doc-comment in
+  `ReposicionReporteTests.UnArticuloSinMinimoNuncaApareceEnLaReposicion`
+  were both corrected to state this plainly instead of the disproven
+  mutation-target claim. The scenario itself (spec `reposicion-de-stock`:
+  "Minimo Is A Fixed, Owner-Set Reorder Point…", scenario 1) is still
+  covered as ordinary spec coverage — just not as mutation-proof evidence.
+  *(spec `reposicion-de-stock`: "Minimo Is A Fixed, Owner-Set Reorder
+  Point…", scenario 1; mutation-proof-tests)*
+- [x] 4.7 [P] **Mutation target**: `candidatos.DefaultIfEmpty()` → inner
   join — the *Sin proveedor* row must disappear once mutated.
   *(mutation-proof-tests)*
-- [ ] 4.8 [P] **Mutation target**: `orderby a.IdProveedorHabitual, a.Id` —
+- [x] 4.8 [P] **Mutation target**: `orderby a.IdProveedorHabitual, a.Id` —
   delete the first key — the row-sequence assertion (9.9's *Sin proveedor*
   no longer last) must fail. *(mutation-proof-tests)*
-- [ ] 4.9 [P] Discriminating-seed integration test, one PV, every field of
+- [x] 4.9 [P] Discriminating-seed integration test, one PV, every field of
   every row asserted with different values per row/column, row order
   asserted as a sequence: an articulo `cantidad = minimo` (**appears**);
   `cantidad = minimo + 0.001` (absent); `minimo = null, cantidad = 0`
@@ -873,25 +951,59 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   Low-Stock Boundary Is Inclusive" all 3 scenarios, "Reposición Report Is
   The Alert And The Purchase Suggestion…" scenarios 1-3;
   mutation-proof-tests rules 4 and 6)*
-- [ ] 4.10 [P] Export equality: identical query string on `/reposicion` and
+- [x] 4.10 [P] Export equality: identical query string on `/reposicion` and
   `/reposicion/export`, every cell of every row compared, including the
   *Sin proveedor* row's empty proveedor cell and a null `sugerido` cell
   rendering **empty, not `0`**; plus a cap refusal (`TopeDeFilas` lowered)
   that **refuses rather than truncates**. *(spec `reposicion-de-stock`:
   "The Reposición Export Sibling Is Catalog-Bounded, Never Truncated", both
-  scenarios; mutation-proof-tests rule 6)*
-- [ ] 4.11 [P] Authorization: a Vendedor gets `403` on the reposición
+  scenarios; mutation-proof-tests rule 6)* *(judgment-day round 1, confirmed
+  MAJOR #1: the row-equality test read only data rows starting at row 7 and
+  never asserted row 6 (`FilaDeTituloDeTabla` in `ExportadorXlsx.cs`), so a
+  header-label swap in `ColumnasReposicion` (`ExportacionDeReportes.cs`)
+  shipped with zero coverage — all 3 export tests stayed green under the
+  mutation. Closed by adding the header-row assertion (reads cells
+  `(6,1)..(6,7)`, compares against the 7 `ColumnasReposicion` titles in
+  order) to `ElExportEsIgualAlEndpointJsonEnTodasLasColumnasIncluidasLasCeldasVacias`,
+  the same pattern `ExistenciasExportTests.ElExportEsIgualAlEndpointJsonParaLasDosFilas`
+  already established on `main`. Mutation evidence: swapping two titles in
+  `ColumnasReposicion` makes the new header assert FAIL; reverting restores
+  green.)*
+- [x] 4.11 [P] Authorization: a Vendedor gets `403` on the reposición
   report and its export. *(spec `reposicion-de-stock`: "Reposición Report…",
   scenario "A Vendedor is rejected from the reposición report and its
   export")*
-- [ ] 4.12 Gate guard: `has-pending-model-changes` clean, zero migration
-  files in the diff.
-- [ ] 4.13 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 4.14 Branch `feat/stage13-slice4-reposicion` off `main` (parent:
+- [x] 4.12 Gate guard: `has-pending-model-changes` clean, zero migration
+  files in the diff. *(confirmed: `dotnet ef migrations has-pending-model-changes`
+  from `src/Ways.Infrastructure` → "No changes have been made to the model
+  since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty)*
+- [x] 4.13 Run `judgment-day`; fix; re-judge until clean. *(CLEAN ROUND 2
+  2026-08-14. Round 1: judge B static + LIVE mutation pass — 10 mutations
+  plus a live re-run of the 4.6 disproof (confirmed honest), 8 killed, 2
+  SURVIVORS: (M10, MAJOR) ColumnasReposicion header swap — no test read the
+  workbook header row; (M9, MAJOR) deleting ExigirVentanaValida passed 8/8 —
+  no test sent `?dias=` at all. Plus 1 WARNING (inferential): soft-deleted
+  proveedor sorted mid-list at its raw-FK position with null name,
+  contradicting design decision 3's "lands under Sin proveedor" — resolved
+  as Orchestrator Decision #12 (dangling FK projected null + presence-first
+  ordering → single trailing bucket). Fix commit `da25a70`: 7-header assert
+  at row 6, `?dias=0`→400 `dias_rotacion_invalido` + echo tests (45 and
+  default 30), decision-12 projection/ordering with seed resequenced.
+  Scoped re-judgment by judge B: all 4 re-mutations killed (headers, guard,
+  hard-coded echo probe, presence-key drop), zero fix-caused defects,
+  10/10 green. Judge A fresh read-only pass over the corrected frozen diff:
+  ZERO findings (verified FilaDeTituloDeTabla=6, the soft-delete query
+  filter as pre-existing infra, and the 4.6 disproof's three-valued-logic
+  reasoning). JUDGMENT: APPROVED — 2 confirmed-and-fixed MAJORs, 1 WARNING
+  resolved by decision #12, 0 contradictions.)*
+- [x] 4.14 Branch `feat/stage13-slice4-reposicion` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
 
-**Test plan**: 3 mutation targets (4.6-4.8), discriminating seed (4.9),
-export equality + cap refusal (4.10), authorization (4.11).
+**Test plan**: 3 mutation targets (4.6-4.8) — **4.6 disproven with
+recorded evidence** (SQL NULL semantics make `s.Minimo != null`
+row-admission redundant; see 4.6's note), 4.7-4.8 confirmed — discriminating
+seed (4.9), export equality + cap refusal (4.10), authorization (4.11).
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ReposicionReport`
 
@@ -907,7 +1019,7 @@ gains `ConsumoDiarioPromedio`/`DiasDeCobertura` per row;
 reverts to slice 4's shape (no rotation columns), `/reposicion` still
 functions.
 
-- [ ] 5.1 Modify `ServicioDeReportesDeStock.cs`: private
+- [x] 5.1 Modify `ServicioDeReportesDeStock.cs`: private
   `LeerConsumoAsync(idPuntoVenta, idsArticulo?, desdeUtc, hastaUtcExclusivo,
   ct)`:
   ```csharp
@@ -922,8 +1034,9 @@ functions.
       .ToDictionaryAsync(x => x.IdArticulo, x => x.Neto, ct);
   ```
   Plain LINQ over `db.MovimientosStock` — no raw SQL, `LectorDeSerieTemporal`
-  untouched (design decision 7). The caller negates: `-neto`.
-- [ ] 5.2 Modify `ServicioDeReportesDeStock.cs`: wire `ObtenerReposicionAsync`
+  untouched (design decision 7). The caller negates: `-neto`. Implemented
+  verbatim as the pinned snippet, returning `IReadOnlyDictionary<int, decimal>`.
+- [x] 5.2 Modify `ServicioDeReportesDeStock.cs`: wire `ObtenerReposicionAsync`
   — when `filas.Count > 0`, compute `(desdeUtc, hastaUtc) :=
   ReglaDeReposicion.VentanaDeRotacion(hoy, diasDeRotacion, zona)`, call
   `LeerConsumoAsync(pv, filas.ids, desdeUtc, hastaUtc, ct)`, project
@@ -931,35 +1044,67 @@ functions.
   ? -neto : null, diasDeRotacion)` and `DiasDeCobertura :=
   ReglaDeReposicion.DiasDeCobertura(cantidad, consumoDiarioPromedio)` per
   row. When `filas.Count == 0`, the rotation query is skipped entirely
-  (decision 12 — a PV with no minimums costs exactly one query).
-- [ ] 5.3 Modify `Contratos.cs`: widen `FilaDeReposicion` with
+  (decision 12 — a PV with no minimums costs exactly one query). Wired as
+  written; `zona` resolved via `TimeZoneInfo.FindSystemTimeZoneById(zonaId)`.
+- [x] 5.3 Modify `Contratos.cs`: widen `FilaDeReposicion` with
   `ConsumoDiarioPromedio?`, `DiasDeCobertura?`; add `FilaDeRotacion(IdArticulo,
   Articulo, ConsumoEnVentana, ConsumoDiarioPromedio, MinimoSugerido)` and
   `Rotacion(IdPuntoVenta, Hoy, DiasDeRotacion, DiasCoberturaObjetivo,
   ZonaHoraria, Filas)`. `dto-contract-honesty`: doc-comment that an articulo
   absent from `Rotacion.Filas` means "no qualifying movement", never a row
   with zero-valued fields (design decision 14).
-- [ ] 5.4 Modify `ServicioDeReportesDeStock.cs`:
+- [x] 5.4 Modify `ServicioDeReportesDeStock.cs`:
   `ObtenerRotacionAsync(idPuntoVenta, dias?, ct)` — same consumption
   definition and window resolution as 5.1-5.2 (never a second definition),
   one row per articulo with a qualifying movement in the window; an
   articulo with none is **absent**, never present with `minimoSugerido = 0`.
-- [ ] 5.5 Modify `ReportesEndpoints.cs`:
+  Resolves `dias_cobertura_objetivo` via a new private
+  `ResolverDiasCoberturaAsync` (design's private-surfaces grouping, slice 5).
+  A soft-deleted articulo whose ledger still has qualifying movements is
+  filtered out of `Filas` via the EF global filter on `Articulo` — same
+  inherited trade-off as `ExistenciasTests.UnArticuloEliminadoNuncaApareceEnLasExistencias`
+  (design: Open Questions), documented inline rather than crashing on a
+  missing name.
+- [x] 5.5 Modify `ReportesEndpoints.cs`:
   `GET /reportes/stock/rotacion?idPuntoVenta[&dias]`, `Politicas.LecturaDeReportes`.
-- [ ] 5.6 [P] **Mutation target**: delete `&& m.IdComprobanteCompra == null`
+- [x] 5.6 [P] **Mutation target**: delete `&& m.IdComprobanteCompra == null`
   from `LeerConsumoAsync`'s filter — the netting-trap test (5.10) must fail.
-  *(mutation-proof-tests)*
-- [ ] 5.7 [P] **Mutation target**: `VentanaDeRotacion`'s zone conversion —
+  *(mutation-proof-tests)* **EVIDENCE**: mutated to
+  `(m.Motivo == MotivoStock.Anulacion /* MUTATION 5.6 */)`, ran
+  `LaRotacionNoNeteaLaAnulacionDeUnaCompraDentroDeLasVentas` → FAILED
+  (`Assert.Equal() Failure: Expected: 5 Actual: 20` — the compra's −15
+  reversal negated back in as +15 consumption, 8−3+15=20), reverted,
+  `git status`/`git diff --stat` clean, suite green again.
+- [x] 5.7 [P] **Mutation target**: `VentanaDeRotacion`'s zone conversion —
   replace with `hoy`/edges computed from `reloj.Ahora.UtcDateTime` — the
   midday-UTC boundary test (5.11) must fail. *(mutation-proof-tests, the
-  stage-11 slice-9 bug class hardened by `08e7707`)*
-- [ ] 5.8 [P] **Mutation target**: `ConsumoDiario`'s `netoConsumido is null
+  stage-11 slice-9 bug class hardened by `08e7707`)* **EVIDENCE**: the
+  wiring-level equivalent of this mutation is the zone argument
+  `ObtenerRotacionAsync` passes into `VentanaDeRotacion` (the pure function
+  itself is already unit-proven by `ReglaDeReposicionTests`) — mutated
+  `TimeZoneInfo.FindSystemTimeZoneById(zonaId)` to `TimeZoneInfo.Utc /*
+  MUTATION 5.7 */` in that call, ran
+  `LaVentanaDeRotacionResuelveElBordeEnLaZonaHorariaDelPuntoDeVenta` →
+  FAILED (`Expected: 9 Actual: 22` — the "outside" movement at 02:00Z fell
+  inside the shifted UTC-only window), reverted, clean diff, suite green.
+- [x] 5.8 [P] **Mutation target**: `ConsumoDiario`'s `netoConsumido is null
   ⇒ null` — return `0m` instead — the zero-history test (5.12) must fail.
-  *(mutation-proof-tests)*
-- [ ] 5.9 [P] **Mutation target**: the `filas.Count == 0` early return in
+  *(mutation-proof-tests)* **EVIDENCE**: mutated
+  `ReglaDeReposicion.ConsumoDiario` to `netoConsumido is null ? 0m /*
+  MUTATION 5.8 */ : …`, ran
+  `UnArticuloSinHistoriaDeConsumoMuestraNulosDeRotacionEnLaReposicionNuncaCero`
+  → FAILED (`Assert.Null() Failure: Expected: null Actual: 0`), reverted,
+  clean diff, suite green.
+- [x] 5.9 [P] **Mutation target**: the `filas.Count == 0` early return in
   `ObtenerReposicionAsync` (wired in slice 4, exercised here) — delete it —
   the empty-PV query-count test (5.14) must fail. *(mutation-proof-tests)*
-- [ ] 5.10 [P] Integration, named:
+  **EVIDENCE**: deleted the `if (crudas.Count == 0) { return …; }` guard
+  (the empty branch still yields empty `Filas`, but now issues one extra
+  query filtering `LeerConsumoAsync` by an empty id list), ran
+  `UnPuntoDeVentaSinMinimosNoConsultaMovimientosStock` → FAILED
+  (`Assert.Equal() Failure: Expected: 6 Actual: 7`), reverted, clean diff,
+  suite green.
+- [x] 5.10 [P] Integration, named:
   `LaRotacionNoNeteaLaAnulacionDeUnaCompraDentroDeLasVentas` — seed compra
   → confirm → **anular la compra** (`motivo = anulacion` **with**
   `id_comprobante_compra`) → sale → **anular la venta** (`motivo =
@@ -967,55 +1112,145 @@ functions.
   equals exactly the sale minus its own anulación, all magnitudes distinct.
   *(spec `reposicion-de-stock`: "Rotation Excludes Purchase-Reversal
   Anulaciones And Is Advisory-Only", scenario "A purchase anulación is
-  excluded from consumption")*
-- [ ] 5.11 [P] Integration, the clock pinned at `2026-08-14T12:00:00Z`, PV
+  excluded from consumption")* Compra leg driven through the real
+  `POST /api/compras` → `/confirmar` → `/anular` flow (genuine
+  `id_comprobante_compra` FK, same pattern as
+  `ComprasAnulacionYConcurrenciaTests`); sale + its anulación seeded directly
+  on the ledger (`SembrarMovimientoAsync`, same precedent as that file's
+  `ReducirStockComoVentaAsync` — no FK requirement on a null comprobante).
+  Magnitudes 15 (compra, excluded)/8 (venta)/3 (anulación de venta)/5 (net)
+  all distinct.
+- [x] 5.11 [P] Integration, the clock pinned at `2026-08-14T12:00:00Z`, PV
   zone `America/Argentina/Buenos_Aires` (local `09:00`), `dias = 1`. A
   movement at `2026-08-14T02:00:00Z` (local `2026-08-13 23:00`) is
   **outside** the window; one at `2026-08-14T04:00:00Z` (local `01:00`) is
   **inside**. Distinct magnitudes. *(spec: "The rotation window resolves
-  in the punto de venta's own zona horaria")*
-- [ ] 5.12 [P] Integration: an articulo with no qualifying movement in the
+  in the punto de venta's own zona horaria")* Magnitudes 13
+  (outside)/9 (inside), single articulo, `factoryConRelojFijo` pattern
+  (`VencimientosReporteTests` precedent).
+- [x] 5.12 [P] Integration: an articulo with no qualifying movement in the
   window shows `minimoSugerido = null` on the reposición report, not `0`.
   *(spec: "A zero-history articulo shows no suggestion rather than a
-  suggestion of zero")*
-- [ ] 5.13 [P] Integration: a mixed sequence containing `ajuste`,
+  suggestion of zero")* **APPLY NOTE**: `FilaDeReposicion` has no
+  `minimoSugerido` field (design's own Interfaces/Contracts section — that
+  field lives only on `FilaDeRotacion`); the task text's `minimoSugerido`
+  is stale relative to the pinned `Contratos.cs` record. Implemented as
+  the accurate translation of the same spec scenario onto the actual
+  reposición fields: `ConsumoDiarioPromedio`/`DiasDeCobertura` both `null`
+  (never `0`) for an articulo under mínimo with zero qualifying movements.
+  `GET /rotacion`'s own absence behavior for the identical fact is covered
+  separately by 5.17.
+- [x] 5.13 [P] Integration: a mixed sequence containing `ajuste`,
   `inventario`, `decomiso`, `transferencia` and `reclasificacion`, each with
   a distinct magnitude, leaves `consumoEnVentana` unchanged from the
   sales-only baseline. *(spec: "ajuste, inventario, decomiso, transferencia
-  and reclasificacion never count as consumption")*
-- [ ] 5.14 [P] Integration, by query count: a PV with hundreds of stocked
+  and reclasificacion never count as consumption")* Baseline venta 20;
+  five excluded motivos at 1/2/3/4/5.
+- [x] 5.14 [P] Integration, by query count: a PV with hundreds of stocked
   articulos and zero minimums returns zero rows **and issues no query
   against `movimientos_stock`** — `ContadorDeComandos`, exact constant.
   *(spec: "A catalog with no minimo configured anywhere returns zero alert
-  rows")*
-- [ ] 5.15 [P] Integration: an arbitrary rotation figure never gates the
+  rows")* 200 seeded articulos; calls `ServicioDeReportesDeStock.ObtenerReposicionAsync`
+  directly (manual `WaysDbContext` + interceptors, `VentasCheckoutTests`
+  precedent) — exact constant is **6** (2 from `ResolverContextoAsync`, 2
+  from `ResolverDiasRotacionAsync`, 1 from `ConstruirQueryDeReposicion`;
+  `ServicioDeParametros.ResolverAsync` itself issues 2 — the PV-ownership
+  `AnyAsync` guard plus the `parametros` row read), confirmed by a real run
+  before recording the assertion, not derived-and-assumed.
+- [x] 5.15 [P] Integration: an arbitrary rotation figure never gates the
   alert — an articulo at `cantidad <= minimo` appears independent of its
   rotation value. *(spec: "A wrong rotation figure never gates the alert")*
-- [ ] 5.16 [P] Integration: `?dias=60` on `GET /reposicion?idPuntoVenta=7`
+  Seeded a deliberately large qualifying sale (500) to prove a big rotation
+  figure still doesn't suppress or alter row inclusion.
+- [x] 5.16 [P] Integration: `?dias=60` on `GET /reposicion?idPuntoVenta=7`
   widens the window so a 45-day-old sale contributes; the same `?dias=60`
   on `GET /rotacion?idPuntoVenta=7` shows the articulo with a
   `minimoSugerido` reflecting it. *(spec: "An explicit dias override widens
   the reposición report's window"; "dias overrides the default window on
-  the rotacion route too")*
-- [ ] 5.17 [P] Integration: `GET /rotacion` omits an articulo with no
+  the rotacion route too")* Sale magnitude 60, chosen so `consumoDiarioPromedio
+  = 60/60 = 1` exactly at `dias=60` — asserted absent/null at the default
+  30-day window on both routes, present/non-null at `dias=60` on both.
+- [x] 5.17 [P] Integration: `GET /rotacion` omits an articulo with no
   qualifying movement — absence, never a zero row. *(spec `GET
   /api/reportes/stock/rotacion…`: "An articulo with no consumption history
-  is absent, not zero")*
-- [ ] 5.18 [P] `parametros-operativos` scenario:
+  is absent, not zero")* Two articulos in the same PV, only one with a
+  qualifying movement — the other's absence asserted directly (not an
+  empty-response coincidence).
+- [x] 5.18 [P] `parametros-operativos` scenario:
   `dias_cobertura_objetivo = 7` and an average daily consumption of `3` ⇒
   `minimoSugerido = 21`, shown as a suggestion, never written to
   `stock.minimo`. *(spec `parametros-operativos`: "dias_cobertura_objetivo
-  feeds minimoSugerido, never minimo directly")*
-- [ ] 5.19 [P] Integration: after `/reposicion` or `/reposicion` runs for an
+  feeds minimoSugerido, never minimo directly")* Consumo total 90 over the
+  default 30-day window ⇒ `consumoDiarioPromedio = 3`; default
+  `dias_cobertura_objetivo = 7` ⇒ `minimoSugerido = 21`; re-reads
+  `stock.minimo` after the call and asserts it is still `NULL`.
+- [x] 5.19 [P] Integration: after `/reposicion` or `/reposicion` runs for an
   articulo with a computable `minimoSugerido` and no `minimo`, re-read
   `stock.minimo` and assert it is still `NULL` — no automated write ever
   occurs outside `PUT /api/stock/minimos`. *(spec `reposicion-de-stock`:
-  "minimoSugerido is never written to minimo automatically")*
-- [ ] 5.20 Gate guard: `has-pending-model-changes` clean, zero migration
-  files in the diff.
-- [ ] 5.21 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 5.22 Branch `feat/stage13-slice5-rotacion` off `main` (parent:
+  "minimoSugerido is never written to minimo automatically")* **APPLY
+  NOTE**: task text literally says "after `/reposicion` or `/reposicion`
+  runs" (repeats the same route) — interpreted as `/reposicion` or
+  `/rotacion`, the only reading consistent with 5.16 immediately above
+  (which names both routes together) and with this task's own placement
+  right after 5.18's single-route write-check. Implemented calling BOTH
+  routes for the same articulo (qualifying movement seeded, `minimo`
+  left `NULL`) and re-reading `stock.minimo` as `NULL` after each call.
+- [x] 5.20 Gate guard: `has-pending-model-changes` clean, zero migration
+  files in the diff. **VERIFIED**: `dotnet ef migrations
+  has-pending-model-changes --project src/Ways.Infrastructure --startup-project
+  src/Ways.Infrastructure` → "No changes have been made to the model since
+  the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
+  files).
+- [x] 5.21 Run `judgment-day`; fix; re-judge until clean. *(CLEAN 2026-08-14:
+  judge B's scoped re-judgment re-applied all 6 named mutations — every one
+  killed by exactly its dedicated test with the predicted failure mode
+  (incl. the live 500 `error_interno` confirmation of the soft-delete
+  guard) — zero fix-caused defects beyond one prose slip corrected by the
+  orchestrator; judge A's fresh read-only pass returned ZERO findings,
+  independently re-deriving the netting predicate against the raw-ADO
+  write paths of ventas/compras, the window arithmetic, the query-count-6
+  claim, and every DTO field's fate. JUDGMENT: APPROVED. Round 1, juez B —
+  7 findings confirmed and closed: #1 MAJOR
+  (`ResolverDiasCoberturaAsync`/`ObtenerRotacionAsync` never routed
+  `dias_cobertura_objetivo` through `ReglaDeReposicion.ExigirVentanaValida`,
+  making the designed 400 unreachable and letting a stored `<= 0` value
+  fabricate a zero/negative `minimoSugerido` — fixed by wrapping the
+  resolved value with `ExigirVentanaValida(_, "dias_cobertura_invalido")`
+  at the single resolution point; test
+  `UnDiasDeCoberturaObjetivoInvalidoEsRechazadoConCuatrocientos`); #2
+  WARNING (the `FilaDeRotacion` clamp-to-zero contract had no test; test
+  `UnaVentanaConDevolucionesNetasPositivasClampeaElConsumoAZeroNuncaNegativo`);
+  #3 WARNING (window boundaries untested at the exact instant; test
+  `LaVentanaDeRotacionIncluyeElBordeInferiorYExcluyeElBordeSuperiorExactos`);
+  #4 WARNING (`DiasDeCobertura(f.Cantidad, …)` wiring untested; test
+  `LaCoberturaDeDiasSeCalculaSobreCantidadNuncaSobreMinimo`); #5 WARNING
+  (soft-deleted articulo with qualifying history untested — the
+  `nombres.ContainsKey` guard was already correct, just unproven; test
+  `UnArticuloDadoDeBajaConHistoriaCalificadaDesapareceDeLaRotacionSinReventar`);
+  #6 SUGGESTION (dead `Contexto.Vendedor` setup — closed with test
+  `UnVendedorEsRechazadoDelReporteDeRotacion`, mirror of 4.11); #7
+  SUGGESTION (incoherent narrative in the 5.10 doc-comment — corrected to
+  the real observed value, Expected 5 / Actual 20). Five of the 6 new
+  integration tests confirmed FAIL under their named mutation and PASS on
+  revert (the sixth, the Vendedor-403 mirror, is an auth-gate test with no
+  named mutation). Filtered suite `~Rotacion|~Reposicion` green: 60/60
+  (29 `Ways.Domain.Tests` + 31 `Ways.IntegrationTests`, up from 25
+  integration baseline + 6 new).)*
+- [x] 5.22 Branch `feat/stage13-slice5-rotacion` off `main` (parent:
   slice 4); PR; merge stacked-to-main.
+
+**APPLY NOTE (Verify line, no mismatch this time)**: unlike slices 2 and 4,
+this slice's `Verify` filter runs clean as literally written —
+`~RotacionReport` matches the new `RotacionReporteTests` class (all 10
+tests); `~LeerConsumoAsync` matches nothing extra (the method is private,
+no test name contains that substring) but the `|` OR keeps the filter
+non-empty. Also ran the wider `~Rotacion|~Reposicion` filter (25 tests,
+covering the slice-4 `ReposicionReporteTests`/`ReposicionExportTests`
+regression surface widened by this slice) and the Domain
+`~ReglaDeReposicion` suite (28 tests) — both green, see Work Unit Evidence
+in the apply summary.
 
 **Test plan**: 4 mutation targets (5.6-5.9), netting trap (5.10),
 midday-UTC boundary (5.11), zero-history (5.12), motivo exclusions (5.13),

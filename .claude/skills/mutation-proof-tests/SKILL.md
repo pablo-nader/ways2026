@@ -70,6 +70,18 @@ so deleting the clause under test changes nothing the test can see.
    (awaiting it) and assert synchronously after the flush. (Occurrence: CajaZ stale
    test, stage 11 — survived its own strengthening until the flush was forced.)
 
+8. **A workbook equality test also asserts the HEADER row — the header is what
+   binds a cell to its column.** Reading data cells by position from
+   `primeraFilaDeDatos` leaves the header texts unguarded: swapping two column
+   titles ships a workbook whose `Mínimo` column is labeled `Reposición` — a lying
+   file an operator orders stock from — while every data-cell equality stays green.
+   Assert ALL header texts of the export's column set, in exact order, read from the
+   real header row (`ExportadorXlsx.FilaDeTituloDeTabla`), once per export equality
+   test. (Two same-day occurrences, stage 13 slices 2 and 4 — both caught as
+   surviving mutants by judgment-day, both fixed with a six/seven-header assert that
+   also kills the adjacent hard-coded-label mutant. Pre-existing exports share the
+   gap; close it whenever an export equality test is touched.)
+
 ## Decision Gate
 
 | Situation | Action |
