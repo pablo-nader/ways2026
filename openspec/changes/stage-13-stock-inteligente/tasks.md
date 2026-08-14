@@ -105,12 +105,12 @@ rows, Admin-only; doc-11's backlog row 367 is re-registered.
 been since Etapa 5, no other slice depends on this write path's *code*
 existing (only on its *contract*).
 
-- [ ] 1.1 Modify `src/Ways.Domain/Catalogos/ParametroConocido.cs`: add
+- [x] 1.1 Modify `src/Ways.Domain/Catalogos/ParametroConocido.cs`: add
   `DiasRotacion` (`int`, default `30`) and `DiasCoberturaObjetivo` (`int`,
   default `7`), both registered in `PorClave` — without that, `Buscar()`
   rejects them as unknown. *(no migration — stage-10/12 pattern; spec
   `parametros-operativos`)*
-- [ ] 1.2 Create `src/Ways.Domain/Stock/ReglaDeReposicion.cs`:
+- [x] 1.2 Create `src/Ways.Domain/Stock/ReglaDeReposicion.cs`:
   `EstadoDeReposicion` enum (`SinMinimo`/`Bajo`/`Ok`, wire values are the
   C# member names — the `EstadoDeVencimiento` precedent, no naming
   policy); `Clasificar(cantidad, minimo?)` — `minimo is null ⇒ SinMinimo`,
@@ -126,14 +126,14 @@ existing (only on its *contract*).
   (takes the standard offset); `ExigirVentanaValida(dias, codigo)` —
   rejects `dias <= 0`. *(design decision 1, 7; `PoliticaDeRoles` pattern —
   no `IWaysDbContext` anywhere in this file)*
-- [ ] 1.3 Modify `src/Ways.Application/Stock/Contratos.cs`: add
+- [x] 1.3 Modify `src/Ways.Application/Stock/Contratos.cs`: add
   `SolicitudDeMinimos(IdPuntoVenta, IdArticulo, Minimo?, Reposicion?)` and
   `MinimosDeStock(IdPuntoVenta, IdArticulo, Cantidad, Minimo?, Reposicion?,
   Estado)`. `dto-contract-honesty`: doc-comment each field's fate —
   `Minimo`/`Reposicion` on the request go straight to the upsert's `$4`/`$5`;
   on the response they are read back from the same statement's `RETURNING`,
   never re-derived.
-- [ ] 1.4 Modify `src/Ways.Application/Stock/ServicioDeStock.cs`:
+- [x] 1.4 Modify `src/Ways.Application/Stock/ServicioDeStock.cs`:
   `EscribirMinimosAsync(SolicitudDeMinimos, ct)` — in-memory validation
   first (`ExigirUmbralValido` on both fields: `>= 0` → `400
   minimo_negativo`; at most 3 decimals → `400 minimo_invalido`;
@@ -152,17 +152,17 @@ existing (only on its *contract*).
   `movimientos_stock` insert anywhere in this method. Response classifies
   `Estado` via `ReglaDeReposicion.Clasificar` on the returned row. *(design
   decision 10, 11)*
-- [ ] 1.5 Modify `src/Ways.Api/Endpoints/StockEndpoints.cs`:
+- [x] 1.5 Modify `src/Ways.Api/Endpoints/StockEndpoints.cs`:
   `PUT /api/stock/minimos`, `.RequireAuthorization(Politicas.GestionDeCatalogo)`
   stacked over the group's `OperacionDePos` — the `/ajustes`,
   `/transferencias`, `/conteos`, `/decomiso` precedent.
-- [ ] 1.6 Modify `docs/11-programa-post-paridad.md`: re-register the backlog
+- [x] 1.6 Modify `docs/11-programa-post-paridad.md`: re-register the backlog
   row at line 367 (the full conteo snapshot/freeze/variance workflow) to its
   new owner `stage-13b-conteo-por-planilla`, citing proposal decision 5 —
   the carve-out is not complete until the registration is. *(proposal
   decision 5, binding — "a carve-out recorded only in a proposal is a
   carve-out that disappears at the next archive")*
-- [ ] 1.7 [P] Domain unit suite (`PoliticaDeRoles` pattern, no DB, no
+- [x] 1.7 [P] Domain unit suite (`PoliticaDeRoles` pattern, no DB, no
   fixture): `Clasificar` at `cantidad = minimo - 1 / = minimo / = minimo +
   1`, at `minimo = 0` with `cantidad = 0` and `= -1` (negative balances are
   legal), and `minimo = null`; `Sugerido` null-vs-0 and with negative
@@ -172,50 +172,50 @@ existing (only on its *contract*).
   `VentanaDeRotacion` for a UTC zone, a `-03:00` zone, `dias = 1`, and an
   invalid-local-midnight zone. *(spec: none — pure Domain arithmetic, the
   contract every downstream scenario relies on)*
-- [ ] 1.8 [P] Application unit: `ExigirVentanaValida` rejects `0` and `-1`
+- [x] 1.8 [P] Application unit: `ExigirVentanaValida` rejects `0` and `-1`
   with their two distinct codes.
-- [ ] 1.9 [P] **Mutation target**: the `SET` list of the upsert — add
+- [x] 1.9 [P] **Mutation target**: the `SET` list of the upsert — add
   `cantidad = EXCLUDED.cantidad` → a write over a row with `cantidad = 5`
   must leave the balance unchanged; the mutation must make it change.
   *(spec `stock`: "Writing Reorder Parameters Creates The Stock Row Without
   A Movement", scenario 2; mutation-proof-tests)*
-- [ ] 1.10 [P] **Mutation target**: `ReglaDeReposicion.Clasificar`'s `<=` →
+- [x] 1.10 [P] **Mutation target**: `ReglaDeReposicion.Clasificar`'s `<=` →
   `<` — the exact-boundary Domain fact from 1.7 must fail.
   *(mutation-proof-tests)*
-- [ ] 1.11 [P] **Mutation target**: `Sugerido`'s `reposicion is null` guard
+- [x] 1.11 [P] **Mutation target**: `Sugerido`'s `reposicion is null` guard
   — return `0m` instead of `null` — the null-vs-zero Domain fact from 1.7
   must fail. *(mutation-proof-tests)*
-- [ ] 1.12 [P] **Mutation target**: delete
+- [x] 1.12 [P] **Mutation target**: delete
   `.RequireAuthorization(Politicas.GestionDeCatalogo)` on `PUT /minimos` —
   the Supervisor-`403` test (1.16) must fail once the line is gone, because
   the group's `OperacionDePos` alone admits Supervisor **and** Vendedor.
   *(mutation-proof-tests)*
-- [ ] 1.13 [P] Integration: a minimo write for an articulo with **no**
+- [x] 1.13 [P] Integration: a minimo write for an articulo with **no**
   `stock` row creates it at `cantidad = 0` with zero `movimientos_stock`
   rows, asserted before and after by `SELECT COUNT(*)`. *(spec `stock`:
   scenario 1; spec `reposicion-de-stock`: PUT requirement, scenario 1)*
-- [ ] 1.14 [P] Integration: a minimo write over `cantidad = 45` leaves
+- [x] 1.14 [P] Integration: a minimo write over `cantidad = 45` leaves
   `cantidad` unchanged and inserts zero movements. *(spec `stock`: scenario
   2)*
-- [ ] 1.15 [P] Integration: both fields `null` clears a previously-set pair
+- [x] 1.15 [P] Integration: both fields `null` clears a previously-set pair
   (the unmanage operation).
-- [ ] 1.16 [P] Integration: the five refusal paths with their HTTP status —
+- [x] 1.16 [P] Integration: the five refusal paths with their HTTP status —
   `400 minimo_negativo`, `400 reposicion_menor_que_minimo`, `400
   minimo_invalido` (both on `minimo` and on `reposicion`, > 3 decimals),
   `400 referencia_invalida` (unknown articulo), `404` (unknown/foreign-tenant
   punto de venta). *(spec `reposicion-de-stock`: PUT requirement, scenarios
   2-5)*
-- [ ] 1.17 [P] Authorization: Supervisor gets `403` on `PUT /minimos`;
+- [x] 1.17 [P] Authorization: Supervisor gets `403` on `PUT /minimos`;
   Vendedor gets `403` on `PUT /minimos`. *(spec `reposicion-de-stock`: PUT
   requirement, scenarios 6-7 — the write half; the read half of scenario 6
   is slice 2's task, once `/existencias` exposes the columns)*
-- [ ] 1.18 [P] RLS over the **`ways_app`** connection (NOSUPERUSER
+- [x] 1.18 [P] RLS over the **`ways_app`** connection (NOSUPERUSER
   NOBYPASSRLS, `mutation-proof-tests` rule 5): cross-tenant `SELECT`/`UPDATE`
   of `stock.minimo` and a cross-tenant `INSERT` through the upsert, asserting
   row counts for the silent 0-row cases and `42501` where an error is
   actually raised — proves the *new statement* respects `stock`'s existing
   policy, not the schema.
-- [ ] 1.19 Gate guard: `dotnet ef migrations has-pending-model-changes`
+- [x] 1.19 Gate guard: `dotnet ef migrations has-pending-model-changes`
   reports no pending changes; `git diff --stat` against `main` shows zero
   files under `Migraciones/`.
 - [ ] 1.20 Run `judgment-day` on the slice diff; fix confirmed issues;

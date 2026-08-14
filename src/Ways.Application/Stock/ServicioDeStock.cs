@@ -31,6 +31,11 @@ namespace Ways.Application.Stock;
 /// <c>AjustarAsync</c>, con la cantidad positiva del cliente negada server-side (disciplina de
 /// <c>ContarAsync</c>) y el único rechazo de negatividad que este servicio conoce
 /// (<c>409 stock_insuficiente_para_decomiso</c>). No restringido a lotes vencidos.
+///
+/// Etapa 13, slice 1 (design decisión 10/11): <c>EscribirMinimosAsync</c> gana el par
+/// <c>minimo</c>/<c>reposicion</c> de <c>PUT /api/stock/minimos</c> — a diferencia de todo lo de
+/// arriba, NO abre transacción ni escribe <c>movimientos_stock</c>: un parámetro de reposición
+/// no es un hecho del ledger, es un umbral configurado sobre la misma fila de caché.
 /// </summary>
 public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes)
 {
@@ -97,6 +102,99 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         await transaccion.CommitAsync(ct);
 
         return nuevaCantidad;
+    }
+
+    // ---- mínimos de reposición (stage-13-stock-inteligente, Slice 1; design decisión 10/11) -----
+
+    /// <summary>Design decisión 10/11: <c>PUT /api/stock/minimos</c> — validación EN MEMORIA
+    /// primero, dos pre-checks de existencia/tenant, y UN statement crudo (<see
+    /// cref="UpsertParametrosDeReposicionAsync"/>) que crea la fila en <c>cantidad = 0</c> si
+    /// falta y jamás la toca si existe. Sin transacción, sin lock explícito, sin fila de
+    /// <c>movimientos_stock</c> — un parámetro de reposición no es un hecho del ledger.</summary>
+    public async Task<MinimosDeStock> EscribirMinimosAsync(SolicitudDeMinimos solicitud, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+
+        ExigirUmbralValido(solicitud.Minimo, "mínimo");
+        ExigirUmbralValido(solicitud.Reposicion, "reposición");
+
+        if (solicitud.Minimo is { } minimo && solicitud.Reposicion is { } reposicion && reposicion < minimo)
+        {
+            throw new ErrorDominio(
+                "reposicion_menor_que_minimo",
+                "La reposición no puede ser menor que el mínimo cuando ambos están definidos.",
+                400);
+        }
+
+        // Pre-checks de existencia/tenant ANTES del statement — mismo criterio que AjustarAsync:
+        // la referencia se valida sobre una lectura simple, nunca dejando que la FK real de la
+        // base la rechace con un 500 crudo dentro del INSERT de abajo.
+        await ResolverArticuloAsync(solicitud.IdArticulo, ct);
+        await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var fila = await UpsertParametrosDeReposicionAsync(conexion, idTenant, solicitud, ct);
+
+        return new MinimosDeStock(
+            solicitud.IdPuntoVenta, solicitud.IdArticulo, fila.Cantidad, fila.Minimo, fila.Reposicion,
+            ReglaDeReposicion.Clasificar(fila.Cantidad, fila.Minimo));
+    }
+
+    /// <summary>Design decisión 10 — el mutation target nombrado del slice: <c>cantidad</c> ESTÁ
+    /// en el <c>VALUES</c> (crea la fila en <c>0</c> cuando falta) y está AUSENTE del <c>SET</c>
+    /// (jamás pisa un saldo existente) — la asimetría es la decisión entera, no una omisión. Sin
+    /// transacción: un único statement con <c>RETURNING</c> ya es atómico por sí mismo.</summary>
+    private static async Task<(decimal Cantidad, decimal? Minimo, decimal? Reposicion)> UpsertParametrosDeReposicionAsync(
+        DbConnection conexion, int idTenant, SolicitudDeMinimos solicitud, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO stock (id_articulo, id_punto_venta, id_tenant, cantidad, minimo, reposicion) " +
+            "VALUES ($1, $2, $3, 0, $4, $5) " +
+            "ON CONFLICT (id_articulo, id_punto_venta) DO UPDATE " +
+            "SET minimo = EXCLUDED.minimo, reposicion = EXCLUDED.reposicion " +
+            "RETURNING cantidad, minimo, reposicion";
+
+        AgregarParametro(comando, solicitud.IdArticulo);
+        AgregarParametro(comando, solicitud.IdPuntoVenta);
+        AgregarParametro(comando, idTenant);
+        AgregarParametroNulo(comando, solicitud.Minimo);
+        AgregarParametroNulo(comando, solicitud.Reposicion);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            throw new InvalidOperationException("El upsert de mínimos de reposición no devolvió ninguna fila.");
+        }
+
+        return (
+            lector.GetDecimal(0),
+            lector.IsDBNull(1) ? null : lector.GetDecimal(1),
+            lector.IsDBNull(2) ? null : lector.GetDecimal(2));
+    }
+
+    /// <summary>Design: New Domain error codes — familia <c>minimo_negativo</c>/<c>
+    /// minimo_invalido</c> (un código, el mensaje nombra el campo ofendido — mismo criterio que
+    /// <c>cantidad_de_ajuste_invalida</c> en ajuste/decomiso). Valida EN MEMORIA, antes de
+    /// resolver cualquier referencia: <c>&gt;= 0</c> y hasta 3 decimales — sin el segundo
+    /// chequeo, Postgres redondearía en silencio el valor que el operador tipeó al truncar a
+    /// <c>numeric(12,3)</c>. <c>null</c> pasa sin validar (campo sin gestionar).</summary>
+    private static void ExigirUmbralValido(decimal? valor, string campo)
+    {
+        if (valor is not { } numero)
+        {
+            return;
+        }
+
+        if (numero < 0m)
+        {
+            throw new ErrorDominio("minimo_negativo", $"El {campo} no puede ser negativo.", 400);
+        }
+
+        if (decimal.Round(numero, 3, MidpointRounding.AwayFromZero) != numero)
+        {
+            throw new ErrorDominio("minimo_invalido", $"El {campo} admite hasta 3 decimales.", 400);
+        }
     }
 
     // ---- decomiso (design: Write site 3 — "EjecutarDecomisoAsync, structurally EjecutarAjusteAsync

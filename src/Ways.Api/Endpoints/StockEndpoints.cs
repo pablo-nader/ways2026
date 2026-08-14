@@ -96,6 +96,18 @@ public static class StockEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Decomiso de stock (admin-only) — motivo = decomiso, nunca negativo.");
 
+        // stage-13-stock-inteligente (Slice 1, task 1.5, design: API Surface): reemplazo completo
+        // del par minimo/reposicion — mismo apilado GestionDeCatalogo sobre OperacionDePos que
+        // /ajustes, /transferencias, /conteos y /decomiso. Un Supervisor lee el par en
+        // /api/reportes/stock/existencias (LecturaDeReportes) pero no puede escribirlo acá.
+        grupo.MapPut("/minimos", async (ServicioDeStock servicio, SolicitudDeMinimos solicitud, CancellationToken ct) =>
+        {
+            var resultado = await servicio.EscribirMinimosAsync(solicitud, ct);
+            return Results.Ok(resultado);
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Reemplazo completo de minimo/reposicion (admin-only) — sin movimiento, sin transacción.");
+
         return app;
     }
 }

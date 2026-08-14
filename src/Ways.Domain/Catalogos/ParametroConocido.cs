@@ -53,11 +53,27 @@ public sealed record ParametroConocido(string Clave, Type TipoClr, string ValorP
     public static readonly ParametroConocido DiasAlertaVencimiento =
         new("dias_alerta_vencimiento", typeof(int), "30");
 
+    /// <summary>Ventana de días que el cálculo de rotación agrega para producir el consumo
+    /// diario promedio (stage-13, design decisión 7). Sin migración — mismo patrón que <see
+    /// cref="ZonaHoraria"/>/<see cref="ComisionPorcentaje"/> (stage-10) y <see
+    /// cref="LotesHabilitado"/>/<see cref="DiasAlertaVencimiento"/> (stage-12). Default
+    /// <c>30</c> días.</summary>
+    public static readonly ParametroConocido DiasRotacion =
+        new("dias_rotacion", typeof(int), "30");
+
+    /// <summary>Días de cobertura objetivo que <c>minimoSugerido</c> multiplica sobre el
+    /// consumo diario promedio (stage-13, design decisión 1). Nunca se escribe a
+    /// <c>stock.minimo</c> automáticamente — solo alimenta la sugerencia. Default <c>7</c>
+    /// días.</summary>
+    public static readonly ParametroConocido DiasCoberturaObjetivo =
+        new("dias_cobertura_objetivo", typeof(int), "7");
+
     private static readonly IReadOnlyDictionary<string, ParametroConocido> PorClave =
         new[]
         {
             ToleranciaPago, VueltoMaximo, ImporteAdicionalRecarga, SlotsTicketsEspera,
-            ZonaHoraria, ComisionPorcentaje, LotesHabilitado, DiasAlertaVencimiento
+            ZonaHoraria, ComisionPorcentaje, LotesHabilitado, DiasAlertaVencimiento,
+            DiasRotacion, DiasCoberturaObjetivo
         }.ToDictionary(p => p.Clave, p => p, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Devuelve el registro de <paramref name="clave"/>, o rechaza con un error de
