@@ -24,6 +24,13 @@ namespace Ways.Application.Stock;
 /// mismo trío de primitivas que <c>ServicioDeVentas</c> ya consume — <c>LeerSaldosAsync</c> (fase
 /// de resolución de la transferencia) y <c>ResolverSinIdentificarAsync</c> (get-or-create
 /// perezoso, statement crudo, cuando ningún lote del artículo tiene saldo positivo en el origen).
+///
+/// Etapa 12, slice 11 (design: Write site 3, proposal decisión 9): <c>AjustarAsync</c> gana la
+/// dimensión de lote (<c>idLote</c> requerido/rechazado según <c>EsLoteEfectivo</c>) y
+/// <c>DecomisarAsync</c> nace como motivo de primera clase — estructuralmente el mismo camino de
+/// <c>AjustarAsync</c>, con la cantidad positiva del cliente negada server-side (disciplina de
+/// <c>ContarAsync</c>) y el único rechazo de negatividad que este servicio conoce
+/// (<c>409 stock_insuficiente_para_decomiso</c>). No restringido a lotes vencidos.
 /// </summary>
 public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes)
 {
@@ -48,18 +55,24 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         // Pre-checks de existencia/tenant ANTES de la transacción (mismo criterio que
         // ServicioDeVentas: la referencia se valida sobre una lectura simple, nunca dejando que
         // el FK real de la base la rechace con un 500 crudo dentro del INSERT crudo de abajo).
-        await ResolverArticuloAsync(solicitud.IdArticulo, ct);
-        await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+        var articulo = await ResolverArticuloAsync(solicitud.IdArticulo, ct);
+        var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+
+        // Etapa 12, slice 11 (design: Write site 3 — "IdLote required when lot-effective"):
+        // resuelto/validado ANTES de la transacción, mismo criterio que la fase de resolución de
+        // TransferirAsync.
+        var idLote = await ResolverIdLoteEfectivoAsync(puntoVenta.IdEmpresa, puntoVenta.Id, articulo, solicitud.IdLote, ct);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarAjusteAsync(
-                idTenant, idEmpleado, solicitud.IdArticulo, solicitud.IdPuntoVenta, cantidad, observaciones, momento, ct));
+                idTenant, idEmpleado, solicitud.IdArticulo, solicitud.IdPuntoVenta, cantidad, observaciones, idLote,
+                momento, ct));
     }
 
     private async Task<decimal> EjecutarAjusteAsync(
         int idTenant, int idEmpleado, int idArticulo, int idPuntoVenta, decimal cantidad, string observaciones,
-        DateTimeOffset momento, CancellationToken ct)
+        int? idLote, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -68,13 +81,104 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         await InsertarMovimientoStockAsync(
             conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, cantidad, MotivoStock.Ajuste, idEmpleado,
-            observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote: null, ct);
+            observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote, ct);
 
         var nuevaCantidad = await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, cantidad, ct);
+
+        // Etapa 12, slice 11 (design: Write site 3 — "aggregate upsert then lot upsert, in that
+        // order"): el agregado SIEMPRE upsertea primero (lock order, decisión 6/9 del proposal);
+        // el lote solo cuando el artículo es lote-efectivo. Sin rechazo de negatividad — el ajuste
+        // es la operación que CORRIGE un saldo negativo (spec: "no negativity refusal").
+        if (idLote is { } idLoteEfectivo)
+        {
+            await UpsertStockLoteAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, idLoteEfectivo, cantidad, ct);
+        }
 
         await transaccion.CommitAsync(ct);
 
         return nuevaCantidad;
+    }
+
+    // ---- decomiso (design: Write site 3 — "EjecutarDecomisoAsync, structurally EjecutarAjusteAsync
+    // with three deltas"; proposal decisión 9) --------------------------------------------------
+
+    /// <summary>Design: API Surface — <c>POST /api/stock/decomiso</c>, <c>motivo = decomiso</c>,
+    /// primera clase (proposal decisión 9: NO una bandera de <c>ajuste</c>). Tres diferencias con
+    /// <see cref="AjustarAsync"/>: (1) <see cref="SolicitudDeDecomiso.Cantidad"/> llega SIEMPRE
+    /// positiva y se niega acá, nunca en el servicio de abajo (misma disciplina que
+    /// <c>ContarAsync</c> — el cliente nunca manda un delta con signo); (2) el único rechazo de
+    /// negatividad de este servicio (<c>409 stock_insuficiente_para_decomiso</c>) sobre el saldo
+    /// OPERATIVO — el del lote si es lote-efectivo, si no el agregado (spec: "the target balance");
+    /// (3) <c>observaciones</c> obligatoria igual que un ajuste. NO restringido a lotes vencidos
+    /// (decisión 9 del proposal) — la merma real entra en el mismo cajón que la vencida.</summary>
+    public async Task<decimal> DecomisarAsync(SolicitudDeDecomiso solicitud, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        var cantidadPositiva = ExigirCantidadDeDecomisoValida(solicitud.Cantidad);
+        var observaciones = ExigirObservaciones(solicitud.Observaciones);
+
+        var articulo = await ResolverArticuloAsync(solicitud.IdArticulo, ct);
+        var puntoVenta = await ResolverPuntoVentaAsync(solicitud.IdPuntoVenta, ct);
+
+        var idLote = await ResolverIdLoteEfectivoAsync(puntoVenta.IdEmpresa, puntoVenta.Id, articulo, solicitud.IdLote, ct);
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () =>
+            await EjecutarDecomisoAsync(
+                idTenant, idEmpleado, solicitud.IdArticulo, solicitud.IdPuntoVenta, cantidadPositiva, observaciones,
+                idLote, momento, ct));
+    }
+
+    private async Task<decimal> EjecutarDecomisoAsync(
+        int idTenant, int idEmpleado, int idArticulo, int idPuntoVenta, decimal cantidadPositiva, string observaciones,
+        int? idLote, DateTimeOffset momento, CancellationToken ct)
+    {
+        // Disciplina de ContarAsync: nunca un delta con signo provisto por el cliente — acá es
+        // donde el "positivo" del contrato se convierte en la baja real.
+        var delta = -cantidadPositiva;
+
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        await InsertarMovimientoStockAsync(
+            conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, delta, MotivoStock.Decomiso, idEmpleado,
+            observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote, ct);
+
+        var nuevaAgregada = await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, delta, ct);
+
+        if (idLote is { } idLoteEfectivo)
+        {
+            var nuevaDelLote = await UpsertStockLoteAsync(
+                conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, idLoteEfectivo, delta, ct);
+
+            // spec lotes-y-vencimientos: "the target balance (the lot's stock_lotes.cantidad when
+            // lot-effective, otherwise stock.cantidad)" — SOLO el lote decide cuando es
+            // lote-efectivo, el agregado nunca se vuelve a chequear acá (a diferencia de una
+            // transferencia, que chequea ambos).
+            if (nuevaDelLote < 0m)
+            {
+                throw new ErrorDominio(
+                    "stock_insuficiente_para_decomiso",
+                    $"No hay stock suficiente del lote {idLoteEfectivo} del artículo {idArticulo} para decomisar.",
+                    409);
+            }
+        }
+        else if (nuevaAgregada < 0m)
+        {
+            throw new ErrorDominio(
+                "stock_insuficiente_para_decomiso",
+                $"No hay stock suficiente del artículo {idArticulo} para decomisar.",
+                409);
+        }
+
+        await transaccion.CommitAsync(ct);
+
+        return nuevaAgregada;
     }
 
     // ---- transferencia entre puntos de venta (design: Transactions — TRANSFERENCIA; decisión 9) ----
@@ -391,6 +495,55 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         return JsonSerializer.Deserialize<bool>(valorJson);
     }
 
+    /// <summary>Etapa 12, slice 11 (design: Write site 3 — "IdLote required when lot-effective
+    /// (lote_requerido), refused when not (lote_no_aplica)"). Compartido por
+    /// <see cref="AjustarAsync"/> y <see cref="DecomisarAsync"/> — ambos operan sobre UN solo
+    /// artículo/punto de venta, a diferencia de <see cref="ResolverLineasDeTransferenciaAsync"/>
+    /// (multi-línea, con FEFO-default). Acá NO hay FEFO-default: el ajuste/decomiso de un
+    /// artículo lote-efectivo siempre exige el <c>idLote</c> explícito — no hay "línea de venta"
+    /// que el operador esté surtiendo, así que no hay lote físico implícito que adivinar.
+    /// <see cref="ServicioDeLotes.LeerSaldosAsync"/> valida que el <c>idLote</c> explícito existe,
+    /// pertenece al artículo y no está borrado (<c>400 lote_invalido</c>) — mismo criterio de
+    /// nunca dejar que la FK real de la base rechace con un 500 crudo.</summary>
+    private async Task<int?> ResolverIdLoteEfectivoAsync(
+        int idEmpresa, int idPuntoVenta, Articulo articulo, int? idLotePedido, CancellationToken ct)
+    {
+        var lotesHabilitado = await ResolverLotesHabilitadoAsync(idEmpresa, idPuntoVenta, ct);
+        var esLoteEfectivo = ReglaDeLotes.ControlEfectivo(articulo.ControlaLote, lotesHabilitado);
+
+        if (!esLoteEfectivo)
+        {
+            if (idLotePedido is not null)
+            {
+                throw new ErrorDominio(
+                    "lote_no_aplica",
+                    $"El artículo {articulo.Id} no tiene lote efectivo; no admite idLote.",
+                    400);
+            }
+
+            return null;
+        }
+
+        if (idLotePedido is null)
+        {
+            throw new ErrorDominio(
+                "lote_requerido",
+                $"El artículo {articulo.Id} es lote-efectivo; requiere idLote.",
+                400);
+        }
+
+        var saldos = await servicioDeLotes.LeerSaldosAsync(idPuntoVenta, [articulo.Id], [idLotePedido.Value], ct);
+        if (!saldos.Any(s => s.IdLote == idLotePedido.Value))
+        {
+            throw new ErrorDominio(
+                "lote_invalido",
+                $"El lote {idLotePedido} no existe, no pertenece al artículo {articulo.Id} o fue eliminado.",
+                400);
+        }
+
+        return idLotePedido;
+    }
+
     // ---- conteo de inventario (design: Transactions — CONTEO DE INVENTARIO; decisión 10) ----------
 
     /// <summary>Design decisión 10: el cliente manda el TOTAL contado, nunca un delta. El delta
@@ -635,6 +788,28 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         if (decimal.Round(cantidad, 3, MidpointRounding.AwayFromZero) != cantidad)
         {
             throw new ErrorDominio("cantidad_invalida", "La cantidad del ajuste admite hasta 3 decimales.", 400);
+        }
+
+        return cantidad;
+    }
+
+    /// <summary>Etapa 12, slice 11 (design: Write site 3 — "cantidad arrives positive and is
+    /// negated server-side"; spec lotes-y-vencimientos: "the client MUST send a positive
+    /// cantidad"). A diferencia de <see cref="ExigirCantidadValida"/> (que solo prohíbe cero,
+    /// porque un ajuste carga o descarga con signo), un decomiso SIEMPRE resta — cero o negativo
+    /// del cliente es un error de contrato, no una operación legítima. Reusa el mismo código de
+    /// familia que <see cref="ExigirCantidadValida"/> (decomiso es estructuralmente un ajuste,
+    /// design decisión 9 del proposal), sin un código nuevo en la lista de la etapa.</summary>
+    private static decimal ExigirCantidadDeDecomisoValida(decimal cantidad)
+    {
+        if (cantidad <= 0)
+        {
+            throw new ErrorDominio("cantidad_de_ajuste_invalida", "La cantidad del decomiso tiene que ser mayor a cero.", 400);
+        }
+
+        if (decimal.Round(cantidad, 3, MidpointRounding.AwayFromZero) != cantidad)
+        {
+            throw new ErrorDominio("cantidad_invalida", "La cantidad del decomiso admite hasta 3 decimales.", 400);
         }
 
         return cantidad;

@@ -8,8 +8,15 @@ namespace Ways.Application.Stock;
 /// y nunca cero (<c>ck_movimientos_stock_cantidad_no_cero</c>). Sin campo de empleado, mismo
 /// criterio que <c>Ways.Application.Ventas.SolicitudDeVenta</c>: <c>id_empleado</c> siempre sale
 /// del actor autenticado.
+///
+/// Etapa 12, slice 11 (design: Write site 3 — "IdLote required when lot-effective"): <see
+/// cref="IdLote"/> es obligatorio para un artículo lote-efectivo (<c>400 lote_requerido</c> si se
+/// omite) y se rechaza para uno sin control de lote efectivo (<c>400 lote_no_aplica</c> si se
+/// provee). A diferencia de una transferencia, el ajuste NO tiene rechazo de negatividad — es la
+/// operación que corrige un saldo negativo.
 /// </summary>
-public sealed record SolicitudDeAjusteDeStock(int IdPuntoVenta, int IdArticulo, decimal Cantidad, string? Observaciones);
+public sealed record SolicitudDeAjusteDeStock(
+    int IdPuntoVenta, int IdArticulo, decimal Cantidad, string? Observaciones, int? IdLote = null);
 
 /// <summary>
 /// Balance de <c>GET /api/stock</c> (design: API Surface — "balance for the POS badge").
@@ -106,3 +113,15 @@ public sealed record SolicitudDeReconciliacion(int? IdArticulo, int? IdPuntoVent
 /// La suma de ambos es el total de pares dentro del alcance pedido.
 /// </summary>
 public sealed record ResultadoDeReconciliacion(int ParesReconciliados, int ParesSinResiduo);
+
+/// <summary>
+/// Cuerpo de <c>POST /api/stock/decomiso</c> (stage-12-lotes-vencimientos, Slice 11; design: API
+/// Surface; proposal decisión 9). <see cref="Cantidad"/> SIEMPRE POSITIVA — el servidor la niega
+/// antes de escribir el movimiento (misma disciplina que <c>ContarAsync</c>: nunca un delta con
+/// signo provisto por el cliente). <see cref="IdLote"/> es obligatorio para un artículo
+/// lote-efectivo (<c>400 lote_requerido</c>), rechazado para uno sin control de lote efectivo
+/// (<c>400 lote_no_aplica</c>). <see cref="Observaciones"/> obligatoria (misma disciplina que
+/// <see cref="SolicitudDeAjusteDeStock"/>). NO restringido a lotes vencidos (decisión 9 del
+/// proposal) — la merma real (rotura, pérdida) entra en el mismo cajón.
+/// </summary>
+public sealed record SolicitudDeDecomiso(int IdPuntoVenta, int IdArticulo, int? IdLote, decimal Cantidad, string Observaciones);

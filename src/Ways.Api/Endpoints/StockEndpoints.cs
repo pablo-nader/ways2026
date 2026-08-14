@@ -85,6 +85,17 @@ public static class StockEndpoints
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Re-run manual de la reconciliación de lotes (admin-only) — motivo = reclasificacion.");
 
+        // stage-12-lotes-vencimientos (Slice 11, task 11.3, design: API Surface; proposal
+        // decisión 9): decomiso, motivo de primera clase — mismo apilado GestionDeCatalogo sobre
+        // OperacionDePos que /ajustes. NO restringido a lotes vencidos.
+        grupo.MapPost("/decomiso", async (ServicioDeStock servicio, SolicitudDeDecomiso solicitud, CancellationToken ct) =>
+        {
+            var cantidad = await servicio.DecomisarAsync(solicitud, ct);
+            return Results.Ok(new StockActual(solicitud.IdPuntoVenta, solicitud.IdArticulo, cantidad));
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Decomiso de stock (admin-only) — motivo = decomiso, nunca negativo.");
+
         return app;
     }
 }
