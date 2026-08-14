@@ -152,12 +152,19 @@ public class ReposicionReporteTests(WaysApiFixture fixture) : IClassFixture<Ways
         return JsonSerializer.Deserialize<Reposicion>(cuerpo, OpcionesJson)!;
     }
 
-    // ---- task 4.6: MUTATION TARGET — s.Minimo != null -------------------------------------------
+    // ---- task 4.6: cobertura de spec (NO mutation target — ver nota) ------------------------------
 
-    /// <summary>Nombra la cláusula bajo prueba (mutation-proof-tests): <c>s.Minimo != null</c> en
-    /// <c>ConstruirQueryDeReposicion</c>. Mutación aplicada (borrar la cláusula): este test pasó de
-    /// FALLAR (el artículo sin mínimo aparece en el reporte) a pasar al revertir — evidencia
-    /// registrada en el resumen de apply.</summary>
+    /// <summary>Cobertura de spec (reposicion-de-stock: "An articulo with no minimo never alerts,
+    /// even at zero stock"), NO un mutation target pese a lo que dice task 4.6: se corrió la
+    /// mutación (borrar <c>s.Minimo != null</c> de <c>ConstruirQueryDeReposicion</c>) contra este
+    /// seed y el test siguió en VERDE. Investigado con <c>ToQueryString()</c> — Npgsql traduce
+    /// <c>s.cantidad &lt;= s.minimo</c> a SQL con lógica de tres valores: <c>x &lt;= NULL</c> es
+    /// siempre desconocido, así que ninguna fila con <c>minimo</c> NULL puede pasar el <c>WHERE</c>
+    /// con o sin el chequeo explícito — no hay combinación de datos que discrimine la mutación
+    /// (mutation-proof-tests regla 3 agotada: el "confound" es la semántica NULL de SQL misma, no
+    /// otra capa que rodear). La cláusula se conserva en el código por legibilidad/intención
+    /// documental, nunca por necesidad funcional. Desvío y evidencia registrados en tasks.md, task
+    /// 4.6.</summary>
     [Fact]
     public async Task UnArticuloSinMinimoNuncaApareceEnLaReposicion()
     {

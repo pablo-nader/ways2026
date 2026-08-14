@@ -144,9 +144,6 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     }
 
     /// <summary>Cláusulas bajo prueba (mutation-proof-tests, en orden de daño si se pierden):
-    ///   <c>s.Minimo != null</c>       → sin ella, TODO artículo sin mínimo alerta (el día uno
-    ///                                   catastrófico que la decisión 1 del proposal existe para
-    ///                                   evitar).
     ///   <c>s.Cantidad &lt;= s.Minimo</c> → con <c>&lt;</c>, el artículo EXACTAMENTE en el punto de
     ///                                   pedido desaparece (spec: The Low-Stock Boundary Is
     ///                                   Inclusive).
@@ -155,6 +152,18 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
     ///                                   documenta).
     ///   <c>candidatos.DefaultIfEmpty()</c> → sin el LEFT JOIN, las filas "Sin proveedor"
     ///                                   desaparecen en silencio (design decisión 3).
+    ///   <c>orderby a.IdProveedorHabitual, a.Id</c> (primer campo) → sin él, "Sin proveedor" deja de
+    ///                                   ordenar siempre último.
+    /// <c>s.Minimo != null</c> se conserva por legibilidad/intención documental (nombra
+    /// explícitamente decisión 1 del proposal: "minimo NULL ⇒ no gestionado"), pero se verificó con
+    /// <c>ToQueryString()</c> que Npgsql la traduce a un <c>IS NOT NULL</c> aditivo — REDUNDANTE
+    /// para la admisión de filas, porque <c>s.cantidad &lt;= s.minimo</c> ya excluye toda fila con
+    /// <c>minimo</c> NULL vía la lógica de tres valores de SQL (<c>x &lt;= NULL</c> es siempre
+    /// desconocido, nunca verdadero, para cualquier <c>x</c>). Confirmado corriendo la mutación
+    /// (borrar esta cláusula) contra un seed con <c>minimo = null, cantidad = 0</c>: la fila sigue
+    /// AUSENTE — no hay ninguna combinación de datos que la haga observable como mutation target
+    /// (mutation-proof-tests regla 3, agotada: no hay confound de OTRA capa que rodear, es la
+    /// semántica NULL de SQL misma). Evidencia y desvío registrados en tasks.md, task 4.6.
     /// El LEFT JOIN a <c>proveedores</c> NO se filtra por empresa: <c>articulos.id_proveedor_habitual</c>
     /// es autoritativo, agregar un predicado de empresa vaciaría el nombre de un proveedor real
     /// (design decisión 3, <c>explore.md</c> §4). El <c>orderby</c> va ANTES del <c>select</c> hacia

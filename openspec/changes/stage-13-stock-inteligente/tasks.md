@@ -438,10 +438,28 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   `GET /reportes/stock/reposicion?idPuntoVenta[&dias]` and
   `GET /reportes/stock/reposicion/export?…&formato=xlsx`, both under
   `Politicas.LecturaDeReportes` (inherited).
-- [x] 4.6 [P] **Mutation target**: `s.Minimo != null` — delete it — a
-  seeded articulo with `minimo = null, cantidad = 0` must **not** appear;
-  the mutation must make it appear. *(spec `reposicion-de-stock`: "Minimo
-  Is A Fixed, Owner-Set Reorder Point…", scenario 1; mutation-proof-tests)*
+- [x] 4.6 [P] **Mutation target — DISPROVEN, evidence recorded, not a
+  silent skip**: `s.Minimo != null` — deleted it, ran the seeded-articulo
+  test (`minimo = null, cantidad = 0`), and the row stayed **absent** —
+  the mutation did NOT make it appear. Root cause confirmed via
+  `ConstruirQueryDeReposicion(...).ToQueryString()` on both versions:
+  Npgsql translates `s.Minimo != null` to an additive `s.minimo IS NOT
+  NULL`, but `s.cantidad <= s.minimo` alone already excludes every
+  `minimo`-NULL row through SQL's three-valued logic (`x <= NULL` is
+  always unknown, for any `x`) — the explicit null check is row-admission
+  REDUNDANT for this query shape, so no seed can turn it into a
+  discriminating mutation target (`mutation-proof-tests` rule 3 exhausted:
+  the confound is SQL's own NULL semantics, not another layer to route
+  around). The clause stays in the code for documentary intent (design
+  decision 1, "minimo NULL ⇒ unmanaged") — its doc-comment in
+  `ConstruirQueryDeReposicion` and the test's doc-comment in
+  `ReposicionReporteTests.UnArticuloSinMinimoNuncaApareceEnLaReposicion`
+  were both corrected to state this plainly instead of the disproven
+  mutation-target claim. The scenario itself (spec `reposicion-de-stock`:
+  "Minimo Is A Fixed, Owner-Set Reorder Point…", scenario 1) is still
+  covered as ordinary spec coverage — just not as mutation-proof evidence.
+  *(spec `reposicion-de-stock`: "Minimo Is A Fixed, Owner-Set Reorder
+  Point…", scenario 1; mutation-proof-tests)*
 - [x] 4.7 [P] **Mutation target**: `candidatos.DefaultIfEmpty()` → inner
   join — the *Sin proveedor* row must disappear once mutated.
   *(mutation-proof-tests)*
@@ -472,14 +490,19 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   report and its export. *(spec `reposicion-de-stock`: "Reposición Report…",
   scenario "A Vendedor is rejected from the reposición report and its
   export")*
-- [ ] 4.12 Gate guard: `has-pending-model-changes` clean, zero migration
-  files in the diff.
+- [x] 4.12 Gate guard: `has-pending-model-changes` clean, zero migration
+  files in the diff. *(confirmed: `dotnet ef migrations has-pending-model-changes`
+  from `src/Ways.Infrastructure` → "No changes have been made to the model
+  since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty)*
 - [ ] 4.13 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 4.14 Branch `feat/stage13-slice4-reposicion` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
 
-**Test plan**: 3 mutation targets (4.6-4.8), discriminating seed (4.9),
-export equality + cap refusal (4.10), authorization (4.11).
+**Test plan**: 3 mutation targets (4.6-4.8) — **4.6 disproven with
+recorded evidence** (SQL NULL semantics make `s.Minimo != null`
+row-admission redundant; see 4.6's note), 4.7-4.8 confirmed — discriminating
+seed (4.9), export equality + cap refusal (4.10), authorization (4.11).
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ReposicionReport`
 
