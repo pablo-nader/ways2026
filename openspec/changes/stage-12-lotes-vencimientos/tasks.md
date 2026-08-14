@@ -1212,8 +1212,19 @@ articulo requires an explicit `idLote`; the response carries a
   — "No changes have been made to the model since the last migration."
   No `Migraciones/`/`Configuraciones/` file touched by this slice, per
   the DB CHANGE GATE.)*
-- [ ] 9.11 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 9.12 Branch `feat/stage12-slice9-ncx` off `main` (parent: slice 8);
+- [x] 9.11 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  judge B round 1 APPROVE with a real coverage gap (no test annulled a
+  lot-bearing NCX — closed by 54a4a6f with a surgical sign-isolating
+  mutation, Expected-5/Actual-8); judge A round 1 REJECT with a MAJOR
+  product bug: the snapshot-suggested lot vanished from the picker when its
+  balance hit zero — the MAINLINE devolución case — because idLoteSugerido
+  resolved AFTER LeerSaldosAsync with empty idsLotePedidos. Fix c09db6f:
+  pre-saldos resolution threaded through idsLotePedidos (exact mirror of
+  the write path, design decision 6) + deterministic OrderBy tiebreaker on
+  the snapshot query. Round 2: both judges APPROVE; judge A verified the
+  fix hunk-by-hunk and blob-checked scope. One cosmetic nit recorded
+  (doc-comment says Assert.Contains, actual is Assert.Single).)*
+- [x] 9.12 Branch `feat/stage12-slice9-ncx` off `main` (parent: slice 8);
   PR; merge stacked-to-main.
 
 **Test plan**: `lote_requerido` (9.4), suggestion (9.5), sin-identificar
