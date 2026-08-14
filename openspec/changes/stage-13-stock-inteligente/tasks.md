@@ -70,6 +70,38 @@
 11. **Doc-11 backlog re-registration (decision 5) is a slice-1 task**, not a
     closing sweep — the same discipline stage 12 used for its own doc-10
     update from within a slice (its task 1.17).
+12. **`judgment-day` round 1, slice 4 — judge B's WARNING (inferential) on
+    the soft-deleted-proveedor ordering, RESOLVED.** Task 4.1's pinned
+    snippet projects `IdProveedor` as the raw FK (`a.IdProveedorHabitual`)
+    and orders by `a.IdProveedorHabitual, a.Id` alone. Under that snippet, a
+    row whose `id_proveedor_habitual` points at a soft-deleted proveedor
+    resolves `Proveedor == null` (name lookup fails, EF's baja-lógica global
+    filter) but `IdProveedor` still carries the live FK value — so the row's
+    ORDER KEY disagrees with its DISPLAY GROUP: it sorts by FK position
+    (mid-list, between whichever real proveedores bracket that FK) while
+    displaying as "Sin proveedor". `design.md`'s decision 3 is explicit that
+    a soft-deleted proveedor's row "lands under Sin proveedor" — that letter
+    is authoritative over the pinned snippet, which the task text itself
+    frames as a **draft**, not a locked contract. Left as coded, slice 6's
+    `agruparPorProveedor` fold (a plain fold over the already-sorted rows,
+    no sort of its own — see slice 6's tasks) would emit a SECOND "Sin
+    proveedor" bucket wherever the soft-deleted row's FK happened to sort,
+    splitting one logical group into two on screen.
+    **Resolution**: `ConstruirQueryDeReposicion` now projects
+    `IdProveedor := p == null ? null : (int?)a.IdProveedorHabitual` (the
+    dangling FK never travels to the client — `dto-contract-honesty`
+    doc-comment updated on `FilaDeReposicion` in `Contratos.cs`) and orders
+    `orderby (p == null), a.IdProveedorHabitual, a.Id` — every row with no
+    EFFECTIVE proveedor (FK null OR FK pointing at a soft-deleted/missing
+    proveedor) falls into ONE trailing bucket; within that bucket, FK then
+    Id keeps the order deterministic. **Slice 6 inherits a trivial
+    single-null-bucket fold** — `agruparPorProveedor` never has to merge two
+    "Sin proveedor" groups because there is structurally only one row-run to
+    fold into it. Evidence: mutating the `orderby` back to
+    `a.IdProveedorHabitual, a.Id` (dropping the presence key) makes the
+    discriminating-seed test's (task 4.9) row-sequence assert FAIL — the
+    soft-deleted-proveedor row returns to the middle of the list; reverting
+    restores green. See the inline note on task 4.1 below.
 
 ---
 
@@ -445,7 +477,7 @@ contract.
 cut: the report/export boundary — ship the JSON endpoint (4.1-4.3, 4.5-4.9)
 first, the export sibling (4.4, 4.10) is the cut point if this overflows.
 
-- [ ] 4.1 Modify `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
+- [x] 4.1 Modify `src/Ways.Application/Reportes/ServicioDeReportesDeStock.cs`:
   private `ConstruirQueryDeReposicion(idPuntoVenta)`:
   ```csharp
   from s in db.Stock
@@ -462,7 +494,15 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   authoritative regardless of the proveedor's own empresa scoping (design
   decision 3). Postgres orders `NULL` last in `ASC` by default, so no
   explicit `NULLS LAST` is needed for *Sin proveedor* to land last.
-- [ ] 4.2 Modify `ServicioDeReportesDeStock.cs`:
+  *(apply note — `judgment-day` round 1, decision 12: the snippet above is
+  the DRAFT this task pinned, not the shipped code. A soft-deleted
+  proveedor's FK disagreeing with its display group (order key ≠ display
+  group) is a real defect against design decision 3's "lands under Sin
+  proveedor" — fixed by projecting `IdProveedor := p == null ? null :
+  (int?)a.IdProveedorHabitual` and ordering `orderby (p == null),
+  a.IdProveedorHabitual, a.Id`. See decision 12 above for the full
+  rationale and mutation evidence.)*
+- [x] 4.2 Modify `ServicioDeReportesDeStock.cs`:
   `ObtenerReposicionAsync(idPuntoVenta, dias?, ct)` —
   `ResolverContextoAsync` → `(idEmpresa, zonaId, hoy)`; `diasDeRotacion :=
   dias ?? dias_rotacion` through `ExigirVentanaValida` (`400
@@ -472,33 +512,71 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   empty-set short-circuit is wired here so slice 5 only has to fill it in);
   project `Sugerido` via `ReglaDeReposicion.Sugerido(cantidad, reposicion)`
   per row — pure, no rotation dependency.
-- [ ] 4.3 Modify `src/Ways.Application/Reportes/Contratos.cs`:
+  *(apply note: design's Application Service Surfaces section labels
+  `ResolverDiasRotacionAsync` "privados, slice 5" alongside
+  `ResolverDiasCoberturaAsync`, but resolving `dias ?? dias_rotacion` is
+  literally required by this task's text — added the resolver here,
+  `ResolverDiasAlertaAsync`-shaped, and left `ResolverDiasCoberturaAsync`
+  for slice 5, whose only consumer — `MinimoSugerido` — doesn't exist yet.
+  Not a scope deviation: the design's grouping note and this task's literal
+  requirement disagree, and the task text governs.)*
+  *(judgment-day round 1, confirmed MAJOR #2: the `ExigirVentanaValida` call
+  wired here shipped with ZERO test coverage — every existing test omitted
+  `?dias=`, so deleting the guard call left all 8 tests green, and the
+  `DiasDeRotacion` echo was equally unasserted (a hard-coded value would
+  have passed too). Closed by adding
+  `UnDiasDeRotacionInvalidoEsRechazadoConCuatrocientos` (`?dias=0` → 400
+  `dias_rotacion_invalido`) and
+  `LaRespuestaEcoaElDiasDeRotacionEfectivamenteResuelto` (`?dias=45` echoes
+  `45`; `dias` omitted echoes the `dias_rotacion` default `30`) to
+  `ReposicionReporteTests.cs`. Mutation evidence: deleting the
+  `ExigirVentanaValida` call makes the first new test FAIL (200 instead of
+  400); reverting restores green.)*
+- [x] 4.3 Modify `src/Ways.Application/Reportes/Contratos.cs`:
   `FilaDeReposicion(IdArticulo, Articulo, Cantidad, Minimo, Reposicion?,
   Sugerido?, IdProveedor?, Proveedor?)` — no rotation fields in this slice;
   `Reposicion(IdPuntoVenta, Hoy, DiasDeRotacion, ZonaHoraria, Filas)`.
   `dto-contract-honesty`: doc-comment `Sugerido` as null-not-zero when
   `Reposicion` unset; doc-comment that `ConsumoDiarioPromedio`/
   `DiasDeCobertura` are **added by slice 5**, not omitted by oversight.
-- [ ] 4.4 Modify `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
+- [x] 4.4 Modify `src/Ways.Application/Reportes/ExportacionDeReportes.cs`:
   one `De(Reposicion, ctx)` mapper — the aggregate cap shape (guard on
   `TablaExportable.Filas.Count` after mapping, no `COUNT(*)`), the same
   method backs both the JSON and the export (design decision 13 — no
   `ObtenerReposicionParaExportacionAsync` twin).
-- [ ] 4.5 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`:
+- [x] 4.5 Modify `src/Ways.Api/Endpoints/ReportesEndpoints.cs`:
   `GET /reportes/stock/reposicion?idPuntoVenta[&dias]` and
   `GET /reportes/stock/reposicion/export?…&formato=xlsx`, both under
   `Politicas.LecturaDeReportes` (inherited).
-- [ ] 4.6 [P] **Mutation target**: `s.Minimo != null` — delete it — a
-  seeded articulo with `minimo = null, cantidad = 0` must **not** appear;
-  the mutation must make it appear. *(spec `reposicion-de-stock`: "Minimo
-  Is A Fixed, Owner-Set Reorder Point…", scenario 1; mutation-proof-tests)*
-- [ ] 4.7 [P] **Mutation target**: `candidatos.DefaultIfEmpty()` → inner
+- [x] 4.6 [P] **Mutation target — DISPROVEN, evidence recorded, not a
+  silent skip**: `s.Minimo != null` — deleted it, ran the seeded-articulo
+  test (`minimo = null, cantidad = 0`), and the row stayed **absent** —
+  the mutation did NOT make it appear. Root cause confirmed via
+  `ConstruirQueryDeReposicion(...).ToQueryString()` on both versions:
+  Npgsql translates `s.Minimo != null` to an additive `s.minimo IS NOT
+  NULL`, but `s.cantidad <= s.minimo` alone already excludes every
+  `minimo`-NULL row through SQL's three-valued logic (`x <= NULL` is
+  always unknown, for any `x`) — the explicit null check is row-admission
+  REDUNDANT for this query shape, so no seed can turn it into a
+  discriminating mutation target (`mutation-proof-tests` rule 3 exhausted:
+  the confound is SQL's own NULL semantics, not another layer to route
+  around). The clause stays in the code for documentary intent (design
+  decision 1, "minimo NULL ⇒ unmanaged") — its doc-comment in
+  `ConstruirQueryDeReposicion` and the test's doc-comment in
+  `ReposicionReporteTests.UnArticuloSinMinimoNuncaApareceEnLaReposicion`
+  were both corrected to state this plainly instead of the disproven
+  mutation-target claim. The scenario itself (spec `reposicion-de-stock`:
+  "Minimo Is A Fixed, Owner-Set Reorder Point…", scenario 1) is still
+  covered as ordinary spec coverage — just not as mutation-proof evidence.
+  *(spec `reposicion-de-stock`: "Minimo Is A Fixed, Owner-Set Reorder
+  Point…", scenario 1; mutation-proof-tests)*
+- [x] 4.7 [P] **Mutation target**: `candidatos.DefaultIfEmpty()` → inner
   join — the *Sin proveedor* row must disappear once mutated.
   *(mutation-proof-tests)*
-- [ ] 4.8 [P] **Mutation target**: `orderby a.IdProveedorHabitual, a.Id` —
+- [x] 4.8 [P] **Mutation target**: `orderby a.IdProveedorHabitual, a.Id` —
   delete the first key — the row-sequence assertion (9.9's *Sin proveedor*
   no longer last) must fail. *(mutation-proof-tests)*
-- [ ] 4.9 [P] Discriminating-seed integration test, one PV, every field of
+- [x] 4.9 [P] Discriminating-seed integration test, one PV, every field of
   every row asserted with different values per row/column, row order
   asserted as a sequence: an articulo `cantidad = minimo` (**appears**);
   `cantidad = minimo + 0.001` (absent); `minimo = null, cantidad = 0`
@@ -511,25 +589,59 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   Low-Stock Boundary Is Inclusive" all 3 scenarios, "Reposición Report Is
   The Alert And The Purchase Suggestion…" scenarios 1-3;
   mutation-proof-tests rules 4 and 6)*
-- [ ] 4.10 [P] Export equality: identical query string on `/reposicion` and
+- [x] 4.10 [P] Export equality: identical query string on `/reposicion` and
   `/reposicion/export`, every cell of every row compared, including the
   *Sin proveedor* row's empty proveedor cell and a null `sugerido` cell
   rendering **empty, not `0`**; plus a cap refusal (`TopeDeFilas` lowered)
   that **refuses rather than truncates**. *(spec `reposicion-de-stock`:
   "The Reposición Export Sibling Is Catalog-Bounded, Never Truncated", both
-  scenarios; mutation-proof-tests rule 6)*
-- [ ] 4.11 [P] Authorization: a Vendedor gets `403` on the reposición
+  scenarios; mutation-proof-tests rule 6)* *(judgment-day round 1, confirmed
+  MAJOR #1: the row-equality test read only data rows starting at row 7 and
+  never asserted row 6 (`FilaDeTituloDeTabla` in `ExportadorXlsx.cs`), so a
+  header-label swap in `ColumnasReposicion` (`ExportacionDeReportes.cs`)
+  shipped with zero coverage — all 3 export tests stayed green under the
+  mutation. Closed by adding the header-row assertion (reads cells
+  `(6,1)..(6,7)`, compares against the 7 `ColumnasReposicion` titles in
+  order) to `ElExportEsIgualAlEndpointJsonEnTodasLasColumnasIncluidasLasCeldasVacias`,
+  the same pattern `ExistenciasExportTests.ElExportEsIgualAlEndpointJsonParaLasDosFilas`
+  already established on `main`. Mutation evidence: swapping two titles in
+  `ColumnasReposicion` makes the new header assert FAIL; reverting restores
+  green.)*
+- [x] 4.11 [P] Authorization: a Vendedor gets `403` on the reposición
   report and its export. *(spec `reposicion-de-stock`: "Reposición Report…",
   scenario "A Vendedor is rejected from the reposición report and its
   export")*
-- [ ] 4.12 Gate guard: `has-pending-model-changes` clean, zero migration
-  files in the diff.
-- [ ] 4.13 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 4.14 Branch `feat/stage13-slice4-reposicion` off `main` (parent:
+- [x] 4.12 Gate guard: `has-pending-model-changes` clean, zero migration
+  files in the diff. *(confirmed: `dotnet ef migrations has-pending-model-changes`
+  from `src/Ways.Infrastructure` → "No changes have been made to the model
+  since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty)*
+- [x] 4.13 Run `judgment-day`; fix; re-judge until clean. *(CLEAN ROUND 2
+  2026-08-14. Round 1: judge B static + LIVE mutation pass — 10 mutations
+  plus a live re-run of the 4.6 disproof (confirmed honest), 8 killed, 2
+  SURVIVORS: (M10, MAJOR) ColumnasReposicion header swap — no test read the
+  workbook header row; (M9, MAJOR) deleting ExigirVentanaValida passed 8/8 —
+  no test sent `?dias=` at all. Plus 1 WARNING (inferential): soft-deleted
+  proveedor sorted mid-list at its raw-FK position with null name,
+  contradicting design decision 3's "lands under Sin proveedor" — resolved
+  as Orchestrator Decision #12 (dangling FK projected null + presence-first
+  ordering → single trailing bucket). Fix commit `da25a70`: 7-header assert
+  at row 6, `?dias=0`→400 `dias_rotacion_invalido` + echo tests (45 and
+  default 30), decision-12 projection/ordering with seed resequenced.
+  Scoped re-judgment by judge B: all 4 re-mutations killed (headers, guard,
+  hard-coded echo probe, presence-key drop), zero fix-caused defects,
+  10/10 green. Judge A fresh read-only pass over the corrected frozen diff:
+  ZERO findings (verified FilaDeTituloDeTabla=6, the soft-delete query
+  filter as pre-existing infra, and the 4.6 disproof's three-valued-logic
+  reasoning). JUDGMENT: APPROVED — 2 confirmed-and-fixed MAJORs, 1 WARNING
+  resolved by decision #12, 0 contradictions.)*
+- [x] 4.14 Branch `feat/stage13-slice4-reposicion` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
 
-**Test plan**: 3 mutation targets (4.6-4.8), discriminating seed (4.9),
-export equality + cap refusal (4.10), authorization (4.11).
+**Test plan**: 3 mutation targets (4.6-4.8) — **4.6 disproven with
+recorded evidence** (SQL NULL semantics make `s.Minimo != null`
+row-admission redundant; see 4.6's note), 4.7-4.8 confirmed — discriminating
+seed (4.9), export equality + cap refusal (4.10), authorization (4.11).
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ReposicionReport`
 

@@ -32,6 +32,14 @@ namespace Ways.Application.Reportes;
 /// decisión 17) — solo el export exige tope (<c>Contar → rechazar → .Take(tope + 1)</c>, mismo
 /// shape que <c>ServicioDeHistoricoDeCajas.ListarCierresParaExportacionAsync</c>); el JSON no lo
 /// pagina, mismo criterio que <c>ObtenerExistenciasAsync</c>.
+///
+/// stage-13-stock-inteligente, Slice 4 (design decisión 1/2/3/12/13, spec reposicion-de-stock):
+/// agrega <see cref="ObtenerReposicionAsync"/> — la alerta y la sugerencia de compra son la misma
+/// lista (<c>minimo IS NOT NULL AND cantidad &lt;= minimo</c>), agregado acotado por el catálogo
+/// como existencias (mismo shape de export: guarda sobre <c>TablaExportable.Filas.Count</c> ya
+/// mapeada, sin <c>ObtenerReposicionParaExportacionAsync</c> propio — decisión 13). Sin campos de
+/// rotación todavía: la slice 5 completa <see cref="FilaDeReposicion"/> con
+/// <c>ConsumoDiarioPromedio</c>/<c>DiasDeCobertura</c> vía <c>LeerConsumoAsync</c>.
 /// </summary>
 public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros parametros, IRelojDelSistema reloj)
 {
@@ -113,6 +121,86 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
         return new Vencimientos(idPuntoVenta, hoy, diasDeAlerta, zonaId, Clasificar(filas, hoy, diasDeAlerta));
     }
 
+    /// <summary>stage-13-stock-inteligente, Slice 4 (design decisión 12; task 4.2): la alerta y la
+    /// sugerencia de compra son la MISMA lista — <see cref="ConstruirQueryDeReposicion"/> se
+    /// evalúa una única vez, sin campos de rotación todavía (esos llegan en la slice 5, que
+    /// completa la rama <c>crudas.Count &gt; 0</c> de abajo con <c>LeerConsumoAsync</c>).
+    /// El corto-circuito de la fila 0 se cablea ACÁ (decisión 12) para que la slice 5 no tenga
+    /// que reestructurar el método, solo llenar la rama que hoy es un mapeo puro.</summary>
+    public async Task<Reposicion> ObtenerReposicionAsync(
+        int idPuntoVenta, int? dias, CancellationToken ct = default)
+    {
+        var (idEmpresa, zonaId, hoy) = await ResolverContextoAsync(idPuntoVenta, ct);
+        var diasDeRotacion = ReglaDeReposicion.ExigirVentanaValida(
+            dias ?? await ResolverDiasRotacionAsync(idEmpresa, idPuntoVenta, ct), "dias_rotacion_invalido");
+
+        var crudas = await ConstruirQueryDeReposicion(idPuntoVenta).ToListAsync(ct);
+
+        if (crudas.Count == 0)
+        {
+            return new Reposicion(idPuntoVenta, hoy, diasDeRotacion, zonaId, []);
+        }
+
+        // Sugerido es puro (ReglaDeReposicion.Sugerido no depende de rotación) — la slice 5 solo
+        // agrega ConsumoDiarioPromedio/DiasDeCobertura a esta misma proyección, nunca una segunda.
+        var filas = crudas
+            .Select(f => new FilaDeReposicion(
+                f.IdArticulo, f.Articulo, f.Cantidad, f.Minimo, f.Reposicion,
+                ReglaDeReposicion.Sugerido(f.Cantidad, f.Reposicion),
+                f.IdProveedorHabitual, f.Proveedor))
+            .ToList();
+
+        return new Reposicion(idPuntoVenta, hoy, diasDeRotacion, zonaId, filas);
+    }
+
+    /// <summary>Cláusulas bajo prueba (mutation-proof-tests, en orden de daño si se pierden):
+    ///   <c>s.Cantidad &lt;= s.Minimo</c> → con <c>&lt;</c>, el artículo EXACTAMENTE en el punto de
+    ///                                   pedido desaparece (spec: The Low-Stock Boundary Is
+    ///                                   Inclusive).
+    ///   <c>s.IdPuntoVenta == idPuntoVenta</c> → mezclar dos PVs del mismo tenant rompe el reporte
+    ///                                   (misma familia de bug que <see cref="ObtenerExistenciasAsync"/>
+    ///                                   documenta).
+    ///   <c>candidatos.DefaultIfEmpty()</c> → sin el LEFT JOIN, las filas "Sin proveedor"
+    ///                                   desaparecen en silencio (design decisión 3).
+    ///   <c>orderby (p == null), a.IdProveedorHabitual, a.Id</c> (primer campo) → sin la clave de
+    ///                                   presencia, una fila cuyo proveedor está soft-deleted
+    ///                                   (FK apuntando a un id vivo pero <c>p == null</c> por el
+    ///                                   filtro global de baja lógica) vuelve a ordenar por su FK
+    ///                                   crudo en lugar de caer al bucket final "Sin proveedor"
+    ///                                   (orchestrator decision 12, tasks.md).
+    /// <c>s.Minimo != null</c> se conserva por legibilidad/intención documental (nombra
+    /// explícitamente decisión 1 del proposal: "minimo NULL ⇒ no gestionado"), pero se verificó con
+    /// <c>ToQueryString()</c> que Npgsql la traduce a un <c>IS NOT NULL</c> aditivo — REDUNDANTE
+    /// para la admisión de filas, porque <c>s.cantidad &lt;= s.minimo</c> ya excluye toda fila con
+    /// <c>minimo</c> NULL vía la lógica de tres valores de SQL (<c>x &lt;= NULL</c> es siempre
+    /// desconocido, nunca verdadero, para cualquier <c>x</c>). Confirmado corriendo la mutación
+    /// (borrar esta cláusula) contra un seed con <c>minimo = null, cantidad = 0</c>: la fila sigue
+    /// AUSENTE — no hay ninguna combinación de datos que la haga observable como mutation target
+    /// (mutation-proof-tests regla 3, agotada: no hay confound de OTRA capa que rodear, es la
+    /// semántica NULL de SQL misma). Evidencia y desvío registrados en tasks.md, task 4.6.
+    /// El LEFT JOIN a <c>proveedores</c> NO se filtra por empresa: <c>articulos.id_proveedor_habitual</c>
+    /// es autoritativo, agregar un predicado de empresa vaciaría el nombre de un proveedor real
+    /// (design decisión 3, <c>explore.md</c> §4). El <c>orderby</c> va ANTES del <c>select</c> hacia
+    /// el record — EF no traduce un <c>OrderBy</c> sobre la propiedad de un objeto recién construido
+    /// (mismo obstáculo que <see cref="ConstruirQueryDeVencimientos"/> ya documenta). Postgres
+    /// ordena NULL último en ASC por default, así que "Sin proveedor" cae al final sin <c>NULLS
+    /// LAST</c> explícito. <c>IdProveedor</c>/orderby usan <c>p == null</c>, nunca el FK crudo de
+    /// <c>a.IdProveedorHabitual</c>, como clave de presencia: un FK que apunta a un proveedor
+    /// soft-deleted resuelve <c>p == null</c> igual que un FK NULL, así que ambos casos caen en el
+    /// MISMO bucket final "Sin proveedor" — nunca un FK colgante viajando al cliente ni una
+    /// segunda fila "Sin proveedor" a mitad de lista (orchestrator decision 12, tasks.md;
+    /// design decisión 3 es la letra autoritativa sobre el snippet pinneado de la task 4.1).</summary>
+    private IQueryable<FilaCrudaDeReposicion> ConstruirQueryDeReposicion(int idPuntoVenta) =>
+        from s in db.Stock
+        where s.IdPuntoVenta == idPuntoVenta && s.Minimo != null && s.Cantidad <= s.Minimo
+        join a in db.Articulos on s.IdArticulo equals a.Id
+        join p in db.Proveedores on a.IdProveedorHabitual equals p.Id into candidatos
+        from p in candidatos.DefaultIfEmpty()
+        orderby (p == null), a.IdProveedorHabitual, a.Id
+        select new FilaCrudaDeReposicion(
+            a.Id, a.Nombre, s.Cantidad, s.Minimo!.Value, s.Reposicion,
+            p == null ? null : (int?)a.IdProveedorHabitual, p == null ? null : p.RazonSocial);
+
     /// <summary>Proyección cruda de <c>stock_lotes ⋈ lotes ⋈ articulos</c> (spec: "lot rows...
     /// with a positive stock_lotes.cantidad") — <c>Cantidad &gt; 0</c> estrictamente, nunca
     /// <c>&lt;&gt; 0</c> (spec: "A zero-balance lot never appears in the report"; un saldo
@@ -168,6 +256,20 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
         return JsonSerializer.Deserialize<int>(resuelto.Valor);
     }
 
+    /// <summary>Slice 4 — mismo patrón que <see cref="ResolverDiasAlertaAsync"/>. La slice 5 agrega
+    /// el resolver gemelo de <c>dias_cobertura_objetivo</c>, todavía sin consumidor acá.</summary>
+    private async Task<int> ResolverDiasRotacionAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    {
+        var resuelto = await parametros.ResolverAsync(ParametroConocido.DiasRotacion.Clave, idEmpresa, idPuntoVenta, ct);
+        return JsonSerializer.Deserialize<int>(resuelto.Valor);
+    }
+
     private sealed record FilaCruda(
         int IdArticulo, string Articulo, int IdLote, string CodigoLote, DateOnly? FechaVencimiento, decimal Cantidad);
+
+    /// <summary>Proyección cruda de <see cref="ConstruirQueryDeReposicion"/>, previa a la fórmula
+    /// pura de <see cref="ObtenerReposicionAsync"/> — nunca expuesta fuera de este archivo.</summary>
+    private sealed record FilaCrudaDeReposicion(
+        int IdArticulo, string Articulo, decimal Cantidad, decimal Minimo, decimal? Reposicion,
+        int? IdProveedorHabitual, string? Proveedor);
 }
