@@ -448,7 +448,6 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
 
   it('mientras una fila guarda, TODA la ventana queda attribute-disabled — no solo la fila en edición (decisión 15 / tarea 3.5)', async () => {
     mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
       if (ruta.startsWith('/reportes/stock/existencias?')) return Promise.resolve(existenciasFixture(dosFilasFixture()))
       return undefined
     })
@@ -463,26 +462,28 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     renderExistencias()
 
     await screen.findByText('Aceite de girasol 900ml')
-    // Deja resultados del picker visibles (sin elegir ninguno) ANTES de disparar el guardado —
-    // judgment-day round A, FINDING 3: el `disabled` de esos botones de resultado, no solo el del
-    // input de búsqueda.
-    await usuario.type(screen.getByLabelText('Buscar artículo para agregar'), 'arroz')
-    const botonResultado = await screen.findByText('ART-50 — Arroz largo fino 1kg')
+    expect(screen.getByLabelText('Buscar artículo para agregar')).toBeInTheDocument()
 
     await usuario.click(screen.getAllByRole('button', { name: 'Editar' })[0]) // abre A
+    // Judgment-day ronda final A (residual del FINDING 1 CRITICAL): apenas hay una fila en
+    // edición el picker de alta DESAPARECE del DOM — la ausencia supersede al chequeo de
+    // `disabled` que este test hacía antes del fix estructural (no hace falta que haya un PUT
+    // en vuelo todavía, alcanza con `filaEnEdicion !== null`).
+    expect(screen.queryByLabelText('Buscar artículo para agregar')).not.toBeInTheDocument()
+
     await usuario.type(screen.getByLabelText('Mínimo de Aceite de girasol 900ml'), '5')
     await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
 
     // El PUT de la fila A quedó en vuelo (nunca resuelto todavía) — TODA superficie gobernada por
     // `guardando` tiene que quedar attribute-disabled, no solo la fila que se está guardando
     // (react-async-state regla 10: el mismo patrón de bloqueo se replica en cada superficie
-    // hermana de la ventana).
+    // hermana de la ventana). El picker de alta ya no forma parte de esa superficie: sigue
+    // ausente por `filaEnEdicion`, no por `disabled`.
     expect(screen.getByRole('button', { name: 'Editar' })).toBeDisabled() // única "Editar" visible: fila B
     expect(screen.getByLabelText('Punto de venta')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Descargar' })).toBeDisabled()
-    expect(screen.getByLabelText('Buscar artículo para agregar')).toBeDisabled()
+    expect(screen.queryByLabelText('Buscar artículo para agregar')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled() // el propio Guardar en vuelo
-    expect(botonResultado.closest('button')).toBeDisabled() // FINDING 3: el atributo, no solo el guard de `agregarFila`
 
     resolverPut(minimosFixture({ idArticulo: 1, cantidad: 12, minimo: 5, reposicion: null, estado: 'Bajo' }))
     await screen.findByText('Bajo')
@@ -490,7 +491,7 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     expect(screen.getAllByRole('button', { name: 'Editar' })[0]).not.toBeDisabled()
     expect(screen.getByLabelText('Punto de venta')).not.toBeDisabled()
     expect(screen.getByRole('button', { name: 'Descargar' })).not.toBeDisabled()
-    expect(screen.getByLabelText('Buscar artículo para agregar')).not.toBeDisabled()
+    expect(screen.getByLabelText('Buscar artículo para agregar')).toBeInTheDocument() // reaparece al cerrar la edición
   })
 
   it('guardar la fila A y después editar y guardar la fila B aplica la respuesta a B — el `finally` token-gated reabre la ventana (tarea 3.5/3.10)', async () => {
@@ -559,6 +560,34 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByText('Arroz largo fino 1kg')).not.toBeInTheDocument()
+  })
+
+  it('agregar X por el picker sin guardar ni cancelar esconde el picker — no hay forma de agregar Z hasta cerrar la edición (judgment-day ronda final A, residual FINDING 1 CRITICAL)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+    expect(screen.getByLabelText('Buscar artículo para agregar')).toBeInTheDocument()
+
+    // Agrega X por el picker — se abre sola para edición, sin guardar ni cancelar.
+    await usuario.type(screen.getByLabelText('Buscar artículo para agregar'), 'arroz')
+    await usuario.click(await screen.findByText('ART-50 — Arroz largo fino 1kg'))
+    expect(await screen.findByText('Arroz largo fino 1kg')).toBeInTheDocument()
+
+    // Fix estructural: mientras X siga en edición sin guardar, el picker entero está AUSENTE del
+    // DOM (no solo `disabled`) — no hay forma de agregar un segundo fantasma Z, que era la clase
+    // de bug que dejaba el ref de slot único huérfano.
+    expect(screen.queryByLabelText('Buscar artículo para agregar')).not.toBeInTheDocument()
+
+    // Cancelar X: se remueve de la grilla y el picker reaparece.
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByText('Arroz largo fino 1kg')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Buscar artículo para agregar')).toBeInTheDocument()
   })
 
   it('cambiar de punto de venta sin guardar una fila agregada por el picker no deja el ref fantasma corrompiendo la grilla nueva (judgment-day round 2, FINDING 1, MAJOR fix-caused)', async () => {

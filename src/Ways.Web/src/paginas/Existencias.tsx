@@ -481,7 +481,13 @@ export function Existencias() {
                   </tbody>
                 </table>
 
-                {puedeEscribir && (
+                {/* Judgment-day ronda final A (residual del FINDING 1 CRITICAL): el gate por identidad
+                    del clear en `guardarFila` no alcanza — `agregarFila` sigue pisando el slot único
+                    del ref sin chequear un fantasma previo. Fix estructural: el picker desaparece
+                    mientras haya CUALQUIER fila en edición, así nunca puede coexistir un segundo
+                    fantasma sin guardar (agregar abre la fila en edición y el picker se esconde hasta
+                    guardar o cancelar). */}
+                {puedeEscribir && filaEnEdicion === null && (
                   <div className="mt-2">
                     <label className="form-label small text-muted d-block mb-1">Agregar artículo</label>
                     <SelectorDeArticuloParaAlta disabled={guardando !== null} onElegir={agregarFila} />
