@@ -218,18 +218,22 @@ existing (only on its *contract*).
 - [x] 1.19 Gate guard: `dotnet ef migrations has-pending-model-changes`
   reports no pending changes; `git diff --stat` against `main` shows zero
   files under `Migraciones/`.
-- [ ] 1.20 Run `judgment-day` on the slice diff; fix confirmed issues;
-  re-judge until clean. *(IN PROGRESS at session handoff 2026-08-14: judge B
-  ran in TWO passes because the jd-judge-* agent types lost Bash in the
-  environment — (1) full STATIC read-only trace, zero findings; (2) LIVE
-  mutation pass via a general-purpose agent under the B-bis mandate: 11
-  mutations, ZERO survivors (clamp, rounding, window exclusivity,
-  invalid-midnight zone proven non-decorative, all 3 validation arms,
-  COALESCE full-replace, create-at-zero, SET-with-cantidad sample), sweep
-  28+15+25 green, HEAD 83f651f intact. BOTH judge-B passes APPROVE.
-  PENDING: judge A (fresh read-only pass) → then close 1.20/1.21, PR,
-  merge, full suite.)*
-- [ ] 1.21 Branch `feat/stage13-slice1-minimos-api` off `main`; PR; merge
+- [x] 1.20 Run `judgment-day` on the slice diff; fix confirmed issues;
+  re-judge until clean. *(CLEAN ROUND 2026-08-14. Judge B ran in TWO passes
+  because the jd-judge-* agent types lost Bash in the environment —
+  (1) full STATIC read-only trace, zero findings; (2) LIVE mutation pass
+  via a general-purpose agent under the B-bis mandate: 11 mutations, ZERO
+  survivors (clamp, rounding, window exclusivity, invalid-midnight zone
+  proven non-decorative, all 3 validation arms, COALESCE full-replace,
+  create-at-zero, SET-with-cantidad sample), sweep 28+15+25 green, HEAD
+  83f651f intact. Judge A fresh read-only pass over the frozen diff at
+  f282081: ZERO findings — verified upsert parameter ordering and SET list
+  against sibling upserts, no-schema gate (newest migration still Etapa
+  12's), DST arithmetic of VentanaDeRotacion re-derived, dto-contract
+  field fates, RLS tests over ways_app with 42501, auth stacking vs the
+  /ajustes precedent. BOTH judges APPROVE — JUDGMENT: APPROVED, round 1,
+  0 confirmed / 0 suspect / 0 contradictions.)*
+- [x] 1.21 Branch `feat/stage13-slice1-minimos-api` off `main`; PR; merge
   stacked-to-main.
 
 **Test plan**: Domain suite (1.7-1.8), 3 mutation targets (1.9-1.12),
