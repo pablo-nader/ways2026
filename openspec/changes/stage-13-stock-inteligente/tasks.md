@@ -558,8 +558,26 @@ first, the export sibling (4.4, 4.10) is the cut point if this overflows.
   from `src/Ways.Infrastructure` → "No changes have been made to the model
   since the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty)*
-- [ ] 4.13 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 4.14 Branch `feat/stage13-slice4-reposicion` off `main` (parent:
+- [x] 4.13 Run `judgment-day`; fix; re-judge until clean. *(CLEAN ROUND 2
+  2026-08-14. Round 1: judge B static + LIVE mutation pass — 10 mutations
+  plus a live re-run of the 4.6 disproof (confirmed honest), 8 killed, 2
+  SURVIVORS: (M10, MAJOR) ColumnasReposicion header swap — no test read the
+  workbook header row; (M9, MAJOR) deleting ExigirVentanaValida passed 8/8 —
+  no test sent `?dias=` at all. Plus 1 WARNING (inferential): soft-deleted
+  proveedor sorted mid-list at its raw-FK position with null name,
+  contradicting design decision 3's "lands under Sin proveedor" — resolved
+  as Orchestrator Decision #12 (dangling FK projected null + presence-first
+  ordering → single trailing bucket). Fix commit `da25a70`: 7-header assert
+  at row 6, `?dias=0`→400 `dias_rotacion_invalido` + echo tests (45 and
+  default 30), decision-12 projection/ordering with seed resequenced.
+  Scoped re-judgment by judge B: all 4 re-mutations killed (headers, guard,
+  hard-coded echo probe, presence-key drop), zero fix-caused defects,
+  10/10 green. Judge A fresh read-only pass over the corrected frozen diff:
+  ZERO findings (verified FilaDeTituloDeTabla=6, the soft-delete query
+  filter as pre-existing infra, and the 4.6 disproof's three-valued-logic
+  reasoning). JUDGMENT: APPROVED — 2 confirmed-and-fixed MAJORs, 1 WARNING
+  resolved by decision #12, 0 contradictions.)*
+- [x] 4.14 Branch `feat/stage13-slice4-reposicion` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
 
 **Test plan**: 3 mutation targets (4.6-4.8) — **4.6 disproven with
