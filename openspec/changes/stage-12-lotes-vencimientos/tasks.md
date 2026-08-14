@@ -1940,7 +1940,32 @@ change.
   `opcionDeLote` mapping unit test in `ventas.test.ts` (no DOM).
 - [x] 14.9 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   no pending changes (web-only slice). Verified.
-- [ ] 14.10 Run `judgment-day`; fix; re-judge until clean.
+- [x] 14.10 Run `judgment-day`; fix; re-judge until clean. *(JD-FIX NOTE,
+  slice 14 judgment-day ronda 1, juez B: 4 hallazgos confirmados, todos
+  arreglados.*
+  - *MAJOR 2a — the picker preselection fixture put the `sugerido` lot
+    LAST, so "pick the suggested one" and "pick the last one" were
+    indistinguishable. Fixed: `Pos.test.tsx`'s preselection test now uses
+    3 lots with `sugerido` in the MIDDLE — a "pick the last" mutant goes
+    RED against this fixture (verified, then reverted).*
+  - *MAJOR 2b — `SelectorDeLote`'s `cargandoRef.current` re-entrancy guard
+    clause was dead: the button's native `disabled` wins the race before
+    a same-tick double-click ever reaches the ref check, and the removed
+    test comment's claim to the contrary was empirically false. Fixed:
+    dropped the `cargandoRef` ref entirely from `Pos.tsx` (the clause was
+    its only reader); the double-click test's comment in `Pos.test.tsx`
+    now states the true defense (`disabled` on the native button).*
+  - *MAJOR 2f — zero coverage for `loteVencido: true` on an emitted
+    ticket item. Fixed: added a "Pos — ticket: warning de lote vencido"
+    describe block in `Pos.test.tsx` asserting the "⚠ Lote vencido" text
+    renders when `true` and is absent when `false` — a mutant gating the
+    warning on `false` goes RED (verified, then reverted).*
+  - *MINOR — `SelectorDeLote`'s `/stock/lotes` rejection branch
+    (`No se pudieron cargar los lotes.`) had no test. Fixed: added a
+    rejection-path test to the picker describe block.*
+  - *Full suite after fixes: 564/564 vitest tests green (was 561), `npx
+    tsc -b` clean, `oxlint` clean (one pre-existing unrelated warning in
+    `AuthContext.tsx`).)*
 - [ ] 14.11 Branch `feat/stage12-slice14-web-operacion` off `main` (parent:
   slices 5+8); PR; merge stacked-to-main.
 

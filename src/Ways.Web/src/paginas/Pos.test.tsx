@@ -1314,11 +1314,15 @@ describe('Pos — picker de lote (stage-12-lotes-vencimientos, Slice 14, design 
   })
 
   it('preselecciona (resalta) el lote sugerido que manda el servidor — nunca lo recalcula', async () => {
+    // El sugerido va en el MEDIO de la lista, ni primero ni último: si "elegir el sugerido" y
+    // "elegir el último/primero" fueran indistinguibles, esta aserción no lo detectaría (judgment-day
+    // slice 14, MAJOR 2a — mutante "elegir el último" debe quedar RED contra este fixture).
     mockearApiGet((ruta) =>
       ruta.startsWith('/stock/lotes?')
         ? Promise.resolve<LoteListado[]>([
             loteFixture({ idLote: 1, codigo: '2026-09-01' }),
             loteFixture({ idLote: 2, codigo: '2026-10-01', sugerido: true }),
+            loteFixture({ idLote: 3, codigo: '2026-11-01' }),
           ])
         : undefined,
     )
@@ -1339,7 +1343,7 @@ describe('Pos — picker de lote (stage-12-lotes-vencimientos, Slice 14, design 
     expect(screen.queryByLabelText('Lote de Coca Cola 1L')).not.toBeInTheDocument()
   })
 
-  it('doble click en "Elegir lote" dispara exactamente un fetch (react-async-state regla 9: guard de reentrancia de primera línea)', async () => {
+  it('doble click en "Elegir lote" dispara exactamente un fetch (el `disabled` nativo del botón es la defensa, no un ref)', async () => {
     let resolverLotes: (valor: LoteListado[]) => void = () => {}
     mockearApiGet((ruta) =>
       ruta.startsWith('/stock/lotes?') ? new Promise((resolve) => (resolverLotes = resolve)) : undefined,
@@ -1347,8 +1351,11 @@ describe('Pos — picker de lote (stage-12-lotes-vencimientos, Slice 14, design 
     await armarCarritoConUnaLinea()
 
     const boton = screen.getByRole('button', { name: 'Elegir lote' })
-    // Mismo tick: `fireEvent` (a diferencia de `userEvent.click` con `await` de por medio) es lo
-    // que reproduce el doble click que le gana al re-render del `disabled`.
+    // `fireEvent.click` (a diferencia de `userEvent.click` con `await` de por medio) dispara los
+    // dos clicks en el mismo tick — pero el segundo no hace nada: React ya marcó el botón
+    // `disabled` en el primer render posterior al `setCargando(true)`, y ni JSDOM ni un navegador
+    // real despachan `click` sobre un elemento disabled. No hay guard de reentrancia por ref: el
+    // único fetch que se prueba acá es consecuencia del atributo nativo.
     fireEvent.click(boton)
     fireEvent.click(boton)
 
@@ -1389,5 +1396,71 @@ describe('Pos — picker de lote (stage-12-lotes-vencimientos, Slice 14, design 
 
     expect(screen.getByRole('button', { name: 'Elegir lote' })).toBeInTheDocument()
     expect(screen.queryByLabelText('Lote de Coca Cola 1L')).not.toBeInTheDocument()
+  })
+
+  it('un fetch de lotes rechazado muestra "No se pudieron cargar los lotes."', async () => {
+    mockearApiGet((ruta) => (ruta.startsWith('/stock/lotes?') ? Promise.reject(new Error('boom')) : undefined))
+    await armarCarritoConUnaLinea()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Elegir lote' }))
+
+    expect(await screen.findByText('No se pudieron cargar los lotes.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Lote de Coca Cola 1L')).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — ticket: warning de lote vencido (design decisión 12: "Expired Lot Sale Warns, Never Blocks")', () => {
+  it('un item emitido con loteVencido: true muestra el warning "⚠ Lote vencido" en el ticket', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/ventas') {
+        return Promise.resolve(
+          comprobanteEmitidoFixture({
+            items: [
+              {
+                orden: 1,
+                idArticulo: 1,
+                descripcion: 'Coca Cola 1L',
+                codigoBarra: '7790001234567',
+                idArea: 1,
+                idListaPrecio: 1,
+                idOferta: null,
+                idAlicuotaIva: 1,
+                porcentajeIva: 21,
+                cantidad: 1,
+                precioUnitario: 100,
+                descuento: 0,
+                total: 100,
+                idLote: 2,
+                codigoLote: '2026-01-01',
+                loteVencido: true,
+              },
+            ],
+          }),
+        )
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+    const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+    expect(within(fila).getByText('⚠ Lote vencido')).toBeInTheDocument()
+  })
+
+  it('un item emitido con loteVencido: false no muestra el warning', async () => {
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+    const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
+    expect(within(fila).queryByText('⚠ Lote vencido')).not.toBeInTheDocument()
   })
 })
