@@ -1578,45 +1578,74 @@ counts per lot, acquiring every lock before deriving any delta; the
 cross-cutting stock/stock_lotes invariants are now provable end to end
 across all eight motivos. **Rollback**: revert the branch.
 
-- [ ] 12.1 Modify `src/Ways.Application/Stock/Contratos.cs`:
+- [x] 12.1 Modify `src/Ways.Application/Stock/Contratos.cs`:
   `SolicitudDeConteo.Contada` widens to `decimal?`; add `Lotes:
   IReadOnlyList<ConteoDeLote>?`; `ConteoDeLote(IdLote, Contada)`;
-  `ResultadoConteo.Lotes: IReadOnlyList<LoteContado>`.
-- [ ] 12.2 Modify `ServicioDeStock.cs`: `ContarAsync` — exactly-one-of
+  `ResultadoConteo.Lotes: IReadOnlyList<LoteContado>`. *(APPLY-RUN NOTE:
+  both `SolicitudDeConteo.Lotes` and `ResultadoConteo.Lotes` carry a
+  `= null` default to stay source-compatible with every positional caller
+  already in the repo — matches decision 18's "source-compatible for every
+  existing caller".)*
+- [x] 12.2 Modify `ServicioDeStock.cs`: `ContarAsync` — exactly-one-of
   validation (`400 conteo_contada_y_lotes` if both or neither present);
   `conteo_lote_repetido` refusal on a duplicated `idLote` before any lock.
-- [ ] 12.3 Modify `ServicioDeStock.cs`: per-lot conteo, decision 12's
+  *(APPLY-RUN NOTE: an empty `Lotes` array (`[]`) is treated the same as
+  absent — `ExigirExactamenteUnaFormaDeConteo` checks `Count: > 0`, per
+  dto-contract-honesty "a field with no actionable value is absent".)*
+- [x] 12.3 Modify `ServicioDeStock.cs`: per-lot conteo, decision 12's
   split — **acquisition phase**: `BloquearYCrearSiFaltaStockAsync`
   (aggregate first), then each lot's `BloquearYCrearSiFaltaStockLoteAsync`
   ascending `id_lote`, no delta written yet; **application phase**: derive
   every delta, write `movimientos_stock` (`motivo = inventario`) + upsert
   `stock_lotes` per lot with a non-zero delta, aggregate accumulates the
-  sum.
-- [ ] 12.4 Note: proposal decision 11's pre-approved degradation (`409
+  sum. *(APPLY-RUN NOTE: `BloquearYCrearSiFaltaStockLoteAsync` is new —
+  same no-op `SET cantidad = stock_lotes.cantidad ... RETURNING` shape as
+  `BloquearYCrearSiFaltaStockAsync`, one more key. `EjecutarConteoPorLoteAsync`
+  mirrors `EjecutarConteoAsync`'s transaction/connection setup.)*
+- [x] 12.4 Note: proposal decision 11's pre-approved degradation (`409
   conteo_lote_no_soportado`) exists for a delivery slice that ships an
   aggregate-only conteo without per-lot support. This slice ships per-lot
   conteo in full, so the refusal path is documented but not the primary
   behavior — keep the `409` branch reachable only if a future regression
-  removes per-lot support.
-- [ ] 12.5 [P] Lock-acquisition-order test: every lock (aggregate no-op
+  removes per-lot support. *(APPLY-RUN NOTE: no `409 conteo_lote_no_soportado`
+  code was written — an unreachable branch with zero test coverage would be
+  dead code, not a documented fallback. Doc-comment on `ContarAsync` records
+  the decision instead.)*
+- [x] 12.5 [P] Lock-acquisition-order test: every lock (aggregate no-op
   upsert, then each lot's no-op upsert ascending) is acquired before any
   delta write. *(design decision 12, proves the acquisition/application
   split)*
-- [ ] 12.6 [P] Zero-difference-lot-writes-nothing test. *(spec
+- [x] 12.6 [P] Zero-difference-lot-writes-nothing test. *(spec
   conteo-de-inventario: "A lot with no difference writes no row even when
-  a sibling lot differs")*
-- [ ] 12.7 [P] `conteo_contada_y_lotes` tests. *(spec: "Supplying both
+  a sibling lot differs")* *(APPLY-RUN NOTE:
+  `ConteoPorLoteTests.UnLoteSinDiferenciaNoEscribeFilaAunqueUnLoteHermanoDifiera`.)*
+- [x] 12.7 [P] `conteo_contada_y_lotes` tests. *(spec: "Supplying both
   cantidad_contada and lotes is rejected", "Supplying neither
-  cantidad_contada nor lotes is rejected")*
-- [ ] 12.8 [P] Per-lot-derives-aggregate-delta test. *(spec: "A
+  cantidad_contada nor lotes is rejected")* *(APPLY-RUN NOTE: three tests,
+  not two —
+  `UnConteoConCantidadContadaYLotesEsRechazado`,
+  `UnConteoSinCantidadContadaNiLotesEsRechazado`, plus
+  `UnConteoConListaDeLotesVaciaEsRechazadoComoSiEstuvieraAusente` (an empty
+  `Lotes: []` array counts as "absent", dto-contract-honesty).)*
+- [x] 12.8 [P] Per-lot-derives-aggregate-delta test. *(spec: "A
   lot-effective conteo derives the aggregate delta from per-lot deltas")*
-- [ ] 12.9 [P] Never-fabricate-into-sin-identificar test. *(spec: "A
+  *(APPLY-RUN NOTE:
+  `ConteoPorLoteTests.UnConteoLoteEfectivoDerivaElDeltaAgregadoDeLosDeltasPorLote`
+  — literal spec scenario numbers, L1 12→15/+3, L2 28→20/-8, agregado -5.)*
+- [x] 12.9 [P] Never-fabricate-into-sin-identificar test. *(spec: "A
   lot-effective conteo never writes into the sin-identificar lot to absorb
-  a difference")*
-- [ ] 12.10 [P] `conteo_lote_repetido` test.
-- [ ] 12.11 [P] Aggregate-grain regression: a matching count still writes
-  nothing. *(spec: "A matching count writes nothing")*
-- [ ] 12.12 [P] **Cross-cutting invariant suite** (now provable with all
+  a difference")* *(APPLY-RUN NOTE:
+  `ConteoPorLoteTests.UnConteoLoteEfectivoNuncaEscribeEnElLoteSinIdentificarParaAbsorberUnaDiferencia`
+  — seeds the sin-identificar lot at saldo 0 and asserts it stays exactly
+  0 after a differing per-lot count on a sibling lot.)*
+- [x] 12.10 [P] `conteo_lote_repetido` test. *(APPLY-RUN NOTE:
+  `ConteoPorLoteTests.UnConteoConUnIdLoteRepetidoEsRechazado`.)*
+- [x] 12.11 [P] Aggregate-grain regression: a matching count still writes
+  nothing. *(spec: "A matching count writes nothing")* *(APPLY-RUN NOTE:
+  `ConteoPorLoteTests.UnConteoAgregadoDeContadaIgualALaActualSigueSinEscribirNada`
+  — proves the pre-slice-12 aggregate (`Contada`) path is byte-identical
+  after the `decimal?`/exactly-one-of widening.)*
+- [x] 12.12 [P] **Cross-cutting invariant suite** (now provable with all
   eight motivos live), one long-form test per invariant asserting **every**
   row, not just totals: (1) `stock.cantidad = SUM(movimientos)` after a
   sequence covering all eight motivos including a `reclasificacion` pair
@@ -1625,10 +1654,112 @@ across all eight motivos. **Rollback**: revert the branch.
   compra→venta→transferencia→NCX→anulación→conteo→decomiso *(spec
   lotes-y-vencimientos: Stock Lotes Balance And Its Two Invariants)*; (3)
   `SUM(stock_lotes) = stock.cantidad` for a reconciled lot-effective pair.
-- [ ] 12.13 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
-- [ ] 12.14 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 12.15 Branch `feat/stage12-slice12-conteo` off `main` (parent:
+  *(APPLY-RUN NOTE: `InvarianteStockYStockLotesTests.cs`, three tests,
+  invariant asserted after EACH step of the sequence (not only at the
+  end), same discipline as `SaldoLedgerInvarianteTests` from stage 7: (1)
+  `LaCantidadDeStockEsLaSumaDeSusMovimientosTrasUnaSecuenciaConLosOchoMotivos`
+  — non-lot articulo through ajuste→compra→venta→transferencia→NCX→
+  anulación→conteo→decomiso, THEN flips `controla_lote` and runs
+  reconciliation to add the `reclasificacion` pair, asserting the
+  aggregate invariant unmoved (decision 14: `stock` never touched by
+  reconciliation) and that all eight `MotivoStock` values are present on
+  the ledger; (2)
+  `StockLotesCantidadEsLaSumaDeSusMovimientosConEseLoteTrasLaCadenaCompraVentaTransferenciaNcxAnulacionConteoDecomiso`
+  — a single lot traced through the exact 7-step chain named by this task,
+  asserted after each step at the origin PV (plus a bonus assertion at the
+  destination PV after the transfer); (3)
+  `LaSumaDeStockLotesIgualaElAgregadoParaUnParLoteEfectivoReconciliado` —
+  pre-existing stock reconciled into the sin-identificar lot, then a
+  dated-lot compra confirmed on top (proves the invariant holds under a
+  MIX of lots, not only the trivial single-lot case), then a second
+  reconciliation run (idempotence) re-checked. All 3 green against real
+  Postgres.)*
+- [x] 12.13 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. *(Verified via `--project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure` — "No changes have been made
+  to the model since the last migration." No `Migraciones/`/`Configuraciones/`
+  file touched by this slice, per the DB CHANGE GATE — `Contratos.cs`/
+  `ServicioDeStock.cs` are Application-layer, no EF model surface.)*
+> **JUDGMENT-DAY FIX NOTE (12.14, ronda 1, juez B)**: 2 gaps confirmados —
+> uno BLOCKER de correctitud, uno secundario:
+>
+> 1. (BLOCKER) `ContarAsync`/`EjecutarConteoAsync` no chequeaba
+>    `ReglaDeLotes.ControlEfectivo` antes de aceptar una `Contada` agregada:
+>    un POST con solo `Contada` para un artículo lote-efectivo devolvía 200,
+>    movía `stock.cantidad` y dejaba `stock_lotes` intacto — invariante 3
+>    roto en silencio (probado empíricamente: 40→50 agregado, lotes quedan
+>    en 40). El `409 conteo_lote_no_soportado` de la task 12.4 es la
+>    degradación pre-aprobada para "el per-lot conteo no está implementado"
+>    — no cubre este caso, donde SÍ está implementado. Fix:
+>    `ExigirFormaDeConteoCoincideConControlDeLote`, guard en `ContarAsync`
+>    ANTES de cualquier lock — `400 conteo_requiere_lotes` (código nuevo,
+>    honesto, distinto del `409` de la degradación) para `Contada` contra
+>    un artículo lote-efectivo; simetría inversa `400 conteo_no_aplica_lotes`
+>    para `Lotes` contra un artículo SIN lote efectivo (¿ya existía? no —
+>    mismo tratamiento que `lote_no_aplica` de `ResolverIdLoteEfectivoAsync`).
+>    Spec `conteo-de-inventario` ENMENDADO (dos escenarios nuevos bajo
+>    "Conteo Of A Lot-Effective Articulo...", marcados "Amended at slice-12
+>    judgment-day"). Tests nuevos en `ConteoPorLoteTests.cs`:
+>    `UnConteoAgregadoParaUnArticuloLoteEfectivoEsRechazado` (delta NO cero
+>    a propósito — expone la escritura real si el guard fallara; la 12.11
+>    original probaba delta CERO, que nunca llega a escribir nada
+>    independientemente de la forma del conteo, escondiendo el gap) y
+>    `UnConteoPorLoteParaUnArticuloSinLoteEfectivoEsRechazado`. La 12.11
+>    original (`UnConteoAgregadoDeContadaIgualALaActualSigueSinEscribirNada`)
+>    usaba (incorrectamente) `SembrarArticuloLoteEfectivoAsync` para un
+>    escenario que su propio doc-comment describía como "sin control de
+>    lote efectivo" — corregida a un nuevo helper
+>    `SembrarArticuloSinLoteAsync` (`ControlaLote = false`), ahora
+>    consistente con su propio contrato. Evidencia de mutación: guard
+>    anulado (`if (false && ...)`) → `UnConteoAgregadoParaUnArticuloLoteEfectivoEsRechazado`
+>    **FALLÓ** (200 real vs. 400 esperado); revertido, **GREEN**.
+> 2. (secundario) `ExigirLotesDeConteoValidos` no validaba existencia/
+>    pertenencia del `idLote` del desglose por lote — un `idLote` inexistente
+>    solo se descubría dentro de la FK cruda del upsert no-op de
+>    `BloquearYCrearSiFaltaStockLoteAsync`, un 500 crudo. Fix:
+>    `ExigirLotesDeConteoExistenAsync`, SELECT-first contra
+>    `ServicioDeLotes.LeerSaldosAsync` (mismo criterio que
+>    `ResolverIdLoteEfectivoAsync`), ANTES de la transacción → `400
+>    lote_invalido`. Test nuevo: `UnConteoPorLoteConUnIdLoteInexistenteEsRechazado`.
+>    Evidencia de mutación: validación anulada (`if (false && ...)`) → el
+>    test **FALLÓ** empíricamente con `500 InternalServerError` /
+>    `SqlState 23503`, `fk_stock_lotes_lote` — exactamente el crudo que el
+>    fix previene; revertido, **GREEN**.
+>
+> Nota adicional sin código (hallazgo 2(e) del juez B): el orden ascendente
+> de adquisición del conteo por lote está under-tested para el orden
+> cross-request concurrente entre dos conteos simultáneos del mismo par —
+> mismo convoy-masking ya documentado en el slice 10 (una única transacción
+> observada a la vez basta para probar el orden intra-request; el orden
+> cross-request queda como convención probada por diseño, no por prueba
+> directa, mismo criterio aceptado en slices previos).
+>
+> El gap sistémico de `ManejadorDeErrores` con excepciones ADO crudas (no
+> `DbUpdateException`) — el mismo mecanismo detrás del hallazgo 2 de arriba
+> — es repo-wide, no específico de este slice: se registra como follow-up
+> del orquestador (chip ya spawneado), no se resuelve acá.
+>
+> Filtro `~ConteoPorLoteTests`: 12/12 (9 + 3 nuevos). Filtro
+> `~InvarianteStockYStockLotesTests`: 3/3. Regresión combinada
+> `~AjusteDeStockTests|~AjusteDecomisoLoteTests|~TransferenciaLoteTests|~TransferenciasYConteoDeInventarioTests`:
+> 71/71. `has-pending-model-changes`: sin cambios pendientes. Árbol limpio
+> tras el commit.
+
+- [x] 12.14 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN
+  NOTE: judge B round 1 REJECT with a genuine BLOCKER — aggregate `Contada`
+  against a lot-effective articulo returned 200 and silently broke
+  invariant 3 (stock 40→50, stock_lotes stayed 40), the exact divergence
+  decision 11 exists to prevent; the original 12.11 test HID it by seeding
+  lot-effective with a zero delta. Plus the raw-500 on an unknown conteo
+  idLote. Fix 7b88759: ExigirFormaDeConteoCoincideConControlDeLote (400
+  conteo_requiere_lotes / 400 conteo_no_aplica_lotes, spec amended) +
+  SELECT-first lote validation (400 lote_invalido) + the 12.11 test
+  corrected. Judge B round 2 APPROVE (empirical re-probe: 400 and invariant
+  intact). Judge A APPROVE with 2 MINORs: spec wording "before reaching the
+  database" tightened to "before any lock" in this branch; recorded debt —
+  the per-lot path lacks the aggregate path's defense-in-depth
+  final!=contada loud check (consistency suggestion, very low risk).)*
+- [x] 12.15 Branch `feat/stage12-slice12-conteo` off `main` (parent:
   slice 11); PR; merge stacked-to-main.
 
 **Test plan**: acquisition order (12.5), zero-diff per lot (12.6),

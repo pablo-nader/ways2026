@@ -146,3 +146,37 @@ refusal is strictly better than a silent divergence between `stock` and
   `cantidad_contada`
 - THEN it is rejected with `409 conteo_lote_no_soportado`, and no
   `movimientos_stock` row is written
+
+#### Scenario: An aggregate-only conteo of a lot-effective articulo is refused when per-lot conteo IS shipped
+(Amended at slice-12 judgment-day, juez B FIX 1: the per-lot conteo path is
+complete in this delivery slice, so the `409 conteo_lote_no_soportado`
+degradation above never fires — but nothing had guarded the aggregate-only
+path against a lot-effective articulo once per-lot support existed. Silently
+accepting it would move `stock.cantidad` without ever touching
+`stock_lotes`, breaking the third invariant — `SUM(stock_lotes.cantidad) =
+stock.cantidad` — without any error surfaced. The honest refusal here is
+`400 conteo_requiere_lotes`, distinct from the pre-approved `409`
+degradation: this is a well-formed request against a fully-implemented
+per-lot path, not a missing-feature fallback.)
+- GIVEN articulo 40 is lot-effective (`stock.cantidad = 40`,
+  `stock_lotes` sums to `40` across its lots) and the deployed conteo
+  endpoint DOES support the per-lot contract
+- WHEN a conteo request for articulo 40 supplies a single aggregate
+  `cantidad_contada = 50` (no `lotes`)
+- THEN it is rejected with `400 conteo_requiere_lotes` before any lock is
+  acquired (the guard runs after the read-only articulo/parametro
+  resolution SELECTs but before any row lock or write), no
+  `movimientos_stock` row is written, and `stock.cantidad` stays `40`
+
+#### Scenario: A per-lot conteo of an articulo WITHOUT lot-effective control is refused
+(Amended at slice-12 judgment-day, juez B FIX 1 — inverse symmetry: a
+`lotes` breakdown has no destination for an articulo that is not
+lot-effective, same criterion as `lote_no_aplica` in
+`ServicioDeStock.ResolverIdLoteEfectivoAsync`.)
+- GIVEN articulo 41 is NOT lot-effective
+- WHEN a conteo request for articulo 41 supplies a `lotes` breakdown (no
+  `cantidad_contada`)
+- THEN it is rejected with `400 conteo_no_aplica_lotes` before any lock is
+  acquired, and no `movimientos_stock` row is written *(wording aligned at
+  judge-A round: the guard follows the read-only resolution SELECTs, unlike
+  the truly zero-DB exactly-one-of check)*

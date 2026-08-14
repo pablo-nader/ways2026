@@ -62,8 +62,27 @@ public sealed record LineaTransferida(int IdArticulo, int? IdLote, decimal Canti
 /// design: API Surface; Interfaces/Contracts; decisión 10). <see cref="Contada"/> es el TOTAL
 /// físicamente contado — nunca un delta (spec: conteo-de-inventario / Conteo Input Is The Counted
 /// Total, Never A Delta): el servidor deriva el ajuste bajo el lock de la fila de <c>stock</c>.
+///
+/// Etapa 12, slice 12 (design decisión 18, dto-contract-honesty): <see cref="Contada"/> se ensancha
+/// a <c>decimal?</c> — el contrato pasa a EXACTLY-ONE-OF <see cref="Contada"/> / <see cref="Lotes"/>
+/// (<c>400 conteo_contada_y_lotes</c> si vienen ambos o ninguno). Un artículo lote-efectivo cuenta
+/// por lote (<see cref="Lotes"/>, un total contado por cada <c>idLote</c>); uno sin lote efectivo
+/// sigue mandando el total agregado (<see cref="Contada"/>). El ensanchamiento es
+/// source-compatible: todo caller previo que pasaba un <c>decimal</c> posicional sigue compilando
+/// (conversión implícita a <c>decimal?</c>), y <see cref="Lotes"/> con su default <c>null</c> no
+/// rompe ninguna llamada existente.
 /// </summary>
-public sealed record SolicitudDeConteo(int IdPuntoVenta, int IdArticulo, decimal Contada, string Observaciones);
+public sealed record SolicitudDeConteo(
+    int IdPuntoVenta, int IdArticulo, decimal? Contada, string Observaciones,
+    IReadOnlyList<ConteoDeLote>? Lotes = null);
+
+/// <summary>
+/// Una línea del desglose por lote de un conteo (etapa 12, slice 12, design decisión 12/18).
+/// <see cref="Contada"/> es el total físicamente contado de ESE lote — nunca un delta, misma
+/// disciplina que <see cref="SolicitudDeConteo.Contada"/> un nivel arriba: el servidor deriva
+/// <c>delta = Contada − stock_lotes.cantidad</c> bajo el row lock propio del lote.
+/// </summary>
+public sealed record ConteoDeLote(int IdLote, decimal Contada);
 
 /// <summary>
 /// Resultado de <c>POST /api/stock/conteos</c> (stage-8, judgment-day fix: la respuesta anterior
@@ -73,9 +92,24 @@ public sealed record SolicitudDeConteo(int IdPuntoVenta, int IdArticulo, decimal
 /// cualquiera de las dos direcciones. Este contrato lleva la verdad tal como el servidor la
 /// escribió, bajo el mismo lock de fila que calculó <see cref="Delta"/>: nunca hace falta que el
 /// cliente adivine.
+///
+/// Etapa 12, slice 12: <see cref="Lotes"/> lleva el resultado por lote cuando el conteo llegó vía
+/// <see cref="SolicitudDeConteo.Lotes"/> — <c>null</c> para un conteo agregado (misma disciplina de
+/// "un campo sin destino no existe" que <see cref="SolicitudDeConteo"/>). <see cref="Cantidad"/>/
+/// <see cref="CantidadAnterior"/>/<see cref="Delta"/> siguen siendo el AGREGADO (la suma de los
+/// deltas por lote cuando <see cref="Lotes"/> está presente, design decisión 12) — el caller nunca
+/// necesita sumar a mano.
 /// </summary>
 public sealed record ResultadoConteo(
-    int IdPuntoVenta, int IdArticulo, decimal Cantidad, decimal CantidadAnterior, decimal Delta, bool MovimientoRegistrado);
+    int IdPuntoVenta, int IdArticulo, decimal Cantidad, decimal CantidadAnterior, decimal Delta, bool MovimientoRegistrado,
+    IReadOnlyList<LoteContado>? Lotes = null);
+
+/// <summary>Resultado por lote de un conteo (etapa 12, slice 12) — mismo shape que
+/// <see cref="ResultadoConteo"/> un nivel abajo, una fila por cada <see cref="ConteoDeLote"/> del
+/// request, incluidos los lotes sin diferencia (<see cref="MovimientoRegistrado"/> en <c>false</c>,
+/// spec: "A lot with no difference writes no row").</summary>
+public sealed record LoteContado(
+    int IdLote, decimal Cantidad, decimal CantidadAnterior, decimal Delta, bool MovimientoRegistrado);
 
 /// <summary>
 /// Cuerpo de <c>POST /api/stock/lotes</c> (stage-12-lotes-vencimientos, Slice 3; design: API
