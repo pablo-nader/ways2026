@@ -161,6 +161,34 @@ public class TransferenciaLoteTests(WaysApiFixture fixture) : IClassFixture<Ways
         return articulo.Id;
     }
 
+    /// <summary>Artículo SIN control de lote — <c>ControlaLote = false</c>, contraparte del
+    /// lote-efectivo de arriba, usado por el caso mixto y por el rechazo de <c>lote_invalido</c>
+    /// (mismo criterio que <c>TransferenciasYConteoDeInventarioTests.SembrarArticuloConPrecioAsync</c>,
+    /// copiado acá a propósito — frentes en paralelo, sin infra de test compartida entre archivos).</summary>
+    private async Task<int> SembrarArticuloSinLoteAsync(Contexto ctx, string nombre, decimal precio)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var articulo = new Articulo
+        {
+            IdTenant = ctx.IdTenant, CodigoInterno = $"{nombre}-{Guid.NewGuid():N}", Nombre = nombre,
+            IdArea = ctx.IdArea, IdAlicuotaIva = ctx.IdAlicuotaIva, UnidadVenta = UnidadVenta.Unidad,
+            EsProducto = true, ControlaLote = false, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Articulos.Add(articulo);
+        await db.SaveChangesAsync();
+
+        db.Precios.Add(new Precio
+        {
+            IdTenant = ctx.IdTenant, IdArticulo = articulo.Id, IdListaPrecio = ctx.IdListaPrecio, Monto = precio,
+            VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+        });
+        await db.SaveChangesAsync();
+
+        return articulo.Id;
+    }
+
     private async Task<int> SembrarLoteAsync(Contexto ctx, int idArticulo, string codigo, DateOnly? fechaVencimiento)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
@@ -445,6 +473,97 @@ public class TransferenciaLoteTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Transferencia));
+    }
+
+    // ---- gaps de cobertura (judgment-day, ronda de fix): mixta + lote_invalido sobre línea sin lote --
+
+    /// <summary>spec transferencias-de-stock: una transferencia con una línea de artículo
+    /// lote-efectivo y una línea de artículo SIN control de lote completa AMBAS en la misma
+    /// transacción — el filtro <c>indicesConLoteEfectivo</c> de <see cref="ServicioDeStock"/>
+    /// separa las líneas correctamente en <c>ConstruirClavesOrdenadas</c> (2 claves para la línea
+    /// sin lote, 4 para la línea con lote), sin que una contamine el tratamiento de la otra.
+    ///
+    /// EVIDENCIA DE MUTACIÓN: mutado el ternario de <c>ConstruirClavesOrdenadas</c> para emitir
+    /// también una clave de lote (<c>IdLote = 0</c>) en la rama sin-lote — build, filtro
+    /// <c>FullyQualifiedName~TransferenciaLote</c>: este test <b>FALLA</b> (el movimiento sin lote
+    /// deja de tener <c>id_lote == null</c> / aparece una fila de <c>stock_lotes</c> inesperada).
+    /// Revertido el mutante, corrida de nuevo: GREEN.</summary>
+    [Fact]
+    public async Task UnaTransferenciaMixtaConLineaLoteEfectivaYLineaSinLoteCompletaAmbas()
+    {
+        var ctx = await PrepararAsync(nameof(UnaTransferenciaMixtaConLineaLoteEfectivaYLineaSinLoteCompletaAmbas));
+
+        var idArticuloConLote = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-mixta-con-lote", 10m);
+        var idLote = await SembrarLoteAsync(ctx, idArticuloConLote, "L-MIXTA", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloConLote, idLote, 20m);
+        await SembrarStockAgregadoAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloConLote, 20m);
+
+        var idArticuloSinLote = await SembrarArticuloSinLoteAsync(ctx, "articulo-mixta-sin-lote", 15m);
+        await SembrarStockAgregadoAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloSinLote, 30m);
+
+        var solicitud = new SolicitudDeTransferencia(
+            ctx.IdPuntoVentaOrigen, ctx.IdPuntoVentaDestino, "Transferencia mixta",
+            [new LineaDeTransferencia(idArticuloSinLote, 6m, null), new LineaDeTransferencia(idArticuloConLote, 8m, idLote)]);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/transferencias", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        var movimientosSinLote = await db.MovimientosStock
+            .Where(m => m.IdArticulo == idArticuloSinLote && m.Motivo == MotivoStock.Transferencia)
+            .ToListAsync();
+        Assert.Equal(2, movimientosSinLote.Count);
+        Assert.All(movimientosSinLote, m => Assert.Null(m.IdLote));
+        Assert.Contains(movimientosSinLote, m => m.IdPuntoVenta == ctx.IdPuntoVentaOrigen && m.Cantidad == -6m);
+        Assert.Contains(movimientosSinLote, m => m.IdPuntoVenta == ctx.IdPuntoVentaDestino && m.Cantidad == 6m);
+
+        var movimientosConLote = await db.MovimientosStock
+            .Where(m => m.IdArticulo == idArticuloConLote && m.Motivo == MotivoStock.Transferencia)
+            .ToListAsync();
+        Assert.Equal(2, movimientosConLote.Count);
+        Assert.All(movimientosConLote, m => Assert.Equal(idLote, m.IdLote));
+        Assert.Contains(movimientosConLote, m => m.IdPuntoVenta == ctx.IdPuntoVentaOrigen && m.Cantidad == -8m);
+        Assert.Contains(movimientosConLote, m => m.IdPuntoVenta == ctx.IdPuntoVentaDestino && m.Cantidad == 8m);
+
+        Assert.Equal(24m, await LeerStockAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloSinLote));
+        Assert.Equal(6m, await LeerStockAsync(ctx, ctx.IdPuntoVentaDestino, idArticuloSinLote));
+        Assert.Equal(12m, await LeerStockAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloConLote));
+        Assert.Equal(8m, await LeerStockAsync(ctx, ctx.IdPuntoVentaDestino, idArticuloConLote));
+        Assert.Equal(12m, await LeerStockLoteAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloConLote, idLote));
+        Assert.Equal(8m, await LeerStockLoteAsync(ctx, ctx.IdPuntoVentaDestino, idArticuloConLote, idLote));
+    }
+
+    /// <summary>dto-contract-honesty (mismo criterio que <c>ServicioDeVentas</c>): un <c>idLote</c>
+    /// provisto en una línea de artículo SIN lote efectivo (<c>ControlaLote = false</c>) se
+    /// rechaza explícitamente en vez de ignorarse en silencio — <c>ServicioDeStock.cs</c>,
+    /// guard ~269-281.
+    ///
+    /// EVIDENCIA DE MUTACIÓN: anulado el guard (comentado el <c>if</c> que lanza
+    /// <c>lote_invalido</c>) — build, filtro <c>FullyQualifiedName~TransferenciaLote</c>: este
+    /// test <b>FALLA</b> (200 en vez de 400 — el idLote ajeno se ignora en silencio). Revertido
+    /// el mutante, corrida de nuevo: GREEN.</summary>
+    [Fact]
+    public async Task UnaLineaSinLoteEfectivoConIdLoteProvistoEsRechazadaComoLoteInvalido()
+    {
+        var ctx = await PrepararAsync(nameof(UnaLineaSinLoteEfectivoConIdLoteProvistoEsRechazadaComoLoteInvalido));
+
+        var idArticuloSinLote = await SembrarArticuloSinLoteAsync(ctx, "articulo-sin-lote-invalido", 12m);
+        await SembrarStockAgregadoAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloSinLote, 20m);
+
+        var idArticuloConLote = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-lote-ajeno", 10m);
+        var idLoteAjeno = await SembrarLoteAsync(ctx, idArticuloConLote, "L-AJENO", VencimientoLejanoFuturo);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/stock/transferencias", SolicitudDeUnaLinea(ctx, idArticuloSinLote, 5m, idLoteAjeno));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("lote_invalido", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticuloSinLote && m.Motivo == MotivoStock.Transferencia));
+        Assert.Equal(20m, await LeerStockAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloSinLote));
     }
 
     // ---- task 10.4 / 10.5: mutation target + A→B vs. B→A, sin 40P01 -------------------------------

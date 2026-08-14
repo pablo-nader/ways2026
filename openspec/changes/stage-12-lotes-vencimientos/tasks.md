@@ -1232,6 +1232,26 @@ the branch.
   `Microsoft.EntityFrameworkCore.Design`, mismo criterio que slices previos.
   Output: "No changes have been made to the model since the last
   migration.")*
+> Note (judgment-day, slice 10, FIX round — juez B, 2 gaps de cobertura
+> confirmados, ambos ya smoke-testeados en verde por el juez, dejados como
+> tests permanentes en `TransferenciaLoteTests.cs`):
+> 1. **Transferencia mixta** (`UnaTransferenciaMixtaConLineaLoteEfectivaYLineaSinLoteCompletaAmbas`):
+>    una línea de artículo lote-efectivo + una línea de artículo sin lote en
+>    la misma solicitud — ambas completan, sin que el filtro
+>    `indicesConLoteEfectivo` de `ResolverLineasDeTransferenciaAsync`
+>    contamine el tratamiento de la otra. Evidencia de mutación: el ternario
+>    de `ConstruirClavesOrdenadas` mutado para emitir también una clave de
+>    lote en la rama sin-lote → el test FALLA (500 por FK inválida sobre
+>    `stock_lotes`); revertido, GREEN.
+> 2. **`lote_invalido` sobre línea sin lote efectivo**
+>    (`UnaLineaSinLoteEfectivoConIdLoteProvistoEsRechazadaComoLoteInvalido`):
+>    un `idLote` provisto en una línea de artículo sin control de lote se
+>    rechaza (400), nada se escribe. Evidencia de mutación: anulado el guard
+>    de `ServicioDeStock.cs` (~269-281) → el test FALLA (200 en vez de 400);
+>    revertido, GREEN.
+>
+> Filtro `~TransferenciaLote`: 13/13 (11 previos + 2 nuevos). Regresión
+> `~TransferenciasYConteo`: 28/28.
 - [ ] 10.14 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 10.15 Branch `feat/stage12-slice10-transferencias` off `main`
   (parent: slice 3); PR; merge stacked-to-main.
