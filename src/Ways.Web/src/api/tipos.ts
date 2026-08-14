@@ -868,18 +868,52 @@ export type PaginaDeMovimientosTesoreria = {
 // --- Existencias (stage-11-exportacion-reportes, Slice 9 — droppable a Etapa 13) — espejo de
 // `Ways.Application.Reportes.Contratos`. Sin fecha/zona horaria: el stock es estado ACTUAL, no
 // tiene dimensión temporal (a diferencia del resto de los reportes de esta etapa).
+//
+// stage-13-stock-inteligente (Slice 2/3): `FilaExistencia` gana `minimo`/`reposicion`/`estado` —
+// espejo de `ReglaDeReposicion.EstadoDeReposicion` (nombres de miembro de C#, no snake_case:
+// mismo criterio que el resto de los enums de wire de esta web, p. ej. `EstadoDeVencimiento`).
+
+/** Espejo de `Ways.Domain.Stock.ReglaDeReposicion.EstadoDeReposicion` — `minimo` nulo nunca
+ * alerta (`SinMinimo`), el borde es `cantidad <= minimo` (`Bajo`), nunca `<`. */
+export type EstadoDeReposicion = 'SinMinimo' | 'Bajo' | 'Ok'
 
 /** Fila de `GET /api/reportes/stock/existencias` — espejo de `FilaExistencia`. */
 export type FilaExistencia = {
   idArticulo: number
   nombre: string
   cantidad: number
+  minimo: number | null
+  reposicion: number | null
+  estado: EstadoDeReposicion
 }
 
 /** Respuesta de `GET /api/reportes/stock/existencias` — espejo de `Existencias`. */
 export type Existencias = {
   idPuntoVenta: number
   filas: FilaExistencia[]
+}
+
+/** Cuerpo de `PUT /api/stock/minimos` — espejo de
+ * `Ways.Application.Stock.Contratos.SolicitudDeMinimos` (stage-13-stock-inteligente, Slice 1/3;
+ * design decisión 11). REEMPLAZO COMPLETO de ambos umbrales, no PATCH: `null` limpia el campo
+ * (la operación de "unmanage"). */
+export type SolicitudDeMinimos = {
+  idPuntoVenta: number
+  idArticulo: number
+  minimo: number | null
+  reposicion: number | null
+}
+
+/** Respuesta de `PUT /api/stock/minimos` — espejo de `MinimosDeStock`. La fila PERSISTIDA, leída
+ * del mismo `RETURNING` que escribió, con `estado` ya derivado — la grilla la aplica sin volver a
+ * pedir el reporte (design decisión 16). */
+export type MinimosDeStock = {
+  idPuntoVenta: number
+  idArticulo: number
+  cantidad: number
+  minimo: number | null
+  reposicion: number | null
+  estado: EstadoDeReposicion
 }
 
 // --- POS: checkout (stage-5-pos-ventas, Slice 6 → wireado en Slice 7) ---

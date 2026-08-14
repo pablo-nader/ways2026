@@ -8,6 +8,11 @@ type PropsBotonDeDescarga = {
   /** Se invoca al iniciar una descarga válida (tras la guarda) — limpia el error previo del caller. */
   onInicio?: () => void
   className?: string
+  /** stage-13-stock-inteligente (Slice 3): deshabilita el botón desde afuera cuando OTRA acción
+   * de la misma pantalla está en vuelo (`react-async-state` regla 5/9 — ventana completa
+   * deshabilitada mientras `Existencias.tsx` guarda una fila). No reemplaza el guard interno de
+   * re-entrancy del propio botón, que sigue cubriendo su propio doble click. */
+  disabled?: boolean
 }
 
 /**
@@ -18,7 +23,7 @@ type PropsBotonDeDescarga = {
  * navegan la SPA: se funnelean por `onError` al estado de la pantalla que monta el botón (proposal
  * decisión 8 — "a download that silently does nothing is this pattern's worst failure mode").
  */
-export function BotonDeDescarga({ ruta, etiqueta = 'Descargar', onError, onInicio, className }: PropsBotonDeDescarga) {
+export function BotonDeDescarga({ ruta, etiqueta = 'Descargar', onError, onInicio, className, disabled }: PropsBotonDeDescarga) {
   const [descargando, setDescargando] = useState(false)
   const enVueloRef = useRef(false)
 
@@ -42,7 +47,7 @@ export function BotonDeDescarga({ ruta, etiqueta = 'Descargar', onError, onInici
     <button
       type="button"
       className={className ?? 'btn btn-sm btn-outline-secondary rounded-0'}
-      disabled={descargando}
+      disabled={descargando || disabled}
       onClick={manejarClick}
     >
       {descargando ? 'Descargando…' : etiqueta}

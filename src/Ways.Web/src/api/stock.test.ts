@@ -4,6 +4,7 @@ import {
   aLineasDeTransferencia,
   aSolicitudDeConteo,
   aSolicitudDeConteoPorLote,
+  aSolicitudDeMinimos,
   aSolicitudDeTransferencia,
   articulosRepetidosEnTransferencia,
   contadaValida,
@@ -11,6 +12,8 @@ import {
   lineaDeTransferenciaVacia,
   lineaTransferenciaCompleta,
   lineasDeConteoDeLoteCompletas,
+  reposicionMenorQueMinimo,
+  umbralTextoValido,
   type LineaDeConteoDeLoteFormulario,
   type LineaDeTransferenciaFormulario,
 } from './stock'
@@ -253,5 +256,69 @@ describe('aSolicitudDeConteoPorLote', () => {
     const solicitud = aSolicitudDeConteoPorLote(2, 10, [lineaDeLoteFixture()], 'obs')
     expect(solicitud.contada).toBeNull()
     expect(solicitud.lotes).not.toHaveLength(0)
+  })
+})
+
+// ---- Mínimos y reposición (stage-13-stock-inteligente, Slice 3) --------------------------------
+
+describe('umbralTextoValido', () => {
+  it('vacío es válido (unmanage)', () => {
+    expect(umbralTextoValido('')).toBe(true)
+    expect(umbralTextoValido('   ')).toBe(true)
+  })
+
+  it('un entero, un cero y un negativo son válidos (la negatividad la rechaza el servidor, no el parseo)', () => {
+    expect(umbralTextoValido('0')).toBe(true)
+    expect(umbralTextoValido('2.5')).toBe(true)
+    expect(umbralTextoValido('-1')).toBe(true)
+  })
+
+  it('una coma decimal no parsea — inválido, nunca coercionado en silencio a null', () => {
+    expect(umbralTextoValido('1,5')).toBe(false)
+  })
+})
+
+describe('aSolicitudDeMinimos', () => {
+  it('cada campo vacío coerciona a null (unmanage de un solo campo)', () => {
+    expect(aSolicitudDeMinimos(2, 10, '', '20')).toEqual({ idPuntoVenta: 2, idArticulo: 10, minimo: null, reposicion: 20 })
+    expect(aSolicitudDeMinimos(2, 10, '5', '')).toEqual({ idPuntoVenta: 2, idArticulo: 10, minimo: 5, reposicion: null })
+  })
+
+  it('ambos vacíos limpia el par completo — la operación de unmanage', () => {
+    expect(aSolicitudDeMinimos(2, 10, '', '')).toEqual({ idPuntoVenta: 2, idArticulo: 10, minimo: null, reposicion: null })
+  })
+
+  it('"0" coerciona a 0, nunca a null', () => {
+    expect(aSolicitudDeMinimos(2, 10, '0', '0')).toEqual({ idPuntoVenta: 2, idArticulo: 10, minimo: 0, reposicion: 0 })
+  })
+
+  it('decimales y negativos viajan tal cual — la validación de rango es responsabilidad del servidor', () => {
+    expect(aSolicitudDeMinimos(2, 10, '2.5', '-1')).toEqual({ idPuntoVenta: 2, idArticulo: 10, minimo: 2.5, reposicion: -1 })
+  })
+
+  it('una coma decimal ("1,5") coerciona a NaN — nunca silenciosamente a null', () => {
+    const solicitud = aSolicitudDeMinimos(2, 10, '1,5', '')
+    expect(Number.isNaN(solicitud.minimo)).toBe(true)
+  })
+})
+
+describe('reposicionMenorQueMinimo', () => {
+  it('reposición por debajo del mínimo dispara el aviso', () => {
+    expect(reposicionMenorQueMinimo('10', '5')).toBe(true)
+  })
+
+  it('reposición igual o por encima del mínimo no dispara el aviso', () => {
+    expect(reposicionMenorQueMinimo('10', '10')).toBe(false)
+    expect(reposicionMenorQueMinimo('10', '20')).toBe(false)
+  })
+
+  it('un campo vacío nunca dispara el aviso — todavía no hay dos valores para comparar', () => {
+    expect(reposicionMenorQueMinimo('', '5')).toBe(false)
+    expect(reposicionMenorQueMinimo('10', '')).toBe(false)
+    expect(reposicionMenorQueMinimo('', '')).toBe(false)
+  })
+
+  it('un campo con formato inválido nunca dispara este aviso en particular', () => {
+    expect(reposicionMenorQueMinimo('1,5', '5')).toBe(false)
   })
 })
