@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Existencias } from './Existencias'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ROL } from '../api/tipos'
-import type { Existencias as ExistenciasRespuesta, FilaExistencia, MinimosDeStock, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
+import type { ArticuloListado, Existencias as ExistenciasRespuesta, FilaExistencia, MinimosDeStock, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPutMock = vi.fn()
@@ -85,6 +85,32 @@ function existenciasFixture(filas: FilaExistencia[] = [filaFixture()], idPuntoVe
 
 function minimosFixture(sobrescribir: Partial<MinimosDeStock> = {}): MinimosDeStock {
   return { idPuntoVenta: 10, idArticulo: 1, cantidad: 12, minimo: 5, reposicion: null, estado: 'Bajo', ...sobrescribir }
+}
+
+function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
+  return {
+    id: 50,
+    codigoInterno: 'ART-50',
+    nombre: 'Arroz largo fino 1kg',
+    descripcion: null,
+    idArea: 1,
+    idCategoria: null,
+    idMarca: null,
+    idGrupo: null,
+    idProveedorHabitual: null,
+    idAlicuotaIva: 3,
+    unidadVenta: 'Unidad',
+    unidadesPorBulto: null,
+    esProducto: true,
+    costoLista: null,
+    descuentoProveedor: null,
+    costoNominal: null,
+    disponibleParaTodas: true,
+    idsEmpresas: [],
+    activo: true,
+    controlaLote: false,
+    ...sobrescribir,
+  }
 }
 
 function renderExistencias() {
@@ -387,6 +413,113 @@ describe('Existencias — editor de mínimos y reposición (stage-13-stock-intel
     expect(await screen.findByText('La reposición no puede ser menor que el mínimo.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
     expect(apiPutMock).not.toHaveBeenCalled()
+  })
+
+  it('mientras una fila guarda, TODA la ventana queda attribute-disabled — no solo la fila en edición (decisión 15 / tarea 3.5)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/existencias?')) return Promise.resolve(existenciasFixture(dosFilasFixture()))
+      return undefined
+    })
+    let resolverPut: (valor: MinimosDeStock) => void = () => {}
+    apiPutMock.mockImplementation(
+      () =>
+        new Promise<MinimosDeStock>((resolve) => {
+          resolverPut = resolve
+        }),
+    )
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Aceite de girasol 900ml')
+    await usuario.click(screen.getAllByRole('button', { name: 'Editar' })[0]) // abre A
+    await usuario.type(screen.getByLabelText('Mínimo de Aceite de girasol 900ml'), '5')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    // El PUT de la fila A quedó en vuelo (nunca resuelto todavía) — TODA superficie gobernada por
+    // `guardando` tiene que quedar attribute-disabled, no solo la fila que se está guardando
+    // (react-async-state regla 10: el mismo patrón de bloqueo se replica en cada superficie
+    // hermana de la ventana).
+    expect(screen.getByRole('button', { name: 'Editar' })).toBeDisabled() // única "Editar" visible: fila B
+    expect(screen.getByLabelText('Punto de venta')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Descargar' })).toBeDisabled()
+    expect(screen.getByLabelText('Buscar artículo para agregar')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled() // el propio Guardar en vuelo
+
+    resolverPut(minimosFixture({ idArticulo: 1, cantidad: 12, minimo: 5, reposicion: null, estado: 'Bajo' }))
+    await screen.findByText('Bajo')
+
+    expect(screen.getAllByRole('button', { name: 'Editar' })[0]).not.toBeDisabled()
+    expect(screen.getByLabelText('Punto de venta')).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Descargar' })).not.toBeDisabled()
+    expect(screen.getByLabelText('Buscar artículo para agregar')).not.toBeDisabled()
+  })
+
+  it('guardar la fila A y después editar y guardar la fila B aplica la respuesta a B — el `finally` token-gated reabre la ventana (tarea 3.5/3.10)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/existencias?')) return Promise.resolve(existenciasFixture(dosFilasFixture()))
+      return undefined
+    })
+    apiPutMock
+      .mockResolvedValueOnce(minimosFixture({ idArticulo: 1, cantidad: 12, minimo: 5, reposicion: null, estado: 'Bajo' }))
+      .mockResolvedValueOnce(minimosFixture({ idArticulo: 2, cantidad: 87.5, minimo: 10, reposicion: null, estado: 'Bajo' }))
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Aceite de girasol 900ml')
+
+    // Guarda la fila A (idArticulo 1) de punta a punta.
+    await usuario.click(screen.getAllByRole('button', { name: 'Editar' })[0])
+    await usuario.type(screen.getByLabelText('Mínimo de Aceite de girasol 900ml'), '5')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findAllByText('Bajo') // A ya resolvió — si el `finally` quedara colgado, esto nunca abriría B
+
+    // Ahora edita y guarda la fila B (idArticulo 2) — la SEGUNDA fila, no la primera: si el updater
+    // aplicara siempre a la primera fila (o si la ventana siguiera bloqueada por un `finally` sin
+    // `setGuardando(null)`), este segundo guardado fallaría o pisaría la fila equivocada.
+    await usuario.click(screen.getAllByRole('button', { name: 'Editar' })[1]) // fila B — A ya volvió a mostrar "Editar" tras guardar
+    await usuario.type(screen.getByLabelText('Mínimo de Fideos guiseros 500g'), '10')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(2))
+    expect(apiPutMock).toHaveBeenNthCalledWith(2, '/stock/minimos', { idPuntoVenta: 10, idArticulo: 2, minimo: 10, reposicion: null })
+
+    const filas = await screen.findAllByRole('row')
+    const filaB = within(filas[2]) // [0] encabezado, [1] fila A, [2] fila B
+    expect(filaB.getByText('Bajo')).toBeInTheDocument()
+    expect(filaB.getByText('10')).toBeInTheDocument()
+  })
+
+  it('el indicador "Buscando…" del picker de alta desaparece si el término vuelve a quedar corto antes de que la búsqueda resuelva', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+    const buscador = screen.getByLabelText('Buscar artículo para agregar')
+
+    await usuario.type(buscador, 'ye')
+    expect(screen.getByText('Buscando…')).toBeInTheDocument()
+
+    await usuario.type(buscador, '{Backspace}') // vuelve a 1 carácter, antes de que resuelva el debounce de 300ms
+    expect(screen.queryByText('Buscando…')).not.toBeInTheDocument()
+  })
+
+  it('cancelar una fila agregada por el picker y nunca guardada la saca de la grilla (fila fantasma, tarea 3.4)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderExistencias()
+
+    await screen.findByText('Yerba mate 1kg')
+    await usuario.type(screen.getByLabelText('Buscar artículo para agregar'), 'arroz')
+    await usuario.click(await screen.findByText('ART-50 — Arroz largo fino 1kg'))
+
+    expect(await screen.findByText('Arroz largo fino 1kg')).toBeInTheDocument()
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByText('Arroz largo fino 1kg')).not.toBeInTheDocument()
   })
 })
 

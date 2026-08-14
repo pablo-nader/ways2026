@@ -45,6 +45,7 @@ function SelectorDeArticuloParaAlta({ disabled, onElegir }: PropsSelectorDeArtic
   useEffect(() => {
     if (termino.trim().length < 2) {
       setResultados([])
+      setBuscando(false)
       return
     }
 
@@ -130,6 +131,10 @@ export function Existencias() {
   // ---- Editor inline de una sola fila (decisión 15: bloquear supersede-during-write, nunca
   // reconciliar por token) --------------------------------------------------------------------
   const [filaEnEdicion, setFilaEnEdicion] = useState<number | null>(null) // idArticulo, UNA sola
+  // Tarea 3.4 / fila fantasma: `agregarFila` appenda la fila local ANTES del `PUT` que la
+  // persiste — este ref recuerda el `idArticulo` de esa fila local mientras sigue sin guardarse,
+  // para que `cancelarEdicion` pueda sacarla de la grilla en vez de dejarla huérfana.
+  const filaLocalSinGuardarRef = useRef<number | null>(null)
   const [minimoTexto, setMinimoTexto] = useState('')
   const [reposicionTexto, setReposicionTexto] = useState('')
   const [guardando, setGuardando] = useState<number | null>(null) // idArticulo en vuelo — atributo `disabled`
@@ -211,6 +216,11 @@ export function Existencias() {
 
   function cancelarEdicion() {
     if (guardandoRef.current !== null) return
+    if (filaLocalSinGuardarRef.current !== null && filaLocalSinGuardarRef.current === filaEnEdicion) {
+      const idALimpiar = filaLocalSinGuardarRef.current
+      setExistencias((prev) => (prev === null ? prev : { ...prev, filas: prev.filas.filter((f) => f.idArticulo !== idALimpiar) }))
+      filaLocalSinGuardarRef.current = null
+    }
     setFilaEnEdicion(null)
     setErrorGuardado('')
   }
@@ -244,6 +254,7 @@ export function Existencias() {
           ),
         }
       })
+      filaLocalSinGuardarRef.current = null
       setFilaEnEdicion(null)
     } catch (e) {
       if (tokenDeEscrituraRef.current === miToken) {
@@ -277,6 +288,7 @@ export function Existencias() {
       estado: 'SinMinimo',
     }
     setExistencias((prev) => (prev === null ? prev : { ...prev, filas: [...prev.filas, nuevaFila] }))
+    filaLocalSinGuardarRef.current = nuevaFila.idArticulo
     abrirFila(nuevaFila)
   }
 
@@ -405,7 +417,7 @@ export function Existencias() {
                                   <button
                                     type="button"
                                     className="btn btn-primary btn-sm rounded-0 me-1"
-                                    disabled={!puedeGuardar}
+                                    disabled={!puedeGuardar || guardandoEstaFila}
                                     onClick={() => guardarFila(fila)}
                                   >
                                     {guardandoEstaFila ? 'Guardando…' : 'Guardar'}
