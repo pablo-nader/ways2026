@@ -1,22 +1,45 @@
 import { describe, expect, it } from 'vitest'
 import {
+  aConteoDeLotes,
   aLineasDeTransferencia,
   aSolicitudDeConteo,
+  aSolicitudDeConteoPorLote,
   aSolicitudDeTransferencia,
   articulosRepetidosEnTransferencia,
   contadaValida,
+  lineaDeConteoDeLoteVacia,
   lineaDeTransferenciaVacia,
   lineaTransferenciaCompleta,
+  lineasDeConteoDeLoteCompletas,
+  type LineaDeConteoDeLoteFormulario,
   type LineaDeTransferenciaFormulario,
 } from './stock'
+import type { LoteListado } from './tipos'
 
 function lineaFixture(sobrescribir: Partial<LineaDeTransferenciaFormulario> = {}): LineaDeTransferenciaFormulario {
-  return { clave: 1, idArticulo: 10, descripcion: 'Fideos 500g', cantidad: '5', ...sobrescribir }
+  return {
+    clave: 1,
+    idArticulo: 10,
+    descripcion: 'Fideos 500g',
+    cantidad: '5',
+    idLote: '',
+    codigoLote: '',
+    controlaLote: false,
+    ...sobrescribir,
+  }
 }
 
 describe('lineaDeTransferenciaVacia', () => {
-  it('arranca sin artículo ni cantidad tipeados', () => {
-    expect(lineaDeTransferenciaVacia(7)).toEqual({ clave: 7, idArticulo: '', descripcion: '', cantidad: '' })
+  it('arranca sin artículo, cantidad ni lote elegidos', () => {
+    expect(lineaDeTransferenciaVacia(7)).toEqual({
+      clave: 7,
+      idArticulo: '',
+      descripcion: '',
+      cantidad: '',
+      idLote: '',
+      codigoLote: '',
+      controlaLote: false,
+    })
   })
 })
 
@@ -66,7 +89,12 @@ describe('articulosRepetidosEnTransferencia', () => {
 describe('aLineasDeTransferencia', () => {
   it('mapea las líneas completas a número y filtra las incompletas', () => {
     const lineas = aLineasDeTransferencia([lineaFixture({ idArticulo: 10, cantidad: '5' }), lineaFixture({ clave: 2, idArticulo: '' })])
-    expect(lineas).toEqual([{ idArticulo: 10, cantidad: 5 }])
+    expect(lineas).toEqual([{ idArticulo: 10, cantidad: 5, idLote: null }])
+  })
+
+  it('un idLote elegido viaja como número; sin elegir viaja como null (el servidor resuelve FEFO)', () => {
+    const lineas = aLineasDeTransferencia([lineaFixture({ idArticulo: 10, cantidad: '5', idLote: 41 })])
+    expect(lineas).toEqual([{ idArticulo: 10, cantidad: 5, idLote: 41 }])
   })
 })
 
@@ -80,7 +108,7 @@ describe('aSolicitudDeTransferencia', () => {
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
       observaciones: 'Reposición de sucursal',
-      lineas: [{ idArticulo: 10, cantidad: 5 }],
+      lineas: [{ idArticulo: 10, cantidad: 5, idLote: null }],
     })
   })
 
@@ -114,5 +142,71 @@ describe('aSolicitudDeConteo', () => {
     const solicitud = aSolicitudDeConteo('', '', '10', 'obs')
     expect(solicitud.idPuntoVenta).toBe(0)
     expect(solicitud.idArticulo).toBe(0)
+  })
+})
+
+// ---- Conteo por lote (stage-12-lotes-vencimientos, Slice 15) -----------------------------------
+
+function loteFixture(sobrescribir: Partial<LoteListado> = {}): LoteListado {
+  return {
+    idLote: 41,
+    idArticulo: 10,
+    codigo: '2026-08-20',
+    fechaVencimiento: '2026-08-20',
+    esSinIdentificar: false,
+    cantidad: 12,
+    estado: 'Vigente',
+    sugerido: true,
+    ...sobrescribir,
+  }
+}
+
+function lineaDeLoteFixture(sobrescribir: Partial<LineaDeConteoDeLoteFormulario> = {}): LineaDeConteoDeLoteFormulario {
+  return { idLote: 41, codigo: '2026-08-20', contada: '10', ...sobrescribir }
+}
+
+describe('lineaDeConteoDeLoteVacia', () => {
+  it('arranca con el idLote/código del lote y sin contada tipeada', () => {
+    expect(lineaDeConteoDeLoteVacia(loteFixture())).toEqual({ idLote: 41, codigo: '2026-08-20', contada: '' })
+  })
+})
+
+describe('lineasDeConteoDeLoteCompletas', () => {
+  it('solo cuentan las líneas con una contada válida', () => {
+    const completas = lineasDeConteoDeLoteCompletas([
+      lineaDeLoteFixture({ idLote: 1, contada: '10' }),
+      lineaDeLoteFixture({ idLote: 2, contada: '' }),
+      lineaDeLoteFixture({ idLote: 3, contada: '-1' }),
+    ])
+    expect(completas.map((l) => l.idLote)).toEqual([1])
+  })
+})
+
+describe('aConteoDeLotes', () => {
+  it('mapea las líneas completas a número y filtra las incompletas', () => {
+    const lotes = aConteoDeLotes([
+      lineaDeLoteFixture({ idLote: 1, contada: '10' }),
+      lineaDeLoteFixture({ idLote: 2, contada: '' }),
+    ])
+    expect(lotes).toEqual([{ idLote: 1, contada: 10 }])
+  })
+})
+
+describe('aSolicitudDeConteoPorLote', () => {
+  it('arma la rama exactly-one-of por lote: contada null, lotes con las líneas completas', () => {
+    const solicitud = aSolicitudDeConteoPorLote(2, 10, [lineaDeLoteFixture({ idLote: 41, contada: '15' })], '  Recuento por lote  ')
+    expect(solicitud).toEqual({
+      idPuntoVenta: 2,
+      idArticulo: 10,
+      contada: null,
+      observaciones: 'Recuento por lote',
+      lotes: [{ idLote: 41, contada: 15 }],
+    })
+  })
+
+  it('nunca arma las dos formas a la vez — contada siempre null en la rama por lote', () => {
+    const solicitud = aSolicitudDeConteoPorLote(2, 10, [lineaDeLoteFixture()], 'obs')
+    expect(solicitud.contada).toBeNull()
+    expect(solicitud.lotes).not.toHaveLength(0)
   })
 })

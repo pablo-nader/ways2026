@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tablero } from './Tablero'
@@ -11,6 +11,7 @@ import type {
   PuntoVentaListado,
   Rentabilidad,
   ResumenDeGastos,
+  ResumenDeVencimientos,
   ResumenDeVentas,
   TopArticulos,
   UsuarioAutenticado,
@@ -223,6 +224,10 @@ function comisionesFixture(sobrescribir: Partial<Comisiones> = {}): Comisiones {
   }
 }
 
+function vencimientosResumenFixture(sobrescribir: Partial<ResumenDeVencimientos> = {}): ResumenDeVencimientos {
+  return { idPuntoVenta: 10, vencidos: 2, porVencer: 5, sinFecha: 1, ...sobrescribir }
+}
+
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/empresas') return Promise.resolve([empresaUno])
@@ -238,6 +243,7 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
     if (ruta.startsWith('/reportes/articulos/top?')) return Promise.resolve(topArticulosFixture())
     if (ruta.startsWith('/reportes/rentabilidad?')) return Promise.resolve(rentabilidadFixture())
     if (ruta.startsWith('/reportes/comisiones?')) return Promise.resolve(comisionesFixture())
+    if (ruta.startsWith('/reportes/stock/vencimientos/resumen?')) return Promise.resolve(vencimientosResumenFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -1137,6 +1143,63 @@ describe('Tablero — Descarga de reportes (stage-11 slice 4)', () => {
     fireEvent.click(boton)
     await waitFor(() => {
       expect(screen.queryByText('Sin permiso para exportar.')).not.toBeInTheDocument()
+    })
+  })
+})
+
+describe('Tablero — tile de vencimientos (stage-12-lotes-vencimientos, Slice 15)', () => {
+  it('sin punto de venta elegido ("Todos") muestra un aviso neutro, nunca dispara el fetch', async () => {
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    await screen.findByText('Vencimientos')
+
+    expect(screen.getByText('Elegí un punto de venta para ver el resumen de vencimientos.')).toBeInTheDocument()
+    const rutas = apiGetMock.mock.calls.map((llamada) => llamada[0] as string)
+    expect(rutas.some((r) => r.startsWith('/reportes/stock/vencimientos/resumen'))).toBe(false)
+  })
+
+  it('con un punto de venta elegido, muestra los tres conteos del resumen y un link al reporte', async () => {
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    fireEvent.change(screen.getByLabelText('Punto de venta'), { target: { value: '10' } })
+
+    await waitFor(() => {
+      const rutas = apiGetMock.mock.calls.map((llamada) => llamada[0] as string)
+      expect(rutas.some((r) => r.startsWith('/reportes/stock/vencimientos/resumen?') && r.includes('idPuntoVenta=10'))).toBe(true)
+    })
+
+    // Query acotado al tile — varios paneles hermanos ya muestran '5'/'1' sueltos en sus propias
+    // tablas, así que un `getByText` global colisionaría.
+    const titulo = await screen.findByText('Vencimientos')
+    const tile = titulo.closest('div.border')
+    if (!tile) throw new Error('No se encontró el tile de vencimientos')
+    await waitFor(() => {
+      expect(within(tile as HTMLElement).getByText('2')).toBeInTheDocument() // vencidos
+      expect(within(tile as HTMLElement).getByText('5')).toBeInTheDocument() // por vencer
+      expect(within(tile as HTMLElement).getByText('1')).toBeInTheDocument() // sin fecha
+    })
+    expect(screen.getByRole('link', { name: 'Ver reporte' })).toHaveAttribute('href', '/reportes/stock/vencimientos')
+  })
+
+  it('un error del panel de vencimientos no contamina a sus paneles hermanos', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/vencimientos/resumen?')) return Promise.reject(new Error('boom'))
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    fireEvent.change(screen.getByLabelText('Punto de venta'), { target: { value: '10' } })
+
+    expect(await screen.findByText('No se pudo cargar el resumen de vencimientos.')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText('Vendedor #9')).toBeInTheDocument()
+      expect(screen.getByText('Efectivo')).toBeInTheDocument()
+      expect(screen.getByText('Producto Estrella')).toBeInTheDocument()
     })
   })
 })

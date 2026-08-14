@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConteoDeInventario } from './ConteoDeInventario'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ROL } from '../api/tipos'
-import type { ArticuloListado, PuntoVentaListado, ResultadoConteo, StockActual, UsuarioAutenticado } from '../api/tipos'
+import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoConteo, StockActual, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -84,6 +84,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     disponibleParaTodas: true,
     idsEmpresas: [],
     activo: true,
+    controlaLote: false,
     ...sobrescribir,
   }
 }
@@ -117,6 +118,35 @@ function mockearBase(stockActual: StockActual, sobrescribirGet?: (ruta: string) 
     if (ruta.startsWith('/stock?')) return Promise.resolve(stockActual)
     const propia = sobrescribirGet?.(ruta)
     if (propia) return propia
+    return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+  })
+}
+
+function loteFixture(sobrescribir: Partial<LoteListado> = {}): LoteListado {
+  return {
+    idLote: 41,
+    idArticulo: 10,
+    codigo: '2026-08-20',
+    fechaVencimiento: '2026-08-20',
+    esSinIdentificar: false,
+    cantidad: 12,
+    estado: 'Vigente',
+    sugerido: true,
+    ...sobrescribir,
+  }
+}
+
+/** stage-12-lotes-vencimientos (Slice 15) — variante lote-efectiva de `mockearBase`: el artículo
+ * mockeado tiene `controlaLote: true` y `GET /api/stock/lotes` devuelve una lista fija de lotes. */
+function mockearBaseConLote(
+  stockActual: StockActual,
+  lotes: LoteListado[] = [loteFixture({ idLote: 41 }), loteFixture({ idLote: 42, codigo: '2026-09-01' })],
+) {
+  apiGetMock.mockImplementation((ruta: string) => {
+    if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+    if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
+    if (ruta.startsWith('/stock?')) return Promise.resolve(stockActual)
+    if (ruta.startsWith('/stock/lotes?')) return Promise.resolve(lotes)
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -283,5 +313,108 @@ describe('ConteoDeInventario — role gating', () => {
     renderConteoProtegido()
 
     await waitFor(() => expect(screen.getByText('Inicio (redirigido)')).toBeInTheDocument())
+  })
+})
+
+// ---- Conteo por lote (stage-12-lotes-vencimientos, Slice 15) -----------------------------------
+
+describe('ConteoDeInventario — conteo por lote (exactly-one-of)', () => {
+  it('un artículo lote-efectivo muestra el grid por lote, nunca el campo agregado — exactly-one-of', async () => {
+    mockearBaseConLote({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
+    const usuario = userEvent.setup()
+
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+
+    await screen.findByText('2026-08-20')
+    expect(screen.getByText('2026-09-01')).toBeInTheDocument()
+    // Nunca las dos formas a la vez: el campo agregado desaparece cuando el grid por lote está.
+    expect(screen.queryByLabelText('Cantidad contada')).not.toBeInTheDocument()
+  })
+
+  it('el botón queda deshabilitado hasta contar al menos un lote', async () => {
+    mockearBaseConLote({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
+    const usuario = userEvent.setup()
+
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByText('2026-08-20')
+
+    await usuario.type(screen.getByLabelText('Observaciones'), 'Recuento por lote')
+    expect(screen.getByRole('button', { name: 'Contar' })).toBeDisabled()
+
+    await usuario.type(screen.getByLabelText('Contada del lote 2026-08-20'), '10')
+    expect(screen.getByRole('button', { name: 'Contar' })).not.toBeDisabled()
+  })
+
+  it('contador de lotes incompletos: baja a medida que se cuentan lotes (mirror de Transferencias.tsx)', async () => {
+    mockearBaseConLote({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
+    const usuario = userEvent.setup()
+
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByText('2026-08-20')
+
+    expect(screen.getByText('2 lote(s) sin contar — no se van a incluir en el conteo.')).toBeInTheDocument()
+
+    await usuario.type(screen.getByLabelText('Contada del lote 2026-08-20'), '10')
+    expect(screen.getByText('1 lote(s) sin contar — no se van a incluir en el conteo.')).toBeInTheDocument()
+
+    await usuario.type(screen.getByLabelText('Contada del lote 2026-09-01'), '5')
+    expect(screen.queryByText(/lote\(s\) sin contar/)).not.toBeInTheDocument()
+  })
+
+  it('envía la rama por lote — contada:null, lotes solo con los completos, exactamente un lote sin tocar queda afuera', async () => {
+    mockearBaseConLote({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/conteos')
+        return Promise.resolve({
+          idPuntoVenta: 1,
+          idArticulo: 10,
+          cantidad: 22,
+          cantidadAnterior: 12,
+          delta: 10,
+          movimientoRegistrado: true,
+          lotes: [{ idLote: 41, cantidad: 22, cantidadAnterior: 12, delta: 10, movimientoRegistrado: true }],
+        })
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+    await screen.findByText('2026-08-20')
+
+    await usuario.type(screen.getByLabelText('Contada del lote 2026-08-20'), '22')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'Recuento por lote')
+    await usuario.click(screen.getByRole('button', { name: 'Contar' }))
+
+    expect(await screen.findByText('Diferencia registrada: +10 (antes 12 → ahora 22).')).toBeInTheDocument()
+    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/conteos')
+    expect(llamadas).toHaveLength(1)
+    const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
+    expect(cuerpo).toEqual({
+      idPuntoVenta: 1,
+      idArticulo: 10,
+      contada: null,
+      observaciones: 'Recuento por lote',
+      lotes: [{ idLote: 41, contada: 22 }],
+    })
+  })
+
+  it('un artículo SIN control de lote nunca muestra el grid por lote', async () => {
+    mockearBase({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
+    const usuario = userEvent.setup()
+
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+
+    expect(screen.queryByText('Conteo por lote')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Cantidad contada')).toBeInTheDocument()
   })
 })

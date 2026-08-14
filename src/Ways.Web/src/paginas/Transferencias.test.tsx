@@ -6,7 +6,7 @@ import { Transferencias } from './Transferencias'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
-import type { ArticuloListado, PuntoVentaListado, ResultadoTransferencia, UsuarioAutenticado } from '../api/tipos'
+import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoTransferencia, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -85,6 +85,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     disponibleParaTodas: true,
     idsEmpresas: [],
     activo: true,
+    controlaLote: false,
     ...sobrescribir,
   }
 }
@@ -115,6 +116,34 @@ function mockearPuntosVenta(puntos: PuntoVentaListado[] = [puntoVentaFixture({ i
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve(puntos)
     if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+    return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+  })
+}
+
+function loteFixture(sobrescribir: Partial<LoteListado> = {}): LoteListado {
+  return {
+    idLote: 41,
+    idArticulo: 10,
+    codigo: '2026-08-20',
+    fechaVencimiento: '2026-08-20',
+    esSinIdentificar: false,
+    cantidad: 12,
+    estado: 'Vigente',
+    sugerido: true,
+    ...sobrescribir,
+  }
+}
+
+/** Variante lote-efectiva de `mockearPuntosVenta` — mismo artículo pero con `controlaLote: true`
+ * y `GET /api/stock/lotes` mockeado (stage-12-lotes-vencimientos, Slice 15). */
+function mockearPuntosVentaConLote(
+  lotes: LoteListado[] = [loteFixture({ idLote: 41, sugerido: true }), loteFixture({ idLote: 42, codigo: '2026-09-01', sugerido: false })],
+) {
+  const puntos = [puntoVentaFixture({ id: 1, nombre: 'Casa Central' }), puntoVentaFixture({ id: 2, nombre: 'Sucursal Norte' })]
+  apiGetMock.mockImplementation((ruta: string) => {
+    if (ruta === '/puntos-venta') return Promise.resolve(puntos)
+    if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
+    if (ruta.startsWith('/stock/lotes?')) return Promise.resolve(lotes)
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -158,7 +187,7 @@ describe('Transferencias — flujo feliz', () => {
     resolverTransferir({
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
-      lineas: [{ idArticulo: 10, cantidadOrigen: 12, cantidadDestino: 13 }],
+      lineas: [{ idArticulo: 10, idLote: null, cantidadOrigen: 12, cantidadDestino: 13 }],
     })
 
     expect(await screen.findByText(/Transferencia registrada: Casa Central → Sucursal Norte/)).toBeInTheDocument()
@@ -174,7 +203,7 @@ describe('Transferencias — flujo feliz', () => {
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
       observaciones: 'Reposición de sucursal',
-      lineas: [{ idArticulo: 10, cantidad: 8 }],
+      lineas: [{ idArticulo: 10, cantidad: 8, idLote: null }],
     })
   })
 })
@@ -209,7 +238,7 @@ describe('Transferencias — líneas incompletas', () => {
     await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
     await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
 
-    resolverTransferir({ idPuntoVentaOrigen: 1, idPuntoVentaDestino: 2, lineas: [{ idArticulo: 10, cantidadOrigen: 12, cantidadDestino: 13 }] })
+    resolverTransferir({ idPuntoVentaOrigen: 1, idPuntoVentaDestino: 2, lineas: [{ idArticulo: 10, idLote: null, cantidadOrigen: 12, cantidadDestino: 13 }] })
     await screen.findByText(/Transferencia registrada/)
 
     const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/transferencias')
@@ -219,7 +248,7 @@ describe('Transferencias — líneas incompletas', () => {
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
       observaciones: 'obs',
-      lineas: [{ idArticulo: 10, cantidad: 8 }],
+      lineas: [{ idArticulo: 10, cantidad: 8, idLote: null }],
     })
   })
 })
@@ -320,5 +349,115 @@ describe('Transferencias — role gating', () => {
 
     await screen.findByLabelText('Origen')
     expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
+  })
+})
+
+// ---- Lotes (stage-12-lotes-vencimientos, Slice 15) ----------------------------------------------
+
+describe('Transferencias — picker de lote', () => {
+  it('un artículo lote-efectivo muestra el picker de lote, pre-seleccionado con el sugerido, y lo manda en el request', async () => {
+    mockearPuntosVentaConLote()
+    let resolverTransferir: (valor: ResultadoTransferencia) => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/transferencias') return new Promise((resolve) => (resolverTransferir = resolve))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarLinea(usuario)
+
+    // Pre-selección FEFO (decisión 19): el picker de lote arranca en el sugerido, sin que el
+    // operador haga nada.
+    await waitFor(() => expect(screen.getByLabelText('Lote')).toHaveValue('41'))
+
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
+
+    resolverTransferir({
+      idPuntoVentaOrigen: 1,
+      idPuntoVentaDestino: 2,
+      lineas: [{ idArticulo: 10, idLote: 41, cantidadOrigen: 12, cantidadDestino: 13 }],
+    })
+    await screen.findByText(/Transferencia registrada/)
+
+    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/transferencias')
+    const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
+    expect(cuerpo).toEqual({
+      idPuntoVentaOrigen: 1,
+      idPuntoVentaDestino: 2,
+      observaciones: 'obs',
+      lineas: [{ idArticulo: 10, cantidad: 8, idLote: 41 }],
+    })
+  })
+
+  it('el operador puede vaciar la selección de lote — el servidor resuelve FEFO ("Auto (FEFO)")', async () => {
+    mockearPuntosVentaConLote()
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await completarLinea(usuario)
+
+    await waitFor(() => expect(screen.getByLabelText('Lote')).toHaveValue('41'))
+    await usuario.selectOptions(screen.getByLabelText('Lote'), '')
+    expect(screen.getByLabelText('Lote')).toHaveValue('')
+  })
+
+  it('un artículo SIN control de lote nunca muestra el picker', async () => {
+    mockearPuntosVenta()
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await completarLinea(usuario)
+
+    expect(screen.queryByLabelText('Lote')).not.toBeInTheDocument()
+  })
+
+  it('mutation-proof: dos filas del resultado con el mismo artículo y lotes distintos NUNCA colisionan (clave compuesta)', async () => {
+    mockearPuntosVentaConLote()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/transferencias')
+        return Promise.resolve({
+          idPuntoVentaOrigen: 1,
+          idPuntoVentaDestino: 2,
+          lineas: [
+            { idArticulo: 10, idLote: 41, cantidadOrigen: 3, cantidadDestino: 4 },
+            { idArticulo: 10, idLote: 42, cantidadOrigen: 7, cantidadDestino: 8 },
+          ],
+        })
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarLinea(usuario)
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
+
+    await screen.findByText(/Transferencia registrada/)
+
+    // Con `key={l.idArticulo}` a secas, React colapsaría estas dos filas del mismo artículo en
+    // una — acá deben coexistir las DOS, con sus cantidades propias intactas.
+    const filas = screen.getAllByRole('row').filter((fila) => fila.textContent?.includes('Fideos 500g'))
+    expect(filas).toHaveLength(2)
+    expect(filas[0].textContent).toContain('41')
+    expect(filas[0].textContent).toContain('3')
+    expect(filas[0].textContent).toContain('4')
+    expect(filas[1].textContent).toContain('42')
+    expect(filas[1].textContent).toContain('7')
+    expect(filas[1].textContent).toContain('8')
   })
 })
