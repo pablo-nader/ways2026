@@ -25,6 +25,7 @@ import { Parametros } from './paginas/Parametros'
 import { Pos } from './paginas/Pos'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
+import { Reposicion } from './paginas/Reposicion'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
 import { Tablero } from './paginas/Tablero'
 import { Tenants } from './paginas/Tenants'
@@ -149,6 +150,18 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <Vencimientos />
+                </RutaProtegida>
+              }
+            />
+            {/* stage-13-stock-inteligente (Slice 6, design: "Reposicion.tsx — grouped by
+                proveedor"): mismo gate que /reportes/stock/vencimientos
+                (Politicas.LecturaDeReportes) — vista de gestión, agrupada por proveedor
+                habitual. */}
+            <Route
+              path="/reportes/stock/reposicion"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <Reposicion />
                 </RutaProtegida>
               }
             />

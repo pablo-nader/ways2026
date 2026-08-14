@@ -109,6 +109,15 @@ export function Layout() {
                     </NavLink>
                   </li>
                 )}
+                {/* stage-13-stock-inteligente (Slice 6): mismo gate que Vencimientos
+                    (puedeVerReportes). */}
+                {usuario && puedeVerReportes(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/reportes/stock/reposicion">
+                      Reposición
+                    </NavLink>
+                  </li>
+                )}
                 {usuario && puedeGestionarUsuarios(usuario.rolId) && (
                   <li className="nav-item">
                     <NavLink className="nav-link" to="/usuarios">
