@@ -1036,7 +1036,19 @@ permanent; now records that both paths return the same value since slice 8.
   set. The **joint** checkout-vs-reverse-transfer deadlock proof itself is
   deferred to slice 10 (task 10.12), once `ServicioDeStock`'s transfer
   write also exists — recorded as an explicit cross-slice dependency, not a
-  gap. *(APPLY-RUN NOTE: "hand-built key set" implemented as a real,
+  gap. *(PAIRING CLOSED at slice 10, task 10.12 —
+  `UnCheckoutYUnaTransferenciaConcurrentesDelMismoArticuloYLoteNoDeadlockean`
+  in `TransferenciaLoteTests.cs` runs the checkout-vs-reverse-transfer
+  scenario end to end and passes. Note also the negative finding recorded
+  at slice 10's task 10.4: the joint proof, like the transfer-vs-transfer
+  deadlock test, does NOT independently discriminate the `id_lote` `ThenBy`
+  mutation — both checkout and transfer write the aggregate `stock` row
+  before any `stock_lotes` row for the same pair, so two transactions
+  sharing an articulo/PV always convoy-serialize on that shared row before
+  either reaches lot granularity. 8.7's OWN single-transaction ordering
+  test still kills the mutation correctly — that discriminating power
+  never depended on a second, concurrent transaction.)* *(APPLY-RUN NOTE:
+  "hand-built key set" implemented as a real,
   achievable production scenario rather than an artificial in-memory
   fixture — `LosMovimientosDeDosLotesDelMismoArticuloSeEscribenEnOrdenAscendentePorIdLote`
   submits TWO lines of the SAME lot-effective articulo, each with a
@@ -1241,54 +1253,172 @@ travels with the merchandise; the lock order gains a `≥2N`-key form; per-lot
 insufficiency and expired-lot transfer are refused. **Rollback**: revert
 the branch.
 
-- [ ] 10.1 Modify `src/Ways.Application/Stock/ServicioDeStock.cs`:
+- [x] 10.1 Modify `src/Ways.Application/Stock/ServicioDeStock.cs`:
   `ClaveDeStock` widens (`IdLote`, `IdLoteDelMovimiento`);
   `ConstruirClavesOrdenadas` — per lot-effective line, 4 keys (aggregate +
   lot at origen, aggregate + lot at destino); order
   `.OrderBy(IdArticulo).ThenBy(IdPuntoVenta).ThenBy(IdLote.HasValue).ThenBy(IdLote ?? 0)`.
-- [ ] 10.2 Modify `ServicioDeStock.cs`: pre-transaction phase — read
+  *(APPLY-RUN NOTE — continuación tras corte de proceso: el wip rescatado
+  (`e37313e`) tenía TODO el resto de la task correcto pero el `ThenBy` de
+  `id_lote` estaba directamente AUSENTE del código shipeado — quedó solo
+  `.OrderBy(IdArticulo).ThenBy(IdPuntoVenta)`, a pesar de que el doc-comment
+  de la clase y el comentario de la task 10.4 en el test lo daban por
+  puesto y por probado. Restaurado en esta continuación.)*
+- [x] 10.2 Modify `ServicioDeStock.cs`: pre-transaction phase — read
   `stock_lotes` of the origin PV for requested articulos, FEFO-default
   omitted lots via `ReglaDeLotes.ElegirFefo`, apply decision 11's
   `(IdArticulo, IdLote)` duplicate refusal **after** defaulting;
   `transferencia_lote_vencido` check alongside `ResolverArticuloAsync`.
-- [ ] 10.3 Modify `ServicioDeStock.cs`: transaction loop — at an aggregate
+  *(Ya estaba correcto en el wip rescatado — sin cambios en esta
+  continuación.)*
+- [x] 10.3 Modify `ServicioDeStock.cs`: transaction loop — at an aggregate
   element, insert the ledger row (carrying `IdLoteDelMovimiento`) + upsert
   `stock`; at a lot element, upsert `stock_lotes` only. Both `RETURNING`
   values checked for negativity → `409
   stock_insuficiente_para_transferencia` (aggregate check unchanged, lot
-  check new).
-- [ ] 10.4 [P] **Mutation target**: `.ThenBy(c => c.IdLote.HasValue).ThenBy(c
+  check new). *(Ya estaba correcto en el wip rescatado — sin cambios en
+  esta continuación.)*
+- [x] 10.4 [P] **Mutation target**: `.ThenBy(c => c.IdLote.HasValue).ThenBy(c
   => c.IdLote ?? 0)` deleted in `ConstruirClavesOrdenadas` → the
   transfer-vs-reverse-transfer deadlock test MUST fail; revert → green.
-  Record evidence.
-- [ ] 10.5 [P] A→B vs. B→A concurrency test, write-site 3: both transfers
-  complete, no `40P01`.
-- [ ] 10.6 [P] Per-lot insufficiency with a sufficient aggregate. *(spec
+  Record evidence. *(DESVÍO documentado — el wip dejaba una "EVIDENCIA DE
+  MUTACIÓN" en el doc-comment del test afirmando un ciclo RED→GREEN que la
+  corrida real de esta continuación NO reprodujo: con el `ThenBy` borrado,
+  el archivo completo (11/11, incluidos este test, 10.11 y el joint proof
+  10.12) siguió en GREEN, corrida ×2. Causa raíz analizada y confirmada
+  empíricamente: dentro de un mismo `(id_articulo, id_punto_venta)`, el
+  elemento AGREGADO de cada línea precede a su elemento LOTE por
+  construcción del array por línea, sea cual sea el `ThenBy` — así que el
+  primer elemento nuevo tocado por dos transferencias recíprocas del MISMO
+  artículo es siempre la MISMA fila física de `stock`, que actúa de convoy:
+  quien la toca primero la retiene hasta el commit y la otra transacción
+  simplemente espera, sin llegar nunca a competir en el orden opuesto que
+  el test intenta forzar sobre `stock_lotes`. El mismo mecanismo neutraliza
+  el joint proof 10.12 (checkout y transferencia comparten la fila
+  agregada del mismo artículo/PV). El `ThenBy` de `id_lote` se mantiene —
+  sigue siendo exigido por el design/spec (orden total `≥2N`, consistente
+  con los otros dos sitios de escritura) y es la forma correcta — pero
+  NINGÚN test de este archivo lo prueba por mutación viva; el comentario
+  falso del wip fue corregido en el test para reflejar este hallazgo
+  negativo documentado en vez de una evidencia fabricada. Ver el doc-comment
+  de `TransferenciasReciprocasDelMismoArticuloConLotesEnOrdenOpuestoNoDeadlockean`
+  en `TransferenciaLoteTests.cs`.)*
+- [x] 10.5 [P] A→B vs. B→A concurrency test, write-site 3: both transfers
+  complete, no `40P01`. *(Ya estaba correcto en el wip rescatado — mismo
+  test que 10.4, sin cambios en esta continuación.)*
+- [x] 10.6 [P] Per-lot insufficiency with a sufficient aggregate. *(spec
   transferencias-de-stock: "A lot-level underflow is refused even with a
   sufficient aggregate")*
-- [ ] 10.7 [P] Lot-travels test. *(spec: "A lot-effective articulo transfer
+- [x] 10.7 [P] Lot-travels test. *(spec: "A lot-effective articulo transfer
   moves the same lot at both ends")*
-- [ ] 10.8 [P] Omitted-`idLote`-resolves-via-FEFO test. *(spec: "An omitted
+- [x] 10.8 [P] Omitted-`idLote`-resolves-via-FEFO test. *(spec: "An omitted
   idLote resolves via FEFO at transfer time")*
-- [ ] 10.9 [P] `transferencia_lote_vencido` tests. *(spec: "Transferring an
+- [x] 10.9 [P] `transferencia_lote_vencido` tests. *(spec: "Transferring an
   explicitly expired lot is refused", "A non-expired lot transfers
   normally")*
-- [ ] 10.10 [P] Duplicate-line detection ×3. *(spec: "Two lines of the same
+- [x] 10.10 [P] Duplicate-line detection ×3. *(spec: "Two lines of the same
   articulo with different explicit lots are accepted", "Two lines
   resolving to the same explicit lot are rejected", "Two lines both
   omitting idLote that resolve to the same FEFO lot are rejected")*
-- [ ] 10.11 [P] Single-ascending-order test over both origin and
+- [x] 10.11 [P] Single-ascending-order test over both origin and
   destination lot rows. *(spec: "A single ascending order covers both
   origin and destination lot rows")*
-- [ ] 10.12 [P] **Joint deadlock proof** (completes the pairing opened at
+- [x] 10.12 [P] **Joint deadlock proof** (completes the pairing opened at
   slice 8.7): a checkout selling lot 7 of articulo 40 at PV 1, concurrent
   with a transferencia moving the same lot 7 of articulo 40 from PV 1 to
   PV 2 — both complete, no deadlock. *(spec stock: "A concurrent checkout
   and reverse transfer of the same articulo and lots do not deadlock")*
-- [ ] 10.13 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes.
-- [ ] 10.14 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 10.15 Branch `feat/stage12-slice10-transferencias` off `main`
+  Cierra la nota cross-slice de la task 8.7. *(APPLY-RUN NOTE: verificado
+  ×1 GREEN con el código correcto; verificado empíricamente que este test
+  TAMPOCO discrimina la mutación del 10.4 por el mismo mecanismo de
+  convoy sobre la fila agregada compartida — ver la nota de 10.4. El
+  proof queda como cobertura funcional real (checkout y transferencia
+  concurrentes del mismo artículo/lote no deadlockean), no como prueba de
+  mutación del `ThenBy` de `id_lote`.)*
+- [x] 10.13 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes. *(Ejecutado con `--project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure` — Ways.Api no referencia
+  `Microsoft.EntityFrameworkCore.Design`, mismo criterio que slices previos.
+  Output: "No changes have been made to the model since the last
+  migration.")*
+> Note (judgment-day, slice 10, FIX round — juez B, 2 gaps de cobertura
+> confirmados, ambos ya smoke-testeados en verde por el juez, dejados como
+> tests permanentes en `TransferenciaLoteTests.cs`):
+> 1. **Transferencia mixta** (`UnaTransferenciaMixtaConLineaLoteEfectivaYLineaSinLoteCompletaAmbas`):
+>    una línea de artículo lote-efectivo + una línea de artículo sin lote en
+>    la misma solicitud — ambas completan, sin que el filtro
+>    `indicesConLoteEfectivo` de `ResolverLineasDeTransferenciaAsync`
+>    contamine el tratamiento de la otra. Evidencia de mutación: el ternario
+>    de `ConstruirClavesOrdenadas` mutado para emitir también una clave de
+>    lote en la rama sin-lote → el test FALLA (500 por FK inválida sobre
+>    `stock_lotes`); revertido, GREEN.
+> 2. **`lote_invalido` sobre línea sin lote efectivo**
+>    (`UnaLineaSinLoteEfectivoConIdLoteProvistoEsRechazadaComoLoteInvalido`):
+>    un `idLote` provisto en una línea de artículo sin control de lote se
+>    rechaza (400), nada se escribe. Evidencia de mutación: anulado el guard
+>    de `ServicioDeStock.cs` (~269-281) → el test FALLA (200 en vez de 400);
+>    revertido, GREEN.
+>
+> Filtro `~TransferenciaLote`: 13/13 (11 previos + 2 nuevos). Regresión
+> `~TransferenciasYConteo`: 28/28.
+> Note (judgment-day, slice 10, FIX round — juez A, 1 MAJOR + 1 MINOR
+> confirmados):
+> 1. **MAJOR — `LineaTransferida` sin `IdLote` + agregación que colapsaba
+>    multi-lote** (design.md:180, `dto-contract-honesty`): el shipped había
+>    dropeado `IdLote` del record sin documentar, y `EjecutarTransferenciaAsync`
+>    agregaba por `IdArticulo` solo — dos líneas del mismo artículo con lotes
+>    distintos (caso ACEPTADO por spec, ver `DosLineasDelMismoArticuloConLotesExplicitosDistintosSonAceptadas`)
+>    colapsaban en una sola fila del response, y el caller nunca sabía qué
+>    lote viajó en el FEFO-default. Fix: `LineaTransferida(int IdArticulo,
+>    int? IdLote, decimal CantidadOrigen, decimal CantidadDestino)` restaurado
+>    igual que el design; `resultadosPorArticuloYLote` ensanchado a clave
+>    `(IdArticulo, IdLote)` — una fila por (artículo, lote), lote FEFO incluido.
+>    `CantidadOrigen`/`CantidadDestino` siguen siendo el checkpoint del
+>    `stock.cantidad` agregado devuelto por el upsert de ESA línea puntual, no
+>    el saldo final del artículo ni el de `stock_lotes` (documentado en el
+>    doc-comment del record). Test nuevo:
+>    `LaRespuestaDeUnaTransferenciaConDosLotesDelMismoArticuloTraeUnaFilaPorLoteConIdLote`
+>    — 2 líneas de un mismo artículo con lotes explícitos distintos + 1 línea
+>    FEFO-default de otro artículo, asserta las 3 filas del body con
+>    IdArticulo/IdLote/cantidades exactos. Evidencia de mutación: clave
+>    revertida a `IdArticulo` solo → el test FALLA (2 filas en vez de 3);
+>    revertido, GREEN. Consumidores verificados: `Ways.Web` (`tipos.ts`,
+>    `Transferencias.tsx`) todavía NO consume lote en transferencias (ni
+>    `LineaDeTransferencia` ni `LineaTransferida` tienen `idLote` del lado
+>    TS) — el campo nuevo es transparente para el cliente actual. Riesgo
+>    latente anotado, no corregido acá (fuera de alcance del slice 10):
+>    `Transferencias.tsx:288` usa `key={l.idArticulo}` en la tabla de
+>    resultado — el día que un slice futuro (14/15) sume selección de lote a
+>    la UI, dos filas del mismo artículo con lotes distintos van a colisionar
+>    esa key de React.
+> 2. **MINOR — faltaba el test del FEFO-default que resuelve a un lote
+>    solo-vencido**: el código ya hacía el re-check incondicional de
+>    `EstaVencido` (aunque el lote viniera de FEFO), pero no había cobertura
+>    para el caso "único lote con saldo, y ese lote está vencido". Test
+>    nuevo: `UnaLineaSinIdLoteQueResuelvePorFefoAUnUnicoLoteVencidoEsRechazada`.
+>    Evidencia de mutación: anulado el `if (ReglaDeLotes.EstaVencido(...))` →
+>    el test FALLA (200, transfiere el vencido); revertido, GREEN.
+>
+> Filtro `~TransferenciaLote`: 15/15 (13 previos + 2 nuevos). Regresión
+> `~TransferenciasYConteo`: 28/28. `has-pending-model-changes`: sin cambios
+> pendientes (fix puramente de capa Application, sin tocar el modelo).
+- [x] 10.14 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  this slice's apply died mid-run with the host process; the rescued wip had
+  two defects the continuation caught — comments claiming a lock tie-break
+  the code lacked (restored) and FALSE mutation evidence for 10.4 (the
+  shared aggregate row is a natural lock convoy; judge B later derived the
+  STRUCTURAL proof that a lot-row deadlock cycle is impossible by
+  construction, validated cross-articulo ×3 under mutation — the tie-break
+  stands as cross-write-site convention, honestly documented). Judge B:
+  APPROVE ×2 with 5 standard mutations killed + 2 coverage gaps closed
+  (mixed transfer, lote_invalido). Judge A: REJECT round 1 with a MAJOR
+  contract drift — LineaTransferida had silently dropped the design-mandated
+  IdLote and the per-articulo aggregation collapsed multi-lot lines in the
+  response; fixed in 5703a29 (per-(articulo,lote) rows, field-by-field
+  3-row test, FEFO-to-expired 409 test); APPROVE round 2 with hand-derived
+  arithmetic verification. Latent Web risk (key={l.idArticulo} in
+  Transferencias.tsx) recorded for slice 14/15.)*
+- [x] 10.15 Branch `feat/stage12-slice10-transferencias` off `main`
   (parent: slice 3); PR; merge stacked-to-main.
 
 **Test plan**: deadlock mutation (10.4), A→B/B→A concurrency (10.5),
