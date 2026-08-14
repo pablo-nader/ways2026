@@ -1,22 +1,120 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { clienteDeArticulos } from '../api/articulos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rutasDeExportacion } from '../api/reportes'
-import type { Existencias as ExistenciasRespuesta, PuntoVentaListado } from '../api/tipos'
+import { aSolicitudDeMinimos, clienteDeStock, reposicionMenorQueMinimo, umbralTextoValido } from '../api/stock'
+import type { ArticuloListado, EstadoDeReposicion, Existencias as ExistenciasRespuesta, FilaExistencia, PuntoVentaListado } from '../api/tipos'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+
+const CANTIDAD_DE_COLUMNAS = 7
+
+const ETIQUETA_ESTADO: Record<EstadoDeReposicion, string> = {
+  SinMinimo: 'Sin mínimo',
+  Bajo: 'Bajo',
+  Ok: 'Ok',
+}
 
 function formatearCantidad(valor: number): string {
   return valor.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
 }
 
+function formatearUmbral(valor: number | null): string {
+  return valor === null ? '—' : formatearCantidad(valor)
+}
+
+// ---- Selector de artículo para agregar una fila (stage-13-stock-inteligente, Slice 3) ---------
+// Duplicado de `SelectorDeArticulo` en `Transferencias.tsx`: no hay un módulo compartido de
+// selectores todavía (mismo criterio ya documentado ahí). A diferencia de ese selector, este no
+// mantiene una "descripción elegida" en pantalla — el resultado se consume de inmediato
+// (`onElegir`) y la búsqueda se limpia sola.
+
+type PropsSelectorDeArticuloParaAlta = {
+  disabled: boolean
+  onElegir: (articulo: ArticuloListado) => void
+}
+
+function SelectorDeArticuloParaAlta({ disabled, onElegir }: PropsSelectorDeArticuloParaAlta) {
+  const [termino, setTermino] = useState('')
+  const [resultados, setResultados] = useState<ArticuloListado[]>([])
+  const [buscando, setBuscando] = useState(false)
+  const generacionRef = useRef(0)
+
+  useEffect(() => {
+    if (termino.trim().length < 2) {
+      setResultados([])
+      return
+    }
+
+    let vigente = true
+    const miGeneracion = (generacionRef.current += 1)
+    setBuscando(true)
+
+    const temporizador = setTimeout(() => {
+      clienteDeArticulos
+        .listar(termino, false)
+        .then((pagina) => {
+          if (!vigente || generacionRef.current !== miGeneracion) return
+          setResultados(pagina.items)
+        })
+        .catch(() => {
+          if (!vigente || generacionRef.current !== miGeneracion) return
+          setResultados([])
+        })
+        .finally(() => {
+          if (!vigente || generacionRef.current !== miGeneracion) return
+          setBuscando(false)
+        })
+    }, 300)
+
+    return () => {
+      vigente = false
+      clearTimeout(temporizador)
+    }
+  }, [termino])
+
+  return (
+    <div className="position-relative" style={{ maxWidth: 320 }}>
+      <input
+        type="text"
+        className="form-control form-control-sm rounded-0"
+        placeholder="Buscar artículo para agregar…"
+        aria-label="Buscar artículo para agregar"
+        value={termino}
+        disabled={disabled}
+        onChange={(e) => setTermino(e.target.value)}
+      />
+      {buscando && <div className="small text-muted">Buscando…</div>}
+      {!buscando && resultados.length > 0 && (
+        <div className="list-group position-absolute w-100" style={{ zIndex: 10 }}>
+          {resultados.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className="list-group-item list-group-item-action py-1 px-2 small"
+              onClick={() => {
+                onElegir(a)
+                setTermino('')
+                setResultados([])
+              }}
+            >
+              {a.codigoInterno} — {a.nombre}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
- * Existencias (stage-11-exportacion-reportes, Slice 9 — web, droppable a Etapa 13; design: Web
- * Composition; proposal decisión 10) — pantalla modesta: `stock` ⋈ `articulos` de UN punto de
- * venta, sin filtro de fecha (el stock no tiene dimensión temporal) y sin paginado (agregado
- * acotado por construcción, design decisión 6). Misma política que `/tablero`
- * (`Politicas.LecturaDeReportes`: Supervisor + Admin).
+ * Existencias (stage-11-exportacion-reportes, Slice 9 — web; ampliada en stage-13-stock-inteligente,
+ * Slice 3, design: Web Composition; decisiones 15/16) — pantalla del punto de venta: `stock` ⋈
+ * `articulos`, con edición inline de `minimo`/`reposicion` fila-por-fila y alta de artículos nuevos
+ * al grupo gestionado. Misma política que `/tablero` (`Politicas.LecturaDeReportes`: Supervisor +
+ * Admin en lectura; `PUT /api/stock/minimos` es Admin-only del lado del servidor).
  */
 export function Existencias() {
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
@@ -27,7 +125,22 @@ export function Existencias() {
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
   const [errorDescarga, setErrorDescarga] = useState('')
-  const generacionRef = useRef(0)
+  const generacionRef = useRef(0) // staleness de LECTURAS (regla 2), sin tocar por esta slice
+
+  // ---- Editor inline de una sola fila (decisión 15: bloquear supersede-during-write, nunca
+  // reconciliar por token) --------------------------------------------------------------------
+  const [filaEnEdicion, setFilaEnEdicion] = useState<number | null>(null) // idArticulo, UNA sola
+  const [minimoTexto, setMinimoTexto] = useState('')
+  const [reposicionTexto, setReposicionTexto] = useState('')
+  const [guardando, setGuardando] = useState<number | null>(null) // idArticulo en vuelo — atributo `disabled`
+  // Espejo síncrono de `guardando`, mismo criterio que `transfiriendoRef` en Transferencias.tsx /
+  // CompraEditor.tsx: el `useState` de arriba solo maneja el render (`disabled`), pero React 18
+  // batchea su commit — dos clicks despachados en el MISMO tick (sin render entre medio) todavía
+  // leerían el `guardando` VIEJO del cierre. El guard de reentrancia de primera línea (regla 9)
+  // necesita una escritura/lectura SÍNCRONA, así que vive en este ref, no en el estado.
+  const guardandoRef = useRef<number | null>(null)
+  const [errorGuardado, setErrorGuardado] = useState('')
+  const tokenDeEscrituraRef = useRef(0) // gate de la respuesta/`finally` del propio guardado (regla 2/4)
 
   useEffect(() => {
     let vigente = true
@@ -76,6 +189,97 @@ export function Existencias() {
     cargar()
   }, [cargar])
 
+  function cambiarPuntoVenta(nuevoId: number) {
+    if (guardandoRef.current !== null) return
+    setIdPuntoVenta(nuevoId)
+    setFilaEnEdicion(null)
+    setErrorGuardado('')
+  }
+
+  /** Abre una fila para edición — mutation target nombrado (design decisión 15, tarea 3.6):
+   * sin este guard de primera línea, abrir la fila B mientras la fila A se guarda deja de estar
+   * bloqueado. Lee `guardandoRef` (no el estado `guardando`): un doble click en el MISMO tick
+   * vence tanto al re-render del atributo `disabled` COMO a un guard basado en estado — solo un
+   * ref, escrito/leído sincrónicamente, sobrevive esa carrera (`react-async-state` regla 9). */
+  function abrirFila(fila: FilaExistencia) {
+    if (guardandoRef.current !== null) return
+    setFilaEnEdicion(fila.idArticulo)
+    setMinimoTexto(fila.minimo === null ? '' : String(fila.minimo))
+    setReposicionTexto(fila.reposicion === null ? '' : String(fila.reposicion))
+    setErrorGuardado('')
+  }
+
+  function cancelarEdicion() {
+    if (guardandoRef.current !== null) return
+    setFilaEnEdicion(null)
+    setErrorGuardado('')
+  }
+
+  async function guardarFila(fila: FilaExistencia) {
+    if (guardandoRef.current !== null) return // regla 9: guard de reentrancia de primera línea (doble click)
+    if (idPuntoVenta === null) return
+    if (!umbralTextoValido(minimoTexto) || !umbralTextoValido(reposicionTexto)) return
+    if (reposicionMenorQueMinimo(minimoTexto, reposicionTexto)) return
+
+    const miToken = (tokenDeEscrituraRef.current += 1)
+    guardandoRef.current = fila.idArticulo
+    setGuardando(fila.idArticulo)
+    setErrorGuardado('')
+
+    try {
+      const solicitud = aSolicitudDeMinimos(idPuntoVenta, fila.idArticulo, minimoTexto, reposicionTexto)
+      const resultado = await clienteDeStock.escribirMinimos(solicitud)
+      if (tokenDeEscrituraRef.current !== miToken) return
+
+      // decisión 16: la respuesta AUTORITATIVA se aplica con un updater funcional desde `prev` —
+      // nunca un refetch del reporte completo (regla 1: nunca se lee `existencias` del cierre).
+      setExistencias((prev) => {
+        if (prev === null) return prev
+        return {
+          ...prev,
+          filas: prev.filas.map((f) =>
+            f.idArticulo === resultado.idArticulo
+              ? { ...f, cantidad: resultado.cantidad, minimo: resultado.minimo, reposicion: resultado.reposicion, estado: resultado.estado }
+              : f,
+          ),
+        }
+      })
+      setFilaEnEdicion(null)
+    } catch (e) {
+      if (tokenDeEscrituraRef.current === miToken) {
+        setErrorGuardado(e instanceof ErrorApi ? e.message : 'No se pudo guardar el mínimo.')
+      }
+    } finally {
+      if (tokenDeEscrituraRef.current === miToken) {
+        guardandoRef.current = null
+        setGuardando(null)
+      }
+    }
+  }
+
+  /** Alta de artículo (tarea 3.4): agrega una fila local en `cantidad = 0` (el mismo residuo que
+   * deja el upsert del servidor cuando no había fila de `stock` previa) y la abre para edición —
+   * la fila existe recién cuando el `PUT` la persiste. Si el artículo ya está en la grilla, abre
+   * la fila existente en vez de duplicarla. */
+  function agregarFila(articulo: ArticuloListado) {
+    if (guardandoRef.current !== null) return
+    const existente = existencias?.filas.find((f) => f.idArticulo === articulo.id)
+    if (existente) {
+      abrirFila(existente)
+      return
+    }
+    const nuevaFila: FilaExistencia = {
+      idArticulo: articulo.id,
+      nombre: articulo.nombre,
+      cantidad: 0,
+      minimo: null,
+      reposicion: null,
+      estado: 'SinMinimo',
+    }
+    setExistencias((prev) => (prev === null ? prev : { ...prev, filas: [...prev.filas, nuevaFila] }))
+    abrirFila(nuevaFila)
+  }
+
   return (
     <div className="container-fluid py-4">
       <Box titulo="Existencias" variante="inverse">
@@ -106,7 +310,8 @@ export function Existencias() {
                   id="existencias-punto-venta"
                   className="form-select rounded-0"
                   value={idPuntoVenta}
-                  onChange={(e) => setIdPuntoVenta(Number(e.target.value))}
+                  disabled={guardando !== null}
+                  onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
                 >
                   {puntosVenta.map((pv) => (
                     <option key={pv.id} value={pv.id}>
@@ -121,6 +326,7 @@ export function Existencias() {
                   etiqueta="Descargar"
                   onError={setErrorDescarga}
                   onInicio={() => setErrorDescarga('')}
+                  disabled={guardando !== null}
                 />
               </div>
             </div>
@@ -137,25 +343,118 @@ export function Existencias() {
                       <th>Artículo</th>
                       <th>Nombre</th>
                       <th className="text-end">Cantidad</th>
+                      <th className="text-end">Mínimo</th>
+                      <th className="text-end">Reposición</th>
+                      <th>Estado</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {existencias.filas.map((fila) => (
-                      <tr key={fila.idArticulo}>
-                        <td>{fila.idArticulo}</td>
-                        <td>{fila.nombre}</td>
-                        <td className="text-end">{formatearCantidad(fila.cantidad)}</td>
-                      </tr>
-                    ))}
+                    {existencias.filas.map((fila) => {
+                      const enEdicion = filaEnEdicion === fila.idArticulo
+                      const guardandoEstaFila = guardando === fila.idArticulo
+                      const minimoInvalido = enEdicion && !umbralTextoValido(minimoTexto)
+                      const reposicionInvalida = enEdicion && !umbralTextoValido(reposicionTexto)
+                      const violaReposicion = enEdicion && reposicionMenorQueMinimo(minimoTexto, reposicionTexto)
+                      const puedeGuardar = enEdicion && !minimoInvalido && !reposicionInvalida && !violaReposicion
+
+                      return (
+                        <Fragment key={fila.idArticulo}>
+                          <tr>
+                            <td>{fila.idArticulo}</td>
+                            <td>{fila.nombre}</td>
+                            <td className="text-end">{formatearCantidad(fila.cantidad)}</td>
+                            <td className="text-end" style={{ minWidth: 110 }}>
+                              {enEdicion ? (
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="form-control form-control-sm rounded-0 text-end"
+                                  aria-label={`Mínimo de ${fila.nombre}`}
+                                  value={minimoTexto}
+                                  disabled={guardando !== null}
+                                  onChange={(e) => setMinimoTexto(e.target.value)}
+                                />
+                              ) : (
+                                formatearUmbral(fila.minimo)
+                              )}
+                            </td>
+                            <td className="text-end" style={{ minWidth: 110 }}>
+                              {enEdicion ? (
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="form-control form-control-sm rounded-0 text-end"
+                                  aria-label={`Reposición de ${fila.nombre}`}
+                                  value={reposicionTexto}
+                                  disabled={guardando !== null}
+                                  onChange={(e) => setReposicionTexto(e.target.value)}
+                                />
+                              ) : (
+                                formatearUmbral(fila.reposicion)
+                              )}
+                              {violaReposicion && <div className="small text-danger">La reposición no puede ser menor que el mínimo.</div>}
+                              {(minimoInvalido || reposicionInvalida) && !violaReposicion && (
+                                <div className="small text-danger">Formato numérico inválido.</div>
+                              )}
+                            </td>
+                            <td>{ETIQUETA_ESTADO[fila.estado]}</td>
+                            <td className="text-end" style={{ minWidth: 170 }}>
+                              {enEdicion ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="btn btn-primary btn-sm rounded-0 me-1"
+                                    disabled={!puedeGuardar}
+                                    onClick={() => guardarFila(fila)}
+                                  >
+                                    {guardandoEstaFila ? 'Guardando…' : 'Guardar'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-outline-secondary btn-sm rounded-0"
+                                    disabled={guardando !== null}
+                                    onClick={cancelarEdicion}
+                                  >
+                                    Cancelar
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn-outline-secondary btn-sm rounded-0"
+                                  disabled={guardando !== null}
+                                  onClick={() => abrirFila(fila)}
+                                >
+                                  Editar
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                          {enEdicion && errorGuardado && (
+                            <tr>
+                              <td colSpan={CANTIDAD_DE_COLUMNAS} className="text-danger small py-1">
+                                {errorGuardado}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })}
                     {existencias.filas.length === 0 && (
                       <tr>
-                        <td colSpan={3} className="text-center text-muted py-4">
+                        <td colSpan={CANTIDAD_DE_COLUMNAS} className="text-center text-muted py-4">
                           No hay stock cargado para este punto de venta.
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+
+                <div className="mt-2">
+                  <label className="form-label small text-muted d-block mb-1">Agregar artículo</label>
+                  <SelectorDeArticuloParaAlta disabled={guardando !== null} onElegir={agregarFila} />
+                </div>
               </div>
             )}
           </>
