@@ -14,8 +14,10 @@ import type {
   PaginaDeMovimientosTesoreria,
   Rentabilidad,
   ResumenDeGastos,
+  ResumenDeVencimientos,
   ResumenDeVentas,
   TopArticulos,
+  Vencimientos,
   VentasPorMedioPago,
   VentasPorPuntoVenta,
   VentasPorVendedor,
@@ -107,6 +109,16 @@ export const clienteDeReportes = {
     api.get<PaginaDeMovimientosTesoreria>(`/reportes/tesoreria${construirQueryDeTesoreria(filtros)}`),
   existencias: (idPuntoVenta: number) =>
     api.get<Existencias>(`/reportes/stock/existencias?idPuntoVenta=${idPuntoVenta}`),
+  /** stage-12-lotes-vencimientos (Slice 15): `dias` es opcional — omitido, el servidor resuelve
+   * `dias_alerta_vencimiento` (PV → empresa → default), mismo criterio que el resto de los
+   * parámetros del backend con default declarado (dto-contract-honesty: no se manda un valor
+   * inventado del lado del cliente cuando el servidor ya sabe resolverlo). */
+  vencimientos: (idPuntoVenta: number, dias: number | null) =>
+    api.get<Vencimientos>(
+      `/reportes/stock/vencimientos?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}`,
+    ),
+  vencimientosResumen: (idPuntoVenta: number) =>
+    api.get<ResumenDeVencimientos>(`/reportes/stock/vencimientos/resumen?idPuntoVenta=${idPuntoVenta}`),
 }
 
 // ---- Offset local para desde/hasta de /cajas y /tesoreria (stage-11-exportacion-reportes,
@@ -212,6 +224,10 @@ export const rutasDeExportacion = {
   /** Sin `desde`/`hasta`: el stock no tiene rango, el nombre de archivo se fecha con el día del
    * servidor (mismo criterio que la ruta JSON hermana). */
   existencias: (idPuntoVenta: number) => `/reportes/stock/existencias/export?idPuntoVenta=${idPuntoVenta}&formato=xlsx`,
+  /** stage-12-lotes-vencimientos (Slice 15): mismo query string que la ruta JSON hermana +
+   * `formato=xlsx`, mismo criterio que `existencias`. */
+  vencimientos: (idPuntoVenta: number, dias: number | null) =>
+    `/reportes/stock/vencimientos/export?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
 }
 
 function aFechaIso(fecha: Date): string {

@@ -100,6 +100,15 @@ export function Layout() {
                     </NavLink>
                   </li>
                 )}
+                {/* stage-12-lotes-vencimientos (Slice 15): mismo gate que Existencias
+                    (puedeVerReportes). */}
+                {usuario && puedeVerReportes(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/reportes/stock/vencimientos">
+                      Vencimientos
+                    </NavLink>
+                  </li>
+                )}
                 {usuario && puedeGestionarUsuarios(usuario.rolId) && (
                   <li className="nav-item">
                     <NavLink className="nav-link" to="/usuarios">

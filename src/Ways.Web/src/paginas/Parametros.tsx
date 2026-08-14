@@ -74,11 +74,14 @@ export function Parametros() {
   }, [idEmpresa, cargarListado])
 
   // Cambiar de clave resetea el valor tipeado: un `<select>` de zona horaria no puede arrancar
-  // en '' (no matchea ninguna opción), y un numérico arranca limpio para que el placeholder con
-  // el default declarado sea visible.
+  // en '' (no matchea ninguna opción), un checkbox arranca en 'false' (mismo criterio: no puede
+  // quedar en un estado sin mapeo), y un numérico arranca limpio para que el placeholder con el
+  // default declarado sea visible.
   useEffect(() => {
     const conocido = PARAMETROS_CONOCIDOS.find((p) => p.clave === clave)
-    setValorTexto(conocido?.tipo === 'texto' ? ZONAS_HORARIAS_OFRECIDAS[0].id : '')
+    if (conocido?.tipo === 'texto') setValorTexto(ZONAS_HORARIAS_OFRECIDAS[0].id)
+    else if (conocido?.tipo === 'booleano') setValorTexto('false')
+    else setValorTexto('')
   }, [clave])
 
   const puntosVentaDeLaEmpresa = puntosVenta.filter((p) => p.idEmpresa === idEmpresa)
@@ -96,9 +99,11 @@ export function Parametros() {
       const valor =
         conocidoSeleccionado?.tipo === 'texto'
           ? JSON.stringify(valorTexto)
-          : JSON.stringify(
-              conocidoSeleccionado?.tipo === 'entero' ? Math.trunc(Number(valorTexto)) : Number(valorTexto),
-            )
+          : conocidoSeleccionado?.tipo === 'booleano'
+            ? JSON.stringify(valorTexto === 'true')
+            : JSON.stringify(
+                conocidoSeleccionado?.tipo === 'entero' ? Math.trunc(Number(valorTexto)) : Number(valorTexto),
+              )
 
       const datos: ParametroAlta = {
         clave,
@@ -108,7 +113,13 @@ export function Parametros() {
 
       await api.put(`/parametros?idEmpresa=${idEmpresa}`, datos)
       setAviso(`Se guardó "${clave}".`)
-      setValorTexto(conocidoSeleccionado?.tipo === 'texto' ? ZONAS_HORARIAS_OFRECIDAS[0].id : '')
+      setValorTexto(
+        conocidoSeleccionado?.tipo === 'texto'
+          ? ZONAS_HORARIAS_OFRECIDAS[0].id
+          : conocidoSeleccionado?.tipo === 'booleano'
+            ? 'false'
+            : '',
+      )
       await cargarListado(idEmpresa)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar el parámetro.')
@@ -213,6 +224,17 @@ export function Parametros() {
                       </option>
                     ))}
                   </select>
+                ) : conocidoSeleccionado?.tipo === 'booleano' ? (
+                  <div className="form-check form-switch mt-2">
+                    <input
+                      id="p-valor"
+                      type="checkbox"
+                      className="form-check-input"
+                      checked={valorTexto === 'true'}
+                      onChange={(e) => setValorTexto(e.target.checked ? 'true' : 'false')}
+                    />
+                    <span className="small text-muted ms-1">{valorTexto === 'true' ? 'Habilitado' : 'Deshabilitado'}</span>
+                  </div>
                 ) : (
                   <input
                     id="p-valor"

@@ -10,7 +10,7 @@ import {
 import { clienteDeArticulos } from '../api/articulos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
-import type { ArticuloListado, PuntoVentaListado, ResultadoTransferencia } from '../api/tipos'
+import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoTransferencia } from '../api/tipos'
 import { Box } from '../componentes/Box'
 
 // ---- Selector de artículo por búsqueda (search-as-you-type) — duplicado de CompraEditor.tsx:
@@ -96,10 +96,113 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
   )
 }
 
+// ---- Picker de lote por línea (stage-12-lotes-vencimientos, Slice 15) ---------------------------
+// `GET /api/stock/lotes` con `sugerido` — el server manda (design decisión 19): el picker
+// PRE-SELECCIONA el lote sugerido (FEFO), nunca lo recalcula del lado del cliente. El operador
+// puede vaciar la selección: un `idLote` omitido deja que el servidor resuelva FEFO en el
+// momento de la transferencia (mismo criterio del picker del POS, Slice 14).
+
+type PropsSelectorDeLote = {
+  idPuntoVenta: number | ''
+  idArticulo: number | ''
+  idLote: number | ''
+  disabled: boolean
+  onCambio: (idLote: number | '', codigoLote: string) => void
+}
+
+function SelectorDeLote({ idPuntoVenta, idArticulo, idLote, disabled, onCambio }: PropsSelectorDeLote) {
+  const [lotes, setLotes] = useState<LoteListado[]>([])
+  const [cargando, setCargando] = useState(false)
+  const [error, setError] = useState('')
+  const generacionRef = useRef(0)
+  const idLoteRef = useRef(idLote)
+  idLoteRef.current = idLote
+  const idPuntoVentaAnteriorRef = useRef(idPuntoVenta)
+
+  useEffect(() => {
+    setLotes([])
+
+    // stage-12-lotes-vencimientos (judgment-day fix, Slice 15): un lote explícito elegido viaja
+    // contra el PV de origen — si el origen cambia, ese `idLote` queda referido al PV anterior
+    // (stale). Se resetea acá, junto con el refetch de abajo, para que nunca viaje un lote de otro
+    // punto de venta; un cambio de `idArticulo` no necesita este reset porque `onElegir` en
+    // `FilaDeLinea` ya limpia `idLote` en el mismo `setLineas`.
+    if (idPuntoVentaAnteriorRef.current !== idPuntoVenta) {
+      idPuntoVentaAnteriorRef.current = idPuntoVenta
+      if (idLoteRef.current !== '') onCambio('', '')
+    }
+
+    if (idPuntoVenta === '' || idArticulo === '') return
+
+    let vigente = true
+    const miGeneracion = (generacionRef.current += 1)
+    setCargando(true)
+    setError('')
+
+    clienteDeStock
+      .listarLotes(idPuntoVenta, idArticulo)
+      .then((lista) => {
+        if (!vigente || generacionRef.current !== miGeneracion) return
+        setLotes(lista)
+        // Pre-selección FEFO (decisión 19) — solo si la línea todavía no tiene un lote elegido
+        // al momento en que esta respuesta aterriza (token-gated, regla 2/3 de react-async-state).
+        if (idLoteRef.current === '') {
+          const sugerido = lista.find((l) => l.sugerido)
+          if (sugerido) onCambio(sugerido.idLote, sugerido.codigo)
+        }
+      })
+      .catch((e) => {
+        if (!vigente || generacionRef.current !== miGeneracion) return
+        setLotes([])
+        setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los lotes.')
+      })
+      .finally(() => {
+        if (!vigente || generacionRef.current !== miGeneracion) return
+        setCargando(false)
+      })
+
+    return () => {
+      vigente = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idPuntoVenta, idArticulo])
+
+  if (idPuntoVenta === '' || idArticulo === '') return <span className="text-muted small">—</span>
+  if (cargando && lotes.length === 0) return <span className="text-muted small">Cargando lotes…</span>
+  if (error) return <span className="text-danger small">{error}</span>
+
+  return (
+    <select
+      className="form-select form-select-sm rounded-0"
+      aria-label="Lote"
+      value={idLote}
+      disabled={disabled}
+      onChange={(e) => {
+        const valor = e.target.value
+        if (valor === '') {
+          onCambio('', '')
+          return
+        }
+        const elegido = lotes.find((l) => l.idLote === Number(valor))
+        onCambio(Number(valor), elegido?.codigo ?? '')
+      }}
+    >
+      <option value="">Auto (FEFO)</option>
+      {lotes.map((l) => (
+        <option key={l.idLote} value={l.idLote}>
+          {l.codigo} — saldo {l.cantidad}
+          {l.sugerido ? ' (sugerido)' : ''}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 // ---- Fila editable del grid de líneas ----------------------------------------------------------
 
 type PropsFilaDeLinea = {
   linea: LineaDeTransferenciaFormulario
+  idPuntoVentaOrigen: number | ''
   disabled: boolean
   repetida: boolean
   incompleta: boolean
@@ -107,14 +210,22 @@ type PropsFilaDeLinea = {
   onQuitar: (clave: number) => void
 }
 
-function FilaDeLinea({ linea, disabled, repetida, incompleta, onCambio, onQuitar }: PropsFilaDeLinea) {
+function FilaDeLinea({ linea, idPuntoVentaOrigen, disabled, repetida, incompleta, onCambio, onQuitar }: PropsFilaDeLinea) {
   return (
     <tr className={repetida ? 'table-danger' : incompleta ? 'table-warning text-muted' : undefined}>
       <td style={{ minWidth: 220 }}>
         <SelectorDeArticulo
           descripcion={linea.descripcion}
           disabled={disabled}
-          onElegir={(a) => onCambio(linea.clave, { idArticulo: a.id, descripcion: a.nombre })}
+          onElegir={(a) =>
+            onCambio(linea.clave, {
+              idArticulo: a.id,
+              descripcion: a.nombre,
+              controlaLote: a.controlaLote,
+              idLote: '',
+              codigoLote: '',
+            })
+          }
         />
         {repetida && <div className="small text-danger">Artículo repetido en la transferencia.</div>}
         {incompleta && !repetida && <div className="small text-warning-emphasis">Línea incompleta — no se va a transferir.</div>}
@@ -130,6 +241,19 @@ function FilaDeLinea({ linea, disabled, repetida, incompleta, onCambio, onQuitar
           disabled={disabled}
           onChange={(e) => onCambio(linea.clave, { cantidad: e.target.value })}
         />
+      </td>
+      <td style={{ minWidth: 180 }}>
+        {linea.controlaLote && linea.idArticulo !== '' ? (
+          <SelectorDeLote
+            idPuntoVenta={idPuntoVentaOrigen}
+            idArticulo={linea.idArticulo}
+            idLote={linea.idLote}
+            disabled={disabled}
+            onCambio={(idLote, codigoLote) => onCambio(linea.clave, { idLote, codigoLote })}
+          />
+        ) : (
+          <span className="text-muted small">—</span>
+        )}
       </td>
       <td>
         <button type="button" className="btn btn-outline-danger btn-sm rounded-0" disabled={disabled} onClick={() => onQuitar(linea.clave)}>
@@ -175,7 +299,11 @@ export function Transferencias() {
   const [idPuntoVentaDestino, setIdPuntoVentaDestino] = useState<number | ''>('')
   const [observaciones, setObservaciones] = useState('')
   const proximaClaveRef = useRef(1)
-  const [lineas, setLineas] = useState<LineaDeTransferenciaFormulario[]>([lineaDeTransferenciaVacia(1)])
+  // Inicializador perezoso que consume el ref (mismo patrón que CuentaCorriente.tsx y Pos.tsx):
+  // evita que la fila inicial y la primera agregada compartan `clave` (colisión de key de React).
+  const [lineas, setLineas] = useState<LineaDeTransferenciaFormulario[]>(() => [
+    lineaDeTransferenciaVacia(proximaClaveRef.current++),
+  ])
 
   const [transfiriendo, setTransfiriendo] = useState(false)
   const transfiriendoRef = useRef(false)
@@ -279,14 +407,20 @@ export function Transferencias() {
               <thead>
                 <tr>
                   <th>Artículo</th>
+                  <th>Lote</th>
                   <th className="text-end">Stock en origen</th>
                   <th className="text-end">Stock en destino</th>
                 </tr>
               </thead>
               <tbody>
+                {/* stage-12-lotes-vencimientos (Slice 15): DEUDA del slice 10 cerrada acá — con
+                    lote, dos filas del MISMO artículo pueden coexistir (`(idArticulo, idLote)` es
+                    la clave de agregación real del backend), así que `key={l.idArticulo}` solo
+                    colisionaba silenciosamente entre ellas. Clave compuesta. */}
                 {resultado.lineas.map((l) => (
-                  <tr key={l.idArticulo}>
+                  <tr key={`${l.idArticulo}-${l.idLote ?? 'sin-lote'}`}>
                     <td>{descripcionesTransferidas[l.idArticulo] ?? `Artículo #${l.idArticulo}`} (#{l.idArticulo})</td>
+                    <td>{l.idLote ?? '—'}</td>
                     <td className="text-end">{l.cantidadOrigen}</td>
                     <td className="text-end">{l.cantidadDestino}</td>
                   </tr>
@@ -359,6 +493,7 @@ export function Transferencias() {
               <tr>
                 <th>Artículo</th>
                 <th>Cantidad</th>
+                <th>Lote</th>
                 <th></th>
               </tr>
             </thead>
@@ -367,8 +502,9 @@ export function Transferencias() {
                 <FilaDeLinea
                   key={l.clave}
                   linea={l}
+                  idPuntoVentaOrigen={idPuntoVentaOrigen}
                   disabled={ocupado || !referenciaOk}
-                  repetida={l.idArticulo !== '' && repetidos.has(Number(l.idArticulo))}
+                  repetida={repetidos.has(l.clave)}
                   incompleta={!lineaTransferenciaCompleta(l)}
                   onCambio={cambiarLinea}
                   onQuitar={quitarLinea}

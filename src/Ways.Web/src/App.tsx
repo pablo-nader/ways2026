@@ -31,6 +31,7 @@ import { Tenants } from './paginas/Tenants'
 import { Tesoreria } from './paginas/Tesoreria'
 import { Transferencias } from './paginas/Transferencias'
 import { Usuarios } from './paginas/Usuarios'
+import { Vencimientos } from './paginas/Vencimientos'
 import { descriptorListasPrecio } from './api/catalogos'
 import { ROL } from './api/tipos'
 
@@ -136,6 +137,18 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <Existencias />
+                </RutaProtegida>
+              }
+            />
+            {/* stage-12-lotes-vencimientos (Slice 15, design: Web Composition): mismo gate que
+                /reportes/existencias (Politicas.LecturaDeReportes) — vista de gestión sobre
+                lotes con saldo positivo, no el picker del POS (Politicas.OperacionDePos de
+                GET /api/stock/lotes). */}
+            <Route
+              path="/reportes/stock/vencimientos"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <Vencimientos />
                 </RutaProtegida>
               }
             />

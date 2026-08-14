@@ -125,3 +125,91 @@ describe('Parametros — claves numéricas existentes (flujo sin cambios)', () =
     expect(datos.valor).toBe('12')
   })
 })
+
+// ---- Claves nuevas de stage-12-lotes-vencimientos (Slice 15) -----------------------------------
+
+describe('Parametros — clave lotes_habilitado (tipo booleano, nuevo en el registro)', () => {
+  it('renderiza un checkbox — nunca un <input type="number"> ni un <select> — y arranca deshabilitado', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+
+    render(<Parametros />)
+    await screen.findByText('Empresa Uno SA')
+
+    await usuario.selectOptions(screen.getByLabelText('Clave'), 'lotes_habilitado')
+
+    const selectorDeValor = screen.getByLabelText('Valor')
+    expect(selectorDeValor.tagName).toBe('INPUT')
+    expect((selectorDeValor as HTMLInputElement).type).toBe('checkbox')
+    expect(selectorDeValor).not.toBeChecked()
+  })
+
+  it('coerción boolean: tildarlo y guardar manda el JSON crudo `true`, no `"true"` ni `1`', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+
+    render(<Parametros />)
+    await screen.findByText('Empresa Uno SA')
+
+    await usuario.selectOptions(screen.getByLabelText('Clave'), 'lotes_habilitado')
+    await usuario.click(screen.getByLabelText('Valor'))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, datos] = apiPutMock.mock.calls[0] as [string, { clave: string; valor: string }]
+    expect(datos.clave).toBe('lotes_habilitado')
+    expect(datos.valor).toBe('true')
+  })
+
+  it('sin tildar, guarda el JSON crudo `false`', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+
+    render(<Parametros />)
+    await screen.findByText('Empresa Uno SA')
+
+    await usuario.selectOptions(screen.getByLabelText('Clave'), 'lotes_habilitado')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, datos] = apiPutMock.mock.calls[0] as [string, { clave: string; valor: string }]
+    expect(datos.valor).toBe('false')
+  })
+
+  it('cambiar de clave a otra numérica resetea el checkbox — nunca queda pisado un "true" residual', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+
+    render(<Parametros />)
+    await screen.findByText('Empresa Uno SA')
+
+    await usuario.selectOptions(screen.getByLabelText('Clave'), 'lotes_habilitado')
+    await usuario.click(screen.getByLabelText('Valor'))
+    await usuario.selectOptions(screen.getByLabelText('Clave'), 'dias_alerta_vencimiento')
+
+    expect(screen.getByLabelText('Valor').tagName).toBe('INPUT')
+    expect((screen.getByLabelText('Valor') as HTMLInputElement).type).toBe('number')
+    expect(screen.getByLabelText('Valor')).toHaveValue(null)
+  })
+})
+
+describe('Parametros — clave dias_alerta_vencimiento (entero, nuevo en el registro)', () => {
+  it('envía un número entero JSON, con el default 30 en el placeholder', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+
+    render(<Parametros />)
+    await screen.findByText('Empresa Uno SA')
+
+    await usuario.selectOptions(screen.getByLabelText('Clave'), 'dias_alerta_vencimiento')
+    expect(screen.getByPlaceholderText('Default: 30')).toBeInTheDocument()
+
+    await usuario.type(screen.getByLabelText('Valor'), '45')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, datos] = apiPutMock.mock.calls[0] as [string, { clave: string; valor: string }]
+    expect(datos.clave).toBe('dias_alerta_vencimiento')
+    expect(datos.valor).toBe('45')
+  })
+})

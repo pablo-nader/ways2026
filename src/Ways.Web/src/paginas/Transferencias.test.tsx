@@ -6,7 +6,7 @@ import { Transferencias } from './Transferencias'
 import { RutaProtegida } from '../auth/RutaProtegida'
 import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
-import type { ArticuloListado, PuntoVentaListado, ResultadoTransferencia, UsuarioAutenticado } from '../api/tipos'
+import type { ArticuloListado, LoteListado, PuntoVentaListado, ResultadoTransferencia, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -120,6 +120,34 @@ function mockearPuntosVenta(puntos: PuntoVentaListado[] = [puntoVentaFixture({ i
   })
 }
 
+function loteFixture(sobrescribir: Partial<LoteListado> = {}): LoteListado {
+  return {
+    idLote: 41,
+    idArticulo: 10,
+    codigo: '2026-08-20',
+    fechaVencimiento: '2026-08-20',
+    esSinIdentificar: false,
+    cantidad: 12,
+    estado: 'Vigente',
+    sugerido: true,
+    ...sobrescribir,
+  }
+}
+
+/** Variante lote-efectiva de `mockearPuntosVenta` — mismo artículo pero con `controlaLote: true`
+ * y `GET /api/stock/lotes` mockeado (stage-12-lotes-vencimientos, Slice 15). */
+function mockearPuntosVentaConLote(
+  lotes: LoteListado[] = [loteFixture({ idLote: 41, sugerido: true }), loteFixture({ idLote: 42, codigo: '2026-09-01', sugerido: false })],
+) {
+  const puntos = [puntoVentaFixture({ id: 1, nombre: 'Casa Central' }), puntoVentaFixture({ id: 2, nombre: 'Sucursal Norte' })]
+  apiGetMock.mockImplementation((ruta: string) => {
+    if (ruta === '/puntos-venta') return Promise.resolve(puntos)
+    if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
+    if (ruta.startsWith('/stock/lotes?')) return Promise.resolve(lotes)
+    return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+  })
+}
+
 async function completarLinea(usuario: ReturnType<typeof userEvent.setup>) {
   await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'fideos')
   await screen.findByText('ART-10 — Fideos 500g')
@@ -175,8 +203,43 @@ describe('Transferencias — flujo feliz', () => {
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
       observaciones: 'Reposición de sucursal',
-      lineas: [{ idArticulo: 10, cantidad: 8 }],
+      lineas: [{ idArticulo: 10, cantidad: 8, idLote: null }],
     })
+  })
+})
+
+describe('Transferencias — clave de línea (judgment-day fix, Slice 15)', () => {
+  it('agregar una línea inmediatamente tras el mount no colisiona de clave con la fila inicial', async () => {
+    // `proximaClaveRef` arrancaba en `1`, el mismo valor que la fila inicial: la primera línea
+    // agregada recibía una `clave` duplicada (colisión de key de React; `cambiarLinea`/`quitarLinea`,
+    // que matchean por `clave`, tocarían ambas filas). Igual criterio de "señal discriminante" que
+    // el test de arriba: se espía `console.error` y se afirma la ausencia del warning de React.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockearPuntosVenta()
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+
+    const buscadores = screen.getAllByPlaceholderText('Buscar artículo…')
+    expect(buscadores).toHaveLength(2)
+    await usuario.type(buscadores[1], 'fideos')
+    await screen.findByText('ART-10 — Fideos 500g')
+    await usuario.click(screen.getByText('ART-10 — Fideos 500g'))
+    await usuario.type(screen.getAllByLabelText('Cantidad')[1], '3')
+
+    // Comportamiento observable: si la `clave` colisionara, editar la fila nueva también
+    // habría tocado la fila inicial (mismo `clave` en el `.map` de `cambiarLinea`).
+    expect(buscadores[0]).toHaveValue('')
+    expect(screen.getAllByLabelText('Cantidad')[0]).toHaveValue(null)
+
+    const huboWarningDeClave = errorSpy.mock.calls.some((call) =>
+      call.some((arg) => typeof arg === 'string' && arg.includes('same key')),
+    )
+    expect(huboWarningDeClave).toBe(false)
+
+    errorSpy.mockRestore()
   })
 })
 
@@ -224,7 +287,7 @@ describe('Transferencias — líneas incompletas', () => {
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
       observaciones: 'obs',
-      lineas: [{ idArticulo: 10, cantidad: 8 }],
+      lineas: [{ idArticulo: 10, cantidad: 8, idLote: null }],
     })
   })
 })
@@ -325,5 +388,278 @@ describe('Transferencias — role gating', () => {
 
     await screen.findByLabelText('Origen')
     expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
+  })
+})
+
+// ---- Lotes (stage-12-lotes-vencimientos, Slice 15) ----------------------------------------------
+
+describe('Transferencias — picker de lote', () => {
+  it('un artículo lote-efectivo muestra el picker de lote, pre-seleccionado con el sugerido, y lo manda en el request', async () => {
+    mockearPuntosVentaConLote()
+    let resolverTransferir: (valor: ResultadoTransferencia) => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/transferencias') return new Promise((resolve) => (resolverTransferir = resolve))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarLinea(usuario)
+
+    // Pre-selección FEFO (decisión 19): el picker de lote arranca en el sugerido, sin que el
+    // operador haga nada.
+    await waitFor(() => expect(screen.getByLabelText('Lote')).toHaveValue('41'))
+
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
+
+    resolverTransferir({
+      idPuntoVentaOrigen: 1,
+      idPuntoVentaDestino: 2,
+      lineas: [{ idArticulo: 10, idLote: 41, cantidadOrigen: 12, cantidadDestino: 13 }],
+    })
+    await screen.findByText(/Transferencia registrada/)
+
+    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/transferencias')
+    const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
+    expect(cuerpo).toEqual({
+      idPuntoVentaOrigen: 1,
+      idPuntoVentaDestino: 2,
+      observaciones: 'obs',
+      lineas: [{ idArticulo: 10, cantidad: 8, idLote: 41 }],
+    })
+  })
+
+  it('el operador puede vaciar la selección de lote — el servidor resuelve FEFO ("Auto (FEFO)")', async () => {
+    mockearPuntosVentaConLote()
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await completarLinea(usuario)
+
+    await waitFor(() => expect(screen.getByLabelText('Lote')).toHaveValue('41'))
+    await usuario.selectOptions(screen.getByLabelText('Lote'), '')
+    expect(screen.getByLabelText('Lote')).toHaveValue('')
+  })
+
+  it('un artículo SIN control de lote nunca muestra el picker', async () => {
+    mockearPuntosVenta()
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await completarLinea(usuario)
+
+    expect(screen.queryByLabelText('Lote')).not.toBeInTheDocument()
+  })
+
+  it('mutation-proof: dos filas del resultado con el mismo artículo y lotes distintos NUNCA colisionan (clave compuesta)', async () => {
+    // La clave discriminante real de esta mutación es el warning de React de claves duplicadas
+    // en un `.map` — un `key={l.idArticulo}` a secas NO produce contenido visiblemente erróneo
+    // en un primer render controlado (cada `<tr>` sigue derivando su texto de sus propias
+    // props), así que un assert de solo-contenido pasa igual con la mutación aplicada — el
+    // confound que `mutation-proof-tests` regla 3 exige rodear. Acá se espía `console.error` y
+    // se afirma la AUSENCIA del warning "Encountered two children with the same key", que SÍ es
+    // la señal que React emite exclusivamente cuando la clave colisiona.
+    // *(Mutación aplicada→observada→revertida en este apply run: revertir la clave compuesta a
+    // `key={l.idArticulo}` deja pasar el assert de contenido de abajo intacto, pero el spy de
+    // `console.error` capta el warning "Encountered two children with the same key" que este
+    // test existe para prevenir — confirmado localmente, revertido, verde de nuevo.)*
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    mockearPuntosVentaConLote()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/transferencias')
+        return Promise.resolve({
+          idPuntoVentaOrigen: 1,
+          idPuntoVentaDestino: 2,
+          lineas: [
+            { idArticulo: 10, idLote: 41, cantidadOrigen: 3, cantidadDestino: 4 },
+            { idArticulo: 10, idLote: 42, cantidadOrigen: 7, cantidadDestino: 8 },
+          ],
+        })
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarLinea(usuario)
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
+
+    await screen.findByText(/Transferencia registrada/)
+
+    // Contenido: las DOS filas coexisten, con sus cantidades propias intactas.
+    const filas = screen.getAllByRole('row').filter((fila) => fila.textContent?.includes('Fideos 500g'))
+    expect(filas).toHaveLength(2)
+    expect(filas[0].textContent).toContain('41')
+    expect(filas[0].textContent).toContain('3')
+    expect(filas[0].textContent).toContain('4')
+    expect(filas[1].textContent).toContain('42')
+    expect(filas[1].textContent).toContain('7')
+    expect(filas[1].textContent).toContain('8')
+
+    // La señal discriminante real: React NUNCA advierte de claves duplicadas con la clave
+    // compuesta — esta es la aserción que la mutación (revertir a `key={l.idArticulo}`) hace
+    // fallar.
+    const huboWarningDeClave = errorSpy.mock.calls.some((call) =>
+      call.some((arg) => typeof arg === 'string' && arg.includes('same key')),
+    )
+    expect(huboWarningDeClave).toBe(false)
+
+    errorSpy.mockRestore()
+  })
+})
+
+describe('Transferencias — lote explícito stale al cambiar Origen (judgment-day fix, Slice 15)', () => {
+  it('elegir un lote explícito y cambiar el Origen resetea la selección a Auto (FEFO) — nunca viaja el idLote del PV anterior', async () => {
+    const puntos = [
+      puntoVentaFixture({ id: 1, nombre: 'Casa Central' }),
+      puntoVentaFixture({ id: 2, nombre: 'Sucursal Norte' }),
+    ]
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve(puntos)
+      if (ruta.startsWith('/articulos'))
+        return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta.startsWith('/stock/lotes?') && ruta.includes('idPuntoVenta=1'))
+        return Promise.resolve([loteFixture({ idLote: 41, sugerido: true }), loteFixture({ idLote: 42, codigo: '2026-09-01', sugerido: false })])
+      if (ruta.startsWith('/stock/lotes?') && ruta.includes('idPuntoVenta=2')) return Promise.resolve([])
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    let resolverTransferir: (valor: ResultadoTransferencia) => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/transferencias') return new Promise((resolve) => (resolverTransferir = resolve))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarLinea(usuario)
+
+    await waitFor(() => expect(screen.getByLabelText('Lote')).toHaveValue('41'))
+    await usuario.selectOptions(screen.getByLabelText('Lote'), '42')
+    expect(screen.getByLabelText('Lote')).toHaveValue('42')
+
+    // cambia el Origen — el lote 42 pertenecía al PV 1, ahora es stale.
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '2')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '1')
+
+    await waitFor(() => expect(screen.getByLabelText('Lote')).toHaveValue(''))
+
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
+
+    resolverTransferir({
+      idPuntoVentaOrigen: 2,
+      idPuntoVentaDestino: 1,
+      lineas: [{ idArticulo: 10, idLote: null, cantidadOrigen: 12, cantidadDestino: 13 }],
+    })
+    await screen.findByText(/Transferencia registrada/)
+
+    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/transferencias')
+    const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
+    // nunca viaja el idLote 42 (stale, del PV de origen anterior).
+    expect(cuerpo).toEqual({
+      idPuntoVentaOrigen: 2,
+      idPuntoVentaDestino: 1,
+      observaciones: 'obs',
+      lineas: [{ idArticulo: 10, cantidad: 8, idLote: null }],
+    })
+  })
+})
+
+describe('Transferencias — repetidos por lote (judgment-day fix, Slice 15)', () => {
+  // Helper: arma dos filas del MISMO artículo lote-efectivo con `clave` propia y distinta —
+  // la fila inicial y la agregada con "+ Agregar línea" (el `proximaClaveRef` arranca ya
+  // consumido por la fila inicial, ver fix del judgment-day de este slice).
+  async function completarDosLineasMismoArticulo(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+
+    const buscadores = screen.getAllByPlaceholderText('Buscar artículo…')
+    await usuario.type(buscadores[0], 'fideos')
+    await screen.findByText('ART-10 — Fideos 500g')
+    await usuario.click(screen.getByText('ART-10 — Fideos 500g'))
+    await usuario.type(screen.getAllByLabelText('Cantidad')[0], '8')
+
+    await usuario.type(buscadores[1], 'fideos')
+    await screen.findByText('ART-10 — Fideos 500g')
+    await usuario.click(screen.getByText('ART-10 — Fideos 500g'))
+    await usuario.type(screen.getAllByLabelText('Cantidad')[1], '3')
+  }
+
+  // (c) — el MAJOR original: la UI bloqueaba una transferencia legal (dos líneas del mismo
+  // artículo con lotes explícitos DISTINTOS, la operación real de depósito que el picker existe
+  // para habilitar). Espeja `(idArticulo, idLote)` — la clave real de unicidad del backend
+  // (decisión 11) — en vez de `idArticulo` a secas.
+  it('(c) dos líneas del mismo artículo con lotes explícitos DISTINTOS no bloquean el envío', async () => {
+    mockearPuntosVentaConLote()
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarDosLineasMismoArticulo(usuario)
+
+    const lotes = await waitFor(() => screen.getAllByLabelText('Lote'))
+    await waitFor(() => expect(lotes[0]).toHaveValue('41'))
+    await waitFor(() => expect(lotes[1]).toHaveValue('41'))
+    await usuario.selectOptions(lotes[1], '42') // segunda línea con un lote explícito DISTINTO
+
+    expect(screen.queryByText('Artículo repetido en la transferencia.')).not.toBeInTheDocument()
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    expect(screen.getByRole('button', { name: 'Transferir' })).not.toBeDisabled()
+  })
+
+  // (d) — mismo artículo, una línea con lote explícito y otra en Auto (FEFO): el cliente no
+  // bloquea (no puede computar el pick FEFO de la línea Auto para compararlo, decisión 19), pero
+  // si el servidor los resuelve al mismo lote arbitra con un 400 `articulo_repetido` — este test
+  // prueba que ese refusal aparece en el aviso existente, nunca se traga.
+  it('(d) mismo artículo con lote explícito + Auto pasa el gate cliente; un 400 articulo_repetido del servidor se muestra, no se traga', async () => {
+    mockearPuntosVentaConLote()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/transferencias') {
+        return Promise.reject(new ErrorApi(400, 'articulo_repetido', 'El artículo 10 aparece más de una vez en la transferencia.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarDosLineasMismoArticulo(usuario)
+
+    const lotes = await waitFor(() => screen.getAllByLabelText('Lote'))
+    await waitFor(() => expect(lotes[0]).toHaveValue('41'))
+    await waitFor(() => expect(lotes[1]).toHaveValue('41'))
+    await usuario.selectOptions(lotes[1], '') // segunda línea vuelve a "Auto (FEFO)"
+
+    expect(screen.queryByText('Artículo repetido en la transferencia.')).not.toBeInTheDocument()
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    expect(screen.getByRole('button', { name: 'Transferir' })).not.toBeDisabled()
+
+    await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
+
+    expect(await screen.findByText('El artículo 10 aparece más de una vez en la transferencia.')).toBeInTheDocument()
   })
 })

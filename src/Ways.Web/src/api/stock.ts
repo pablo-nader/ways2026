@@ -8,6 +8,7 @@
  */
 import { api } from './cliente'
 import type {
+  ConteoDeLote,
   LineaDeTransferencia,
   LoteListado,
   ResultadoConteo,
@@ -28,9 +29,11 @@ export const clienteDeStock = {
    * de lo que se escribió; el `GET /api/stock` previo es solo un dato de referencia en pantalla,
    * nunca lo que decide qué se renderiza después de un submit. */
   contar: (solicitud: SolicitudDeConteo) => api.post<ResultadoConteo>('/stock/conteos', solicitud),
-  /** `GET /api/stock/lotes` — feed del picker (stage-12-lotes-vencimientos, Slice 14, design
-   * decisión 19). Se pide bajo demanda (click en "Elegir lote"), nunca de arranque para cada
-   * línea del carrito — el camino feliz (omitir `idLote`) no necesita esta llamada. */
+  /** `GET /api/stock/lotes` — feed del picker (stage-12-lotes-vencimientos, Slices 14/15, design
+   * decisión 19): `sugerido` es FEFO server-computed y el picker lo pre-selecciona, nunca lo
+   * recalcula del lado del cliente. Se pide bajo demanda, nunca de arranque para cada línea —
+   * el camino feliz (omitir `idLote`) no necesita esta llamada. La variante con
+   * `idComprobanteAsociado` (sugerencia desde el snapshot de una devolución) vive en el POS. */
   listarLotes: (idPuntoVenta: number, idArticulo: number) =>
     api.get<LoteListado[]>(`/stock/lotes?idPuntoVenta=${idPuntoVenta}&idArticulo=${idArticulo}`),
 }
@@ -43,10 +46,20 @@ export type LineaDeTransferenciaFormulario = {
   idArticulo: number | ''
   descripcion: string
   cantidad: string
+  /** stage-12-lotes-vencimientos (Slice 15): opcional incluso para un artículo lote-efectivo —
+   * `''` deja que el servidor resuelva el lote vía FEFO (design decisión 19: "el server manda"),
+   * mismo criterio que el picker del POS. */
+  idLote: number | ''
+  /** Código del lote elegido, solo para mostrarlo en el `<select>` — nunca viaja al backend
+   * (el servidor ya conoce el código a partir de `idLote`). */
+  codigoLote: string
+  /** `ArticuloListado.controlaLote` del artículo elegido — campo solo de UI (decide si esta fila
+   * muestra el picker de lote), nunca viaja al backend: no es parte de `LineaDeTransferencia`. */
+  controlaLote: boolean
 }
 
 export function lineaDeTransferenciaVacia(clave: number): LineaDeTransferenciaFormulario {
-  return { clave, idArticulo: '', descripcion: '', cantidad: '' }
+  return { clave, idArticulo: '', descripcion: '', cantidad: '', idLote: '', codigoLote: '', controlaLote: false }
 }
 
 export function lineaTransferenciaCompleta(l: LineaDeTransferenciaFormulario): boolean {
@@ -56,22 +69,73 @@ export function lineaTransferenciaCompleta(l: LineaDeTransferenciaFormulario): b
 
 /** Espejo de `ExigirLineasDeTransferenciaValidas` (design decisión 9: "rechaza un artículo
  * repetido en un mismo request") — feedback instantáneo, nunca autoritativo: el servidor vuelve a
- * validarlo. Solo mira las líneas completas — una fila a medio llenar nunca cuenta como repetida. */
+ * validarlo. Solo mira las líneas completas — una fila a medio llenar nunca cuenta como repetida.
+ *
+ * stage-12-lotes-vencimientos (Slice 15, judgment-day fix): la clave real de unicidad del backend
+ * es `(idArticulo, idLote)` (decisión 11) — dedupear por `idArticulo` a secas bloqueaba una
+ * transferencia legal (dos líneas del mismo artículo con lotes explícitos DISTINTOS, la operación
+ * real que el picker de lote existe para habilitar). Acá se espeja esa clave con lo único que el
+ * cliente PUEDE saber sin adivinar el FEFO del servidor (decisión 19: "el server manda"):
+ * - Dos líneas completas con el MISMO `(idArticulo, idLote explícito)` → repetido (choca contra la
+ *   restricción real del backend).
+ * - Dos o más líneas del mismo artículo, TODAS con lote en "Auto (FEFO)" → repetido: el servidor
+ *   lee los saldos UNA sola vez antes de resolver todas las líneas (`LeerSaldosAsync`, snapshot
+ *   único pre-transacción) y `ElegirFefo` es una función pura sobre ese mismo snapshot — dos
+ *   líneas Auto del mismo artículo SIEMPRE resuelven al mismo lote, nunca "probablemente"; el
+ *   servidor las rechaza con `400 articulo_repetido` de forma determinística.
+ * - Mismo artículo con lotes explícitos DISTINTOS → PERMITIDO (válido en el backend).
+ * - Mismo artículo, una línea con lote explícito y otra en Auto → PERMITIDO client-side (el
+ *   cliente no puede computar el pick FEFO de la línea Auto para compararlo); si el servidor
+ *   resuelve al mismo lote igual, arbitra con un `400 articulo_repetido` que el funnel de error
+ *   existente (`ErrorApi.message` en el catch de `transferir`) muestra tal cual, sin tragarlo.
+ *
+ * Devuelve las `clave` (no los `idArticulo`) de las líneas efectivamente en conflicto — a
+ * diferencia del `idArticulo` a secas, dos líneas del mismo artículo pueden coexistir sin
+ * conflicto (lotes distintos), así que marcar por artículo ya no alcanza para decidir qué fila
+ * mostrar en rojo. */
 export function articulosRepetidosEnTransferencia(lineas: LineaDeTransferenciaFormulario[]): Set<number> {
-  const conteoPorArticulo = new Map<number, number>()
+  const porArticulo = new Map<number, LineaDeTransferenciaFormulario[]>()
   for (const l of lineas.filter(lineaTransferenciaCompleta)) {
     const id = Number(l.idArticulo)
-    conteoPorArticulo.set(id, (conteoPorArticulo.get(id) ?? 0) + 1)
+    const grupo = porArticulo.get(id) ?? []
+    grupo.push(l)
+    porArticulo.set(id, grupo)
   }
-  const repetidos = new Set<number>()
-  for (const [id, cantidad] of conteoPorArticulo) {
-    if (cantidad > 1) repetidos.add(id)
+
+  const repetidas = new Set<number>()
+  for (const grupo of porArticulo.values()) {
+    if (grupo.length < 2) continue
+
+    const autoFefo = grupo.filter((l) => l.idLote === '')
+    if (autoFefo.length > 1) {
+      for (const l of autoFefo) repetidas.add(l.clave)
+    }
+
+    const porLoteExplicito = new Map<number, LineaDeTransferenciaFormulario[]>()
+    for (const l of grupo) {
+      if (l.idLote === '') continue
+      const idLote = Number(l.idLote)
+      const g = porLoteExplicito.get(idLote) ?? []
+      g.push(l)
+      porLoteExplicito.set(idLote, g)
+    }
+    for (const g of porLoteExplicito.values()) {
+      if (g.length > 1) {
+        for (const l of g) repetidas.add(l.clave)
+      }
+    }
   }
-  return repetidos
+  return repetidas
 }
 
 export function aLineasDeTransferencia(lineas: LineaDeTransferenciaFormulario[]): LineaDeTransferencia[] {
-  return lineas.filter(lineaTransferenciaCompleta).map((l) => ({ idArticulo: Number(l.idArticulo), cantidad: Number(l.cantidad) }))
+  return lineas
+    .filter(lineaTransferenciaCompleta)
+    .map((l) => ({
+      idArticulo: Number(l.idArticulo),
+      cantidad: Number(l.cantidad),
+      idLote: l.idLote === '' ? null : Number(l.idLote),
+    }))
 }
 
 export function aSolicitudDeTransferencia(
@@ -108,4 +172,45 @@ export function contadaValida(contada: string): boolean {
   if (contada.trim() === '') return false
   const n = Number(contada)
   return Number.isFinite(n) && n >= 0
+}
+
+// ---- Conteo por lote (stage-12-lotes-vencimientos, Slice 15, design decisión 12/18) ------------
+// Un artículo lote-efectivo cuenta por lote — nunca el total agregado (`400
+// conteo_no_aplica_lotes` del lado del servidor si se manda `contada`) — exactly-one-of espejado
+// client-side: la pantalla decide QUÉ forma armar según `ArticuloListado.controlaLote`, nunca
+// arma ambas ni ninguna.
+
+export type LineaDeConteoDeLoteFormulario = { idLote: number; codigo: string; contada: string }
+
+export function lineaDeConteoDeLoteVacia(lote: LoteListado): LineaDeConteoDeLoteFormulario {
+  return { idLote: lote.idLote, codigo: lote.codigo, contada: '' }
+}
+
+/** Solo cuentan como "completas" las líneas con una `contada` tipeada — un lote listado pero sin
+ * tocar por el operador se omite del request (mismo criterio que `ContarAsync`: no hace falta
+ * recontar cada lote existente para actualizar uno solo). */
+export function lineasDeConteoDeLoteCompletas(lineas: LineaDeConteoDeLoteFormulario[]): LineaDeConteoDeLoteFormulario[] {
+  return lineas.filter((l) => contadaValida(l.contada))
+}
+
+export function aConteoDeLotes(lineas: LineaDeConteoDeLoteFormulario[]): ConteoDeLote[] {
+  return lineasDeConteoDeLoteCompletas(lineas).map((l) => ({ idLote: l.idLote, contada: Number(l.contada) }))
+}
+
+/** Rama por-lote de `SolicitudDeConteo` — `contada: null`, `lotes` con al menos una línea
+ * completa (dto-contract-honesty: nunca se manda `lotes: []`, el backend lo rechazaría igual que
+ * "ninguna de las dos formas"). */
+export function aSolicitudDeConteoPorLote(
+  idPuntoVenta: number | '',
+  idArticulo: number | '',
+  lineas: LineaDeConteoDeLoteFormulario[],
+  observaciones: string,
+): SolicitudDeConteo {
+  return {
+    idPuntoVenta: idPuntoVenta === '' ? 0 : idPuntoVenta,
+    idArticulo: idArticulo === '' ? 0 : idArticulo,
+    contada: null,
+    observaciones: observaciones.trim(),
+    lotes: aConteoDeLotes(lineas),
+  }
 }

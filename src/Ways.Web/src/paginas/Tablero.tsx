@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
@@ -13,6 +14,7 @@ import type {
   PuntoVentaListado,
   Rentabilidad,
   ResumenDeGastos,
+  ResumenDeVencimientos,
   ResumenDeVentas,
   TopArticulos,
   VentasPorMedioPago,
@@ -335,6 +337,69 @@ function bannerDeCobertura(cobertura: CoberturaDeCosto): string {
   if (pctDesconocido > 0) partes.push(`${pctDesconocido.toFixed(0)}% de costo desconocido`)
 
   return partes.length === 0 ? 'Cobertura de costo: 100% de la venta con costo real considerado.' : partes.join(', ')
+}
+
+type PropsPanelDeVencimientos = { idPuntoVenta: number | null }
+
+/**
+ * Tile de vencimientos (stage-12-lotes-vencimientos, Slice 15 — completa el groundwork del
+ * Slice 13): reusa `GET /api/reportes/stock/vencimientos/resumen`, que a su vez reusa la MISMA
+ * clasificación que `ObtenerVencimientosAsync` — nunca una segunda query de agregación, el tile
+ * no puede divergir del reporte. Requiere un punto de venta CONCRETO (el endpoint no acepta
+ * "Todos" — es un balance por PV, mismo criterio que `/stock/existencias`); con "Todos" elegido
+ * muestra un aviso neutro en vez de una cifra inventada o de sumar PVs a mano. Sin filtro de
+ * rango propio (a diferencia de los paneles de venta): el balance de lotes no tiene dimensión
+ * temporal, mismo criterio que `Existencias.tsx`.
+ */
+function PanelDeVencimientos({ idPuntoVenta }: PropsPanelDeVencimientos) {
+  const cargarDatos = useCallback(
+    () => (idPuntoVenta === null ? Promise.resolve(null) : clienteDeReportes.vencimientosResumen(idPuntoVenta)),
+    [idPuntoVenta],
+  )
+  const { datos, cargando, error, reintentar } = usePanelDeReporte<ResumenDeVencimientos | null>(
+    cargarDatos,
+    'No se pudo cargar el resumen de vencimientos.',
+  )
+
+  return (
+    <div className="border p-3 bg-white h-100">
+      <div className="d-flex align-items-center justify-content-between mb-2">
+        <h6 className="mb-0">Vencimientos</h6>
+        <Link to="/reportes/stock/vencimientos" className="small">
+          Ver reporte
+        </Link>
+      </div>
+      {error && <PanelDeError error={error} onReintentar={reintentar} />}
+      {idPuntoVenta === null ? (
+        <p className="text-muted small mb-0">Elegí un punto de venta para ver el resumen de vencimientos.</p>
+      ) : cargando && !datos ? (
+        <Cargando />
+      ) : (
+        datos && (
+          <div className="row g-2 text-center">
+            <div className="col-4">
+              <div className="text-muted small">Vencidos</div>
+              <div className="fs-5 text-danger" data-testid="vencimientos-tile-vencidos">
+                {datos.vencidos}
+              </div>
+            </div>
+            <div className="col-4">
+              <div className="text-muted small">Por vencer</div>
+              <div className="fs-5 text-warning-emphasis" data-testid="vencimientos-tile-por-vencer">
+                {datos.porVencer}
+              </div>
+            </div>
+            <div className="col-4">
+              <div className="text-muted small">Sin fecha</div>
+              <div className="fs-5 text-secondary" data-testid="vencimientos-tile-sin-fecha">
+                {datos.sinFecha}
+              </div>
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  )
 }
 
 type PropsPanelDeRentabilidad = { idEmpresa: number; desde: string; hasta: string; idPuntoVenta: number | null }
@@ -761,6 +826,9 @@ export function Tablero() {
                 </div>
                 <div className="col-md-3">
                   <PanelTopArticulos idEmpresa={idEmpresa} desde={desde} hasta={hasta} idPuntoVenta={idPuntoVenta} />
+                </div>
+                <div className="col-md-3">
+                  <PanelDeVencimientos idPuntoVenta={idPuntoVenta} />
                 </div>
               </div>
             )}

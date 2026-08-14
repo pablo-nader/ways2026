@@ -216,11 +216,14 @@ export type ParametroResuelto = { clave: string; valor: string }
 
 /** Espejo de `ParametroConocido` (Ways.Domain.Catalogos): clave, tipo declarado y default
  * documentado — el editor solo acepta estas claves, igual que el backend. `zona_horaria` es
- * el primer tipo `'texto'`: el backend lo guarda como string JSON-quoteado (stage-10). */
+ * el primer tipo `'texto'`: el backend lo guarda como string JSON-quoteado (stage-10).
+ * `'booleano'` (stage-12-lotes-vencimientos, Slice 15) es el primer tipo `bool` del registro —
+ * `lotes_habilitado`, viaja como `true`/`false` JSON crudo, sin comillas (mismo criterio de
+ * `JsonSerializer.Deserialize<bool>` que el resto de los lectores tipados del backend). */
 export const PARAMETROS_CONOCIDOS: {
   clave: string
   etiqueta: string
-  tipo: 'entero' | 'decimal' | 'texto'
+  tipo: 'entero' | 'decimal' | 'texto' | 'booleano'
   porDefecto: string
 }[] = [
   { clave: 'tolerancia_pago', etiqueta: 'Tolerancia de pago ($)', tipo: 'decimal', porDefecto: '10' },
@@ -239,6 +242,16 @@ export const PARAMETROS_CONOCIDOS: {
     porDefecto: 'America/Argentina/Buenos_Aires',
   },
   { clave: 'comision_porcentaje', etiqueta: 'Comisión (%)', tipo: 'decimal', porDefecto: '0' },
+  // stage-12-lotes-vencimientos (Slice 15, espejo de `ParametroConocido.LotesHabilitado`/
+  // `.DiasAlertaVencimiento`): interruptor del módulo de lotes a nivel empresa + horizonte de
+  // alerta del reporte de vencimientos.
+  { clave: 'lotes_habilitado', etiqueta: 'Control de lotes habilitado', tipo: 'booleano', porDefecto: 'false' },
+  {
+    clave: 'dias_alerta_vencimiento',
+    etiqueta: 'Días de alerta de vencimiento',
+    tipo: 'entero',
+    porDefecto: '30',
+  },
 ]
 
 /** Zonas IANA ofrecidas en el editor de `zona_horaria` (design decisión 12): un `<select>`
@@ -470,11 +483,11 @@ export type ArticuloListado = {
   disponibleParaTodas: boolean
   idsEmpresas: number[]
   activo: boolean
-  /** stage-12-lotes-vencimientos (Slice 14): mirror de solo lectura — el toggle de edición
-   * (`AltaArticulo`/`EdicionArticulo`) es del editor de `Articulos.tsx` (Slice 15). Acá solo se
-   * lee para decidir si una línea de venta/compra de este artículo pide lote (`ControlEfectivo`
-   * = `controlaLote` AND `lotesHabilitado` del parámetro, decisión 2 del proposal — el picker del
-   * POS no necesita este flag porque `GET /api/stock/lotes` ya resuelve todo server-side). */
+  /** stage-12-lotes-vencimientos (Slices 14/15, espejo de `Articulo.ControlaLote`): acá viaja
+   * solo el flag propio del artículo; el control EFECTIVO es este flag AND `lotes_habilitado`
+   * de la empresa (`ReglaDeLotes.ControlEfectivo`, decisión 2 del proposal). El toggle de
+   * edición vive en el editor de `Articulos.tsx`; el picker del POS no necesita este flag
+   * porque `GET /api/stock/lotes` ya resuelve todo server-side. */
   controlaLote: boolean
 }
 
@@ -500,6 +513,7 @@ export type AltaArticulo = {
   disponibleParaTodas: boolean
   idsEmpresas: number[] | null
   activo: boolean
+  controlaLote: boolean
 }
 
 /** Sin `codigoInterno`: no es editable por este ABM (valor asignado en el alta, mismo criterio
@@ -1171,7 +1185,13 @@ export type StockActual = { idPuntoVenta: number; idArticulo: number; cantidad: 
  * calculó bajo el mismo lock de fila que derivó el ajuste — `movimientoRegistrado` distingue el
  * no-op de diferencia cero de la rama que sí escribió un movimiento, sin que el cliente tenga que
  * releer `GET /api/stock` (esa segunda lectura puede correr después de una venta concurrente y
- * mentir en cualquiera de las dos direcciones). */
+ * mentir en cualquiera de las dos direcciones).
+ *
+ * stage-12-lotes-vencimientos (Slice 15, espejo de `Ways.Application.Stock.Contratos.
+ * ResultadoConteo`): `lotes` lleva el resultado POR LOTE cuando el conteo llegó vía
+ * `SolicitudDeConteo.lotes` — `null`/ausente para un conteo agregado. `cantidad`/
+ * `cantidadAnterior`/`delta` siguen siendo el AGREGADO (la suma de los deltas por lote cuando
+ * `lotes` está presente) — el cliente nunca necesita sumar a mano. */
 export type ResultadoConteo = {
   idPuntoVenta: number
   idArticulo: number
@@ -1179,11 +1199,30 @@ export type ResultadoConteo = {
   cantidadAnterior: number
   delta: number
   movimientoRegistrado: boolean
+  lotes?: LoteContado[] | null
 }
 
+/** Resultado por lote de un conteo (stage-12-lotes-vencimientos, Slice 15, espejo de
+ * `Ways.Application.Stock.Contratos.LoteContado`) — una fila por cada `ConteoDeLote` del
+ * request, incluidos los lotes sin diferencia (`movimientoRegistrado` en `false`). */
+export type LoteContado = {
+  idLote: number
+  cantidad: number
+  cantidadAnterior: number
+  delta: number
+  movimientoRegistrado: boolean
+}
+
+/** Una línea del desglose por lote de un conteo (stage-12-lotes-vencimientos, Slice 15, espejo
+ * de `Ways.Application.Stock.Contratos.ConteoDeLote`) — `contada` es el total físicamente
+ * contado de ESE lote, misma disciplina que el agregado: nunca un delta. */
+export type ConteoDeLote = { idLote: number; contada: number }
+
 /** Una línea del cuerpo de `POST /api/stock/transferencias` — `cantidad` siempre positiva
- * (espejo de `LineaDeTransferencia`). */
-export type LineaDeTransferencia = { idArticulo: number; cantidad: number }
+ * (espejo de `LineaDeTransferencia`). stage-12-lotes-vencimientos (Slice 15, misma forma exacta
+ * que agrega el Slice 14): `idLote` es opcional para un artículo lote-efectivo — omitido, el
+ * servidor lo resuelve vía FEFO. */
+export type LineaDeTransferencia = { idArticulo: number; cantidad: number; idLote?: number | null }
 
 /** Cuerpo de `POST /api/stock/transferencias` (espejo de `SolicitudDeTransferencia`).
  * `observaciones` es obligatoria, mismo criterio que el ajuste manual. */
@@ -1195,9 +1234,9 @@ export type SolicitudDeTransferencia = {
 }
 
 /** El stock resultante de un artículo en AMBOS puntos de venta tras la transacción (espejo de
- * `LineaTransferida`). `idLote` (stage-12-lotes-vencimientos, Slice 10): el backend ya lo manda
- * desde ese slice — mirror de solo lectura, la columna de lote en la grilla de `Transferencias.tsx`
- * es del Slice 15. */
+ * `LineaTransferida`). `idLote` (stage-12-lotes-vencimientos, Slice 10): el backend lo manda con
+ * clave de agregación `(idArticulo, idLote)` — dos líneas del mismo artículo con lotes distintos
+ * son filas separadas; la columna de lote de la grilla de `Transferencias.tsx` es del Slice 15. */
 export type LineaTransferida = { idArticulo: number; idLote: number | null; cantidadOrigen: number; cantidadDestino: number }
 
 /** Respuesta de `POST /api/stock/transferencias` (espejo de `ResultadoTransferencia`). */
@@ -1209,21 +1248,35 @@ export type ResultadoTransferencia = {
 
 /** Cuerpo de `POST /api/stock/conteos` — `contada` es el TOTAL físicamente contado, nunca un
  * delta (espejo de `SolicitudDeConteo`; spec: conteo-de-inventario / Conteo Input Is The Counted
- * Total, Never A Delta). */
-export type SolicitudDeConteo = { idPuntoVenta: number; idArticulo: number; contada: number; observaciones: string }
+ * Total, Never A Delta).
+ *
+ * stage-12-lotes-vencimientos (Slice 15, espejo de `Ways.Application.Stock.Contratos.
+ * SolicitudDeConteo`, design decisión 18): `contada` se ensancha a `number | null` — el contrato
+ * pasa a EXACTLY-ONE-OF `contada`/`lotes` (`400 conteo_contada_y_lotes` si vienen ambos o
+ * ninguno). Un artículo lote-efectivo cuenta por lote (`lotes`, un total contado por cada
+ * `idLote`); uno sin lote efectivo sigue mandando el total agregado (`contada`). */
+export type SolicitudDeConteo = {
+  idPuntoVenta: number
+  idArticulo: number
+  contada: number | null
+  observaciones: string
+  lotes?: ConteoDeLote[] | null
+}
 
-// --- Lotes y vencimientos (stage-12-lotes-vencimientos, Slice 14): espejo de
-// `Ways.Domain.Stock.EstadoDeVencimiento`/`Ways.Application.Stock.Contratos.LoteListado` — el
-// picker del POS/la recepción de compra NUNCA recalculan FEFO (design decisión 19), solo
-// renderizan lo que el servidor ya resolvió.
+// --- Lotes y vencimientos (stage-12-lotes-vencimientos) --------------------------------------
+// Espejo de `Ways.Application.Stock.Contratos`/`Ways.Application.Reportes.Contratos` — mismos
+// nombres de campo que el backend serializa en camelCase. `EstadoDeVencimiento` viaja como texto
+// (`JsonStringEnumConverter` sin política de naming en `Program.cs`, mismo criterio que
+// `Granularidad`/`EstadoPago`) — los NOMBRES de los miembros de C#, no una variante snake_case.
 
-/** Viaja como texto (`JsonStringEnumConverter`), nunca como ordinal — mismo criterio que
- * `Granularidad`. */
+/** Espejo del enum `EstadoDeVencimiento` (Ways.Domain.Stock) — clasificación de un lote respecto
+ * de "hoy". `SinFecha` es el lote sin identificar: se incluye en el reporte, nunca se excluye. */
 export type EstadoDeVencimiento = 'Vencido' | 'PorVencer' | 'Vigente' | 'SinFecha'
 
-/** Fila de `GET /api/stock/lotes` (picker) — espejo de `LoteListado`. `sugerido` es el pick FEFO
- * server-computed (`ReglaDeLotes.ElegirFefo`, decisión 19): el picker lo resalta, nunca lo
- * recalcula — omitir `idLote` al vender/transferir hace que el servidor elija el mismo lote. */
+/** Fila de `GET /api/stock/lotes` y resultado de `POST /api/stock/lotes` (espejo de
+ * `LoteListado`, design decisión 19). `sugerido` es el pick FEFO server-computed
+ * (`ReglaDeLotes.ElegirFefo`) — el picker lo renderiza, nunca lo recalcula. Misma forma exacta
+ * que agrega el Slice 14. */
 export type LoteListado = {
   idLote: number
   idArticulo: number
@@ -1234,6 +1287,37 @@ export type LoteListado = {
   estado: EstadoDeVencimiento
   sugerido: boolean
 }
+
+/** Fila de `GET /api/reportes/stock/vencimientos` (espejo de `FilaDeVencimiento`) — solo lotes
+ * con `stock_lotes.cantidad` positivo. `fechaVencimiento` es `null` exactamente para el lote sin
+ * identificar, que clasifica `SinFecha` y SE INCLUYE en el reporte. */
+export type FilaDeVencimiento = {
+  idArticulo: number
+  articulo: string
+  idLote: number
+  codigoLote: string
+  fechaVencimiento: string | null
+  cantidad: number
+  estado: EstadoDeVencimiento
+}
+
+/** Respuesta de `GET /api/reportes/stock/vencimientos` (espejo de `Vencimientos`). `hoy`/
+ * `zonaHoraria` son la fecha y la zona efectivamente resueltas para clasificar cada fila — "hoy"
+ * se calcula en la zona horaria del punto de venta, NUNCA en UTC. `diasDeAlerta` es el horizonte
+ * efectivamente aplicado: el parámetro `dias` de la query si vino, si no el
+ * `dias_alerta_vencimiento` resuelto (PV → empresa → default). */
+export type Vencimientos = {
+  idPuntoVenta: number
+  hoy: string
+  diasDeAlerta: number
+  zonaHoraria: string
+  filas: FilaDeVencimiento[]
+}
+
+/** Respuesta de `GET /api/reportes/stock/vencimientos/resumen` (espejo de
+ * `ResumenDeVencimientos`) — el tile de Tablero. Mismos tres conteos que `Vencimientos.filas`
+ * agrupados por `FilaDeVencimiento.estado` — nunca una query de agregación separada. */
+export type ResumenDeVencimientos = { idPuntoVenta: number; vencidos: number; porVencer: number; sinFecha: number }
 
 // --- Reportes (stage-10-agregacion-dashboard, Slice 7): G1 parity — ventas/resumen y
 // gastos/resumen. Espejo de `Ways.Application.Reportes.Contratos` — mismos nombres de campo que

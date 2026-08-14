@@ -68,12 +68,13 @@ function mockearApiGet() {
     if (/^\/articulos\/\d+\/codigos-barra$/.test(ruta)) return Promise.resolve([])
     if (/^\/articulos\/\d+\/precios$/.test(ruta)) return Promise.resolve([])
     if (/^\/articulos\/\d+\/sugerencia-precio$/.test(ruta)) return Promise.resolve({ precioSugerido: 55.5 })
-    if (ruta === '/catalogos/areas') return Promise.resolve([])
+    if (ruta === '/catalogos/areas') return Promise.resolve([{ id: 1, nombre: 'Almacén', activo: true }])
     if (ruta === '/catalogos/categorias') return Promise.resolve([])
     if (ruta === '/catalogos/marcas') return Promise.resolve([])
     if (ruta === '/catalogos/grupos') return Promise.resolve([])
     if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [], total: 0, pagina: 1, tamanio: 200 })
-    if (ruta === '/catalogos-fiscales/alicuotas-iva') return Promise.resolve([])
+    if (ruta === '/catalogos-fiscales/alicuotas-iva')
+      return Promise.resolve([{ id: 1, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true }])
     if (ruta === '/empresas') return Promise.resolve([])
     if (ruta === '/catalogos/listas-precio') return Promise.resolve([])
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -110,5 +111,55 @@ describe('Articulos — reseteo de estado por artículo (key de FormularioArticu
     await waitFor(() => {
       expect(screen.queryByText(/Precio sugerido a partir de costo y margen/)).not.toBeInTheDocument()
     })
+  })
+})
+
+// ---- controlaLote (stage-12-lotes-vencimientos, Slice 15) ---------------------------------------
+
+describe('Articulos — toggle controlaLote (coerción boolean, dto-contract-honesty)', () => {
+  it('un artículo con controlaLote:false arranca con el checkbox destildado', async () => {
+    render(<Articulos />)
+
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Editar' }))
+
+    await screen.findByText('Editando artículo A0001')
+    expect(screen.getByLabelText('Controla lote / vencimiento')).not.toBeChecked()
+  })
+
+  it('tildar el checkbox y guardar manda controlaLote:true — nunca un string ni "on"', async () => {
+    mockearApiGet()
+    apiPutMock.mockResolvedValue(articuloFixture({ id: 1, controlaLote: true }))
+    render(<Articulos />)
+
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Editar' }))
+
+    await screen.findByText('Editando artículo A0001')
+    await userEvent.click(screen.getByLabelText('Controla lote / vencimiento'))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.controlaLote).toBe(true)
+  })
+
+  it('sin tocar el checkbox, guarda controlaLote:false — el valor previo del artículo, no un default inventado', async () => {
+    mockearApiGet()
+    apiPutMock.mockResolvedValue(articuloFixture({ id: 1, controlaLote: false }))
+    render(<Articulos />)
+
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Editar' }))
+
+    await screen.findByText('Editando artículo A0001')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.controlaLote).toBe(false)
   })
 })
