@@ -164,9 +164,37 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
         <SelectorDeArticulo
           descripcion={linea.descripcion}
           disabled={disabled}
-          onElegir={(a) => onCambio(linea.clave, { idArticulo: a.id, descripcion: a.nombre })}
+          onElegir={(a) => onCambio(linea.clave, { idArticulo: a.id, descripcion: a.nombre, controlaLote: a.controlaLote })}
         />
         {incompleta && <div className="small text-warning-emphasis">Línea incompleta — no se va a guardar.</div>}
+      </td>
+      <td style={{ minWidth: 180 }}>
+        {linea.controlaLote ? (
+          <>
+            <input
+              type="text"
+              className="form-control form-control-sm rounded-0 mb-1"
+              aria-label="Código de lote"
+              placeholder="Código de lote (opcional)"
+              value={linea.codigoLote}
+              disabled={disabled}
+              onChange={(e) => onCambio(linea.clave, { codigoLote: e.target.value })}
+            />
+            <input
+              type="date"
+              className={`form-control form-control-sm rounded-0 ${linea.fechaVencimiento.trim() === '' ? 'is-invalid' : ''}`}
+              aria-label="Fecha de vencimiento"
+              value={linea.fechaVencimiento}
+              disabled={disabled}
+              onChange={(e) => onCambio(linea.clave, { fechaVencimiento: e.target.value })}
+            />
+            {linea.fechaVencimiento.trim() === '' && (
+              <div className="invalid-feedback">Este artículo controla lote — la fecha de vencimiento es obligatoria.</div>
+            )}
+          </>
+        ) : (
+          <span className="text-muted small">No controla lote</span>
+        )}
       </td>
       <td style={{ width: 90 }}>
         <input
@@ -279,6 +307,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
         <thead>
           <tr>
             <th>Artículo</th>
+            <th>Lote</th>
             <th className="text-end">Cantidad</th>
             <th className="text-end">Costo unitario</th>
             <th className="text-end">Descuento</th>
@@ -292,6 +321,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
           {compra.items.map((item) => (
             <tr key={item.orden}>
               <td>{item.descripcion}</td>
+              <td>{item.codigoLote ?? '—'}</td>
               <td className="text-end">{item.cantidad}</td>
               <td className="text-end">{formatearMoneda(item.costoUnitario)}</td>
               <td className="text-end">{formatearMoneda(item.descuento)}</td>
@@ -303,7 +333,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
           ))}
           {compra.items.length === 0 && (
             <tr>
-              <td colSpan={8} className="text-center text-muted py-3">
+              <td colSpan={9} className="text-center text-muted py-3">
                 Esta compra no tiene items.
               </td>
             </tr>
@@ -880,6 +910,7 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
                 <thead>
                   <tr>
                     <th>Artículo</th>
+                    <th>Lote</th>
                     <th>Unidades</th>
                     <th>Bultos</th>
                     <th>Un./bulto</th>
@@ -906,7 +937,7 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
                   ))}
                   {lineas.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="text-center text-muted py-3">
+                      <td colSpan={11} className="text-center text-muted py-3">
                         Todavía no hay items cargados.
                       </td>
                     </tr>

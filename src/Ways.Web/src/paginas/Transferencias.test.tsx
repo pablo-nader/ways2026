@@ -85,6 +85,7 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
     disponibleParaTodas: true,
     idsEmpresas: [],
     activo: true,
+    controlaLote: false,
     ...sobrescribir,
   }
 }
@@ -158,7 +159,7 @@ describe('Transferencias — flujo feliz', () => {
     resolverTransferir({
       idPuntoVentaOrigen: 1,
       idPuntoVentaDestino: 2,
-      lineas: [{ idArticulo: 10, cantidadOrigen: 12, cantidadDestino: 13 }],
+      lineas: [{ idArticulo: 10, idLote: null, cantidadOrigen: 12, cantidadDestino: 13 }],
     })
 
     expect(await screen.findByText(/Transferencia registrada: Casa Central → Sucursal Norte/)).toBeInTheDocument()
@@ -209,7 +210,11 @@ describe('Transferencias — líneas incompletas', () => {
     await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
     await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
 
-    resolverTransferir({ idPuntoVentaOrigen: 1, idPuntoVentaDestino: 2, lineas: [{ idArticulo: 10, cantidadOrigen: 12, cantidadDestino: 13 }] })
+    resolverTransferir({
+      idPuntoVentaOrigen: 1,
+      idPuntoVentaDestino: 2,
+      lineas: [{ idArticulo: 10, idLote: null, cantidadOrigen: 12, cantidadDestino: 13 }],
+    })
     await screen.findByText(/Transferencia registrada/)
 
     const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/transferencias')

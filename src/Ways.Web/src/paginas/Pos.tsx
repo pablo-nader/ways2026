@@ -19,16 +19,28 @@ import {
   validarPagosLocal,
   type FilaPago,
 } from '../api/pagos'
+import { clienteDeStock } from '../api/stock'
 import type {
   ClienteListado,
   ComprobanteEmitido,
+  LoteListado,
   MedioPagoAlta,
   MedioPagoListado,
   ParametroResuelto,
   PuntoVentaListado,
   ResultadoDeResolucion,
 } from '../api/tipos'
-import { aLineaDeCarritoDesdeEscaneo, aLineasDeResolucion, aSolicitudDeVenta, calcularSubtotalPrevia, clienteDeVentas, indexarResolucionPorArticulo, previaDeLinea } from '../api/ventas'
+import {
+  aLineaDeCarritoDesdeEscaneo,
+  aLineasDeResolucion,
+  aSolicitudDeVenta,
+  calcularSubtotalPrevia,
+  clienteDeVentas,
+  indexarResolucionPorArticulo,
+  opcionDeLote,
+  previaDeLinea,
+  type LotesSeleccionados,
+} from '../api/ventas'
 import { Box } from '../componentes/Box'
 
 const CLAVE_PUNTO_VENTA = 'ways.pos.idPuntoVenta'
@@ -198,6 +210,109 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
   )
 }
 
+type PropsSelectorDeLote = {
+  idPuntoVenta: number
+  idArticulo: number
+  nombreArticulo: string
+  idLoteElegido: number | null
+  disabled: boolean
+  onElegir: (idLote: number | null) => void
+}
+
+/**
+ * Picker de lote de una línea del carrito (stage-12-lotes-vencimientos, Slice 14, design decisión
+ * 19): se pide bajo demanda (click en "Elegir lote") — el camino feliz de cero tecleo (omitir
+ * `idLote`, el servidor resuelve FEFO solo) nunca dispara este fetch. `sugerido` llega ya resuelto
+ * del servidor (`ReglaDeLotes.ElegirFefo`); acá solo se resalta, nunca se recalcula.
+ */
+function SelectorDeLote({ idPuntoVenta, idArticulo, nombreArticulo, idLoteElegido, disabled, onElegir }: PropsSelectorDeLote) {
+  const [cargando, setCargando] = useState(false)
+  const [error, setError] = useState('')
+  const [lotes, setLotes] = useState<LoteListado[] | null>(null)
+  const cargandoRef = useRef(false)
+  const tokenRef = useRef(0)
+
+  // react-async-state regla 3: los saldos de lote son por punto de venta — un cambio de PV
+  // invalida cualquier fetch en vuelo y cualquier lote ya cargado, nunca puede sobrevivir a la
+  // selección anterior (mutation-proof-tests regla 7: probado en Pos.test.tsx resolviendo la
+  // promesa vieja DESPUÉS del cambio de PV, dentro de `act`).
+  useEffect(() => {
+    tokenRef.current += 1
+    cargandoRef.current = false
+    setCargando(false)
+    setError('')
+    setLotes(null)
+  }, [idPuntoVenta, idArticulo])
+
+  async function cargar() {
+    // regla 9: guard de reentrancia de primera línea — un doble click en el mismo tick le gana al
+    // re-render que deshabilita el botón.
+    if (cargandoRef.current || lotes !== null) return
+
+    const miToken = (tokenRef.current += 1)
+    cargandoRef.current = true
+    setCargando(true)
+    setError('')
+
+    try {
+      const resultado = await clienteDeStock.listarLotes(idPuntoVenta, idArticulo)
+      if (tokenRef.current !== miToken) return
+      setLotes(resultado)
+    } catch (e) {
+      if (tokenRef.current !== miToken) return
+      setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los lotes.')
+    } finally {
+      if (tokenRef.current === miToken) {
+        cargandoRef.current = false
+        setCargando(false)
+      }
+    }
+  }
+
+  if (lotes === null) {
+    return (
+      <div>
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-secondary rounded-0"
+          disabled={disabled || cargando}
+          onClick={cargar}
+        >
+          {cargando ? 'Cargando…' : 'Elegir lote'}
+        </button>
+        {error && <div className="small text-danger">{error}</div>}
+      </div>
+    )
+  }
+
+  if (lotes.length === 0) {
+    return <span className="small text-muted">Sin lotes registrados — FEFO automático.</span>
+  }
+
+  const sugerido = lotes.find((l) => l.sugerido) ?? null
+  const valorActual = idLoteElegido !== null ? String(idLoteElegido) : sugerido ? String(sugerido.idLote) : ''
+
+  return (
+    <select
+      className="form-select form-select-sm rounded-0"
+      aria-label={`Lote de ${nombreArticulo}`}
+      value={valorActual}
+      disabled={disabled}
+      onChange={(e) => onElegir(e.target.value === '' ? null : Number(e.target.value))}
+    >
+      <option value="">FEFO automático (recomendado)</option>
+      {lotes.map((l) => {
+        const opcion = opcionDeLote(l)
+        return (
+          <option key={l.idLote} value={opcion.valor}>
+            {opcion.etiqueta}
+          </option>
+        )
+      })}
+    </select>
+  )
+}
+
 /**
  * Pantalla del POS (stage-5-pos-ventas, Slice 7, design: POS Screen Composition) — escaneo +
  * carrito + selección de punto de venta/cliente (Slice 6) + panel de pagos, checkout (`POST
@@ -224,6 +339,12 @@ export function Pos() {
   const generacionResolucionRef = useRef(0)
   const ultimaAccionEsEdicionRef = useRef(false)
   const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>({})
+
+  // stage-12-lotes-vencimientos (Slice 14): elección explícita de lote por línea, indexada por
+  // `idArticulo` — una línea ausente acá viaja con `idLote: null` (design decisión 19, camino
+  // feliz de cero tecleo). Los saldos de lote son por punto de venta: cambiar de PV invalida
+  // cualquier elección hecha (`cambiarPuntoVenta` la resetea entera).
+  const [lotesSeleccionados, setLotesSeleccionados] = useState<LotesSeleccionados>({})
 
   const [entradaEscaneo, setEntradaEscaneo] = useState('')
   const [escaneando, setEscaneando] = useState(false)
@@ -462,15 +583,26 @@ export function Pos() {
         return resto
       })
 
+    // El lote elegido es propio de la línea, no de una unidad puntual: re-escanear el mismo
+    // artículo (suma cantidad) no lo invalida — solo desaparece cuando la línea entera se va.
+    const limpiarLoteDeFila = (idArticulo: number) =>
+      setLotesSeleccionados((prev) => {
+        if (!(idArticulo in prev)) return prev
+        const { [idArticulo]: _omitido, ...resto } = prev
+        return resto
+      })
+
     switch (accion.tipo) {
       case 'quitarLinea':
         limpiarFila(accion.idArticulo)
+        limpiarLoteDeFila(accion.idArticulo)
         break
       case 'escanear':
         limpiarFila(accion.linea.idArticulo)
         break
       case 'vaciar':
         setCantidadesEnEdicion({})
+        setLotesSeleccionados({})
         break
       case 'editarCantidad':
         break
@@ -557,6 +689,24 @@ export function Pos() {
     if (cobrandoRef.current) return
     setIdPuntoVenta(id)
     guardarPuntoVentaSeleccionado(id)
+    // Los saldos de lote son por punto de venta (stage-12-lotes-vencimientos, Slice 14): una
+    // elección hecha contra el PV anterior no tiene sentido en el nuevo — cada `SelectorDeLote`
+    // ya se resetea solo por su propio efecto, esto limpia el lado del carrito.
+    setLotesSeleccionados({})
+  }
+
+  /** Elección explícita de un lote en la línea de `idArticulo`, o `null` para volver al camino
+   * feliz (FEFO server-side, design decisión 19). */
+  function elegirLote(idArticulo: number, idLote: number | null) {
+    if (cobrandoRef.current) return
+    setLotesSeleccionados((prev) => {
+      if (idLote === null) {
+        if (!(idArticulo in prev)) return prev
+        const { [idArticulo]: _omitido, ...resto } = prev
+        return resto
+      }
+      return { ...prev, [idArticulo]: idLote }
+    })
   }
 
   function cambiarCliente(id: number) {
@@ -678,6 +828,7 @@ export function Pos() {
         codigoTipoComprobante: 'TX',
         idComprobanteAsociado: null,
         lineas,
+        lotesSeleccionados,
         pagos: aPagosDeVenta(pagosConVuelto),
         direccionEntrega: null,
         observaciones: null,
@@ -690,6 +841,7 @@ export function Pos() {
       setLineas([])
       setPrecios({})
       setCantidadesEnEdicion({})
+      setLotesSeleccionados({})
       setFilasPago([filaPagoVacia(proximaFilaPagoIdRef.current++)])
       setEntradaEscaneo('')
       setTerminoCliente('')
@@ -747,7 +899,15 @@ export function Pos() {
                   <tbody>
                     {comprobante.items.map((item) => (
                       <tr key={item.orden}>
-                        <td>{item.descripcion}</td>
+                        <td>
+                          {item.descripcion}
+                          {item.codigoLote && <div className="small text-muted">Lote {item.codigoLote}</div>}
+                          {item.loteVencido && (
+                            // Warning prominente, nunca un bloqueo (design decisión 12: "Expired
+                            // Lot Sale Warns, Never Blocks") — la venta ya se emitió.
+                            <div className="small text-danger fw-bold">⚠ Lote vencido</div>
+                          )}
+                        </td>
                         <td>{item.cantidad}</td>
                         <td className="text-end">{formatearMoneda(item.precioUnitario)}</td>
                         <td className="text-end">
@@ -841,6 +1001,7 @@ export function Pos() {
                     <th>Código</th>
                     <th>Artículo</th>
                     <th style={{ width: 110 }}>Cantidad</th>
+                    <th style={{ width: 160 }}>Lote</th>
                     <th className="text-end">Precio unit.</th>
                     <th className="text-end">Total</th>
                     <th className="text-end">Acciones</th>
@@ -867,6 +1028,18 @@ export function Pos() {
                             onChange={(e) => cambiarCantidad(l.idArticulo, e.target.value)}
                             onBlur={() => confirmarCantidad(l.idArticulo)}
                           />
+                        </td>
+                        <td>
+                          {puntoVentaSeleccionada && (
+                            <SelectorDeLote
+                              idPuntoVenta={puntoVentaSeleccionada.id}
+                              idArticulo={l.idArticulo}
+                              nombreArticulo={l.nombre}
+                              idLoteElegido={lotesSeleccionados[l.idArticulo] ?? null}
+                              disabled={cobrando}
+                              onElegir={(idLote) => elegirLote(l.idArticulo, idLote)}
+                            />
+                          )}
                         </td>
                         <td className="text-end">
                           {previa.precioUnitario === null ? (
@@ -910,7 +1083,7 @@ export function Pos() {
                   })}
                   {lineas.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="text-center text-muted py-4">
+                      <td colSpan={7} className="text-center text-muted py-4">
                         Escaneá o tipeá un código para empezar la venta.
                       </td>
                     </tr>

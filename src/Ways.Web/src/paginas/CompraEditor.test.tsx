@@ -8,6 +8,7 @@ import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
 import type {
   AlicuotaIvaListado,
+  ArticuloListado,
   CompraDetalle,
   ItemDeCompra,
   ListaPrecioListado,
@@ -133,6 +134,32 @@ function listaPrecioFixture(sobrescribir: Partial<ListaPrecioListado> = {}): Lis
   }
 }
 
+function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
+  return {
+    id: 20,
+    codigoInterno: 'ART-20',
+    nombre: 'Leche en polvo 800g',
+    descripcion: null,
+    idArea: 1,
+    idCategoria: null,
+    idMarca: null,
+    idGrupo: null,
+    idProveedorHabitual: null,
+    idAlicuotaIva: 3,
+    unidadVenta: 'Unidad',
+    unidadesPorBulto: null,
+    esProducto: true,
+    costoLista: null,
+    descuentoProveedor: null,
+    costoNominal: null,
+    disponibleParaTodas: true,
+    idsEmpresas: [],
+    activo: true,
+    controlaLote: true,
+    ...sobrescribir,
+  }
+}
+
 function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
   return {
     orden: 1,
@@ -148,6 +175,9 @@ function itemFixture(sobrescribir: Partial<ItemDeCompra> = {}): ItemDeCompra {
     total: 950,
     actualizaCosto: true,
     precioSugerido: 114.95,
+    codigoLote: null,
+    fechaVencimiento: null,
+    idLote: null,
     ...sobrescribir,
   }
 }
@@ -524,6 +554,51 @@ describe('CompraEditor — líneas incompletas', () => {
 
     expect(await screen.findByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
     expect(screen.getByText('$1.149,50')).toBeInTheDocument()
+  })
+})
+
+describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimientos, Slice 14)', () => {
+  it('elegir un artículo que controla lote muestra los inputs de lote y suma al contador hasta cargar la fecha de vencimiento', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture({ items: [] }))
+      if (ruta.startsWith('/articulos?busqueda=')) {
+        return Promise.resolve({ items: [articuloFixture()], total: 1, pagina: 1, tamanio: 25 })
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByDisplayValue('0003-00012345')
+
+    await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'leche')
+    await screen.findByText('ART-20 — Leche en polvo 800g')
+    await usuario.click(screen.getByText('ART-20 — Leche en polvo 800g'))
+
+    expect(screen.getByLabelText('Fecha de vencimiento')).toBeInTheDocument()
+    expect(await screen.findByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
+
+    await usuario.type(screen.getByLabelText('Unidades'), '5')
+    await usuario.type(screen.getByLabelText('Costo unitario'), '20')
+    await usuario.selectOptions(screen.getByLabelText('Alícuota de IVA'), '3')
+
+    // Sigue incompleta: el artículo controla lote y la fecha de vencimiento es obligatoria
+    // (espejo del `lote_requerido` server-side) — código de lote NO es obligatorio, se deriva.
+    expect(screen.getByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
+
+    await usuario.type(screen.getByLabelText('Fecha de vencimiento'), '2026-12-01')
+
+    await waitFor(() => expect(screen.queryByText(/línea\(s\) incompleta\(s\)/)).not.toBeInTheDocument())
+  })
+
+  it('un artículo que no controla lote nunca muestra los inputs de lote', async () => {
+    mockearReferencia((ruta) => (ruta === '/compras/1' ? Promise.resolve(compraFixture()) : undefined))
+    renderEditor()
+
+    await screen.findByText('Elegido: Fideos 500g')
+    expect(screen.getByText('No controla lote')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Fecha de vencimiento')).not.toBeInTheDocument()
   })
 })
 

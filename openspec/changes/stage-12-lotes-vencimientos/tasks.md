@@ -1882,29 +1882,64 @@ FEFO and completes the happy path with zero keystrokes; the compra editor
 captures lot input per line. **Rollback**: revert the branch — no backend
 change.
 
-- [ ] 14.1 Modify `src/Ways.Web/src/paginas/Pos.tsx`: lot picker component
+- [x] 14.1 Modify `src/Ways.Web/src/paginas/Pos.tsx`: lot picker component
   fed by `GET /api/stock/lotes` (pre-selected via `sugerido`); a line for a
   lot-effective articulo omits `idLote` by default; `loteVencido` renders
   as a prominent warning, never a block.
-- [ ] 14.2 Modify `src/Ways.Web/src/paginas/CompraEditor.tsx`: lot input
+  - Deviation: the picker is click-triggered per cart line (a "Elegir
+    lote" button), not auto-fetched on add — `ArticuloEscaneado` has no
+    `controlaLote` (adding it would be a backend change, out of scope per
+    this slice's own Rollback note), so there is no client-side signal to
+    decide up front whether a line needs the picker at all. An empty
+    `GET /api/stock/lotes` response is ambiguous (not lot-effective, OR
+    lot-effective with no lots yet) but resolves to the same correct
+    action either way: leave `idLote` omitted, the server FEFO-picks or
+    creates the sin-identificar lot. Lot selections are cleared on point
+    of venta change (balances are PV-scoped) and reset after checkout.
+- [x] 14.2 Modify `src/Ways.Web/src/paginas/CompraEditor.tsx`: lot input
   fields (`codigoLote`, `fechaVencimiento`) per draft line for a
   lot-effective articulo; the incomplete-line counter includes them.
-- [ ] 14.3 Modify `src/Ways.Web/src/api/tipos.ts` / `catalogos.ts`:
+  - Deviation: `controlaLote` per line is captured from the chosen
+    `ArticuloListado` at search-selection time (exact). For a REOPENED
+    draft, `itemAFormulario` infers it from whether the persisted item
+    already carries lot data (`idLote`/`codigoLote`/`fechaVencimiento`
+    non-null) — a real signal, but a lot-effective articulo whose line was
+    saved before any lot data was entered is not detected until the
+    operator touches it again. The server's `lote_requerido` 400 at
+    confirm remains the correctness backstop in that gap; a batch
+    `clienteDeArticulos.obtener()` lookup per reopened line was considered
+    and dropped to keep this slice's diff proportional to its ~400-line
+    budget.
+- [x] 14.3 Modify `src/Ways.Web/src/api/tipos.ts` / `catalogos.ts`:
   mirrored contracts — `LineaDeVenta.idLote`, `ItemEmitido.idLote`/
   `codigoLote`/`loteVencido`, `LineaDeCompraSolicitada.codigoLote`/
   `fechaVencimiento`, `LoteListado`, `controlaLote` descriptor field.
-- [ ] 14.4 [P] Picker `sugerido`-preselection test.
-- [ ] 14.5 [P] **Stale-response test** (`mutation-proof-tests` rule 7): a
+  - Deviation: `controlaLote` landed on `ArticuloListado` in `tipos.ts`
+    (read-only mirror consumed by `CompraEditor.tsx`), NOT in
+    `catalogos.ts` — `Articulos.tsx` is a hand-built ABM screen outside the
+    `DescriptorDeCatalogo` machine (same escape hatch as `categorias`), so
+    there is no descriptor to extend there. The write-side toggle
+    (`AltaArticulo`/`EdicionArticulo.controlaLote` + the editor UI) stays
+    Slice 15's, per the coordination note in this task's brief. Also
+    mirrored `LineaTransferida.idLote` (backend already sends it since
+    Slice 10) and `ItemDeCompra.codigoLote`/`fechaVencimiento`/`idLote` —
+    both needed for `CompraEditor.tsx` to round-trip a persisted draft.
+- [x] 14.4 [P] Picker `sugerido`-preselection test.
+- [x] 14.5 [P] **Stale-response test** (`mutation-proof-tests` rule 7): a
   stale picker fetch resolves after the operator changed line — resolved
   inside `act`, asserted synchronously after the flush.
-- [ ] 14.6 [P] Double-click test: exactly one `fetch` on the picker despite
+  - Concretized as: fetch starts for PV #1, the operator switches the
+    punto de venta before it resolves (lot balances are PV-scoped), the
+    PV #1 response lands after — asserted to never paint (`Pos.test.tsx`).
+- [x] 14.6 [P] Double-click test: exactly one `fetch` on the picker despite
   a double-click (`react-async-state` busy/re-entrancy guard).
-- [ ] 14.7 [P] Incomplete-line counter test on `CompraEditor` (lot fields
+- [x] 14.7 [P] Incomplete-line counter test on `CompraEditor` (lot fields
   count toward incompleteness).
-- [ ] 14.8 [P] `web-descriptor-tests` for the `Pos.tsx` picker and
-  `CompraEditor`'s lot input, colocated `*.test.tsx`.
-- [ ] 14.9 Gate guard: `dotnet ef migrations has-pending-model-changes` →
-  no pending changes (web-only slice).
+- [x] 14.8 [P] `web-descriptor-tests` for the `Pos.tsx` picker and
+  `CompraEditor`'s lot input, colocated `*.test.tsx`; plus a pure
+  `opcionDeLote` mapping unit test in `ventas.test.ts` (no DOM).
+- [x] 14.9 Gate guard: `dotnet ef migrations has-pending-model-changes` →
+  no pending changes (web-only slice). Verified.
 - [ ] 14.10 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 14.11 Branch `feat/stage12-slice14-web-operacion` off `main` (parent:
   slices 5+8); PR; merge stacked-to-main.

@@ -7,6 +7,7 @@ import type {
   ArticuloEscaneado,
   ClienteListado,
   ComprobanteEmitido,
+  LoteListado,
   MedioPagoListado,
   PaginaDe,
   ParametroResuelto,
@@ -131,6 +132,9 @@ function comprobanteEmitidoFixture(sobrescribir: Partial<ComprobanteEmitido> = {
         precioUnitario: 100,
         descuento: 0,
         total: 100,
+        idLote: null,
+        codigoLote: null,
+        loteVencido: false,
       },
     ],
     pagos: [{ idMedioPago: 1, importe: 100, referencia: null, vuelto: 0 }],
@@ -156,29 +160,41 @@ const consumidorFinal = clienteFixture()
 const otroCliente = clienteFixture({ id: 2, numero: 2, nombre: 'Juan', apellido: 'Pérez', esConsumidorFinal: false })
 const puntoVentaCentro = puntoVentaFixture()
 
-function mockearApiGet() {
+/** Rutas GET comunes a casi todos los tests — devuelve `undefined` (no `Promise`) para una ruta
+ * que no reconoce, así un test puede extender la tabla sin duplicarla entera (mismo criterio que
+ * `mockearReferencia` en CompraEditor.test.tsx). */
+function rutaBaseDePos(ruta: string, puntosVenta: PuntoVentaListado[] = [puntoVentaCentro]): Promise<unknown> | undefined {
+  if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>(puntosVenta)
+  if (ruta === '/clientes') {
+    const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 }
+    return Promise.resolve(pagina)
+  }
+  if (ruta.startsWith('/clientes?busqueda=')) {
+    const pagina: PaginaDe<ClienteListado> = { items: [otroCliente], total: 1, pagina: 1, tamanio: 25 }
+    return Promise.resolve(pagina)
+  }
+  if (ruta.startsWith('/articulos/escaneo?entrada=')) {
+    return Promise.resolve(articuloEscaneadoFixture())
+  }
+  if (ruta === '/catalogos/medios-pago') {
+    return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta, medioCuentaCorriente])
+  }
+  if (ruta.startsWith('/parametros/tolerancia_pago')) {
+    return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
+  }
+  if (ruta.startsWith('/parametros/vuelto_maximo')) {
+    return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
+  }
+  // stage-12-lotes-vencimientos (Slice 14): sin lotes por defecto — el camino feliz de la
+  // mayoría de los tests nunca abre el picker, pero cualquier click accidental no debe romper.
+  if (ruta.startsWith('/stock/lotes?')) return Promise.resolve<LoteListado[]>([])
+  return undefined
+}
+
+function mockearApiGet(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
-    if (ruta === '/clientes') {
-      const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 }
-      return Promise.resolve(pagina)
-    }
-    if (ruta.startsWith('/clientes?busqueda=')) {
-      const pagina: PaginaDe<ClienteListado> = { items: [otroCliente], total: 1, pagina: 1, tamanio: 25 }
-      return Promise.resolve(pagina)
-    }
-    if (ruta.startsWith('/articulos/escaneo?entrada=')) {
-      return Promise.resolve(articuloEscaneadoFixture())
-    }
-    if (ruta === '/catalogos/medios-pago') {
-      return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta, medioCuentaCorriente])
-    }
-    if (ruta.startsWith('/parametros/tolerancia_pago')) {
-      return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
-    }
-    if (ruta.startsWith('/parametros/vuelto_maximo')) {
-      return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
-    }
+    const propia = sobrescribir?.(ruta) ?? rutaBaseDePos(ruta)
+    if (propia) return propia
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -475,11 +491,11 @@ describe('Pos — vista previa de precios', () => {
     await waitFor(() => expect(apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')).toBe(true))
     const llamadaVentas = apiPostMock.mock.calls.find((llamada) => llamada[0] === '/ventas')
     const solicitud = llamadaVentas?.[1] as {
-      lineas: { idArticulo: number; cantidad: number; codigoBarra: string | null }[]
+      lineas: { idArticulo: number; cantidad: number; codigoBarra: string | null; idLote: number | null }[]
       pagos: { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }[]
     }
 
-    expect(solicitud.lineas).toEqual([{ idArticulo: 1, cantidad: 1, codigoBarra: '7790001234567' }])
+    expect(solicitud.lineas).toEqual([{ idArticulo: 1, cantidad: 1, codigoBarra: '7790001234567', idLote: null }])
     expect(solicitud.pagos).toEqual([{ idMedioPago: medioEfectivo.id, importe: 500, referencia: null, vuelto: 0 }])
   })
 
@@ -1262,5 +1278,116 @@ describe('Pos — limpieza de ediciones en curso', () => {
     await userEvent.click(boton)
 
     await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
+  })
+})
+
+describe('Pos — picker de lote (stage-12-lotes-vencimientos, Slice 14, design decisión 19)', () => {
+  function loteFixture(sobrescribir: Partial<LoteListado> = {}): LoteListado {
+    return {
+      idLote: 1,
+      idArticulo: 1,
+      codigo: '2026-09-01',
+      fechaVencimiento: '2026-09-01',
+      esSinIdentificar: false,
+      cantidad: 5,
+      estado: 'Vigente',
+      sugerido: false,
+      ...sobrescribir,
+    }
+  }
+
+  /** Deja el carrito con una sola línea de Coca Cola, sin pasar por el panel de pagos — punto de
+   * partida de los tests del picker. */
+  async function armarCarritoConUnaLinea() {
+    render(<Pos />)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+  }
+
+  it('el camino feliz nunca pide los lotes — el botón "Elegir lote" no dispara ningún fetch solo por aparecer', async () => {
+    await armarCarritoConUnaLinea()
+
+    expect(screen.getByRole('button', { name: 'Elegir lote' })).toBeInTheDocument()
+    expect(apiGetMock.mock.calls.some((call: unknown[]) => (call[0] as string).startsWith('/stock/lotes?'))).toBe(false)
+  })
+
+  it('preselecciona (resalta) el lote sugerido que manda el servidor — nunca lo recalcula', async () => {
+    mockearApiGet((ruta) =>
+      ruta.startsWith('/stock/lotes?')
+        ? Promise.resolve<LoteListado[]>([
+            loteFixture({ idLote: 1, codigo: '2026-09-01' }),
+            loteFixture({ idLote: 2, codigo: '2026-10-01', sugerido: true }),
+          ])
+        : undefined,
+    )
+    await armarCarritoConUnaLinea()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Elegir lote' }))
+
+    expect(await screen.findByLabelText('Lote de Coca Cola 1L')).toHaveValue('2')
+  })
+
+  it('una lista de lotes vacía muestra el aviso de FEFO automático, sin picker', async () => {
+    mockearApiGet((ruta) => (ruta.startsWith('/stock/lotes?') ? Promise.resolve<LoteListado[]>([]) : undefined))
+    await armarCarritoConUnaLinea()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Elegir lote' }))
+
+    expect(await screen.findByText('Sin lotes registrados — FEFO automático.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Lote de Coca Cola 1L')).not.toBeInTheDocument()
+  })
+
+  it('doble click en "Elegir lote" dispara exactamente un fetch (react-async-state regla 9: guard de reentrancia de primera línea)', async () => {
+    let resolverLotes: (valor: LoteListado[]) => void = () => {}
+    mockearApiGet((ruta) =>
+      ruta.startsWith('/stock/lotes?') ? new Promise((resolve) => (resolverLotes = resolve)) : undefined,
+    )
+    await armarCarritoConUnaLinea()
+
+    const boton = screen.getByRole('button', { name: 'Elegir lote' })
+    // Mismo tick: `fireEvent` (a diferencia de `userEvent.click` con `await` de por medio) es lo
+    // que reproduce el doble click que le gana al re-render del `disabled`.
+    fireEvent.click(boton)
+    fireEvent.click(boton)
+
+    resolverLotes([loteFixture()])
+    await screen.findByLabelText('Lote de Coca Cola 1L')
+
+    const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/stock/lotes?'))
+    expect(llamadas).toHaveLength(1)
+  })
+
+  it('una respuesta stale que llega DESPUÉS de cambiar de punto de venta no pinta el picker (mutation-proof-tests regla 7)', async () => {
+    const puntoVentaSucursal = puntoVentaFixture({ id: 8, nombre: 'Sucursal Norte' })
+    let resolverLotesPv1: (valor: LoteListado[]) => void = () => {}
+    let promesaLotesPv1: Promise<LoteListado[]> = Promise.resolve([])
+    mockearApiGet((ruta) => {
+      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro, puntoVentaSucursal])
+      if (ruta.startsWith('/stock/lotes?') && ruta.includes(`idPuntoVenta=${puntoVentaCentro.id}`)) {
+        promesaLotesPv1 = new Promise((resolve) => (resolverLotesPv1 = resolve))
+        return promesaLotesPv1
+      }
+      if (ruta.startsWith('/stock/lotes?')) return Promise.resolve<LoteListado[]>([])
+      return undefined
+    })
+    await armarCarritoConUnaLinea()
+    await waitFor(() => expect(screen.getByLabelText('Punto de venta')).toHaveValue(String(puntoVentaCentro.id)))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Elegir lote' }))
+    // el fetch de PV1 queda en vuelo — `resolverLotesPv1` todavía no se llamó.
+
+    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), String(puntoVentaSucursal.id))
+
+    // regla 7: el flush del microtask va DENTRO de `act` — un `waitFor` pasaría en su primer
+    // tick, antes de que el `.then` stale aterrice, y saldría verde sin probar nada.
+    await act(async () => {
+      resolverLotesPv1([loteFixture({ idLote: 99, codigo: 'STALE' })])
+      await promesaLotesPv1
+    })
+
+    expect(screen.getByRole('button', { name: 'Elegir lote' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Lote de Coca Cola 1L')).not.toBeInTheDocument()
   })
 })
