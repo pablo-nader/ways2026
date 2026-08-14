@@ -2072,7 +2072,7 @@ branch — no backend change.
   resuelven al mismo lote, nunca "probablemente". Suite completa tras la
   ronda: 590/590 (586 + 4 nuevos) + `tsc -b` limpio + `oxlint` limpio (solo
   warning preexistente ajeno en `AuthContext.tsx`).)*
-- [ ] 15.13 Branch `feat/stage12-slice15-web-backoffice` off `main`
+- [x] 15.13 Branch `feat/stage12-slice15-web-backoffice` off `main`
   (parent: slices 12+13); PR; merge stacked-to-main.
 
 **Test plan**: descriptor tests ×6 (15.8), incomplete-line ×2 (15.9),
