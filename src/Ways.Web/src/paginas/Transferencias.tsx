@@ -117,9 +117,21 @@ function SelectorDeLote({ idPuntoVenta, idArticulo, idLote, disabled, onCambio }
   const generacionRef = useRef(0)
   const idLoteRef = useRef(idLote)
   idLoteRef.current = idLote
+  const idPuntoVentaAnteriorRef = useRef(idPuntoVenta)
 
   useEffect(() => {
     setLotes([])
+
+    // stage-12-lotes-vencimientos (judgment-day fix, Slice 15): un lote explícito elegido viaja
+    // contra el PV de origen — si el origen cambia, ese `idLote` queda referido al PV anterior
+    // (stale). Se resetea acá, junto con el refetch de abajo, para que nunca viaje un lote de otro
+    // punto de venta; un cambio de `idArticulo` no necesita este reset porque `onElegir` en
+    // `FilaDeLinea` ya limpia `idLote` en el mismo `setLineas`.
+    if (idPuntoVentaAnteriorRef.current !== idPuntoVenta) {
+      idPuntoVentaAnteriorRef.current = idPuntoVenta
+      if (idLoteRef.current !== '') onCambio('', '')
+    }
+
     if (idPuntoVenta === '' || idArticulo === '') return
 
     let vigente = true

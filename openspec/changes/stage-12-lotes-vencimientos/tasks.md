@@ -2030,6 +2030,48 @@ branch — no backend change.
   aplicada (revertir al literal `lineaDeTransferenciaVacia(1)`) → RED en el
   test nuevo + 2 tests existentes de la ronda 1 (que ahora sí ejercitan el
   camino real sin el rodeo) → revertida → GREEN.)*
+
+  *(Ronda 3, Judge A, un CRITICAL + un WARNING + un MINOR fixed: (1) CRITICAL
+  — `ConteoDeInventario.tsx` derivaba `esLoteEfectivo` de `controlaLote` a
+  secas, ignorando `lotes_habilitado` de la empresa (espejo roto de
+  `ReglaDeLotes.ControlEfectivo`, que SÍ es el AND de ambos flags). Con
+  `controla_lote=true` y el módulo apagado, la grilla por lote se mostraba
+  igual, `GET /api/stock/lotes` devolvía cero lotes (nunca hubo
+  reconciliación) y `puedeContar` exigía ≥1 línea completa → dead-end
+  permanente, el operador nunca podía contar ese artículo. Solución elegida:
+  el parámetro resuelto SÍ existe y es consumible (`GET
+  /api/parametros/lotes_habilitado`, `Politicas.OperacionDePos`, el mismo que
+  prueba `Parametros.tsx` vía "Probar") — se agregó `clienteDeParametros`
+  (`api/parametros.ts`) y un efecto token-gated (mismo patrón que
+  `actual`/`lineasDeLote`) que lo resuelve solo cuando el artículo elegido
+  tiene `controlaLote`, usando el `idEmpresa` del punto de venta
+  seleccionado. Mientras no resuelve o si el fetch falla, el default es
+  agregado (mismo default `"false"` del parámetro en el servidor) — nunca un
+  dead-end: si el módulo está realmente ON, el servidor rechaza el envío
+  agregado con `400 conteo_requiere_lotes`, visible por el funnel existente.
+  Tests: (a) módulo off + artículo flaggeado → agregado usable, submit OK;
+  (b) módulo on + artículo con lotes → grilla como antes; (c) fetch de
+  `lotes_habilitado` fallido → cae a agregado (mismo criterio honesto).
+  Mutación aplicada (`esLoteEfectivo = articuloControlaLote` a secas) → RED
+  en (a) (dead-end reproducido: grilla vacía, botón deshabilitado) →
+  revertida → GREEN. (2) WARNING — `Transferencias.tsx`'s `SelectorDeLote`
+  no reseteaba un `idLote` explícito al cambiar el punto de venta Origen: la
+  selección viajaba stale contra el PV nuevo. Fix: el efecto que ya
+  refetchea lotes ahora también resetea el `idLote` de la línea (vía
+  `onCambio('', '')`) cuando detecta, con un ref, que `idPuntoVenta`
+  específicamente cambió — un cambio de `idArticulo` no necesita este reset
+  porque `onElegir` ya limpia `idLote` en el mismo `setLineas`. Test: elegir
+  lote explícito → cambiar Origen → el `idLote` de la línea vuelve a ''
+  (Auto) y el request nunca lleva el stale. Mutación aplicada (revertir el
+  reset) → RED (el POST llevó `idLote: 42`, del PV anterior) → revertida →
+  GREEN. (3) MINOR — comentario de `stock.ts` corregido: "el servidor las
+  rechazaría igual con `400 articulo_repetido` en el caso más probable" →
+  la garantía real, verificada en `ServicioDeStock.ResolverLineasAsync`: una
+  sola lectura de saldos pre-transacción (`LeerSaldosAsync`) + `ElegirFefo`
+  puro sobre ese mismo snapshot ⇒ dos líneas Auto del mismo artículo SIEMPRE
+  resuelven al mismo lote, nunca "probablemente". Suite completa tras la
+  ronda: 590/590 (586 + 4 nuevos) + `tsc -b` limpio + `oxlint` limpio (solo
+  warning preexistente ajeno en `AuthContext.tsx`).)*
 - [ ] 15.13 Branch `feat/stage12-slice15-web-backoffice` off `main`
   (parent: slices 12+13); PR; merge stacked-to-main.
 

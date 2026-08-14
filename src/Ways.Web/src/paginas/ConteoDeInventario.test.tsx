@@ -137,16 +137,22 @@ function loteFixture(sobrescribir: Partial<LoteListado> = {}): LoteListado {
 }
 
 /** stage-12-lotes-vencimientos (Slice 15) — variante lote-efectiva de `mockearBase`: el artículo
- * mockeado tiene `controlaLote: true` y `GET /api/stock/lotes` devuelve una lista fija de lotes. */
+ * mockeado tiene `controlaLote: true` y `GET /api/stock/lotes` devuelve una lista fija de lotes.
+ *
+ * judgment-day (ronda juez A): el control EFECTIVO ahora es el AND con `lotes_habilitado` de la
+ * empresa (`GET /api/parametros/lotes_habilitado`) — acá se mockea resuelto en `"true"` (el
+ * módulo está ON), que es el escenario que estos tests ya asumían implícitamente. */
 function mockearBaseConLote(
   stockActual: StockActual,
   lotes: LoteListado[] = [loteFixture({ idLote: 41 }), loteFixture({ idLote: 42, codigo: '2026-09-01' })],
+  lotesHabilitado = 'true',
 ) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
     if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
     if (ruta.startsWith('/stock?')) return Promise.resolve(stockActual)
     if (ruta.startsWith('/stock/lotes?')) return Promise.resolve(lotes)
+    if (ruta.startsWith('/parametros/lotes_habilitado')) return Promise.resolve({ clave: 'lotes_habilitado', valor: lotesHabilitado })
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -416,5 +422,74 @@ describe('ConteoDeInventario — conteo por lote (exactly-one-of)', () => {
 
     expect(screen.queryByText('Conteo por lote')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Cantidad contada')).toBeInTheDocument()
+  })
+})
+
+// ---- Control efectivo de lote — AND con `lotes_habilitado` (judgment-day, Slice 15, ronda A) ---
+
+describe('ConteoDeInventario — control efectivo de lote (judgment-day fix, ronda juez A)', () => {
+  it('(a) artículo con controlaLote pero módulo de lotes apagado (lotes_habilitado=false): cae al formulario agregado, usable, submit OK — sin dead-end', async () => {
+    mockearBaseConLote({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 }, [], 'false')
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/conteos')
+        return Promise.resolve({ idPuntoVenta: 1, idArticulo: 10, cantidad: 45, cantidadAnterior: 40, delta: 5, movimientoRegistrado: true })
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+
+    // el AND con `lotes_habilitado=false` cae al agregado: nunca la grilla por lote, aunque el
+    // artículo tenga `controlaLote: true` — antes del fix, esto quedaba en un grid vacío sin
+    // ninguna línea completable (dead-end permanente).
+    await waitFor(() => expect(screen.getByLabelText('Cantidad contada')).toBeInTheDocument())
+    expect(screen.queryByText('Conteo por lote')).not.toBeInTheDocument()
+
+    await usuario.type(screen.getByLabelText('Cantidad contada'), '45')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'Recuento con módulo apagado')
+
+    expect(screen.getByRole('button', { name: 'Contar' })).not.toBeDisabled()
+    await usuario.click(screen.getByRole('button', { name: 'Contar' }))
+
+    expect(await screen.findByText('Diferencia registrada: +5 (antes 40 → ahora 45).')).toBeInTheDocument()
+    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/conteos')
+    expect(llamadas).toHaveLength(1)
+    const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
+    expect(cuerpo).toEqual({ idPuntoVenta: 1, idArticulo: 10, contada: 45, observaciones: 'Recuento con módulo apagado' })
+  })
+
+  it('(b) artículo con controlaLote y módulo de lotes prendido (lotes_habilitado=true): muestra la grilla por lote, como antes del fix', async () => {
+    mockearBaseConLote({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
+    const usuario = userEvent.setup()
+
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+
+    await screen.findByText('2026-08-20')
+    expect(screen.queryByLabelText('Cantidad contada')).not.toBeInTheDocument()
+  })
+
+  it('(c) caso borde elegido: si la resolución de lotes_habilitado falla (red caída), cae al agregado en vez de bloquear al operador', async () => {
+    // `mockearBaseConLote` con la ruta de `lotes_habilitado` sobrescrita a un reject.
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+      if (ruta.startsWith('/articulos')) return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta.startsWith('/stock?')) return Promise.resolve({ idPuntoVenta: 1, idArticulo: 10, cantidad: 40 })
+      if (ruta.startsWith('/parametros/lotes_habilitado')) return Promise.reject(new Error('caído'))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderConteo()
+    await screen.findByLabelText('Punto de venta')
+    await elegirPuntoVentaYArticulo(usuario)
+
+    // Fetch fallido → `lotesHabilitado` se queda en `null` → default agregado (honesto, mismo
+    // default que el servidor), nunca un dead-end.
+    await waitFor(() => expect(screen.getByLabelText('Cantidad contada')).toBeInTheDocument())
+    expect(screen.queryByText('Conteo por lote')).not.toBeInTheDocument()
   })
 })

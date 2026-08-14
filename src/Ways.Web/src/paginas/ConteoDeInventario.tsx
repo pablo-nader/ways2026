@@ -11,6 +11,7 @@ import {
 import { clienteDeArticulos } from '../api/articulos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
+import { clienteDeParametros } from '../api/parametros'
 import type { ArticuloListado, PuntoVentaListado, ResultadoConteo } from '../api/tipos'
 import { Box } from '../componentes/Box'
 
@@ -111,6 +112,19 @@ function SelectorDeArticulo({ descripcion, disabled, onElegir }: PropsSelectorDe
  * un grid de "contada por lote" — nunca muestra el campo agregado a la vez. Un artículo sin
  * control de lote sigue el flujo agregado de siempre. La pantalla arma UNA de las dos formas del
  * contrato, nunca ambas ni ninguna, mismo criterio que el backend (`400 conteo_contada_y_lotes`).
+ *
+ * judgment-day (Slice 15, ronda juez A): el control EFECTIVO no es solo `controlaLote` — es el AND
+ * con `lotes_habilitado` de la empresa, espejo de `ReglaDeLotes.ControlEfectivo` (Domain). Con el
+ * flag propio en `true` pero el módulo apagado (`lotes_habilitado = false`), `GET /api/stock/lotes`
+ * jamás tuvo reconciliación y devuelve cero lotes — mostrar igual el grid por lote dejaba al
+ * operador sin ninguna forma de contar ese artículo (dead-end permanente, `puedeContar` exigía
+ * ≥1 línea que nunca podía existir). Acá se resuelve `lotes_habilitado` vía
+ * `GET /api/parametros/lotes_habilitado` (mismo endpoint que prueba `Parametros.tsx`, con
+ * `Politicas.OperacionDePos` — no hace falta ser admin) antes de decidir la forma del formulario;
+ * mientras no resuelve, o si el fetch falla, el default es agregado (mismo default del parámetro
+ * en el servidor, `"false"`) — nunca un dead-end: si el módulo está realmente ON, el servidor
+ * rechaza el envío agregado con `400 conteo_requiere_lotes`, error que el funnel ya muestra tal
+ * cual — el server manda, honesto y sin bloquear al operador silenciosamente.
  */
 export function ConteoDeInventario() {
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
@@ -143,7 +157,46 @@ export function ConteoDeInventario() {
   const [contada, setContada] = useState('')
   const [observaciones, setObservaciones] = useState('')
 
-  const esLoteEfectivo = articuloSeleccionado?.controlaLote === true
+  const articuloControlaLote = articuloSeleccionado?.controlaLote === true
+  const idEmpresaSeleccionada = (puntosVenta ?? []).find((pv) => pv.id === idPuntoVenta)?.idEmpresa ?? null
+
+  // ---- `lotes_habilitado` de la empresa (judgment-day, Slice 15) — solo se resuelve cuando hace
+  // falta (el artículo elegido tiene `controlaLote`): mismo patrón token-gated que `actual`/
+  // `lineasDeLote` de abajo. `null` = sin resolver todavía (o fetch fallido) — el default es
+  // agregado, nunca el grid por lote, hasta tener una respuesta positiva explícita del servidor.
+  const [lotesHabilitado, setLotesHabilitado] = useState<boolean | null>(null)
+  const generacionLotesHabilitadoRef = useRef(0)
+
+  useEffect(() => {
+    setLotesHabilitado(null)
+    if (idEmpresaSeleccionada === null || idPuntoVenta === '' || !articuloControlaLote) return
+
+    let vigente = true
+    const miGeneracion = (generacionLotesHabilitadoRef.current += 1)
+
+    clienteDeParametros
+      .resolver('lotes_habilitado', idEmpresaSeleccionada, idPuntoVenta)
+      .then((resuelto) => {
+        if (!vigente || generacionLotesHabilitadoRef.current !== miGeneracion) return
+        setLotesHabilitado(resuelto.valor === 'true')
+      })
+      .catch(() => {
+        if (!vigente || generacionLotesHabilitadoRef.current !== miGeneracion) return
+        // Fetch fallido: se queda en `null` → `esLoteEfectivo` cae a agregado (default honesto,
+        // mismo criterio que el default del parámetro en el servidor). Nunca un dead-end: si el
+        // módulo está realmente ON, el servidor rechaza el envío agregado y ese error se ve.
+        setLotesHabilitado(null)
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [idEmpresaSeleccionada, idPuntoVenta, articuloControlaLote])
+
+  // Control EFECTIVO — espejo de `ReglaDeLotes.ControlEfectivo` (Domain): el AND de ambos flags,
+  // nunca `controlaLote` a secas (ese era el dead-end del judgment-day: con el módulo apagado, la
+  // grilla por lote se mostraba igual y nunca tenía líneas para completar).
+  const esLoteEfectivo = articuloControlaLote && lotesHabilitado === true
 
   // ---- stock actual conocido (el "antes" honesto) — token-gated, se reconsulta cada vez que
   // cambia el par (punto de venta, artículo). ----------------------------------------------------

@@ -519,6 +519,67 @@ describe('Transferencias — picker de lote', () => {
   })
 })
 
+describe('Transferencias — lote explícito stale al cambiar Origen (judgment-day fix, Slice 15)', () => {
+  it('elegir un lote explícito y cambiar el Origen resetea la selección a Auto (FEFO) — nunca viaja el idLote del PV anterior', async () => {
+    const puntos = [
+      puntoVentaFixture({ id: 1, nombre: 'Casa Central' }),
+      puntoVentaFixture({ id: 2, nombre: 'Sucursal Norte' }),
+    ]
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve(puntos)
+      if (ruta.startsWith('/articulos'))
+        return Promise.resolve({ items: [articuloFixture({ controlaLote: true })], total: 1, pagina: 1, tamanio: 25 })
+      if (ruta.startsWith('/stock/lotes?') && ruta.includes('idPuntoVenta=1'))
+        return Promise.resolve([loteFixture({ idLote: 41, sugerido: true }), loteFixture({ idLote: 42, codigo: '2026-09-01', sugerido: false })])
+      if (ruta.startsWith('/stock/lotes?') && ruta.includes('idPuntoVenta=2')) return Promise.resolve([])
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    let resolverTransferir: (valor: ResultadoTransferencia) => void = () => {}
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/stock/transferencias') return new Promise((resolve) => (resolverTransferir = resolve))
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+    const usuario = userEvent.setup()
+
+    renderTransferencias()
+    await screen.findByLabelText('Origen')
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '1')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '2')
+    await usuario.type(screen.getByLabelText('Observaciones'), 'obs')
+    await completarLinea(usuario)
+
+    await waitFor(() => expect(screen.getByLabelText('Lote')).toHaveValue('41'))
+    await usuario.selectOptions(screen.getByLabelText('Lote'), '42')
+    expect(screen.getByLabelText('Lote')).toHaveValue('42')
+
+    // cambia el Origen — el lote 42 pertenecía al PV 1, ahora es stale.
+    await usuario.selectOptions(screen.getByLabelText('Origen'), '2')
+    await usuario.selectOptions(screen.getByLabelText('Destino'), '1')
+
+    await waitFor(() => expect(screen.getByLabelText('Lote')).toHaveValue(''))
+
+    await usuario.click(screen.getByLabelText(/Confirmo que quiero mover este stock/))
+    await usuario.click(screen.getByRole('button', { name: 'Transferir' }))
+
+    resolverTransferir({
+      idPuntoVentaOrigen: 2,
+      idPuntoVentaDestino: 1,
+      lineas: [{ idArticulo: 10, idLote: null, cantidadOrigen: 12, cantidadDestino: 13 }],
+    })
+    await screen.findByText(/Transferencia registrada/)
+
+    const llamadas = apiPostMock.mock.calls.filter((call: unknown[]) => call[0] === '/stock/transferencias')
+    const [, cuerpo] = llamadas[0] as [string, Record<string, unknown>]
+    // nunca viaja el idLote 42 (stale, del PV de origen anterior).
+    expect(cuerpo).toEqual({
+      idPuntoVentaOrigen: 2,
+      idPuntoVentaDestino: 1,
+      observaciones: 'obs',
+      lineas: [{ idArticulo: 10, cantidad: 8, idLote: null }],
+    })
+  })
+})
+
 describe('Transferencias — repetidos por lote (judgment-day fix, Slice 15)', () => {
   // Helper: arma dos filas del MISMO artículo lote-efectivo con `clave` propia y distinta —
   // la fila inicial y la agregada con "+ Agregar línea" (el `proximaClaveRef` arranca ya

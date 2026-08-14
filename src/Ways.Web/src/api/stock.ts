@@ -77,9 +77,11 @@ export function lineaTransferenciaCompleta(l: LineaDeTransferenciaFormulario): b
  * cliente PUEDE saber sin adivinar el FEFO del servidor (decisión 19: "el server manda"):
  * - Dos líneas completas con el MISMO `(idArticulo, idLote explícito)` → repetido (choca contra la
  *   restricción real del backend).
- * - Dos o más líneas del mismo artículo, TODAS con lote en "Auto (FEFO)" → repetido: el cliente no
- *   puede saber si el servidor las resolvería al mismo lote, pero bloquear acá es honesto — el
- *   servidor las rechazaría igual con `400 articulo_repetido` en el caso más probable.
+ * - Dos o más líneas del mismo artículo, TODAS con lote en "Auto (FEFO)" → repetido: el servidor
+ *   lee los saldos UNA sola vez antes de resolver todas las líneas (`LeerSaldosAsync`, snapshot
+ *   único pre-transacción) y `ElegirFefo` es una función pura sobre ese mismo snapshot — dos
+ *   líneas Auto del mismo artículo SIEMPRE resuelven al mismo lote, nunca "probablemente"; el
+ *   servidor las rechaza con `400 articulo_repetido` de forma determinística.
  * - Mismo artículo con lotes explícitos DISTINTOS → PERMITIDO (válido en el backend).
  * - Mismo artículo, una línea con lote explícito y otra en Auto → PERMITIDO client-side (el
  *   cliente no puede computar el pick FEFO de la línea Auto para compararlo); si el servidor
