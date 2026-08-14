@@ -1471,8 +1471,21 @@ path. **Rollback**: revert the branch.
   of a lot-effective articulo without idLote is rejected")*
 - [x] 11.11 Gate guard: `dotnet ef migrations has-pending-model-changes` →
   no pending changes.
-- [ ] 11.12 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 11.13 Branch `feat/stage12-slice11-ajuste-decomiso` off `main`
+- [x] 11.12 Run `judgment-day`; fix; re-judge until clean. *(APPLY-RUN NOTE:
+  judge B round 1 APPROVE-with-findings — 5 mutations killed cleanly but 3
+  coverage gaps confirmed by SURVIVING mutations: the aggregate branch of
+  decomiso (no-lot articulo) was dead code to the tests, invalid-cantidad
+  validation was never exercised via /decomiso, and nothing proved an ajuste
+  CAN leave a negative balance (its central difference from decomiso). Fix
+  d36554a: 7 new tests (11→18), each verified by re-running the surviving
+  mutation to RED. Judge B round 2 APPROVE with surgical-precision kills
+  (1/18, 2/18, 2/18 — no collateral). Judge A APPROVE with 3 MINORs:
+  ExigirObservaciones message says "ajuste" on the decomiso path
+  (pre-existing since stage 5, follow-up ticket); the stock spec's multi-lot
+  scenario was mislabeled "ajuste" — amended to "conteo" in this branch
+  (single-IdLote request shape confirmed); cantidad-code reuse cosmetic and
+  documented.)*
+- [x] 11.13 Branch `feat/stage12-slice11-ajuste-decomiso` off `main`
   (parent: slice 10); PR; merge stacked-to-main.
 
 **Test plan**: 403 mutation (11.4), insufficiency (11.5), sign discipline
