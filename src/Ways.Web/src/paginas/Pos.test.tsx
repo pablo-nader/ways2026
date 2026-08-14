@@ -1453,6 +1453,9 @@ describe('Pos — ticket: warning de lote vencido (design decisión 12: "Expired
     expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
     const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
     expect(within(fila).getByText('⚠ Lote vencido')).toBeInTheDocument()
+    // El código de lote y el warning conviven en la misma fila del ticket (judgment-day, slice
+    // 14, MINOR 4 juez A) — el operador ve QUÉ lote venció, no solo QUE algo venció.
+    expect(within(fila).getByText('Lote 2026-01-01')).toBeInTheDocument()
   })
 
   it('un item emitido con loteVencido: false no muestra el warning', async () => {

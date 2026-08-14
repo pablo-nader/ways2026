@@ -600,6 +600,66 @@ describe('CompraEditor — líneas con control de lote (stage-12-lotes-vencimien
     expect(screen.getByText('No controla lote')).toBeInTheDocument()
     expect(screen.queryByLabelText('Fecha de vencimiento')).not.toBeInTheDocument()
   })
+
+  it('re-elegir el artículo de una línea con lote cargado, por uno que no controla lote, no deja codigoLote/fechaVencimiento stale en el payload (judgment-day, MAJOR juez A)', async () => {
+    const articuloSinLote = articuloFixture({ id: 30, codigoInterno: 'ART-30', nombre: 'Coca Cola 1.5L', controlaLote: false })
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1')
+        return Promise.resolve(compraFixture({ items: [itemFixture({ codigoLote: 'LOTE-A', fechaVencimiento: '2026-06-01' })] }))
+      if (ruta.startsWith('/articulos?busqueda=')) return Promise.resolve({ items: [articuloSinLote], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+    apiPutMock.mockResolvedValue(compraFixture())
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByText('Elegido: Fideos 500g')
+    expect(screen.getByLabelText('Código de lote')).toHaveValue('LOTE-A')
+    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('2026-06-01')
+
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'coca')
+    await screen.findByText('ART-30 — Coca Cola 1.5L')
+    await usuario.click(screen.getByText('ART-30 — Coca Cola 1.5L'))
+
+    // El artículo nuevo no controla lote: los inputs de lote desaparecen — el reset no es solo
+    // interno, también es visible (el operador ve que el lote del artículo anterior ya no aplica).
+    expect(screen.getByText('No controla lote')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Código de lote')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Fecha de vencimiento')).not.toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Guardar borrador' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    const items = cuerpo.items as Record<string, unknown>[]
+    expect(items).toHaveLength(1)
+    expect(items[0].idArticulo).toBe(30)
+    expect(items[0].codigoLote).toBeNull()
+    expect(items[0].fechaVencimiento).toBeNull()
+  })
+
+  it('re-elegir el artículo de una línea con lote cargado, por otro que también controla lote, resetea codigoLote/fechaVencimiento visualmente (el operador recarga los del lote nuevo)', async () => {
+    const otroArticuloConLote = articuloFixture({ id: 40, codigoInterno: 'ART-40', nombre: 'Yerba 1kg', controlaLote: true })
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1')
+        return Promise.resolve(compraFixture({ items: [itemFixture({ codigoLote: 'LOTE-A', fechaVencimiento: '2026-06-01' })] }))
+      if (ruta.startsWith('/articulos?busqueda=')) return Promise.resolve({ items: [otroArticuloConLote], total: 1, pagina: 1, tamanio: 25 })
+      return undefined
+    })
+    const usuario = userEvent.setup()
+
+    renderEditor()
+    await screen.findByText('Elegido: Fideos 500g')
+    expect(screen.getByLabelText('Código de lote')).toHaveValue('LOTE-A')
+    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('2026-06-01')
+
+    await usuario.type(screen.getByPlaceholderText('Buscar artículo…'), 'yerba')
+    await screen.findByText('ART-40 — Yerba 1kg')
+    await usuario.click(screen.getByText('ART-40 — Yerba 1kg'))
+
+    expect(screen.getByLabelText('Código de lote')).toHaveValue('')
+    expect(screen.getByLabelText('Fecha de vencimiento')).toHaveValue('')
+  })
 })
 
 describe('CompraEditor — role gating', () => {

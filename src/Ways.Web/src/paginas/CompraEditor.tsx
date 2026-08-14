@@ -164,7 +164,19 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
         <SelectorDeArticulo
           descripcion={linea.descripcion}
           disabled={disabled}
-          onElegir={(a) => onCambio(linea.clave, { idArticulo: a.id, descripcion: a.nombre, controlaLote: a.controlaLote })}
+          onElegir={(a) => {
+            // Cambiar el artículo de una línea invalida cualquier lote ya cargado (era del
+            // artículo anterior): sin este reset, codigoLote/fechaVencimiento quedan stale y
+            // viajan en el payload — la validación del servidor es incondicional y los persiste
+            // (judgment-day, slice 14, MAJOR juez A).
+            const cambioDeArticulo = linea.idArticulo !== a.id
+            onCambio(linea.clave, {
+              idArticulo: a.id,
+              descripcion: a.nombre,
+              controlaLote: a.controlaLote,
+              ...(cambioDeArticulo ? { codigoLote: '', fechaVencimiento: '' } : {}),
+            })
+          }}
         />
         {incompleta && <div className="small text-warning-emphasis">Línea incompleta — no se va a guardar.</div>}
       </td>
@@ -308,6 +320,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
           <tr>
             <th>Artículo</th>
             <th>Lote</th>
+            <th>Vencimiento</th>
             <th className="text-end">Cantidad</th>
             <th className="text-end">Costo unitario</th>
             <th className="text-end">Descuento</th>
@@ -322,6 +335,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
             <tr key={item.orden}>
               <td>{item.descripcion}</td>
               <td>{item.codigoLote ?? '—'}</td>
+              <td>{item.fechaVencimiento ?? '—'}</td>
               <td className="text-end">{item.cantidad}</td>
               <td className="text-end">{formatearMoneda(item.costoUnitario)}</td>
               <td className="text-end">{formatearMoneda(item.descuento)}</td>
@@ -333,7 +347,7 @@ function TablaDeItemsDeSoloLectura({ compra }: { compra: CompraDetalle }) {
           ))}
           {compra.items.length === 0 && (
             <tr>
-              <td colSpan={9} className="text-center text-muted py-3">
+              <td colSpan={10} className="text-center text-muted py-3">
                 Esta compra no tiene items.
               </td>
             </tr>

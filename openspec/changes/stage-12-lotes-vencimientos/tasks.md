@@ -1966,6 +1966,39 @@ change.
   - *Full suite after fixes: 564/564 vitest tests green (was 561), `npx
     tsc -b` clean, `oxlint` clean (one pre-existing unrelated warning in
     `AuthContext.tsx`).)*
+  - *(JD-FIX NOTE, slice 14 judgment-day ronda 2, juez A: 1 MAJOR + 3
+    MINOR confirmados, todos arreglados.*
+    - *MAJOR — `CompraEditor.tsx`'s `FilaDeItem.onElegir` only merged the
+      new artículo's identity; a previous artículo's `codigoLote`/
+      `fechaVencimiento` survived the swap and travelled in the save
+      payload — the server's `lote_requerido` validation is deliberately
+      unconditional and would persist the stale lot data
+      (react-async-state regla 8, subtree keyed by entity). Fixed: `onElegir`
+      now resets `codigoLote`/`fechaVencimiento` to `''` whenever the
+      chosen `idArticulo` differs from the line's current one. Two tests
+      added to `CompraEditor.test.tsx`: artículo A (lote-efectivo, loaded)
+      → artículo C (no controla lote) asserts the PUT payload carries
+      `codigoLote: null, fechaVencimiento: null`; artículo A → artículo B
+      (both lote-efectivos) asserts the inputs reset visually to `''`. A
+      revert-and-rerun against the original one-liner sent both new tests
+      RED (payload kept `'LOTE-A'`/`'2026-06-01'`), verified then restored.*
+    - *MINOR — the "⚠ Lote vencido" ticket warning already had a comment
+      citing design decisión 12, but didn't contrast it with the picker's
+      pre-submit hint (`opcionDeLote`'s plain-text "vencido" option
+      label). Fixed: comment in `Pos.tsx` now names both surfaces and why
+      the ticket one is deliberately louder.*
+    - *MINOR — `TablaDeItemsDeSoloLectura` (compra confirmada/anulada)
+      showed `codigoLote` but not `fechaVencimiento`, even though the
+      field is already mirrored on `ItemDeCompra`. Fixed: added a
+      "Vencimiento" column next to "Lote"; `colSpan` on the empty-state
+      row bumped 9 → 10.*
+    - *MINOR — the loteVencido ticket test only asserted the warning text,
+      not that `codigoLote` renders in the same row. Fixed: extended the
+      assertion in `Pos.test.tsx` to also check `within(fila)` for `Lote
+      2026-01-01`.*
+    - *Full suite after fixes: 566/566 vitest tests green (was 564), `npx
+      tsc -b` clean, `oxlint` clean (same pre-existing unrelated warning
+      in `AuthContext.tsx`).)*
 - [ ] 14.11 Branch `feat/stage12-slice14-web-operacion` off `main` (parent:
   slices 5+8); PR; merge stacked-to-main.
 

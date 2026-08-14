@@ -901,8 +901,11 @@ export function Pos() {
                           {item.descripcion}
                           {item.codigoLote && <div className="small text-muted">Lote {item.codigoLote}</div>}
                           {item.loteVencido && (
-                            // Warning prominente, nunca un bloqueo (design decisión 12: "Expired
-                            // Lot Sale Warns, Never Blocks") — la venta ya se emitió.
+                            // Escalada visual deliberada (design decisión 12: "Expired Lot Sale
+                            // Warns, Never Blocks"): más fuerte que el hint pre-submit del picker
+                            // (`opcionDeLote`, texto plano "vencido" en el `<option>`) porque acá
+                            // la venta ya se emitió — es la última chance de que el operador se
+                            // entere, nunca un bloqueo.
                             <div className="small text-danger fw-bold">⚠ Lote vencido</div>
                           )}
                         </td>
