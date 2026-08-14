@@ -281,12 +281,19 @@ public static class ExportacionDeReportes
     [
         new ColumnaExportable("Artículo", TipoDeColumna.Entero),
         new ColumnaExportable("Nombre", TipoDeColumna.Texto),
-        new ColumnaExportable("Cantidad", TipoDeColumna.Cantidad)
+        new ColumnaExportable("Cantidad", TipoDeColumna.Cantidad),
+        new ColumnaExportable("Mínimo", TipoDeColumna.Cantidad),
+        new ColumnaExportable("Reposición", TipoDeColumna.Cantidad),
+        new ColumnaExportable("Estado", TipoDeColumna.Texto)
     ];
 
     /// <summary>Slice 9 (proposal decisión 10): sin fila de totales — a diferencia de
     /// <c>ventas/resumen</c>/<c>compras/por-proveedor</c>, sumar cantidades de artículos distintos
-    /// no produce una figura con significado propio.</summary>
+    /// no produce una figura con significado propio. stage-13-stock-inteligente, Slice 2: mismo
+    /// orden de columnas que el JSON — <c>minimo</c>/<c>reposicion</c> nulos quedan como celda
+    /// vacía (nunca <c>0</c>, <c>Celda.Cantidad</c> ya acepta <c>decimal?</c>), <c>Estado</c> se
+    /// escribe como texto del nombre de miembro del enum (mismo criterio que <c>Vencimientos</c>
+    /// con <see cref="FilaDeVencimiento.Estado"/>).</summary>
     public static TablaExportable De(Existencias respuesta, ContextoDeExportacion ctx) =>
         new(
             "Existencias", ctx, ColumnasExistencias,
@@ -295,7 +302,10 @@ public static class ExportacionDeReportes
                 [
                     Celda.Entero(f.IdArticulo),
                     Celda.Texto(f.Nombre),
-                    Celda.Cantidad(f.Cantidad)
+                    Celda.Cantidad(f.Cantidad),
+                    Celda.Cantidad(f.Minimo),
+                    Celda.Cantidad(f.Reposicion),
+                    Celda.Texto(f.Estado.ToString())
                 ])
                 .ToList());
 
