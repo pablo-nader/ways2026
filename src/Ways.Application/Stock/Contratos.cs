@@ -43,7 +43,12 @@ public sealed record LineaDeTransferencia(int IdArticulo, decimal Cantidad, int?
 public sealed record ResultadoTransferencia(
     int IdPuntoVentaOrigen, int IdPuntoVentaDestino, IReadOnlyList<LineaTransferida> Lineas);
 
-public sealed record LineaTransferida(int IdArticulo, decimal CantidadOrigen, decimal CantidadDestino);
+/// <summary>Etapa 12, slice 10 (design: dto-contract-honesty — "every field named below has a
+/// destination"): <see cref="IdLote"/> viaja igual que <c>ItemEmitido.IdLote</c> — el caller
+/// necesita saber qué lote se movió, sea explícito o resuelto por FEFO. La clave de agregación de
+/// <c>ServicioDeStock.EjecutarTransferenciaAsync</c> es <c>(IdArticulo, IdLote)</c>, no solo
+/// <c>IdArticulo</c>: dos líneas del mismo artículo con lotes distintos son filas separadas.</summary>
+public sealed record LineaTransferida(int IdArticulo, int? IdLote, decimal CantidadOrigen, decimal CantidadDestino);
 
 /// <summary>
 /// Cuerpo de <c>POST /api/stock/conteos</c> (stage-8-compras-transferencias-inventario, Slice 3;

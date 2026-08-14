@@ -143,7 +143,10 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
         var claves = ConstruirClavesOrdenadas(idPuntoVentaOrigen, idPuntoVentaDestino, lineas);
-        var resultadosPorArticulo = new Dictionary<int, (decimal Origen, decimal Destino)>();
+        // Etapa 12, slice 10, judgment-day fix (juez A, FIX 1): clave ensanchada a
+        // (IdArticulo, IdLote) — dos líneas del mismo artículo con lotes distintos son ACEPTADAS
+        // por spec y no pueden colapsar en una sola fila del response (dto-contract-honesty).
+        var resultadosPorArticuloYLote = new Dictionary<(int IdArticulo, int? IdLote), (decimal Origen, decimal Destino)>();
 
         foreach (var clave in claves)
         {
@@ -170,8 +173,9 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
                         409);
                 }
 
-                var previo = resultadosPorArticulo.TryGetValue(clave.IdArticulo, out var existente) ? existente : (Origen: 0m, Destino: 0m);
-                resultadosPorArticulo[clave.IdArticulo] = clave.IdPuntoVenta == idPuntoVentaOrigen
+                var claveResultado = (clave.IdArticulo, clave.IdLoteDelMovimiento);
+                var previo = resultadosPorArticuloYLote.TryGetValue(claveResultado, out var existente) ? existente : (Origen: 0m, Destino: 0m);
+                resultadosPorArticuloYLote[claveResultado] = clave.IdPuntoVenta == idPuntoVentaOrigen
                     ? (nueva, previo.Destino)
                     : (previo.Origen, nueva);
             }
@@ -196,9 +200,11 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         await transaccion.CommitAsync(ct);
 
-        var lineasResultado = resultadosPorArticulo
-            .OrderBy(kv => kv.Key)
-            .Select(kv => new LineaTransferida(kv.Key, kv.Value.Origen, kv.Value.Destino))
+        var lineasResultado = resultadosPorArticuloYLote
+            .OrderBy(kv => kv.Key.IdArticulo)
+            .ThenBy(kv => kv.Key.IdLote.HasValue)   // NULLS FIRST, mismo criterio que ConstruirClavesOrdenadas
+            .ThenBy(kv => kv.Key.IdLote ?? 0)
+            .Select(kv => new LineaTransferida(kv.Key.IdArticulo, kv.Key.IdLote, kv.Value.Origen, kv.Value.Destino))
             .ToList();
 
         return new ResultadoTransferencia(idPuntoVentaOrigen, idPuntoVentaDestino, lineasResultado);

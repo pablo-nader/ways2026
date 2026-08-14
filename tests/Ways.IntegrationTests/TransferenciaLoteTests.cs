@@ -566,6 +566,115 @@ public class TransferenciaLoteTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(20m, await LeerStockAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloSinLote));
     }
 
+    // ---- judgment-day (juez A, ronda 1, FIX 1): el response no colapsa multi-lote del mismo artículo --
+
+    /// <summary>dto-contract-honesty (design.md:180 — <c>LineaTransferida(int IdArticulo, int? IdLote,
+    /// decimal CantidadOrigen, decimal CantidadDestino)</c>): dos líneas del MISMO artículo con lotes
+    /// explícitos distintos son un caso ACEPTADO por spec (mismo escenario que
+    /// <see cref="DosLineasDelMismoArticuloConLotesExplicitosDistintosSonAceptadas"/>) — la clave de
+    /// agregación del response ensancha a <c>(IdArticulo, IdLote)</c>, así que esas dos líneas producen
+    /// DOS filas, no una sola que las colapsa. Se suma una tercera línea de un artículo DISTINTO sin
+    /// <c>idLote</c> (FEFO-default) para probar que el lote resuelto por FEFO también viaja en la fila.
+    ///
+    /// <see cref="LineaTransferida.CantidadOrigen"/>/<see cref="LineaTransferida.CantidadDestino"/> son
+    /// el valor de <c>stock.cantidad</c> (la fila AGREGADA, compartida por todos los lotes del mismo
+    /// artículo) tal como lo devolvió el upsert de ESA línea puntual, en el orden en que las líneas
+    /// llegaron en la solicitud — no el saldo final del artículo ni el saldo del lote en particular
+    /// (ese vive en <c>stock_lotes</c>, fuera de este contrato). Para una única línea por artículo
+    /// (todos los tests de arriba) ese checkpoint coincide con el saldo final, que es lo que ya
+    /// probaban; acá, con dos líneas del mismo artículo, se ven los DOS checkpoints intermedios.
+    ///
+    /// EVIDENCIA DE MUTACIÓN: revertida la clave de <c>resultadosPorArticuloYLote</c> a <c>IdArticulo</c>
+    /// solo (<c>ServicioDeStock.EjecutarTransferenciaAsync</c>) — build, filtro
+    /// <c>FullyQualifiedName~TransferenciaLote</c>: este test <b>FALLA</b> (2 filas en <c>Lineas</c> en
+    /// vez de 3, la del artículo A pisada por la segunda línea). Revertido el mutante, corrida de
+    /// nuevo: GREEN.</summary>
+    [Fact]
+    public async Task LaRespuestaDeUnaTransferenciaConDosLotesDelMismoArticuloTraeUnaFilaPorLoteConIdLote()
+    {
+        var ctx = await PrepararAsync(nameof(LaRespuestaDeUnaTransferenciaConDosLotesDelMismoArticuloTraeUnaFilaPorLoteConIdLote));
+
+        var idArticuloA = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-response-dos-lotes", 10m);
+        var idLoteA1 = await SembrarLoteAsync(ctx, idArticuloA, "L-RESP-A1", VencimientoLejanoFuturo);
+        var idLoteA2 = await SembrarLoteAsync(ctx, idArticuloA, "L-RESP-A2", VencimientoLejanoFuturoTemprano);
+        await SembrarStockLoteAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloA, idLoteA1, 10m);
+        await SembrarStockLoteAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloA, idLoteA2, 10m);
+        await SembrarStockAgregadoAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloA, 20m);
+
+        var idArticuloB = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-response-fefo", 10m);
+        var idLoteB = await SembrarLoteAsync(ctx, idArticuloB, "L-RESP-B", VencimientoLejanoFuturo);
+        await SembrarStockLoteAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloB, idLoteB, 15m);
+        await SembrarStockAgregadoAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloB, 15m);
+
+        var solicitud = new SolicitudDeTransferencia(
+            ctx.IdPuntoVentaOrigen, ctx.IdPuntoVentaDestino, "Response multi-lote del mismo artículo",
+            [
+                new LineaDeTransferencia(idArticuloA, 3m, idLoteA1),
+                new LineaDeTransferencia(idArticuloA, 4m, idLoteA2),
+                new LineaDeTransferencia(idArticuloB, 5m, null)
+            ]);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/transferencias", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        var resultado = JsonSerializer.Deserialize<ResultadoTransferencia>(cuerpo, OpcionesJson)!;
+        Assert.Equal(3, resultado.Lineas.Count);
+
+        var filaA1 = Assert.Single(resultado.Lineas, l => l.IdArticulo == idArticuloA && l.IdLote == idLoteA1);
+        Assert.Equal(17m, filaA1.CantidadOrigen);
+        Assert.Equal(3m, filaA1.CantidadDestino);
+
+        var filaA2 = Assert.Single(resultado.Lineas, l => l.IdArticulo == idArticuloA && l.IdLote == idLoteA2);
+        Assert.Equal(13m, filaA2.CantidadOrigen);
+        Assert.Equal(7m, filaA2.CantidadDestino);
+
+        // FEFO-default: idLoteB es el único lote con saldo del artículo B — el lote resuelto viaja
+        // en IdLote aunque el cliente nunca lo pidió explícito.
+        var filaB = Assert.Single(resultado.Lineas, l => l.IdArticulo == idArticuloB && l.IdLote == idLoteB);
+        Assert.Equal(10m, filaB.CantidadOrigen);
+        Assert.Equal(5m, filaB.CantidadDestino);
+
+        Assert.Equal(7m, await LeerStockLoteAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloA, idLoteA1));
+        Assert.Equal(6m, await LeerStockLoteAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloA, idLoteA2));
+        Assert.Equal(10m, await LeerStockLoteAsync(ctx, ctx.IdPuntoVentaOrigen, idArticuloB, idLoteB));
+    }
+
+    // ---- judgment-day (juez A, ronda 1, FIX 2): re-check de vencido corre también sobre FEFO --------
+
+    /// <summary>spec transferencias-de-stock: "Transferring an expired lot is refused... always,
+    /// whether the lot is explicit or FEFO-resolved" — contraparte por FEFO de
+    /// <see cref="UnLoteVencidoExplicitoEsRechazadoSinEscribirNingunMovimiento"/>: el ÚNICO lote con
+    /// saldo positivo del artículo está vencido, la línea omite <c>idLote</c>, FEFO lo resuelve de
+    /// todos modos (no filtra por vencido, solo por saldo positivo) y el re-check incondicional de
+    /// <c>ServicioDeStock.ResolverLineasDeTransferenciaAsync</c> lo rechaza igual que si hubiera sido
+    /// explícito.
+    ///
+    /// EVIDENCIA DE MUTACIÓN: comentado el <c>if (ReglaDeLotes.EstaVencido(...))</c> que lanza
+    /// <c>transferencia_lote_vencido</c> — build, filtro <c>FullyQualifiedName~TransferenciaLote</c>:
+    /// este test <b>FALLA</b> (200, transfiere el lote vencido resuelto por FEFO). Revertido el
+    /// mutante, corrida de nuevo: GREEN.</summary>
+    [Fact]
+    public async Task UnaLineaSinIdLoteQueResuelvePorFefoAUnUnicoLoteVencidoEsRechazada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaLineaSinIdLoteQueResuelvePorFefoAUnUnicoLoteVencidoEsRechazada));
+        var idArticulo = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-fefo-unico-vencido", 10m);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L-FEFO-VENCIDO", VencimientoLejanoPasado);
+        await SembrarStockLoteAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, idLote, 20m);
+        await SembrarStockAgregadoAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, 20m);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/stock/transferencias", SolicitudDeUnaLinea(ctx, idArticulo, 5m, idLote: null));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("transferencia_lote_vencido", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Transferencia));
+        Assert.Equal(20m, await LeerStockLoteAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo, idLote));
+        Assert.Equal(20m, await LeerStockAsync(ctx, ctx.IdPuntoVentaOrigen, idArticulo));
+    }
+
     // ---- task 10.4 / 10.5: mutation target + A→B vs. B→A, sin 40P01 -------------------------------
 
     /// <summary>Pausa la transacción manual justo DESPUÉS de <c>BeginTransactionAsync</c> hasta que

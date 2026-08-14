@@ -1252,6 +1252,47 @@ the branch.
 >
 > Filtro `~TransferenciaLote`: 13/13 (11 previos + 2 nuevos). Regresión
 > `~TransferenciasYConteo`: 28/28.
+> Note (judgment-day, slice 10, FIX round — juez A, 1 MAJOR + 1 MINOR
+> confirmados):
+> 1. **MAJOR — `LineaTransferida` sin `IdLote` + agregación que colapsaba
+>    multi-lote** (design.md:180, `dto-contract-honesty`): el shipped había
+>    dropeado `IdLote` del record sin documentar, y `EjecutarTransferenciaAsync`
+>    agregaba por `IdArticulo` solo — dos líneas del mismo artículo con lotes
+>    distintos (caso ACEPTADO por spec, ver `DosLineasDelMismoArticuloConLotesExplicitosDistintosSonAceptadas`)
+>    colapsaban en una sola fila del response, y el caller nunca sabía qué
+>    lote viajó en el FEFO-default. Fix: `LineaTransferida(int IdArticulo,
+>    int? IdLote, decimal CantidadOrigen, decimal CantidadDestino)` restaurado
+>    igual que el design; `resultadosPorArticuloYLote` ensanchado a clave
+>    `(IdArticulo, IdLote)` — una fila por (artículo, lote), lote FEFO incluido.
+>    `CantidadOrigen`/`CantidadDestino` siguen siendo el checkpoint del
+>    `stock.cantidad` agregado devuelto por el upsert de ESA línea puntual, no
+>    el saldo final del artículo ni el de `stock_lotes` (documentado en el
+>    doc-comment del record). Test nuevo:
+>    `LaRespuestaDeUnaTransferenciaConDosLotesDelMismoArticuloTraeUnaFilaPorLoteConIdLote`
+>    — 2 líneas de un mismo artículo con lotes explícitos distintos + 1 línea
+>    FEFO-default de otro artículo, asserta las 3 filas del body con
+>    IdArticulo/IdLote/cantidades exactos. Evidencia de mutación: clave
+>    revertida a `IdArticulo` solo → el test FALLA (2 filas en vez de 3);
+>    revertido, GREEN. Consumidores verificados: `Ways.Web` (`tipos.ts`,
+>    `Transferencias.tsx`) todavía NO consume lote en transferencias (ni
+>    `LineaDeTransferencia` ni `LineaTransferida` tienen `idLote` del lado
+>    TS) — el campo nuevo es transparente para el cliente actual. Riesgo
+>    latente anotado, no corregido acá (fuera de alcance del slice 10):
+>    `Transferencias.tsx:288` usa `key={l.idArticulo}` en la tabla de
+>    resultado — el día que un slice futuro (14/15) sume selección de lote a
+>    la UI, dos filas del mismo artículo con lotes distintos van a colisionar
+>    esa key de React.
+> 2. **MINOR — faltaba el test del FEFO-default que resuelve a un lote
+>    solo-vencido**: el código ya hacía el re-check incondicional de
+>    `EstaVencido` (aunque el lote viniera de FEFO), pero no había cobertura
+>    para el caso "único lote con saldo, y ese lote está vencido". Test
+>    nuevo: `UnaLineaSinIdLoteQueResuelvePorFefoAUnUnicoLoteVencidoEsRechazada`.
+>    Evidencia de mutación: anulado el `if (ReglaDeLotes.EstaVencido(...))` →
+>    el test FALLA (200, transfiere el vencido); revertido, GREEN.
+>
+> Filtro `~TransferenciaLote`: 15/15 (13 previos + 2 nuevos). Regresión
+> `~TransferenciasYConteo`: 28/28. `has-pending-model-changes`: sin cambios
+> pendientes (fix puramente de capa Application, sin tocar el modelo).
 - [ ] 10.14 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 10.15 Branch `feat/stage12-slice10-transferencias` off `main`
   (parent: slice 3); PR; merge stacked-to-main.
