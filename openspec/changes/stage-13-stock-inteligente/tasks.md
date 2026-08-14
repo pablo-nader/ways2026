@@ -377,57 +377,113 @@ editing, blocked supersede, add-row, no post-write refetch.
 cut: ship the grid + inline edit first; the articulo add-row (3.4) is the
 cut point if the slice overflows during apply.
 
-- [ ] 3.1 Modify `src/Ways.Web/src/api/{tipos,stock}.ts`: mirror
+- [x] 3.1 Modify `src/Ways.Web/src/api/{tipos,stock}.ts`: mirror
   `EstadoDeReposicion`, `FilaExistencia` (+3 fields), `SolicitudDeMinimos`,
   `MinimosDeStock`; `clienteDeStock.escribirMinimos`.
-- [ ] 3.2 Create the pure helper `aSolicitudDeMinimos(idPv, idArticulo,
+- [x] 3.2 Create the pure helper `aSolicitudDeMinimos(idPv, idArticulo,
   minimoTexto, reposicionTexto)` in a colocated module — `'' → null`
   coercion for both inputs.
-- [ ] 3.3 Modify `src/Ways.Web/src/paginas/Existencias.tsx`: add columns
+- [x] 3.3 Modify `src/Ways.Web/src/paginas/Existencias.tsx`: add columns
   `Mínimo`/`Reposición`/`Estado`; state contract — `generacionRef` (existing,
   read staleness), `filaEnEdicion: number | null` (one `idArticulo`),
   `guardando: number | null` (one `idArticulo` in flight). Save applies the
   authoritative `MinimosDeStock` response via a functional updater from
   `prev` (no post-write refetch — decision 16), gated on its captured
   token, `guardando` reset in a token-gated `finally`.
-- [ ] 3.4 Modify `Existencias.tsx`: **add-row** — an articulo lookup over
+- [x] 3.4 Modify `Existencias.tsx`: **add-row** — an articulo lookup over
   `clienteDeArticulos` (the `Transferencias.tsx` picker pattern), appending
   a row with `cantidad = 0` locally, saved through the same `PUT`.
-- [ ] 3.5 Modify `Existencias.tsx`: `guardando !== null` disables **every**
+- [x] 3.5 Modify `Existencias.tsx`: `guardando !== null` disables **every**
   row's "Editar", the PV selector, the download button and the add-row; the
   handler's first line is `if (guardando !== null) return` (beats a
   same-tick double click ahead of the `disabled` re-render). Client-side
   pre-validation mirrors `reposicion_menor_que_minimo` and disables save
   while the aviso is visible — the copy never claims a block the UI does
-  not enforce (`react-async-state` rule 7).
-- [ ] 3.6 [P] **Mutation target**: remove the `guardando !== null` guard
-  from the row-open handler — the "open row B blocked while row A is
-  saving" test (3.10) must fail. *(mutation-proof-tests, design decision
-  15 — "supersede-during-write mutated across four consecutive review
-  rounds in this repo before blocking the window killed the class")*
-- [ ] 3.7 [P] Descriptor tests: `aSolicitudDeMinimos` coercion branches —
+  not enforce (`react-async-state` rule 7). **APPLY REFINEMENT**: the
+  first-line reentrancy guard is `guardandoRef.current !== null`
+  (`useRef<number|null>`, mirror of `guardando`), not the literal
+  `guardando` (`useState`) named above. Empirically verified with the
+  ScratchDisabled probe (see 3.6 evidence) that a `useState`-based guard
+  cannot survive a genuine same-tick double click, because React 18
+  batches the state commit — two `fireEvent.click`s issued inside one
+  `act()` with no render in between would both read the SAME stale
+  closure value even with the state check present. The `guardando` state
+  itself is kept, unchanged, driving every `disabled` attribute in the
+  JSX — this is a targeted refinement of the guard's storage, not a
+  change to the disable surface. Same precedent already used in this repo
+  (`transfiriendoRef` in `Transferencias.tsx`/`CompraEditor.tsx`).
+- [x] 3.6 [P] **Mutation target**: remove the `guardandoRef.current !== null`
+  guard from the row-open handler (`abrirFila`) — the "open row B blocked
+  while row A is saving, same tick" test must fail. *(mutation-proof-tests,
+  design decision 15 — "supersede-during-write mutated across four
+  consecutive review rounds in this repo before blocking the window killed
+  the class")* **EVIDENCE**: mutated `abrirFila` to
+  `/* MUTATION 3.6 */` (guard line removed), ran
+  `npx vitest run Existencias -t "abrir la fila B"` → **FAILED** (`expected
+  document not to contain element, found <input aria-label="Mínimo de
+  Fideos guiseros 500g" ...>` — row B's editor opened despite row A's
+  save being in flight, dispatched via two `fireEvent.click` calls inside
+  one `act()` so no render/`disabled` update lands between them). Reverted
+  the guard line; ran `npx vitest run Existencias` → 13/13 green;
+  `git diff --stat -- src/Ways.Web/src/paginas/Existencias.tsx` after
+  revert showed no `MUTATION` marker left in the file (`grep -rn
+  "MUTATION"` → clean). Full suite re-run after revert: 629/629 green.
+  A first attempt at this same test (dispatching the row-B click via a
+  single `fireEvent.click` after two AWAITED `userEvent.click`s on
+  "Guardar", mirroring `CompraEditor.test.tsx`'s double-click pattern)
+  **passed even with the guard removed** — confirmed via an isolated
+  probe (`ScratchDisabled.test.tsx`, discarded after use) that jsdom
+  silently no-ops `fireEvent.click` on a `disabled` button, so the
+  pre-existing `disabled={guardando !== null}` attribute was the actual
+  confound killing the mutation's observability, not the removed guard.
+  Per `mutation-proof-tests` rule 3 ("kill the confounds, not the
+  layers"), the test was re-routed below that confound: both clicks now
+  fire inside a single `act()` with zero renders between them, which also
+  revealed the `guardando`-state-vs-`guardandoRef` distinction recorded in
+  3.5 above.
+- [x] 3.7 [P] Descriptor tests: `aSolicitudDeMinimos` coercion branches —
   `''`, `'0'`, `'2.5'`, `'-1'`, `'1,5'`, both-empty (unmanage).
-  *(web-descriptor-tests)*
-- [ ] 3.8 [P] Component test: save applies the authoritative response
+  *(web-descriptor-tests)* Implemented in `stock.test.ts` alongside
+  `umbralTextoValido`/`reposicionMenorQueMinimo` (both new pure helpers
+  introduced by 3.5's client-side pre-validation).
+- [x] 3.8 [P] Component test: save applies the authoritative response
   **without** a refetch — assert no second `GET` fires after the `PUT`
   resolves.
-- [ ] 3.9 [P] Component test: a stale read landing after a save is
+- [x] 3.9 [P] Component test: a stale read landing after a save is
   discarded — a stale promise resolved **inside `act`**, asserted
   synchronously after the flush (`react-async-state` rule 7 — the "committed
   write reported as a failure" class this design's decision 16 exists to
-  prevent).
-- [ ] 3.10 [P] Component test: double-click on save ⇒ exactly one `fetch`;
+  prevent). Since decision 16 removes the natural read/write race on this
+  screen (a save never triggers a report refetch), the test constructs the
+  race via a PV round-trip (Centro → Norte, held pending → back to Centro,
+  resolved fast) to leave a genuinely stale, still-in-flight Norte read;
+  the save happens on the fresh Centro generation; the stale Norte
+  response is resolved last, inside `act`, and asserted to never land.
+- [x] 3.10 [P] Component test: double-click on save ⇒ exactly one `fetch`;
   open-row-B **blocked** while row A is saving (ties to the 3.6 mutation).
-- [ ] 3.11 Gate guard: `has-pending-model-changes` clean, zero migration
+  Implemented as two tests: the double-click case mirrors the
+  `CompraEditor.test.tsx` "await click twice" convention; the
+  same-tick supersede-blocked case is the dedicated mutation-target test
+  from 3.6 (single `act()`, two `fireEvent.click`s, no render between
+  them — see 3.6 evidence for why the naive single-`fireEvent.click`
+  variant does not exercise the mutation).
+- [x] 3.11 Gate guard: `has-pending-model-changes` clean, zero migration
   files in the diff (web-only slice — confirms no accidental API/EF drift).
-- [ ] 3.12 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 3.13 Branch `feat/stage13-slice3-web-minimos` off `main` (parent:
-  slices 1+2); PR; merge stacked-to-main.
+  **VERIFIED**: `dotnet ef migrations has-pending-model-changes --project
+  src/Ways.Infrastructure --startup-project src/Ways.Infrastructure` →
+  "No changes have been made to the model since the last migration.";
+  `git diff --stat main -- src/Ways.Infrastructure/Persistencia/Migraciones/`
+  → empty output (zero files); `git status --porcelain` shows only 6
+  `src/Ways.Web/**` files modified; `dotnet build --no-restore` → 0
+  errors.
 
 **Test plan**: mutation target (3.6), coercion descriptors (3.7), no-refetch
 (3.8), stale-read-discarded (3.9), double-click + supersede-blocked (3.10).
 
-**Verify**: `npm run test -- Existencias`
+**Verify**: `npm run test -- Existencias` — 13/13 green (full suite:
+`npx vitest run` → 35 files, 629/629 green). `npm run lint` (oxlint) →
+clean (one pre-existing, unrelated warning in `AuthContext.tsx`).
+`npm run build` (`tsc -b && vite build`) → clean.
 
 ---
 
