@@ -1,9 +1,11 @@
 using System.Data;
 using System.Data.Common;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Articulos;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
@@ -17,8 +19,13 @@ namespace Ways.Application.Stock;
 /// (<c>Politicas.GestionDeCatalogo</c>) es quien bloquea al Vendedor — este servicio no repite
 /// ese chequeo, mismo criterio que el resto de los ABM del proyecto (autorización vive en la capa
 /// de API, nunca duplicada en Application).
+///
+/// Etapa 12, slice 10 (design: Write site 3): <see cref="ServicioDeLotes"/> se inyecta para el
+/// mismo trío de primitivas que <c>ServicioDeVentas</c> ya consume — <c>LeerSaldosAsync</c> (fase
+/// de resolución de la transferencia) y <c>ResolverSinIdentificarAsync</c> (get-or-create
+/// perezoso, statement crudo, cuando ningún lote del artículo tiene saldo positivo en el origen).
 /// </summary>
-public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto)
+public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes)
 {
     public async Task<decimal> ObtenerCantidadAsync(int idPuntoVenta, int idArticulo, CancellationToken ct = default) =>
         await db.Stock
@@ -61,7 +68,7 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         await InsertarMovimientoStockAsync(
             conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, cantidad, MotivoStock.Ajuste, idEmpleado,
-            observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, ct);
+            observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote: null, ct);
 
         var nuevaCantidad = await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, cantidad, ct);
 
@@ -72,12 +79,16 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
     // ---- transferencia entre puntos de venta (design: Transactions — TRANSFERENCIA; decisión 9) ----
 
-    /// <summary>Design decisión 9: rechaza un artículo repetido en un mismo request, arma UN
-    /// único orden ascendente sobre las <c>2N</c> claves <c>(id_articulo, id_punto_venta)</c> —
-    /// nunca "todo el origen, después todo el destino" — y aplica cada una en ese orden. Ese
-    /// orden total es lo que evita el deadlock contra una transferencia inversa simultánea
-    /// (B→A) y contra un checkout en cualquiera de los dos puntos de venta (que ya ordena sus
-    /// upserts de stock asc <c>id_articulo</c>).</summary>
+    /// <summary>Design decisión 9: rechaza líneas vacías/inválidas en memoria, antes de cualquier
+    /// consulta. Etapa 12, slice 10 (design: Write site 3): el lote viaja — cada línea
+    /// lote-efectiva resuelve su <c>idLote</c> (explícito o FEFO-defaulted) en la fase de
+    /// resolución, ANTES de que la transacción abra, y esa fase es también donde corren el
+    /// rechazo de duplicados <c>(IdArticulo, IdLote)</c> post-defaulting (decisión 11) y el
+    /// chequeo de <c>transferencia_lote_vencido</c>. Dentro de la transacción, un único orden
+    /// ascendente sobre las <c>≥2N</c> claves <c>(id_articulo, id_punto_venta, id_lote NULLS
+    /// FIRST)</c> — nunca "todo el origen, después todo el destino" — es lo que evita el deadlock
+    /// contra una transferencia inversa simultánea (B→A) y contra un checkout concurrente del
+    /// mismo artículo/lote en cualquiera de los dos puntos de venta.</summary>
     public async Task<ResultadoTransferencia> TransferirAsync(SolicitudDeTransferencia solicitud, CancellationToken ct = default)
     {
         var idTenant = ExigirTenantDeLaSesion();
@@ -100,24 +111,31 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         // Pre-checks de existencia/tenant ANTES de la transacción (mismo criterio que
         // AjustarAsync): ResolverPuntoVentaAsync da el mismo 404 para "no existe" y "es de otro
         // tenant" (ADR-8), tanto para origen como para destino.
-        await ResolverPuntoVentaAsync(solicitud.IdPuntoVentaOrigen, ct);
+        var puntoVentaOrigen = await ResolverPuntoVentaAsync(solicitud.IdPuntoVentaOrigen, ct);
         await ResolverPuntoVentaAsync(solicitud.IdPuntoVentaDestino, ct);
 
+        var articuloPorId = new Dictionary<int, Articulo>();
         foreach (var idArticulo in lineas.Select(l => l.IdArticulo).Distinct())
         {
-            await ResolverArticuloAsync(idArticulo, ct);
+            articuloPorId[idArticulo] = await ResolverArticuloAsync(idArticulo, ct);
         }
+
+        // Etapa 12, slice 10 (design: Write site 3 — "lot resolution happens before the
+        // transaction opens, same phase as the existing pre-checks"): FEFO-default de lotes
+        // omitidos, chequeo de vencido y rechazo de duplicados post-defaulting.
+        var lineasResueltas = await ResolverLineasDeTransferenciaAsync(
+            idTenant, puntoVentaOrigen, articuloPorId, lineas, momento, ct);
 
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarTransferenciaAsync(
-                idTenant, idEmpleado, solicitud.IdPuntoVentaOrigen, solicitud.IdPuntoVentaDestino, lineas, observaciones,
-                momento, ct));
+                idTenant, idEmpleado, solicitud.IdPuntoVentaOrigen, solicitud.IdPuntoVentaDestino, lineasResueltas,
+                observaciones, momento, ct));
     }
 
     private async Task<ResultadoTransferencia> EjecutarTransferenciaAsync(
         int idTenant, int idEmpleado, int idPuntoVentaOrigen, int idPuntoVentaDestino,
-        IReadOnlyList<LineaDeTransferencia> lineas, string observaciones, DateTimeOffset momento, CancellationToken ct)
+        IReadOnlyList<LineaDeTransferenciaResuelta> lineas, string observaciones, DateTimeOffset momento, CancellationToken ct)
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -129,28 +147,51 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         foreach (var clave in claves)
         {
-            await InsertarMovimientoStockAsync(
-                conexion, transaccionCruda, idTenant, clave.IdArticulo, clave.IdPuntoVenta, clave.Delta,
-                MotivoStock.Transferencia, idEmpleado, observaciones, momento,
-                idComprobanteCompra: null, idPuntoVentaDestino: idPuntoVentaDestino, ct);
-
-            var nueva = await UpsertStockAsync(conexion, transaccionCruda, idTenant, clave.IdArticulo, clave.IdPuntoVenta, clave.Delta, ct);
-
-            // La RETURNING del upsert ES el chequeo de suficiencia (design decisión 5): sin
-            // segunda consulta, sin TOCTOU. Back-office tightening (spec: Insufficient Origin
-            // Stock Is Refused) — asimétrico a propósito respecto de una venta, que nunca bloquea.
-            if (clave.Delta < 0m && nueva < 0m)
+            if (clave.IdLote is null)
             {
-                throw new ErrorDominio(
-                    "stock_insuficiente_para_transferencia",
-                    $"No hay stock suficiente del artículo {clave.IdArticulo} en el punto de venta de origen para transferir.",
-                    409);
-            }
+                // Elemento AGREGADO (design decisión 10): el ledger se escribe ACÁ, cargando
+                // IdLoteDelMovimiento cuando la línea era lote-efectiva — el elemento LOTE (más
+                // abajo) nunca escribe una segunda fila de movimientos_stock para el mismo par.
+                await InsertarMovimientoStockAsync(
+                    conexion, transaccionCruda, idTenant, clave.IdArticulo, clave.IdPuntoVenta, clave.Delta,
+                    MotivoStock.Transferencia, idEmpleado, observaciones, momento,
+                    idComprobanteCompra: null, idPuntoVentaDestino, clave.IdLoteDelMovimiento, ct);
 
-            var previo = resultadosPorArticulo.TryGetValue(clave.IdArticulo, out var existente) ? existente : (Origen: 0m, Destino: 0m);
-            resultadosPorArticulo[clave.IdArticulo] = clave.IdPuntoVenta == idPuntoVentaOrigen
-                ? (nueva, previo.Destino)
-                : (previo.Origen, nueva);
+                var nueva = await UpsertStockAsync(conexion, transaccionCruda, idTenant, clave.IdArticulo, clave.IdPuntoVenta, clave.Delta, ct);
+
+                // La RETURNING del upsert ES el chequeo de suficiencia (design decisión 5): sin
+                // segunda consulta, sin TOCTOU. Back-office tightening (spec: Insufficient Origin
+                // Stock Is Refused) — asimétrico a propósito respecto de una venta, que nunca bloquea.
+                if (clave.Delta < 0m && nueva < 0m)
+                {
+                    throw new ErrorDominio(
+                        "stock_insuficiente_para_transferencia",
+                        $"No hay stock suficiente del artículo {clave.IdArticulo} en el punto de venta de origen para transferir.",
+                        409);
+                }
+
+                var previo = resultadosPorArticulo.TryGetValue(clave.IdArticulo, out var existente) ? existente : (Origen: 0m, Destino: 0m);
+                resultadosPorArticulo[clave.IdArticulo] = clave.IdPuntoVenta == idPuntoVentaOrigen
+                    ? (nueva, previo.Destino)
+                    : (previo.Origen, nueva);
+            }
+            else
+            {
+                // Elemento LOTE: upsert de stock_lotes SOLO, sin fila de ledger propia (el
+                // movimiento ya se escribió en el elemento agregado del mismo par). La RETURNING
+                // es la suficiencia POR LOTE (spec: "even when the origin's aggregate
+                // stock.cantidad is sufficient" — decisión 7 de la propuesta).
+                var nuevaDelLote = await UpsertStockLoteAsync(
+                    conexion, transaccionCruda, idTenant, clave.IdArticulo, clave.IdPuntoVenta, clave.IdLote.Value, clave.Delta, ct);
+
+                if (clave.Delta < 0m && nuevaDelLote < 0m)
+                {
+                    throw new ErrorDominio(
+                        "stock_insuficiente_para_transferencia",
+                        $"No hay stock suficiente del lote {clave.IdLote} del artículo {clave.IdArticulo} en el punto de venta de origen para transferir.",
+                        409);
+                }
+            }
         }
 
         await transaccion.CommitAsync(ct);
@@ -163,19 +204,186 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         return new ResultadoTransferencia(idPuntoVentaOrigen, idPuntoVentaDestino, lineasResultado);
     }
 
-    private readonly record struct ClaveDeTransferencia(int IdArticulo, int IdPuntoVenta, decimal Delta);
+    /// <summary>Línea de transferencia YA resuelta (design: "LineaResuelta") — <see cref="IdLote"/>
+    /// es <c>null</c> para un artículo sin control de lote efectivo, o el lote explícito/FEFO-defaulted
+    /// para uno lote-efectivo. Producida por <see cref="ResolverLineasDeTransferenciaAsync"/>, fuera
+    /// de la transacción — <see cref="ConstruirClavesOrdenadas"/> nunca vuelve a tocar <c>lotes</c>.</summary>
+    private readonly record struct LineaDeTransferenciaResuelta(int IdArticulo, decimal Cantidad, int? IdLote);
 
-    private static List<ClaveDeTransferencia> ConstruirClavesOrdenadas(
-        int idPuntoVentaOrigen, int idPuntoVentaDestino, IReadOnlyList<LineaDeTransferencia> lineas) =>
+    /// <summary>Etapa 12, slice 10 (design: Write site 3 — "the lot travels"): claves ensanchadas a
+    /// <c>(IdArticulo, IdPuntoVenta, IdLote, Delta, IdLoteDelMovimiento)</c>. Por línea
+    /// lote-efectiva, 4 claves — agregado + su movimiento y saldo del lote, en origen y en
+    /// destino; por línea sin lote, las 2 de siempre. El orden asc
+    /// <c>(id_articulo, id_punto_venta, id_lote NULLS FIRST)</c> es el mismo orden total que los
+    /// otros dos sitios de escritura (decisión 6, spec stock), lo que hace posible el joint proof
+    /// checkout-vs-transferencia (task 10.12).</summary>
+    private readonly record struct ClaveDeStock(int IdArticulo, int IdPuntoVenta, int? IdLote, decimal Delta, int? IdLoteDelMovimiento);
+
+    private static List<ClaveDeStock> ConstruirClavesOrdenadas(
+        int idPuntoVentaOrigen, int idPuntoVentaDestino, IReadOnlyList<LineaDeTransferenciaResuelta> lineas) =>
         lineas
-            .SelectMany(l => new[]
-            {
-                new ClaveDeTransferencia(l.IdArticulo, idPuntoVentaOrigen, -l.Cantidad),
-                new ClaveDeTransferencia(l.IdArticulo, idPuntoVentaDestino, l.Cantidad)
-            })
+            .SelectMany(l => l.IdLote is { } lote
+                ? new[]
+                  {
+                      new ClaveDeStock(l.IdArticulo, idPuntoVentaOrigen, null, -l.Cantidad, lote),   // agregada + su movimiento
+                      new ClaveDeStock(l.IdArticulo, idPuntoVentaOrigen, lote, -l.Cantidad, null),    // saldo del lote
+                      new ClaveDeStock(l.IdArticulo, idPuntoVentaDestino, null, l.Cantidad, lote),
+                      new ClaveDeStock(l.IdArticulo, idPuntoVentaDestino, lote, l.Cantidad, null)
+                  }
+                : new[]
+                  {
+                      new ClaveDeStock(l.IdArticulo, idPuntoVentaOrigen, null, -l.Cantidad, null),
+                      new ClaveDeStock(l.IdArticulo, idPuntoVentaDestino, null, l.Cantidad, null)
+                  })
             .OrderBy(c => c.IdArticulo)
             .ThenBy(c => c.IdPuntoVenta)
+            .ThenBy(c => c.IdLote.HasValue)          // NULLS FIRST — decisión 9
+            .ThenBy(c => c.IdLote ?? 0)
             .ToList();
+
+    /// <summary>Etapa 12, slice 10 (design: Write site 3, fase de resolución — "keeps lotes and
+    /// reads out of the transaction entirely"): para cada línea lote-efectiva, resuelve su lote
+    /// (explícito validado contra <see cref="ServicioDeLotes.LeerSaldosAsync"/>, o FEFO-defaulted,
+    /// o el sin-identificar perezoso cuando ningún lote tiene saldo positivo — mismo camino que
+    /// <c>ServicioDeVentas</c>), rechaza un vencido (<c>transferencia_lote_vencido</c> — a
+    /// diferencia del checkout, acá SIEMPRE bloquea, sea el lote explícito o resuelto por FEFO) y,
+    /// al final, rechaza duplicados <c>(IdArticulo, IdLote)</c> evaluados DESPUÉS del defaulting
+    /// (decisión 11 — reusa el código <c>articulo_repetido</c>).</summary>
+    private async Task<IReadOnlyList<LineaDeTransferenciaResuelta>> ResolverLineasDeTransferenciaAsync(
+        int idTenant, PuntoVenta puntoVentaOrigen, IReadOnlyDictionary<int, Articulo> articuloPorId,
+        IReadOnlyList<LineaDeTransferencia> lineas, DateTimeOffset momento, CancellationToken ct)
+    {
+        var lineasResueltas = lineas.Select(l => new LineaDeTransferenciaResuelta(l.IdArticulo, l.Cantidad, IdLote: null)).ToList();
+
+        var indicesConArticuloControlaLote = lineas
+            .Select((l, indice) => (Linea: l, Indice: indice))
+            .Where(x => articuloPorId[x.Linea.IdArticulo].ControlaLote)
+            .Select(x => x.Indice)
+            .ToList();
+
+        var lotesHabilitado = indicesConArticuloControlaLote.Count > 0
+            && await ResolverLotesHabilitadoAsync(puntoVentaOrigen.IdEmpresa, puntoVentaOrigen.Id, ct);
+
+        var indicesConLoteEfectivo = lotesHabilitado ? indicesConArticuloControlaLote : [];
+
+        // dto-contract-honesty / mismo criterio que ServicioDeVentas: un idLote en una línea SIN
+        // lote efectivo no tiene destino — se rechaza en vez de tragárselo en silencio.
+        var indicesConLoteEfectivoSet = indicesConLoteEfectivo.ToHashSet();
+        for (var indice = 0; indice < lineas.Count; indice++)
+        {
+            if (!indicesConLoteEfectivoSet.Contains(indice) && lineas[indice].IdLote is not null)
+            {
+                throw new ErrorDominio(
+                    "lote_invalido",
+                    $"El artículo {lineas[indice].IdArticulo} no tiene lote efectivo; no admite idLote.",
+                    400);
+            }
+        }
+
+        if (indicesConLoteEfectivo.Count > 0)
+        {
+            var idsArticuloConLote = indicesConLoteEfectivo.Select(i => lineas[i].IdArticulo).Distinct().ToList();
+            var idsLotePedidos = indicesConLoteEfectivo
+                .Select(i => lineas[i].IdLote)
+                .Where(idLote => idLote is not null)
+                .Select(idLote => idLote!.Value)
+                .Distinct()
+                .ToList();
+
+            var saldos = await servicioDeLotes.LeerSaldosAsync(puntoVentaOrigen.Id, idsArticuloConLote, idsLotePedidos, ct);
+            var saldosPorArticulo = saldos.ToLookup(s => s.IdArticulo);
+
+            // Honestidad documental: "hoy" acá es UTC naive, mismo criterio interino que
+            // ServicioDeVentas/ServicioDeCompras/ServicioDeLotes en esta etapa.
+            var hoy = DateOnly.FromDateTime(momento.UtcDateTime);
+
+            foreach (var indice in indicesConLoteEfectivo)
+            {
+                var linea = lineas[indice];
+                var saldosDelArticulo = saldosPorArticulo[linea.IdArticulo].ToList();
+
+                SaldoDeLote loteResuelto;
+                if (linea.IdLote is { } idLote)
+                {
+                    var posicion = saldosDelArticulo.FindIndex(s => s.IdLote == idLote);
+                    if (posicion < 0)
+                    {
+                        throw new ErrorDominio(
+                            "lote_invalido",
+                            $"El lote {idLote} no existe, no pertenece al artículo {linea.IdArticulo} o fue eliminado.",
+                            400);
+                    }
+
+                    loteResuelto = saldosDelArticulo[posicion];
+                }
+                else if (ReglaDeLotes.ElegirFefo(saldosDelArticulo, hoy) is { } elegido)
+                {
+                    loteResuelto = elegido;
+                }
+                else
+                {
+                    // Ningún lote con saldo positivo (design decisión 7) — get-or-create perezoso
+                    // del sin-identificar, statement crudo fuera de la transacción. En una
+                    // transferencia (a diferencia del checkout) esto típicamente desemboca en
+                    // stock_insuficiente_para_transferencia dentro de la transacción — el sin
+                    // identificar arranca en 0, y transferir cualquier cantidad positiva lo deja
+                    // negativo, exactamente el mismo camino de rechazo que un lote explícito
+                    // insuficiente.
+                    var conexionParaLotes = await ObtenerConexionAbiertaAsync(ct);
+                    var idSinIdentificar = await ServicioDeLotes.ResolverSinIdentificarAsync(
+                        conexionParaLotes, transaccion: null, idTenant, linea.IdArticulo, momento, ct);
+
+                    loteResuelto = new SaldoDeLote(
+                        linea.IdArticulo, idSinIdentificar, ReglaDeLotes.CodigoSinIdentificar,
+                        EsSinIdentificar: true, FechaVencimiento: null, Cantidad: 0m);
+                }
+
+                // spec transferencias-de-stock: "Expired Lot Transfer Is Refused" — a diferencia
+                // del checkout (decisión 12: solo un warning), una transferencia SIEMPRE bloquea
+                // sobre un lote vencido, sea explícito o resuelto por FEFO.
+                if (ReglaDeLotes.EstaVencido(loteResuelto.FechaVencimiento, hoy))
+                {
+                    throw new ErrorDominio(
+                        "transferencia_lote_vencido",
+                        $"El lote {loteResuelto.Codigo} del artículo {linea.IdArticulo} está vencido; no se puede transferir.",
+                        409);
+                }
+
+                lineasResueltas[indice] = lineasResueltas[indice] with { IdLote = loteResuelto.IdLote };
+            }
+        }
+
+        // spec transferencias-de-stock: "Duplicate-Line Detection Widens To (IdArticulo, IdLote),
+        // Evaluated After FEFO Defaulting" (decisión 11) — reusa el código articulo_repetido,
+        // evaluado sobre el resultado YA resuelto, nunca contra el input crudo del cliente.
+        var repetida = lineasResueltas
+            .GroupBy(l => (l.IdArticulo, l.IdLote))
+            .FirstOrDefault(g => g.Count() > 1);
+        if (repetida is not null)
+        {
+            throw new ErrorDominio(
+                "articulo_repetido",
+                $"El artículo {repetida.Key.IdArticulo} aparece más de una vez en la transferencia para el mismo lote.",
+                400);
+        }
+
+        return lineasResueltas;
+    }
+
+    /// <summary>Mismo patrón que <see cref="ServicioDeLotes"/>'s resolución de un único parámetro
+    /// de clave (<c>ResolverDiasAlertaAsync</c>): candidatos filtrados por <c>Clave</c> ANTES de
+    /// <c>ResolucionDeParametros.Resolver</c> (design decisión 2 — nunca un candidato multi-clave
+    /// sin filtrar).</summary>
+    private async Task<bool> ResolverLotesHabilitadoAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    {
+        var candidatos = await db.Parametros
+            .Where(p => p.Clave == ParametroConocido.LotesHabilitado.Clave && p.IdEmpresa == idEmpresa
+                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
+            .ToListAsync(ct);
+
+        var valorJson = ResolucionDeParametros.Resolver(ParametroConocido.LotesHabilitado.Clave, candidatos, idPuntoVenta);
+        return JsonSerializer.Deserialize<bool>(valorJson);
+    }
 
     // ---- conteo de inventario (design: Transactions — CONTEO DE INVENTARIO; decisión 10) ----------
 
@@ -222,7 +430,7 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         await InsertarMovimientoStockAsync(
             conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, delta, MotivoStock.Inventario, idEmpleado,
-            observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, ct);
+            observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote: null, ct);
 
         var final = await UpsertStockAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, delta, ct);
 
@@ -281,18 +489,22 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
     /// acá solo por simetría de firma con el statement gemelo de <c>ServicioDeCompras</c> (design:
     /// File Changes — "the two raw statements gain motivo/idComprobanteCompra/idPuntoVentaDestino
     /// parameters").</summary>
+    /// <summary>Etapa 12, slice 10: gana <paramref name="idLote"/> (design decisión 10 — en una
+    /// transferencia, el ledger se escribe en el elemento AGREGADO de <c>ConstruirClavesOrdenadas</c>
+    /// y lleva el <c>IdLoteDelMovimiento</c> de esa clave; <c>Ajustar</c>/<c>Contar</c> siguen
+    /// pasando <c>null</c>, sin cambio de comportamiento).</summary>
     private static async Task InsertarMovimientoStockAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
         decimal cantidad, MotivoStock motivo, int idEmpleado, string? observaciones, DateTimeOffset creadoEl,
-        int? idComprobanteCompra, int? idPuntoVentaDestino, CancellationToken ct)
+        int? idComprobanteCompra, int? idPuntoVentaDestino, int? idLote, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccion;
         comando.CommandText =
             "INSERT INTO movimientos_stock " +
             "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_empleado, observaciones, " +
-            "id_comprobante_compra, id_punto_venta_destino, creado_el) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
+            "id_comprobante_compra, id_punto_venta_destino, creado_el, id_lote) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)";
 
         AgregarParametro(comando, idTenant);
         AgregarParametro(comando, idArticulo);
@@ -304,6 +516,7 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         AgregarParametroNulo(comando, idComprobanteCompra);
         AgregarParametroNulo(comando, idPuntoVentaDestino);
         AgregarParametro(comando, creadoEl);
+        AgregarParametroNulo(comando, idLote);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -328,6 +541,37 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El upsert de stock no devolvió ninguna fila.");
+
+        return Convert.ToDecimal(resultado);
+    }
+
+    /// <summary>Etapa 12, slice 10 (design: Write site 3 — "UpsertStockLoteAsync: la MISMA forma
+    /// que UpsertStockAsync, una clave más"): mismo shape que
+    /// <c>Ways.Application.Ventas.ServicioDeVentas</c>/<c>Ways.Application.Compras.ServicioDeCompras</c>
+    /// (copia deliberada, no compartida — mismo criterio de "frentes en paralelo" que el resto de
+    /// la etapa). La <c>RETURNING</c> es el chequeo de suficiencia POR LOTE (spec transferencias-de-stock:
+    /// "Insufficient Origin Stock Is Refused" extendido al lote) — sin segunda consulta, sin TOCTOU.</summary>
+    private static async Task<decimal> UpsertStockLoteAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
+        int idLote, decimal delta, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "INSERT INTO stock_lotes (id_articulo, id_punto_venta, id_lote, id_tenant, cantidad) " +
+            "VALUES ($1, $2, $3, $4, $5) " +
+            "ON CONFLICT (id_articulo, id_punto_venta, id_lote) DO UPDATE " +
+            "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
+            "RETURNING cantidad";
+
+        AgregarParametro(comando, idArticulo);
+        AgregarParametro(comando, idPuntoVenta);
+        AgregarParametro(comando, idLote);
+        AgregarParametro(comando, idTenant);
+        AgregarParametro(comando, delta);
+
+        var resultado = await comando.ExecuteScalarAsync(ct)
+            ?? throw new InvalidOperationException("El upsert de stock_lotes no devolvió ninguna fila.");
 
         return Convert.ToDecimal(resultado);
     }
@@ -403,9 +647,11 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         return limpio;
     }
 
-    /// <summary>Design decisión 9: un artículo repetido en un mismo request se rechaza entero
-    /// (spec: transferencias-de-stock — "articulo_repetido"), antes de resolver referencias o
-    /// tocar la base.</summary>
+    /// <summary>Validación puramente en memoria, antes de resolver referencias o tocar la base.
+    /// Etapa 12, slice 10: el rechazo de artículo repetido (<c>articulo_repetido</c>) se MUDÓ
+    /// de acá a <see cref="ResolverLineasDeTransferenciaAsync"/> — la clave se ensanchó a
+    /// <c>(IdArticulo, IdLote)</c> y decisión 11 exige evaluarla DESPUÉS del defaulting de FEFO,
+    /// que solo corre una vez resueltos el punto de venta y los artículos.</summary>
     private static IReadOnlyList<LineaDeTransferencia> ExigirLineasDeTransferenciaValidas(
         IReadOnlyList<LineaDeTransferencia> lineas)
     {
@@ -413,13 +659,6 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         {
             throw new ErrorDominio(
                 "transferencia_sin_lineas", "La transferencia no tiene líneas para procesar.", 400);
-        }
-
-        var repetida = lineas.GroupBy(l => l.IdArticulo).FirstOrDefault(g => g.Count() > 1);
-        if (repetida is not null)
-        {
-            throw new ErrorDominio(
-                "articulo_repetido", $"El artículo {repetida.Key} aparece más de una vez en la transferencia.", 400);
         }
 
         foreach (var linea in lineas)

@@ -29,7 +29,14 @@ public sealed record SolicitudDeTransferencia(
     int IdPuntoVentaOrigen, int IdPuntoVentaDestino, string Observaciones,
     IReadOnlyList<LineaDeTransferencia> Lineas);
 
-public sealed record LineaDeTransferencia(int IdArticulo, decimal Cantidad);
+/// <summary>
+/// Etapa 12, slice 10 (design: Write site 3 — "the lot travels"): <see cref="IdLote"/> es
+/// opcional para un artículo lote-efectivo — omitido, el servidor lo resuelve vía FEFO en la
+/// misma fase de decisión que el checkout (<c>ServicioDeStock.ResolverLineasDeTransferenciaAsync</c>).
+/// Para un artículo SIN control de lote efectivo, un <c>idLote</c> no tiene destino y se rechaza
+/// (<c>400 lote_invalido</c>) en vez de ignorarse en silencio.
+/// </summary>
+public sealed record LineaDeTransferencia(int IdArticulo, decimal Cantidad, int? IdLote = null);
 
 /// <summary>Resultado de una transferencia: el stock resultante de cada artículo en AMBOS puntos
 /// de venta tras la transacción (design: Transactions — TRANSFERENCIA).</summary>
