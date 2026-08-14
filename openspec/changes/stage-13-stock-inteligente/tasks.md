@@ -694,6 +694,37 @@ here, since 3.13 is explicitly the orchestrator's task.
   → empty; `npx vitest run` → 35 files, 639/639 green (full repo suite,
   web-only change — no other file touched); `npm run build` (`tsc -b &&
   vite build`) → clean, 0 type errors.
+  **ROUND A FINAL (judgment-day, judge A ledger, scoped fix-agent run)**: 1
+  CRITICAL residual confirmed and closed.
+  **CONFIRMED CRITICAL (residual of Finding 1)**: round A's identity-gated
+  clear in `guardarFila`'s success path fixed the *symptom* (a save on a
+  different row no longer orphans the ghost's ref) but not the *class* of
+  bug — `agregarFila` still overwrote the single-slot ref without checking
+  for a prior ghost, and `SelectorDeArticuloParaAlta` was never gated by
+  `filaEnEdicion`: it stayed visible and enabled as soon as the first ghost
+  was added (no PUT in flight needed). Sequence: add X via the picker (X
+  opens for edit) → without saving or cancelling, add Z via the still-visible
+  picker → the ref gets overwritten to Z → X is now permanently orphaned in
+  the grid (reopening X + Cancelar fails the identity match against the new
+  ref value). **Structural fix** (kills the class, not the symptom):
+  condition the picker's render on `filaEnEdicion === null` —
+  `{puedeEscribir && filaEnEdicion === null && (...)}`. With that, two
+  unsaved ghosts can never coexist: adding one opens it for edit and the
+  picker disappears until it is saved or cancelled. No extra ref logic
+  added. Rewrote the "TODA la ventana queda attribute-disabled" test (task
+  3.5): the picker is now *absent* (not merely `disabled`) as soon as any
+  row is in edit, which supersedes the old `disabled`-attribute assertion on
+  the picker's input/result buttons — reflected inline in the test's own
+  comments. Added the judge's exact required sequence as a new test: add X
+  via the picker → without saving/cancelling, assert the picker is gone →
+  Cancelar X → X is removed and the picker reappears. **EVIDENCE**: removed
+  the `filaEnEdicion === null` condition from the render, ran `npx vitest
+  run Existencias -t "agregar X por el picker sin guardar"` → **FAILED**
+  (picker still present with X in edit); reverted via `git checkout --` →
+  clean working tree, fix restored from the prior commit. Full suite after
+  revert: `npx vitest run` → 35 files, 640/640 green (full repo suite,
+  web-only change — no other file touched); `npm run build` (`tsc -b &&
+  vite build`) → clean, 0 type errors.
 - [ ] 3.13 Branch `feat/stage13-slice3-web-minimos` off `main` (parent:
   slices 1+2); PR; merge stacked-to-main.
 
@@ -703,9 +734,9 @@ phantom-ref-on-reload + saved-row-cancel + same-tick save guard (3.12 round
 2, FINDINGS 1/2/3), ghost-row-identity-gated-clear + write-role gate +
 result-button `disabled` attribute (3.12 round A, FINDINGS 1/2/3).
 
-**Verify**: `npm run test -- Existencias` — 23/23 green (full suite:
-`npx vitest run` → 35 files, 639/639 green — updated post-`judgment-day`
-round A, see the apply notes on task 3.12). `npm run lint`
+**Verify**: `npm run test -- Existencias` — 24/24 green (full suite:
+`npx vitest run` → 35 files, 640/640 green — updated post-`judgment-day`
+round A final, see the apply notes on task 3.12). `npm run lint`
 (oxlint) → clean (one pre-existing, unrelated warning in `AuthContext.tsx`).
 `npm run build` (`tsc -b && vite build`) → clean.
 
