@@ -1999,7 +1999,7 @@ change.
     - *Full suite after fixes: 566/566 vitest tests green (was 564), `npx
       tsc -b` clean, `oxlint` clean (same pre-existing unrelated warning
       in `AuthContext.tsx`).)*
-- [ ] 14.11 Branch `feat/stage12-slice14-web-operacion` off `main` (parent:
+- [x] 14.11 Branch `feat/stage12-slice14-web-operacion` off `main` (parent:
   slices 5+8); PR; merge stacked-to-main.
 
 **Test plan**: preselection (14.4), stale-response (14.5), double-click
