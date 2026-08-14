@@ -579,17 +579,22 @@ stock_lotes (                  -- [operativa] (Etapa 12)
 > chocar contra ella). Ningún enum, columna ni invariante del esquema de arriba cambió de
 > forma — el trabajo de esta etapa fue enteramente de escritores nuevos, nunca de esquema.
 >
-> **Estado (Etapa 12, Slice 1 — esquema, sin escritor):** `lotes`/`stock_lotes` nuevas, con RLS
-> propia; seis columnas aditivas (`movimientos_stock.id_lote`, `articulos.controla_lote`,
+> **Estado (Etapa 12 — COMPLETA):** `lotes`/`stock_lotes` nuevas, con RLS propia; seis columnas
+> aditivas (`movimientos_stock.id_lote`, `articulos.controla_lote`,
 > `items_comprobante_venta.id_lote`, `items_comprobante_compra.codigo_lote`/
 > `fecha_vencimiento`/`id_lote`) y dos valores nuevos de `motivo_stock` (`decomiso`,
-> `reclasificacion`) — ambos agregados vía `ALTER TYPE ... ADD VALUE`, sin escritor todavía
-> (ningún `Sql()` de la migración que los agrega puede nombrarlos, PG lo prohíbe dentro de la
-> misma transacción). `stock.cantidad = SUM(movimientos)` sigue intacto; se agrega el segundo
-> invariante `stock_lotes.cantidad = SUM(movimientos con ese id_lote)`. Ningún dato existente se
-> reescribe: `controla_lote` default `false`, todo lo demás nullable. Los escritores reales
-> (get-or-create, reconciliación, recepción, venta, transferencia, ajuste, conteo, decomiso)
-> aterrizan en las slices 2-12.
+> `reclasificacion`) — ambos agregados vía `ALTER TYPE ... ADD VALUE` (ningún `Sql()` de la
+> migración que los agrega puede nombrarlos, PG lo prohíbe dentro de la misma transacción).
+> Los OCHO motivos tienen escritor: `reclasificacion` lo escribe solo la reconciliación de
+> activación (pares neto cero de `ServicioDeLotes.ReconciliarAsync`) y `decomiso` solo
+> `ServicioDeStock.DecomisarAsync` (Admin, cantidad positiva negada server-side, nunca
+> negativo). `stock.cantidad = SUM(movimientos)` sigue intacto sobre los ocho motivos; el
+> segundo invariante `stock_lotes.cantidad = SUM(movimientos con ese id_lote)` y el tercero
+> (`SUM(stock_lotes) = stock.cantidad` para par reconciliado) están probados end-to-end.
+> Ningún dato existente se reescribió: `controla_lote` default `false`, todo lo demás nullable.
+> Control efectivo = `articulos.controla_lote` AND parámetro `lotes_habilitado` (empresa);
+> selección FEFO particionada no-vencidos-primero (`ReglaDeLotes.ElegirFefo`); vencido =
+> `fecha_vencimiento < hoy` estricto, con "hoy" en la zona horaria del punto de venta.
 
 `stock.cantidad` es un cache mantenido en la misma transacción del movimiento.
 Transferencia entre locales: dos movimientos espejados — feature nueva que el legacy

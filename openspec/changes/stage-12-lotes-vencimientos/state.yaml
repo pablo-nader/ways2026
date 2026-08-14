@@ -1,6 +1,6 @@
 change: stage-12-lotes-vencimientos
-phase: tasks
-status: in-progress
+phase: verify
+status: done
 artifact_store: openspec
 execution_mode: automatic-autonomous
 delivery_strategy: auto-chain
@@ -202,13 +202,30 @@ phases:
       (auto-chain + stacked-to-main, delivery_strategy/chain_strategy de state.yaml
       honrados sin reabrir la pregunta).
   apply:
-    status: pending
-    artifact: null
+    status: done
+    artifact: tasks.md (204/204 checked) + 15 merged PRs (#99-#111, #113, #114) + follow-up fix PR #112
     depends_on: [tasks]
+    notes: >-
+      15 slices merged stacked-to-main in dependency order (1 to 2 to 3 to the four parallel
+      fronts to 14 to 15), each with its own judgment-day round(s) before merge. 204/204 tasks
+      checked. A cross-cutting follow-up (PR #112, fix/manejador-errores-raw-ado) closed a
+      repo-wide gap flagged at slice-12 judgment-day, outside the 15-slice plan but delivered
+      in the same window.
   verify:
-    status: pending
-    artifact: null
+    status: done
+    artifact: verify-report.md
     depends_on: [apply]
+    notes: >-
+      PASS WITH WARNINGS. 34/34 requirements, 136/136 scenarios compliant (post-judgment-day
+      amended counts: comprobantes-venta +1, conteo-de-inventario +2 versus the tasks-phase
+      snapshot of 133). DB gate matches the shipped migration byte-for-byte. Domain 420/420,
+      Application 257/257, vitest 612/612 independently re-run green this pass; dotnet build,
+      npx tsc -b and dotnet ef migrations has-pending-model-changes all clean. Full integration
+      suite intentionally not re-run (concurrent orchestrator-run testcontainers session
+      detected live via docker ps) — reported separately by the orchestrator. 2 WARNING
+      findings (doc 10 section 6 closing note stale; one mutation-proof-tests target
+      structurally unkillable by a live test, honestly documented rather than faked), 0
+      CRITICAL, 6 SUGGESTION-level debts consolidated for archive.
   archive:
     status: pending
     artifact: null
