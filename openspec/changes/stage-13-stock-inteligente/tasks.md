@@ -566,6 +566,19 @@ here, since 3.13 is explicitly the orchestrator's task.
   (row B's "Bajo"/"10" never landed — `filaB.getByText('Bajo')` found no
   match, the response was applied to row A instead); reverted via `git
   checkout --` → 17/17 green.
+  **APPLY NOTE — `judgment-day` round 2, slice 3 (FINDING 3)**: the
+  "doble click en Guardar" test above (`CompraEditor.test.tsx` awaited
+  double-click convention) proves the Guardar button's `disabled`
+  ATTRIBUTE, not `guardarFila`'s own first-line `guardandoRef` guard —
+  `userEvent.click` no-ops on an already-`disabled` button (same confound
+  documented in 3.6's evidence for `abrirFila`), so removing that guard
+  line still passed 17/17. Round 1's Finding 5 ("defense-in-depth,
+  unreachable by construction") was therefore an artifact of that gap, not
+  a settled fact. Closed with a dedicated same-tick test (two
+  `fireEvent.click`s on Guardar inside one `act()`, zero renders between
+  them — same pattern as the 3.6 mutation target) that exercises the guard
+  BEFORE the `disabled` attribute re-renders. See FINDING 3 evidence below
+  task 3.12.
 - [x] 3.11 Gate guard: `has-pending-model-changes` clean, zero migration
   files in the diff (web-only slice — confirms no accidental API/EF drift).
   **VERIFIED**: `dotnet ef migrations has-pending-model-changes --project
@@ -575,17 +588,74 @@ here, since 3.13 is explicitly the orchestrator's task.
   → empty output (zero files); `git status --porcelain` shows only 6
   `src/Ways.Web/**` files modified; `dotnet build --no-restore` → 0
   errors.
-- [ ] 3.12 Run `judgment-day`; fix; re-judge until clean.
+- [x] 3.12 Run `judgment-day`; fix; re-judge until clean.
+  **ROUND 2 (judgment-day, judge B re-round)**: 1 MAJOR (fix-caused, judge
+  B PROVED LIVE) + 2 WARNING confirmed and closed.
+  **CONFIRMED MAJOR (Finding 1, fix-caused by round 1's Finding 7 fix)**:
+  `cambiarPuntoVenta` cleared `filaEnEdicion` but never
+  `filaLocalSinGuardarRef` — `cargar()` replaces the grid wholesale
+  (mount, PV change, Reintentar) without touching that ref. Corruption
+  sequence proved live by the judge: add articulo X via the picker on PV A
+  (ref := X, unsaved) → switch PV before saving → the new PV happens to
+  have a PERSISTED row with the same idArticulo X → Editar + Cancelar on
+  that persisted row → `cancelarEdicion` matches the stale ref and DELETES
+  the real, persisted row. Fixed with a single clear point: `cargar()`
+  itself resets `filaLocalSinGuardarRef.current = null` right after its
+  `idPuntoVenta === null` guard — since `cargar` is the only function that
+  ever replaces `existencias.filas` wholesale (mount effect, PV switch via
+  `cambiarPuntoVenta`'s state change, and the Reintentar button), a single
+  clear there covers every path that can strand the ref, instead of
+  duplicating the clear at each call site. **EVIDENCE**: mutated `cargar`
+  to `/* MUTATION 1 */` (dropped the clear line), ran `npx vitest run
+  Existencias -t "FINDING 1"` → **FAILED** (`Arroz persistido en Norte`
+  gone from the grid — `getByText` found no match, replaced by "No hay
+  stock cargado para este punto de venta."); `git checkout --
+  src/Ways.Web/src/paginas/Existencias.tsx` → 20/20 green, no `MUTATION`
+  marker left.
+  **CONFIRMED WARNING (Finding 2, coverage gap on the pre-existing
+  success-path clear)**: the `filaLocalSinGuardarRef.current = null` line
+  already shipped in `guardarFila`'s success path (round 1, task 3.4/3.6)
+  had zero direct coverage of its own removal — dropping it still passed
+  17/17. Closed with a dedicated test: add a row via the picker, save it
+  (PUT resolves OK), then Editar + Cancelar the now-PERSISTED row — it
+  must stay in the grid. **EVIDENCE**: mutated the success-path clear to
+  `/* MUTATION 2 */`, ran `npx vitest run Existencias -t "FINDING 2"` →
+  **FAILED** (`Arroz largo fino 1kg` gone after Cancelar); reverted via
+  `git checkout --` → 20/20 green.
+  **CONFIRMED WARNING (Finding 3, stale mutation-proof claim on 3.10)**:
+  with Guardar now attribute-`disabled` while in flight, the existing
+  "doble click en Guardar" test (3.10) proves the `disabled` ATTRIBUTE,
+  not `guardarFila`'s own first-line `guardandoRef` guard — removing that
+  guard line still passed 17/17, because `userEvent.click` no-ops on an
+  already-disabled button before ever reaching the handler (same confound
+  as 3.6's `abrirFila` evidence). Round 1's Finding 5 ("unreachable by
+  construction") is retracted as stated: the guard IS reachable in a
+  genuine same-tick double click, where the `disabled` attribute has not
+  re-rendered yet. Closed with a same-tick test mirroring 3.6's mutation
+  target (two `fireEvent.click`s on Guardar inside one `act()`, zero
+  renders between them), asserting exactly one PUT. **EVIDENCE**: mutated
+  `guardarFila`'s first line to `/* MUTATION 3 */` (guard removed), ran
+  `npx vitest run Existencias -t "FINDING 3"` → **FAILED** (`expected
+  "vi.fn()" to be called 1 times, but got 2 times`); reverted via `git
+  checkout --` → 20/20 green. See the cross-reference note on task 3.10
+  above for the corrected framing of the double-click vs. same-tick tests.
+  Full suite after all reverts: `npx vitest run` → 20/20 in
+  `Existencias.test.tsx` (full repo suite unaffected — web-only change, no
+  other file touched). `npm run build` (`tsc -b && vite build`) → clean.
+  `git status --porcelain` clean, no stray `MUTATION` markers
+  (`grep -rn "MUTATION"` on both touched files → empty).
 - [ ] 3.13 Branch `feat/stage13-slice3-web-minimos` off `main` (parent:
   slices 1+2); PR; merge stacked-to-main.
 
 **Test plan**: mutation target (3.6), coercion descriptors (3.7), no-refetch
-(3.8), stale-read-discarded (3.9), double-click + supersede-blocked (3.10).
+(3.8), stale-read-discarded (3.9), double-click + supersede-blocked (3.10),
+phantom-ref-on-reload + saved-row-cancel + same-tick save guard (3.12 round
+2, FINDINGS 1/2/3).
 
-**Verify**: `npm run test -- Existencias` — 17/17 green (full suite:
-`npx vitest run` → 35 files, 633/633 green — updated post-`judgment-day`
-round 1, see the apply notes on tasks 3.5/3.10). `npm run lint` (oxlint) →
-clean (one pre-existing, unrelated warning in `AuthContext.tsx`).
+**Verify**: `npm run test -- Existencias` — 20/20 green (full suite:
+`npx vitest run` → 35 files, 636/636 green — updated post-`judgment-day`
+round 2, see the apply notes on tasks 3.5/3.10/3.12). `npm run lint`
+(oxlint) → clean (one pre-existing, unrelated warning in `AuthContext.tsx`).
 `npm run build` (`tsc -b && vite build`) → clean.
 
 ---
