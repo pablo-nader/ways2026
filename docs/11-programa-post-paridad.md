@@ -364,7 +364,7 @@ notas de etapas ya archivadas.
 |---|---|
 | Las 4 sugerencias de cobertura del verify de la Etapa 8 | Se resuelven dentro de la etapa que toque el código correspondiente |
 | Recargo por medio de pago (la columna existe, la lógica está dormida) | Etapa 10 lo expone en los agregados; su activación es un cambio menor previo |
-| Conteo de inventario completo (la Etapa 8 entregó una versión mínima, sin workflow de snapshot/variance) | Etapa 13 |
+| Conteo de inventario completo (la Etapa 8 entregó una versión mínima, sin workflow de snapshot/variance) | `stage-13b-conteo-por-planilla` (re-registrado desde la Etapa 13 — proposal decisión 5: necesita migración propia, incompatible con el gate sin-cambios-de-schema que la Etapa 13 ratificó; secuenciado después de la Etapa 13, cerca de la Etapa 14) |
 | Cuenta corriente de proveedores con ledger propio | Etapa 15 |
 | Órdenes de compra | Etapa 16 |
 | Libro IVA compras | Etapa 19 |

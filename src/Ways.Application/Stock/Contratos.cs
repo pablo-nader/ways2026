@@ -159,3 +159,26 @@ public sealed record ResultadoDeReconciliacion(int ParesReconciliados, int Pares
 /// proposal) — la merma real (rotura, pérdida) entra en el mismo cajón.
 /// </summary>
 public sealed record SolicitudDeDecomiso(int IdPuntoVenta, int IdArticulo, int? IdLote, decimal Cantidad, string Observaciones);
+
+/// <summary>
+/// Cuerpo de <c>PUT /api/stock/minimos</c> (stage-13-stock-inteligente, Slice 1; design:
+/// Interfaces/Contracts; decisión 11). REEMPLAZO COMPLETO de ambos umbrales — no PATCH: <see
+/// cref="Minimo"/>/<see cref="Reposicion"/> en <c>null</c> limpian el campo (la operación de
+/// "unmanage"), y un valor presente siempre pisa el anterior. <c>dto-contract-honesty</c>:
+/// ningún campo queda sin destino — los cuatro se leen en
+/// <c>ServicioDeStock.EscribirMinimosAsync</c>, <see cref="Minimo"/>/<see cref="Reposicion"/>
+/// van directo al <c>$4</c>/<c>$5</c> del upsert crudo tras la validación en memoria.
+/// </summary>
+public sealed record SolicitudDeMinimos(int IdPuntoVenta, int IdArticulo, decimal? Minimo, decimal? Reposicion);
+
+/// <summary>
+/// Resultado de <c>PUT /api/stock/minimos</c> (design decisión 11). <see cref="Cantidad"/>/<see
+/// cref="Minimo"/>/<see cref="Reposicion"/> se leen del <c>RETURNING</c> del MISMO statement que
+/// escribió — nunca re-derivados ni releídos por una segunda consulta — para que la grilla
+/// renderice la fila persistida sin refetch (design decisión 16). <see cref="Estado"/> es
+/// derivado en memoria vía <see cref="Ways.Domain.Stock.ReglaDeReposicion.Clasificar"/> sobre
+/// esa misma fila, nunca una segunda definición del borde.
+/// </summary>
+public sealed record MinimosDeStock(
+    int IdPuntoVenta, int IdArticulo, decimal Cantidad, decimal? Minimo, decimal? Reposicion,
+    EstadoDeReposicion Estado);
