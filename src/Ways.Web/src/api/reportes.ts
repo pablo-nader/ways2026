@@ -13,9 +13,11 @@ import type {
   PaginaDeHistoricoDeCajas,
   PaginaDeMovimientosTesoreria,
   Rentabilidad,
+  Reposicion,
   ResumenDeGastos,
   ResumenDeVencimientos,
   ResumenDeVentas,
+  Rotacion,
   TopArticulos,
   Vencimientos,
   VentasPorMedioPago,
@@ -119,6 +121,16 @@ export const clienteDeReportes = {
     ),
   vencimientosResumen: (idPuntoVenta: number) =>
     api.get<ResumenDeVencimientos>(`/reportes/stock/vencimientos/resumen?idPuntoVenta=${idPuntoVenta}`),
+  /** stage-13-stock-inteligente (Slice 6): mismo criterio opcional de `dias` que `vencimientos` —
+   * omitido, el servidor resuelve `dias_rotacion` (PV → empresa → default). */
+  reposicion: (idPuntoVenta: number, dias: number | null) =>
+    api.get<Reposicion>(
+      `/reportes/stock/reposicion?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}`,
+    ),
+  /** stage-13-stock-inteligente (Slice 6): feed independiente de `minimoSugerido`, mismo criterio
+   * opcional de `dias`. */
+  rotacion: (idPuntoVenta: number, dias: number | null) =>
+    api.get<Rotacion>(`/reportes/stock/rotacion?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}`),
 }
 
 // ---- Offset local para desde/hasta de /cajas y /tesoreria (stage-11-exportacion-reportes,
@@ -228,6 +240,11 @@ export const rutasDeExportacion = {
    * `formato=xlsx`, mismo criterio que `existencias`. */
   vencimientos: (idPuntoVenta: number, dias: number | null) =>
     `/reportes/stock/vencimientos/export?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
+  /** stage-13-stock-inteligente (Slice 6): mismo query string que la ruta JSON hermana +
+   * `formato=xlsx`, mismo criterio que `vencimientos`. Sin sibling propio para `/rotacion` — esa
+   * ruta no tiene export (`ReportesEndpoints.cs`). */
+  reposicion: (idPuntoVenta: number, dias: number | null) =>
+    `/reportes/stock/reposicion/export?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
 }
 
 function aFechaIso(fecha: Date): string {

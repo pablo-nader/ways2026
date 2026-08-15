@@ -1353,6 +1353,67 @@ export type Vencimientos = {
  * agrupados por `FilaDeVencimiento.estado` — nunca una query de agregación separada. */
 export type ResumenDeVencimientos = { idPuntoVenta: number; vencidos: number; porVencer: number; sinFecha: number }
 
+// --- Reposición de stock (stage-13-stock-inteligente, Slices 4/5) ----------------------------
+// Espejo de `Ways.Application.Reportes.Contratos` — alerta y sugerencia de compra
+// (`minimo IS NOT NULL AND cantidad <= minimo`), agrupable por proveedor habitual, más el feed
+// independiente de rotación que alimenta `minimoSugerido` (Slice 5).
+
+/** Fila de `GET /api/reportes/stock/reposicion` — espejo de `FilaDeReposicion`. `sugerido` es
+ * `null`, NUNCA `0`, cuando `reposicion` no está configurado. `idProveedor`/`proveedor` viajan
+ * `null` en conjunto para la fila que cae en el grupo "Sin proveedor" — un `idProveedorHabitual`
+ * que apunta a un proveedor soft-deleted también proyecta `null` acá (orchestrator decision 12,
+ * tasks.md stage-13): un solo bucket "Sin proveedor", nunca un FK colgante ni un segundo bucket.
+ * `consumoDiarioPromedio`/`diasDeCobertura` son `null`, NUNCA `0`, cuando el artículo no tiene
+ * historia calificada en la ventana de rotación. */
+export type FilaDeReposicion = {
+  idArticulo: number
+  articulo: string
+  cantidad: number
+  minimo: number
+  reposicion: number | null
+  sugerido: number | null
+  idProveedor: number | null
+  proveedor: string | null
+  consumoDiarioPromedio: number | null
+  diasDeCobertura: number | null
+}
+
+/** Respuesta de `GET /api/reportes/stock/reposicion` — espejo de `Reposicion`. `hoy`/
+ * `zonaHoraria` son la fecha y la zona efectivamente resueltas (echo obligatorio, mismo criterio
+ * que `Vencimientos.hoy`/`Vencimientos.zonaHoraria`); `diasDeRotacion` es el horizonte efectivo —
+ * el parámetro `dias` de la query si vino, si no `dias_rotacion` (default 30). */
+export type Reposicion = {
+  idPuntoVenta: number
+  hoy: string
+  diasDeRotacion: number
+  zonaHoraria: string
+  filas: FilaDeReposicion[]
+}
+
+/** Fila de `GET /api/reportes/stock/rotacion` — espejo de `FilaDeRotacion`. Solo existe porque el
+ * artículo tuvo AL MENOS UN movimiento calificado (venta o su anulación, nunca la anulación de
+ * una compra) en la ventana — un artículo sin historia NO ES UNA FILA de esta lista, nunca una
+ * fila con `minimoSugerido` en `0`. */
+export type FilaDeRotacion = {
+  idArticulo: number
+  articulo: string
+  consumoEnVentana: number
+  consumoDiarioPromedio: number
+  minimoSugerido: number
+}
+
+/** Respuesta de `GET /api/reportes/stock/rotacion` — espejo de `Rotacion`. `diasCoberturaObjetivo`
+ * es el horizonte de cobertura efectivamente resuelto que multiplica `minimoSugerido` — mismo
+ * criterio de echo obligatorio que `diasDeRotacion`. */
+export type Rotacion = {
+  idPuntoVenta: number
+  hoy: string
+  diasDeRotacion: number
+  diasCoberturaObjetivo: number
+  zonaHoraria: string
+  filas: FilaDeRotacion[]
+}
+
 // --- Reportes (stage-10-agregacion-dashboard, Slice 7): G1 parity — ventas/resumen y
 // gastos/resumen. Espejo de `Ways.Application.Reportes.Contratos` — mismos nombres de campo que
 // el backend serializa en camelCase, ningún dato de negocio recalculado en el cliente.
