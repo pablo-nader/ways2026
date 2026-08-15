@@ -1375,7 +1375,7 @@ the `Sugerido` column** (i.e. drop `GET /rotacion`'s web consumer, tasks
 its own endpoint and column, so dropping it removes code never shipped
 rather than retracting a published DTO field.
 
-- [ ] 7.1 Modify `ServicioDeReportesDeStock.cs`:
+- [x] 7.1 Modify `ServicioDeReportesDeStock.cs`:
   `ObtenerResumenDeReposicionAsync(idPuntoVenta, ct)` — calls the **same**
   `ObtenerReposicionAsync` method and folds its own rows: `bajoMinimo :=
   filas.Count`, `sinStock := filas.Count(f => f.Cantidad <= 0)`,
@@ -1383,47 +1383,72 @@ rather than retracting a published DTO field.
   aggregation query.** *(design decision 8, 9 — with the field name
   correction recorded in Orchestrator Decision #5 above: `sinProveedor`,
   not design.md's stale `sinSugerencia`)*
-- [ ] 7.2 Modify `Contratos.cs`: `ResumenDeReposicion(IdPuntoVenta,
+- [x] 7.2 Modify `Contratos.cs`: `ResumenDeReposicion(IdPuntoVenta,
   BajoMinimo, SinStock, SinProveedor)`. `dto-contract-honesty`:
   doc-comment `SinProveedor` as the *Sin proveedor* group count — distinct
   from, and never conflated with, "no `sugerido`" (`reposicion` unset).
-- [ ] 7.3 Modify `ReportesEndpoints.cs`:
+- [x] 7.3 Modify `ReportesEndpoints.cs`:
   `GET /reportes/stock/reposicion/resumen?idPuntoVenta`, `Politicas.LecturaDeReportes`.
-- [ ] 7.4 Modify `src/Ways.Web/src/api/{tipos,reportes}.ts`: mirror
+- [x] 7.4 Modify `src/Ways.Web/src/api/{tipos,reportes}.ts`: mirror
   `ResumenDeReposicion` (`sinProveedor`, not `sinSugerencia`);
   `clienteDeReportes.reposicionResumen`.
-- [ ] 7.5 Modify `src/Ways.Web/src/paginas/Tablero.tsx`: `PanelDeReposicion`
+- [x] 7.5 Modify `src/Ways.Web/src/paginas/Tablero.tsx`: `PanelDeReposicion`
   cloned from `PanelDeVencimientos` — `usePanelDeReporte`, requires a
   concrete `idPuntoVenta` (neutral copy otherwise), `PanelDeError` + retry,
   `Link` to the report, and **one `data-testid` per metric**:
   `reposicion-tile-bajo-minimo`, `reposicion-tile-sin-stock`,
   `reposicion-tile-sin-proveedor` — the stage-12 slice-15 lesson: a blob
   assertion cannot catch two swapped counts.
+  **APPLY NOTE**: both `PanelDeVencimientos` and `PanelDeReposicion` render
+  a "Ver reporte" link with identical text, so the two pre-existing
+  `screen.getByRole('link', { name: 'Ver reporte' })` assertions (one in
+  the vencimientos tile describe block, one new in the reposición block)
+  became ambiguous once both panels render together. Both scoped with
+  `within(screen.getByText(<título>).closest('div')!)` — not a task,
+  recorded per the instruction to never silently deviate.
 - [ ] 7.6 Modify `src/Ways.Web/src/paginas/Existencias.tsx`: add the
   `Sugerido` column, fed by `clienteDeReportes.rotacion(idPuntoVenta)`
   fetched alongside the report and indexed by `idArticulo`; an articulo
   absent from that map renders `—`, never `0`.
-- [ ] 7.7 [P] **Mutation target**: the fold of `sinStock`
+- [x] 7.7 [P] **Mutation target**: the fold of `sinStock`
   (`f.Cantidad <= 0`) — change to `< 0` — the tile test seeded with an
   articulo at exactly `0` (7.8) must fail. *(mutation-proof-tests)*
-- [ ] 7.8 [P] Integration: the tile's three counts equal the report's
+  **EVIDENCE**: mutated `ObtenerResumenDeReposicionAsync`'s `sinStock` fold
+  to `f.Cantidad < 0 /* MUTATION 7.7 */`, ran `dotnet test --filter
+  FullyQualifiedName~LosTresConteosDelTileIgualanElFoldeoDelReporte` →
+  **FAILED** (`Assert.Equal() Failure: Expected: 2 Actual: 1` — the
+  exactly-zero articulo stopped counting as `sinStock`); reverted, ran
+  `--filter FullyQualifiedName~ReposicionReporteTests` → 9/9 green,
+  `grep -rn "MUTATION"` on the touched files left only the pre-existing
+  "MUTATION TARGET" comment headers from slice 4, no inline marker.
+- [x] 7.8 [P] Integration: the tile's three counts equal the report's
   folded values over a seed with **all three metrics distinct**
   (`bajoMinimo = 7, sinStock = 2, sinProveedor = 1`), so no two counts can
   be swapped without detection. *(spec `reposicion-de-stock`: "The Tablero
   Tile Reuses The Report Method, Never A Second Aggregation Query",
   scenario "The tile's three counts equal the report's folded values")*
-- [ ] 7.9 [P] Integration, discrimination: two rows below minimo — one with
+  Implemented as `ReposicionReporteTests.LosTresConteosDelTileIgualanElFoldeoDelReporte`
+  (also the 7.7 mutation-target test — same seed serves both purposes).
+- [x] 7.9 [P] Integration, discrimination: two rows below minimo — one with
   no `id_proveedor_habitual` and `sugerido = 30`, another with a proveedor
   assigned but `sugerido = null` (`reposicion` unset) — `sinProveedor = 1`,
   counting only the row missing a proveedor, independent of `sugerido`.
   *(spec: "sinProveedor counts the Sin proveedor group, not a missing
-  suggestion")*
-- [ ] 7.10 [P] Component test: the three `data-testid`s asserted
+  suggestion")* Implemented as
+  `ReposicionReporteTests.SinProveedorCuentaElGrupoSinProveedorNoElSugeridoAusente`.
+- [x] 7.10 [P] Component test: the three `data-testid`s asserted
   individually, not as one blob — the stage-12 slice-15 lesson applied.
+  Implemented in `Tablero.test.tsx`, describe block "Tablero — tile de
+  reposición (stage-13-stock-inteligente, Slice 7)".
 - [ ] 7.11 [P] Component test: the `Existencias.tsx` `Sugerido` column
   renders `—` for an articulo absent from the rotation map, never `0`.
-- [ ] 7.12 Gate guard: `has-pending-model-changes` clean, zero migration
-  files in the diff.
+- [x] 7.12 Gate guard: `has-pending-model-changes` clean, zero migration
+  files in the diff. **VERIFIED**: `dotnet ef migrations
+  has-pending-model-changes --project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure` → "No changes have been made
+  to the model since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
+  files).
 - [ ] 7.13 Run `judgment-day`; fix; re-judge until clean.
 - [ ] 7.14 Branch `feat/stage13-slice7-tile-y-sugerencia` off `main`
   (parent: slices 3+4+5); PR; merge stacked-to-main. **If the slice
@@ -1435,7 +1460,18 @@ rather than retracting a published DTO field.
 (7.8), sinProveedor discrimination (7.9), per-testid assertions (7.10),
 column null-render (7.11).
 
-**Verify**: `dotnet test --filter FullyQualifiedName~ResumenDeReposicion` && `npm run test -- Tablero Existencias`
+**APPLY NOTE (Verify line filter mismatch, same class as slice 2's)**: this
+slice's `Verify` line below reads `FullyQualifiedName~ResumenDeReposicion`,
+but no test method matches that substring — the two new tests are
+`ReposicionReporteTests.LosTresConteosDelTileIgualanElFoldeoDelReporte` and
+`.SinProveedorCuentaElGrupoSinProveedorNoElSugeridoAusente` (named for what
+they prove, per this repo's convention, not for the endpoint under test).
+Ran `--filter FullyQualifiedName~ReposicionReporteTests` instead, which
+matches the whole class (9 tests: the 7 pre-existing slice-4 tests plus
+these 2, all green) — recorded per instruction to never silently deviate;
+not a task, so not re-numbered.
+
+**Verify**: `dotnet test --filter FullyQualifiedName~ReposicionReporteTests` && `npm run test -- Tablero Existencias`
 
 ---
 
