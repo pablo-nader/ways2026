@@ -274,12 +274,24 @@ describe('Existencias — reporte (stage-11-exportacion-reportes, Slice 9 — we
 describe('Existencias — columna Sugerido (stage-13-stock-inteligente, Slice 7)', () => {
   it('un artículo presente en /rotacion muestra su minimoSugerido; uno ausente muestra "—", nunca "0"', async () => {
     const filaConRotacion = filaFixture({ idArticulo: 1, nombre: 'Aceite de girasol 900ml', cantidad: 12 })
+    // Judgment-day slice 7 juez B (ronda 1, WARNING): SEGUNDA fila presente en /rotacion, con
+    // idArticulo y minimoSugerido DISTINTOS de la primera — con un solo par en el fixture, mutar
+    // la clave del map a "siempre rotacion.filas[0].idArticulo" es indistinguible del fold correcto
+    // (un solo par no expone el swap de clave). Con dos pares, el mutante pisa ambas entradas bajo
+    // la clave 1, así que la búsqueda por idArticulo 3 falla y la de idArticulo 1 muestra 15 en vez
+    // de 7.
+    const filaOtraConRotacion = filaFixture({ idArticulo: 3, nombre: 'Detergente 750ml', cantidad: 20 })
     const filaSinRotacion = filaFixture({ idArticulo: 2, nombre: 'Fideos guiseros 500g', cantidad: 87.5 })
     mockearRutasBase((ruta) => {
-      if (ruta.startsWith('/reportes/stock/existencias?')) return Promise.resolve(existenciasFixture([filaConRotacion, filaSinRotacion]))
+      if (ruta.startsWith('/reportes/stock/existencias?')) {
+        return Promise.resolve(existenciasFixture([filaConRotacion, filaOtraConRotacion, filaSinRotacion]))
+      }
       if (ruta.startsWith('/reportes/stock/rotacion?')) {
         return Promise.resolve(
-          rotacionFixture([{ idArticulo: 1, articulo: 'Aceite de girasol 900ml', consumoEnVentana: 30, consumoDiarioPromedio: 1, minimoSugerido: 7 }]),
+          rotacionFixture([
+            { idArticulo: 1, articulo: 'Aceite de girasol 900ml', consumoEnVentana: 30, consumoDiarioPromedio: 1, minimoSugerido: 7 },
+            { idArticulo: 3, articulo: 'Detergente 750ml', consumoEnVentana: 45, consumoDiarioPromedio: 1.5, minimoSugerido: 15 },
+          ]),
         )
       }
       return undefined
@@ -293,10 +305,13 @@ describe('Existencias — columna Sugerido (stage-13-stock-inteligente, Slice 7)
     // renderizan "—" en estas filas (ambos null en filaFixture), así que un `getByText('—')` sin
     // ámbito de columna sería ambiguo.
     const sugeridoAceite = within(filas[0]).getAllByRole('cell')[6]
-    const sugeridoFideos = within(filas[1]).getAllByRole('cell')[6]
-    // task 7.11: idArticulo 1 está en el mapa de rotación ⇒ muestra minimoSugerido (7); idArticulo
-    // 2 está AUSENTE ⇒ "—", nunca "0" — la ausencia es la respuesta honesta (design decisión 14).
+    const sugeridoDetergente = within(filas[1]).getAllByRole('cell')[6]
+    const sugeridoFideos = within(filas[2]).getAllByRole('cell')[6]
+    // task 7.11: idArticulo 1 y 3 están en el mapa de rotación ⇒ muestran su propio minimoSugerido
+    // (7 y 15, distintos entre sí); idArticulo 2 está AUSENTE ⇒ "—", nunca "0" — la ausencia es la
+    // respuesta honesta (design decisión 14).
     expect(sugeridoAceite).toHaveTextContent('7')
+    expect(sugeridoDetergente).toHaveTextContent('15')
     expect(sugeridoFideos).toHaveTextContent('—')
   })
 

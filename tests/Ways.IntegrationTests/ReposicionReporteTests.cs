@@ -463,8 +463,12 @@ public class ReposicionReporteTests(WaysApiFixture fixture) : IClassFixture<Ways
     // ---- task 7.9: discriminación — sinProveedor cuenta el grupo Sin proveedor, no "sin sugerido" --
 
     /// <summary>spec reposicion-de-stock: "sinProveedor counts the Sin proveedor group, not a missing
-    /// suggestion" — dos filas bajo mínimo, una sin proveedor CON sugerido, otra con proveedor SIN
-    /// sugerido: <c>sinProveedor</c> cuenta solo la primera, independiente de <c>sugerido</c>.</summary>
+    /// suggestion" — tres filas bajo mínimo, con cardinalidades DISCRIMINANTES para que el mutante
+    /// <c>f.IdProveedor is null</c> → <c>f.Sugerido is null</c> no sobreviva: una sin proveedor CON
+    /// sugerido (grupo sinProveedor = 1), y DOS con proveedor SIN sugerido (grupo "sin sugerido" = 2,
+    /// asimétrico respecto de sinProveedor). Las magnitudes de cantidad/mínimo también son distintas
+    /// entre sí para que <c>bajoMinimo</c>/<c>sinStock</c>/<c>sinProveedor</c> (3/0/1) no colisionen y
+    /// ningún swap entre los tres campos del resumen sobreviva.</summary>
     [Fact]
     public async Task SinProveedorCuentaElGrupoSinProveedorNoElSugeridoAusente()
     {
@@ -479,13 +483,22 @@ public class ReposicionReporteTests(WaysApiFixture fixture) : IClassFixture<Ways
         var artConProveedorSinSugerido = await SembrarArticuloAsync(ctx, "discriminacion-con-proveedor", provedor);
         await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artConProveedorSinSugerido, cantidad: 3m, minimo: 10m, reposicion: null);
 
+        // TERCERA fila (rompe la simetría 1/1): también con proveedor, también SIN sugerido, pero
+        // con cantidad/mínimo distintos y sin agotar stock — hace que "sin sugerido" (2) diverja de
+        // sinProveedor (1); si el fold se equivoca de campo, el resumen da 2 en vez de 1.
+        var artConProveedorSinSugeridoDos = await SembrarArticuloAsync(ctx, "discriminacion-con-proveedor-dos", provedor);
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artConProveedorSinSugeridoDos, cantidad: 4m, minimo: 6m, reposicion: null);
+
         var reposicion = await ObtenerReposicionAsync(ctx.Admin, ctx.IdPuntoVenta);
-        Assert.Equal(2, reposicion.Filas.Count);
+        Assert.Equal(3, reposicion.Filas.Count);
         Assert.Equal(30m, reposicion.Filas.Single(f => f.IdArticulo == artSinProveedorConSugerido).Sugerido);
         Assert.Null(reposicion.Filas.Single(f => f.IdArticulo == artConProveedorSinSugerido).Sugerido);
+        Assert.Null(reposicion.Filas.Single(f => f.IdArticulo == artConProveedorSinSugeridoDos).Sugerido);
 
         var resumen = await ObtenerResumenAsync(ctx.Admin, ctx.IdPuntoVenta);
 
+        Assert.Equal(3, resumen.BajoMinimo);
+        Assert.Equal(0, resumen.SinStock);
         Assert.Equal(1, resumen.SinProveedor);
     }
 }

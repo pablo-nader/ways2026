@@ -1464,6 +1464,29 @@ rather than retracting a published DTO field.
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
   files).
 - [ ] 7.13 Run `judgment-day`; fix; re-judge until clean.
+  **Ronda 1, juez B**: 3 hallazgos confirmados, los 3 cerrados — (MAJOR)
+  `ReposicionReporteTests.SinProveedorCuentaElGrupoSinProveedorNoElSugeridoAusente`
+  (7.9) tenía cardinalidades simétricas (1 fila sin proveedor, 1 fila sin
+  sugerido) — mutar el fold `IdProveedor is null` → `Sugerido is null`
+  sobrevivía; fix: tercera fila bajo mínimo con proveedor asignado y
+  `reposicion` null (grupo "sin sugerido" pasa a 2, "sin proveedor" queda
+  en 1), más los otros dos counts del resumen (`bajoMinimo`/`sinStock`)
+  asertados con magnitudes distintas entre sí. (WARNING, autorizado con
+  extensión de matriz) `/reportes/stock/reposicion/resumen` no tenía test
+  de autorización — `.AllowAnonymous()` sobrevivía 9/9 en
+  `ReportesAutorizacionTests`; fix test-only: sumadas las DOS rutas de
+  resumen de stock (`stock/reposicion/resumen`, `stock/vencimientos/resumen`)
+  a `TodasLasRutas`, con un `RutaCon` que arma `?idPuntoVenta=` para ellas en
+  vez de `idEmpresa`/`desde`/`hasta`/`granularidad`. El sibling
+  `stock/vencimientos/resumen` tenía el MISMO gap preexistente desde la
+  slice 6 — cerrado de paso, también test-only. (WARNING)
+  `Existencias.test.tsx` el fixture de rotación traía una sola fila —
+  mutar la clave del map a "siempre `rotacion.filas[0].idArticulo`" era
+  indistinguible del fold correcto; fix: segunda fila presente en la
+  grilla y en `/rotacion` (otro artículo, `minimoSugerido` distinto),
+  ambas celdas de Sugerido asertadas con valores distintos por fila.
+  Evidencia de mutación real por hallazgo (mutar → build/test falla →
+  revert → verde) en los commits de esta ronda.
 - [ ] 7.14 Branch `feat/stage13-slice7-tile-y-sugerencia` off `main`
   (parent: slices 3+4+5); PR; merge stacked-to-main. **If the slice
   overflows at apply time, drop tasks 7.6/7.11 (the `Sugerido` column) per
