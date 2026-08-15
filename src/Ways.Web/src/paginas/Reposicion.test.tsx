@@ -168,6 +168,25 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
     expect(within(filaDos).getByText('8')).toBeInTheDocument()
   })
 
+  it('sugerido renderiza 0 cuando es un sugerido genuino de 0 — nunca —', async () => {
+    // Regression guard: un `!valor ? '—' : ...` en formatearCantidadNullable trataría
+    // sugerido: 0 como falsy y renderizaría '—' (lectura "comprar nada" que la spec prohíbe).
+    const filaConSugeridoCero = filaFixture({ idArticulo: 3, sugerido: 0 })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) {
+        return Promise.resolve(reposicionFixture([filaConSugeridoCero]))
+      }
+      return undefined
+    })
+    renderReposicion()
+
+    const filas = await screen.findAllByRole('row')
+    // fila 0 = encabezado, fila 1 = header del grupo de proveedor, fila 2 = dato.
+    const filaDato = filas[2]
+    expect(within(filaDato).queryByText('—')).not.toBeInTheDocument()
+    expect(within(filaDato).getByText('0')).toBeInTheDocument()
+  })
+
   it('agrupa por proveedor mostrando el nombre y la cantidad de filas en el encabezado del grupo', async () => {
     const filaUno = filaFixture({ idArticulo: 1, idProveedor: 1, proveedor: 'Proveedor Uno' })
     const filaDos = filaFixture({ idArticulo: 2, idProveedor: 1, proveedor: 'Proveedor Uno' })
