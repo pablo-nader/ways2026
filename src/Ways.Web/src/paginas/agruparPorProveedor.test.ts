@@ -55,4 +55,16 @@ describe('agruparPorProveedor (stage-13-stock-inteligente, Slice 6 — fold sobr
   it('la lista vacía produce cero grupos', () => {
     expect(agruparPorProveedor([])).toEqual([])
   })
+
+  it('dos proveedores con ids distintos y el mismo nombre visible producen DOS grupos, no uno fusionado', () => {
+    const filaProveedorUno = filaFixture({ idArticulo: 1, idProveedor: 1, proveedor: 'Proveedor Homónimo' })
+    const filaProveedorDos = filaFixture({ idArticulo: 2, idProveedor: 2, proveedor: 'Proveedor Homónimo' })
+
+    const grupos = agruparPorProveedor([filaProveedorUno, filaProveedorDos])
+
+    expect(grupos).toEqual([
+      { idProveedor: 1, proveedor: 'Proveedor Homónimo', filas: [filaProveedorUno] },
+      { idProveedor: 2, proveedor: 'Proveedor Homónimo', filas: [filaProveedorDos] },
+    ])
+  })
 })

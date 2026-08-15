@@ -1,8 +1,11 @@
-import { render, screen, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Reposicion } from './Reposicion'
-import type { FilaDeReposicion, PuntoVentaListado, Reposicion as ReposicionRespuesta } from '../api/tipos'
+import { RutaProtegida } from '../auth/RutaProtegida'
+import { ROL } from '../api/tipos'
+import type { FilaDeReposicion, PuntoVentaListado, Reposicion as ReposicionRespuesta, UsuarioAutenticado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
 const apiDescargarMock = vi.fn()
@@ -26,11 +29,43 @@ vi.mock('../api/cliente', () => ({
   },
 }))
 
+function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
+  return {
+    id: 9,
+    usuario: 'supervisor',
+    mail: 'supervisor@ways.test',
+    rolId: ROL.Supervisor,
+    rol: 'Supervisor',
+    ultimaConexion: null,
+    idTenant: 1,
+    ...sobrescribir,
+  }
+}
+
+let usuarioActual: UsuarioAutenticado | null = usuarioFixture()
+
+vi.mock('../auth/useAuth', () => ({
+  useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
+}))
+
 const puntoVentaCentro: PuntoVentaListado = {
   id: 10,
   idTenant: 1,
   idEmpresa: 1,
   nombre: 'PV Centro',
+  domicilio: null,
+  horario: null,
+  whatsapp: null,
+  instagram: null,
+  facebook: null,
+  web: null,
+}
+
+const puntoVentaNorte: PuntoVentaListado = {
+  id: 11,
+  idTenant: 1,
+  idEmpresa: 1,
+  nombre: 'PV Norte',
   domicilio: null,
   horario: null,
   whatsapp: null,
@@ -61,7 +96,7 @@ function reposicionFixture(filas: FilaDeReposicion[], idPuntoVenta = 10): Reposi
 
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaCentro])
+    if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaCentro, puntoVentaNorte])
     const propia = sobrescribir?.(ruta)
     if (propia) return propia
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -72,10 +107,31 @@ function renderReposicion() {
   return render(<Reposicion />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
 }
 
+/** Monta detrás del mismo gate de rol que `App.tsx` usa para
+ * `/reportes/stock/reposicion` (`Politicas.LecturaDeReportes`). */
+function renderReposicionProtegido() {
+  return render(
+    <MemoryRouter initialEntries={['/reportes/stock/reposicion']}>
+      <Routes>
+        <Route
+          path="/reportes/stock/reposicion"
+          element={
+            <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+              <Reposicion />
+            </RutaProtegida>
+          }
+        />
+        <Route path="/" element={<div>Inicio (redirigido)</div>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
 beforeEach(() => {
   apiGetMock.mockReset()
   apiDescargarMock.mockReset()
   apiDescargarMock.mockResolvedValue(undefined)
+  usuarioActual = usuarioFixture()
 })
 
 describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
@@ -133,10 +189,13 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
       if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([filaFixture()]))
       return undefined
     })
+    const usuario = userEvent.setup()
     renderReposicion()
 
     await screen.findByText('Yerba mate 1kg')
-    expect(await screen.findByRole('button', { name: 'Descargar' })).toBeInTheDocument()
+    await usuario.click(screen.getByRole('button', { name: 'Descargar' }))
+
+    expect(apiDescargarMock.mock.calls[0][0]).toMatch(/^\/reportes\/stock\/reposicion\/export\?idPuntoVenta=10/)
   })
 
   it('sin filas bajo el mínimo muestra un estado vacío', async () => {
@@ -147,5 +206,65 @@ describe('Reposicion (stage-13-stock-inteligente, Slice 6 — web)', () => {
     renderReposicion()
 
     expect(await screen.findByText('No hay artículos bajo el mínimo para este punto de venta.')).toBeInTheDocument()
+  })
+
+  it('una respuesta desactualizada nunca pisa la más reciente (generación)', async () => {
+    let resolverPrimera: (valor: ReposicionRespuesta) => void = () => {}
+    const primera = new Promise<ReposicionRespuesta>((resolve) => {
+      resolverPrimera = resolve
+    })
+    let cantidadDeLlamadas = 0
+
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) {
+        cantidadDeLlamadas += 1
+        if (cantidadDeLlamadas === 1) return primera
+        return Promise.resolve(reposicionFixture([filaFixture({ idArticulo: 999, articulo: 'segunda-respuesta' })]))
+      }
+      return undefined
+    })
+
+    const usuario = userEvent.setup()
+    renderReposicion()
+    await screen.findByLabelText('Punto de venta')
+
+    await usuario.selectOptions(screen.getByLabelText('Punto de venta'), '11')
+    expect(await screen.findByText('segunda-respuesta')).toBeInTheDocument()
+
+    // El flush del microtask va DENTRO de act (mutation-proof-tests regla 7): un waitFor solo
+    // pasaría en su primer tick, antes de que el .then stale aterrice.
+    const { act } = await import('@testing-library/react')
+    await act(async () => {
+      resolverPrimera(reposicionFixture([filaFixture({ idArticulo: 1, articulo: 'primera-respuesta-vieja' })]))
+      await primera
+    })
+    expect(screen.queryByText('primera-respuesta-vieja')).not.toBeInTheDocument()
+    expect(screen.getByText('segunda-respuesta')).toBeInTheDocument()
+  })
+})
+
+describe('Reposicion — role gating (mismo gate que Vencimientos: Politicas.LecturaDeReportes)', () => {
+  it('un Supervisor llega a /reportes/stock/reposicion', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([filaFixture()]))
+      return undefined
+    })
+    renderReposicionProtegido()
+
+    await screen.findByText('Yerba mate 1kg')
+    expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
+  })
+
+  it('un Vendedor nunca llega a /reportes/stock/reposicion: redirige a Inicio', async () => {
+    usuarioActual = usuarioFixture({ id: 4, usuario: 'vendedor', rolId: ROL.Vendedor, rol: 'Vendedor' })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([filaFixture()]))
+      return undefined
+    })
+
+    renderReposicionProtegido()
+
+    expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Reposición')).not.toBeInTheDocument())
   })
 })

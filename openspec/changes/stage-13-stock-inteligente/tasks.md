@@ -956,6 +956,27 @@ depends on it.
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
   files). Web-only slice, as expected.
 - [ ] 6.8 Run `judgment-day`; fix; re-judge until clean.
+  **Ronda 1, juez B**: 4 hallazgos confirmados, los 4 cerrados —
+  (MAJOR) `Reposicion.test.tsx` el test del botón de descarga no clickeaba
+  ni asertaba la ruta, solo existencia (fix: replica el precedente
+  `Vencimientos.test.tsx` — click + `apiDescargarMock` matchea
+  `/reportes/stock/reposicion/export?idPuntoVenta=`); (WARNING)
+  `agruparPorProveedor.test.ts` ningún test discriminaba la clave del fold
+  (`idProveedor` vs. nombre) por fixtures biyectivos (fix: test nuevo con
+  dos proveedores de igual nombre e id distinto, consecutivos → dos
+  grupos); (WARNING) el gate de generación de `Reposicion.tsx` (stale
+  response) sin cobertura (fix: test de respuesta desactualizada, mismo
+  patrón que `Vencimientos.test.tsx` — promesa diferida + `act` síncrono,
+  mutation-proof-tests regla 7); (WARNING) sin tests de rol/ruta para
+  `/reportes/stock/reposicion` (fix: replica los dos tests de rol de
+  `Vencimientos.test.tsx` — Supervisor llega, Vendedor redirige a Inicio).
+  **Limitación de suite registrada** (igual que en `Vencimientos.test.tsx`
+  y demás siblings): los tests de rol montan `RutaProtegida` directo en un
+  `MemoryRouter` propio del test, no a través de `App.tsx` — la
+  invisibilidad de la entrada de nav en `Layout.tsx` para roles sin acceso
+  queda sin test unitario en ningún sibling de esta suite; no se agregó
+  cobertura Layout-level para Reposición porque ningún sibling la tiene
+  (no es una regresión de este slice).
 - [ ] 6.9 Branch `feat/stage13-slice6-web-reposicion` off `main` (parent:
   slices 4+5); PR; merge stacked-to-main.
 
