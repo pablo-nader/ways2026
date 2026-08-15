@@ -977,6 +977,16 @@ depends on it.
   queda sin test unitario en ningún sibling de esta suite; no se agregó
   cobertura Layout-level para Reposición porque ningún sibling la tiene
   (no es una regresión de este slice).
+  **Ronda 2, juez A**: 0 severos, 1 WARNING cerrado (test-only) —
+  `Reposicion.test.tsx:151-169` ('sugerido renderiza — cuando es null,
+  nunca 0') solo contrastaba `null` ('—') contra `8` ('8'), nunca un
+  `sugerido = 0` genuino: un regression a `!valor ? '—' : ...` en
+  `formatearCantidadNullable` (Reposicion.tsx) habría pasado la suite
+  renderizando '—' para un 0 real (fix: test hermano nuevo, fixture
+  `idArticulo: 3, sugerido: 0`, assert `getByText('0')` +
+  `queryByText('—')` ausente; evidencia: mutado `valor === null` →
+  `!valor`, el nuevo assert falló solo; revertido, suite completa verde
+  otra vez — 626/626).
 - [ ] 6.9 Branch `feat/stage13-slice6-web-reposicion` off `main` (parent:
   slices 4+5); PR; merge stacked-to-main.
 
