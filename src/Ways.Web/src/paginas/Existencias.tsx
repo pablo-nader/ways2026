@@ -11,7 +11,7 @@ import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 
-const CANTIDAD_DE_COLUMNAS = 7
+const CANTIDAD_DE_COLUMNAS = 8
 
 const ETIQUETA_ESTADO: Record<EstadoDeReposicion, string> = {
   SinMinimo: 'Sin mínimo',
@@ -130,6 +130,13 @@ export function Existencias() {
 
   const [idPuntoVenta, setIdPuntoVenta] = useState<number | null>(null)
   const [existencias, setExistencias] = useState<ExistenciasRespuesta | null>(null)
+  // stage-13-stock-inteligente, Slice 7 (tarea 7.6): mapa idArticulo → minimoSugerido de
+  // `GET /rotacion`, fetcheado JUNTO con el reporte (Promise.all, misma generación) — un artículo
+  // AUSENTE del mapa renderiza `—`, nunca `0` (design decisión 14: la ausencia es la respuesta
+  // honesta). Si `/rotacion` falla, degrada a mapa vacío (`—` en toda la columna) SIN romper la
+  // pantalla — el reporte de existencias sigue siendo la fuente de verdad de esta grilla
+  // (`react-async-state` regla 6: un fallo de un feed secundario nunca reporta el load como fallido).
+  const [mapaSugeridos, setMapaSugeridos] = useState<Map<number, number>>(new Map())
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
   const [errorDescarga, setErrorDescarga] = useState('')
@@ -193,11 +200,19 @@ export function Existencias() {
     setCargando(true)
     setError('')
 
-    clienteDeReportes
-      .existencias(idPuntoVenta)
-      .then((datos) => {
+    // tarea 7.6: `/rotacion` se pide JUNTO con `/existencias` (mismo disparo, misma generación),
+    // pero con su propio `.catch` — un fallo del feed de sugerencia nunca convierte el load de
+    // existencias en un error (degrada a mapa vacío, `—` en toda la columna).
+    const cargaSugeridos = clienteDeReportes
+      .rotacion(idPuntoVenta, null)
+      .then((rotacion) => new Map(rotacion.filas.map((f) => [f.idArticulo, f.minimoSugerido])))
+      .catch(() => new Map<number, number>())
+
+    Promise.all([clienteDeReportes.existencias(idPuntoVenta), cargaSugeridos])
+      .then(([datos, mapa]) => {
         if (generacionRef.current !== miGeneracion) return
         setExistencias(datos)
+        setMapaSugeridos(mapa)
       })
       .catch((e) => {
         if (generacionRef.current !== miGeneracion) return
@@ -387,6 +402,7 @@ export function Existencias() {
                       <th className="text-end">Mínimo</th>
                       <th className="text-end">Reposición</th>
                       <th>Estado</th>
+                      <th className="text-end">Sugerido</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -440,6 +456,7 @@ export function Existencias() {
                               )}
                             </td>
                             <td>{ETIQUETA_ESTADO[fila.estado]}</td>
+                            <td className="text-end">{formatearUmbral(mapaSugeridos.get(fila.idArticulo) ?? null)}</td>
                             <td className="text-end" style={{ minWidth: 170 }}>
                               {puedeEscribir &&
                                 (enEdicion ? (

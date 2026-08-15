@@ -1406,10 +1406,18 @@ rather than retracting a published DTO field.
   became ambiguous once both panels render together. Both scoped with
   `within(screen.getByText(<título>).closest('div')!)` — not a task,
   recorded per the instruction to never silently deviate.
-- [ ] 7.6 Modify `src/Ways.Web/src/paginas/Existencias.tsx`: add the
+- [x] 7.6 Modify `src/Ways.Web/src/paginas/Existencias.tsx`: add the
   `Sugerido` column, fed by `clienteDeReportes.rotacion(idPuntoVenta)`
   fetched alongside the report and indexed by `idArticulo`; an articulo
   absent from that map renders `—`, never `0`.
+  **APPLY NOTE**: `/rotacion` is fetched via `Promise.all` alongside
+  `/existencias` in the same `cargar()` call, same generation token — but
+  with its OWN `.catch` that degrades to an empty `Map` rather than
+  rejecting the combined promise (`react-async-state` rule 6: a secondary
+  feed's failure never turns a successful primary load into an error).
+  `agregarFila`'s new local row is naturally absent from the rotation map
+  fetched at load time, so it renders `—` until the next reload — no
+  special-casing needed.
 - [x] 7.7 [P] **Mutation target**: the fold of `sinStock`
   (`f.Cantidad <= 0`) — change to `< 0` — the tile test seeded with an
   articulo at exactly `0` (7.8) must fail. *(mutation-proof-tests)*
@@ -1440,8 +1448,14 @@ rather than retracting a published DTO field.
   individually, not as one blob — the stage-12 slice-15 lesson applied.
   Implemented in `Tablero.test.tsx`, describe block "Tablero — tile de
   reposición (stage-13-stock-inteligente, Slice 7)".
-- [ ] 7.11 [P] Component test: the `Existencias.tsx` `Sugerido` column
+- [x] 7.11 [P] Component test: the `Existencias.tsx` `Sugerido` column
   renders `—` for an articulo absent from the rotation map, never `0`.
+  Implemented in `Existencias.test.tsx`, describe block "Existencias —
+  columna Sugerido (stage-13-stock-inteligente, Slice 7)": one test
+  discriminates present-vs-absent (`minimoSugerido` value vs. `—`,
+  indexed by cell position — `Mínimo`/`Reposición` also render `—` on
+  the same rows, so a text-only query would be ambiguous); a second
+  proves the `/rotacion`-failure degradation from 7.6's APPLY NOTE.
 - [x] 7.12 Gate guard: `has-pending-model-changes` clean, zero migration
   files in the diff. **VERIFIED**: `dotnet ef migrations
   has-pending-model-changes --project src/Ways.Infrastructure
