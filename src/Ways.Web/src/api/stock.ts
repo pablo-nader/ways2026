@@ -11,9 +11,11 @@ import type {
   ConteoDeLote,
   LineaDeTransferencia,
   LoteListado,
+  MinimosDeStock,
   ResultadoConteo,
   ResultadoTransferencia,
   SolicitudDeConteo,
+  SolicitudDeMinimos,
   SolicitudDeTransferencia,
   StockActual,
 } from './tipos'
@@ -36,6 +38,10 @@ export const clienteDeStock = {
    * `idComprobanteAsociado` (sugerencia desde el snapshot de una devolución) vive en el POS. */
   listarLotes: (idPuntoVenta: number, idArticulo: number) =>
     api.get<LoteListado[]>(`/stock/lotes?idPuntoVenta=${idPuntoVenta}&idArticulo=${idArticulo}`),
+  /** `PUT /api/stock/minimos` (stage-13-stock-inteligente, Slice 1/3; design decisión 11/16): la
+   * respuesta es la fila PERSISTIDA leída del mismo `RETURNING` que escribió — `Existencias.tsx`
+   * la aplica con un updater funcional desde `prev`, sin volver a pedir el reporte. */
+  escribirMinimos: (solicitud: SolicitudDeMinimos) => api.put<MinimosDeStock>('/stock/minimos', solicitud),
 }
 
 // ---- Formulario de transferencia: una línea editable por fila (mismo patrón que compras.ts) --
@@ -212,5 +218,52 @@ export function aSolicitudDeConteoPorLote(
     contada: null,
     observaciones: observaciones.trim(),
     lotes: aConteoDeLotes(lineas),
+  }
+}
+
+// ---- Mínimos y reposición (stage-13-stock-inteligente, Slice 3) --------------------------------
+// Editor inline de fila única de `Existencias.tsx` (design: Web Composition, decisión 15/16): un
+// umbral vacío es "no gestionado" (unmanage), nunca 0 — el mismo criterio que ya usa
+// `SolicitudDeMinimos` del lado del servidor.
+
+function aUmbral(texto: string): number | null {
+  const limpio = texto.trim()
+  return limpio === '' ? null : Number(limpio)
+}
+
+/** Un campo vacío siempre es válido (unmanage); uno tipeado tiene que parsear a un número finito.
+ * `Number('1,5')` (coma decimal) es `NaN`, así que ese texto queda INVÁLIDO en vez de viajar como
+ * `null` en silencio — que es lo que `JSON.stringify` haría con un `NaN` sin este guard, la
+ * misma clase de "campo aceptado y descartado" que `dto-contract-honesty` prohíbe. */
+export function umbralTextoValido(texto: string): boolean {
+  const limpio = texto.trim()
+  return limpio === '' || Number.isFinite(Number(limpio))
+}
+
+/** Espejo cliente de `reposicion_menor_que_minimo` (design decisión 11) — feedback instantáneo
+ * que deshabilita el guardado; el servidor lo vuelve a validar igual (`react-async-state` regla
+ * 7: la copia nunca promete un bloqueo que la UI no aplica). Solo compara cuando AMBOS campos son
+ * números finitos — un campo vacío o con formato inválido no dispara este aviso en particular,
+ * eso ya lo bloquea `umbralTextoValido` por su propia razón. */
+export function reposicionMenorQueMinimo(minimoTexto: string, reposicionTexto: string): boolean {
+  if (!umbralTextoValido(minimoTexto) || !umbralTextoValido(reposicionTexto)) return false
+  const minimo = aUmbral(minimoTexto)
+  const reposicion = aUmbral(reposicionTexto)
+  return minimo !== null && reposicion !== null && reposicion < minimo
+}
+
+/** `SolicitudDeMinimos` completa desde el formulario de edición de una fila — REEMPLAZO completo
+ * (decisión 11): ambos campos vacíos limpia el par (unmanage). */
+export function aSolicitudDeMinimos(
+  idPuntoVenta: number,
+  idArticulo: number,
+  minimoTexto: string,
+  reposicionTexto: string,
+): SolicitudDeMinimos {
+  return {
+    idPuntoVenta,
+    idArticulo,
+    minimo: aUmbral(minimoTexto),
+    reposicion: aUmbral(reposicionTexto),
   }
 }

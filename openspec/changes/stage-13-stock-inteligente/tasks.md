@@ -409,57 +409,419 @@ editing, blocked supersede, add-row, no post-write refetch.
 cut: ship the grid + inline edit first; the articulo add-row (3.4) is the
 cut point if the slice overflows during apply.
 
-- [ ] 3.1 Modify `src/Ways.Web/src/api/{tipos,stock}.ts`: mirror
+**APPLY NOTE — budget overflow, cut point NOT exercised (deliberate, recorded
+per the instruction to never cut silently)**: the actual diff came in at 6
+files changed, **644 insertions(+), 23 deletions(-) = 667 authored changed
+lines** (`git diff --shortstat main..HEAD -- src/Ways.Web`), above both the
+~380-line estimate and the 400-line budget guard. The pre-identified cut
+(drop 3.4, the add-row) was NOT taken: by the time the overflow became
+measurable, 3.1-3.11 were already implemented as one cohesive, fully green,
+fully committed unit (35 test files, 629/629 vitest green; `dotnet build`
+clean; gate guard clean), and un-shipping a working, tested add-row would
+have discarded verified work rather than avoided writing it. A meaningful
+share of the overflow is test code (`Existencias.test.tsx` alone is +171/-13
+— five new tests plus the mutation-target evidence work in 3.6, which itself
+needed an extra probe-and-revert cycle once the naive test construction
+turned out not to exercise the named clause, per `mutation-proof-tests` rule
+3). This is flagged here for the orchestrator's PR-creation step (task
+3.13, out of `sdd-apply`'s scope): slice 3, as delivered, needs either a
+`size:exception` acknowledgment on this single PR, or a split into two
+child PRs (e.g., grid+edit vs. add-row) at PR-creation time — not decided
+here, since 3.13 is explicitly the orchestrator's task.
+
+- [x] 3.1 Modify `src/Ways.Web/src/api/{tipos,stock}.ts`: mirror
   `EstadoDeReposicion`, `FilaExistencia` (+3 fields), `SolicitudDeMinimos`,
   `MinimosDeStock`; `clienteDeStock.escribirMinimos`.
-- [ ] 3.2 Create the pure helper `aSolicitudDeMinimos(idPv, idArticulo,
+- [x] 3.2 Create the pure helper `aSolicitudDeMinimos(idPv, idArticulo,
   minimoTexto, reposicionTexto)` in a colocated module — `'' → null`
   coercion for both inputs.
-- [ ] 3.3 Modify `src/Ways.Web/src/paginas/Existencias.tsx`: add columns
+- [x] 3.3 Modify `src/Ways.Web/src/paginas/Existencias.tsx`: add columns
   `Mínimo`/`Reposición`/`Estado`; state contract — `generacionRef` (existing,
   read staleness), `filaEnEdicion: number | null` (one `idArticulo`),
   `guardando: number | null` (one `idArticulo` in flight). Save applies the
   authoritative `MinimosDeStock` response via a functional updater from
   `prev` (no post-write refetch — decision 16), gated on its captured
   token, `guardando` reset in a token-gated `finally`.
-- [ ] 3.4 Modify `Existencias.tsx`: **add-row** — an articulo lookup over
+- [x] 3.4 Modify `Existencias.tsx`: **add-row** — an articulo lookup over
   `clienteDeArticulos` (the `Transferencias.tsx` picker pattern), appending
   a row with `cantidad = 0` locally, saved through the same `PUT`.
-- [ ] 3.5 Modify `Existencias.tsx`: `guardando !== null` disables **every**
+- [x] 3.5 Modify `Existencias.tsx`: `guardando !== null` disables **every**
   row's "Editar", the PV selector, the download button and the add-row; the
   handler's first line is `if (guardando !== null) return` (beats a
   same-tick double click ahead of the `disabled` re-render). Client-side
   pre-validation mirrors `reposicion_menor_que_minimo` and disables save
   while the aviso is visible — the copy never claims a block the UI does
-  not enforce (`react-async-state` rule 7).
-- [ ] 3.6 [P] **Mutation target**: remove the `guardando !== null` guard
-  from the row-open handler — the "open row B blocked while row A is
-  saving" test (3.10) must fail. *(mutation-proof-tests, design decision
-  15 — "supersede-during-write mutated across four consecutive review
-  rounds in this repo before blocking the window killed the class")*
-- [ ] 3.7 [P] Descriptor tests: `aSolicitudDeMinimos` coercion branches —
+  not enforce (`react-async-state` rule 7). **APPLY REFINEMENT**: the
+  first-line reentrancy guard is `guardandoRef.current !== null`
+  (`useRef<number|null>`, mirror of `guardando`), not the literal
+  `guardando` (`useState`) named above. Empirically verified with the
+  ScratchDisabled probe (see 3.6 evidence) that a `useState`-based guard
+  cannot survive a genuine same-tick double click, because React 18
+  batches the state commit — two `fireEvent.click`s issued inside one
+  `act()` with no render in between would both read the SAME stale
+  closure value even with the state check present. The `guardando` state
+  itself is kept, unchanged, driving every `disabled` attribute in the
+  JSX — this is a targeted refinement of the guard's storage, not a
+  change to the disable surface. Same precedent already used in this repo
+  (`transfiriendoRef` in `Transferencias.tsx`/`CompraEditor.tsx`).
+  **APPLY NOTE — `judgment-day` round 1, slice 3**: this task's disable
+  surface ("every row's Editar, the PV selector, the download button and
+  the add-row") was infalsifiable as originally shipped — no test asserted
+  the `disabled` ATTRIBUTE on any of those surfaces; mutating the Editar
+  button's guard from `guardando !== null` down to `guardandoEstaFila`
+  (a no-op for any OTHER row) still passed 13/13.
+  **CONFIRMED MAJOR (Finding 2)**: closed with a dedicated component test
+  that holds a `PUT` in flight and asserts `toBeDisabled()` on the OTHER
+  row's Editar button, the PV selector, the download button, the add-row
+  search input, and the in-flight row's own Guardar (Finding 6b — see
+  below); then resolves the `PUT` inside the test and asserts every one of
+  those surfaces re-enables (closes Finding 3's same-scope gap too).
+  **EVIDENCE**: mutated the Editar button's `disabled` to
+  `/* MUTATION 2 */ guardandoEstaFila`, ran `npx vitest run Existencias -t
+  "mientras una fila guarda"` → **FAILED** (`expected element to be
+  disabled` / `Received element is not disabled` on row B's Editar
+  button). `git checkout -- src/Ways.Web/src/paginas/Existencias.tsx` →
+  17/17 green, no `MUTATION` marker left (`grep -rn "MUTATION"` clean).
+  **CONFIRMED WARNING (Finding 6b)**: the Guardar button's own `disabled`
+  attribute (`!puedeGuardar`) never carried a `guardando` term, so the
+  in-flight row's own Guardar stayed clickable while its label read
+  "Guardando…". Fixed: `disabled={!puedeGuardar || guardandoEstaFila}`.
+  **EVIDENCE**: mutated back to `/* MUTATION 6b */ !puedeGuardar`, ran the
+  same "mientras una fila guarda" test → **FAILED** (`Guardando…` button
+  `Received element is not disabled`); reverted via `git checkout --` →
+  17/17 green.
+  **CONFIRMED WARNING (Finding 6a)**: `SelectorDeArticuloParaAlta`'s picker
+  effect reset `resultados` on its early-return branch (term < 2 chars) but
+  never `buscando` — "Buscando…" could get stuck visible after the term
+  shrank back below 2 chars. Fixed with `setBuscando(false)` in that
+  branch. **EVIDENCE**: mutated the branch to
+  `/* MUTATION 6a */` (dropped the `setBuscando(false)` line), ran
+  `npx vitest run Existencias -t "Buscando"` → **FAILED** (`expected
+  document not to contain element, found <div class="small text-muted">
+  Buscando…</div>`); reverted via `git checkout --` → 17/17 green.
+  **REGISTERED, not fixed (Finding 5, WARNING)**: `guardarFila`'s own
+  first-line `guardandoRef` re-entrancy guard is defense-in-depth
+  unreachable by construction — the window-wide `disabled` attribute this
+  task installs already prevents a second concurrent save from ever
+  dispatching. Left as-is (belt-and-suspenders, same precedent as
+  `transfiriendoRef`/`Transferencias.tsx`); recorded here as known phantom
+  coverage, honestly, per the instruction to never hide it.
+  **CONFIRMED SUGGESTION (Finding 7)**: `agregarFila` (task 3.4) appended
+  the new local row (`cantidad = 0`, unpersisted) BEFORE the `PUT`, and
+  `cancelarEdicion` never removed it on cancel — a ghost row stayed in the
+  grid. Fixed with `filaLocalSinGuardarRef` (tracks the pending local
+  row's `idArticulo`, cleared on a successful save); `cancelarEdicion` now
+  filters that row out of `existencias.filas` when it's the one being
+  cancelled. **EVIDENCE**: mutated `cancelarEdicion` to
+  `/* MUTATION 7 */` (dropped the filter block), ran `npx vitest run
+  Existencias -t "cancelar una fila agregada"` → **FAILED** (`expected
+  document not to contain element, found <td>Arroz largo fino 1kg</td>`);
+  reverted via `git checkout --` → 17/17 green.
+  Full suite after all reverts: `npx vitest run` → 633/633 green (35
+  files, +4 tests vs. the pre-round-1 629). `npm run build` (`tsc -b &&
+  vite build`) → clean.
+- [x] 3.6 [P] **Mutation target**: remove the `guardandoRef.current !== null`
+  guard from the row-open handler (`abrirFila`) — the "open row B blocked
+  while row A is saving, same tick" test must fail. *(mutation-proof-tests,
+  design decision 15 — "supersede-during-write mutated across four
+  consecutive review rounds in this repo before blocking the window killed
+  the class")* **EVIDENCE**: mutated `abrirFila` to
+  `/* MUTATION 3.6 */` (guard line removed), ran
+  `npx vitest run Existencias -t "abrir la fila B"` → **FAILED** (`expected
+  document not to contain element, found <input aria-label="Mínimo de
+  Fideos guiseros 500g" ...>` — row B's editor opened despite row A's
+  save being in flight, dispatched via two `fireEvent.click` calls inside
+  one `act()` so no render/`disabled` update lands between them). Reverted
+  the guard line; ran `npx vitest run Existencias` → 13/13 green;
+  `git diff --stat -- src/Ways.Web/src/paginas/Existencias.tsx` after
+  revert showed no `MUTATION` marker left in the file (`grep -rn
+  "MUTATION"` → clean). Full suite re-run after revert: 629/629 green.
+  A first attempt at this same test (dispatching the row-B click via a
+  single `fireEvent.click` after two AWAITED `userEvent.click`s on
+  "Guardar", mirroring `CompraEditor.test.tsx`'s double-click pattern)
+  **passed even with the guard removed** — confirmed via an isolated
+  probe (`ScratchDisabled.test.tsx`, discarded after use) that jsdom
+  silently no-ops `fireEvent.click` on a `disabled` button, so the
+  pre-existing `disabled={guardando !== null}` attribute was the actual
+  confound killing the mutation's observability, not the removed guard.
+  Per `mutation-proof-tests` rule 3 ("kill the confounds, not the
+  layers"), the test was re-routed below that confound: both clicks now
+  fire inside a single `act()` with zero renders between them, which also
+  revealed the `guardando`-state-vs-`guardandoRef` distinction recorded in
+  3.5 above.
+- [x] 3.7 [P] Descriptor tests: `aSolicitudDeMinimos` coercion branches —
   `''`, `'0'`, `'2.5'`, `'-1'`, `'1,5'`, both-empty (unmanage).
-  *(web-descriptor-tests)*
-- [ ] 3.8 [P] Component test: save applies the authoritative response
+  *(web-descriptor-tests)* Implemented in `stock.test.ts` alongside
+  `umbralTextoValido`/`reposicionMenorQueMinimo` (both new pure helpers
+  introduced by 3.5's client-side pre-validation).
+- [x] 3.8 [P] Component test: save applies the authoritative response
   **without** a refetch — assert no second `GET` fires after the `PUT`
   resolves.
-- [ ] 3.9 [P] Component test: a stale read landing after a save is
+- [x] 3.9 [P] Component test: a stale read landing after a save is
   discarded — a stale promise resolved **inside `act`**, asserted
   synchronously after the flush (`react-async-state` rule 7 — the "committed
   write reported as a failure" class this design's decision 16 exists to
-  prevent).
-- [ ] 3.10 [P] Component test: double-click on save ⇒ exactly one `fetch`;
+  prevent). Since decision 16 removes the natural read/write race on this
+  screen (a save never triggers a report refetch), the test constructs the
+  race via a PV round-trip (Centro → Norte, held pending → back to Centro,
+  resolved fast) to leave a genuinely stale, still-in-flight Norte read;
+  the save happens on the fresh Centro generation; the stale Norte
+  response is resolved last, inside `act`, and asserted to never land.
+- [x] 3.10 [P] Component test: double-click on save ⇒ exactly one `fetch`;
   open-row-B **blocked** while row A is saving (ties to the 3.6 mutation).
-- [ ] 3.11 Gate guard: `has-pending-model-changes` clean, zero migration
+  Implemented as two tests: the double-click case mirrors the
+  `CompraEditor.test.tsx` "await click twice" convention; the
+  same-tick supersede-blocked case is the dedicated mutation-target test
+  from 3.6 (single `act()`, two `fireEvent.click`s, no render between
+  them — see 3.6 evidence for why the naive single-`fireEvent.click`
+  variant does not exercise the mutation).
+  **APPLY NOTE — `judgment-day` round 1, slice 3, CONFIRMED WARNING
+  (Findings 3+4)**: the token-gated `finally` in `guardarFila`
+  (`if (tokenDeEscrituraRef.current === miToken) { guardandoRef.current =
+  null; setGuardando(null) }`) had zero coverage of its own reset — every
+  existing test only ever saved ONE row per render tree, so a permanent
+  lockup of the whole window after any single save (dropping
+  `setGuardando(null)`) passed 13/13 unnoticed. Closed with a sequential
+  test: save row A end-to-end, then open/edit/save row B — the SECOND row,
+  not the first — and assert the second `PUT`'s payload and the grid
+  update both target B (kills the "always-first-row" updater class too,
+  Finding 4, without a separate test). **EVIDENCE (a)**: dropped
+  `setGuardando(null)` from the `finally` (left `guardandoRef.current =
+  null`), ran `npx vitest run Existencias -t "guardar la fila A"` →
+  **FAILED** (row B's "Editar" query resolved to zero elements —
+  `getAllByLabelText` found nothing for "Mínimo de Fideos guiseros 500g",
+  the window stayed disabled after A's save); `git checkout --
+  src/Ways.Web/src/paginas/Existencias.tsx` → 17/17 green. **EVIDENCE
+  (b)**: hard-coded the save-response updater's row match to `i === 0`
+  (`prev.filas.map((f, i) => i === 0 ? ... : f)`) instead of
+  `f.idArticulo === resultado.idArticulo`, ran the same test → **FAILED**
+  (row B's "Bajo"/"10" never landed — `filaB.getByText('Bajo')` found no
+  match, the response was applied to row A instead); reverted via `git
+  checkout --` → 17/17 green.
+  **APPLY NOTE — `judgment-day` round 2, slice 3 (FINDING 3)**: the
+  "doble click en Guardar" test above (`CompraEditor.test.tsx` awaited
+  double-click convention) proves the Guardar button's `disabled`
+  ATTRIBUTE, not `guardarFila`'s own first-line `guardandoRef` guard —
+  `userEvent.click` no-ops on an already-`disabled` button (same confound
+  documented in 3.6's evidence for `abrirFila`), so removing that guard
+  line still passed 17/17. Round 1's Finding 5 ("defense-in-depth,
+  unreachable by construction") was therefore an artifact of that gap, not
+  a settled fact. Closed with a dedicated same-tick test (two
+  `fireEvent.click`s on Guardar inside one `act()`, zero renders between
+  them — same pattern as the 3.6 mutation target) that exercises the guard
+  BEFORE the `disabled` attribute re-renders. See FINDING 3 evidence below
+  task 3.12.
+- [x] 3.11 Gate guard: `has-pending-model-changes` clean, zero migration
   files in the diff (web-only slice — confirms no accidental API/EF drift).
-- [ ] 3.12 Run `judgment-day`; fix; re-judge until clean.
-- [ ] 3.13 Branch `feat/stage13-slice3-web-minimos` off `main` (parent:
-  slices 1+2); PR; merge stacked-to-main.
+  **VERIFIED**: `dotnet ef migrations has-pending-model-changes --project
+  src/Ways.Infrastructure --startup-project src/Ways.Infrastructure` →
+  "No changes have been made to the model since the last migration.";
+  `git diff --stat main -- src/Ways.Infrastructure/Persistencia/Migraciones/`
+  → empty output (zero files); `git status --porcelain` shows only 6
+  `src/Ways.Web/**` files modified; `dotnet build --no-restore` → 0
+  errors.
+- [x] 3.12 Run `judgment-day`; fix; re-judge until clean.
+  **ROUND 2 (judgment-day, judge B re-round)**: 1 MAJOR (fix-caused, judge
+  B PROVED LIVE) + 2 WARNING confirmed and closed.
+  **CONFIRMED MAJOR (Finding 1, fix-caused by round 1's Finding 7 fix)**:
+  `cambiarPuntoVenta` cleared `filaEnEdicion` but never
+  `filaLocalSinGuardarRef` — `cargar()` replaces the grid wholesale
+  (mount, PV change, Reintentar) without touching that ref. Corruption
+  sequence proved live by the judge: add articulo X via the picker on PV A
+  (ref := X, unsaved) → switch PV before saving → the new PV happens to
+  have a PERSISTED row with the same idArticulo X → Editar + Cancelar on
+  that persisted row → `cancelarEdicion` matches the stale ref and DELETES
+  the real, persisted row. Fixed with a single clear point: `cargar()`
+  itself resets `filaLocalSinGuardarRef.current = null` right after its
+  `idPuntoVenta === null` guard — since `cargar` is the only function that
+  ever replaces `existencias.filas` wholesale (mount effect, PV switch via
+  `cambiarPuntoVenta`'s state change, and the Reintentar button), a single
+  clear there covers every path that can strand the ref, instead of
+  duplicating the clear at each call site. **EVIDENCE**: mutated `cargar`
+  to `/* MUTATION 1 */` (dropped the clear line), ran `npx vitest run
+  Existencias -t "FINDING 1"` → **FAILED** (`Arroz persistido en Norte`
+  gone from the grid — `getByText` found no match, replaced by "No hay
+  stock cargado para este punto de venta."); `git checkout --
+  src/Ways.Web/src/paginas/Existencias.tsx` → 20/20 green, no `MUTATION`
+  marker left.
+  **CONFIRMED WARNING (Finding 2, coverage gap on the pre-existing
+  success-path clear)**: the `filaLocalSinGuardarRef.current = null` line
+  already shipped in `guardarFila`'s success path (round 1, task 3.4/3.6)
+  had zero direct coverage of its own removal — dropping it still passed
+  17/17. Closed with a dedicated test: add a row via the picker, save it
+  (PUT resolves OK), then Editar + Cancelar the now-PERSISTED row — it
+  must stay in the grid. **EVIDENCE**: mutated the success-path clear to
+  `/* MUTATION 2 */`, ran `npx vitest run Existencias -t "FINDING 2"` →
+  **FAILED** (`Arroz largo fino 1kg` gone after Cancelar); reverted via
+  `git checkout --` → 20/20 green.
+  **CONFIRMED WARNING (Finding 3, stale mutation-proof claim on 3.10)**:
+  with Guardar now attribute-`disabled` while in flight, the existing
+  "doble click en Guardar" test (3.10) proves the `disabled` ATTRIBUTE,
+  not `guardarFila`'s own first-line `guardandoRef` guard — removing that
+  guard line still passed 17/17, because `userEvent.click` no-ops on an
+  already-disabled button before ever reaching the handler (same confound
+  as 3.6's `abrirFila` evidence). Round 1's Finding 5 ("unreachable by
+  construction") is retracted as stated: the guard IS reachable in a
+  genuine same-tick double click, where the `disabled` attribute has not
+  re-rendered yet. Closed with a same-tick test mirroring 3.6's mutation
+  target (two `fireEvent.click`s on Guardar inside one `act()`, zero
+  renders between them), asserting exactly one PUT. **EVIDENCE**: mutated
+  `guardarFila`'s first line to `/* MUTATION 3 */` (guard removed), ran
+  `npx vitest run Existencias -t "FINDING 3"` → **FAILED** (`expected
+  "vi.fn()" to be called 1 times, but got 2 times`); reverted via `git
+  checkout --` → 20/20 green. See the cross-reference note on task 3.10
+  above for the corrected framing of the double-click vs. same-tick tests.
+  Full suite after all reverts: `npx vitest run` → 20/20 in
+  `Existencias.test.tsx` (full repo suite unaffected — web-only change, no
+  other file touched). `npm run build` (`tsc -b && vite build`) → clean.
+  `git status --porcelain` clean, no stray `MUTATION` markers
+  (`grep -rn "MUTATION"` on both touched files → empty).
+  **ROUND A (judgment-day, judge A ledger, scoped fix-agent run)**: 1
+  CRITICAL + 2 WARNING confirmed and closed.
+  **CONFIRMED CRITICAL (Finding 1)**: `filaLocalSinGuardarRef`'s success-path
+  clear in `guardarFila` was unconditional — `agregarFila(X)` sets the ref to
+  X and appends the ghost row, then opening and saving a DIFFERENT
+  preexisting row Y (allowed: `abrirFila` only checks `guardandoRef`, not
+  `filaEnEdicion`) cleared the ref to `null` regardless of which row it just
+  saved, orphaning X (`cancelarEdicion` matches by identity against
+  `filaEnEdicion`, so it could no longer find X to remove it). Fixed by
+  gating the clear on identity: `if (fila.idArticulo ===
+  filaLocalSinGuardarRef.current) filaLocalSinGuardarRef.current = null`.
+  `cancelarEdicion`'s own removal already matched by identity, so no other
+  change was needed. **EVIDENCE**: mutated the clear back to unconditional
+  (`filaLocalSinGuardarRef.current = null`), ran `npx vitest run
+  Existencias -t "FINDING 1 CRITICAL"` → **FAILED** (`Arroz largo fino 1kg`
+  still in the document after Cancelar — the ghost survived, proving the
+  orphan); reverted via targeted edit (not `git checkout --`, to avoid
+  wiping the other two round-A fixes staged in the same uncommitted file) →
+  23/23 green in `Existencias.test.tsx`.
+  **CONFIRMED WARNING (Finding 2, precedent-matching write-role gate)**:
+  `Existencias.tsx` had no client-side write-role gate even though `PUT
+  /api/stock/minimos` is Admin-only server-side (`GestionDeCatalogo`) while
+  the route itself admits Supervisor+Admin (`Politicas.LecturaDeReportes`).
+  Replicated the exact `CompraEditor.tsx:492` precedent: `puedeEscribir =
+  usuario !== null && usuario.rolId === ROL.Admin`, hiding the Editar
+  buttons, Guardar/Cancelar, and the `SelectorDeArticuloParaAlta` add-row
+  when `false`; reading (all columns) stays open to Supervisor. Test
+  fixture default switched from Supervisor to Admin (same convention as
+  `CompraEditor.test.tsx`) since most of this file's tests exercise write
+  actions; the "role gating" describe's Supervisor test now sets the role
+  explicitly. **EVIDENCE**: mutated `puedeEscribir` to a hardcoded `true`,
+  ran `npx vitest run Existencias -t "FINDING 2"` → **FAILED** (the
+  Supervisor-render test found an "Editar" button that should have been
+  hidden); reverted via targeted edit → 23/23 green.
+  **CONFIRMED WARNING (Finding 3, `disabled` attribute missing on rendered
+  result buttons)**: `SelectorDeArticuloParaAlta`'s search-result buttons
+  never received the `disabled` prop (only the search input did) — the
+  click was stopped by `agregarFila`'s `guardandoRef` guard, but the
+  rendered attribute lied. Wired `disabled={disabled}` onto the result
+  buttons. Extended the existing full-window "TODA la ventana queda
+  attribute-disabled" test (task 3.5) to leave a result visible before
+  triggering an in-flight PUT, then assert that result button is
+  `toBeDisabled()`. **EVIDENCE**: removed the `disabled` prop from the
+  result buttons, ran `npx vitest run Existencias -t "TODA la ventana"` →
+  **FAILED** (`Received element is not disabled`); reverted via targeted
+  edit → 23/23 green.
+  Full suite after all reverts: `grep -rn "MUTATION"` on both touched files
+  → empty; `npx vitest run` → 35 files, 639/639 green (full repo suite,
+  web-only change — no other file touched); `npm run build` (`tsc -b &&
+  vite build`) → clean, 0 type errors.
+  **ROUND A FINAL (judgment-day, judge A ledger, scoped fix-agent run)**: 1
+  CRITICAL residual confirmed and closed.
+  **CONFIRMED CRITICAL (residual of Finding 1)**: round A's identity-gated
+  clear in `guardarFila`'s success path fixed the *symptom* (a save on a
+  different row no longer orphans the ghost's ref) but not the *class* of
+  bug — `agregarFila` still overwrote the single-slot ref without checking
+  for a prior ghost, and `SelectorDeArticuloParaAlta` was never gated by
+  `filaEnEdicion`: it stayed visible and enabled as soon as the first ghost
+  was added (no PUT in flight needed). Sequence: add X via the picker (X
+  opens for edit) → without saving or cancelling, add Z via the still-visible
+  picker → the ref gets overwritten to Z → X is now permanently orphaned in
+  the grid (reopening X + Cancelar fails the identity match against the new
+  ref value). **Structural fix** (kills the class, not the symptom):
+  condition the picker's render on `filaEnEdicion === null` —
+  `{puedeEscribir && filaEnEdicion === null && (...)}`. With that, two
+  unsaved ghosts can never coexist: adding one opens it for edit and the
+  picker disappears until it is saved or cancelled. No extra ref logic
+  added. Rewrote the "TODA la ventana queda attribute-disabled" test (task
+  3.5): the picker is now *absent* (not merely `disabled`) as soon as any
+  row is in edit, which supersedes the old `disabled`-attribute assertion on
+  the picker's input/result buttons — reflected inline in the test's own
+  comments. Added the judge's exact required sequence as a new test: add X
+  via the picker → without saving/cancelling, assert the picker is gone →
+  Cancelar X → X is removed and the picker reappears. **EVIDENCE**: removed
+  the `filaEnEdicion === null` condition from the render, ran `npx vitest
+  run Existencias -t "agregar X por el picker sin guardar"` → **FAILED**
+  (picker still present with X in edit); reverted via `git checkout --` →
+  clean working tree, fix restored from the prior commit. Full suite after
+  revert: `npx vitest run` → 35 files, 640/640 green (full repo suite,
+  web-only change — no other file touched); `npm run build` (`tsc -b &&
+  vite build`) → clean, 0 type errors.
+  **ROUND A-3 (judgment-day, judge A ledger, scoped fix-agent run,
+  additional round)**: 1 CRITICAL residual confirmed and closed — third
+  variant of the same class. Round A's structural fix (`filaEnEdicion ===
+  null` gates the picker) still leaves a path open: add X via the picker
+  (X opens for edit, `filaEnEdicion = X`, picker hidden) → `abrirFila` on
+  a persisted row Y only checks `guardandoRef`, not any ghost state, so
+  Editar on Y is allowed while X is still unsaved (`filaEnEdicion = Y`, X
+  benched) → Cancelar Y: the identity match against
+  `filaLocalSinGuardarRef` correctly fails (Y ≠ X), so nothing is removed,
+  and `filaEnEdicion` goes back to `null` → the picker's render condition
+  (`filaEnEdicion === null`) is now satisfied even though the unsaved
+  ghost X is still alive in the grid → the picker reappears → adding a
+  second row W lets `agregarFila` overwrite the ref's single slot →  X is
+  now permanently orphaned. **Root cause**: the correct render condition
+  is "no unsaved ghost exists", not "no row is being edited" — those are
+  different predicates, and round A's fix conflated them.
+  `filaLocalSinGuardarRef` (a `ref`) cannot govern render either way:
+  mutating a ref does not trigger a re-render, so any render-time
+  condition has to read committed React state. **Fix**: added
+  `filaFantasma` (`useState<number | null>`), an exact state mirror of
+  `filaLocalSinGuardarRef` — same pattern already used for
+  `guardando`/`guardandoRef` in this same component (the ref is for
+  synchronous guards, the state is for render). Every write to the ref
+  (`agregarFila`'s set, the identity-gated clear in `guardarFila`'s
+  success path, the removal in `cancelarEdicion`, and the reset in
+  `cargar`) now has an adjacent write to `filaFantasma`, each with a
+  one-line comment naming the mirror. Picker render condition became
+  `puedeEscribir && filaEnEdicion === null && filaFantasma === null`.
+  Added the judge's exact required sequence as a new test: add X via the
+  picker → Editar the persisted row Y → Cancelar Y → assert the picker is
+  still absent (`queryByLabelText` null) → reopen X → Cancelar X → X is
+  removed and the picker reappears. **EVIDENCE**: reverted the render
+  condition to `filaEnEdicion === null` only (leaving `filaFantasma`
+  unused), ran `npx vitest run Existencias -t "abrir y cancelar Y"` →
+  **FAILED** (picker present after cancelling Y); reverted via `git
+  checkout --` → clean working tree, fix restored from the prior commit.
+  Full suite after revert: `npx vitest run` → 35 files, 641/641 green
+  (full repo suite, web-only change — no other file touched); `npm run
+  build` (`tsc -b && vite build`) → clean, 0 type errors.
+- [x] 3.13 Branch `feat/stage13-slice3-web-minimos` off `main` (parent:
+  slices 1+2); PR; merge stacked-to-main. *(FINAL VERDICT 2026-08-14:
+  JUDGMENT: APPROVED at HEAD `678f1c2` after the longest judgment-day of
+  the program — judge B round 1 (2 MAJORs: deleted checklist items,
+  unfalsifiable full-window disable; +4 deterministic WARNINGs), two
+  scoped B re-judgments (round 2 caught a MAJOR fix-caused stale-ref
+  corruption LIVE), and three judge-A rounds on the ghost-row mechanism
+  (unconditional clear → picker unGated on filaEnEdicion → picker
+  reappearing with a benched ghost), closed structurally with the
+  filaFantasma state mirror (a ref never governs render). Judge B's final
+  hygiene pass over the post-approval delta: 4 re-mutations killed exactly
+  their tests, puedeEscribir hollowing ruled out empirically (16 failed
+  under a forced false — none vacuous). Both ledgers clean on the final
+  candidate.)*
 
 **Test plan**: mutation target (3.6), coercion descriptors (3.7), no-refetch
-(3.8), stale-read-discarded (3.9), double-click + supersede-blocked (3.10).
+(3.8), stale-read-discarded (3.9), double-click + supersede-blocked (3.10),
+phantom-ref-on-reload + saved-row-cancel + same-tick save guard (3.12 round
+2, FINDINGS 1/2/3), ghost-row-identity-gated-clear + write-role gate +
+result-button `disabled` attribute (3.12 round A, FINDINGS 1/2/3).
 
-**Verify**: `npm run test -- Existencias`
+**Verify**: `npm run test -- Existencias` — 25/25 green (full suite:
+`npx vitest run` → 35 files, 641/641 green — updated post-`judgment-day`
+round A-3, see the apply notes on task 3.12). `npm run lint`
+(oxlint) → clean (one pre-existing, unrelated warning in `AuthContext.tsx`).
+`npm run build` (`tsc -b && vite build`) → clean.
 
 ---
 
