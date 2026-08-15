@@ -955,7 +955,10 @@ depends on it.
   the model since the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
   files). Web-only slice, as expected.
-- [ ] 6.8 Run `judgment-day`; fix; re-judge until clean.
+- [x] 6.8 Run `judgment-day`; fix; re-judge until clean. *(CLEAN
+  2026-08-15: re-ronda B aprobada — 4 re-mutaciones muertas, mocks sin
+  fugas; juez A fresh: 0 severos, 1 WARNING cerrado test-only con
+  evidencia de mutación falsy-coercion. JUDGMENT: APPROVED.)*
   **Ronda 1, juez B**: 4 hallazgos confirmados, los 4 cerrados —
   (MAJOR) `Reposicion.test.tsx` el test del botón de descarga no clickeaba
   ni asertaba la ruta, solo existencia (fix: replica el precedente
@@ -987,7 +990,7 @@ depends on it.
   `queryByText('—')` ausente; evidencia: mutado `valor === null` →
   `!valor`, el nuevo assert falló solo; revertido, suite completa verde
   otra vez — 626/626).
-- [ ] 6.9 Branch `feat/stage13-slice6-web-reposicion` off `main` (parent:
+- [x] 6.9 Branch `feat/stage13-slice6-web-reposicion` off `main` (parent:
   slices 4+5); PR; merge stacked-to-main.
 
 **Test plan**: grouping descriptors (6.5), null-sugerido render (6.6).
