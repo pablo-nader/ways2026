@@ -112,13 +112,123 @@ phases:
       presupuesto Medium, sin size:exception previsto (split 1a/1b
       pre-autorizado para la slice de la migración).
   spec:
-    status: pending
+    status: done
     artifact: specs/
     depends_on: [propose]
+    notes: >-
+      1 capability nueva (`auditoria-de-operaciones`, spec completa, 7
+      requirements): fila append-only con id_tenant del sujeto auditado (no
+      del actor) + RLS estandar sobre la conexion ways_app (bloqueo
+      cross-tenant, INSERT con id_tenant ajeno rechazado 42501); escritura
+      misma-transaccion fail-closed con dos escenarios discriminantes
+      (precio.cambio vs venta.anulacion) mas el escenario del guard de 16
+      queries del checkout INTACTO como criterio observable; catalogo de 12
+      acciones/6 servicios con "una operacion, una fila" (incluye el
+      close/reopen de precio como una sola fila), stock.transferencia
+      excluido por razon estructural, conteo sin diferencia sin fila de
+      auditoria; contrato de payload acotado por accion con la regla
+      valor_anterior ⊆ valor_nuevo y denylist explicito de hash_password;
+      consulta GET /api/auditoria filtrable/paginada bajo LecturaDeAuditoria
+      (Admin 200 cross-PV, Supervisor 403, Vendedor 403, filas PV NULL bajo
+      "todos"); export sibling verbatim sobre el contrato de la etapa 11
+      (refusal at cap, paridad de figuras, 403 heredado por co-locacion).
+      3 deltas ADDED (no MODIFIED, siguiendo la clasificacion explicita del
+      proposal): `precios` (cambio de precio atribuible, fail-closed sobre
+      el mismo AbrirNuevoPrecioAsync), `comprobantes-venta` (anulacion
+      atribuible con el escenario flagship 100%-servicio-sin-CC),
+      `comprobantes-compra` (anulacion atribuible en la misma transaccion
+      que los contramovimientos). Decision de redaccion: el caso
+      100%-servicio-sin-CC aparece dos veces con enfoques distintos —
+      cobertura/fila (auditoria-de-operaciones) vs comportamiento propio de
+      anulacion (comprobantes-venta) — no es duplicacion, son dos
+      requirements distintos. No se tocaron specs de stock,
+      conteo-de-inventario, lotes-y-vencimientos,
+      reliquidacion-a-precio-del-dia, usuarios-*, exportacion-de-reportes
+      (consumida verbatim, no modificada), segun el contrato de
+      capabilities del proposal.
   design:
-    status: pending
+    status: done
     artifact: design.md
     depends_on: [propose]
+    notes: >-
+      17 decisiones numeradas, cero DDL nuevo (la seccion del gate es
+      contrato intocable). (1) DOS MODOS, UN CONTRATO: Registrar(...)
+      sincronico encola la entidad en el MISMO SaveChangesAsync del llamador
+      EF; RegistrarAsync(conexion, transaccion, ...) hace UN INSERT sin
+      RETURNING sobre la conexion Y transaccion del llamador ADO
+      (convencion EscriturasDeCuentaCorriente/InsertarMovimientoStockAsync).
+      El writer JAMAS abre transaccion, ni SaveChanges, ni Commit. Razon
+      decisiva: 4 de los 5 caminos de ServicioDeUsuarios NO tienen
+      transaccion explicita (solo SaveChangesAsync), asi que un INSERT crudo
+      ahi autocommitearia y romperia fail-closed en las dos direcciones.
+      (2) id_actor y creado_el NO son parametros: los estampa el writer
+      desde contexto/reloj — 11 call sites no pueden equivocarlos y la
+      exencion del gate §B (id_actor server-derived) queda estructural.
+      (3) Invariantes (subset, denylist, snake_case) en el CONSTRUCTOR de
+      RegistroDeAuditoria (Domain puro): un registro ilegal no es
+      construible. (4) AccionAuditada = sealed record (Accion, Entidad) con
+      12 constantes + Todas: el catalogo fija el PAR, no el verbo.
+      (5) Payload = diccionario construido por 12 fabricas puras; NINGUNA
+      acepta una entidad ⇒ un dump de fila es irrepresentable (la defensa de
+      hash_password es de tipos, la denylist es backstop). (6) UN
+      JsonSerializerOptions compartido por los dos modos con
+      DictionaryKeyPolicy (NO PropertyNamingPolicy, que sobre un diccionario
+      es un no-op que parece decision) + JsonStringEnumConverter snake_case
+      ⇒ los enums serializan con su etiqueta de base ("emitido"/"activo").
+      (7) Auditoria NO hereda EntidadTenant (arrastraria EntidadBase, que el
+      gate prohibe): filtro propio clonado de MovimientoStock y id_tenant
+      escrito EXPLICITO — EstamparTenant() lo pisaria con el tenant de la
+      SESION, convirtiendo en silencio la decision 1 del proposal ("tenant
+      del sujeto") en su contraria. (8) MarcarAnuladoAsync de ventas pasa a
+      RETURNING id_punto_venta / int? (precedente exacto:
+      ServicioDeTurnos.MarcarCerradoAsync): el mismo UPDATE sigue siendo la
+      unica autoridad race-safe y ahora tambien da el PV, cero round trips;
+      compras YA lo devolvia. (9) Las before-images salen del RETURNING
+      autoritativo (cantidad_anterior = nueva - delta) o del lock ya tomado
+      (saldo del FOR UPDATE), NUNCA de un SELECT extra que otra transaccion
+      podria responder distinto. (10) Fail-closed se prueba POR DATO
+      (contexto.UsuarioId inexistente ⇒ 23503 de fk_auditoria_actor dentro
+      de la transaccion de negocio), sin interfaz IEscritorDeAuditoria ni
+      seam de test — y el mismo test cubre el mapeo 23503 → 400
+      referencia_invalida que exige el gate §B. (11) usuario.alta es el
+      unico call site que cambia la estructura del llamador: transaccion
+      explicita con dos SaveChangesAsync (el id no existe antes del primer
+      flush). (12) Paginacion OFFSET (PaginaDe<T>, 7 precedentes en el repo,
+      cero de keyset; el pager web muestra "pagina N de M" y necesita el
+      COUNT) con desempate OBLIGATORIO id_auditoria DESC: creado_el sale de
+      un unico reloj.Ahora por operacion, asi que los empates son por
+      construccion y bajo RelojFijo empata el fixture entero. (13) Un solo
+      ConstruirQuery para JSON y export; export con forma LISTADO
+      (count-first + tope + segundo Exigir anti-carrera) y mapeado desde el
+      MISMO FilaDeAuditoria ⇒ la paridad es estructural. (14) LEFT JOIN a
+      usuarios con IgnoreQueryFilters(["BajaLogica"]): un inner join BORRA
+      del log las filas de un actor root (invisible a la sesion de tenant) y
+      de un usuario dado de baja. (15) accion/entidad NO se validan contra
+      el catalogo en lectura (una accion retirada tiene que seguir siendo
+      consultable). (16) idEntidad exige entidad ⇒ 400 (id polimorfico).
+      (17) Auditoria.tsx = HistoricoDeCajas.tsx (filtros + pager) +
+      BotonDeDescarga de Vencimientos.tsx, con el panel de detalle como
+      componente aislado y por lo tanto limpiamente droppable.
+      11 call sites ubicados con archivo:linea, payload y "lo que NO cambia"
+      (orden de locks, decide-then-commit, UPDATE...RETURNING como
+      autoridad). Ondulacion registrada: ServicioDeStock.
+      InsertarMovimientoStockAsync pasa a devolver el id (RETURNING) para
+      alimentar los payloads; TransferirAsync lo ignora y sigue sin escribir
+      auditoria. 28 mutation targets nombrados (fail-closed en EF y en ADO,
+      denylist, subset, RLS sobre ways_app, desempate de paginacion, LEFT
+      JOIN, IgnoreQueryFilters, cada filtro, RequireAuthorization,
+      encabezados del XLSX por la regla 8, reloj fijo, guard de 16
+      byte-identico como no-regresion). Testing: mediodia UTC + RelojFijo
+      (creado_el sin DEFAULT), seeds asimetricos, aserciones celda por celda
+      con encabezados. Plan de 7 slices RATIFICADO (~2.360 lineas, riesgo
+      Medium, sin size:exception) con 4 puntos de corte pre-autorizados
+      (1a/1b, 5a/5b, panel de detalle de la 7; cobertura y fail-closed nunca
+      se degradan). 6 open questions, DOS de ellas exigen reconciliar con el
+      spec que corrio en paralelo: usuario.baja no puede llevar
+      estado:"eliminado" (EstadoUsuario es Activo|Inactivo|Bloqueado y
+      EliminarAsync escribe deleted_at) y stock.conteo escribe una fila por
+      movimiento de ledger (el conteo POR LOTE escribe N), con id_lote en el
+      payload.
   tasks:
     status: pending
     artifact: tasks.md
