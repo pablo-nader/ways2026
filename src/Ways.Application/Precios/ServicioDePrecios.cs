@@ -620,10 +620,12 @@ public class ServicioDePrecios(
         await using var comando = conexion.CreateCommand();
         comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
         comando.CommandText =
-            // Task 2.2 (design call site 1) — `monto` sumado a la proyección: una columna más
-            // en un SELECT que YA corre bajo el advisory lock, cero round trips nuevos — es el
-            // before-image de `precio.cambio` (PayloadDeAuditoria.CambioDePrecio).
-            "SELECT id_precio, vigente_desde, monto FROM precios " +
+            // Task 2.2 (design call site 1) — la columna `precio` (mapeo de `Precio.Monto`,
+            // PrecioConfiguration.cs:56 — NO se llama "monto" en la base) sumada a la
+            // proyección: una columna más en un SELECT que YA corre bajo el advisory lock, cero
+            // round trips nuevos — es el before-image de `precio.cambio`
+            // (PayloadDeAuditoria.CambioDePrecio, cuya clave jsonb SÍ es "monto").
+            "SELECT id_precio, vigente_desde, precio FROM precios " +
             "WHERE id_articulo = $1 AND id_lista_precio = $2 AND id_tenant = $3 " +
             "AND vigente_hasta IS NULL AND deleted_at IS NULL";
 
