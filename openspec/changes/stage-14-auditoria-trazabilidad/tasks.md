@@ -650,7 +650,7 @@ and simply unused for these paths.
   --startup-project src/Ways.Infrastructure` → "No changes have been made
   to the model since the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
-- [ ] 2.23 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 2.23 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   *(orchestrator)* **Round 1, judge B**: 1 MAJOR (2.3's cross-tenant
   `usuario` uniqueness coverage was claimed "implicit" but didn't exist —
   now explicit, see 2.3's note) + 4 WARNINGs closed (2.1's misreported
@@ -680,7 +680,7 @@ and simply unused for these paths.
   "FullyQualifiedName~Precios|FullyQualifiedName~Usuarios|FullyQualifiedName~Auditoria"`
   → 207/207, all pre-existing tests unchanged (fail-closed alta and the rest
   stayed green).
-- [ ] 2.24 Branch `feat/stage14-slice2-precios-usuarios` off `main`
+- [x] 2.24 Branch `feat/stage14-slice2-precios-usuarios` off `main` *(CLEAN 2026-08-16: juez B ronda 1 — 1 MAJOR (scoping por-tenant del username infalsificable tras el retiro del test InMemory; cerrado con el test cross-tenant de actor PLATAFORMA — el filtro EF+RLS enmascara el predicado para actores tenant-scoped) + 4 WARNINGs cerrados + sugerencia aplicada; re-ronda B aprobada con 5 re-mutantes muertos; juez A ronda 2: 0 severos, 1 WARNING inferencial (doble-INSERT en retry por la construccion dentro del lambda — RESUELTO REVIRTIENDO la sugerencia al estado que B reviso en ronda 1, con el residuo del interplay ExecutionStrategy+tracker registrado como pre-existente en ServicioDePrecios) + 1 SUGGESTION de doc cerrada. JUDGMENT: APPROVED.)*
   (parent: slice 1); PR; merge stacked-to-main. *(orchestrator)*
 
 **Test plan**: coverage ×6 (2.8, 2.9, 2.15, 2.17, 2.18) — actually 7 Facts/
