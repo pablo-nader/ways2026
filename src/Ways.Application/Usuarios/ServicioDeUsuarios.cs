@@ -106,19 +106,6 @@ public class ServicioDeUsuarios(
         await ExigirDisponibilidadAsync(nombre, mail, idTenantDestino, null, ct);
 
         var ahora = reloj.Ahora;
-        var usuario = new Usuario
-        {
-            NombreUsuario = nombre,
-            Mail = mail,
-            RolId = datos.RolId,
-            IdTenant = idTenantDestino,
-            Estado = datos.Estado,
-            PasswordHash = hasheador.Hashear(datos.Password),
-            PasswordAlgoritmo = hasheador.Algoritmo,
-            PasswordActualizadoEl = ahora,
-            CreatedAt = ahora,
-            UpdatedAt = ahora
-        };
 
         // Design decisión 11 / task 2.3 — el ÚNICO call site que cambia la estructura
         // transaccional de su llamador: `id_entidad` es polimórfico y sin FK, así que el id de
@@ -133,6 +120,26 @@ public class ServicioDeUsuarios(
         var usuarioCreado = await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            // Judgment-day slice 2 (ronda 1, juez B, sugerencia aplicada): la entidad se
+            // construye ACÁ ADENTRO, no antes de CreateExecutionStrategy — mismo patrón que
+            // ServicioDePrecios.AbrirNuevoPrecioAsync/ServicioDeAprovisionamiento, para que un
+            // reintento de la estrategia (transitorio, ADR-16) parta de una entidad fresca en
+            // vez de reusar la misma instancia (ya potencialmente trackeada por un intento
+            // previo) entre reintentos.
+            var usuario = new Usuario
+            {
+                NombreUsuario = nombre,
+                Mail = mail,
+                RolId = datos.RolId,
+                IdTenant = idTenantDestino,
+                Estado = datos.Estado,
+                PasswordHash = hasheador.Hashear(datos.Password),
+                PasswordAlgoritmo = hasheador.Algoritmo,
+                PasswordActualizadoEl = ahora,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            };
 
             db.Usuarios.Add(usuario);
             await db.SaveChangesAsync(ct);

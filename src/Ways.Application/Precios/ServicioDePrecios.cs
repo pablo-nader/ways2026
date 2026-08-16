@@ -27,13 +27,17 @@ namespace Ways.Application.Precios;
 /// <para><b>DEVIATION registrada (tasks.md, Slice 2, task 2.1):</b> <paramref name="auditoria"/>
 /// es OPCIONAL (default <c>null</c>), no un parámetro requerido — desviación deliberada del
 /// patrón de <c>ServicioDeUsuarios</c> (que sí lo exige). Motivo: agregar un parámetro
-/// REQUERIDO acá rompía la compilación de 12 call sites de test que instancian
-/// <c>ServicioDePrecios</c> a mano sin pasar un cuarto argumento — incluido
-/// <c>tests/Ways.IntegrationTests/VentasCheckoutTests.cs</c>, el único archivo que
-/// Orchestrator Decision 13 (tasks.md) prohíbe tocar en CUALQUIER slice de esta etapa ("nothing
-/// in any slice has a reason to touch that file"), justo porque el design no anticipó este
-/// ripple mecánico de constructor. Verificado: ninguno de esos 12 call sites llama nunca a
-/// <see cref="AbrirNuevoPrecioAsync"/> (todos son lectura pura vía
+/// REQUERIDO acá rompía la compilación de 9 archivos de test que instancian
+/// <c>ServicioDePrecios</c> a mano sin pasar un cuarto argumento (10 líneas de instanciación en
+/// total — <c>VentasCheckoutTests.cs</c> tiene dos): <c>ComprasAnulacionYConcurrenciaTests.cs</c>,
+/// <c>OfertasResolucionTests.cs</c>, <c>PlanDeVentaFefoTests.cs</c>, <c>ReliquidacionTests.cs</c>,
+/// <c>VentaEscrituraLoteTests.cs</c>, <c>VentasAtomicidadYConcurrenciaTests.cs</c>,
+/// <c>VentasCheckoutTests.cs</c>, <c>VentasTurnoWiringTests.cs</c> y
+/// <c>ServicioDeOfertasTests.cs</c> — incluido <c>tests/Ways.IntegrationTests/VentasCheckoutTests.cs</c>,
+/// el único archivo que Orchestrator Decision 13 (tasks.md) prohíbe tocar en CUALQUIER slice de
+/// esta etapa ("nothing in any slice has a reason to touch that file"), justo porque el design no
+/// anticipó este ripple mecánico de constructor. Verificado: ninguno de esos call sites llama
+/// nunca a <see cref="AbrirNuevoPrecioAsync"/> (todos son lectura pura vía
 /// <c>ServicioDeOfertas.PreciosVigentesEnLoteAsync</c> o resolución de <see
 /// cref="PrecioVigenteAsync"/>/<see cref="PreciosVigentesAsync"/>), así que un <c>auditoria</c>
 /// ausente nunca se dereferencia en esos caminos. La propiedad <see cref="Auditoria"/> revienta

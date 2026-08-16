@@ -446,14 +446,21 @@ and simply unused for these paths.
   **DEVIATION (registered):** `ServicioDeAuditoria` landed as an OPTIONAL
   constructor parameter (`ServicioDeAuditoria? auditoria = null`, guarded
   by a fail-loud `Auditoria` property) instead of required — a required
-  4th parameter broke compilation of 12 pre-existing test call sites,
-  including `tests/Ways.IntegrationTests/VentasCheckoutTests.cs`, the one
-  file Orchestrator Decision 13 forbids touching in ANY slice. Verified
-  none of those 12 call sites ever reach `AbrirNuevoPrecioAsync` (all
-  read-only via `ServicioDeOfertas.PreciosVigentesEnLoteAsync` or price
-  resolution), so the guard is never exercised there; every real/DI caller
-  still gets the real instance. See the class doc-comment for the full
-  writeup.
+  4th parameter broke compilation of 9 pre-existing test files (10
+  instantiation lines — `VentasCheckoutTests.cs` has two), including
+  `tests/Ways.IntegrationTests/VentasCheckoutTests.cs`, the one file
+  Orchestrator Decision 13 forbids touching in ANY slice. Verified none of
+  those call sites ever reach `AbrirNuevoPrecioAsync` (all read-only via
+  `ServicioDeOfertas.PreciosVigentesEnLoteAsync` or price resolution), so
+  the guard is never exercised there; every real/DI caller still gets the
+  real instance. See the class doc-comment for the full writeup. **Judgment-day
+  slice 2 (round 1, judge B, WARNING):** the count was originally
+  misreported as "12" — recounted precisely against the actual test tree
+  and corrected here and in the class doc-comment. Guard coverage added:
+  `ServicioDePreciosSuperficieTests.ElGuardDeAuditoriaAusenteFallaFuerteEnVezDeSaltearseEnSilencio`
+  (reflection over the private `Auditoria` property — the real write path
+  can't run under InMemory, same documented limitation as
+  `ServicioDeUsuarios.CrearAsync`).
 - [x] 2.2 Modify `ServicioDePrecios.cs`'s `BuscarFilaAbiertaAsync` (`:584`):
   add `monto` to its `SELECT` projection — one more column on a statement
   that already runs under the advisory lock, zero new round trips.
@@ -477,9 +484,20 @@ and simply unused for these paths.
   (`ElMismoNombreDeUsuarioEnDosTenantsDistintosConvive`) was removed and
   its business-rule coverage ("mismo nombre en dos tenants distintos
   convive") ported into the new Postgres-backed
-  `PreciosYUsuariosAuditoriaTests` (implicit via `CrearAsync` calls
+  `PreciosYUsuariosAuditoriaTests` — see that file's class doc-comment note.
+  **Judgment-day slice 2 (round 1, judge B, MAJOR — closed):** the
+  port was originally recorded above as "implicit via `CrearAsync` calls
   succeeding against two different tenants across the slice's other
-  tests) — see that file's class doc-comment note.
+  tests" — it wasn't: no existing test in that file ever called
+  `CrearAsync` with the SAME `NombreUsuario` against two different
+  tenants, so the per-tenant scoping in
+  `ServicioDeUsuarios.ExigirDisponibilidadAsync` was unfalsifiable
+  (mutating it to a global uniqueness check survived all 203 tests).
+  Now covered explicitly by
+  `PreciosYUsuariosAuditoriaTests.ElMismoNombreDeUsuarioEnDosTenantsDistintosConviveYEnElMismoTenantSeRechaza`
+  (same name, two tenants via real `CrearAsync` round-trips: both
+  succeed; same name repeated in the same tenant: rejected with
+  `usuario_duplicado`/409).
 - [x] 2.4 Modify `ServicioDeUsuarios.cs`'s `ActualizarAsync` (`:143`,
   **before** the entity's fields are mutated, while the old values are
   still in memory): `Registrar(usuario.actualizacion, ant={usuario, mail,
@@ -494,6 +512,12 @@ and simply unused for these paths.
   `var momento = reloj.Ahora;` (instead of two separate `reloj.Ahora`
   reads) so the audit payload's `deleted_at` is byte-identical to the
   persisted column under any clock, not just `RelojFijo`.
+  **Judgment-day slice 2 (round 1, judge B, WARNING — closed):** no test
+  inspected the payload's KEYS, so reverting the factory to the stale
+  `{estado:"eliminado"}` shape survived. Now covered key-by-key by
+  `PreciosYUsuariosAuditoriaTests.UsuarioBajaEscribePayloadConDeletedAtYEstadoClavePorClave`
+  (asserts exactly `{deleted_at, estado}` on both sides, `anterior.deleted_at
+  IS NULL`, `nuevo.deleted_at == RelojFijo` exact).
 - [x] 2.6 Modify `ServicioDeUsuarios.cs`'s desbloqueo path (`:188`):
   `Registrar(usuario.desbloqueo, ant={estado:"bloqueado"} real pre-
   Desbloquear, nuevo={estado:"activo"} post)` before the `:189`
@@ -561,6 +585,12 @@ and simply unused for these paths.
   pre/post values across all four fields (`mutation-proof-tests` rule 6),
   resolving 2.14's evidence.
   `PreciosYUsuariosAuditoriaTests.UsuarioActualizacionEscribeValoresDistintosPrePostMutacion`.
+  **Judgment-day slice 2 (round 1, judge B, WARNING — closed):** the test
+  claimed "four fields ALL distinct" while `estado` went Activo→Activo
+  (never actually changed) and had no `NotEqual` assertion for it either.
+  Fixture now moves `estado` Activo→Bloqueado (a real, supported
+  transition) and a `NotEqual` on `estado` was added alongside the other
+  three — the comment is true now.
 - [x] 2.16 [P] **Mutation target**: `monto` in `BuscarFilaAbiertaAsync`'s
   `SELECT` — remove it / hardcode `0` — 2.8's `valorAnterior.monto`
   assertion must fail. *(slice 2 row 4)*
@@ -599,6 +629,15 @@ and simply unused for these paths.
   `PreciosYUsuariosAuditoriaTests.EdicionDeCuentaDePlataformaNoEscribeFilaDeAuditoria`
   (direct-service call, no exception thrown ≡ the HTTP 200 the design
   criterion describes).
+  **Judgment-day slice 2 (round 1, judge B, WARNING — closed):** the
+  platform-subject skip (`if (usuario.IdTenant is int idTenantSujeto)`)
+  was only exercised for `ActualizarAsync` — removing it from
+  `CambiarPasswordAsync` survived undetected. Now also covered by
+  `PreciosYUsuariosAuditoriaTests.PasswordYDesbloqueoDeCuentaDePlataformaNoEscribenFilaDeAuditoria`
+  (password + desbloqueo in the same fixture; `EliminarAsync` is
+  structurally unreachable for a platform subject — always root, and
+  `PoliticaDeRoles.ValidarPuedeIntervenirSobre` rejects both self-baja and
+  any root-targeted baja before the audit guard is ever reached).
 - [x] 2.21 [P] Integration — reloj: all five `usuario.*` actions and
   `precio.cambio` stamp `creado_el` exactly `RelojFijo(2026-08-
   14T12:00:00Z)`, closing 1.27's cross-slice mutation evidence.
@@ -612,7 +651,17 @@ and simply unused for these paths.
   to the model since the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
 - [ ] 2.23 Run `judgment-day`; fix confirmed issues; re-judge until clean.
-  *(orchestrator)*
+  *(orchestrator)* **Round 1, judge B**: 1 MAJOR (2.3's cross-tenant
+  `usuario` uniqueness coverage was claimed "implicit" but didn't exist —
+  now explicit, see 2.3's note) + 4 WARNINGs closed (2.1's misreported
+  call-site count, 2.5's `usuario.baja` payload key-by-key coverage,
+  2.18/2.20's platform-subject skip on `CambiarPasswordAsync`, 2.15's
+  Activo→Activo non-change). Authorized suggestion applied: `CrearAsync`'s
+  `new Usuario {...}` moved inside the `ExecutionStrategy` retry lambda,
+  matching `ServicioDePrecios.AbrirNuevoPrecioAsync`/
+  `ServicioDeAprovisionamiento`'s pattern of building retry-scoped entities
+  inside the lambda — all existing tests stayed green with no semantic
+  adjustment.
 - [ ] 2.24 Branch `feat/stage14-slice2-precios-usuarios` off `main`
   (parent: slice 1); PR; merge stacked-to-main. *(orchestrator)*
 

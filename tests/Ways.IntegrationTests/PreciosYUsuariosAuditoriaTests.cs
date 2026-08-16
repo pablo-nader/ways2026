@@ -10,6 +10,7 @@ using Ways.Application.Precios;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
+using Ways.Domain.Common;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -300,12 +301,62 @@ public class PreciosYUsuariosAuditoriaTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal(0, await lectura.Auditoria.CountAsync(a => a.Accion == "usuario.alta"));
     }
 
+    /// <summary>Judgment-day slice 2 (ronda 1, juez B, MAJOR) — la cobertura Postgres real de
+    /// <c>ExigirDisponibilidadAsync</c> con <c>CrearAsync</c> completo (round-trip persistido,
+    /// no un seed crudo por <c>db.Usuarios.Add</c> como <c>UsuariosYLoginTests</c>): el MISMO
+    /// <c>NombreUsuario</c> en DOS tenants distintos convive (índice único por tenant, doc 09
+    /// ADR-7) y el MISMO nombre repetido en el MISMO tenant se rechaza con
+    /// <c>usuario_duplicado</c>/409 — el reemplazo directo de la línea 360-361 de
+    /// <c>ServicioDeUsuarios.ExigirDisponibilidadAsync</c> (<c>u.NombreUsuario == usuario</c> sin
+    /// el <c>&amp;&amp; u.IdTenant == idTenantScope</c>) sobrevivía a los 203 tests existentes
+    /// porque ninguno pasaba por <see cref="ServicioDeUsuarios.CrearAsync"/> dos veces con el
+    /// mismo nombre en tenants distintos. tasks.md task 2.3 documentaba esta cobertura como
+    /// "implícita" en otros tests de este archivo — no lo era; este es el test explícito.</summary>
+    [Fact]
+    public async Task ElMismoNombreDeUsuarioEnDosTenantsDistintosConviveYEnElMismoTenantSeRechaza()
+    {
+        var (idTenantA, _, _, _, idActorAdminA) = await AprovisionarTenantAsync(
+            nameof(ElMismoNombreDeUsuarioEnDosTenantsDistintosConviveYEnElMismoTenantSeRechaza) + "A");
+        var (idTenantB, _, _, _, idActorAdminB) = await AprovisionarTenantAsync(
+            nameof(ElMismoNombreDeUsuarioEnDosTenantsDistintosConviveYEnElMismoTenantSeRechaza) + "B");
+
+        var reloj = new RelojFijo(MomentoFijo);
+
+        var (dbA, servicioA) = CrearServicioDeUsuarios(idTenantA, idActorAdminA, reloj);
+        await using var _dbA = dbA;
+        var (dbB, servicioB) = CrearServicioDeUsuarios(idTenantB, idActorAdminB, reloj);
+        await using var _dbB = dbB;
+
+        var datosA = new CrearUsuario("vendedor-cross-tenant", "cross-a@ways.test", (int)RolConocido.Vendedor, PasswordUsuario);
+        var datosB = new CrearUsuario("vendedor-cross-tenant", "cross-b@ways.test", (int)RolConocido.Vendedor, PasswordUsuario);
+
+        // Mismo NombreUsuario, dos tenants distintos: los dos CrearAsync tienen que succeeder.
+        var creadoA = await servicioA.CrearAsync(datosA);
+        var creadoB = await servicioB.CrearAsync(datosB);
+
+        Assert.NotEqual(creadoA.Id, creadoB.Id);
+        Assert.Equal("vendedor-cross-tenant", creadoA.Usuario);
+        Assert.Equal("vendedor-cross-tenant", creadoB.Usuario);
+
+        // Mismo NombreUsuario, MISMO tenant (A otra vez): se rechaza con usuario_duplicado.
+        var datosDuplicadoEnA = new CrearUsuario(
+            "vendedor-cross-tenant", "cross-a-duplicado@ways.test", (int)RolConocido.Vendedor, PasswordUsuario);
+
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicioA.CrearAsync(datosDuplicadoEnA));
+
+        Assert.Equal("usuario_duplicado", error.Codigo);
+        Assert.Equal(409, error.EstadoHttp);
+    }
+
     // ---- usuario.actualizacion (task 2.15, mutation targets 2.14/2.16) -------------------------
 
     /// <summary>Task 2.15 / mutation target 2.14 — cobertura de <c>usuario.actualizacion</c>:
     /// ambos payloads llevan las cuatro columnas editables con valores genuinamente distintos
     /// (<c>mutation-proof-tests</c> regla 6) — mueve la captura después de la mutación y
-    /// <c>valor_anterior == valor_nuevo</c>.</summary>
+    /// <c>valor_anterior == valor_nuevo</c>. Judgment-day slice 2 (ronda 1, juez B, WARNING): el
+    /// <c>estado</c> tiene que cambiar de verdad (Activo→Bloqueado, <c>ActualizarAsync</c> lo
+    /// soporta) — con Activo→Activo el comentario de arriba mentía sobre "las cuatro columnas"
+    /// y el <c>NotEqual</c> de esa columna ni siquiera se ejercitaba.</summary>
     [Fact]
     public async Task UsuarioActualizacionEscribeValoresDistintosPrePostMutacion()
     {
@@ -319,7 +370,7 @@ public class PreciosYUsuariosAuditoriaTests(WaysApiFixture fixture) : IClassFixt
 
         await servicio.ActualizarAsync(
             idObjetivo,
-            new ActualizarUsuario("vendedor-nuevo", "nuevo@ways.test", (int)RolConocido.Supervisor, EstadoUsuario.Activo));
+            new ActualizarUsuario("vendedor-nuevo", "nuevo@ways.test", (int)RolConocido.Supervisor, EstadoUsuario.Bloqueado));
 
         var fila = await db.Auditoria.Where(a => a.IdEntidad == idObjetivo && a.Accion == "usuario.actualizacion").SingleAsync();
         var (anterior, nuevo) = Parsear(fila);
@@ -333,13 +384,14 @@ public class PreciosYUsuariosAuditoriaTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal("vendedor-nuevo", nuevo.GetProperty("usuario").GetString());
         Assert.Equal("nuevo@ways.test", nuevo.GetProperty("mail").GetString());
         Assert.Equal((int)RolConocido.Supervisor, nuevo.GetProperty("id_rol").GetInt32());
-        Assert.Equal("activo", nuevo.GetProperty("estado").GetString());
+        Assert.Equal("bloqueado", nuevo.GetProperty("estado").GetString());
 
         // mutation-proof-tests regla 6: ningún valor coincide entre anterior/nuevo en ninguna
         // de las cuatro columnas — un "anterior == nuevo" (mutación 2.14) no podría pasar esto.
         Assert.NotEqual(anterior.Value.GetProperty("usuario").GetString(), nuevo.GetProperty("usuario").GetString());
         Assert.NotEqual(anterior.Value.GetProperty("mail").GetString(), nuevo.GetProperty("mail").GetString());
         Assert.NotEqual(anterior.Value.GetProperty("id_rol").GetInt32(), nuevo.GetProperty("id_rol").GetInt32());
+        Assert.NotEqual(anterior.Value.GetProperty("estado").GetString(), nuevo.GetProperty("estado").GetString());
     }
 
     /// <summary>Mutation target 2.16 — <c>monto</c> en el <c>SELECT</c> de
@@ -392,6 +444,43 @@ public class PreciosYUsuariosAuditoriaTests(WaysApiFixture fixture) : IClassFixt
 
         Assert.NotNull(anterior);
         Assert.Equal("bloqueado", anterior!.Value.GetProperty("estado").GetString());
+        Assert.Equal("activo", nuevo.GetProperty("estado").GetString());
+    }
+
+    // ---- usuario.baja (judgment-day slice 2, ronda 1, juez B, WARNING 2) -------------------------
+
+    /// <summary>Judgment-day slice 2 (ronda 1, juez B, WARNING) — cobertura clave por clave del
+    /// payload de <c>usuario.baja</c> (<see cref="PayloadDeAuditoria.BajaDeUsuario"/>): las DOS
+    /// claves son <c>{deleted_at, estado}</c> en ambos lados (tasks.md, Orchestrator Decision #2)
+    /// — revertir la fábrica al shape stale <c>{estado:"eliminado"}</c> sobrevivía porque ningún
+    /// test existente inspeccionaba las claves del payload de baja, solo su existencia.</summary>
+    [Fact]
+    public async Task UsuarioBajaEscribePayloadConDeletedAtYEstadoClavePorClave()
+    {
+        var (idTenant, _, _, _, idActorAdmin) =
+            await AprovisionarTenantAsync(nameof(UsuarioBajaEscribePayloadConDeletedAtYEstadoClavePorClave));
+        var idObjetivo = await SembrarUsuarioAsync(idTenant, "vendedor-baja", "baja@ways.test");
+
+        var reloj = new RelojFijo(MomentoFijo);
+        var (db, servicio) = CrearServicioDeUsuarios(idTenant, idActorAdmin, reloj);
+        await using var _ = db;
+
+        await servicio.EliminarAsync(idObjetivo);
+
+        var fila = await db.Auditoria.Where(a => a.IdEntidad == idObjetivo && a.Accion == "usuario.baja").SingleAsync();
+        var (anterior, nuevo) = Parsear(fila);
+
+        Assert.NotNull(anterior);
+
+        var clavesAnterior = anterior!.Value.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal);
+        var clavesNuevo = nuevo.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal);
+        Assert.Equal(new[] { "deleted_at", "estado" }, clavesAnterior);
+        Assert.Equal(new[] { "deleted_at", "estado" }, clavesNuevo);
+
+        Assert.Equal(JsonValueKind.Null, anterior.Value.GetProperty("deleted_at").ValueKind);
+        Assert.Equal(MomentoFijo, nuevo.GetProperty("deleted_at").GetDateTimeOffset());
+
+        Assert.Equal("activo", anterior.Value.GetProperty("estado").GetString());
         Assert.Equal("activo", nuevo.GetProperty("estado").GetString());
     }
 
@@ -499,6 +588,37 @@ public class PreciosYUsuariosAuditoriaTests(WaysApiFixture fixture) : IClassFixt
             new ActualizarUsuario("staff-plataforma-2", "staff-plataforma-2@ways.test", (int)RolConocido.Root, EstadoUsuario.Activo));
 
         Assert.Equal("staff-plataforma-2", actualizado.Usuario);
+
+        var total = await db.Auditoria.CountAsync(a => a.IdEntidad == idPlataforma && a.Entidad == "usuario");
+        Assert.Equal(0, total);
+    }
+
+    /// <summary>Judgment-day slice 2 (ronda 1, juez B, WARNING) — el skip de sujeto-plataforma
+    /// (<c>if (usuario.IdTenant is int idTenantSujeto)</c>) solo estaba probado en
+    /// <see cref="EdicionDeCuentaDePlataformaNoEscribeFilaDeAuditoria"/> (<c>ActualizarAsync</c>);
+    /// removerlo de <c>CambiarPasswordAsync</c> sobrevivía sin que ningún test lo notara — acá se
+    /// prueba ese call site (y, barato en el mismo fixture, <c>DesbloquearAsync</c>). <c>EliminarAsync</c>
+    /// queda afuera: <c>PoliticaDeRoles.ValidarPuedeIntervenirSobre</c> rechaza tanto la baja de la
+    /// propia cuenta (<c>actorId == objetivoId</c>) como la baja de cualquier cuenta root, así que
+    /// una cuenta de plataforma (siempre root, <see cref="PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance"/>)
+    /// nunca alcanza el guard de auditoría por ese camino — no hay nada que este test pueda
+    /// ejercitar ahí sin cambiar la policy misma.</summary>
+    [Fact]
+    public async Task PasswordYDesbloqueoDeCuentaDePlataformaNoEscribenFilaDeAuditoria()
+    {
+        var idPlataforma = await SembrarUsuarioAsync(
+            idTenant: null, "staff-sin-auditoria", "staff-sin-auditoria@ways.test", RolConocido.Root);
+
+        var reloj = new RelojFijo(MomentoFijo);
+        var (db, servicio) = CrearServicioDeUsuarios(idTenant: null, idPlataforma, reloj, RolConocido.Root);
+        await using var _ = db;
+
+        // El propio actor sobre sí mismo: CambiarPasswordAsync esquiva ValidarPuedeIntervenirSobre
+        // (usuario.Id == contexto.UsuarioId) y DesbloquearAsync no tiene esa restricción para
+        // esBaja: false — ambos caminos llegan hasta su propio guard de sujeto-plataforma sin
+        // ningún 23503 (NOT NULL de auditoria.id_tenant).
+        await servicio.CambiarPasswordAsync(idPlataforma, new CambiarPassword("otra-contraseña-plataforma"));
+        await servicio.DesbloquearAsync(idPlataforma);
 
         var total = await db.Auditoria.CountAsync(a => a.IdEntidad == idPlataforma && a.Entidad == "usuario");
         Assert.Equal(0, total);
