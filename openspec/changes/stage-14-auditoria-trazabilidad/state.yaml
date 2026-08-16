@@ -6,6 +6,24 @@ execution_mode: automatic-autonomous
 delivery_strategy: auto-chain
 chain_strategy: stacked-to-main
 db_gate: UNA-MIGRACION-APROBADA
+db_gate_amendment_1: >-
+  ENMIENDA 1 APROBADA 2026-08-16 (orquestador, mandato autonomo delegado,
+  patron de las 3 enmiendas del gate de la etapa 12): la migracion
+  AuditoriaEtapa14 lleva DOS indices de soporte de FK adicionales a los 3
+  del contrato — ix_auditoria_id_actor (id_actor) e ix_auditoria_punto_venta
+  (id_punto_venta, id_tenant) — generados por la ForeignKeyIndexConvention
+  de EF Core, no suprimible en model-time (RemoveIndex sincronico post
+  HasForeignKey no persiste: el batch de convenciones lo re-agrega,
+  verificado empiricamente por el apply). Fundamento de la aprobacion:
+  (1) el ix_auditoria_actor del contrato lidera por id_tenant, asi que NO
+  cubre fk_auditoria_actor por prefijo — el indice de soporte es el
+  comportamiento estandar; (2) es el patron que TODA FK del schema ya
+  tiene (ix_movimientos_stock_empleado et al.) y ningun gate previo conto
+  esos indices por separado; (3) cero semantica nueva — ni tabla, ni
+  columna, ni constraint: solo soporte mecanico de FK con naming doc-10
+  snake_case explicito. El resto de la migracion verificado verbatim
+  contra proposal SA por el apply. Total final: 5 indices (3 del contrato
+  + 2 de soporte de FK).
 db_gate_approval: >-
   APROBADO 2026-08-16 por el orquestador bajo mandato autonomo delegado:
   gate EJERCIDO FORMALMENTE sobre la seccion 'Modelo de datos propuesto'
