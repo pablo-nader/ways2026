@@ -469,6 +469,17 @@ public static class ReportesEndpoints
             "de filas exigido tras mapear — agregado acotado por catálogo, mismo criterio que " +
             "/stock/existencias/export.");
 
+        // Tile de Tablero (stage-13-stock-inteligente, Slice 7; design decisión 8/9, spec
+        // reposicion-de-stock: "The Tablero Tile Reuses The Report Method, Never A Second
+        // Aggregation Query"): gate heredado del grupo. Reusa la misma clasificación que el JSON
+        // de arriba, nunca una segunda query de agregación (ObtenerResumenDeReposicionAsync).
+        grupo.MapGet("/stock/reposicion/resumen", (
+            ServicioDeReportesDeStock servicio, int idPuntoVenta, CancellationToken ct) =>
+            servicio.ObtenerResumenDeReposicionAsync(idPuntoVenta, ct))
+        .WithSummary(
+            "Tile de Tablero: conteos de bajoMinimo/sinStock/sinProveedor del punto de venta — " +
+            "sinProveedor cuenta el grupo Sin proveedor, nunca conflado con sugerido ausente.");
+
         // stage-13-stock-inteligente, Slice 5 (design decisión 14, spec reposicion-de-stock:
         // "GET /api/reportes/stock/rotacion Feeds The Suggested-Minimo Column..."): gate heredado
         // del grupo. Feed INDEPENDIENTE de minimoSugerido — no depende de minimo, agrega sobre

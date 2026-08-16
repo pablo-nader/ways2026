@@ -1390,6 +1390,14 @@ export type Reposicion = {
   filas: FilaDeReposicion[]
 }
 
+/** Respuesta de `GET /api/reportes/stock/reposicion/resumen` (stage-13-stock-inteligente, Slice 7)
+ * — espejo de `ResumenDeReposicion`, el tile de Tablero. Mismos tres conteos que `Reposicion.filas`
+ * foldeados por `ObtenerResumenDeReposicionAsync` — nunca una query de agregación separada.
+ * `sinProveedor` cuenta el grupo "Sin proveedor" (`idProveedor` nulo en `FilaDeReposicion`) — NUNCA
+ * conflado con "sin sugerido" (`sugerido` nulo, `reposicion` sin configurar): orchestrator decision
+ * 5 (tasks.md) corrigió este nombre sobre la `sinSugerencia` vieja de design.md. */
+export type ResumenDeReposicion = { idPuntoVenta: number; bajoMinimo: number; sinStock: number; sinProveedor: number }
+
 /** Fila de `GET /api/reportes/stock/rotacion` — espejo de `FilaDeRotacion`. Solo existe porque el
  * artículo tuvo AL MENOS UN movimiento calificado (venta o su anulación, nunca la anulación de
  * una compra) en la ventana — un artículo sin historia NO ES UNA FILA de esta lista, nunca una
