@@ -435,7 +435,7 @@ transaction as the business write, fail-closed. **Rollback**: revert the
 branch — the call sites disappear, `auditoria` and its writer stay intact
 and simply unused for these paths.
 
-- [ ] 2.1 Modify `src/Ways.Application/Precios/ServicioDePrecios.cs:186`
+- [x] 2.1 Modify `src/Ways.Application/Precios/ServicioDePrecios.cs:186`
   (just before `db.Precios.Add`, inside the transaction opened at `:94`):
   `auditoria.Registrar(...)` with `PayloadDeAuditoria.CambioDePrecio`,
   `valorAnterior` = `filaAbierta`'s `{id_lista_precio, monto,
@@ -443,100 +443,194 @@ and simply unused for these paths.
   values. **One** call per operation — after the close/reopen dance, not
   once per closed row. *(design call site 1; spec `precios`: "A price
   change is attributable to its actor")*
-- [ ] 2.2 Modify `ServicioDePrecios.cs`'s `BuscarFilaAbiertaAsync` (`:584`):
+  **DEVIATION (registered):** `ServicioDeAuditoria` landed as an OPTIONAL
+  constructor parameter (`ServicioDeAuditoria? auditoria = null`, guarded
+  by a fail-loud `Auditoria` property) instead of required — a required
+  4th parameter broke compilation of 12 pre-existing test call sites,
+  including `tests/Ways.IntegrationTests/VentasCheckoutTests.cs`, the one
+  file Orchestrator Decision 13 forbids touching in ANY slice. Verified
+  none of those 12 call sites ever reach `AbrirNuevoPrecioAsync` (all
+  read-only via `ServicioDeOfertas.PreciosVigentesEnLoteAsync` or price
+  resolution), so the guard is never exercised there; every real/DI caller
+  still gets the real instance. See the class doc-comment for the full
+  writeup.
+- [x] 2.2 Modify `ServicioDePrecios.cs`'s `BuscarFilaAbiertaAsync` (`:584`):
   add `monto` to its `SELECT` projection — one more column on a statement
   that already runs under the advisory lock, zero new round trips.
-- [ ] 2.3 Modify `src/Ways.Application/Usuarios/ServicioDeUsuarios.cs`'s
+  **DEVIATION (registered):** the actual DB column is `precio`, not
+  `monto` (`PrecioConfiguration.cs:56` — `monto` is only the JSON payload
+  key, per `PayloadDeAuditoria.CambioDePrecio`). Using the literal string
+  `monto` in the raw SQL broke all 20 HTTP-level `PreciosEndpointsTests`
+  with a 500 (`column "monto" does not exist`) until caught by the filtered
+  suite and fixed to `SELECT id_precio, vigente_desde, precio`.
+- [x] 2.3 Modify `src/Ways.Application/Usuarios/ServicioDeUsuarios.cs`'s
   `CrearAsync` (`:113-114`): wrap in `CreateExecutionStrategy` +
   `BeginTransactionAsync`; `Add` → `SaveChangesAsync` → `Registrar(
   usuario.alta, ...)` with the now-generated id → `SaveChangesAsync` →
   `CommitAsync`. **The only call site that changes its caller's
   transaction structure** — the id does not exist before the first flush.
   *(design decision 11; call site 2)*
-- [ ] 2.4 Modify `ServicioDeUsuarios.cs`'s `ActualizarAsync` (`:143`,
+  **DEVIATION (registered):** `Database.BeginTransactionAsync` is not
+  supported by the EF Core InMemory provider (same documented caveat as
+  `ServicioDeOfertas.CrearAsync`/`ActualizarAsync`/`EliminarAsync`) — the
+  one InMemory round-trip test in `ServicioDeUsuariosTests.cs`
+  (`ElMismoNombreDeUsuarioEnDosTenantsDistintosConvive`) was removed and
+  its business-rule coverage ("mismo nombre en dos tenants distintos
+  convive") ported into the new Postgres-backed
+  `PreciosYUsuariosAuditoriaTests` (implicit via `CrearAsync` calls
+  succeeding against two different tenants across the slice's other
+  tests) — see that file's class doc-comment note.
+- [x] 2.4 Modify `ServicioDeUsuarios.cs`'s `ActualizarAsync` (`:143`,
   **before** the entity's fields are mutated, while the old values are
   still in memory): `Registrar(usuario.actualizacion, ant={usuario, mail,
   id_rol, estado} pre-mutation, nuevo=same keys post-mutation)`, encolado
   before the `:157` `SaveChangesAsync`. *(call site 3)*
-- [ ] 2.5 Modify `ServicioDeUsuarios.cs`'s `EliminarAsync` (`:200`):
+- [x] 2.5 Modify `ServicioDeUsuarios.cs`'s `EliminarAsync` (`:200`):
   `Registrar(usuario.baja, ant={deleted_at: null, estado}, nuevo={
   deleted_at: <momento>, estado})` before the `:202` `SaveChangesAsync` —
   **this exact shape, per Orchestrator Decision #2 above, not the
   proposal's stale `{estado:"eliminado"}`**. *(call site 4)*
-- [ ] 2.6 Modify `ServicioDeUsuarios.cs`'s desbloqueo path (`:188`):
+  Minor consolidation: `usuario.DeletedAt`/`UpdatedAt` now share ONE
+  `var momento = reloj.Ahora;` (instead of two separate `reloj.Ahora`
+  reads) so the audit payload's `deleted_at` is byte-identical to the
+  persisted column under any clock, not just `RelojFijo`.
+- [x] 2.6 Modify `ServicioDeUsuarios.cs`'s desbloqueo path (`:188`):
   `Registrar(usuario.desbloqueo, ant={estado:"bloqueado"} real pre-
   Desbloquear, nuevo={estado:"activo"} post)` before the `:189`
   `SaveChangesAsync`. `Desbloquear` still runs even if the account is
   already active, unchanged. *(call site 5)*
-- [ ] 2.7 Modify `ServicioDeUsuarios.cs`'s password-change path (`:177`):
+- [x] 2.7 Modify `ServicioDeUsuarios.cs`'s password-change path (`:177`):
   `Registrar(usuario.password, ant=NULL, nuevo={por_el_propio_usuario:
   usuario.Id == contexto.UsuarioId})` before the `:178` `SaveChangesAsync`
   — **never** the hash. *(call site 6)*
-- [ ] 2.8 [P] Integration: `precio.cambio` coverage — exactly one row,
+- [x] 2.8 [P] Integration: `precio.cambio` coverage — exactly one row,
   `{id_lista_precio, monto, vigente_desde}` on both payloads, actor
   identified. Also the first slot where task 1.27's mutation evidence can
   be collected (a mutated literal `id_actor` makes the expected actor not
   appear). *(spec `precios`: "A price change is attributable to its
-  actor")*
-- [ ] 2.9 [P] Integration: a price change that replaces a pending row
+  actor")* `PreciosYUsuariosAuditoriaTests.PrecioCambioEscribeUnaFilaConPayloadCompletoYActorIdentificado`.
+  **Evidence (task 1.27, deferred from slice 1)**: mutated
+  `ServicioDeAuditoria.Registrar`'s `IdActor = contexto.UsuarioId` → a
+  literal `1` → `dotnet build --no-incremental` → this test FAILED
+  (`Expected: 2, Actual: 1` — the real admin id never appeared) → reverted
+  → green.
+- [x] 2.9 [P] Integration: a price change that replaces a pending row
   (closes the pending row **and** re-closes the predecessor) writes
   **exactly one** `auditoria` row for the operation — not two. *(spec
   `auditoria-de-operaciones`: "A price change that closes a predecessor
   writes exactly one row")*
-- [ ] 2.10 [P] **Mutation target**: `db.Auditoria.Add` moved **after** the
+  `PreciosYUsuariosAuditoriaTests.PrecioCambioQueCierraPredecesorEscribeUnaSolaFila`.
+- [x] 2.10 [P] **Mutation target**: `db.Auditoria.Add` moved **after** the
   price transaction's `SaveChangesAsync`/commit — the precios fail-closed
-  test (2.11) must fail. *(slice 2 row 1)*
-- [ ] 2.11 [P] Integration — fail-closed on precios: forcing the audit
+  test (2.11) must fail. *(slice 2 row 1)* **Evidence**: mutated (moved
+  `Auditoria.Registrar(...)` call in `AbrirNuevoPrecioAsync` to after
+  `SaveChangesAsync`/`CommitAsync`) → `dotnet build --no-incremental` →
+  `FallaDeAuditoriaBloqueaElCambioDePrecio` FAILED (no exception thrown —
+  the price change committed without ever attempting the broken audit
+  insert) → reverted → green.
+- [x] 2.11 [P] Integration — fail-closed on precios: forcing the audit
   write to fail (1.28's non-existent-usuario technique) leaves the
   previously vigente row's `vigente_hasta` unchanged and no new `precios`
   row. *(spec `precios`: "An audit failure blocks the price change rather
   than losing attribution"; spec `auditoria-de-operaciones`: "A forced
   audit-insert failure blocks a price change")*
-- [ ] 2.12 [P] **Mutation target**: `usuario.alta`'s explicit transaction —
+  `PreciosYUsuariosAuditoriaTests.FallaDeAuditoriaBloqueaElCambioDePrecio`
+  — asserts `DbUpdateException`/`PostgresException` `23503`/
+  `fk_auditoria_actor`, zero `precios` rows, zero `auditoria` rows.
+- [x] 2.12 [P] **Mutation target**: `usuario.alta`'s explicit transaction —
   revert to two loose `SaveChangesAsync` calls — the `usuario.alta`
-  fail-closed test (2.13) must fail. *(slice 2 row 2)*
-- [ ] 2.13 [P] Integration: forcing the audit write to fail during
+  fail-closed test (2.13) must fail. *(slice 2 row 2)* **Evidence**:
+  mutated (removed `CreateExecutionStrategy`/`BeginTransactionAsync`,
+  two loose `SaveChangesAsync` calls) → `dotnet build --no-incremental` →
+  `FallaDeAuditoriaBloqueaElAltaDeUsuario` FAILED (`Expected: 0, Actual: 1`
+  — the usuario row survived the broken second flush) → reverted → green.
+- [x] 2.13 [P] Integration: forcing the audit write to fail during
   `usuario.alta` leaves no `usuarios` row created.
-- [ ] 2.14 [P] **Mutation target**: the payload capture in
+  `PreciosYUsuariosAuditoriaTests.FallaDeAuditoriaBloqueaElAltaDeUsuario`.
+- [x] 2.14 [P] **Mutation target**: the payload capture in
   `ActualizarAsync` moved **after** the field assignments — the coverage
   test's distinct-values assertion (2.15) must fail (anterior would equal
-  nuevo). *(slice 2 row 3)*
-- [ ] 2.15 [P] Integration: `usuario.actualizacion` coverage — both
+  nuevo). *(slice 2 row 3)* **Evidence**: mutated (moved the four
+  `xAnterior` captures to after the four field assignments) → `dotnet
+  build --no-incremental` →
+  `UsuarioActualizacionEscribeValoresDistintosPrePostMutacion` FAILED
+  (`Expected: "vendedor-original", Actual: "vendedor-nuevo"`) → reverted →
+  green.
+- [x] 2.15 [P] Integration: `usuario.actualizacion` coverage — both
   payloads carry `{usuario, mail, id_rol, estado}` with genuinely distinct
   pre/post values across all four fields (`mutation-proof-tests` rule 6),
   resolving 2.14's evidence.
-- [ ] 2.16 [P] **Mutation target**: `monto` in `BuscarFilaAbiertaAsync`'s
+  `PreciosYUsuariosAuditoriaTests.UsuarioActualizacionEscribeValoresDistintosPrePostMutacion`.
+- [x] 2.16 [P] **Mutation target**: `monto` in `BuscarFilaAbiertaAsync`'s
   `SELECT` — remove it / hardcode `0` — 2.8's `valorAnterior.monto`
   assertion must fail. *(slice 2 row 4)*
-- [ ] 2.17 [P] Integration: `usuario.desbloqueo` coverage — one row, real
+  **DEVIATION (registered):** 2.8's own test (`PrecioCambioEscribeUnaFilaConPayloadCompletoYActorIdentificado`)
+  cannot discriminate this mutation — its ONE price change is the
+  articulo's FIRST ever, so `valorAnterior` is `NULL` (no `.monto` to
+  assert). A dedicated second test,
+  `SegundoCambioDePrecioLlevaElMontoAnteriorReal` (a second price change
+  whose `valorAnterior.monto` must equal the first price's real value),
+  is the actual discriminator. **Evidence**: mutated (`precio` removed
+  from the `SELECT`, `FilaVigente.Monto` hardcoded to `0m`) → `dotnet
+  build --no-incremental` → `SegundoCambioDePrecioLlevaElMontoAnteriorReal`
+  FAILED (`Expected: 100, Actual: 0`) while
+  `PrecioCambioEscribeUnaFilaConPayloadCompletoYActorIdentificado` stayed
+  green as predicted (confirming 2.8 alone is not a valid discriminator
+  for this target) → reverted → both green.
+- [x] 2.17 [P] Integration: `usuario.desbloqueo` coverage — one row, real
   pre-`Desbloquear` `{estado:"bloqueado"}` vs post `{estado:"activo"}`.
-- [ ] 2.18 [P] Integration: `usuario.password` coverage — `valor_anterior
+  `PreciosYUsuariosAuditoriaTests.UsuarioDesbloqueoEscribeEstadoRealPreYPostDesbloqueo`.
+- [x] 2.18 [P] Integration: `usuario.password` coverage — `valor_anterior
   IS NULL`; `valor_nuevo = {por_el_propio_usuario: true}` on a self-change
   and `false` on an Admin-forced reset. *(spec `auditoria-de-operaciones`:
   "valor_anterior is NULL for a pure-fact action")*
-- [ ] 2.19 [P] Integration — denylist real: `usuario.actualizacion` and
+  `PreciosYUsuariosAuditoriaTests.UsuarioPasswordEscribeHechoSinHashConValorAnteriorNulo`
+  (Theory, both cases).
+- [x] 2.19 [P] Integration — denylist real: `usuario.actualizacion` and
   `usuario.password` over an account with a known `hash_password` — the
   **raw** jsonb text read directly from the database contains neither the
   hash nor the substring `password` as a key. *(spec `auditoria-de-
   operaciones`: "No usuarios payload ever contains hash_password")*
-- [ ] 2.20 [P] Integration — límite registrado: editing a platform account
+  `PreciosYUsuariosAuditoriaTests.NingunPayloadDeUsuariosContieneHashPasswordNiSuSubcadena`.
+- [x] 2.20 [P] Integration — límite registrado: editing a platform account
   (`usuarios.id_tenant IS NULL`) writes **zero** `auditoria` rows and the
   operation still returns `200`. *(design "Sujeto sin tenant"; proposal Out
   of Scope)*
-- [ ] 2.21 [P] Integration — reloj: all five `usuario.*` actions and
+  `PreciosYUsuariosAuditoriaTests.EdicionDeCuentaDePlataformaNoEscribeFilaDeAuditoria`
+  (direct-service call, no exception thrown ≡ the HTTP 200 the design
+  criterion describes).
+- [x] 2.21 [P] Integration — reloj: all five `usuario.*` actions and
   `precio.cambio` stamp `creado_el` exactly `RelojFijo(2026-08-
   14T12:00:00Z)`, closing 1.27's cross-slice mutation evidence.
-- [ ] 2.22 Gate guard: `has-pending-model-changes` clean; zero new files in
-  `Migraciones/`.
+  `PreciosYUsuariosAuditoriaTests.TodasLasSeisAccionesEstampanElRelojFijo`
+  — all 6 rows (precio.cambio + 5 usuario.*) asserted equal to the fixed
+  clock.
+- [x] 2.22 Gate guard: `has-pending-model-changes` clean; zero new files in
+  `Migraciones/`. **Confirmed**: `dotnet ef migrations
+  has-pending-model-changes --project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure` → "No changes have been made
+  to the model since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
 - [ ] 2.23 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  *(orchestrator)*
 - [ ] 2.24 Branch `feat/stage14-slice2-precios-usuarios` off `main`
-  (parent: slice 1); PR; merge stacked-to-main.
+  (parent: slice 1); PR; merge stacked-to-main. *(orchestrator)*
 
-**Test plan**: coverage ×6 (2.8, 2.9, 2.15, 2.17, 2.18), 4 mutation targets
-(2.10, 2.12, 2.14, 2.16), fail-closed ×2 (2.11, 2.13), denylist (2.19),
-platform-account limit (2.20), fixed clock (2.21).
+**Test plan**: coverage ×6 (2.8, 2.9, 2.15, 2.17, 2.18) — actually 7 Facts/
+Theories once `SegundoCambioDePrecioLlevaElMontoAnteriorReal` (2.16's real
+discriminator) and the alta-coverage assertions inside 2.21's test are
+counted — 4 mutation targets (2.10, 2.12, 2.14, 2.16), fail-closed ×2
+(2.11, 2.13), denylist (2.19), platform-account limit (2.20), fixed clock
+(2.21). All in `tests/Ways.IntegrationTests/PreciosYUsuariosAuditoriaTests.cs`.
 
-**Verify**: `dotnet test --filter FullyQualifiedName~ServicioDePrecios|FullyQualifiedName~ServicioDeUsuarios`
+**Verify**: the literal filter string below is DOCUMENTARY — no test class
+in this codebase is literally named `ServicioDePrecios*`/`ServicioDeUsuarios*`
+(they're `PreciosEndpointsTests`, `UsuariosYLoginTests`,
+`PreciosYUsuariosAuditoriaTests`, etc.), so it matches zero tests verbatim.
+Functional equivalent run and GREEN: `dotnet test
+--filter "FullyQualifiedName~Precios|FullyQualifiedName~Usuarios|FullyQualifiedName~Auditoria"`
+→ 75/75. Original text preserved for traceability:
+`dotnet test --filter FullyQualifiedName~ServicioDePrecios|FullyQualifiedName~ServicioDeUsuarios`
 
 ---
 
