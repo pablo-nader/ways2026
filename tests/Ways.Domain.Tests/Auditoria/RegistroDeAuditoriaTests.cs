@@ -77,4 +77,48 @@ public class RegistroDeAuditoriaTests
         Assert.Throws<InvalidOperationException>(() =>
             new RegistroDeAuditoria(1, null, Accion, 41, null, nuevo));
     }
+
+    // ---- judgment-day, slice 1 ronda 2, finding 1 (juez B): la denylist/snake_case es
+    // recursiva, no solo top-level ------------------------------------------------------------
+
+    [Fact]
+    public void UnaClaveProhibidaDentroDeUnDiccionarioAnidadoLanza()
+    {
+        var nuevo = new Dictionary<string, object?>
+        {
+            ["datos"] = new Dictionary<string, object?> { ["hash_password"] = "x" }
+        };
+
+        Assert.Throws<InvalidOperationException>(() =>
+            new RegistroDeAuditoria(1, null, Accion, 41, null, nuevo));
+    }
+
+    [Fact]
+    public void UnDiccionarioAnidadoSinClavesProhibidasEsValido()
+    {
+        var nuevo = new Dictionary<string, object?>
+        {
+            ["datos"] = new Dictionary<string, object?> { ["monto"] = 100m, ["moneda"] = "ars" }
+        };
+
+        var registro = new RegistroDeAuditoria(1, null, Accion, 41, null, nuevo);
+
+        Assert.Equal(nuevo, registro.ValorNuevo);
+    }
+
+    [Fact]
+    public void UnaClaveProhibidaDentroDeUnaListaDeDiccionariosLanza()
+    {
+        var nuevo = new Dictionary<string, object?>
+        {
+            ["items"] = new List<Dictionary<string, object?>>
+            {
+                new() { ["monto"] = 10m },
+                new() { ["token"] = "x" }
+            }
+        };
+
+        Assert.Throws<InvalidOperationException>(() =>
+            new RegistroDeAuditoria(1, null, Accion, 41, null, nuevo));
+    }
 }

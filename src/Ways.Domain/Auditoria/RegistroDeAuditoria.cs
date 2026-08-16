@@ -38,16 +38,18 @@ public sealed partial record RegistroDeAuditoria
                 $"vacío (acción {accion.Accion}).");
         }
 
-        foreach (var clave in valorNuevo.Keys)
+        foreach (var (clave, valor) in valorNuevo)
         {
             ValidarClave(clave, accion.Accion);
+            ValidarValorAnidado(valor, accion.Accion);
         }
 
         if (valorAnterior is not null)
         {
-            foreach (var clave in valorAnterior.Keys)
+            foreach (var (clave, valor) in valorAnterior)
             {
                 ValidarClave(clave, accion.Accion);
+                ValidarValorAnidado(valor, accion.Accion);
 
                 // 2. Regla de subconjunto: toda clave de valorAnterior está en valorNuevo — la
                 // inversa NO (valorNuevo lleva además metadata propia de la operación).
@@ -80,7 +82,9 @@ public sealed partial record RegistroDeAuditoria
 
         // 3. Denylist sobre claves — backstop del hecho estructural de que ninguna fábrica de
         // PayloadDeAuditoria acepta una entidad (design decisión 5): ningún secreto debería
-        // poder llegar acá, pero esta regla lo rechaza igual si alguna vez lo hiciera.
+        // poder llegar acá, pero esta regla lo rechaza igual si alguna vez lo hiciera, sin
+        // importar a qué profundidad de anidamiento aparezca la clave (ver
+        // <see cref="ValidarValorAnidado"/>).
         foreach (var prohibida in ClavesProhibidas)
         {
             if (clave.Contains(prohibida, StringComparison.OrdinalIgnoreCase))
@@ -89,6 +93,36 @@ public sealed partial record RegistroDeAuditoria
                     $"El invariante de escritura de auditoría fue violado: la clave '{clave}' está " +
                     $"en la denylist de secretos (acción {accion}).");
             }
+        }
+    }
+
+    /// <summary>Recorre <paramref name="valor"/> buscando diccionarios anidados (a cualquier
+    /// profundidad, incluso dentro de listas de diccionarios) y valida sus claves con las mismas
+    /// reglas 3/4 que las claves top-level — el backstop de <see cref="ValidarClave"/> es
+    /// verdadero para el registro completo, no solo para su primer nivel.</summary>
+    private static void ValidarValorAnidado(object? valor, string accion)
+    {
+        switch (valor)
+        {
+            case IReadOnlyDictionary<string, object?> diccionarioAnidado:
+                foreach (var (claveAnidada, valorAnidado) in diccionarioAnidado)
+                {
+                    ValidarClave(claveAnidada, accion);
+                    ValidarValorAnidado(valorAnidado, accion);
+                }
+
+                break;
+
+            case string:
+                break;
+
+            case System.Collections.IEnumerable lista:
+                foreach (var elemento in lista)
+                {
+                    ValidarValorAnidado(elemento, accion);
+                }
+
+                break;
         }
     }
 

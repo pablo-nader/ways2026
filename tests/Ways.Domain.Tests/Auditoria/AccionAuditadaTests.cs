@@ -44,4 +44,32 @@ public partial class AccionAuditadaTests
             Assert.False(string.IsNullOrWhiteSpace(accion.Entidad));
         }
     }
+
+    /// <summary>judgment-day, slice 1 ronda 2, finding 3 (juez B): el tipo NO impide
+    /// <c>new AccionAuditada(...)</c> inline (el <c>record</c> posicional genera un constructor
+    /// público) — este test es el único freno real contra un typo en el catálogo, congelando los
+    /// 12 pares exactos que el resto del código asume.</summary>
+    [Fact]
+    public void ElCatalogoTieneExactamenteLosDoceParesEsperados()
+    {
+        (string Accion, string Entidad)[] esperado =
+        [
+            ("precio.cambio", "articulo"),
+            ("venta.anulacion", "comprobante_venta"),
+            ("compra.anulacion", "comprobante_compra"),
+            ("stock.ajuste", "articulo"),
+            ("stock.decomiso", "articulo"),
+            ("stock.conteo", "articulo"),
+            ("cc.reliquidacion", "cliente"),
+            ("usuario.alta", "usuario"),
+            ("usuario.actualizacion", "usuario"),
+            ("usuario.baja", "usuario"),
+            ("usuario.desbloqueo", "usuario"),
+            ("usuario.password", "usuario")
+        ];
+
+        var real = AccionAuditada.Todas.Select(a => (a.Accion, a.Entidad));
+
+        Assert.Equal(esperado, real);
+    }
 }

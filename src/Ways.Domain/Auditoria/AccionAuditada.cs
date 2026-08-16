@@ -8,9 +8,15 @@ namespace Ways.Domain.Auditoria;
 /// decisión 8, `accion text` + CHECK de no-vacío): la aplicación es la parte estricta.
 ///
 /// <c>dto-contract-honesty</c>: cada constante documenta el par exacto que su call site (design,
-/// tabla "Call sites") tiene permitido escribir — no hay overload ni constructor público fuera de
-/// estas 12 instancias, así que un call site nuevo que necesite una acción no listada tiene que
-/// agregarla acá primero, nunca improvisar un <c>new AccionAuditada(...)</c> inline.
+/// tabla "Call sites") tiene permitido escribir — la convención del repo es usar siempre una de
+/// estas 12 instancias; un call site nuevo que necesite una acción no listada tiene que agregarla
+/// acá primero, nunca improvisar un <c>new AccionAuditada(...)</c> inline. El <c>record</c>
+/// posicional público SÍ genera un constructor público (<c>new AccionAuditada("x", "y")</c>
+/// compila): nada en el tipo lo impide, y la membresía al catálogo no se valida en runtime
+/// (design decisión 15 — una acción retirada deja filas consultables cuyo <c>accion</c> ya no
+/// tiene entrada acá, y eso es intencional). La garantía de "solo estas 12" es de convención +
+/// test (<see cref="Ways.Domain.Tests.Auditoria.AccionAuditadaTests"/> congela el catálogo
+/// exacto), no del tipo.
 /// </summary>
 public sealed record AccionAuditada(string Accion, string Entidad)
 {

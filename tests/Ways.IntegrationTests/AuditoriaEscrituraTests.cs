@@ -200,6 +200,47 @@ public class AuditoriaEscrituraTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(momentoFijo, creadoEl);
     }
 
+    // ---- design decisión 7: el id_tenant escrito es el del SUJETO, no el de la sesión -----------
+
+    /// <summary>Mutation target (judgment-day, slice 1 ronda 2, finding 2 del juez B): mutar
+    /// <c>ServicioDeAuditoria.Registrar</c> de <c>IdTenant = registro.IdTenant</c> a
+    /// <c>IdTenant = contexto.IdTenant ?? registro.IdTenant</c> sobrevivía porque todo el resto
+    /// del fixture iguala tenant de sesión y tenant sujeto (design decisión 7: coinciden en 11 de
+    /// las 12 acciones — divergen exactamente cuando root, sin tenant propio, edita el usuario de
+    /// un tenant). Acá se los diverge deliberadamente vía <see cref="ContextoFijo"/> (un doble de
+    /// test, no una sesión HTTP real — <c>ContextoDeUsuarioHttp.IdTenant</c> viene de un claim
+    /// ausente para staff de plataforma) para poder afirmar cuál de los dos gana. El contexto de
+    /// acceso EF usa <see cref="TenantActualFijo.Plataforma"/> a propósito: así el único guard
+    /// bajo prueba es la línea de <c>ServicioDeAuditoria</c>, no la policy RLS (que ya tiene su
+    /// propia cobertura arriba, y bloquearía este INSERT en modo <c>Tenant</c> antes de llegar a
+    /// la aserción).</summary>
+    [Fact]
+    public async Task RegistrarEscribeElTenantDelSujetoNoElDeLaSesion()
+    {
+        var idActor = await ObtenerIdDeUsuarioRootAsync();
+        var tenantSesion = await SembrarTenantAsync(nameof(RegistrarEscribeElTenantDelSujetoNoElDeLaSesion) + "-sesion");
+        var tenantSujeto = await SembrarTenantAsync(nameof(RegistrarEscribeElTenantDelSujetoNoElDeLaSesion) + "-sujeto");
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var servicio = new ServicioDeAuditoria(
+            db, new RelojFijo(DateTimeOffset.UtcNow), new ContextoFijo(tenantSesion.Id, idActor));
+
+        var registro = new RegistroDeAuditoria(
+            tenantSujeto.Id, idPuntoVenta: null, AccionAuditada.UsuarioActualizacion, idEntidad: 41,
+            valorAnterior: null, valorNuevo: new Dictionary<string, object?> { ["estado"] = "activo" });
+
+        servicio.Registrar(registro);
+        await db.SaveChangesAsync();
+
+        var idTenantEscrito = await db.Auditoria
+            .Where(a => a.Accion == "usuario.actualizacion" && a.IdEntidad == 41)
+            .Select(a => a.IdTenant)
+            .SingleAsync();
+
+        Assert.Equal(tenantSujeto.Id, idTenantEscrito);
+        Assert.NotEqual(tenantSesion.Id, idTenantEscrito);
+    }
+
     // ---- db-error-backstops (task 1.28, gate §B) -------------------------------------------------
 
     /// <summary>Fail-closed por dato (design decisión 10, gate §B): un <c>contexto.UsuarioId</c>
