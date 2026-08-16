@@ -173,6 +173,27 @@ public class ServicioDeReportesDeStock(IWaysDbContext db, ServicioDeParametros p
         return new Reposicion(idPuntoVenta, hoy, diasDeRotacion, zonaId, filas);
     }
 
+    /// <summary>Tile de Tablero (stage-13-stock-inteligente, Slice 7; design decisión 8/9; tarea
+    /// 7.1) — reusa <see cref="ObtenerReposicionAsync"/> con <c>dias</c> nulo (el horizonte
+    /// default, mismo criterio que <see cref="ObtenerResumenDeVencimientosAsync"/>) y foldea sus
+    /// propias filas: el tile nunca puede divergir del reporte porque no hay una segunda query de
+    /// agregación. <c>SinProveedor</c> cuenta el grupo "Sin proveedor" (<c>IdProveedor is null</c>)
+    /// — orchestrator decision 5 (tasks.md): NUNCA "sin sugerido" (<c>Sugerido is null</c>), el
+    /// nombre que design.md usaba antes de la corrección de la spec ratificada.</summary>
+    public async Task<ResumenDeReposicion> ObtenerResumenDeReposicionAsync(
+        int idPuntoVenta, CancellationToken ct = default)
+    {
+        var reposicion = await ObtenerReposicionAsync(idPuntoVenta, dias: null, ct);
+
+        // Cláusula bajo prueba (mutation-proof-tests, tarea 7.7): f.Cantidad <= 0 — con < 0, el
+        // artículo EXACTAMENTE en cero (agotado, el caso más urgente) deja de contar como sinStock.
+        return new ResumenDeReposicion(
+            idPuntoVenta,
+            reposicion.Filas.Count,
+            reposicion.Filas.Count(f => f.Cantidad <= 0),
+            reposicion.Filas.Count(f => f.IdProveedor is null));
+    }
+
     /// <summary>stage-13-stock-inteligente, Slice 5 (design decisión 14; task 5.4): el feed
     /// independiente de <c>minimoSugerido</c> para el editor — a diferencia de <see
     /// cref="ObtenerReposicionAsync"/>, NO depende de <c>minimo</c>: agrega sobre TODO el catálogo

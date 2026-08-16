@@ -15,6 +15,7 @@ import type {
   Rentabilidad,
   Reposicion,
   ResumenDeGastos,
+  ResumenDeReposicion,
   ResumenDeVencimientos,
   ResumenDeVentas,
   Rotacion,
@@ -131,6 +132,9 @@ export const clienteDeReportes = {
    * opcional de `dias`. */
   rotacion: (idPuntoVenta: number, dias: number | null) =>
     api.get<Rotacion>(`/reportes/stock/rotacion?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}`),
+  /** stage-13-stock-inteligente (Slice 7): tile de Tablero, mismo criterio que `vencimientosResumen`. */
+  reposicionResumen: (idPuntoVenta: number) =>
+    api.get<ResumenDeReposicion>(`/reportes/stock/reposicion/resumen?idPuntoVenta=${idPuntoVenta}`),
 }
 
 // ---- Offset local para desde/hasta de /cajas y /tesoreria (stage-11-exportacion-reportes,

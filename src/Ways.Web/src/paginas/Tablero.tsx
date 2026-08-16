@@ -14,6 +14,7 @@ import type {
   PuntoVentaListado,
   Rentabilidad,
   ResumenDeGastos,
+  ResumenDeReposicion,
   ResumenDeVencimientos,
   ResumenDeVentas,
   TopArticulos,
@@ -393,6 +394,67 @@ function PanelDeVencimientos({ idPuntoVenta }: PropsPanelDeVencimientos) {
               <div className="text-muted small">Sin fecha</div>
               <div className="fs-5 text-secondary" data-testid="vencimientos-tile-sin-fecha">
                 {datos.sinFecha}
+              </div>
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+type PropsPanelDeReposicion = { idPuntoVenta: number | null }
+
+/**
+ * Tile de reposición (stage-13-stock-inteligente, Slice 7) — clonado de `PanelDeVencimientos`:
+ * reusa `GET /api/reportes/stock/reposicion/resumen`, que a su vez reusa `ObtenerReposicionAsync`
+ * (design decisión 8/9) — el tile no puede divergir del reporte porque no hay una segunda query de
+ * agregación. Requiere un punto de venta CONCRETO, mismo criterio que `PanelDeVencimientos`. Un
+ * `data-testid` POR MÉTRICA (`reposicion-tile-bajo-minimo`/`-sin-stock`/`-sin-proveedor`) — la
+ * lección del stage-12 slice 15: un blob no caza dos conteos swapeados.
+ */
+function PanelDeReposicion({ idPuntoVenta }: PropsPanelDeReposicion) {
+  const cargarDatos = useCallback(
+    () => (idPuntoVenta === null ? Promise.resolve(null) : clienteDeReportes.reposicionResumen(idPuntoVenta)),
+    [idPuntoVenta],
+  )
+  const { datos, cargando, error, reintentar } = usePanelDeReporte<ResumenDeReposicion | null>(
+    cargarDatos,
+    'No se pudo cargar el resumen de reposición.',
+  )
+
+  return (
+    <div className="border p-3 bg-white h-100">
+      <div className="d-flex align-items-center justify-content-between mb-2">
+        <h6 className="mb-0">Reposición</h6>
+        <Link to="/reportes/stock/reposicion" className="small">
+          Ver reporte
+        </Link>
+      </div>
+      {error && <PanelDeError error={error} onReintentar={reintentar} />}
+      {idPuntoVenta === null ? (
+        <p className="text-muted small mb-0">Elegí un punto de venta para ver el resumen de reposición.</p>
+      ) : cargando && !datos ? (
+        <Cargando />
+      ) : (
+        datos && (
+          <div className="row g-2 text-center">
+            <div className="col-4">
+              <div className="text-muted small">Bajo mínimo</div>
+              <div className="fs-5 text-danger" data-testid="reposicion-tile-bajo-minimo">
+                {datos.bajoMinimo}
+              </div>
+            </div>
+            <div className="col-4">
+              <div className="text-muted small">Sin stock</div>
+              <div className="fs-5 text-warning-emphasis" data-testid="reposicion-tile-sin-stock">
+                {datos.sinStock}
+              </div>
+            </div>
+            <div className="col-4">
+              <div className="text-muted small">Sin proveedor</div>
+              <div className="fs-5 text-secondary" data-testid="reposicion-tile-sin-proveedor">
+                {datos.sinProveedor}
               </div>
             </div>
           </div>
@@ -829,6 +891,9 @@ export function Tablero() {
                 </div>
                 <div className="col-md-3">
                   <PanelDeVencimientos idPuntoVenta={idPuntoVenta} />
+                </div>
+                <div className="col-md-3">
+                  <PanelDeReposicion idPuntoVenta={idPuntoVenta} />
                 </div>
               </div>
             )}

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tablero } from './Tablero'
@@ -11,6 +11,7 @@ import type {
   PuntoVentaListado,
   Rentabilidad,
   ResumenDeGastos,
+  ResumenDeReposicion,
   ResumenDeVencimientos,
   ResumenDeVentas,
   TopArticulos,
@@ -228,6 +229,13 @@ function vencimientosResumenFixture(sobrescribir: Partial<ResumenDeVencimientos>
   return { idPuntoVenta: 10, vencidos: 2, porVencer: 5, sinFecha: 1, ...sobrescribir }
 }
 
+// stage-13-stock-inteligente (Slice 7): tres conteos DISTINTOS entre sí (mismo criterio que
+// vencimientosResumenFixture) — ningún swap entre bajoMinimo/sinStock/sinProveedor pasa
+// desapercibido si un test lee el testid equivocado.
+function reposicionResumenFixture(sobrescribir: Partial<ResumenDeReposicion> = {}): ResumenDeReposicion {
+  return { idPuntoVenta: 10, bajoMinimo: 7, sinStock: 3, sinProveedor: 1, ...sobrescribir }
+}
+
 function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/empresas') return Promise.resolve([empresaUno])
@@ -244,6 +252,7 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
     if (ruta.startsWith('/reportes/rentabilidad?')) return Promise.resolve(rentabilidadFixture())
     if (ruta.startsWith('/reportes/comisiones?')) return Promise.resolve(comisionesFixture())
     if (ruta.startsWith('/reportes/stock/vencimientos/resumen?')) return Promise.resolve(vencimientosResumenFixture())
+    if (ruta.startsWith('/reportes/stock/reposicion/resumen?')) return Promise.resolve(reposicionResumenFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -1180,7 +1189,13 @@ describe('Tablero — tile de vencimientos (stage-12-lotes-vencimientos, Slice 1
       expect(screen.getByTestId('vencimientos-tile-por-vencer')).toHaveTextContent('5')
       expect(screen.getByTestId('vencimientos-tile-sin-fecha')).toHaveTextContent('1')
     })
-    expect(screen.getByRole('link', { name: 'Ver reporte' })).toHaveAttribute('href', '/reportes/stock/vencimientos')
+    // APPLY NOTE (Slice 7): scoped al panel — desde Slice 7, PanelDeReposicion también renderiza un
+    // link "Ver reporte" en pantalla; `getByRole` sin ámbito quedaría ambiguo entre ambos paneles.
+    const panelVencimientos = screen.getByText('Vencimientos').closest('div')!
+    expect(within(panelVencimientos).getByRole('link', { name: 'Ver reporte' })).toHaveAttribute(
+      'href',
+      '/reportes/stock/vencimientos',
+    )
   })
 
   it('un error del panel de vencimientos no contamina a sus paneles hermanos', async () => {
@@ -1194,6 +1209,65 @@ describe('Tablero — tile de vencimientos (stage-12-lotes-vencimientos, Slice 1
     fireEvent.change(screen.getByLabelText('Punto de venta'), { target: { value: '10' } })
 
     expect(await screen.findByText('No se pudo cargar el resumen de vencimientos.')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText('Vendedor #9')).toBeInTheDocument()
+      expect(screen.getByText('Efectivo')).toBeInTheDocument()
+      expect(screen.getByText('Producto Estrella')).toBeInTheDocument()
+    })
+  })
+})
+
+describe('Tablero — tile de reposición (stage-13-stock-inteligente, Slice 7)', () => {
+  it('sin punto de venta elegido ("Todos") muestra un aviso neutro, nunca dispara el fetch', async () => {
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    await screen.findByText('Reposición')
+
+    expect(screen.getByText('Elegí un punto de venta para ver el resumen de reposición.')).toBeInTheDocument()
+    const rutas = apiGetMock.mock.calls.map((llamada) => llamada[0] as string)
+    expect(rutas.some((r) => r.startsWith('/reportes/stock/reposicion/resumen'))).toBe(false)
+  })
+
+  it('con un punto de venta elegido, muestra los tres conteos del resumen y un link al reporte', async () => {
+    mockearRutasBase()
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    fireEvent.change(screen.getByLabelText('Punto de venta'), { target: { value: '10' } })
+
+    await waitFor(() => {
+      const rutas = apiGetMock.mock.calls.map((llamada) => llamada[0] as string)
+      expect(rutas.some((r) => r.startsWith('/reportes/stock/reposicion/resumen?') && r.includes('idPuntoVenta=10'))).toBe(true)
+    })
+
+    // task 7.10: los tres testid asertados INDIVIDUALMENTE — la lección del stage-12 slice 15
+    // aplicada acá también: un swap bajoMinimo↔sinStock↔sinProveedor debe hacer fallar este test,
+    // nunca pasar por accidente porque los tres valores están "en algún lado" del tile.
+    await waitFor(() => {
+      expect(screen.getByTestId('reposicion-tile-bajo-minimo')).toHaveTextContent('7')
+      expect(screen.getByTestId('reposicion-tile-sin-stock')).toHaveTextContent('3')
+      expect(screen.getByTestId('reposicion-tile-sin-proveedor')).toHaveTextContent('1')
+    })
+    const panelReposicion = screen.getByText('Reposición').closest('div')!
+    expect(within(panelReposicion).getByRole('link', { name: 'Ver reporte' })).toHaveAttribute(
+      'href',
+      '/reportes/stock/reposicion',
+    )
+  })
+
+  it('un error del panel de reposición no contamina a sus paneles hermanos', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion/resumen?')) return Promise.reject(new Error('boom'))
+      return undefined
+    })
+    renderTablero()
+
+    await screen.findByText('Empresa Uno SA')
+    fireEvent.change(screen.getByLabelText('Punto de venta'), { target: { value: '10' } })
+
+    expect(await screen.findByText('No se pudo cargar el resumen de reposición.')).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByText('Vendedor #9')).toBeInTheDocument()
       expect(screen.getByText('Efectivo')).toBeInTheDocument()

@@ -219,6 +219,21 @@ public sealed record Reposicion(
     int IdPuntoVenta, DateOnly Hoy, int DiasDeRotacion, string ZonaHoraria,
     IReadOnlyList<FilaDeReposicion> Filas);
 
+/// <summary>Respuesta de <c>GET /api/reportes/stock/reposicion/resumen</c> — el tile de Tablero
+/// (stage-13-stock-inteligente, Slice 7; design decisión 8/9, con la corrección de nombre del
+/// tercer campo registrada en orchestrator decision 5, tasks.md: <c>SinProveedor</c>, no la
+/// <c>SinSugerencia</c> vieja de design.md). Los tres conteos salen de <see cref="Reposicion.Filas"/>
+/// vía <c>ObtenerResumenDeReposicionAsync</c>, que reusa <c>ObtenerReposicionAsync</c> — nunca una
+/// segunda query de agregación, mismo criterio que <see cref="ResumenDeVencimientos"/>.
+/// <c>dto-contract-honesty</c>: <see cref="SinProveedor"/> cuenta el grupo <c>"Sin proveedor"</c>
+/// (<see cref="FilaDeReposicion.IdProveedor"/> <c>null</c>) — NUNCA conflado con "sin sugerido"
+/// (<see cref="FilaDeReposicion.Sugerido"/> <c>null</c>, <c>reposicion</c> sin configurar): son dos
+/// causas distintas (falta cargar un proveedor vs. falta configurar un <c>reposicion</c>) detrás de
+/// un número, y confundirlas es exactamente lo que esta doc-comment y la spec ratificada
+/// (reposicion-de-stock: "sinProveedor counts the Sin proveedor group, not a missing suggestion")
+/// prohíben.</summary>
+public sealed record ResumenDeReposicion(int IdPuntoVenta, int BajoMinimo, int SinStock, int SinProveedor);
+
 /// <summary>Fila de <c>GET /api/reportes/stock/rotacion</c> (stage-13-stock-inteligente, Slice 5;
 /// design: Interfaces / Contracts, decisión 14). Solo existe porque el artículo tiene AL MENOS UN
 /// movimiento calificado (<c>venta</c> o <c>anulacion</c> de venta) en la ventana — un artículo sin

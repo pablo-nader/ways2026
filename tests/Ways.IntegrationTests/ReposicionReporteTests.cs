@@ -396,4 +396,109 @@ public class ReposicionReporteTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
+
+    // ---- Slice 7 (tasks 7.7-7.9): GET /api/reportes/stock/reposicion/resumen — el tile de Tablero
+    // reusa ObtenerReposicionAsync y foldea sus propias filas (design decisión 8/9), tercer campo
+    // sinProveedor (orchestrator decision 5, tasks.md — nunca la sinSugerencia vieja de design.md).
+
+    private static async Task<ResumenDeReposicion> ObtenerResumenAsync(HttpClient cliente, int idPuntoVenta)
+    {
+        var respuesta = await cliente.GetAsync($"/api/reportes/stock/reposicion/resumen?idPuntoVenta={idPuntoVenta}");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        return JsonSerializer.Deserialize<ResumenDeReposicion>(cuerpo, OpcionesJson)!;
+    }
+
+    // ---- task 7.7: MUTATION TARGET — el fold de sinStock (f.Cantidad <= 0) ------------------------
+
+    /// <summary>Nombra la cláusula bajo prueba (mutation-proof-tests): el fold <c>f.Cantidad &lt;= 0</c>
+    /// de <c>ObtenerResumenDeReposicionAsync</c> — con <c>&lt; 0</c>, el artículo EXACTAMENTE en cero
+    /// (el caso más urgente: la góndola está vacía AHORA) deja de contar como <c>sinStock</c>. También
+    /// cubre task 7.8 (spec reposicion-de-stock: "The tile's three counts equal the report's folded
+    /// values"): los tres conteos DISTINTOS entre sí (7/2/1) para que ningún swap pase desapercibido
+    /// (mutation-proof-tests regla 6). EVIDENCIA (mutación aplicada durante el apply de esta slice):
+    /// mutar <c>f.Cantidad &lt;= 0</c> a <c>f.Cantidad &lt; 0</c> en <c>ServicioDeReportesDeStock.cs</c>
+    /// y correr este test AISLADO (<c>--filter FullyQualifiedName~LosTresConteosDelTileIgualanElFoldeoDelReporte</c>)
+    /// hace fallar el <c>Assert.Equal(2, resumen.SinStock)</c> (el artículo en cantidad exactamente 0
+    /// deja de contarse, <c>SinStock</c> pasa a 1); revertida la mutación, el test vuelve a
+    /// verde.</summary>
+    [Fact]
+    public async Task LosTresConteosDelTileIgualanElFoldeoDelReporte()
+    {
+        var ctx = await PrepararAsync(nameof(LosTresConteosDelTileIgualanElFoldeoDelReporte));
+
+        var provUno = await SembrarProveedorAsync(ctx, "Proveedor resumen 1");
+        var provDos = await SembrarProveedorAsync(ctx, "Proveedor resumen 2");
+        var provTres = await SembrarProveedorAsync(ctx, "Proveedor resumen 3");
+
+        // Seis filas CON proveedor — dos de ellas sinStock (una en cantidad EXACTAMENTE 0, el
+        // mutation target; otra en saldo negativo, legal per ReglaDeReposicion).
+        var artA = await SembrarArticuloAsync(ctx, "resumen-a", provUno);
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artA, cantidad: 3m, minimo: 5m, reposicion: null);
+        var artB = await SembrarArticuloAsync(ctx, "resumen-b-cero", provUno);
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artB, cantidad: 0m, minimo: 2m, reposicion: null);
+        var artC = await SembrarArticuloAsync(ctx, "resumen-c-negativo", provDos);
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artC, cantidad: -1m, minimo: 1m, reposicion: null);
+        var artD = await SembrarArticuloAsync(ctx, "resumen-d", provDos);
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artD, cantidad: 4m, minimo: 6m, reposicion: null);
+        var artE = await SembrarArticuloAsync(ctx, "resumen-e", provTres);
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artE, cantidad: 1m, minimo: 10m, reposicion: null);
+        var artF = await SembrarArticuloAsync(ctx, "resumen-f", provTres);
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artF, cantidad: 2m, minimo: 3m, reposicion: null);
+
+        // Séptima fila SIN proveedor — la única que cuenta en sinProveedor.
+        var artG = await SembrarArticuloAsync(ctx, "resumen-g-sin-proveedor");
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artG, cantidad: 5m, minimo: 8m, reposicion: null);
+
+        var reposicion = await ObtenerReposicionAsync(ctx.Admin, ctx.IdPuntoVenta);
+        Assert.Equal(7, reposicion.Filas.Count);
+
+        var resumen = await ObtenerResumenAsync(ctx.Admin, ctx.IdPuntoVenta);
+
+        Assert.Equal(7, resumen.BajoMinimo);
+        Assert.Equal(2, resumen.SinStock);
+        Assert.Equal(1, resumen.SinProveedor);
+    }
+
+    // ---- task 7.9: discriminación — sinProveedor cuenta el grupo Sin proveedor, no "sin sugerido" --
+
+    /// <summary>spec reposicion-de-stock: "sinProveedor counts the Sin proveedor group, not a missing
+    /// suggestion" — tres filas bajo mínimo, con cardinalidades DISCRIMINANTES para que el mutante
+    /// <c>f.IdProveedor is null</c> → <c>f.Sugerido is null</c> no sobreviva: una sin proveedor CON
+    /// sugerido (grupo sinProveedor = 1), y DOS con proveedor SIN sugerido (grupo "sin sugerido" = 2,
+    /// asimétrico respecto de sinProveedor). Las magnitudes de cantidad/mínimo también son distintas
+    /// entre sí para que <c>bajoMinimo</c>/<c>sinStock</c>/<c>sinProveedor</c> (3/0/1) no colisionen y
+    /// ningún swap entre los tres campos del resumen sobreviva.</summary>
+    [Fact]
+    public async Task SinProveedorCuentaElGrupoSinProveedorNoElSugeridoAusente()
+    {
+        var ctx = await PrepararAsync(nameof(SinProveedorCuentaElGrupoSinProveedorNoElSugeridoAusente));
+
+        // Sin proveedor, CON sugerido (reposicion = 32 ⇒ sugerido = 30) — cuenta en sinProveedor.
+        var artSinProveedorConSugerido = await SembrarArticuloAsync(ctx, "discriminacion-sin-proveedor");
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artSinProveedorConSugerido, cantidad: 2m, minimo: 10m, reposicion: 32m);
+
+        // Con proveedor, SIN sugerido (reposicion sin configurar) — NO cuenta en sinProveedor.
+        var provedor = await SembrarProveedorAsync(ctx, "Proveedor discriminación");
+        var artConProveedorSinSugerido = await SembrarArticuloAsync(ctx, "discriminacion-con-proveedor", provedor);
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artConProveedorSinSugerido, cantidad: 3m, minimo: 10m, reposicion: null);
+
+        // TERCERA fila (rompe la simetría 1/1): también con proveedor, también SIN sugerido, pero
+        // con cantidad/mínimo distintos y sin agotar stock — hace que "sin sugerido" (2) diverja de
+        // sinProveedor (1); si el fold se equivoca de campo, el resumen da 2 en vez de 1.
+        var artConProveedorSinSugeridoDos = await SembrarArticuloAsync(ctx, "discriminacion-con-proveedor-dos", provedor);
+        await SembrarStockAsync(ctx, ctx.IdPuntoVenta, artConProveedorSinSugeridoDos, cantidad: 4m, minimo: 6m, reposicion: null);
+
+        var reposicion = await ObtenerReposicionAsync(ctx.Admin, ctx.IdPuntoVenta);
+        Assert.Equal(3, reposicion.Filas.Count);
+        Assert.Equal(30m, reposicion.Filas.Single(f => f.IdArticulo == artSinProveedorConSugerido).Sugerido);
+        Assert.Null(reposicion.Filas.Single(f => f.IdArticulo == artConProveedorSinSugerido).Sugerido);
+        Assert.Null(reposicion.Filas.Single(f => f.IdArticulo == artConProveedorSinSugeridoDos).Sugerido);
+
+        var resumen = await ObtenerResumenAsync(ctx.Admin, ctx.IdPuntoVenta);
+
+        Assert.Equal(3, resumen.BajoMinimo);
+        Assert.Equal(0, resumen.SinStock);
+        Assert.Equal(1, resumen.SinProveedor);
+    }
 }
