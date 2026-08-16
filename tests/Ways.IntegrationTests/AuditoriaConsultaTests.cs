@@ -188,7 +188,12 @@ public class AuditoriaConsultaTests(WaysApiFixture fixture) : IClassFixture<Ways
             ctx.IdTenant, null, ctx.IdActorAdmin, "precio.cambio", "articulo", 41,
             new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), null, "{\"monto\":100}");
         ids["R2"] = await SembrarFilaAsync(
-            ctx.IdTenant, ctx.IdPuntoVenta1, ctx.IdActorX, "venta.anulacion", "comprobante_venta", 501,
+            // idEntidad = 41 a propósito, COLISIONANDO con R1/R4/R5 (articulo 41) bajo una
+            // entidad distinta — sin esto, el clon entidad==null||... es indistinguible de
+            // idEntidad==null||... (mutation-proof-tests regla 3: sin la colisión, idEntidad=41
+            // ya identifica el mismo subconjunto por sí solo, así que mutar la cláusula de
+            // entidad no cambiaría nada observable).
+            ctx.IdTenant, ctx.IdPuntoVenta1, ctx.IdActorX, "venta.anulacion", "comprobante_venta", 41,
             new DateTimeOffset(2026, 2, 1, 0, 0, 0, TimeSpan.Zero), "{\"estado\":\"emitido\"}", "{\"estado\":\"anulado\"}");
         ids["R3"] = await SembrarFilaAsync(
             ctx.IdTenant, ctx.IdPuntoVenta2, ctx.IdActorY, "compra.anulacion", "comprobante_compra", 601,
