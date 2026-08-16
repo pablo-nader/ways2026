@@ -398,6 +398,15 @@ optional.
   snapshot.
 - [ ] 1.30 Run `judgment-day` on the slice diff; fix confirmed issues;
   re-judge until clean.
+  - Ronda 1 (juez B): 0 severos; 3 WARNING (findings 1-3). Fixed y con
+    evidencia de mutación (commit `7b30f73`): finding 1 (denylist/snake_case
+    ahora recursiva sobre diccionarios anidados), finding 2 (test que
+    discrimina tenant de sesión vs tenant sujeto, design decisión 7), finding
+    3 (doc-honesty de `AccionAuditada` + test que congela el catálogo de 12
+    pares). Finding 4 (`comando.Transaction`) registrado como mutante
+    equivalente bajo el driver Npgsql — sin fix (no hay assertion barata que
+    lo discrimine sin acoplarse al driver). Finding 5 (CHECKs de la
+    migración) es survivor CONTRACTUADO por el gate §B — no aplica fix.
 - [ ] 1.31 Branch `feat/stage14-slice1-tabla-auditoria` off `main`; PR;
   merge stacked-to-main.
 
