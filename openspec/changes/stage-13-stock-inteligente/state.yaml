@@ -178,8 +178,9 @@ phases:
       order: 1 blocks everything; [2→3] and [4→5→6] disjoint and
       parallel; 7 needs 3+4+5. All 42 spec scenarios (11 requirements
       across the 4 delta specs) placed in exactly one slice each,
-      cross-checked against the running total. All 12 named mutation
-      targets from design.md's table placed in exactly one slice
+      cross-checked against the running total. All 13 named mutation
+      targets from design.md's table (count corrected at verify, W1)
+      placed in exactly one slice
       (Orchestrator Decision 7), including the 4 explicitly requested by
       the orchestrator: the -SUM neteo filter with
       anulacion-sin-id_comprobante_compra (slice 5), the SET-sin-cantidad
@@ -216,13 +217,33 @@ phases:
       before apply: NO (auto-chain + stacked-to-main already resolved in
       state.yaml, honoured unchanged).
   apply:
-    status: pending
+    status: done
     artifact: tasks.md + PRs
     depends_on: [tasks]
+    note: >-
+      7 slices, PRs #115-#121 merged stacked-to-main (2026-08-14..16).
+      Judgment-day CLEAN per slice (~20 confirmed findings fixed with
+      mutation evidence; slice 3 took the longest cycle of the program —
+      3 judge-A rounds on the ghost-row mechanism, closed structurally
+      with the filaFantasma state mirror). Gate SIN-CAMBIOS-DE-SCHEMA
+      held the whole stage. Full suites post-final-merge: Domain 452 ·
+      Application 257 · Integration 1119 · vitest 660. Slice 3 shipped as
+      a de facto size:exception (1450 additions from judgment-day test
+      depth; pre-identified cut not exercised) — formally acknowledged at
+      verify (W3) and to be recorded in the archive report.
   verify:
-    status: pending
+    status: done
     artifact: verify-report.md
     depends_on: [apply]
+    note: >-
+      PASS WITH WARNINGS (2026-08-16, HEAD 7683654): 0 CRITICAL; W1
+      mutation-target count drift (11/12/13 across artifacts — corrected
+      to 13 in tasks.md and this file); W2 stale phase statuses (fixed
+      here); W3 slice-3 de facto size:exception (acknowledged, archive
+      report must record it). All 11 requirements / 42 scenarios mapped
+      to passing tests; gates 2 (sin-schema) and 3 (checkout protection,
+      VentasCheckoutTests 16/17 byte-identical) PASS; LectorDeSerieTemporal
+      still the only raw-SQL reader.
   archive:
     status: pending
     artifact: archive-report.md

@@ -46,9 +46,12 @@
    `ServicioDeStock`'s existing upsert tests from prior stages, so this
    stage adds no new backstop-translation surface. Declared explicitly per
    the instruction to name the absence, not silently skip the skill.
-7. **`mutation-proof-tests` compliance**: the eleven named mutation targets
-   in design.md's table (12 rows, one of which — slice 2's — is folded into
-   the existencias projection) are each placed in exactly one slice below.
+7. **`mutation-proof-tests` compliance**: the thirteen named mutation
+   targets in design.md's table are each placed in exactly one slice below
+   (1.9-1.12, 2.4, 4.6-4.8, 5.6-5.9, 7.7). *(Count corrected at verify —
+   W1: the narrative previously said "eleven"/"twelve" in different
+   artifacts; the table's actual row count is 13, all placed and
+   evidenced, 4.6 disproven with recorded evidence.)*
    Every one requires recorded apply-time evidence (mutation applied → named
    failing test → reverted → green) in its slice's PR body, per the design's
    binding verify criterion 3.
@@ -1543,10 +1546,11 @@ not a task, so not re-numbered.
   enforced per-slice above (1.3, 2.1, 4.3, 5.3, 7.2), including the explicit
   note that rotation fields are **absent by design** in slice 4 (added by
   slice 5), never a silent omission.
-- **`mutation-proof-tests` compliance**: the twelve named mutation targets
-  in design.md's table are each placed in exactly one slice above (§
-  Orchestrator Decision #7); every one requires recorded apply-time
-  evidence in its slice's PR body.
+- **`mutation-proof-tests` compliance**: the thirteen named mutation
+  targets in design.md's table are each placed in exactly one slice above
+  (§ Orchestrator Decision #7, count corrected at verify); every one
+  carries recorded apply-time evidence, with 4.6 disproven (SQL
+  three-valued logic) rather than evidenced.
 - **`react-async-state`/`web-descriptor-tests` compliance**: slices 3, 6
   and 7 are the only web-touching slices; every new/modified pure helper
   ships a colocated descriptor test in the same slice.
