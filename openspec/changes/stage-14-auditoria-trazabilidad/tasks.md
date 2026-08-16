@@ -1090,13 +1090,15 @@ depends on it.
 — `5a` (policy + route with date/`accion`/actor filters + 403s) and `5b`
 (`entidad`/`idEntidad`/PV filters + pagination).
 
-- [ ] 5.1 Modify `src/Ways.Api/Seguridad/Politicas.cs`: `const string
+- [x] 5.1 Modify `src/Ways.Api/Seguridad/Politicas.cs`: `const string
   LecturaDeAuditoria = "lectura_auditoria"`; `.AddPolicy(LecturaDeAuditoria,
   p => p.RequireAuthenticatedUser().RequireClaim(ClaimsWays.RolId,
   ((int)RolConocido.Admin).ToString()))` — the exact shape of
   `LecturaDeRentabilidad`, **not** stacked over `LecturaDeReportes`.
-  *(design decision 6)*
-- [ ] 5.2 Create `src/Ways.Application/Auditoria/Contratos.cs`:
+  *(design decision 6)* Covered at the policy-composition level too:
+  `PoliticasTests.LecturaDeAuditoriaAdmiteSoloAdmin` (Theory, 4 roles, no
+  Docker — same shape as `LecturaDeRentabilidadAdmiteSoloAdmin`).
+- [x] 5.2 Create `src/Ways.Application/Auditoria/Contratos.cs`:
   `FiltrosDeAuditoria(Desde, Hasta, Accion, IdActor, Entidad, IdEntidad,
   IdPuntoVenta)`, `FilaDeAuditoria(IdAuditoria, CreadoEl, Accion, Entidad,
   IdEntidad, IdActor, Actor, IdPuntoVenta, ValorAnterior, ValorNuevo)`,
@@ -1105,7 +1107,7 @@ depends on it.
   `ConstruirQuery`, no field accepted and silently discarded; doc-comment
   `Actor == null` as "not visible to this session", never "no actor"
   (`IdActor` always travels).
-- [ ] 5.3 Create
+- [x] 5.3 Create
   `src/Ways.Application/Auditoria/ServicioDeConsultaDeAuditoria.cs`:
   `ConstruirQuery(filtros)` — `LEFT JOIN` to `db.Usuarios.IgnoreQueryFilters(
   ["BajaLogica"])` via `DefaultIfEmpty()`, `orderby CreadoEl descending,
@@ -1114,70 +1116,193 @@ depends on it.
   `Skip((pagina-1)*tamanio).Take(tamanio)` with `pagina = Math.Max(pagina,
   1)`, `tamanio = Math.Clamp(tamanio, 1, 200)`; `idEntidad` without
   `entidad` → `400 entidad_requerida`.
-- [ ] 5.4 Create `src/Ways.Api/Endpoints/AuditoriaEndpoints.cs`: `GET
+  **DEVIATION (registered):** the entity's real PK property is `Id`
+  (`Auditoria.cs`, `AuditoriaConfiguration.cs` — slice 1), not the
+  `IdAuditoria` design/task prose used before the entity landed — the
+  tiebreaker is `orderby ... a.Id descending`, same underlying column
+  (`id_auditoria`). `idEntidad`-without-`entidad` validation lives at the
+  TOP of `ConstruirQuery` (not a separate step in `ConsultarAsync`) so
+  slice 6's `ConsultarParaExportacionAsync` — not declared yet — inherits
+  it automatically by reusing the same private method, per design decision
+  13 ("one `ConstruirQuery`, two consumers").
+- [x] 5.4 Create `src/Ways.Api/Endpoints/AuditoriaEndpoints.cs`: `GET
   /api/auditoria?desde&hasta&accion&idActor&entidad&idEntidad&idPuntoVenta&pagina&tamanio`
   under `.RequireAuthorization(Politicas.LecturaDeAuditoria)`.
-- [ ] 5.5 [P] **Mutation target**: `ThenByDescending(a.IdAuditoria)` on the
+  **Note (plumbing, not a scope deviation):** wiring this route required
+  two mechanical additions the task/design prose didn't spell out
+  line-by-line but every prior `MapearX()` slice needed the same way:
+  `app.MapearAuditoria();` in `Program.cs` and
+  `services.AddScoped<ServicioDeConsultaDeAuditoria>();` in
+  `Ways.Application/DependencyInjection.cs` — without either, the route
+  404s / DI throws at first request.
+- [x] 5.5 [P] **Mutation target**: `ThenByDescending(a.IdAuditoria)` on the
   ordering — delete it — the tied-`creado_el` pagination test (5.9) must
-  fail. *(slice 5 row 1)*
-- [ ] 5.6 [P] **Mutation target**: `candidatos.DefaultIfEmpty()` (the LEFT
+  fail. *(slice 5 row 1)* **Evidence**: mutated (`orderby a.CreadoEl
+  descending, a.Id descending` → `orderby a.CreadoEl descending`) →
+  `dotnet build --no-incremental` → `--filter
+  FullyQualifiedName~PaginacionConCreadoElEmpatadoNoRepiteNiSalteaYRespetaElOrdenDescendentePorId`
+  → FAILED (`Expected: [5,4,3,2,1], Actual: [2,1,3,4,5]` — the concatenated
+  3-page sequence stopped matching the expected strict descending-id order)
+  → reverted → green.
+- [x] 5.6 [P] **Mutation target**: `candidatos.DefaultIfEmpty()` (the LEFT
   JOIN) → an inner join — the root-actor/soft-deleted-actor visibility test
-  (5.10) must fail. *(slice 5 row 2)*
-- [ ] 5.7 [P] **Mutation target**: `IgnoreQueryFilters(["BajaLogica"])` —
+  (5.10) must fail. *(slice 5 row 2)* **Evidence**: mutated (`join u in
+  ... into actores from u in actores.DefaultIfEmpty()` → plain `join u in
+  ... on a.IdActor equals u.Id`, no `into`/`DefaultIfEmpty`) → build →
+  `--filter
+  FullyQualifiedName~UnActorSoftDeletedSigueMostrandoElNombreYUnActorRootApareceConActorNuloEIdActorPresente`
+  → FAILED (`InvalidOperationException: Sequence contains no matching
+  element` — the root-actor row vanished from the result set entirely,
+  `.Single()` found nothing) → reverted → green.
+- [x] 5.7 [P] **Mutation target**: `IgnoreQueryFilters(["BajaLogica"])` —
   remove it — the soft-deleted-actor-name half of 5.10 must fail. *(slice 5
-  row 3)*
-- [ ] 5.8 [P] **Mutation target**: each `if (filtro is { } x)` clause in
+  row 3)* **Evidence**: mutated (`db.Usuarios.IgnoreQueryFilters(["BajaLogica"])`
+  → `db.Usuarios`) → build → same filter as 5.6 → FAILED
+  (`Expected: "vendedor-de-baja", Actual: null` — the soft-deleted actor's
+  row survived the LEFT JOIN but its name disappeared, as predicted) →
+  reverted → green.
+- [x] 5.8 [P] **Mutation target**: each `if (filtro is { } x)` clause in
   `ConstruirQuery` — delete one at a time — the matching filter's dedicated
   test (5.11-5.16, asymmetric seeds per filter) must fail, with no other
   clause producing the same subset. *(slice 5 row 4; mutation-proof-tests
-  rules 4/6)*
-- [ ] 5.9 [P] Integration: pagination with `creado_el` tied across every
+  rules 4/6)* Implemented as one combined `where (... || ...) && (... ||
+  ...) && ...` (design's own snippet shape), so each mutation replaces one
+  AND-term with `true`. **Evidence, one clause at a time, `dotnet build
+  --no-incremental` between each**: `Desde` → true →
+  `FiltroDeFechaDevuelveElSubconjuntoEsperado` FAILED (`Expected: 3, Actual:
+  5`) → reverted; `Hasta` → true → same test FAILED (`Expected: 3, Actual:
+  6`) → reverted; `Accion` → true →
+  `FiltroDeAccionDevuelveElSubconjuntoEsperado` FAILED (`Expected: 2,
+  Actual: 8`) → reverted; `IdActor` → true →
+  `FiltroDeActorDevuelveElSubconjuntoEsperado` FAILED (`Expected: 3, Actual:
+  8`) → reverted; `Entidad` → true →
+  `FiltroDeEntidadMasIdEntidadDevuelveSoloLaHistoriaDeEseAgregado` FAILED
+  (`Expected: 3, Actual: 4`) → reverted; `IdEntidad` → true → same test
+  FAILED (`Expected: 3, Actual: 5`) → reverted; `IdPuntoVenta` → true →
+  `FiltroDePuntoDeVentaDevuelveElSubconjuntoEsperado` FAILED (`Expected: 3,
+  Actual: 8`) → reverted → 16/16 green.
+  **DEVIATION (registered, mutation-proof-tests rule 3):** the `Entidad`/
+  `IdEntidad` pair was originally UNDISCRIMINATING — the fixture's
+  `idEntidad` values never collided across different `entidad`s, so
+  `idEntidad=41` alone already identified the same 3-row subset regardless
+  of the `entidad` clause (an overdetermined confound, same defect class
+  the skill documents). Fixed by making R2 (`comprobante_venta`) carry
+  `idEntidad=41` too — colliding with the `articulo`/41 rows — which is
+  what actually makes the `Entidad` mutation observable (see the 4-vs-3
+  evidence above).
+- [x] 5.9 [P] Integration: pagination with `creado_el` tied across every
   row (RelojFijo) — page 2 neither repeats nor skips a row, resolving 5.5's
   evidence.
-- [ ] 5.10 [P] Integration — actor visibility: a row whose actor is
+  `AuditoriaConsultaTests.PaginacionConCreadoElEmpatadoNoRepiteNiSalteaYRespetaElOrdenDescendentePorId`
+  — asserts the concatenated 3-page sequence (tamanio=2) equals the full
+  expected strictly-descending-by-id order (design Testing Strategy:
+  "order as a sequence, not a set"), not merely "no dup/skip" as a set.
+- [x] 5.10 [P] Integration — actor visibility: a row whose actor is
   soft-deleted still shows the actor's name; a row whose actor is a
   root/platform user, read by a tenant Admin, appears with `actor: null`
   and `idActor` present — resolving 5.6 and 5.7's evidence. *(design
   decision 14)*
-- [ ] 5.11 [P] Integration: `desde`/`hasta` returns its expected subset
+  `AuditoriaConsultaTests.UnActorSoftDeletedSigueMostrandoElNombreYUnActorRootApareceConActorNuloEIdActorPresente`.
+- [x] 5.11 [P] Integration: `desde`/`hasta` returns its expected subset
   (asymmetric seeds — every date, actor, entidad and PV distinct).
-- [ ] 5.12 [P] Integration: `accion` returns its expected subset; an
+  `AuditoriaConsultaTests.FiltroDeFechaDevuelveElSubconjuntoEsperado` — 8-row
+  fixture (`SembrarEscenarioDeFiltrosAsync`), every row's date/accion/actor/
+  entidad+id/PV mutually distinct (mutation-proof-tests rule 6).
+- [x] 5.12 [P] Integration: `accion` returns its expected subset; an
   unknown `accion` returns `200` with zero rows. *(design decision 15)*
-- [ ] 5.13 [P] Integration: `idActor` returns its expected subset.
-- [ ] 5.14 [P] Integration: `entidad` + `idEntidad` returns exactly that
+  `FiltroDeAccionDevuelveElSubconjuntoEsperado` +
+  `UnaAccionDesconocidaDevuelve200ConCeroFilas`.
+- [x] 5.13 [P] Integration: `idActor` returns its expected subset.
+  `FiltroDeActorDevuelveElSubconjuntoEsperado`.
+- [x] 5.14 [P] Integration: `entidad` + `idEntidad` returns exactly that
   aggregate's rows — 3 rows for articulo 41, 2 for articulo 42. *(spec:
   "Filtering by entidad + id_entidad returns only that aggregate's
   history")*
-- [ ] 5.15 [P] Integration: `idPuntoVenta` returns its expected subset;
+  `FiltroDeEntidadMasIdEntidadDevuelveSoloLaHistoriaDeEseAgregado` — asserts
+  both aggregates (41 and 42), not just the spec's literal one.
+- [x] 5.15 [P] Integration: `idPuntoVenta` returns its expected subset;
   unset ("todos") includes `id_punto_venta IS NULL` rows. *(spec:
   "Tenant-wide rows appear under 'todos' punto de venta")*
-- [ ] 5.16 [P] Integration: `idEntidad` without `entidad` → `400
+  `FiltroDePuntoDeVentaDevuelveElSubconjuntoEsperado` (both PVs) +
+  `SinFiltroDePuntoDeVentaTodosIncluyeLasTenantWideYAmbosPuntosDeVenta`
+  (also resolves 5.18's "Admin reads across every punto de venta" scenario
+  in the same assertion: both PVs' rows AND the PV-null rows present in one
+  response).
+- [x] 5.16 [P] Integration: `idEntidad` without `entidad` → `400
   entidad_requerida`. *(design decision 16)*
-- [ ] 5.17 [P] **Mutation target**:
+  `IdEntidadSinEntidadRechazaCon400EntidadRequerida` — asserts the status
+  code AND the `codigo` field of the ProblemDetails body.
+- [x] 5.17 [P] **Mutation target**:
   `.RequireAuthorization(Politicas.LecturaDeAuditoria)` on `GET
   /api/auditoria` — delete the line — the Supervisor-403 test (5.18) must
-  fail. *(slice 5 row 5)*
-- [ ] 5.18 [P] Integration — authorization: Supervisor → `403`; Vendedor →
+  fail. *(slice 5 row 5)* **Evidence**: mutated (`.RequireAuthorization(...)`
+  line deleted from the `MapGroup`) → build → `--filter
+  FullyQualifiedName~UnSupervisorEsRechazado` → FAILED (`Expected:
+  Forbidden, Actual: OK` — the group fell back to `Program.cs`'s
+  authenticated-only fallback policy, letting any logged-in role through) →
+  reverted → green.
+- [x] 5.18 [P] Integration — authorization: Supervisor → `403`; Vendedor →
   `403`; Root → `403`; Admin → `200`, sees rows from **every** punto de
   venta of the tenant. *(spec: "Admin reads across every punto de venta of
   the tenant", "A Supervisor is rejected", "A Vendedor is rejected")*
-- [ ] 5.19 [P] **Mutation target**: the tenant/RLS filter of the query —
+  `UnSupervisorEsRechazado`, `UnVendedorEsRechazado`, `UnRootEsRechazado`,
+  `UnAdminEsAceptado` (+ the cross-PV assertion inside 5.15's
+  `SinFiltroDePuntoDeVentaTodosIncluyeLasTenantWideYAmbosPuntosDeVenta`).
+  Supervisor/Vendedor clients are created ONLY inside these two tests (via
+  `CrearYLoguearAsync`, a real `POST /api/usuarios`) — deliberately kept
+  OUT of the shared `PrepararAsync` scaffolding, because a real alta writes
+  its own `usuario.alta` audit row (slice 2) that would otherwise pollute
+  every exact-count assertion in 5.11-5.16/5.9 (caught this exact
+  contamination on first run: `Expected: 8, Actual: 10` — fixed by moving
+  role-client creation out of the shared setup).
+- [x] 5.19 [P] **Mutation target**: the tenant/RLS filter of the query —
   read with another tenant's GUC — the tenant-isolation test (5.20) must
   fail. *(slice 5 row 6)*
-- [ ] 5.20 [P] Integration — tenant isolation over `ways_app`
+  **DEVIATION (registered, mutation-proof-tests rule 3 — the exact
+  `LotesRlsTests` precedent):** over `ways_app`, RLS alone already isolates
+  regardless of the EF tenant filter — mutating/removing
+  `AplicarFiltroDeTenantEnAuditoria` would NOT make an `ways_app`-based
+  isolation test fail (confound, not a real proof). Routed BELOW the
+  confound, same as `LotesRlsTests.CrearContextoDeOwner`: a dedicated test
+  runs `ServicioDeConsultaDeAuditoria.ConsultarAsync` over a
+  `WaysDbContext` built on the OWNER connection (`ways_owner`, bypasses
+  RLS) — the ONLY mechanism left able to isolate is the EF query filter
+  itself. **Evidence**: mutated (commented out
+  `AplicarFiltroDeTenantEnAuditoria(modelBuilder);` in
+  `WaysDbContext.OnModelCreating`) → `dotnet build --no-incremental` →
+  `--filter
+  FullyQualifiedName~ElFiltroDeTenantDeLaConsultaAislaAunSobreUnaConexionQueBypaseaRls`
+  → FAILED (`Assert.DoesNotContain() Failure: Item found in set` — tenant
+  A's row leaked into tenant B's owner-connection session) → reverted →
+  green.
+- [x] 5.20 [P] Integration — tenant isolation over `ways_app`
   (`mutation-proof-tests` rule 5): row-count isolation, plus an Admin of
   tenant B never seeing tenant A's rows through the endpoint.
-- [ ] 5.21 Gate guard: `has-pending-model-changes` clean; zero new files in
-  `Migraciones/`.
+  `UnAdminDeOtroTenantNuncaVeFilasDelTenantAjenoATravesDelEndpoint` (HTTP,
+  full stack, `ways_app`) +
+  `ElFiltroDeTenantDeLaConsultaAislaAunSobreUnaConexionQueBypaseaRls` (the
+  genuinely discriminating half, 5.19's evidence — see its DEVIATION note).
+- [x] 5.21 Gate guard: `has-pending-model-changes` clean; zero new files in
+  `Migraciones/`. **Confirmed**: `dotnet ef migrations
+  has-pending-model-changes --project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure` → "No changes have been made
+  to the model since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
 - [ ] 5.22 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  *(orchestrator — out of `sdd-apply`'s scope per the launch prompt)*
 - [ ] 5.23 Branch `feat/stage14-slice5-consulta` off `main` (parent:
-  slice 1); PR; merge stacked-to-main.
+  slice 1); PR; merge stacked-to-main. *(branch already exists — this
+  worktree runs on it, created off `main` at `5fe20f1` per the launch
+  prompt; PR creation/merge is orchestrator work)*
 
 **Test plan**: 6 mutation targets (5.5-5.8, 5.17, 5.19), per-filter tests
 ×6 (5.11-5.16), tied-pagination (5.9), actor visibility (5.10),
 authorization ×4 roles (5.18), tenant isolation (5.20).
 
-**Verify**: `dotnet test --filter FullyQualifiedName~Auditoria`
+**Verify**: `dotnet test --filter FullyQualifiedName~Auditoria` → **60/60
+green** (16 new `AuditoriaConsultaTests` + 4 new `PoliticasTests` theory
+cases + 40 pre-existing Auditoria-filtered tests from slices 1-4,
+unaffected).
 
 ---
 
