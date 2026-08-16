@@ -1487,6 +1487,22 @@ rather than retracting a published DTO field.
   ambas celdas de Sugerido asertadas con valores distintos por fila.
   Evidencia de mutación real por hallazgo (mutar → build/test falla →
   revert → verde) en los commits de esta ronda.
+  **Ronda 1, juez A**: 0 hallazgos severos. (WARNING, autorizado, cerrado
+  test-only) `RutasSinLecturaDeRentabilidad` (la `TheoryData` del único
+  test Supervisor-aceptado) no había sido extendida con
+  `stock/reposicion/resumen` ni `stock/vencimientos/resumen` — una
+  regresión que hiciera `Forbidden` al Supervisor en esas rutas pasaría
+  inadvertida; fix: sumadas las dos rutas a la lista. Evidencia de
+  mutación real: stackear `.RequireAuthorization(Politicas.LecturaDeRentabilidad)`
+  sobre el `MapGet` de `reposicion/resumen` → build → el test
+  Supervisor-aceptado FALLA para esa ruta (`Expected: OK / Actual:
+  Forbidden`) → `git checkout --` → 44/44 verde. (SUGGESTION, autorizado,
+  cerrado test-only) los nombres `UnVendedorEsRechazadoEnLasNueveRutas` /
+  `UnRootEsRechazadoEnLasNueveRutas` / `UnAdminEsAceptadoEnLasNueveRutas`
+  / `UnSupervisorEsAceptadoEnLasSieteRutasSinLecturaDeRentabilidad` ya no
+  describían las 11/9 entradas reales; renombrados sin el numeral
+  (`...EnTodasLasRutasDeReportes`,
+  `UnSupervisorEsAceptadoEnLasRutasSinLecturaDeRentabilidad`).
 - [ ] 7.14 Branch `feat/stage13-slice7-tile-y-sugerencia` off `main`
   (parent: slices 3+4+5); PR; merge stacked-to-main. **If the slice
   overflows at apply time, drop tasks 7.6/7.11 (the `Sugerido` column) per
