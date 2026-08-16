@@ -1,0 +1,66 @@
+change: stage-14-auditoria-trazabilidad
+phase: explore
+status: done
+artifact_store: openspec
+execution_mode: automatic-autonomous
+delivery_strategy: auto-chain
+chain_strategy: stacked-to-main
+db_gate: PENDIENTE
+db_gate_scope: >-
+  La etapa CASI SEGURO requiere migración (tabla nueva `auditoria` — modelo
+  mínimo tentativo en explore.md). El gate se ejercerá FORMALMENTE sobre el
+  'Modelo de datos propuesto' del proposal, bajo mandato autónomo delegado
+  (mismo patrón que el gate real de la etapa 12): tabla, columnas, PK bigint
+  identity, FK id_actor a usuarios, scoping id_tenant + id_punto_venta NULL,
+  índice de consulta, RLS HabilitarRlsDeTenant, y las no-decisiones
+  deliberadas que correspondan. db-error-backstops APLICA si la migración
+  trae constraints nuevos (FK id_actor como mínimo).
+phases:
+  explore:
+    status: done
+    artifact: explore.md
+    depends_on: []
+    notes: >-
+      Hallazgo central: los tres ledgers inmutables existentes
+      (movimientos_stock, movimientos_cuenta_corriente, precios con
+      historia) ya son auditoría parcial — el gap real está CONCENTRADO en
+      precios (cero actor) y cambios de rol (cero actor, cero valor
+      anterior), más el caso borde de anulación de comprobante 100%
+      servicio sin CC (sin rastro de quién). IContextoDeUsuario disponible
+      en los seis servicios candidatos: el gap nunca es "no tengo el
+      usuario", es "no lo persisto". Tensión del checkout resuelta por
+      precedente: INSERT crudo vía ExecuteNonQueryAsync sin RETURNING es
+      invisible al guard de 16 queries (doc-comment de
+      InsertarMovimientoStockAsync). Recomendación: tabla única
+      `auditoria` (accion/entidad/id_entidad + jsonb valor_anterior/nuevo)
+      escrita en la MISMA transacción. 7 preguntas listadas para el
+      proposal (retención, primera pasada, autorización de lectura,
+      naming JSON snake_case vs PascalCase heredado, etc.).
+  propose:
+    status: pending
+    artifact: proposal.md
+    depends_on: [explore]
+  spec:
+    status: pending
+    artifact: specs/
+    depends_on: [propose]
+  design:
+    status: pending
+    artifact: design.md
+    depends_on: [propose]
+  tasks:
+    status: pending
+    artifact: tasks.md
+    depends_on: [spec, design]
+  apply:
+    status: pending
+    artifact: tasks.md + PRs
+    depends_on: [tasks]
+  verify:
+    status: pending
+    artifact: verify-report.md
+    depends_on: [apply]
+  archive:
+    status: pending
+    artifact: archive-report.md
+    depends_on: [verify]
