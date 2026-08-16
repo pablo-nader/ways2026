@@ -230,9 +230,43 @@ phases:
       movimiento de ledger (el conteo POR LOTE escribe N), con id_lote en el
       payload.
   tasks:
-    status: pending
+    status: done
     artifact: tasks.md
     depends_on: [spec, design]
+    notes: >-
+      7 slices stacked-to-main, ~2 360 lineas, 28 mutation targets de
+      design.md colocados exactamente una vez (1:8, 2:4, 3:3, 4:3, 5:6,
+      6:3, 7:1), los 12 call sites/acciones ubicados con file:ancla del
+      design. Merge order: 1 bloquea todo -> {2,3,4} paralelos (servicios
+      disjuntos) -> 5 -> 6 -> 7. Gate guard en cada slice
+      (has-pending-model-changes limpio; slice 1 exactamente UNA migracion
+      nueva AuditoriaEtapa14, slices 2-7 cero migraciones adicionales).
+      DOS conflictos spec/design (corridas en paralelo) resueltos por el
+      orquestador y registrados como Orchestrator Decisions 5 y 6 al tope
+      de tasks.md: (1) stock.conteo escribe UNA fila por OPERACION de
+      conteo, no por movimiento de ledger -- la letra del spec
+      (spec.md:97-98, "exactly one row") es autoritativa sobre el texto
+      per-lote de design.md, que queda flageado como stale; el payload
+      agrega movimientos_generados/lotes_afectados/delta_total y la fila
+      se escribe UNA vez despues del loop (slice 4, tarea 4.4, evidencia en
+      4.11); el conteo sin diferencia sigue sin escribir nada. (2)
+      usuario.baja payload = {deleted_at, estado} (EstadoUsuario no tiene
+      "eliminado"; EliminarAsync escribe deleted_at) -- la tabla de
+      payloads del proposal queda como texto stale en ese punto, el call
+      site de design.md (ya correcto) es autoritativo (slice 2, tarea 2.5).
+      Criterio binding: VentasCheckoutTests.cs ausente del diff completo de
+      la etapa (tarea 3.12), no solo su constante 16 sin editar. Skills
+      aplicadas: mutation-proof-tests (28 targets, regla 8 en slice 6),
+      dto-contract-honesty (slices 1/5/7), db-error-backstops (slice 1,
+      SQLSTATE 23503 de fk_auditoria_actor), react-async-state +
+      web-descriptor-tests (slice 7, unica slice web de esta etapa),
+      work-unit-commits (todas). Judgment-day + branch/PR/merge numerados
+      por slice. Sin size:exception previsto; cortes pre-autorizados 1a/1b,
+      5a/5b y el PanelDeCambio droppable de la 7 (cobertura de las 12
+      acciones y fail-closed NUNCA se degradan). Review Workload Forecast:
+      ~2 360 lineas, riesgo Medium (slices 1 y 5 mas cerca del cap),
+      auto-chain/stacked-to-main ya resuelto, decision needed before apply:
+      No.
   apply:
     status: pending
     artifact: tasks.md + PRs
