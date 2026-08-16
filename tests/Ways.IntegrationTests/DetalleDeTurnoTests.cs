@@ -313,6 +313,12 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         // PV que abrió/cerró el turno.
         Assert.Contains($"PV {ctx.IdPuntoVenta}", hoja.Cell(2, 1).GetString());
 
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
+        Assert.Equal(
+            ["Sección", "Detalle", "Fecha", "Importe"],
+            Enumerable.Range(1, 4).Select(c => hoja.Cell(6, c).GetString()));
+
         const int primeraFilaDeDatos = 7;
         var filas = new List<(string Seccion, string Detalle, decimal Importe)>();
         for (var fila = primeraFilaDeDatos; !hoja.Cell(fila, 1).Value.IsBlank; fila++)

@@ -180,6 +180,14 @@ public class ReportesVentasResumenExportTests(WaysApiFixture fixture) : IClassFi
         using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido porque
+        // el test de igualdad de abajo solo lee celdas por posición.
+        const int filaDeEncabezados = 6;
+        Assert.Equal(
+            ["Período", "Neto", "TX", "Ticket promedio"],
+            Enumerable.Range(1, 4).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
+
         // Primera fila de datos es la 7 (fila 6 = título de tabla) — una fila por bucket, EN
         // ORDEN, seguida de la fila de totales.
         const int primeraFilaDeDatos = 7;

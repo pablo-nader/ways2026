@@ -152,6 +152,14 @@ public class ComprasListadoExportTests(WaysApiFixture fixture) : IClassFixture<W
         using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido porque
+        // el test de igualdad de abajo solo lee celdas por posición.
+        const int filaDeEncabezados = 6;
+        Assert.Equal(
+            ["Comprobante", "Proveedor", "Fecha de recepción", "Estado", "Total"],
+            Enumerable.Range(1, 5).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
+
         var zona = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");
         const int primeraFilaDeDatos = 7;
         for (var i = 0; i < pagina.Items.Count; i++)

@@ -172,8 +172,16 @@ public class VencimientosExportTests(WaysApiFixture fixture) : IClassFixture<Way
         using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
-        // Fila 6 = título de tabla, los datos empiezan en la fila 7 — orden fecha_vencimiento ASC
-        // NULLS LAST del lado del servicio, ambas filas con TODAS sus columnas comparadas.
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido porque
+        // el test de igualdad de abajo solo lee celdas por posición.
+        const int filaDeEncabezados = 6;
+        Assert.Equal(
+            ["Artículo", "Nombre", "Lote", "Código de lote", "Vencimiento", "Cantidad", "Estado"],
+            Enumerable.Range(1, 7).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
+
+        // Los datos empiezan en la fila 7 — orden fecha_vencimiento ASC NULLS LAST del lado del
+        // servicio, ambas filas con TODAS sus columnas comparadas.
         const int primeraFilaDeDatos = 7;
         for (var i = 0; i < vencimientos.Filas.Count; i++)
         {

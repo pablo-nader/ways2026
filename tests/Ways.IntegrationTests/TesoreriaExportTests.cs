@@ -146,8 +146,16 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         using var libroXlsx = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libroXlsx.Worksheets.First();
 
-        // Fila 6 = título de tabla; los datos empiezan en la fila 7, mismo orden de cadena que el
-        // libro JSON (inicio/ingreso/egreso/final/concepto/empleado/fecha, design: Slice 7 task 7.5).
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido porque
+        // el test de igualdad de abajo solo lee celdas por posición.
+        const int filaDeEncabezados = 6;
+        Assert.Equal(
+            ["Inicio", "Ingreso", "Egreso", "Final", "Concepto", "Empleado", "Fecha"],
+            Enumerable.Range(1, 7).Select(c => hoja.Cell(filaDeEncabezados, c).GetString()));
+
+        // Los datos empiezan en la fila 7, mismo orden de cadena que el libro JSON
+        // (inicio/ingreso/egreso/final/concepto/empleado/fecha, design: Slice 7 task 7.5).
         var zonaArgentina = TimeZoneInfo.FindSystemTimeZoneById("America/Argentina/Buenos_Aires");
         const int primeraFilaDeDatos = 7;
         for (var i = 0; i < libro.Items.Count; i++)

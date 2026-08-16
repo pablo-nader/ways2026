@@ -324,6 +324,12 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
             ctx.Admin, $"/api/reportes/ventas/por-punto-venta/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
         var hoja = libro.Worksheets.First();
 
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
+        Assert.Equal(
+            ["Punto de venta", "Neto", "TX", "Ticket promedio"],
+            Enumerable.Range(1, 4).Select(c => hoja.Cell(6, c).GetString()));
+
         Assert.Equal(fila.IdPuntoVenta, hoja.Cell(7, 1).GetValue<int>());
         Assert.Equal(fila.Neto, hoja.Cell(7, 2).GetValue<decimal>());
         Assert.Equal(fila.CantidadTx, hoja.Cell(7, 3).GetValue<int>());
@@ -344,6 +350,12 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         using var libro = await DescargarLibroAsync(
             ctx.Admin, $"/api/reportes/ventas/por-vendedor/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
         var hoja = libro.Worksheets.First();
+
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
+        Assert.Equal(
+            ["Vendedor", "Neto", "TX", "Ticket promedio"],
+            Enumerable.Range(1, 4).Select(c => hoja.Cell(6, c).GetString()));
 
         Assert.Equal(fila.IdEmpleado, hoja.Cell(7, 1).GetValue<int>());
         Assert.Equal(fila.Neto, hoja.Cell(7, 2).GetValue<decimal>());
@@ -367,6 +379,12 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
             ctx.Admin, $"/api/reportes/ventas/por-medio-pago/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
         var hoja = libro.Worksheets.First();
 
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
+        Assert.Equal(
+            ["Medio de pago", "Neto", "Cantidad de pagos"],
+            Enumerable.Range(1, 3).Select(c => hoja.Cell(6, c).GetString()));
+
         Assert.Equal(fila.IdMedioPago, hoja.Cell(7, 1).GetValue<int>());
         Assert.Equal(fila.Neto, hoja.Cell(7, 2).GetValue<decimal>());
         Assert.Equal(fila.CantidadPagos, hoja.Cell(7, 3).GetValue<int>());
@@ -388,6 +406,12 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
             ctx.Admin, $"/api/reportes/articulos/top/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
         var hoja = libro.Worksheets.First();
 
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
+        Assert.Equal(
+            ["Artículo", "Descripción", "Cantidad", "Total"],
+            Enumerable.Range(1, 4).Select(c => hoja.Cell(6, c).GetString()));
+
         Assert.Equal(fila.IdArticulo, hoja.Cell(7, 1).GetValue<int>());
         Assert.Equal(fila.Descripcion, hoja.Cell(7, 2).GetString());
         Assert.Equal(fila.Cantidad, hoja.Cell(7, 3).GetValue<decimal>());
@@ -408,6 +432,12 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         using var libro = await DescargarLibroAsync(
             ctx.Admin, $"/api/reportes/compras/por-proveedor/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
         var hoja = libro.Worksheets.First();
+
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
+        Assert.Equal(
+            ["Proveedor", "Total", "Cantidad de compras"],
+            Enumerable.Range(1, 3).Select(c => hoja.Cell(6, c).GetString()));
 
         Assert.Equal(fila.NombreProveedor, hoja.Cell(7, 1).GetString());
         Assert.Equal(fila.Total, hoja.Cell(7, 2).GetValue<decimal>());
@@ -431,6 +461,12 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
             ctx.Admin, $"/api/reportes/gastos/resumen/export?{Rango(ctx.IdEmpresa)}&granularidad=Dia&formato=xlsx");
         var hoja = libro.Worksheets.First();
 
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
+        Assert.Equal(
+            ["Período", "Importe"],
+            Enumerable.Range(1, 2).Select(c => hoja.Cell(6, c).GetString()));
+
         Assert.Equal(reporte.Serie[0].Etiqueta, hoja.Cell(7, 1).GetString());
         Assert.Equal(reporte.Serie[0].Importe, hoja.Cell(7, 2).GetValue<decimal>());
         Assert.Equal(reporte.ImporteTotal, hoja.Cell(8, 2).GetValue<decimal>());
@@ -451,6 +487,12 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         using var libro = await DescargarLibroAsync(
             ctx.Admin, $"/api/reportes/rentabilidad/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
         var hoja = libro.Worksheets.First();
+
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
+        Assert.Equal(
+            ["Artículo", "Descripción", "Venta considerada", "Costo considerado", "Margen", "Margen %"],
+            Enumerable.Range(1, 6).Select(c => hoja.Cell(6, c).GetString()));
 
         Assert.Equal(fila.IdArticulo, hoja.Cell(7, 1).GetValue<int>());
         Assert.Equal(fila.Descripcion, hoja.Cell(7, 2).GetString());
@@ -476,6 +518,12 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         using var libro = await DescargarLibroAsync(
             ctx.Admin, $"/api/reportes/comisiones/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
         var hoja = libro.Worksheets.First();
+
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
+        Assert.Equal(
+            ["Vendedor", "Neto vendido", "Comisión"],
+            Enumerable.Range(1, 3).Select(c => hoja.Cell(6, c).GetString()));
 
         Assert.Equal(fila.IdEmpleado, hoja.Cell(7, 1).GetValue<int>());
         Assert.Equal(fila.NetoVendido, hoja.Cell(7, 2).GetValue<decimal>());
