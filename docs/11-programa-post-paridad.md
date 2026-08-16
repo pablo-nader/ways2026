@@ -187,6 +187,15 @@ permite calcular. **Tamaño:** media.
 pull (pantalla) o push (correo/notificación); si la sugerencia de compra genera directamente
 una orden de compra cuando exista la Etapa 16, o queda como listado.
 
+> **COMPLETA Y ARCHIVADA** (2026-08-16, `2026-08-16-stage-13-stock-inteligente`, 7 PRs
+> #115–#121 + barrido de headers #122). Las tres decisiones abiertas se resolvieron: mínimo
+> **fijo** con sugerencia por rotación **visible pero jamás escrita** (`minimoSugerido` nunca
+> toca `stock.minimo`); alerta **pull** heredada del canal de la 12 (push queda con 3
+> tripwires nombrados en el proposal); la sugerencia queda como **listado** por proveedor
+> (la OC es de la Etapa 16). Cero cambios de schema (gate ratificado y sostenido); el conteo
+> snapshot/variance se re-registró como `stage-13b-conteo-por-planilla` (fila 367). Suites al
+> cierre: Domain 452 · Application 257 · Integration 1119 · vitest 660.
+
 ### Etapa 14 — Auditoría y trazabilidad
 
 **Alcance.** Registro de quién, cuándo y qué en las operaciones sensibles: cambios de precio,

@@ -245,9 +245,31 @@ phases:
       VentasCheckoutTests 16/17 byte-identical) PASS; LectorDeSerieTemporal
       still the only raw-SQL reader.
   archive:
-    status: pending
+    status: done
     artifact: archive-report.md
     depends_on: [verify]
+    note: >-
+      Archived 2026-08-16. Content phase completed by sdd-archive (physical folder
+      move to openspec/changes/archive/ is the orchestrator's deterministic-copy
+      step, not performed here). 4 delta specs merged into openspec/specs/ by
+      mechanical shell copy/Edit with verbatim diff verification (0 differences):
+      stock (+1 requirement/+2 scenarios), reposicion-de-stock (NEW capability, 8
+      requirements/29 scenarios, mechanical cp), parametros-operativos (+1
+      requirement/+4 scenarios), reportes-de-gestion (1 requirement MODIFIED
+      in place, 2->6 scenarios). archive-report.md written with the full delivery
+      record (7 slices, PRs #115-#121, 2026-08-14..16, plus bonus PR #122),
+      the 8+17+12 decisions log, judgment-day summary (~20 confirmed findings,
+      slice 3's 3-round filaFantasma structural fix), W3 (slice-3 de facto
+      size:exception) FORMALLY RECOGNIZED per the review-workload guard, and the
+      stage's backlog (nav-visibility suite-wide gap, line-estimate calibration,
+      owner-reserved pendings, task_bc8c3429). No standalone verify-report.md file
+      was ever committed to this change folder (confirmed via git log --all on
+      the path) — state.yaml's own verify-phase note was used as the highest-
+      ranked available account of sdd-verify's findings, per the Final-State
+      Authority hierarchy. Engram MCP tools were not exposed in this execution
+      environment; retrieval and persistence were filesystem-only (openspec mode),
+      recorded as a deviation from the skill's default engram step. Archived as
+      PASS WITH WARNINGS / intentional-with-warnings, not a clean archive.
 dependencies:
   spec: [propose]
   design: [propose]
