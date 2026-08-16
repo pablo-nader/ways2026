@@ -1335,59 +1335,128 @@ mirrors the JSON endpoint's figures cell by cell, refuses rather than
 truncates at cap. **Rollback**: revert the branch — the JSON endpoint is
 untouched.
 
-- [ ] 6.1 Create `src/Ways.Application/Exportacion/ExportacionDeAuditoria.cs`:
+- [x] 6.1 Create `src/Ways.Application/Exportacion/ExportacionDeAuditoria.cs`:
   `De(IReadOnlyList<FilaDeAuditoria> filas, ctx, zona)` mapping to
   `TablaExportable`, 8 columns in order: `Fecha · Acción · Entidad · Id
   entidad · Actor · Punto de venta · Valor anterior · Valor nuevo`.
   `Actor` null ⇒ `"#<idActor>"`; `Punto de venta` null ⇒ blank cell; both
   payload cells via `Celda.Texto(JsonSerializer.Serialize(elemento))`.
-- [ ] 6.2 Modify `ServicioDeConsultaDeAuditoria.cs`: add
+- [x] 6.2 Modify `ServicioDeConsultaDeAuditoria.cs`: add
   `ConsultarParaExportacionAsync(f, tope, ct)` = `Contar → GuardaDeTope.
   Exigir → Take(tope+1) → Exigir` (the stage-11 listing shape, decision 13),
   mapping from the **same** `FilaDeAuditoria` the JSON endpoint returns.
-- [ ] 6.3 Modify `src/Ways.Api/Endpoints/AuditoriaEndpoints.cs`: `GET
+- [x] 6.3 Modify `src/Ways.Api/Endpoints/AuditoriaEndpoints.cs`: `GET
   /api/auditoria/export?...&formato=xlsx`, `desde`/`hasta` mandatory
   (export house rule), `NombreDeArchivo.Construir("auditoria", alcance,
   desde, hasta)`. No separate `.RequireAuthorization` — inherited by
   co-location under the same route group as `LecturaDeAuditoria`.
-- [ ] 6.4 Modify `src/Ways.Web/src/api/{tipos,auditoria}.ts`: add
+- [x] 6.4 Modify `src/Ways.Web/src/api/{tipos,auditoria}.ts`: add
   `rutasDeExportacion.auditoria(filtros)` (route builder only — the screen
   is slice 7).
-- [ ] 6.5 [P] **Mutation target**: `GuardaDeTope.Exigir` (the second call,
+  **DEVIATION (registered):** `tipos.ts` was NOT modified — `auditoria.ts`
+  is new (Slice 6 is the first web-touching change of this stage; no
+  `clienteDeAuditoria` yet, that's Slice 7 per Suggested Work Units).
+  `tipos.ts` is reserved for genuinely cross-cutting shared types (`ROL`,
+  `EstadoUsuario`, `PaginaDe<T>`); domain-specific filter shapes live in
+  their own domain file — the established precedent is `reportes.ts`
+  itself, whose `FiltrosDeHistoricoDeCajas`/`FiltrosDeTesoreria` are
+  declared locally, not in `tipos.ts`. `auditoria.ts` follows that same
+  precedent with its own `FiltrosDeExportacionDeAuditoria` (narrower than
+  the eventual `dto-contract-honesty` `FiltrosDeAuditoria` mirror —
+  Orchestrator Decision 8 explicitly reserves that mirror for Slice 7's
+  `tipos.ts`, not this slice). `rutasDeExportacion` is its own local
+  object in `auditoria.ts` (same convention as `reportes.ts`'s own
+  `rutasDeExportacion`, not the same JS object — no cross-file coupling),
+  duplicating `fechaIsoConOffset`/`desplazamientoUtcLocal` per the
+  established "no shared date-utils module yet" convention. 3 colocated
+  unit tests (`auditoria.test.ts`) — `npx vitest run src/api/auditoria.test.ts`
+  → 3/3 green; full web suite (`npx vitest run`) → 38 files / 663 tests
+  green, no regressions.
+- [x] 6.5 [P] **Mutation target**: `GuardaDeTope.Exigir` (the second call,
   after `Take(tope+1)`) — delete it — the over-cap export test (6.7) must
   fail (truncates instead of rejecting). *(slice 6 row 1)*
-- [ ] 6.6 [P] **Mutation target**: `ExportacionDeAuditoria`'s header row —
+  **DEVIATION (registered):** the simple over-cap test (6.7 as originally
+  scoped — 4 seeded rows, `TopeDeFilas=3`) does NOT discriminate this
+  mutant: the first `Exigir` (over the real `COUNT(*)`) already rejects
+  before the second `Exigir` is ever reached, so deleting only the second
+  call is an equivalent mutant for that scenario — empirically confirmed
+  (mutated → `UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadRealYNoGeneraArchivo`
+  stayed GREEN). A dedicated race test was added,
+  `UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacion`
+  (same `DbCommandInterceptor` pattern as
+  `VentasListadoExportTests.UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacion`
+  — the second query touching `auditoria` gets a row inserted just before
+  it runs, so `COUNT(*)` sees `tope` rows but the read brings `tope + 1`).
+  **Evidence**: mutated (second `Exigir` deleted) → `dotnet build
+  --no-incremental` → `UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacion`
+  FAILED (`Expected: BadRequest, Actual: OK` — the extra row silently
+  reached the workbook) while `UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadRealYNoGeneraArchivo`
+  stayed green as predicted (confirming it alone is not a valid
+  discriminator) → reverted → both green.
+- [x] 6.6 [P] **Mutation target**: `ExportacionDeAuditoria`'s header row —
   swap the `Valor anterior`/`Valor nuevo` titles — the full-header-row
   assertion (6.8) must fail. *(slice 6 row 2; `mutation-proof-tests` rule
-  8)*
-- [ ] 6.7 [P] Integration: with `TopeDeFilas` lowered below the seeded row
+  8)* **Evidence**: mutated (titles swapped in `Columnas`) → `dotnet build
+  --no-incremental` → `ElExportEsIgualAlListadoJsonCeldaPorCeldaConLosOchoEncabezadosEnOrden`
+  FAILED at the row-6 header assertion (position 6: expected `"Valor
+  anterior"`, got `"Valor nuevo"`) → reverted → green.
+- [x] 6.7 [P] Integration: with `TopeDeFilas` lowered below the seeded row
   count, the export is rejected `400 exportacion_demasiado_grande` and no
   file is generated, resolving 6.5's evidence. *(spec: "The export refuses
   rather than truncates at cap")*
-- [ ] 6.8 [P] Integration — export parity, cell by cell
+  `AuditoriaExportTests.UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadRealYNoGeneraArchivo`.
+  See 6.5's note: this test alone does not discriminate the second
+  `Exigir` — `UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacion`
+  (also under this task) closes that gap.
+- [x] 6.8 [P] Integration — export parity, cell by cell
   (`mutation-proof-tests` rule 8): the same query string on JSON and XLSX
   produce equal figures for every row **and** the complete 8-header-row
   text asserted in order; a tenant-wide row's PV cell is blank; both jsonb
   payload cells equal `JsonSerializer.Serialize` of the JSON endpoint's own
   `JsonElement`. *(spec: "Export figures equal the endpoint's for
   identical filters")*
-- [ ] 6.9 [P] **Mutation target**: `.RequireAuthorization` on `/export` —
+  `AuditoriaExportTests.ElExportEsIgualAlListadoJsonCeldaPorCeldaConLosOchoEncabezadosEnOrden`
+  — 3 seeded rows: one with PV + a resolvable actor name, one tenant-wide
+  (PV NULL, root actor ⇒ `#<idActor>` cell), one with distinct
+  `valorAnterior`/`valorNuevo` content.
+- [x] 6.9 [P] **Mutation target**: `.RequireAuthorization` on `/export` —
   delete the line — the Supervisor-403-on-export test (6.10) must fail.
   *(slice 6 row 3)*
-- [ ] 6.10 [P] Integration — authorization: Supervisor → `403` on
+  **Note**: there is no separate `.RequireAuthorization` line on `/export`
+  itself (design: inherited by co-location) — the ONE line that can be
+  deleted is the shared `.RequireAuthorization(Politicas.LecturaDeAuditoria)`
+  on `grupo`, which covers both routes. **Evidence**: mutated (that line
+  deleted) → `dotnet build --no-incremental` →
+  `UnSupervisorEsRechazadoDelExportDeAuditoriaSinPoliticaPropiaEnLaRuta`
+  FAILED (`Expected: Forbidden, Actual: OK` — the group fell back to
+  `Program.cs`'s `RequireAuthenticatedUser()` fallback policy, which any
+  authenticated Supervisor satisfies) → reverted → green.
+- [x] 6.10 [P] Integration — authorization: Supervisor → `403` on
   `/export`, with no separate policy declared on the route. *(spec: "A
   Supervisor is rejected on the export too, inherited from the source
   route")*
-- [ ] 6.11 Gate guard: `has-pending-model-changes` clean; zero new files in
-  `Migraciones/`.
+  `AuditoriaExportTests.UnSupervisorEsRechazadoDelExportDeAuditoriaSinPoliticaPropiaEnLaRuta`.
+- [x] 6.11 Gate guard: `has-pending-model-changes` clean; zero new files in
+  `Migraciones/`. **Confirmed**: `dotnet ef migrations
+  has-pending-model-changes --project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure` → "No changes have been made
+  to the model since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
 - [ ] 6.12 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  *(orchestrator)*
 - [ ] 6.13 Branch `feat/stage14-slice6-export` off `main` (parent:
-  slice 5); PR; merge stacked-to-main.
+  slice 5); PR; merge stacked-to-main. *(orchestrator)*
 
 **Test plan**: 3 mutation targets (6.5, 6.6, 6.9), cap refusal (6.7),
-cell-by-cell parity + header row (6.8), Supervisor 403 (6.10).
+cell-by-cell parity + header row (6.8), Supervisor 403 (6.10). Plus one
+extra discriminator (6.5's note): the COUNT-vs-Take race test, added
+because the plain over-cap test is an equivalent mutant for the second
+`GuardaDeTope.Exigir`.
 
 **Verify**: `dotnet test --filter FullyQualifiedName~ExportacionDeAuditoria|FullyQualifiedName~Auditoria`
+→ **68/68 green** (`AuditoriaExportTests` 4 facts + the rest of the
+`~Auditoria` suite, unchanged). Web: `npx vitest run` → 38 files / 663
+tests green (3 new in `auditoria.test.ts`).
 
 ---
 
