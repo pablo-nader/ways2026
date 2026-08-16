@@ -10,14 +10,23 @@ namespace Ways.Application.Tests.Auditoria;
 /// </summary>
 public class SerializadorDeAuditoriaTests
 {
+    /// <summary>Mutation target (slice 1, row 3): <c>DictionaryKeyPolicy</c> → <c>PropertyNamingPolicy</c>
+    /// (design decisión 6, un no-op sobre un diccionario). Las claves de producción de
+    /// <c>PayloadDeAuditoria</c> ya son snake_case a mano, así que una entrada snake_case NO
+    /// discrimina la política (pasa igual con las dos) — <c>mutation-proof-tests</c> regla 3: la
+    /// clave de entrada es PascalCase, algo que <see cref="RegistroDeAuditoria"/> jamás dejaría
+    /// pasar en producción (su propio invariante de snake_case), pero que SÍ deja ver si
+    /// <see cref="SerializadorDeAuditoria.Opciones"/> la transformó — la prueba de que la
+    /// política correcta está activa, ruteada por debajo de esa validación aguas arriba.</summary>
     [Fact]
     public void LasClavesSerializanEnSnakeCase()
     {
-        var valor = new Dictionary<string, object?> { ["id_lista_precio"] = 1, ["vigente_desde"] = "x" };
+        var valor = new Dictionary<string, object?> { ["IdListaPrecio"] = 1, ["vigente_desde"] = "x" };
 
         var json = SerializadorDeAuditoria.Serializar(valor);
 
         Assert.Contains("\"id_lista_precio\"", json);
+        Assert.DoesNotContain("\"IdListaPrecio\"", json);
         Assert.Contains("\"vigente_desde\"", json);
     }
 
