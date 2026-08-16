@@ -279,7 +279,7 @@ public class AuditoriaAnulacionVentaTests(WaysApiFixture fixture) : IClassFixtur
     /// composición no produce reversas bajo ninguna implementación, ni siquiera una que ignorara el
     /// fail-closed. El GIVEN literal del spec `comprobantes-venta` para este escenario es "3 líneas
     /// de producto y un consumo de cuenta corriente": este test lo cubre con magnitudes distintas
-    /// por línea (2/3/1 unidades, $100/$250/$400) para que el CERO de cada aserción sea real — si
+    /// por línea (2/3/1 unidades, $50/$100/$150) para que el CERO de cada aserción sea real — si
     /// el fail-closed fallara, habría 3 filas de <c>movimientos_stock</c> y 1 contramovimiento de
     /// CC que este test SÍ detectaría. Mismo técnica <c>REVOKE INSERT ON auditoria</c> que el test
     /// insignia de arriba (que se mantiene intacto: sigue siendo el flagship de la task 3.7).
