@@ -29,6 +29,8 @@ public static class DependencyInjection
         // stage-14-auditoria-trazabilidad, Slice 1: el writer se registra completo desde esta
         // slice, aunque sin call sites todavía (slices 2-4 lo inyectan recién ahí).
         services.AddScoped<ServicioDeAuditoria>();
+        // stage-14-auditoria-trazabilidad, Slice 5: el lado de lectura — GET /api/auditoria.
+        services.AddScoped<ServicioDeConsultaDeAuditoria>();
 
         // AsignadorDeNumeroCliente (Ways.Application.Clientes) es estática, sin ciclo de
         // vida de DI que registrar — el IWaysDbContext llega por parámetro en cada llamada.

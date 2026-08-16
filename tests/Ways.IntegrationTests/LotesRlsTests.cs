@@ -31,39 +31,6 @@ public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
 {
     private sealed record Escenario(int IdTenant, int IdArticulo, int IdPuntoVenta, int IdLote);
 
-    /// <summary>Judgment-day fix (juez B, MAJOR): un <see cref="WaysDbContext"/> sobre
-    /// <c>ways_owner</c> (bypassea RLS) para que las dos pruebas de "el filtro de EF nunca
-    /// devuelve filas ajenas" prueben genuinamente el query filter — sobre <c>ways_app</c>
-    /// RLS filtra igual aunque el filtro de EF no exista, así esas pruebas no distinguían
-    /// nada (comprobado comentando <c>SetQueryFilter</c> y viendo los 8 tests pasar
-    /// igual).</summary>
-    private WaysDbContext CrearContextoDeOwner(ITenantActual tenantActual)
-    {
-        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
-            .UseNpgsql(fixture.OwnerConnectionString, npgsql =>
-            {
-                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
-                npgsql.MapEnum<EstadoTenant>("estado_tenant");
-                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
-                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
-                npgsql.MapEnum<TipoDocumento>("tipo_documento");
-                npgsql.MapEnum<ModoLista>("modo_lista");
-                npgsql.MapEnum<UnidadVenta>("unidad_venta");
-                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
-                npgsql.MapEnum<MotivoStock>("motivo_stock");
-                npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
-                npgsql.MapEnum<EstadoTurno>("estado_turno");
-                npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
-                npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
-                npgsql.MapEnum<EstadoCompra>("estado_compra");
-            })
-            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
-            .Options;
-
-        return new WaysDbContext(opciones, tenantActual);
-    }
-
     private async Task<Escenario> SembrarEscenarioAsync(string nombre)
     {
         using var _ = fixture.CreateClient(); // arranca el host (siembra roles, alícuotas)
@@ -223,7 +190,7 @@ public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
         var escenarioA = await SembrarEscenarioAsync(nameof(ElFiltroDeEfNuncaDevuelveLotesDeOtroTenant) + "-A");
         var escenarioB = await SembrarEscenarioAsync(nameof(ElFiltroDeEfNuncaDevuelveLotesDeOtroTenant) + "-B");
 
-        await using var sesionB = CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, escenarioB.IdTenant));
+        await using var sesionB = fixture.CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, escenarioB.IdTenant));
 
         var visibleAjeno = await sesionB.Lotes.AnyAsync(l => l.Id == escenarioA.IdLote);
         Assert.False(visibleAjeno);
@@ -328,7 +295,7 @@ public class LotesRlsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtur
         var escenarioA = await SembrarEscenarioAsync(nameof(ElFiltroDeEfNuncaDevuelveStockLotesDeOtroTenant) + "-A");
         var escenarioB = await SembrarEscenarioAsync(nameof(ElFiltroDeEfNuncaDevuelveStockLotesDeOtroTenant) + "-B");
 
-        await using var sesionB = CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, escenarioB.IdTenant));
+        await using var sesionB = fixture.CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, escenarioB.IdTenant));
 
         var visibleAjeno = await sesionB.StockLotes.AnyAsync(s =>
             s.IdArticulo == escenarioA.IdArticulo && s.IdPuntoVenta == escenarioA.IdPuntoVenta && s.IdLote == escenarioA.IdLote);
