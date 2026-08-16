@@ -396,7 +396,7 @@ optional.
   --short` on the migrations dir shows exactly one new pair
   (`20260816044634_AuditoriaEtapa14.cs` + `.Designer.cs`) plus the modified
   snapshot.
-- [ ] 1.30 Run `judgment-day` on the slice diff; fix confirmed issues;
+- [x] 1.30 Run `judgment-day` on the slice diff; fix confirmed issues;
   re-judge until clean.
   - Ronda 1 (juez B): 0 severos; 3 WARNING (findings 1-3). Fixed y con
     evidencia de mutación (commit `7b30f73`): finding 1 (denylist/snake_case
@@ -416,7 +416,7 @@ optional.
     rechaza (no se valida por `ToString()`). 3 tests nuevos, 2 de ellos los
     probes exactos del juez; evidencia de mutación (borrar el case → los 2
     tests fallan → revert → verde).
-- [ ] 1.31 Branch `feat/stage14-slice1-tabla-auditoria` off `main`; PR;
+- [x] 1.31 Branch `feat/stage14-slice1-tabla-auditoria` off `main`; PR; *(CLEAN 2026-08-16: juez B ronda 1 — 0 severos, 3 WARNINGs fixeados (denylist recursiva, tenant sujeto-vs-sesion discriminado via modo plataforma, doc del catalogo honesto) + 2 disposiciones sin fix registradas (mutante equivalente Npgsql; CHECKs contractuados por gate SB); re-ronda B aprobada con R2-B-1 residual cerrado por micro-fix (case IDictionary — Dictionary<string,string>/Hashtable anidados ahora validados, claves no-string rechazadas); juez A fresh read-only: CERO hallazgos — verifico la migracion columna por columna contra el gate + enmienda 1, las 12 factories sin secretos alcanzables, y el orden GRANT-vs-migracion del fixture. JUDGMENT: APPROVED.)*
   merge stacked-to-main.
 
 **Test plan**: Domain suite (1.12-1.15), 8 mutation targets (1.16-1.20,
