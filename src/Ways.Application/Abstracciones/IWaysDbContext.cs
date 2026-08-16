@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Ways.Domain.Articulos;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
@@ -105,6 +106,12 @@ public interface IWaysDbContext
     // §A/§B).
     DbSet<Lote> Lotes { get; }
     DbSet<StockLote> StockLotes { get; }
+
+    // stage-14-auditoria-trazabilidad, Slice 1: ServicioDeAuditoria.Registrar es el primer
+    // (y único, en esta slice) escritor — nadie más consume este DbSet todavía (slices 2-4).
+    // Nombre totalmente calificado, mismo motivo que Ways.Domain.Stock.Stock arriba: la
+    // propiedad "Auditoria" colisionaría con el tipo del mismo nombre del namespace homónimo.
+    DbSet<Ways.Domain.Auditoria.Auditoria> Auditoria { get; }
 
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>

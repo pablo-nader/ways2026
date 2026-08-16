@@ -117,6 +117,12 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Lote> Lotes => Set<Lote>();
     public DbSet<StockLote> StockLotes => Set<StockLote>();
 
+    // stage-14-auditoria-trazabilidad, Slice 1 (schema + writer, DB CHANGE GATE EJERCIDO Y
+    // APROBADO): ServicioDeAuditoria.Registrar es el único escritor en esta slice, expuesto
+    // desde el arranque (a diferencia de otras slices "modelo adelantado a la migración") porque
+    // el writer se entrega completo, aunque sin call sites todavía (slices 2-4).
+    public DbSet<Ways.Domain.Auditoria.Auditoria> Auditoria => Set<Ways.Domain.Auditoria.Auditoria>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>
@@ -160,6 +166,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnMovimientoCaja(modelBuilder);
         AplicarFiltroDeTenantEnArqueoTurno(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoTesoreria(modelBuilder);
+        AplicarFiltroDeTenantEnAuditoria(modelBuilder);
     }
 
     /// <summary>
@@ -632,6 +639,25 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(MovimientoTesoreria), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoTesoreria.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-14-auditoria-trazabilidad (Slice 1, design decisión 7): <see cref="Ways.Domain.Auditoria.Auditoria"/>
+    /// NO hereda <see cref="EntidadTenant"/> (arrastraría <see cref="EntidadBase"/>, que el gate
+    /// prohíbe) — necesita la variante escrita a mano, mismo criterio que
+    /// <see cref="AplicarFiltroDeTenantEnMovimientoStock"/>. <c>IdTenant</c> se escribe EXPLÍCITO
+    /// por el caller (<c>ServicioDeAuditoria</c>), nunca por <c>EstamparTenant()</c>: ese método
+    /// pisaría el tenant del SUJETO auditado (proposal decisión 1) con el tenant de la SESIÓN.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnAuditoria(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(Ways.Domain.Auditoria.Auditoria))!;
+
+        var parametro = Expression.Parameter(typeof(Ways.Domain.Auditoria.Auditoria), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(Ways.Domain.Auditoria.Auditoria.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);
