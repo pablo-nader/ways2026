@@ -636,75 +636,137 @@ operation**, per Orchestrator Decision #1 above — never one per lote.
 `InsertarMovimientoStockAsync`'s `Task<int>` signature can stay (harmless,
 `TransferirAsync` ignores the value) or revert with it.
 
-- [ ] 4.1 Modify `src/Ways.Application/Stock/ServicioDeStock.cs`:
+- [x] 4.1 Modify `src/Ways.Application/Stock/ServicioDeStock.cs`:
   `InsertarMovimientoStockAsync` → `RETURNING id_movimiento_stock` /
   `ExecuteScalarAsync`, returning `int`. `TransferirAsync` ignores the
   returned value and stays byte-identical in behavior — still writes zero
   `auditoria` rows (proposal decision 5). *(Orchestrator Decision 15 above;
   design Open Questions)*
-- [ ] 4.2 Modify `ServicioDeStock.cs`'s ajuste path (`:101`, after the
+  **DEVIATION (registered, not silent):** the `RETURNING` clause reads
+  `id_movimiento`, not `id_movimiento_stock` — `movimientos_stock`'s actual
+  primary-key column is `id_movimiento` (confirmed against the etapa-5
+  migration and `MovimientoStock.Id`), not the name tasks.md/design.md use
+  for the SQL identifier. The payload dictionary KEY stays literally
+  `id_movimiento_stock` in every `PayloadDeAuditoria` factory (that name is
+  the audit contract's own field name, independent of the DB column) — only
+  the `RETURNING` SQL identifier differs from the task's prose. Verified
+  empirically: the literal task text fails with `column "id_movimiento_stock"
+  does not exist` against real Postgres.
+- [x] 4.2 Modify `ServicioDeStock.cs`'s ajuste path (after the
   aggregate **and** lote upserts, before commit): `RegistrarAsync(
   stock.ajuste, ant={cantidad: nueva − delta}, nuevo={cantidad: nueva,
   id_movimiento_stock, observaciones})`.
-- [ ] 4.3 Modify `ServicioDeStock.cs`'s decomiso path (`:276`, **after**
+- [x] 4.3 Modify `ServicioDeStock.cs`'s decomiso path (**after**
   both negative-stock refusals): `RegistrarAsync(stock.decomiso,
   ant={cantidad}, nuevo={cantidad, id_movimiento_stock, observaciones,
   id_lote})` — `id_lote` null = no lote-efectivo.
-- [ ] 4.4 Modify `ServicioDeStock.cs`'s conteo paths
-  (`EjecutarConteoAsync:743` and `EjecutarConteoPorLoteAsync:810`): **per
+- [x] 4.4 Modify `ServicioDeStock.cs`'s conteo paths
+  (`EjecutarConteoAsync` and `EjecutarConteoPorLoteAsync`): **per
   Orchestrator Decision #1 above** — accumulate `movimientos_generados`
   (the `id_movimiento_stock` list), `lotes_afectados` (count), and
   `delta_total` across the existing loop over lotes/agregado; write
   **exactly one** `RegistrarAsync(stock.conteo, ant={cantidad: cantidad al
   inicio}, nuevo={cantidad: cantidad final, movimientos_generados,
   lotes_afectados, delta_total})` **after** the loop, per counting
-  operation. The existing zero-difference early return (`:721-727`) is
+  operation. The existing zero-difference early return is
   untouched and now unambiguously produces zero ledger **and** zero audit
-  rows for the whole operation.
-- [ ] 4.5 Modify
+  rows for the whole operation. The single-lote/aggregate path
+  (`EjecutarConteoAsync`) uses the same `PayloadDeAuditoria.Conteo` factory
+  with `lotesAfectados: 0` (the aggregate path never touches a lote) and a
+  one-element `movimientos_generados`.
+- [x] 4.5 Modify
   `src/Ways.Application/CuentaCorriente/ServicioDeReliquidacion.cs`
-  (`:130`, after the marker + rowcount check, before commit):
-  `RegistrarAsync(cc.reliquidacion, ant={saldo} from the :174 SELECT …
+  (after the marker + rowcount check, before commit):
+  `RegistrarAsync(cc.reliquidacion, ant={saldo} from the SELECT …
   FOR UPDATE, nuevo={saldo: nuevoSaldo, id_movimiento, consumos_actualizados:
-  |ids|, diferencia: delta})`.
-- [ ] 4.6 [P] **Mutation target**: `cantidad − delta` as before-image — use
+  |ids|, diferencia: delta})`. `BloquearClienteAsync`'s previously-discarded
+  `Saldo` tuple element is now captured as `saldoInicial`.
+- [x] 4.6 [P] **Mutation target**: `cantidad − delta` as before-image — use
   `nueva` on both sides — the `stock.ajuste` coverage test (4.9) must fail.
-  *(slice 4 row 1)*
-- [ ] 4.7 [P] **Mutation target**: the delta-cero early return
-  (`ServicioDeStock.cs:721`) — remove it — the zero-difference conteo test
-  (4.10) must fail. *(slice 4 row 2)*
-- [ ] 4.8 [P] **Mutation target**: the `saldo` before-image taken from the
+  *(slice 4 row 1)* **Evidence**: mutated (`nuevaCantidad, nuevaCantidad`
+  on both sides) → `dotnet build --no-incremental` → `dotnet test
+  tests/Ways.IntegrationTests --no-build --filter FullyQualifiedName~Ajuste`
+  → `StockAuditoriaTests.UnAjusteDeStockEscribeUnaFilaDeAuditoriaConAnteriorDistintoDeNuevo`
+  FAILED (`Assert.Equal` on `anterior.cantidad`: expected 50, actual 70 —
+  the mutated before-image collapsed to the after-image) → reverted →
+  44/44 green.
+- [x] 4.7 [P] **Mutation target**: the delta-cero early return
+  (`ServicioDeStock.cs`, `EjecutarConteoAsync`) — remove it — the
+  zero-difference conteo test (4.10) must fail. *(slice 4 row 2)*
+  **Evidence**: mutated (early-return block deleted) → `dotnet build
+  --no-incremental` → `dotnet test tests/Ways.IntegrationTests --no-build
+  --filter FullyQualifiedName~Conteo` →
+  `StockAuditoriaTests.UnConteoAgregadoSinDiferenciaNoEscribeFilaDeAuditoria`
+  FAILED (`400 movimiento_de_stock_sin_cantidad` — the mutated path reached
+  `InsertarMovimientoStockAsync` with `cantidad = 0`, tripping
+  `ck_movimientos_stock_cantidad_no_cero`), together with two pre-existing
+  zero-difference tests
+  (`TransferenciasYConteoDeInventarioTests.UnConteoQueCoincideConElCacheNoEscribeNadaYDevuelve200`,
+  `ConteoPorLoteTests.UnConteoAgregadoDeContadaIgualALaActualSigueSinEscribirNada`)
+  → reverted → 51/51 green.
+- [x] 4.8 [P] **Mutation target**: the `saldo` before-image taken from the
   `FOR UPDATE` — re-read it **after** the `UPDATE` instead — the
   `cc.reliquidacion` coverage test (4.13) must fail. *(slice 4 row 3)*
-- [ ] 4.9 [P] Integration: `stock.ajuste` coverage — one row, `{cantidad:
+  **Evidence**: mutated (`ReliquidacionDeCc(nuevoSaldo, nuevoSaldo, …)`,
+  simulating a post-`UPDATE` re-read) → `dotnet build --no-incremental` →
+  `dotnet test tests/Ways.IntegrationTests --no-build --filter
+  FullyQualifiedName~Reliquidacion` →
+  `ReliquidacionAuditoriaTests.UnaReliquidacionConDiferenciaEscribeUnaFilaDeAuditoriaConSaldoAnteriorDistintoDeNuevo`
+  FAILED (`Assert.Equal` on `anterior.saldo`: expected 100, actual 150 —
+  the mutated before-image collapsed to the after-image) → reverted →
+  25/25 green.
+- [x] 4.9 [P] Integration: `stock.ajuste` coverage — one row, `{cantidad:
   anterior}` ≠ `{cantidad: nuevo}` with delta ≠ 0, `id_movimiento_stock`
-  and `observaciones` present, resolving 4.6's evidence.
-- [ ] 4.10 [P] Integration: `stock.conteo`, zero-difference — zero
+  and `observaciones` present, resolving 4.6's evidence. Implemented as
+  `StockAuditoriaTests.UnAjusteDeStockEscribeUnaFilaDeAuditoriaConAnteriorDistintoDeNuevo`.
+- [x] 4.10 [P] Integration: `stock.conteo`, zero-difference — zero
   `movimientos_stock` rows **and** zero `auditoria` rows, resolving 4.7's
   evidence. *(spec `auditoria-de-operaciones`: "A zero-difference conteo
-  writes no audit row")*
-- [ ] 4.11 [P] Integration — **the reconciled scenario** (Orchestrator
+  writes no audit row")* Implemented as
+  `StockAuditoriaTests.UnConteoAgregadoSinDiferenciaNoEscribeFilaDeAuditoria`.
+- [x] 4.11 [P] Integration — **the reconciled scenario** (Orchestrator
   Decision #1): a conteo por lote over one articulo with 3 lotes, 2
   differing, writes **exactly one** `auditoria` row for the whole
   operation — not two — with `valor_nuevo.movimientos_generados` naming
   both `id_movimiento_stock` values and `lotes_afectados = 2`. This is the
   discriminating test that replaces design.md's stale per-lote call-site
   text. *(spec `auditoria-de-operaciones`: "Each operation MUST write
-  exactly one row")*
-- [ ] 4.12 [P] Integration: `stock.decomiso` coverage — one row, `id_lote`
+  exactly one row")* Implemented as
+  `StockAuditoriaTests.UnConteoPorLoteConDosDeTresLotesDiferentesEscribeUnaSolaFilaDeAuditoria`
+  (L1 10→15 and L3 5→3 differ, L2 20→20 matches; asserts exactly one
+  `auditoria` row, `lotes_afectados = 2`, and `movimientos_generados`
+  naming both real ledger row ids).
+- [x] 4.12 [P] Integration: `stock.decomiso` coverage — one row, `id_lote`
   present on a lote-efectivo decomiso and `NULL` on an aggregate-only one;
   both `409 stock_insuficiente_para_decomiso` refusal paths leave zero
-  rows.
-- [ ] 4.13 [P] Integration: `cc.reliquidacion` coverage — one row, `saldo`
+  rows. Implemented as four `StockAuditoriaTests` facts:
+  `UnDecomisoDeStockEscribeUnaFilaConIdLotePresenteCuandoEsLoteEfectivo`,
+  `UnDecomisoDeStockEscribeUnaFilaConIdLoteNuloCuandoNoEsLoteEfectivo`,
+  `UnDecomisoRechazadoPorStockInsuficienteEnElLoteNoEscribeFilaDeAuditoria`,
+  `UnDecomisoRechazadoPorStockInsuficienteEnElAgregadoNoEscribeFilaDeAuditoria`.
+- [x] 4.13 [P] Integration: `cc.reliquidacion` coverage — one row, `saldo`
   anterior ≠ nuevo with a known `diferencia`, `consumos_actualizados`
   matches the seeded consumos; the two no-op paths (sin elegibles, delta
   cero) commit without any ledger or audit row, resolving 4.8's evidence.
-- [ ] 4.14 [P] Integration — límite registrado: `TransferirAsync` writes
+  Implemented as three `ReliquidacionAuditoriaTests` facts:
+  `UnaReliquidacionConDiferenciaEscribeUnaFilaDeAuditoriaConSaldoAnteriorDistintoDeNuevo`,
+  `UnaReliquidacionSinConsumosElegiblesNoEscribeFilaDeAuditoria`,
+  `UnaReliquidacionConDeltaCeroNoEscribeFilaDeAuditoria` (a consumo whose
+  price never changed — eligible, but a zero-delta re-pricing, distinct
+  from the "sin elegibles" no-op).
+- [x] 4.14 [P] Integration — límite registrado: `TransferirAsync` writes
   **zero** `auditoria` rows for either leg, and both `movimientos_stock`
   legs still carry their own `id_empleado`. *(spec `auditoria-de-
   operaciones`: "stock.transferencia is excluded by scope, not by defect")*
-- [ ] 4.15 Gate guard: `has-pending-model-changes` clean; zero new files in
-  `Migraciones/`.
+  Implemented as
+  `StockAuditoriaTests.UnaTransferenciaNoEscribeFilasDeAuditoriaParaNingunaDeLasDosPatas`.
+- [x] 4.15 Gate guard: `has-pending-model-changes` clean; zero new files in
+  `Migraciones/`. **Confirmed**: `dotnet ef migrations
+  has-pending-model-changes --project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure` → "No changes have been made
+  to the model since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` and `git status
+  --short` on that directory both empty.
 - [ ] 4.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
 - [ ] 4.17 Branch `feat/stage14-slice4-stock-cc` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
