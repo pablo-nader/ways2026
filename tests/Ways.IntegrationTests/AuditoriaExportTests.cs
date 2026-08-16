@@ -1,15 +1,18 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Exportacion;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 
 namespace Ways.IntegrationTests;
 
@@ -235,5 +238,105 @@ public class AuditoriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
         Assert.Contains("4", problema.GetProperty("title").GetString());
+    }
+
+    // ---- task 6.5: backstop de carrera del segundo GuardaDeTope.Exigir ---------------------------
+
+    /// <summary>
+    /// Discriminador real del SEGUNDO <c>GuardaDeTope.Exigir</c> (mutation target 6.5): con un
+    /// <c>COUNT(*)</c> ya consistente con el tope, la prueba de arriba (6.7) NO puede detectar
+    /// borrar el segundo <c>Exigir</c> — el primero ya rechaza antes de llegar a <c>Take</c>. Este
+    /// test recrea la carrera que el segundo <c>Exigir</c> existe para atrapar (mismo patrón que
+    /// <c>VentasListadoExportTests.UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacion</c>):
+    /// un <c>DbCommandInterceptor</c> retiene la SEGUNDA consulta que toca <c>auditoria</c> (la
+    /// lectura <c>.Take(tope + 1)</c> — la primera es el <c>COUNT(*)</c>) e inserta una fila extra
+    /// JUSTO ANTES de dejarla correr, así el <c>COUNT(*)</c> pasa el primer <c>Exigir</c> con
+    /// exactamente <c>tope</c> filas pero la lectura trae <c>tope + 1</c>.
+    /// </summary>
+    [Fact]
+    public async Task UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacion()
+    {
+        var gate = new SemaphoreSlim(0, 1);
+        Contexto? ctxRef = null;
+        DateOnly dia = default;
+
+        var interceptor = new InterceptorDeCarreraDeExportacion(async () =>
+        {
+            if (ctxRef is null)
+            {
+                return;
+            }
+
+            await SembrarFilaAsync(
+                ctxRef.IdTenant, ctxRef.IdPuntoVenta, ctxRef.IdActorAdmin, "precio.cambio", "articulo", 999,
+                new DateTimeOffset(dia.Year, dia.Month, dia.Day, 12, 0, 59, TimeSpan.Zero), null, "{\"monto\":999}");
+            gate.Release();
+        });
+
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 3);
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor));
+            }));
+
+        var ctx = await PrepararAsync(nameof(UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacion), factoryBajo);
+        dia = new DateOnly(2026, 1, 1);
+        ctxRef = ctx;
+
+        for (var i = 0; i < 3; i++)
+        {
+            await SembrarFilaAsync(
+                ctx.IdTenant, ctx.IdPuntoVenta, ctx.IdActorAdmin, "precio.cambio", "articulo", 41 + i,
+                new DateTimeOffset(2026, 1, 1, 12, 0, i, TimeSpan.Zero), null, $"{{\"monto\":{100 + i}}}");
+        }
+
+        var respuesta = await LlamarExportAsync(ctx.Admin, dia, dia);
+
+        Assert.True(await gate.WaitAsync(TimeSpan.FromSeconds(10)), "El interceptor de carrera nunca insertó la fila extra.");
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("4", problema.GetProperty("title").GetString());
+    }
+
+    /// <summary>Retiene la SEGUNDA consulta que toca <c>auditoria</c> (la lectura <c>.Take(tope +
+    /// 1)</c> — la primera es el <c>COUNT(*)</c>) e inyecta <paramref name="alSegundaConsulta"/>
+    /// antes de dejarla correr. Cubre tanto <c>ReaderExecutingAsync</c> como
+    /// <c>ScalarExecutingAsync</c>: si <c>CountAsync</c> se traduce a un escalar en vez de un
+    /// reader, el contador compartido sigue contando en orden.</summary>
+    private sealed class InterceptorDeCarreraDeExportacion(Func<Task> alSegundaConsulta) : DbCommandInterceptor
+    {
+        private int _coincidencias;
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            await ConsiderarAsync(command);
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override async ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
+            CancellationToken cancellationToken = default)
+        {
+            await ConsiderarAsync(command);
+            return await base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private async Task ConsiderarAsync(DbCommand command)
+        {
+            if (!command.CommandText.Contains("auditoria", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (Interlocked.Increment(ref _coincidencias) == 2)
+            {
+                await alSegundaConsulta();
+            }
+        }
     }
 }
