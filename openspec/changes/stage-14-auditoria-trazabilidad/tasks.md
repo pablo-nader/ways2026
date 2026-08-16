@@ -723,7 +723,7 @@ call sites disappear, both `MarcarAnulado*Async` methods keep their
   --startup-project src/Ways.Infrastructure` → "No changes have been made
   to the model since the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
-- [ ] 3.14 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 3.14 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   - Ronda 1 (juez B): 0 severos; 2 WARNING (findings 1-2). Ambos fixed y con
     evidencia de mutación: finding 1 (test fail-closed nuevo sobre la
     composición literal del spec — 3 líneas de producto + consumo de CC —
@@ -731,7 +731,7 @@ call sites disappear, both `MarcarAnulado*Async` methods keep their
     finding 2 (`Assert.NotEqual(0, fila.IdActor)` → `Assert.Equal(ctx.
     IdEmpleadoAdmin, fila.IdActor)` en ambos tests de cobertura, venta y
     compra). Re-judge pendiente.
-- [ ] 3.15 Branch `feat/stage14-slice3-anulaciones` off `main` (parent:
+- [x] 3.15 Branch `feat/stage14-slice3-anulaciones` off `main` (parent: *(CLEAN 2026-08-16: juez B ronda 1 — 0 severos, 2 WARNINGs test-only cerrados (fail-closed con la composicion literal del spec 3 lineas+CC asertando cero reversas; IdActor por IGUALDAD con el admin — el mutante actor-constante ahora muere en ambos tests); re-ronda B aprobada (patch-id verificado, REVOKE con restore en finally, retry limpio 200) con 1 INFO de cifras de comentario corregido por el orquestador; juez A fresh: CERO hallazgos — verifico el precedente MarcarCerradoAsync, la carrera cross-connection del interceptor como patron establecido del repo, y que MarcarAnulad(o|a)Async no tiene callers externos. JUDGMENT: APPROVED.)*
   slice 1); PR; merge stacked-to-main.
 
 **Test plan**: 3 mutation targets (3.4-3.6), flagship (3.7), coverage
