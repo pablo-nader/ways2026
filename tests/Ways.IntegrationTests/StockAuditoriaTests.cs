@@ -189,6 +189,32 @@ public class StockAuditoriaTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         return puntoVenta.Id;
     }
 
+    /// <summary>Judgment-day fix (juez B, slice 4, ronda 1, finding 2): sin este quemado previo,
+    /// <c>id_articulo</c> e <c>id_movimiento_stock</c> coinciden por alineación accidental de las
+    /// secuencias en el entorno de test — mutar el call site de auditoría a
+    /// <c>idMovimientoStock</c> en vez de <c>idArticulo</c> sobrevive porque ambos valores son
+    /// iguales por casualidad. Regla permanente (magnitudes discriminantes): ningún id usado por
+    /// una aserción de auditoría (articulo/punto de venta/actor/entidad/movimiento/cliente) puede
+    /// coincidir con otro por casualidad — se desincroniza a propósito quemando filas descartables
+    /// ANTES de sembrar la entidad real que el test audita.</summary>
+    private async Task QuemarArticulosDescartablesAsync(Contexto ctx, int cantidad)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+
+        for (var i = 0; i < cantidad; i++)
+        {
+            db.Articulos.Add(new Articulo
+            {
+                IdTenant = ctx.IdTenant, CodigoInterno = $"quemado-{Guid.NewGuid():N}", Nombre = "quemado",
+                IdArea = ctx.IdArea, IdAlicuotaIva = ctx.IdAlicuotaIva, UnidadVenta = UnidadVenta.Unidad,
+                EsProducto = true, ControlaLote = false, CreatedAt = ahora, UpdatedAt = ahora
+            });
+        }
+
+        await db.SaveChangesAsync();
+    }
+
     // ---- task 4.9 / mutation target 4.6 (design mutation-targets, slice 4, fila 1) ---------------
 
     /// <summary>spec `auditoria-de-operaciones`: catálogo de las doce acciones, cobertura de
@@ -199,6 +225,7 @@ public class StockAuditoriaTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     public async Task UnAjusteDeStockEscribeUnaFilaDeAuditoriaConAnteriorDistintoDeNuevo()
     {
         var ctx = await PrepararAsync(nameof(UnAjusteDeStockEscribeUnaFilaDeAuditoriaConAnteriorDistintoDeNuevo));
+        await QuemarArticulosDescartablesAsync(ctx, 2);
         var idArticulo = await SembrarArticuloSinLoteAsync(ctx, "articulo-auditoria-ajuste", 10m);
         await SembrarStockAgregadoAsync(ctx, idArticulo, 50m);
 
@@ -328,6 +355,45 @@ public class StockAuditoriaTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(0, await db.Auditoria.CountAsync(a => a.Accion == "stock.conteo" && a.IdEntidad == idArticulo));
     }
 
+    /// <summary>Judgment-day fix (juez B, slice 4, ronda 1, finding 1): el conteo AGREGADO con
+    /// diferencia (delta ≠ 0, <c>EjecutarConteoAsync</c>) no tenía ningún test — hardcodear
+    /// <c>delta_total = 0</c> en el payload, o borrar el bloque <c>RegistrarAsync</c> entero,
+    /// sobrevivían los 66/66 tests previos (solo estaban cubiertos el camino sin diferencia y el
+    /// camino por-lote). Magnitudes discriminantes (88/61/-27, delta negativo — complementa el
+    /// +3 del escenario por-lote) y secuencias desincronizadas
+    /// (<see cref="QuemarArticulosDescartablesAsync"/>) — verifica el payload clave por clave.</summary>
+    [Fact]
+    public async Task UnConteoAgregadoConDiferenciaEscribeUnaFilaDeAuditoriaConPayloadCompleto()
+    {
+        var ctx = await PrepararAsync(nameof(UnConteoAgregadoConDiferenciaEscribeUnaFilaDeAuditoriaConPayloadCompleto));
+        await QuemarArticulosDescartablesAsync(ctx, 2);
+        var idArticulo = await SembrarArticuloSinLoteAsync(ctx, "articulo-conteo-auditoria-agregado-con-diferencia", 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 88m);
+
+        var solicitud = new SolicitudDeConteo(ctx.IdPuntoVenta, idArticulo, 61m, "Conteo agregado con diferencia auditado");
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/stock/conteos", solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var movimiento = await db.MovimientosStock.SingleAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Inventario);
+
+        var fila = await db.Auditoria.SingleAsync(a => a.Accion == "stock.conteo" && a.IdEntidad == idArticulo);
+        Assert.Equal(ctx.IdPuntoVenta, fila.IdPuntoVenta);
+        Assert.Equal("articulo", fila.Entidad);
+        Assert.Equal(ctx.IdEmpleadoAdmin, fila.IdActor);
+
+        var anterior = JsonDocument.Parse(fila.ValorAnterior!).RootElement;
+        var nuevo = JsonDocument.Parse(fila.ValorNuevo).RootElement;
+        Assert.Equal(88m, anterior.GetProperty("cantidad").GetDecimal());
+        Assert.Equal(61m, nuevo.GetProperty("cantidad").GetDecimal());
+        Assert.Equal(-27m, nuevo.GetProperty("delta_total").GetDecimal());
+        Assert.Equal(0, nuevo.GetProperty("lotes_afectados").GetInt32());
+
+        var idsGenerados = nuevo.GetProperty("movimientos_generados").EnumerateArray().Select(e => e.GetInt32()).ToList();
+        Assert.Equal([movimiento.Id], idsGenerados);
+    }
+
     // ---- task 4.11: el escenario reconciliado (tasks.md Orchestrator Decision #1) -----------------
 
     /// <summary>spec `auditoria-de-operaciones`: "Each operation MUST write exactly one row" — el
@@ -338,6 +404,7 @@ public class StockAuditoriaTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     public async Task UnConteoPorLoteConDosDeTresLotesDiferentesEscribeUnaSolaFilaDeAuditoria()
     {
         var ctx = await PrepararAsync(nameof(UnConteoPorLoteConDosDeTresLotesDiferentesEscribeUnaSolaFilaDeAuditoria));
+        await QuemarArticulosDescartablesAsync(ctx, 2);
         var idArticulo = await SembrarArticuloLoteEfectivoAsync(ctx, "articulo-conteo-auditoria-reconciliado", 10m);
         var idLote1 = await SembrarLoteAsync(ctx, idArticulo, "L1-CONTEO-AUDITORIA", VencimientoLejanoFuturo);
         var idLote2 = await SembrarLoteAsync(ctx, idArticulo, "L2-CONTEO-AUDITORIA", VencimientoLejanoFuturo);

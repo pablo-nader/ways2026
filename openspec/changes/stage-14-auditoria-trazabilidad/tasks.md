@@ -768,6 +768,20 @@ operation**, per Orchestrator Decision #1 above — never one per lote.
   src/Ways.Infrastructure/Persistencia/Migraciones/` and `git status
   --short` on that directory both empty.
 - [ ] 4.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  - Ronda 1 (juez B): 2 MAJOR cerrados con evidencia de mutación. Finding 1:
+    el conteo agregado con diferencia (`EjecutarConteoAsync`, delta ≠ 0) no
+    tenía ningún test — cubierto por
+    `StockAuditoriaTests.UnConteoAgregadoConDiferenciaEscribeUnaFilaDeAuditoriaConPayloadCompleto`
+    (payload clave por clave + actor por igualdad). Finding 2: el test de
+    ajuste no discriminaba `id_entidad` (coincidencia accidental con
+    `id_movimiento_stock` por alineación de secuencias en el entorno) —
+    desincronizado quemando filas descartables antes de sembrar la entidad
+    real (`QuemarArticulosDescartablesAsync`/`QuemarClientesDescartablesAsync`),
+    aplicado también a los hermanos `UnConteoPorLoteConDosDeTresLotesDiferentesEscribeUnaSolaFilaDeAuditoria`
+    y `ReliquidacionAuditoriaTests.UnaReliquidacionConDiferenciaEscribeUnaFilaDeAuditoriaConSaldoAnteriorDistintoDeNuevo`.
+    La sugerencia equivalente para `stock.decomiso` quedó registrada como
+    survivor equivalente por rollback (mutar su call site no cambia el
+    resultado observable) — sin fix.
 - [ ] 4.17 Branch `feat/stage14-slice4-stock-cc` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
 

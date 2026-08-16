@@ -166,6 +166,30 @@ public class ReliquidacionAuditoriaTests(WaysApiFixture fixture) : IClassFixture
         await db.SaveChangesAsync();
     }
 
+    /// <summary>Judgment-day fix (juez B, slice 4, ronda 1, finding 2): mismo criterio que
+    /// <c>StockAuditoriaTests.QuemarArticulosDescartablesAsync</c> — sin este quemado previo,
+    /// <c>id_cliente</c> puede coincidir por casualidad con <c>id_movimiento</c> de
+    /// <c>movimientos_cuenta_corriente</c> en el entorno de test, escondiendo un call site mutado
+    /// que auditara con el id equivocado.</summary>
+    private async Task QuemarClientesDescartablesAsync(Contexto ctx, int cantidad)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var idCondicionFiscal = await db.CondicionesFiscales.Select(c => c.Id).FirstAsync();
+
+        for (var i = 0; i < cantidad; i++)
+        {
+            db.Clientes.Add(new Cliente
+            {
+                IdTenant = ctx.IdTenant, Numero = 1000 + Random.Shared.Next(1, 100_000), Nombre = "quemado",
+                IdCondicionFiscal = idCondicionFiscal, IdListaPrecio = ctx.IdListaPrecio, LimiteCredito = 0m,
+                CreditoIlimitado = true, Saldo = 0m, Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+            });
+        }
+
+        await db.SaveChangesAsync();
+    }
+
     private static async Task<HttpResponseMessage> EjecutarAsync(Contexto ctx, int idCliente) =>
         await ctx.Admin.PostAsJsonAsync(
             $"/api/clientes/{idCliente}/cuenta-corriente/reliquidacion", new SolicitudDeReliquidacion(ctx.IdPuntoVenta));
@@ -180,6 +204,7 @@ public class ReliquidacionAuditoriaTests(WaysApiFixture fixture) : IClassFixture
     {
         var ctx = await PrepararAsync(nameof(UnaReliquidacionConDiferenciaEscribeUnaFilaDeAuditoriaConSaldoAnteriorDistintoDeNuevo));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-reliquidacion-auditoria", 100m);
+        await QuemarClientesDescartablesAsync(ctx, 2);
         var idCliente = await SembrarClienteAsync(ctx, "Cliente reliquidacion auditoria");
         await RealizarConsumoAsync(ctx, idCliente, idArticulo, 1m, 100m);
         await SubirPrecioAsync(ctx, idArticulo, 150m);
