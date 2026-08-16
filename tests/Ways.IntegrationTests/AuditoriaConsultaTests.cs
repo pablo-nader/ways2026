@@ -226,18 +226,26 @@ public class AuditoriaConsultaTests(WaysApiFixture fixture) : IClassFixture<Ways
 
     // ---- 5.11: desde/hasta ----------------------------------------------------------------------
 
+    /// <summary>Judgment-day fix (juez B, slice 5 ronda 1, WARNING): el borde superior inclusivo
+    /// de <c>Hasta</c> no estaba pinneado — ninguna fila caía EXACTAMENTE en el instante
+    /// <c>hasta</c>, así que <c>&lt;=</c>→<c>&lt;</c> sobrevivía. La fila agregada acá cae justo
+    /// en <c>hasta</c> y tiene que seguir contando.</summary>
     [Fact]
     public async Task FiltroDeFechaDevuelveElSubconjuntoEsperado()
     {
         var ctx = await PrepararAsync(nameof(FiltroDeFechaDevuelveElSubconjuntoEsperado));
         var ids = await SembrarEscenarioDeFiltrosAsync(ctx);
 
+        var idFilaEnElBordeHasta = await SembrarFilaAsync(
+            ctx.IdTenant, null, ctx.IdActorAdmin, "precio.cambio", "articulo", 999,
+            new DateTimeOffset(2026, 5, 31, 0, 0, 0, TimeSpan.Zero), null, "{\"monto\":999}");
+
         var pagina = await ConsultarAsync(
             ctx.Admin, "?desde=2026-03-01T00:00:00Z&hasta=2026-05-31T00:00:00Z&tamanio=50");
 
-        Assert.Equal(3, pagina.Total);
+        Assert.Equal(4, pagina.Total);
         var idsDevueltos = pagina.Items.Select(f => f.IdAuditoria).ToHashSet();
-        Assert.Equal(new HashSet<long> { ids["R3"], ids["R4"], ids["R5"] }, idsDevueltos);
+        Assert.Equal(new HashSet<long> { ids["R3"], ids["R4"], ids["R5"], idFilaEnElBordeHasta }, idsDevueltos);
     }
 
     // ---- 5.12: accion -----------------------------------------------------------------------------
@@ -360,6 +368,81 @@ public class AuditoriaConsultaTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var cuerpo = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("entidad_requerida", cuerpo.GetProperty("codigo").GetString());
+    }
+
+    // ---- contenido de los payloads (Judgment-day, juez B, slice 5 ronda 1, WARNING) --------------
+
+    /// <summary>Mutation target (slice 5, juez B ronda 1, WARNING): el contenido de
+    /// <c>ValorAnterior</c>/<c>ValorNuevo</c> nunca se comparaba contra lo sembrado — proyectar
+    /// <c>ValorAnterior</c> desde <c>a.ValorNuevo</c> sobrevivía 16/16. R2 (estado
+    /// emitido→anulado) discrimina el contenido REAL de ambos payloads; R1 (<c>ValorAnterior</c>
+    /// null) discrimina la null-ness.</summary>
+    [Fact]
+    public async Task ElContenidoDeAmbosPayloadsCoincideConLoSembradoYLaNullNessDeValorAnteriorSeRespeta()
+    {
+        var ctx = await PrepararAsync(nameof(ElContenidoDeAmbosPayloadsCoincideConLoSembradoYLaNullNessDeValorAnteriorSeRespeta));
+        var ids = await SembrarEscenarioDeFiltrosAsync(ctx);
+
+        var pagina = await ConsultarAsync(ctx.Admin, "?tamanio=50");
+
+        var filaR2 = pagina.Items.Single(f => f.IdAuditoria == ids["R2"]);
+        Assert.Equal("emitido", filaR2.ValorAnterior!.Value.GetProperty("estado").GetString());
+        Assert.Equal("anulado", filaR2.ValorNuevo.GetProperty("estado").GetString());
+
+        var filaR1 = pagina.Items.Single(f => f.IdAuditoria == ids["R1"]);
+        Assert.Null(filaR1.ValorAnterior);
+        Assert.Equal(100, filaR1.ValorNuevo.GetProperty("monto").GetInt32());
+    }
+
+    // ---- clamp de pagina/tamanio (Judgment-day, juez B, slice 5 ronda 1, WARNING) -----------------
+
+    /// <summary>Mutation target (slice 5, juez B ronda 1, WARNING): <c>Math.Clamp(tamanio, 1,
+    /// 200)</c> sin ningún test — borrar el clamp sobrevivía (<c>tamanio=0</c> se traduciría en
+    /// <c>Take(0)</c>, cero filas, en vez de la mínima página de 1).</summary>
+    [Fact]
+    public async Task TamanioCeroSeTrataComoElMinimoUnaFila()
+    {
+        var ctx = await PrepararAsync(nameof(TamanioCeroSeTrataComoElMinimoUnaFila));
+        await SembrarEscenarioDeFiltrosAsync(ctx);
+
+        var pagina = await ConsultarAsync(ctx.Admin, "?tamanio=0");
+
+        Assert.Equal(8, pagina.Total);
+        Assert.Equal(1, pagina.Tamanio);
+        Assert.Single(pagina.Items);
+    }
+
+    /// <summary>Mutation target (slice 5, juez B ronda 1, WARNING): mismo <c>Math.Clamp</c>, borde
+    /// superior — sin el clamp, <c>tamanio=500</c> viajaría tal cual en vez de topearse en
+    /// 200.</summary>
+    [Fact]
+    public async Task TamanioQuinientosSeTopeaEnDoscientos()
+    {
+        var ctx = await PrepararAsync(nameof(TamanioQuinientosSeTopeaEnDoscientos));
+        await SembrarEscenarioDeFiltrosAsync(ctx);
+
+        var pagina = await ConsultarAsync(ctx.Admin, "?tamanio=500");
+
+        Assert.Equal(200, pagina.Tamanio);
+    }
+
+    /// <summary>Mutation target (slice 5, juez B ronda 1, WARNING): <c>Math.Max(pagina, 1)</c> sin
+    /// ningún test — borrar el clamp sobrevivía. <c>pagina=0</c> tiene que tratarse igual que
+    /// <c>pagina=1</c>.</summary>
+    [Fact]
+    public async Task PaginaCeroSeTrataComoLaPrimera()
+    {
+        var ctx = await PrepararAsync(nameof(PaginaCeroSeTrataComoLaPrimera));
+        await SembrarEscenarioDeFiltrosAsync(ctx);
+
+        var paginaConCero = await ConsultarAsync(ctx.Admin, "?tamanio=50&pagina=0");
+        var paginaConUno = await ConsultarAsync(ctx.Admin, "?tamanio=50&pagina=1");
+
+        Assert.Equal(1, paginaConCero.Pagina);
+        Assert.Equal(8, paginaConCero.Total);
+        Assert.Equal(
+            paginaConUno.Items.Select(f => f.IdAuditoria).ToList(),
+            paginaConCero.Items.Select(f => f.IdAuditoria).ToList());
     }
 
     // ---- 5.5/5.9: tiebreaker id_auditoria DESC bajo creado_el empatado ---------------------------
@@ -528,7 +611,7 @@ public class AuditoriaConsultaTests(WaysApiFixture fixture) : IClassFixture<Ways
             ctxB.IdTenant, null, ctxB.IdActorAdmin, "precio.cambio", "articulo", 42,
             MomentoFijo, null, "{\"monto\":200}");
 
-        await using var sesionOwnerDeB = CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, ctxB.IdTenant));
+        await using var sesionOwnerDeB = fixture.CrearContextoDeOwner(new TenantActualFijo(ModoDeAcceso.Tenant, ctxB.IdTenant));
         var servicio = new ServicioDeConsultaDeAuditoria(sesionOwnerDeB);
 
         var pagina = await servicio.ConsultarAsync(
@@ -537,36 +620,5 @@ public class AuditoriaConsultaTests(WaysApiFixture fixture) : IClassFixture<Ways
         var idsVisibles = pagina.Items.Select(f => f.IdAuditoria).ToHashSet();
         Assert.DoesNotContain(idFilaA, idsVisibles);
         Assert.Contains(idFilaB, idsVisibles);
-    }
-
-    /// <summary>Mismo criterio que <c>LotesRlsTests.CrearContextoDeOwner</c>: un
-    /// <see cref="WaysDbContext"/> sobre <c>ways_owner</c> (bypassea RLS) para que la prueba de
-    /// arriba pruebe genuinamente el query filter de EF, no la política RLS (ya cubierta por
-    /// <c>AuditoriaEscrituraTests</c>, Slice 1).</summary>
-    private WaysDbContext CrearContextoDeOwner(ITenantActual tenantActual)
-    {
-        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
-            .UseNpgsql(fixture.OwnerConnectionString, npgsql =>
-            {
-                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
-                npgsql.MapEnum<EstadoTenant>("estado_tenant");
-                npgsql.MapEnum<Domain.Catalogos.ComportamientoMedioPago>("comportamiento_medio_pago");
-                npgsql.MapEnum<Domain.Catalogos.ClaseComprobante>("clase_comprobante");
-                npgsql.MapEnum<Domain.Clientes.TipoDocumento>("tipo_documento");
-                npgsql.MapEnum<Domain.Catalogos.ModoLista>("modo_lista");
-                npgsql.MapEnum<Domain.Articulos.UnidadVenta>("unidad_venta");
-                npgsql.MapEnum<Domain.Ventas.EstadoComprobante>("estado_comprobante");
-                npgsql.MapEnum<Domain.Stock.MotivoStock>("motivo_stock");
-                npgsql.MapEnum<Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
-                npgsql.MapEnum<Domain.Caja.EstadoTurno>("estado_turno");
-                npgsql.MapEnum<Domain.Caja.TipoMovimientoCaja>("tipo_movimiento_caja");
-                npgsql.MapEnum<Domain.Caja.TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
-                npgsql.MapEnum<Domain.Gastos.CategoriaGasto>("categoria_gasto");
-                npgsql.MapEnum<Domain.Compras.EstadoCompra>("estado_compra");
-            })
-            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
-            .Options;
-
-        return new WaysDbContext(opciones, tenantActual);
     }
 }

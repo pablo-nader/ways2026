@@ -1288,6 +1288,28 @@ depends on it.
   --startup-project src/Ways.Infrastructure` → "No changes have been made
   to the model since the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
+  **Judgment-day slice 5 (round 1, judge B — closed, 0 severos, 3
+  WARNINGs + 1 sugerencia):**
+  1. `Hasta`'s inclusive upper bound (`:90`) was unpinned — no seeded row
+     landed EXACTLY on the `hasta` instant, so `<=`→`<` survived 16/16.
+     `FiltroDeFechaDevuelveElSubconjuntoEsperado` now seeds a row exactly
+     at `hasta` and asserts it's included.
+  2. `Math.Clamp(tamanio, 1, 200)`/`Math.Max(pagina, 1)` (`:38-39`) had no
+     test at all — deleting the clamp survived. Added
+     `TamanioCeroSeTrataComoElMinimoUnaFila`,
+     `TamanioQuinientosSeTopeaEnDoscientos`,
+     `PaginaCeroSeTrataComoLaPrimera`.
+  3. The log's payload CONTENT was never asserted — projecting
+     `ValorAnterior` from `a.ValorNuevo` survived 16/16. Added
+     `ElContenidoDeAmbosPayloadsCoincideConLoSembradoYLaNullNessDeValorAnteriorSeRespeta`
+     (R2's real emitido→anulado content on both sides, R1's null
+     `ValorAnterior`).
+  4. Sugerencia: `LotesRlsTests`' 15-line owner-context `MapEnum` helper,
+     duplicated verbatim in `AuditoriaConsultaTests`, hoisted to
+     `WaysApiFixture.CrearContextoDeOwner` and reused by both files —
+     Slice 6 will reuse it too.
+  All four mutations verified: mutated → `dotnet build --no-incremental`
+  → targeted test FAILED → reverted → green.
 - [ ] 5.22 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   *(orchestrator — out of `sdd-apply`'s scope per the launch prompt)*
 - [ ] 5.23 Branch `feat/stage14-slice5-consulta` off `main` (parent:

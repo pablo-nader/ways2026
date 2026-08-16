@@ -255,6 +255,41 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
         return new WaysDbContext(opciones, tenantActual);
     }
 
+    /// <summary>Un <see cref="WaysDbContext"/> sobre <c>ways_owner</c> (bypassea RLS) — el único
+    /// mecanismo que puede aislar sobre esta conexión es el query filter de EF, nunca RLS. Usado
+    /// por las pruebas que necesitan probar genuinamente el filtro de EF de tenant, no la
+    /// política RLS (ya cubierta por las pruebas sobre <c>ways_app</c>).
+    ///
+    /// Judgment-day (juez B, slice 5, sugerencia): hoisteado desde <c>LotesRlsTests</c> —
+    /// duplicaba 15 líneas de <c>MapEnum</c> con <c>AuditoriaConsultaTests</c>, y crecía con cada
+    /// enum nuevo. El slice 6 lo va a reusar también.</summary>
+    public WaysDbContext CrearContextoDeOwner(ITenantActual tenantActual)
+    {
+        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
+            .UseNpgsql(OwnerConnectionString, npgsql =>
+            {
+                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<MotivoStock>("motivo_stock");
+                npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<EstadoTurno>("estado_turno");
+                npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
+                npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
+                npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                npgsql.MapEnum<EstadoCompra>("estado_compra");
+            })
+            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
+            .Options;
+
+        return new WaysDbContext(opciones, tenantActual);
+    }
+
     /// <summary>Conexión cruda como <c>ways_app</c> con el GUC de tenant seteado a mano
     /// —lo mismo que hace <c>InterceptorDeContextoDeTenant</c>, pero sin pasar por EF: es
     /// la prueba de que la capa 2 (RLS) no depende del ORM.</summary>
