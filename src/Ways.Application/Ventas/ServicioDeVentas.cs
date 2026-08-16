@@ -495,7 +495,8 @@ public class ServicioDeVentas(
         // ValidarSignoDeLineas dentro de MaterializarItems): valida la transición contra el
         // estado pre-leído ANTES del UPDATE atómico del paso 1, que sigue siendo la única
         // autoridad race-safe — si otra anulación gana la carrera entre este SELECT y ese UPDATE,
-        // la rama `!seAnulo` de abajo la sigue atrapando sin depender de este pre-chequeo.
+        // la rama `idPuntoVentaAnulacion is null` de abajo la sigue atrapando sin depender de
+        // este pre-chequeo.
         // AsNoTracking(): el UPDATE de abajo es SQL crudo, no pasa por el change tracker de EF —
         // sin esto, la entidad quedaría trackeada con el estado VIEJO y el ObtenerAsync() del
         // final devolvería ese mismo objeto stale desde el identity map, en vez de re-consultar.
@@ -516,15 +517,16 @@ public class ServicioDeVentas(
         await ExigirTurnoNoCerradoAsync(conexion, transaccionCruda, idTenant, id, ct);
 
         // 1. Transición atómica emitido → anulado — un único UPDATE ... WHERE estado = 'emitido'
-        // RETURNING (forward obligation, ADR-8: el segundo layer id_tenant en el WHERE es la
-        // misma defensa barata que ActualizarSaldoClienteAsync, RLS ya aísla por tenant). Dos
-        // anulaciones concurrentes del mismo comprobante se serializan acá: Postgres toma el row
-        // lock de la primera, la segunda espera y, al retomarlo, re-evalúa el WHERE contra el
-        // estado YA COMITEADO por la primera — 'anulado' no matchea 'emitido', 0 filas, nunca un
-        // 500 ni una condición de carrera silenciosa.
-        var seAnulo = await MarcarAnuladoAsync(conexion, transaccionCruda, idTenant, id, ct);
+        // RETURNING id_punto_venta (stage-14-auditoria-trazabilidad, Slice 3, design decisión 8 —
+        // mismo criterio que ServicioDeTurnos.MarcarCerradoAsync). Sigue siendo la única autoridad
+        // race-safe para "¿pasó la transición?", y ahora también contesta "¿en qué PV?" sin una
+        // lectura extra. Dos anulaciones concurrentes del mismo comprobante se serializan acá:
+        // Postgres toma el row lock de la primera, la segunda espera y, al retomarlo, re-evalúa
+        // el WHERE contra el estado YA COMITEADO por la primera — 'anulado' no matchea 'emitido',
+        // 0 filas, nunca un 500 ni una condición de carrera silenciosa.
+        var idPuntoVentaAnulacion = await MarcarAnuladoAsync(conexion, transaccionCruda, idTenant, id, ct);
 
-        if (!seAnulo)
+        if (idPuntoVentaAnulacion is null)
         {
             // ADR-8: mismo 404 para "no existe" y "es de otro tenant" (filtro de EF + RLS ya
             // deja invisible un comprobante ajeno) — solo si NINGUNA fila visible tiene ese id
@@ -538,6 +540,25 @@ public class ServicioDeVentas(
 
             throw new ErrorDominio("comprobante_ya_anulado", "El comprobante ya está anulado.", 409);
         }
+
+        // 1.5. Auditoría (stage-14-auditoria-trazabilidad, Slice 3; spec auditoria-de-operaciones;
+        // design call site 7) — MISMA transacción cruda, MISMA constante EstadoComprobante.Emitido
+        // que ligó el WHERE del UPDATE de arriba, así que valor_anterior no puede divergir del
+        // predicado que realmente lo autorizó. id_punto_venta sale del RETURNING recién leído,
+        // nunca de comprobantePreLectura (AsNoTracking, tomado ANTES del UPDATE bajo otro filtro).
+        // ServicioDeAuditoria se instancia local con los mismos db/reloj/contexto de este servicio
+        // — el binding verify criterion de esta etapa restringe el diff de este archivo a las
+        // líneas de EjecutarAnulacionAsync/MarcarAnuladoAsync, así que el constructor de
+        // ServicioDeVentas (y VentasCheckoutTests, que lo instancia directo) queda intacto.
+        var servicioDeAuditoriaAnulacion = new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto);
+        var (valorAnteriorVentaAnulacion, valorNuevoVentaAnulacion) =
+            Ways.Domain.Auditoria.PayloadDeAuditoria.AnulacionDeVenta(EstadoComprobante.Emitido, EstadoComprobante.Anulado);
+        await servicioDeAuditoriaAnulacion.RegistrarAsync(
+            conexion, transaccionCruda,
+            new Ways.Domain.Auditoria.RegistroDeAuditoria(
+                idTenant, idPuntoVentaAnulacion, Ways.Domain.Auditoria.AccionAuditada.VentaAnulacion, id,
+                valorAnteriorVentaAnulacion, valorNuevoVentaAnulacion),
+            ct);
 
         // 2. Movimientos de stock inversos — uno por cada movimiento ORIGINAL de motivo = venta
         // de este comprobante (nunca recalculado desde items: ver el doc-comment de
@@ -712,8 +733,12 @@ public class ServicioDeVentas(
 
     /// <summary>Único UPDATE atómico de la transición de estado — ver el doc-comment de
     /// <see cref="EjecutarAnulacionAsync"/> sobre por qué esto alcanza para serializar dos
-    /// anulaciones concurrentes sin ningún lock explícito.</summary>
-    private static async Task<bool> MarcarAnuladoAsync(
+    /// anulaciones concurrentes sin ningún lock explícito. stage-14-auditoria-trazabilidad, Slice
+    /// 3 (design decisión 8, precedente exacto <c>ServicioDeTurnos.MarcarCerradoAsync</c>):
+    /// <c>RETURNING id_punto_venta</c> en vez de <c>id_comprobante_venta</c> — el mismo lock que
+    /// ya decide "¿pasó la transición?" contesta también "¿en qué PV?", sin una lectura extra ni
+    /// confiar en el pre-read <c>AsNoTracking()</c>.</summary>
+    private static async Task<int?> MarcarAnuladoAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idComprobanteVenta, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
@@ -721,7 +746,7 @@ public class ServicioDeVentas(
         comando.CommandText =
             "UPDATE comprobantes_venta SET estado = $1 " +
             "WHERE id_comprobante_venta = $2 AND id_tenant = $3 AND estado = $4 " +
-            "RETURNING id_comprobante_venta";
+            "RETURNING id_punto_venta";
 
         AgregarParametro(comando, EstadoComprobante.Anulado);
         AgregarParametro(comando, idComprobanteVenta);
@@ -729,7 +754,7 @@ public class ServicioDeVentas(
         AgregarParametro(comando, EstadoComprobante.Emitido);
 
         var resultado = await comando.ExecuteScalarAsync(ct);
-        return resultado is not null;
+        return resultado is null ? null : Convert.ToInt32(resultado);
     }
 
     // ---- La transacción (design: The Sale Transaction, orden de statements pineado) ----------
