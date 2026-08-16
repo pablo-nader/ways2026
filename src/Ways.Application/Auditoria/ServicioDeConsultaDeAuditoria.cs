@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Exportacion;
 using Ways.Domain.Common;
 
 namespace Ways.Application.Auditoria;
@@ -50,6 +51,31 @@ public sealed class ServicioDeConsultaDeAuditoria(IWaysDbContext db)
         var items = crudas.Select(Materializar).ToList();
 
         return new PaginaDeAuditoria(items, total, pagina, tamanio);
+    }
+
+    /// <summary>
+    /// Sibling de export (Slice 6, design decisión 13) — shape LISTADO: <c>Contar → GuardaDeTope.
+    /// Exigir → Take(tope+1) → segundo Exigir</c> (etapa 11, <c>ServicioDeVentas.
+    /// ListarParaExportacionAsync</c> verbatim), sobre el MISMO <see cref="ConstruirQuery"/> que
+    /// <see cref="ConsultarAsync"/> — nunca un predicado propio. El orden ya viene de
+    /// <see cref="ConstruirQuery"/> (<c>creado_el desc, id desc</c>), sin un <c>OrderBy</c>
+    /// adicional acá.
+    /// </summary>
+    public async Task<IReadOnlyList<FilaDeAuditoria>> ConsultarParaExportacionAsync(
+        FiltrosDeAuditoria filtros, int tope, CancellationToken ct = default)
+    {
+        var query = ConstruirQuery(filtros);
+
+        var cantidad = await query.CountAsync(ct);
+        GuardaDeTope.Exigir(cantidad, tope);
+
+        var crudas = await query
+            .Take(tope + 1)
+            .ToListAsync(ct);
+
+        GuardaDeTope.Exigir(crudas.Count, tope);
+
+        return crudas.Select(Materializar).ToList();
     }
 
     private static FilaDeAuditoria Materializar(FilaCrudaDeAuditoria f) =>
