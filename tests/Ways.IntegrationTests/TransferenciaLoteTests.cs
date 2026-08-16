@@ -871,7 +871,8 @@ public class TransferenciaLoteTests(WaysApiFixture fixture) : IClassFixture<Ways
         var reloj = new RelojFijo(DateTimeOffset.UtcNow);
         var contexto = new ContextoFijo(ctx.IdTenant, usuarioId: 1);
         var servicioDeLotes = new ServicioDeLotes(db, reloj, contexto);
-        var servicioDeStock = new ServicioDeStock(db, reloj, contexto, servicioDeLotes);
+        var servicioDeAuditoria = new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto);
+        var servicioDeStock = new ServicioDeStock(db, reloj, contexto, servicioDeLotes, servicioDeAuditoria);
 
         var solicitud = new SolicitudDeTransferencia(
             idPuntoVentaConIdMayor, idPuntoVentaConIdMenor, "Orden de locks",
