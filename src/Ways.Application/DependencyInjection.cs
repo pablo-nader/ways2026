@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
+using Ways.Application.Auditoria;
 using Ways.Application.Caja;
 using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
@@ -24,6 +25,10 @@ public static class DependencyInjection
     public static IServiceCollection AgregarApplication(this IServiceCollection services)
     {
         services.AddSingleton<IRelojDelSistema, RelojDelSistema>();
+
+        // stage-14-auditoria-trazabilidad, Slice 1: el writer se registra completo desde esta
+        // slice, aunque sin call sites todavía (slices 2-4 lo inyectan recién ahí).
+        services.AddScoped<ServicioDeAuditoria>();
 
         // AsignadorDeNumeroCliente (Ways.Application.Clientes) es estática, sin ciclo de
         // vida de DI que registrar — el IWaysDbContext llega por parámetro en cada llamada.
