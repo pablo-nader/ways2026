@@ -3,7 +3,9 @@ using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Domain.Articulos;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Precios;
@@ -21,9 +23,40 @@ namespace Ways.Application.Precios;
 ///
 /// Autorización: <c>Politicas.GestionDeCatalogo</c> aplicada en la capa de API, mismo criterio
 /// que <see cref="Articulos.ServicioDeArticulos"/>.
+///
+/// <para><b>DEVIATION registrada (tasks.md, Slice 2, task 2.1):</b> <paramref name="auditoria"/>
+/// es OPCIONAL (default <c>null</c>), no un parámetro requerido — desviación deliberada del
+/// patrón de <c>ServicioDeUsuarios</c> (que sí lo exige). Motivo: agregar un parámetro
+/// REQUERIDO acá rompía la compilación de 9 archivos de test que instancian
+/// <c>ServicioDePrecios</c> a mano sin pasar un cuarto argumento (10 líneas de instanciación en
+/// total — <c>VentasCheckoutTests.cs</c> tiene dos): <c>ComprasAnulacionYConcurrenciaTests.cs</c>,
+/// <c>OfertasResolucionTests.cs</c>, <c>PlanDeVentaFefoTests.cs</c>, <c>ReliquidacionTests.cs</c>,
+/// <c>VentaEscrituraLoteTests.cs</c>, <c>VentasAtomicidadYConcurrenciaTests.cs</c>,
+/// <c>VentasCheckoutTests.cs</c>, <c>VentasTurnoWiringTests.cs</c> y
+/// <c>ServicioDeOfertasTests.cs</c> — incluido <c>tests/Ways.IntegrationTests/VentasCheckoutTests.cs</c>,
+/// el único archivo que Orchestrator Decision 13 (tasks.md) prohíbe tocar en CUALQUIER slice de
+/// esta etapa ("nothing in any slice has a reason to touch that file"), justo porque el design no
+/// anticipó este ripple mecánico de constructor. Verificado: ninguno de esos call sites llama
+/// nunca a <see cref="AbrirNuevoPrecioAsync"/> (todos son lectura pura vía
+/// <c>ServicioDeOfertas.PreciosVigentesEnLoteAsync</c> o resolución de <see
+/// cref="PrecioVigenteAsync"/>/<see cref="PreciosVigentesAsync"/>), así que un <c>auditoria</c>
+/// ausente nunca se dereferencia en esos caminos. La propiedad <see cref="Auditoria"/> revienta
+/// fuerte (nunca en silencio) si algún día SÍ se alcanza sin haberla inyectado — el fail-closed
+/// de precios (spec, task 2.11) sigue intacto para todo caller real (DI siempre inyecta la
+/// instancia real, <c>AddScoped&lt;ServicioDeAuditoria&gt;()</c>).</para>
 /// </summary>
-public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto)
+public class ServicioDePrecios(
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeAuditoria? auditoria = null)
 {
+    /// <summary>Guard fail-loud del parámetro opcional documentado arriba — nunca un skip
+    /// silencioso del fail-closed de auditoría.</summary>
+    private ServicioDeAuditoria Auditoria => auditoria
+        ?? throw new InvalidOperationException(
+            "ServicioDePrecios necesita ServicioDeAuditoria para escribir un cambio de precio; " +
+            "el constructor la recibió null. Solo válido en fixtures de test que nunca llaman " +
+            "AbrirNuevoPrecioAsync (ver el doc-comment de la clase) — cualquier caller real " +
+            "(DI) siempre la inyecta.");
+
     /// <summary>Tolerancia de desfasaje de reloj entre cliente y servidor para "vigente_desde no
     /// puede estar en el pasado" (spec: Programmable Future Prices — el spec no fija un número;
     /// 30 segundos es una decisión de esta capa de servicio, documentada acá porque no hay una
@@ -182,6 +215,16 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
                     await CerrarFilaAsync(predecesorAReabrir.Id, vigenteDesdeEfectivo, ahora, ct);
                 }
             }
+
+            // Design call site 1 / task 2.1 — UNA llamada por operación, después del cierre de
+            // la fila abierta y del re-cierre del predecesor (arriba), ANTES de db.Precios.Add:
+            // ambas escrituras quedan encoladas en el MISMO SaveChangesAsync (:197) de abajo, así
+            // que un INSERT de auditoría roto (fail-closed) revierte también el cambio de precio.
+            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.CambioDePrecio(
+                idListaPrecio, filaAbierta?.Monto, filaAbierta?.VigenteDesde, precio, vigenteDesdeEfectivo);
+
+            Auditoria.Registrar(new RegistroDeAuditoria(
+                idTenant, idPuntoVenta: null, AccionAuditada.PrecioCambio, idArticulo, valorAnterior, valorNuevo));
 
             db.Precios.Add(new Precio
             {
@@ -581,7 +624,12 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         await using var comando = conexion.CreateCommand();
         comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
         comando.CommandText =
-            "SELECT id_precio, vigente_desde FROM precios " +
+            // Task 2.2 (design call site 1) — la columna `precio` (mapeo de `Precio.Monto`,
+            // PrecioConfiguration.cs:56 — NO se llama "monto" en la base) sumada a la
+            // proyección: una columna más en un SELECT que YA corre bajo el advisory lock, cero
+            // round trips nuevos — es el before-image de `precio.cambio`
+            // (PayloadDeAuditoria.CambioDePrecio, cuya clave jsonb SÍ es "monto").
+            "SELECT id_precio, vigente_desde, precio FROM precios " +
             "WHERE id_articulo = $1 AND id_lista_precio = $2 AND id_tenant = $3 " +
             "AND vigente_hasta IS NULL AND deleted_at IS NULL";
 
@@ -596,7 +644,7 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
             return null;
         }
 
-        return new FilaVigente(lector.GetInt32(0), lector.GetFieldValue<DateTimeOffset>(1));
+        return new FilaVigente(lector.GetInt32(0), lector.GetFieldValue<DateTimeOffset>(1), lector.GetDecimal(2));
     }
 
     /// <summary>(judgment-day, item 1; ronda 2, item 1) Localiza el PREDECESOR de una fila
@@ -659,7 +707,9 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
             return null;
         }
 
-        return new FilaVigente(lector.GetInt32(0), lector.GetFieldValue<DateTimeOffset>(1));
+        // El predecesor solo se usa para re-cerrar su ventana (CerrarFilaAsync) — nunca alimenta
+        // un payload de auditoría, así que Monto no se proyecta acá (task 2.2, design call site 1).
+        return new FilaVigente(lector.GetInt32(0), lector.GetFieldValue<DateTimeOffset>(1), Monto: 0m);
     }
 
     private async Task CerrarFilaAsync(int idPrecio, DateTimeOffset vigenteHasta, DateTimeOffset ahora, CancellationToken ct)
@@ -696,5 +746,8 @@ public class ServicioDePrecios(IWaysDbContext db, IRelojDelSistema reloj, IConte
         comando.Parameters.Add(parametro);
     }
 
-    private readonly record struct FilaVigente(int Id, DateTimeOffset VigenteDesde);
+    /// <summary><c>Monto</c> es el before-image de <c>precio.cambio</c> (task 2.2) — solo
+    /// significativo cuando la fila viene de <see cref="BuscarFilaAbiertaAsync"/>; el predecesor
+    /// (<see cref="BuscarPredecesorAsync"/>) nunca lo lee.</summary>
+    private readonly record struct FilaVigente(int Id, DateTimeOffset VigenteDesde, decimal Monto);
 }

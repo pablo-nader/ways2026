@@ -62,4 +62,28 @@ public class ServicioDePreciosSuperficieTests
             Assert.DoesNotContain(propiedades, n => n is "Id" or "IdPrecio");
         }
     }
+
+    /// <summary>Judgment-day slice 2 (ronda 1, juez B, WARNING) — guard fail-loud documentado en
+    /// el doc-comment de la clase (tasks.md task 2.1, DEVIATION registrada): un
+    /// <c>auditoria</c> ausente tiene que reventar con <see cref="InvalidOperationException"/> al
+    /// primer acceso, nunca saltearse en silencio. Vía reflexión sobre la property PRIVADA
+    /// <c>Auditoria</c> — el camino real (<see cref="ServicioDePrecios.AbrirNuevoPrecioAsync"/>)
+    /// abre una transacción (<c>CreateExecutionStrategy</c> + <c>BeginTransactionAsync</c>) que el
+    /// proveedor InMemory no soporta (mismo motivo documentado en
+    /// <c>ServicioDeOfertasTests</c>/<c>ServicioDeUsuariosTests</c>), así que no hay forma de
+    /// alcanzar el write path real sin Postgres. La property no toca ninguna de las otras tres
+    /// dependencias del constructor, así que <c>null</c> alcanza para las tres.</summary>
+    [Fact]
+    public void ElGuardDeAuditoriaAusenteFallaFuerteEnVezDeSaltearseEnSilencio()
+    {
+        var servicio = new ServicioDePrecios(db: null!, reloj: null!, contexto: null!, auditoria: null);
+
+        var propiedad = typeof(ServicioDePrecios)
+            .GetProperty("Auditoria", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        var excepcion = Record.Exception(() => propiedad.GetValue(servicio));
+
+        var deReflexion = Assert.IsType<TargetInvocationException>(excepcion);
+        Assert.IsType<InvalidOperationException>(deReflexion.InnerException);
+    }
 }
