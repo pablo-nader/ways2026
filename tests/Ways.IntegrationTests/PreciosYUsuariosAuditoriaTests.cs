@@ -302,8 +302,8 @@ public class PreciosYUsuariosAuditoriaTests(WaysApiFixture fixture) : IClassFixt
     }
 
     /// <summary>Judgment-day slice 2 (ronda 1, juez B, MAJOR) — la cobertura Postgres real de
-    /// <c>ExigirDisponibilidadAsync</c> con <c>CrearAsync</c> completo (round-trip persistido,
-    /// no un seed crudo por <c>db.Usuarios.Add</c> como <c>UsuariosYLoginTests</c>): el MISMO
+    /// <c>ExigirDisponibilidadAsync</c> con <c>CrearAsync</c> completo (round-trip persistido, no
+    /// un seed crudo por <c>db.Usuarios.Add</c> como <c>UsuariosYLoginTests</c>): el MISMO
     /// <c>NombreUsuario</c> en DOS tenants distintos convive (índice único por tenant, doc 09
     /// ADR-7) y el MISMO nombre repetido en el MISMO tenant se rechaza con
     /// <c>usuario_duplicado</c>/409 — el reemplazo directo de la línea 360-361 de
@@ -311,28 +311,36 @@ public class PreciosYUsuariosAuditoriaTests(WaysApiFixture fixture) : IClassFixt
     /// el <c>&amp;&amp; u.IdTenant == idTenantScope</c>) sobrevivía a los 203 tests existentes
     /// porque ninguno pasaba por <see cref="ServicioDeUsuarios.CrearAsync"/> dos veces con el
     /// mismo nombre en tenants distintos. tasks.md task 2.3 documentaba esta cobertura como
-    /// "implícita" en otros tests de este archivo — no lo era; este es el test explícito.</summary>
+    /// "implícita" en otros tests de este archivo — no lo era; este es el test explícito.
+    ///
+    /// El actor tiene que ser de PLATAFORMA (root, <c>datos.IdTenant</c> explícito), no un admin
+    /// de tenant: con un actor de tenant, la sesión de EF (<c>TenantActualFijo.Tenant</c>) ya
+    /// filtra <c>db.Usuarios</c> a su propio tenant (filtro de EF + RLS), así que el chequeo
+    /// cross-tenant nunca se ejercitaría — la mutación de arriba solo es observable cuando
+    /// <c>db.Usuarios</c> NO está filtrado por tenant (sesión de plataforma), que es exactamente
+    /// el único caso real donde <c>idTenantScope</c> puede diferir del tenant de la sesión.</summary>
     [Fact]
     public async Task ElMismoNombreDeUsuarioEnDosTenantsDistintosConviveYEnElMismoTenantSeRechaza()
     {
-        var (idTenantA, _, _, _, idActorAdminA) = await AprovisionarTenantAsync(
+        var (idTenantA, _, _, _, _) = await AprovisionarTenantAsync(
             nameof(ElMismoNombreDeUsuarioEnDosTenantsDistintosConviveYEnElMismoTenantSeRechaza) + "A");
-        var (idTenantB, _, _, _, idActorAdminB) = await AprovisionarTenantAsync(
+        var (idTenantB, _, _, _, _) = await AprovisionarTenantAsync(
             nameof(ElMismoNombreDeUsuarioEnDosTenantsDistintosConviveYEnElMismoTenantSeRechaza) + "B");
+        var idRoot = await ObtenerIdDeUsuarioRootAsync();
 
         var reloj = new RelojFijo(MomentoFijo);
+        var (db, servicio) = CrearServicioDeUsuarios(idTenant: null, idRoot, reloj, RolConocido.Root);
+        await using var _ = db;
 
-        var (dbA, servicioA) = CrearServicioDeUsuarios(idTenantA, idActorAdminA, reloj);
-        await using var _dbA = dbA;
-        var (dbB, servicioB) = CrearServicioDeUsuarios(idTenantB, idActorAdminB, reloj);
-        await using var _dbB = dbB;
+        var datosA = new CrearUsuario(
+            "vendedor-cross-tenant", "cross-a@ways.test", (int)RolConocido.Vendedor, PasswordUsuario, IdTenant: idTenantA);
+        var datosB = new CrearUsuario(
+            "vendedor-cross-tenant", "cross-b@ways.test", (int)RolConocido.Vendedor, PasswordUsuario, IdTenant: idTenantB);
 
-        var datosA = new CrearUsuario("vendedor-cross-tenant", "cross-a@ways.test", (int)RolConocido.Vendedor, PasswordUsuario);
-        var datosB = new CrearUsuario("vendedor-cross-tenant", "cross-b@ways.test", (int)RolConocido.Vendedor, PasswordUsuario);
-
-        // Mismo NombreUsuario, dos tenants distintos: los dos CrearAsync tienen que succeeder.
-        var creadoA = await servicioA.CrearAsync(datosA);
-        var creadoB = await servicioB.CrearAsync(datosB);
+        // Mismo NombreUsuario, dos tenants distintos, MISMA sesión de plataforma sin filtro: los
+        // dos CrearAsync tienen que succeeder.
+        var creadoA = await servicio.CrearAsync(datosA);
+        var creadoB = await servicio.CrearAsync(datosB);
 
         Assert.NotEqual(creadoA.Id, creadoB.Id);
         Assert.Equal("vendedor-cross-tenant", creadoA.Usuario);
@@ -340,9 +348,10 @@ public class PreciosYUsuariosAuditoriaTests(WaysApiFixture fixture) : IClassFixt
 
         // Mismo NombreUsuario, MISMO tenant (A otra vez): se rechaza con usuario_duplicado.
         var datosDuplicadoEnA = new CrearUsuario(
-            "vendedor-cross-tenant", "cross-a-duplicado@ways.test", (int)RolConocido.Vendedor, PasswordUsuario);
+            "vendedor-cross-tenant", "cross-a-duplicado@ways.test", (int)RolConocido.Vendedor, PasswordUsuario,
+            IdTenant: idTenantA);
 
-        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicioA.CrearAsync(datosDuplicadoEnA));
+        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datosDuplicadoEnA));
 
         Assert.Equal("usuario_duplicado", error.Codigo);
         Assert.Equal(409, error.EstadoHttp);
