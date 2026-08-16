@@ -767,7 +767,7 @@ operation**, per Orchestrator Decision #1 above — never one per lote.
   to the model since the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` and `git status
   --short` on that directory both empty.
-- [ ] 4.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 4.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   - Ronda 1 (juez B): 2 MAJOR cerrados con evidencia de mutación. Finding 1:
     el conteo agregado con diferencia (`EjecutarConteoAsync`, delta ≠ 0) no
     tenía ningún test — cubierto por
@@ -792,7 +792,7 @@ operation**, per Orchestrator Decision #1 above — never one per lote.
     ajuste del mismo archivo. Evidencia de mutación: call site de decomiso
     en `ServicioDeStock.cs` mutado a `observaciones=""`/`idMovimientoStock=0`
     → los 2 tests fallaron → revert → 23/23 verdes.
-- [ ] 4.17 Branch `feat/stage14-slice4-stock-cc` off `main` (parent:
+- [x] 4.17 Branch `feat/stage14-slice4-stock-cc` off `main` (parent: *(CLEAN 2026-08-16: juez B ronda 1 — 2 MAJORs cerrados (cobertura del conteo agregado clave-por-clave; id_entidad desincronizado de secuencias coincidentes con quemadores de filas) + survivor equivalente del decomiso registrado; re-ronda B aprobada con 4 re-mutantes muertos incl. el survivor de ronda 1 y el probe de reliquidacion; juez A fresh: 0 severos, 1 WARNING (payload de decomiso 2-de-4 claves) cerrado test-only en cf2a474 con evidencia. JUDGMENT: APPROVED.)*
   slice 1); PR; merge stacked-to-main.
 
 **Test plan**: 3 mutation targets (4.6-4.8), coverage ×3 (4.9, 4.12, 4.13),
