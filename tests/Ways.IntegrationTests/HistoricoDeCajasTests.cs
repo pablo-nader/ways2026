@@ -332,6 +332,12 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
         using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();
 
+        // Fila 6 = título de tabla (mutation-proof-tests regla 8): el header es lo que ata cada
+        // celda de datos a su columna, sin este assert un swap de labels pasa inadvertido.
+        Assert.Equal(
+            ["Turno", "Punto de venta", "Apertura", "Cierre", "Esperado", "Declarado", "Diferencia", "Retiros"],
+            Enumerable.Range(1, 8).Select(c => hoja.Cell(6, c).GetString()));
+
         // Las 8 columnas completas, no solo Diferencia — Apertura/Cierre se comparan
         // zone-converted (mismo patrón que VentasListadoExportTests) porque el mapper convierte
         // el DateTimeOffset a America/Argentina/Buenos_Aires antes de escribir la celda.
