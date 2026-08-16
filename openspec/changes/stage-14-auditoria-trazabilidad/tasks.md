@@ -782,6 +782,16 @@ operation**, per Orchestrator Decision #1 above — never one per lote.
     La sugerencia equivalente para `stock.decomiso` quedó registrada como
     survivor equivalente por rollback (mutar su call site no cambia el
     resultado observable) — sin fix.
+  - Ronda 1 (juez A): 0 severos; 1 WARNING cerrado test-only. Los dos tests
+    de cobertura de `stock.decomiso` (`StockAuditoriaTests.cs:260-330`)
+    assertaban solo `cantidad`/`id_lote` y nunca `id_movimiento_stock` ni
+    `observaciones`, aunque `PayloadDeAuditoria.DecomisoDeStock` escribe las
+    4 claves — agregados los asserts de `observaciones` (igualdad con la
+    observación seedeada) e `id_movimiento_stock` (round-trip contra la fila
+    real de `movimientos_stock` del decomiso), mismo patrón del test de
+    ajuste del mismo archivo. Evidencia de mutación: call site de decomiso
+    en `ServicioDeStock.cs` mutado a `observaciones=""`/`idMovimientoStock=0`
+    → los 2 tests fallaron → revert → 23/23 verdes.
 - [ ] 4.17 Branch `feat/stage14-slice4-stock-cc` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
 

@@ -277,6 +277,10 @@ public class StockAuditoriaTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(40m, anterior.GetProperty("cantidad").GetDecimal());
         Assert.Equal(35m, nuevo.GetProperty("cantidad").GetDecimal());
         Assert.Equal(idLote, nuevo.GetProperty("id_lote").GetInt32());
+        Assert.Equal("Rotura auditada", nuevo.GetProperty("observaciones").GetString());
+
+        var movimiento = await db.MovimientosStock.SingleAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Decomiso);
+        Assert.Equal(movimiento.Id, nuevo.GetProperty("id_movimiento_stock").GetInt32());
     }
 
     [Fact]
@@ -296,6 +300,10 @@ public class StockAuditoriaTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         var nuevo = JsonDocument.Parse(fila.ValorNuevo).RootElement;
         Assert.Equal(JsonValueKind.Null, nuevo.GetProperty("id_lote").ValueKind);
+        Assert.Equal("Rotura sin lote auditada", nuevo.GetProperty("observaciones").GetString());
+
+        var movimiento = await db.MovimientosStock.SingleAsync(m => m.IdArticulo == idArticulo && m.Motivo == MotivoStock.Decomiso);
+        Assert.Equal(movimiento.Id, nuevo.GetProperty("id_movimiento_stock").GetInt32());
     }
 
     /// <summary>Los dos caminos de rechazo <c>409 stock_insuficiente_para_decomiso</c> (lote y
