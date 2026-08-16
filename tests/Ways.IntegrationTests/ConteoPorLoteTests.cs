@@ -585,7 +585,8 @@ public class ConteoPorLoteTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         var reloj = new RelojFijo(DateTimeOffset.UtcNow);
         var contexto = new ContextoFijo(ctx.IdTenant, usuarioId: 1);
         var servicioDeLotes = new ServicioDeLotes(db, reloj, contexto);
-        var servicioDeStock = new ServicioDeStock(db, reloj, contexto, servicioDeLotes);
+        var servicioDeAuditoria = new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto);
+        var servicioDeStock = new ServicioDeStock(db, reloj, contexto, servicioDeLotes, servicioDeAuditoria);
 
         var solicitud = new SolicitudDeConteo(
             ctx.IdPuntoVenta, idArticulo, null, "Orden de locks",

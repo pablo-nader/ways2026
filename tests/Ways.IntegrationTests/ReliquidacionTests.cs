@@ -698,7 +698,8 @@ public class ReliquidacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         var contexto = new ContextoFijo(ctx.IdTenant, usuarioId: ctx.IdEmpleadoAdmin);
         var lector = new LectorDeConsumosReliquidables(db);
         var servicioDePrecios = new ServicioDePrecios(db, reloj, contexto);
-        var servicio = new ServicioDeReliquidacion(db, reloj, contexto, lector, servicioDePrecios);
+        var servicioDeAuditoria = new Ways.Application.Auditoria.ServicioDeAuditoria(db, reloj, contexto);
+        var servicio = new ServicioDeReliquidacion(db, reloj, contexto, lector, servicioDePrecios, servicioDeAuditoria);
 
         await servicio.EjecutarAsync(idCliente, new SolicitudDeReliquidacion(ctx.IdPuntoVenta));
 
