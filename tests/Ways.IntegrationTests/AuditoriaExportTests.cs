@@ -223,7 +223,12 @@ public class AuditoriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var ctx = await PrepararAsync(nameof(UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadRealYNoGeneraArchivo), factoryBajo);
         var dia = new DateOnly(2026, 1, 1);
 
-        for (var i = 0; i < 4; i++)
+        // tope+2 = 5 filas (no tope+1 = 4): con solo 4 filas, count real y count leído del
+        // Take(tope+1) coinciden, y borrar el PRIMER GuardaDeTope.Exigir sobrevive (el segundo
+        // Exigir, sobre crudas.Count, rechaza igual con el mismo "4"). Con 5 filas el Take(4)
+        // trunca: si el primer Exigir se borra, el mutante reporta "4" (el truncado) en vez de "5"
+        // (la cantidad REAL) y el assert de abajo lo discrimina.
+        for (var i = 0; i < 5; i++)
         {
             await SembrarFilaAsync(
                 ctx.IdTenant, ctx.IdPuntoVenta, ctx.IdActorAdmin, "precio.cambio", "articulo", 41 + i,
@@ -237,7 +242,72 @@ public class AuditoriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
-        Assert.Contains("4", problema.GetProperty("title").GetString());
+        Assert.Contains("5", problema.GetProperty("title").GetString());
+    }
+
+    // ---- judgment-day slice 6 (juez B, finding 2): FormatoDeExportacion.Parsear en esta ruta -----
+
+    /// <summary>Complementa <c>FormatoDeExportacionTests</c> (unitaria, sin fixture) — mismo patrón
+    /// que <c>ReportesVentasResumenExportTests.UnFormatoNoSoportadoRechazaConProblemDetailsAtravesDelPipelineHttp</c>
+    /// (líneas 228-240): sin este test, borrar la llamada a <see cref="FormatoDeExportacion.Parsear"/>
+    /// en <c>/api/auditoria/export</c> sobrevive — un <c>formato=pdf</c> devolvería 200 XLSX.</summary>
+    [Fact]
+    public async Task UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeAuditoria()
+    {
+        var ctx = await PrepararAsync(nameof(UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeAuditoria), fixture);
+        var hoy = new DateOnly(2026, 1, 1);
+
+        var respuesta = await LlamarExportAsync(ctx.Admin, hoy, hoy, formato: "pdf");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("formato_no_soportado", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- judgment-day slice 6 (juez B, finding 3): borde EXACTO del tope (200, no 400) -----------
+
+    /// <summary>Discriminador real del SEGUNDO <c>GuardaDeTope.Exigir</c> del lado del ÉXITO: sin
+    /// este test, mutar ese segundo <c>Exigir</c> a <c>Exigir(crudas.Count, tope - 1)</c> sobrevive
+    /// — <c>UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadRealYNoGeneraArchivo</c> solo cubre
+    /// el rechazo por ARRIBA del tope. Acá se exportan EXACTAMENTE <c>tope</c> filas y se espera
+    /// 200 con el workbook completo (design decisión 6: exportar exactamente el tope es
+    /// legítimo).</summary>
+    [Fact]
+    public async Task UnaExportacionDeExactamenteElTopeDeFilasSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 3)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeExactamenteElTopeDeFilasSeAceptaCompleta), factoryBajo);
+        var dia = new DateOnly(2026, 1, 1);
+
+        for (var i = 0; i < 3; i++)
+        {
+            await SembrarFilaAsync(
+                ctx.IdTenant, ctx.IdPuntoVenta, ctx.IdActorAdmin, "precio.cambio", "articulo", 41 + i,
+                new DateTimeOffset(2026, 1, 1, 12, 0, i, TimeSpan.Zero), null, $"{{\"monto\":{100 + i}}}");
+        }
+
+        var respuesta = await LlamarExportAsync(ctx.Admin, dia, dia);
+        var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+        Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+
+        // Encabezado de tabla en la fila 6 (mismo layout que ExportadorXlsx), datos desde la 7: las
+        // tope=3 filas ocupan 7-9, y la fila 10 debe quedar vacía — si el mutante rechazara de más
+        // (Exigir(count, tope-1)) esta sección de arriba ya devolvió 400 y el test corta antes.
+        const int primeraFilaDeDatos = 7;
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.False(hoja.Row(primeraFilaDeDatos + i).IsEmpty());
+        }
+        Assert.True(hoja.Row(primeraFilaDeDatos + 3).IsEmpty());
     }
 
     // ---- task 6.5: backstop de carrera del segundo GuardaDeTope.Exigir ---------------------------
