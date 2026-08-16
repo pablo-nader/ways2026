@@ -615,6 +615,7 @@ public class PreciosYUsuariosAuditoriaTests(WaysApiFixture fixture) : IClassFixt
     [Fact]
     public async Task PasswordYDesbloqueoDeCuentaDePlataformaNoEscribenFilaDeAuditoria()
     {
+        using var _host = fixture.CreateClient(); // arranca el host: siembra los roles primero
         var idPlataforma = await SembrarUsuarioAsync(
             idTenant: null, "staff-sin-auditoria", "staff-sin-auditoria@ways.test", RolConocido.Root);
 
