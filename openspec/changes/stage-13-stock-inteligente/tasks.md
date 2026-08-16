@@ -1463,7 +1463,13 @@ rather than retracting a published DTO field.
   to the model since the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty output (zero
   files).
-- [ ] 7.13 Run `judgment-day`; fix; re-judge until clean.
+- [x] 7.13 Run `judgment-day`; fix; re-judge until clean. *(CLEAN
+  2026-08-16: re-ronda B aprobada — 3 re-mutaciones muertas, incluida la
+  verificación en vivo del cierre del sibling vencimientos/resumen; juez A
+  fresh: 0 severos, 1 WARNING (matriz Supervisor-aceptado sin las rutas
+  nuevas) + 1 SUGGESTION (nombres "NueveRutas" caducos) cerrados test-only
+  en `9507f8f` con evidencia de mutación de política apilada. JUDGMENT:
+  APPROVED.)*
   **Ronda 1, juez B**: 3 hallazgos confirmados, los 3 cerrados — (MAJOR)
   `ReposicionReporteTests.SinProveedorCuentaElGrupoSinProveedorNoElSugeridoAusente`
   (7.9) tenía cardinalidades simétricas (1 fila sin proveedor, 1 fila sin
@@ -1503,8 +1509,10 @@ rather than retracting a published DTO field.
   describían las 11/9 entradas reales; renombrados sin el numeral
   (`...EnTodasLasRutasDeReportes`,
   `UnSupervisorEsAceptadoEnLasRutasSinLecturaDeRentabilidad`).
-- [ ] 7.14 Branch `feat/stage13-slice7-tile-y-sugerencia` off `main`
-  (parent: slices 3+4+5); PR; merge stacked-to-main. **If the slice
+- [x] 7.14 Branch `feat/stage13-slice7-tile-y-sugerencia` off `main`
+  (parent: slices 3+4+5); PR; merge stacked-to-main. *(Degradation NOT
+  exercised — the slice landed under budget with 7.6/7.11 shipped.)*
+  **If the slice
   overflows at apply time, drop tasks 7.6/7.11 (the `Sugerido` column) per
   the pre-approved degradation above and record the reduction in the PR
   body — never a silent cut.**
