@@ -4,10 +4,12 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Exportacion;
 using Ways.Application.Precios;
 using Ways.Application.Stock;
 using Ways.Domain.Articulos;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
@@ -519,6 +521,21 @@ public class ServicioDeCompras(
 
             throw new ErrorDominio("compra_no_confirmada", "La compra no está confirmada.", 409);
         }
+
+        // 1.5. Auditoría (stage-14-auditoria-trazabilidad, Slice 3; spec auditoria-de-operaciones;
+        // design call site 8) — MISMA transacción cruda; id_punto_venta sale del RETURNING que
+        // MarcarAnuladaAsync YA devuelve (sin cambios en ese método), nunca de una lectura extra.
+        // ServicioDeAuditoria se instancia local con los mismos db/reloj/contexto de este
+        // servicio, mismo criterio que ServicioDeVentas.EjecutarAnulacionAsync.
+        var servicioDeAuditoriaAnulacionCompra = new ServicioDeAuditoria(db, reloj, contexto);
+        var (valorAnteriorCompraAnulacion, valorNuevoCompraAnulacion) =
+            PayloadDeAuditoria.AnulacionDeCompra(EstadoCompra.Confirmada, EstadoCompra.Anulada);
+        await servicioDeAuditoriaAnulacionCompra.RegistrarAsync(
+            conexion, transaccionCruda,
+            new RegistroDeAuditoria(
+                idTenant, idPuntoVenta, AccionAuditada.CompraAnulacion, id,
+                valorAnteriorCompraAnulacion, valorNuevoCompraAnulacion),
+            ct);
 
         // 2. El ledger ORIGINAL, nunca recalculado desde items (design: doc-comment de
         // ServicioDeVentas.AnularAsync, mismo criterio acá). Orden ascendente (id_articulo,

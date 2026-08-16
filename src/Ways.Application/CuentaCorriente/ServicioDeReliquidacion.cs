@@ -4,7 +4,9 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Precios;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.CuentaCorriente;
@@ -27,7 +29,7 @@ namespace Ways.Application.CuentaCorriente;
 /// </summary>
 public class ServicioDeReliquidacion(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, LectorDeConsumosReliquidables lector,
-    ServicioDePrecios servicioDePrecios)
+    ServicioDePrecios servicioDePrecios, ServicioDeAuditoria auditoria)
 {
     /// <summary>Preview — <c>GET</c>, sin lock, nunca autoritativo (design: API Surface). Un
     /// consumo que se marca ENTRE este preview y el commit siguiente simplemente deja de aparecer
@@ -77,8 +79,10 @@ public class ServicioDeReliquidacion(
     {
         await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-        // 1. Lock del cliente — PRIMER statement, SIN turno (design decisión 4, pinned).
-        var (_, idListaPrecio) = await BloquearClienteAsync(idTenant, idCliente, ct);
+        // 1. Lock del cliente — PRIMER statement, SIN turno (design decisión 4, pinned). El saldo
+        // devuelto (etapa 14, slice 4) es el before-image autoritativo de cc.reliquidacion —
+        // decisión 9, JAMÁS un segundo SELECT después del UPDATE de saldo.
+        var (saldoInicial, idListaPrecio) = await BloquearClienteAsync(idTenant, idCliente, ct);
 
         // 2/3. Escaneo de elegibles + items — bajo el lock recién tomado (design: "scan runs
         // after it, inside the same transaction").
@@ -137,6 +141,18 @@ public class ServicioDeReliquidacion(
                 $"El marcador de reliquidación afectó {filasMarcadas} filas, se esperaban " +
                 $"{resultado.IdsMovimientosCubiertos.Count} — invariante de escritura violado.");
         }
+
+        // Etapa 14, slice 4 (design call site 12): después del marcador y su chequeo de rowcount,
+        // antes del commit. saldoInicial viene del FOR UPDATE ya tomado en el paso 1 — nunca un
+        // re-read tras el UPDATE de saldo (mutation target del slice, design mutation-targets,
+        // fila 3).
+        var (anteriorReliquidacion, nuevoReliquidacion) = PayloadDeAuditoria.ReliquidacionDeCc(
+            saldoInicial, nuevoSaldo, idMovimiento, resultado.IdsMovimientosCubiertos.Count, resultado.Delta);
+        await auditoria.RegistrarAsync(
+            conexion, transaccionCruda,
+            new RegistroDeAuditoria(
+                idTenant, idPuntoVenta, AccionAuditada.CcReliquidacion, idCliente, anteriorReliquidacion, nuevoReliquidacion),
+            ct);
 
         await transaccion.CommitAsync(ct);
         return resultado;

@@ -710,62 +710,162 @@ row in the same ADO transaction as the `estado` transition, including the
 call sites disappear, both `MarcarAnulado*Async` methods keep their
 `RETURNING`-derived PV (harmless if unused).
 
-- [ ] 3.1 Modify `src/Ways.Application/Ventas/ServicioDeVentas.cs`:
+- [x] 3.1 Modify `src/Ways.Application/Ventas/ServicioDeVentas.cs`:
   `MarcarAnuladoAsync` → `RETURNING id_punto_venta` / return `int?`
   (instead of `bool` via `RETURNING id_comprobante_venta`) — the same
   `UPDATE ... WHERE estado = 'emitido'` stays the sole race-safe authority,
   now also answering "in which PV", zero extra round trips. *(design
   decision 8; call site 7)*
-- [ ] 3.2 Modify `ServicioDeVentas.cs`'s `EjecutarAnulacionAsync` (`:541`,
+- [x] 3.2 Modify `ServicioDeVentas.cs`'s `EjecutarAnulacionAsync` (`:541`,
   after the `!seAnulo` guard, before paso 2):
   `auditoria.RegistrarAsync(conexion, transaccionCruda, ...)` with
   `accion=venta.anulacion`, `ant={estado: EstadoComprobante.Emitido}` (the
   **same constant** that binds the `UPDATE`'s `WHERE`), `nuevo={estado:
   EstadoComprobante.Anulado}`.
-- [ ] 3.3 Modify `src/Ways.Application/Compras/ServicioDeCompras.cs`'s
+  **DEVIATION (registered, not silent)**: `auditoria` is **not** a new
+  constructor dependency of `ServicioDeVentas`/`ServicioDeCompras` — design's
+  own call-site table never lists a constructor change for call sites 7/8,
+  and design binding verify criterion 2 restricts this etapa's diff of
+  `src/Ways.Application/Ventas/` to the lines of
+  `EjecutarAnulacionAsync`/`MarcarAnuladoAsync`. `VentasCheckoutTests.cs` and
+  4 other integration test files construct `ServicioDeVentas`/`ServicioDeCompras`
+  with `new(...)` and the CURRENT positional arg count (confirmed by
+  `grep`: `PlanDeVentaFefoTests`, `VentasAtomicidadYConcurrenciaTests`,
+  `VentaEscrituraLoteTests`, `VentasTurnoWiringTests`,
+  `VentasCheckoutTests`, and `ComprasAnulacionYConcurrenciaTests.CrearServicio`)
+  — a constructor parameter would have broken all of them, including the
+  one file that must stay byte-identical. Instead,
+  `new ServicioDeAuditoria(db, reloj, contexto)` is instantiated LOCAL to
+  each `EjecutarAnulacionAsync`, from the same `db`/`reloj`/`contexto`
+  already captured by each service's own primary constructor — zero DI
+  surface change, zero touched constructor, zero touched test file. For
+  `ServicioDeVentas.cs` specifically, fully-qualified names
+  (`Ways.Application.Auditoria.ServicioDeAuditoria`,
+  `Ways.Domain.Auditoria.*`) are used inline instead of adding `using`
+  directives, to keep the diff confined to the two named methods per
+  binding verify criterion 2's literal text.
+- [x] 3.3 Modify `src/Ways.Application/Compras/ServicioDeCompras.cs`'s
   anulación path (`:522`, after the guard, before paso 2):
   `RegistrarAsync` with `accion=compra.anulacion`, `ant={estado:
   "confirmada"}` (guaranteed by the `UPDATE`'s `WHERE`, `:677`),
   `nuevo={estado:"anulada"}`; `id_punto_venta` from the `RETURNING`
   `MarcarAnuladaAsync` **already** returns — no change to that method.
-- [ ] 3.4 [P] **Mutation target**: `RETURNING id_punto_venta` on
+  Compras is not named by binding verify criterion 2, so ordinary `using`
+  directives (`Ways.Application.Auditoria`, `Ways.Domain.Auditoria`) were
+  added — same local-instantiation pattern as 3.2 otherwise.
+- [x] 3.4 [P] **Mutation target**: `RETURNING id_punto_venta` on
   `MarcarAnuladoAsync` — revert to `id_comprobante_venta` and read the PV
   from the pre-read instead — a test whose pre-read PV disagrees with the
   row's actual PV must catch the audit row's `id_punto_venta` diverging.
-  *(slice 3 row 1)*
-- [ ] 3.5 [P] **Mutation target**: `RegistrarAsync` moved **after**
+  *(slice 3 row 1)* **Evidence**: a same-thread, no-race test cannot
+  discriminate here — the PV is immutable post-emission, so the pre-read
+  and the `RETURNING` always agree without a real interleaving (same
+  confound flagged in slice 1 task 1.18). Test
+  `AuditoriaAnulacionVentaTests.LaAuditoriaDeAnulacionLlevaElPuntoDeVentaQueElUpdateAtomicoRealmenteVioNoElDelPreRead`
+  forces a genuine race via a `DbCommandInterceptor` pausing
+  `EjecutarAnulacionAsync` right after the pre-read SELECT executes; from a
+  separate owner connection (outside the app transaction) `id_punto_venta`
+  is reassigned to a second, freshly-seeded PV; the atomic `UPDATE ...
+  RETURNING` then sees and returns the reassigned PV. Mutated (audit call
+  reads `comprobantePreLectura!.IdPuntoVenta` instead of the `RETURNING`
+  value) → `dotnet build --no-incremental` → named test →
+  `Assert.Equal() Failure: Values differ / Expected: 4 / Actual: 3` (audit
+  row carried the stale pre-read PV) → reverted → `git diff` clean →
+  rebuilt → green.
+- [x] 3.5 [P] **Mutation target**: `RegistrarAsync` moved **after**
   `CommitAsync` in the anulación transaction — the flagship fail-closed
-  test (3.9) must fail. *(slice 3 row 2)*
-- [ ] 3.6 [P] **Mutation target**: `EstadoComprobante.Emitido` as
+  test (3.9) must fail. *(slice 3 row 2)* **Evidence**: mutated (the whole
+  "1.5. Auditoría" block cut from before paso 2 and pasted after
+  `transaccion.CommitAsync(ct)`, immediately before `return await
+  ObtenerAsync(...)`) → `dotnet build --no-incremental` → named test
+  `AuditoriaAnulacionVentaTests.UnaFallaAlEscribirLaAuditoriaBloqueaLaAnulacionDelComprobante100PorCientoServicio`
+  → `Assert.Equal() Failure: Values differ / Expected: Emitido / Actual:
+  Anulado` (the 100%-servicio comprobante committed `Anulado` even with
+  `INSERT` on `auditoria` revoked, because the commit had already happened
+  before the now-doomed audit insert ran) → reverted via `git checkout --`
+  → `git diff` clean → rebuilt → green.
+- [x] 3.6 [P] **Mutation target**: `EstadoComprobante.Emitido` as
   `valor_anterior` replaced by a hardcoded `"anulado"` literal — the
   `venta.anulacion` payload coverage test (3.8) must fail. *(slice 3 row 3)*
-- [ ] 3.7 [P] Integration — **the flagship scenario**: a TX comprobante
+  **Evidence**: mutated (`PayloadDeAuditoria.AnulacionDeVenta`'s first
+  argument changed from `EstadoComprobante.Emitido` to
+  `EstadoComprobante.Anulado`, the enum member that serializes to the
+  `"anulado"` literal per `SerializadorDeAuditoria`'s
+  `JsonStringEnumConverter(SnakeCaseLower)`) → `dotnet build
+  --no-incremental` → named test
+  `AuditoriaAnulacionVentaTests.VentaAnulacionCoberturaSobreUnComprobanteConConsumoDeCuentaCorriente`
+  → `Assert.Equal() Failure: Strings differ / Expected: "emitido" / Actual:
+  "anulado"` → reverted → `git diff` clean → rebuilt → green.
+- [x] 3.7 [P] Integration — **the flagship scenario**: a TX comprobante
   composed entirely of service lines (`id_articulo NULL` on every item)
   with no cuenta corriente pago, anulado — one `auditoria` row naming the
   actor, zero `movimientos_stock`, zero `movimientos_cuenta_corriente`
   reversal rows. *(spec `comprobantes-venta`: "A 100%-servicio comprobante
   without cuenta corriente is attributable on anulación"; spec `auditoria-
   de-operaciones`: "A 100%-servicio anulación without cuenta corriente is
-  attributable")*
-- [ ] 3.8 [P] Integration: `venta.anulacion` coverage over a mixed
+  attributable")* Implemented as
+  `AuditoriaAnulacionVentaTests.AnulacionDeUnComprobante100PorCientoServicioSinCcEsAtribuible`.
+  **Note**: `POST /api/ventas` cannot construct a free-concept
+  (`id_articulo NULL`) line — `LineaDeVenta.IdArticulo` is non-nullable
+  `int` (`Ventas/Contratos.cs`) and the checkout path "no construye ese
+  camino todavía" per `ItemComprobanteVenta.IdArticulo`'s own doc-comment
+  — so the comprobante + its free-concept item are seeded directly by EF
+  (`SembrarComprobanteDeServicioAsync`), same precedent as
+  `CajaCierreEndpointsTests.SembrarPagoAsync`, then anulado through the
+  real `POST /api/ventas/{id}/anulacion` endpoint.
+- [x] 3.8 [P] Integration: `venta.anulacion` coverage over a mixed
   comprobante (product + service lines, with CC consumo) — one row,
   `{estado: Emitido}` → `{estado: Anulado}`, `id_punto_venta` matches the
-  comprobante's own PV.
-- [ ] 3.9 [P] Integration — fail-closed on `venta.anulacion`: forcing the
+  comprobante's own PV. Implemented as
+  `AuditoriaAnulacionVentaTests.VentaAnulacionCoberturaSobreUnComprobanteConConsumoDeCuentaCorriente`.
+  **DEVIATION (registered, not silent)**: since the checkout endpoint
+  structurally cannot emit a free-concept line (see 3.7's note), "mixed"
+  composition is covered by the flagship test's directly-seeded
+  100%-servicio comprobante instead; this task's own coverage test uses an
+  ordinary product line paid by cuenta corriente (real checkout path,
+  `EmitirConCcAsync`) to exercise the payload/PV assertions over a
+  comprobante that DOES produce ledger reversal rows — the generality axis
+  this task actually needed (a non-degenerate case, as opposed to 3.7's
+  degenerate one), rather than a literal product+service item mix.
+- [x] 3.9 [P] Integration — fail-closed on `venta.anulacion`: forcing the
   audit write to fail leaves `estado = emitido` and no inverse
   `movimientos_stock`/`movimientos_cuenta_corriente` row. *(spec
   `comprobantes-venta`: "An audit failure blocks the anulación"; spec
   `auditoria-de-operaciones`: "A forced audit-insert failure blocks a venta
-  anulación")*
-- [ ] 3.10 [P] Integration: `compra.anulacion` coverage — a confirmada
+  anulación")* Implemented as
+  `AuditoriaAnulacionVentaTests.UnaFallaAlEscribirLaAuditoriaBloqueaLaAnulacionDelComprobante100PorCientoServicio`
+  over the SAME 100%-servicio-sin-CC comprobante as 3.7 — design's own
+  "test insignia (b)": the audit `INSERT` is the ONLY statement in that
+  transaction touching `usuarios` (via `fk_auditoria_actor`), so `REVOKE
+  INSERT ON auditoria` isolates the failure without ambiguity (same
+  `REVOKE`/`RESTORE` technique as `AnulacionTests`/
+  `ComprasAnulacionYConcurrenciaTests`). Also doubles as 3.5's fail-closed
+  evidence, per that task's own text.
+  **Judgment Day fix (slice 3 juez B ronda 1, finding 1, WARNING):** the
+  100%-servicio-sin-CC comprobante this task's test runs on never produces
+  reversas under any implementation, so the spec's THEN ("no inverse
+  movimientos_stock/movimientos_cuenta_corriente row exists") was vacuously
+  true there — it asserted nothing about the mechanism it claims to guard.
+  Complemented (not replaced) with
+  `UnaFallaAlEscribirLaAuditoriaBloqueaLaAnulacionDeUnComprobanteConTresLineasDeProductoYConsumoDeCc`,
+  the spec's literal GIVEN ("3 líneas de producto y un consumo de cuenta
+  corriente"), with distinct per-line magnitudes so the CEROs it asserts
+  are real. Evidence: committed → mutated (the "1.5. Auditoría" block moved
+  after `transaccion.CommitAsync(ct)`) → `dotnet build --no-incremental` →
+  new test FAILED (reversas existían / estado quedó `Anulado`) → reverted →
+  `git diff` clean → rebuilt → green.
+- [x] 3.10 [P] Integration: `compra.anulacion` coverage — a confirmada
   compra of 50 units, none sold, anulada — one row, actor identified, same
   transaction as the `-50` `movimientos_stock` row. *(spec `comprobantes-
-  compra`: "A compra anulación is attributable to its actor")*
-- [ ] 3.11 [P] Integration — fail-closed on `compra.anulacion`: `estado`
+  compra`: "A compra anulación is attributable to its actor")* Implemented
+  as `AuditoriaAnulacionCompraTests.CompraAnulacionCoberturaSobreUnaCompraConfirmadaSinVender`.
+- [x] 3.11 [P] Integration — fail-closed on `compra.anulacion`: `estado`
   remains `confirmada`, no `movimientos_stock` contramovimiento. *(spec
   `comprobantes-compra`: "An audit failure blocks the anulación, same as
-  the negative-stock refusal")*
-- [ ] 3.12 **Binding verify criterion, not a mutation target**:
+  the negative-stock refusal")* Implemented as
+  `AuditoriaAnulacionCompraTests.UnaFallaAlEscribirLaAuditoriaBloqueaLaCompraAnulacion`
+  (`REVOKE INSERT ON auditoria`, same technique as 3.9).
+- [x] 3.12 **Binding verify criterion, not a mutation target**:
   `tests/Ways.IntegrationTests/VentasCheckoutTests.cs` is **absent from the
   stage's diff entirely** (`git diff --name-only` against the stage's base
   never lists this file), and its `Assert.Equal(16, …)` query-count guard
@@ -773,11 +873,26 @@ call sites disappear, both `MarcarAnulado*Async` methods keep their
   `ServicioDeVentas.cs`, so it is asserted here. *(spec `auditoria-de-
   operaciones`: "Checkout emission writes no audit row and the query-count
   guard stays at 16"; design binding verify criterion 2; Orchestrator
-  Decision 13 above)*
-- [ ] 3.13 Gate guard: `has-pending-model-changes` clean; zero new files in
-  `Migraciones/`.
-- [ ] 3.14 Run `judgment-day`; fix confirmed issues; re-judge until clean.
-- [ ] 3.15 Branch `feat/stage14-slice3-anulaciones` off `main` (parent:
+  Decision 13 above)* **Confirmed**:
+  `git diff --name-only main | grep -i VentasCheckout` → no match, on the
+  final committed state (`ba9b8d5`). `EmitirAsync`/checkout is never
+  touched by this slice — only `EjecutarAnulacionAsync`/`MarcarAnuladoAsync`
+  in `ServicioDeVentas.cs`, per 3.2's DEVIATION note above.
+- [x] 3.13 Gate guard: `has-pending-model-changes` clean; zero new files in
+  `Migraciones/`. **Confirmed**: `dotnet ef migrations
+  has-pending-model-changes --project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure` → "No changes have been made
+  to the model since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
+- [x] 3.14 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  - Ronda 1 (juez B): 0 severos; 2 WARNING (findings 1-2). Ambos fixed y con
+    evidencia de mutación: finding 1 (test fail-closed nuevo sobre la
+    composición literal del spec — 3 líneas de producto + consumo de CC —
+    complementando, no reemplazando, el flagship 100%-servicio, task 3.9);
+    finding 2 (`Assert.NotEqual(0, fila.IdActor)` → `Assert.Equal(ctx.
+    IdEmpleadoAdmin, fila.IdActor)` en ambos tests de cobertura, venta y
+    compra). Re-judge pendiente.
+- [x] 3.15 Branch `feat/stage14-slice3-anulaciones` off `main` (parent: *(CLEAN 2026-08-16: juez B ronda 1 — 0 severos, 2 WARNINGs test-only cerrados (fail-closed con la composicion literal del spec 3 lineas+CC asertando cero reversas; IdActor por IGUALDAD con el admin — el mutante actor-constante ahora muere en ambos tests); re-ronda B aprobada (patch-id verificado, REVOKE con restore en finally, retry limpio 200) con 1 INFO de cifras de comentario corregido por el orquestador; juez A fresh: CERO hallazgos — verifico el precedente MarcarCerradoAsync, la carrera cross-connection del interceptor como patron establecido del repo, y que MarcarAnulad(o|a)Async no tiene callers externos. JUDGMENT: APPROVED.)*
   slice 1); PR; merge stacked-to-main.
 
 **Test plan**: 3 mutation targets (3.4-3.6), flagship (3.7), coverage
@@ -797,77 +912,163 @@ operation**, per Orchestrator Decision #1 above — never one per lote.
 `InsertarMovimientoStockAsync`'s `Task<int>` signature can stay (harmless,
 `TransferirAsync` ignores the value) or revert with it.
 
-- [ ] 4.1 Modify `src/Ways.Application/Stock/ServicioDeStock.cs`:
+- [x] 4.1 Modify `src/Ways.Application/Stock/ServicioDeStock.cs`:
   `InsertarMovimientoStockAsync` → `RETURNING id_movimiento_stock` /
   `ExecuteScalarAsync`, returning `int`. `TransferirAsync` ignores the
   returned value and stays byte-identical in behavior — still writes zero
   `auditoria` rows (proposal decision 5). *(Orchestrator Decision 15 above;
   design Open Questions)*
-- [ ] 4.2 Modify `ServicioDeStock.cs`'s ajuste path (`:101`, after the
+  **DEVIATION (registered, not silent):** the `RETURNING` clause reads
+  `id_movimiento`, not `id_movimiento_stock` — `movimientos_stock`'s actual
+  primary-key column is `id_movimiento` (confirmed against the etapa-5
+  migration and `MovimientoStock.Id`), not the name tasks.md/design.md use
+  for the SQL identifier. The payload dictionary KEY stays literally
+  `id_movimiento_stock` in every `PayloadDeAuditoria` factory (that name is
+  the audit contract's own field name, independent of the DB column) — only
+  the `RETURNING` SQL identifier differs from the task's prose. Verified
+  empirically: the literal task text fails with `column "id_movimiento_stock"
+  does not exist` against real Postgres.
+- [x] 4.2 Modify `ServicioDeStock.cs`'s ajuste path (after the
   aggregate **and** lote upserts, before commit): `RegistrarAsync(
   stock.ajuste, ant={cantidad: nueva − delta}, nuevo={cantidad: nueva,
   id_movimiento_stock, observaciones})`.
-- [ ] 4.3 Modify `ServicioDeStock.cs`'s decomiso path (`:276`, **after**
+- [x] 4.3 Modify `ServicioDeStock.cs`'s decomiso path (**after**
   both negative-stock refusals): `RegistrarAsync(stock.decomiso,
   ant={cantidad}, nuevo={cantidad, id_movimiento_stock, observaciones,
   id_lote})` — `id_lote` null = no lote-efectivo.
-- [ ] 4.4 Modify `ServicioDeStock.cs`'s conteo paths
-  (`EjecutarConteoAsync:743` and `EjecutarConteoPorLoteAsync:810`): **per
+- [x] 4.4 Modify `ServicioDeStock.cs`'s conteo paths
+  (`EjecutarConteoAsync` and `EjecutarConteoPorLoteAsync`): **per
   Orchestrator Decision #1 above** — accumulate `movimientos_generados`
   (the `id_movimiento_stock` list), `lotes_afectados` (count), and
   `delta_total` across the existing loop over lotes/agregado; write
   **exactly one** `RegistrarAsync(stock.conteo, ant={cantidad: cantidad al
   inicio}, nuevo={cantidad: cantidad final, movimientos_generados,
   lotes_afectados, delta_total})` **after** the loop, per counting
-  operation. The existing zero-difference early return (`:721-727`) is
+  operation. The existing zero-difference early return is
   untouched and now unambiguously produces zero ledger **and** zero audit
-  rows for the whole operation.
-- [ ] 4.5 Modify
+  rows for the whole operation. The single-lote/aggregate path
+  (`EjecutarConteoAsync`) uses the same `PayloadDeAuditoria.Conteo` factory
+  with `lotesAfectados: 0` (the aggregate path never touches a lote) and a
+  one-element `movimientos_generados`.
+- [x] 4.5 Modify
   `src/Ways.Application/CuentaCorriente/ServicioDeReliquidacion.cs`
-  (`:130`, after the marker + rowcount check, before commit):
-  `RegistrarAsync(cc.reliquidacion, ant={saldo} from the :174 SELECT …
+  (after the marker + rowcount check, before commit):
+  `RegistrarAsync(cc.reliquidacion, ant={saldo} from the SELECT …
   FOR UPDATE, nuevo={saldo: nuevoSaldo, id_movimiento, consumos_actualizados:
-  |ids|, diferencia: delta})`.
-- [ ] 4.6 [P] **Mutation target**: `cantidad − delta` as before-image — use
+  |ids|, diferencia: delta})`. `BloquearClienteAsync`'s previously-discarded
+  `Saldo` tuple element is now captured as `saldoInicial`.
+- [x] 4.6 [P] **Mutation target**: `cantidad − delta` as before-image — use
   `nueva` on both sides — the `stock.ajuste` coverage test (4.9) must fail.
-  *(slice 4 row 1)*
-- [ ] 4.7 [P] **Mutation target**: the delta-cero early return
-  (`ServicioDeStock.cs:721`) — remove it — the zero-difference conteo test
-  (4.10) must fail. *(slice 4 row 2)*
-- [ ] 4.8 [P] **Mutation target**: the `saldo` before-image taken from the
+  *(slice 4 row 1)* **Evidence**: mutated (`nuevaCantidad, nuevaCantidad`
+  on both sides) → `dotnet build --no-incremental` → `dotnet test
+  tests/Ways.IntegrationTests --no-build --filter FullyQualifiedName~Ajuste`
+  → `StockAuditoriaTests.UnAjusteDeStockEscribeUnaFilaDeAuditoriaConAnteriorDistintoDeNuevo`
+  FAILED (`Assert.Equal` on `anterior.cantidad`: expected 50, actual 70 —
+  the mutated before-image collapsed to the after-image) → reverted →
+  44/44 green.
+- [x] 4.7 [P] **Mutation target**: the delta-cero early return
+  (`ServicioDeStock.cs`, `EjecutarConteoAsync`) — remove it — the
+  zero-difference conteo test (4.10) must fail. *(slice 4 row 2)*
+  **Evidence**: mutated (early-return block deleted) → `dotnet build
+  --no-incremental` → `dotnet test tests/Ways.IntegrationTests --no-build
+  --filter FullyQualifiedName~Conteo` →
+  `StockAuditoriaTests.UnConteoAgregadoSinDiferenciaNoEscribeFilaDeAuditoria`
+  FAILED (`400 movimiento_de_stock_sin_cantidad` — the mutated path reached
+  `InsertarMovimientoStockAsync` with `cantidad = 0`, tripping
+  `ck_movimientos_stock_cantidad_no_cero`), together with two pre-existing
+  zero-difference tests
+  (`TransferenciasYConteoDeInventarioTests.UnConteoQueCoincideConElCacheNoEscribeNadaYDevuelve200`,
+  `ConteoPorLoteTests.UnConteoAgregadoDeContadaIgualALaActualSigueSinEscribirNada`)
+  → reverted → 51/51 green.
+- [x] 4.8 [P] **Mutation target**: the `saldo` before-image taken from the
   `FOR UPDATE` — re-read it **after** the `UPDATE` instead — the
   `cc.reliquidacion` coverage test (4.13) must fail. *(slice 4 row 3)*
-- [ ] 4.9 [P] Integration: `stock.ajuste` coverage — one row, `{cantidad:
+  **Evidence**: mutated (`ReliquidacionDeCc(nuevoSaldo, nuevoSaldo, …)`,
+  simulating a post-`UPDATE` re-read) → `dotnet build --no-incremental` →
+  `dotnet test tests/Ways.IntegrationTests --no-build --filter
+  FullyQualifiedName~Reliquidacion` →
+  `ReliquidacionAuditoriaTests.UnaReliquidacionConDiferenciaEscribeUnaFilaDeAuditoriaConSaldoAnteriorDistintoDeNuevo`
+  FAILED (`Assert.Equal` on `anterior.saldo`: expected 100, actual 150 —
+  the mutated before-image collapsed to the after-image) → reverted →
+  25/25 green.
+- [x] 4.9 [P] Integration: `stock.ajuste` coverage — one row, `{cantidad:
   anterior}` ≠ `{cantidad: nuevo}` with delta ≠ 0, `id_movimiento_stock`
-  and `observaciones` present, resolving 4.6's evidence.
-- [ ] 4.10 [P] Integration: `stock.conteo`, zero-difference — zero
+  and `observaciones` present, resolving 4.6's evidence. Implemented as
+  `StockAuditoriaTests.UnAjusteDeStockEscribeUnaFilaDeAuditoriaConAnteriorDistintoDeNuevo`.
+- [x] 4.10 [P] Integration: `stock.conteo`, zero-difference — zero
   `movimientos_stock` rows **and** zero `auditoria` rows, resolving 4.7's
   evidence. *(spec `auditoria-de-operaciones`: "A zero-difference conteo
-  writes no audit row")*
-- [ ] 4.11 [P] Integration — **the reconciled scenario** (Orchestrator
+  writes no audit row")* Implemented as
+  `StockAuditoriaTests.UnConteoAgregadoSinDiferenciaNoEscribeFilaDeAuditoria`.
+- [x] 4.11 [P] Integration — **the reconciled scenario** (Orchestrator
   Decision #1): a conteo por lote over one articulo with 3 lotes, 2
   differing, writes **exactly one** `auditoria` row for the whole
   operation — not two — with `valor_nuevo.movimientos_generados` naming
   both `id_movimiento_stock` values and `lotes_afectados = 2`. This is the
   discriminating test that replaces design.md's stale per-lote call-site
   text. *(spec `auditoria-de-operaciones`: "Each operation MUST write
-  exactly one row")*
-- [ ] 4.12 [P] Integration: `stock.decomiso` coverage — one row, `id_lote`
+  exactly one row")* Implemented as
+  `StockAuditoriaTests.UnConteoPorLoteConDosDeTresLotesDiferentesEscribeUnaSolaFilaDeAuditoria`
+  (L1 10→15 and L3 5→3 differ, L2 20→20 matches; asserts exactly one
+  `auditoria` row, `lotes_afectados = 2`, and `movimientos_generados`
+  naming both real ledger row ids).
+- [x] 4.12 [P] Integration: `stock.decomiso` coverage — one row, `id_lote`
   present on a lote-efectivo decomiso and `NULL` on an aggregate-only one;
   both `409 stock_insuficiente_para_decomiso` refusal paths leave zero
-  rows.
-- [ ] 4.13 [P] Integration: `cc.reliquidacion` coverage — one row, `saldo`
+  rows. Implemented as four `StockAuditoriaTests` facts:
+  `UnDecomisoDeStockEscribeUnaFilaConIdLotePresenteCuandoEsLoteEfectivo`,
+  `UnDecomisoDeStockEscribeUnaFilaConIdLoteNuloCuandoNoEsLoteEfectivo`,
+  `UnDecomisoRechazadoPorStockInsuficienteEnElLoteNoEscribeFilaDeAuditoria`,
+  `UnDecomisoRechazadoPorStockInsuficienteEnElAgregadoNoEscribeFilaDeAuditoria`.
+- [x] 4.13 [P] Integration: `cc.reliquidacion` coverage — one row, `saldo`
   anterior ≠ nuevo with a known `diferencia`, `consumos_actualizados`
   matches the seeded consumos; the two no-op paths (sin elegibles, delta
   cero) commit without any ledger or audit row, resolving 4.8's evidence.
-- [ ] 4.14 [P] Integration — límite registrado: `TransferirAsync` writes
+  Implemented as three `ReliquidacionAuditoriaTests` facts:
+  `UnaReliquidacionConDiferenciaEscribeUnaFilaDeAuditoriaConSaldoAnteriorDistintoDeNuevo`,
+  `UnaReliquidacionSinConsumosElegiblesNoEscribeFilaDeAuditoria`,
+  `UnaReliquidacionConDeltaCeroNoEscribeFilaDeAuditoria` (a consumo whose
+  price never changed — eligible, but a zero-delta re-pricing, distinct
+  from the "sin elegibles" no-op).
+- [x] 4.14 [P] Integration — límite registrado: `TransferirAsync` writes
   **zero** `auditoria` rows for either leg, and both `movimientos_stock`
   legs still carry their own `id_empleado`. *(spec `auditoria-de-
   operaciones`: "stock.transferencia is excluded by scope, not by defect")*
-- [ ] 4.15 Gate guard: `has-pending-model-changes` clean; zero new files in
-  `Migraciones/`.
-- [ ] 4.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
-- [ ] 4.17 Branch `feat/stage14-slice4-stock-cc` off `main` (parent:
+  Implemented as
+  `StockAuditoriaTests.UnaTransferenciaNoEscribeFilasDeAuditoriaParaNingunaDeLasDosPatas`.
+- [x] 4.15 Gate guard: `has-pending-model-changes` clean; zero new files in
+  `Migraciones/`. **Confirmed**: `dotnet ef migrations
+  has-pending-model-changes --project src/Ways.Infrastructure
+  --startup-project src/Ways.Infrastructure` → "No changes have been made
+  to the model since the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` and `git status
+  --short` on that directory both empty.
+- [x] 4.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  - Ronda 1 (juez B): 2 MAJOR cerrados con evidencia de mutación. Finding 1:
+    el conteo agregado con diferencia (`EjecutarConteoAsync`, delta ≠ 0) no
+    tenía ningún test — cubierto por
+    `StockAuditoriaTests.UnConteoAgregadoConDiferenciaEscribeUnaFilaDeAuditoriaConPayloadCompleto`
+    (payload clave por clave + actor por igualdad). Finding 2: el test de
+    ajuste no discriminaba `id_entidad` (coincidencia accidental con
+    `id_movimiento_stock` por alineación de secuencias en el entorno) —
+    desincronizado quemando filas descartables antes de sembrar la entidad
+    real (`QuemarArticulosDescartablesAsync`/`QuemarClientesDescartablesAsync`),
+    aplicado también a los hermanos `UnConteoPorLoteConDosDeTresLotesDiferentesEscribeUnaSolaFilaDeAuditoria`
+    y `ReliquidacionAuditoriaTests.UnaReliquidacionConDiferenciaEscribeUnaFilaDeAuditoriaConSaldoAnteriorDistintoDeNuevo`.
+    La sugerencia equivalente para `stock.decomiso` quedó registrada como
+    survivor equivalente por rollback (mutar su call site no cambia el
+    resultado observable) — sin fix.
+  - Ronda 1 (juez A): 0 severos; 1 WARNING cerrado test-only. Los dos tests
+    de cobertura de `stock.decomiso` (`StockAuditoriaTests.cs:260-330`)
+    assertaban solo `cantidad`/`id_lote` y nunca `id_movimiento_stock` ni
+    `observaciones`, aunque `PayloadDeAuditoria.DecomisoDeStock` escribe las
+    4 claves — agregados los asserts de `observaciones` (igualdad con la
+    observación seedeada) e `id_movimiento_stock` (round-trip contra la fila
+    real de `movimientos_stock` del decomiso), mismo patrón del test de
+    ajuste del mismo archivo. Evidencia de mutación: call site de decomiso
+    en `ServicioDeStock.cs` mutado a `observaciones=""`/`idMovimientoStock=0`
+    → los 2 tests fallaron → revert → 23/23 verdes.
+- [x] 4.17 Branch `feat/stage14-slice4-stock-cc` off `main` (parent: *(CLEAN 2026-08-16: juez B ronda 1 — 2 MAJORs cerrados (cobertura del conteo agregado clave-por-clave; id_entidad desincronizado de secuencias coincidentes con quemadores de filas) + survivor equivalente del decomiso registrado; re-ronda B aprobada con 4 re-mutantes muertos incl. el survivor de ronda 1 y el probe de reliquidacion; juez A fresh: 0 severos, 1 WARNING (payload de decomiso 2-de-4 claves) cerrado test-only en cf2a474 con evidencia. JUDGMENT: APPROVED.)*
   slice 1); PR; merge stacked-to-main.
 
 **Test plan**: 3 mutation targets (4.6-4.8), coverage ×3 (4.9, 4.12, 4.13),

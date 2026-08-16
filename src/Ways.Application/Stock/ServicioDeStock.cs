@@ -4,7 +4,9 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Domain.Articulos;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
@@ -37,7 +39,9 @@ namespace Ways.Application.Stock;
 /// arriba, NO abre transacción ni escribe <c>movimientos_stock</c>: un parámetro de reposición
 /// no es un hecho del ledger, es un umbral configurado sobre la misma fila de caché.
 /// </summary>
-public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes)
+public class ServicioDeStock(
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes,
+    ServicioDeAuditoria auditoria)
 {
     public async Task<decimal> ObtenerCantidadAsync(int idPuntoVenta, int idArticulo, CancellationToken ct = default) =>
         await db.Stock
@@ -84,7 +88,7 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-        await InsertarMovimientoStockAsync(
+        var idMovimientoStock = await InsertarMovimientoStockAsync(
             conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, cantidad, MotivoStock.Ajuste, idEmpleado,
             observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote, ct);
 
@@ -98,6 +102,16 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         {
             await UpsertStockLoteAsync(conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, idLoteEfectivo, cantidad, ct);
         }
+
+        // Etapa 14, slice 4 (design decisión 9, call site 9): before-image derivado del RETURNING
+        // autoritativo del upsert (nueva − delta), JAMÁS un segundo SELECT — mutation target del
+        // slice (design mutation-targets, fila 1).
+        var (anteriorAjuste, nuevoAjuste) = PayloadDeAuditoria.AjusteDeStock(
+            nuevaCantidad - cantidad, nuevaCantidad, idMovimientoStock, observaciones);
+        await auditoria.RegistrarAsync(
+            conexion, transaccionCruda,
+            new RegistroDeAuditoria(idTenant, idPuntoVenta, AccionAuditada.StockAjuste, idArticulo, anteriorAjuste, nuevoAjuste),
+            ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -243,7 +257,7 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         var conexion = await ObtenerConexionAbiertaAsync(ct);
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
-        await InsertarMovimientoStockAsync(
+        var idMovimientoStock = await InsertarMovimientoStockAsync(
             conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, delta, MotivoStock.Decomiso, idEmpleado,
             observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote, ct);
 
@@ -273,6 +287,16 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
                 $"No hay stock suficiente del artículo {idArticulo} para decomisar.",
                 409);
         }
+
+        // Etapa 14, slice 4 (design call site 10): recién DESPUÉS de los dos rechazos de
+        // negatividad — un decomiso rechazado no deja fila de auditoría. Before-image sobre el
+        // AGREGADO (nueva − delta), mismo criterio de decisión 9 que el ajuste.
+        var (anteriorDecomiso, nuevoDecomiso) = PayloadDeAuditoria.DecomisoDeStock(
+            nuevaAgregada - delta, nuevaAgregada, idMovimientoStock, observaciones, idLote);
+        await auditoria.RegistrarAsync(
+            conexion, transaccionCruda,
+            new RegistroDeAuditoria(idTenant, idPuntoVenta, AccionAuditada.StockDecomiso, idArticulo, anteriorDecomiso, nuevoDecomiso),
+            ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -720,13 +744,15 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
         if (delta == 0m)
         {
-            // spec: "Zero-Difference Conteo Writes No Ledger Row" — commit sin escribir nada,
-            // que además evita ck_movimientos_stock_cantidad_no_cero (nunca lo alcanza).
+            // spec: "Zero-Difference Conteo Writes No Ledger Row" — commit sin escribir nada, ni
+            // ledger NI auditoría (tasks.md, Orchestrator Decision #1: la operación entera queda
+            // muda) — mutation target del slice (design mutation-targets, fila 2); además evita
+            // ck_movimientos_stock_cantidad_no_cero (nunca lo alcanza).
             await transaccion.CommitAsync(ct);
             return new ResultadoConteo(idPuntoVenta, idArticulo, actual, actual, 0m, MovimientoRegistrado: false);
         }
 
-        await InsertarMovimientoStockAsync(
+        var idMovimientoStock = await InsertarMovimientoStockAsync(
             conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, delta, MotivoStock.Inventario, idEmpleado,
             observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, idLote: null, ct);
 
@@ -740,6 +766,16 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
             throw new InvalidOperationException(
                 $"El conteo de inventario produjo un resultado inconsistente: esperado {contada}, obtenido {final}.");
         }
+
+        // Etapa 14, slice 4 (design call site 11; tasks.md Orchestrator Decision #1): UNA fila
+        // por OPERACIÓN de conteo. El conteo agregado (sin desglose por lote) no toca ningún
+        // lote — lotesAfectados = 0, el único movimiento es el agregado.
+        var (anteriorConteo, nuevoConteo) = PayloadDeAuditoria.Conteo(
+            actual, final, [idMovimientoStock], lotesAfectados: 0, delta);
+        await auditoria.RegistrarAsync(
+            conexion, transaccionCruda,
+            new RegistroDeAuditoria(idTenant, idPuntoVenta, AccionAuditada.StockConteo, idArticulo, anteriorConteo, nuevoConteo),
+            ct);
 
         await transaccion.CommitAsync(ct);
 
@@ -784,6 +820,12 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         var deltaAgregado = 0m;
         var cantidadAgregadaFinal = actualAgregado;
 
+        // Etapa 14, slice 4 (tasks.md Orchestrator Decision #1, VINCULANTE — resuelve el
+        // conflicto entre design.md y spec.md a favor del spec): acumula acá, a través del loop,
+        // en vez de escribir una fila de auditoría por lote — la fila se escribe UNA sola vez,
+        // después del loop, por OPERACIÓN de conteo.
+        var movimientosGenerados = new List<int>();
+
         foreach (var lote in lotesAscendentes)
         {
             var actualDelLote = actualPorLote[lote.IdLote];
@@ -795,9 +837,10 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
                 continue;
             }
 
-            await InsertarMovimientoStockAsync(
+            var idMovimientoDelLote = await InsertarMovimientoStockAsync(
                 conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, deltaDelLote, MotivoStock.Inventario,
                 idEmpleado, observaciones, momento, idComprobanteCompra: null, idPuntoVentaDestino: null, lote.IdLote, ct);
+            movimientosGenerados.Add(idMovimientoDelLote);
 
             var finalDelLote = await UpsertStockLoteAsync(
                 conexion, transaccionCruda, idTenant, idArticulo, idPuntoVenta, lote.IdLote, deltaDelLote, ct);
@@ -810,6 +853,20 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
 
             deltaAgregado += deltaDelLote;
             resultadosPorLote.Add(new LoteContado(lote.IdLote, finalDelLote, actualDelLote, deltaDelLote, MovimientoRegistrado: true));
+        }
+
+        // Ningún lote difirió ⇒ cero filas de ledger Y cero de auditoría para la operación entera
+        // (mismo criterio que el early-return del conteo agregado, tasks.md Orchestrator Decision
+        // #1). Al menos un lote difirió ⇒ UNA fila, con la lista completa de movimientos y el
+        // conteo de lotes afectados — nunca una fila por lote.
+        if (movimientosGenerados.Count > 0)
+        {
+            var (anteriorConteo, nuevoConteo) = PayloadDeAuditoria.Conteo(
+                actualAgregado, cantidadAgregadaFinal, movimientosGenerados, movimientosGenerados.Count, deltaAgregado);
+            await auditoria.RegistrarAsync(
+                conexion, transaccionCruda,
+                new RegistroDeAuditoria(idTenant, idPuntoVenta, AccionAuditada.StockConteo, idArticulo, anteriorConteo, nuevoConteo),
+                ct);
         }
 
         await transaccion.CommitAsync(ct);
@@ -891,8 +948,15 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
     /// <summary>Etapa 12, slice 10: gana <paramref name="idLote"/> (design decisión 10 — en una
     /// transferencia, el ledger se escribe en el elemento AGREGADO de <c>ConstruirClavesOrdenadas</c>
     /// y lleva el <c>IdLoteDelMovimiento</c> de esa clave; <c>Ajustar</c>/<c>Contar</c> siguen
-    /// pasando <c>null</c>, sin cambio de comportamiento).</summary>
-    private static async Task InsertarMovimientoStockAsync(
+    /// pasando <c>null</c>, sin cambio de comportamiento).
+    ///
+    /// Etapa 14, slice 4 (tasks.md Orchestrator Decision #15; design Open Questions): gana
+    /// <c>RETURNING id_movimiento_stock</c> / <c>ExecuteScalarAsync</c>, devuelve <c>int</c> — el
+    /// único cambio fuera de los doce call sites nombrados, necesario para alimentar los payloads
+    /// de <c>stock.ajuste</c>/<c>stock.decomiso</c>/<c>stock.conteo</c>. <see
+    /// cref="EjecutarTransferenciaAsync"/> ignora el valor devuelto y su comportamiento queda
+    /// byte-idéntico — sigue sin escribir auditoría (proposal decisión 5).</summary>
+    private static async Task<int> InsertarMovimientoStockAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idArticulo, int idPuntoVenta,
         decimal cantidad, MotivoStock motivo, int idEmpleado, string? observaciones, DateTimeOffset creadoEl,
         int? idComprobanteCompra, int? idPuntoVentaDestino, int? idLote, CancellationToken ct)
@@ -903,7 +967,8 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
             "INSERT INTO movimientos_stock " +
             "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_empleado, observaciones, " +
             "id_comprobante_compra, id_punto_venta_destino, creado_el, id_lote) " +
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)";
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) " +
+            "RETURNING id_movimiento";
 
         AgregarParametro(comando, idTenant);
         AgregarParametro(comando, idArticulo);
@@ -917,7 +982,10 @@ public class ServicioDeStock(IWaysDbContext db, IRelojDelSistema reloj, IContext
         AgregarParametro(comando, creadoEl);
         AgregarParametroNulo(comando, idLote);
 
-        await comando.ExecuteNonQueryAsync(ct);
+        var resultado = await comando.ExecuteScalarAsync(ct)
+            ?? throw new InvalidOperationException("El INSERT de movimientos_stock no devolvió ninguna fila.");
+
+        return Convert.ToInt32(resultado);
     }
 
     private static async Task<decimal> UpsertStockAsync(
