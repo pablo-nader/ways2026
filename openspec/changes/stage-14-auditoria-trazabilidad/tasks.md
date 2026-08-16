@@ -1310,9 +1310,9 @@ depends on it.
      Slice 6 will reuse it too.
   All four mutations verified: mutated → `dotnet build --no-incremental`
   → targeted test FAILED → reverted → green.
-- [ ] 5.22 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 5.22 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   *(orchestrator — out of `sdd-apply`'s scope per the launch prompt)*
-- [ ] 5.23 Branch `feat/stage14-slice5-consulta` off `main` (parent:
+- [x] 5.23 Branch `feat/stage14-slice5-consulta` off `main` (parent: *(CLEAN 2026-08-16: juez B ronda 1 — 0 severos, 3 WARNINGs cerrados (borde hasta pinneado con fila AL instante; clamps de pagina/tamanio con 3 tests; contenido del payload asertado en ambos lados + null-ness) + sugerencia aplicada (CrearContextoDeOwner hoisteado a WaysApiFixture, 15 MapEnum verificados 1:1 contra produccion); re-ronda B aprobada con 3 re-mutantes muertos y el hoist re-verificado EN VIVO (drop del filtro EF de StockLote → solo el test owner falla); juez A fresh: CERO hallazgos — verifico la cadena de aprovisionamiento sin polucion de auditoria, la aritmetica del fixture de 8 filas filtro por filtro, y la politica Admin-only contra RolConocido. JUDGMENT: APPROVED.)*
   slice 1); PR; merge stacked-to-main. *(branch already exists — this
   worktree runs on it, created off `main` at `5fe20f1` per the launch
   prompt; PR creation/merge is orchestrator work)*
