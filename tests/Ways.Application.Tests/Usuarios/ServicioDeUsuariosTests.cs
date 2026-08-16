@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Usuarios;
 using Ways.Domain.Common;
 using Ways.Domain.Usuarios;
@@ -17,6 +18,17 @@ namespace Ways.Application.Tests.Usuarios;
 /// por el filtro de tenant y reventar recién en el <c>SaveChangesAsync</c>. El chequeo de mail
 /// corre sobre un <c>dbPlataforma</c> separado del <c>db</c> de sesión — acá comparten
 /// InMemory, la separación real (RLS bajo Postgres) se prueba en <c>UsuariosYLoginTests</c>.
+///
+/// <see cref="ServicioDeUsuarios.CrearAsync"/> COMPLETO (round-trip persistido) NO se cubre acá
+/// desde slice 2 de stage-14 (design decisión 11, task 2.3): ahora envuelve el alta en
+/// <c>Database.BeginTransactionAsync</c> — el proveedor InMemory no lo soporta, mismo motivo
+/// documentado en <c>ServicioDeOfertasTests</c> para <c>ServicioDeOfertas.CrearAsync</c>/
+/// <c>ActualizarAsync</c>/<c>EliminarAsync</c>. Los tres tests de rechazo (<c>tenant_requerido</c>,
+/// <c>usuario_duplicado</c>, <c>mail_duplicado</c>) siguen viviendo acá porque revientan ANTES
+/// de abrir la transacción (validaciones fuera de ella, sin tocar la base). El round-trip
+/// "mismo nombre en dos tenants distintos convive" migró a
+/// <c>Ways.IntegrationTests.PreciosYUsuariosAuditoriaTests</c> (Postgres real, con transacción
+/// real).
 /// </summary>
 public class ServicioDeUsuariosTests
 {
@@ -44,13 +56,19 @@ public class ServicioDeUsuariosTests
         new(new DbContextOptionsBuilder<WaysDbContext>().UseInMemoryDatabase(nombreDeBase).Options, tenantActual);
 
     private static ServicioDeUsuarios CrearServicio(
-        string nombreDeBase, ITenantActual tenantActual, IContextoDeUsuario contexto) =>
-        new(
-            CrearContexto(nombreDeBase, tenantActual),
+        string nombreDeBase, ITenantActual tenantActual, IContextoDeUsuario contexto)
+    {
+        var db = CrearContexto(nombreDeBase, tenantActual);
+        var reloj = new RelojFijo(Ahora);
+
+        return new ServicioDeUsuarios(
+            db,
             CrearContexto(nombreDeBase, TenantActualFijo.Plataforma),
             new HasheadorPbkdf2(),
-            new RelojFijo(Ahora),
-            contexto);
+            reloj,
+            contexto,
+            new ServicioDeAuditoria(db, reloj, contexto));
+    }
 
     private static async Task SembrarRolesAsync(string nombreDeBase)
     {
@@ -173,25 +191,6 @@ public class ServicioDeUsuariosTests
 
         Assert.Equal("usuario_duplicado", error.Codigo);
         Assert.Equal(409, error.EstadoHttp);
-    }
-
-    [Fact]
-    public async Task ElMismoNombreDeUsuarioEnDosTenantsDistintosConvive()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        await SembrarRolesAsync(nombreDeBase);
-        await SembrarUsuarioAsync(nombreDeBase, idTenant: 1, "admin", "admin1@ways.test", RolConocido.Admin);
-
-        var contexto = new ContextoFijo(RolConocido.Root, usuarioId: 1, idTenant: null);
-        var servicio = CrearServicio(nombreDeBase, TenantActualFijo.Plataforma, contexto);
-
-        var datos = new CrearUsuario(
-            "admin", "admin2@ways.test", (int)RolConocido.Admin, Password, IdTenant: 2);
-
-        var creado = await servicio.CrearAsync(datos);
-
-        Assert.Equal("admin", creado.Usuario);
-        Assert.Equal("admin2@ways.test", creado.Mail);
     }
 
     /// <summary>El caso CRITICAL de judgment-day: antes del fix, <c>ExigirDisponibilidadAsync</c>
