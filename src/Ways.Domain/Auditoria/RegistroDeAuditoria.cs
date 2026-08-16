@@ -83,7 +83,8 @@ public sealed partial record RegistroDeAuditoria
         // 3. Denylist sobre claves — backstop del hecho estructural de que ninguna fábrica de
         // PayloadDeAuditoria acepta una entidad (design decisión 5): ningún secreto debería
         // poder llegar acá, pero esta regla lo rechaza igual si alguna vez lo hiciera, sin
-        // importar a qué profundidad de anidamiento aparezca la clave (ver
+        // importar a qué profundidad de anidamiento aparezca la clave, incluso dentro de
+        // diccionarios anidados de otro TValue o no genéricos (ver
         // <see cref="ValidarValorAnidado"/>).
         foreach (var prohibida in ClavesProhibidas)
         {
@@ -97,9 +98,14 @@ public sealed partial record RegistroDeAuditoria
     }
 
     /// <summary>Recorre <paramref name="valor"/> buscando diccionarios anidados (a cualquier
-    /// profundidad, incluso dentro de listas de diccionarios) y valida sus claves con las mismas
-    /// reglas 3/4 que las claves top-level — el backstop de <see cref="ValidarClave"/> es
-    /// verdadero para el registro completo, no solo para su primer nivel.</summary>
+    /// profundidad, incluso dentro de listas de diccionarios, dentro de un
+    /// <see cref="Dictionary{TKey, TValue}"/> con otro TValue por invarianza de tipos, o dentro de
+    /// un <see cref="System.Collections.Hashtable"/> no genérico) y valida sus claves con las
+    /// mismas reglas 3/4 que las claves top-level — el backstop de <see cref="ValidarClave"/> es
+    /// verdadero para el registro completo, no solo para su primer nivel. Una clave no-string en
+    /// un diccionario no genérico se rechaza directamente: validarla por su <c>ToString()</c>
+    /// sería deshonesto, porque esa representación puede no coincidir con la identidad real de
+    /// la clave.</summary>
     private static void ValidarValorAnidado(object? valor, string accion)
     {
         switch (valor)
@@ -114,6 +120,22 @@ public sealed partial record RegistroDeAuditoria
                 break;
 
             case string:
+                break;
+
+            case System.Collections.IDictionary diccionarioNoGenerico:
+                foreach (System.Collections.DictionaryEntry entrada in diccionarioNoGenerico)
+                {
+                    if (entrada.Key is not string claveAnidadaNoGenerica)
+                    {
+                        throw new InvalidOperationException(
+                            $"El invariante de escritura de auditoría fue violado: un diccionario " +
+                            $"anidado tiene una clave no-string ('{entrada.Key}') (acción {accion}).");
+                    }
+
+                    ValidarClave(claveAnidadaNoGenerica, accion);
+                    ValidarValorAnidado(entrada.Value, accion);
+                }
+
                 break;
 
             case System.Collections.IEnumerable lista:

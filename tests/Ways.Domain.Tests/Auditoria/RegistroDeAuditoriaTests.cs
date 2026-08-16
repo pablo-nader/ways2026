@@ -121,4 +121,45 @@ public class RegistroDeAuditoriaTests
         Assert.Throws<InvalidOperationException>(() =>
             new RegistroDeAuditoria(1, null, Accion, 41, null, nuevo));
     }
+
+    // ---- judgment-day, slice 1 ronda 2, residual R2-B-1 (juez B): por invarianza de TValue, un
+    // Dictionary<string,string> anidado o un Hashtable no genérico caían al case IEnumerable sin
+    // validar sus claves ------------------------------------------------------------------------
+
+    [Fact]
+    public void UnaClaveProhibidaDentroDeUnDiccionarioDeStringAStringAnidadoLanza()
+    {
+        var nuevo = new Dictionary<string, object?>
+        {
+            ["datos"] = new Dictionary<string, string> { ["password_hash"] = "x" }
+        };
+
+        Assert.Throws<InvalidOperationException>(() =>
+            new RegistroDeAuditoria(1, null, Accion, 41, null, nuevo));
+    }
+
+    [Fact]
+    public void UnaClaveProhibidaDentroDeUnHashtableAnidadoLanza()
+    {
+        var nuevo = new Dictionary<string, object?>
+        {
+            ["datos"] = new System.Collections.Hashtable { ["secret_key"] = "x" }
+        };
+
+        Assert.Throws<InvalidOperationException>(() =>
+            new RegistroDeAuditoria(1, null, Accion, 41, null, nuevo));
+    }
+
+    [Fact]
+    public void UnDiccionarioDeStringAStringAnidadoSinClavesProhibidasEsValido()
+    {
+        var nuevo = new Dictionary<string, object?>
+        {
+            ["datos"] = new Dictionary<string, string> { ["moneda"] = "ars" }
+        };
+
+        var registro = new RegistroDeAuditoria(1, null, Accion, 41, null, nuevo);
+
+        Assert.Equal(nuevo, registro.ValorNuevo);
+    }
 }

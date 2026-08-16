@@ -407,6 +407,15 @@ optional.
     equivalente bajo el driver Npgsql — sin fix (no hay assertion barata que
     lo discrimine sin acoplarse al driver). Finding 5 (CHECKs de la
     migración) es survivor CONTRACTUADO por el gate §B — no aplica fix.
+  - Re-ronda B: fixes de ronda 1 verificados. Residual R2-B-1 (WARNING)
+    cerrado: `ValidarValorAnidado` ganó un case `System.Collections.IDictionary`
+    entre `IReadOnlyDictionary<string, object?>` e `IEnumerable`, cubriendo
+    diccionarios anidados con otro `TValue` (invarianza de tipos) y
+    `Hashtable` no genéricos, que antes caían al case `IEnumerable` sin
+    validar sus claves. Clave no-string en un diccionario no genérico se
+    rechaza (no se valida por `ToString()`). 3 tests nuevos, 2 de ellos los
+    probes exactos del juez; evidencia de mutación (borrar el case → los 2
+    tests fallan → revert → verde).
 - [ ] 1.31 Branch `feat/stage14-slice1-tabla-auditoria` off `main`; PR;
   merge stacked-to-main.
 
