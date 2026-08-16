@@ -1444,6 +1444,19 @@ untouched.
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
 - [ ] 6.12 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   *(orchestrator)*
+  - Ronda 1 (juez B): 0 severos; 3 WARNING (findings 1-3), pre-existentes-de-
+    patrón (mismos gaps que la etapa 11) cerrados en el código NUEVO de esta
+    slice. Fixed y con evidencia de mutación en `AuditoriaExportTests.cs`
+    (commit `08efd37`): finding 1 (seed subida a tope+2 filas y assert sobre
+    la cantidad REAL, discrimina el primer `GuardaDeTope.Exigir` de un `Take`
+    truncado con el mismo count), finding 2 (`UnFormatoNoSoportadoRechaza...`
+    — caso HTTP faltante para `FormatoDeExportacion.Parsear` en
+    `/api/auditoria/export`), finding 3
+    (`UnaExportacionDeExactamenteElTopeDeFilasSeAceptaCompleta` — borde
+    exacto del tope, discrimina el segundo `Exigir` del lado del éxito). Los
+    hermanos de la etapa 11 (mismos WARNINGs en `VentasListadoExportTests`/
+    `ReportesVentasResumenExportTests`) quedan FUERA de alcance de esta
+    ronda — chip aparte.
 - [ ] 6.13 Branch `feat/stage14-slice6-export` off `main` (parent:
   slice 5); PR; merge stacked-to-main. *(orchestrator)*
 
