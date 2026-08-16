@@ -46,7 +46,8 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
     public static readonly TheoryData<string> RutasSinLecturaDeRentabilidad = new()
     {
         "ventas/resumen", "compras/por-proveedor", "gastos/resumen", "articulos/top",
-        "ventas/por-punto-venta", "ventas/por-vendedor", "ventas/por-medio-pago"
+        "ventas/por-punto-venta", "ventas/por-vendedor", "ventas/por-medio-pago",
+        "stock/reposicion/resumen", "stock/vencimientos/resumen"
     };
 
     public static readonly TheoryData<string> RutasConLecturaDeRentabilidad = new() { "rentabilidad", "comisiones" };
@@ -99,9 +100,9 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
 
     [Theory]
     [MemberData(nameof(TodasLasRutas))]
-    public async Task UnVendedorEsRechazadoEnLasNueveRutas(string ruta)
+    public async Task UnVendedorEsRechazadoEnTodasLasRutasDeReportes(string ruta)
     {
-        var ctx = await PrepararAsync(nameof(UnVendedorEsRechazadoEnLasNueveRutas) + ruta.Replace("/", "-"));
+        var ctx = await PrepararAsync(nameof(UnVendedorEsRechazadoEnTodasLasRutasDeReportes) + ruta.Replace("/", "-"));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
 
         var respuesta = await ctx.Vendedor.GetAsync(RutaCon(ruta, ctx.IdEmpresa, ctx.IdPuntoVenta, hoy));
@@ -111,9 +112,9 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
 
     [Theory]
     [MemberData(nameof(TodasLasRutas))]
-    public async Task UnRootEsRechazadoEnLasNueveRutas(string ruta)
+    public async Task UnRootEsRechazadoEnTodasLasRutasDeReportes(string ruta)
     {
-        var ctx = await PrepararAsync(nameof(UnRootEsRechazadoEnLasNueveRutas) + ruta.Replace("/", "-"));
+        var ctx = await PrepararAsync(nameof(UnRootEsRechazadoEnTodasLasRutasDeReportes) + ruta.Replace("/", "-"));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
 
         var respuesta = await ctx.Root.GetAsync(RutaCon(ruta, ctx.IdEmpresa, ctx.IdPuntoVenta, hoy));
@@ -123,9 +124,9 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
 
     [Theory]
     [MemberData(nameof(TodasLasRutas))]
-    public async Task UnAdminEsAceptadoEnLasNueveRutas(string ruta)
+    public async Task UnAdminEsAceptadoEnTodasLasRutasDeReportes(string ruta)
     {
-        var ctx = await PrepararAsync(nameof(UnAdminEsAceptadoEnLasNueveRutas) + ruta.Replace("/", "-"));
+        var ctx = await PrepararAsync(nameof(UnAdminEsAceptadoEnTodasLasRutasDeReportes) + ruta.Replace("/", "-"));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
 
         var respuesta = await ctx.Admin.GetAsync(RutaCon(ruta, ctx.IdEmpresa, ctx.IdPuntoVenta, hoy));
@@ -135,9 +136,9 @@ public class ReportesAutorizacionTests(WaysApiFixture fixture) : IClassFixture<W
 
     [Theory]
     [MemberData(nameof(RutasSinLecturaDeRentabilidad))]
-    public async Task UnSupervisorEsAceptadoEnLasSieteRutasSinLecturaDeRentabilidad(string ruta)
+    public async Task UnSupervisorEsAceptadoEnLasRutasSinLecturaDeRentabilidad(string ruta)
     {
-        var ctx = await PrepararAsync(nameof(UnSupervisorEsAceptadoEnLasSieteRutasSinLecturaDeRentabilidad) + ruta.Replace("/", "-"));
+        var ctx = await PrepararAsync(nameof(UnSupervisorEsAceptadoEnLasRutasSinLecturaDeRentabilidad) + ruta.Replace("/", "-"));
         var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
 
         var respuesta = await ctx.Supervisor.GetAsync(RutaCon(ruta, ctx.IdEmpresa, ctx.IdPuntoVenta, hoy));
