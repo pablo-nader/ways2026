@@ -39,7 +39,7 @@ public class AuditoriaAnulacionCompraTests(WaysApiFixture fixture) : IClassFixtu
 
     private sealed record Contexto(
         int IdTenant, int IdPuntoVenta, HttpClient Admin, int IdProveedor, int IdArticulo, int IdAlicuotaIva21,
-        int IdTipoCFA);
+        int IdTipoCFA, int IdEmpleadoAdmin);
 
     private async Task<Contexto> PrepararAsync(string nombre)
     {
@@ -90,7 +90,9 @@ public class AuditoriaAnulacionCompraTests(WaysApiFixture fixture) : IClassFixtu
 
         var idTipoCFA = await db.TiposComprobante.Where(t => t.Codigo == "C-FA").Select(t => t.Id).SingleAsync();
 
-        return new Contexto(resultado.IdTenant, resultado.IdPuntoVenta, admin, proveedor.Id, articulo.Id, idAlicuotaIva21, idTipoCFA);
+        return new Contexto(
+            resultado.IdTenant, resultado.IdPuntoVenta, admin, proveedor.Id, articulo.Id, idAlicuotaIva21, idTipoCFA,
+            resultado.IdUsuarioAdmin);
     }
 
     private static SolicitudDeCompra SolicitudSimple(Contexto ctx, decimal unidades = 50m, decimal costoUnitario = 100m) =>
@@ -134,7 +136,10 @@ public class AuditoriaAnulacionCompraTests(WaysApiFixture fixture) : IClassFixtu
 
         var fila = await db.Auditoria.SingleAsync(a => a.Accion == "compra.anulacion" && a.IdEntidad == creada.Id);
         Assert.Equal("comprobante_compra", fila.Entidad);
-        Assert.NotEqual(0, fila.IdActor);
+        // Judgment Day fix (slice 3 juez B ronda 1, finding 2): NotEqual(0, ...) no discrimina el
+        // actor — un mutante que estampa un actor constante (p. ej. 1) lo pasa igual. Igualdad
+        // exacta contra el admin real cierra ese hueco.
+        Assert.Equal(ctx.IdEmpleadoAdmin, fila.IdActor);
         Assert.Equal(ctx.IdPuntoVenta, fila.IdPuntoVenta);
 
         using var valorAnterior = JsonDocument.Parse(fila.ValorAnterior!);

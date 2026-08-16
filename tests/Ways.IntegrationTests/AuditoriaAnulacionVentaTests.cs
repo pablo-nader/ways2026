@@ -223,7 +223,10 @@ public class AuditoriaAnulacionVentaTests(WaysApiFixture fixture) : IClassFixtur
 
         var fila = await db.Auditoria.SingleAsync(a => a.Accion == "venta.anulacion" && a.IdEntidad == idComprobante);
         Assert.Equal("comprobante_venta", fila.Entidad);
-        Assert.NotEqual(0, fila.IdActor);
+        // Judgment Day fix (slice 3 juez B ronda 1, finding 2): NotEqual(0, ...) no discrimina el
+        // actor — un mutante que estampa un actor constante (p. ej. 1) lo pasa igual. Igualdad
+        // exacta contra el admin real cierra ese hueco.
+        Assert.Equal(ctx.IdEmpleadoAdmin, fila.IdActor);
         Assert.Equal(ctx.IdPuntoVenta, fila.IdPuntoVenta);
 
         Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteVenta == idComprobante));
@@ -267,6 +270,92 @@ public class AuditoriaAnulacionVentaTests(WaysApiFixture fixture) : IClassFixtur
         // Reintento limpio inmediatamente después tiene que funcionar (mismo criterio que
         // AnulacionTests: la anulación no consume ningún recurso de un solo uso).
         var reintento = await ctx.Admin.PostAsync($"/api/ventas/{idComprobante}/anulacion", null);
+        Assert.Equal(HttpStatusCode.OK, reintento.StatusCode);
+    }
+
+    /// <summary>Judgment Day fix (slice 3 juez B ronda 1, finding 1, WARNING): el test de arriba
+    /// corre sobre el comprobante 100%-servicio, donde el THEN del spec ("no inverse
+    /// movimientos_stock/movimientos_cuenta_corriente row exists") es VACUAMENTE verdadero — esa
+    /// composición no produce reversas bajo ninguna implementación, ni siquiera una que ignorara el
+    /// fail-closed. El GIVEN literal del spec `comprobantes-venta` para este escenario es "3 líneas
+    /// de producto y un consumo de cuenta corriente": este test lo cubre con magnitudes distintas
+    /// por línea (2/3/1 unidades, $100/$250/$400) para que el CERO de cada aserción sea real — si
+    /// el fail-closed fallara, habría 3 filas de <c>movimientos_stock</c> y 1 contramovimiento de
+    /// CC que este test SÍ detectaría. Mismo técnica <c>REVOKE INSERT ON auditoria</c> que el test
+    /// insignia de arriba (que se mantiene intacto: sigue siendo el flagship de la task 3.7).
+    /// </summary>
+    [Fact]
+    public async Task UnaFallaAlEscribirLaAuditoriaBloqueaLaAnulacionDeUnComprobanteConTresLineasDeProductoYConsumoDeCc()
+    {
+        var ctx = await PrepararAsync(
+            nameof(UnaFallaAlEscribirLaAuditoriaBloqueaLaAnulacionDeUnComprobanteConTresLineasDeProductoYConsumoDeCc));
+
+        var idArticuloA = await SembrarArticuloConPrecioAsync(ctx, "articulo-fail-closed-a", 50m);
+        var idArticuloB = await SembrarArticuloConPrecioAsync(ctx, "articulo-fail-closed-b", 100m);
+        var idArticuloC = await SembrarArticuloConPrecioAsync(ctx, "articulo-fail-closed-c", 150m);
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, ctx.IdCliente, "TX", null,
+            [
+                new LineaDeVenta(idArticuloA, 2m, null),
+                new LineaDeVenta(idArticuloB, 3m, null),
+                new LineaDeVenta(idArticuloC, 1m, null)
+            ],
+            // 2*50 + 3*100 + 1*150 = 550 — bajo el LimiteCredito (1000m) de PrepararAsync.
+            [new PagoDeVenta(ctx.IdMedioCuentaCorriente, 550m, null, 0m)],
+            null, null);
+
+        var emisionRespuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var emisionCuerpo = await emisionRespuesta.Content.ReadAsStringAsync();
+        Assert.True(emisionRespuesta.StatusCode == HttpStatusCode.Created, emisionCuerpo);
+        var emitido = (await JsonSerializer.DeserializeAsync<ComprobanteEmitido>(
+            new MemoryStream(System.Text.Encoding.UTF8.GetBytes(emisionCuerpo)), OpcionesJson))!;
+
+        await using var dbAntes = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var stockAAntes = await dbAntes.Stock
+            .Where(s => s.IdArticulo == idArticuloA && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+        var stockBAntes = await dbAntes.Stock
+            .Where(s => s.IdArticulo == idArticuloB && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+        var stockCAntes = await dbAntes.Stock
+            .Where(s => s.IdArticulo == idArticuloC && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+
+        await RevocarAsync("auditoria", "INSERT");
+        HttpResponseMessage respuesta;
+        try
+        {
+            respuesta = await ctx.Admin.PostAsync($"/api/ventas/{emitido.Id}/anulacion", null);
+        }
+        finally
+        {
+            await RestaurarAsync("auditoria", "INSERT");
+        }
+
+        Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var estado = await db.ComprobantesVenta.Where(c => c.Id == emitido.Id).Select(c => c.Estado).FirstAsync();
+        Assert.Equal(EstadoComprobante.Emitido, estado);
+
+        Assert.Equal(
+            0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteVenta == emitido.Id && m.Motivo == MotivoStock.Anulacion));
+        Assert.Equal(
+            0, await db.MovimientosCuentaCorriente.CountAsync(
+                m => m.IdComprobanteVenta == emitido.Id && m.Tipo == Ways.Domain.CuentaCorriente.TipoMovimientoCc.Ajuste));
+        Assert.Equal(
+            0, await db.Auditoria.CountAsync(a => a.IdEntidad == emitido.Id && a.Accion == "venta.anulacion"));
+
+        var stockADespues = await db.Stock
+            .Where(s => s.IdArticulo == idArticuloA && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+        var stockBDespues = await db.Stock
+            .Where(s => s.IdArticulo == idArticuloB && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+        var stockCDespues = await db.Stock
+            .Where(s => s.IdArticulo == idArticuloC && s.IdPuntoVenta == ctx.IdPuntoVenta).Select(s => s.Cantidad).FirstAsync();
+        Assert.Equal(stockAAntes, stockADespues);
+        Assert.Equal(stockBAntes, stockBDespues);
+        Assert.Equal(stockCAntes, stockCDespues);
+
+        // Reintento limpio inmediatamente después tiene que funcionar.
+        var reintento = await ctx.Admin.PostAsync($"/api/ventas/{emitido.Id}/anulacion", null);
         Assert.Equal(HttpStatusCode.OK, reintento.StatusCode);
     }
 

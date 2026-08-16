@@ -680,6 +680,19 @@ call sites disappear, both `MarcarAnulado*Async` methods keep their
   `REVOKE`/`RESTORE` technique as `AnulacionTests`/
   `ComprasAnulacionYConcurrenciaTests`). Also doubles as 3.5's fail-closed
   evidence, per that task's own text.
+  **Judgment Day fix (slice 3 juez B ronda 1, finding 1, WARNING):** the
+  100%-servicio-sin-CC comprobante this task's test runs on never produces
+  reversas under any implementation, so the spec's THEN ("no inverse
+  movimientos_stock/movimientos_cuenta_corriente row exists") was vacuously
+  true there — it asserted nothing about the mechanism it claims to guard.
+  Complemented (not replaced) with
+  `UnaFallaAlEscribirLaAuditoriaBloqueaLaAnulacionDeUnComprobanteConTresLineasDeProductoYConsumoDeCc`,
+  the spec's literal GIVEN ("3 líneas de producto y un consumo de cuenta
+  corriente"), with distinct per-line magnitudes so the CEROs it asserts
+  are real. Evidence: committed → mutated (the "1.5. Auditoría" block moved
+  after `transaccion.CommitAsync(ct)`) → `dotnet build --no-incremental` →
+  new test FAILED (reversas existían / estado quedó `Anulado`) → reverted →
+  `git diff` clean → rebuilt → green.
 - [x] 3.10 [P] Integration: `compra.anulacion` coverage — a confirmada
   compra of 50 units, none sold, anulada — one row, actor identified, same
   transaction as the `-50` `movimientos_stock` row. *(spec `comprobantes-
@@ -711,6 +724,13 @@ call sites disappear, both `MarcarAnulado*Async` methods keep their
   to the model since the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
 - [ ] 3.14 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  - Ronda 1 (juez B): 0 severos; 2 WARNING (findings 1-2). Ambos fixed y con
+    evidencia de mutación: finding 1 (test fail-closed nuevo sobre la
+    composición literal del spec — 3 líneas de producto + consumo de CC —
+    complementando, no reemplazando, el flagship 100%-servicio, task 3.9);
+    finding 2 (`Assert.NotEqual(0, fila.IdActor)` → `Assert.Equal(ctx.
+    IdEmpleadoAdmin, fila.IdActor)` en ambos tests de cobertura, venta y
+    compra). Re-judge pendiente.
 - [ ] 3.15 Branch `feat/stage14-slice3-anulaciones` off `main` (parent:
   slice 1); PR; merge stacked-to-main.
 
