@@ -84,4 +84,22 @@ public class PoliticasTests
 
         Assert.Equal(admitido, resultado.Succeeded);
     }
+
+    /// <summary>stage-14-auditoria-trazabilidad, Slice 5 (task 5.1; design decisión 6): misma
+    /// forma exacta que <see cref="LecturaDeRentabilidadAdmiteSoloAdmin"/> — Admin-only, sin
+    /// apilar sobre <see cref="Politicas.LecturaDeReportes"/> (el log de auditoría no es un
+    /// reporte de gestión).</summary>
+    [Theory]
+    [InlineData(RolConocido.Vendedor, false)]
+    [InlineData(RolConocido.Supervisor, false)]
+    [InlineData(RolConocido.Root, false)]
+    [InlineData(RolConocido.Admin, true)]
+    public async Task LecturaDeAuditoriaAdmiteSoloAdmin(RolConocido rol, bool admitido)
+    {
+        var servicio = ConstruirServicioDeAutorizacion();
+
+        var resultado = await servicio.AuthorizeAsync(Usuario(rol), Politicas.LecturaDeAuditoria);
+
+        Assert.Equal(admitido, resultado.Succeeded);
+    }
 }

@@ -70,6 +70,14 @@ public static class Politicas
     /// <see cref="LecturaDeReportes"/> en <c>/rentabilidad</c> y <c>/comisiones</c>.</summary>
     public const string LecturaDeRentabilidad = "lectura_rentabilidad";
 
+    /// <summary>Solo admin — la puerta de <c>GET /api/auditoria</c> (y su export sibling)
+    /// (stage-14-auditoria-trazabilidad, Slice 5; spec auditoria-de-operaciones: "GET /api/auditoria
+    /// Is Filtered, Paginated, And Admin-Only"; design decisión 6). Misma forma exacta que
+    /// <see cref="LecturaDeRentabilidad"/>, pero SIN apilar sobre <see cref="LecturaDeReportes"/>
+    /// — el log de auditoría no es un reporte de gestión, es la puerta de un dato distinto.
+    /// Supervisor, Vendedor y Root quedan afuera.</summary>
+    public const string LecturaDeAuditoria = "lectura_auditoria";
+
     public static AuthorizationBuilder AgregarPoliticasWays(this AuthorizationBuilder builder)
     {
         return builder
@@ -119,6 +127,9 @@ public static class Politicas
                             ((int)RolConocido.Supervisor).ToString(),
                             ((int)RolConocido.Admin).ToString()))
             .AddPolicy(LecturaDeRentabilidad, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(ClaimsWays.RolId, ((int)RolConocido.Admin).ToString()))
+            .AddPolicy(LecturaDeAuditoria, politica =>
                 politica.RequireAuthenticatedUser()
                         .RequireClaim(ClaimsWays.RolId, ((int)RolConocido.Admin).ToString()));
     }
