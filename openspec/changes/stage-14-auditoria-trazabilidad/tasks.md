@@ -1698,7 +1698,7 @@ operator through the export. A documented reduction, never a silent one.
     passed, 693/693 tests passed (689 pre-existentes + 4 nuevos:
     `Auditoria.test.tsx` 8→11, `compararPayloads.test.ts` 6→7). `npm run
     build` (`tsc -b && vite build`) limpio. JUDGMENT: APPROVED.
-- [ ] 7.16 Branch `feat/stage14-slice7-web` off `main` (parent: slices 5+6);
+- [x] 7.16 Branch `feat/stage14-slice7-web` off `main` (parent: slices 5+6); *(CLEAN 2026-08-16: juez B ronda 1 — 3 MAJORs (BUG DE PRODUCCION: limpiar una fecha desincronizaba el listado JSON del export, que armaba desde=T00:00:00+NaN:NaN y el endpoint rechazaba; paridad de filtros asertada solo para accion; borde de ultima pagina sobredeterminado por fixture total:1) + 4 WARNINGs + 2 sugerencias -> fix a249dab con UN builder de alcance compartido (precedente construirQueryDeAlcanceDeCajas) y boton deshabilitado con motivo visible; re-ronda B aprobada con 6 re-mutantes muertos incl. probe de que el test de stale reforzado sigue discriminando. Juez A: 0 severos, 2 WARNINGs (mirror inerte FiltrosDeAuditoria con doc que sobredeclaraba -> removido; rama de fallback de etiquetaDeAccion, el mecanismo de la decision 15, sin test -> exportada y cubierta) + 2 sugerencias cerradas en 3413eee. JUDGMENT: APPROVED.)*
   PR; merge stacked-to-main. **If the slice overflows at apply time, drop
   tasks 7.5/7.7/7.8 (`PanelDeCambio`/`compararPayloads`) per the
   pre-approved degradation above and record the reduction in the PR body —
