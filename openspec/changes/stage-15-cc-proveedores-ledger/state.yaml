@@ -155,9 +155,32 @@ phases:
       (verificado por grep post-merge); la decision 3 del design queda
       alineada sin accion.
   tasks:
-    status: pending
+    status: done
     artifact: tasks.md
     depends_on: [spec, design]
+    notes: >-
+      6 slices stacked-to-main (~2250 lineas), merge order 1->2->3->4->5->6:
+      (1) migracion CuentaCorrienteDeProveedoresEtapa15 completa + entidad/
+      Configuration + doc-10, con gate guard vinculante (exactamente UNA
+      migracion, has-pending-model-changes limpio, 7 indices, fidelidad del
+      backfill con 3 soft-deletes + gasto sin id_proveedor como
+      discriminantes, idempotencia por re-run — tareas 1.20-1.36), targets
+      #1-#11; (2) EscriturasDeCuentaCorrienteProveedor + movimiento compra
+      en confirm + contramovimiento en anulacion con fallback pre-cutover,
+      targets #12-#20; (3) movimiento pago en InsertarGastoAsync +
+      imputacion + carreras pago×pago y anulacion×pago, #21-#23;
+      (4) estado de cuenta paginado + ServicioDeSaldoDeProveedor
+      re-sourceado con la formula OD7, #24(redefinido)-#26, tests
+      discriminantes nuevos 4.12/4.13 (impaga y parcial pre-cutover —
+      ninguna de las dos formulas rechazadas los pasaba); (5) policy
+      SupervisionDeCuentaDeProveedor + POST /ajustes top-level, #27;
+      (6) web CuentaCorrienteDeProveedor.tsx + modal + Resumen re-apuntado,
+      #28. Conflictos reconciliados con OD7 (formula, Orchestrator
+      Decision 4 de tasks.md) y OD9 (paginacion, OD5 de tasks.md); OD8
+      ratificada (2.8/2.14); clarificacion de scheduling: la carrera
+      confirm×pago del slice 2 corre contra la clase writer directa y el
+      slice 3 repite las carreras sobre los call sites reales. CERO
+      conflictos nuevos fuera de las OD existentes.
   apply:
     status: pending
     artifact: tasks.md + PRs
