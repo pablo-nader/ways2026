@@ -233,6 +233,34 @@ describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
     expect(screen.getByRole('button', { name: 'Descargar' })).toBeDisabled()
   })
 
+  // judgment-day ronda 1, finding 6: `cambiarEntidad` limpia `idEntidad` cuando se vacía `entidad`
+  // (`idEntidad` sin `entidad` es 400 `entidad_requerida` del servidor) — el guard no tenía test;
+  // borrar `idEntidad: null` de esa rama sobrevivía.
+  it('limpiar Entidad limpia también #Id: el input queda vacío y el request siguiente no manda idEntidad', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderAuditoria()
+
+    await screen.findByText('#41')
+    await usuario.type(screen.getByLabelText('Entidad'), 'articulo')
+    await usuario.type(screen.getByLabelText('#Id'), '41')
+    await waitFor(() => {
+      const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/auditoria?'))
+      expect(llamadas.some((call: unknown[]) => (call[0] as string).includes('idEntidad=41'))).toBe(true)
+    })
+
+    apiGetMock.mockClear()
+    mockearRutasBase()
+    await usuario.clear(screen.getByLabelText('Entidad'))
+
+    await waitFor(() => {
+      const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/auditoria?'))
+      expect(llamadas.length).toBeGreaterThan(0)
+      expect(llamadas.every((call: unknown[]) => !(call[0] as string).includes('idEntidad='))).toBe(true)
+    })
+    expect(screen.getByLabelText('#Id')).toHaveValue(null)
+  })
+
   it('el botón de descarga llama a rutasDeExportacion.auditoria con el filtro actual', async () => {
     mockearRutasBase()
     const usuario = userEvent.setup()
