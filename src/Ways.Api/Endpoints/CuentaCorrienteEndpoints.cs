@@ -82,8 +82,7 @@ public static class CuentaCorrienteEndpoints
                 idCliente, desde, hasta, opciones.Value.TopeDeFilas, ct);
 
             var zona = TimeZoneInfo.FindSystemTimeZoneById(AlcanceDeListadoHttp.ZonaPorDefecto);
-            var desdeFecha = DateOnly.FromDateTime(desde.UtcDateTime);
-            var hastaFecha = DateOnly.FromDateTime(hasta.UtcDateTime);
+            var (desdeFecha, hastaFecha) = FechaDelRango.De(desde, hasta);
 
             var ctx = ContextoDeExportacionHttp.Construir(
                 usuario, reloj, $"Cliente {idCliente}", puntoVenta: null, desdeFecha, hastaFecha,

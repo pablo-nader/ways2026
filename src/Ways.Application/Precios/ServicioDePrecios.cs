@@ -739,10 +739,16 @@ public class ServicioDePrecios(
         return conexion;
     }
 
+    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> ANTES de escribirlo como
+    /// parámetro raw-ADO (judgment-day, juez A) — la convención de EF
+    /// (<c>WaysDbContext.NormalizacionAUtc</c>) no alcanza este camino: Npgsql rechaza escribir
+    /// contra <c>timestamptz</c> con offset distinto de cero, y acá se arma el <c>DbParameter</c>
+    /// a mano. <c>ToUniversalTime()</c> es una reexpresión, nunca mueve el instante — mismo
+    /// criterio que el converter de EF.</summary>
     private static void AgregarParametro(DbCommand comando, object valor)
     {
         var parametro = comando.CreateParameter();
-        parametro.Value = valor;
+        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
         comando.Parameters.Add(parametro);
     }
 

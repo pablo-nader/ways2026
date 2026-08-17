@@ -88,8 +88,13 @@ public class EstadoDeCuentaExportTests(WaysApiFixture fixture) : IClassFixture<W
         await db.SaveChangesAsync();
     }
 
+    // judgment-day fix (Juez B, WARNING, residual cerrado): offset -03:00 REAL (no "Z") — así
+    // revertir el call site de /cuenta-corriente/export al viejo
+    // `DateOnly.FromDateTime(...UtcDateTime)` corre la fecha MOSTRADA (ver assert de nombre de
+    // archivo en ElExportEsIgualAlEstadoDeCuentaJsonParaLosMismosParametros), algo que un offset
+    // "Z" nunca discrimina.
     private static string ConstruirQuery(DateOnly desde, DateOnly hasta, string? formato) =>
-        $"desde={desde:yyyy-MM-dd}T00:00:00Z&hasta={hasta:yyyy-MM-dd}T23:59:59Z" +
+        $"desde={desde:yyyy-MM-dd}T00:00:00-03:00&hasta={hasta:yyyy-MM-dd}T23:59:59-03:00" +
         (formato is null ? string.Empty : $"&formato={formato}");
 
     private static Task<HttpResponseMessage> LlamarEstadoDeCuentaAsync(
@@ -121,6 +126,14 @@ public class EstadoDeCuentaExportTests(WaysApiFixture fixture) : IClassFixture<W
         var cuerpoError = exportRespuesta.IsSuccessStatusCode ? string.Empty : await exportRespuesta.Content.ReadAsStringAsync();
         Assert.True(exportRespuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
         Assert.Equal(ContentTypeXlsx, exportRespuesta.Content.Headers.ContentType?.MediaType);
+
+        // judgment-day fix (Juez B, WARNING, residual cerrado): nombre de archivo derivado de
+        // FechaDelRango.De — con el offset -03:00 real de ConstruirQuery, revertir el call site de
+        // CuentaCorrienteEndpoints.cs al viejo `DateOnly.FromDateTime(hasta.UtcDateTime)` correría
+        // `hasta` un día (23:59:59-03:00 cae en 02:59:59Z del día siguiente) y este assert lo atrapa.
+        var nombreEsperado = NombreDeArchivo.Construir("estado_de_cuenta", $"cliente{ctx.IdCliente}", desde, hasta);
+        var disposicionExport = exportRespuesta.Content.Headers.ContentDisposition?.ToString() ?? string.Empty;
+        Assert.Contains($"filename=\"{nombreEsperado}\"", disposicionExport);
 
         using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();

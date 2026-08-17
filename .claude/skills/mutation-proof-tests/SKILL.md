@@ -99,6 +99,22 @@ so deleting the clause under test changes nothing the test can see.
    fail). Both judges raised this independently — it is settled, do not re-litigate.
    (Stage 14 slice 6 found the three gaps; swept across all 18 routes and 11 files.)
 
+10. **A date-boundary test sends the offset the CLIENT sends, never `Z`.** A
+   `desde`/`hasta` built as `...T00:00:00Z`/`...T23:59:59Z` is a confound: with
+   offset zero, `limite.DateTime` and `limite.UtcDateTime` are the same value, so
+   every timezone defect in the request path is invisible. The web builds both
+   limits with the browser's own offset (`fechaIsoConOffset`, duplicated in
+   `compras.ts`/`cuentaCorriente.ts`/`reportes.ts`/`auditoria.ts`), so a test that
+   sends `Z` is not testing the production payload. Use a real negative offset
+   (`-03:00`, the default zone) so the end-of-day límite lands on the NEXT UTC day,
+   and assert the displayed date — the `Período` header and both ends of
+   `NombreDeArchivo` — not only the rows returned. (Two occurrences of this class:
+   the `hoy` UTC filename bug of stage 11, and the `desde`/`hasta` display bug plus
+   the Npgsql `only offset 0 (UTC) is supported` 500 found in stage 14 slice 6 —
+   both survived because every export test in the repo sent offset zero. Residual:
+   only `AuditoriaExportTests` sends a real offset; the other five export test files
+   still send `Z`. Close each one whenever it is touched.)
+
 ## Decision Gate
 
 | Situation | Action |
@@ -106,4 +122,5 @@ so deleting the clause under test changes nothing the test can see.
 | Test exists to prove a predicate/filter/guard/expression | Mutation evidence recorded before commit |
 | Test passes with the clause deleted | Re-route below the confound (rule 3) — never call it done |
 | RLS-related assertion | ways_app connection, statement-level, row counts |
+| Test sends a date boundary as `...Z` | Confound (rule 10) — resend with a real negative offset |
 | Cannot name the clause under test | Ordinary coverage — this skill does not apply |

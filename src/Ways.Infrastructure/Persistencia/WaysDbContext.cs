@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
 using Ways.Application.Clientes;
@@ -134,6 +135,42 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     /// cada redeploy genera claves nuevas y echa a todos los usuarios logueados.
     /// </summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
+
+    /// <summary>
+    /// Npgsql RECHAZA escribir un <see cref="DateTimeOffset"/> con offset distinto de cero contra
+    /// una columna <c>timestamptz</c> ("only offset 0 (UTC) is supported"), y esa restricción
+    /// alcanza también a los PARÁMETROS de una consulta. El cliente web manda cada límite de fecha
+    /// con su offset local (<c>fechaIsoConOffset</c> en <c>compras.ts</c>/<c>cuentaCorriente.ts</c>/
+    /// <c>reportes.ts</c>/<c>auditoria.ts</c>), así que sin esta normalización todo filtro por fecha
+    /// desde la web tira 500 en cada endpoint que compara contra una de esas columnas.
+    ///
+    /// Se resuelve por CONVENCIÓN y no endpoint por endpoint a propósito: el instante no cambia
+    /// (<see cref="DateTimeOffset.ToUniversalTime"/> es una reexpresión, no una conversión de
+    /// zona), no hay migración (el tipo de columna es el mismo), y ningún endpoint EF nuevo puede
+    /// volver a olvidarse. Los caminos raw-ADO (que arman su <c>DbParameter</c> a mano y no pasan
+    /// por esta convención) quedan cubiertos por la MISMA normalización, pero aplicada en el
+    /// helper compartido <c>AgregarParametro</c> de cada servicio que usa ADO crudo
+    /// (judgment-day, juez A: <c>ServicioDePrecios.AbrirNuevoPrecioAsync</c> escribía
+    /// <c>vigente_hasta</c> con el offset tal cual del cliente y tiraba 500 — bug real, no
+    /// hipotético). La lectura es identidad — Npgsql ya devuelve offset cero.
+    ///
+    /// La fecha que se MUESTRA nunca sale de acá: la deriva
+    /// <c>Ways.Application.Exportacion.FechaDelRango</c> del valor original, antes de que la query
+    /// lo vea.
+    /// </summary>
+    protected override void ConfigureConventions(ModelConfigurationBuilder builder)
+    {
+        base.ConfigureConventions(builder);
+
+        // Alcanza también a las propiedades DateTimeOffset? — EF aplica la conversión del tipo no
+        // nullable a su contraparte nullable, un registro aparte para Properties<DateTimeOffset?>
+        // es config muerta (verificado con una columna nullable real).
+        builder.Properties<DateTimeOffset>()
+            .HaveConversion<NormalizacionAUtc>();
+    }
+
+    private sealed class NormalizacionAUtc()
+        : ValueConverter<DateTimeOffset, DateTimeOffset>(v => v.ToUniversalTime(), v => v);
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -296,12 +296,37 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
     private const string ContentTypeXlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+    // judgment-day fix (Juez B, WARNING, residual cerrado): nombre de archivo derivado de
+    // FechaDelRango.De — con offset -03:00 real, revertir el call site de ReportesEndpoints.cs
+    // (export de /cajas) al viejo `DateOnly.FromDateTime(...UtcDateTime)` correría `desde`/`hasta`
+    // (ver LaFechaMostradaSaleDelRangoPedidoNoDelTurno abajo), algo un offset "Z" nunca discrimina.
     private static Task<HttpResponseMessage> LlamarExportDelHistoricoAsync(
         HttpClient cliente, DateTimeOffset desde, DateTimeOffset hasta, int? idPuntoVenta = null, string formato = "xlsx") =>
         cliente.GetAsync(
             $"/api/reportes/cajas/export?desde={Uri.EscapeDataString(desde.ToString("O"))}" +
             $"&hasta={Uri.EscapeDataString(hasta.ToString("O"))}" +
             (idPuntoVenta is { } pv ? $"&idPuntoVenta={pv}" : string.Empty) + $"&formato={formato}");
+
+    /// <summary>judgment-day fix (Juez B, WARNING, cierra el 5º call site de FechaDelRango.De):
+    /// SIN <c>RelojFijo</c> y SIN sembrar turnos en rango — el nombre de archivo/Período de este
+    /// export sale de <c>desde</c>/<c>hasta</c> (el rango pedido), no del turno, así que el reloj
+    /// del servidor y la presencia de turnos son irrelevantes para este assert.</summary>
+    [Fact]
+    public async Task LaFechaMostradaSaleDelRangoPedidoNoDelTurno()
+    {
+        var ctx = await PrepararAsync(nameof(LaFechaMostradaSaleDelRangoPedidoNoDelTurno));
+
+        var desde = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.FromHours(-3));
+        var hasta = new DateTimeOffset(2026, 1, 31, 23, 59, 59, TimeSpan.FromHours(-3));
+
+        var respuesta = await LlamarExportDelHistoricoAsync(ctx.Admin, desde, hasta);
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var nombreEsperado = NombreDeArchivo.Construir(
+            "cajas_historico", "todos", DateOnly.FromDateTime(desde.DateTime), DateOnly.FromDateTime(hasta.DateTime));
+        var disposicion = respuesta.Content.Headers.ContentDisposition?.ToString() ?? string.Empty;
+        Assert.Contains($"filename=\"{nombreEsperado}\"", disposicion);
+    }
 
     /// <summary>task 5a.9 (spec: G2 Listing Export Figures Equal The JSON Listing): compara las
     /// 8 columnas del workbook (Turno, Punto de venta, Apertura, Cierre, Esperado, Declarado,

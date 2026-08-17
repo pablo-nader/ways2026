@@ -144,10 +144,13 @@ public class LectorDeSerieTemporal(IWaysDbContext db)
         return true;
     }
 
+    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
+    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
+    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
     private static void AgregarParametro(DbCommand comando, object valor)
     {
         var parametro = comando.CreateParameter();
-        parametro.Value = valor;
+        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
         comando.Parameters.Add(parametro);
     }
 }

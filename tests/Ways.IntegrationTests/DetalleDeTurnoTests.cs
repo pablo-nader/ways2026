@@ -355,6 +355,51 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(detalle.Resumen.Egresos.Retiros, filaRetiros.Importe);
     }
 
+    // ---- judgment-day fix (Juez B, WARNING): guard de que FechaDelRango NUNCA se aplique al ------
+    // instante de servidor de este sitio (CajaEndpoints.cs:135-136) --------------------------------
+
+    private sealed class RelojFijo(DateTimeOffset ahora) : IRelojDelSistema
+    {
+        public DateTimeOffset Ahora { get; } = ahora;
+    }
+
+    /// <summary>Reloj fijado a las 22:30 ART del 5/8 (01:30 UTC del 6/8) — mismo patrón que
+    /// <c>ExistenciasExportTests.RelojFijo</c>, el OTRO sitio de instante-de-servidor no-aplicado,
+    /// que ya tiene esta guarda. <c>turno.FechaApertura</c>/<c>FechaCierre</c> nacen de
+    /// <c>reloj.Ahora</c> (<c>ServicioDeTurnos.AbrirAsync</c>/<c>CerrarAsync</c>), así que pinear
+    /// el reloj pinea el instante del turno. Si <c>CajaEndpoints.cs:135-136</c> alguna vez
+    /// reemplazara la conversión de zona por <c>FechaDelRango.De(turno.FechaApertura, ...)</c> —el
+    /// helper pensado para un LÍMITE con offset de CLIENTE, no para un instante de SERVIDOR— el
+    /// nombre de archivo mostraría "2026-08-06" (el día UTC crudo) en vez de "2026-08-05" (el día
+    /// de pared del punto de venta).</summary>
+    [Fact]
+    public async Task ElExportDelDetalleUsaElDiaDeParedDelPuntoDeVentaNoElDiaUtcDelInstanteDeApertura()
+    {
+        using var factoryConRelojFijo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddSingleton<IRelojDelSistema>(
+                    new RelojFijo(new DateTimeOffset(2026, 8, 6, 1, 30, 0, TimeSpan.Zero)))));
+
+        var ctx = await PrepararAsync(
+            nameof(ElExportDelDetalleUsaElDiaDeParedDelPuntoDeVentaNoElDiaUtcDelInstanteDeApertura), factoryConRelojFijo);
+
+        var turno = await AbrirTurnoAsync(ctx, ctx.Admin, 100m);
+        await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 100m);
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/caja/turnos/{turno.Id}/detalle/export?formato=xlsx");
+        var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+
+        var diaDelPuntoDeVenta = new DateOnly(2026, 8, 5);
+        var nombreEsperado = NombreDeArchivo.Construir("caja_z", $"turno{turno.Id}", diaDelPuntoDeVenta, diaDelPuntoDeVenta);
+        var diaUtcIncorrecto = new DateOnly(2026, 8, 6);
+        var nombreConDiaUtc = NombreDeArchivo.Construir("caja_z", $"turno{turno.Id}", diaUtcIncorrecto, diaUtcIncorrecto);
+
+        var disposicion = respuesta.Content.Headers.ContentDisposition?.ToString() ?? string.Empty;
+        Assert.DoesNotContain(nombreConDiaUtc, disposicion);
+        Assert.Contains($"filename=\"{nombreEsperado}\"", disposicion);
+    }
+
     [Fact]
     public async Task UnVendedorDescargaElExportDelTurnoQueElMismoCerro()
     {

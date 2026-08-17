@@ -51,8 +51,7 @@ public static class AuditoriaEndpoints
 
             var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta, ct);
             var zona = TimeZoneInfo.FindSystemTimeZoneById(zonaId);
-            var desdeFecha = DateOnly.FromDateTime(desde.UtcDateTime);
-            var hastaFecha = DateOnly.FromDateTime(hasta.UtcDateTime);
+            var (desdeFecha, hastaFecha) = FechaDelRango.De(desde, hasta);
 
             var ctx = ContextoDeExportacionHttp.Construir(
                 usuario, reloj, empresa, idPuntoVenta is { } id ? $"PV {id}" : null, desdeFecha, hastaFecha, zonaId);
