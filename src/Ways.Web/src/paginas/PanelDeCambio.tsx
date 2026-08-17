@@ -5,7 +5,9 @@ type PropsPanelDeCambio = {
   valorNuevo: Record<string, unknown>
 }
 
-function formatearValor(valor: unknown): string {
+/** Exportada para el test colocado (`PanelDeCambio.test.tsx`, `web-descriptor-tests`: todo
+ * formatter/mapper puro nuevo lleva su propio test unitario, sin DOM). */
+export function formatearValor(valor: unknown): string {
   if (valor === undefined) return '—'
   if (valor === null) return 'null'
   if (typeof valor === 'object') return JSON.stringify(valor)
