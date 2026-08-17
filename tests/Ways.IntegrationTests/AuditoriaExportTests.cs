@@ -381,8 +381,15 @@ public class AuditoriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
     /// de verdad. Se prueba sobre el listado JSON y no sobre el export a propósito: es una forma
     /// de query distinta (paginada, con <c>CountAsync</c>), y la clase alcanza a los ~13 endpoints
     /// que filtran por una columna <c>DateTimeOffset</c>, no solo a los seis exports.
-    /// El instante NO se mueve: la fila de las 02:00-03:00 (05:00Z) entra en un rango que arranca
-    /// a las 00:00-03:00 y la de las 23:00Z del día anterior queda afuera.
+    ///
+    /// R3 discrimina, además, que el converter REEXPRESE el offset (<see
+    /// cref="DateTimeOffset.ToUniversalTime"/>) en vez de CORRER el instante (p. ej. <c>new
+    /// DateTimeOffset(v.DateTime, TimeSpan.Zero)</c>, que descarta el offset original en lugar de
+    /// convertirlo): se siembra ESTRICTAMENTE entre el borde real del rango pedido
+    /// (<c>desde=00:00-03:00</c> = <c>03:00Z</c>) y el borde que un converter que corre el
+    /// instante produciría (<c>00:00Z</c>, tres horas antes). Con la reexpresión correcta R3 queda
+    /// AFUERA del rango; un converter que corra el instante la incluiría, y las otras dos filas
+    /// (a 5h/4h del borde real) no alcanzan a discriminar ese error.
     /// </summary>
     [Fact]
     public async Task ElListadoJsonAceptaLimitesConElOffsetLocalDelClienteSinRomper()
@@ -397,6 +404,12 @@ public class AuditoriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         await SembrarFilaAsync(
             ctx.IdTenant, ctx.IdPuntoVenta, ctx.IdActorAdmin, "precio.cambio", "articulo", 42,
             new DateTimeOffset(2026, 3, 9, 23, 0, 0, TimeSpan.Zero), null, "{\"monto\":200}");
+        // 2026-03-10 01:00Z: ESTRICTAMENTE entre el borde real (03:00Z) y el borde corrido por un
+        // converter que descarte el offset del cliente en vez de reexpresarlo (00:00Z) — sin esta
+        // fila, un converter que corre el instante 3h pasa los 8 tests de la clase.
+        await SembrarFilaAsync(
+            ctx.IdTenant, ctx.IdPuntoVenta, ctx.IdActorAdmin, "precio.cambio", "articulo", 43,
+            new DateTimeOffset(2026, 3, 10, 1, 0, 0, TimeSpan.Zero), null, "{\"monto\":300}");
 
         var desde = Uri.EscapeDataString("2026-03-10T00:00:00.000-03:00");
         var hasta = Uri.EscapeDataString("2026-03-10T23:59:59.999-03:00");

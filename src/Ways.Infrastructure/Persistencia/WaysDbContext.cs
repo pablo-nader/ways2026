@@ -146,8 +146,11 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     ///
     /// Se resuelve por CONVENCIÓN y no endpoint por endpoint a propósito: el instante no cambia
     /// (<see cref="DateTimeOffset.ToUniversalTime"/> es una reexpresión, no una conversión de
-    /// zona), no hay migración (el tipo de columna es el mismo), y ningún endpoint nuevo puede
-    /// volver a olvidarse. La lectura es identidad — Npgsql ya devuelve offset cero.
+    /// zona), no hay migración (el tipo de columna es el mismo), y ningún endpoint EF nuevo puede
+    /// volver a olvidarse — la excepción conocida son los caminos raw-ADO, que arman sus
+    /// <c>DbParameter</c> a mano y no pasan por esta convención (hoy ninguno filtra con un offset
+    /// distinto de cero, así que no hay defecto vivo). La lectura es identidad — Npgsql ya
+    /// devuelve offset cero.
     ///
     /// La fecha que se MUESTRA nunca sale de acá: la deriva
     /// <c>Ways.Application.Exportacion.FechaDelRango</c> del valor original, antes de que la query
@@ -157,9 +160,10 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     {
         base.ConfigureConventions(builder);
 
+        // Alcanza también a las propiedades DateTimeOffset? — EF aplica la conversión del tipo no
+        // nullable a su contraparte nullable, un registro aparte para Properties<DateTimeOffset?>
+        // es config muerta (verificado con una columna nullable real).
         builder.Properties<DateTimeOffset>()
-            .HaveConversion<NormalizacionAUtc>();
-        builder.Properties<DateTimeOffset?>()
             .HaveConversion<NormalizacionAUtc>();
     }
 

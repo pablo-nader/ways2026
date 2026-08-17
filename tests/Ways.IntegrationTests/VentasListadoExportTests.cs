@@ -110,8 +110,12 @@ public class VentasListadoExportTests(WaysApiFixture fixture) : IClassFixture<Wa
         return comprobante.Id;
     }
 
+    // judgment-day fix (Juez B, WARNING, residual cerrado): offset -03:00 REAL (no "Z") — así
+    // revertir el call site de /api/ventas/export al viejo `DateOnly.FromDateTime(...UtcDateTime)`
+    // corre la fecha MOSTRADA (ver assert de "Período"/nombre de archivo en
+    // ElExportEsIgualAlListadoJsonParaLosMismosParametros), algo que un offset "Z" nunca discrimina.
     private static string ConstruirQuery(int idPuntoVenta, DateOnly desde, DateOnly hasta, string? formato, EstadoComprobante? estado = null) =>
-        $"idPuntoVenta={idPuntoVenta}&desde={desde:yyyy-MM-dd}T00:00:00Z&hasta={hasta:yyyy-MM-dd}T23:59:59Z" +
+        $"idPuntoVenta={idPuntoVenta}&desde={desde:yyyy-MM-dd}T00:00:00-03:00&hasta={hasta:yyyy-MM-dd}T23:59:59-03:00" +
         (formato is null ? string.Empty : $"&formato={formato}") +
         (estado is null ? string.Empty : $"&estado={estado}");
 
@@ -145,6 +149,14 @@ public class VentasListadoExportTests(WaysApiFixture fixture) : IClassFixture<Wa
         var cuerpoError = exportRespuesta.IsSuccessStatusCode ? string.Empty : await exportRespuesta.Content.ReadAsStringAsync();
         Assert.True(exportRespuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
         Assert.Equal(ContentTypeXlsx, exportRespuesta.Content.Headers.ContentType?.MediaType);
+
+        // judgment-day fix (Juez B, WARNING, residual cerrado): nombre de archivo derivado de
+        // FechaDelRango.De — con el offset -03:00 real de ConstruirQuery, revertir el call site de
+        // VentasEndpoints.cs al viejo `DateOnly.FromDateTime(hasta.UtcDateTime)` correría `hasta`
+        // un día (23:59:59-03:00 cae en 02:59:59Z del día siguiente) y este assert lo atrapa.
+        var nombreEsperado = NombreDeArchivo.Construir("ventas_listado", $"pv{ctx.IdPuntoVenta}", desde, hasta);
+        var disposicionExport = exportRespuesta.Content.Headers.ContentDisposition?.ToString() ?? string.Empty;
+        Assert.Contains($"filename=\"{nombreEsperado}\"", disposicionExport);
 
         using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
         var hoja = libro.Worksheets.First();

@@ -105,8 +105,13 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         return movimiento.Id;
     }
 
+    // judgment-day fix (Juez B, WARNING, residual cerrado): offset -03:00 REAL (no "Z") — así
+    // revertir el call site de /reportes/tesoreria/export al viejo
+    // `DateOnly.FromDateTime(...UtcDateTime)` corre la fecha MOSTRADA, y el assert de nombre de
+    // archivo que YA tiene ElExportEsIgualAlLibroJsonFilaPorFila (línea 142-144) lo atrapa — un
+    // offset "Z" nunca lo discriminaba.
     private static string ConstruirQuery(int idPuntoVenta, DateOnly desde, DateOnly hasta, string? formato) =>
-        $"idPuntoVenta={idPuntoVenta}&desde={desde:yyyy-MM-dd}T00:00:00Z&hasta={hasta:yyyy-MM-dd}T23:59:59Z" +
+        $"idPuntoVenta={idPuntoVenta}&desde={desde:yyyy-MM-dd}T00:00:00-03:00&hasta={hasta:yyyy-MM-dd}T23:59:59-03:00" +
         (formato is null ? string.Empty : $"&formato={formato}");
 
     private static Task<HttpResponseMessage> LlamarLibroAsync(HttpClient cliente, int idPuntoVenta, DateOnly desde, DateOnly hasta) =>
