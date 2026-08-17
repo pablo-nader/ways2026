@@ -122,5 +122,5 @@ so deleting the clause under test changes nothing the test can see.
 | Test exists to prove a predicate/filter/guard/expression | Mutation evidence recorded before commit |
 | Test passes with the clause deleted | Re-route below the confound (rule 3) — never call it done |
 | RLS-related assertion | ways_app connection, statement-level, row counts |
-| Test sends a date boundary as `...Z` | Confound (rule 9) — resend with a real negative offset |
+| Test sends a date boundary as `...Z` | Confound (rule 10) — resend with a real negative offset |
 | Cannot name the clause under test | Ordinary coverage — this skill does not apply |

@@ -147,10 +147,12 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     /// Se resuelve por CONVENCIÓN y no endpoint por endpoint a propósito: el instante no cambia
     /// (<see cref="DateTimeOffset.ToUniversalTime"/> es una reexpresión, no una conversión de
     /// zona), no hay migración (el tipo de columna es el mismo), y ningún endpoint EF nuevo puede
-    /// volver a olvidarse — la excepción conocida son los caminos raw-ADO, que arman sus
-    /// <c>DbParameter</c> a mano y no pasan por esta convención (hoy ninguno filtra con un offset
-    /// distinto de cero, así que no hay defecto vivo). La lectura es identidad — Npgsql ya
-    /// devuelve offset cero.
+    /// volver a olvidarse. Los caminos raw-ADO (que arman su <c>DbParameter</c> a mano y no pasan
+    /// por esta convención) quedan cubiertos por la MISMA normalización, pero aplicada en el
+    /// helper compartido <c>AgregarParametro</c> de cada servicio que usa ADO crudo
+    /// (judgment-day, juez A: <c>ServicioDePrecios.AbrirNuevoPrecioAsync</c> escribía
+    /// <c>vigente_hasta</c> con el offset tal cual del cliente y tiraba 500 — bug real, no
+    /// hipotético). La lectura es identidad — Npgsql ya devuelve offset cero.
     ///
     /// La fecha que se MUESTRA nunca sale de acá: la deriva
     /// <c>Ways.Application.Exportacion.FechaDelRango</c> del valor original, antes de que la query

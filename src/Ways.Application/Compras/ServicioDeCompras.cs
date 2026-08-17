@@ -827,10 +827,13 @@ public class ServicioDeCompras(
         return conexion;
     }
 
+    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
+    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
+    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
     private static void AgregarParametro(DbCommand comando, object valor)
     {
         var parametro = comando.CreateParameter();
-        parametro.Value = valor;
+        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
         comando.Parameters.Add(parametro);
     }
 
@@ -840,7 +843,12 @@ public class ServicioDeCompras(
     private static void AgregarParametroNulo(DbCommand comando, object? valor)
     {
         var parametro = comando.CreateParameter();
-        parametro.Value = valor ?? DBNull.Value;
+        parametro.Value = valor switch
+        {
+            null => DBNull.Value,
+            DateTimeOffset dto => dto.ToUniversalTime(),
+            _ => valor
+        };
         comando.Parameters.Add(parametro);
     }
 

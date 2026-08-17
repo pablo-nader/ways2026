@@ -301,6 +301,59 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(160m, enDiezDias!.Precio);
     }
 
+    // ---- judgment-day (juez A, PR #129): offset raw-ADO no normalizado -----------------------
+
+    /// <summary>Regresión del bug real que este PR decía haber cerrado (judgment-day, juez A):
+    /// la convención de EF (<c>WaysDbContext.NormalizacionAUtc</c>) NO alcanza a
+    /// <c>ServicioDePrecios</c>, que cierra la fila activa preexistente con un UPDATE raw-ADO.
+    /// Un cliente que programa un precio con <see cref="ProgramarPrecio.VigenteDesde"/> en un
+    /// offset real de browser (-03:00, no UTC) hacía que <c>vigente_hasta</c> de la fila cerrada
+    /// viajara con ese offset tal cual hasta Npgsql, que revienta con 500 ("only offset 0 (UTC)
+    /// is supported") contra la columna <c>timestamptz</c>. Sin el fix del helper
+    /// <c>AgregarParametro</c> este test da 500; con el fix da 201, y el <c>vigente_hasta</c> de
+    /// la fila cerrada queda en el INSTANTE correcto (la igualdad de <see cref="DateTimeOffset"/>
+    /// compara por instante UTC, no por offset textual — <c>ToUniversalTime()</c> es una
+    /// reexpresión, nunca corre el instante).</summary>
+    [Fact]
+    public async Task ProgramarUnPrecioConVigenteDesdeConOffsetNoUtcCierraLaFilaActivaEnElInstanteCorrecto()
+    {
+        var (_, idArea, idAlicuotaIva, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ProgramarUnPrecioConVigenteDesdeConOffsetNoUtcCierraLaFilaActivaEnElInstanteCorrecto));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var articulo = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+
+        var inmediato = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios", new AltaPrecio(idListaGeneral, 100m));
+        Assert.Equal(HttpStatusCode.Created, inmediato.StatusCode);
+
+        // Offset REAL de browser (Argentina, -03:00) — no UTC. Este valor viaja tal cual hasta el
+        // UPDATE raw-ADO que cierra `inmediato` (ServicioDePrecios.CerrarFilaAsync).
+        var vigenteDesdeConOffset = DateTimeOffset.UtcNow.AddDays(3).ToOffset(TimeSpan.FromHours(-3));
+
+        var programado = await admin.PostAsJsonAsync(
+            $"/api/articulos/{articulo.Id}/precios/programados",
+            new ProgramarPrecio(idListaGeneral, 150m, vigenteDesdeConOffset));
+        Assert.Equal(HttpStatusCode.Created, programado.StatusCode);
+
+        var historial = await admin.GetFromJsonAsync<List<HistorialDePrecio>>(
+            $"/api/articulos/{articulo.Id}/precios/{idListaGeneral}/historial");
+        Assert.NotNull(historial);
+        var filaCerrada = historial!.Single(h => h.Precio == 100m);
+        var filaNueva = historial.Single(h => h.Precio == 150m);
+
+        // Mismo criterio que UnCambioDePrecioCierraLaFilaAnteriorYAbreUnaNueva: sin solapamiento
+        // ni hueco, la fila cerrada termina exactamente donde la nueva empieza — ambos valores
+        // vienen del mismo round-trip por Postgres (microsegundos), así que la igualdad exacta es
+        // válida acá.
+        Assert.Equal(filaNueva.VigenteDesde, filaCerrada.VigenteHasta);
+
+        // Contra el valor ORIGINAL que mandó el cliente (con offset -03:00, ticks de 100ns) solo
+        // tolera la pérdida de precisión de Postgres (microsegundos) — nunca el corrimiento de 3
+        // horas que produciría el bug (escribir el offset crudo en vez de normalizarlo a UTC).
+        var desvio = (vigenteDesdeConOffset - filaCerrada.VigenteHasta!.Value).Duration();
+        Assert.True(desvio < TimeSpan.FromMilliseconds(1), $"Desvío inesperado: {desvio}");
+    }
+
     // ---- judgment-day ronda 1, item 1: predecessor re-close on pending replacement ----------
 
     /// <summary>Secuencia (a) del hallazgo CRITICAL: inmediato → programado → inmediato con
