@@ -66,9 +66,9 @@ public static class AsignadorDeNumeroComprobante
             "VALUES ($1, $2, $3, 1) " +
             "ON CONFLICT (id_punto_venta, tipo_comprobante) DO NOTHING";
 
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, tipoComprobante);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, tipoComprobante);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -84,8 +84,8 @@ public static class AsignadorDeNumeroComprobante
             "UPDATE numeraciones_comprobante SET proximo_numero = proximo_numero + 1 " +
             "WHERE id_punto_venta = $1 AND tipo_comprobante = $2 RETURNING proximo_numero - 1";
 
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, tipoComprobante);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, tipoComprobante);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException(
@@ -105,15 +105,5 @@ public static class AsignadorDeNumeroComprobante
         }
 
         return conexion;
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
     }
 }

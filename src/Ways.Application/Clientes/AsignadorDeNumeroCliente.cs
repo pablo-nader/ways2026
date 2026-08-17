@@ -45,7 +45,7 @@ public static class AsignadorDeNumeroCliente
             "INSERT INTO numeraciones_clientes (id_tenant, proximo_numero) VALUES ($1, 1) " +
             "ON CONFLICT (id_tenant) DO NOTHING";
 
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -60,7 +60,7 @@ public static class AsignadorDeNumeroCliente
             "UPDATE numeraciones_clientes SET proximo_numero = proximo_numero + 1 " +
             "WHERE id_tenant = $1 RETURNING proximo_numero - 1";
 
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException(
@@ -80,12 +80,5 @@ public static class AsignadorDeNumeroCliente
         }
 
         return conexion;
-    }
-
-    private static void AgregarParametro(DbCommand comando, int valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor;
-        comando.Parameters.Add(parametro);
     }
 }

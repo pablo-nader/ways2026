@@ -52,12 +52,12 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             "SET updated_at = lotes.updated_at " +
             "RETURNING id_lote, fecha_vencimiento";
 
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, codigoResuelto);
-        AgregarParametro(comando, fechaVencimiento);
-        AgregarParametro(comando, momento);
-        AgregarParametro(comando, momento);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, codigoResuelto);
+        ParametrosDeComando.Agregar(comando, fechaVencimiento);
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, momento);
 
         await using var lector = await comando.ExecuteReaderAsync(ct);
         if (!await lector.ReadAsync(ct))
@@ -101,11 +101,11 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             "SET updated_at = lotes.updated_at " +
             "RETURNING id_lote";
 
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, ReglaDeLotes.CodigoSinIdentificar);
-        AgregarParametro(comando, momento);
-        AgregarParametro(comando, momento);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, ReglaDeLotes.CodigoSinIdentificar);
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, momento);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El get-or-create del lote sin identificar no devolvió ninguna fila.");
@@ -302,8 +302,8 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             "  ORDER BY id_lote FOR UPDATE" +
             ") bloqueadas";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("La suma bajo lock de stock_lotes no devolvió ninguna fila.");
@@ -327,14 +327,14 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_empleado, id_lote, creado_el) " +
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)";
 
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, cantidad);
-        AgregarParametro(comando, MotivoStock.Reclasificacion);
-        AgregarParametro(comando, idEmpleado);
-        AgregarParametroNulo(comando, idLote);
-        AgregarParametro(comando, creadoEl);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, cantidad);
+        ParametrosDeComando.Agregar(comando, MotivoStock.Reclasificacion);
+        ParametrosDeComando.Agregar(comando, idEmpleado);
+        ParametrosDeComando.AgregarNulo(comando, idLote);
+        ParametrosDeComando.Agregar(comando, creadoEl);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -356,11 +356,11 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
             "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
             "RETURNING cantidad";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idLote);
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, delta);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idLote);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, delta);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El upsert de stock_lotes no devolvió ninguna fila.");
@@ -497,30 +497,6 @@ public class ServicioDeLotes(IWaysDbContext db, IRelojDelSistema reloj, IContext
         return new LoteListado(
             lote.Id, lote.IdArticulo, lote.Codigo, lote.FechaVencimiento, lote.EsSinIdentificar, Cantidad: 0m,
             ReglaDeLotes.Clasificar(lote.FechaVencimiento, hoy, diasAlertaPorDefecto), Sugerido: false);
-    }
-
-    // ---- statements crudos (misma convención que ServicioDeStock/ServicioDeCompras) --------------
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
-    }
-
-    private static void AgregarParametroNulo(DbCommand comando, object? valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor switch
-        {
-            null => DBNull.Value,
-            DateTimeOffset dto => dto.ToUniversalTime(),
-            _ => valor
-        };
-        comando.Parameters.Add(parametro);
     }
 
     // ---- validaciones ---------------------------------------------------------------------------

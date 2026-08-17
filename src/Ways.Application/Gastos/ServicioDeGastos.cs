@@ -195,8 +195,8 @@ public class ServicioDeGastos(
         comando.CommandText =
             "SELECT estado::text, id_proveedor FROM comprobantes_compra " +
             "WHERE id_comprobante_compra = $1 AND id_tenant = $2 FOR SHARE";
-        AgregarParametro(comando, idComprobanteCompra);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idComprobanteCompra);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         await using var lector = await comando.ExecuteReaderAsync(ct);
         if (!await lector.ReadAsync(ct))
@@ -239,16 +239,6 @@ public class ServicioDeGastos(
         }
 
         return conexion;
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
     }
 
     // ---- resolución interna ---------------------------------------------------------------

@@ -189,8 +189,8 @@ public class ServicioDeReliquidacion(
         comando.Transaction = transaccionCruda;
         comando.CommandText = "SELECT saldo, id_lista_precio FROM clientes WHERE id_cliente = $1 AND id_tenant = $2 FOR UPDATE";
 
-        AgregarParametro(comando, idCliente);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idCliente);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         await using var lector = await comando.ExecuteReaderAsync(ct);
         if (!await lector.ReadAsync(ct))
@@ -218,9 +218,9 @@ public class ServicioDeReliquidacion(
             "UPDATE movimientos_cuenta_corriente SET id_movimiento_actualizacion = $1 " +
             "WHERE id_movimiento = ANY($2) AND id_tenant = $3 AND id_movimiento_actualizacion IS NULL";
 
-        AgregarParametro(comando, idMovimientoActualizacion);
-        AgregarParametro(comando, idsMovimiento.ToArray());
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idMovimientoActualizacion);
+        ParametrosDeComando.Agregar(comando, idsMovimiento.ToArray());
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         return await comando.ExecuteNonQueryAsync(ct);
     }
@@ -261,14 +261,4 @@ public class ServicioDeReliquidacion(
         contexto.IdTenant
             ?? throw new InvalidOperationException(
                 "ServicioDeReliquidacion requiere un actor de tenant; SupervisionDeCuentaCorriente no admite plataforma.");
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
-    }
 }

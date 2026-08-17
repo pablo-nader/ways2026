@@ -685,8 +685,8 @@ public class ServicioDeVentas(
             "WHERE c.id_comprobante_venta = $1 AND c.id_tenant = $2 " +
             "FOR SHARE OF t";
 
-        AgregarParametro(comando, idComprobanteVenta);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idComprobanteVenta);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         var estado = (string?)await comando.ExecuteScalarAsync(ct);
         if (estado == "cerrado")
@@ -705,8 +705,8 @@ public class ServicioDeVentas(
         comando.Transaction = transaccion;
         comando.CommandText = "SELECT 1 FROM clientes WHERE id_cliente = $1 AND id_tenant = $2 FOR UPDATE";
 
-        AgregarParametro(comando, idCliente);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idCliente);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         await comando.ExecuteScalarAsync(ct);
     }
@@ -724,8 +724,8 @@ public class ServicioDeVentas(
             "SELECT id_movimiento_actualizacion FROM movimientos_cuenta_corriente " +
             "WHERE id_movimiento = $1 AND id_tenant = $2";
 
-        AgregarParametro(comando, idMovimiento);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idMovimiento);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         var resultado = await comando.ExecuteScalarAsync(ct);
         return resultado is null or DBNull ? null : Convert.ToInt32(resultado);
@@ -748,10 +748,10 @@ public class ServicioDeVentas(
             "WHERE id_comprobante_venta = $2 AND id_tenant = $3 AND estado = $4 " +
             "RETURNING id_punto_venta";
 
-        AgregarParametro(comando, EstadoComprobante.Anulado);
-        AgregarParametro(comando, idComprobanteVenta);
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, EstadoComprobante.Emitido);
+        ParametrosDeComando.Agregar(comando, EstadoComprobante.Anulado);
+        ParametrosDeComando.Agregar(comando, idComprobanteVenta);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, EstadoComprobante.Emitido);
 
         var resultado = await comando.ExecuteScalarAsync(ct);
         return resultado is null ? null : Convert.ToInt32(resultado);
@@ -1089,15 +1089,15 @@ public class ServicioDeVentas(
             "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_venta, id_empleado, creado_el, id_lote) " +
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
 
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, cantidad);
-        AgregarParametro(comando, motivo);
-        AgregarParametro(comando, idComprobanteVenta);
-        AgregarParametro(comando, idEmpleado);
-        AgregarParametro(comando, creadoEl);
-        AgregarParametroNulo(comando, idLote);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, cantidad);
+        ParametrosDeComando.Agregar(comando, motivo);
+        ParametrosDeComando.Agregar(comando, idComprobanteVenta);
+        ParametrosDeComando.Agregar(comando, idEmpleado);
+        ParametrosDeComando.Agregar(comando, creadoEl);
+        ParametrosDeComando.AgregarNulo(comando, idLote);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -1119,10 +1119,10 @@ public class ServicioDeVentas(
             "SET cantidad = stock.cantidad + EXCLUDED.cantidad " +
             "RETURNING cantidad";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, delta);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, delta);
 
         await comando.ExecuteScalarAsync(ct);
     }
@@ -1146,11 +1146,11 @@ public class ServicioDeVentas(
             "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
             "RETURNING cantidad";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idLote);
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, delta);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idLote);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, delta);
 
         await comando.ExecuteScalarAsync(ct);
     }
@@ -1165,32 +1165,6 @@ public class ServicioDeVentas(
         }
 
         return conexion;
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
-    }
-
-    /// <summary>Mismo criterio que <c>ServicioDeCompras.AgregarParametroNulo</c>/
-    /// <c>ServicioDeStock.AgregarParametroNulo</c> — <c>id_lote</c> es el primer parámetro nullable
-    /// que esta clase envía por statement crudo (etapa 12, slice 8); <see cref="AgregarParametro"/>
-    /// nunca necesitó <c>DBNull.Value</c> hasta ahora.</summary>
-    private static void AgregarParametroNulo(DbCommand comando, object? valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor switch
-        {
-            null => DBNull.Value,
-            DateTimeOffset dto => dto.ToUniversalTime(),
-            _ => valor
-        };
-        comando.Parameters.Add(parametro);
     }
 
     // ---- Utilidades ---------------------------------------------------------------------------

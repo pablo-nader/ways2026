@@ -616,8 +616,8 @@ public class ServicioDeOfertas(
         comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
         comando.CommandText = "SELECT pg_advisory_xact_lock($1, $2)";
 
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, idOferta);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idOferta);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -632,16 +632,6 @@ public class ServicioDeOfertas(
         }
 
         return conexion;
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
     }
 
     private async Task<Oferta> BuscarAsync(int id, CancellationToken ct) =>

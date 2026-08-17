@@ -169,11 +169,11 @@ public class ServicioDeStock(
             "SET minimo = EXCLUDED.minimo, reposicion = EXCLUDED.reposicion " +
             "RETURNING cantidad, minimo, reposicion";
 
-        AgregarParametro(comando, solicitud.IdArticulo);
-        AgregarParametro(comando, solicitud.IdPuntoVenta);
-        AgregarParametro(comando, idTenant);
-        AgregarParametroNulo(comando, solicitud.Minimo);
-        AgregarParametroNulo(comando, solicitud.Reposicion);
+        ParametrosDeComando.Agregar(comando, solicitud.IdArticulo);
+        ParametrosDeComando.Agregar(comando, solicitud.IdPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.AgregarNulo(comando, solicitud.Minimo);
+        ParametrosDeComando.AgregarNulo(comando, solicitud.Reposicion);
 
         await using var lector = await comando.ExecuteReaderAsync(ct);
         if (!await lector.ReadAsync(ct))
@@ -896,9 +896,9 @@ public class ServicioDeStock(
             "SET cantidad = stock.cantidad " +
             "RETURNING cantidad";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El upsert no-op de stock no devolvió ninguna fila.");
@@ -923,10 +923,10 @@ public class ServicioDeStock(
             "SET cantidad = stock_lotes.cantidad " +
             "RETURNING cantidad";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idLote);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idLote);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El upsert no-op de stock_lotes no devolvió ninguna fila.");
@@ -970,17 +970,17 @@ public class ServicioDeStock(
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) " +
             "RETURNING id_movimiento";
 
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, cantidad);
-        AgregarParametro(comando, motivo);
-        AgregarParametro(comando, idEmpleado);
-        AgregarParametroNulo(comando, observaciones);
-        AgregarParametroNulo(comando, idComprobanteCompra);
-        AgregarParametroNulo(comando, idPuntoVentaDestino);
-        AgregarParametro(comando, creadoEl);
-        AgregarParametroNulo(comando, idLote);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, cantidad);
+        ParametrosDeComando.Agregar(comando, motivo);
+        ParametrosDeComando.Agregar(comando, idEmpleado);
+        ParametrosDeComando.AgregarNulo(comando, observaciones);
+        ParametrosDeComando.AgregarNulo(comando, idComprobanteCompra);
+        ParametrosDeComando.AgregarNulo(comando, idPuntoVentaDestino);
+        ParametrosDeComando.Agregar(comando, creadoEl);
+        ParametrosDeComando.AgregarNulo(comando, idLote);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El INSERT de movimientos_stock no devolvió ninguna fila.");
@@ -1001,10 +1001,10 @@ public class ServicioDeStock(
             "SET cantidad = stock.cantidad + EXCLUDED.cantidad " +
             "RETURNING cantidad";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, delta);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, delta);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El upsert de stock no devolvió ninguna fila.");
@@ -1031,11 +1031,11 @@ public class ServicioDeStock(
             "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
             "RETURNING cantidad";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idLote);
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, delta);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idLote);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, delta);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El upsert de stock_lotes no devolvió ninguna fila.");
@@ -1053,28 +1053,6 @@ public class ServicioDeStock(
         }
 
         return conexion;
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
-    }
-
-    private static void AgregarParametroNulo(DbCommand comando, object? valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor switch
-        {
-            null => DBNull.Value,
-            DateTimeOffset dto => dto.ToUniversalTime(),
-            _ => valor
-        };
-        comando.Parameters.Add(parametro);
     }
 
     // ---- validaciones -------------------------------------------------------------------------

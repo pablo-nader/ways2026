@@ -89,11 +89,11 @@ public class LectorDeSerieTemporal(IWaysDbContext db)
             await using var comando = conexion.CreateCommand();
             comando.CommandText = string.Format(sqlTemplate, LiteralDeGranularidad(granularidad));
 
-            AgregarParametro(comando, zona);
-            AgregarParametro(comando, idTenant);
-            AgregarParametro(comando, idsPuntoVenta.ToArray());
-            AgregarParametro(comando, desdeUtc);
-            AgregarParametro(comando, hastaUtcExclusivo);
+            ParametrosDeComando.Agregar(comando, zona);
+            ParametrosDeComando.Agregar(comando, idTenant);
+            ParametrosDeComando.Agregar(comando, idsPuntoVenta.ToArray());
+            ParametrosDeComando.Agregar(comando, desdeUtc);
+            ParametrosDeComando.Agregar(comando, hastaUtcExclusivo);
 
             var filas = new List<T>();
             await using var lector = await comando.ExecuteReaderAsync(ct);
@@ -142,16 +142,6 @@ public class LectorDeSerieTemporal(IWaysDbContext db)
 
         await db.Database.OpenConnectionAsync(ct);
         return true;
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
     }
 }
 

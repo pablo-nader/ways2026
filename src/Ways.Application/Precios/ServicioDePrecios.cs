@@ -602,8 +602,8 @@ public class ServicioDePrecios(
         comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
         comando.CommandText = "SELECT pg_advisory_xact_lock($1, $2)";
 
-        AgregarParametro(comando, clave1);
-        AgregarParametro(comando, clave2);
+        ParametrosDeComando.Agregar(comando, clave1);
+        ParametrosDeComando.Agregar(comando, clave2);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -633,9 +633,9 @@ public class ServicioDePrecios(
             "WHERE id_articulo = $1 AND id_lista_precio = $2 AND id_tenant = $3 " +
             "AND vigente_hasta IS NULL AND deleted_at IS NULL";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idListaPrecio);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idListaPrecio);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         await using var lector = await comando.ExecuteReaderAsync(ct);
 
@@ -694,11 +694,11 @@ public class ServicioDePrecios(
             "AND vigente_desde <> vigente_hasta " +
             "ORDER BY vigente_desde ASC LIMIT 1";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idListaPrecio);
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, limiteOriginal);
-        AgregarParametro(comando, idFilaPendienteCerrada);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idListaPrecio);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, limiteOriginal);
+        ParametrosDeComando.Agregar(comando, idFilaPendienteCerrada);
 
         await using var lector = await comando.ExecuteReaderAsync(ct);
 
@@ -720,9 +720,9 @@ public class ServicioDePrecios(
         comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
         comando.CommandText = "UPDATE precios SET vigente_hasta = $1, updated_at = $2 WHERE id_precio = $3";
 
-        AgregarParametro(comando, vigenteHasta);
-        AgregarParametro(comando, ahora);
-        AgregarParametro(comando, idPrecio);
+        ParametrosDeComando.Agregar(comando, vigenteHasta);
+        ParametrosDeComando.Agregar(comando, ahora);
+        ParametrosDeComando.Agregar(comando, idPrecio);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -737,19 +737,6 @@ public class ServicioDePrecios(
         }
 
         return conexion;
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> ANTES de escribirlo como
-    /// parámetro raw-ADO (judgment-day, juez A) — la convención de EF
-    /// (<c>WaysDbContext.NormalizacionAUtc</c>) no alcanza este camino: Npgsql rechaza escribir
-    /// contra <c>timestamptz</c> con offset distinto de cero, y acá se arma el <c>DbParameter</c>
-    /// a mano. <c>ToUniversalTime()</c> es una reexpresión, nunca mueve el instante — mismo
-    /// criterio que el converter de EF.</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
     }
 
     /// <summary><c>Monto</c> es el before-image de <c>precio.cambio</c> (task 2.2) — solo
