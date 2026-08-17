@@ -1,4 +1,3 @@
-using System.Data;
 using System.Data.Common;
 
 namespace Ways.Application.Abstracciones;
@@ -23,13 +22,6 @@ internal static class ParametrosDeComando
     }
 
     public static void AgregarNulo(DbCommand comando, object? valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is null ? DBNull.Value : Normalizar(valor);
-        comando.Parameters.Add(parametro);
-    }
-
-    public static void AgregarNulo(IDbCommand comando, object? valor)
     {
         var parametro = comando.CreateParameter();
         parametro.Value = valor is null ? DBNull.Value : Normalizar(valor);

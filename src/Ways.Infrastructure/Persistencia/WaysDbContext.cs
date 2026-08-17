@@ -149,7 +149,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     /// zona), no hay migración (el tipo de columna es el mismo), y ningún endpoint EF nuevo puede
     /// volver a olvidarse. Los caminos raw-ADO (que arman su <c>DbParameter</c> a mano y no pasan
     /// por esta convención) quedan cubiertos por la MISMA normalización, pero aplicada en el
-    /// helper compartido <c>AgregarParametro</c> de cada servicio que usa ADO crudo
+    /// helper único <c>Ways.Application.Abstracciones.ParametrosDeComando</c>
     /// (judgment-day, juez A: <c>ServicioDePrecios.AbrirNuevoPrecioAsync</c> escribía
     /// <c>vigente_hasta</c> con el offset tal cual del cliente y tiraba 500 — bug real, no
     /// hipotético). La lectura es identidad — Npgsql ya devuelve offset cero.
