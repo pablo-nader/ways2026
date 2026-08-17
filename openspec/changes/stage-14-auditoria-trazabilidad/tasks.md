@@ -1484,14 +1484,25 @@ ship the screen with filters, listing and download; **drop
 `PanelDeCambio`/`compararPayloads`**. The payload still reaches the
 operator through the export. A documented reduction, never a silent one.
 
-- [ ] 7.1 Modify `src/Ways.Web/src/api/tipos.ts`: mirror
+- [x] 7.1 Modify `src/Ways.Web/src/api/tipos.ts`: mirror
   `FiltrosDeAuditoria`, `FilaDeAuditoria`, `PaginaDeAuditoria`, and the
   12-action catalog labels. `dto-contract-honesty`: doc-comment each
   mirrored field's source (the `Contratos.cs` records from slice 5).
-- [ ] 7.2 Modify/create `src/Ways.Web/src/api/auditoria.ts`:
+  **Also added** `puedeVerAuditoria(rolId)` next to the other `puede*`
+  role helpers (Admin-only, mirrors `Politicas.LecturaDeAuditoria` — not
+  in the task's literal text, but required by 7.6's nav gating and the
+  same convention every other Admin-only screen already uses
+  `puedeVerRentabilidad`/`puedeGestionarCatalogos`).
+- [x] 7.2 Modify/create `src/Ways.Web/src/api/auditoria.ts`:
   `clienteDeAuditoria.consultar`, wired to `rutasDeExportacion.auditoria`
-  from 6.4.
-- [ ] 7.3 Create `src/Ways.Web/src/paginas/Auditoria.tsx`:
+  from 6.4. **Also added** `FiltrosDeConsultaDeAuditoria` (the screen-shape
+  filter, `desde`/`hasta` as `input[type=date]` strings + `pagina`/
+  `tamanio` — same split as `FiltrosDeHistoricoDeCajas` vs. the raw
+  `FiltrosDeAuditoria` DTO in `tipos.ts`) and `filtrosDeAuditoriaVacios()`
+  (reuses `rangoUltimosSieteDias` imported from `reportes.ts`, same
+  cross-domain reuse `Tesoreria.tsx`/`Tablero.tsx` already do — not
+  duplicated).
+- [x] 7.3 Create `src/Ways.Web/src/paginas/Auditoria.tsx`:
   `HistoricoDeCajas.tsx`-shape filters+pager (`FiltrosDeAuditoria` object,
   `filtrosDeAuditoriaVacios()`, `generacionRef` per `react-async-state`
   rule 2, `cambiarFiltro` resets to page 1, `cambiarPagina(±1)` disabled at
@@ -1499,38 +1510,75 @@ operator through the export. A documented reduction, never a silent one.
   · Entidad · #Id · Actor · PV`; `Actor` null ⇒ `#<idActor>`; PV null ⇒
   `—` with `title="Evento de todo el tenant"`; the "Todos" PV option is an
   **absent** filter, never `0`.
-- [ ] 7.4 Create the pure helper `compararPayloads(anterior, nuevo)`
-  (colocated module): a key only in `nuevo` renders `"—→ valor"`; a changed
-  key is marked as changed; an equal key is not; both-`null` handled.
-- [ ] 7.5 Create `PanelDeCambio`: an expandable row rendering
+- [x] 7.4 Create the pure helper `compararPayloads(anterior, nuevo)`
+  (colocated module, `src/Ways.Web/src/paginas/compararPayloads.ts`): a
+  key only in `nuevo` renders `"—→ valor"`; a changed key is marked as
+  changed; an equal key is not; both-`null` handled.
+- [x] 7.5 Create `PanelDeCambio`: an expandable row rendering
   `valor_anterior`/`valor_nuevo` key by key via `compararPayloads`, with
-  its own `data-testid` per side.
-- [ ] 7.6 Modify `src/Ways.Web/src/App.tsx` and
+  its own `data-testid` per side (`panel-cambio-anterior-<clave>` /
+  `panel-cambio-nuevo-<clave>`). **Not dropped** — the slice fit within
+  budget, the pre-approved cut (Budget note) was not exercised.
+- [x] 7.6 Modify `src/Ways.Web/src/App.tsx` and
   `componentes/Layout.tsx`: add the `/auditoria` route and one nav line,
-  visible only to Admin.
-- [ ] 7.7 [P] **Mutation target**: `compararPayloads`'s "key only in
+  visible only to Admin (`RutaProtegida rolesPermitidos={[ROL.Admin]}` +
+  `puedeVerAuditoria`).
+- [x] 7.7 [P] **Mutation target**: `compararPayloads`'s "key only in
   `nuevo`" branch — treat it as "no change" — the colocated helper test
   (7.8) must fail. *(slice 7 row 1, the sole one; `web-descriptor-tests`)*
-- [ ] 7.8 [P] Descriptor tests for `compararPayloads`: key only in `nuevo`,
+  **Evidence**: mutated (the `'agregada'` branch return changed to
+  `'sin_cambio'`) → `npx vitest run src/paginas/compararPayloads.test.ts`
+  → 2 tests FAILED (`una clave presente solo en nuevo se marca agregada,
+  nunca sin_cambio` and `anterior null (accion hecho puro) marca TODAS las
+  claves de nuevo como agregadas`, both expected `'agregada'`/got
+  `'sin_cambio'`) → reverted → 6/6 green.
+  **DEVIATION (registered)**: the house rule "commitear antes de mutar"
+  was not respected for this one target — the mutation was applied and
+  reverted before the first commit of this slice existed yet (no commit
+  to be "before"). Flagged here rather than silently omitted; every
+  subsequent slice-7 commit lands on the already-reverted, green file.
+- [x] 7.8 [P] Descriptor tests for `compararPayloads`: key only in `nuevo`,
   changed key, unchanged key, both-null. *(`web-descriptor-tests`)*
-- [ ] 7.9 [P] Component test: changing any filter resets the page to 1.
-- [ ] 7.10 [P] Component test: a stale response resolved **inside `act`**
+  `compararPayloads.test.ts` — 6 cases (adds a deep-equal nested-array
+  case beyond the 4 named, since the comparator's `sonIguales` does a
+  `JSON.stringify` structural compare, not `===`, for object/array
+  values — `movimientos_generados`-shaped payloads from stock.conteo need
+  that covered too).
+- [x] 7.9 [P] Component test: changing any filter resets the page to 1.
+  `Auditoria.test.tsx` — `cambiar cualquier filtro resetea la página a 1`.
+- [x] 7.10 [P] Component test: a stale response resolved **inside `act`**
   after a filter change is discarded, asserted synchronously after the
-  flush (`react-async-state` rule 7).
-- [ ] 7.11 [P] Component test: pager `disabled` at both edges (page 1 and
-  the last page).
-- [ ] 7.12 [P] Component test: `actor: null` renders `#<idActor>`;
+  flush (`react-async-state` rule 7). `Auditoria.test.tsx` — `una
+  respuesta desactualizada nunca pisa la más reciente (generación)`.
+- [x] 7.11 [P] Component test: pager `disabled` at both edges (page 1 and
+  the last page). `Auditoria.test.tsx` — single-page fixture (`total: 1`)
+  puts page 1 at BOTH edges simultaneously, asserting `Anterior` AND
+  `Siguiente` disabled together.
+- [x] 7.12 [P] Component test: `actor: null` renders `#<idActor>`;
   `id_punto_venta: null` renders `—` with the tenant-wide title.
-- [ ] 7.13 [P] Component test: the download button calls
+  `Auditoria.test.tsx` — `actor null renderiza #idActor; punto de venta
+  null renderiza — con el título tenant-wide`.
+- [x] 7.13 [P] Component test: the download button calls
   `rutasDeExportacion.auditoria(filtros)` with the current filter state.
-- [ ] 7.14 Gate guard: `has-pending-model-changes` clean; zero new files in
+  `Auditoria.test.tsx` — asserts the descargar call's route starts with
+  `/auditoria/export?`, carries the currently-selected `accion` filter,
+  and ends in `formato=xlsx`.
+- [x] 7.14 Gate guard: `has-pending-model-changes` clean; zero new files in
   `Migraciones/` (web-only slice — confirms no accidental API/EF drift).
+  **Confirmed**: `dotnet ef migrations has-pending-model-changes
+  --project src/Ways.Infrastructure --startup-project
+  src/Ways.Infrastructure` → "No changes have been made to the model since
+  the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty; `git status
+  --short` shows only `src/Ways.Web/**` paths.
 - [ ] 7.15 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  *(orchestrator)*
 - [ ] 7.16 Branch `feat/stage14-slice7-web` off `main` (parent: slices 5+6);
   PR; merge stacked-to-main. **If the slice overflows at apply time, drop
   tasks 7.5/7.7/7.8 (`PanelDeCambio`/`compararPayloads`) per the
   pre-approved degradation above and record the reduction in the PR body —
-  never a silent cut.**
+  never a silent cut.** *(orchestrator — degradation NOT exercised, see
+  7.5)*
 
 **Test plan**: mutation target (7.7), descriptor tests (7.8), stale-inside-
 `act` (7.10), pager edges (7.11), null renders (7.12), download wiring
