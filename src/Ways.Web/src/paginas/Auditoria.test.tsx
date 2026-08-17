@@ -158,6 +158,37 @@ describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
     expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled()
   })
 
+  // judgment-day ronda 1, finding 3: `total: 1` colapsa página 1 y última página en el mismo
+  // fixture — `Math.ceil`→`Math.floor` en `totalPaginas` sobrevivía al único test previo. Fixture
+  // multi-página (60 eventos, tamaño 25 ⇒ 3 páginas, la última parcial con 10) navegando hasta la
+  // última página discrimina el mutante: con `Math.floor`, `total: 60 / tamanio: 25` da
+  // `totalPaginas = 2`, no 3, y "Siguiente" quedaría deshabilitado en la página 2 (falso borde).
+  it('en la última página parcial (total 60, tamaño 25 ⇒ 3 páginas), la etiqueta y el disabled de Siguiente son correctos', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/auditoria?')) {
+        const paginaSolicitada = ruta.includes('pagina=3') ? 3 : ruta.includes('pagina=2') ? 2 : 1
+        return Promise.resolve(paginaFixture([filaFixture()], { total: 60, pagina: paginaSolicitada, tamanio: 25 }))
+      }
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderAuditoria()
+
+    await screen.findByText(/Página 1 de 3/)
+    expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Siguiente' })).toBeEnabled()
+
+    await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText(/Página 2 de 3/)
+    expect(screen.getByRole('button', { name: 'Anterior' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Siguiente' })).toBeEnabled()
+
+    await usuario.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText(/Página 3 de 3/)
+    expect(screen.getByRole('button', { name: 'Anterior' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled()
+  })
+
   it('actor null renderiza #idActor; punto de venta null renderiza — con el título tenant-wide', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/auditoria?')) {
@@ -172,6 +203,11 @@ describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
     expect(await screen.findByText('#7')).toBeInTheDocument()
     const celdaPv = screen.getByTitle('Evento de todo el tenant')
     expect(within(celdaPv).getByText('—')).toBeInTheDocument()
+    // Sugerencia 1 (judgment-day ronda 1): `etiquetaDeAccion` es reducible a `return accion` sin
+    // fallar ningún test previo — la celda de acción debe mostrar la etiqueta en español del
+    // catálogo, nunca el código crudo `precio.cambio` (scoped al `<td>`, "Cambio de precio"
+    // también existe como `<option>` del filtro).
+    expect(screen.getByRole('cell', { name: 'Cambio de precio' })).toBeInTheDocument()
   })
 
   // judgment-day ronda 1, finding 1: `/auditoria/export` exige desde/hasta no vacíos
