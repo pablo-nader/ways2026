@@ -141,8 +141,15 @@ describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
     await usuario.selectOptions(screen.getByLabelText('Acción'), 'venta.anulacion')
     expect(await screen.findByText('#41')).toBeInTheDocument()
 
-    await resolverPrimera(paginaFixture([filaFixture({ idAuditoria: 909, idEntidad: 999 })]))
-    await waitFor(() => expect(screen.queryByText('#999')).not.toBeInTheDocument())
+    // El flush del microtask va DENTRO de act (mutation-proof-tests regla 7, mismo patrón que
+    // Vencimientos.test.tsx): un waitFor solo pasaría en su primer tick, antes de que el .then
+    // stale aterrice — envolver en act y assertar sincrónicamente después SÍ discrimina.
+    const { act } = await import('@testing-library/react')
+    await act(async () => {
+      resolverPrimera(paginaFixture([filaFixture({ idAuditoria: 909, idEntidad: 999 })]))
+      await primera
+    })
+    expect(screen.queryByText('#999')).not.toBeInTheDocument()
     expect(screen.getByText('#41')).toBeInTheDocument()
   })
 
