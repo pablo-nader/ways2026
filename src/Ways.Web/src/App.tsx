@@ -3,6 +3,7 @@ import { AuthProvider } from './auth/AuthContext'
 import { RutaProtegida } from './auth/RutaProtegida'
 import { Layout } from './componentes/Layout'
 import { Articulos } from './paginas/Articulos'
+import { Auditoria } from './paginas/Auditoria'
 import { Caja } from './paginas/Caja'
 import { CajaZ } from './paginas/CajaZ'
 import { CierreDeCaja } from './paginas/CierreDeCaja'
@@ -162,6 +163,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
                   <Reposicion />
+                </RutaProtegida>
+              }
+            />
+            {/* stage-14-auditoria-trazabilidad (Slice 7, design decisión 17): Admin-only —
+                Politicas.LecturaDeAuditoria NO se apila sobre LecturaDeReportes, es su propio
+                gate, mismo criterio admin-only que /clientes/-proveedores más abajo. */}
+            <Route
+              path="/auditoria"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <Auditoria />
                 </RutaProtegida>
               }
             />

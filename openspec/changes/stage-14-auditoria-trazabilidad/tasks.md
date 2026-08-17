@@ -1484,14 +1484,35 @@ ship the screen with filters, listing and download; **drop
 `PanelDeCambio`/`compararPayloads`**. The payload still reaches the
 operator through the export. A documented reduction, never a silent one.
 
-- [ ] 7.1 Modify `src/Ways.Web/src/api/tipos.ts`: mirror
+- [x] 7.1 Modify `src/Ways.Web/src/api/tipos.ts`: mirror
   `FiltrosDeAuditoria`, `FilaDeAuditoria`, `PaginaDeAuditoria`, and the
   12-action catalog labels. `dto-contract-honesty`: doc-comment each
   mirrored field's source (the `Contratos.cs` records from slice 5).
-- [ ] 7.2 Modify/create `src/Ways.Web/src/api/auditoria.ts`:
+  **DEVIATION (judgment-day ronda 2, juez A, WARNING — registered, not
+  silent):** the `FiltrosDeAuditoria` mirror shipped with zero type
+  consumers (the screen's own `FiltrosDeConsultaDeAuditoria`/
+  `FiltrosDeAlcanceDeAuditoria`, `api/auditoria.ts`, are independently
+  defined — never derived from it) while its doc-comment claimed real
+  consumption. Removed from `tipos.ts`: its shape genuinely differs from
+  the screen filters (`DateTimeOffset?` nullable ISO vs. non-null
+  `YYYY-MM-DD` strings), so a `Pick`/derivation would force an artificial
+  shape rather than ship an inert mirror. `FilaDeAuditoria`/
+  `PaginaDeAuditoria` remain, both with real consumers.
+  **Also added** `puedeVerAuditoria(rolId)` next to the other `puede*`
+  role helpers (Admin-only, mirrors `Politicas.LecturaDeAuditoria` — not
+  in the task's literal text, but required by 7.6's nav gating and the
+  same convention every other Admin-only screen already uses
+  `puedeVerRentabilidad`/`puedeGestionarCatalogos`).
+- [x] 7.2 Modify/create `src/Ways.Web/src/api/auditoria.ts`:
   `clienteDeAuditoria.consultar`, wired to `rutasDeExportacion.auditoria`
-  from 6.4.
-- [ ] 7.3 Create `src/Ways.Web/src/paginas/Auditoria.tsx`:
+  from 6.4. **Also added** `FiltrosDeConsultaDeAuditoria` (the screen-shape
+  filter, `desde`/`hasta` as `input[type=date]` strings + `pagina`/
+  `tamanio` — same split as `FiltrosDeHistoricoDeCajas` vs. the raw
+  `FiltrosDeAuditoria` DTO in `tipos.ts`) and `filtrosDeAuditoriaVacios()`
+  (reuses `rangoUltimosSieteDias` imported from `reportes.ts`, same
+  cross-domain reuse `Tesoreria.tsx`/`Tablero.tsx` already do — not
+  duplicated).
+- [x] 7.3 Create `src/Ways.Web/src/paginas/Auditoria.tsx`:
   `HistoricoDeCajas.tsx`-shape filters+pager (`FiltrosDeAuditoria` object,
   `filtrosDeAuditoriaVacios()`, `generacionRef` per `react-async-state`
   rule 2, `cambiarFiltro` resets to page 1, `cambiarPagina(±1)` disabled at
@@ -1499,38 +1520,190 @@ operator through the export. A documented reduction, never a silent one.
   · Entidad · #Id · Actor · PV`; `Actor` null ⇒ `#<idActor>`; PV null ⇒
   `—` with `title="Evento de todo el tenant"`; the "Todos" PV option is an
   **absent** filter, never `0`.
-- [ ] 7.4 Create the pure helper `compararPayloads(anterior, nuevo)`
-  (colocated module): a key only in `nuevo` renders `"—→ valor"`; a changed
-  key is marked as changed; an equal key is not; both-`null` handled.
-- [ ] 7.5 Create `PanelDeCambio`: an expandable row rendering
+- [x] 7.4 Create the pure helper `compararPayloads(anterior, nuevo)`
+  (colocated module, `src/Ways.Web/src/paginas/compararPayloads.ts`): a
+  key only in `nuevo` renders `"—→ valor"`; a changed key is marked as
+  changed; an equal key is not; both-`null` handled.
+- [x] 7.5 Create `PanelDeCambio`: an expandable row rendering
   `valor_anterior`/`valor_nuevo` key by key via `compararPayloads`, with
-  its own `data-testid` per side.
-- [ ] 7.6 Modify `src/Ways.Web/src/App.tsx` and
+  its own `data-testid` per side (`panel-cambio-anterior-<clave>` /
+  `panel-cambio-nuevo-<clave>`). **Not dropped** — the slice fit within
+  budget, the pre-approved cut (Budget note) was not exercised.
+- [x] 7.6 Modify `src/Ways.Web/src/App.tsx` and
   `componentes/Layout.tsx`: add the `/auditoria` route and one nav line,
-  visible only to Admin.
-- [ ] 7.7 [P] **Mutation target**: `compararPayloads`'s "key only in
+  visible only to Admin (`RutaProtegida rolesPermitidos={[ROL.Admin]}` +
+  `puedeVerAuditoria`).
+- [x] 7.7 [P] **Mutation target**: `compararPayloads`'s "key only in
   `nuevo`" branch — treat it as "no change" — the colocated helper test
   (7.8) must fail. *(slice 7 row 1, the sole one; `web-descriptor-tests`)*
-- [ ] 7.8 [P] Descriptor tests for `compararPayloads`: key only in `nuevo`,
+  **Evidence**: mutated (the `'agregada'` branch return changed to
+  `'sin_cambio'`) → `npx vitest run src/paginas/compararPayloads.test.ts`
+  → 2 tests FAILED (`una clave presente solo en nuevo se marca agregada,
+  nunca sin_cambio` and `anterior null (accion hecho puro) marca TODAS las
+  claves de nuevo como agregadas`, both expected `'agregada'`/got
+  `'sin_cambio'`) → reverted → 6/6 green.
+  **DEVIATION (registered)**: the house rule "commitear antes de mutar"
+  was not respected for this one target — the mutation was applied and
+  reverted before the first commit of this slice existed yet (no commit
+  to be "before"). Flagged here rather than silently omitted; every
+  subsequent slice-7 commit lands on the already-reverted, green file.
+- [x] 7.8 [P] Descriptor tests for `compararPayloads`: key only in `nuevo`,
   changed key, unchanged key, both-null. *(`web-descriptor-tests`)*
-- [ ] 7.9 [P] Component test: changing any filter resets the page to 1.
-- [ ] 7.10 [P] Component test: a stale response resolved **inside `act`**
+  `compararPayloads.test.ts` — 6 cases (adds a deep-equal nested-array
+  case beyond the 4 named, since the comparator's `sonIguales` does a
+  `JSON.stringify` structural compare, not `===`, for object/array
+  values — `movimientos_generados`-shaped payloads from stock.conteo need
+  that covered too).
+- [x] 7.9 [P] Component test: changing any filter resets the page to 1.
+  `Auditoria.test.tsx` — `cambiar cualquier filtro resetea la página a 1`.
+- [x] 7.10 [P] Component test: a stale response resolved **inside `act`**
   after a filter change is discarded, asserted synchronously after the
-  flush (`react-async-state` rule 7).
-- [ ] 7.11 [P] Component test: pager `disabled` at both edges (page 1 and
-  the last page).
-- [ ] 7.12 [P] Component test: `actor: null` renders `#<idActor>`;
+  flush (`react-async-state` rule 7). `Auditoria.test.tsx` — `una
+  respuesta desactualizada nunca pisa la más reciente (generación)`.
+- [x] 7.11 [P] Component test: pager `disabled` at both edges (page 1 and
+  the last page). `Auditoria.test.tsx` — single-page fixture (`total: 1`)
+  puts page 1 at BOTH edges simultaneously, asserting `Anterior` AND
+  `Siguiente` disabled together.
+- [x] 7.12 [P] Component test: `actor: null` renders `#<idActor>`;
   `id_punto_venta: null` renders `—` with the tenant-wide title.
-- [ ] 7.13 [P] Component test: the download button calls
+  `Auditoria.test.tsx` — `actor null renderiza #idActor; punto de venta
+  null renderiza — con el título tenant-wide`.
+- [x] 7.13 [P] Component test: the download button calls
   `rutasDeExportacion.auditoria(filtros)` with the current filter state.
-- [ ] 7.14 Gate guard: `has-pending-model-changes` clean; zero new files in
+  `Auditoria.test.tsx` — asserts the descargar call's route starts with
+  `/auditoria/export?`, carries the currently-selected `accion` filter,
+  and ends in `formato=xlsx`.
+- [x] 7.14 Gate guard: `has-pending-model-changes` clean; zero new files in
   `Migraciones/` (web-only slice — confirms no accidental API/EF drift).
-- [ ] 7.15 Run `judgment-day`; fix confirmed issues; re-judge until clean.
-- [ ] 7.16 Branch `feat/stage14-slice7-web` off `main` (parent: slices 5+6);
+  **Confirmed**: `dotnet ef migrations has-pending-model-changes
+  --project src/Ways.Infrastructure --startup-project
+  src/Ways.Infrastructure` → "No changes have been made to the model since
+  the last migration."; `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` → empty; `git status
+  --short` shows only `src/Ways.Web/**` paths.
+- [x] 7.15 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  *(orchestrator)*
+  - Ronda 1 (juez B): 3 MAJOR + 4 WARNING + 2 sugerencias. *(judgment-day
+    ronda 2, juez A, sugerencia cerrada: el conteo original decía "5
+    WARNING" pero solo se enumeran 4 (findings 4-7) — corregido al conteo
+    real.)*
+    **Finding 1 (MAJOR, cerrado):** `construirQueryDeConsultaDeAuditoria` y
+    `construirQueryDeExportacionDeAuditoria` divergían en la guarda de
+    `desde`/`hasta` vacíos — la consulta JSON los omitía, el export los
+    mandaba igual y `fechaIsoConOffset` sobre un string vacío producía
+    `desde=...T00:00:00+NaN:NaN` (`DateTimeOffset` malformado, 400 del
+    servidor). Unificados en `construirQueryDeAlcanceDeAuditoria`
+    (`api/auditoria.ts`), mismo criterio que `construirQueryDeAlcanceDeCajas`
+    (`reportes.ts:177`) — el caso vacío queda guardado en los dos lados por
+    construcción. Decisión de producto: `AuditoriaEndpoints.cs:44` declara
+    `DateTimeOffset desde, DateTimeOffset hasta` sin `?` en `/export` (no
+    nullable), así que `Auditoria.tsx` deshabilita el botón de descarga con
+    el motivo visible (`puedeExportarAuditoria`) en vez de emitir una URL
+    que el servidor rechaza. Evidencia de mutación: reintroducido un
+    builder de export sin guarda → `una respuesta desactualizada...NaN`
+    FALLÓ (`+NaN:NaN` reproducido literal) → revert → 7/7 verdes
+    (`auditoria.test.ts`).
+    **Finding 2 (MAJOR, cerrado):** la paridad JSON↔export solo estaba
+    asertada para `accion` — borrar `idPuntoVenta` (o `idActor`/`entidad`/
+    `idEntidad`) solo del builder de export sobrevivía. Agregado un test
+    de paridad que compara la URL completa (los 7 filtros de alcance) de
+    ambas superficies. Evidencia de mutación: forkeado un builder de
+    export que omite `idPuntoVenta` → el test de paridad Y el test
+    preexistente de "agrega los 5 filtros opcionales" FALLARON → revert →
+    verdes.
+    **Finding 3 (MAJOR, cerrado):** el único test de bordes del pager
+    usaba `total: 1`, que colapsa página 1 y última página en el mismo
+    fixture — `Math.ceil`→`Math.floor` en `totalPaginas` sobrevivía.
+    Agregado un fixture multi-página (total 60, tamaño 25 ⇒ 3 páginas, la
+    última parcial) navegando hasta la última página real, asertando la
+    etiqueta "Página N de M" y el disabled de "Siguiente" ahí. Evidencia
+    de mutación: `Math.ceil`→`Math.floor` → el nuevo test FALLÓ ("Página 1
+    de 2" en vez de "de 3") → revert → verde.
+    **Finding 4 (WARNING, cerrado):** cubierto por el test de paridad del
+    finding 2 — la URL completa asertada incluye `idActor` y el resto de
+    los filtros no-`accion`, verificado.
+    **Finding 5 (WARNING, cerrado):** `PanelDeCambio` tenía 0 tests
+    (renderizar `valorNuevo` de ambos lados sobrevivía) y `formatearValor`
+    no tenía su test colocado (`web-descriptor-tests`). Exportado
+    `formatearValor` y creado `PanelDeCambio.test.tsx`: unit tests del
+    helper + tests por `data-testid` de cada lado (agregada → "—" del
+    lado anterior; modificada → ambos valores reales y distintos; valor
+    `undefined` del lado nuevo → "—" ahí; sin cambios → mismo valor en
+    ambos lados). Evidencia de mutación: cambiado el lado anterior para
+    renderizar `valorNuevo` → 2 tests FALLARON (modificada, valor
+    `undefined`) → revert → 8/8 verdes.
+    **Finding 6 (WARNING, cerrado):** el guard de `cambiarEntidad` (limpiar
+    `entidad` limpia también `idEntidad`, si no el request siguiente 400ea
+    `entidad_requerida`) no tenía test. Agregado: setear entidad+idEntidad,
+    limpiar entidad, assertar que el request siguiente NO manda `idEntidad`
+    y que el input `#Id` queda vacío (no solo disabled). Evidencia de
+    mutación: quitado `idEntidad: null` de la rama de limpieza → el test
+    FALLÓ (`idEntidad=41` seguía viajando) → revert → verde.
+    **Finding 7 (WARNING, pre-existente — registrado, SIN fix):** ningún
+    test importa `Layout`/`App`, así que ambos gates Admin-only son
+    infalsificables (widenearlos a Supervisor pasa toda la suite). El
+    backstop real es el server (403 probado en slices 5/6 por
+    `PoliticasTests`). Limitación suite-wide conocida, mismo registro que
+    dejó slice 6 de la etapa 13 — no se agregó un test de `Layout`/`App`
+    porque ningún sibling de la suite lo hace (no hay patrón que replicar
+    sin abrir una superficie nueva fuera del alcance de esta ronda).
+    **Sugerencia 1 (aplicada):** `etiquetaDeAccion` era reducible a
+    `return accion` sin fallar ningún test — agregado un assert de la
+    etiqueta en español ("Cambio de precio") en la celda de la tabla
+    (`getByRole('cell', ...)`, scoped para no chocar con el `<option>`
+    homónimo del filtro).
+    **Sugerencia 2 (aplicada, honestidad de evidencia):** la nota de esta
+    misma task (7.10) decía "resuelto dentro de `act` y asertado
+    sincrónicamente" pero el test usaba `waitFor` — discriminaba igual,
+    pero la nota describía una construcción más fuerte que la real.
+    Fortalecido el test al patrón real de `Vencimientos.test.tsx` (regla
+    7): el flush del microtask va dentro de `act`, el assert es sincrónico
+    después, sin `waitFor`.
+    **Vitest tras los fixes de ronda 1**: `npx vitest run` → 41 test files
+    passed, 689/689 tests passed (674 pre-existentes + 15 nuevos:
+    `auditoria.test.ts` 3→7, `Auditoria.test.tsx` 5→8, `PanelDeCambio.test.tsx`
+    0→8). `npm run build` (`tsc -b && vite build`) limpio. Re-ronda y
+    JUDGMENT final: ver 7.16 (orchestrator).
+
+    **Ronda 2 (juez A): 0 severos; 2 WARNING + 2 sugerencias.**
+    **Finding (WARNING, `dto-contract-honesty`, cerrado):** `tipos.ts:1638-
+    1652` mirroreaba `FiltrosDeAuditoria` (`Contratos.cs`) sin ningún
+    consumidor de tipo (`auditoria.ts` solo importa `PaginaDeAuditoria`; la
+    pantalla usa `FiltrosDeConsultaDeAuditoria`/`FiltrosDeAlcanceDeAuditoria`
+    definidos localmente) con un doc-comment que afirmaba consumo real —
+    falso para ese tipo. Eliminado el mirror inerte (las formas difieren
+    genuinamente: `DateTimeOffset?` nullable del backend vs. `string`
+    no-nulo `YYYY-MM-DD` de pantalla, así que un `Pick`/derivación no
+    aplica sin forzar el shape); doc-comment de `tipos.ts` y las dos
+    referencias cruzadas en `auditoria.ts` corregidos para describir solo
+    los mirrors que sí atan (`FilaDeAuditoria`/`PaginaDeAuditoria`).
+    Verificado con `npx tsc -b` limpio tras el borrado.
+    **Finding (WARNING, cerrado):** el fallback `?? accion` de
+    `etiquetaDeAccion` (`Auditoria.tsx`, el mecanismo exacto de la decisión
+    15 del design) no tenía test y la función no estaba exportada.
+    Exportada; agregados los tests de sus dos ramas (catálogo → etiqueta en
+    español; no catalogada → código crudo) más un assert de componente con
+    una fila de acción retirada. Evidencia de mutación: `?? accion` → `??
+    '—'` → 2 tests FALLARON (unitario de la rama fallback + el assert de
+    componente) → revert → 11/11 verdes (`Auditoria.test.tsx`).
+    **Sugerencia (aplicada):** `compararPayloads.ts`'s `sonIguales` compara
+    con `JSON.stringify`, sensible al orden de claves. Documentado en el
+    código como limitación conocida (riesgo bajo: ambos payloads salen del
+    mismo serializador) y fijado con un test que asienta el comportamiento
+    actual (objeto anidado con distinto orden de claves ⇒ `'cambiada'`).
+    **Sugerencia (aplicada):** el header de esta misma ronda 1 decía "5
+    WARNING" pero solo se enumeran 4 (findings 4-7) — corregido al conteo
+    real arriba.
+    **Vitest tras los fixes de ronda 2**: `npx vitest run` → 41 test files
+    passed, 693/693 tests passed (689 pre-existentes + 4 nuevos:
+    `Auditoria.test.tsx` 8→11, `compararPayloads.test.ts` 6→7). `npm run
+    build` (`tsc -b && vite build`) limpio. JUDGMENT: APPROVED.
+- [x] 7.16 Branch `feat/stage14-slice7-web` off `main` (parent: slices 5+6); *(CLEAN 2026-08-16: juez B ronda 1 — 3 MAJORs (BUG DE PRODUCCION: limpiar una fecha desincronizaba el listado JSON del export, que armaba desde=T00:00:00+NaN:NaN y el endpoint rechazaba; paridad de filtros asertada solo para accion; borde de ultima pagina sobredeterminado por fixture total:1) + 4 WARNINGs + 2 sugerencias -> fix a249dab con UN builder de alcance compartido (precedente construirQueryDeAlcanceDeCajas) y boton deshabilitado con motivo visible; re-ronda B aprobada con 6 re-mutantes muertos incl. probe de que el test de stale reforzado sigue discriminando. Juez A: 0 severos, 2 WARNINGs (mirror inerte FiltrosDeAuditoria con doc que sobredeclaraba -> removido; rama de fallback de etiquetaDeAccion, el mecanismo de la decision 15, sin test -> exportada y cubierta) + 2 sugerencias cerradas en 3413eee. JUDGMENT: APPROVED.)*
   PR; merge stacked-to-main. **If the slice overflows at apply time, drop
   tasks 7.5/7.7/7.8 (`PanelDeCambio`/`compararPayloads`) per the
   pre-approved degradation above and record the reduction in the PR body —
-  never a silent cut.**
+  never a silent cut.** *(orchestrator — degradation NOT exercised, see
+  7.5)*
 
 **Test plan**: mutation target (7.7), descriptor tests (7.8), stale-inside-
 `act` (7.10), pager edges (7.11), null renders (7.12), download wiring

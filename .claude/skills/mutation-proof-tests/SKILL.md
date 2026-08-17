@@ -82,7 +82,24 @@ so deleting the clause under test changes nothing the test can see.
    also kills the adjacent hard-coded-label mutant. Pre-existing exports share the
    gap; close it whenever an export equality test is touched.)
 
-9. **A date-boundary test sends the offset the CLIENT sends, never `Z`.** A
+9. **The three shared gaps of every `/export` route test, and the settled question
+   about `IsEmpty()`.** An export route needs all three, per route, or a mutant lives:
+   (a) the tope-rejection test seeds `tope + 2` and asserts the REAL count — on a
+   LISTADO route (two `Exigir`, `.Take(tope + 1)`) seeding `tope + 1` makes the count
+   and the truncated read agree, so deleting the first `Exigir` survives; AGREGADO
+   routes have one `Exigir` over a materialized `Filas.Count` and need no change;
+   (b) a `formato=pdf` test PER ROUTE — one test does not cover its siblings;
+   (c) an exactly-tope success test asserting 200 and a complete workbook, or
+   `Exigir(count, tope - 1)` survives. Assert the count as `"tiene N filas"`, never a
+   bare `"N"` — the title also carries the tope, so a lone digit can match the wrong
+   number. `hoja.Row(n).IsEmpty()` IS load-bearing as the end-of-data assertion:
+   `ExportadorXlsx.AplicarFormatoDeColumna` styles whole columns, but a styled-yet-
+   unwritten row still reads empty while a row holding data reads non-empty (proven
+   by forcing a fourth data row into a three-row expectation and watching the assert
+   fail). Both judges raised this independently — it is settled, do not re-litigate.
+   (Stage 14 slice 6 found the three gaps; swept across all 18 routes and 11 files.)
+
+10. **A date-boundary test sends the offset the CLIENT sends, never `Z`.** A
    `desde`/`hasta` built as `...T00:00:00Z`/`...T23:59:59Z` is a confound: with
    offset zero, `limite.DateTime` and `limite.UtcDateTime` are the same value, so
    every timezone defect in the request path is invisible. The web builds both

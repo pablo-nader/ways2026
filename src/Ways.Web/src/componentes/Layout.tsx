@@ -7,6 +7,7 @@ import {
   puedeGestionarCatalogos,
   puedeGestionarUsuarios,
   puedeOperarPos,
+  puedeVerAuditoria,
   puedeVerReportes,
 } from '../api/tipos'
 
@@ -115,6 +116,17 @@ export function Layout() {
                   <li className="nav-item">
                     <NavLink className="nav-link" to="/reportes/stock/reposicion">
                       Reposición
+                    </NavLink>
+                  </li>
+                )}
+                {/* stage-14-auditoria-trazabilidad (Slice 7, design decisión 17): Admin-only —
+                    nav y ruta comparten Politicas.LecturaDeAuditoria (puedeVerAuditoria), NUNCA
+                    apilada sobre puedeVerReportes (Supervisor queda afuera acá, a diferencia de
+                    Tablero/Histórico de cajas/etc.). */}
+                {usuario && puedeVerAuditoria(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/auditoria">
+                      Auditoría
                     </NavLink>
                   </li>
                 )}

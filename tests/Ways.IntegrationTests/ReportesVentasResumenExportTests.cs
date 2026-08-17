@@ -292,7 +292,7 @@ public class ReportesVentasResumenExportTests(WaysApiFixture fixture) : IClassFi
 
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
-        Assert.Contains("4", problema.GetProperty("title").GetString());
+        Assert.Contains("tiene 4 filas", problema.GetProperty("title").GetString());
     }
 
     // ---- task 1b.10: éxito exactamente en el tope -------------------------------------------------

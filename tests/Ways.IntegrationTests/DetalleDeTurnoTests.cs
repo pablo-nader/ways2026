@@ -2,9 +2,12 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using ClosedXML.Excel;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
+using Ways.Application.Exportacion;
 using Ways.Application.Gastos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
@@ -44,9 +47,11 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         int IdTenant, int IdPuntoVenta, int IdEmpleadoAdmin, int IdCliente, int IdTipoComprobanteTx,
         int IdMedioEfectivo, HttpClient Admin, HttpClient Vendedor);
 
-    private async Task<Contexto> PrepararAsync(string nombre)
+    private async Task<Contexto> PrepararAsync(string nombre, WebApplicationFactory<Program>? factory = null)
     {
-        using var root = fixture.CreateClient();
+        var host = factory ?? fixture;
+
+        using var root = host.CreateClient();
         var loginRoot = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
@@ -56,7 +61,7 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
 
-        var admin = fixture.CreateClient();
+        var admin = host.CreateClient();
         var loginAdmin = await admin.PostAsJsonAsync(
             "/api/auth/login", new SolicitudDeLogin(mailAdmin, resultado.PasswordTemporal));
         Assert.Equal(HttpStatusCode.OK, loginAdmin.StatusCode);
@@ -67,7 +72,7 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             "/api/usuarios", new CrearUsuario($"vendedor-{corto}", mailVendedor, (int)RolConocido.Vendedor, PasswordOtroRol));
         Assert.Equal(HttpStatusCode.Created, altaVendedor.StatusCode);
 
-        var vendedor = fixture.CreateClient();
+        var vendedor = host.CreateClient();
         var loginVendedor = await vendedor.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailVendedor, PasswordOtroRol));
         Assert.Equal(HttpStatusCode.OK, loginVendedor.StatusCode);
 
@@ -362,5 +367,113 @@ public class DetalleDeTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
         Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+    }
+
+    // ---- barrido export: FormatoDeExportacion.Parsear en esta ruta -------------------------------
+
+    /// <summary>Sin la llamada a <see cref="FormatoDeExportacion.Parsear"/> dentro de
+    /// <c>/caja/turnos/{id}/detalle/export</c>, un <c>formato=pdf</c> devolvería 200 XLSX en vez de
+    /// 400. <c>Parsear</c> corre ANTES de resolver el turno (CajaEndpoints.cs:116, previo al
+    /// <c>ObtenerAsync</c> de la línea 120), así que ni siquiera hace falta un turno existente — un
+    /// id arbitrario alcanza para probar este clause sin sembrar ningún dato.</summary>
+    [Fact]
+    public async Task UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeDetalleDeTurno()
+    {
+        var ctx = await PrepararAsync(nameof(UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeDetalleDeTurno));
+
+        var respuesta = await ctx.Admin.GetAsync("/api/caja/turnos/999999/detalle/export?formato=pdf");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("formato_no_soportado", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- barrido export: borde EXACTO del tope y rechazo por ARRIBA del tope ----------------------
+    //
+    // Esta ruta no tenía NINGÚN test de tope: su único GuardaDeTope.Exigir (CajaEndpoints.cs:142)
+    // podía borrarse sin que la suite se rompiera. ExportacionDeCaja.De(DetalleDeTurno, ...) arma
+    // tabla.Filas sumando SEIS bloques (Medios + Egresos por categoría + Egresos por área + Retiros
+    // (SIEMPRE una fila, incondicional) + Tickets + Gastos). Para que la cuenta sea determinística
+    // se sella la actividad del turno a UN SOLO medio de pago (Efectivo, vía fondoInicial != 0 y
+    // ventas solo con ese medio) y CERO gastos:
+    //   - Medios: 1 fila (Efectivo es el único con TuvoFilas/ancla — ResolvedorDeMedioDeCajaFisica
+    //     exige exactamente un medio Efectivo, y ningún otro medio tiene actividad).
+    //   - Egresos por categoría / por área: 0 filas cada uno — LectorDeContenidoDeResumen agrupa
+    //     con GroupBy sobre `db.Gastos.Where(turno)`; sin gastos sembrados, el GroupBy no emite
+    //     ningún grupo (a diferencia de "1 grupo con total 0").
+    //   - Retiros: 1 fila siempre (ExportacionDeCaja.cs:136-142 la agrega incondicionalmente).
+    //   - Tickets: N filas, una por venta sembrada (SembrarVentaAsync, estado Emitido).
+    //   - Gastos: 0 filas (ninguno sembrado).
+    // Total = 1 (Medios) + 0 + 0 + 1 (Retiros) + N (Tickets) + 0 = 2 + N. Con tope = 3, N = 1 pega
+    // EXACTO en el tope; N = 2 pega en tope + 1.
+
+    /// <summary>Discriminador real del ÚNICO <c>GuardaDeTope.Exigir</c> de esta ruta AGREGADA del
+    /// lado del ÉXITO: sin este test, mutar <c>Exigir(tabla.Filas.Count, tope)</c> a
+    /// <c>Exigir(tabla.Filas.Count, tope - 1)</c> sobrevive — nada más en este archivo ejercita el
+    /// export con el tope bajado. Un ticket sembrado (más el "Medios" y el "Retiros" incondicional,
+    /// sin gastos) da EXACTAMENTE 3 filas contra un tope de 3.</summary>
+    [Fact]
+    public async Task UnaExportacionDelDetalleDeExactamenteElTopeDeFilasSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 3)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDelDetalleDeExactamenteElTopeDeFilasSeAceptaCompleta), factoryBajo);
+        var turno = await AbrirTurnoAsync(ctx, ctx.Admin, 100m);
+
+        await SembrarVentaAsync(ctx, turno.Id, 50m);
+        // esperado efectivo = 100 (fondo) + 50 (venta) = 150 — sin gastos ni retiros.
+        await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 150m);
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/caja/turnos/{turno.Id}/detalle/export?formato=xlsx");
+        var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+        Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+
+        // Header en la fila 6, datos desde la 7 (mismo layout que ElExportDelDetalleEsIgualAlJsonParaElMismoTurno):
+        // Medios (fila 7) + Retiros (fila 8) + el ticket sembrado (fila 9) = las tope=3 filas, y la
+        // fila 10 tiene que quedar vacía.
+        const int primeraFilaDeDatos = 7;
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.False(hoja.Row(primeraFilaDeDatos + i).IsEmpty());
+        }
+        Assert.True(hoja.Row(primeraFilaDeDatos + 3).IsEmpty());
+    }
+
+    /// <summary>Sibling de rechazo del test de arriba — esta ruta no tenía NINGÚN test de tope
+    /// (ver el comentario de bloque de arriba): sin este test, borrar el
+    /// <c>GuardaDeTope.Exigir</c> de <c>/detalle/export</c> (CajaEndpoints.cs:142) sobrevive
+    /// completo, sin ningún test de la suite notándolo. Dos tickets sembrados dan 4 filas (tope +
+    /// 1) contra un tope de 3.</summary>
+    [Fact]
+    public async Task UnaExportacionDelDetalleQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 3)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDelDetalleQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+        var turno = await AbrirTurnoAsync(ctx, ctx.Admin, 100m);
+
+        await SembrarVentaAsync(ctx, turno.Id, 50m);
+        await SembrarVentaAsync(ctx, turno.Id, 60m);
+        // esperado efectivo = 100 (fondo) + 50 + 60 (ventas) = 210 — sin gastos ni retiros.
+        await CerrarTurnoAsync(ctx.Admin, turno.Id, ctx.IdMedioEfectivo, 210m);
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/caja/turnos/{turno.Id}/detalle/export?formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("tiene 4 filas", problema.GetProperty("title").GetString());
     }
 }

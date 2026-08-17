@@ -120,6 +120,16 @@ export function puedeVerComisiones(rolId: number) {
   return rolId === ROL.Admin
 }
 
+/** Espejo de `Politicas.LecturaDeAuditoria` (stage-14-auditoria-trazabilidad, Slice 5): SOLO admin
+ * ve el log de auditoría — ni supervisor, ni vendedor, ni root (spec auditoria-de-operaciones:
+ * "GET /api/auditoria Is Filtered, Paginated, And Admin-Only" — la policy NO se apila sobre
+ * `LecturaDeReportes`, es su propio gate, mismo criterio admin-only que `puedeVerRentabilidad`).
+ * Puramente cosmético: el servidor vuelve a exigir la misma policy en `/api/auditoria` y
+ * `/api/auditoria/export`. */
+export function puedeVerAuditoria(rolId: number) {
+  return rolId === ROL.Admin
+}
+
 // --- Catálogos de tenant (ADR-11) ---
 
 export type ComportamientoMedioPago = 'Efectivo' | 'Electronico' | 'CuentaCorriente'
@@ -1619,3 +1629,57 @@ export type Comisiones = {
   filas: ComisionPorEmpleado[]
   provisional: boolean
 }
+
+// --- Auditoría (stage-14-auditoria-trazabilidad, Slice 7) — espejo de
+// `Ways.Application.Auditoria.Contratos` (Slice 5). `dto-contract-honesty`: `FilaDeAuditoria`/
+// `PaginaDeAuditoria` abajo son los únicos DTOs mirroreados acá — cada campo se consume
+// directamente en `Auditoria.tsx` al renderizar cada columna/el panel de detalle.
+// `FiltrosDeAuditoria` (`Contratos.cs`) NO tiene mirror en este archivo (judgment-day, ronda 2,
+// juez A): su forma difiere genuinamente de los filtros de pantalla (`desde`/`hasta` viajan como
+// `DateTimeOffset?` nullable en el backend vs. `string` no-nulo `input[type=date]` en
+// `FiltrosDeAlcanceDeAuditoria`/`FiltrosDeConsultaDeAuditoria`, `api/auditoria.ts`) — un mirror sin
+// consumidor de tipo no ata nada, así que se optó por no crearlo en vez de dejarlo inerte.
+
+/** Espejo de `FilaDeAuditoria` (Slice 5). `actor` `null` significa "el nombre no es visible para
+ * esta sesión" (un actor de plataforma, excluido por el filtro de tenant/RLS de `usuarios` bajo
+ * el LEFT JOIN) — NUNCA "sin actor": `idActor` siempre viaja, `Auditoria.tsx` lo muestra como
+ * `#idActor`. `valorAnterior`/`valorNuevo` viajan con sus claves TAL CUAL fueron serializadas por
+ * `SerializadorDeAuditoria` (snake_case) — la pantalla no las reinterpreta, solo las compara
+ * clave por clave (`compararPayloads`, `PanelDeCambio`). */
+export type FilaDeAuditoria = {
+  idAuditoria: number
+  creadoEl: string
+  accion: string
+  entidad: string
+  idEntidad: number
+  idActor: number
+  actor: string | null
+  idPuntoVenta: number | null
+  valorAnterior: Record<string, unknown> | null
+  valorNuevo: Record<string, unknown>
+}
+
+/** Página de `GET /api/auditoria` — espejo de `PaginaDeAuditoria` (Slice 5). */
+export type PaginaDeAuditoria = { items: FilaDeAuditoria[]; total: number; pagina: number; tamanio: number }
+
+/** Espejo del catálogo de 12 pares `(accion, entidad)` de `AccionAuditada`
+ * (`Ways.Domain.Auditoria`, Slice 1) — alimenta el `<select>` de acción de `Auditoria.tsx`.
+ * Etiquetas en español; el VALOR que viaja al backend es siempre el `accion` crudo
+ * (`precio.cambio`, ...) — la base no valida `accion` contra este catálogo (design decisión 15),
+ * así que una fila con una acción retirada de acá sigue siendo consultable filtrando por su texto
+ * exacto (no aparece en el `<select>`, pero el filtro por texto libre seguiría funcionando si se
+ * expusiera). */
+export const CATALOGO_DE_ACCIONES_AUDITADAS: { valor: string; etiqueta: string }[] = [
+  { valor: 'precio.cambio', etiqueta: 'Cambio de precio' },
+  { valor: 'venta.anulacion', etiqueta: 'Anulación de venta' },
+  { valor: 'compra.anulacion', etiqueta: 'Anulación de compra' },
+  { valor: 'stock.ajuste', etiqueta: 'Ajuste de stock' },
+  { valor: 'stock.decomiso', etiqueta: 'Decomiso de stock' },
+  { valor: 'stock.conteo', etiqueta: 'Conteo de inventario' },
+  { valor: 'cc.reliquidacion', etiqueta: 'Reliquidación de cuenta corriente' },
+  { valor: 'usuario.alta', etiqueta: 'Alta de usuario' },
+  { valor: 'usuario.actualizacion', etiqueta: 'Actualización de usuario' },
+  { valor: 'usuario.baja', etiqueta: 'Baja de usuario' },
+  { valor: 'usuario.desbloqueo', etiqueta: 'Desbloqueo de usuario' },
+  { valor: 'usuario.password', etiqueta: 'Cambio de contraseña' },
+]

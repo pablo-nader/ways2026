@@ -184,7 +184,12 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var ctx = await PrepararAsync(nameof(UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
         var dia = new DateOnly(2026, 8, 1);
 
-        for (var i = 0; i < 4; i++)
+        // tope+2 = 5 filas (no tope+1 = 4): con solo 4 filas, el COUNT(*) real y el count leído
+        // del Take(tope+1) coinciden, y borrar el PRIMER GuardaDeTope.Exigir sobrevive (el
+        // segundo Exigir, sobre items.Count, rechaza igual con el mismo "4"). Con 5 filas el
+        // Take(4) trunca: si el primer Exigir se borra, el mutante reporta "4" (el truncado) en
+        // vez de "5" (la cantidad REAL) y el assert de abajo lo discrimina.
+        for (var i = 0; i < 5; i++)
         {
             await SembrarMovimientoAsync(ctx, dia, 0m, 10m + i, 0m, 10m + i);
         }
@@ -196,9 +201,15 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
-        Assert.Contains("4", problema.GetProperty("title").GetString());
+        Assert.Contains("tiene 5 filas", problema.GetProperty("title").GetString());
     }
 
+    /// <summary>Discriminador real del SEGUNDO <c>GuardaDeTope.Exigir</c> del lado del ÉXITO: sin
+    /// el assert del workbook completo (y no solo el status code), mutar ese segundo
+    /// <c>Exigir</c> a <c>Exigir(items.Count, tope - 1)</c> sobrevive —
+    /// <see cref="UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadReal"/> solo cubre el
+    /// rechazo por ARRIBA del tope. Acá se exportan EXACTAMENTE <c>tope</c> movimientos (3) y se
+    /// espera 200 con el workbook completo.</summary>
     [Fact]
     public async Task UnaExportacionExactamenteEnElTopeSeAcepta()
     {
@@ -215,8 +226,41 @@ public class TesoreriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         }
 
         var respuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta, dia, dia);
+        var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+        Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
 
-        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+
+        // Encabezado en la fila 6, datos desde la 7 (mismo layout que el test de igualdad de
+        // arriba): las tope=3 filas ocupan 7-9, la fila 10 tiene que quedar vacía.
+        const int primeraFilaDeDatos = 7;
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.False(hoja.Row(primeraFilaDeDatos + i).IsEmpty());
+        }
+        Assert.True(hoja.Row(primeraFilaDeDatos + 3).IsEmpty());
+    }
+
+    // ---- barrido-export GAP 2: FormatoDeExportacion.Parsear en esta ruta ------------------------
+
+    /// <summary>Sin este test, borrar la llamada a <c>FormatoDeExportacion.Parsear</c> en
+    /// <c>/api/reportes/tesoreria/export</c> sobrevive — un <c>formato=pdf</c> devolvería 200
+    /// XLSX en vez de 400.</summary>
+    [Fact]
+    public async Task UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeTesoreria()
+    {
+        var ctx = await PrepararAsync(nameof(UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeTesoreria), fixture);
+        var hoy = new DateOnly(2026, 8, 1);
+
+        var respuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta, hoy, hoy, formato: "pdf");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("formato_no_soportado", problema.GetProperty("codigo").GetString());
     }
 
     // ---- task 7.11: rol un escalón debajo del gate, mitad export -------------------------------
