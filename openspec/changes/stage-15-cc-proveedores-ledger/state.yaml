@@ -82,9 +82,33 @@ phases:
     artifact: proposal.md
     depends_on: [explore]
   spec:
-    status: pending
+    status: done
     artifact: specs/
     depends_on: [propose]
+    notes: >-
+      5 archivos: cuenta-corriente-de-proveedores NUEVA (11 requirements /
+      26 escenarios: apertura por backfill con fidelidad a la formula
+      retirada — soft-deletes y gasto sin id_proveedor como casos
+      discriminantes —, los 4 caminos de escritura, CHECK 23514 por insert
+      crudo, RLS 42501, cache por construccion, estado de pago derivado
+      del ledger, estado de cuenta con regla 10 de mutation-proof-tests:
+      seed mediodia UTC + offset real -03:00, nunca Z; 3 carreras con el
+      orden de locks pinneado); saldo-de-proveedor delta 1 MODIFIED + 2
+      REMOVED (retiro explicito de "Saldo Is A Derived Read, Never
+      Persisted", precedente etapa 7); gastos 1 ADDED (el pago escribe en
+      el ledger); comprobantes-compra 2 ADDED (confirmar/anular escriben);
+      operacion-de-pos 2 ADDED. TRES TENSIONES ARBITRADAS POR EL
+      ORQUESTADOR (Orchestrator Decision 6): (T1) el /export sibling del
+      estado de cuenta queda FUERA — el proposal es el contrato y lo
+      excluye con racional ("cheapest first extension"); el brief del
+      spec estaba desalineado, no el proposal; extension diferida
+      registrada para el archive. (T2) el spec de la capability nueva
+      excede el presupuesto de 650 palabras (~2000) por decision
+      deliberada del proposal de NO partir la superficie en capabilities
+      multiples — presupuesto leido como advisory, precedente
+      size:exception de la 13. (T3) el requirement de estado de pago
+      conserva su titulo original con cuerpo MODIFIED (convencion
+      MODIFIED-not-RENAMED).
   design:
     status: pending
     artifact: design.md
