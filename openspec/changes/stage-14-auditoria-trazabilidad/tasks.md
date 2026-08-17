@@ -1573,6 +1573,84 @@ operator through the export. A documented reduction, never a silent one.
   --short` shows only `src/Ways.Web/**` paths.
 - [ ] 7.15 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   *(orchestrator)*
+  - Ronda 1 (juez B): 3 MAJOR + 5 WARNING + 2 sugerencias.
+    **Finding 1 (MAJOR, cerrado):** `construirQueryDeConsultaDeAuditoria` y
+    `construirQueryDeExportacionDeAuditoria` divergían en la guarda de
+    `desde`/`hasta` vacíos — la consulta JSON los omitía, el export los
+    mandaba igual y `fechaIsoConOffset` sobre un string vacío producía
+    `desde=...T00:00:00+NaN:NaN` (`DateTimeOffset` malformado, 400 del
+    servidor). Unificados en `construirQueryDeAlcanceDeAuditoria`
+    (`api/auditoria.ts`), mismo criterio que `construirQueryDeAlcanceDeCajas`
+    (`reportes.ts:177`) — el caso vacío queda guardado en los dos lados por
+    construcción. Decisión de producto: `AuditoriaEndpoints.cs:44` declara
+    `DateTimeOffset desde, DateTimeOffset hasta` sin `?` en `/export` (no
+    nullable), así que `Auditoria.tsx` deshabilita el botón de descarga con
+    el motivo visible (`puedeExportarAuditoria`) en vez de emitir una URL
+    que el servidor rechaza. Evidencia de mutación: reintroducido un
+    builder de export sin guarda → `una respuesta desactualizada...NaN`
+    FALLÓ (`+NaN:NaN` reproducido literal) → revert → 7/7 verdes
+    (`auditoria.test.ts`).
+    **Finding 2 (MAJOR, cerrado):** la paridad JSON↔export solo estaba
+    asertada para `accion` — borrar `idPuntoVenta` (o `idActor`/`entidad`/
+    `idEntidad`) solo del builder de export sobrevivía. Agregado un test
+    de paridad que compara la URL completa (los 7 filtros de alcance) de
+    ambas superficies. Evidencia de mutación: forkeado un builder de
+    export que omite `idPuntoVenta` → el test de paridad Y el test
+    preexistente de "agrega los 5 filtros opcionales" FALLARON → revert →
+    verdes.
+    **Finding 3 (MAJOR, cerrado):** el único test de bordes del pager
+    usaba `total: 1`, que colapsa página 1 y última página en el mismo
+    fixture — `Math.ceil`→`Math.floor` en `totalPaginas` sobrevivía.
+    Agregado un fixture multi-página (total 60, tamaño 25 ⇒ 3 páginas, la
+    última parcial) navegando hasta la última página real, asertando la
+    etiqueta "Página N de M" y el disabled de "Siguiente" ahí. Evidencia
+    de mutación: `Math.ceil`→`Math.floor` → el nuevo test FALLÓ ("Página 1
+    de 2" en vez de "de 3") → revert → verde.
+    **Finding 4 (WARNING, cerrado):** cubierto por el test de paridad del
+    finding 2 — la URL completa asertada incluye `idActor` y el resto de
+    los filtros no-`accion`, verificado.
+    **Finding 5 (WARNING, cerrado):** `PanelDeCambio` tenía 0 tests
+    (renderizar `valorNuevo` de ambos lados sobrevivía) y `formatearValor`
+    no tenía su test colocado (`web-descriptor-tests`). Exportado
+    `formatearValor` y creado `PanelDeCambio.test.tsx`: unit tests del
+    helper + tests por `data-testid` de cada lado (agregada → "—" del
+    lado anterior; modificada → ambos valores reales y distintos; valor
+    `undefined` del lado nuevo → "—" ahí; sin cambios → mismo valor en
+    ambos lados). Evidencia de mutación: cambiado el lado anterior para
+    renderizar `valorNuevo` → 2 tests FALLARON (modificada, valor
+    `undefined`) → revert → 8/8 verdes.
+    **Finding 6 (WARNING, cerrado):** el guard de `cambiarEntidad` (limpiar
+    `entidad` limpia también `idEntidad`, si no el request siguiente 400ea
+    `entidad_requerida`) no tenía test. Agregado: setear entidad+idEntidad,
+    limpiar entidad, assertar que el request siguiente NO manda `idEntidad`
+    y que el input `#Id` queda vacío (no solo disabled). Evidencia de
+    mutación: quitado `idEntidad: null` de la rama de limpieza → el test
+    FALLÓ (`idEntidad=41` seguía viajando) → revert → verde.
+    **Finding 7 (WARNING, pre-existente — registrado, SIN fix):** ningún
+    test importa `Layout`/`App`, así que ambos gates Admin-only son
+    infalsificables (widenearlos a Supervisor pasa toda la suite). El
+    backstop real es el server (403 probado en slices 5/6 por
+    `PoliticasTests`). Limitación suite-wide conocida, mismo registro que
+    dejó slice 6 de la etapa 13 — no se agregó un test de `Layout`/`App`
+    porque ningún sibling de la suite lo hace (no hay patrón que replicar
+    sin abrir una superficie nueva fuera del alcance de esta ronda).
+    **Sugerencia 1 (aplicada):** `etiquetaDeAccion` era reducible a
+    `return accion` sin fallar ningún test — agregado un assert de la
+    etiqueta en español ("Cambio de precio") en la celda de la tabla
+    (`getByRole('cell', ...)`, scoped para no chocar con el `<option>`
+    homónimo del filtro).
+    **Sugerencia 2 (aplicada, honestidad de evidencia):** la nota de esta
+    misma task (7.10) decía "resuelto dentro de `act` y asertado
+    sincrónicamente" pero el test usaba `waitFor` — discriminaba igual,
+    pero la nota describía una construcción más fuerte que la real.
+    Fortalecido el test al patrón real de `Vencimientos.test.tsx` (regla
+    7): el flush del microtask va dentro de `act`, el assert es sincrónico
+    después, sin `waitFor`.
+    **Vitest tras los fixes de ronda 1**: `npx vitest run` → 41 test files
+    passed, 689/689 tests passed (674 pre-existentes + 15 nuevos:
+    `auditoria.test.ts` 3→7, `Auditoria.test.tsx` 5→8, `PanelDeCambio.test.tsx`
+    0→8). `npm run build` (`tsc -b && vite build`) limpio. Re-ronda y
+    JUDGMENT final: ver 7.16 (orchestrator).
 - [ ] 7.16 Branch `feat/stage14-slice7-web` off `main` (parent: slices 5+6);
   PR; merge stacked-to-main. **If the slice overflows at apply time, drop
   tasks 7.5/7.7/7.8 (`PanelDeCambio`/`compararPayloads`) per the
