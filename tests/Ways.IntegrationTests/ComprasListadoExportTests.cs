@@ -189,6 +189,12 @@ public class ComprasListadoExportTests(WaysApiFixture fixture) : IClassFixture<W
 
     // ---- task 3.7: rechazo por tope ---------------------------------------------------------------
 
+    /// <summary>Discriminador real del PRIMER <c>GuardaDeTope.Exigir</c> (sobre el <c>COUNT(*)</c>):
+    /// se siembra tope+2 (5, no tope+1) filas porque con solo 4 filas el <c>COUNT(*)</c> real y la
+    /// lectura truncada por <c>.Take(tope + 1)</c> coinciden en "4" — borrar el primer <c>Exigir</c>
+    /// sobrevive porque el segundo rechaza igual con el mismo número. Con 5 filas el <c>Take(4)</c>
+    /// trunca: el mutante reporta "4" (el truncado) en vez de la cantidad REAL "5", y el assert de
+    /// abajo lo discrimina.</summary>
     [Fact]
     public async Task UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadReal()
     {
@@ -199,7 +205,7 @@ public class ComprasListadoExportTests(WaysApiFixture fixture) : IClassFixture<W
         var ctx = await PrepararAsync(nameof(UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
         var dia = new DateOnly(2026, 8, 1);
 
-        for (var i = 0; i < 4; i++)
+        for (var i = 0; i < 5; i++)
         {
             await SembrarCompraAsync(ctx, dia, 100m + i, $"0001-0000000{i}");
         }
@@ -211,6 +217,67 @@ public class ComprasListadoExportTests(WaysApiFixture fixture) : IClassFixture<W
 
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
-        Assert.Contains("4", problema.GetProperty("title").GetString());
+        Assert.Contains("tiene 5 filas", problema.GetProperty("title").GetString());
+    }
+
+    // ---- FormatoDeExportacion.Parsear en esta ruta (barrido de gaps compartidos) ------------------
+
+    /// <summary>Sin este test, borrar la llamada a <see cref="FormatoDeExportacion.Parsear"/> en
+    /// <c>/api/compras/export</c> sobrevive — un <c>formato=pdf</c> devolvería 200 XLSX en vez de
+    /// 400.</summary>
+    [Fact]
+    public async Task UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeCompras()
+    {
+        var ctx = await PrepararAsync(nameof(UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeCompras), fixture);
+        var hoy = new DateOnly(2026, 8, 1);
+
+        var respuesta = await LlamarExportAsync(ctx.Admin, hoy, hoy, formato: "pdf");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("formato_no_soportado", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- exportar exactamente el tope de filas es legítimo (barrido de gaps compartidos) ----------
+
+    /// <summary>Discriminador real del SEGUNDO <c>GuardaDeTope.Exigir</c> del lado del ÉXITO: sin
+    /// este test, mutar ese segundo <c>Exigir</c> a <c>Exigir(items.Count, tope - 1)</c> sobrevive
+    /// — <c>UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadReal</c> solo cubre el rechazo por
+    /// ARRIBA del tope. Acá se exportan EXACTAMENTE <c>tope</c> filas y se espera 200 con el
+    /// workbook completo.</summary>
+    [Fact]
+    public async Task UnaExportacionDeExactamenteElTopeDeFilasSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 3)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeExactamenteElTopeDeFilasSeAceptaCompleta), factoryBajo);
+        var dia = new DateOnly(2026, 8, 1);
+
+        for (var i = 0; i < 3; i++)
+        {
+            await SembrarCompraAsync(ctx, dia, 100m + i, $"0001-0000000{i}");
+        }
+
+        var respuesta = await LlamarExportAsync(ctx.Admin, dia, dia);
+        var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+        Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+
+        // Encabezado en la fila 6, datos desde la 7 (mismo layout que
+        // ElExportEsIgualAlListadoJsonParaLosMismosParametros): las tope=3 filas ocupan 7-9, la
+        // fila 10 debe quedar vacía.
+        const int primeraFilaDeDatos = 7;
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.False(hoja.Row(primeraFilaDeDatos + i).IsEmpty());
+        }
+        Assert.True(hoja.Row(primeraFilaDeDatos + 3).IsEmpty());
     }
 }
