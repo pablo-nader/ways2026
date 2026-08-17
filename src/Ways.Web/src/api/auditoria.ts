@@ -1,10 +1,12 @@
 /**
  * Cliente de `GET /api/auditoria` + `/export` (Slice 5/6) y ahora también el cliente JSON
  * (`clienteDeAuditoria`, Slice 7) consumido por `Auditoria.tsx`. `FiltrosDeExportacionDeAuditoria`
- * (export, Slice 6) y `FiltrosDeConsultaDeAuditoria` (JSON, Slice 7) son shapes de pantalla
- * distintos, mismo criterio que `reportes.ts` (`FiltrosDeHistoricoDeCajas` vs. el query del
- * export): los tipos de filtro propios de un dominio viven en el archivo del dominio, nunca en
- * `tipos.ts` — ahí solo viven los DTOs espejo del backend (`FiltrosDeAuditoria`/
+ * (export, Slice 6) y `FiltrosDeConsultaDeAuditoria` (JSON, Slice 7) comparten los mismos 7
+ * filtros de alcance vía `FiltrosDeAlcanceDeAuditoria`/`construirQueryDeAlcanceDeAuditoria`
+ * (judgment-day ronda 1, finding 1) — `FiltrosDeConsultaDeAuditoria` solo suma `pagina`/`tamanio`,
+ * propios de la ruta JSON. Mismo criterio que `reportes.ts` (`FiltrosDeHistoricoDeCajas` vs. el
+ * query del export): los tipos de filtro propios de un dominio viven en el archivo del dominio,
+ * nunca en `tipos.ts` — ahí solo viven los DTOs espejo del backend (`FiltrosDeAuditoria`/
  * `FilaDeAuditoria`/`PaginaDeAuditoria`, `dto-contract-honesty`, design decisión 8/Orchestrator
  * Decision 8).
  *
@@ -33,11 +35,15 @@ function fechaIsoConOffset(fechaIso: string, horaLimite: string): string {
   return `${fechaIso}T${horaLimite}${desplazamientoUtcLocal(anio, mes, dia)}`
 }
 
-/** Filtros del export de auditoría — `desde`/`hasta` son OBLIGATORIOS acá (a diferencia del
- * futuro `GET /api/auditoria` JSON, Slice 7): regla de la casa del export + nombre de archivo
- * determinístico (mismo criterio que `historicoDeCajas`/`tesoreria` en `reportes.ts`). El resto
- * replica 1:1 los 5 filtros opcionales de `FiltrosDeAuditoria` (backend, Slice 5). */
-export type FiltrosDeExportacionDeAuditoria = {
+/** Filtros compartidos por AMBAS superficies de `/api/auditoria` (JSON y export) — mismo shape,
+ * mismo builder (`construirQueryDeAlcanceDeAuditoria` abajo), mismo criterio de guardas que
+ * `construirQueryDeAlcanceDeCajas` (`reportes.ts:177`): un único lugar donde vive la guarda de
+ * `desde`/`hasta` vacíos, para que el caso vacío quede resuelto igual en los dos lados por
+ * construcción — dos builders divergentes (judgment-day, ronda 1, finding 1) dejaban el caso
+ * vacío guardado en la consulta JSON pero NO en el export, que mandaba
+ * `desde=...T00:00:00+NaN:NaN` (`fechaIsoConOffset` sobre un string vacío) — un `DateTimeOffset`
+ * malformado que el servidor rechaza con 400. */
+export type FiltrosDeAlcanceDeAuditoria = {
   desde: string
   hasta: string
   accion: string | null
@@ -47,10 +53,10 @@ export type FiltrosDeExportacionDeAuditoria = {
   idPuntoVenta: number | null
 }
 
-function construirQueryDeExportacionDeAuditoria(filtros: FiltrosDeExportacionDeAuditoria): string {
+function construirQueryDeAlcanceDeAuditoria(filtros: FiltrosDeAlcanceDeAuditoria): string {
   const parametros = new URLSearchParams()
-  parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
-  parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
+  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
+  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
   if (filtros.accion !== null) parametros.set('accion', filtros.accion)
   if (filtros.idActor !== null) parametros.set('idActor', String(filtros.idActor))
   if (filtros.entidad !== null) parametros.set('entidad', filtros.entidad)
@@ -59,11 +65,28 @@ function construirQueryDeExportacionDeAuditoria(filtros: FiltrosDeExportacionDeA
   return `?${parametros.toString()}`
 }
 
+/** Filtros del export de auditoría — mismo shape que `FiltrosDeAlcanceDeAuditoria`.
+ * `AuditoriaEndpoints.cs:44` (`/export`) declara `DateTimeOffset desde, DateTimeOffset hasta` SIN
+ * `?` — a diferencia de `/` (Slice 7, ambos opcionales) — así que el servidor rechaza esta ruta
+ * con `desde`/`hasta` vacíos. Decisión de producto (judgment-day, ronda 1, finding 1): con
+ * filtros de fecha vacíos, `Auditoria.tsx` deshabilita el botón de descarga
+ * (`puedeExportarAuditoria` abajo) en vez de emitir una URL que el servidor va a rechazar. El
+ * guard de `construirQueryDeAlcanceDeAuditoria` sigue aplicando igual acá como defensa en
+ * profundidad — con el botón deshabilitado, esta rama no debería ejecutarse en producción. */
+export type FiltrosDeExportacionDeAuditoria = FiltrosDeAlcanceDeAuditoria
+
+/** Habilita el botón de descarga de `Auditoria.tsx` solo cuando el rango está completo —
+ * `/export` exige `desde`/`hasta` no nulos (`AuditoriaEndpoints.cs:44`), a diferencia de la
+ * consulta JSON (`/`, ambos opcionales). */
+export function puedeExportarAuditoria(filtros: { desde: string; hasta: string }): boolean {
+  return filtros.desde !== '' && filtros.hasta !== ''
+}
+
 /** Misma convención de `reportes.ts` (`rutasDeExportacion.<dominio>(filtros)`), en su propio
  * módulo. */
 export const rutasDeExportacion = {
   auditoria: (filtros: FiltrosDeExportacionDeAuditoria) =>
-    `/auditoria/export${construirQueryDeExportacionDeAuditoria(filtros)}&formato=xlsx`,
+    `/auditoria/export${construirQueryDeAlcanceDeAuditoria(filtros)}&formato=xlsx`,
 }
 
 // ---- Cliente JSON de `GET /api/auditoria` (Slice 7, `Auditoria.tsx`) --------------------------
@@ -72,17 +95,11 @@ export const rutasDeExportacion = {
  * (`reportes.ts`): `desde`/`hasta` en formato `input[type=date]` (`YYYY-MM-DD`), a diferencia de
  * `FiltrosDeAuditoria` (`tipos.ts`, el DTO crudo del backend, `DateTimeOffset?` ISO completo) —
  * `construirQueryDeConsultaDeAuditoria` hace la conversión recién al armar el query string, mismo
- * criterio que `construirQueryDeExportacionDeAuditoria` arriba. `desde`/`hasta` vacíos SÍ están
+ * criterio que `construirQueryDeAlcanceDeAuditoria` arriba. `desde`/`hasta` vacíos SÍ están
  * permitidos acá (a diferencia del export, que los exige): el listado JSON no necesita un rango
- * acotado para nombrar un archivo. */
-export type FiltrosDeConsultaDeAuditoria = {
-  desde: string
-  hasta: string
-  accion: string | null
-  idActor: number | null
-  entidad: string | null
-  idEntidad: number | null
-  idPuntoVenta: number | null
+ * acotado para nombrar un archivo — el botón de descarga se deshabilita en ese caso
+ * (`puedeExportarAuditoria`). */
+export type FiltrosDeConsultaDeAuditoria = FiltrosDeAlcanceDeAuditoria & {
   pagina: number
   tamanio: number
 }
@@ -108,16 +125,12 @@ export function filtrosDeAuditoriaVacios(): FiltrosDeConsultaDeAuditoria {
 /** Query compartido de `GET /api/auditoria` — `dto-contract-honesty`: cada parámetro solo se
  * agrega si `AuditoriaEndpoints.cs` lo lee (`desde, hasta, accion, idActor, entidad, idEntidad,
  * idPuntoVenta, pagina, tamanio`, todos opcionales salvo pagina/tamanio con default del propio
- * endpoint — acá se mandan siempre explícitos, mismo criterio que `construirQueryDeHistoricoDeCajas`). */
-function construirQueryDeConsultaDeAuditoria(filtros: FiltrosDeConsultaDeAuditoria): string {
-  const parametros = new URLSearchParams()
-  if (filtros.desde) parametros.set('desde', fechaIsoConOffset(filtros.desde, '00:00:00'))
-  if (filtros.hasta) parametros.set('hasta', fechaIsoConOffset(filtros.hasta, '23:59:59.999'))
-  if (filtros.accion !== null) parametros.set('accion', filtros.accion)
-  if (filtros.idActor !== null) parametros.set('idActor', String(filtros.idActor))
-  if (filtros.entidad !== null) parametros.set('entidad', filtros.entidad)
-  if (filtros.idEntidad !== null) parametros.set('idEntidad', String(filtros.idEntidad))
-  if (filtros.idPuntoVenta !== null) parametros.set('idPuntoVenta', String(filtros.idPuntoVenta))
+ * endpoint). Los 7 filtros de alcance vienen de `construirQueryDeAlcanceDeAuditoria` (mismo
+ * builder que usa el export, arriba) — `pagina`/`tamanio` son propios de esta ruta y no viajan al
+ * export, mismo criterio que `construirQueryDeHistoricoDeCajas`/`construirQueryDeAlcanceDeCajas`
+ * (`reportes.ts:177-189`). */
+export function construirQueryDeConsultaDeAuditoria(filtros: FiltrosDeConsultaDeAuditoria): string {
+  const parametros = new URLSearchParams(construirQueryDeAlcanceDeAuditoria(filtros).slice(1))
   parametros.set('pagina', String(filtros.pagina))
   parametros.set('tamanio', String(filtros.tamanio))
   return `?${parametros.toString()}`

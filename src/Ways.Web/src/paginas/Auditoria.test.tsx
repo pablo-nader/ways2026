@@ -174,6 +174,29 @@ describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
     expect(within(celdaPv).getByText('—')).toBeInTheDocument()
   })
 
+  // judgment-day ronda 1, finding 1: `/auditoria/export` exige desde/hasta no vacíos
+  // (AuditoriaEndpoints.cs: DateTimeOffset sin `?`) — con cualquiera de las dos fechas vacía, el
+  // botón queda deshabilitado con el motivo visible en vez de mandar una descarga que el servidor
+  // rechaza.
+  it('con Desde o Hasta vacíos, el botón de descarga queda deshabilitado con el motivo visible', async () => {
+    mockearRutasBase()
+    const usuario = userEvent.setup()
+    renderAuditoria()
+
+    await screen.findByText('#41')
+    expect(screen.getByRole('button', { name: 'Descargar' })).toBeEnabled()
+
+    await usuario.clear(screen.getByLabelText('Desde'))
+
+    expect(screen.getByRole('button', { name: 'Descargar' })).toBeDisabled()
+    expect(screen.getByText('Completá Desde y Hasta para descargar.')).toBeInTheDocument()
+
+    await usuario.type(screen.getByLabelText('Desde'), '2026-08-05')
+    await usuario.clear(screen.getByLabelText('Hasta'))
+
+    expect(screen.getByRole('button', { name: 'Descargar' })).toBeDisabled()
+  })
+
   it('el botón de descarga llama a rutasDeExportacion.auditoria con el filtro actual', async () => {
     mockearRutasBase()
     const usuario = userEvent.setup()

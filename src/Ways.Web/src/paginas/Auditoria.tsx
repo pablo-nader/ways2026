@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
   clienteDeAuditoria,
   filtrosDeAuditoriaVacios,
+  puedeExportarAuditoria,
   rutasDeExportacion,
   type FiltrosDeConsultaDeAuditoria,
 } from '../api/auditoria'
@@ -232,9 +233,16 @@ export function Auditoria() {
                 idPuntoVenta: filtros.idPuntoVenta,
               })}
               etiqueta="Descargar"
+              disabled={!puedeExportarAuditoria(filtros)}
               onError={setErrorDescarga}
               onInicio={() => setErrorDescarga('')}
             />
+            {/* `/auditoria/export` exige desde/hasta no vacíos (AuditoriaEndpoints.cs) — con
+                cualquiera de las dos fechas vacía, el botón queda deshabilitado con el motivo
+                visible en vez de mandar una descarga que el servidor va a rechazar. */}
+            {!puedeExportarAuditoria(filtros) && (
+              <div className="small text-muted mt-1">Completá Desde y Hasta para descargar.</div>
+            )}
           </div>
         </div>
 
