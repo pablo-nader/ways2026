@@ -110,9 +110,50 @@ phases:
       conserva su titulo original con cuerpo MODIFIED (convencion
       MODIFIED-not-RENAMED).
   design:
-    status: pending
+    status: done
     artifact: design.md
     depends_on: [propose]
+    notes: >-
+      16 decisiones con call sites archivo:linea, cero DDL nuevo (gate
+      intocado). Nucleo: EscriturasDeCuentaCorrienteProveedor estatica
+      (copia estructural de EscriturasDeCuentaCorriente) con UPDATE ...
+      RETURNING crudo y ParametrosDeComando; los RETURNING autoritativos
+      de compras se ENSANCHAN (+id_proveedor, total) en vez de pre-lecturas;
+      pago despues del SaveChangesAsync (id_gasto es identity); apertura
+      inalcanzable en 3 capas; Configuration espejo sin AK/self-FK con los
+      6 indices nombrados a mano. Orden de locks verificado linea por
+      linea con REFINAMIENTO aceptado: el FK check del INSERT de gastos
+      toma FOR KEY SHARE sobre proveedores antes del FOR NO KEY UPDATE
+      del saldo — modos no conflictivos en PG, mismo shape que el checkout
+      con clientes; el invariante se enuncia "proveedores es el ultimo
+      lock de fila TOMADO FOR UPDATE". 28 mutation targets colocados por
+      slice + fila de no-regresion de VentasCheckoutTests. 6 slices
+      ratificados ~2250 lineas.
+      TENSIONES ARBITRADAS POR EL ORQUESTADOR (siguen a las OD 1-6):
+      (OD7/T1) estado de pago por compra: se RECHAZAN ambas formulas — la
+      del proposal (SUM importe <= 0: una compra pre-cutover sin movimiento
+      propio leeria 'pagada') Y la del design (solo movimientos imputados:
+      un pago parcial pre-cutover se pierde). Formula vinculante:
+      pagado(X) = SUMA de gastos ligados a X (el mecanismo retirado sigue
+      siendo verdad para TODO el tiempo porque el pago SIGUE siendo un
+      gasto — decision 2) + SUMA(-importe) de movimientos tipo 'ajuste'
+      imputados a X; los movimientos 'pago' NO se cuentan (espejan un
+      gasto ya contado: double-count). Fidelidad pre-cutover preservada y
+      los ajustes nuevos afectan el estado. (OD8/T2) anulacion de compra
+      pre-cutover: fallback del design APROBADO — contramovimiento
+      importe = -(importe del movimiento 'compra' si existe, si no
+      -total de la compra); la deuda pre-cutover esta dentro del asiento
+      de apertura y se revierte igual. (OD9/T3) estado de cuenta PAGINADO
+      (patron etapa 14: OFFSET + desempate id_movimiento DESC, orden
+      fecha DESC, id DESC del design d10); si el spec transcribio la
+      forma sin paginar de la 7, tasks lo reconcilia a paginado. (T4)
+      /export sibling: ya arbitrado FUERA en la fase spec (OD6); el read
+      model queda export-ready sin costearlo. (T5) POST /ajustes
+      top-level APROBADO (honra la decision 8 del proposal sobre el
+      shape de rutas de la 7). (T6) STALE: el design leyo main PRE-merge
+      del PR #133 — EscriturasDeCuentaCorriente ya usa ParametrosDeComando
+      (verificado por grep post-merge); la decision 3 del design queda
+      alineada sin accion.
   tasks:
     status: pending
     artifact: tasks.md
