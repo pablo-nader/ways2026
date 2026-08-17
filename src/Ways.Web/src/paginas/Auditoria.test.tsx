@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Auditoria } from './Auditoria'
+import { Auditoria, etiquetaDeAccion } from './Auditoria'
 import type { FilaDeAuditoria, PaginaDeAuditoria, PuntoVentaListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -78,6 +78,21 @@ beforeEach(() => {
   apiGetMock.mockReset()
   apiDescargarMock.mockReset()
   apiDescargarMock.mockResolvedValue(undefined)
+})
+
+// ---- etiquetaDeAccion: helper puro, sin DOM (web-descriptor-tests) ----------------------------
+
+describe('etiquetaDeAccion', () => {
+  it('una acción del catálogo devuelve su etiqueta en español', () => {
+    expect(etiquetaDeAccion('precio.cambio')).toBe('Cambio de precio')
+  })
+
+  // judgment-day ronda 2, juez A: el fallback `?? accion` (design decisión 15 — "una acción
+  // retirada deja rastro consultable") no tenía test. Mutation target: `?? accion` → `?? '—'` (o
+  // cualquier valor fijo) debe hacer fallar este test.
+  it('una acción NO catalogada (retirada) devuelve el código crudo, no un placeholder', () => {
+    expect(etiquetaDeAccion('modulo.retirado')).toBe('modulo.retirado')
+  })
 })
 
 describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
@@ -215,6 +230,21 @@ describe('Auditoria (stage-14-auditoria-trazabilidad, Slice 7)', () => {
     // catálogo, nunca el código crudo `precio.cambio` (scoped al `<td>`, "Cambio de precio"
     // también existe como `<option>` del filtro).
     expect(screen.getByRole('cell', { name: 'Cambio de precio' })).toBeInTheDocument()
+  })
+
+  // judgment-day ronda 2, juez A: el fallback de `etiquetaDeAccion` (`?? accion`, design decisión
+  // 15 — "una acción retirada deja rastro consultable") no tenía cobertura de componente. Una fila
+  // con una acción no catalogada debe mostrar el código crudo, no desaparecer ni romper el render.
+  it('una fila con una acción retirada del catálogo muestra el código crudo en la celda de Acción', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/auditoria?')) {
+        return Promise.resolve(paginaFixture([filaFixture({ idAuditoria: 502, accion: 'modulo.retirado' })]))
+      }
+      return undefined
+    })
+    renderAuditoria()
+
+    expect(await screen.findByRole('cell', { name: 'modulo.retirado' })).toBeInTheDocument()
   })
 
   // judgment-day ronda 1, finding 1: `/auditoria/export` exige desde/hasta no vacíos

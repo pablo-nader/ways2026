@@ -18,7 +18,10 @@ function formatearFechaHora(iso: string): string {
   return new Date(iso).toLocaleString('es-AR')
 }
 
-function etiquetaDeAccion(accion: string): string {
+/** Exportada para el test colocado (`Auditoria.test.tsx`, `web-descriptor-tests`). Fallback
+ * `?? accion` (design decisión 15): una acción retirada del catálogo deja rastro consultable —
+ * la fila muestra el código crudo (`modulo.retirado`) en vez de desaparecer o romper el render. */
+export function etiquetaDeAccion(accion: string): string {
   return CATALOGO_DE_ACCIONES_AUDITADAS.find((a) => a.valor === accion)?.etiqueta ?? accion
 }
 
