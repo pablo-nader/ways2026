@@ -95,6 +95,30 @@ public class ExportadorXlsxTests
         Assert.True(celdaDeNeto.Value.IsBlank);
     }
 
+    /// <summary>stage-14: <c>GeneradoEl</c> llega al exportador ya convertido a la zona del punto
+    /// de venta (invariante de <see cref="InstanteDeGeneracion"/>, aplicado en
+    /// <c>ContextoDeExportacionHttp.Construir</c>) — el exportador solo tiene que imprimir la hora
+    /// de pared que recibe, nunca volver a convertirla. Offset -03:00 con hora de pared 22:30 del
+    /// 5/8: si el exportador reconvirtiera (p. ej. leyendo <c>UtcDateTime</c>), imprimiría
+    /// 2026-08-06 01:30 en su lugar.</summary>
+    [Fact]
+    public void ElEncabezadoImprimeLaHoraDeParedDelOffsetRecibidoSinReconvertir()
+    {
+        var contexto = ContextoDePrueba with
+        {
+            GeneradoEl = new DateTimeOffset(2026, 8, 5, 22, 30, 0, TimeSpan.FromHours(-3))
+        };
+        IReadOnlyList<IReadOnlyList<Celda>> filas =
+            [[Celda.Texto("2026-08"), Celda.Moneda(700m), Celda.Fecha(new DateOnly(2026, 8, 12))]];
+        var tabla = new TablaExportable("Hoja", contexto, Columnas, filas);
+
+        using var libro = GenerarYReabrir(tabla);
+        var textoEncabezado = libro.Worksheets.First().Cell(4, 1).GetString();
+
+        Assert.Contains("Generado el 2026-08-05 22:30", textoEncabezado);
+        Assert.DoesNotContain("2026-08-06", textoEncabezado);
+    }
+
     [Fact]
     public void ElEncabezadoOcupaLasFilas1A4YLaTablaArrancaEnLaFila6()
     {

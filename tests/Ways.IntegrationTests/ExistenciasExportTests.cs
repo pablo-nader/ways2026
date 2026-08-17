@@ -248,6 +248,36 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Contains($"filename*=UTF-8''{nombreEsperado}", disposicion);
     }
 
+    /// <summary>stage-14: prueba la conversión de <c>reloj.Ahora</c> a la zona resuelta del PV en
+    /// <c>ContextoDeExportacionHttp.Construir</c> — el mismo reloj fijado que
+    /// <see cref="UnSupervisorExportaLasExistenciasConUnNombreDeArchivoDeterministico"/> usa para
+    /// el nombre de archivo (22:30 ART del 5/8, 01:30 UTC del 6/8), acá aplicado al encabezado del
+    /// XLSX. Día Y hora discriminan: si <c>GeneradoEl</c> quedara en UTC crudo, la fila 4
+    /// imprimiría "2026-08-06 01:30" en lugar de "2026-08-05 22:30".</summary>
+    [Fact]
+    public async Task ElEncabezadoImprimeLaHoraDeParedDeLaZonaDelPuntoDeVenta()
+    {
+        using var factoryConRelojFijo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddSingleton<IRelojDelSistema>(
+                    new RelojFijo(new DateTimeOffset(2026, 8, 6, 1, 30, 0, TimeSpan.Zero)))));
+
+        var ctx = await PrepararAsync(
+            nameof(ElEncabezadoImprimeLaHoraDeParedDeLaZonaDelPuntoDeVenta), factoryConRelojFijo);
+        var idArticulo = await SembrarArticuloAsync(ctx, "Yerba mate 1kg");
+        await SembrarStockAsync(ctx, idArticulo, 5m);
+
+        var respuesta = await LlamarExportAsync(ctx.Supervisor, ctx.IdPuntoVenta);
+        var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var texto = libro.Worksheets.First().Cell(4, 1).GetString();
+
+        Assert.Contains("Generado el 2026-08-05 22:30", texto);
+        Assert.DoesNotContain("2026-08-06", texto);
+    }
+
     // ---- task 9.10: rol un escalón debajo del gate, mitad export ---------------------------------
 
     [Fact]
