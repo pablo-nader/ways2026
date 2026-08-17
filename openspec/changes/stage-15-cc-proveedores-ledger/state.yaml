@@ -1,0 +1,61 @@
+change: stage-15-cc-proveedores-ledger
+phase: explore
+status: done
+artifact_store: openspec
+execution_mode: automatic-autonomous
+delivery_strategy: auto-chain
+chain_strategy: stacked-to-main
+db_gate: PENDIENTE
+phases:
+  explore:
+    status: done
+    artifact: explore.md
+    depends_on: []
+    notes: >-
+      Espejo de la etapa 7 en PATRON, no en paridad legacy (alsina E8 es ABM
+      pelado, nunca hubo CC de proveedores). Saldo actual = derivado
+      embrionario (ServicioDeSaldoDeProveedor, dos agregados EF, sin lock);
+      el requirement "Saldo Is A Derived Read, Never Persisted" del spec
+      saldo-de-proveedor se retira explicitamente (precedente etapa 7 con
+      consumo-cuenta-corriente). Ni ConfirmarAsync ni gastos lockean
+      proveedores hoy: orden total nuevo a pinnear turno -> compra header ->
+      proveedor -> ledger INSERT. PRIMERA etapa NO-aditiva del programa:
+      proveedores.saldo requiere backfill. Modelo tentativo:
+      movimientos_cuenta_corriente_proveedor (operativa, 5 FKs / 5 indices
+      de soporte ForeignKeyIndexConvention contados + AK, id_empleado
+      simple no-composite por el sentinel NULL de staff de plataforma).
+      Cinco Orchestrator Decisions registradas al pie del explore.md para
+      formalizar en el proposal: (1) apertura por ajuste con la formula
+      exacta del spec vigente, no replay sintetico; (2) el pago sigue
+      siendo gastos (turno-scoped, visible al arqueo) con FK id_gasto y AK
+      (Id,IdTenant) en gastos si falta; (3) reliquidacion FUERA de alcance;
+      (4) retenciones/NC diferidas, tipo minimo compra|pago|ajuste;
+      (5) contramovimiento en anulacion de compra EN alcance.
+  propose:
+    status: pending
+    artifact: proposal.md
+    depends_on: [explore]
+  spec:
+    status: pending
+    artifact: specs/
+    depends_on: [propose]
+  design:
+    status: pending
+    artifact: design.md
+    depends_on: [propose]
+  tasks:
+    status: pending
+    artifact: tasks.md
+    depends_on: [spec, design]
+  apply:
+    status: pending
+    artifact: tasks.md + PRs
+    depends_on: [tasks]
+  verify:
+    status: pending
+    artifact: verify-report.md
+    depends_on: [apply]
+  archive:
+    status: pending
+    artifact: archive-report.md
+    depends_on: [verify]
