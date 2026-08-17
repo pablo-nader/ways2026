@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using ClosedXML.Excel;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
 using Ways.Application.Exportacion;
@@ -58,9 +60,13 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         int IdCliente, int IdEmpleadoAdmin, int IdTipoComprobanteTx, int IdArea, int IdAlicuotaIva, int IdListaPrecio,
         int IdMedioPagoEfectivo, int IdProveedor);
 
-    private async Task<Contexto> PrepararAsync(string nombre)
+    /// <summary>Parametrizado por <paramref name="factory"/> (mismo idioma que
+    /// <c>ReportesVentasResumenExportTests.PrepararAsync</c>): las pruebas de tope de esta clase
+    /// usan un <c>WithWebHostBuilder</c> propio para bajar <c>OpcionesDeExportacion.TopeDeFilas</c>
+    /// sin afectar al resto de la clase, que sigue pasando la <c>fixture</c> compartida.</summary>
+    private async Task<Contexto> PrepararAsync(string nombre, WebApplicationFactory<Program> factory)
     {
-        var root = fixture.CreateClient();
+        var root = factory.CreateClient();
         var loginRoot = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
         Assert.Equal(HttpStatusCode.OK, loginRoot.StatusCode);
 
@@ -70,13 +76,13 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
         var resultado = (await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>())!;
 
-        var admin = fixture.CreateClient();
+        var admin = factory.CreateClient();
         var loginAdmin = await admin.PostAsJsonAsync(
             "/api/auth/login", new SolicitudDeLogin(mailAdmin, resultado.PasswordTemporal));
         Assert.Equal(HttpStatusCode.OK, loginAdmin.StatusCode);
 
-        var supervisor = await CrearYLoguearAsync(admin, nombre, "supervisor", RolConocido.Supervisor);
-        var vendedor = await CrearYLoguearAsync(admin, nombre, "vendedor", RolConocido.Vendedor);
+        var supervisor = await CrearYLoguearAsync(admin, factory, nombre, "supervisor", RolConocido.Supervisor);
+        var vendedor = await CrearYLoguearAsync(admin, factory, nombre, "vendedor", RolConocido.Vendedor);
 
         await using var dbTenant = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, resultado.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -111,14 +117,15 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
             idMedioEfectivo, proveedor.Id);
     }
 
-    private async Task<HttpClient> CrearYLoguearAsync(HttpClient admin, string nombre, string sufijo, RolConocido rol)
+    private static async Task<HttpClient> CrearYLoguearAsync(
+        HttpClient admin, WebApplicationFactory<Program> factory, string nombre, string sufijo, RolConocido rol)
     {
         var corto = Guid.NewGuid().ToString("N")[..8];
         var mail = $"{nombre.ToLowerInvariant()}-{sufijo}@ways.test";
         var alta = await admin.PostAsJsonAsync("/api/usuarios", new CrearUsuario($"{sufijo}-{corto}", mail, (int)rol, PasswordOtroRol));
         Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
 
-        var cliente = fixture.CreateClient();
+        var cliente = factory.CreateClient();
         var login = await cliente.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mail, PasswordOtroRol));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         return cliente;
@@ -307,12 +314,19 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         return new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
     }
 
+    /// <summary>Sibling de <see cref="DescargarLibroAsync"/> que NO valida la respuesta — las
+    /// pruebas de rechazo (formato no soportado, tope superado) necesitan el <see
+    /// cref="HttpResponseMessage"/> crudo para inspeccionar el 400 y el ProblemDetails, algo que
+    /// <see cref="DescargarLibroAsync"/> no puede devolver porque exige 200 con el assert.</summary>
+    private static Task<HttpResponseMessage> LlamarExportSinValidarAsync(HttpClient cliente, string ruta) =>
+        cliente.GetAsync(ruta);
+
     // ---- task 2.4: equality tests (uno por export nuevo) ------------------------------------------
 
     [Fact]
     public async Task ElExportDePorPuntoVentaEsIgualAlEndpointJson()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDePorPuntoVentaEsIgualAlEndpointJson));
+        var ctx = await PrepararAsync(nameof(ElExportDePorPuntoVentaEsIgualAlEndpointJson), fixture);
         await SembrarComprobanteAsync(ctx, 300m);
 
         var jsonRespuesta = await ctx.Admin.GetAsync($"/api/reportes/ventas/por-punto-venta?{Rango(ctx.IdEmpresa)}");
@@ -339,7 +353,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task ElExportDePorVendedorEsIgualAlEndpointJson()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDePorVendedorEsIgualAlEndpointJson));
+        var ctx = await PrepararAsync(nameof(ElExportDePorVendedorEsIgualAlEndpointJson), fixture);
         await SembrarComprobanteAsync(ctx, 500m);
 
         var jsonRespuesta = await ctx.Admin.GetAsync($"/api/reportes/ventas/por-vendedor?{Rango(ctx.IdEmpresa)}");
@@ -366,7 +380,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task ElExportDePorMedioPagoEsIgualAlEndpointJson()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDePorMedioPagoEsIgualAlEndpointJson));
+        var ctx = await PrepararAsync(nameof(ElExportDePorMedioPagoEsIgualAlEndpointJson), fixture);
         var idComprobante = await SembrarComprobanteAsync(ctx, 400m);
         await SembrarPagoAsync(ctx, idComprobante, 400m);
 
@@ -393,7 +407,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task ElExportDeArticulosTopEsIgualAlEndpointJson()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDeArticulosTopEsIgualAlEndpointJson));
+        var ctx = await PrepararAsync(nameof(ElExportDeArticulosTopEsIgualAlEndpointJson), fixture);
         var idArticulo = await SembrarArticuloAsync(ctx, "Articulo export top");
         await SembrarLineaAsync(ctx, idArticulo, "Articulo export top", 2m, 200m);
 
@@ -421,7 +435,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task ElExportDeComprasPorProveedorEsIgualAlEndpointJson()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDeComprasPorProveedorEsIgualAlEndpointJson));
+        var ctx = await PrepararAsync(nameof(ElExportDeComprasPorProveedorEsIgualAlEndpointJson), fixture);
         await SembrarCompraAsync(ctx, 1000m);
 
         var jsonRespuesta = await ctx.Admin.GetAsync($"/api/reportes/compras/por-proveedor?{Rango(ctx.IdEmpresa)}");
@@ -448,7 +462,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task ElExportDeGastosResumenEsIgualAlEndpointJson()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDeGastosResumenEsIgualAlEndpointJson));
+        var ctx = await PrepararAsync(nameof(ElExportDeGastosResumenEsIgualAlEndpointJson), fixture);
         var idTurno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
         await SembrarGastoAsync(ctx, idTurno, 700m);
 
@@ -475,7 +489,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task ElExportDeRentabilidadEsIgualAlEndpointJson()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDeRentabilidadEsIgualAlEndpointJson));
+        var ctx = await PrepararAsync(nameof(ElExportDeRentabilidadEsIgualAlEndpointJson), fixture);
         var idArticulo = await SembrarArticuloAsync(ctx, "Articulo export rentabilidad");
         await SembrarLineaAsync(ctx, idArticulo, "Articulo export rentabilidad", 1m, 300m, costoUnitario: 100m);
 
@@ -505,7 +519,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task ElExportDeComisionesEsIgualAlEndpointJson()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDeComisionesEsIgualAlEndpointJson));
+        var ctx = await PrepararAsync(nameof(ElExportDeComisionesEsIgualAlEndpointJson), fixture);
         await ConfigurarComisionAsync(ctx, "10");
         await SembrarComprobanteAsync(ctx, 1000m);
 
@@ -542,7 +556,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [MemberData(nameof(RutasSoloLecturaDeReportes))]
     public async Task UnVendedorEsRechazadoEnLosSeisExportsDeLecturaDeReportes(string ruta)
     {
-        var ctx = await PrepararAsync(nameof(UnVendedorEsRechazadoEnLosSeisExportsDeLecturaDeReportes) + ruta.Replace("/", "-"));
+        var ctx = await PrepararAsync(nameof(UnVendedorEsRechazadoEnLosSeisExportsDeLecturaDeReportes) + ruta.Replace("/", "-"), fixture);
 
         var respuesta = await ctx.Vendedor.GetAsync(
             $"/api/reportes/{ruta}?{Rango(ctx.IdEmpresa)}&granularidad=Dia&formato=xlsx");
@@ -564,7 +578,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task UnSupervisorEsRechazadoEnElExportDeRentabilidad()
     {
-        var ctx = await PrepararAsync(nameof(UnSupervisorEsRechazadoEnElExportDeRentabilidad));
+        var ctx = await PrepararAsync(nameof(UnSupervisorEsRechazadoEnElExportDeRentabilidad), fixture);
 
         var respuesta = await ctx.Supervisor.GetAsync($"/api/reportes/rentabilidad/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
 
@@ -574,7 +588,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task UnSupervisorEsRechazadoEnElExportDeComisiones()
     {
-        var ctx = await PrepararAsync(nameof(UnSupervisorEsRechazadoEnElExportDeComisiones));
+        var ctx = await PrepararAsync(nameof(UnSupervisorEsRechazadoEnElExportDeComisiones), fixture);
 
         var respuesta = await ctx.Supervisor.GetAsync($"/api/reportes/comisiones/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
 
@@ -592,7 +606,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task ElExportDeRentabilidadCargaElBloqueDeCobertura()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDeRentabilidadCargaElBloqueDeCobertura));
+        var ctx = await PrepararAsync(nameof(ElExportDeRentabilidadCargaElBloqueDeCobertura), fixture);
         var idArticulo = await SembrarArticuloAsync(ctx, "Articulo cobertura");
 
         for (var i = 0; i < 7; i++)
@@ -634,7 +648,7 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
     [Fact]
     public async Task ElExportDeComisionesLlevaLaEtiquetaProvisional()
     {
-        var ctx = await PrepararAsync(nameof(ElExportDeComisionesLlevaLaEtiquetaProvisional));
+        var ctx = await PrepararAsync(nameof(ElExportDeComisionesLlevaLaEtiquetaProvisional), fixture);
         await SembrarComprobanteAsync(ctx, 100m);
 
         var jsonRespuesta = await ctx.Admin.GetAsync($"/api/reportes/comisiones?{Rango(ctx.IdEmpresa)}");
@@ -647,5 +661,438 @@ public class ExportacionDeReportesTests(WaysApiFixture fixture) : IClassFixture<
         var hoja = libro.Worksheets.First();
 
         Assert.Contains("PROVISIONAL", hoja.Cell(4, 1).GetString());
+    }
+
+    // ---- sweep GAP 2: FormatoDeExportacion.Parsear por cada una de las ocho rutas -----------------
+
+    public static readonly TheoryData<string> RutasDeLosOchoExports = new()
+    {
+        "ventas/por-punto-venta/export", "ventas/por-vendedor/export", "ventas/por-medio-pago/export",
+        "articulos/top/export", "compras/por-proveedor/export", "gastos/resumen/export",
+        "rentabilidad/export", "comisiones/export"
+    };
+
+    /// <summary>Cierra el gap de <see cref="FormatoDeExportacion.Parsear"/> para los ocho export
+    /// siblings de esta clase — ninguno lo tenía cubierto (esta clase no tenía ni un test de
+    /// formato): borrar el <c>Parsear(formato)</c> de CUALQUIERA de las ocho rutas de
+    /// <c>ReportesEndpoints.MapearReportes</c> deja pasar un <c>formato=pdf</c> con 200 XLSX en vez
+    /// de 400. Un solo <c>[Theory]</c> con un caso por ruta (en vez de ocho <c>[Fact]</c>s) porque
+    /// las ocho comparten los mismos parámetros obligatorios (idEmpresa,
+    /// desde, hasta, formato); <c>granularidad=Dia</c> viaja siempre en la query aunque solo
+    /// <c>gastos/resumen/export</c> la exija — minimal API ignora los query params no declarados
+    /// por una ruta, así que no rompe a las otras siete. Sin datos sembrados: <c>Parsear</c> corta
+    /// ANTES de tocar el servicio de reportes, mismo criterio que el resto del barrido.</summary>
+    [Theory]
+    [MemberData(nameof(RutasDeLosOchoExports))]
+    public async Task UnFormatoNoSoportadoRechazaConProblemDetailsEnCadaUnoDeLosOchoExports(string ruta)
+    {
+        var ctx = await PrepararAsync(
+            nameof(UnFormatoNoSoportadoRechazaConProblemDetailsEnCadaUnoDeLosOchoExports) + ruta.Replace("/", "-"),
+            fixture);
+
+        var respuesta = await LlamarExportSinValidarAsync(
+            ctx.Admin, $"/api/reportes/{ruta}?{Rango(ctx.IdEmpresa)}&granularidad=Dia&formato=pdf");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("formato_no_soportado", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- sweep GAP 3: el único GuardaDeTope.Exigir AGREGADO de cada ruta, pineado de ambos lados --
+    //
+    // Las ocho rutas de este archivo son AGREGADAS (un solo Exigir sobre tabla.Filas.Count, sin
+    // .Take ni COUNT(*) propio) — GAP 1 del barrido no aplica. Cada par de abajo reusa EXACTAMENTE
+    // la siembra de su test de igualdad (task 2.4), sin inventar siembra nueva: el tope se baja
+    // hasta calzar justo con la cantidad de filas que esa siembra ya produce.
+    //   - por-punto-venta / por-vendedor / por-medio-pago / articulos-top / comisiones: sin fila de
+    //     totales (ExportacionDeReportes.De no le agrega una) — 1 comprobante/línea sembrada ⇒
+    //     tabla.Filas.Count == 1 ⇒ tope éxito = 1, tope rechazo = 0.
+    //   - compras-por-proveedor / gastos-resumen / rentabilidad: SÍ agregan una fila de totales
+    //     (ExportacionDeReportes.De) — 1 fila de negocio sembrada ⇒ tabla.Filas.Count == 2 (dato +
+    //     totales) ⇒ tope éxito = 2, tope rechazo = 1.
+
+    /// <summary>Discrimina el ÚNICO <c>GuardaDeTope.Exigir</c> de <c>ventas/por-punto-venta/export</c>
+    /// del lado del ÉXITO: <c>ElExportDePorPuntoVentaEsIgualAlEndpointJson</c> siembra un
+    /// comprobante y <c>VentasPorPuntoVenta.Filas</c> trae exactamente 1 fila, sin fila de totales
+    /// (<c>ExportacionDeReportes.De(VentasPorPuntoVenta, …)</c> no le agrega una) ⇒
+    /// <c>tabla.Filas.Count == 1</c>. Con <c>TopeDeFilas = 1</c>, mutar el segundo argumento a
+    /// <c>tope - 1</c> sobrevive sin este test — la prueba de rechazo de abajo solo cubre el lado de
+    /// ARRIBA del tope.</summary>
+    [Fact]
+    public async Task UnaExportacionDePorPuntoVentaExactamenteEnElTopeSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 1)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDePorPuntoVentaExactamenteEnElTopeSeAceptaCompleta), factoryBajo);
+        await SembrarComprobanteAsync(ctx, 300m);
+
+        using var libro = await DescargarLibroAsync(
+            ctx.Admin, $"/api/reportes/ventas/por-punto-venta/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+        var hoja = libro.Worksheets.First();
+
+        Assert.False(hoja.Row(7).IsEmpty());
+        Assert.True(hoja.Row(8).IsEmpty());
+    }
+
+    /// <summary>Discrimina el mismo <c>Exigir</c> del lado del RECHAZO: con <c>TopeDeFilas = 0</c> la
+    /// única fila sembrada (1 &gt; 0) rechaza con la cantidad REAL en el título — sin este test,
+    /// borrar el <c>Exigir</c> completo de la ruta sobrevivía (esta clase no tenía ningún test de
+    /// tope hasta esta pasada del barrido).</summary>
+    [Fact]
+    public async Task UnaExportacionDePorPuntoVentaQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 0)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDePorPuntoVentaQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+        await SembrarComprobanteAsync(ctx, 300m);
+
+        var respuesta = await LlamarExportSinValidarAsync(
+            ctx.Admin, $"/api/reportes/ventas/por-punto-venta/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("tiene 1 filas", problema.GetProperty("title").GetString());
+    }
+
+    /// <summary>Mismo par que <c>por-punto-venta</c>, ruta <c>ventas/por-vendedor/export</c>: 1
+    /// comprobante sembrado (mismo criterio de <c>ElExportDePorVendedorEsIgualAlEndpointJson</c>) ⇒
+    /// <c>VentasPorVendedor.Filas.Count == 1</c>, sin totales ⇒ tope éxito 1 / rechazo 0.</summary>
+    [Fact]
+    public async Task UnaExportacionDePorVendedorExactamenteEnElTopeSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 1)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDePorVendedorExactamenteEnElTopeSeAceptaCompleta), factoryBajo);
+        await SembrarComprobanteAsync(ctx, 500m);
+
+        using var libro = await DescargarLibroAsync(
+            ctx.Admin, $"/api/reportes/ventas/por-vendedor/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+        var hoja = libro.Worksheets.First();
+
+        Assert.False(hoja.Row(7).IsEmpty());
+        Assert.True(hoja.Row(8).IsEmpty());
+    }
+
+    /// <summary>Contraparte de rechazo: <c>TopeDeFilas = 0</c> contra la misma fila única — sin
+    /// ningún test de tope previo en esta ruta, borrar el <c>Exigir</c> de
+    /// <c>ventas/por-vendedor/export</c> sobrevivía.</summary>
+    [Fact]
+    public async Task UnaExportacionDePorVendedorQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 0)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDePorVendedorQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+        await SembrarComprobanteAsync(ctx, 500m);
+
+        var respuesta = await LlamarExportSinValidarAsync(
+            ctx.Admin, $"/api/reportes/ventas/por-vendedor/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("tiene 1 filas", problema.GetProperty("title").GetString());
+    }
+
+    /// <summary>Mismo par, ruta <c>ventas/por-medio-pago/export</c>: 1 comprobante + 1 pago (mismo
+    /// criterio de <c>ElExportDePorMedioPagoEsIgualAlEndpointJson</c>) ⇒
+    /// <c>VentasPorMedioPago.Filas.Count == 1</c>, sin totales ⇒ tope éxito 1 / rechazo 0.</summary>
+    [Fact]
+    public async Task UnaExportacionDePorMedioPagoExactamenteEnElTopeSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 1)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDePorMedioPagoExactamenteEnElTopeSeAceptaCompleta), factoryBajo);
+        var idComprobante = await SembrarComprobanteAsync(ctx, 400m);
+        await SembrarPagoAsync(ctx, idComprobante, 400m);
+
+        using var libro = await DescargarLibroAsync(
+            ctx.Admin, $"/api/reportes/ventas/por-medio-pago/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+        var hoja = libro.Worksheets.First();
+
+        Assert.False(hoja.Row(7).IsEmpty());
+        Assert.True(hoja.Row(8).IsEmpty());
+    }
+
+    /// <summary>Contraparte de rechazo de <c>ventas/por-medio-pago/export</c>: <c>TopeDeFilas = 0</c>
+    /// contra la misma fila única — sin este par, la ruta no tenía ningún test de tope.</summary>
+    [Fact]
+    public async Task UnaExportacionDePorMedioPagoQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 0)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDePorMedioPagoQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+        var idComprobante = await SembrarComprobanteAsync(ctx, 400m);
+        await SembrarPagoAsync(ctx, idComprobante, 400m);
+
+        var respuesta = await LlamarExportSinValidarAsync(
+            ctx.Admin, $"/api/reportes/ventas/por-medio-pago/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("tiene 1 filas", problema.GetProperty("title").GetString());
+    }
+
+    /// <summary>Mismo par, ruta <c>articulos/top/export</c>: 1 artículo + 1 línea (mismo criterio de
+    /// <c>ElExportDeArticulosTopEsIgualAlEndpointJson</c>) ⇒ <c>TopArticulos.Articulos.Count == 1</c>,
+    /// sin totales ⇒ tope éxito 1 / rechazo 0.</summary>
+    [Fact]
+    public async Task UnaExportacionDeArticulosTopExactamenteEnElTopeSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 1)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeArticulosTopExactamenteEnElTopeSeAceptaCompleta), factoryBajo);
+        var idArticulo = await SembrarArticuloAsync(ctx, "Articulo tope top");
+        await SembrarLineaAsync(ctx, idArticulo, "Articulo tope top", 2m, 200m);
+
+        using var libro = await DescargarLibroAsync(
+            ctx.Admin, $"/api/reportes/articulos/top/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+        var hoja = libro.Worksheets.First();
+
+        Assert.False(hoja.Row(7).IsEmpty());
+        Assert.True(hoja.Row(8).IsEmpty());
+    }
+
+    /// <summary>Contraparte de rechazo de <c>articulos/top/export</c>: <c>TopeDeFilas = 0</c> contra
+    /// la misma fila única — sin este par, la ruta no tenía ningún test de tope.</summary>
+    [Fact]
+    public async Task UnaExportacionDeArticulosTopQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 0)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeArticulosTopQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+        var idArticulo = await SembrarArticuloAsync(ctx, "Articulo tope top rechazo");
+        await SembrarLineaAsync(ctx, idArticulo, "Articulo tope top rechazo", 2m, 200m);
+
+        var respuesta = await LlamarExportSinValidarAsync(
+            ctx.Admin, $"/api/reportes/articulos/top/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("tiene 1 filas", problema.GetProperty("title").GetString());
+    }
+
+    /// <summary>Ruta <c>compras/por-proveedor/export</c>: 1 compra (mismo criterio de
+    /// <c>ElExportDeComprasPorProveedorEsIgualAlEndpointJson</c>) ⇒ <c>PorProveedor.Count == 1</c>
+    /// MÁS la fila de totales que <c>ExportacionDeReportes.De(ComprasPorProveedor, …)</c> siempre
+    /// agrega (línea 166-171: <c>filas.Add([… "Total" …])</c>) ⇒ <c>tabla.Filas.Count == 2</c> ⇒
+    /// tope éxito 2 / rechazo 1. Fila 7 = dato, fila 8 = totales, fila 9 tiene que quedar vacía.</summary>
+    [Fact]
+    public async Task UnaExportacionDeComprasPorProveedorExactamenteEnElTopeSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 2)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeComprasPorProveedorExactamenteEnElTopeSeAceptaCompleta), factoryBajo);
+        await SembrarCompraAsync(ctx, 1000m);
+
+        using var libro = await DescargarLibroAsync(
+            ctx.Admin, $"/api/reportes/compras/por-proveedor/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+        var hoja = libro.Worksheets.First();
+
+        Assert.False(hoja.Row(7).IsEmpty());
+        Assert.False(hoja.Row(8).IsEmpty());
+        Assert.True(hoja.Row(9).IsEmpty());
+    }
+
+    /// <summary>Contraparte de rechazo de <c>compras/por-proveedor/export</c>: con
+    /// <c>TopeDeFilas = 1</c> las 2 filas reales (dato + totales) superan el tope — sin este par, la
+    /// ruta no tenía ningún test de tope.</summary>
+    [Fact]
+    public async Task UnaExportacionDeComprasPorProveedorQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 1)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeComprasPorProveedorQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+        await SembrarCompraAsync(ctx, 1000m);
+
+        var respuesta = await LlamarExportSinValidarAsync(
+            ctx.Admin, $"/api/reportes/compras/por-proveedor/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("tiene 2 filas", problema.GetProperty("title").GetString());
+    }
+
+    /// <summary>Ruta <c>gastos/resumen/export</c>: 1 gasto (mismo criterio de
+    /// <c>ElExportDeGastosResumenEsIgualAlEndpointJson</c>) ⇒ <c>Serie.Count == 1</c> MÁS la fila de
+    /// totales que <c>ExportacionDeReportes.De(ResumenDeGastos, …)</c> siempre agrega (línea 197:
+    /// <c>filas.Add([… ImporteTotal])</c>) ⇒ <c>tabla.Filas.Count == 2</c> ⇒ tope éxito 2 / rechazo
+    /// 1.</summary>
+    [Fact]
+    public async Task UnaExportacionDeGastosResumenExactamenteEnElTopeSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 2)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeGastosResumenExactamenteEnElTopeSeAceptaCompleta), factoryBajo);
+        var idTurno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
+        await SembrarGastoAsync(ctx, idTurno, 700m);
+
+        using var libro = await DescargarLibroAsync(
+            ctx.Admin, $"/api/reportes/gastos/resumen/export?{Rango(ctx.IdEmpresa)}&granularidad=Dia&formato=xlsx");
+        var hoja = libro.Worksheets.First();
+
+        Assert.False(hoja.Row(7).IsEmpty());
+        Assert.False(hoja.Row(8).IsEmpty());
+        Assert.True(hoja.Row(9).IsEmpty());
+    }
+
+    /// <summary>Contraparte de rechazo de <c>gastos/resumen/export</c>: con <c>TopeDeFilas = 1</c>
+    /// las 2 filas reales (bucket + totales) superan el tope — sin este par, la ruta no tenía ningún
+    /// test de tope.</summary>
+    [Fact]
+    public async Task UnaExportacionDeGastosResumenQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 1)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeGastosResumenQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+        var idTurno = await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
+        await SembrarGastoAsync(ctx, idTurno, 700m);
+
+        var respuesta = await LlamarExportSinValidarAsync(
+            ctx.Admin, $"/api/reportes/gastos/resumen/export?{Rango(ctx.IdEmpresa)}&granularidad=Dia&formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("tiene 2 filas", problema.GetProperty("title").GetString());
+    }
+
+    /// <summary>Ruta <c>rentabilidad/export</c>: 1 línea con costo real (mismo criterio de
+    /// <c>ElExportDeRentabilidadEsIgualAlEndpointJson</c>) ⇒ <c>PorArticulo.Count == 1</c> MÁS la
+    /// fila de totales que <c>ExportacionDeReportes.De(Rentabilidad, …)</c> siempre agrega (línea
+    /// 233-241: <c>filas.Add([… "Total" …])</c>) ⇒ <c>tabla.Filas.Count == 2</c> ⇒ tope éxito 2 /
+    /// rechazo 1.</summary>
+    [Fact]
+    public async Task UnaExportacionDeRentabilidadExactamenteEnElTopeSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 2)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeRentabilidadExactamenteEnElTopeSeAceptaCompleta), factoryBajo);
+        var idArticulo = await SembrarArticuloAsync(ctx, "Articulo tope rentabilidad");
+        await SembrarLineaAsync(ctx, idArticulo, "Articulo tope rentabilidad", 1m, 300m, costoUnitario: 100m);
+
+        using var libro = await DescargarLibroAsync(
+            ctx.Admin, $"/api/reportes/rentabilidad/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+        var hoja = libro.Worksheets.First();
+
+        Assert.False(hoja.Row(7).IsEmpty());
+        Assert.False(hoja.Row(8).IsEmpty());
+        Assert.True(hoja.Row(9).IsEmpty());
+    }
+
+    /// <summary>Contraparte de rechazo de <c>rentabilidad/export</c>: con <c>TopeDeFilas = 1</c> las
+    /// 2 filas reales (artículo + totales) superan el tope — sin este par, la ruta no tenía ningún
+    /// test de tope.</summary>
+    [Fact]
+    public async Task UnaExportacionDeRentabilidadQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 1)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeRentabilidadQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+        var idArticulo = await SembrarArticuloAsync(ctx, "Articulo tope rentabilidad rechazo");
+        await SembrarLineaAsync(ctx, idArticulo, "Articulo tope rentabilidad rechazo", 1m, 300m, costoUnitario: 100m);
+
+        var respuesta = await LlamarExportSinValidarAsync(
+            ctx.Admin, $"/api/reportes/rentabilidad/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("tiene 2 filas", problema.GetProperty("title").GetString());
+    }
+
+    /// <summary>Ruta <c>comisiones/export</c>: 1 comprobante con comisión configurada (mismo
+    /// criterio de <c>ElExportDeComisionesEsIgualAlEndpointJson</c>) ⇒ <c>Comisiones.Filas.Count ==
+    /// 1</c>, sin fila de totales (<c>ExportacionDeReportes.De(Comisiones, …)</c> no le agrega una —
+    /// la etiqueta PROVISIONAL viaja en el encabezado, no en una fila) ⇒ tope éxito 1 / rechazo
+    /// 0.</summary>
+    [Fact]
+    public async Task UnaExportacionDeComisionesExactamenteEnElTopeSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 1)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeComisionesExactamenteEnElTopeSeAceptaCompleta), factoryBajo);
+        await ConfigurarComisionAsync(ctx, "10");
+        await SembrarComprobanteAsync(ctx, 1000m);
+
+        using var libro = await DescargarLibroAsync(
+            ctx.Admin, $"/api/reportes/comisiones/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+        var hoja = libro.Worksheets.First();
+
+        Assert.False(hoja.Row(7).IsEmpty());
+        Assert.True(hoja.Row(8).IsEmpty());
+    }
+
+    /// <summary>Contraparte de rechazo de <c>comisiones/export</c>: <c>TopeDeFilas = 0</c> contra la
+    /// misma fila única — sin este par, la ruta no tenía ningún test de tope.</summary>
+    [Fact]
+    public async Task UnaExportacionDeComisionesQueSuperaElTopeSeRechazaConLaCantidadReal()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 0)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeComisionesQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
+        await ConfigurarComisionAsync(ctx, "10");
+        await SembrarComprobanteAsync(ctx, 1000m);
+
+        var respuesta = await LlamarExportSinValidarAsync(
+            ctx.Admin, $"/api/reportes/comisiones/export?{Rango(ctx.IdEmpresa)}&formato=xlsx");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("tiene 1 filas", problema.GetProperty("title").GetString());
     }
 }
