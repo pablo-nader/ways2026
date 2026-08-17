@@ -671,9 +671,9 @@ public class ServicioDeCompras(
             "AND numero_externo IS NOT NULL AND fecha_comprobante IS NOT NULL " +
             "RETURNING id_punto_venta, id_tipo_comprobante";
 
-        AgregarParametro(comando, momento);
-        AgregarParametro(comando, id);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, id);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         await using var lector = await comando.ExecuteReaderAsync(ct);
         if (!await lector.ReadAsync(ct))
@@ -694,9 +694,9 @@ public class ServicioDeCompras(
             "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'confirmada'::estado_compra " +
             "RETURNING id_punto_venta";
 
-        AgregarParametro(comando, momento);
-        AgregarParametro(comando, id);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, id);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         var resultado = await comando.ExecuteScalarAsync(ct);
         return resultado is null ? null : Convert.ToInt32(resultado);
@@ -712,8 +712,8 @@ public class ServicioDeCompras(
             "WHERE id_comprobante_compra = $1 AND id_tenant = $2 AND estado = 'borrador'::estado_compra " +
             "FOR UPDATE";
 
-        AgregarParametro(comando, id);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, id);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         var resultado = await comando.ExecuteScalarAsync(ct);
         return resultado is not null;
@@ -731,15 +731,15 @@ public class ServicioDeCompras(
             "(id_tenant, id_articulo, id_punto_venta, cantidad, motivo, id_comprobante_compra, id_empleado, creado_el, id_lote) " +
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)";
 
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, cantidad);
-        AgregarParametro(comando, motivo);
-        AgregarParametro(comando, idComprobanteCompra);
-        AgregarParametro(comando, idEmpleado);
-        AgregarParametro(comando, creadoEl);
-        AgregarParametroNulo(comando, idLote);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, cantidad);
+        ParametrosDeComando.Agregar(comando, motivo);
+        ParametrosDeComando.Agregar(comando, idComprobanteCompra);
+        ParametrosDeComando.Agregar(comando, idEmpleado);
+        ParametrosDeComando.Agregar(comando, creadoEl);
+        ParametrosDeComando.AgregarNulo(comando, idLote);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -757,10 +757,10 @@ public class ServicioDeCompras(
             "SET cantidad = stock.cantidad + EXCLUDED.cantidad " +
             "RETURNING cantidad";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, delta);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, delta);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El upsert de stock no devolvió ninguna fila.");
@@ -786,11 +786,11 @@ public class ServicioDeCompras(
             "SET cantidad = stock_lotes.cantidad + EXCLUDED.cantidad " +
             "RETURNING cantidad";
 
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idLote);
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, delta);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idLote);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, delta);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("El upsert de stock_lotes no devolvió ninguna fila.");
@@ -807,10 +807,10 @@ public class ServicioDeCompras(
         comando.CommandText =
             "UPDATE articulos SET costo_nominal = $1, updated_at = $2 WHERE id_articulo = $3 AND id_tenant = $4";
 
-        AgregarParametro(comando, costoNominal);
-        AgregarParametro(comando, momento);
-        AgregarParametro(comando, idArticulo);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, costoNominal);
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, idArticulo);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         await comando.ExecuteNonQueryAsync(ct);
     }
@@ -825,31 +825,6 @@ public class ServicioDeCompras(
         }
 
         return conexion;
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
-    }
-
-    /// <summary>Mismo criterio que <c>ServicioDeStock.AgregarParametroNulo</c> — <c>id_lote</c> es
-    /// el primer parámetro nullable que esta clase envía por statement crudo (etapa 12, slice 5);
-    /// <see cref="AgregarParametro"/> nunca necesitó <c>DBNull.Value</c> hasta ahora.</summary>
-    private static void AgregarParametroNulo(DbCommand comando, object? valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor switch
-        {
-            null => DBNull.Value,
-            DateTimeOffset dto => dto.ToUniversalTime(),
-            _ => valor
-        };
-        comando.Parameters.Add(parametro);
     }
 
     // ---- resolución de contexto (fuera de transacción) ---------------------------------------------

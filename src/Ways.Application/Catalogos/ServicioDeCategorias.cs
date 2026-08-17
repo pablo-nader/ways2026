@@ -151,8 +151,8 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
             var conexion = Db.Database.GetDbConnection();
             await using var comando = conexion.CreateCommand();
             comando.CommandText = SqlExistePadre;
-            AgregarParametro(comando, idCategoria);
-            AgregarParametro(comando, tenantActual.Id);
+            ParametrosDeComando.AgregarNulo(comando, idCategoria);
+            ParametrosDeComando.AgregarNulo(comando, tenantActual.Id);
 
             var resultado = await comando.ExecuteScalarAsync(ct);
             return resultado is bool existe && existe;
@@ -175,8 +175,8 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
             var conexion = Db.Database.GetDbConnection();
             await using var comando = conexion.CreateCommand();
             comando.CommandText = SqlDescendientes;
-            AgregarParametro(comando, idCategoria);
-            AgregarParametro(comando, tenantActual.Id);
+            ParametrosDeComando.AgregarNulo(comando, idCategoria);
+            ParametrosDeComando.AgregarNulo(comando, tenantActual.Id);
 
             var descendientes = new List<int>();
             await using var lector = await comando.ExecuteReaderAsync(ct);
@@ -205,8 +205,8 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
             var conexion = Db.Database.GetDbConnection();
             await using var comando = conexion.CreateCommand();
             comando.CommandText = sql;
-            AgregarParametro(comando, idCategoria);
-            AgregarParametro(comando, tenantActual.Id);
+            ParametrosDeComando.AgregarNulo(comando, idCategoria);
+            ParametrosDeComando.AgregarNulo(comando, tenantActual.Id);
 
             var resultado = await comando.ExecuteScalarAsync(ct);
             return Convert.ToInt32(resultado);
@@ -234,20 +234,5 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
 
         await Db.Database.OpenConnectionAsync(ct);
         return true;
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(System.Data.IDbCommand comando, object? valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor switch
-        {
-            null => DBNull.Value,
-            DateTimeOffset dto => dto.ToUniversalTime(),
-            _ => valor
-        };
-        comando.Parameters.Add(parametro);
     }
 }

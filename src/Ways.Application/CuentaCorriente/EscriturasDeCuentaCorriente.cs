@@ -1,4 +1,5 @@
 using System.Data.Common;
+using Ways.Application.Abstracciones;
 using Ways.Domain.CuentaCorriente;
 
 namespace Ways.Application.CuentaCorriente;
@@ -34,9 +35,9 @@ public static class EscriturasDeCuentaCorriente
         comando.CommandText =
             "UPDATE clientes SET saldo = saldo + $1 WHERE id_cliente = $2 AND id_tenant = $3 RETURNING saldo";
 
-        AgregarParametro(comando, importe);
-        AgregarParametro(comando, idCliente);
-        AgregarParametro(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, importe);
+        ParametrosDeComando.Agregar(comando, idCliente);
+        ParametrosDeComando.Agregar(comando, idTenant);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException($"No se pudo actualizar el saldo del cliente {idCliente}.");
@@ -76,17 +77,17 @@ public static class EscriturasDeCuentaCorriente
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) " +
             "RETURNING id_movimiento";
 
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, idCliente);
-        AgregarParametro(comando, fecha);
-        AgregarParametro(comando, idPuntoVenta);
-        AgregarParametro(comando, idEmpleado);
-        AgregarParametro(comando, tipo);
-        AgregarParametroNullable(comando, idComprobanteVenta);
-        AgregarParametroNullable(comando, idPagoComprobante);
-        AgregarParametro(comando, importe);
-        AgregarParametro(comando, saldoResultante);
-        AgregarParametroNullable(comando, detalle);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, idCliente);
+        ParametrosDeComando.Agregar(comando, fecha);
+        ParametrosDeComando.Agregar(comando, idPuntoVenta);
+        ParametrosDeComando.Agregar(comando, idEmpleado);
+        ParametrosDeComando.Agregar(comando, tipo);
+        ParametrosDeComando.AgregarNulo(comando, idComprobanteVenta);
+        ParametrosDeComando.AgregarNulo(comando, idPagoComprobante);
+        ParametrosDeComando.Agregar(comando, importe);
+        ParametrosDeComando.Agregar(comando, saldoResultante);
+        ParametrosDeComando.AgregarNulo(comando, detalle);
 
         var resultado = await comando.ExecuteScalarAsync(ct)
             ?? throw new InvalidOperationException("No se pudo insertar el movimiento de cuenta corriente.");
@@ -119,27 +120,5 @@ public static class EscriturasDeCuentaCorriente
                 "Un movimiento de tipo ActualizacionPrecios no lleva id_comprobante_venta ni id_pago_comprobante — " +
                 "invariante de escritura violado.");
         }
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
-    }
-
-    private static void AgregarParametroNullable(DbCommand comando, object? valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor switch
-        {
-            null => DBNull.Value,
-            DateTimeOffset dto => dto.ToUniversalTime(),
-            _ => valor
-        };
-        comando.Parameters.Add(parametro);
     }
 }

@@ -69,38 +69,16 @@ public sealed class ServicioDeAuditoria(IWaysDbContext db, IRelojDelSistema relo
             "(id_tenant, id_punto_venta, id_actor, accion, entidad, id_entidad, valor_anterior, valor_nuevo, creado_el) " +
             "VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)";
 
-        AgregarParametro(comando, registro.IdTenant);
-        AgregarParametroNulo(comando, registro.IdPuntoVenta);
-        AgregarParametro(comando, contexto.UsuarioId);
-        AgregarParametro(comando, registro.Accion.Accion);
-        AgregarParametro(comando, registro.Accion.Entidad);
-        AgregarParametro(comando, registro.IdEntidad);
-        AgregarParametroNulo(comando, valorAnterior);
-        AgregarParametro(comando, valorNuevo);
-        AgregarParametro(comando, reloj.Ahora);
+        ParametrosDeComando.Agregar(comando, registro.IdTenant);
+        ParametrosDeComando.AgregarNulo(comando, registro.IdPuntoVenta);
+        ParametrosDeComando.Agregar(comando, contexto.UsuarioId);
+        ParametrosDeComando.Agregar(comando, registro.Accion.Accion);
+        ParametrosDeComando.Agregar(comando, registro.Accion.Entidad);
+        ParametrosDeComando.Agregar(comando, registro.IdEntidad);
+        ParametrosDeComando.AgregarNulo(comando, valorAnterior);
+        ParametrosDeComando.Agregar(comando, valorNuevo);
+        ParametrosDeComando.Agregar(comando, reloj.Ahora);
 
         await comando.ExecuteNonQueryAsync(ct);
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
-    }
-
-    private static void AgregarParametroNulo(DbCommand comando, object? valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor switch
-        {
-            null => DBNull.Value,
-            DateTimeOffset dto => dto.ToUniversalTime(),
-            _ => valor
-        };
-        comando.Parameters.Add(parametro);
     }
 }

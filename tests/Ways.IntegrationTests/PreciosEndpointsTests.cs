@@ -310,7 +310,7 @@ public class PreciosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysA
     /// offset real de browser (-03:00, no UTC) hacía que <c>vigente_hasta</c> de la fila cerrada
     /// viajara con ese offset tal cual hasta Npgsql, que revienta con 500 ("only offset 0 (UTC)
     /// is supported") contra la columna <c>timestamptz</c>. Sin el fix del helper
-    /// <c>AgregarParametro</c> este test da 500; con el fix da 201, y el <c>vigente_hasta</c> de
+    /// <c>ParametrosDeComando.Agregar</c> este test da 500; con el fix da 201, y el <c>vigente_hasta</c> de
     /// la fila cerrada queda en el INSTANTE correcto (la igualdad de <see cref="DateTimeOffset"/>
     /// compara por instante UTC, no por offset textual — <c>ToUniversalTime()</c> es una
     /// reexpresión, nunca corre el instante).</summary>

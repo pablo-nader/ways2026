@@ -158,7 +158,7 @@ public class ServicioDeTurnos(
         await using var comando = conexion.CreateCommand();
         comando.Transaction = transaccionCruda;
         comando.CommandText = "SELECT estado::text FROM turnos_caja WHERE id_turno_caja = $1 FOR SHARE";
-        AgregarParametro(comando, idTurnoCaja);
+        ParametrosDeComando.Agregar(comando, idTurnoCaja);
 
         var estado = (string?)await comando.ExecuteScalarAsync(ct);
         if (estado != "abierto")
@@ -328,13 +328,13 @@ public class ServicioDeTurnos(
             "WHERE id_turno_caja = $4 AND id_tenant = $5 AND estado = $6 " +
             "RETURNING id_punto_venta";
 
-        AgregarParametro(comando, EstadoTurno.Cerrado);
-        AgregarParametro(comando, momento);
-        AgregarParametro(comando, idEmpleadoCierre);
-        AgregarParametro(comando, idTurnoCaja);
-        AgregarParametro(comando, idTenant);
-        AgregarParametro(comando, EstadoTurno.Abierto);
-        AgregarParametro(comando, (object?)observacionesCierre ?? DBNull.Value);
+        ParametrosDeComando.Agregar(comando, EstadoTurno.Cerrado);
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, idEmpleadoCierre);
+        ParametrosDeComando.Agregar(comando, idTurnoCaja);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, EstadoTurno.Abierto);
+        ParametrosDeComando.Agregar(comando, (object?)observacionesCierre ?? DBNull.Value);
 
         var resultado = await comando.ExecuteScalarAsync(ct);
         return resultado is null ? null : Convert.ToInt32(resultado);
@@ -428,16 +428,6 @@ public class ServicioDeTurnos(
         }
 
         return conexion;
-    }
-
-    /// <summary>Normaliza a UTC cualquier <see cref="DateTimeOffset"/> antes de escribirlo como
-    /// parámetro raw-ADO — la convención de EF no alcanza este camino (ver el doc-comment de
-    /// <c>ServicioDePrecios.AgregarParametro</c>, judgment-day juez A).</summary>
-    private static void AgregarParametro(DbCommand comando, object valor)
-    {
-        var parametro = comando.CreateParameter();
-        parametro.Value = valor is DateTimeOffset dto ? dto.ToUniversalTime() : valor;
-        comando.Parameters.Add(parametro);
     }
 
     // ---- proyecciones -----------------------------------------------------------------------
