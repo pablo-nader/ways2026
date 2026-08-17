@@ -307,6 +307,20 @@ phases:
       defecto latente en los caminos ADO de esta etapa que su propia estrategia
       de tests (RelojFijo siempre en Z) no podia ver.
   archive:
-    status: pending
+    status: done
     artifact: archive-report.md
     depends_on: [verify]
+    note: >-
+      Archived 2026-08-17. 4 spec merges (auditoria-de-operaciones created as a
+      new capability, mechanical cp; precios/comprobantes-venta/comprobantes-compra
+      each ADDED-appended) all verified byte-identical to their delta blocks via
+      diff (empty in all 4 cases) and additive-only via git diff (zero pre-existing
+      lines touched). Archive report records all 7 slice PRs (#123-#132) plus the
+      3 post-slice chip PRs (#129-#131), the full decisions log (proposal 8 +
+      design 17 + orchestrator 15, including the two spec/design conflict
+      resolutions and DB gate amendment 1), the judgment-day summary (~35 confirmed
+      findings incl. the slice-7 production date-desync bug and PR #129's CRITICAL
+      over the raw-ADO parameter helper), and W1/W2 per Final-State Authority (W1
+      remediated pre-archive by the orchestrator; W2 informational/already-fixed).
+      Content-only phase — the change-folder move to openspec/changes/archive/ and
+      the docs/10-11 updates are performed by the orchestrator outside this phase.

@@ -216,6 +216,18 @@ cuánto detalle se guarda (valor anterior y nuevo, o solo el hecho); política d
 tamaño de la tabla; si la auditoría se escribe en la misma transacción que la operación
 (consistente pero acoplada) o de forma diferida; qué operaciones entran en la primera pasada.
 
+> **COMPLETA Y ARCHIVADA** (2026-08-17, `2026-08-17-stage-14-auditoria-trazabilidad`, 7 PRs
+> #123–#132 + 3 PRs de chips relacionados #129–#131). Las cuatro decisiones abiertas se
+> resolvieron: tabla **única** `auditoria` (jsonb con payload acotado por acción y denylist
+> recursiva de secretos — jamás un dump de entidad); valor anterior **y** nuevo con la regla
+> `valor_anterior ⊆ valor_nuevo`; **sin retención** por ahora, con 3 tripwires medibles
+> registrados; **misma transacción, fail-closed** (la operación que no se puede auditar no
+> ocurre; probado por datos con 23503). Primera pasada: 12 acciones en 6 servicios — las 5 del
+> doc más el ciclo de vida completo de usuarios; `stock.transferencia` excluida por
+> construcción. Una sola migración (gate ejercido con una enmienda); el checkout intocado.
+> Lectura Admin-only (`LecturaDeAuditoria`), consulta filtrable + export + pantalla. Suites al
+> cierre: Domain 490 · Application 270 · Integration 1237 · vitest 693.
+
 ### Etapa 15 — Cuenta corriente de proveedores (ledger)
 
 **Alcance.** Promover el saldo derivado actual (`Σ compras confirmadas − Σ gastos ligados`,
