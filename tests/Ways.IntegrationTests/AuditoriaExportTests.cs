@@ -371,6 +371,96 @@ public class AuditoriaExportTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Contains("4", problema.GetProperty("title").GetString());
     }
 
+    // ---- clase repo-wide: un límite con offset local del cliente no puede tirar 500 --------------
+
+    /// <summary>
+    /// Guard de la convención <c>NormalizacionAUtc</c> de <c>WaysDbContext</c>: Npgsql rechaza
+    /// escribir un <c>DateTimeOffset</c> con offset ≠ 0 contra <c>timestamptz</c>, y esa
+    /// restricción alcanza a los PARÁMETROS de la consulta. Sin la convención, este listado
+    /// devuelve 500 (<c>"only offset 0 (UTC) is supported"</c>) con el payload que manda la web
+    /// de verdad. Se prueba sobre el listado JSON y no sobre el export a propósito: es una forma
+    /// de query distinta (paginada, con <c>CountAsync</c>), y la clase alcanza a los ~13 endpoints
+    /// que filtran por una columna <c>DateTimeOffset</c>, no solo a los seis exports.
+    /// El instante NO se mueve: la fila de las 02:00-03:00 (05:00Z) entra en un rango que arranca
+    /// a las 00:00-03:00 y la de las 23:00Z del día anterior queda afuera.
+    /// </summary>
+    [Fact]
+    public async Task ElListadoJsonAceptaLimitesConElOffsetLocalDelClienteSinRomper()
+    {
+        var ctx = await PrepararAsync(nameof(ElListadoJsonAceptaLimitesConElOffsetLocalDelClienteSinRomper), fixture);
+
+        // 2026-03-10 05:00Z = 02:00-03:00 del 10/3 → DENTRO del rango pedido.
+        await SembrarFilaAsync(
+            ctx.IdTenant, ctx.IdPuntoVenta, ctx.IdActorAdmin, "precio.cambio", "articulo", 41,
+            new DateTimeOffset(2026, 3, 10, 5, 0, 0, TimeSpan.Zero), null, "{\"monto\":100}");
+        // 2026-03-09 23:00Z = 20:00-03:00 del 9/3 → FUERA (antes del 10/3 00:00-03:00 = 03:00Z).
+        await SembrarFilaAsync(
+            ctx.IdTenant, ctx.IdPuntoVenta, ctx.IdActorAdmin, "precio.cambio", "articulo", 42,
+            new DateTimeOffset(2026, 3, 9, 23, 0, 0, TimeSpan.Zero), null, "{\"monto\":200}");
+
+        var desde = Uri.EscapeDataString("2026-03-10T00:00:00.000-03:00");
+        var hasta = Uri.EscapeDataString("2026-03-10T23:59:59.999-03:00");
+        var respuesta = await ctx.Admin.GetAsync($"/api/auditoria?desde={desde}&hasta={hasta}&tamanio=50");
+
+        var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+
+        var pagina = JsonSerializer.Deserialize<PaginaRespuesta>(await respuesta.Content.ReadAsStringAsync(), OpcionesJson)!;
+        Assert.Equal(1, pagina.Total);
+        Assert.Equal(41, pagina.Items[0].IdEntidad);
+    }
+
+    // ---- clase repo-wide: la fecha MOSTRADA sale del offset del propio límite, no de UTC ---------
+
+    /// <summary>
+    /// El cliente real (<c>fechaIsoConOffset</c> en <c>auditoria.ts</c>/<c>reportes.ts</c>) manda
+    /// <c>hasta</c> como <c>...T23:59:59.999-03:00</c>, no como <c>...Z</c>: TODOS los tests de
+    /// export de este repo mandaban offset cero, y por eso
+    /// <c>DateOnly.FromDateTime(hasta.UtcDateTime)</c> sobrevivió en las seis rutas de export —
+    /// con offset cero el bug no se manifiesta. Con el offset real de Buenos_Aires,
+    /// <c>23:59:59.999-03:00</c> del 31/1 es <c>02:59:59.999Z</c> del 1/2, así que el mutante
+    /// muestra "2026-02-01" tanto en el "Período" del encabezado como en el nombre de archivo,
+    /// mientras el filtrado de filas (que usa el <c>DateTimeOffset</c> crudo) sigue correcto.
+    /// El extremo <c>desde</c> con offset POSITIVO (que se corre hacia atrás) lo cubre
+    /// <c>FechaDelRangoTests</c>, unitario y sin fixture.
+    /// </summary>
+    [Fact]
+    public async Task ElPeriodoYElNombreDeArchivoRespetanElOffsetDelClienteYNoElDiaUtc()
+    {
+        var ctx = await PrepararAsync(nameof(ElPeriodoYElNombreDeArchivoRespetanElOffsetDelClienteYNoElDiaUtc), fixture);
+
+        await SembrarFilaAsync(
+            ctx.IdTenant, ctx.IdPuntoVenta, ctx.IdActorAdmin, "precio.cambio", "articulo", 41,
+            new DateTimeOffset(2026, 1, 15, 12, 0, 0, TimeSpan.Zero), null, "{\"monto\":100}");
+
+        var desde = Uri.EscapeDataString("2026-01-01T00:00:00.000-03:00");
+        var hasta = Uri.EscapeDataString("2026-01-31T23:59:59.999-03:00");
+        var respuesta = await ctx.Admin.GetAsync(
+            $"/api/auditoria/export?desde={desde}&hasta={hasta}&formato=xlsx");
+
+        var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+
+        var diaElegido = new DateOnly(2026, 1, 1);
+        var ultimoDiaElegido = new DateOnly(2026, 1, 31);
+        var diaUtcIncorrecto = new DateOnly(2026, 2, 1);
+
+        var disposicion = respuesta.Content.Headers.ContentDisposition?.ToString() ?? string.Empty;
+        Assert.DoesNotContain(
+            NombreDeArchivo.Construir("auditoria", "todos", diaElegido, diaUtcIncorrecto), disposicion);
+        Assert.Contains(
+            $"filename=\"{NombreDeArchivo.Construir("auditoria", "todos", diaElegido, ultimoDiaElegido)}\"",
+            disposicion);
+
+        // "Período" en la fila 3 del bloque de encabezado (ExportadorXlsx escribe 1-4, tabla en 6).
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var periodo = libro.Worksheets.First().Cell(3, 1).GetString();
+        Assert.Equal("Período: 2026-01-01 a 2026-01-31", periodo);
+
+        // El filtrado NUNCA dependió de esta derivación: la fila del 15/1 sigue estando.
+        Assert.False(libro.Worksheets.First().Row(7).IsEmpty());
+    }
+
     /// <summary>Retiene la SEGUNDA consulta que toca <c>auditoria</c> (la lectura <c>.Take(tope +
     /// 1)</c> — la primera es el <c>COUNT(*)</c>) e inyecta <paramref name="alSegundaConsulta"/>
     /// antes de dejarla correr. Cubre tanto <c>ReaderExecutingAsync</c> como
