@@ -742,7 +742,7 @@ auditoria (                    -- [operativa — id_punto_venta NULL en eventos 
 -- RLS estándar (HabilitarRlsDeTenant) — sin desvío.
 ```
 
-> **Estado (Etapa 14, Slice 1): tabla + writer implementados, sin call sites todavía.** Fila
+> **Estado (Etapa 14, COMPLETA): auditoría de punta a punta.** Fila
 > append-only — ningún endpoint UPDATE/DELETE existe sobre `auditoria`, y la entidad no hereda
 > `EntidadBase`/`EntidadTenant` (mismo criterio que `movimientos_stock`, §6): un hecho inmutable
 > no tiene `updated_at` ni baja lógica, y su `id_tenant` — el del SUJETO auditado, no el de la
@@ -759,9 +759,16 @@ auditoria (                    -- [operativa — id_punto_venta NULL en eventos 
 > es un diccionario acotado por acción (`PayloadDeAuditoria`, ninguna fábrica acepta una
 > entidad), con la regla `valor_anterior ⊆ valor_nuevo` y una denylist de secretos
 > (`password`/`contrasena`/`hash`/`token`/`secret`) validadas en el constructor de
-> `RegistroDeAuditoria` — un registro ilegal no es construible. Los call sites (slices 2-4), la
-> consulta filtrable/paginada + export (slices 5-6) y la pantalla (slice 7) llegan en slices
-> posteriores de `stage-14-auditoria-trazabilidad`.
+> `RegistroDeAuditoria` — un registro ilegal no es construible. Las 12 acciones tienen call site
+> y cobertura (`stock.transferencia` queda EXCLUIDA por construcción: tiene origen y destino, y
+> una sola columna `id_punto_venta` no puede expresarlo sin mentir; hay test que prueba la
+> ausencia). Un conteo escribe UNA fila por OPERACIÓN, no por movimiento del ledger, y el conteo
+> sin diferencia no escribe nada. La lectura es `GET /api/auditoria` (filtros de fecha/acción/
+> actor/entidad/PV, paginada con desempate por `id_auditoria DESC`, Admin-only vía
+> `LecturaDeAuditoria` — un Supervisor no lee el log que registra Supervisores) con su
+> `/export` hermano sobre la MISMA query, y la pantalla `Auditoria.tsx` con panel de cambios.
+> La regla fail-closed está probada POR DATOS: un `id_actor` inexistente levanta `23503` sobre
+> `fk_auditoria_actor` DENTRO de la transacción de negocio, que se revierte entera.
 
 ---
 

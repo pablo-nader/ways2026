@@ -286,13 +286,26 @@ phases:
       auto-chain/stacked-to-main ya resuelto, decision needed before apply:
       No.
   apply:
-    status: pending
+    status: done
     artifact: tasks.md + PRs
     depends_on: [tasks]
   verify:
-    status: pending
+    status: done
     artifact: verify-report.md
     depends_on: [apply]
+    note: >-
+      PASS WITH WARNINGS (2026-08-17, HEAD 8c262ba): 0 CRITICAL. 10 requirements
+      / 31 escenarios trazados a tests que pasan. Gate verificado: UNA migracion
+      AuditoriaEtapa14 con 5 indices (3 del contrato + 2 de soporte de FK de la
+      enmienda 1); has-pending-model-changes limpio. Proteccion del checkout
+      PASS: VentasCheckoutTests.cs ausente del diff de TODA la etapa y tambien
+      de los 3 PRs de chips posteriores, constante 16 intacta. Fail-closed
+      probado POR DATOS (23503 real sobre fk_auditoria_actor + rollback + mapeo
+      a 400 por el ManejadorDeErrores real), sin seam de test. W1: drift de la
+      anotacion de doc-10 congelada en el slice 1 — REMEDIADO pre-archive. W2
+      informativo: el fix de offsets del PR #129 cerro retroactivamente un
+      defecto latente en los caminos ADO de esta etapa que su propia estrategia
+      de tests (RelojFijo siempre en Z) no podia ver.
   archive:
     status: pending
     artifact: archive-report.md
