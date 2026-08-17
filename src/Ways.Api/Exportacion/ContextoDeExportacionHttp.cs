@@ -50,6 +50,6 @@ public static class ContextoDeExportacionHttp
             Hasta: hasta,
             ZonaHoraria: zonaHoraria,
             Usuario: usuario.NombreUsuario,
-            GeneradoEl: reloj.Ahora,
+            GeneradoEl: InstanteDeGeneracion.En(reloj.Ahora, zonaHoraria),
             Cobertura: cobertura);
 }
