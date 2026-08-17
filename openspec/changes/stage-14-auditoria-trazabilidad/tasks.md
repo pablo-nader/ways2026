@@ -1442,7 +1442,7 @@ untouched.
   --startup-project src/Ways.Infrastructure` → "No changes have been made
   to the model since the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty.
-- [ ] 6.12 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 6.12 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   *(orchestrator)*
   - Ronda 1 (juez B): 0 severos; 3 WARNING (findings 1-3), pre-existentes-de-
     patrón (mismos gaps que la etapa 11) cerrados en el código NUEVO de esta
@@ -1457,7 +1457,7 @@ untouched.
     hermanos de la etapa 11 (mismos WARNINGs en `VentasListadoExportTests`/
     `ReportesVentasResumenExportTests`) quedan FUERA de alcance de esta
     ronda — chip aparte.
-- [ ] 6.13 Branch `feat/stage14-slice6-export` off `main` (parent:
+- [x] 6.13 Branch `feat/stage14-slice6-export` off `main` (parent: *(CLEAN 2026-08-16: juez B ronda 1 — 0 severos, 3 WARNINGs cerrados (seed tope+2 que discrimina el PRIMER Exigir por cantidad real; formato=pdf por ruta; borde exacto del tope del lado del EXITO con las filas asertadas presentes); re-ronda B aprobada con los 3 re-mutantes muertos. Juez A fresh: 0 severos, 1 WARNING PRE-EXISTENTE Y REPO-WIDE registrado sin fix: DateOnly.FromDateTime(hasta.UtcDateTime) corre el 'Periodo' del header y el nombre de archivo UN DIA para offsets UTC negativos (23:59:59.999-03:00 -> 02:59:59.999Z del dia siguiente); el filtrado de filas NO se afecta (usa el instante crudo). Patron byte-identico en VentasEndpoints, ReportesEndpoints, CuentaCorrienteEndpoints, ComprasEndpoints y CajaEndpoints — misma CLASE que el bug de produccion del 'hoy' UTC en el filename que cazo la etapa 11, sobreviviente en la cara desde/hasta. Fuera de alcance de este slice (arreglarlo solo aca desalinearia auditoria de sus 5 hermanos): chip de barrido repo-wide. JUDGMENT: APPROVED.)*
   slice 5); PR; merge stacked-to-main. *(orchestrator)*
 
 **Test plan**: 3 mutation targets (6.5, 6.6, 6.9), cap refusal (6.7),
