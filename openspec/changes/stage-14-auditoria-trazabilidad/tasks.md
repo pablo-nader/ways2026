@@ -1488,6 +1488,16 @@ operator through the export. A documented reduction, never a silent one.
   `FiltrosDeAuditoria`, `FilaDeAuditoria`, `PaginaDeAuditoria`, and the
   12-action catalog labels. `dto-contract-honesty`: doc-comment each
   mirrored field's source (the `Contratos.cs` records from slice 5).
+  **DEVIATION (judgment-day ronda 2, juez A, WARNING — registered, not
+  silent):** the `FiltrosDeAuditoria` mirror shipped with zero type
+  consumers (the screen's own `FiltrosDeConsultaDeAuditoria`/
+  `FiltrosDeAlcanceDeAuditoria`, `api/auditoria.ts`, are independently
+  defined — never derived from it) while its doc-comment claimed real
+  consumption. Removed from `tipos.ts`: its shape genuinely differs from
+  the screen filters (`DateTimeOffset?` nullable ISO vs. non-null
+  `YYYY-MM-DD` strings), so a `Pick`/derivation would force an artificial
+  shape rather than ship an inert mirror. `FilaDeAuditoria`/
+  `PaginaDeAuditoria` remain, both with real consumers.
   **Also added** `puedeVerAuditoria(rolId)` next to the other `puede*`
   role helpers (Admin-only, mirrors `Politicas.LecturaDeAuditoria` — not
   in the task's literal text, but required by 7.6's nav gating and the
@@ -1571,9 +1581,12 @@ operator through the export. A documented reduction, never a silent one.
   the last migration."; `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` → empty; `git status
   --short` shows only `src/Ways.Web/**` paths.
-- [ ] 7.15 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 7.15 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   *(orchestrator)*
-  - Ronda 1 (juez B): 3 MAJOR + 5 WARNING + 2 sugerencias.
+  - Ronda 1 (juez B): 3 MAJOR + 4 WARNING + 2 sugerencias. *(judgment-day
+    ronda 2, juez A, sugerencia cerrada: el conteo original decía "5
+    WARNING" pero solo se enumeran 4 (findings 4-7) — corregido al conteo
+    real.)*
     **Finding 1 (MAJOR, cerrado):** `construirQueryDeConsultaDeAuditoria` y
     `construirQueryDeExportacionDeAuditoria` divergían en la guarda de
     `desde`/`hasta` vacíos — la consulta JSON los omitía, el export los
@@ -1651,6 +1664,40 @@ operator through the export. A documented reduction, never a silent one.
     `auditoria.test.ts` 3→7, `Auditoria.test.tsx` 5→8, `PanelDeCambio.test.tsx`
     0→8). `npm run build` (`tsc -b && vite build`) limpio. Re-ronda y
     JUDGMENT final: ver 7.16 (orchestrator).
+
+    **Ronda 2 (juez A): 0 severos; 2 WARNING + 2 sugerencias.**
+    **Finding (WARNING, `dto-contract-honesty`, cerrado):** `tipos.ts:1638-
+    1652` mirroreaba `FiltrosDeAuditoria` (`Contratos.cs`) sin ningún
+    consumidor de tipo (`auditoria.ts` solo importa `PaginaDeAuditoria`; la
+    pantalla usa `FiltrosDeConsultaDeAuditoria`/`FiltrosDeAlcanceDeAuditoria`
+    definidos localmente) con un doc-comment que afirmaba consumo real —
+    falso para ese tipo. Eliminado el mirror inerte (las formas difieren
+    genuinamente: `DateTimeOffset?` nullable del backend vs. `string`
+    no-nulo `YYYY-MM-DD` de pantalla, así que un `Pick`/derivación no
+    aplica sin forzar el shape); doc-comment de `tipos.ts` y las dos
+    referencias cruzadas en `auditoria.ts` corregidos para describir solo
+    los mirrors que sí atan (`FilaDeAuditoria`/`PaginaDeAuditoria`).
+    Verificado con `npx tsc -b` limpio tras el borrado.
+    **Finding (WARNING, cerrado):** el fallback `?? accion` de
+    `etiquetaDeAccion` (`Auditoria.tsx`, el mecanismo exacto de la decisión
+    15 del design) no tenía test y la función no estaba exportada.
+    Exportada; agregados los tests de sus dos ramas (catálogo → etiqueta en
+    español; no catalogada → código crudo) más un assert de componente con
+    una fila de acción retirada. Evidencia de mutación: `?? accion` → `??
+    '—'` → 2 tests FALLARON (unitario de la rama fallback + el assert de
+    componente) → revert → 11/11 verdes (`Auditoria.test.tsx`).
+    **Sugerencia (aplicada):** `compararPayloads.ts`'s `sonIguales` compara
+    con `JSON.stringify`, sensible al orden de claves. Documentado en el
+    código como limitación conocida (riesgo bajo: ambos payloads salen del
+    mismo serializador) y fijado con un test que asienta el comportamiento
+    actual (objeto anidado con distinto orden de claves ⇒ `'cambiada'`).
+    **Sugerencia (aplicada):** el header de esta misma ronda 1 decía "5
+    WARNING" pero solo se enumeran 4 (findings 4-7) — corregido al conteo
+    real arriba.
+    **Vitest tras los fixes de ronda 2**: `npx vitest run` → 41 test files
+    passed, 693/693 tests passed (689 pre-existentes + 4 nuevos:
+    `Auditoria.test.tsx` 8→11, `compararPayloads.test.ts` 6→7). `npm run
+    build` (`tsc -b && vite build`) limpio. JUDGMENT: APPROVED.
 - [ ] 7.16 Branch `feat/stage14-slice7-web` off `main` (parent: slices 5+6);
   PR; merge stacked-to-main. **If the slice overflows at apply time, drop
   tasks 7.5/7.7/7.8 (`PanelDeCambio`/`compararPayloads`) per the
