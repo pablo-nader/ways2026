@@ -1631,25 +1631,14 @@ export type Comisiones = {
 }
 
 // --- Auditoría (stage-14-auditoria-trazabilidad, Slice 7) — espejo de
-// `Ways.Application.Auditoria.Contratos` (Slice 5). `dto-contract-honesty`: cada campo mirror se
-// consume en `clienteDeAuditoria.consultar`/`construirQueryDeConsultaDeAuditoria` (`api/
-// auditoria.ts`) o directamente en `Auditoria.tsx` al renderizar cada columna/el panel de detalle.
-
-/** Espejo de `FiltrosDeAuditoria` (`Ways.Application.Auditoria.Contratos`, Slice 5) — los 7
- * filtros crudos que `GET /api/auditoria` lee. `desde`/`hasta` viajan como ISO completo
- * (`DateTimeOffset?`, mismo offset explícito que `FiltrosDeExportacionDeAuditoria`), a diferencia
- * del estado de pantalla de `Auditoria.tsx` (`FiltrosDeConsultaDeAuditoria`, `api/auditoria.ts`),
- * que guarda `desde`/`hasta` en formato `input[type=date]` (`YYYY-MM-DD`) hasta el momento de
- * armar el query string. */
-export type FiltrosDeAuditoria = {
-  desde: string | null
-  hasta: string | null
-  accion: string | null
-  idActor: number | null
-  entidad: string | null
-  idEntidad: number | null
-  idPuntoVenta: number | null
-}
+// `Ways.Application.Auditoria.Contratos` (Slice 5). `dto-contract-honesty`: `FilaDeAuditoria`/
+// `PaginaDeAuditoria` abajo son los únicos DTOs mirroreados acá — cada campo se consume
+// directamente en `Auditoria.tsx` al renderizar cada columna/el panel de detalle.
+// `FiltrosDeAuditoria` (`Contratos.cs`) NO tiene mirror en este archivo (judgment-day, ronda 2,
+// juez A): su forma difiere genuinamente de los filtros de pantalla (`desde`/`hasta` viajan como
+// `DateTimeOffset?` nullable en el backend vs. `string` no-nulo `input[type=date]` en
+// `FiltrosDeAlcanceDeAuditoria`/`FiltrosDeConsultaDeAuditoria`, `api/auditoria.ts`) — un mirror sin
+// consumidor de tipo no ata nada, así que se optó por no crearlo en vez de dejarlo inerte.
 
 /** Espejo de `FilaDeAuditoria` (Slice 5). `actor` `null` significa "el nombre no es visible para
  * esta sesión" (un actor de plataforma, excluido por el filtro de tenant/RLS de `usuarios` bajo

@@ -6,9 +6,12 @@
  * (judgment-day ronda 1, finding 1) — `FiltrosDeConsultaDeAuditoria` solo suma `pagina`/`tamanio`,
  * propios de la ruta JSON. Mismo criterio que `reportes.ts` (`FiltrosDeHistoricoDeCajas` vs. el
  * query del export): los tipos de filtro propios de un dominio viven en el archivo del dominio,
- * nunca en `tipos.ts` — ahí solo viven los DTOs espejo del backend (`FiltrosDeAuditoria`/
- * `FilaDeAuditoria`/`PaginaDeAuditoria`, `dto-contract-honesty`, design decisión 8/Orchestrator
- * Decision 8).
+ * nunca en `tipos.ts` — ahí solo viven los DTOs espejo del backend que sí comparten forma exacta
+ * con el mirror (`FilaDeAuditoria`/`PaginaDeAuditoria`, `dto-contract-honesty`, design decisión 8/
+ * Orchestrator Decision 8). El DTO crudo del backend (`FiltrosDeAuditoria`, `Contratos.cs`) NO
+ * tiene mirror en `tipos.ts` (judgment-day, ronda 2, juez A) — su forma difiere genuinamente de
+ * los filtros de pantalla definidos acá, así que un mirror sin consumidor de tipo se hubiera
+ * quedado inerte.
  *
  * Mismo criterio de offset local que `reportes.ts` (`fechaIsoConOffset`/`desplazamientoUtcLocal`,
  * duplicado a propósito: no hay un módulo compartido de utilidades de fecha en esta web todavía) —
@@ -93,11 +96,12 @@ export const rutasDeExportacion = {
 
 /** Filtro de pantalla de `Auditoria.tsx` — mismo shape que `FiltrosDeHistoricoDeCajas`
  * (`reportes.ts`): `desde`/`hasta` en formato `input[type=date]` (`YYYY-MM-DD`), a diferencia de
- * `FiltrosDeAuditoria` (`tipos.ts`, el DTO crudo del backend, `DateTimeOffset?` ISO completo) —
- * `construirQueryDeConsultaDeAuditoria` hace la conversión recién al armar el query string, mismo
- * criterio que `construirQueryDeAlcanceDeAuditoria` arriba. `desde`/`hasta` vacíos SÍ están
- * permitidos acá (a diferencia del export, que los exige): el listado JSON no necesita un rango
- * acotado para nombrar un archivo — el botón de descarga se deshabilita en ese caso
+ * `FiltrosDeAuditoria` (`Ways.Application.Auditoria.Contratos`, el DTO crudo del backend,
+ * `DateTimeOffset?` ISO completo, SIN mirror en `tipos.ts` — ver nota de `dto-contract-honesty`
+ * arriba) — `construirQueryDeConsultaDeAuditoria` hace la conversión recién al armar el query
+ * string, mismo criterio que `construirQueryDeAlcanceDeAuditoria` arriba. `desde`/`hasta` vacíos
+ * SÍ están permitidos acá (a diferencia del export, que los exige): el listado JSON no necesita
+ * un rango acotado para nombrar un archivo — el botón de descarga se deshabilita en ese caso
  * (`puedeExportarAuditoria`). */
 export type FiltrosDeConsultaDeAuditoria = FiltrosDeAlcanceDeAuditoria & {
   pagina: number
