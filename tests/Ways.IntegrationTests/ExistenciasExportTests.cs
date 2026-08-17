@@ -285,6 +285,67 @@ public class ExistenciasExportTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
-        Assert.Contains("4", problema.GetProperty("title").GetString());
+        Assert.Contains("tiene 4 filas", problema.GetProperty("title").GetString());
+    }
+
+    // ---- barrido export: FormatoDeExportacion.Parsear en esta ruta -------------------------------
+
+    /// <summary>Sin la llamada a <see cref="FormatoDeExportacion.Parsear"/> dentro de
+    /// <c>/stock/existencias/export</c>, un <c>formato=pdf</c> devolvería 200 XLSX en vez de 400 —
+    /// mismo patrón que <c>ReportesVentasResumenExportTests</c>. No necesita datos sembrados: el
+    /// parseo del formato corre antes de cualquier lectura.</summary>
+    [Fact]
+    public async Task UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeExistencias()
+    {
+        var ctx = await PrepararAsync(nameof(UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDeExistencias));
+
+        var respuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta, formato: "pdf");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("formato_no_soportado", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- barrido export: borde EXACTO del tope (200, no 400) --------------------------------------
+
+    /// <summary>Discriminador real del ÚNICO <c>GuardaDeTope.Exigir</c> de esta ruta AGREGADA del
+    /// lado del ÉXITO: sin este test, mutar <c>Exigir(tabla.Filas.Count, tope)</c> a
+    /// <c>Exigir(tabla.Filas.Count, tope - 1)</c> sobrevive — <c>UnaExportacionQueSuperaElTopeSeRechazaConLaCantidadReal</c>
+    /// solo cubre el rechazo por ARRIBA del tope. Acá se exportan EXACTAMENTE <c>tope</c> filas
+    /// (un artículo con stock = una fila, sin fila de totales) y se espera 200 con el workbook
+    /// completo.</summary>
+    [Fact]
+    public async Task UnaExportacionDeExactamenteElTopeDeFilasSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 3)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDeExactamenteElTopeDeFilasSeAceptaCompleta), factoryBajo);
+
+        for (var i = 0; i < 3; i++)
+        {
+            var idArticulo = await SembrarArticuloAsync(ctx, $"articulo-tope-existencias-{i}");
+            await SembrarStockAsync(ctx, idArticulo, 1m);
+        }
+
+        var respuesta = await LlamarExportAsync(ctx.Admin, ctx.IdPuntoVenta);
+        var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+        Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+
+        // Header en la fila 6, datos desde la 7 (mismo layout que el test de igualdad de arriba):
+        // las tope=3 filas ocupan 7-9, y la fila 10 tiene que quedar vacía.
+        const int primeraFilaDeDatos = 7;
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.False(hoja.Row(primeraFilaDeDatos + i).IsEmpty());
+        }
+        Assert.True(hoja.Row(primeraFilaDeDatos + 3).IsEmpty());
     }
 }

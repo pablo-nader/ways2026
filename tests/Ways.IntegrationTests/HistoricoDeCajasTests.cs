@@ -406,7 +406,12 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var ctx = await PrepararAsync(nameof(UnaExportacionDelHistoricoQueSuperaElTopeSeRechazaConLaCantidadReal), factoryBajo);
 
-        for (var i = 0; i < 4; i++)
+        // tope+2 = 5 turnos (no tope+1 = 4): con solo 4 turnos, el COUNT(*) real y el count
+        // leído del Take(tope+1) coinciden, y borrar el PRIMER GuardaDeTope.Exigir sobrevive (el
+        // segundo Exigir, sobre turnos.Count, rechaza igual con el mismo "4"). Con 5 turnos el
+        // Take(4) trunca: si el primer Exigir se borra, el mutante reporta "4" (el truncado) en
+        // vez de "5" (la cantidad REAL) y el assert de abajo lo discrimina.
+        for (var i = 0; i < 5; i++)
         {
             var turno = await AbrirTurnoAsync(ctx, ctx.IdPuntoVenta, 100m);
             await CerrarTurnoAsync(ctx, turno.Id, [new ConteoDeclarado(ctx.IdMedioEfectivo, 100m)]);
@@ -420,6 +425,69 @@ public class HistoricoDeCajasTests(WaysApiFixture fixture) : IClassFixture<WaysA
 
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
-        Assert.Contains("4", problema.GetProperty("title").GetString());
+        Assert.Contains("tiene 5 filas", problema.GetProperty("title").GetString());
+    }
+
+    // ---- barrido-export GAP 3: borde EXACTO del tope se acepta completo -----------------------
+
+    /// <summary>Discriminador real del SEGUNDO <c>GuardaDeTope.Exigir</c> del lado del ÉXITO: sin
+    /// este test, mutar ese segundo <c>Exigir</c> a <c>Exigir(turnos.Count, tope - 1)</c>
+    /// sobrevive — <see cref="UnaExportacionDelHistoricoQueSuperaElTopeSeRechazaConLaCantidadReal"/>
+    /// solo cubre el rechazo por ARRIBA del tope. Acá se cierran EXACTAMENTE <c>tope</c> turnos
+    /// (3) y se espera 200 con el workbook completo.</summary>
+    [Fact]
+    public async Task UnaExportacionDelHistoricoDeExactamenteElTopeDeFilasSeAceptaCompleta()
+    {
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Configure<OpcionesDeExportacion>(o => o.TopeDeFilas = 3)));
+
+        var ctx = await PrepararAsync(nameof(UnaExportacionDelHistoricoDeExactamenteElTopeDeFilasSeAceptaCompleta), factoryBajo);
+
+        for (var i = 0; i < 3; i++)
+        {
+            var turno = await AbrirTurnoAsync(ctx, ctx.IdPuntoVenta, 100m);
+            await CerrarTurnoAsync(ctx, turno.Id, [new ConteoDeclarado(ctx.IdMedioEfectivo, 100m)]);
+        }
+
+        var ahora = DateTimeOffset.UtcNow;
+        var respuesta = await LlamarExportDelHistoricoAsync(ctx.Admin, ahora.AddMinutes(-5), ahora.AddMinutes(5));
+        var cuerpoError = respuesta.IsSuccessStatusCode ? string.Empty : await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpoError);
+        Assert.Equal(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        using var libro = new XLWorkbook(new MemoryStream(await respuesta.Content.ReadAsByteArrayAsync()));
+        var hoja = libro.Worksheets.First();
+
+        // Encabezado en la fila 6, datos desde la 7 (mismo layout que
+        // ElExportDelHistoricoEsIgualAlListadoJsonTurnoPorTurno): las tope=3 filas ocupan 7-9, la
+        // fila 10 tiene que quedar vacía.
+        const int primeraFilaDeDatos = 7;
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.False(hoja.Row(primeraFilaDeDatos + i).IsEmpty());
+        }
+        Assert.True(hoja.Row(primeraFilaDeDatos + 3).IsEmpty());
+    }
+
+    // ---- barrido-export GAP 2: FormatoDeExportacion.Parsear en esta ruta ------------------------
+
+    /// <summary>Sin este test, borrar la llamada a <c>FormatoDeExportacion.Parsear</c> en
+    /// <c>/api/reportes/cajas/export</c> sobrevive — un <c>formato=pdf</c> devolvería 200 XLSX en
+    /// vez de 400.</summary>
+    [Fact]
+    public async Task UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDelHistorico()
+    {
+        var ctx = await PrepararAsync(nameof(UnFormatoNoSoportadoRechazaConProblemDetailsEnElExportDelHistorico));
+        var ahora = DateTimeOffset.UtcNow;
+
+        var respuesta = await LlamarExportDelHistoricoAsync(
+            ctx.Admin, ahora.AddMinutes(-5), ahora.AddMinutes(5), formato: "pdf");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        Assert.NotEqual(ContentTypeXlsx, respuesta.Content.Headers.ContentType?.MediaType);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("formato_no_soportado", problema.GetProperty("codigo").GetString());
     }
 }
