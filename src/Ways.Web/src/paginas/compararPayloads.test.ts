@@ -45,4 +45,16 @@ describe('compararPayloads', () => {
 
     expect(resultado).toEqual([{ clave: 'movimientos_generados', valorAnterior: [1, 2, 3], valorNuevo: [1, 2, 3], estado: 'sin_cambio' }])
   })
+
+  // judgment-day ronda 2, juez A, sugerencia: `sonIguales` compara con `JSON.stringify`, sensible
+  // al orden de claves — fijado acá como comportamiento CONOCIDO, no como bug: un objeto anidado
+  // semánticamente igual pero con distinto orden de claves se reporta 'cambiada'. El riesgo real
+  // es bajo porque ambos payloads salen del mismo serializador (mismo orden para el mismo shape).
+  it('(limitación conocida) un objeto anidado semánticamente igual pero con distinto orden de claves se marca cambiada', () => {
+    const resultado = compararPayloads({ datos: { a: 1, b: 2 } }, { datos: { b: 2, a: 1 } })
+
+    expect(resultado).toEqual([
+      { clave: 'datos', valorAnterior: { a: 1, b: 2 }, valorNuevo: { b: 2, a: 1 }, estado: 'cambiada' },
+    ])
+  })
 })

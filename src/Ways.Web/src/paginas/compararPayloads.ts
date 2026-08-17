@@ -7,6 +7,12 @@ export type ComparacionDeClave = {
   estado: EstadoDeClave
 }
 
+// Limitación conocida (judgment-day ronda 2, juez A, sugerencia): `JSON.stringify` es sensible al
+// orden de claves — dos objetos anidados semánticamente iguales con distinto orden de claves se
+// reportarían como `'cambiada'`. No se normaliza recursivamente porque el riesgo real es bajo:
+// `valorAnterior`/`valorNuevo` salen del MISMO serializador (`SerializadorDeAuditoria`, backend),
+// que siempre emite las claves en el mismo orden para el mismo shape. Comportamiento fijado como
+// conocido por `compararPayloads.test.ts`.
 function sonIguales(a: unknown, b: unknown): boolean {
   if (a === b) return true
   if (a === null || b === null) return false
