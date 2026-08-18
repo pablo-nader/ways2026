@@ -256,7 +256,31 @@ above):**
     The invariant the gate actually cares about — RLS enabled LAST, the
     backfill running before RLS, and the final index count = 7 — is
     unaffected by this reordering.
-16. **`fk_movimientos_cuenta_corriente_proveedor_tenant`'s exemption test
+16. **Mutation target #4 (task 1.28) is a provably equivalent mutant at
+    runtime — resolved with a source-text assertion instead of a behavioral
+    one, per `mutation-proof-tests` rule 3 exhausted first.** The backfill's
+    `derivado` CTE is rooted at `proveedores` (`FROM proveedores p LEFT JOIN
+    (...) g ON g.id_proveedor = p.id_proveedor`); under SQL NULL semantics no
+    real (NOT NULL) `p.id_proveedor` can ever match a `g.id_proveedor IS
+    NULL` group, so deleting `id_proveedor IS NOT NULL` from the gastos
+    subquery changes NOTHING observable in ANY artifact the migration
+    produces (no ledger row, no `proveedores.saldo` change) — confirmed
+    empirically twice: (1) the end-to-end fidelity test passes unchanged
+    under the mutation; (2) a first attempt at a "routed below the confound"
+    test (mutation-proof-tests rule 3) that reconstructed the subquery
+    fragment BY HAND inside the test also passed under the mutation, because
+    it executed the correct hand-written SQL, never the actual (mutated)
+    migration text — a test-authoring mistake caught by re-running the
+    mutation against it. Since the predicate lives inside one embedded SQL
+    string literal with no separately-invokable component, there is no
+    runtime seam to route the test below. Final resolution:
+    `CuentaCorrienteProveedorBackfillTests.ElTextoFuenteDeLaMigracionConservaElFiltroIdProveedorNoNuloTarget4`
+    reads the actual migration `.cs` file from disk and asserts the literal
+    predicate text is present — a source-text (golden-text style) assertion,
+    the only mechanism that can detect this specific deletion. Both mutation
+    runs (behavioral attempt + final source-text test) are recorded as
+    apply-time evidence for target #4.
+17. **`fk_movimientos_cuenta_corriente_proveedor_tenant`'s exemption test
     (task 1.24) cannot assert the exact constraint name.** Because
     `id_proveedor` is `NOT NULL` and its FK is composite
     (`id_proveedor, id_tenant`), any row with a bogus `id_tenant` also
