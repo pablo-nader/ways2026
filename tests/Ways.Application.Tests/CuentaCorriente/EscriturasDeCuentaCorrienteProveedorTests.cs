@@ -143,4 +143,60 @@ public class EscriturasDeCuentaCorrienteProveedorTests
         Assert.Contains("Apertura", excepcion.Message);
         Assert.Contains("id_punto_venta", excepcion.Message);
     }
+
+    // ---- mutation target #17: UPDATE aditivo crudo, nunca un Proveedor.Saldo trackeado -------------
+
+    /// <summary>Mutation target #17 (task 2.23) es un mutante PROVABLY EQUIVALENT AT RUNTIME contra
+    /// los call sites reales de este slice — resuelto con una aserción de texto fuente, mismo
+    /// criterio que los targets #4/#11 de slice 1
+    /// (<c>CuentaCorrienteProveedorBackfillTests</c>) y el #19 de este mismo slice
+    /// (<c>ServicioDeComprasLockOrderTests</c>), <c>mutation-proof-tests</c> rule 3 agotada
+    /// primero.
+    ///
+    /// El escenario literal del target ("double-count under a forced execution-strategy retry")
+    /// es estructuralmente INALCANZABLE por <c>ServicioDeCompras.ConfirmarAsync</c>/
+    /// <c>AnularAsync</c>: ambos envuelven su núcleo transaccional en
+    /// <c>FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento</c>
+    /// (<c>maxRetryCount: 0</c>, <c>ShouldRetryOn</c> siempre <c>false</c>) — cuyo propio
+    /// doc-comment declara que existe PRECISAMENTE para que un reintento nunca vuelva a ejecutar
+    /// este statement. Construir una prueba de comportamiento que fuerce ese reintento exigiría
+    /// bypassear la propia clase que este código usa para prevenirlo — lo que la prueba
+    /// necesitaría demostrar que NO puede pasar.
+    /// </summary>
+    [Fact]
+    public void ElTextoFuenteDeActualizarSaldoProveedorAsyncUsaElUpdateAditivoCrudoTarget17()
+    {
+        var fuente = LeerFuenteDeEscriturasDeCuentaCorrienteProveedor();
+        var metodo = ExtraerMetodo(fuente, "public static async Task<decimal> ActualizarSaldoProveedorAsync(", "public static async Task<int> InsertarMovimientoCcProveedorAsync(");
+
+        Assert.Contains("UPDATE proveedores SET saldo = saldo + $1", metodo);
+
+        // Nunca una entidad Proveedor trackeada — ningún acceso a IWaysDbContext.Proveedores ni a
+        // SaveChangesAsync dentro de este método (design decisión 2).
+        Assert.DoesNotContain(".Proveedores", metodo);
+        Assert.DoesNotContain("SaveChangesAsync", metodo);
+    }
+
+    private static string RutaDeEsteArchivo([System.Runtime.CompilerServices.CallerFilePath] string ruta = "") => ruta;
+
+    private static string LeerFuenteDeEscriturasDeCuentaCorrienteProveedor()
+    {
+        var ruta = Path.Combine(
+            Path.GetDirectoryName(RutaDeEsteArchivo())!,
+            "..", "..", "..", "src", "Ways.Application", "CuentaCorriente", "EscriturasDeCuentaCorrienteProveedor.cs");
+
+        Assert.True(File.Exists(ruta), $"No se encontró {ruta}");
+        return File.ReadAllText(ruta);
+    }
+
+    private static string ExtraerMetodo(string fuente, string firma, string siguiente)
+    {
+        var inicio = fuente.IndexOf(firma, StringComparison.Ordinal);
+        Assert.True(inicio >= 0, $"No se encontró '{firma}'.");
+
+        var fin = fuente.IndexOf(siguiente, inicio, StringComparison.Ordinal);
+        Assert.True(fin > inicio, $"No se encontró '{siguiente}' después de '{firma}'.");
+
+        return fuente[inicio..fin];
+    }
 }
