@@ -1055,9 +1055,14 @@ above):**
 - [x] 4.19 Gate guard: `dotnet ef migrations has-pending-model-changes`
   clean; zero new files under `Migraciones/`. Confirmed: clean, `git diff
   --stat -- src/Ways.Infrastructure/Persistencia/Migraciones/` empty.
-- [x] 4.20 Run `judgment-day`; fix confirmed issues; re-judge until clean.
-- [x] 4.21 Branch `feat/stage15-slice4-estado-de-cuenta` off `main`
-  (parent: slice 3); PR; merge stacked-to-main.
+- [ ] 4.20 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  **NOT executed by `sdd-apply`** — orchestrator-level review action, out
+  of this phase's scope per the project's solo-dev PR validation gate.
+- [ ] 4.21 Branch `feat/stage15-slice4-estado-de-cuenta` off `main`
+  (parent: slice 3); PR; merge stacked-to-main. **NOT executed by
+  `sdd-apply`** — the branch already exists (worktree pre-created by the
+  orchestrator) and carries this phase's commits; PR creation/merge is an
+  orchestrator action, out of this phase's scope.
 
 **Test plan**: filters (4.7), tied-`fecha` pagination (4.8), defaults
 (4.9), `/saldo` byte-compatibility (4.10), payment-status coverage
