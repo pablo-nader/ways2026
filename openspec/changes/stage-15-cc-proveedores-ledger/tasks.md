@@ -1502,11 +1502,11 @@ above):**
   `Proveedores.test.tsx`, `Compras.test.tsx`) → reverted (`git diff`
   byte-identical to the committed tip) → 18/18 green across the three
   files.
-- [x] 6.14 Run `judgment-day`; fix confirmed issues; re-judge until
+- [ ] 6.14 Run `judgment-day`; fix confirmed issues; re-judge until
   clean. **NOT executed by `sdd-apply`** — orchestrator-level review
   action, out of this phase's scope per the project's solo-dev PR
   validation gate (deviation 41 above).
-- [x] 6.15 Branch `feat/stage15-slice6-web` off `main` (parent: slice 5);
+- [ ] 6.15 Branch `feat/stage15-slice6-web` off `main` (parent: slice 5);
   PR; merge stacked-to-main. **NOT executed by `sdd-apply`** — the branch
   already exists (worktree pre-created by the orchestrator) and carries
   this phase's 3 commits; PR creation/merge is an orchestrator action, out
