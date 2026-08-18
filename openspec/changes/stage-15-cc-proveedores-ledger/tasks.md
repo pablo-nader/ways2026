@@ -834,7 +834,7 @@ above):**
 - [x] 3.15 Gate guard: `dotnet ef migrations has-pending-model-changes`
   clean; zero new files under `Migraciones/`.
 - [x] 3.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
-- [ ] 3.17 Branch `feat/stage15-slice3-pago-por-gasto` off `main` (parent:
+- [x] 3.17 Branch `feat/stage15-slice3-pago-por-gasto` off `main` (parent:
   slice 2); PR; merge stacked-to-main.
 
 **Test plan**: predicate scenarios (3.3-3.6), arqueo no-regression (3.7),
