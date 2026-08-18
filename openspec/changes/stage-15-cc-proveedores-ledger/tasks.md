@@ -228,11 +228,96 @@ no dependent object, no rewritten row (proposal Rollback Plan).
 see decision 3 above. The migration must not ship in a slice that might be
 dropped.
 
-- [ ] 1.1 Create the migration `CuentaCorrienteDeProveedoresEtapa15`:
+**Deviations registered during `sdd-apply` (stage-12 discipline, decision 14
+above):**
+
+15. **Task 1.10's literal order for `ALTER TABLE gastos` is SQL-infeasible —
+    corrected to follow the proposal instead, per the task's own escape
+    clause ("si el proposal internamente ordena distinto ALTER gastos, seguí
+    al proposal").** Task 1.10 as written places `ALTER gastos` AFTER `ALTER
+    proveedores` + statement 2 and BEFORE RLS. But
+    `fk_movimientos_cuenta_corriente_proveedor_gasto` is declared INSIDE the
+    same `CREATE TABLE` that comes earlier in the same ordering — Postgres
+    requires the referenced composite unique constraint
+    (`ak_gastos_id_gasto_id_tenant`) to exist BEFORE the FK that references
+    it is created, or the migration fails with `42830` ("there is no unique
+    constraint matching given keys for referenced table 'gastos'") —
+    reproduced empirically while running the fidelity/idempotency tests
+    against `WaysApiFixture`. proposal.md's own explicit ordering note
+    (`proposal.md:663-668`) does not mention `ALTER TABLE gastos` in its
+    list at all, so there is no literal proposal text to contradict.
+    Resolution: `ak_gastos_id_gasto_id_tenant` is added immediately after
+    the enum `AlterDatabase` and BEFORE `CREATE TABLE` — the same position
+    `dotnet ef migrations add` chose on its own (correct topological order:
+    prerequisites before dependents). Binding order actually shipped:
+    `CREATE TYPE` → `ALTER TABLE gastos ADD CONSTRAINT ak_...` → `CREATE
+    TABLE` (with all 6 FKs/indexes) → backfill statement 1 (1.6) → `ALTER
+    TABLE proveedores` + statement 2 (1.7) → `HabilitarRlsDeTenant` (LAST).
+    The invariant the gate actually cares about — RLS enabled LAST, the
+    backfill running before RLS, and the final index count = 7 — is
+    unaffected by this reordering.
+16. **Mutation target #4 (task 1.28) is a provably equivalent mutant at
+    runtime — resolved with a source-text assertion instead of a behavioral
+    one, per `mutation-proof-tests` rule 3 exhausted first.** The backfill's
+    `derivado` CTE is rooted at `proveedores` (`FROM proveedores p LEFT JOIN
+    (...) g ON g.id_proveedor = p.id_proveedor`); under SQL NULL semantics no
+    real (NOT NULL) `p.id_proveedor` can ever match a `g.id_proveedor IS
+    NULL` group, so deleting `id_proveedor IS NOT NULL` from the gastos
+    subquery changes NOTHING observable in ANY artifact the migration
+    produces (no ledger row, no `proveedores.saldo` change) — confirmed
+    empirically twice: (1) the end-to-end fidelity test passes unchanged
+    under the mutation; (2) a first attempt at a "routed below the confound"
+    test (mutation-proof-tests rule 3) that reconstructed the subquery
+    fragment BY HAND inside the test also passed under the mutation, because
+    it executed the correct hand-written SQL, never the actual (mutated)
+    migration text — a test-authoring mistake caught by re-running the
+    mutation against it. Since the predicate lives inside one embedded SQL
+    string literal with no separately-invokable component, there is no
+    runtime seam to route the test below. Final resolution:
+    `CuentaCorrienteProveedorBackfillTests.ElTextoFuenteDeLaMigracionConservaElFiltroIdProveedorNoNuloTarget4`
+    reads the actual migration `.cs` file from disk and asserts the literal
+    predicate text is present — a source-text (golden-text style) assertion,
+    the only mechanism that can detect this specific deletion. Both mutation
+    runs (behavioral attempt + final source-text test) are recorded as
+    apply-time evidence for target #4.
+17. **Mutation target #11 (task 1.35) is also a provably equivalent mutant at
+    runtime against `WaysApiFixture` — resolved with a source-text ordering
+    assertion instead of a behavioral one, per `mutation-proof-tests` rule 3
+    exhausted first.** `ways_owner` (the connection `WaysApiFixture` uses to
+    run migrations) is created as a Postgres SUPERUSER inside the
+    Testcontainers container, and a Postgres superuser ALWAYS bypasses RLS —
+    even with `FORCE ROW LEVEL SECURITY` — regardless of statement order.
+    The migration's own comment already names this exact risk ("depending on
+    RLS bypass to write the backfill would make the migration's correctness
+    rest on `ways_owner` being a superuser — a known carryover weakness, not
+    a foundation") — moving `HabilitarRlsDeTenant` before the backfill
+    changes NO observable artifact under this fixture (confirmed
+    empirically: both the fidelity and idempotency tests pass unchanged
+    under the mutation). Final resolution:
+    `CuentaCorrienteProveedorBackfillTests.ElTextoFuenteDeLaMigracionOrdenaRlsDespuesDelBackfillTarget11`
+    reads the actual migration `.cs` file and asserts `HabilitarRlsDeTenant`'s
+    text index is AFTER both backfill statements' text indices — the only
+    mechanism that can detect this specific reordering given the documented
+    superuser carryover.
+18. **`fk_movimientos_cuenta_corriente_proveedor_tenant`'s exemption test
+    (task 1.24) cannot assert the exact constraint name.** Because
+    `id_proveedor` is `NOT NULL` and its FK is composite
+    (`id_proveedor, id_tenant`), any row with a bogus `id_tenant` also
+    necessarily breaks `fk_..._proveedor` (no `(id_proveedor, id_tenant)`
+    pair can match). Postgres reports exactly one violated constraint per
+    statement — empirically `fk_..._proveedor`, matching this table's FK
+    declaration order — so isolating `fk_..._tenant` specifically is
+    structurally impossible on a composite-keyed table. The test
+    (`CuentaCorrienteProveedorSchemaTests.UnIdTenantInexistenteViolaAlgunaFkGenerica23503`)
+    asserts SQLSTATE `23503` and the `fk_movimientos_cuenta_corriente_proveedor_`
+    prefix instead — the actual thing `ManejadorDeErrores.cs`'s generic
+    mapping classifies on.
+
+- [x] 1.1 Create the migration `CuentaCorrienteDeProveedoresEtapa15`:
   `CREATE TYPE tipo_movimiento_cc_proveedor AS ENUM ('apertura', 'compra',
   'pago', 'ajuste')`, declaration order = C# member order. *(proposal §A,
   `proposal.md:499-508`)*
-- [ ] 1.2 Same migration: `CREATE TABLE
+- [x] 1.2 Same migration: `CREATE TABLE
   movimientos_cuenta_corriente_proveedor` — 12 columns exactly per §B
   (`id_movimiento` `integer GENERATED BY DEFAULT AS IDENTITY`, `id_tenant`,
   `id_proveedor`, `fecha timestamptz NOT NULL` **no DEFAULT**,
@@ -241,18 +326,18 @@ dropped.
   `saldo_resultante numeric(14,2)`, `detalle NULL`);
   `pk_movimientos_cuenta_corriente_proveedor`. *(proposal §B,
   `proposal.md:524-541`)*
-- [ ] 1.3 Same migration: 6 named FKs exactly per §B's table —
+- [x] 1.3 Same migration: 6 named FKs exactly per §B's table —
   `fk_..._tenant`, `fk_..._proveedor` (composite, AK already exists),
   `fk_..._punto_venta` (composite, MATCH SIMPLE, nullable),
   `fk_..._empleado` (simple, not composite — the platform-staff NULL
   sentinel reason), `fk_..._comprobante_compra` (composite, nullable, AK
   already exists), `fk_..._gasto` (composite, nullable, **requires §D's
   new AK**) — all `RESTRICT`. *(proposal.md:552-557)*
-- [ ] 1.4 Same migration: `CHECK ck_movimientos_cuenta_corriente_proveedor_apertura`
+- [x] 1.4 Same migration: `CHECK ck_movimientos_cuenta_corriente_proveedor_apertura`
   — `(tipo = 'apertura' AND id_punto_venta IS NULL AND id_empleado IS
   NULL) OR (tipo <> 'apertura' AND id_punto_venta IS NOT NULL AND
   id_empleado IS NOT NULL)`. *(proposal.md:558)*
-- [ ] 1.5 Same migration: 6 named indexes exactly per §B's table —
+- [x] 1.5 Same migration: 6 named indexes exactly per §B's table —
   `ix_..._tenant`, `ix_..._proveedor_fecha` (covers FK2 by prefix),
   `ix_..._comprobante_compra` (covers FK5), `ix_..._punto_venta` (covers
   FK3), `ix_..._empleado` (simple, covers FK4), `ix_..._gasto` (covers
@@ -261,7 +346,7 @@ dropped.
   lesson: `ForeignKeyIndexConvention` re-adds a support index for any
   uncovered FK even if removed by hand). *(proposal.md:570-585, design
   decision 16)*
-- [ ] 1.6 Same migration, in order after the table/FKs/indexes: the
+- [x] 1.6 Same migration, in order after the table/FKs/indexes: the
   backfill's statement 1 — `WITH derivado AS (...) INSERT INTO
   movimientos_cuenta_corriente_proveedor (...) SELECT ... FROM derivado d
   WHERE d.saldo <> 0 AND NOT EXISTS (...)`, exactly the SQL of proposal §C
@@ -269,21 +354,21 @@ dropped.
   `estado = 'confirmada'`, `categoria = 'proveedor' AND id_proveedor IS
   NOT NULL`, `now()` (no `IRelojDelSistema` in migration context, accepted
   per decision 13 above). *(proposal.md:606-635)*
-- [ ] 1.7 Same migration: the backfill's statement 2 — `UPDATE proveedores
+- [x] 1.7 Same migration: the backfill's statement 2 — `UPDATE proveedores
   p SET saldo = m.saldo_resultante FROM
   movimientos_cuenta_corriente_proveedor m WHERE ... AND m.tipo =
   'apertura' AND p.saldo <> m.saldo_resultante` — the cache derived FROM
   the row statement 1 just wrote, never recomputed independently.
   *(proposal.md:637-645)*
-- [ ] 1.8 Same migration: `ALTER TABLE proveedores ADD COLUMN saldo
+- [x] 1.8 Same migration: `ALTER TABLE proveedores ADD COLUMN saldo
   numeric(14,2) NOT NULL DEFAULT 0` (metadata-only, no CHECK — a negative
   saldo is a legitimate credit, decision 5). *(proposal §C,
   `proposal.md:589-596`)*
-- [ ] 1.9 Same migration: `ALTER TABLE gastos ADD CONSTRAINT
+- [x] 1.9 Same migration: `ALTER TABLE gastos ADD CONSTRAINT
   ak_gastos_id_gasto_id_tenant UNIQUE (id_gasto, id_tenant)` — verified
   absent from `GastoConfiguration.cs`, structurally unviolable (`id_gasto`
   already unique via `pk_gastos`). *(proposal §D, `proposal.md:670-684`)*
-- [ ] 1.10 Migration ordering is part of the contract, verify in the
+- [x] 1.10 Migration ordering is part of the contract, verify in the
   generated file: `CREATE TYPE` → `CREATE TABLE` → FKs/indexes →
   **backfill (1.6, 1.7)** → `ALTER TABLE proveedores` + statement 2 →
   `HabilitarRlsDeTenant("movimientos_cuenta_corriente_proveedor")` **LAST**
@@ -291,44 +376,44 @@ dropped.
   `app_tenant_actual()` GUC set; RLS running before the backfill would
   make correctness rest on the `ways_owner`-superuser carryover.
   *(proposal.md:663-668)*
-- [ ] 1.11 Create `src/Ways.Domain/CuentaCorriente/TipoMovimientoCcProveedor.cs`
+- [x] 1.11 Create `src/Ways.Domain/CuentaCorriente/TipoMovimientoCcProveedor.cs`
   — `enum { Apertura, Compra, Pago, Ajuste }`, member order = the native
   type's declared order (`npgsql.MapEnum<T>()`). *(design.md:123-125)*
-- [ ] 1.12 Create
+- [x] 1.12 Create
   `src/Ways.Domain/CuentaCorriente/MovimientoCuentaCorrienteProveedor.cs`
   — immutable, no `EntidadBase` inheritance (no `updated_at`, no soft
   delete), no `EntidadTenant` (the `IdTenant` is written explicitly, never
   `EstamparTenant()`). *(design.md:127-129, mirrors
   `MovimientoCuentaCorriente.cs:17-56`)*
-- [ ] 1.13 Create
+- [x] 1.13 Create
   `src/Ways.Infrastructure/.../Configuraciones/MovimientoCuentaCorrienteProveedorConfiguration.cs`
   — mirrors `MovimientoCuentaCorrienteConfiguration.cs:18-133` minus the
   alternate key, the self-FK and its support index; declares all 6
   support indexes by hand with doc-10 names. *(design decision 16,
   `design.md:68, 323`)*
-- [ ] 1.14 Modify `GastoConfiguration.cs` —
+- [x] 1.14 Modify `GastoConfiguration.cs` —
   `HasAlternateKey(g => new { g.Id, g.IdTenant })`. *(design.md:324, gate
   §D)*
-- [ ] 1.15 Modify `ProveedorConfiguration.cs` — `saldo numeric(14,2)`.
+- [x] 1.15 Modify `ProveedorConfiguration.cs` — `saldo numeric(14,2)`.
   *(design.md:325)*
-- [ ] 1.16 Modify `src/Ways.Infrastructure/Persistencia/WaysDbContext.cs`
+- [x] 1.16 Modify `src/Ways.Infrastructure/Persistencia/WaysDbContext.cs`
   — `DbSet<MovimientoCuentaCorrienteProveedor>` +
   `AplicarFiltroDeTenantEnMovimientoCuentaCorrienteProveedor`, cloned from
   the `MovimientoStock` one (stage-14 decision-7 pattern: `id_tenant`
   written explicitly by the writer). *(design.md:326)*
-- [ ] 1.17 Modify `WaysDbContextFactory.cs` **and**
+- [x] 1.17 Modify `WaysDbContextFactory.cs` **and**
   `DependencyInjection.cs` — `MapEnum<TipoMovimientoCcProveedor>` in BOTH
   option builders, never also `HasPostgresEnum`. *(design.md:327, proposal
   §A)*
-- [ ] 1.18 Modify `src/Ways.Application/Abstracciones/IWaysDbContext.cs` —
+- [x] 1.18 Modify `src/Ways.Application/Abstracciones/IWaysDbContext.cs` —
   `DbSet<MovimientoCuentaCorrienteProveedor>`. *(design.md:328)*
-- [ ] 1.19 Modify `docs/10-modelo-de-datos.md` — the new table (a
+- [x] 1.19 Modify `docs/10-modelo-de-datos.md` — the new table (a
   §8-adjacent subsection), `proveedores.saldo` in §2, the "Estado (Etapa
   15)" annotation, and the retirement of the "saldo derivado,
   deliberadamente simple" note at doc-10:832-834. Landed from inside this
   slice (stage-12 task-1.17 discipline). *(proposal In Scope,
   `proposal.md:66-68`)*
-- [ ] 1.20 [P] Integration — **backfill fidelity BY DATA (the stage's
+- [x] 1.20 [P] Integration — **backfill fidelity BY DATA (the stage's
   flagship)**: a fixture mixing, per proveedor: borrador/confirmada/anulada
   compras, linked/unlinked gastos, a `categoria = proveedor` gasto with
   `id_proveedor IS NULL`, a soft-deleted compra, a soft-deleted gasto, a
@@ -337,19 +422,19 @@ dropped.
   proveedor, migrate, assert `proveedores.saldo == saldoPrevio` per
   proveedor **and** the `apertura` row's `importe == saldo_resultante ==
   saldoPrevio`. *(design.md:373)*
-- [ ] 1.21 [P] Integration — idempotency/no-op: re-running the migration
+- [x] 1.21 [P] Integration — idempotency/no-op: re-running the migration
   writes **no** additional `apertura` row and changes **no** saldo; a
   proveedor with zero derived saldo gets **no** row and keeps `saldo = 0`.
   *(design.md:374)*
-- [ ] 1.22 [P] Integration — RLS on `ways_app` (NOSUPERUSER NOBYPASSRLS):
+- [x] 1.22 [P] Integration — RLS on `ways_app` (NOSUPERUSER NOBYPASSRLS):
   cross-tenant `SELECT` returns **0** rows; an `INSERT` with a foreign
   `id_tenant` is refused `42501`. *(design.md:375, mutation-proof-tests
   rule 5)*
-- [ ] 1.23 [P] Integration — the CHECK: a raw `INSERT` of `tipo =
+- [x] 1.23 [P] Integration — the CHECK: a raw `INSERT` of `tipo =
   'apertura'` **with** a PV/empleado, and of `tipo = 'compra'` **without**
   them, both rejected `23514`. *(design.md:376, mutation-proof-tests rule
   4)*
-- [ ] 1.24 [P] `db-error-backstops` — exemption tests for `fk_..._tenant`
+- [x] 1.24 [P] `db-error-backstops` — exemption tests for `fk_..._tenant`
   (session-derived), `fk_..._empleado` (server-derived, `usuarios`
   soft-deleted so never physically removed), `fk_..._gasto` (id of a row
   the same transaction just inserted, once slice 2/3 wire it — provable
@@ -357,47 +442,47 @@ dropped.
   SQLSTATE `23503` proven per FK, the generic `fk_`/`23503` → `400
   referencia_invalida` mapping (`ManejadorDeErrores.cs:224`) confirmed
   unmodified. *(proposal §E)*
-- [ ] 1.25 [P] **Mutation target #1** — `deleted_at IS NULL` on
+- [x] 1.25 [P] **Mutation target #1** — `deleted_at IS NULL` on
   `comprobantes_compra` in the backfill → delete it → the fidelity test's
   soft-deleted-compra case (1.20) must fail.
-- [ ] 1.26 [P] **Mutation target #2** — `deleted_at IS NULL` on `gastos`
+- [x] 1.26 [P] **Mutation target #2** — `deleted_at IS NULL` on `gastos`
   in the backfill → delete it → the fidelity test's soft-deleted-gasto
   case (1.20) must fail.
-- [ ] 1.27 [P] **Mutation target #3** — `deleted_at IS NULL` on
+- [x] 1.27 [P] **Mutation target #3** — `deleted_at IS NULL` on
   `proveedores` in the backfill → delete it → the fidelity test's
   soft-deleted-proveedor case (1.20, "gets no row") must fail.
-- [ ] 1.28 [P] **Mutation target #4** — `id_proveedor IS NOT NULL` in the
+- [x] 1.28 [P] **Mutation target #4** — `id_proveedor IS NOT NULL` in the
   backfill's `gastos` predicate → delete it → the fidelity test's
   `id_proveedor IS NULL` gasto case (1.20) must fail.
-- [ ] 1.29 [P] **Mutation target #5** — `estado = 'confirmada'` in the
+- [x] 1.29 [P] **Mutation target #5** — `estado = 'confirmada'` in the
   backfill → widen to any estado → the fidelity test's borrador+anulada
   case (1.20) must fail.
-- [ ] 1.30 [P] **Mutation target #6** — `WHERE d.saldo <> 0` → delete it
+- [x] 1.30 [P] **Mutation target #6** — `WHERE d.saldo <> 0` → delete it
   → "a proveedor with no history gets no row" (1.21) must fail.
-- [ ] 1.31 [P] **Mutation target #7** — the `NOT EXISTS (...)` idempotency
+- [x] 1.31 [P] **Mutation target #7** — the `NOT EXISTS (...)` idempotency
   guard → delete it → re-run writes a second `apertura` row (1.21) must
   fail.
-- [ ] 1.32 [P] **Mutation target #8** — statement 2 deriving the cache
+- [x] 1.32 [P] **Mutation target #8** — statement 2 deriving the cache
   FROM the row of statement 1 → recompute it independently → the fidelity
   test (1.20, "both must agree by construction") must fail.
-- [ ] 1.33 [P] **Mutation target #9** —
+- [x] 1.33 [P] **Mutation target #9** —
   `HabilitarRlsDeTenant("movimientos_cuenta_corriente_proveedor")` →
   delete the line → the cross-tenant row count **and** the `42501` INSERT
   test (1.22) must both fail.
-- [ ] 1.34 [P] **Mutation target #10** — the `ck_..._apertura` CHECK in
+- [x] 1.34 [P] **Mutation target #10** — the `ck_..._apertura` CHECK in
   the migration → delete it → the raw-insert `23514` test (1.23, both
   directions) must fail.
-- [ ] 1.35 [P] **Mutation target #11** — RLS ordered LAST in the migration
+- [x] 1.35 [P] **Mutation target #11** — RLS ordered LAST in the migration
   → move it before the backfill → the migration fails or the backfill
   writes zero rows (1.20/1.21 regress).
-- [ ] 1.36 Gate guard (**VINCULANTE**, `state.yaml` db_gate_approval):
+- [x] 1.36 Gate guard (**VINCULANTE**, `state.yaml` db_gate_approval):
   `git diff --stat main -- src/Ways.Infrastructure/Persistencia/Migraciones/`
   shows **exactly one** new file, named for
   `CuentaCorrienteDeProveedoresEtapa15`; `dotnet ef migrations
   has-pending-model-changes` reports no pending changes; the final new
   index count on `movimientos_cuenta_corriente_proveedor` + the implicit
   `gastos` AK index = **7**. Any deviation reopens the gate.
-- [ ] 1.37 Run `judgment-day` on the slice diff; fix confirmed issues;
+- [x] 1.37 Run `judgment-day` on the slice diff; fix confirmed issues;
   re-judge until clean.
 - [ ] 1.38 Branch `feat/stage15-slice1-ledger-schema` off `main`; PR;
   merge stacked-to-main.

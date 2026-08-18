@@ -113,6 +113,11 @@ public interface IWaysDbContext
     // propiedad "Auditoria" colisionaría con el tipo del mismo nombre del namespace homónimo.
     DbSet<Ways.Domain.Auditoria.Auditoria> Auditoria { get; }
 
+    // stage-15-cc-proveedores-ledger, Slice 1: la fixture de fidelidad del backfill (task 1.20)
+    // es el primer consumidor de Application de este DbSet — EscriturasDeCuentaCorrienteProveedor
+    // (slice 2) no lo necesita (opera raw-ADO, mismo criterio que EscriturasDeCuentaCorriente).
+    DbSet<MovimientoCuentaCorrienteProveedor> MovimientosCuentaCorrienteProveedor { get; }
+
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>
     /// y <c>BeginTransactionAsync</c> no tienen un equivalente más angosto en este proyecto.

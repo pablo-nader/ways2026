@@ -129,5 +129,13 @@ public class GastoConfiguration : IEntityTypeConfiguration<Gasto>
             .HasPrincipalKey(m => new { m.Id, m.IdTenant })
             .HasConstraintName("fk_gastos_medio_pago")
             .OnDelete(DeleteBehavior.Restrict);
+
+        // stage-15-cc-proveedores-ledger, Slice 1 (gate §D): habilita la FK compuesta
+        // fk_movimientos_cuenta_corriente_proveedor_gasto — id_gasto ya es único vía pk_gastos,
+        // así que la constraint es estructuralmente inviolable (no agrega ningún modo de fallo
+        // nuevo, solo el target de referencia compuesto que el resto de las FKs operativas de
+        // este esquema usa).
+        builder.HasAlternateKey(g => new { g.Id, g.IdTenant })
+            .HasName("ak_gastos_id_gasto_id_tenant");
     }
 }

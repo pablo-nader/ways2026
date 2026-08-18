@@ -100,6 +100,16 @@ public class ProveedorConfiguration : IEntityTypeConfiguration<Proveedor>
             .HasDefaultValue(true)
             .IsRequired();
 
+        // stage-15-cc-proveedores-ledger, Slice 1 (gate §C): cache mantenida por
+        // EscriturasDeCuentaCorrienteProveedor — el libro es movimientos_cuenta_corriente_proveedor
+        // (mismo criterio que Cliente.Saldo, doc-10:169-170). Sin CHECK: un saldo negativo es un
+        // "saldo a favor" legítimo (decisión 5).
+        builder.Property(p => p.Saldo)
+            .HasColumnName("saldo")
+            .HasColumnType("numeric(14,2)")
+            .HasDefaultValue(0m)
+            .IsRequired();
+
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(p => p.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(p => p.DeletedAt).HasColumnName("deleted_at");
