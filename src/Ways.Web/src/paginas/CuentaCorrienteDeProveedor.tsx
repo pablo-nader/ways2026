@@ -77,9 +77,9 @@ function ModalAjusteDeProveedor({ idProveedor, puntosVenta, saldoActual, onCerra
   const saldoResultante = Number.isFinite(importeNumerico) ? saldoResultanteDeAjuste(saldoActual, importeNumerico) : null
 
   async function registrarAjuste() {
-    // regla 9: guard de reentrancia de primera línea — un doble click en el mismo tick no puede
-    // emitir un segundo POST (jsdom no-opea clicks en disabled: la defensa real vive acá, nunca en
-    // el atributo `disabled` solo).
+    // regla 9: guard de reentrancia de primera línea — dos defensas complementarias contra el
+    // doble click: este ref cubre la ventana same-tick, antes de que React re-renderice con
+    // `disabled`; el atributo `disabled` cubre el resto de la ventana mientras `registrando` es true.
     if (registrandoRef.current) return
 
     const rechazo = validarAjusteLocal({ importe: importeNumerico, detalle })

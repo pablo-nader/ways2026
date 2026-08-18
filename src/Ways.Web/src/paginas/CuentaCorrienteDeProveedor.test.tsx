@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -349,10 +349,14 @@ describe('CuentaCorrienteDeProveedor — modal de ajuste manual', () => {
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
-  // jsdom no-opea clicks en disabled: el guard real vive en el primer renglón del handler (regla
-  // 9), no en el atributo `disabled` — dos `userEvent.click` + un `fireEvent.click` forzado
-  // reproducen el mismo patrón que `CuentaCorriente.test.tsx` (cliente, stage 7).
-  it('doble click en "Registrar ajuste" dispara exactamente un POST', async () => {
+  // Prueba la guarda de re-entrancia (`if (registrandoRef.current) return`, regla 9): el ref cubre
+  // la ventana same-tick antes del re-render de React, `disabled` cubre el resto — son DOS
+  // defensas complementarias. Para que el guard del ref sea la ÚNICA defensa observable, los dos
+  // clicks viajan DENTRO de un mismo `act()` (no dos `await userEvent.click` separados), así
+  // ningún re-render de React corre entre ellos — si no, el segundo click ya vería el `disabled`
+  // puesto por el primero y el test probaría el atributo, no la guarda del `ref` (mismo patrón que
+  // `BotonDeDescarga.test.tsx`).
+  it('doble click en el mismo tick en "Registrar ajuste" dispara exactamente un POST', async () => {
     await abrirModalDeAjuste()
     await userEvent.type(screen.getByLabelText('Importe'), '-200')
     await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), 'motivo válido')
@@ -366,9 +370,10 @@ describe('CuentaCorrienteDeProveedor — modal de ajuste manual', () => {
     )
 
     const boton = screen.getByRole('button', { name: 'Registrar ajuste' })
-    await userEvent.click(boton)
-    await userEvent.click(boton)
-    fireEvent.click(boton)
+    act(() => {
+      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
 
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/proveedores/1/cuenta-corriente/ajustes')).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'Registrando…' })).toBeDisabled()

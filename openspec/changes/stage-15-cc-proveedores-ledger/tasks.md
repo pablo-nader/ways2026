@@ -1394,6 +1394,23 @@ above):**
     pre-authorized degradation (drop the ajuste modal) was NOT exercised —
     the full scope fit inside one PR with green tests, so there was no
     coverage to trim.
+43. **`judgment-day` (juez B) confirmed one CRITICAL finding, fixed here:
+    task 6.12's double-click test (`CuentaCorrienteDeProveedor.test.tsx`,
+    "doble click en 'Registrar ajuste' dispara exactamente un POST") was
+    overdetermined** — its two `await userEvent.click` calls let React
+    re-render with `disabled` between clicks, so jsdom no-opeaba the second
+    click on its own; neutralizing the ref guard (`if (registrandoRef.current)
+    return`) still passed 13/13, because `disabled` alone already blocked the
+    second click. The guard's inline comment also asserted (unverified) that
+    the ref was "the real defense", never `disabled` alone. Fixed by
+    dispatching both clicks inside one `act()` (no `await` between them, same
+    pattern as `BotonDeDescarga.test.tsx`'s same-tick double-click test), so
+    the ref guard is the only defense observable in that window; mutating it
+    to a no-op now fails the test with 2 POSTs (verified). The comment now
+    states both defenses are complementary — the ref covers the same-tick
+    window, `disabled` covers the rest — without ranking one as "the real"
+    one. Test renamed to "doble click en el mismo tick en 'Registrar ajuste'
+    dispara exactamente un POST".
 
 - [x] 6.1 Create `src/Ways.Web/src/api/cuentaCorrienteDeProveedor.ts` —
   client + pure mappers (movement mapper, filter builder, `etiquetarAjuste`).
