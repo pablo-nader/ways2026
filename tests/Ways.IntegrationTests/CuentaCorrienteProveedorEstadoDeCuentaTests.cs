@@ -157,9 +157,12 @@ public class CuentaCorrienteProveedorEstadoDeCuentaTests(WaysApiFixture fixture)
     {
         var ctx = await PrepararAsync(nameof(ConFechaEmpatadaLaPaginacionDesempataPorIdMovimientoDescendenteSinDuplicarNiSaltear));
 
-        // Las tres filas comparten EXACTAMENTE la misma fecha (RelojFijo) — sin
-        // ThenByDescending(Id) el orden entre ellas es indefinido y la paginación puede repetir o
-        // saltear filas.
+        // Las tres filas comparten EXACTAMENTE la misma fecha (RelojFijo) — cobertura de spec
+        // (task 4.8): la paginación no puede duplicar ni saltear filas bajo un empate. La prueba
+        // de mutación real del target #25 es de texto fuente (ver deviación registrada en
+        // tasks.md / apply-progress) — el orden de un empate SQL sin desempate explícito no es
+        // determinista de forma observable en este entorno de test (Postgres puede resolverlo
+        // por plan/estrategia de sort, no por garantía del estándar).
         var id1 = await SembrarMovimientoAsync(ctx, TipoMovimientoCcProveedor.Ajuste, Mediodia, 100m, "primero");
         var id2 = await SembrarMovimientoAsync(ctx, TipoMovimientoCcProveedor.Ajuste, Mediodia, 100m, "segundo");
         var id3 = await SembrarMovimientoAsync(ctx, TipoMovimientoCcProveedor.Ajuste, Mediodia, 100m, "tercero");

@@ -859,18 +859,103 @@ merged.
 **Budget note**: pre-authorized split `4a`/`4b` if this slice overflows —
 see decision 3 above.
 
-- [ ] 4.1 Create
+**Deviations registered during `sdd-apply` (stage-12 discipline, decision 14
+above):**
+
+27. **The backfill fidelity test (Slice 1, `CuentaCorrienteProveedorBackfillTests.
+    PrepararFixtureSinMigrarAsync`) captured its pre-migration `saldoPrevio` by
+    calling `ServicioDeSaldoDeProveedor.ObtenerAsync` directly — valid only
+    while that class still computed the retired formula.** Task 4.5 re-sources
+    `ObtenerAsync` onto `movimientos_cuenta_corriente_proveedor`, a table that
+    does not exist yet at the exact point that test calls it (the fixture is
+    deliberately migrated only up to `MigracionAnterior`, before
+    `CuentaCorrienteDeProveedoresEtapa15` runs — the whole point of the test).
+    Calling the re-sourced service there now fails with `42P01 relation "
+    movimientos_cuenta_corriente_proveedor" does not exist`, confirmed
+    empirically. Fixed by inlining the retired formula verbatim (same predicate
+    `Σ compras confirmadas − Σ gastos categoria=proveedor` `ServicioDeSaldoDeProveedor.
+    ObtenerAsync` used before this task) into a new private helper,
+    `CalcularSaldoPorLaFormulaRetiradaAsync`, owned by the test file itself —
+    not a from-memory reimplementation, the exact predicate the class had until
+    this task moved it. Zero production code touched by this fix; the fidelity
+    test's own assertions (`saldoPrevio == saldo` post-migration) are unchanged.
+28. **`SaldoDeProveedorTests.CrearContextoConContador` (stage-8, its own
+    manually-curated `DbContextOptionsBuilder<WaysDbContext>`) was missing
+    `MapEnum<TipoMovimientoCcProveedor>` — the same gap class as slice 2's
+    deviation 20, opened one slice later this time.** Task 4.5's re-sourcing is
+    the FIRST code path that makes `ServicioDeSaldoDeProveedor` actually query
+    `movimientos_cuenta_corriente_proveedor`, and this file's query-budget test
+    (`ElSaldoEmiteUnaCantidadConstanteDeConsultasIndependienteDeLaCantidadDeCompras`)
+    builds its own context instead of using `WaysApiFixture.CrearContextoDeAplicacion`
+    — reproduced empirically (`42883: operator does not exist:
+    tipo_movimiento_cc_proveedor = integer`). Fixed with the one missing
+    `MapEnum` line; the query-count assertion (constant regardless of compra
+    count) still holds after re-sourcing — 4 queries now instead of 3, but
+    still constant.
+29. **Mutation target #25 could not be proven with a behavioral test —
+    resolved with a deterministic source-text assertion instead, after two
+    runtime attempts were exhausted (`mutation-proof-tests` rule 2/3), same
+    criterion as slice 1's targets #4/#11 and slice 2's target #19.** First
+    attempt: three movements seeded with an identical `Fecha` in ascending
+    `id_movimiento` order — the mutant (`ThenByDescending(Id)` deleted) still
+    passed the pagination test, because in an INSERT-only fixture with no
+    updates, PostgreSQL's B-tree TID tiebreaker (>= PG 12) keeps physical tuple
+    order correlated with `id_movimiento` order, so an unordered tie
+    coincidentally resolves the same way. Second attempt: a raw `UPDATE`
+    against the first-seeded row after seeding, specifically to decouple its
+    physical location (TID) from its `id_movimiento` — the mutant STILL passed
+    the HTTP-level paginated test; a follow-up diagnostic query confirmed why:
+    the actual paginated query (with `Skip`/`Take`) and a plain unbounded
+    `ORDER BY fecha DESC` diverge in how PostgreSQL resolves the same tie
+    (bounded top-N sort vs. full sort), so the observable tie-order is
+    plan-dependent, not a property the test can pin down from outside.
+    Resolution: `ServicioDeCuentaCorrienteDeProveedorLecturaTests.
+    ConstruirQueryDesempataPorIdMovimientoDescendenteTarget25` (new file,
+    `tests/Ways.Application.Tests/CuentaCorriente/`) reads
+    `ServicioDeCuentaCorrienteDeProveedor.cs` from disk and asserts
+    `ThenByDescending(m => m.Id)` is chained immediately after
+    `OrderByDescending(m => m.Fecha)` inside `ConstruirQuery` — the only
+    mechanism that can detect this specific deletion given the confirmed
+    plan-dependent confound. Task 4.8's behavioral test ships unchanged as the
+    spec-level coverage that pagination does not duplicate/skip under a tied
+    `fecha` in the ordinary case — it is not target #25's discriminator.
+30. **Mutation evidence for target #24 substituted the full binding formula
+    with each of the two REJECTED ones (proposal's and design's), beyond the
+    narrower "widen one filter" mutation the design.md table literally
+    describes, per explicit instruction.** All three runs used
+    `SaldoDeProveedorReSourceadoTests`' pre-cutover fixtures (tasks 4.12/4.13)
+    plus `SaldoDeProveedorTests.UnPagoParcialLigadoDaEstadoParcial`/
+    `VariosGastosLigadosALaMismaCompraSeAcumulanHastaPagada` (ordinary
+    post-cutover partial payments): (1) narrow mutation — `tipo = 'ajuste'` →
+    `tipo <> 'compra'` (re-including `pago`) — both post-cutover partial-payment
+    tests failed with a doubled `Pagado` (800 vs 400 expected, 1000 vs 500),
+    reverted, green; (2) full substitution with the proposal's formula
+    (`SUM(importe)` over all linked ledger movements including the compra's own
+    `+total`, `<= 0 ⇒ pagada`) — both pre-cutover tests (4.12, 4.13) failed:
+    the no-payment case read `Pagado = 1234.56` instead of `0` (reads `pagada`,
+    the exact defect OD7's arbitration names), the partial-payment case read
+    `Pagado = 1000` instead of `400`; reverted, green; (3) full substitution
+    with the design's formula (`pagado = −Σ importe WHERE tipo <> 'compra'`,
+    ledger-only, never queries `gastos`) — the no-payment case (4.12) passed
+    BY COINCIDENCE (no ledger rows either way ⇒ both formulas read `0`), but
+    the partial-payment case (4.13) failed exactly as `state.yaml` OD7's
+    arbitration predicts: `Pagado = 0` instead of `400` — "a pre-cutover
+    partial payment is lost because the design's formula never queries
+    `gastos` at all". Reverted; `git diff` against the committed slice-4 tip
+    confirms byte-identical production code after all three reverts.
+
+- [x] 4.1 Create
   `src/Ways.Domain/CuentaCorriente/CalculadorDeEstadoDeCuentaDeProveedor.cs`
   — `EtiquetarAjuste(idComprobanteCompra)`: non-null ⇒ Contramovimiento,
   null ⇒ Manual, pure. `ResolverEstadoPago(pagado, total)` is REUSED
   unchanged from `ServicioDeSaldoDeProveedor.cs:69-77`. *(design.md:
   131-134)*
-- [ ] 4.2 Create `src/Ways.Application/CuentaCorriente/ContratosDeProveedor.cs`
+- [x] 4.2 Create `src/Ways.Application/CuentaCorriente/ContratosDeProveedor.cs`
   — `MovimientoDeCuentaDeProveedor`, `EstadoDeCuentaDeProveedorHeader`,
   `PaginaDeEstadoDeCuentaDeProveedor(Header, Items, Total, Pagina,
   Tamanio, Historico, Desde, Hasta)` — **PAGINATED** shape, reconciling
   spec.md's unpaginated prose per decision 5 above. *(design.md:139-149)*
-- [ ] 4.3 Create
+- [x] 4.3 Create
   `src/Ways.Application/CuentaCorriente/ServicioDeCuentaCorrienteDeProveedor.cs`
   — `ObtenerEstadoDeCuentaAsync`: `CountAsync` +
   `Skip((pagina-1)*tamanio).Take(tamanio)`, `pagina = Max(pagina, 1)`,
@@ -878,12 +963,12 @@ see decision 3 above.
   id_movimiento DESC` (the tiebreaker — decision 5 above); `historico`
   overrides `desde`/`hasta`; no filter ⇒ last-month default. *(design.md:
   63, 152-154, 174-177)*
-- [ ] 4.4 Same file: `ConstruirQuery` private helper with the 4 named
+- [x] 4.4 Same file: `ConstruirQuery` private helper with the 4 named
   clauses under `mutation-proof-tests`: `Where(m => m.IdProveedor ==
   idProveedor)`, `ThenByDescending(IdMovimiento)`, the
   `historico`-vs-default-range branch, each `if (desde/hasta is { } x)`.
   *(design.md:164-172)*
-- [ ] 4.5 Modify `ServicioDeSaldoDeProveedor.cs` — `Saldo` sourced from
+- [x] 4.5 Modify `ServicioDeSaldoDeProveedor.cs` — `Saldo` sourced from
   `proveedores.saldo`; the per-compra `pagadoPorCompra` re-sourced
   applying the **BINDING OD7 formula** (decision 4 above): `pagado(X) =
   SUM(gastos.importe) WHERE gastos.id_comprobante_compra = X AND
@@ -897,53 +982,81 @@ see decision 3 above.
   `ResolverEstadoPago` stay byte-identical. **NOT** design.md's rejected
   `−Σ importe WHERE tipo <> 'compra'` shape. *(design decision 8/9,
   OVERRIDDEN by state.yaml OD7 per decision 4 above)*
-- [ ] 4.6 Confirm `GET /api/proveedores/{id}/cuenta-corriente` under the
+- [x] 4.6 Confirm `GET /api/proveedores/{id}/cuenta-corriente` under the
   `OperacionDePos` group; `GET /api/proveedores/{id}/saldo` stays
-  top-level, unchanged route/policy/DTOs. *(design.md:255-257)*
-- [ ] 4.7 [P] Integration — filters with asymmetric seeds (distinct
+  top-level, unchanged route/policy/DTOs. Realized as a NEW file,
+  `src/Ways.Api/Endpoints/CuentaCorrienteDeProveedorEndpoints.cs`
+  (`MapearCuentaCorrienteDeProveedor`), registered in `Program.cs` right
+  after `MapearCompras()` — mirrors the design's file-changes table, which
+  lists this same file created once with both this slice's `GET` and
+  slice 5's top-level `POST /ajustes` (that route is NOT added here; it
+  lands in slice 5 as a `Modify`, not a second `Create`, a deviation
+  registered so `sdd-verify` doesn't read task 5.5's literal "Create" as a
+  duplicate file). *(design.md:255-257)*
+- [x] 4.7 [P] Integration — filters with asymmetric seeds (distinct
   dates, tipos, importes, imputaciones); order asserted as a sequence.
-- [ ] 4.8 [P] Integration — pagination with `fecha` TIED on every row
+- [x] 4.8 [P] Integration — pagination with `fecha` TIED on every row
   (`RelojFijo`) ⇒ page 2 repeats and skips nothing — proves the OD9
   pagination reconciliation (decision 5 above).
-- [ ] 4.9 [P] Integration — `historico` overrides `desde`/`hasta`; no
+- [x] 4.9 [P] Integration — `historico` overrides `desde`/`hasta`; no
   filter ⇒ last-month default; empty ledger ⇒ empty page with the header
   still populated.
-- [ ] 4.10 [P] Integration — `/saldo` byte-compatibility: the response is
+- [x] 4.10 [P] Integration — `/saldo` byte-compatibility: the response is
   byte-identical over the same data (all 3 records, all fields, per row —
   mutation-proof-tests rule 6).
-- [ ] 4.11 [P] Integration — a fully-imputed compra ⇒ `pagada`; a
+- [x] 4.11 [P] Integration — a fully-imputed compra ⇒ `pagada`; a
   partially-imputed one ⇒ `parcial`; an unimputed payment reduces the
   total saldo without settling any compra. *(spec + MODIFIED
-  `saldo-de-proveedor` scenarios)*
-- [ ] 4.12 [P] Integration — a PRE-CUTOVER confirmed compra with NO
+  `saldo-de-proveedor` scenarios; covered by the pre-existing stage-8
+  `SaldoDeProveedorTests.cs`, which stays green byte-for-byte under the
+  re-sourced formula — no new test needed for the ordinary post-cutover
+  case)*
+- [x] 4.12 [P] Integration — a PRE-CUTOVER confirmed compra with NO
   payments (its debt lives only in the `apertura` asiento) ⇒ `impaga` —
   the discriminating case both the proposal's and the design's original
   formulas got wrong (decision 4 above).
-- [ ] 4.13 [P] Integration — a PRE-CUTOVER compra PARTIALLY paid via a
+- [x] 4.13 [P] Integration — a PRE-CUTOVER compra PARTIALLY paid via a
   linked gasto before the cutover ⇒ `parcial` with the correct remaining
   amount — the case OD7's arbitration names explicitly ("un pago parcial
   pre-cutover se pierde" under design's rejected formula, decision 4
-  above). Also the DISCRIMINATOR for redefined mutation target #24.
-- [ ] 4.14 [P] Integration — authorization: Vendedor `200` on estado de
+  above). Seeded via a DIRECT EF insert of both the `ComprobanteCompra`
+  (bypassing `ServicioDeCompras`, so no own `compra` ledger row exists)
+  AND the linked `Gasto` (bypassing `ServicioDeGastos`, so no `pago`
+  ledger row exists either) — the exact shape a payment made through the
+  retired, pre-ledger mechanism leaves. Also the runtime-attempted (and
+  discarded) DISCRIMINATOR for target #24 — see deviation 29 below for
+  why target #24 uses a different fixture instead.
+- [x] 4.14 [P] Integration — authorization: Vendedor `200` on estado de
   cuenta and `/saldo`; tenant B never sees tenant A's movements.
-- [ ] 4.15 [P] **Mutation target #24 (REDEFINED per decision 4 above)** —
+- [x] 4.15 [P] **Mutation target #24 (REDEFINED per decision 4 above)** —
   the `tipo = 'ajuste'` filter on the ledger-imputed sum → widen to `tipo
   <> 'compra'` (re-including `pago`) → the double-count discriminator
-  (4.13's shape: a partially-paid post-cutover compra whose `pagado`
-  would double if `pago` movements were counted alongside the `gastos`
-  sum) must fail.
-- [ ] 4.16 [P] **Mutation target #25** — `ThenByDescending(IdMovimiento)`
-  → delete it → the tied-`fecha` pagination test (4.8) must fail.
-- [ ] 4.17 [P] **Mutation target #26** — each `if (desde/hasta/historico
+  must fail. Discriminated by the pre-existing, ORDINARY post-cutover
+  partial-payment tests in `SaldoDeProveedorTests.cs`
+  (`UnPagoParcialLigadoDaEstadoParcial`,
+  `VariosGastosLigadosALaMismaCompraSeAcumulanHastaPagada`) — task 4.13's
+  own pre-cutover fixture has no `pago` ledger row to double-count by
+  construction (deviation 30 below), so it cannot discriminate this
+  specific mutation; an ordinary paid compra (own `compra` row + a real,
+  ledger-writing `pago`) can and does.
+- [x] 4.16 [P] **Mutation target #25** — `ThenByDescending(IdMovimiento)`
+  → delete it → RESOLVED WITH A SOURCE-TEXT ASSERTION, not the behavioral
+  tied-`fecha` pagination test (4.8) — see deviation 29 below; two runtime
+  attempts were exhausted first (`mutation-proof-tests` rule 2/3).
+- [x] 4.17 [P] **Mutation target #26** — each `if (desde/hasta/historico
   …)` in `ConstruirQuery` → delete one → that filter's asymmetric-seed
-  test (4.7) must fail.
-- [ ] 4.18 `dto-contract-honesty`: every field of
+  test (4.7) must fail. Proven for both `desde` and `hasta` independently.
+- [x] 4.18 `dto-contract-honesty`: every field of
   `ContratosDeProveedor.cs` traced to its read/use point — no
-  accepted-and-dropped field.
-- [ ] 4.19 Gate guard: `dotnet ef migrations has-pending-model-changes`
-  clean; zero new files under `Migraciones/`.
-- [ ] 4.20 Run `judgment-day`; fix confirmed issues; re-judge until clean.
-- [ ] 4.21 Branch `feat/stage15-slice4-estado-de-cuenta` off `main`
+  accepted-and-dropped field. All three records are OUTPUT-only in this
+  slice (no request DTO yet — `SolicitudDeAjusteDeProveedor` is slice 5);
+  every field is populated from a real query result and returned, none
+  accepted from a client and silently dropped.
+- [x] 4.19 Gate guard: `dotnet ef migrations has-pending-model-changes`
+  clean; zero new files under `Migraciones/`. Confirmed: clean, `git diff
+  --stat -- src/Ways.Infrastructure/Persistencia/Migraciones/` empty.
+- [x] 4.20 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 4.21 Branch `feat/stage15-slice4-estado-de-cuenta` off `main`
   (parent: slice 3); PR; merge stacked-to-main.
 
 **Test plan**: filters (4.7), tied-`fecha` pagination (4.8), defaults
