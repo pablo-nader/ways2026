@@ -115,6 +115,32 @@ so deleting the clause under test changes nothing the test can see.
    only `AuditoriaExportTests` sends a real offset; the other five export test files
    still send `Z`. Close each one whenever it is touched.)
 
+11. **A ledger assert needs prior state that discriminates — a fresh seed proves
+   nothing about provenance.** With a fresh entity (saldo 0) and ONE operation,
+   `saldo_resultante == importe == total` by arithmetic coincidence, so a mutant that
+   sources the stored snapshot from ANY in-scope value (the request total, a local
+   recomputation) passes green. Every assert over `saldo_resultante`, a cached
+   `saldo`, or a derived estado seeds REAL prior debt: ≠ 0, ≠ the operation's own
+   importe, ≠ their trivial sum — and reverse paths (anulación) assert the resulting
+   snapshot too, not only the reversal's importe. (Stage 15 slice 2: judge B's
+   CRITICAL — the only `SaldoResultante` assert lived in the fresh-provider test and
+   the value-substitution mutant survived 9/9; killed with prior debt 800+1500⇒2300.)
+
+12. **A read layer has its own three mutant classes — write-side coverage kills none
+   of them.** Proven the hard way (stage 15 slice 4: three CRITICALs in one round,
+   all surviving 100% of the slice's tests):
+   (a) **Source-of-truth**: a field documented as "read from the cache/stored column,
+   never re-derived" needs a test that DELIBERATELY DESYNCS cache from derivation
+   (raw `UPDATE` to a sentinel) and asserts the endpoint returns the sentinel —
+   in-sync fixtures make both sources indistinguishable by construction.
+   (b) **Projection**: EVERY projected money/date field of a returned item gets
+   asserted with per-row discriminating values — a `SaldoResultante = 0m` hardcode
+   survived 8/8 tests because no test read the field back.
+   (c) **Identity predicate**: seeding ONE entity per tenant makes `Where(Id == x)`
+   undeletable-undetectable; every listing/estado test seeds a SECOND sibling of the
+   same tenant with its own rows and asserts exact counts + row identity, so
+   cross-entity leaks fail loudly.
+
 ## Decision Gate
 
 | Situation | Action |
