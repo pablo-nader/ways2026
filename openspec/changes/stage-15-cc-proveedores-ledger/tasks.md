@@ -1292,9 +1292,112 @@ running balance and the filters, and DROP the ajuste modal (the endpoint
 still serves the operation) — a documented reduction, never silent
 (decision 3 above).
 
-- [ ] 6.1 Create `src/Ways.Web/src/api/cuentaCorrienteDeProveedor.ts` —
+**Deviations registered during `sdd-apply` (stage-12 discipline, decision 14
+above):**
+
+36. **Task 6.6's "two entry points (per-row action in `Proveedores.tsx`,
+    filtered header in `Compras.tsx`)" is realized as ONE shared entry
+    point — `ResumenSaldoDeProveedor`'s own new link — reachable from both
+    existing surfaces, not two separate, redundant buttons.** design.md's
+    Web Composition section states `ResumenSaldoDeProveedor.tsx` itself
+    "gains the link to the new screen" (`design.md:304-307`) and stays
+    presentational, shared between `Proveedores.tsx`'s panel and
+    `Compras.tsx`'s filtered header — the same component instance IS the
+    entry point in both places once it renders a `<Link>`. Adding a
+    second, separate per-row "Ver estado de cuenta" button in
+    `Proveedores.tsx` would duplicate the same navigation the shared
+    component already offers, for no added coverage. `ResumenSaldoDeProveedor`
+    widened its props to `{ saldo, idProveedor }` (from `{ saldo }`) so
+    the link can be built; both call sites updated (`Proveedores.tsx`
+    passes the panel's own `idProveedor`, `Compras.tsx` passes
+    `saldoProveedor.idProveedor` from the response itself, never a second
+    source of truth for the same id).
+37. **`clienteDeProveedores.obtener` (task 6.2's identity fallback,
+    mirroring `clienteDeClientes.obtener` in `CuentaCorriente.tsx`) is
+    gated `Politicas.GestionDeCatalogo` (Admin-only) server-side
+    (`ProveedoresEndpoints.cs:11-27`) — NOT `OperacionDePos` like
+    `/clientes/{id}` is.** This is pre-existing API surface, unmodified by
+    this stage ("cero cambios de API"), and unlike the client-side
+    precedent, a Vendedor/Supervisor arriving at
+    `/proveedores/:id/cuenta-corriente` by direct URL (no
+    `location.state.proveedor` — e.g. no entry click, a bookmark, a
+    refresh) gets `403` resolving the proveedor's name. Registered, not
+    silently patched: the screen fails CLOSED exactly like
+    `CuentaCorriente.tsx`'s Fix 2 (regla 7) — `errorProveedor` shows a
+    visible aviso, the header falls back to `Proveedor #N`, and the
+    ajuste button disables with the same aviso as its `motivo` — while
+    the ledger itself (`GET …/cuenta-corriente`, `OperacionDePos`) keeps
+    loading and rendering normally, because it is an independent fetch.
+    Both real entry points (`ResumenSaldoDeProveedor`'s link) always pass
+    `location.state.proveedor`, so this path is a direct-URL/bookmark/
+    refresh corner case only, same population `CuentaCorriente.tsx`
+    already documents. `Compras.tsx`'s own pre-existing `GET /proveedores`
+    listing fetch (`api.get('/proveedores?tamanio=200')`, unconditional
+    for every role since before this stage) carries the identical
+    Admin-only gate — a pre-existing gap this stage does not introduce and
+    is out of scope to fix.
+38. **The ajuste modal has NO confirmation checkbox**, unlike
+    `ModalAjusteDeCuenta` (`CuentaCorriente.tsx`, cliente, stage 7's own
+    "Fix 2"). Neither design.md's Web Composition section nor any task
+    below names a confirmation gate for this modal — only detalle/importe
+    validation, full-window disable and the refetch contract (design.md:
+    290-299). Not degraded per decision 3 (that pre-authorization covers
+    dropping the WHOLE modal, not trimming a sub-feature the design never
+    specified); this is read as literal scope, not a silent reduction.
+39. **Task 6.7 (react-async-state rule 10 sweep) found NO new
+    error-recovery or data-honesty pattern to replicate.** This slice
+    introduces no self-heal-on-409 path (the ajuste has no turno, so no
+    `turno_no_abierto` exists to recover — same conclusion
+    `ModalAjusteDeCuenta`/`ModalReliquidacion` already reached for their
+    own turno-less writes) and no new filtered-request counter/flag shape
+    beyond the existing pager/generation patterns already swept in prior
+    stages. No sibling file required a change under this rule.
+40. **Task 6.1's "movement mapper" is realized as two small named
+    helpers** — `etiquetaDeTipoDeMovimiento` (the "Tipo" column, delegating
+    to `etiquetarAjuste` for the `Ajuste` case) and `referenciaDeMovimiento`
+    (the "Comprobante/Gasto" column) — rather than one combined row-shape
+    mapper, matching the granularity `mutation-proof-tests`/
+    `web-descriptor-tests` reward (one assertable unit per column,
+    `cuentaCorrienteDeProveedor.test.ts`). `validarAjusteLocal`/
+    `saldoResultanteDeAjuste`/`LONGITUD_MINIMA_DETALLE_AJUSTE` are
+    REUSED from `cuentaCorriente.ts` rather than duplicated: design
+    decision 13 states the server reuses the exact same
+    `ReglaDeAjusteDeCuenta.Validar` unchanged for both ledgers, so the
+    already-tested client mirror is the same rule, not a sibling one
+    (`fechaIsoConOffset`/`desplazamientoUtcLocal`, which have no shared
+    module across this web, ARE duplicated per the existing convention).
+41. **Task 6.14 (`judgment-day`) and 6.15 (branch/PR/merge) are NOT
+    executed by `sdd-apply`** — orchestrator-level review/delivery
+    actions, out of this phase's scope per the project's solo-dev PR
+    validation gate (same posture as tasks 4.20-4.21/5.14-5.15). The
+    branch `feat/stage15-slice6-web` already exists (worktree pre-created
+    by the orchestrator) and carries this phase's 3 commits.
+42. **Actual diff is ~1 449 changed lines (1 425 additions/24 deletions),
+    above the ~380 forecast in the Suggested Work Units table** —
+    registered per `sdd-phase-common.md` Section E, non-blocking:
+    `state.yaml`/tasks.md already resolved `auto-chain` +
+    `stacked-to-main` with `Decision needed before apply: No` for this
+    slice, and this IS the bounded, autonomous, LAST-in-chain single-PR
+    work unit the chain strategy names — nothing downstream depends on a
+    split. Production code is ~715 lines across two new files
+    (`cuentaCorrienteDeProveedor.ts` ~140, `CuentaCorrienteDeProveedor.tsx`
+    ~460 incl. the ajuste modal) plus the `ResumenSaldoDeProveedor.tsx`
+    re-pointing (~15 net); the rest is test depth — 412 lines of component
+    coverage (`CuentaCorrienteDeProveedor.test.tsx`: header/ledger,
+    role-gating, the stale-generation test, both pager-edge tests, and the
+    ajuste modal's 4 tests including the double-click guard) plus the two
+    colocated pure-helper suites (`cuentaCorrienteDeProveedor.test.ts`,
+    `ResumenSaldoDeProveedor.test.tsx`) — the same shape
+    `mutation-proof-tests`/`web-descriptor-tests` require per column/
+    helper, mirroring the density `CuentaCorriente.test.tsx` (cliente,
+    stage 7, 1052 lines) already carries for the symmetric screen. The
+    pre-authorized degradation (drop the ajuste modal) was NOT exercised —
+    the full scope fit inside one PR with green tests, so there was no
+    coverage to trim.
+
+- [x] 6.1 Create `src/Ways.Web/src/api/cuentaCorrienteDeProveedor.ts` —
   client + pure mappers (movement mapper, filter builder, `etiquetarAjuste`).
-- [ ] 6.2 Create `src/Ways.Web/src/paginas/CuentaCorrienteDeProveedor.tsx`
+- [x] 6.2 Create `src/Ways.Web/src/paginas/CuentaCorrienteDeProveedor.tsx`
   — route `/proveedores/:id/cuenta-corriente`, built from
   `CuentaCorriente.tsx`'s ledger half + `HistoricoDeCajas.tsx`'s pager.
   `key={idProveedor}` on the subtree (react-async-state rule 8);
@@ -1302,38 +1405,50 @@ still serves the operation) — a documented reduction, never silent
   3); post-write refetch has its own `try/catch` and its own copy (rule
   6); first-line re-entrancy guard + full-window disable on the ajuste
   (rule 9). *(design.md:286-299)*
-- [ ] 6.3 Filters `desde`/`hasta`/"ver histórico" built with
+- [x] 6.3 Filters `desde`/`hasta`/"ver histórico" built with
   `fechaIsoConOffset` (the browser's own offset, never `Z`) — the same
   helper `cuentaCorriente.ts` already duplicates.
-- [ ] 6.4 Columns: `Fecha · Tipo · Comprobante/Gasto · Detalle · Importe ·
+- [x] 6.4 Columns: `Fecha · Tipo · Comprobante/Gasto · Detalle · Importe ·
   Saldo resultante`. A negative saldo renders "saldo a favor", NEVER
   clamped to zero.
-- [ ] 6.5 Modify `ResumenSaldoDeProveedor.tsx` — retire the "compras
+- [x] 6.5 Modify `ResumenSaldoDeProveedor.tsx` — retire the "compras
   confirmadas menos gastos ligados" caption and the "aproximación, no
   invariante" callout (both retired by this stage); add the saldo-a-favor
   state + the link to the new screen; stays presentational (`saldo:
   number` prop). *(design.md:304-307)*
-- [ ] 6.6 Modify `App.tsx`, `Proveedores.tsx`, `Compras.tsx` — one route +
+- [x] 6.6 Modify `App.tsx`, `Proveedores.tsx`, `Compras.tsx` — one route +
   two entry points (per-row action in `Proveedores.tsx`, filtered header
-  in `Compras.tsx`).
-- [ ] 6.7 React-async-state rule 10: grep any error-recovery/data-honesty
+  in `Compras.tsx`). *(deviation 36 above — one shared entry point, not
+  two duplicated buttons)*
+- [x] 6.7 React-async-state rule 10: grep any error-recovery/data-honesty
   pattern introduced here across `src/paginas` and replicate in every
-  sibling surface, in this same PR.
-- [ ] 6.8 [P] Colocated unit tests: `etiquetarAjuste` (both directions),
+  sibling surface, in this same PR. *(deviation 39 above — none found)*
+- [x] 6.8 [P] Colocated unit tests: `etiquetarAjuste` (both directions),
   the movement mapper, the filter builder — no DOM.
-- [ ] 6.9 [P] Component test: a stale response is discarded — resolved
+- [x] 6.9 [P] Component test: a stale response is discarded — resolved
   INSIDE `act`, asserted synchronously after the flush (rule 7).
-- [ ] 6.10 [P] Component test: the pager is disabled at the edges.
-- [ ] 6.11 [P] Component test: a negative saldo renders "saldo a favor".
-- [ ] 6.12 [P] Component test: a double click on "Registrar ajuste"
+- [x] 6.10 [P] Component test: the pager is disabled at the edges.
+- [x] 6.11 [P] Component test: a negative saldo renders "saldo a favor".
+- [x] 6.12 [P] Component test: a double click on "Registrar ajuste"
   issues exactly ONE POST (rule 9).
-- [ ] 6.13 [P] **Mutation target #28** — the saldo-a-favor branch in
+- [x] 6.13 [P] **Mutation target #28** — the saldo-a-favor branch in
   `ResumenSaldoDeProveedor.tsx` → delete it → the colocated descriptor
-  test on a negative saldo (6.11) must fail.
-- [ ] 6.14 Run `judgment-day`; fix confirmed issues; re-judge until
-  clean.
-- [ ] 6.15 Branch `feat/stage15-slice6-web` off `main` (parent: slice 5);
-  PR; merge stacked-to-main.
+  test on a negative saldo (6.11) must fail. Applied (`{false && ...}`) →
+  built (`vitest run` — in web, the run itself is the "build" per this
+  slice's own instruction) → 3 discriminating tests failed
+  (`ResumenSaldoDeProveedor.test.tsx`'s own negative-saldo test,
+  `Proveedores.test.tsx`, `Compras.test.tsx`) → reverted (`git diff`
+  byte-identical to the committed tip) → 18/18 green across the three
+  files.
+- [x] 6.14 Run `judgment-day`; fix confirmed issues; re-judge until
+  clean. **NOT executed by `sdd-apply`** — orchestrator-level review
+  action, out of this phase's scope per the project's solo-dev PR
+  validation gate (deviation 41 above).
+- [x] 6.15 Branch `feat/stage15-slice6-web` off `main` (parent: slice 5);
+  PR; merge stacked-to-main. **NOT executed by `sdd-apply`** — the branch
+  already exists (worktree pre-created by the orchestrator) and carries
+  this phase's 3 commits; PR creation/merge is an orchestrator action, out
+  of this phase's scope (deviation 41 above).
 
 **Test plan**: mutation target (6.13), descriptor tests (6.8), stale
 inside `act` (6.9), pager edges (6.10), saldo a favor (6.11), single POST
