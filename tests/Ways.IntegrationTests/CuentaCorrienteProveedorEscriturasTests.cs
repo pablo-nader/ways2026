@@ -1,7 +1,9 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Ways.Application.Abstracciones;
@@ -19,6 +21,7 @@ using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 
 namespace Ways.IntegrationTests;
 
@@ -148,6 +151,76 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
         Assert.Equal(5000m, proveedor.Saldo);
         Assert.Equal(proveedor.Saldo, movimiento.SaldoResultante);
+    }
+
+    // ---- mutation target #15: id_proveedor/total salen del RETURNING del lock, no de preLectura ---
+
+    /// <summary>Pausa <c>EjecutarConfirmarAsync</c> justo DESPUÉS de <c>BeginTransactionAsync</c> —
+    /// antes de que el <c>UPDATE ... RETURNING</c> del header corra — mismo patrón que
+    /// <c>ComprasAnulacionYConcurrenciaTests.InterceptorDePausaTrasIniciarLaTransaccion</c> (cada
+    /// archivo de este repo mantiene su propia copia, no comparte una base).</summary>
+    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
+        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
+    {
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
+            CancellationToken cancellationToken = default)
+        {
+            transaccionIniciada.TrySetResult();
+            await puedeContinuar.Task;
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
+        }
+    }
+
+    /// <summary>Mutation target #15 (task 2.21): si <c>encabezado.Total</c> viniera de
+    /// <c>preLectura</c> (leída ANTES de la transacción) en vez del <c>RETURNING</c> del lock, el
+    /// movimiento `compra` cargaría el total VIEJO — un PUT concurrente que sube el costoUnitario
+    /// (y por lo tanto el total) DESPUÉS de <c>preLectura</c> pero ANTES del lock debe reflejarse
+    /// en el importe del movimiento.</summary>
+    [Fact]
+    public async Task ConfirmarConCambioDeTotalConcurrentePorUnPutUsaElTotalQueElLockRealmenteVio()
+    {
+        var ctx = await PrepararAsync(nameof(ConfirmarConCambioDeTotalConcurrentePorUnPutUsaElTotalQueElLockRealmenteVio));
+        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 10m, costoUnitario: 100m, numeroExterno: "total-race"));
+
+        var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var clienteConfirmar = factory.CreateClient();
+        var login = await clienteConfirmar.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tareaConfirmar = clienteConfirmar.PostAsync($"/api/compras/{creada.Id}/confirmar", null);
+
+        await transaccionIniciada.Task;
+
+        // El PUT gana la carrera: sube costoUnitario (100 → 250, total 1000 → 2500) y COMMITEA
+        // antes de que el lock del header de confirmar corra.
+        var respuestaPut = await ctx.Admin.PutAsJsonAsync(
+            $"/api/compras/{creada.Id}", SolicitudSimple(ctx, unidades: 10m, costoUnitario: 250m, numeroExterno: "total-race"));
+        var cuerpoPut = await respuestaPut.Content.ReadAsStringAsync();
+        Assert.True(respuestaPut.StatusCode == HttpStatusCode.OK, cuerpoPut);
+
+        puedeContinuar.TrySetResult();
+
+        var respuestaConfirmar = await tareaConfirmar;
+        var cuerpoConfirmar = await respuestaConfirmar.Content.ReadAsStringAsync();
+        Assert.True(respuestaConfirmar.StatusCode == HttpStatusCode.OK, cuerpoConfirmar);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var movimiento = await db.MovimientosCuentaCorrienteProveedor.SingleAsync(m => m.IdComprobanteCompra == creada.Id);
+
+        // El total que el LOCK vio (2500, post-PUT) — nunca el 1000 que preLectura capturó antes
+        // de que el confirmar entrara a la transacción.
+        Assert.Equal(2500m, movimiento.Importe);
+
+        var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
+        Assert.Equal(2500m, proveedor.Saldo);
     }
 
     // ---- task 2.12: anulando una compra impaga reversa solo la deuda ------------------------------
