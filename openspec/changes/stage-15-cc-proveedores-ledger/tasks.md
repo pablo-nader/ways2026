@@ -1113,7 +1113,7 @@ above):**
 - [x] 4.19 Gate guard: `dotnet ef migrations has-pending-model-changes`
   clean; zero new files under `Migraciones/`. Confirmed: clean, `git diff
   --stat -- src/Ways.Infrastructure/Persistencia/Migraciones/` empty.
-- [ ] 4.20 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 4.20 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   **NOT executed by `sdd-apply`** — orchestrator-level review action, out
   of this phase's scope per the project's solo-dev PR validation gate.
 - [ ] 4.21 Branch `feat/stage15-slice4-estado-de-cuenta` off `main`
