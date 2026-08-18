@@ -730,7 +730,7 @@ above):**
 - [x] 2.28 Gate guard: `dotnet ef migrations has-pending-model-changes`
   clean; zero new files under `Migraciones/`.
 - [x] 2.29 Run `judgment-day`; fix confirmed issues; re-judge until clean.
-- [ ] 2.30 Branch `feat/stage15-slice2-escrituras-y-deuda` off `main`
+- [x] 2.30 Branch `feat/stage15-slice2-escrituras-y-deuda` off `main`
   (parent: slice 1); PR; merge stacked-to-main.
 
 **Test plan**: validator matrix (2.10), confirm/anulación coverage
