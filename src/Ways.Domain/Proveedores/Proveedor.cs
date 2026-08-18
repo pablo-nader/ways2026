@@ -39,4 +39,11 @@ public class Proveedor : EntidadTenant
     public string? Observaciones { get; set; }
 
     public bool Activo { get; set; } = true;
+
+    /// <summary>stage-15-cc-proveedores-ledger (gate §C): cache mantenida por
+    /// <c>EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync</c> — el libro es
+    /// <c>movimientos_cuenta_corriente_proveedor</c>. Nunca escrito por un
+    /// <c>proveedor.Saldo +=</c> trackeado (design decisión 2). Puede ser negativo — "saldo a
+    /// favor" legítimo, nunca clamped a cero.</summary>
+    public decimal Saldo { get; set; }
 }

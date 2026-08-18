@@ -124,6 +124,13 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     // el writer se entrega completo, aunque sin call sites todavía (slices 2-4).
     public DbSet<Ways.Domain.Auditoria.Auditoria> Auditoria => Set<Ways.Domain.Auditoria.Auditoria>();
 
+    // stage-15-cc-proveedores-ledger, Slice 1 (schema foundation, DB CHANGE GATE aprobado): la
+    // migración también entrega EscriturasDeCuentaCorrienteProveedor (slice 2), pero el DbSet ya
+    // se expone acá — no hay call site de negocio todavía (compra/pago/ajuste), sin embargo la
+    // fixture de fidelidad del backfill sí lo consume por EF para verificar el resultado.
+    public DbSet<MovimientoCuentaCorrienteProveedor> MovimientosCuentaCorrienteProveedor
+        => Set<MovimientoCuentaCorrienteProveedor>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>
@@ -200,6 +207,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnStockLote(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoStock(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCuentaCorriente(modelBuilder);
+        AplicarFiltroDeTenantEnMovimientoCuentaCorrienteProveedor(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoCaja(modelBuilder);
         AplicarFiltroDeTenantEnArqueoTurno(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoTesoreria(modelBuilder);
@@ -627,6 +635,24 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(MovimientoCuentaCorriente), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoCuentaCorriente.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-15-cc-proveedores-ledger (Slice 1, gate §B): <see cref="MovimientoCuentaCorrienteProveedor"/>
+    /// es el mismo shape de ledger append-only que <see cref="MovimientoCuentaCorriente"/> —
+    /// necesita la variante escrita a mano. <c>IdTenant</c> se escribe EXPLÍCITO por
+    /// <c>EscriturasDeCuentaCorrienteProveedor</c> (slice 2), nunca por <c>EstamparTenant()</c>
+    /// (stage-14 decisión 7).
+    /// </summary>
+    private void AplicarFiltroDeTenantEnMovimientoCuentaCorrienteProveedor(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(MovimientoCuentaCorrienteProveedor))!;
+
+        var parametro = Expression.Parameter(typeof(MovimientoCuentaCorrienteProveedor), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(MovimientoCuentaCorrienteProveedor.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);
