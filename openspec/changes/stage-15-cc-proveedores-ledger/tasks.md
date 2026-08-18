@@ -1260,7 +1260,7 @@ above):**
   main -- src/Ways.Infrastructure/Persistencia/Migraciones/` empty;
   `has-pending-model-changes` reports "No changes have been made to the
   model since the last migration."
-- [ ] 5.14 Run `judgment-day`; fix confirmed issues; re-judge until
+- [x] 5.14 Run `judgment-day`; fix confirmed issues; re-judge until
   clean. **NOT executed by `sdd-apply`** — orchestrator-level review
   action, out of this phase's scope per the project's solo-dev PR
   validation gate (same posture as task 4.20).
