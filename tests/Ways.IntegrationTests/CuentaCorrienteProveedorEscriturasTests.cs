@@ -223,14 +223,52 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
         Assert.Equal(2500m, proveedor.Saldo);
     }
 
+    // ---- mutation target #16: saldo_resultante viene del RETURNING del UPDATE, jamás recalculado --
+
+    /// <summary>Discrimina target #16 contra un mutante de VALOR (no de orden): con saldo previo 0,
+    /// <c>saldo_resultante == total</c> por COINCIDENCIA, así que reemplazar <c>nuevoSaldoProveedor</c>
+    /// por <c>encabezado.Total</c> en <c>EjecutarConfirmarAsync</c> pasaría desapercibido — con
+    /// deuda previa REAL (≠ 0, ≠ total de esta compra) el RETURNING (saldoPrevio + total) y el
+    /// total puro dejan de coincidir (hallazgo del juez B, judgment-day de este slice).</summary>
+    [Fact]
+    public async Task ConfirmarConDeudaPreviaEscribeElSaldoResultanteDelReturningNoElTotalDeEstaCompra()
+    {
+        var ctx = await PrepararAsync(nameof(ConfirmarConDeudaPreviaEscribeElSaldoResultanteDelReturningNoElTotalDeEstaCompra));
+
+        var compraPrevia = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 8m, costoUnitario: 100m, numeroExterno: "previa"));
+        await ConfirmarViaApiAsync(ctx, compraPrevia.Id); // saldo previo = 800
+
+        var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 15m, costoUnitario: 100m, numeroExterno: "sujeto"));
+        await ConfirmarViaApiAsync(ctx, creada.Id); // total de esta compra = 1500
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var movimiento = await db.MovimientosCuentaCorrienteProveedor.SingleAsync(m => m.IdComprobanteCompra == creada.Id);
+
+        // 800 (deuda previa) + 1500 (total de esta compra) = 2300 — si el RETURNING fuera
+        // reemplazado por encabezado.Total a secas, el movimiento cargaría 1500, no 2300.
+        Assert.Equal(2300m, movimiento.SaldoResultante);
+
+        var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
+        Assert.Equal(2300m, proveedor.Saldo);
+        Assert.Equal(proveedor.Saldo, movimiento.SaldoResultante);
+    }
+
     // ---- task 2.12: anulando una compra impaga reversa solo la deuda ------------------------------
 
     [Fact]
     public async Task AnulandoUnaCompraImpagaReviertaSoloLaDeuda()
     {
         var ctx = await PrepararAsync(nameof(AnulandoUnaCompraImpagaReviertaSoloLaDeuda));
+
+        // Otra compra confirmada que NO se anula acá — deuda previa que discrimina el mismo
+        // mutante de VALOR que target #16 (si saldo_resultante del ajuste viniera de un valor
+        // local como "el importe" en vez del RETURNING, este resto de 300 desenmascara la
+        // diferencia; con saldo previo 0 el resultado hubiera sido 0 en ambos casos).
+        var otraCompra = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 3m, costoUnitario: 100m, numeroExterno: "resto"));
+        await ConfirmarViaApiAsync(ctx, otraCompra.Id); // 300
+
         var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 10m, costoUnitario: 100m));
-        await ConfirmarViaApiAsync(ctx, creada.Id);
+        await ConfirmarViaApiAsync(ctx, creada.Id); // 1000 — saldo previo al anular = 300 + 1000 = 1300
 
         var respuesta = await ctx.Admin.PostAsync($"/api/compras/{creada.Id}/anular", null);
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -244,8 +282,12 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
         var ajuste = Assert.Single(ajustes);
         Assert.Equal(-1000m, ajuste.Importe);
 
+        // 1300 (saldo previo, con la otra compra viva) − 1000 (revertido) = 300.
+        Assert.Equal(300m, ajuste.SaldoResultante);
+
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
-        Assert.Equal(0m, proveedor.Saldo);
+        Assert.Equal(300m, proveedor.Saldo);
+        Assert.Equal(proveedor.Saldo, ajuste.SaldoResultante);
     }
 
     // ---- task 2.13: anulando una compra totalmente pagada deja saldo a favor ----------------------
@@ -350,8 +392,14 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
     public async Task AnulandoUnaCompraPreCutoverEscribeElAjusteConElFallback()
     {
         var ctx = await PrepararAsync(nameof(AnulandoUnaCompraPreCutoverEscribeElAjusteConElFallback));
+
+        // Otra compra confirmada que se queda con su movimiento `compra` intacto — deuda previa
+        // que discrimina el mismo mutante de VALOR que en el caso impago (mutation target #16).
+        var otraCompra = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 4m, costoUnitario: 100m, numeroExterno: "resto-precutover"));
+        await ConfirmarViaApiAsync(ctx, otraCompra.Id); // 400
+
         var creada = await CrearBorradorAsync(ctx, SolicitudSimple(ctx, unidades: 10m, costoUnitario: 200m));
-        await ConfirmarViaApiAsync(ctx, creada.Id);
+        await ConfirmarViaApiAsync(ctx, creada.Id); // 2000 — saldo previo al anular = 400 + 2000 = 2400
         await BorrarMovimientoCompraAsync(ctx, creada.Id);
 
         var respuesta = await ctx.Admin.PostAsync($"/api/compras/{creada.Id}/anular", null);
@@ -366,8 +414,12 @@ public class CuentaCorrienteProveedorEscriturasTests(WaysApiFixture fixture) : I
         Assert.NotNull(ajuste.Detalle);
         Assert.Contains("compra confirmada antes del ledger", ajuste.Detalle);
 
+        // 2400 (con la otra compra viva) − 2000 (fallback del total) = 400.
+        Assert.Equal(400m, ajuste.SaldoResultante);
+
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
-        Assert.Equal(0m, proveedor.Saldo);
+        Assert.Equal(400m, proveedor.Saldo);
+        Assert.Equal(proveedor.Saldo, ajuste.SaldoResultante);
     }
 
     // ---- task 2.15 / mutation target #14: fecha bajo offset real -03:00 ---------------------------

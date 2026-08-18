@@ -594,6 +594,32 @@ above):**
     — `ServicioDeGastos`'s real write path does not exist until slice 3. A
     `gastos` row is seeded only to satisfy `id_gasto`'s FK; the ledger
     write itself never goes through `InsertarGastoAsync`.
+24. **Judgment-day judge B found task 2.22 / mutation target #16's original
+    evidence insufficient — a VALUE-class mutant survived the recorded
+    proof.** The only `SaldoResultante` assertion in
+    `CuentaCorrienteProveedorEscriturasTests.cs`
+    (`ConfirmarUnaCompraEscribeExactamenteUnMovimientoCompraYSubeElSaldo`)
+    ran against a FRESH proveedor (saldo previo 0), where
+    `saldo_resultante == encabezado.Total` by pure coincidence: replacing
+    `nuevoSaldoProveedor` with `encabezado.Total` in
+    `EjecutarConfirmarAsync` (`ServicioDeCompras.cs:~482`) passed all 9
+    tests. The anulación path (`EjecutarAnulacionAsync:~635-643`) had NO
+    assertion on the ajuste movement's `SaldoResultante` at all. Closed
+    tests-only (production code is correct — the gap was coverage, not a
+    defect): added
+    `ConfirmarConDeudaPreviaEscribeElSaldoResultanteDelReturningNoElTotalDeEstaCompra`
+    (real prior debt from a previously confirmed compra, ≠ 0 and ≠ this
+    compra's total) and widened `AnulandoUnaCompraImpagaReviertaSoloLaDeuda`
+    /`AnulandoUnaCompraPreCutoverEscribeElAjusteConElFallback` with a second,
+    untouched confirmed compra so the ajuste's resulting saldo is neither 0
+    nor equal to the reverted importe. Mutation evidence (two cycles, this
+    round): (1) `nuevoSaldoProveedor` → `encabezado.Total` in
+    `EjecutarConfirmarAsync` — the new confirm test failed (`2300` expected
+    vs `1500` actual), reverted; (2) the ajuste's `saldoResultante` →
+    `-importeOriginal` (a local value) in `EjecutarAnulacionAsync` — both
+    widened anulación tests failed (`300`/`400` expected vs `-1000`/`-2000`
+    actual), reverted. Full `CuentaCorrienteProveedorEscriturasTests` green
+    (10/10) after revert.
 
 - [x] 2.1 Create
   `src/Ways.Application/CuentaCorriente/EscriturasDeCuentaCorrienteProveedor.cs`
