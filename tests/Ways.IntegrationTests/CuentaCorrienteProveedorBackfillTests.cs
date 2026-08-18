@@ -511,46 +511,39 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         }
     }
 
-    /// <summary>Target #4, ROUTED BELOW THE CONFOUND (mutation-proof-tests rule 3): la prueba de
-    /// fidelidad de punta a punta NO puede matar el mutante que elimina
-    /// <c>id_proveedor IS NOT NULL</c> del predicate de gastos — bajo semántica NULL de SQL,
-    /// <c>g.id_proveedor = p.id_proveedor</c> nunca empareja cuando <c>g.id_proveedor IS NULL</c>
-    /// (ningún <c>p.id_proveedor</c> real es NULL), así que el LEFT JOIN protege el resultado
-    /// final por accidente incluso sin el filtro — confirmado empíricamente (mutante
-    /// equivalente bajo el pipeline completo, registrado en tasks.md). Esta prueba ejercita el
-    /// FRAGMENTO de la subquery de gastos en aislamiento — el mismo SQL, ejecutado directo —
-    /// para que el predicate SÍ tenga un observable que solo él puede producir: la ausencia de
-    /// un grupo <c>id_proveedor IS NULL</c> en el resultado agregado.</summary>
+    /// <summary>Target #4 — PROVABLY EQUIVALENT AT RUNTIME, prueba de TEXTO FUENTE en su lugar
+    /// (mutation-proof-tests rule 3 agotada primero, finding registrado en tasks.md). La prueba
+    /// de fidelidad de punta a punta NO puede matar el mutante que borra
+    /// <c>id_proveedor IS NOT NULL</c> del predicate de gastos: la CTE <c>derivado</c> está
+    /// enraizada en <c>proveedores</c> (<c>FROM proveedores p LEFT JOIN (...) g ON g.id_proveedor
+    /// = p.id_proveedor</c>) y bajo semántica NULL de SQL ningún <c>p.id_proveedor</c> real
+    /// (NOT NULL) puede emparejar con un grupo <c>g.id_proveedor IS NULL</c> — así que NINGÚN
+    /// artefacto que la migración produce (fila del ledger, <c>proveedores.saldo</c>) puede
+    /// diferir con o sin el filtro. Confirmado empíricamente DOS VECES: (1) la prueba de
+    /// fidelidad de punta a punta pasa bajo la mutación; (2) una primera versión de esta prueba,
+    /// que reconstruía el fragmento SQL a mano en el test en vez de leer el archivo real, también
+    /// pasaba bajo la mutación — porque ejecutaba el SQL correcto, no el mutado. Sin diferencia
+    /// observable en NINGÚN artefacto en tiempo de ejecución, no hay "debajo del confound" al
+    /// que enrutar (la regla 3 asume un componente invocable por separado; acá el predicate vive
+    /// dentro de un único literal SQL embebido, sin costura). La única prueba que SÍ detecta esta
+    /// mutación es de texto fuente: lee el archivo de migración REAL y confirma que la cláusula
+    /// sigue presente en el fragmento de gastos.</summary>
     [Fact]
-    public async Task ElFragmentoDeGastosDelBackfillExcluyeElGrupoIdProveedorNuloTarget4()
+    public void ElTextoFuenteDeLaMigracionConservaElFiltroIdProveedorNoNuloTarget4()
     {
-        var f = await PrepararFixtureSinMigrarAsync("target4-fragmento");
-        try
-        {
-            await using var conexion = new NpgsqlConnection(f.CadenaNueva);
-            await conexion.OpenAsync();
+        var rutaMigracion = Path.Combine(
+            Path.GetDirectoryName(RutaDeEsteArchivo())!,
+            "..", "..", "src", "Ways.Infrastructure", "Persistencia", "Migraciones",
+            "20260817153958_CuentaCorrienteDeProveedoresEtapa15.cs");
 
-            await using var comando = conexion.CreateCommand();
-            comando.CommandText =
-                """
-                SELECT count(*)
-                FROM (SELECT id_tenant, id_proveedor, SUM(importe) AS total
-                      FROM gastos
-                      WHERE categoria = 'proveedor' AND id_proveedor IS NOT NULL AND deleted_at IS NULL
-                      GROUP BY id_tenant, id_proveedor) g
-                WHERE g.id_proveedor IS NULL;
-                """;
-            var gruposConIdProveedorNulo = (long)(await comando.ExecuteScalarAsync())!;
+        Assert.True(File.Exists(rutaMigracion), $"No se encontró la migración en {rutaMigracion}");
 
-            // El predicate SÍ tiene un rol observable acá: cero grupos con id_proveedor NULL.
-            // Sin el filtro, el gasto huérfano de 9999 (sembrado en la fixture) formaría su
-            // propio grupo con id_proveedor = NULL — el discriminante que el JOIN de la
-            // pipeline completa esconde por construcción.
-            Assert.Equal(0, gruposConIdProveedorNulo);
-        }
-        finally
-        {
-            await EliminarBaseAsync(f.CadenaAdmin, f.NombreBase);
-        }
+        var fuente = File.ReadAllText(rutaMigracion);
+
+        Assert.Contains(
+            "WHERE categoria = 'proveedor' AND id_proveedor IS NOT NULL AND deleted_at IS NULL",
+            fuente);
     }
+
+    private static string RutaDeEsteArchivo([System.Runtime.CompilerServices.CallerFilePath] string ruta = "") => ruta;
 }
