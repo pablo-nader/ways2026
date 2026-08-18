@@ -78,6 +78,19 @@ public static class Politicas
     /// Supervisor, Vendedor y Root quedan afuera.</summary>
     public const string LecturaDeAuditoria = "lectura_auditoria";
 
+    /// <summary>Supervisor o admin — la puerta del ajuste manual de cuenta corriente de
+    /// PROVEEDORES (stage-15-cc-proveedores-ledger, Slice 5; proposal decisión 8; design decisión
+    /// 12; spec cuenta-corriente-de-proveedores: "Manual Ajuste Requires A Detalle Under A
+    /// Dedicated Policy"). Mismo claim set exacto que <see cref="SupervisionDeCuentaCorriente"/>
+    /// (el ajuste del lado cliente), pero nombre PROPIO — reusar
+    /// <see cref="SupervisionDeCuentaCorriente"/> haría que un futuro tightening reservado para el
+    /// cierre de caja (su propio doc-comment) se aplicara sin querer al lado proveedor. Mismo
+    /// patrón "mismos claims, nombre propio" que <see cref="LecturaDeAuditoria"/> frente a
+    /// <see cref="LecturaDeRentabilidad"/>. Las lecturas (saldo, estado de cuenta) siguen bajo
+    /// <see cref="OperacionDePos"/>, sin policy nueva — solo la escritura discrecional del saldo
+    /// sube el gate.</summary>
+    public const string SupervisionDeCuentaDeProveedor = "supervision_cuenta_proveedor";
+
     public static AuthorizationBuilder AgregarPoliticasWays(this AuthorizationBuilder builder)
     {
         return builder
@@ -131,6 +144,12 @@ public static class Politicas
                         .RequireClaim(ClaimsWays.RolId, ((int)RolConocido.Admin).ToString()))
             .AddPolicy(LecturaDeAuditoria, politica =>
                 politica.RequireAuthenticatedUser()
-                        .RequireClaim(ClaimsWays.RolId, ((int)RolConocido.Admin).ToString()));
+                        .RequireClaim(ClaimsWays.RolId, ((int)RolConocido.Admin).ToString()))
+            .AddPolicy(SupervisionDeCuentaDeProveedor, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(
+                            ClaimsWays.RolId,
+                            ((int)RolConocido.Supervisor).ToString(),
+                            ((int)RolConocido.Admin).ToString()));
     }
 }

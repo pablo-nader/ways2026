@@ -79,6 +79,12 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // línea de arriba (apila SupervisionDeCuentaCorriente en vez de GestionDeCatalogo, ver
         // CuentaCorrienteEndpoints); 403 Vendedor cubierto en AjustesDeCuentaCorrienteTests.
         ("POST", "/api/clientes/{idCliente:int}/cuenta-corriente/ajustes"),
+        // stage-15-cc-proveedores-ledger (Slice 5, task 5.2, design decisión 12): ajuste manual
+        // de PROVEEDORES — mapeado TOP-LEVEL sobre `app`, mismo criterio de composición que
+        // "/api/proveedores/{id}/saldo" (ProveedoresEndpoints.cs); apila
+        // SupervisionDeCuentaDeProveedor en vez de GestionDeCatalogo. 403 Vendedor cubierto en
+        // AjusteDeCuentaCorrienteDeProveedorTests.
+        ("POST", "/api/proveedores/{idProveedor:int}/cuenta-corriente/ajustes"),
 
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).

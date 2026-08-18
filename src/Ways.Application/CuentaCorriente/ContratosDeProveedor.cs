@@ -25,3 +25,16 @@ public sealed record EstadoDeCuentaDeProveedorHeader(int IdProveedor, decimal Sa
 public sealed record PaginaDeEstadoDeCuentaDeProveedor(
     EstadoDeCuentaDeProveedorHeader Header, IReadOnlyList<MovimientoDeCuentaDeProveedor> Items,
     int Total, int Pagina, int Tamanio, bool Historico, DateTimeOffset? Desde, DateTimeOffset? Hasta);
+
+/// <summary>
+/// Cuerpo de <c>POST /api/proveedores/{id}/cuenta-corriente/ajustes</c> (design.md: API Surface;
+/// Transactions — AJUSTE MANUAL; decisión 15). Deliberadamente SIN <c>tipo</c> ni
+/// <c>saldoResultante</c> — <c>tipo</c> porque <c>apertura</c> es la única otra forma del enum y
+/// solo la migración la escribe (un campo que solo puede valer una cosa legal no debería existir,
+/// <c>dto-contract-honesty</c> rule 1); <c>saldoResultante</c> porque es SIEMPRE derivado del
+/// <c>RETURNING</c> del writer, nunca aceptado del cliente (ningún endpoint de esta etapa acepta
+/// un saldo o un delta ya calculado). <see cref="Importe"/> viaja con signo, decidido por el
+/// llamador (spec: Manual Ajuste — importe con signo); <see cref="Detalle"/> es obligatorio
+/// (<see cref="Domain.CuentaCorriente.ReglaDeAjusteDeCuenta"/>).
+/// </summary>
+public sealed record SolicitudDeAjusteDeProveedor(int IdPuntoVenta, decimal Importe, string? Detalle);
