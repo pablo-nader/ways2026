@@ -943,6 +943,46 @@ above):**
     partial payment is lost because the design's formula never queries
     `gastos` at all". Reverted; `git diff` against the committed slice-4 tip
     confirms byte-identical production code after all three reverts.
+31. **`judgment-day` round 1 (juez B) confirmed 3 CRITICAL coverage gaps on
+    the slice-4 diff — production code was correct in all three, the gap was
+    always a missing discriminating test.** Fixed tests-only, evidenced with
+    the standard commit-first / mutate / revert cycle (`git checkout -- src/`
+    after each), full target-file run + `SaldoDeProveedorTests` (16/16) green
+    at the end:
+    - **CRITICAL 1** (`ServicioDeSaldoDeProveedor.cs:90-103`): no test
+      discriminated the cache (`proveedores.saldo`) from the retired
+      re-derived-aggregate path, because every existing flow keeps both in
+      sync by construction. New test
+      `SaldoDeProveedorReSourceadoTests.ElSaldoLeeLaCacheAunDesincronizadaDelAgregadoDelLedger`
+      desyncs them on purpose via a raw `UPDATE proveedores SET saldo =
+      777.77` over the fixture's owner connection and asserts `/saldo`
+      returns the sentinel, not the (zero) aggregate. Mutating
+      `ResolverSaldoDeProveedorAsync` to re-derive from
+      `MovimientosCuentaCorrienteProveedor` made it fail (`777.77` expected,
+      `0.00` actual), confirmed.
+    - **CRITICAL 2** (`ServicioDeCuentaCorrienteDeProveedor.cs:44-51`): no
+      test asserted `MovimientoDeCuentaDeProveedor.SaldoResultante` on
+      returned items. New test
+      `CuentaCorrienteProveedorEstadoDeCuentaTests.LosItemsDevuelvenElSaldoResultanteAcumuladoPorFila`
+      seeds a nonzero previous debt plus 3 more movements whose accumulated
+      `SaldoResultante` (1190/1070/1680) are all pairwise-distinct and none
+      equal to their own `Importe` (mutation-proof-tests rule 6). Mutating
+      the projection to hardcode `SaldoResultante = 0m` made it fail (`1190`
+      expected, `0` actual), confirmed.
+    - **CRITICAL 3** (`ServicioDeCuentaCorrienteDeProveedor.cs:83`): deleting
+      `Where(m => m.IdProveedor == idProveedor)` survives because every test
+      in the file seeds exactly one proveedor per tenant. New test
+      `CuentaCorrienteProveedorEstadoDeCuentaTests.UnSegundoProveedorDelMismoTenantNoContaminaElEstadoDeCuenta`
+      (plus a new `CrearSegundoProveedorEnElMismoTenantAsync` helper and a
+      `SembrarMovimientoAsync` overload taking an explicit `idProveedor`)
+      seeds a second proveedor of the SAME tenant with its own movements and
+      asserts proveedor A's estado de cuenta returns exactly A's 2 rows by
+      id, with B's distinct total (333) undetected. Mutating the filter to
+      `Where(m => true)` made it fail (`Total` 2 expected, 4 actual — B's
+      rows leaked in), confirmed. (The helper's first draft wrote
+      `condiciones_fiscales` under the tenant-scoped context and hit an RLS
+      violation — fixed by switching to `TenantActualFijo.Plataforma`,
+      matching this file's own `PrepararAsync`.)
 
 - [x] 4.1 Create
   `src/Ways.Domain/CuentaCorriente/CalculadorDeEstadoDeCuentaDeProveedor.cs`
