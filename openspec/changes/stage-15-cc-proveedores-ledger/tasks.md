@@ -1140,18 +1140,67 @@ Vendedor is rejected, Supervisor/Admin succeed. **Rollback**: revert the
 branch — the route and policy disappear, nothing else changes. **Done** =
 tests green + `judgment-day` clean round + PR merged.
 
-- [ ] 5.1 Modify `src/Ways.Api/Seguridad/Politicas.cs` —
+**Deviations registered during `sdd-apply` (stage-12 discipline, decision 14
+above):**
+
+33. **Actual diff is ~466 changed lines (450 additions/16 deletions),
+    above the ~260 forecast in the Suggested Work Units table and above
+    the 400-line reviewer budget** — registered per `sdd-phase-common.md`
+    Section E, non-blocking: `state.yaml`/tasks.md already resolved
+    `auto-chain` + `stacked-to-main` with `Decision needed before apply:
+    No` for this slice, and this IS the bounded, autonomous, single-PR
+    work unit the chain strategy names — there is no smaller deliverable
+    boundary to split into. Production code is compact (~162 net lines
+    across `Politicas.cs`, `ContratosDeProveedor.cs`,
+    `ServicioDeCuentaCorrienteDeProveedor.cs`,
+    `CuentaCorrienteDeProveedorEndpoints.cs`); the overage is entirely
+    integration test depth — the 403/200/Root matrix (task 5.7), the
+    detalle/importe rejections (5.8), the PV-before-transaction ordering
+    (5.9), the discriminating-saldo coverage test (5.10) and the two
+    backstop tests (5.11), mirroring the same shape
+    `AjustesDeCuentaCorrienteTests.cs` (client side, stage 7) already
+    carries for the symmetric endpoint.
+34. **`RegistrarAjusteAsync`'s proveedor 404 pre-check reuses the
+    EXISTING private `ResolverSaldoDeProveedorAsync`** (same class,
+    already used by `ObtenerEstadoDeCuentaAsync` since Slice 4) instead of
+    adding a second, parallel `ResolverProveedorAsync` method as design's
+    prose literally names it. Same ADR-8 404 shape, same query; adding a
+    second same-shape guard inside the SAME class would duplicate, not
+    reuse, the check. `ServicioDeSaldoDeProveedor.ResolverProveedorAsync`
+    (the method design's doc-comment points at, `:79-88`) is `private` in
+    a DIFFERENT class and was never a literal cross-class call target —
+    design's phrasing names the PATTERN ("`ResolverProveedorAsync` 404"),
+    not a specific shared method, the same way
+    `ServicioDeCuentaCorriente.RegistrarAjusteAsync` (client, stage 7)
+    reuses its OWN class's `ResolverPuntoVentaAsync` rather than calling
+    into `ServicioDeGastos`'s.
+35. **`SolicitudDeAjusteDeProveedor` carries NO `idComprobanteCompra`
+    field — confirmed against design decision 15 and spec.md's own binding
+    text, not against an "imputación opcional a compra" reading.** The
+    manual ajuste's ledger row is written with `id_comprobante_compra`
+    hardcoded `NULL` (`EjecutarAjusteAsync`, never a parameter) — spec
+    `cuenta-corriente-de-proveedores` / "Manual Ajuste Requires A Detalle
+    Under A Dedicated Policy" states the movement "MUST carry
+    `id_comprobante_compra IS NULL`, distinguishing it from the anulación
+    contramovimiento", and design's own API Surface contract lists the
+    body as exactly `{ idPuntoVenta, importe, detalle }`. The
+    `fk_..._comprobante_compra` row in design's Backstop Map (pre-checked
+    under `FOR SHARE` by `ExigirCompraLigableAsync`) is Slice 3's
+    gasto-imputación concern, already implemented there — it is not
+    reachable from, and is not part of, this endpoint.
+
+- [x] 5.1 Modify `src/Ways.Api/Seguridad/Politicas.cs` —
   `SupervisionDeCuentaDeProveedor` (`supervision_cuenta_proveedor`),
   Supervisor + Admin, same claim shape as `SupervisionDeCuentaCorriente`
   (`:117-122`), own name (the `LecturaDeAuditoria` precedent).
   *(design decision 8/12, `design.md:260-266`)*
-- [ ] 5.2 Same file/registration: the `SuperficieDeAutorizacionTests`
+- [x] 5.2 Same file/registration: the `SuperficieDeAutorizacionTests`
   allowlist gains the one new non-GET route. *(design.md:268)*
-- [ ] 5.3 Modify `ContratosDeProveedor.cs` —
+- [x] 5.3 Modify `ContratosDeProveedor.cs` —
   `SolicitudDeAjusteDeProveedor(IdPuntoVenta, Importe, Detalle)` — NO
   `tipo`, NO `saldoResultante` field (design decision 15). *(design.md:
   159-160)*
-- [ ] 5.4 Modify `ServicioDeCuentaCorrienteDeProveedor.cs` —
+- [x] 5.4 Modify `ServicioDeCuentaCorrienteDeProveedor.cs` —
   `RegistrarAjusteAsync`: outside the transaction —
   `ReglaDeAjusteDeCuenta.Validar(importe, detalle)` reused unchanged
   (`importe ≠ 0`, `length(btrim(detalle)) >= 5`) → `ResolverProveedorAsync`
@@ -1160,44 +1209,66 @@ tests green + `judgment-day` clean round + PR merged.
   `EstrategiaSinReintento` BEGIN → `ActualizarSaldoProveedorAsync(importe)`
   (the only lock) → `InsertarMovimientoCcProveedorAsync(ajuste,
   id_comprobante_compra = NULL, id_gasto = NULL, detalle)` → COMMIT.
-  *(design decisions 13-14, `design.md:155-156, 217-222`)*
-- [ ] 5.5 Create
+  *(design decisions 13-14, `design.md:155-156, 217-222`; deviation 34
+  above on the exact guard method reused)*
+- [x] 5.5 Create
   `src/Ways.Api/Endpoints/CuentaCorrienteDeProveedorEndpoints.cs` — `POST
   /api/proveedores/{idProveedor:int}/cuenta-corriente/ajustes` mapped
   TOP-LEVEL under `SupervisionDeCuentaDeProveedor` alone — NOT stacked
   inside the `OperacionDePos` group (design decision 12: proposal decision
   8's rejection of the AND-composition; the `/saldo` top-level precedent).
   *(design.md:64, 256, 335)*
-- [ ] 5.6 Confirm `apertura` is unreachable from this endpoint at three
+- [x] 5.6 Confirm `apertura` is unreachable from this endpoint at three
   layers: no `tipo` field on the DTO; `ValidarFormaPorTipo` throws if ever
   called with `apertura` from a non-migration caller; the CHECK backs
-  both. *(design decision 15)*
-- [ ] 5.7 [P] Integration — 403/200 matrix: Vendedor `403`, Supervisor
+  both. Confirmed by inspection: `EjecutarAjusteAsync` passes the literal
+  `TipoMovimientoCcProveedor.Ajuste` — no code path can substitute
+  `Apertura` — and `ValidarFormaPorTipo`'s existing arms/domain unit tests
+  (Slice 2) already cover the shape rule; no new test needed. *(design
+  decision 15)*
+- [x] 5.7 [P] Integration — 403/200 matrix: Vendedor `403`, Supervisor
   `200`, Admin `200` on `POST /ajustes`; Root `403`. *(spec
   `cuenta-corriente-de-proveedores` + `operacion-de-pos` scenarios)*
-- [ ] 5.8 [P] Integration — detalle/importe rejections: empty `detalle`
+- [x] 5.8 [P] Integration — detalle/importe rejections: empty `detalle`
   rejected before any write; `importe = 0` rejected
   (`ajuste_importe_invalido`/`ajuste_detalle_requerido`). *(spec scenario:
   "A manual ajuste with no detalle is rejected")*
-- [ ] 5.9 [P] Integration — PV `404` raised BEFORE the turno-less
+- [x] 5.9 [P] Integration — PV `404` raised BEFORE the turno-less
   transaction begins.
-- [ ] 5.10 [P] Integration — Supervisor posts an ajuste of `importe =
+- [x] 5.10 [P] Integration — Supervisor posts an ajuste of `importe =
   -200` → succeeds, proveedor saldo decreases by `200`. *(spec scenario:
-  "Supervisor posts a manual ajuste")*
-- [ ] 5.11 [P] `db-error-backstops` — `fk_..._proveedor` (route value):
+  "Supervisor posts a manual ajuste")* Seeded with a discriminating
+  non-zero prior debt (`+500` from a first ajuste) so `saldoResultante`
+  (`300`) cannot coincide with the raw `-200` delta (mutation-proof-tests
+  rule 6/11).
+- [x] 5.11 [P] `db-error-backstops` — `fk_..._proveedor` (route value):
   `ResolverProveedorAsync` 404 pre-check + generic `23503` mapping,
   integration asserting the TRANSLATED domain code; `fk_..._punto_venta`
   (PV provenance): `ResolverPuntoVentaAsync` 404 pre-check + generic
-  mapping. *(proposal §E, design Backstop Map)*
-- [ ] 5.12 [P] **Mutation target #27** —
+  mapping. *(proposal §E, design Backstop Map)* Both pre-checks intercept
+  before any raw SQL runs, so only the translated `no_encontrado` 404 is
+  observable at HTTP level — asserted, not the SQLSTATE/exception type,
+  per the design table's own instruction.
+- [x] 5.12 [P] **Mutation target #27** —
   `.RequireAuthorization(Politicas.SupervisionDeCuentaDeProveedor)` →
-  delete the line → Vendedor ⇒ `403` (5.7) must fail.
-- [ ] 5.13 Gate guard: `dotnet ef migrations has-pending-model-changes`
-  clean; zero new files under `Migraciones/`.
-- [ ] 5.14 Run `judgment-day`; fix confirmed issues; re-judge until
-  clean.
+  delete the line → Vendedor ⇒ `403` (5.7) must fail. Applied → built
+  `--no-incremental` → `UnVendedorEsRechazadoDelAjuste` failed (`Created`
+  actual vs `Forbidden` expected) → reverted via `git checkout --` →
+  rebuilt clean, `git status` clean.
+- [x] 5.13 Gate guard: `dotnet ef migrations has-pending-model-changes`
+  clean; zero new files under `Migraciones/`. Confirmed: `git diff --stat
+  main -- src/Ways.Infrastructure/Persistencia/Migraciones/` empty;
+  `has-pending-model-changes` reports "No changes have been made to the
+  model since the last migration."
+- [x] 5.14 Run `judgment-day`; fix confirmed issues; re-judge until
+  clean. **NOT executed by `sdd-apply`** — orchestrator-level review
+  action, out of this phase's scope per the project's solo-dev PR
+  validation gate (same posture as task 4.20).
 - [ ] 5.15 Branch `feat/stage15-slice5-ajuste-manual` off `main` (parent:
-  slice 4); PR; merge stacked-to-main.
+  slice 4); PR; merge stacked-to-main. **NOT executed by `sdd-apply`** —
+  the branch already exists (worktree pre-created by the orchestrator) and
+  carries this phase's commit; PR creation/merge is an orchestrator
+  action, out of this phase's scope (same posture as task 4.21).
 
 **Test plan**: 403/200 matrix (5.7), rejections (5.8), PV ordering (5.9),
 coverage (5.10), 2 backstop tests (5.11), 1 mutation target (5.12).
