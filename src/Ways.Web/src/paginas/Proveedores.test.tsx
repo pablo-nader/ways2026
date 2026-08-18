@@ -1,8 +1,13 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { Proveedores } from './Proveedores'
 import type { PaginaDe, ProveedorListado, SaldoDeProveedor } from '../api/tipos'
+
+function renderProveedores() {
+  return render(<Proveedores />, { wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter> })
+}
 
 const apiGetMock = vi.fn()
 
@@ -67,7 +72,7 @@ beforeEach(() => {
 describe('Proveedores — listado', () => {
   it('renderiza las filas con el botón "Ver saldo"', async () => {
     mockearRutasBase()
-    render(<Proveedores />)
+    renderProveedores()
 
     expect(await screen.findByText('Proveedor Uno SA')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Ver saldo' })).toBeInTheDocument()
@@ -84,7 +89,7 @@ describe('Proveedores — panel de saldo', () => {
     mockearRutasBase((ruta) => (ruta === '/proveedores/1/saldo' ? Promise.resolve(saldo) : undefined))
     const usuario = userEvent.setup()
 
-    render(<Proveedores />)
+    renderProveedores()
     await screen.findByText('Proveedor Uno SA')
     await usuario.click(screen.getByRole('button', { name: 'Ver saldo' }))
 
@@ -94,7 +99,10 @@ describe('Proveedores — panel de saldo', () => {
     expect(screen.getByText('Parcial')).toBeInTheDocument()
   })
 
-  it('un saldo negativo se muestra tal cual, con la nota de aproximación (dangling-gasto, decisión 6)', async () => {
+  // stage-15-cc-proveedores-ledger (Slice 6): `ResumenSaldoDeProveedor` fue re-apuntada al ledger —
+  // el callout "aproximación, no invariante" describía la fórmula RETIRADA por esta etapa, ahora
+  // dice simplemente "Saldo a favor." (mutation target #28, `ResumenSaldoDeProveedor.test.tsx`).
+  it('un saldo negativo se muestra tal cual, con el callout de saldo a favor', async () => {
     const saldo: SaldoDeProveedor = {
       idProveedor: 1,
       saldo: -500,
@@ -103,12 +111,12 @@ describe('Proveedores — panel de saldo', () => {
     mockearRutasBase((ruta) => (ruta === '/proveedores/1/saldo' ? Promise.resolve(saldo) : undefined))
     const usuario = userEvent.setup()
 
-    render(<Proveedores />)
+    renderProveedores()
     await screen.findByText('Proveedor Uno SA')
     await usuario.click(screen.getByRole('button', { name: 'Ver saldo' }))
 
     expect(await screen.findByText('-$500,00')).toBeInTheDocument()
-    expect(screen.getByText(/Saldo negativo: hay gastos de proveedor sin ligar/)).toBeInTheDocument()
+    expect(screen.getByText('Saldo a favor.')).toBeInTheDocument()
     // la compra sigue impaga individualmente aunque el saldo total ya sea negativo — honesto, no invariante.
     expect(screen.getByText('Impaga')).toBeInTheDocument()
   })
@@ -118,7 +126,7 @@ describe('Proveedores — panel de saldo', () => {
     mockearRutasBase((ruta) => (ruta === '/proveedores/1/saldo' ? Promise.resolve(saldo) : undefined))
     const usuario = userEvent.setup()
 
-    render(<Proveedores />)
+    renderProveedores()
     await screen.findByText('Proveedor Uno SA')
     await usuario.click(screen.getByRole('button', { name: 'Ver saldo' }))
 
@@ -130,7 +138,7 @@ describe('Proveedores — panel de saldo', () => {
     mockearRutasBase((ruta) => (ruta === '/proveedores/1/saldo' ? Promise.resolve(saldo) : undefined))
     const usuario = userEvent.setup()
 
-    render(<Proveedores />)
+    renderProveedores()
     await screen.findByText('Proveedor Uno SA')
     await usuario.click(screen.getByRole('button', { name: 'Ver saldo' }))
     await screen.findByText('Saldo de Proveedor Uno SA')

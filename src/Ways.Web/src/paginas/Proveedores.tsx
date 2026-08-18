@@ -18,9 +18,9 @@ function formatearMoneda(valor: number): string {
 // Montado con `key={idProveedor}` desde el padre (react-async-state regla 8): cambiar de
 // proveedor remonta el panel entero, sin arrastrar el saldo del anterior mientras carga el nuevo.
 
-type PropsPanelSaldo = { idProveedor: number; razonSocial: string; onCerrar: () => void }
+type PropsPanelSaldo = { proveedor: ProveedorListado; onCerrar: () => void }
 
-function PanelSaldoDeProveedor({ idProveedor, razonSocial, onCerrar }: PropsPanelSaldo) {
+function PanelSaldoDeProveedor({ proveedor, onCerrar }: PropsPanelSaldo) {
   const [saldo, setSaldo] = useState<SaldoDeProveedor | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -31,7 +31,7 @@ function PanelSaldoDeProveedor({ idProveedor, razonSocial, onCerrar }: PropsPane
     setError('')
 
     clienteDeCompras
-      .obtenerSaldoDeProveedor(idProveedor)
+      .obtenerSaldoDeProveedor(proveedor.id)
       .then((datos) => {
         if (vigente) setSaldo(datos)
       })
@@ -46,12 +46,12 @@ function PanelSaldoDeProveedor({ idProveedor, razonSocial, onCerrar }: PropsPane
     return () => {
       vigente = false
     }
-  }, [idProveedor])
+  }, [proveedor.id])
 
   return (
     <div className="border p-3 mb-4 bg-white">
       <div className="d-flex justify-content-between align-items-start mb-2">
-        <strong>Saldo de {razonSocial}</strong>
+        <strong>Saldo de {proveedor.razonSocial}</strong>
         <button type="button" className="btn btn-sm btn-outline-secondary rounded-0" onClick={onCerrar}>
           Cerrar
         </button>
@@ -63,7 +63,11 @@ function PanelSaldoDeProveedor({ idProveedor, razonSocial, onCerrar }: PropsPane
       {saldo && (
         <>
           <div className="mb-3">
-            <ResumenSaldoDeProveedor saldo={saldo.saldo} />
+            {/* stage-15-cc-proveedores-ledger (Slice 6, judgment-day hallazgo CRITICAL): este panel
+                ya tiene el `ProveedorListado` completo — se lo pasamos a `ResumenSaldoDeProveedor`
+                para que el link real cargue con `location.state.proveedor` (mismo patrón que
+                `Clientes.tsx`). */}
+            <ResumenSaldoDeProveedor saldo={saldo.saldo} idProveedor={proveedor.id} proveedor={proveedor} />
           </div>
 
           <div className="table-responsive">
@@ -311,12 +315,7 @@ export function Proveedores() {
         )}
 
         {proveedorSaldo && (
-          <PanelSaldoDeProveedor
-            key={proveedorSaldo.id}
-            idProveedor={proveedorSaldo.id}
-            razonSocial={proveedorSaldo.razonSocial}
-            onCerrar={() => setProveedorSaldo(null)}
-          />
+          <PanelSaldoDeProveedor key={proveedorSaldo.id} proveedor={proveedorSaldo} onCerrar={() => setProveedorSaldo(null)} />
         )}
 
         {cargando ? (

@@ -269,7 +269,16 @@ export function Compras() {
 
         {saldoProveedor && (
           <div className="border p-3 mb-3 bg-white">
-            <ResumenSaldoDeProveedor saldo={saldoProveedor.saldo} />
+            {/* stage-15-cc-proveedores-ledger (Slice 6, judgment-day hallazgo CRITICAL): `proveedorPorId`
+                ya trae el listado completo (fetch de montaje) — se lo pasamos a `ResumenSaldoDeProveedor`
+                para que el link real cargue con `location.state.proveedor`. Si el id todavía no está en
+                el índice (listado aún cargando), el Link va sin `state` y la pantalla destino degrada
+                con gracia. */}
+            <ResumenSaldoDeProveedor
+              saldo={saldoProveedor.saldo}
+              idProveedor={saldoProveedor.idProveedor}
+              proveedor={proveedorPorId[saldoProveedor.idProveedor]}
+            />
           </div>
         )}
 

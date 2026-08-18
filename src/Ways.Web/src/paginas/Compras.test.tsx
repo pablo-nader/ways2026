@@ -231,7 +231,7 @@ describe('Compras — listado', () => {
     expect(screen.queryByText(/Saldo negativo/)).not.toBeInTheDocument()
   })
 
-  it('un saldo negativo filtrando por proveedor muestra el callout de gasto colgante', async () => {
+  it('un saldo negativo filtrando por proveedor muestra el callout de saldo a favor', async () => {
     const saldo: SaldoDeProveedor = {
       idProveedor: 1,
       saldo: -500,
@@ -249,7 +249,7 @@ describe('Compras — listado', () => {
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
 
     expect(await screen.findByText('-$500,00')).toBeInTheDocument()
-    expect(screen.getByText(/Saldo negativo: hay gastos de proveedor sin ligar/)).toBeInTheDocument()
+    expect(screen.getByText('Saldo a favor.')).toBeInTheDocument()
   })
 
   it('una respuesta de listado desactualizada nunca pisa la más reciente (generación)', async () => {

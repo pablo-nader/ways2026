@@ -93,6 +93,15 @@ export function puedeSupervisarCuentaCorriente(rolId: number) {
   return rolId === ROL.Supervisor || rolId === ROL.Admin
 }
 
+/** Espejo de `Politicas.SupervisionDeCuentaDeProveedor` (stage-15-cc-proveedores-ledger, Slice 5):
+ * supervisor o admin pueden registrar un ajuste manual del ledger de proveedores — vendedor queda
+ * afuera, mismo criterio que `puedeSupervisarCuentaCorriente` pero una policy DISTINTA y propia
+ * (design decisión 8/12: nunca compuesta con `OperacionDePos`). Puramente cosmético: el servidor
+ * vuelve a exigir la misma policy en cada `POST /ajustes`. */
+export function puedeSupervisarCuentaDeProveedor(rolId: number) {
+  return rolId === ROL.Supervisor || rolId === ROL.Admin
+}
+
 /** Espejo de `Politicas.LecturaDeReportes` (stage-10-agregacion-dashboard, Slice 1): supervisor o
  * admin ven `Tablero` — vendedor y root quedan afuera, mismo criterio que
  * `puedeSupervisarCuentaCorriente`. Puramente cosmético: el servidor vuelve a exigir la misma
@@ -1213,6 +1222,52 @@ export type CompraConEstadoPago = {
 }
 
 export type SaldoDeProveedor = { idProveedor: number; saldo: number; compras: CompraConEstadoPago[] }
+
+// --- Cuenta corriente de proveedores (stage-15-cc-proveedores-ledger, Slice 4 backend / Slice 6
+// web) — espejo de `Ways.Application.CuentaCorriente.ContratosDeProveedor`. `GET
+// /api/proveedores/{id}/cuenta-corriente` es la lectura PAGINADA del ledger completo (distinta de
+// `SaldoDeProveedor`/`/saldo`, el resumen por-compra — design decisión 9, dos read models a
+// propósito, ninguno amplía al otro). `POST …/ajustes` es la única escritura de esta superficie.
+
+export type TipoMovimientoCcProveedor = 'Apertura' | 'Compra' | 'Pago' | 'Ajuste'
+
+/** Una fila del ledger de proveedores — `saldoResultante` es la ÚNICA fuente del saldo corrido,
+ * nunca re-derivada en pantalla (design decisión 11). `etiqueta` reutiliza el mismo enum
+ * `EtiquetaDeAjuste` que la cuenta corriente de clientes (el backend reusa la clase, Contratos.cs)
+ * — solo viene poblado cuando `tipo === 'Ajuste'`. */
+export type MovimientoDeCuentaDeProveedor = {
+  idMovimiento: number
+  fecha: string
+  tipo: TipoMovimientoCcProveedor
+  importe: number
+  saldoResultante: number
+  detalle: string | null
+  idComprobanteCompra: number | null
+  idGasto: number | null
+  etiqueta: EtiquetaDeAjuste | null
+}
+
+/** `saldo` viene de `proveedores.saldo` — NUNCA re-derivado de los movimientos de esta misma
+ * página (design decisión 11). */
+export type EstadoDeCuentaDeProveedorHeader = { idProveedor: number; saldo: number }
+
+/** Forma PAGINADA (design decisión 10 / `state.yaml` OD9): `pagina`/`tamanio`/`total` habilitan
+ * "Página N de M" en el web — a diferencia de `EstadoDeCuenta` (clientes, stage 7), que no pagina. */
+export type PaginaDeEstadoDeCuentaDeProveedor = {
+  header: EstadoDeCuentaDeProveedorHeader
+  items: MovimientoDeCuentaDeProveedor[]
+  total: number
+  pagina: number
+  tamanio: number
+  historico: boolean
+  desde: string | null
+  hasta: string | null
+}
+
+/** Cuerpo de `POST /api/proveedores/{id}/cuenta-corriente/ajustes` — deliberadamente SIN `tipo`
+ * ni `saldoResultante` (design decisión 15, `dto-contract-honesty`): ningún endpoint de esta etapa
+ * acepta un saldo o un delta ya calculado por el cliente. */
+export type SolicitudDeAjusteDeProveedor = { idPuntoVenta: number; importe: number; detalle: string }
 
 // --- Stock: transferencias y conteo de inventario (stage-8, Slice 6) -----------------------
 // Espejo de `Ways.Application.Stock.Contratos` — ningún request lleva un delta como input
