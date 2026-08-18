@@ -753,60 +753,87 @@ FullyQualifiedName~EscriturasDeCuentaCorrienteProveedor|FullyQualifiedName~Servi
 change, nothing to repair. **Done** = tests green + `judgment-day` clean
 round + PR merged.
 
-- [ ] 3.1 Modify `ServicioDeGastos.cs`'s `InsertarGastoAsync` (`:134-174`),
+**Deviations registered during `sdd-apply` (stage-12 discipline, decision 14
+above):**
+
+25. **Test-authoring bug found and fixed by the mandatory full-suite run,
+    never a production defect** — the new integration test file initially
+    used `C-FA` (which discriminates 21% IVA) as its `tipo_comprobante` for
+    every seeded compra, instead of `C-FB` (flat, no IVA) — the exact
+    convention `CuentaCorrienteProveedorEscriturasTests.cs` (slice 2)
+    already documents inline ("C-FB no discrimina IVA... los importes
+    esperados de este archivo son directos"). This broke 6 of 12 new tests'
+    hardcoded expected totals (e.g. `1000` expected vs `1210,00` actual —
+    exactly `1000 × 1.21`). Fixed by switching to `C-FB`, matching slice
+    2's own precedent; zero production code changed for this fix.
+26. **CRITICAL lesson from slice 2 (judge B) applied proactively to every
+    new saldo/saldo_resultante assertion in this slice, per the
+    orchestrator's explicit instruction** — every test that compares a
+    computed `proveedores.saldo` or `saldo_resultante` value now seeds a
+    real, discriminating prior debt (≠ 0, ≠ the operation's own importe,
+    ≠ the trivial sum) from an unrelated confirmed compra that stays alive,
+    so a value-substitution mutant (e.g. `saldoResultante` sourced from a
+    local value instead of the `RETURNING`) cannot coincidentally pass
+    against a "fresh" proveedor. Applied to tasks 3.1's write-site tests
+    (3.3, 3.4, 3.8, 3.9-positive, 3.10, 3.13) and the 3.9-negative
+    backstop race (enumeration completed per judge A's round-1 WARNING —
+    the original list under-reported 3.4 and 3.8, which apply the same
+    pattern with prior debts 800 and 1500).
+
+- [x] 3.1 Modify `ServicioDeGastos.cs`'s `InsertarGastoAsync` (`:134-174`),
   after `SaveChangesAsync` (`:169`), before the commit (`:171`): if
   `categoria = proveedor` AND `id_proveedor IS NOT NULL` →
   `ActualizarSaldoProveedorAsync(−importe)` (the LAST lock) →
   `InsertarMovimientoCcProveedorAsync(pago, id_gasto = the row just
   flushed, id_comprobante_compra = the gasto's link or NULL, importe =
   −importe)`. *(design decision 7, `design.md:59, 207-215`)*
-- [ ] 3.2 Confirm the turno guard (`:140`) and the arqueo egress term stay
+- [x] 3.2 Confirm the turno guard (`:140`) and the arqueo egress term stay
   untouched — no new derivation, no new term. *(design "What does NOT
   change")*
-- [ ] 3.3 [P] Integration — a linked proveedor gasto writes one imputed
+- [x] 3.3 [P] Integration — a linked proveedor gasto writes one imputed
   `pago`. *(spec `gastos`: "A proveedor-categoria gasto with id_proveedor
   writes one pago movement")*
-- [ ] 3.4 [P] Integration — an unlinked proveedor gasto reduces the saldo
+- [x] 3.4 [P] Integration — an unlinked proveedor gasto reduces the saldo
   without imputación. *(spec `cuenta-corriente-de-proveedores`: "An
   unlinked proveedor gasto reduces the saldo without imputación")*
-- [ ] 3.5 [P] Integration — a non-proveedor categoria, or a proveedor
+- [x] 3.5 [P] Integration — a non-proveedor categoria, or a proveedor
   categoria with `id_proveedor IS NULL`, writes ZERO movements (both
   directions). *(spec `gastos`: "A proveedor-categoria gasto with no
   id_proveedor writes no movement")*
-- [ ] 3.6 [P] Integration — a gasto still requires an open turno
+- [x] 3.6 [P] Integration — a gasto still requires an open turno
   regardless of the ledger write; `409 turno_no_abierto` writes no
   movement. *(spec `gastos`: "A gasto still requires an open turno
   regardless of the ledger write")*
-- [ ] 3.7 [P] Integration — arqueo no-regression: a proveedor payment
+- [x] 3.7 [P] Integration — arqueo no-regression: a proveedor payment
   still appears in the turno's arqueo with NO new term.
-- [ ] 3.8 [P] Integration — `pago × pago` rendezvous on the same
+- [x] 3.8 [P] Integration — `pago × pago` rendezvous on the same
   proveedor: both commit, serialized, `proveedores.saldo` correct, no
   lost update. *(spec scenario: "Two concurrent payments to the same
   proveedor serialize")*
-- [ ] 3.9 [P] Integration — `anulación × pago` rendezvous on the same
+- [x] 3.9 [P] Integration — `anulación × pago` rendezvous on the same
   compra: the payment holds `FOR SHARE` on the header so the anulación's
   `FOR UPDATE` waits and computes its reversal over a ledger that already
   contains the payment. *(spec scenario: "Anulación and a payment to the
   same proveedor race without deadlock")*
-- [ ] 3.10 [P] Integration — fault point: a failure forced at the ledger
+- [x] 3.10 [P] Integration — fault point: a failure forced at the ledger
   write of `InsertarGastoAsync` leaves saldo, ledger, and the `gastos` row
   all untouched.
-- [ ] 3.11 [P] **Mutation target #21** — `categoria = proveedor &&
+- [x] 3.11 [P] **Mutation target #21** — `categoria = proveedor &&
   id_proveedor is not null` → drop either conjunct → the zero-movement
   tests (3.5) must fail.
-- [ ] 3.12 [P] **Mutation target #22** — the ledger write placed AFTER
+- [x] 3.12 [P] **Mutation target #22** — the ledger write placed AFTER
   `SaveChangesAsync` → move it before → `id_gasto` is `0` or an FK
   violation.
-- [ ] 3.13 [P] **Mutation target #23** — `importe = −gasto.Importe` (the
+- [x] 3.13 [P] **Mutation target #23** — `importe = −gasto.Importe` (the
   sign) → drop the negation → the invariant test (`saldo == Σ importe`)
   must fail.
-- [ ] 3.14 [P] `db-error-backstops` — `fk_..._comprobante_compra` race:
+- [x] 3.14 [P] `db-error-backstops` — `fk_..._comprobante_compra` race:
   imputar a payment to a compra being annulled concurrently — already
   pre-checked under `FOR SHARE` by `ExigirCompraLigableAsync`
   (`:187-230`), the TOCTOU guard.
-- [ ] 3.15 Gate guard: `dotnet ef migrations has-pending-model-changes`
+- [x] 3.15 Gate guard: `dotnet ef migrations has-pending-model-changes`
   clean; zero new files under `Migraciones/`.
-- [ ] 3.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 3.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
 - [ ] 3.17 Branch `feat/stage15-slice3-pago-por-gasto` off `main` (parent:
   slice 2); PR; merge stacked-to-main.
 

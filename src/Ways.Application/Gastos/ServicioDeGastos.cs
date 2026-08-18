@@ -4,7 +4,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Caja;
+using Ways.Application.CuentaCorriente;
 using Ways.Domain.Common;
+using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
 
@@ -168,9 +170,44 @@ public class ServicioDeGastos(
         db.Gastos.Add(gasto);
         await db.SaveChangesAsync(ct);
 
+        // stage-15-cc-proveedores-ledger, Slice 3 (design decisión 7, tasks.md task 3.1): el
+        // movimiento `pago` va DESPUÉS de SaveChangesAsync — id_gasto es identity, recién existe
+        // acá — y es el ÚLTIMO lock de fila (for update) antes del commit. El predicado es
+        // ServicioDeSaldoDeProveedor.cs:39-43 VERBATIM (la fórmula retirada que este ledger
+        // reemplaza): categoría proveedor Y id_proveedor no nulo. `idProveedor` ya es el valor
+        // RESUELTO (derivado por ExigirCompraLigableAsync cuando la solicitud no lo trae) — el
+        // movimiento usa el mismo valor que la fila guarda, nunca el crudo de la solicitud.
+        if (solicitud.Categoria == CategoriaGasto.Proveedor && idProveedor is { } idProveedorDelPago)
+        {
+            await EscribirPagoAProveedorAsync(idTenant, idProveedorDelPago, solicitud, gasto, idEmpleado, momento, ct);
+        }
+
         await transaccion.CommitAsync(ct);
 
         return gasto;
+    }
+
+    /// <summary>stage-15-cc-proveedores-ledger, Slice 3: el ÚNICO call site de
+    /// <see cref="EscriturasDeCuentaCorrienteProveedor"/> para pagos — <c>importe = −gasto.Importe</c>
+    /// (el pago REDUCE el saldo), <c>id_gasto</c> = la fila recién flusheada,
+    /// <c>id_comprobante_compra</c> = el vínculo del gasto (puede ser null: la imputación es
+    /// opcional, spec: An Unlinked Proveedor Gasto Reduces The Saldo Without Imputación). Misma
+    /// conexión/transacción cruda que <see cref="ExigirCompraLigableAsync"/> reutiliza — nunca una
+    /// segunda transacción.</summary>
+    private async Task EscribirPagoAProveedorAsync(
+        int idTenant, int idProveedor, SolicitudDeGasto solicitud, Gasto gasto, int idEmpleado,
+        DateTimeOffset momento, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        var nuevoSaldo = await EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(
+            conexion, transaccionCruda, idTenant, idProveedor, -solicitud.Importe, ct);
+
+        await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
+            conexion, transaccionCruda, idTenant, idProveedor, momento, solicitud.IdPuntoVenta, idEmpleado,
+            TipoMovimientoCcProveedor.Pago, gasto.IdComprobanteCompra, gasto.Id, -solicitud.Importe, nuevoSaldo,
+            detalle: null, ct);
     }
 
     /// <summary>design decisión 7: <c>SELECT ... FOR SHARE</c> crudo sobre el header de la compra
