@@ -255,4 +255,56 @@ public class CuentaCorrienteProveedorSchemaTests(WaysApiFixture fixture) : IClas
 
         Assert.All(nombres, n => Assert.StartsWith("fk_", n));
     }
+
+    /// <summary>Gate guard VINCULANTE (task 1.36, state.yaml db_gate_approval): el conteo total
+    /// de índices nuevos tiene que ser EXACTAMENTE 7 — 6 nombrados a mano sobre la tabla nueva
+    /// (gate §B) + 1 implícito de la clave alterna nueva de <c>gastos</c> (gate §D). Cualquier
+    /// índice extra que <c>ForeignKeyIndexConvention</c> agregue sin que este contrato lo
+    /// nombre reabre el gate (precedente: enmienda 1 de la etapa 14).</summary>
+    [Fact]
+    public async Task ElConteoTotalDeIndicesNuevosEsExactamenteSiete()
+    {
+        using var _ = fixture.CreateClient();
+
+        await using var cruda = new Npgsql.NpgsqlConnection(fixture.OwnerConnectionString);
+        await cruda.OpenAsync();
+
+        await using var comandoTabla = cruda.CreateCommand();
+        comandoTabla.CommandText =
+            "SELECT indexname FROM pg_indexes WHERE tablename = 'movimientos_cuenta_corriente_proveedor' ORDER BY indexname";
+        var indicesTabla = new List<string>();
+        await using (var lector = await comandoTabla.ExecuteReaderAsync())
+        {
+            while (await lector.ReadAsync())
+            {
+                indicesTabla.Add(lector.GetString(0));
+            }
+        }
+
+        // 6 índices nombrados a mano + 1 índice implícito de la PK (pg_indexes cuenta también
+        // el índice que respalda la PRIMARY KEY, que NO es parte del conteo "7" del gate — ese
+        // conteo es de índices NUEVOS de soporte/negocio, la PK es la identidad de la fila).
+        var indicesDeSoporte = indicesTabla.Where(n => n != "pk_movimientos_cuenta_corriente_proveedor").ToList();
+        Assert.Equal(6, indicesDeSoporte.Count);
+        Assert.Equal(
+            new[]
+            {
+                "ix_movimientos_cuenta_corriente_proveedor_comprobante_compra",
+                "ix_movimientos_cuenta_corriente_proveedor_empleado",
+                "ix_movimientos_cuenta_corriente_proveedor_gasto",
+                "ix_movimientos_cuenta_corriente_proveedor_proveedor_fecha",
+                "ix_movimientos_cuenta_corriente_proveedor_punto_venta",
+                "ix_movimientos_cuenta_corriente_proveedor_tenant"
+            },
+            indicesDeSoporte.OrderBy(n => n));
+
+        await using var comandoGastos = cruda.CreateCommand();
+        comandoGastos.CommandText =
+            "SELECT indexname FROM pg_indexes WHERE tablename = 'gastos' AND indexname LIKE '%id_gasto_id_tenant%'";
+        var indiceImplicitoGastos = (string?)await comandoGastos.ExecuteScalarAsync();
+        Assert.NotNull(indiceImplicitoGastos);
+
+        // El total del gate: 6 (tabla nueva) + 1 (implícito de gastos) = 7.
+        Assert.Equal(7, indicesDeSoporte.Count + 1);
+    }
 }

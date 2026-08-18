@@ -442,40 +442,40 @@ above):**
   SQLSTATE `23503` proven per FK, the generic `fk_`/`23503` → `400
   referencia_invalida` mapping (`ManejadorDeErrores.cs:224`) confirmed
   unmodified. *(proposal §E)*
-- [ ] 1.25 [P] **Mutation target #1** — `deleted_at IS NULL` on
+- [x] 1.25 [P] **Mutation target #1** — `deleted_at IS NULL` on
   `comprobantes_compra` in the backfill → delete it → the fidelity test's
   soft-deleted-compra case (1.20) must fail.
-- [ ] 1.26 [P] **Mutation target #2** — `deleted_at IS NULL` on `gastos`
+- [x] 1.26 [P] **Mutation target #2** — `deleted_at IS NULL` on `gastos`
   in the backfill → delete it → the fidelity test's soft-deleted-gasto
   case (1.20) must fail.
-- [ ] 1.27 [P] **Mutation target #3** — `deleted_at IS NULL` on
+- [x] 1.27 [P] **Mutation target #3** — `deleted_at IS NULL` on
   `proveedores` in the backfill → delete it → the fidelity test's
   soft-deleted-proveedor case (1.20, "gets no row") must fail.
-- [ ] 1.28 [P] **Mutation target #4** — `id_proveedor IS NOT NULL` in the
+- [x] 1.28 [P] **Mutation target #4** — `id_proveedor IS NOT NULL` in the
   backfill's `gastos` predicate → delete it → the fidelity test's
   `id_proveedor IS NULL` gasto case (1.20) must fail.
-- [ ] 1.29 [P] **Mutation target #5** — `estado = 'confirmada'` in the
+- [x] 1.29 [P] **Mutation target #5** — `estado = 'confirmada'` in the
   backfill → widen to any estado → the fidelity test's borrador+anulada
   case (1.20) must fail.
-- [ ] 1.30 [P] **Mutation target #6** — `WHERE d.saldo <> 0` → delete it
+- [x] 1.30 [P] **Mutation target #6** — `WHERE d.saldo <> 0` → delete it
   → "a proveedor with no history gets no row" (1.21) must fail.
-- [ ] 1.31 [P] **Mutation target #7** — the `NOT EXISTS (...)` idempotency
+- [x] 1.31 [P] **Mutation target #7** — the `NOT EXISTS (...)` idempotency
   guard → delete it → re-run writes a second `apertura` row (1.21) must
   fail.
-- [ ] 1.32 [P] **Mutation target #8** — statement 2 deriving the cache
+- [x] 1.32 [P] **Mutation target #8** — statement 2 deriving the cache
   FROM the row of statement 1 → recompute it independently → the fidelity
   test (1.20, "both must agree by construction") must fail.
-- [ ] 1.33 [P] **Mutation target #9** —
+- [x] 1.33 [P] **Mutation target #9** —
   `HabilitarRlsDeTenant("movimientos_cuenta_corriente_proveedor")` →
   delete the line → the cross-tenant row count **and** the `42501` INSERT
   test (1.22) must both fail.
-- [ ] 1.34 [P] **Mutation target #10** — the `ck_..._apertura` CHECK in
+- [x] 1.34 [P] **Mutation target #10** — the `ck_..._apertura` CHECK in
   the migration → delete it → the raw-insert `23514` test (1.23, both
   directions) must fail.
-- [ ] 1.35 [P] **Mutation target #11** — RLS ordered LAST in the migration
+- [x] 1.35 [P] **Mutation target #11** — RLS ordered LAST in the migration
   → move it before the backfill → the migration fails or the backfill
   writes zero rows (1.20/1.21 regress).
-- [ ] 1.36 Gate guard (**VINCULANTE**, `state.yaml` db_gate_approval):
+- [x] 1.36 Gate guard (**VINCULANTE**, `state.yaml` db_gate_approval):
   `git diff --stat main -- src/Ways.Infrastructure/Persistencia/Migraciones/`
   shows **exactly one** new file, named for
   `CuentaCorrienteDeProveedoresEtapa15`; `dotnet ef migrations
