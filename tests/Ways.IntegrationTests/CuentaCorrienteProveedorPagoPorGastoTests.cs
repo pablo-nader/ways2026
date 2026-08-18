@@ -49,7 +49,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
 
     private sealed record Contexto(
         int IdTenant, int IdPuntoVenta, HttpClient Admin, int IdProveedor, int IdArticulo, int IdAlicuotaIva21,
-        int IdTipoCFA, int IdMedioEfectivo, string MailAdmin, string PasswordAdmin);
+        int IdTipoCFB, int IdMedioEfectivo, string MailAdmin, string PasswordAdmin);
 
     private async Task<Contexto> PrepararAsync(string nombre)
     {
@@ -105,16 +105,20 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         db.Articulos.Add(articulo);
         await db.SaveChangesAsync();
 
-        var idTipoCFA = await db.TiposComprobante.Where(t => t.Codigo == "C-FA").Select(t => t.Id).SingleAsync();
+        // C-FB no discrimina IVA (a diferencia de C-FA) — total == unidades * costoUnitario
+        // exactamente, sin sumar el 21%, mismo criterio que
+        // CuentaCorrienteProveedorEscriturasTests.cs (slice 2): así los importes esperados de este
+        // archivo son directos.
+        var idTipoCFB = await db.TiposComprobante.Where(t => t.Codigo == "C-FB").Select(t => t.Id).SingleAsync();
 
         return new Contexto(
             resultado.IdTenant, resultado.IdPuntoVenta, admin, proveedor.Id, articulo.Id, idAlicuotaIva21,
-            idTipoCFA, idMedioEfectivo, mailAdmin, resultado.PasswordTemporal);
+            idTipoCFB, idMedioEfectivo, mailAdmin, resultado.PasswordTemporal);
     }
 
     private static SolicitudDeCompra SolicitudSimple(Contexto ctx, decimal costoUnitario = 100m, string? numeroExterno = null) =>
         new(
-            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, numeroExterno ?? $"0001-{Guid.NewGuid():N}"[..14],
+            ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, numeroExterno ?? $"0001-{Guid.NewGuid():N}"[..14],
             DateOnly.FromDateTime(DateTime.UtcNow), null,
             [new LineaDeCompraSolicitada(ctx.IdArticulo, "Item de prueba", 10m, null, null, costoUnitario, 0m, ctx.IdAlicuotaIva21, true)]);
 
@@ -153,6 +157,10 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
     public async Task UnGastoDeCategoriaProveedorLigadoEscribeExactamenteUnPagoImputado()
     {
         var ctx = await PrepararAsync(nameof(UnGastoDeCategoriaProveedorLigadoEscribeExactamenteUnPagoImputado));
+        // deuda previa REAL (≠ 0) de otra compra que se queda VIVA — discrimina el
+        // saldo_resultante del RETURNING de un mutante de valor (hallazgo del juez B, slice 2:
+        // ningún assert de saldo/saldo_resultante contra un proveedor "fresco").
+        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 30m, numeroExterno: "resto-imputado"); // 300
         var compra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 100m); // total 1000
         await AbrirTurnoAsync(ctx);
 
@@ -176,8 +184,8 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         Assert.Equal(compra.Id, pago.IdComprobanteCompra);
 
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
-        // compra (+1000) − pago (1000) = 0.
-        Assert.Equal(0m, proveedor.Saldo);
+        // 300 (otra compra viva) + 1000 (esta compra) − 1000 (este pago) = 300.
+        Assert.Equal(300m, proveedor.Saldo);
         Assert.Equal(proveedor.Saldo, pago.SaldoResultante);
     }
 
@@ -359,6 +367,9 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
     public async Task ElPagoQueGanaLaCarreraDejaSuMovimientoVisibleEnElLedgerQueLaAnulacionQueLlegaDespuesComputa()
     {
         var ctx = await PrepararAsync(nameof(ElPagoQueGanaLaCarreraDejaSuMovimientoVisibleEnElLedgerQueLaAnulacionQueLlegaDespuesComputa));
+        // deuda previa REAL de otra compra viva — discrimina el saldo_resultante del RETURNING de
+        // un mutante de valor (hallazgo del juez B, slice 2).
+        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 50m, numeroExterno: "resto-carrera"); // 500
         var compra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 100m); // total 1000
         await AbrirTurnoAsync(ctx);
 
@@ -404,8 +415,9 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         Assert.Equal(-400m, pago.Importe);
 
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
-        // 1000 (compra) − 400 (pago) − 1000 (reversa) = −400, sin lost update.
-        Assert.Equal(-400m, proveedor.Saldo);
+        // 500 (otra compra viva) + 1000 (esta compra) − 400 (pago) − 1000 (reversa) = 100, sin
+        // lost update.
+        Assert.Equal(100m, proveedor.Saldo);
         Assert.Equal(proveedor.Saldo, ajuste.SaldoResultante);
     }
 
@@ -421,7 +433,12 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
     public async Task UnPagoQueIntentaImputarseAUnaCompraSiendoAnuladaConcurrentementeEsRechazadoSinEscribirMovimiento()
     {
         var ctx = await PrepararAsync(nameof(UnPagoQueIntentaImputarseAUnaCompraSiendoAnuladaConcurrentementeEsRechazadoSinEscribirMovimiento));
-        var compra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 100m);
+
+        // Otra compra confirmada que se queda VIVA — deuda previa REAL (≠ 0) que discrimina el
+        // saldo_resultante del RETURNING de un mutante de valor (mismo criterio, hallazgo del juez
+        // B en slice 2: ningún assert de saldo contra un proveedor "fresco").
+        var otraCompra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 30m, numeroExterno: "resto-race"); // 300
+        var compra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 100m); // 1000 — saldo previo a anular = 1300
         await AbrirTurnoAsync(ctx);
 
         var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -459,8 +476,9 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         Assert.Equal(0, await db.MovimientosCuentaCorrienteProveedor.CountAsync(m => m.Tipo == TipoMovimientoCcProveedor.Pago));
 
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
-        // −1000 (reversa de la compra) — el pago rechazado no aportó nada.
-        Assert.Equal(-1000m, proveedor.Saldo);
+        // 1300 (otraCompra viva + esta compra) − 1000 (reversa de esta compra) = 300 — el pago
+        // rechazado no aportó nada.
+        Assert.Equal(300m, proveedor.Saldo);
     }
 
     // ---- task 3.10: falla en el punto del ledger deja saldo/ledger/el gasto sin cambios ------------
@@ -487,6 +505,10 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
     public async Task UnaFallaAlEscribirElLedgerDeProveedorDejaSaldoLedgerYElGastoSinCambios()
     {
         var ctx = await PrepararAsync(nameof(UnaFallaAlEscribirElLedgerDeProveedorDejaSaldoLedgerYElGastoSinCambios));
+        // deuda previa REAL (≠ 0) — para que "sin cambios" sea una prueba real de que el saldo NO
+        // se movió, no una coincidencia con el 0 inicial de un proveedor fresco (hallazgo del juez
+        // B, slice 2).
+        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 70m, numeroExterno: "resto-falla"); // 700
         await AbrirTurnoAsync(ctx);
 
         await RevocarAsync("movimientos_cuenta_corriente_proveedor", "INSERT");
@@ -506,18 +528,23 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         // La transacción entera (INSERT gastos + UPDATE saldo + INSERT ledger) revierte junta — el
         // gasto NUNCA queda huérfano de su movimiento.
         Assert.Equal(0, await db.Gastos.CountAsync(g => g.IdProveedor == ctx.IdProveedor));
-        Assert.Equal(0, await db.MovimientosCuentaCorrienteProveedor.CountAsync(m => m.IdProveedor == ctx.IdProveedor));
+        Assert.Equal(0, await db.MovimientosCuentaCorrienteProveedor.CountAsync(m => m.Tipo == TipoMovimientoCcProveedor.Pago));
 
         var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
-        Assert.Equal(0m, proveedor.Saldo);
+        // Sigue en 700 (la deuda previa) — nunca 500 (700 − 200, si el fallo hubiera dejado pasar
+        // parte de la escritura) ni 0.
+        Assert.Equal(700m, proveedor.Saldo);
     }
 
     // ---- mutation target #23: importe = −gasto.Importe — el invariante saldo == Σ importe ----------
 
     [Fact]
-    public async Task ElSaldoDelProveedorIgualaLaSumaDeMovimientosTrasApertreCompraYPago()
+    public async Task ElSaldoDelProveedorIgualaLaSumaDeMovimientosTrasCompraYPago()
     {
-        var ctx = await PrepararAsync(nameof(ElSaldoDelProveedorIgualaLaSumaDeMovimientosTrasApertreCompraYPago));
+        var ctx = await PrepararAsync(nameof(ElSaldoDelProveedorIgualaLaSumaDeMovimientosTrasCompraYPago));
+        // deuda previa REAL de otra compra viva — discrimina el saldo final de un mutante de valor
+        // (hallazgo del juez B, slice 2).
+        await CrearYConfirmarCompraAsync(ctx, costoUnitario: 20m, numeroExterno: "resto-invariante"); // 200
         var compra = await CrearYConfirmarCompraAsync(ctx, costoUnitario: 100m); // +1000
         await AbrirTurnoAsync(ctx);
 
@@ -538,7 +565,7 @@ public class CuentaCorrienteProveedorPagoPorGastoTests(WaysApiFixture fixture) :
         var suma = await db.MovimientosCuentaCorrienteProveedor
             .Where(m => m.IdProveedor == ctx.IdProveedor)
             .SumAsync(m => m.Importe);
-        Assert.Equal(400m, proveedor.Saldo); // 1000 − 600
+        Assert.Equal(600m, proveedor.Saldo); // 200 (otra compra viva) + 1000 − 600
         Assert.Equal(proveedor.Saldo, suma);
     }
 
