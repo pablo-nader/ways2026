@@ -484,7 +484,7 @@ above):**
   `gastos` AK index = **7**. Any deviation reopens the gate.
 - [x] 1.37 Run `judgment-day` on the slice diff; fix confirmed issues;
   re-judge until clean.
-- [ ] 1.38 Branch `feat/stage15-slice1-ledger-schema` off `main`; PR;
+- [x] 1.38 Branch `feat/stage15-slice1-ledger-schema` off `main`; PR;
   merge stacked-to-main.
 
 **Test plan**: fidelity by data (1.20), idempotency (1.21), RLS + `42501`
