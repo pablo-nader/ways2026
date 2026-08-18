@@ -775,7 +775,10 @@ above):**
     so a value-substitution mutant (e.g. `saldoResultante` sourced from a
     local value instead of the `RETURNING`) cannot coincidentally pass
     against a "fresh" proveedor. Applied to tasks 3.1's write-site tests
-    (3.3, 3.9-positive, 3.10, 3.13) and the 3.9-negative backstop race.
+    (3.3, 3.4, 3.8, 3.9-positive, 3.10, 3.13) and the 3.9-negative
+    backstop race (enumeration completed per judge A's round-1 WARNING —
+    the original list under-reported 3.4 and 3.8, which apply the same
+    pattern with prior debts 800 and 1500).
 
 - [x] 3.1 Modify `ServicioDeGastos.cs`'s `InsertarGastoAsync` (`:134-174`),
   after `SaveChangesAsync` (`:169`), before the commit (`:171`): if
@@ -830,7 +833,7 @@ above):**
   (`:187-230`), the TOCTOU guard.
 - [x] 3.15 Gate guard: `dotnet ef migrations has-pending-model-changes`
   clean; zero new files under `Migraciones/`.
-- [ ] 3.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 3.16 Run `judgment-day`; fix confirmed issues; re-judge until clean.
 - [ ] 3.17 Branch `feat/stage15-slice3-pago-por-gasto` off `main` (parent:
   slice 2); PR; merge stacked-to-main.
 
