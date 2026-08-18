@@ -89,6 +89,10 @@ public static class DependencyInjection
         // (design decisión 11) — dedicado, no extiende ServicioDeProveedores.
         services.AddScoped<ServicioDeSaldoDeProveedor>();
 
+        // stage-15-cc-proveedores-ledger, Slice 4: el lado de lectura del ledger de proveedores —
+        // estado de cuenta paginado (task 4.3).
+        services.AddScoped<ServicioDeCuentaCorrienteDeProveedor>();
+
         // stage-10-agregacion-dashboard, Slice 2: LectorDeSerieTemporal es la única superficie de
         // SQL crudo de toda la etapa (design decisión 2) — ServicioDeReportesDeVentas es su
         // primer consumidor.

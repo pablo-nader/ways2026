@@ -2,64 +2,72 @@ using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
-using Ways.Domain.Gastos;
+using Ways.Domain.CuentaCorriente;
 
 namespace Ways.Application.Compras;
 
 /// <summary>
-/// El saldo derivado del proveedor (design decisión 11, spec: saldo-de-proveedor) — dedicado,
-/// nunca extiende <c>ServicioDeProveedores</c> (un ABM plano que no tiene por qué depender de
-/// dos agregados operativos para servir una lectura). Sin tabla, sin caché, sin estado propio:
-/// <c>Σ compras confirmadas − Σ gastos (categoria = proveedor)</c>, con el estado de pago
-/// por-compra derivado de los gastos LIGADOS únicamente (spec: Per-Compra Payment Status From
-/// Linked Gastos Only).
+/// El saldo del proveedor (design decisión 9, spec: saldo-de-proveedor MODIFIED) — dedicado,
+/// nunca extiende <c>ServicioDeProveedores</c>. Re-sourceado sobre el ledger de
+/// stage-15-cc-proveedores-ledger: <see cref="Saldo"/> viene de <c>proveedores.saldo</c> (la
+/// caché de <c>EscriturasDeCuentaCorrienteProveedor</c>), NUNCA re-derivado de agregados — firma y
+/// los tres records de respuesta se mantienen byte-idénticos a la forma pre-etapa 15 (task 4.10).
 ///
-/// Dos consultas agregadas más el guard de existencia del proveedor (Data Flow del design) — O(1),
-/// nunca N+1: la segunda consulta agregada agrupa TODOS los gastos
-/// de categoría proveedor del proveedor por <c>id_comprobante_compra</c> (incluida la fila NULL,
-/// que agrupa los gastos sin ligar) — de ahí sale tanto el total a restar del saldo como el
-/// desglose por-compra, en un solo <c>GROUP BY</c> (task 4.2: "a single grouped query... no
-/// N+1").
+/// El estado de pago por-compra usa la fórmula VINCULANTE de <c>state.yaml</c> OD7 (tasks.md
+/// decisión 4) — NO la del proposal (<c>SUM(importe) ... &lt;= 0 ⇒ pagada</c>, lee `pagada` una
+/// compra pre-cutover sin movimiento propio) ni la del design (<c>−Σ importe WHERE tipo &lt;&gt;
+/// 'compra'</c>, pierde un pago parcial pre-cutover porque nunca consulta <c>gastos</c>):
+/// <c>pagado(X) = SUM(gastos.importe) WHERE gastos.id_comprobante_compra = X</c> (el mecanismo
+/// retirado, predicado verbatim — sigue siendo verdad para TODO el tiempo porque el pago SIGUE
+/// siendo un gasto) <c>+ SUM(-importe) WHERE movimientos_cuenta_corriente_proveedor.
+/// id_comprobante_compra = X AND tipo = 'ajuste'</c> (contramovimientos y ajustes manuales
+/// imputados). Los movimientos <c>'pago'</c> NO se cuentan acá — ya están contados como gasto;
+/// sumarlos de nuevo sería double-count (mutation target #24 REDEFINIDO). <c>ResolverEstadoPago</c>
+/// no cambia una línea.
 /// </summary>
 public class ServicioDeSaldoDeProveedor(IWaysDbContext db)
 {
     public async Task<SaldoDeProveedor> ObtenerAsync(int idProveedor, CancellationToken ct = default)
     {
-        await ResolverProveedorAsync(idProveedor, ct);
+        var saldo = await ResolverSaldoDeProveedorAsync(idProveedor, ct);
 
         var compras = await db.ComprobantesCompra
             .Where(c => c.IdProveedor == idProveedor && c.Estado == EstadoCompra.Confirmada)
             .Select(c => new { c.Id, c.NumeroExterno, c.Total })
             .ToListAsync(ct);
 
-        // Agrupado por id_comprobante_compra — la fila con clave null agrupa los gastos SIN
-        // ligar (spec: An Unlinked Gasto Still Reduces The Total Saldo). Una sola consulta sirve
-        // tanto al total (spec: Saldo Is A Derived Read) como al desglose por-compra (spec:
-        // Per-Compra Payment Status From Linked Gastos Only).
-        var gastosPorCompra = await db.Gastos
-            .Where(g => g.IdProveedor == idProveedor && g.Categoria == CategoriaGasto.Proveedor)
-            .GroupBy(g => g.IdComprobanteCompra)
+        var idsCompras = compras.Select(c => c.Id).ToList();
+
+        // Primer término de OD7 — el mecanismo retirado, verbatim: SUM(gastos.importe) por
+        // id_comprobante_compra, SIN filtro de categoria acá (distinto del predicado que escribe
+        // el movimiento 'pago' en ServicioDeGastos — ese sí filtra categoria = proveedor). Acotado
+        // a las compras de ESTE proveedor por índice (ix_gastos_comprobante_compra).
+        var pagadoPorGastos = await db.Gastos
+            .Where(g => g.IdComprobanteCompra != null && idsCompras.Contains(g.IdComprobanteCompra.Value))
+            .GroupBy(g => g.IdComprobanteCompra!.Value)
             .Select(grupo => new { IdComprobanteCompra = grupo.Key, Total = grupo.Sum(g => g.Importe) })
-            .ToListAsync(ct);
+            .ToDictionaryAsync(g => g.IdComprobanteCompra, g => g.Total, ct);
 
-        var totalCompras = compras.Sum(c => c.Total);
-        var totalGastos = gastosPorCompra.Sum(g => g.Total);
-
-        var pagadoPorCompra = gastosPorCompra
-            .Where(g => g.IdComprobanteCompra is not null)
-            .ToDictionary(g => g.IdComprobanteCompra!.Value, g => g.Total);
+        // Segundo término de OD7 — SOLO 'ajuste' (contramovimiento de anulación o ajuste manual
+        // imputado); 'pago' queda EXCLUIDO a propósito (ya contado arriba vía gastos — target #24).
+        var reversadoPorAjustes = await db.MovimientosCuentaCorrienteProveedor
+            .Where(m => m.Tipo == TipoMovimientoCcProveedor.Ajuste && m.IdComprobanteCompra != null
+                && idsCompras.Contains(m.IdComprobanteCompra.Value))
+            .GroupBy(m => m.IdComprobanteCompra!.Value)
+            .Select(grupo => new { IdComprobanteCompra = grupo.Key, Total = grupo.Sum(m => -m.Importe) })
+            .ToDictionaryAsync(g => g.IdComprobanteCompra, g => g.Total, ct);
 
         var comprasConEstado = compras
             .Select(c =>
             {
-                var pagado = pagadoPorCompra.GetValueOrDefault(c.Id, 0m);
+                var pagado = pagadoPorGastos.GetValueOrDefault(c.Id, 0m) + reversadoPorAjustes.GetValueOrDefault(c.Id, 0m);
                 var estado = ResolverEstadoPago(pagado, c.Total);
                 return new CompraConEstadoPago(c.Id, c.NumeroExterno, c.Total, pagado, estado);
             })
             .OrderBy(c => c.IdComprobanteCompra)
             .ToList();
 
-        return new SaldoDeProveedor(idProveedor, totalCompras - totalGastos, comprasConEstado);
+        return new SaldoDeProveedor(idProveedor, saldo, comprasConEstado);
     }
 
     /// <summary>spec: A Fully Paid Compra / An Unlinked Gasto Does Not Mark A Compra As Paid — sin
@@ -76,15 +84,22 @@ public class ServicioDeSaldoDeProveedor(IWaysDbContext db)
         return pagado >= total ? EstadoPago.Pagada : EstadoPago.Parcial;
     }
 
-    private async Task ResolverProveedorAsync(int idProveedor, CancellationToken ct)
+    /// <summary>ADR-8: mismo 404 para "no existe" y "es de otro tenant" (spec: Cross-Tenant
+    /// Proveedor Saldo Is Invisible) — trae <c>Saldo</c> en la misma consulta de existencia
+    /// (design decisión 9: <c>proveedores.saldo</c> es la fuente, ya no un agregado).</summary>
+    private async Task<decimal> ResolverSaldoDeProveedorAsync(int idProveedor, CancellationToken ct)
     {
-        var existe = await db.Proveedores.AnyAsync(p => p.Id == idProveedor, ct);
-        if (!existe)
+        var proveedor = await db.Proveedores
+            .Where(p => p.Id == idProveedor)
+            .Select(p => new { p.Saldo })
+            .FirstOrDefaultAsync(ct);
+
+        if (proveedor is null)
         {
-            // ADR-8: mismo 404 para "no existe" y "es de otro tenant" (spec: Cross-Tenant
-            // Proveedor Saldo Is Invisible).
             throw ErrorDominio.NoEncontrado($"No existe el proveedor {idProveedor}.");
         }
+
+        return proveedor.Saldo;
     }
 }
 
@@ -104,8 +119,9 @@ public enum EstadoPago
 public sealed record CompraConEstadoPago(
     int IdComprobanteCompra, string? NumeroExterno, decimal Total, decimal Pagado, EstadoPago EstadoPago);
 
-/// <summary>Respuesta de <c>GET /api/proveedores/{id}/saldo</c> (design: API Surface) —
-/// <see cref="Saldo"/> es la aproximación declarada por el spec (saldo-de-proveedor / Saldo Is
-/// An Approximation, Not An Invariant): un gasto sin ligar la reduce igual, aunque no salde
-/// ninguna compra puntual.</summary>
+/// <summary>Respuesta de <c>GET /api/proveedores/{id}/saldo</c> (design: API Surface), byte-idéntica
+/// a la forma pre-etapa 15 (task 4.10) — <see cref="Saldo"/> ahora es el INVARIANTE de
+/// <c>proveedores.saldo</c> (spec: saldo-de-proveedor / Saldo Is The Single-Write-Authority Cache
+/// Of The Ledger, REMOVED "Saldo Is An Approximation, Not An Invariant"): un gasto sin ligar la
+/// reduce igual, aunque no salde ninguna compra puntual.</summary>
 public sealed record SaldoDeProveedor(int IdProveedor, decimal Saldo, IReadOnlyList<CompraConEstadoPago> Compras);

@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
-using Ways.Application.Compras;
 using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
@@ -32,10 +31,11 @@ namespace Ways.IntegrationTests;
 /// recién ahí aplica <c>CuentaCorrienteDeProveedoresEtapa15</c> — así el backfill sí tiene algo
 /// que leer, exactamente como pasaría en una base real ya operando.
 ///
-/// <c>ServicioDeSaldoDeProveedor.ObtenerAsync</c> (Application, SIN CAMBIOS en esta slice — la
-/// re-derivación desde el ledger es tarea 4.5, Slice 4) es la fórmula retirada corriendo de
-/// verdad contra la fixture ANTES de migrar: la captura "antes" contra el mismo código que
-/// calculaba el saldo en producción, no una reimplementación de la fórmula en el test.
+/// <see cref="CalcularSaldoPorLaFormulaRetiradaAsync"/> inlinea la fórmula retirada (verbatim,
+/// mismo predicado que <c>ServicioDeSaldoDeProveedor.ObtenerAsync</c> tenía ANTES de la tarea 4.5)
+/// contra la fixture, ANTES de migrar — deviación registrada: la Slice 4 re-sourcea esa clase
+/// sobre <c>movimientos_cuenta_corriente_proveedor</c> (OD7), tabla que todavía no existe en este
+/// punto del test por diseño, así que llamarla directamente ya no es posible acá.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -218,6 +218,26 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         await db.SaveChangesAsync();
     }
 
+    /// <summary>La fórmula RETIRADA, verbatim (mismo predicado que
+    /// <c>ServicioDeSaldoDeProveedor.ObtenerAsync</c> tenía antes de la tarea 4.5 — spec:
+    /// saldo-de-proveedor, REMOVED "Saldo Is A Derived Read, Never Persisted"): <c>Σ compras
+    /// confirmadas − Σ gastos (categoria = proveedor)</c>. Inlineada acá porque esta prueba
+    /// necesita evaluarla contra una base migrada SOLO hasta <see cref="MigracionAnterior"/>,
+    /// donde <c>movimientos_cuenta_corriente_proveedor</c> todavía no existe — el punto exacto
+    /// que hace que el backfill tenga algo que leer.</summary>
+    private static async Task<decimal> CalcularSaldoPorLaFormulaRetiradaAsync(WaysDbContext db, int idProveedor)
+    {
+        var totalCompras = await db.ComprobantesCompra
+            .Where(c => c.IdProveedor == idProveedor && c.Estado == EstadoCompra.Confirmada)
+            .SumAsync(c => c.Total);
+
+        var totalGastos = await db.Gastos
+            .Where(g => g.IdProveedor == idProveedor && g.Categoria == CategoriaGasto.Proveedor)
+            .SumAsync(g => g.Importe);
+
+        return totalCompras - totalGastos;
+    }
+
     private sealed record Fixture(
         string NombreBase, string CadenaAdmin, string CadenaNueva,
         int IdConDeuda, int IdCompraConDeuda, decimal SaldoPrevioConDeuda,
@@ -230,8 +250,17 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
 
     /// <summary>Crea la base dedicada, migra hasta <see cref="MigracionAnterior"/>, siembra los 7
     /// proveedores discriminantes (task 1.20) y captura el saldo PREVIO con
-    /// <see cref="ServicioDeSaldoDeProveedor"/> (sin cambios en esta slice) — nunca migra la
-    /// migración bajo prueba: eso lo hace el llamador, para poder decidir cuándo.</summary>
+    /// <see cref="CalcularSaldoPorLaFormulaRetiradaAsync"/> — nunca migra la migración bajo
+    /// prueba: eso lo hace el llamador, para poder decidir cuándo.
+    /// <para>Deviación registrada (Slice 4, tasks.md decisión 4 / task 4.5): esta captura llamaba
+    /// antes a <c>ServicioDeSaldoDeProveedor.ObtenerAsync</c> directamente contra <c>db2</c> —
+    /// válido mientras esa clase todavía calculaba la fórmula retirada. Desde que la tarea 4.5
+    /// la re-sourcea sobre <c>movimientos_cuenta_corriente_proveedor</c> (OD7), esa llamada
+    /// fallaría acá con "relation does not exist": <c>db2</c> está deliberadamente migrado SOLO
+    /// hasta <see cref="MigracionAnterior"/>, ANTES de que esa tabla exista — el estado exacto
+    /// que este archivo necesita para que el backfill tenga algo que leer. La fórmula retirada
+    /// se inlinea acá, verbatim (mismo predicado que <c>ServicioDeSaldoDeProveedor.ObtenerAsync</c>
+    /// tenía antes de la tarea 4.5), en vez de reimplementar de memoria.</para></summary>
     private async Task<Fixture> PrepararFixtureSinMigrarAsync(string sufijo)
     {
         var nombreBase = $"ways_stage15_{sufijo}_{Guid.NewGuid():N}";
@@ -303,7 +332,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         // Target #6: WHERE d.saldo <> 0 — sin ninguna actividad, derivado = 0, sin fila.
         var idSinHistoria = await SembrarProveedorPreMigracionAsync(conexionCruda, ctx.IdTenant, ctx.IdCondicionFiscal, "SinHistoria", eliminado: false);
 
-        var saldoPrevioConDeuda = (await new ServicioDeSaldoDeProveedor(db2).ObtenerAsync(idConDeuda)).Saldo;
+        var saldoPrevioConDeuda = await CalcularSaldoPorLaFormulaRetiradaAsync(db2, idConDeuda);
 
         return new Fixture(
             nombreBase, cadenaAdmin, cadenaNueva,
@@ -396,7 +425,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             }
 
             // ConDeuda (spec scenario): la fila de apertura Y el cache coinciden con el saldo
-            // previo, calculado por el MISMO ServicioDeSaldoDeProveedor que corría antes de migrar.
+            // previo, calculado por CalcularSaldoPorLaFormulaRetiradaAsync ANTES de migrar.
             var aperturaConDeuda = await LeerAperturaAsync(f.IdConDeuda);
             Assert.NotNull(aperturaConDeuda);
             Assert.Equal(1100m, aperturaConDeuda!.Value.Importe);

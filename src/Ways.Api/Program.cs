@@ -174,6 +174,8 @@ app.MapearCaja();
 app.MapearGastos();
 app.MapearCuentaCorriente();
 app.MapearCompras();
+// stage-15-cc-proveedores-ledger, Slice 4: estado de cuenta paginado del proveedor.
+app.MapearCuentaCorrienteDeProveedor();
 app.MapearReportes();
 app.MapearAuditoria();
 
