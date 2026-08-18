@@ -193,6 +193,10 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                     npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
+                    // stage-15-cc-proveedores-ledger, Slice 2 (hallazgo registrado en tasks.md,
+                    // mismo gap que ComprasTipoSeedTests/ComprasAnulacionYConcurrenciaTests):
+                    // migrar hasta HEAD sin este mapeo dispara PendingModelChangesWarning.
+                    npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
                 })
                 .Options;
 
