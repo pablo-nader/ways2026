@@ -263,24 +263,41 @@ public class CuentaCorrienteProveedorEstadoDeCuentaTests(WaysApiFixture fixture)
 
     // ---- regla 10 de mutation-proof-tests: offset real -03:00 en el filtro de fecha, nunca Z -----
 
+    /// <summary>
+    /// SIN <c>historico</c> — a propósito: con <c>historico=true</c> el llamador nunca asigna
+    /// <c>desdeEfectivo</c>/<c>hastaEfectivo</c> (<c>ServicioDeCuentaCorrienteDeProveedor</c>:30-40
+    /// solo lo hace <c>if (!historico)</c>), así que el filtro de fecha JAMÁS se aplica y este test
+    /// pasaba de forma incondicional (judgment-day ronda A, CRITICAL — tasks.md desviación #32).
+    /// El dataset hace que la inclusión dependa DEL OFFSET real, no de la fecha pelada: el límite
+    /// <c>hasta</c> es <c>2026-07-31T23:59:59-03:00</c> == <c>2026-08-01T02:59:59Z</c>. El movimiento
+    /// A cae 1m59s ANTES de ese instante y el B cae 5m01s DESPUÉS — un mutante que trunque el límite
+    /// a fecha (<c>.Date</c>) o que descarte el offset (lo lea como si fuera <c>Z</c>, corriendo el
+    /// límite ~3hs antes) excluye a A, que debe entrar.
+    /// </summary>
     [Fact]
     public async Task UnFiltroHastaConOffsetRealMenosTresIncluyeUnMovimientoQueUnFiltroEnUtcExcluiria()
     {
         var ctx = await PrepararAsync(nameof(UnFiltroHastaConOffsetRealMenosTresIncluyeUnMovimientoQueUnFiltroEnUtcExcluiria));
 
-        // 2026-08-17T23:30:00-03:00 == 2026-08-18T02:30:00Z (spec: A date-boundary filter uses
-        // the client's real offset, not UTC).
-        var fechaDelMovimiento = new DateTimeOffset(2026, 8, 17, 23, 30, 0, TimeSpan.FromHours(-3));
-        Assert.Equal(new DateTimeOffset(2026, 8, 18, 2, 30, 0, TimeSpan.Zero), fechaDelMovimiento);
-        var idMovimiento = await SembrarMovimientoAsync(ctx, TipoMovimientoCcProveedor.Ajuste, fechaDelMovimiento, 100m, "borde -03:00");
+        // A: 2026-07-31T23:58:00-03:00 == 2026-08-01T02:58:00Z — 1m59s antes del límite `hasta`.
+        var fechaDentroDelRango = new DateTimeOffset(2026, 7, 31, 23, 58, 0, TimeSpan.FromHours(-3));
+        Assert.Equal(new DateTimeOffset(2026, 8, 1, 2, 58, 0, TimeSpan.Zero), fechaDentroDelRango);
+        var idDentro = await SembrarMovimientoAsync(ctx, TipoMovimientoCcProveedor.Ajuste, fechaDentroDelRango, 100m, "1m59s antes del limite");
 
-        // hasta = el mismo día calendario en -03:00, offset REAL del cliente, nunca `Z`.
-        var hastaConOffsetReal = "2026-08-17T23:59:59-03:00";
+        // B: 2026-08-01T00:05:00-03:00 == 2026-08-01T03:05:00Z — 5m01s después del límite `hasta`.
+        var fechaFueraDelRango = new DateTimeOffset(2026, 8, 1, 0, 5, 0, TimeSpan.FromHours(-3));
+        Assert.Equal(new DateTimeOffset(2026, 8, 1, 3, 5, 0, TimeSpan.Zero), fechaFueraDelRango);
+        var idFuera = await SembrarMovimientoAsync(ctx, TipoMovimientoCcProveedor.Ajuste, fechaFueraDelRango, 200m, "5m01s despues del limite");
+
+        // hasta = offset REAL del cliente, nunca `Z`.
+        var hastaConOffsetReal = "2026-07-31T23:59:59-03:00";
         var pagina = await ObtenerEstadoDeCuentaAsync(
-            ctx, $"?historico=true&desde=2026-08-01T00:00:00-03:00&hasta={Uri.EscapeDataString(hastaConOffsetReal)}");
+            ctx, $"?desde=2026-07-01T00:00:00-03:00&hasta={Uri.EscapeDataString(hastaConOffsetReal)}");
 
+        Assert.Equal(1, pagina.Total);
         var unica = Assert.Single(pagina.Items);
-        Assert.Equal(idMovimiento, unica.IdMovimiento);
+        Assert.Equal(idDentro, unica.IdMovimiento);
+        Assert.DoesNotContain(pagina.Items, m => m.IdMovimiento == idFuera);
     }
 
     // ---- task 4.14: autorización — Vendedor lee, tenant B nunca ve al proveedor de A -------------

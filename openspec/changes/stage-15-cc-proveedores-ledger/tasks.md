@@ -983,6 +983,24 @@ above):**
       `condiciones_fiscales` under the tenant-scoped context and hit an RLS
       violation — fixed by switching to `TenantActualFijo.Plataforma`,
       matching this file's own `PrepararAsync`.)
+32. **`judgment-day` round 1 (juez A) confirmed 1 CRITICAL: the regla-10
+    offset test was self-defeating — production code was correct, the gap
+    was the test.** `CuentaCorrienteProveedorEstadoDeCuentaTests.
+    UnFiltroHastaConOffsetRealMenosTresIncluyeUnMovimientoQueUnFiltroEnUtcExcluiria`
+    sent `historico=true` alongside `desde`/`hasta`; `ServicioDeCuentaCorrienteDeProveedor.
+    ObtenerEstadoDeCuentaAsync:30-40` only assigns `desdeEfectivo`/`hastaEfectivo`
+    `if (!historico)`, so the date filter was never applied and the test passed
+    unconditionally on a single seeded movement (`Assert.Single` trivially
+    true). Fixed tests-only: dropped `historico=true` so the real filter runs,
+    and redesigned the dataset so inclusion depends on the OFFSET, not the bare
+    date — `hasta = 2026-07-31T23:59:59-03:00` (== `2026-08-01T02:59:59Z`), one
+    movement 1m59s before that instant (must be included) and one 5m01s after
+    (must be excluded). Mutation evidence (commit-first / mutate `hastaEfectivo`
+    to `hasta.Value.UtcDateTime.Date` / `dotnet build --no-incremental` /
+    `git checkout -- src/`): the mutated build made the new test fail as
+    expected (0 items instead of 1, the boundary-adjacent movement wrongly
+    excluded), confirmed; reverted, byte-identical `git status` clean. Full
+    file green after the revert (10/10).
 
 - [x] 4.1 Create
   `src/Ways.Domain/CuentaCorriente/CalculadorDeEstadoDeCuentaDeProveedor.cs`
