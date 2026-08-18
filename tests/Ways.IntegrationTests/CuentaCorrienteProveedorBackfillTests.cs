@@ -91,8 +91,8 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
 
         // Rol/CondicionFiscal/TipoComprobante son catálogos [global] que en producción siembra
         // InicializadorDeBaseDeDatos al arrancar el host — acá se siembran a mano una sola vez,
-        // con IDs desincronizados de los de tenant/empresa/proveedor (regla 11: que id_entidad
-        // discrimine, nunca coincida por casualidad con otra secuencia).
+        // con IDs desincronizados de los de tenant/empresa/proveedor (regla permanente del
+        // programa: que id_entidad discrimine, nunca coincida por casualidad con otra secuencia).
         if (!await db.Roles.AnyAsync(r => r.Id == (int)RolConocido.Vendedor))
         {
             db.Roles.Add(new Rol { Id = (int)RolConocido.Vendedor, Nombre = "Vendedor", CreatedAt = ahora, UpdatedAt = ahora });

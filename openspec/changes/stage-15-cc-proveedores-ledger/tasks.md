@@ -482,7 +482,7 @@ above):**
   has-pending-model-changes` reports no pending changes; the final new
   index count on `movimientos_cuenta_corriente_proveedor` + the implicit
   `gastos` AK index = **7**. Any deviation reopens the gate.
-- [ ] 1.37 Run `judgment-day` on the slice diff; fix confirmed issues;
+- [x] 1.37 Run `judgment-day` on the slice diff; fix confirmed issues;
   re-judge until clean.
 - [ ] 1.38 Branch `feat/stage15-slice1-ledger-schema` off `main`; PR;
   merge stacked-to-main.
