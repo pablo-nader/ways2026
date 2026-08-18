@@ -1264,7 +1264,7 @@ above):**
   clean. **NOT executed by `sdd-apply`** — orchestrator-level review
   action, out of this phase's scope per the project's solo-dev PR
   validation gate (same posture as task 4.20).
-- [ ] 5.15 Branch `feat/stage15-slice5-ajuste-manual` off `main` (parent:
+- [x] 5.15 Branch `feat/stage15-slice5-ajuste-manual` off `main` (parent:
   slice 4); PR; merge stacked-to-main. **NOT executed by `sdd-apply`** —
   the branch already exists (worktree pre-created by the orchestrator) and
   carries this phase's commit; PR creation/merge is an orchestrator
