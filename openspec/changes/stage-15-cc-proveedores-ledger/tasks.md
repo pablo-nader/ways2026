@@ -529,8 +529,9 @@ above):**
     `DbContextOptionsBuilder<WaysDbContext>`** — a gap opened by slice 1
     (which added the enum) but not exercised until this slice's own code
     path (`ConfirmarAsync`/`AnularAsync`) started writing to the ledger:
-    `ComprasAnulacionYConcurrenciaTests.CrearContextoConContador` (task
-    2.15's own budget-of-commands harness — surfaced immediately as an
+    `ComprasAnulacionYConcurrenciaTests.CrearContextoConContador` (that
+    suite's own command-budget harness, inherited from an earlier stage —
+    surfaced immediately as an
     `InvalidCastException` writing the enum parameter), and, discovered
     only by running the FULL integration suite once (per the "una sola
     corrida" rule) rather than a filtered subset:
@@ -728,7 +729,7 @@ above):**
   by `git diff --stat`.
 - [x] 2.28 Gate guard: `dotnet ef migrations has-pending-model-changes`
   clean; zero new files under `Migraciones/`.
-- [ ] 2.29 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 2.29 Run `judgment-day`; fix confirmed issues; re-judge until clean.
 - [ ] 2.30 Branch `feat/stage15-slice2-escrituras-y-deuda` off `main`
   (parent: slice 1); PR; merge stacked-to-main.
 
