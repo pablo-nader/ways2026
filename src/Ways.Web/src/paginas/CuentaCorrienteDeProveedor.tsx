@@ -260,24 +260,24 @@ function PantallaCuentaCorrienteDeProveedor({
 
   const totalPaginas = pagina ? Math.max(1, Math.ceil(pagina.total / pagina.tamanio)) : 1
 
-  // El ajuste manual no necesita medios de pago (no mueve plata física), pero sí el proveedor
-  // confirmado y al menos un punto de venta — mismo criterio fail-closed que
-  // `puedeIngresarPago`/`puedeSupervisarCC` de `CuentaCorriente.tsx` (regla 7: un proveedor NUNCA
-  // verificado no puede habilitar el ajuste).
-  const puedeAjustar =
-    esSupervisorOAdmin &&
-    !cargandoProveedor &&
-    proveedorInfo !== null &&
-    errorProveedor === '' &&
-    puntosVenta !== null &&
-    errorPuntosVenta === '' &&
-    puntosVenta.length > 0
+  // El ajuste manual no necesita medios de pago (no mueve plata física), pero sí al menos un punto
+  // de venta — mismo criterio fail-closed que `puedeIngresarPago`/`puedeSupervisarCC` de
+  // `CuentaCorriente.tsx`. El gate es EXCLUSIVAMENTE rol + puntos de venta: el nombre del
+  // proveedor (`proveedorInfo`/`errorProveedor`) es puramente cosmético (fallback "Proveedor
+  // #id" ya cubierto en el título) y NUNCA gobierna la capacidad de operar — el endpoint del
+  // ajuste solo necesita `idProveedor` (de la URL) y `idPuntoVenta`, ninguno de los dos depende
+  // del fetch del nombre. Acoplar `puedeAjustar` a `errorProveedor` dejaba al Supervisor sin poder
+  // ajustar cuando el fetch Admin-only del nombre (`clienteDeProveedores.obtener`) devolvía 403 —
+  // que es exactamente lo que pasaba en TODA navegación real, porque el único punto de entrada real
+  // (`ResumenSaldoDeProveedor`) no pasaba `location.state.proveedor` (judgment-day stage-15 Slice 6,
+  // hallazgo CRITICAL; ver tasks.md desviación #44).
+  const puedeAjustar = esSupervisorOAdmin && puntosVenta !== null && errorPuntosVenta === '' && puntosVenta.length > 0
 
   let motivoBloqueoAjuste: string | undefined
-  if (cargandoProveedor) {
-    motivoBloqueoAjuste = 'Cargando los datos del proveedor…'
-  } else if (errorProveedor) {
-    motivoBloqueoAjuste = 'No se pudo confirmar el proveedor — no se puede continuar hasta que esto se resuelva.'
+  if (puntosVenta === null) {
+    motivoBloqueoAjuste = 'Cargando los puntos de venta…'
+  } else if (errorPuntosVenta) {
+    motivoBloqueoAjuste = 'No se pudieron cargar los puntos de venta — no se puede continuar hasta que esto se resuelva.'
   } else if (!puedeAjustar) {
     motivoBloqueoAjuste = 'No se pudieron cargar los datos necesarios para registrar un ajuste.'
   }
@@ -285,7 +285,11 @@ function PantallaCuentaCorrienteDeProveedor({
   return (
     <div className="container-fluid py-4">
       <Box
-        titulo={`Estado de cuenta — ${proveedorInfo?.razonSocial ?? `Proveedor #${idProveedor}`}`}
+        titulo={
+          cargandoProveedor
+            ? 'Estado de cuenta — cargando proveedor…'
+            : `Estado de cuenta — ${proveedorInfo?.razonSocial ?? `Proveedor #${idProveedor}`}`
+        }
         herramientas={
           <Link className="btn btn-sm btn-outline-light rounded-0" to="/proveedores">
             Volver a proveedores
@@ -294,9 +298,15 @@ function PantallaCuentaCorrienteDeProveedor({
       >
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
         {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {(errorProveedor || errorPuntosVenta) && (
+        {errorProveedor && (
           <div className="alert alert-warning rounded-0 py-1 px-2 small">
-            {errorProveedor || errorPuntosVenta} No se puede registrar un ajuste hasta que esto se resuelva.
+            {errorProveedor} El nombre del proveedor no se pudo confirmar — el estado de cuenta y el ajuste manual
+            funcionan igual.
+          </div>
+        )}
+        {errorPuntosVenta && (
+          <div className="alert alert-warning rounded-0 py-1 px-2 small">
+            {errorPuntosVenta} No se puede registrar un ajuste hasta que esto se resuelva.
           </div>
         )}
 
@@ -472,10 +482,14 @@ export function CuentaCorrienteDeProveedor() {
   const location = useLocation()
   const proveedorDeState = (location.state as { proveedor?: ProveedorListado } | null)?.proveedor ?? null
 
-  // Sin `location.state` (URL directa) se resuelve por `GET /api/proveedores/{id}` — Admin-only
+  // Sin `location.state` (URL directa, o el link real cuando el llamador no tenía el
+  // `ProveedorListado` completo a mano) se resuelve por `GET /api/proveedores/{id}` — Admin-only
   // del lado del servidor (`Politicas.GestionDeCatalogo`, fuera del alcance de esta slice: "cero
-  // cambios de API"). Un Vendedor/Supervisor llegando así falla CERRADO (regla 7): el nombre no se
-  // resuelve, el aviso queda visible y el ajuste se deshabilita — pero el estado de cuenta en sí
+  // cambios de API"). Un Vendedor/Supervisor llegando así falla CERRADO SOLO en el nombre (regla
+  // 7): el fallback "Proveedor #id" + el aviso quedan visibles, pero el ajuste NUNCA depende de
+  // este fetch (judgment-day stage-15 Slice 6, hallazgo CRITICAL — acoplar `puedeAjustar` a este
+  // error dejaba al Supervisor sin poder ajustar por el link real, que no pasaba `state`; ver
+  // `puedeAjustar` más abajo y tasks.md desviación #44). El estado de cuenta en sí
   // (`OperacionDePos`) sigue cargando y mostrándose igual, porque es un fetch independiente.
   const [proveedorInfo, setProveedorInfo] = useState<ProveedorListado | null>(proveedorDeState)
   const [cargandoProveedor, setCargandoProveedor] = useState(proveedorDeState === null)

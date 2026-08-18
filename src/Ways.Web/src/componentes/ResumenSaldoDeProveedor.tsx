@@ -1,4 +1,5 @@
 import { Link } from 'react-router'
+import type { ProveedorListado } from '../api/tipos'
 
 function formatearMoneda(valor: number): string {
   const signo = valor < 0 ? '-' : ''
@@ -24,15 +25,37 @@ export function esSaldoAFavor(saldo: number): boolean {
  * (`EscriturasDeCuentaCorrienteProveedor`, single-write-authority), no una aproximación derivada;
  * la caption ("compras confirmadas menos gastos ligados") y el callout ("aproximación, no
  * invariante") describían la fórmula RETIRADA por esta etapa — ambos se retiran acá. Sigue
- * puramente presentacional: sin fetch propio, `saldo`/`idProveedor` son los únicos inputs.
+ * puramente presentacional: sin fetch propio, `saldo`/`idProveedor`/`proveedor` son los únicos
+ * inputs.
+ *
+ * `proveedor` (opcional): cuando el llamador ya tiene el `ProveedorListado` completo a mano
+ * (`Proveedores.tsx`, `Compras.tsx` vía su índice por id), este es el ÚNICO punto de entrada real
+ * a `/proveedores/:id/cuenta-corriente` — hay que pasarlo como `location.state.proveedor`, mismo
+ * patrón que `Clientes.tsx` (`state={{ cliente: c }}`), para que la pantalla destino no dependa de
+ * un GET Admin-only para mostrar el nombre (judgment-day stage-15 Slice 6, hallazgo CRITICAL: sin
+ * esto, TODA navegación real llegaba con `state` null). Cuando el llamador no lo tiene, el Link va
+ * sin `state` y la pantalla destino degrada con gracia (fallback "Proveedor #id"); nunca es un
+ * bloqueo para operar.
  */
-export function ResumenSaldoDeProveedor({ saldo, idProveedor }: { saldo: number; idProveedor: number }) {
+export function ResumenSaldoDeProveedor({
+  saldo,
+  idProveedor,
+  proveedor,
+}: {
+  saldo: number
+  idProveedor: number
+  proveedor?: ProveedorListado
+}) {
   return (
     <div>
       <div className="small text-muted">Saldo</div>
       <div className="fs-5">{formatearMoneda(saldo)}</div>
       {esSaldoAFavor(saldo) && <div className="small text-warning-emphasis">Saldo a favor.</div>}
-      <Link className="small" to={`/proveedores/${idProveedor}/cuenta-corriente`}>
+      <Link
+        className="small"
+        to={`/proveedores/${idProveedor}/cuenta-corriente`}
+        state={proveedor ? { proveedor } : undefined}
+      >
         Ver estado de cuenta completo
       </Link>
     </div>

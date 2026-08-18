@@ -1328,10 +1328,24 @@ above):**
     ajuste button disables with the same aviso as its `motivo` — while
     the ledger itself (`GET …/cuenta-corriente`, `OperacionDePos`) keeps
     loading and rendering normally, because it is an independent fetch.
-    Both real entry points (`ResumenSaldoDeProveedor`'s link) always pass
+    **Correction (judgment-day stage-15 Slice 6, hallazgo CRITICAL — see
+    #44): the claim below, as originally shipped, was FALSE.** ~~Both real
+    entry points (`ResumenSaldoDeProveedor`'s link) always pass
     `location.state.proveedor`, so this path is a direct-URL/bookmark/
     refresh corner case only, same population `CuentaCorriente.tsx`
-    already documents. `Compras.tsx`'s own pre-existing `GET /proveedores`
+    already documents.~~ In fact the single `<Link>` in
+    `ResumenSaldoDeProveedor.tsx` (the real entry point behind both
+    `Proveedores.tsx` and `Compras.tsx`) did not pass `state` at all, so
+    EVERY real navigation landed with `state` null — not only the
+    direct-URL/bookmark/refresh corner case — and `puedeAjustar` (gated on
+    `errorProveedor === ''`) disabled the ajuste button for a Supervisor
+    hitting the Admin-only 403 through the real link, not just by bookmark.
+    Fixed by #44: `ResumenSaldoDeProveedor` now accepts an optional
+    `proveedor` prop and passes `state={{ proveedor }}` when the caller has
+    the full `ProveedorListado` (both surfaces do); `puedeAjustar` no
+    longer depends on `errorProveedor`/`proveedorInfo` at all — the gate is
+    role + puntos de venta only, so a failed name fetch never blocks the
+    ajuste, by any path. `Compras.tsx`'s own pre-existing `GET /proveedores`
     listing fetch (`api.get('/proveedores?tamanio=200')`, unconditional
     for every role since before this stage) carries the identical
     Admin-only gate — a pre-existing gap this stage does not introduce and
@@ -1411,6 +1425,37 @@ above):**
     window, `disabled` covers the rest — without ranking one as "the real"
     one. Test renamed to "doble click en el mismo tick en 'Registrar ajuste'
     dispara exactamente un POST".
+44. **`judgment-day` (round 2, juez A) confirmed one CRITICAL finding, fixed
+    here: `ResumenSaldoDeProveedor.tsx`'s `<Link>` — the only real entry
+    point to `/proveedores/{id}/cuenta-corriente` — never passed `state`,
+    so every real navigation landed with `location.state.proveedor` null,
+    and `puedeAjustar` (gated on `errorProveedor === ''`) disabled the
+    ajuste button for a Supervisor whenever the Admin-only fallback fetch
+    (`clienteDeProveedores.obtener`) 403'd — which is exactly what happened
+    on every real link, not just the direct-URL/bookmark corner case #37
+    (falsely) claimed was the only affected path.** Two layers, both
+    applied: (1) `puedeAjustar` in `CuentaCorrienteDeProveedor.tsx` no
+    longer references `errorProveedor`/`proveedorInfo`/`cargandoProveedor`
+    at all — the gate is role (`esSupervisorOAdmin`) + puntos de venta
+    only, since the ajuste endpoint only needs `idProveedor` (from the URL)
+    and `idPuntoVenta`, neither of which depends on the name fetch; a
+    failed name resolution now only affects the cosmetic title (falls back
+    to "Proveedor #id") and shows an informational aviso, never the ability
+    to operate. (2) `ResumenSaldoDeProveedor` gained an optional `proveedor`
+    prop; both call sites now pass it when they have the full
+    `ProveedorListado` on hand — `Proveedores.tsx`'s `PanelSaldoDeProveedor`
+    (which already held it, `proveedorSaldo`) and `Compras.tsx` (via its
+    existing `proveedorPorId` index, built from the page's own `GET
+    /proveedores?tamanio=200` fetch) — so the `<Link>` passes
+    `state={{ proveedor }}`, same pattern as `Clientes.tsx`
+    (`state={{ cliente: c }}`). When the caller doesn't have it, the `Link`
+    goes without `state` and layer (1) still covers the Supervisor
+    gracefully. Mutation-verified both layers: re-coupling `puedeAjustar` to
+    `errorProveedor` failed the new "Supervisor sin `location.state`, GET
+    403, ajusta igual" test in `CuentaCorrienteDeProveedor.test.tsx`;
+    removing the `state` from `ResumenSaldoDeProveedor`'s `<Link>` failed the
+    new "el click real en el link propaga `location.state.proveedor`" test
+    in `ResumenSaldoDeProveedor.test.tsx` (both reverted after verifying).
 
 - [x] 6.1 Create `src/Ways.Web/src/api/cuentaCorrienteDeProveedor.ts` —
   client + pure mappers (movement mapper, filter builder, `etiquetarAjuste`).

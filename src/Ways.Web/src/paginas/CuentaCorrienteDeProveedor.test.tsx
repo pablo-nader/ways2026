@@ -228,6 +228,64 @@ describe('CuentaCorrienteDeProveedor — gating de rol (Supervisor+Admin) para e
   })
 })
 
+// judgment-day stage-15 Slice 6, hallazgo CRITICAL: el ÚNICO punto de entrada real
+// (`ResumenSaldoDeProveedor`) podía no traer `location.state.proveedor`, y el fetch de respaldo del
+// nombre (`clienteDeProveedores.obtener`) es Admin-only del lado del servidor — un Supervisor
+// llegando así recibía 403 en ese GET. El gate del botón "Ajuste manual" tiene que ser EXCLUSIVAMENTE
+// el rol (+ puntos de venta), nunca el resultado de ese fetch cosmético.
+describe('CuentaCorrienteDeProveedor — el ajuste NUNCA depende del fetch del nombre del proveedor', () => {
+  it('un Supervisor sin location.state, con el GET del nombre devolviendo 403, puede ajustar igual', async () => {
+    mockearRutasBase((ruta) => {
+      if (/^\/proveedores\/\d+$/.test(ruta)) {
+        return Promise.reject(new ErrorApi(403, 'prohibido', 'No tiene permiso para ver este proveedor.'))
+      }
+      return undefined
+    })
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/proveedores/1/cuenta-corriente/ajustes'
+        ? Promise.resolve<MovimientoDeCuentaDeProveedor>(
+            movimientoFixture({ idMovimiento: 60, tipo: 'Ajuste', importe: -50, saldoResultante: 450 }),
+          )
+        : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+    )
+
+    renderPantalla(1) // sin state: el link real no lo trajo
+
+    await screen.findByText('$500,00')
+    await screen.findByText(/No tiene permiso para ver este proveedor\./)
+    const boton = screen.getByRole('button', { name: 'Ajuste manual' })
+    expect(boton).toBeEnabled()
+
+    await userEvent.click(boton)
+    await screen.findByText('Ajuste manual de cuenta corriente')
+    await userEvent.type(screen.getByLabelText('Importe'), '-50')
+    await userEvent.type(screen.getByLabelText('Detalle (obligatorio)'), 'motivo válido')
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar ajuste' }))
+
+    await waitFor(() =>
+      expect(apiPostMock).toHaveBeenCalledWith('/proveedores/1/cuenta-corriente/ajustes', {
+        idPuntoVenta: 7,
+        importe: -50,
+        detalle: 'motivo válido',
+      }),
+    )
+    expect(await screen.findByText('Ajuste registrado: -$50,00.')).toBeInTheDocument()
+  })
+
+  it('un Supervisor sin location.state igual ve el fallback "Proveedor #id" en el título', async () => {
+    mockearRutasBase((ruta) => {
+      if (/^\/proveedores\/\d+$/.test(ruta)) {
+        return Promise.reject(new ErrorApi(403, 'prohibido', 'No tiene permiso para ver este proveedor.'))
+      }
+      return undefined
+    })
+
+    renderPantalla(1)
+
+    expect(await screen.findByText('Estado de cuenta — Proveedor #1')).toBeInTheDocument()
+  })
+})
+
 describe('CuentaCorrienteDeProveedor — filtros (react-async-state regla 2, mutation-proof-tests regla 7)', () => {
   // El flush del microtask va DENTRO de act: un `waitFor` solo pasaría en su primer tick, antes de
   // que el `.then` obsoleto aterrice — envolver en act y assertar sincrónicamente después SÍ
