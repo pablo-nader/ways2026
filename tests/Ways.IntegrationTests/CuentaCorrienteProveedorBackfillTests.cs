@@ -510,4 +510,47 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             await EliminarBaseAsync(f.CadenaAdmin, f.NombreBase);
         }
     }
+
+    /// <summary>Target #4, ROUTED BELOW THE CONFOUND (mutation-proof-tests rule 3): la prueba de
+    /// fidelidad de punta a punta NO puede matar el mutante que elimina
+    /// <c>id_proveedor IS NOT NULL</c> del predicate de gastos — bajo semántica NULL de SQL,
+    /// <c>g.id_proveedor = p.id_proveedor</c> nunca empareja cuando <c>g.id_proveedor IS NULL</c>
+    /// (ningún <c>p.id_proveedor</c> real es NULL), así que el LEFT JOIN protege el resultado
+    /// final por accidente incluso sin el filtro — confirmado empíricamente (mutante
+    /// equivalente bajo el pipeline completo, registrado en tasks.md). Esta prueba ejercita el
+    /// FRAGMENTO de la subquery de gastos en aislamiento — el mismo SQL, ejecutado directo —
+    /// para que el predicate SÍ tenga un observable que solo él puede producir: la ausencia de
+    /// un grupo <c>id_proveedor IS NULL</c> en el resultado agregado.</summary>
+    [Fact]
+    public async Task ElFragmentoDeGastosDelBackfillExcluyeElGrupoIdProveedorNuloTarget4()
+    {
+        var f = await PrepararFixtureSinMigrarAsync("target4-fragmento");
+        try
+        {
+            await using var conexion = new NpgsqlConnection(f.CadenaNueva);
+            await conexion.OpenAsync();
+
+            await using var comando = conexion.CreateCommand();
+            comando.CommandText =
+                """
+                SELECT count(*)
+                FROM (SELECT id_tenant, id_proveedor, SUM(importe) AS total
+                      FROM gastos
+                      WHERE categoria = 'proveedor' AND id_proveedor IS NOT NULL AND deleted_at IS NULL
+                      GROUP BY id_tenant, id_proveedor) g
+                WHERE g.id_proveedor IS NULL;
+                """;
+            var gruposConIdProveedorNulo = (long)(await comando.ExecuteScalarAsync())!;
+
+            // El predicate SÍ tiene un rol observable acá: cero grupos con id_proveedor NULL.
+            // Sin el filtro, el gasto huérfano de 9999 (sembrado en la fixture) formaría su
+            // propio grupo con id_proveedor = NULL — el discriminante que el JOIN de la
+            // pipeline completa esconde por construcción.
+            Assert.Equal(0, gruposConIdProveedorNulo);
+        }
+        finally
+        {
+            await EliminarBaseAsync(f.CadenaAdmin, f.NombreBase);
+        }
+    }
 }
