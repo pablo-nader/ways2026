@@ -14,6 +14,7 @@ import { Compras } from './paginas/Compras'
 import { CompraEditor } from './paginas/CompraEditor'
 import { ConteoDeInventario } from './paginas/ConteoDeInventario'
 import { CuentaCorriente } from './paginas/CuentaCorriente'
+import { CuentaCorrienteDeProveedor } from './paginas/CuentaCorrienteDeProveedor'
 import { Empresas } from './paginas/Empresas'
 import { Existencias } from './paginas/Existencias'
 import { HistoricoDeCajas } from './paginas/HistoricoDeCajas'
@@ -216,6 +217,19 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Proveedores />
+                </RutaProtegida>
+              }
+            />
+
+            {/* stage-15-cc-proveedores-ledger (Slice 6, design: Web Composition): estado de
+                cuenta del proveedor — Politicas.OperacionDePos (todo rol opera), a diferencia de
+                /proveedores que es admin-only. Entrada desde ResumenSaldoDeProveedor (panel de
+                Proveedores.tsx y header filtrado de Compras.tsx). */}
+            <Route
+              path="/proveedores/:id/cuenta-corriente"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <CuentaCorrienteDeProveedor />
                 </RutaProtegida>
               }
             />
