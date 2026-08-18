@@ -202,19 +202,23 @@ recomputed apart from the write that produced it.
 ### Requirement: Per-Compra Payment Status Is Derived From Imputed Movements
 
 A confirmed compra's payment status MUST be computed as
-`SUM(importe) WHERE id_comprobante_compra = X` over the compra's own `+total`
-movement plus every `pago`/`ajuste` movement imputed to it: `= total` ⇒
-`impaga`; `<= 0` ⇒ `pagada`; otherwise `parcial`.
+`pagado(X) = SUM(gastos.importe) WHERE id_comprobante_compra = X` plus
+`SUM(-importe)` of ledger movements of tipo `ajuste` imputed to X; `pago`
+movements are NEVER counted (each mirrors a linked gasto already summed).
+`pagado = 0` ⇒ `impaga`; `>= total` ⇒ `pagada`; otherwise `parcial`.
+Binding per the OD7 arbitration in `state.yaml` — a ledger-only sum
+misreads every pre-cutover compra, whose debt lives inside the `apertura`
+asiento without a `compra` movement of its own.
 
-#### Scenario: A fully imputed compra is pagada
-- GIVEN a confirmada compra of `1000` and a `pago` movement of `-1000`
-  imputed to it
+#### Scenario: A fully paid compra is pagada
+- GIVEN a confirmada compra of `1000` and a linked proveedor gasto of
+  `1000` (whose `pago` movement is imputed to it)
 - WHEN its payment status is read
 - THEN it is `pagada`
 
-#### Scenario: A partially imputed compra is parcial
-- GIVEN a confirmada compra of `1000` and a `pago` movement of `-400`
-  imputed to it
+#### Scenario: A partially paid compra is parcial
+- GIVEN a confirmada compra of `1000` and a linked proveedor gasto of
+  `400` (whose `pago` movement is imputed to it)
 - WHEN its payment status is read
 - THEN the remaining sum is `600` and status is `parcial`
 

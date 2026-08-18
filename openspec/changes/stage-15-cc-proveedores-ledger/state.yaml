@@ -181,6 +181,15 @@ phases:
       confirm×pago del slice 2 corre contra la clase writer directa y el
       slice 3 repite las carreras sobre los call sites reales. CERO
       conflictos nuevos fuera de las OD existentes.
+      ENMIENDA DE SPEC POST-TASKS (orquestador, 2026-08-18, a raiz de la
+      SUGGESTION del juez A en el judgment del slice 4): los dos spec
+      deltas (saldo-de-proveedor MODIFIED y cuenta-corriente-de-proveedores
+      "Per-Compra Payment Status") todavia describian las formulas
+      RECHAZADAS por OD7 — la fase spec corrio en paralelo al design y
+      nadie los reconcilio al arbitrar. Reescritos a la formula vinculante
+      (gastos ligados + ajustes imputados, pagos excluidos) con un
+      escenario pre-cutover discriminante nuevo; la implementacion del
+      slice 4 ya era OD7-conforme, el drift era solo documental.
   apply:
     status: pending
     artifact: tasks.md + PRs
