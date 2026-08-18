@@ -312,6 +312,39 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             idBorradorYAnulada, idSinHistoria);
     }
 
+    /// <summary>Extrae los dos statements crudos del backfill DIRECTO del archivo `.cs` de la
+    /// migración — nunca una copia escrita a mano en el test (target #7/target #4 lesson: una
+    /// copia hardcodeada no detecta ninguna mutación del archivo real). Ambos statements viven
+    /// en literales de string crudo (<c>"""..."""</c>) dentro de <c>Up()</c>, statement 1
+    /// primero.</summary>
+    private static (string Statement1, string Statement2) LeerStatementsDelBackfillDesdeElArchivoDeLaMigracion()
+    {
+        var rutaMigracion = Path.Combine(
+            Path.GetDirectoryName(RutaDeEsteArchivo())!,
+            "..", "..", "src", "Ways.Infrastructure", "Persistencia", "Migraciones",
+            "20260817153958_CuentaCorrienteDeProveedoresEtapa15.cs");
+
+        Assert.True(File.Exists(rutaMigracion), $"No se encontró la migración en {rutaMigracion}");
+
+        var fuente = File.ReadAllText(rutaMigracion);
+        const string delimitador = "\"\"\"";
+
+        var inicio1 = fuente.IndexOf(delimitador, StringComparison.Ordinal);
+        var finApertura1 = inicio1 + delimitador.Length;
+        var fin1 = fuente.IndexOf(delimitador, finApertura1, StringComparison.Ordinal);
+        var statement1 = fuente[finApertura1..fin1].Trim();
+
+        var inicio2 = fuente.IndexOf(delimitador, fin1 + delimitador.Length, StringComparison.Ordinal);
+        var finApertura2 = inicio2 + delimitador.Length;
+        var fin2 = fuente.IndexOf(delimitador, finApertura2, StringComparison.Ordinal);
+        var statement2 = fuente[finApertura2..fin2].Trim();
+
+        Assert.Contains("INSERT INTO movimientos_cuenta_corriente_proveedor", statement1);
+        Assert.Contains("UPDATE proveedores", statement2);
+
+        return (statement1, statement2);
+    }
+
     private static async Task EliminarBaseAsync(string cadenaAdmin, string nombreBase)
     {
         await using var admin = new NpgsqlConnection(cadenaAdmin);
@@ -445,57 +478,23 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             var saldoAntesDeReejecutar = await LeerSaldoAsync(f.IdConDeuda);
             Assert.Equal(0, await ContarMovimientosAsync(f.IdSinHistoria));
 
-            // Re-ejecuta a mano el MISMO SQL idempotente de la migración (simula un reintento de
-            // arranque, mismo patrón que ComprasTipoSeedTests/CuentaCorrienteEtapa7BackstopTests).
+            // Re-ejecuta a mano el SQL idempotente de la migración — LEÍDO DEL ARCHIVO REAL de
+            // la migración, nunca una copia escrita a mano en el test (la misma trampa que
+            // target #4 expuso: una copia hardcodeada ejecuta el SQL CORRECTO sin importar lo
+            // que la migración de verdad diga, y no detecta una mutación del guard NOT EXISTS
+            // — target #7). Mismo patrón de reintento que ComprasTipoSeedTests/
+            // CuentaCorrienteEtapa7BackstopTests, pero con la fuente de verdad correcta.
+            var (statement1, statement2) = LeerStatementsDelBackfillDesdeElArchivoDeLaMigracion();
+
             await using (var comando = verificacion.CreateCommand())
             {
-                comando.CommandText =
-                    """
-                    WITH derivado AS (
-                        SELECT p.id_tenant,
-                               p.id_proveedor,
-                               COALESCE(c.total, 0) - COALESCE(g.total, 0) AS saldo
-                        FROM proveedores p
-                        LEFT JOIN (SELECT id_tenant, id_proveedor, SUM(total) AS total
-                                   FROM comprobantes_compra
-                                   WHERE estado = 'confirmada' AND deleted_at IS NULL
-                                   GROUP BY id_tenant, id_proveedor) c
-                               ON c.id_tenant = p.id_tenant AND c.id_proveedor = p.id_proveedor
-                        LEFT JOIN (SELECT id_tenant, id_proveedor, SUM(importe) AS total
-                                   FROM gastos
-                                   WHERE categoria = 'proveedor' AND id_proveedor IS NOT NULL AND deleted_at IS NULL
-                                   GROUP BY id_tenant, id_proveedor) g
-                               ON g.id_tenant = p.id_tenant AND g.id_proveedor = p.id_proveedor
-                        WHERE p.deleted_at IS NULL
-                    )
-                    INSERT INTO movimientos_cuenta_corriente_proveedor
-                        (id_tenant, id_proveedor, fecha, id_punto_venta, id_empleado, tipo,
-                         id_comprobante_compra, id_gasto, importe, saldo_resultante, detalle)
-                    SELECT d.id_tenant, d.id_proveedor, now(), NULL, NULL, 'apertura',
-                           NULL, NULL, d.saldo, d.saldo,
-                           'Asiento de apertura (etapa 15): saldo derivado de compras confirmadas menos gastos '
-                           || 'de categoria proveedor al momento de la migracion.'
-                    FROM derivado d
-                    WHERE d.saldo <> 0
-                      AND NOT EXISTS (SELECT 1
-                                      FROM movimientos_cuenta_corriente_proveedor m
-                                      WHERE m.id_tenant = d.id_tenant AND m.id_proveedor = d.id_proveedor);
-                    """;
+                comando.CommandText = statement1;
                 await comando.ExecuteNonQueryAsync();
             }
 
             await using (var comando = verificacion.CreateCommand())
             {
-                comando.CommandText =
-                    """
-                    UPDATE proveedores p
-                       SET saldo = m.saldo_resultante
-                      FROM movimientos_cuenta_corriente_proveedor m
-                     WHERE m.id_tenant = p.id_tenant
-                       AND m.id_proveedor = p.id_proveedor
-                       AND m.tipo = 'apertura'
-                       AND p.saldo <> m.saldo_resultante;
-                    """;
+                comando.CommandText = statement2;
                 await comando.ExecuteNonQueryAsync();
             }
 
