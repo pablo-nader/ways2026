@@ -1116,7 +1116,7 @@ above):**
 - [x] 4.20 Run `judgment-day`; fix confirmed issues; re-judge until clean.
   **NOT executed by `sdd-apply`** — orchestrator-level review action, out
   of this phase's scope per the project's solo-dev PR validation gate.
-- [ ] 4.21 Branch `feat/stage15-slice4-estado-de-cuenta` off `main`
+- [x] 4.21 Branch `feat/stage15-slice4-estado-de-cuenta` off `main`
   (parent: slice 3); PR; merge stacked-to-main. **NOT executed by
   `sdd-apply`** — the branch already exists (worktree pre-created by the
   orchestrator) and carries this phase's commits; PR creation/merge is an
