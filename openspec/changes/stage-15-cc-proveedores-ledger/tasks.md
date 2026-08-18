@@ -280,7 +280,26 @@ above):**
     the only mechanism that can detect this specific deletion. Both mutation
     runs (behavioral attempt + final source-text test) are recorded as
     apply-time evidence for target #4.
-17. **`fk_movimientos_cuenta_corriente_proveedor_tenant`'s exemption test
+17. **Mutation target #11 (task 1.35) is also a provably equivalent mutant at
+    runtime against `WaysApiFixture` — resolved with a source-text ordering
+    assertion instead of a behavioral one, per `mutation-proof-tests` rule 3
+    exhausted first.** `ways_owner` (the connection `WaysApiFixture` uses to
+    run migrations) is created as a Postgres SUPERUSER inside the
+    Testcontainers container, and a Postgres superuser ALWAYS bypasses RLS —
+    even with `FORCE ROW LEVEL SECURITY` — regardless of statement order.
+    The migration's own comment already names this exact risk ("depending on
+    RLS bypass to write the backfill would make the migration's correctness
+    rest on `ways_owner` being a superuser — a known carryover weakness, not
+    a foundation") — moving `HabilitarRlsDeTenant` before the backfill
+    changes NO observable artifact under this fixture (confirmed
+    empirically: both the fidelity and idempotency tests pass unchanged
+    under the mutation). Final resolution:
+    `CuentaCorrienteProveedorBackfillTests.ElTextoFuenteDeLaMigracionOrdenaRlsDespuesDelBackfillTarget11`
+    reads the actual migration `.cs` file and asserts `HabilitarRlsDeTenant`'s
+    text index is AFTER both backfill statements' text indices — the only
+    mechanism that can detect this specific reordering given the documented
+    superuser carryover.
+18. **`fk_movimientos_cuenta_corriente_proveedor_tenant`'s exemption test
     (task 1.24) cannot assert the exact constraint name.** Because
     `id_proveedor` is `NOT NULL` and its FK is composite
     (`id_proveedor, id_tenant`), any row with a bogus `id_tenant` also

@@ -544,5 +544,44 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             fuente);
     }
 
+    /// <summary>Target #11 — PROVABLY EQUIVALENT AT RUNTIME contra esta fixture, prueba de
+    /// ORDEN DE TEXTO FUENTE en su lugar (mutation-proof-tests rule 3 agotada primero, finding
+    /// registrado en tasks.md). El comentario original de la migración ya documenta el riesgo:
+    /// <c>ways_owner</c> (la conexión que corre la migración en <c>WaysApiFixture</c>) es
+    /// SUPERUSER en el contenedor de Testcontainers, y un superusuario de Postgres bypassea RLS
+    /// SIEMPRE, incluso con <c>FORCE ROW LEVEL SECURITY</c> — así que mover
+    /// <c>HabilitarRlsDeTenant</c> antes del backfill no cambia NINGÚN resultado observable
+    /// bajo esta fixture (confirmado empíricamente: la prueba de fidelidad y la de idempotencia
+    /// pasan igual bajo la mutación). Es el mismo "carryover weakness" que el comentario de la
+    /// migración ya reconoce como una limitación conocida, no introducida por esta prueba. La
+    /// única prueba que sí detecta la reordenación es de texto fuente: RLS tiene que aparecer
+    /// DESPUÉS de ambos statements del backfill en el archivo real.</summary>
+    [Fact]
+    public void ElTextoFuenteDeLaMigracionOrdenaRlsDespuesDelBackfillTarget11()
+    {
+        var rutaMigracion = Path.Combine(
+            Path.GetDirectoryName(RutaDeEsteArchivo())!,
+            "..", "..", "src", "Ways.Infrastructure", "Persistencia", "Migraciones",
+            "20260817153958_CuentaCorrienteDeProveedoresEtapa15.cs");
+
+        Assert.True(File.Exists(rutaMigracion), $"No se encontró la migración en {rutaMigracion}");
+
+        var fuente = File.ReadAllText(rutaMigracion);
+
+        var indiceStatement1 = fuente.IndexOf(
+            "INSERT INTO movimientos_cuenta_corriente_proveedor", StringComparison.Ordinal);
+        var indiceStatement2 = fuente.IndexOf("UPDATE proveedores p", StringComparison.Ordinal);
+        var indiceRls = fuente.IndexOf(
+            "migrationBuilder.HabilitarRlsDeTenant(\"movimientos_cuenta_corriente_proveedor\")",
+            StringComparison.Ordinal);
+
+        Assert.True(indiceStatement1 > 0, "No se encontró el statement 1 del backfill.");
+        Assert.True(indiceStatement2 > 0, "No se encontró el statement 2 del backfill.");
+        Assert.True(indiceRls > 0, "No se encontró la llamada a HabilitarRlsDeTenant.");
+
+        Assert.True(indiceRls > indiceStatement1, "RLS debe ir DESPUÉS del statement 1 del backfill.");
+        Assert.True(indiceRls > indiceStatement2, "RLS debe ir DESPUÉS del statement 2 del backfill.");
+    }
+
     private static string RutaDeEsteArchivo([System.Runtime.CompilerServices.CallerFilePath] string ruta = "") => ruta;
 }
