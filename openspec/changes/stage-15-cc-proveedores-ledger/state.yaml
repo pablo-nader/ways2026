@@ -191,9 +191,29 @@ phases:
       escenario pre-cutover discriminante nuevo; la implementacion del
       slice 4 ya era OD7-conforme, el drift era solo documental.
   apply:
-    status: pending
+    status: done
     artifact: tasks.md + PRs
     depends_on: [tasks]
+    notes: >-
+      6 slices mergeados stacked-to-main, PRs #134-#139 (2026-08-17/18),
+      corrida 100% autonoma. 44 desviaciones registradas en tasks.md.
+      Judgment-day por slice: s1 limpio (5 mutaciones re-ejecutadas, 2
+      mutantes equivalentes verificados); s2 1 CRITICAL de B
+      (saldo_resultante por coincidencia del seed fresco) fixeado; s3
+      limpio a la primera (B probo 2 clases extra no listadas — ambas
+      mueren); s4 el mas rico: 3 CRITICALs de B (clases de lectura:
+      fuente del cache, proyeccion sin assert, entidad hermana) + 1
+      CRITICAL de A (test de regla 10 auto-derrotado por historico=true)
+      + SUGGESTION de A (spec deltas con formulas rechazadas — enmienda
+      del orquestador b4a00b0); s5 limpio a la primera; s6 1 CRITICAL de
+      B (doble submit sobredeterminado) + 1 CRITICAL DE PRODUCCION de A
+      (Link real sin state → 403 del Supervisor → ajuste deshabilitado
+      por acople de puedeAjustar a errorProveedor; desviacion #37
+      documentaba lo contrario). Todo cerrado con evidencia de mutacion
+      por fix y re-rondas limpias. La skill mutation-proof-tests crecio
+      a 12 reglas (11: deuda previa discriminante; 12: las 3 clases de
+      lectura) a mitad de la etapa. El agente del slice 1 se colgo tras
+      generar la migracion y SendMessage lo resucito (7ma recuperacion).
   verify:
     status: pending
     artifact: verify-report.md
