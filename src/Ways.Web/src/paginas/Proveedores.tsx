@@ -63,7 +63,7 @@ function PanelSaldoDeProveedor({ idProveedor, razonSocial, onCerrar }: PropsPane
       {saldo && (
         <>
           <div className="mb-3">
-            <ResumenSaldoDeProveedor saldo={saldo.saldo} />
+            <ResumenSaldoDeProveedor saldo={saldo.saldo} idProveedor={idProveedor} />
           </div>
 
           <div className="table-responsive">

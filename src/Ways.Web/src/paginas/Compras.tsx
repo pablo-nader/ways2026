@@ -269,7 +269,7 @@ export function Compras() {
 
         {saldoProveedor && (
           <div className="border p-3 mb-3 bg-white">
-            <ResumenSaldoDeProveedor saldo={saldoProveedor.saldo} />
+            <ResumenSaldoDeProveedor saldo={saldoProveedor.saldo} idProveedor={saldoProveedor.idProveedor} />
           </div>
         )}
 
