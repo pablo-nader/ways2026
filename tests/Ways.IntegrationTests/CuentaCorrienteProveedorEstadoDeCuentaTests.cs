@@ -87,18 +87,26 @@ public class CuentaCorrienteProveedorEstadoDeCuentaTests(WaysApiFixture fixture)
     /// LECTURA (filtros, orden, paginación), no la escritura (ya cubierta por Slices 2/3). Mantiene
     /// el invariante <c>proveedores.saldo == saldo_resultante</c> de la última fila escrita, para
     /// que el header también sea consistente.</summary>
-    private async Task<int> SembrarMovimientoAsync(
+    private Task<int> SembrarMovimientoAsync(
         Contexto ctx, TipoMovimientoCcProveedor tipo, DateTimeOffset fecha, decimal importe, string? detalle = null,
-        int? idComprobanteCompra = null, int? idGasto = null)
+        int? idComprobanteCompra = null, int? idGasto = null) =>
+        SembrarMovimientoAsync(ctx, ctx.IdProveedor, tipo, fecha, importe, detalle, idComprobanteCompra, idGasto);
+
+    /// <summary>Sobrecarga con <paramref name="idProveedor"/> explícito — permite sembrar movimientos
+    /// para UN SEGUNDO proveedor del MISMO tenant (judgment-day round 1, CRITICAL 3), algo que la
+    /// sobrecarga atada a <c>ctx.IdProveedor</c> no puede expresar.</summary>
+    private async Task<int> SembrarMovimientoAsync(
+        Contexto ctx, int idProveedor, TipoMovimientoCcProveedor tipo, DateTimeOffset fecha, decimal importe,
+        string? detalle = null, int? idComprobanteCompra = null, int? idGasto = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
-        var proveedor = await db.Proveedores.FirstAsync(p => p.Id == ctx.IdProveedor);
+        var proveedor = await db.Proveedores.FirstAsync(p => p.Id == idProveedor);
         var nuevoSaldo = proveedor.Saldo + importe;
 
         var movimiento = new MovimientoCuentaCorrienteProveedor
         {
             IdTenant = ctx.IdTenant,
-            IdProveedor = ctx.IdProveedor,
+            IdProveedor = idProveedor,
             Fecha = fecha,
             IdPuntoVenta = ctx.IdPuntoVenta,
             IdEmpleado = ctx.IdEmpleadoAdmin,
@@ -113,6 +121,32 @@ public class CuentaCorrienteProveedorEstadoDeCuentaTests(WaysApiFixture fixture)
         proveedor.Saldo = nuevoSaldo;
         await db.SaveChangesAsync();
         return movimiento.Id;
+    }
+
+    /// <summary>Crea un SEGUNDO proveedor en el MISMO tenant que <paramref name="ctx"/> — necesario
+    /// para discriminar <c>Where(m => m.IdProveedor == idProveedor)</c> (judgment-day round 1,
+    /// CRITICAL 3): todo el resto de este archivo siembra UN proveedor por tenant, por lo que borrar
+    /// ese filtro sobrevive sin este test.</summary>
+    private async Task<int> CrearSegundoProveedorEnElMismoTenantAsync(Contexto ctx, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var condicionFiscal = new CondicionFiscal
+        {
+            Codigo = $"{nombre}-CF-B", Nombre = $"{nombre}-B", CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.CondicionesFiscales.Add(condicionFiscal);
+        await db.SaveChangesAsync();
+
+        var proveedorB = new Proveedor
+        {
+            IdTenant = ctx.IdTenant, RazonSocial = $"{nombre}-B", IdCondicionFiscal = condicionFiscal.Id,
+            CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.Proveedores.Add(proveedorB);
+        await db.SaveChangesAsync();
+        return proveedorB.Id;
     }
 
     private static async Task<PaginaDeEstadoDeCuentaDeProveedor> ObtenerEstadoDeCuentaAsync(
@@ -270,5 +304,71 @@ public class CuentaCorrienteProveedorEstadoDeCuentaTests(WaysApiFixture fixture)
         var respuesta = await ctxA.Admin.GetAsync($"/api/proveedores/{ctxB.IdProveedor}/cuenta-corriente");
 
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    // ---- judgment-day round 1, CRITICAL 2: SaldoResultante por fila, corrida discriminante --------
+
+    /// <summary>
+    /// Ningún otro test assertea <c>MovimientoDeCuentaDeProveedor.SaldoResultante</c> — corrida con
+    /// deuda previa ≠ 0 y VARIOS movimientos cuyos <c>saldo_resultante</c> son distintos entre sí y
+    /// de sus propios importes (mutation-proof-tests rule 6, lección del slice 2): una fila con
+    /// <c>SaldoResultante = 0m</c> hardcodeado, o la corrida acumulada, quedaría sin detectar.
+    /// </summary>
+    [Fact]
+    public async Task LosItemsDevuelvenElSaldoResultanteAcumuladoPorFila()
+    {
+        var ctx = await PrepararAsync(nameof(LosItemsDevuelvenElSaldoResultanteAcumuladoPorFila));
+
+        // Deuda previa != 0, fuera de la corrida assertada.
+        await SembrarMovimientoAsync(ctx, TipoMovimientoCcProveedor.Ajuste, Mediodia.AddDays(-10), 850m, "deuda previa");
+
+        // Corrida bajo prueba: saldo_resultante acumulado 850 -> 1190 -> 1070 -> 1680, todos
+        // distintos entre sí y distintos de sus propios importes (340, -120, 610).
+        var idMov1 = await SembrarMovimientoAsync(ctx, TipoMovimientoCcProveedor.Ajuste, Mediodia.AddDays(-3), 340m, "incrementa");
+        var idMov2 = await SembrarMovimientoAsync(ctx, TipoMovimientoCcProveedor.Ajuste, Mediodia.AddDays(-2), -120m, "reduce");
+        var idMov3 = await SembrarMovimientoAsync(ctx, TipoMovimientoCcProveedor.Ajuste, Mediodia.AddDays(-1), 610m, "incrementa de nuevo");
+
+        var pagina = await ObtenerEstadoDeCuentaAsync(ctx, "?historico=true&pagina=1&tamanio=10");
+
+        Assert.Equal(1190m, pagina.Items.Single(m => m.IdMovimiento == idMov1).SaldoResultante);
+        Assert.Equal(1070m, pagina.Items.Single(m => m.IdMovimiento == idMov2).SaldoResultante);
+        Assert.Equal(1680m, pagina.Items.Single(m => m.IdMovimiento == idMov3).SaldoResultante);
+        Assert.Equal(1680m, pagina.Header.Saldo);
+    }
+
+    // ---- judgment-day round 1, CRITICAL 3: un SEGUNDO proveedor del MISMO tenant no se filtra ----
+
+    /// <summary>
+    /// Borrar <c>Where(m => m.IdProveedor == idProveedor)</c> sobrevive a todo el resto de este
+    /// archivo porque cada test siembra UN proveedor por tenant. Este test siembra un SEGUNDO
+    /// proveedor del MISMO tenant con sus propios movimientos y assertea que el estado de cuenta
+    /// del proveedor A trae EXACTAMENTE los de A — conteo exacto, identificación de filas, y el
+    /// total de B es distinto y detectable si se filtrara de más (o de menos).
+    /// </summary>
+    [Fact]
+    public async Task UnSegundoProveedorDelMismoTenantNoContaminaElEstadoDeCuenta()
+    {
+        var ctx = await PrepararAsync(nameof(UnSegundoProveedorDelMismoTenantNoContaminaElEstadoDeCuenta));
+        var idProveedorB = await CrearSegundoProveedorEnElMismoTenantAsync(
+            ctx, nameof(UnSegundoProveedorDelMismoTenantNoContaminaElEstadoDeCuenta));
+
+        var idA1 = await SembrarMovimientoAsync(ctx, ctx.IdProveedor, TipoMovimientoCcProveedor.Ajuste, Mediodia.AddDays(-3), 111m, "A-uno");
+        var idA2 = await SembrarMovimientoAsync(ctx, ctx.IdProveedor, TipoMovimientoCcProveedor.Ajuste, Mediodia.AddDays(-2), 222m, "A-dos");
+
+        // Proveedor B: DOS movimientos también, con un total (555) distinto del de A (333) — si el
+        // filtro se pierde, Total pasaría de 2 a 4 y el saldo del header dejaría de coincidir.
+        await SembrarMovimientoAsync(ctx, idProveedorB, TipoMovimientoCcProveedor.Ajuste, Mediodia.AddDays(-3), 333m, "B-uno");
+        await SembrarMovimientoAsync(ctx, idProveedorB, TipoMovimientoCcProveedor.Ajuste, Mediodia.AddDays(-2), 222m, "B-dos");
+
+        var pagina = await ObtenerEstadoDeCuentaAsync(ctx, "?historico=true&pagina=1&tamanio=10");
+
+        Assert.Equal(2, pagina.Total);
+        Assert.Equal(2, pagina.Items.Count);
+        Assert.Collection(
+            pagina.Items,
+            m => Assert.Equal(idA2, m.IdMovimiento),
+            m => Assert.Equal(idA1, m.IdMovimiento));
+        Assert.Equal(333m, pagina.Header.Saldo);
+        Assert.DoesNotContain(pagina.Items, m => m.Detalle != null && m.Detalle.StartsWith("B-"));
     }
 }

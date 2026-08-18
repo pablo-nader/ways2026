@@ -297,4 +297,49 @@ public class SaldoDeProveedorReSourceadoTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(0m, lineaImpaga.Pagado);
         Assert.Equal(EstadoPago.Impaga, lineaImpaga.EstadoPago);
     }
+
+    // ---- judgment-day round 1, CRITICAL 1: discrimina la CACHE del agregado re-derivado ----------
+
+    /// <summary>
+    /// Todos los demás tests mantienen <c>proveedores.saldo</c> (la caché) y el agregado del
+    /// ledger sincronizados por construcción — ninguno distingue si <c>ResolverSaldoDeProveedorAsync</c>
+    /// lee la caché o re-deriva del agregado retirado. Este test DESINCRONIZA a propósito con SQL
+    /// crudo, vía la conexión owner del fixture: siembra compras/gastos normales y después pisa
+    /// <c>proveedores.saldo</c> con un centinela (777.77) que no coincide con ningún importe ni con
+    /// el agregado. Si <c>/saldo</c> devuelve el centinela, la caché es la fuente (correcto); si
+    /// devuelve el agregado re-derivado, el fix quedó revertido en silencio.
+    /// </summary>
+    [Fact]
+    public async Task ElSaldoLeeLaCacheAunDesincronizadaDelAgregadoDelLedger()
+    {
+        var ctx = await PrepararAsync(nameof(ElSaldoLeeLaCacheAunDesincronizadaDelAgregadoDelLedger));
+
+        var pagada = await CrearYConfirmarCompraDeTotalAsync(ctx, 1111m, "cache-vs-agregado-pagada");
+        var idTurno = await AbrirTurnoAsync(ctx);
+        var pagoPagada = await ctx.Admin.PostAsJsonAsync(
+            "/api/gastos",
+            new SolicitudDeGasto(
+                ctx.IdPuntoVenta, CategoriaGasto.Proveedor, ctx.IdProveedor, null, "Pago total", null,
+                ctx.IdMedioEfectivo, null, 1111m, pagada.Id));
+        Assert.Equal(HttpStatusCode.Created, pagoPagada.StatusCode);
+
+        // El agregado en este punto es 1111 − 1111 = 0. El centinela (777.77) no coincide con
+        // ningún importe sembrado ni con el agregado — desincronización deliberada.
+        const decimal centinela = 777.77m;
+        await using (var cruda = new Npgsql.NpgsqlConnection(fixture.OwnerConnectionString))
+        {
+            await cruda.OpenAsync();
+            await using var comando = cruda.CreateCommand();
+            comando.CommandText = "UPDATE proveedores SET saldo = @saldo WHERE id_proveedor = @id";
+            comando.Parameters.AddWithValue("saldo", centinela);
+            comando.Parameters.AddWithValue("id", ctx.IdProveedor);
+            var filas = await comando.ExecuteNonQueryAsync();
+            Assert.Equal(1, filas);
+        }
+
+        var saldo = await ObtenerSaldoAsync(ctx);
+
+        Assert.Equal(centinela, saldo.Saldo);
+        Assert.NotEqual(0m, saldo.Saldo);
+    }
 }
