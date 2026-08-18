@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
+using Ways.Application.CuentaCorriente;
 using Ways.Application.Exportacion;
 using Ways.Application.Precios;
 using Ways.Application.Stock;
@@ -13,6 +14,7 @@ using Ways.Domain.Auditoria;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
+using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Stock;
@@ -464,6 +466,21 @@ public class ServicioDeCompras(
             await ActualizarCostoNominalAsync(conexion, transaccionCruda, idTenant, idArticulo, costo, momento, ct);
         }
 
+        // 5. proveedores — ÚLTIMO lock de fila for update de esta transacción (stage-15-cc-
+        // proveedores-ledger, design decisión 5): recién acá, después de items/lotes/stock/costo,
+        // nunca antes — moverlo invertiría el orden total pineado (mutation target #19) y podría
+        // reintroducir el deadlock que ese orden existe para evitar.
+        var nuevoSaldoProveedor = await EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(
+            conexion, transaccionCruda, idTenant, encabezado.IdProveedor, encabezado.Total, ct);
+
+        // 6. El ÚNICO movimiento `compra` de esta confirmación — importe = total, positivo,
+        // origen = esta compra (design decisión 5). saldo_resultante viene del RETURNING del
+        // UPDATE de arriba, nunca recalculado (mutation target #16: si el orden de estos dos pasos
+        // se invirtiera, saldo_resultante dejaría de coincidir con el saldo post-UPDATE).
+        await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
+            conexion, transaccionCruda, idTenant, encabezado.IdProveedor, momento, encabezado.IdPuntoVenta, idEmpleado,
+            TipoMovimientoCcProveedor.Compra, id, idGasto: null, encabezado.Total, nuevoSaldoProveedor, detalle: null, ct);
+
         await transaccion.CommitAsync(ct);
 
         return await ObtenerAsync(id, ct);
@@ -510,8 +527,8 @@ public class ServicioDeCompras(
         var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
         // 1. UPDATE ... RETURNING — misma autoridad única que confirmar.
-        var idPuntoVenta = await MarcarAnuladaAsync(conexion, transaccionCruda, id, idTenant, momento, ct);
-        if (idPuntoVenta is null)
+        var encabezadoAnulado = await MarcarAnuladaAsync(conexion, transaccionCruda, id, idTenant, momento, ct);
+        if (encabezadoAnulado is null)
         {
             var existe = await db.ComprobantesCompra.AsNoTracking().AnyAsync(c => c.Id == id, ct);
             if (!existe)
@@ -521,6 +538,8 @@ public class ServicioDeCompras(
 
             throw new ErrorDominio("compra_no_confirmada", "La compra no está confirmada.", 409);
         }
+
+        var idPuntoVenta = encabezadoAnulado.Value.IdPuntoVenta;
 
         // 1.5. Auditoría (stage-14-auditoria-trazabilidad, Slice 3; spec auditoria-de-operaciones;
         // design call site 8) — MISMA transacción cruda; id_punto_venta sale del RETURNING que
@@ -593,6 +612,36 @@ public class ServicioDeCompras(
         // 4. Informativo — la regla invertida (design decisión 6): NUNCA bloquea.
         var gastosLigados = await db.Gastos.CountAsync(g => g.IdComprobanteCompra == id, ct);
 
+        // 5. El ledger ES la autoridad del importe a revertir (stage-15-cc-proveedores-ledger,
+        // design decisión 6) — nunca recalculado desde items/total salvo el fallback explícito de
+        // abajo. 0 filas ⇒ compra confirmada ANTES del cutover (su deuda vive en el `apertura` del
+        // backfill, sin `compra` movement propio, decisión 1 del proposal): el fallback usa
+        // `total` del mismo RETURNING que ya lockeó el header (mutation target #20 — sin este
+        // fallback una anulación pre-cutover dejaría la deuda en los libros).
+        var movimientosCompraOriginales = await db.MovimientosCuentaCorrienteProveedor
+            .Where(m => m.IdComprobanteCompra == id && m.Tipo == TipoMovimientoCcProveedor.Compra)
+            .Select(m => m.Importe)
+            .ToListAsync(ct);
+
+        var esPreCutover = movimientosCompraOriginales.Count == 0;
+        var importeOriginal = esPreCutover ? encabezadoAnulado.Value.Total : movimientosCompraOriginales.Sum();
+        var detalleAjuste = esPreCutover
+            ? "Contramovimiento de anulación (etapa 15): compra confirmada antes del ledger de " +
+              "proveedores; importe tomado del total del comprobante (no existe movimiento compra propio)."
+            : null;
+
+        // 6. proveedores — ÚLTIMO lock de fila for update de esta transacción, igual que en
+        // confirmar (design decisión 5/9, mutation target #19 — el mismo orden total aplica acá).
+        var nuevoSaldoProveedor = await EscriturasDeCuentaCorrienteProveedor.ActualizarSaldoProveedorAsync(
+            conexion, transaccionCruda, idTenant, encabezadoAnulado.Value.IdProveedor, -importeOriginal, ct);
+
+        // 7. El ÚNICO movimiento `ajuste` reversor de esta anulación — solo la deuda se revierte,
+        // los pagos (`gastos`/movimientos `pago`) NUNCA se tocan ("sin motor de reversión de
+        // gastos" sobrevive verbatim, design decisión 5).
+        await EscriturasDeCuentaCorrienteProveedor.InsertarMovimientoCcProveedorAsync(
+            conexion, transaccionCruda, idTenant, encabezadoAnulado.Value.IdProveedor, momento, idPuntoVenta, idEmpleado,
+            TipoMovimientoCcProveedor.Ajuste, id, idGasto: null, -importeOriginal, nuevoSaldoProveedor, detalleAjuste, ct);
+
         await transaccion.CommitAsync(ct);
 
         var detalle = await ObtenerAsync(id, ct);
@@ -645,10 +694,13 @@ public class ServicioDeCompras(
 
     /// <summary>Fila devuelta por el UPDATE...RETURNING de <see cref="ConfirmarHeaderAsync"/> —
     /// design: Transactions — CONFIRMAR COMPRA, paso 1. Los valores son los que ESTE lock vio,
-    /// nunca los leídos antes de entrar a la transacción. Solo se devuelven las columnas que la
-    /// transacción consume: la completitud de numero_externo/fecha_comprobante ya la valida el
-    /// propio predicado del UPDATE, así que devolverlas sería código muerto.</summary>
-    private readonly record struct EncabezadoConfirmado(int IdPuntoVenta, int IdTipoComprobante);
+    /// nunca los leídos antes de entrar a la transacción. <c>IdProveedor</c>/<c>Total</c>
+    /// ensanchan el <c>RETURNING</c> (stage-15-cc-proveedores-ledger, design decisión 4): la
+    /// escritura del ledger de proveedor los necesita y este lock ya los tiene, así que leerlos
+    /// del <c>preLectura</c> anterior o con un <c>SELECT</c> aparte sería confiar en un valor que
+    /// un <c>PUT</c> concurrente pudo cambiar entre esa lectura y este lock (mutation target
+    /// #15).</summary>
+    private readonly record struct EncabezadoConfirmado(int IdPuntoVenta, int IdTipoComprobante, int IdProveedor, decimal Total);
 
     /// <summary>El predicado incluye <c>numero_externo</c>/<c>fecha_comprobante IS NOT NULL</c>
     /// además de <c>estado='borrador'</c> — validación bajo el mismo lock, resuelta por el propio
@@ -669,7 +721,7 @@ public class ServicioDeCompras(
             "UPDATE comprobantes_compra SET estado = 'confirmada'::estado_compra, fecha_recepcion = $1, updated_at = $1 " +
             "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'borrador'::estado_compra " +
             "AND numero_externo IS NOT NULL AND fecha_comprobante IS NOT NULL " +
-            "RETURNING id_punto_venta, id_tipo_comprobante";
+            "RETURNING id_punto_venta, id_tipo_comprobante, id_proveedor, total";
 
         ParametrosDeComando.Agregar(comando, momento);
         ParametrosDeComando.Agregar(comando, id);
@@ -681,10 +733,22 @@ public class ServicioDeCompras(
             return null;
         }
 
-        return new EncabezadoConfirmado(lector.GetInt32(0), lector.GetInt32(1));
+        return new EncabezadoConfirmado(lector.GetInt32(0), lector.GetInt32(1), lector.GetInt32(2), lector.GetDecimal(3));
     }
 
-    private static async Task<int?> MarcarAnuladaAsync(
+    /// <summary>Fila devuelta por el UPDATE...RETURNING de <see cref="MarcarAnuladaAsync"/>.
+    /// <c>IdProveedor</c>/<c>Total</c> ensanchan el <c>RETURNING</c> (stage-15-cc-proveedores-
+    /// ledger, design decisión 4/6). <c>Total</c> es una CORRECCIÓN registrada (tasks.md decisión
+    /// 14, mismo criterio que la deviación 15 de slice 1): la lista literal de columnas de
+    /// decisión 4 (`id_punto_venta, id_proveedor`) omite `total`, pero el paso 5 de la sección
+    /// Transactions del propio design ("0 filas ⇒ compra pre-cutover ⇒ importeOriginal := total
+    /// del RETURNING") exige leerlo de ESTE `RETURNING` — el mismo lock, cero round trips extra,
+    /// exactamente la razón que decisión 4 da para ensanchar en primer lugar. `total` no cambia
+    /// tras confirmar (spec comprobantes-compra: "confirmada... MUST be immutable"), así que este
+    /// valor es tan autoritativo como cualquier otro leído bajo este lock.</summary>
+    private readonly record struct EncabezadoAnulado(int IdPuntoVenta, int IdProveedor, decimal Total);
+
+    private static async Task<EncabezadoAnulado?> MarcarAnuladaAsync(
         DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, DateTimeOffset momento, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
@@ -692,14 +756,19 @@ public class ServicioDeCompras(
         comando.CommandText =
             "UPDATE comprobantes_compra SET estado = 'anulada'::estado_compra, updated_at = $1 " +
             "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'confirmada'::estado_compra " +
-            "RETURNING id_punto_venta";
+            "RETURNING id_punto_venta, id_proveedor, total";
 
         ParametrosDeComando.Agregar(comando, momento);
         ParametrosDeComando.Agregar(comando, id);
         ParametrosDeComando.Agregar(comando, idTenant);
 
-        var resultado = await comando.ExecuteScalarAsync(ct);
-        return resultado is null ? null : Convert.ToInt32(resultado);
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new EncabezadoAnulado(lector.GetInt32(0), lector.GetInt32(1), lector.GetDecimal(2));
     }
 
     private static async Task<bool> BloquearBorradorAsync(

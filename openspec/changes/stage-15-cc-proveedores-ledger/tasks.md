@@ -509,35 +509,148 @@ paths (append-only, nothing to repair). **Done** = tests green +
 **Budget note**: pre-authorized split `2a`/`2b` if this slice overflows —
 see decision 3 above.
 
-- [ ] 2.1 Create
+**Deviations registered during `sdd-apply` (stage-12 discipline, decision 14
+above):**
+
+19. **`MarcarAnuladaAsync`'s `RETURNING` is corrected to include `total`,
+    not only `id_punto_venta, id_proveedor`.** Design decision 4's literal
+    column list (`design.md:56`) omits `total`, but the Transactions
+    section's own step 5 for anulación (`design.md:201`) reads
+    `importeOriginal := total del RETURNING` for the pre-cutover fallback
+    — there is no other RETURNING in that transaction to read it from. The
+    same widening rationale decision 4 gives for `ConfirmarHeaderAsync`
+    ("zero extra round trips") applies identically here: `total` does not
+    change once a compra is confirmed (spec `comprobantes-compra`:
+    "confirmada... MUST be immutable"), so reading it under this same lock
+    is exactly as authoritative as `id_punto_venta`/`id_proveedor`. Shipped
+    as `RETURNING id_punto_venta, id_proveedor, total`.
+20. **Three pre-existing integration test files were missing
+    `MapEnum<TipoMovimientoCcProveedor>` in their manually-curated
+    `DbContextOptionsBuilder<WaysDbContext>`** — a gap opened by slice 1
+    (which added the enum) but not exercised until this slice's own code
+    path (`ConfirmarAsync`/`AnularAsync`) started writing to the ledger:
+    `ComprasAnulacionYConcurrenciaTests.CrearContextoConContador` (that
+    suite's own command-budget harness, inherited from an earlier stage —
+    surfaced immediately as an
+    `InvalidCastException` writing the enum parameter), and, discovered
+    only by running the FULL integration suite once (per the "una sola
+    corrida" rule) rather than a filtered subset:
+    `ComprasTipoSeedTests.LosTiposDeCompraAterrizanEnUnaBaseYaMigradaDesdeStage7...`
+    and
+    `CuentaCorrienteEtapa7BackstopTests.RcResuelveEnUnaBaseYaMigradaDesdeStage6SinDuplicar`
+    (both migrate a fresh database to HEAD and hit
+    `PendingModelChangesWarning` because their hand-built model diverges
+    from the real migration snapshot without the mapping). Fixed in this
+    slice's diff — leaving them red would violate the "tests green" gate
+    criterion, and none of the three files needed anything beyond the one
+    missing `MapEnum` line.
+21. **Mutation target #17's literal runtime scenario is structurally
+    unreachable through the real call sites — resolved with a source-text
+    assertion, `mutation-proof-tests` rule 3 exhausted first**, same
+    criterion as slice 1's targets #4/#11.
+    `ServicioDeCompras.ConfirmarAsync`/`AnularAsync` both wrap their
+    transactional core in `FabricaDeEstrategiaSinReintento.
+    CrearEstrategiaSinReintento` (`maxRetryCount: 0`, `ShouldRetryOn`
+    always `false`) — its own doc-comment states this exists PRECISELY so
+    a `CreateExecutionStrategy` replay never reaches these statements.
+    Design's mutation description ("double-count under a forced
+    execution-strategy retry") therefore cannot be forced through either
+    real call site without defeating the very isolation this class
+    provides. Resolution:
+    `EscriturasDeCuentaCorrienteProveedorTests.
+    ElTextoFuenteDeActualizarSaldoProveedorAsyncUsaElUpdateAditivoCrudoTarget17`
+    reads `EscriturasDeCuentaCorrienteProveedor.cs` from disk and asserts
+    both the literal additive SQL text and the absence of any tracked
+    `Proveedores`/`SaveChangesAsync` access in that method.
+22. **Mutation target #19 could not be proven with a live rendezvous —
+    resolved with a deterministic source-text ordering assertion instead**,
+    after two runtime attempts were exhausted (`mutation-proof-tests` rule
+    2/3). First, a `DbCommandInterceptor` capturing the SQL statement
+    sequence was tried and discarded EMPIRICALLY: the raw-ADO statements of
+    `EjecutarConfirmarAsync`/`EjecutarAnulacionAsync` are created via
+    `conexion.CreateCommand()` directly on `db.Database.GetDbConnection()`,
+    bypassing EF Core's command pipeline entirely — `interceptor.Orden`
+    stayed empty in the real run. Second, a genuine timing-forced
+    "deadlock" is structurally impossible to construct here: design's own
+    Concurrency guarantees (`design.md:239-244`) state confirm × pago share
+    only ONE lockable resource (the proveedor row) and "neither holds
+    anything the other needs after taking it" — with a single shared
+    resource there is no second resource to invert for an actual PostgreSQL
+    deadlock, under either the correct or the mutated ordering. Resolution:
+    `ServicioDeComprasLockOrderTests` (new file,
+    `tests/Ways.Application.Tests/Compras/`) reads `ServicioDeCompras.cs`
+    from disk and asserts, by text-index order inside each method, that
+    the proveedor lock (`ActualizarSaldoProveedorAsync`) appears strictly
+    after every stock/costo statement and strictly before the commit, with
+    the ledger `INSERT` immediately following it — proving task 2.9's
+    pinned order directly and discriminating target #19 (moving the lock
+    to "step 1.5" moves its text index before the stock statements,
+    confirmed by mutation). Task 2.17's real concurrency test
+    (`ConfirmarYUnPagoDirectoAlMismoProveedorSeSerializanSinDeadlock`)
+    still ships as the SPEC-level proof that confirm × pago serialize
+    without error — it is a behavioral coverage test, not target #19's
+    mutation discriminator.
+23. **Tasks 2.13 and 2.17's "payment" is simulated by calling
+    `EscriturasDeCuentaCorrienteProveedor` directly**, per decision 7 above
+    — `ServicioDeGastos`'s real write path does not exist until slice 3. A
+    `gastos` row is seeded only to satisfy `id_gasto`'s FK; the ledger
+    write itself never goes through `InsertarGastoAsync`.
+24. **Judgment-day judge B found task 2.22 / mutation target #16's original
+    evidence insufficient — a VALUE-class mutant survived the recorded
+    proof.** The only `SaldoResultante` assertion in
+    `CuentaCorrienteProveedorEscriturasTests.cs`
+    (`ConfirmarUnaCompraEscribeExactamenteUnMovimientoCompraYSubeElSaldo`)
+    ran against a FRESH proveedor (saldo previo 0), where
+    `saldo_resultante == encabezado.Total` by pure coincidence: replacing
+    `nuevoSaldoProveedor` with `encabezado.Total` in
+    `EjecutarConfirmarAsync` (`ServicioDeCompras.cs:~482`) passed all 9
+    tests. The anulación path (`EjecutarAnulacionAsync:~635-643`) had NO
+    assertion on the ajuste movement's `SaldoResultante` at all. Closed
+    tests-only (production code is correct — the gap was coverage, not a
+    defect): added
+    `ConfirmarConDeudaPreviaEscribeElSaldoResultanteDelReturningNoElTotalDeEstaCompra`
+    (real prior debt from a previously confirmed compra, ≠ 0 and ≠ this
+    compra's total) and widened `AnulandoUnaCompraImpagaReviertaSoloLaDeuda`
+    /`AnulandoUnaCompraPreCutoverEscribeElAjusteConElFallback` with a second,
+    untouched confirmed compra so the ajuste's resulting saldo is neither 0
+    nor equal to the reverted importe. Mutation evidence (two cycles, this
+    round): (1) `nuevoSaldoProveedor` → `encabezado.Total` in
+    `EjecutarConfirmarAsync` — the new confirm test failed (`2300` expected
+    vs `1500` actual), reverted; (2) the ajuste's `saldoResultante` →
+    `-importeOriginal` (a local value) in `EjecutarAnulacionAsync` — both
+    widened anulación tests failed (`300`/`400` expected vs `-1000`/`-2000`
+    actual), reverted. Full `CuentaCorrienteProveedorEscriturasTests` green
+    (10/10) after revert.
+
+- [x] 2.1 Create
   `src/Ways.Application/CuentaCorriente/EscriturasDeCuentaCorrienteProveedor.cs`
   — static class, `ActualizarSaldoProveedorAsync`: raw `UPDATE proveedores
   SET saldo = saldo + $1 WHERE id_proveedor = $2 AND id_tenant = $3
   RETURNING saldo` — never a tracked `proveedor.Saldo +=`. *(design.md:
   74-95, decisions 1-2)*
-- [ ] 2.2 Same file: `InsertarMovimientoCcProveedorAsync` — the ONE
+- [x] 2.2 Same file: `InsertarMovimientoCcProveedorAsync` — the ONE
   ledger `INSERT ... RETURNING id_movimiento`. *(design.md:90-107)*
-- [ ] 2.3 Same file: `ValidarFormaPorTipo` — the 4×3 shape matrix
+- [x] 2.3 Same file: `ValidarFormaPorTipo` — the 4×3 shape matrix
   (`apertura`/`compra`/`pago`/`ajuste`), `InvalidOperationException`
   (never `ErrorDominio` — a call-site defect, not a client error).
   *(design.md:109-118)*
-- [ ] 2.4 Every raw-ADO parameter through `ParametrosDeComando.Agregar` /
+- [x] 2.4 Every raw-ADO parameter through `ParametrosDeComando.Agregar` /
   `AgregarNulo` (normalizes any `DateTimeOffset` to UTC) — no private
   `AgregarParametro` clone; `EscriturasDeCuentaCorriente.cs`'s own private
   copy is explicitly NOT refactored in this stage. *(design decision 3,
   `design.md:55, 511-515`)*
-- [ ] 2.5 Modify `ServicioDeCompras.cs`'s `ConfirmarHeaderAsync` (`:663-685`)
+- [x] 2.5 Modify `ServicioDeCompras.cs`'s `ConfirmarHeaderAsync` (`:663-685`)
   — widen `RETURNING` to `id_punto_venta, id_tipo_comprobante,
   id_proveedor, total`. *(design decision 4, `design.md:56, 184`)*
-- [ ] 2.6 Modify `ServicioDeCompras.cs`'s `MarcarAnuladaAsync` (`:687-700`)
+- [x] 2.6 Modify `ServicioDeCompras.cs`'s `MarcarAnuladaAsync` (`:687-700`)
   — widen `RETURNING` to `id_punto_venta, id_proveedor`. *(design.md:196)*
-- [ ] 2.7 Modify `ServicioDeCompras.cs`'s `EjecutarConfirmarAsync`
+- [x] 2.7 Modify `ServicioDeCompras.cs`'s `EjecutarConfirmarAsync`
   (`:312-470`), after the costo loop (`:462-465`), immediately before
   commit (`:467`) — step 5: `ActualizarSaldoProveedorAsync(+total)`, the
   LAST lock for update; step 6: `INSERT` the `compra` movement
   (`id_comprobante_compra` = the id, `id_gasto` NULL, `importe = +total`).
   *(design decision 5, `design.md:57, 189-192`)*
-- [ ] 2.8 Modify `ServicioDeCompras.cs`'s `EjecutarAnulacionAsync`
+- [x] 2.8 Modify `ServicioDeCompras.cs`'s `EjecutarAnulacionAsync`
   (`:504-600`), after the informational `gastosLigados` count (`:594`,
   unchanged) — step 5: `importeOriginal := SUM(importe)` of this compra's
   `compra` movement(s); **0 filas ⇒ pre-cutover fallback**
@@ -546,77 +659,77 @@ see decision 3 above.
   `ActualizarSaldoProveedorAsync(−importeOriginal)`, the LAST lock; step
   7: `INSERT` the reversing `ajuste` (`id_comprobante_compra` = the id).
   *(design decision 6, OD8 ratified fallback, `design.md:58, 200-204`)*
-- [ ] 2.9 Confirm the pinned lock order holds unchanged for both paths —
+- [x] 2.9 Confirm the pinned lock order holds unchanged for both paths —
   no existing statement in `EjecutarConfirmarAsync`/`EjecutarAnulacionAsync`
   moves; the proveedor lock lands strictly after the header/lotes/stock
   locks and immediately before the commit. *(design.md:229-230)*
-- [ ] 2.10 [P] Domain unit — `ValidarFormaPorTipo`: the 4×3 shape matrix,
+- [x] 2.10 [P] Domain unit — `ValidarFormaPorTipo`: the 4×3 shape matrix,
   one fact per illegal combination. *(design.md:372)*
-- [ ] 2.11 [P] Integration — confirming a compra writes exactly one
+- [x] 2.11 [P] Integration — confirming a compra writes exactly one
   `compra` movement, `importe = total`, `proveedores.saldo` increases.
   *(spec `cuenta-corriente-de-proveedores`: "Confirming a compra increases
   the proveedor's saldo")*
-- [ ] 2.12 [P] Integration — anulando an unpaid compra reverses only the
+- [x] 2.12 [P] Integration — anulando an unpaid compra reverses only the
   debt. *(spec scenario: "Anulando an unpaid compra reverses only the
   debt")*
-- [ ] 2.13 [P] Integration — anulando a fully-paid compra leaves a saldo a
+- [x] 2.13 [P] Integration — anulando a fully-paid compra leaves a saldo a
   favor; the linked gasto and its `pago` movement remain untouched
   (requires slice-3's write path — co-locate or defer to slice 3's
   coverage if the pago path isn't testable yet; if deferred, register the
   deferral here per decision 14). *(spec scenario: "Anulando a fully-paid
   compra leaves a saldo a favor")*
-- [ ] 2.14 [P] Integration — anulando a **pre-cutover** compra (its only
+- [x] 2.14 [P] Integration — anulando a **pre-cutover** compra (its only
   `compra`-equivalent debt lives in the `apertura` backfill row, no own
   `compra` movement) writes an `ajuste` of `−total` with the fallback
   detalle. *(OD8, design decision 6 fallback — decision 6 above)*
-- [ ] 2.15 [P] Integration — the `-03:00` offset test: everything under
+- [x] 2.15 [P] Integration — the `-03:00` offset test: everything under
   `RelojFijo(2026-08-17T12:00:00Z)`, the `compra`/`ajuste` movement's
   `fecha` equals the fixed instant exactly at offset zero AND at a real
   `-03:00` write (mutation-proof-tests rule 10 — a `Z` fixture cannot see
   a raw-ADO UTC-normalization regression, stage-14 verify W2/PR #129).
-- [ ] 2.16 [P] Integration — fault point: a failure forced at the ledger
+- [x] 2.16 [P] Integration — fault point: a failure forced at the ledger
   write of `EjecutarConfirmarAsync` leaves `proveedores.saldo`, the
   ledger, **and** the compra's `estado` (still `borrador`) untouched.
-- [ ] 2.17 [P] Integration — **confirm × pago rendezvous** on the same
+- [x] 2.17 [P] Integration — **confirm × pago rendezvous** on the same
   proveedor: race `EjecutarConfirmarAsync` against a direct call to
   `EscriturasDeCuentaCorrienteProveedor` shaped like a payment (decision 7
   above — the real `ServicioDeGastos` wiring lands in slice 3); both
   commit, serialized on the proveedor row, no deadlock.
-- [ ] 2.18 [P] **Mutation target #12** — `ValidarFormaPorTipo`, `compra`
+- [x] 2.18 [P] **Mutation target #12** — `ValidarFormaPorTipo`, `compra`
   requires a comprobante → delete the arm → the Domain fact (2.10) must
   fail.
-- [ ] 2.19 [P] **Mutation target #13** — `ValidarFormaPorTipo`, `apertura`
+- [x] 2.19 [P] **Mutation target #13** — `ValidarFormaPorTipo`, `apertura`
   forbids actor/PV → delete the arm → the Domain fact (2.10) must fail.
-- [ ] 2.20 [P] **Mutation target #14** — `ParametrosDeComando.Agregar` on
+- [x] 2.20 [P] **Mutation target #14** — `ParametrosDeComando.Agregar` on
   `fecha` → replace with a hand-built parameter without
   `ToUniversalTime()` → the `-03:00` offset test (2.15) must fail.
-- [ ] 2.21 [P] **Mutation target #15** — `id_proveedor, total` added to
+- [x] 2.21 [P] **Mutation target #15** — `id_proveedor, total` added to
   `ConfirmarHeaderAsync`'s `RETURNING` → read them from `preLectura`
   instead → a confirm-under-concurrent-`PUT` test (the movement's
   importe diverges) must fail.
-- [ ] 2.22 [P] **Mutation target #16** — the saldo `UPDATE` placed
+- [x] 2.22 [P] **Mutation target #16** — the saldo `UPDATE` placed
   **before** the ledger `INSERT` → swap them → `saldo_resultante` no
   longer equals the post-update saldo (2.11 regresses).
-- [ ] 2.23 [P] **Mutation target #17** — `saldo = saldo + $1` raw →
+- [x] 2.23 [P] **Mutation target #17** — `saldo = saldo + $1` raw →
   replace with a tracked `proveedor.Saldo +=` → double-count under a
   forced `CreateExecutionStrategy` retry.
-- [ ] 2.24 [P] **Mutation target #18** — `AND id_tenant = $3` in the
+- [x] 2.24 [P] **Mutation target #18** — `AND id_tenant = $3` in the
   saldo `UPDATE` → delete it → a cross-tenant update test routed BELOW
   RLS (mutation-proof-tests rule 3) must fail.
-- [ ] 2.25 [P] **Mutation target #19** — the proveedor lock placed
+- [x] 2.25 [P] **Mutation target #19** — the proveedor lock placed
   **after** the stock loop → move it to step 1.5 → the confirm × pago
   rendezvous (2.17) deadlocks/times out.
-- [ ] 2.26 [P] **Mutation target #20** — the pre-cutover fallback of the
+- [x] 2.26 [P] **Mutation target #20** — the pre-cutover fallback of the
   contramovimiento → remove the fallback (always the ledger sum) →
   annulling a pre-cutover compra (2.14) leaves the debt on the books.
-- [ ] 2.27 **Non-regression (binding verify criterion, design.md:45-47,
+- [x] 2.27 **Non-regression (binding verify criterion, design.md:45-47,
   468-470)**: `tests/Ways.IntegrationTests/VentasCheckoutTests.cs` is
   ABSENT from the stage's diff entirely; no file under
   `src/Ways.Application/Ventas/` appears in this slice's diff. Confirmed
   by `git diff --stat`.
-- [ ] 2.28 Gate guard: `dotnet ef migrations has-pending-model-changes`
+- [x] 2.28 Gate guard: `dotnet ef migrations has-pending-model-changes`
   clean; zero new files under `Migraciones/`.
-- [ ] 2.29 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+- [x] 2.29 Run `judgment-day`; fix confirmed issues; re-judge until clean.
 - [ ] 2.30 Branch `feat/stage15-slice2-escrituras-y-deuda` off `main`
   (parent: slice 1); PR; merge stacked-to-main.
 
