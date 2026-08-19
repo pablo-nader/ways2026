@@ -201,6 +201,64 @@
       slice. El merge three-way preserva la regla en main. Regla de proceso nueva: los diffs de
       judgment se congelan con `main...HEAD`.
 
+20. **Slice 5 apply-phase decisions and deviations (decision 15 discipline).**
+    - **Pre-load (tasks 5.4/5.12) is NOT a backend method — deviation from this file's own prior
+      wording, resolved in favor of `design.md`.** `design.md:347-351` (the Web section) and its
+      Testing Strategy row for "Web (vitest)" place the reposición→OC mapping — `{IdArticulo,
+      Sugerido} → {IdArticulo, CantidadPedida}`, filtering `sugerido = null`, blocking the `"Sin
+      proveedor"` bucket — entirely inside `Reposicion.tsx` (slice 6), posting an ordinary
+      `SolicitudDeOrdenDeCompra` to the ALREADY-EXISTING `POST /` (slice 2). `design.md`'s own File
+      Changes table for `ServicioDeOrdenesDeCompra.cs` (`:376`) lists only "Draft CRUD, `enviar`,
+      `cerrar`, `anular`, list + detail read model" — no pre-load method — and mutation target #34's
+      row places "the `sugerido !== null` filter" under slices "4-6" (the web branch), never 5.
+      This file's own tasks 5.4/5.12 (drafted at `sdd-tasks` time) implied a backend method; treated
+      as a tasks-drafting/design mismatch resolved in favor of the authoritative `design.md` (same
+      "`sdd-apply`'s contract: follow design decisions, don't freelance" criterion slice 2 already
+      applied to the DELETE-endpoint mismatch, decision 17 above). No backend code added for the
+      pre-load; `POST /` needs zero modification.
+    - **The cobertura derivation is a SEPARATE LINQ query, never a shared SQL fragment with
+      `EscriturasDeOrdenDeCompra`'s raw-ADO derivation — resolves the launch prompt's own open
+      question ("¿reusable? — si duplicás la derivación, el design lo prohíbe... extraé o
+      reusá").** `design.md`'s Testing Strategy explicitly names TWO derivations and a fidelity
+      test as the seam between them: "Integration — projection fidelity | For every fixture: the
+      stored `estado` equals `ProyectorDeEstadoDeOrden.Proyectar(...)` recomputed from the **read
+      model's own** cobertura numbers | The one assertion that keeps the raw-ADO derivation and
+      the LINQ derivation from drifting" (`design.md:421`) — this sentence only makes sense if the
+      two derivations are independent implementations, not shared SQL. Decision 12 above
+      ("verdad única") governs the **stored `estado` column** (never re-derived by the read
+      model), not the underlying quantity computation, which legitimately has two
+      implementations cross-checked by task 5.9's fidelity test rather than unified by code
+      sharing. Sharing the raw-ADO CTE text would also be structurally awkward: the write side
+      only needs two aggregated booleans (`completa`/`algoRecibido`); the read side needs full
+      per-artículo rows including recibido-no-pedido (`Pedida = 0`, decision 13) and the price
+      comparison, a materially different shape. Both derivations independently add `deleted_at IS
+      NULL` (no entity in this repo has a global EF query filter for soft-delete — verified by
+      grepping `HasQueryFilter` across `Configuraciones/`, zero hits — so the LINQ side needed its
+      own explicit filter, mirroring the raw-ADO defense-in-depth rather than inheriting it).
+    - **`Pendiente`/`TotalEstimado`/`TotalReal`/`DesvioTotal` formulas — design gaps filled by
+      implementation, registered here since neither `design.md` nor the spec pins the exact
+      arithmetic.** `Pendiente = Math.Max(Pedida - Recibida, 0)` — never negative on an
+      over-delivery, matching `design.md:346`'s own use of `Pendiente > 0` to gate `CompraEditor.tsx`'s
+      pre-fill (a negative value would be a nonsensical gate condition). `CostoEstimado`/`CostoReal`
+      per artículo are cantidad-weighted averages over only the comparable lines (a line with
+      `CostoUnitarioEstimado IS NULL` contributes no zero to the estimated average; an artículo with
+      zero linked confirmed lines has no real average) — `Desvio` is `null` unless BOTH sides exist
+      (never a partial or fabricated value). `TotalEstimado`/`TotalReal` sum only the artículos whose
+      own `CostoEstimado`/`CostoReal` is non-null (`dto-contract-honesty`: mixing real terms with
+      fabricated zeros would misstate the total), `null` when zero terms qualify; `DesvioTotal`
+      follows the same "both totals present, denominator non-zero" gate as the per-artículo `Desvio`.
+    - **Test tipo de comprobante choice**: `C-FB` (`DiscriminaIva = false`) used for every receiving
+      comprobante in this slice's tests, not `C-FA` (used by slices 1/4's fixtures) — deliberate,
+      to keep `CalculadorDeCompra.CalcularCostoEfectivoDesdeItem`'s arithmetic IVA-free
+      (`total/cantidad`) so the price-deviation assertions (`+12%`, weighted averages) land on exact
+      decimal values instead of IVA-rounded ones. Not a production code path change — `DiscriminaIva`
+      is read per-line from each linked comprobante's own tipo either way (decision 14).
+    - **`judgment-day` NOT run** (task 5.19) — same executor-boundary reason as every prior slice.
+      Full solution test suite run once end-to-end post-implementation (`dotnet test`, no filter):
+      **2216/2216 green** (526 Domain + 291 Application + 1399 Integration), confirming the
+      non-regression criterion (mutation target #34's trailing row) holds across the whole tree, not
+      only the `ComprasConfirmar`/`ComprasAnular` suites named there.
+
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
 word-budget overage is a house precedent, no action; T5 (spec OD7) — `cuenta-corriente-de-
@@ -1260,57 +1318,102 @@ clean round + PR merged.
 **Budget note**: pre-authorized split `5a` (paginated list) / `5b` (detail + cobertura +
 deviation) if this slice overflows — decision 3 above.
 
-- [ ] 5.1 Same `ContratosDeOrdenDeCompra.cs`: `CoberturaDeArticulo`, `OrdenDeCompraDetalle`,
+- [x] 5.1 Same `ContratosDeOrdenDeCompra.cs`: `CoberturaDeArticulo`, `OrdenDeCompraDetalle`,
   `OrdenDeCompraListada`, `PaginaDeOrdenesDeCompra` — per-artículo cobertura list, never a
   fabricated per-line split. *(design.md:176-192, decision 13, `dto-contract-honesty`)*
-- [ ] 5.2 Same `ServicioDeOrdenesDeCompra.cs`: `ListarAsync` — `ConstruirQuery` with
+- [x] 5.2 Same `ServicioDeOrdenesDeCompra.cs`: `ListarAsync` — `ConstruirQuery` with
   `idProveedor`/`idPuntoVenta`/`estado`/`desde`/`hasta` filters, `ORDER BY fecha_emision DESC,
   id_orden_compra DESC`, `Skip/Take`, `pagina = Math.Max(pagina,1)`, `tamanio =
   Math.Clamp(tamanio,1,200)`. *(design.md:70, 201-204, mutation target #34b)*
-- [ ] 5.3 Same file: `ObtenerDetalleAsync` — items + the per-artículo cobertura (statement-2's
+- [x] 5.3 Same file: `ObtenerDetalleAsync` — items + the per-artículo cobertura (own LINQ
   derivation, read-only) + price deviation via `CalculadorDeCompra.
   CalcularCostoEfectivoDesdeItem`, `null` never `0` when `costo_unitario_estimado IS NULL`.
-  *(design.md:67-69, decision 14, ordenes-de-compra/spec.md:242-249)*
-- [ ] 5.4 Same file: `PreCargarDesdeReposicionAsync` (or the equivalent mapping in `POST /`) —
-  accept the reposición list's shape, `FilaDeReposicion.{IdArticulo, Sugerido} →
-  {IdArticulo, CantidadPedida}`, filtered by proveedor, excluding `sugerido = null` rows.
-  *(design.md:proposal decision 10, ordenes-de-compra/spec.md:264-267)*
-- [ ] 5.5 Modify `OrdenesDeCompraEndpoints.cs` — `GET /` (paginated) and `GET /{id}` under
+  *(design.md:67-69, decision 14, ordenes-de-compra/spec.md:242-249)* — the cobertura derivation is
+  **deliberately separate** from `EscriturasDeOrdenDeCompra.DerivarAsync`'s raw-ADO CTE (decision 20
+  below), never a shared SQL fragment.
+- [x] 5.4 **DEVIATION (decision 20 below): NOT a backend method.** `design.md`'s own Web section
+  (`design.md:347-351`) and its Testing Strategy row ("Web (vitest)": "a `sugerido === null` row is
+  excluded from the pre-load") place the reposición→OC mapping entirely in `Reposicion.tsx`
+  (client-side filter + field mapping, posting a plain `SolicitudDeOrdenDeCompra` to the existing
+  `POST /`). `design.md`'s own File Changes table for `ServicioDeOrdenesDeCompra.cs` (`:376`) lists
+  only "Draft CRUD, `enviar`, `cerrar`, `anular`, list + detail read model" — no pre-load method.
+  Mutation target #34's own row places "the `sugerido !== null` filter" under slices "4-6" (the web
+  branch), never slice 5. No `PreCargarDesdeReposicionAsync` was added; `POST /` needs no
+  modification — it already accepts an ordinary `SolicitudDeOrdenDeCompra` (slice 2).
+- [x] 5.5 Modify `OrdenesDeCompraEndpoints.cs` — `GET /` (paginated) and `GET /{id}` under
   `OperacionDePos` only (no write policy). *(design.md:301-302)*
-- [ ] 5.6 [P] Integration — pagination with `fecha_emision` tied on every row (RelojFijo) ⇒ page 2
+- [x] 5.6 [P] Integration — pagination with `fecha_emision` tied on every row (RelojFijo) ⇒ page 2
   repeats and skips nothing (the `ThenByDescending(o => o.Id)` tiebreaker). *(design.md:70,
-  mutation target #34b)*
-- [ ] 5.7 [P] Integration — each filter (`idProveedor`/`idPuntoVenta`/`estado`/`desde`/`hasta`)
+  mutation target #34b)* — `OrdenesCompraLecturaTests.
+  PaginacionConFechaEmisionEmpatadaNoDuplicaNiSalteaFilas`.
+- [x] 5.7 [P] Integration — each filter (`idProveedor`/`idPuntoVenta`/`estado`/`desde`/`hasta`)
   with asymmetric seeds — an ignored filter must not silently return extra rows. *(design.md:199,
-  mutation target #34b)*
-- [ ] 5.8 [P] Integration — sibling OC of the same tenant seeded on every listing/detail test with
-  its own items (rule 12c) — a raw `UPDATE` desyncing `estado` to a sentinel must surface the
-  sentinel (rule 12a). *(design.md, Testing Strategy; design decision 12)*
-- [ ] 5.9 [P] Integration — **projection fidelity**: for every derivation fixture, the stored
+  mutation target #34b)* — `OrdenesCompraLecturaTests.
+  CadaFiltroIgnoradoDevolveriaDeMasConSemillasAsimetricas`.
+- [x] 5.8 [P] Integration — sibling OC of the same tenant seeded on every listing/detail test with
+  its own items (rule 12c) — a raw EF write desyncing `estado` to a sentinel must surface the
+  sentinel (rule 12a). *(design.md, Testing Strategy; design decision 12)* — `OrdenesCompraLecturaTests.
+  DetalleLeeElEstadoDeLaColumnaSinRederivarloConUnaDesincronizacionCruda` (sentinel: `enviada` OC
+  with zero recepciones force-written to `RecibidaParcial` — a value the real derivation could never
+  produce for that fixture — GET returns the sentinel; sibling OC unaffected).
+- [x] 5.9 [P] Integration — **projection fidelity**: for every derivation fixture, the stored
   `estado` equals `ProyectorDeEstadoDeOrden.Proyectar(...)` recomputed from the read model's own
-  cobertura numbers. *(design.md, Testing Strategy — the raw-ADO/LINQ drift proof)*
-- [ ] 5.10 [P] Integration — a price increase between order and invoice is surfaced (`+12%`), not
-  blocked. *(ordenes-de-compra/spec.md:251-255)*
-- [ ] 5.11 [P] Integration — a never-quoted line reports *no comparable*, never `0`.
-  *(ordenes-de-compra/spec.md:257-260, mutation target #34b)*
-- [ ] 5.12 [P] Integration — pre-load excludes `sugerido = null` rows, never defaults to `0`; the
-  `"Sin proveedor"` bucket cannot pre-load. *(ordenes-de-compra/spec.md:270-278)*
-- [ ] 5.13 [P] Integration — `GET /api/reportes/stock/reposicion`'s response shape and figures
+  cobertura numbers. *(design.md, Testing Strategy — the raw-ADO/LINQ drift proof)* —
+  `OrdenesCompraLecturaTests.
+  CoberturaPorArticuloDiscriminaCorrectamenteYLaProyeccionCoincideConLaColumna`: rule-11 discriminant
+  fixture (two OC lines of one artículo 3+4⇒7 pedidas; a split reception 2 then 5; an artículo
+  received-never-ordered; a soft-deleted reception line excluded; a comprobante ligado still
+  `borrador` excluded; a reception of another OC of the same proveedor excluded) plus the
+  recomputation assertion.
+- [x] 5.10 [P] Integration — a price increase between order and invoice is surfaced (`+12%`), not
+  blocked. *(ordenes-de-compra/spec.md:251-255)* — `OrdenesCompraLecturaTests.
+  UnAumentoDePrecioEntreOrdenYFacturaSeSurfaceaNoSeBloquea`.
+- [x] 5.11 [P] Integration — a never-quoted line reports *no comparable*, never `0`.
+  *(ordenes-de-compra/spec.md:257-260, mutation target #34b)* — `OrdenesCompraLecturaTests.
+  UnaLineaNuncaCotizadaReportaNoComparableNuncaCero`.
+- [x] 5.12 **DEVIATION (decision 20 below), same as 5.4**: the pre-load exclusion of `sugerido =
+  null` rows and the `"Sin proveedor"` bucket's missing action are client-side behaviors
+  (`Reposicion.tsx`, slice 6) — `design.md`'s Testing Strategy places both assertions under "Web
+  (vitest)", not backend integration. No backend test added here; the slice-6 web descriptor tests
+  own this assertion (mutation target #34's "pre-load exclusion test").
+- [x] 5.13 [P] Integration — `GET /api/reportes/stock/reposicion`'s response shape and figures
   unchanged before/after this stage. *(ordenes-de-compra/spec.md:280-283, reposicion-de-
-  stock/spec.md's "byte-identical" scenario)*
-- [ ] 5.14 [P] Integration — the offset boundary: a listing sent at the real client `-03:00` (never
-  `Z`) asserts both the returned rows and the displayed período. *(decision 13 above)*
-- [ ] 5.15 [P] **Mutation target #34b (part 1)** — `.ThenByDescending(o => o.Id)` deleted → the
-  tied-fecha pagination test (5.6) must fail.
-- [ ] 5.16 [P] **Mutation target #34b (part 2)** — any single `if (filtro is { } x)` conjunct
-  deleted → its asymmetric-seed test (5.7) must fail.
-- [ ] 5.17 [P] **Mutation target #34b (part 3)** — the `Desvio` null branch replaced with `0` →
-  the no-comparable test (5.11) must fail.
-- [ ] 5.18 Gate guard: `dotnet ef migrations has-pending-model-changes` clean; zero new files under
-  `Migraciones/`.
-- [ ] 5.19 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  stock/spec.md's "byte-identical" scenario)* — `OrdenesCompraLecturaTests.
+  ReposicionMantieneSuShapeYSusFigurasSinCambios`.
+- [x] 5.14 [P] Integration — the offset boundary: a listing sent at the real client `-03:00` (never
+  `Z`) asserts both the returned rows and the displayed período. *(decision 13 above)* —
+  `OrdenesCompraLecturaTests.ListadoConOffsetMenosTresAsertaFilasYPeriodoMostrado`.
+- [x] 5.15 [P] **Mutation target #34b (part 1)** — `.ThenByDescending(o => o.Id)` deleted → the
+  tied-fecha pagination test (5.6) must fail. **Evidence**: deleted the `.ThenByDescending(o =>
+  o.Id)` line in `ListarAsync` → `dotnet build --no-incremental` (clean) →
+  `PaginacionConFechaEmisionEmpatadaNoDuplicaNiSalteaFilas` FAILED (`Assert.Equal` expected
+  `[3, 2]`, actual `[1, 2]` — page 1 repeated the lowest id instead of the two highest) → `git
+  status` clean revert (no diff — exact restore) → rebuilt → green.
+- [x] 5.16 [P] **Mutation target #34b (part 2)** — any single `if (filtro is { } x)` conjunct
+  deleted → its asymmetric-seed test (5.7) must fail. **Evidence**: deleted the `estado` filter's
+  `if` block in `ConstruirQuery` → build clean →
+  `CadaFiltroIgnoradoDevolveriaDeMasConSemillasAsimetricas` FAILED (`Assert.DoesNotContain` — the
+  `borrador` OC leaked into the `estado=Enviada` result set) → `git status` clean revert → rebuilt →
+  green.
+- [x] 5.17 [P] **Mutation target #34b (part 3)** — the `Desvio` null branch replaced with `0` →
+  the no-comparable test (5.11) must fail. **Evidence**: replaced the `: null` fallback with `:
+  0m` in `ObtenerCoberturaAsync` → build clean →
+  `UnaLineaNuncaCotizadaReportaNoComparableNuncaCero` FAILED (`Assert.Null` expected `null`, actual
+  `0`) → `git status` clean revert → rebuilt → green.
+- [x] 5.18 Gate guard: `dotnet ef migrations has-pending-model-changes` clean (verified via
+  `db.Database.HasPendingModelChanges()`, same pattern as slices 2/4 —
+  `OrdenesCompraLecturaTests.NoHayCambiosPendientesDeModeloRespectoDeLaMigracionDeLaSlice1`); zero
+  new files under `Migraciones/` (`git diff --stat main -- src/Ways.Infrastructure/Persistencia/
+  Migraciones/` empty). Gate holds, no deviation.
+- [ ] 5.19 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
+  RUN by `sdd-apply`** — same executor-boundary reason as every prior slice (1.38/2.27/3.x/4.x):
+  `judgment-day` is an orchestrator-level dual-review protocol this executor cannot invoke. Left for
+  the orchestrator to run before merge.
 - [ ] 5.20 Branch `feat/stage16-slice5-lectura` off `main` (parent: slice 4); PR; merge
-  stacked-to-main.
+  stacked-to-main. **PARTIAL**: the worktree was already provisioned on
+  `feat/stage16-slice5-lectura` off `main` (`6f8a25f`, slice 4 merged) before this phase started —
+  branching is done. PR creation/merge is explicitly out of scope (`NO pushees` instruction) — left
+  for the orchestrator.
 
 **Test plan**: pagination + tiebreaker (5.6); filters (5.7); read-model rules 12a/12c (5.8);
 projection fidelity (5.9); price deviation incl. honest nulls (5.10-5.11); pre-load (5.12);
