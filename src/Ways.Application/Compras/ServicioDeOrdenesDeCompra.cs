@@ -12,9 +12,15 @@ namespace Ways.Application.Compras;
 /// <summary>
 /// stage-16-ordenes-de-compra, Slice 2 (design: Technical Approach, decisiones 6-7). Borrador CRUD
 /// (replace-set, mismo criterio que <see cref="ServicioDeCompras"/>) + <see cref="EnviarAsync"/>
-/// (numeración propia, serie <c>'OC'</c>, consumida al enviar). <c>cerrar</c>/<c>anular</c> llegan
-/// en slice 4; la lectura paginada + el detalle con cobertura en slice 5; la ligadura con
-/// <c>comprobantes_compra</c> en slice 3 — ninguno de esos caminos existe todavía.
+/// (numeración propia, serie <c>'OC'</c>, consumida al enviar). La lectura paginada + el detalle
+/// con cobertura llegan en slice 5; la ligadura con <c>comprobantes_compra</c> en slice 3 (ver
+/// <see cref="EscriturasDeOrdenDeCompra"/>, llamada SOLO desde <see cref="ServicioDeCompras"/>).
+///
+/// Slice 4 (design: Transactions — CERRAR OC/ANULAR OC, decisiones 5/9): <see cref="CerrarAsync"/>
+/// (cierre manual, actor-stamped, jamás revertido por la proyección) y <see cref="AnularAsync"/>
+/// (gobernada por el libro, guard lock-free — decisión 9, mutation target #33). Ninguno de los dos
+/// pasa por <see cref="EscriturasDeOrdenDeCompra"/>: son caminos de escritura propios de esta
+/// clase, no proyecciones del libro de recepción.
 ///
 /// OD9 (orquestador, apply de esta slice): los resolvers 404 de proveedor/punto de venta son
 /// PRIVADOS y PROPIOS de esta clase — copian la FORMA exacta de
@@ -202,6 +208,135 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
         return await ObtenerParaRespuestaAsync(id, ct);
     }
 
+    // ---- cerrar: manual, actor-stamped, jamás revertido (design decisión 5, Transactions — CERRAR OC) ----
+
+    /// <summary>design: Transactions — CERRAR OC (manual). Una única <c>UPDATE … RETURNING</c>
+    /// escribe la tríada <c>estado</c>/<c>fecha_cierre</c>/<c>id_empleado_cierre</c> — el CHECK 2
+    /// (<c>ck_ordenes_compra_cierre</c>, proposal §B) exige que las tres cambien juntas. Válido
+    /// solo desde <c>enviada</c>/<c>recibida_parcial</c> (ordenes-de-compra/spec.md: "Manual Close
+    /// Is A Human Decision"); <c>borrador</c> NO es cerrable (nunca se envió), ni <c>cerrada</c>
+    /// (mutation target #31) ni <c>anulada</c>. Una vez escrito, <c>id_empleado_cierre IS NOT
+    /// NULL</c> hace que <see cref="EscriturasDeOrdenDeCompra.ProyectarEstadoAsync"/> jamás vuelva
+    /// a tocar esta orden (design decisión 2, cortocircuito bajo el mismo lock, mutation target
+    /// #26).</summary>
+    public async Task<OrdenDeCompraBorrador> CerrarAsync(int id, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () =>
+            await EjecutarCierreAsync(id, idTenant, idEmpleado, momento, ct));
+    }
+
+    private async Task<OrdenDeCompraBorrador> EjecutarCierreAsync(
+        int id, int idTenant, int idEmpleado, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        var cerrada = await CerrarHeaderAsync(conexion, transaccionCruda, id, idTenant, idEmpleado, momento, ct);
+        if (!cerrada)
+        {
+            var existe = await db.OrdenesCompra.AsNoTracking().AnyAsync(o => o.Id == id, ct);
+            if (!existe)
+            {
+                throw ErrorDominio.NoEncontrado($"No existe la orden de compra {id}.");
+            }
+
+            // Código único deliberadamente general (mismo criterio que orden_compra_no_enviable,
+            // decisión 19 de tasks.md): borrador (nunca se envió), ya cerrada (mutation target
+            // #31) y anulada colapsan en la misma causa observable — "no está en un estado
+            // cerrable ahora mismo".
+            throw new ErrorDominio(
+                "orden_compra_no_cerrable", "La orden de compra no está en un estado cerrable.", 409);
+        }
+
+        await transaccion.CommitAsync(ct);
+
+        return await ObtenerParaRespuestaAsync(id, ct);
+    }
+
+    // ---- anular: gobernada por el libro, guard lock-free (design decisión 9, Transactions — ANULAR OC) ----
+
+    /// <summary>design decisión 9 (proposal decisión 9, ratificada): anulación GOBERNADA POR EL
+    /// LIBRO, nunca por el estado solo. Statement 1 (<c>SELECT … FOR UPDATE</c>) es el ÚNICO lock
+    /// de fila de todo el método — ni el statement 2 (recepción confirmada) ni el 3 (borrador
+    /// ligado) toman lock alguno (decisión 9: "adding FOR SHARE there closes a lock cycle against
+    /// the confirm path" — un <c>FOR SHARE</c> acá armaría el ciclo confirm-quiere-OC /
+    /// anular-quiere-comprobante, mutation target #33, tasks 4.10/OD-decisión-20.2 de este
+    /// slice). Los TRES guards fallidos colapsan al MISMO código de dominio,
+    /// <c>orden_compra_con_recepciones</c> — el propio contrato del spec ("otherwise 409
+    /// orden_compra_con_recepciones") lo pinea como código único, mismo criterio de generalidad
+    /// deliberada que decisión 19 (<c>orden_compra_no_enviable</c>).</summary>
+    public async Task<OrdenDeCompraBorrador> AnularAsync(int id, CancellationToken ct = default)
+    {
+        var idTenant = ExigirTenantDeLaSesion();
+        var momento = reloj.Ahora;
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        return await estrategia.ExecuteAsync(async () =>
+            await EjecutarAnulacionDeOrdenAsync(id, idTenant, momento, ct));
+    }
+
+    private async Task<OrdenDeCompraBorrador> EjecutarAnulacionDeOrdenAsync(
+        int id, int idTenant, DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // Statement 1 — PRIMER y ÚNICO lock (FOR UPDATE). 0 filas ⇒ la orden no existe para este
+        // tenant (ADR-8: mismo 404 para "no existe" y "es de otro tenant").
+        var estado = await BloquearYLeerEstadoOrdenAsync(conexion, transaccionCruda, id, idTenant, ct);
+        if (estado is null)
+        {
+            throw ErrorDominio.NoEncontrado($"No existe la orden de compra {id}.");
+        }
+
+        if (estado != "borrador" && estado != "enviada")
+        {
+            throw new ErrorDominio(
+                "orden_compra_con_recepciones", "La orden de compra no puede anularse.", 409);
+        }
+
+        // Statement 2 — recepción confirmada (recibida > 0 en cualquier artículo). Lock-free
+        // (decisión 9): un SELECT simple nunca bloquea bajo READ COMMITTED, ve solo el último
+        // commit — el UPDATE en curso de un confirm concurrente (todavía sin comitear) es
+        // invisible acá, no hace falta ningún lock para no verlo.
+        if (await TieneRecepcionConfirmadaAsync(conexion, transaccionCruda, id, idTenant, ct))
+        {
+            throw new ErrorDominio(
+                "orden_compra_con_recepciones", "La orden de compra tiene una recepción confirmada.", 409);
+        }
+
+        // Statement 3 — comprobante ligado todavía en borrador (mutation target #33, task 4.10):
+        // SIN lock de fila — agregar FOR SHARE acá arma el ciclo de deadlock contra
+        // EjecutarConfirmarAsync (que toma comprobantes_compra primero y quiere ordenes_compra
+        // después, mientras esta transacción ya tiene ordenes_compra y querría comprobantes_compra).
+        if (await TieneComprobanteLigadoEnBorradorAsync(conexion, transaccionCruda, id, idTenant, ct))
+        {
+            throw new ErrorDominio(
+                "orden_compra_con_recepciones",
+                "La orden de compra tiene un comprobante ligado todavía en borrador.", 409);
+        }
+
+        // Statement 4 — la ÚNICA autoridad de transición a `anulada`. El lock de statement 1 ya
+        // serializa cualquier escritor concurrente sobre esta fila — 0 filas acá sería un
+        // invariante roto (nadie más pudo mover el estado entretanto), nunca un ErrorDominio.
+        var anulada = await MarcarOrdenAnuladaAsync(conexion, transaccionCruda, id, idTenant, momento, ct)
+            ?? throw new InvalidOperationException(
+                $"La anulación de la orden de compra {id} no afectó ninguna fila bajo el lock ya tomado.");
+
+        await transaccion.CommitAsync(ct);
+
+        return await ObtenerParaRespuestaAsync(id, ct);
+    }
+
     // ---- statements crudos (sibling raw SQL, mismo criterio que ServicioDeCompras) ----------------
 
     private static async Task<bool> BloquearBorradorAsync(
@@ -253,6 +388,130 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
         }
 
         return lector.IsDBNull(0) ? null : lector.GetInt64(0);
+    }
+
+    /// <summary>design: Transactions — CERRAR OC, único statement. Escribe la tríada
+    /// <c>estado</c>/<c>fecha_cierre</c>/<c>id_empleado_cierre</c> en UN <c>UPDATE … RETURNING</c>
+    /// (design decisión 5) — el CHECK 2 exige que las tres cambien juntas, así que partirlo en dos
+    /// statements dejaría una ventana con la fila en un estado que el propio CHECK rechazaría.
+    /// <c>momento</c>/<c>idEmpleado</c> viajan SIEMPRE por <see cref="ParametrosDeComando.Agregar"/>
+    /// (mutation target #32 para el segundo).</summary>
+    private static async Task<bool> CerrarHeaderAsync(
+        DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, int idEmpleado,
+        DateTimeOffset momento, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "UPDATE ordenes_compra SET estado = 'cerrada'::estado_orden_compra, " +
+            "fecha_cierre = $1, id_empleado_cierre = $2, updated_at = $1 " +
+            "WHERE id_orden_compra = $3 AND id_tenant = $4 " +
+            "AND estado IN ('enviada'::estado_orden_compra, 'recibida_parcial'::estado_orden_compra) " +
+            "RETURNING estado";
+
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, idEmpleado);
+        ParametrosDeComando.Agregar(comando, id);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado is not null;
+    }
+
+    /// <summary>design: Transactions — ANULAR OC, statement 1. El ÚNICO <c>FOR UPDATE</c> de todo
+    /// el método <see cref="EjecutarAnulacionDeOrdenAsync"/> — statements 2/3 son lecturas
+    /// lock-free a propósito (decisión 9). <c>null</c> ⇒ la fila no existe para este tenant
+    /// (invariante de FK garantiza que, si existe, esta lectura la ve).</summary>
+    private static async Task<string?> BloquearYLeerEstadoOrdenAsync(
+        DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT estado::text FROM ordenes_compra WHERE id_orden_compra = $1 AND id_tenant = $2 FOR UPDATE";
+
+        ParametrosDeComando.Agregar(comando, id);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado as string;
+    }
+
+    /// <summary>design: Transactions — ANULAR OC, statement 2 ("recibida &gt; 0 en cualquier
+    /// artículo"). <c>cantidad</c> de un item de comprobante confirmado es SIEMPRE positiva
+    /// (<c>ck_items_comprobante_compra_cantidad_positiva</c>) — por eso alcanza con un EXISTS de
+    /// cualquier item confirmado y ligado, sin necesidad de sumar por artículo como hace
+    /// <see cref="EscriturasDeOrdenDeCompra"/>: cualquier fila que pase el filtro ya prueba
+    /// "recibida &gt; 0" para SU artículo. SIN lock de fila — lectura simple, nunca bloquea bajo
+    /// READ COMMITTED (decisión 9).</summary>
+    private static async Task<bool> TieneRecepcionConfirmadaAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idOrdenCompra, int idTenant, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT EXISTS (" +
+            "    SELECT 1 " +
+            "    FROM items_comprobante_compra ic " +
+            "    JOIN comprobantes_compra c " +
+            "      ON c.id_comprobante_compra = ic.id_comprobante_compra AND c.id_tenant = ic.id_tenant " +
+            "    WHERE c.id_orden_compra = $1 AND c.id_tenant = $2 " +
+            "      AND c.estado = 'confirmada'::estado_compra " +
+            "      AND c.deleted_at IS NULL AND ic.deleted_at IS NULL" +
+            ")";
+
+        ParametrosDeComando.Agregar(comando, idOrdenCompra);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        return (bool)(await comando.ExecuteScalarAsync(ct))!;
+    }
+
+    /// <summary>design: Transactions — ANULAR OC, statement 3 (mutation target #33, task 4.10):
+    /// EXISTS de un comprobante ligado todavía en <c>borrador</c> — SIN lock de fila, a propósito
+    /// (decisión 9: agregar <c>FOR SHARE</c> acá cierra el ciclo de deadlock contra
+    /// <c>EjecutarConfirmarAsync</c>, que toma <c>comprobantes_compra</c> primero y
+    /// <c>ordenes_compra</c> después — el orden inverso exacto de esta transacción, que ya tiene
+    /// <c>ordenes_compra</c> desde el statement 1 y pediría <c>comprobantes_compra</c> acá).</summary>
+    private static async Task<bool> TieneComprobanteLigadoEnBorradorAsync(
+        DbConnection conexion, DbTransaction? transaccion, int idOrdenCompra, int idTenant, CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "SELECT EXISTS (" +
+            "    SELECT 1 FROM comprobantes_compra " +
+            "    WHERE id_orden_compra = $1 AND id_tenant = $2 " +
+            "      AND estado = 'borrador'::estado_compra AND deleted_at IS NULL" +
+            ")";
+
+        ParametrosDeComando.Agregar(comando, idOrdenCompra);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        return (bool)(await comando.ExecuteScalarAsync(ct))!;
+    }
+
+    /// <summary>design: Transactions — ANULAR OC, statement 4 — la ÚNICA autoridad de transición a
+    /// <c>anulada</c>. <c>fecha_cierre</c> no se toca: <c>borrador</c>/<c>enviada</c> nunca la
+    /// tuvieron seteada (CHECK 2 ya lo garantiza), así que no hace falta ningún <c>CASE</c> de
+    /// limpieza como el de <see cref="EscriturasDeOrdenDeCompra"/>.</summary>
+    private static async Task<string?> MarcarOrdenAnuladaAsync(
+        DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, DateTimeOffset momento,
+        CancellationToken ct)
+    {
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccion;
+        comando.CommandText =
+            "UPDATE ordenes_compra SET estado = 'anulada'::estado_orden_compra, updated_at = $1 " +
+            "WHERE id_orden_compra = $2 AND id_tenant = $3 " +
+            "AND estado IN ('borrador'::estado_orden_compra, 'enviada'::estado_orden_compra) " +
+            "RETURNING estado::text";
+
+        ParametrosDeComando.Agregar(comando, momento);
+        ParametrosDeComando.Agregar(comando, id);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        var resultado = await comando.ExecuteScalarAsync(ct);
+        return resultado as string;
     }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
@@ -353,7 +612,7 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
     private static OrdenDeCompraBorrador Proyectar(OrdenCompra orden, IReadOnlyList<ItemOrdenCompra> items) => new(
         orden.Id, orden.IdProveedor, orden.IdPuntoVenta, orden.Numero, orden.FechaEmision, orden.FechaEnvio,
-        orden.FechaEsperada, orden.Observaciones, orden.Estado,
+        orden.FechaEsperada, orden.FechaCierre, orden.IdEmpleadoCierre, orden.Observaciones, orden.Estado,
         items
             .OrderBy(i => i.Orden)
             .Select(i => new ItemDeOrden(i.Orden, i.IdArticulo, i.Descripcion, i.CantidadPedida, i.CostoUnitarioEstimado))
