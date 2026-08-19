@@ -1193,10 +1193,17 @@ slices 1-3's re-run suites (223/223 across all `Compras`/`OrdenesCompra`/
       comprobante via an uncommitted `UPDATE`, wants OC `FOR UPDATE`) reproduced Postgres's deadlock
       detector firing (one side threw) within the 15s window; the identical scenario against the
       SHIPPED statement 3 (no `FOR SHARE`) completed both sides cleanly. Not kept as a permanent
-      test — the two shipped interceptor tests above already give the permanent "both orders
-      resolve cleanly" regression coverage against real production code; a raw-SQL-literal test
-      that never calls `ServicioDeOrdenesDeCompra` would only assert Postgres's own locking
-      semantics, not this codebase's behavior.
+      test — a raw-SQL-literal test that never calls `ServicioDeOrdenesDeCompra` would only assert
+      Postgres's own locking semantics, not this codebase's behavior. **Correction (judgment-day
+      round, juez B, MAJOR — see decision 23)**: this bullet originally claimed the two shipped
+      interceptor tests above (`AnularPierdeCuandoConfirmarComitePrimeroMientrasAnularEstaPausada`/
+      `AnularPierdeCuandoIntentaPrimeroMientrasConfirmarEstaPausada`) "already give the permanent
+      regression coverage" for this invariant. That is FALSE: both interceptor tests pause the
+      `DbTransactionInterceptor` immediately after `BeginTransactionAsync`, BEFORE either
+      transaction's first statement runs — they never recreate the row-contention window a deadlock
+      needs, so they regress the RESULT of the race (which side's estado guard wins), not the
+      absence of locking on statements 2/3. The permanent structural regression for THIS invariant
+      is `ServicioDeOrdenesDeCompraLockFreeGuardsTests` (decision 23), not these two tests.
     - **Confound found and fixed (mutation-proof-tests rule 3, task 4.8/4.16 guard "a")**: the
       realistic end-to-end fixture for "an OC with an effective reception cannot be annulled"
       (`UnaOrdenConRecepcionEfectivaNoPuedeAnularse409`) does not, by itself, discriminate
@@ -1213,6 +1220,32 @@ slices 1-3's re-run suites (223/223 across all `Compras`/`OrdenesCompra`/
       process did not die mid-cycle — all 4 mutation-evidence cycles (targets #31/#32/#33/#34a) ran
       end-to-end in one session, each verified FAIL → revert → green before proceeding to the next,
       `git status` clean after every revert.
+
+23. **`judgment-day` round confirmed 1 MAJOR (juez B) on decision 22's interceptor-tests claim —
+    closed with a permanent structural test.** Decision 22's `FOR SHARE`-on-statement-3 bullet
+    claimed the two shipped `DbTransactionInterceptor` tests
+    (`AnularPierdeCuandoConfirmarComitePrimeroMientrasAnularEstaPausada`/
+    `AnularPierdeCuandoIntentaPrimeroMientrasConfirmarEstaPausada`) "already give the permanent
+    regression coverage" for the lock-free invariant on statements 2/3 of `AnularAsync`
+    (`TieneRecepcionConfirmadaAsync`/`TieneComprobanteLigadoEnBorradorAsync`,
+    `ServicioDeOrdenesDeCompra.cs:447-491`). **FALSE, confirmed by inspection**: both interceptor
+    tests pause the interceptor right after `BeginTransactionAsync`, before either transaction's
+    first statement — they never create the row-contention window a deadlock needs, so they
+    regress the RESULT of the race (which side's estado guard wins), never the presence/absence of
+    row locking on these two statements. Left as documented, a deliberate "safety" reintroduction
+    of `FOR SHARE`/`FOR UPDATE` on either guard would ship real deadlock risk with zero red test.
+    **Fix**: added `ServicioDeOrdenesDeCompraLockFreeGuardsTests` (source-text assertion, same
+    technique as `EscriturasDeOrdenDeCompraLockOrderTests`/`ServicioDeComprasLockOrderTests` —
+    mutation-proof-tests rule 3: the absence of a deadlock is a non-event, inherently untestable
+    behaviorally, so the structural confound is the documented escape hatch) — extracts each
+    method's real body via `IndexOf`/substring (not a duplicated SQL literal) and asserts neither
+    contains `FOR SHARE` nor `FOR UPDATE`. Mutation evidence (both guards, both lock clauses):
+    reintroducing `FOR SHARE` in statement 3's `EXISTS` or `FOR UPDATE` in statement 2's `EXISTS`
+    made the corresponding new test fail on a clean `--no-incremental` build; `git checkout -- src/`
+    plus a rebuild returned to green, `git status` clean between cycles. Decision 22's bullet is
+    corrected in place (struck through in effect, replaced with this cross-reference) rather than
+    rewritten silently, per decision 15's honesty discipline; the one-shot raw-ADO deadlock capture
+    described there remains historical evidence, not a claim about the interceptor tests.
 
 ---
 
