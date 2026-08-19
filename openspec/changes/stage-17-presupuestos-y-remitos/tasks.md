@@ -228,6 +228,21 @@ overflows. **Done** = tests green + `judgment-day` clean round + PR merged.
 - [x] 1.18 Modify `WaysDbContextFactory.cs` **and** `DependencyInjection.cs` —
   `MapEnum<EstadoPresupuesto>` in **both** builders, never also `HasPostgresEnum`.
   *(design.md:449, mutation target 9)*
+
+  **Evidence, `WaysDbContextFactory.cs` half**: deleted the call → `dotnet ef migrations
+  has-pending-model-changes` flips from clean to `"Changes have been made to the model since
+  the last migration"` (this factory IS what that CLI tool uses) → reverted → clean again.
+  **Finding registered, `DependencyInjection.cs` half**: the equivalent deletion there is
+  **NOT observable** by any test in this repo, for any of the 17 pre-existing `MapEnum` calls
+  in that file, not only this one — `WaysApiFixture.ConfigureWebHost` unconditionally
+  `RemoveAll`s and re-registers `WaysDbContext`/`IWaysDbContext` with its OWN
+  `ConfigurarNpgsqlDePrueba` (its own comment: "batch 7, slice 2" workaround for
+  `PendingModelChangesWarning`), so production `DependencyInjection.ConfigurarNpgsql` is
+  registered once at host build time and then fully discarded before any query runs. Confirmed
+  empirically: 37/37 slice tests stayed green with the call deleted. This is a **pre-existing
+  test-infrastructure gap**, not introduced by this slice (every prior stage's `MapEnum` entry
+  in this file shares it) — out of scope to close from a schema-only slice; registered here so
+  it is not read as an omission specific to `EstadoPresupuesto`.
 - [x] 1.19 Modify `InicializadorDeBaseDeDatos.cs` — `TiposComprobanteBase` gains an explicit
   `Activo` field, `false` for `PRE` alone — **net 1b, mandatory**: without it every fresh
   install reopens the hole (seeder runs only against an empty DB, after migrations,
@@ -333,6 +348,17 @@ overflows. **Done** = tests green + `judgment-day` clean round + PR merged.
   proposal.md:1130-1137)*
 - [x] 1.38 **GATE GUARD, net 1** — a **migrated** database's `PRE` is inactive, independent of
   net 1b (test still fails if only the seed change is removed). *(mutation target 11)*
+
+  **CORRECTION REGISTERED (mutation-proof-tests rule 2)**: the first version of this test
+  (`UnaBaseMigradaTienePreInactivo`) reused the SHARED `WaysApiFixture` database — which is
+  always a fresh install (migrate + seed in the same startup), so net 1b alone kept it green
+  even with the data statement deleted (confirmed empirically, not reasoned). Replaced with
+  `UnaBaseYaMigradaConPreActivoQuedaInactivaTrasAplicarLaMigracionDeEstaEtapa`: migrates a
+  dedicated new database to the migration immediately BEFORE `PresupuestosEtapa17`, seeds `PRE`
+  ACTIVE by raw SQL (the real pre-etapa-17 state), then applies only `PresupuestosEtapa17` via
+  `IMigrator` — the seeder never runs on this path, so the only net that can deactivate `PRE`
+  here is the data statement. Verified red with the data statement deleted, green after
+  `git checkout --` revert (`ComprasTipoSeedTests`'s own migrated-database precedent).
 - [x] 1.39 **GATE GUARD, net 1b** — a **freshly seeded** database has `PRE` inactive.
   *(mutation target 10)* — implemented against a genuinely fresh database (a NEW `CREATE
   DATABASE` inside the shared Testcontainer, never touched by the migration before), running

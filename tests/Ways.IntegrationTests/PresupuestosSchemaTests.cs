@@ -1,5 +1,8 @@
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
@@ -700,24 +703,109 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
     // El PRE latente — los dos nets, cada uno probado INDEPENDIENTEMENTE (tasks 1.38/1.39)
     // ---------------------------------------------------------------------------------------
 
-    /// <summary>GATE GUARD, net 1 (task 1.38, mutation target #11): una base YA MIGRADA (la
-    /// compartida de <see cref="WaysApiFixture"/>, que corrió esta migración) tiene `PRE`
-    /// inactivo por el data statement 1 — independiente del seed change (net 1b): este test
-    /// sigue en rojo si SOLO se revierte el seed change, porque el dato ya está en la base desde
-    /// antes de que el seeder corriera.</summary>
+    private const string MigracionAnteriorAPresupuestosEtapa17 = "20260819042145_OrdenesDeCompraEtapa16";
+
+    /// <summary>GATE GUARD, net 1 (task 1.38, mutation target #11): una base YA MIGRADA
+    /// (existente ANTES de esta etapa, con `PRE` ya sembrado ACTIVO — el estado real de
+    /// cualquier instalación operando desde antes de la etapa 17) tiene que quedar con `PRE`
+    /// **inactivo** después de aplicar `PresupuestosEtapa17`, por el data statement 1 —
+    /// independiente del seed change (net 1b), que acá NUNCA corre: se migra directo con
+    /// `IMigrator`, sin pasar por `InicializadorDeBaseDeDatos.EjecutarAsync`.
+    ///
+    /// CORRECCIÓN (mutation-proof-tests regla 2, hallazgo registrado en tasks.md): la primera
+    /// versión de este test reusaba la base COMPARTIDA de <see cref="WaysApiFixture"/> — que
+    /// siempre es una instalación FRESCA (migra Y siembra en el mismo arranque), así que net 1b
+    /// por sí solo ya la dejaba en verde, con o sin el data statement 1. Confirmado
+    /// empíricamente: la versión vieja seguía en VERDE con el data statement 1 borrado. Esta
+    /// versión migra a mano hasta la migración ANTERIOR, siembra `PRE` ACTIVO por SQL directo
+    /// (el estado real de una base operando desde antes de esta etapa) y recién ahí aplica
+    /// `PresupuestosEtapa17` — el seeder nunca corre en este camino, así que la única red que
+    /// puede haber apagado `PRE` es el data statement 1 (mismo patrón que
+    /// `ComprasTipoSeedTests.LosTiposDeCompraAterrizanEnUnaBaseYaMigradaDesdeStage7...`).</summary>
     [Fact]
-    public async Task UnaBaseMigradaTienePreInactivo()
+    public async Task UnaBaseYaMigradaConPreActivoQuedaInactivaTrasAplicarLaMigracionDeEstaEtapa()
     {
-        using var _ = fixture.CreateClient(); // arranca el host: aplica migraciones + siembra
+        var nombreBase = $"ways_stage17_pre_{Guid.NewGuid():N}";
+        var cadenaAdmin = new NpgsqlConnectionStringBuilder(fixture.OwnerConnectionString) { Database = "postgres" }.ConnectionString;
+        var cadenaNueva = new NpgsqlConnectionStringBuilder(fixture.OwnerConnectionString) { Database = nombreBase }.ConnectionString;
 
-        await using var cruda = new NpgsqlConnection(fixture.OwnerConnectionString);
-        await cruda.OpenAsync();
+        await using (var admin = new NpgsqlConnection(cadenaAdmin))
+        {
+            await admin.OpenAsync();
+            await using var crear = admin.CreateCommand();
+            crear.CommandText = $"CREATE DATABASE \"{nombreBase}\"";
+            await crear.ExecuteNonQueryAsync();
+        }
 
-        await using var comando = cruda.CreateCommand();
-        comando.CommandText = "SELECT activo FROM tipos_comprobante WHERE codigo = 'PRE'";
-        var activo = (bool)(await comando.ExecuteScalarAsync())!;
+        try
+        {
+            var opciones = new DbContextOptionsBuilder<WaysDbContext>()
+                .UseNpgsql(cadenaNueva, npgsql =>
+                {
+                    npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                    npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                    npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                    npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                    npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                    npgsql.MapEnum<ModoLista>("modo_lista");
+                    npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                    npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                    npgsql.MapEnum<MotivoStock>("motivo_stock");
+                    npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
+                    npgsql.MapEnum<EstadoTurno>("estado_turno");
+                    npgsql.MapEnum<TipoMovimientoCaja>("tipo_movimiento_caja");
+                    npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
+                    npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
+                    npgsql.MapEnum<EstadoCompra>("estado_compra");
+                    npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                    npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
+                    npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
+                })
+                .Options;
 
-        Assert.False(activo);
+            await using (var db = new WaysDbContext(opciones, TenantActualFijo.Plataforma))
+            {
+                var migrador = db.Database.GetInfrastructure().GetRequiredService<IMigrator>();
+                await migrador.MigrateAsync(MigracionAnteriorAPresupuestosEtapa17);
+            }
+
+            // Simula el catálogo de una base real ya operando desde antes de esta etapa: PRE
+            // sembrado ACTIVO, exactamente como lo dejaba InicializadorDeBaseDeDatos ANTES del
+            // cambio de esta etapa.
+            await using (var conexion = new NpgsqlConnection(cadenaNueva))
+            {
+                await conexion.OpenAsync();
+                await using var comando = conexion.CreateCommand();
+                comando.CommandText =
+                    "INSERT INTO tipos_comprobante (clase, codigo, nombre, letra, signo, discrimina_iva, " +
+                    "es_fiscal, afecta_stock, activo, created_at, updated_at) " +
+                    "VALUES ('venta', 'PRE', 'Presupuesto', NULL, 1, false, false, false, true, now(), now())";
+                await comando.ExecuteNonQueryAsync();
+            }
+
+            await using (var db = new WaysDbContext(opciones, TenantActualFijo.Plataforma))
+            {
+                var migrador = db.Database.GetInfrastructure().GetRequiredService<IMigrator>();
+                await migrador.MigrateAsync(); // aplica PresupuestosEtapa17, la única pendiente — el seeder NUNCA corre acá
+            }
+
+            await using var verificacion = new NpgsqlConnection(cadenaNueva);
+            await verificacion.OpenAsync();
+
+            await using var comandoVerificar = verificacion.CreateCommand();
+            comandoVerificar.CommandText = "SELECT activo FROM tipos_comprobante WHERE codigo = 'PRE'";
+            var activo = (bool)(await comandoVerificar.ExecuteScalarAsync())!;
+
+            Assert.False(activo);
+        }
+        finally
+        {
+            await using var admin = new NpgsqlConnection(cadenaAdmin);
+            await admin.OpenAsync();
+            await using var dropear = admin.CreateCommand();
+            dropear.CommandText = $"DROP DATABASE IF EXISTS \"{nombreBase}\" WITH (FORCE)";
+            await dropear.ExecuteNonQueryAsync();
+        }
     }
 
     /// <summary>GATE GUARD, net 1b (task 1.39, mutation target #10): una base recién sembrada
