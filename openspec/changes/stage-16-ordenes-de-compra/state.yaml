@@ -112,9 +112,43 @@ phases:
       reales de 300-500+ lineas); (T5) cuenta-corriente-de-proveedores
       verificada intocada.
   design:
-    status: pending
+    status: done
     artifact: design.md
     depends_on: [propose]
+    notes: >-
+      16 decisiones con call sites archivo:linea, cero DDL nuevo. Nucleo:
+      EscriturasDeOrdenDeCompra estatica con proyeccion en TRES statements
+      (SELECT FOR UPDATE -> derivacion en statement SEPARADO -> UPDATE
+      RETURNING; un UPDATE...FROM(SELECT) no revalida bajo READ COMMITTED),
+      llamada desde confirmar/anular en posicion de lock 2 detras de un
+      NULL check que garantiza cero statements extra sin OC;
+      ProyectorDeEstadoDeOrden puro en Domain; numero asignado ANTES de la
+      transaccion (AsignarComprometidoAsync commitea la suya propia) con
+      el PV pineado en el WHERE del enviar; guard de ligadura FOR SHARE en
+      borrador (validacion) + guard VINCULANTE en confirm; el EXISTS del
+      guard de anulacion LOCK-FREE (cerrarlo con lock arma ciclo de
+      deadlock con el confirm); 6 ramas de ManejadorDeErrores re-scopeadas
+      al slice 1 (nacen con la constraint). 34 mutation targets + fila de
+      no-regresion. TENSIONES T1-T10 ARBITRADAS POR EL ORQUESTADOR
+      (Orchestrator Decision 8): TODAS ratificadas a favor del design —
+      (T1) el criterio del gate de dos enviar sin 409 aplica a dos OCs
+      DISTINTAS del mismo PV; misma OC = 200+409 con numero quemado
+      (huecos legitimos); (T2) ligar a una OC cerrada PERMITIDO
+      (trazabilidad de factura tardia; el cierre manual jamas se
+      revierte, el automatico ya esta completo — a anulada sigue 409);
+      (T3) el FOR SHARE del borrador es validacion, la autoridad es el
+      guard del confirm; (T4) cita corregida ServicioDeGastos:213-267;
+      (T5) el boton de generar OC en Reposicion.tsx se gatea a Admin
+      (las escrituras de OC son Admin-only; el Supervisor conserva la
+      pantalla como hoy); (T6) OC vacia rechazada en enviar (proyectaria
+      directo a cerrada); (T7) CompraDetalle GANA IdOrdenCompra —
+      corrige el "no response shape changes" del proposal por
+      dto-contract-honesty, campo aditivo; (T8) cobertura por articulo
+      como lista separada (la recepcion por linea es subderivable bajo
+      agrupacion); (T9) algoRecibido viene del lado RECEPCION (las
+      entregas por sustitucion cuentan); (T10) guard lock-free
+      ratificado. Desviacion de presupuesto de palabras registrada
+      (precedente de casa).
   tasks:
     status: pending
     artifact: tasks.md
