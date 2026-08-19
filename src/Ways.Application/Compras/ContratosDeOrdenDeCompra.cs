@@ -42,6 +42,11 @@ public sealed record ItemDeOrden(
 /// 1: un campo que nunca varía no es un contrato, es relleno). Este tipo cubre solo lo que el
 /// camino de escritura de esta slice puede proyectar honestamente; <c>OrdenDeCompraDetalle</c> se
 /// crea en la slice 5 tal como el propio task list lo asigna, para <c>GET /{id}</c>.</summary>
+/// <summary><see cref="FechaCierre"/>/<see cref="IdEmpleadoCierre"/> agregados en Slice 4
+/// (design: Transactions — CERRAR OC): <c>CerrarAsync</c> es el camino de escritura que hace estos
+/// dos campos honestos por primera vez — <c>NULL</c> hasta el cierre, poblados en el mismo
+/// <c>UPDATE … RETURNING</c> que los escribe (dto-contract-honesty regla 1: no es relleno, varían
+/// con el cierre real).</summary>
 public sealed record OrdenDeCompraBorrador(
     int Id,
     int IdProveedor,
@@ -50,6 +55,8 @@ public sealed record OrdenDeCompraBorrador(
     DateTimeOffset FechaEmision,
     DateTimeOffset? FechaEnvio,
     DateOnly? FechaEsperada,
+    DateTimeOffset? FechaCierre,
+    int? IdEmpleadoCierre,
     string? Observaciones,
     EstadoOrdenCompra Estado,
     IReadOnlyList<ItemDeOrden> Items);

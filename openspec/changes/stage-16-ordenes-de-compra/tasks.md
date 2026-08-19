@@ -976,60 +976,276 @@ the authorization matrix are proven; the anulación guard reads `comprobantes_co
 **Rollback**: revert branch — both endpoints disappear, the projection (slice 3) is unaffected.
 **Done** = tests green + `judgment-day` clean round + PR merged.
 
-- [ ] 4.1 Same `ServicioDeOrdenesDeCompra.cs`: `CerrarAsync` — `UPDATE … SET estado='cerrada',
+- [x] 4.1 Same `ServicioDeOrdenesDeCompra.cs`: `CerrarAsync` — `UPDATE … SET estado='cerrada',
   fecha_cierre=$m, id_empleado_cierre=$actor WHERE … AND estado IN ('enviada','recibida_parcial')
-  RETURNING`. *(design.md:262-263, ordenes-de-compra/spec.md:139-141)*
-- [ ] 4.2 Same file: `AnularAsync` — statement 1 `SELECT estado FOR UPDATE` (first and only lock);
+  RETURNING`. *(design.md:262-263, ordenes-de-compra/spec.md:139-141)* — **DEVIATION registered
+  (decision 22 below)**: `OrdenDeCompraBorrador` gains `FechaCierre`/`IdEmpleadoCierre` (previously
+  absent from that slice-2 response DTO) — `CerrarAsync` is the write path that makes these two
+  fields honest for the first time (`dto-contract-honesty` rule 1).
+- [x] 4.2 Same file: `AnularAsync` — statement 1 `SELECT estado FOR UPDATE` (first and only lock);
   statement 2 the derived-received-zero guard (any artículo `> 0` ⇒ `409
   orden_compra_con_recepciones`); statement 3 the linked-`borrador` `EXISTS` guard, **WITHOUT any
   row lock** (decision 9); statement 4 `UPDATE … estado='anulada' WHERE … estado IN
-  ('borrador','enviada') RETURNING`. *(design.md:252-259, decision 9, mutation target #33)*
-- [ ] 4.3 Modify `OrdenesDeCompraEndpoints.cs` — add `POST /{id}/cerrar`, `POST /{id}/anular`,
+  ('borrador','enviada') RETURNING`. *(design.md:252-259, decision 9, mutation target #33)* — the
+  three failing guards (statement 1's estado check, statement 2, statement 3) all throw the SAME
+  domain code, `orden_compra_con_recepciones` — the spec's own literal contract
+  (ordenes-de-compra/spec.md:162-164, "otherwise 409 orden_compra_con_recepciones") pins one code
+  for every refusal shape, same deliberate-generality criterion as decision 19's
+  `orden_compra_no_enviable`. `CerrarAsync`'s own 0-row case uses `orden_compra_no_cerrable` (not
+  literally named by spec/design; chosen following the same naming convention as
+  `orden_compra_no_enviable`/`orden_compra_no_editable`).
+- [x] 4.3 Modify `OrdenesDeCompraEndpoints.cs` — add `POST /{id}/cerrar`, `POST /{id}/anular`,
   same policy stack. *(design.md:306-307)*
-- [ ] 4.4 [P] Integration — a supplier order closed manually stamps `fecha_cierre` +
+- [x] 4.4 [P] Integration — a supplier order closed manually stamps `fecha_cierre` +
   `id_empleado_cierre`. *(ordenes-de-compra/spec.md:145-148)*
-- [ ] 4.5 [P] Integration — a manually-closed OC does not reopen when its reception is annulled.
+  `OrdenesCompraCierreYAnulacionTests.CerrarManualmenteEstampaFechaCierreYEmpleado`.
+- [x] 4.5 [P] Integration — a manually-closed OC does not reopen when its reception is annulled.
   *(ordenes-de-compra/spec.md:150-153, comprobantes-compra/spec.md:70-73)*
-- [ ] 4.6 [P] Integration — closing an already-`cerrada` OC is rejected `409`.
-  *(ordenes-de-compra/spec.md:155-158)*
-- [ ] 4.7 [P] Integration — an OC whose only reception was later annulled CAN itself be annulled
+  `UnaOrdenCerradaManualmenteNoSeReabreAlAnularSuRecepcion`.
+- [x] 4.6 [P] Integration — closing an already-`cerrada` OC is rejected `409`.
+  *(ordenes-de-compra/spec.md:155-158)* — implemented as a `[Theory]` covering all three
+  non-cerrable states (`borrador`, `cerrada`, `anulada`),
+  `CerrarUnaOrdenFueraDeEnviadaORecibidaParcialEsRechazada409`, seeded directly by EF (same
+  criterion as `ServicioDeComprasLigaduraTests.SembrarOrdenAnuladaAsync` — the row's state is what
+  the guard interprets, not the path that produced it).
+- [x] 4.7 [P] Integration — an OC whose only reception was later annulled CAN itself be annulled
   (derived quantity zero). *(ordenes-de-compra/spec.md:169-173)*
-- [ ] 4.8 [P] Integration — an OC with an effective (not-annulled) reception CANNOT be annulled ⇒
+  `UnaOrdenCuyaUnicaRecepcionFueAnuladaPuedeAnularseElla`.
+- [x] 4.8 [P] Integration — an OC with an effective (not-annulled) reception CANNOT be annulled ⇒
   `409 orden_compra_con_recepciones`. *(ordenes-de-compra/spec.md:175-178)*
-- [ ] 4.9 [P] Integration — an OC with a still-confirmable linked `borrador` draft CANNOT be
+  `UnaOrdenConRecepcionEfectivaNoPuedeAnularse409` — **FINDING (mutation-proof-tests rule 3,
+  registered here)**: this realistic end-to-end fixture does NOT discriminate statement 2's guard
+  in isolation — any real confirmed reception already moves the estado out of
+  `('borrador','enviada')` via `EscriturasDeOrdenDeCompra`, so statement 1 alone already rejects
+  (confound, verified by mutation). Routed below the confound with a second test,
+  `UnaOrdenEnviadaConUnaRecepcionConfirmadaLigadaDirectaNoPuedeAnularse409` (EF-seeded OC `enviada`
+  + a directly-seeded confirmed comprobante, an estado combination the real projection never
+  produces but that statement 2 must still catch) — this second test is the actual mutation
+  target #33 (guard "a") discriminator.
+- [x] 4.9 [P] Integration — an OC with a still-confirmable linked `borrador` draft CANNOT be
   annulled ⇒ `409 orden_compra_con_recepciones`. *(ordenes-de-compra/spec.md:180-183)*
-- [ ] 4.10 [P] Integration — **the no-lock `EXISTS` proof**: adding `FOR SHARE` to the linked-draft
+  `UnaOrdenConBorradorLigadoConfirmableNoPuedeAnularse409` — no confound here (statements 1/2 both
+  pass cleanly, only statement 3 can reject).
+- [x] 4.10 [P] Integration — **the no-lock `EXISTS` proof**: adding `FOR SHARE` to the linked-draft
   guard's read reproduces the anular×confirmar deadlock; without it, both orders resolve to one
-  `200` + one `409`, never a deadlock. *(design.md:64, decision 9, mutation target #33)*
-- [ ] 4.11 [P] Integration — **authorization matrix**: Vendedor 200 on both GETs, `403` on all
+  `200` + one `409`, never a deadlock. *(design.md:64, decision 9, mutation target #33)* — **this
+  is deferred race #1 from slice 3 (decision 20's "anular OC × confirmar reception", tasks 3.22/
+  3.38), paid off here (decision 22 below).** Two shipped tests force BOTH lock-acquisition orders
+  via `DbTransactionInterceptor` (`AnularPierdeCuandoConfirmarComitePrimeroMientrasAnularEstaPausada`,
+  `AnularPierdeCuandoIntentaPrimeroMientrasConfirmarEstaPausada`) against the REAL HTTP endpoints —
+  **FINDING**: given a genuinely pre-existing linked `borrador` draft, the race is NOT
+  bidirectional in outcome — `anular` loses in BOTH orders (via statement 1 if `confirmar` wins the
+  OC lock first, via statement 3 if `anular` wins it first but still finds the draft `borrador`,
+  invisible-uncommitted confirm notwithstanding under READ COMMITTED). Both orderings verified
+  empirically, both green. The "adding `FOR SHARE` reproduces a deadlock" half was verified with a
+  TEMPORARY raw-two-connection test (removed after evidence capture, not shipped — it duplicates
+  Postgres locking semantics rather than exercising production code): mutating statement 3's read
+  to add `FOR SHARE` and forcing the exact lock cycle (A holds OC `FOR UPDATE`, wants comprobante
+  `FOR SHARE`; B holds comprobante via an uncommitted `UPDATE`, wants OC `FOR UPDATE`) → Postgres's
+  deadlock detector fired and one side threw within the 15s window; the SAME scenario without
+  `FOR SHARE` (statement 3 as shipped) completed both sides cleanly, no exception, confirming
+  decision 9's "lock-free" claim empirically (`mutation-proof-tests` rule 2).
+- [x] 4.11 [P] Integration — **authorization matrix**: Vendedor 200 on both GETs, `403` on all
   five writes (`POST`, `PUT`, `enviar`, `cerrar`, `anular`); Supervisor same; Admin 200 on all;
   tenant B never sees tenant A's OCs. `SuperficieDeAutorizacionTests` allowlist gains the five
-  new non-GET routes. *(ordenes-de-compra/spec.md:232-240, design.md:309-310)*
-- [ ] 4.12 [P] Integration — non-regression: `ComprasConfirmarTests`/`ComprasAnularTests` green
-  and unedited in the diff (repeated per binding verify criterion 3). *(design.md:513-514)*
-- [ ] 4.13 [P] Confirm `cuenta-corriente-de-proveedores`/`saldo-de-proveedor` untouched by
-  `git diff --stat` (spec OD7/T5). *(not-a-new-conflict note above)*
-- [ ] 4.14 [P] **Mutation target #31** — `WHERE estado IN ('enviada','recibida_parcial')` in
-  `cerrar` widened → closing a `borrador`/`anulada` OC succeeds (must fail the test).
-- [ ] 4.15 [P] **Mutation target #32** — `id_empleado_cierre = $actor` on manual close written
-  NULL → the "a manually closed OC is not reopened" test (4.5) must fail.
-- [ ] 4.16 [P] **Mutation target #33** — either the derived-received-zero guard or the linked-
+  new non-GET routes. *(ordenes-de-compra/spec.md:232-240, design.md:309-310)* —
+  `VendedorEsRechazadoEnLasCincoRutasDeEscrituraDeOrdenesDeCompra`,
+  `SupervisorEsRechazadoEnLasCincoRutasDeEscrituraDeOrdenesDeCompra`,
+  `AdminEjerceElCicloCompletoDeEscrituraDeOrdenesDeCompra`,
+  `CerrarYAnularUnaOrdenDeOtroTenantEsRechazadaComo404` (tenant isolation, ADR-8 404). **No
+  `SuperficieDeAutorizacionTests` allowlist edit was needed**: `OrdenesDeCompraEndpoints.cs` already
+  stacks `GestionDeCatalogo` on every write route (slices 2 and 4), so the generic
+  `TodoEndpointNoGetFueraDelAllowlistApilaGestionDeCatalogo` walk covers the two new routes for
+  free — confirmed by mutation (target #34a, task 4.17) that this generic guard actually fires.
+  GETs are not yet implemented (slice 5), so the "200 on both GETs" half of this task is deferred
+  there by construction — no route to test yet.
+- [x] 4.12 [P] Integration — non-regression: `ComprasConfirmarTests`/`ComprasAnularTests` green
+  and unedited in the diff (repeated per binding verify criterion 3). *(design.md:513-514)* —
+  these names refer to `ComprasLifecycleTests`/`ComprasAnulacionYConcurrenciaTests` (same mapping
+  task 3.12's doc-comment already used). `git diff --stat` against both files: empty. Full
+  `Ways.IntegrationTests` regression run: 222/222 green (`Compras`/`OrdenesCompra`/
+  `SuperficieDeAutorizacion`/`ManejadorDeErrores` filter).
+- [x] 4.13 [P] Confirm `cuenta-corriente-de-proveedores`/`saldo-de-proveedor` untouched by
+  `git diff --stat` (spec OD7/T5). *(not-a-new-conflict note above)* — `git diff --stat` against
+  `src/Ways.Application/CuentaCorriente/`: empty.
+- [x] 4.14 [P] **Mutation target #31** — `WHERE estado IN ('enviada','recibida_parcial')` in
+  `cerrar` widened → closing a `borrador`/`anulada` OC succeeds (must fail the test). **Evidence**:
+  deleted the `AND estado IN (...)` clause from `CerrarHeaderAsync`'s SQL → `dotnet build
+  --no-incremental` (clean) → all three `CerrarUnaOrdenFueraDeEnviadaORecibidaParcialEsRechazada409`
+  theory cases FAILED (`borrador`: wrong domain code, the request fell through to an unrelated
+  service-level 409; `cerrada`/`anulada`: `200` instead of `409`, the row's real estado came back
+  `Cerrada` in the response body) → `git checkout -- src/` → `git status` clean → rebuilt → green
+  (3/3).
+- [x] 4.15 [P] **Mutation target #32** — `id_empleado_cierre = $actor` on manual close written
+  NULL → the "a manually closed OC is not reopened" test (4.5) must fail. **Evidence**: replaced
+  `ParametrosDeComando.Agregar(comando, idEmpleado)` with
+  `ParametrosDeComando.AgregarNulo(comando, null)` in `CerrarHeaderAsync` → build clean → BOTH
+  `UnaOrdenCerradaManualmenteNoSeReabreAlAnularSuRecepcion` (expected `Cerrada`, actual `Enviada` —
+  the projection's `cierre_manual` short-circuit reads `id_empleado_cierre IS NOT NULL`, now false,
+  so annulling the reception walked the OC back) AND `CerrarManualmenteEstampaFechaCierreYEmpleado`
+  (expected employee id `3`, actual `null`) FAILED → `git checkout -- src/` → clean → rebuilt →
+  green (2/2).
+- [x] 4.16 [P] **Mutation target #33** — either the derived-received-zero guard or the linked-
   `borrador` `EXISTS` guard deleted → `409 orden_compra_con_recepciones` test (4.8/4.9) must fail,
   one test per guard; adding `FOR SHARE` to the `EXISTS` read → the anular × confirmar rendezvous
-  (4.10) deadlocks.
-- [ ] 4.17 [P] **Mutation target #34a** — `.RequireAuthorization(Politicas.GestionDeCatalogo)`
-  dropped from any of the five write routes → its own 403-matrix test (4.11) must fail.
-- [ ] 4.18 Gate guard: `dotnet ef migrations has-pending-model-changes` clean; zero new files under
-  `Migraciones/`; `Politicas.cs` unchanged (`git diff --stat`).
-- [ ] 4.19 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  (4.10) deadlocks. **Evidence, guard "a" (statement 2)**: neutered the call
+  (`if (false && await TieneRecepcionConfirmadaAsync(...))`) → build clean →
+  `UnaOrdenConRecepcionEfectivaNoPuedeAnularse409` **stayed green** (confound, see task 4.8's
+  finding above) → the isolated discriminator,
+  `UnaOrdenEnviadaConUnaRecepcionConfirmadaLigadaDirectaNoPuedeAnularse409`, FAILED (`200
+  Anulada` instead of `409`) → reverted, clean → both green. **Evidence, guard "b" (statement 3)**:
+  same neutering pattern on `TieneComprobanteLigadoEnBorradorAsync`'s call → build clean →
+  `UnaOrdenConBorradorLigadoConfirmableNoPuedeAnularse409` FAILED (`200 Anulada` instead of `409`,
+  no confound this time) → reverted, clean → green. **Evidence, `FOR SHARE` deadlock**: see task
+  4.10's write-up above (temporary raw-connection test, both directions verified, removed after
+  capture).
+- [x] 4.17 [P] **Mutation target #34a** — `.RequireAuthorization(Politicas.GestionDeCatalogo)`
+  dropped from any of the five write routes → its own 403-matrix test (4.11) must fail. **Evidence**:
+  removed the `.RequireAuthorization(Politicas.GestionDeCatalogo)` call from the `/cerrar` route in
+  `OrdenesDeCompraEndpoints.cs` → build clean → THREE tests failed simultaneously:
+  `VendedorEsRechazadoEnLasCincoRutasDeEscrituraDeOrdenesDeCompra` and
+  `SupervisorEsRechazadoEnLasCincoRutasDeEscrituraDeOrdenesDeCompra` (expected `Forbidden`, actual
+  `OK` on the `/cerrar` assertion) AND the pre-existing generic
+  `SuperficieDeAutorizacionTests.TodoEndpointNoGetFueraDelAllowlistApilaGestionDeCatalogo`
+  (`"Endpoint(s) de escritura sin GestionDeCatalogo y fuera del allowlist: POST
+  /api/ordenes-compra/{id:int}/cerrar"`) → reverted, clean → all three green again.
+- [x] 4.18 Gate guard: `dotnet ef migrations has-pending-model-changes` clean; zero new files under
+  `Migraciones/`; `Politicas.cs` unchanged (`git diff --stat`). Verified: `git diff --stat --
+  src/Ways.Infrastructure/Persistencia/Migraciones/ src/Ways.Api/Seguridad/Politicas.cs` empty;
+  `OrdenesCompraCierreYAnulacionTests.NoHayCambiosPendientesDeModeloEnLaSlice4` green (in-process
+  `HasPendingModelChanges() == false`). Gate holds, no deviation.
+- [x] 4.19 Run `judgment-day`; fix confirmed issues; re-judge until clean. **NOT RUN by
+  `sdd-apply`** — same executor-contract carve-out as slices 1-3: this executor cannot launch
+  sub-agents/reviewers. Left for the orchestrator to run before merge.
 - [ ] 4.20 Branch `feat/stage16-slice4-cierre-y-anulacion` off `main` (parent: slice 3); PR; merge
-  stacked-to-main.
+  stacked-to-main. **PARTIAL**: the worktree was already provisioned on
+  `feat/stage16-slice4-cierre-anulacion` off `main` (`a89e7c0`, slice 3 already merged) before this
+  phase started — branching is done, naming differs by dropping `-y-` (same cosmetic deviation
+  pattern as slices 2/3, not re-branched to avoid losing the provisioned worktree — flagged for the
+  orchestrator). PR creation/merge is explicitly out of scope (`NO pushees` instruction) — left for
+  the orchestrator.
 
 **Test plan**: cierre happy/blocked (4.4, 4.6); non-reopening (4.5); anulación book-governed rule
 (4.7-4.9); the no-lock proof (4.10); authorization matrix (4.11); non-regression (4.12-4.13); 4
 mutation targets incl. 34a (4.14-4.17).
 
 **Verify**: `dotnet test --filter FullyQualifiedName~OrdenesCompraCierreYAnulacion|FullyQualifiedName~SuperficieDeAutorizacion`
+— 21/21 green in `OrdenesCompraCierreYAnulacionTests` (includes
+`ConfirmarUnaRecepcionLigadaAUnaOrdenRealmenteAnuladaPorElEndpointEsRechazada409`, verifying the
+existing slice-3 guard `EscriturasDeOrdenDeCompra.BloquearYExigirNoAnuladaAsync` against an OC
+anulada by THIS slice's real `POST /anular` endpoint, not EF-seeded — the first end-to-end path
+that can produce this combination without bypassing `ExigirOrdenLigableAsync`), combined with
+slices 1-3's re-run suites (223/223 across all `Compras`/`OrdenesCompra`/
+`SuperficieDeAutorizacion`/`ManejadorDeErrores` integration tests; 11/11 in
+`Ways.Application.Tests`; 58/58 in `Ways.Domain.Tests`).
+
+22. **Slice 4 apply-phase decisions and deviations (decision 15 discipline).**
+    - **Domain code convention for `AnularAsync`/`CerrarAsync`**: the spec's own literal contract
+      (ordenes-de-compra/spec.md:162-164) pins a SINGLE code, `orden_compra_con_recepciones`, for
+      every anulación refusal — the estado check (statement 1), the derived-received guard
+      (statement 2) and the linked-borrador guard (statement 3) all throw it. This is the SAME
+      deliberate-generality criterion decision 19 already established for
+      `orden_compra_no_enviable` (one code covering multiple real causes, none of them individually
+      named by spec/design), not a fresh judgment call. `CerrarAsync`'s 0-row rejection uses
+      `orden_compra_no_cerrable` — not literally named anywhere, chosen by the same naming
+      convention as its two slice-2 siblings (`orden_compra_no_enviable`/`orden_compra_no_editable`).
+    - **`OrdenDeCompraBorrador` DTO extension**: gains `FechaCierre`/`IdEmpleadoCierre` (both
+      `DateTimeOffset?`/`int?`, additive trailing positional fields, the one call site
+      (`Proyectar`) updated in the same commit). Not named by design's Interfaces/Contracts (which
+      predates the slice-2 `OrdenDeCompraBorrador` deviation entirely and only knows about the
+      single `OrdenDeCompraDetalle`), but `dto-contract-honesty` rule 1 applies the other direction
+      here: `CerrarAsync` is the write path that makes these two fields real for the first time, so
+      leaving them off the response the cierre call itself returns would hide the fact this exact
+      request just wrote. `OrdenDeCompraDetalle` (slice 5) already plans to carry them; this is not
+      a duplicate decision, just an earlier honest population of the same two columns on the
+      narrower slice-2 DTO.
+    - **The two deferred races from slice 3 (decision 20's tasks 3.22/3.38), paid off here.** Both
+      required an OC-anulación write path that did not exist before this slice.
+      - **"anular OC × confirmar reception" (task 4.10)**: implemented as two `DbTransactionInterceptor`-
+        forced orderings against the REAL HTTP endpoints (`AnularPierdeCuandoConfirmarComitePrimero
+        MientrasAnularEstaPausada`, `AnularPierdeCuandoIntentaPrimeroMientrasConfirmarEstaPausada`).
+        **FINDING, registered honestly rather than reshaped (mutation-proof-tests rule 2)**: given a
+        genuinely pre-existing linked `borrador` draft, this race is NOT bidirectional in outcome —
+        `anular` loses in BOTH lock-acquisition orders (via statement 1 if `confirmar` wins the OC
+        lock first and commits its projection before `anular` reads; via statement 3 if `anular`
+        wins the OC lock first, because statement 3's lock-free read still sees the comprobante as
+        `borrador` — `confirmar`'s own uncommitted `UPDATE` is invisible under READ COMMITTED to a
+        plain `SELECT`). Task 4.9's own guard dominates this fixture regardless of timing; both
+        orderings were verified empirically (both green), not reasoned. The design's Concurrency
+        Guarantees prose ("the annulment loses" as one of two named outcomes) describes the general
+        defense-in-depth mechanism, which this fixture only ever exercises through one of its two
+        branches — same class of honest finding as slice 3's target #21.
+      - **"linking to an OC being annulled concurrently" (FK 9's race sub-clause, task 3.38)**: this
+        is a DIFFERENT, genuinely bidirectional race — `ExigirOrdenLigableAsync`'s `FOR SHARE`
+        (under `ActualizarBorradorAsync`'s own transaction, a real TOCTOU guard per design T3)
+        against `AnularAsync`'s statement-1 `FOR UPDATE` on the SAME OC row. Two tests force both
+        orders (`AnularGanaLaCarreraCuandoElPutQueLigaEstaPausado`,
+        `ElPutQueLigaGanaLaCarreraCuandoAnularEstaPausada`): whichever transaction takes the row
+        lock first wins outright (the other sees the loser's already-committed fact and rejects
+        accordingly — `orden_compra_anulada` if anular won, `orden_compra_con_recepciones` via
+        statement 3 if the link won) — never a deadlock (`FOR SHARE`/`FOR UPDATE` contend on ONE
+        resource, no cycle is reachable). Both orderings verified empirically, both green.
+    - **`FOR SHARE`-on-statement-3 deadlock evidence (mutation target #33, third clause)** was
+      captured with a TEMPORARY test using two raw ADO connections (not the production call sites —
+      it duplicates Postgres locking primitives directly to force the exact lock cycle
+      deterministically) and REMOVED after capturing the evidence: mutating statement 3 to add
+      `FOR SHARE` and forcing (A holds OC `FOR UPDATE`, wants comprobante `FOR SHARE`; B holds
+      comprobante via an uncommitted `UPDATE`, wants OC `FOR UPDATE`) reproduced Postgres's deadlock
+      detector firing (one side threw) within the 15s window; the identical scenario against the
+      SHIPPED statement 3 (no `FOR SHARE`) completed both sides cleanly. Not kept as a permanent
+      test — a raw-SQL-literal test that never calls `ServicioDeOrdenesDeCompra` would only assert
+      Postgres's own locking semantics, not this codebase's behavior. **Correction (judgment-day
+      round, juez B, MAJOR — see decision 23)**: this bullet originally claimed the two shipped
+      interceptor tests above (`AnularPierdeCuandoConfirmarComitePrimeroMientrasAnularEstaPausada`/
+      `AnularPierdeCuandoIntentaPrimeroMientrasConfirmarEstaPausada`) "already give the permanent
+      regression coverage" for this invariant. That is FALSE: both interceptor tests pause the
+      `DbTransactionInterceptor` immediately after `BeginTransactionAsync`, BEFORE either
+      transaction's first statement runs — they never recreate the row-contention window a deadlock
+      needs, so they regress the RESULT of the race (which side's estado guard wins), not the
+      absence of locking on statements 2/3. The permanent structural regression for THIS invariant
+      is `ServicioDeOrdenesDeCompraLockFreeGuardsTests` (decision 23), not these two tests.
+    - **Confound found and fixed (mutation-proof-tests rule 3, task 4.8/4.16 guard "a")**: the
+      realistic end-to-end fixture for "an OC with an effective reception cannot be annulled"
+      (`UnaOrdenConRecepcionEfectivaNoPuedeAnularse409`) does not, by itself, discriminate
+      statement 2's guard — any real confirmed reception already walks the estado out of
+      `('borrador','enviada')` via `EscriturasDeOrdenDeCompra`'s projection, so statement 1's own
+      check already rejects before statement 2 ever runs, verified by mutation (neutering statement
+      2 left this test green). Routed below the confound with a second, EF-seeded test
+      (`UnaOrdenEnviadaConUnaRecepcionConfirmadaLigadaDirectaNoPuedeAnularse409`) that produces an
+      estado/book combination the real projection never creates but that statement 2 must still
+      catch honestly. The realistic test is kept (it documents true end-to-end behavior); the
+      EF-seeded test is the actual mutation-evidence discriminator for that guard.
+    - **Process note**: Docker Desktop was already healthy at the start of this phase (`docker info`
+      verified before the first test run, same discipline as prior slices); the apply-phase host
+      process did not die mid-cycle — all 4 mutation-evidence cycles (targets #31/#32/#33/#34a) ran
+      end-to-end in one session, each verified FAIL → revert → green before proceeding to the next,
+      `git status` clean after every revert.
+
+23. **`judgment-day` round confirmed 1 MAJOR (juez B) on decision 22's interceptor-tests claim —
+    closed with a permanent structural test.** Decision 22's `FOR SHARE`-on-statement-3 bullet
+    claimed the two shipped `DbTransactionInterceptor` tests
+    (`AnularPierdeCuandoConfirmarComitePrimeroMientrasAnularEstaPausada`/
+    `AnularPierdeCuandoIntentaPrimeroMientrasConfirmarEstaPausada`) "already give the permanent
+    regression coverage" for the lock-free invariant on statements 2/3 of `AnularAsync`
+    (`TieneRecepcionConfirmadaAsync`/`TieneComprobanteLigadoEnBorradorAsync`,
+    `ServicioDeOrdenesDeCompra.cs:447-491`). **FALSE, confirmed by inspection**: both interceptor
+    tests pause the interceptor right after `BeginTransactionAsync`, before either transaction's
+    first statement — they never create the row-contention window a deadlock needs, so they
+    regress the RESULT of the race (which side's estado guard wins), never the presence/absence of
+    row locking on these two statements. Left as documented, a deliberate "safety" reintroduction
+    of `FOR SHARE`/`FOR UPDATE` on either guard would ship real deadlock risk with zero red test.
+    **Fix**: added `ServicioDeOrdenesDeCompraLockFreeGuardsTests` (source-text assertion, same
+    technique as `EscriturasDeOrdenDeCompraLockOrderTests`/`ServicioDeComprasLockOrderTests` —
+    mutation-proof-tests rule 3: the absence of a deadlock is a non-event, inherently untestable
+    behaviorally, so the structural confound is the documented escape hatch) — extracts each
+    method's real body via `IndexOf`/substring (not a duplicated SQL literal) and asserts neither
+    contains `FOR SHARE` nor `FOR UPDATE`. Mutation evidence (both guards, both lock clauses):
+    reintroducing `FOR SHARE` in statement 3's `EXISTS` or `FOR UPDATE` in statement 2's `EXISTS`
+    made the corresponding new test fail on a clean `--no-incremental` build; `git checkout -- src/`
+    plus a rebuild returned to green, `git status` clean between cycles. Decision 22's bullet is
+    corrected in place (struck through in effect, replaced with this cross-reference) rather than
+    rewritten silently, per decision 15's honesty discipline; the one-shot raw-ADO deadlock capture
+    described there remains historical evidence, not a claim about the interceptor tests.
 
 ---
 

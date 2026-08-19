@@ -10,8 +10,10 @@ namespace Ways.Api.Endpoints;
 /// 7).
 ///
 /// Slice 2: <c>POST /</c> (borrador), <c>PUT /{id}</c> (replace-set), <c>POST /{id}/enviar</c>
-/// (numeración propia). <c>GET /</c>/<c>GET /{id}</c> llegan en slice 5 (necesitan el detalle con
-/// cobertura); <c>POST /{id}/cerrar</c>/<c>POST /{id}/anular</c> en slice 4.
+/// (numeración propia). Slice 4: <c>POST /{id}/cerrar</c> (cierre manual), <c>POST /{id}/anular</c>
+/// (gobernada por el libro, design decisión 9) — mismo gate que las tres rutas de arriba (task
+/// 4.11, matriz de autorización: las CINCO rutas de escritura apilan <c>GestionDeCatalogo</c>).
+/// <c>GET /</c>/<c>GET /{id}</c> llegan en slice 5 (necesitan el detalle con cobertura).
 /// </summary>
 public static class OrdenesDeCompraEndpoints
 {
@@ -46,6 +48,22 @@ public static class OrdenesDeCompraEndpoints
         })
         .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Asigna numero/fecha_envio propios (serie 'OC') y pasa la orden a enviada.");
+
+        grupo.MapPost("/{id:int}/cerrar", async (ServicioDeOrdenesDeCompra servicio, int id, CancellationToken ct) =>
+        {
+            var cerrada = await servicio.CerrarAsync(id, ct);
+            return Results.Ok(cerrada);
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Cierra manualmente una orden de compra (enviada/recibida_parcial → cerrada).");
+
+        grupo.MapPost("/{id:int}/anular", async (ServicioDeOrdenesDeCompra servicio, int id, CancellationToken ct) =>
+        {
+            var anulada = await servicio.AnularAsync(id, ct);
+            return Results.Ok(anulada);
+        })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
+        .WithSummary("Anula una orden de compra gobernada por el libro de recepción (design decisión 9).");
 
         return app;
     }
