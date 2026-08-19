@@ -414,6 +414,21 @@
     archivos, 796 tests), `npm run build` limpio (mismo advisory de chunk-size pre-existente, sin
     errores de TypeScript nuevos), `git status` limpio entre cada ciclo.
 
+    **Flakiness cazada por judgment-day ronda 1 (juez B), cierre determinista**: el nuevo test
+    same-tick de `Guardar borrador` (WARNING 2 arriba) resultó flaky bajo suite completa (1 de 3
+    corridas full falló con 0 PUTs capturados en vez de 1) — a diferencia de `Enviar`/`Cerrar`/
+    `Anular`, cuyo botón solo depende de `ocupado` (síncrono desde el primer render), el botón de
+    `Guardar borrador` también depende de `encabezadoCompleto`, que hidrata `encabezado` desde
+    `detalle` en un `useEffect` posterior — bajo carga de CPU el doble `dispatchEvent` podía correr
+    contra un botón todavía deshabilitado. Cerrado sin debilitar el assert (sigue siendo exactamente
+    1 PUT): se agregó `await waitFor(() => expect(boton).not.toBeDisabled())` y `await waitFor(()
+    => expect(screen.getByLabelText('Proveedor')).toHaveValue('4'))` antes del doble dispatch. Los
+    tres tests hermanos no comparten el gap (su gate de disabled es solo `ocupado`), así que no se
+    tocaron. Ciclo del mutante (quitar `guardandoRef.current` del guard) reconfirmado: el test sigue
+    detectando los 2 PUTs y falla como se espera. Evidencia: aislado `npx vitest run
+    OrdenDeCompra.test.tsx` ×3 (14/14 siempre) + suite completa `npx vitest run` ×3 corridas
+    consecutivas, una por vez (796/796 las tres, sin la falla original), `git status` limpio.
+
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
 word-budget overage is a house precedent, no action; T5 (spec OD7) — `cuenta-corriente-de-

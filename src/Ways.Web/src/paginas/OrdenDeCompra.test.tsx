@@ -396,6 +396,13 @@ describe('OrdenDeCompra — doble click (react-async-state regla 9)', () => {
     renderPantalla()
     const boton = await screen.findByRole('button', { name: 'Guardar borrador' })
 
+    // A diferencia de Enviar/Cerrar/Anular (habilitados solo por `ocupado`), este botón también
+    // depende de `encabezadoCompleto`, que hidrata desde `detalle` en un useEffect posterior al
+    // primer render — hay que esperar a que ese estado asincrónico asiente antes del doble click,
+    // si no el guard de reentrancia puede correr contra un botón todavía deshabilitado.
+    await waitFor(() => expect(boton).not.toBeDisabled())
+    await waitFor(() => expect(screen.getByLabelText('Proveedor')).toHaveValue('4'))
+
     // Mismo patrón same-tick — replica la red de reentrancia de `guardandoRef`.
     act(() => {
       boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
