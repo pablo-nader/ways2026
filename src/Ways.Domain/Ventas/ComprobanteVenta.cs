@@ -48,6 +48,15 @@ public class ComprobanteVenta : EntidadTenant
     /// con este campo seteado.</summary>
     public int? IdComprobanteAsociado { get; set; }
 
+    /// <summary>stage-17-presupuestos-y-remitos (proposal §G): el presupuesto convertido en
+    /// esta venta, si la hay. <c>NULL</c> en el 100% del tráfico previo a esta etapa —
+    /// permanentemente legítimo, no toda venta viene de un presupuesto. La unicidad de
+    /// <c>(id_presupuesto_origen, id_tenant)</c> (<c>ux_comprobantes_venta_presupuesto_origen</c>,
+    /// PARCIAL) es la garantía de base de que a lo sumo un comprobante liga a cada presupuesto —
+    /// escrito por <c>EscriturasDePresupuesto.MarcarConvertidoAsync</c> dentro de la misma
+    /// transacción de venta (slice 3), nunca editado después.</summary>
+    public int? IdPresupuestoOrigen { get; set; }
+
     public decimal Subtotal { get; set; }
     public decimal DescuentoTotal { get; set; }
     public decimal Total { get; set; }

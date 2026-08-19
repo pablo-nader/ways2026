@@ -201,6 +201,7 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
                     // etapa 15 documentada arriba): migrar hasta HEAD sin este mapeo dispara
                     // PendingModelChangesWarning.
                     npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
+                    npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                 })
                 .Options;
 

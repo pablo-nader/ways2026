@@ -65,6 +65,8 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
                 // stage-16-ordenes-de-compra, Slice 1: mismo gap que la desviación de la etapa 15
                 // documentada en las otras fixtures manualmente curadas de este archivo.
                 npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
+                // stage-17-presupuestos-y-remitos, Slice 1: mismo gap, mismo motivo.
+                npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
             })
             .Options;
 

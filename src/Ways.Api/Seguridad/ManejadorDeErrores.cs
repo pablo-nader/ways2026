@@ -196,6 +196,41 @@ public class ManejadorDeErrores(
                 when string.Equals(uxSinIdentificar, "ux_lotes_sin_identificar", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe un lote sin identificar para este artículo.", "lote_sin_identificar_duplicado"),
 
+            // stage-17-presupuestos-y-remitos (Slice 1, task 1.21, db-error-backstops, design
+            // decisión 18, proposal §J): ux_presupuestos_numero tiene que resolverse por nombre
+            // EXACTO, ANTES de ClasificarUnicidad — su nombre contiene "_numero", así que la
+            // rama genérica de más abajo lo atraparía primero y lo clasificaría como
+            // "numero_duplicado" (el mensaje de ux_clientes_numero). CUARTA ocurrencia del
+            // ordering trap, mismo tratamiento exacto que ux_ordenes_compra_numero (:159-161) —
+            // bajo operación normal esta rama es inalcanzable (el único escritor es
+            // AsignadorDeNumeroComprobante con la serie 'PRES'), queda como backstop de esquema
+            // puro, probado por un INSERT crudo out-of-band (slice 1) y por la concurrencia real
+            // de dos `enviar` simultáneos en un mismo punto de venta (slice 2).
+            { SqlState: "23505", ConstraintName: string uxPresupuestoNumero }
+                when string.Equals(uxPresupuestoNumero, "ux_presupuestos_numero", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un presupuesto con ese número en este punto de venta.", "numero_de_presupuesto_duplicado"),
+
+            // stage-17-presupuestos-y-remitos (Slice 1, task 1.22, db-error-backstops, design
+            // decisión 5/proposal §G): ux_comprobantes_venta_presupuesto_origen tiene que
+            // resolverse por nombre EXACTO, ANTES de ClasificarUnicidad — a diferencia de la
+            // rama de arriba, ESTA sí es alcanzable por un cliente real (idPresupuestoOrigen
+            // viaja en el body): el UPDATE guardado de EscriturasDePresupuesto.MarcarConvertidoAsync
+            // (slice 3) es la autoridad primaria de la carrera de conversión, este índice
+            // parcial es el backstop de esquema que la serializa de verdad. Probado con un
+            // INSERT crudo (slice 1) y con la carrera real de dos conversiones concurrentes
+            // (slice 3).
+            { SqlState: "23505", ConstraintName: string uxPresupuestoOrigen }
+                when string.Equals(uxPresupuestoOrigen, "ux_comprobantes_venta_presupuesto_origen", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Este presupuesto ya fue convertido en una venta.", "presupuesto_ya_convertido"),
+
+            // stage-17-presupuestos-y-remitos (Slice 1, task 1.23, db-error-backstops): orden es
+            // server-asignado dentro del replace-set del borrador (slice 2) — exención
+            // documentada de prueba de carrera, misma familia que
+            // ux_items_orden_compra_orden/ux_items_comprobante_compra_orden.
+            { SqlState: "23505", ConstraintName: string uxItemPresupuesto }
+                when string.Equals(uxItemPresupuesto, "ux_items_presupuesto_orden", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en este presupuesto.", "orden_de_item_duplicado"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
@@ -309,6 +344,19 @@ public class ManejadorDeErrores(
                         || ckOrdenCompra.StartsWith("ck_items_orden_compra_", StringComparison.Ordinal))
                     && ClasificarCheckDeOrdenesDeCompra(ckOrdenCompra) is { } checkOrdenCompra =>
                 (checkOrdenCompra.EstadoHttp, checkOrdenCompra.Titulo, checkOrdenCompra.Codigo),
+
+            // stage-17-presupuestos-y-remitos (Slice 1, tasks 1.24-1.25, db-error-backstops,
+            // design decisión 18, proposal §J): switch por nombre EXACTO detrás de un guard de
+            // prefijo "ck_presupuestos_"/"ck_items_presupuesto_" — mismo criterio que ckOrdenCompra
+            // de arriba. ServicioDePresupuestos (slice 2) ya valida los dos invariantes en el
+            // camino de servicio antes de escribir — bajo operación normal ninguna de las dos
+            // ramas es alcanzable, quedan como backstop de una escritura cruda/fuera de banda,
+            // cada una probada con SQL directo (slice 1).
+            { SqlState: "23514", ConstraintName: string ckPresupuesto }
+                when (ckPresupuesto.StartsWith("ck_presupuestos_", StringComparison.Ordinal)
+                        || ckPresupuesto.StartsWith("ck_items_presupuesto_", StringComparison.Ordinal))
+                    && ClasificarCheckDePresupuestos(ckPresupuesto) is { } checkPresupuesto =>
+                (checkPresupuesto.EstadoHttp, checkPresupuesto.Titulo, checkPresupuesto.Codigo),
 
             // Backstop genérico (db-error-backstops, judgment-day slice 3 ronda 1): cualquier
             // valor numérico que desborda la precisión/escala de su columna (p.ej. un margen o
@@ -747,6 +795,32 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "El costo estimado de un ítem de orden de compra no puede ser negativo.",
                     "costo_estimado_invalido"),
+
+            _ => null
+        };
+
+    /// <summary>stage-17-presupuestos-y-remitos (Slice 1, tasks 1.24-1.25, design decisión 18,
+    /// proposal §J): switch por nombre EXACTO de las dos CHECKs nuevas de
+    /// <c>presupuestos</c>/<c>items_presupuesto</c>, detrás del guard de prefijo del caso de
+    /// arriba. Las dos son 409/400 respectivamente por el mismo criterio que
+    /// <see cref="ClasificarCheckDeOrdenesDeCompra"/>: <c>ck_presupuestos_envio_completo</c> es
+    /// server-derivada (ningún input de cliente la dispara directo, un rechazo de esquema acá
+    /// solo puede significar una escritura cruda) → 409; <c>ck_items_presupuesto_cantidad_positiva</c>
+    /// recibe input real de cliente (cantidad de línea) y el servicio ya la valida primero con
+    /// el mismo código de dominio (<c>cantidad_de_linea_invalida</c>) → 400, esta rama es solo
+    /// el backstop de esquema.</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarCheckDePresupuestos(string nombreDeCheck) =>
+        nombreDeCheck switch
+        {
+            "ck_presupuestos_envio_completo" =>
+                (StatusCodes.Status409Conflict,
+                    "El número, la fecha de envío y el vencimiento del presupuesto tienen que llegar juntos.",
+                    "presupuesto_envio_incompleto"),
+
+            "ck_items_presupuesto_cantidad_positiva" =>
+                (StatusCodes.Status400BadRequest,
+                    "La cantidad de una línea de presupuesto tiene que ser positiva.",
+                    "cantidad_de_linea_invalida"),
 
             _ => null
         };

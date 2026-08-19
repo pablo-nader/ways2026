@@ -92,6 +92,19 @@ tipos_comprobante (           -- [global]
 )
 ```
 
+**`PRE` — desactivado desde la etapa 17 (el cierre del PRE latente).** `PRE` era un tipo
+`activo`, `afecta_stock = false`, sin ningún camino de escritura propio — una venta fantasma
+podía colarse por `POST /api/ventas` con `codigoTipoComprobante = "PRE"`, decrementar stock y
+mover cuenta corriente exactamente como un `TX`. Cerrado con DOS redes independientes (proposal
+decisión 2, migración `PresupuestosEtapa17`): **net 1**, un data statement idempotente
+(`UPDATE tipos_comprobante SET activo = false WHERE codigo = 'PRE'`) que desactiva la fila en
+toda base ya migrada; **net 1b**, un `Activo = false` explícito en
+`InicializadorDeBaseDeDatos.TiposComprobanteBase` — sin él, una base FRESCA reabriría el hueco,
+porque el seeder corre después de las migraciones, contra una tabla vacía, y net 1 solo toca
+filas existentes. Los dos nets se prueban de forma independiente (mutation targets 10/11). Una
+tercera red, en el resolver de `ServicioDeVentas` (`|| !tipo.AfectaStock`, slice 3), refuerza el
+cierre contra cualquier tipo `afecta_stock = false` futuro, no solo `PRE`.
+
 **`RC` (etapa 7 — pago a cuenta, doc 10 §8):** mismo perfil que `PRE` — `letra NULL`,
 `es_fiscal false`, `afecta_stock false`, `discrimina_iva false` —, pero `signo +1` porque el
 dinero entra (el signo negativo vive en el movimiento de cuenta corriente, nunca en el total
@@ -392,6 +405,86 @@ movimientos, y los movimientos no se editan.
 > `ItemEmitido`/`ComprobanteEmitido` ni en ningún payload del POS — es un dato server-side
 > para el margen de la etapa 10.
 >
+> **Estado (Etapa 17, slice 1 — schema + backstops):** `comprobantes_venta` gana
+> `id_presupuesto_origen integer NULL` — ALTER aditivo, metadata-only en PG 11+, sin rewrite
+> de tabla. FK 23 `fk_comprobantes_venta_presupuesto_origen` compuesta
+> `(id_presupuesto_origen, id_tenant)` contra `presupuestos`, RESTRICT, MATCH SIMPLE (el
+> default): con `id_presupuesto_origen` NULL la constraint no se chequea — el 100% del
+> tráfico anterior a esta etapa, permanentemente legítimo. Índice 29
+> `ux_comprobantes_venta_presupuesto_origen` — **UNIQUE PARCIAL**
+> `WHERE id_presupuesto_origen IS NOT NULL` — es a la vez el soporte de FK 23 y la garantía
+> de base de que a lo sumo un comprobante liga a cada presupuesto (1:1 de conversión). Ninguna
+> CHECK ata esta columna a nada: el acuerdo presupuesto↔venta (mismo tenant/cliente, no
+> vencido, todavía `enviado`) es una regla cross-table que el esquema no puede expresar — la
+> aplica el `UPDATE` guardado de `EscriturasDePresupuesto.MarcarConvertidoAsync` (slice 3, ver
+> "Presupuestos" más abajo). `ComprobanteEmitido` gana `IdPresupuestoOrigen` en el
+> round-trip (`dto-contract-honesty` regla 2).
+>
+
+### Presupuestos (Etapa 17)
+
+La intención comercial colocada sobre un cliente ANTES de que exista un `comprobantes_venta`
+(doc-11:307-324). Estructural mirror de `ordenes_compra` (etapa 16, proposal decisión 1): el
+checkout queda byte-idéntico por construcción porque un presupuesto vive en su propia tabla,
+nunca en `comprobantes_venta`. Greenfield: doc-01 y `alsina/` muestran cero hits para
+`presupuesto` (explore.md:15) — cada regla acá es una decisión, no un port.
+
+```sql
+presupuestos (                 -- [operativa]
+    id_presupuesto, id_tenant, id_punto_venta,
+    id_cliente,                                    -- Consumidor Final por defecto, como la venta
+    id_empleado,                                   -- quién lo creó
+    numero                 bigint      NULL,       -- correlativo propio por PV, serie 'PRES';
+                                                    -- se asigna únicamente al ENVIAR
+    fecha_emision           timestamptz NOT NULL,   -- IRelojDelSistema, sin DEFAULT now()
+    fecha_envio             timestamptz NULL,       -- par de `numero`
+    vencimiento             date        NULL,       -- NOT NULL desde 'enviado' (CHECK 1)
+    observaciones,
+    subtotal, descuento_total, total,
+    estado estado_presupuesto NOT NULL             -- enum: borrador | enviado | convertido
+                                                    --     | anulado
+);
+
+items_presupuesto (
+    id_item, id_tenant, id_presupuesto, orden,
+    id_articulo,                        -- NOT NULL: una línea sin artículo no puede convertirse
+                                         -- en una línea de venta que mueve stock
+    descripcion text,                   -- snapshot: el cliente lee un nombre
+    cantidad         numeric(12,3),
+    precio_unitario  numeric(14,2),     -- congelado al guardar el borrador — la provisión que
+                                        -- la conversión reutiliza, nunca re-resuelta
+    descuento        numeric(14,2) NOT NULL DEFAULT 0,
+    total            numeric(14,2),
+    id_lista_precio  integer,           -- procedencia del precio ofrecido, congelada
+    id_oferta        integer NULL,
+    id_alicuota_iva  integer, porcentaje_iva numeric(5,2)
+    -- SIN id_area, SIN codigo_barra, SIN costo_unitario/costo_es_estimado, SIN id_lote:
+    -- deliberadamente más angosta que items_comprobante_venta (un presupuesto no reserva
+    -- stock ni congela un costo).
+);
+```
+
+**Estado (Etapa 17, slice 1 — schema + backstops, DB CHANGE GATE ejercido y aprobado):
+implementada — schema y los dos nets del PRE latente.** Creadas por la migración
+`PresupuestosEtapa17`, junto con el ALTER de `comprobantes_venta` (§4) y el data statement 1
+del cierre del PRE (§1). `EntidadBase`: **SÍ** en las dos tablas — un presupuesto es mutable
+durante `borrador` (replace-set completo bajo `SELECT … FOR UPDATE`) y se edita de nuevo en
+`enviar`/`anular` — hereda el filtro de tenant estándar y `EstamparTenant()`, sin filtro
+clonado, mismo criterio que `ordenes_compra`. `ux_presupuestos_numero` es **UNIQUE PARCIAL**
+`WHERE numero IS NOT NULL` — un borrador no tiene número; `ck_presupuestos_envio_completo`
+exige que `numero`/`fecha_envio`/`vencimiento` lleguen juntos, salvo `anulado` (un borrador
+puede anularse antes de enviarse). `estado_presupuesto` se registra únicamente vía
+`npgsql.MapEnum<EstadoPresupuesto>` en `DependencyInjection.cs`/`WaysDbContextFactory.cs` —
+nunca también con `HasPostgresEnum`. `ManejadorDeErrores.cs` gana 5 ramas exactas: 3 `23505`
+(`ux_presupuestos_numero` → `numero_de_presupuesto_duplicado`, **cuarta ocurrencia** del
+ordering trap, resuelta por encima de `ClasificarUnicidad`;
+`ux_comprobantes_venta_presupuesto_origen` → `presupuesto_ya_convertido`;
+`ux_items_presupuesto_orden` → `orden_de_item_duplicado`) + 2 `23514` (las dos CHECKs de este
+slice). `ReglaDePresupuestos` (`Ways.Domain.Ventas`, sin base de datos) es la única autoridad
+de `EstaVencido`/`EsConvertible` — `vencimiento < hoy` (nunca `<=`), resuelto siempre en la
+zona horaria del punto de venta. `ServicioDePresupuestos` (draft CRUD, `enviar` con la serie
+`'PRES'`, `anular`, la lectura con `vencido` derivado) es slice 2; la conversión dentro de la
+transacción de venta (`EscriturasDePresupuesto`, el guard en `ServicioDeVentas`) es slice 3.
 
 ## 5. Comprobantes de compra
 
