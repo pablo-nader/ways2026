@@ -1,11 +1,59 @@
 change: stage-16-ordenes-de-compra
-phase: explore
+phase: propose
 status: done
 artifact_store: openspec
 execution_mode: automatic-autonomous
 delivery_strategy: auto-chain
 chain_strategy: stacked-to-main
-db_gate: PENDIENTE
+db_gate: UNA-MIGRACION-APROBADA
+db_gate_approval: >-
+  APROBADO 2026-08-18 por el orquestador bajo mandato autonomo delegado:
+  gate EJERCIDO FORMALMENTE sobre la seccion 'Modelo de datos propuesto'
+  del proposal (lineas 501-741), que es EL CONTRATO — cualquier DDL de
+  sdd-apply fuera de esa seccion es violacion de alcance y reabre el
+  gate. ALCANCE APROBADO: UNA migracion (OrdenesDeCompraEtapa16),
+  puramente ADITIVA, cero data statements, nada irreversible: UN enum
+  nuevo estado_orden_compra (5 valores en orden de ciclo de vida = orden
+  C#, un escritor por valor), DOS tablas nuevas — ordenes_compra (16
+  columnas, PK, AK estructuralmente inviolable, 5 FKs, 2 CHECKs
+  ck_..._envio_completo y ck_..._cierre, 7 indices incl. el implicito de
+  la AK y el UNIQUE parcial ux_ordenes_compra_numero, RLS estandar,
+  EntidadBase SI — argumentado: documento MUTABLE, al reves de los
+  ledgers 14/15) e items_orden_compra (11 columnas, PK, 3 FKs, 2 CHECKs,
+  4 indices incl. ux_items_orden_compra_orden, RLS estandar, EntidadBase
+  SI, child-scope sin FK propia a puntos_venta — criterio verbatim de
+  ItemComprobanteCompraConfiguration:12-14), UN ALTER aditivo de
+  comprobantes_compra (+id_orden_compra NULL + FK compuesta MATCH SIMPLE
+  + indice de soporte, metadata-only), ManejadorDeErrores MODIFICADO (2
+  ramas 23505 exact-name — una es la TERCERA ocurrencia del ordering
+  trap de _numero, resuelta POR ENCIMA de ClasificarUnicidad — + 4 ramas
+  23514), Politicas/numeraciones/tipos_comprobante INTOCADOS. TOTAL DE
+  INDICES NUEVOS = 12 (7+4+1, excluyendo los 2 PKs) con auditoria de
+  cobertura FK→indice completa y cero sorpresas de la
+  ForeignKeyIndexConvention esperadas.
+  VERIFICACION INDEPENDIENTE DEL ORQUESTADOR previa a la aprobacion:
+  (1) numeraciones_comprobante.tipo_comprobante es HasMaxLength(30) SIN
+  FK a tipos_comprobante (NumeracionComprobanteConfiguration:29-30,
+  54-63: solo PuntoVenta y Tenant) — la serie 'OC' cuesta cero schema y
+  cero seed, la decision 4 es real; (2) el ordering trap tiene
+  exactamente los 2 precedentes citados (ManejadorDeErrores.cs:128
+  ux_comprobantes_venta_numero y :137 ux_comprobantes_compra_
+  numero_externo, ambos exact-name antes de ClasificarUnicidad) y la
+  rama de items existe (:145 ux_items_comprobante_compra_orden);
+  (3) el criterio child-scope de items esta documentado verbatim
+  (ItemComprobanteCompraConfiguration:13); (4) el partial unique
+  precedente usa HasFilter (ComprobanteCompraConfiguration:87-89).
+  NOTA ACEPTADA: ux_ordenes_compra_numero filtra SOLO numero IS NOT
+  NULL, sin excluir anuladas — diferencia DELIBERADA con numero_externo:
+  una serie propia jamas reusa numeros (los huecos son legitimos, el
+  reuso confunde); el numero_externo es del proveedor y puede repetirse
+  tras anular. CRITERIO DE VERIFY VINCULANTE: exactamente UNA migracion
+  nueva llamada OrdenesDeCompraEtapa16; has-pending-model-changes limpio
+  post-apply; conteo final de indices nuevos = 12 o el gate se reabre
+  con enmienda; prueba de 'cero statements extra' para un confirm de
+  compra SIN OC ligada (el motor intacto es la promesa central de la
+  etapa); el test de concurrencia de dos enviar simultaneos en el mismo
+  PV probando numeros distintos sin 409.
 phases:
   explore:
     status: done
