@@ -1,11 +1,70 @@
 change: stage-17-presupuestos-y-remitos
-phase: explore
+phase: propose
 status: done
 artifact_store: openspec
 execution_mode: automatic-autonomous
 delivery_strategy: auto-chain
 chain_strategy: stacked-to-main
-db_gate: PENDIENTE
+db_gate: DOS-MIGRACIONES-APROBADAS
+db_gate_approval: >-
+  APROBADO 2026-08-19 por el orquestador bajo mandato autonomo delegado:
+  gate EJERCIDO FORMALMENTE sobre la seccion 'Modelo de datos propuesto'
+  del proposal (lineas 611-1036), que es EL CONTRATO — cualquier DDL de
+  sdd-apply fuera de esa seccion es violacion de alcance y reabre el
+  gate. ALCANCE APROBADO: DOS migraciones (PresupuestosEtapa17 y
+  RemitosEtapa17 — el ALTER TYPE ADD VALUE 'remito' AISLADO en la
+  segunda, PG lo exige fuera de la transaccion que lo nombra, precedente
+  etapa 12; UNICO artefacto IRREVERSIBLE de la etapa, aceptado con
+  registro — el valor nace con escritor): 2 enums nuevos de 4 valores
+  (vencido DERIVADO jamas almacenado — decision 3, vencimiento date
+  resuelto en la zona del PV), 4 tablas nuevas (presupuestos 17 col/4
+  FKs/6 indices con partial unique de conversion; items_presupuesto 17
+  col/6 FKs/7 indices; remitos 18 col/5 FKs/7 indices; items_remito 20
+  col/7 FKs/8 indices — todas operativa, RLS estandar, EntidadBase SI),
+  2 ALTERs aditivos (comprobantes_venta +id_presupuesto_origen con FK
+  compuesta y partial unique — 1 presupuesto → ≤1 venta garantizado por
+  indice; movimientos_stock +id_remito con FK e indice de soporte — sin
+  el, las filas del cuarto escritor serian las unicas inatribuibles del
+  ledger), TRES data statements + cambio del seed (PRE activo=false EN
+  AMBOS: data statement idempotente Y TiposComprobanteBase — el seeder
+  corre solo contra tabla vacia y DESPUES de migrar, verificado
+  InicializadorDeBaseDeDatos.cs:432, un solo mecanismo reabre el agujero
+  en bases frescas; + INSERT guardado del tipo TXR afecta_stock=false
+  para la consolidacion sin items), ManejadorDeErrores MODIFICADO (5
+  ramas 23505 — 2 son las ocurrencias 4ta y 5ta del ordering trap de
+  _numero — + 7 ramas 23514), Politicas INTOCADA (decision 10:
+  OperacionDePos solo). TOTAL DE INDICES NUEVOS = 30 (6+7+7+8+1+1,
+  excluyendo los 4 PKs) con auditoria de cobertura de las 24 FKs.
+  VERIFICACION INDEPENDIENTE DEL ORQUESTADOR previa a la aprobacion:
+  (1) ak_comprobantes_venta existe (ComprobanteVentaConfiguration.cs:40)
+  — la FK N:1 del remito no exige AK nueva sobre la tabla mas caliente;
+  (2) RC jamas pasa por ResolverTipoComprobanteAsync (tiene
+  ResolverTipoRcAsync propio, ServicioDeCuentaCorriente.cs:358) — el
+  guard incondicional de AfectaStock del resolver es seguro;
+  (3) el seeder corre solo con tabla vacia (if !AnyAsync,
+  InicializadorDeBaseDeDatos.cs:432) — la correccion del proposal a la
+  OD2 es correcta y obligatoria.
+  ARBITRAJE DE LA PREGUNTA 7 (orquestador): TXR ENTRA — remitos
+  infacturables hasta la 19 vaciaria el alcance textual del doc 11 ("la
+  facturacion posterior consolida"); el comprobante consolidado SIN
+  items (precedente RC) cierra el doble decremento Y el stock fantasma
+  de AnularAsync por construccion, y el guard de la decision 2 lo vuelve
+  inemitible por mostrador.
+  CRITERIO DE VERIFY VINCULANTE: exactamente DOS migraciones con esos
+  nombres; has-pending-model-changes limpio; conteo final de indices
+  nuevos = 30 verificado por DEFINICION contra pg_indexes (la clase
+  name-only del MAJOR de la 16 — incluido el partial unique de
+  comprobantes_venta que el proposal exige verificar y no asumir); el
+  toque a ServicioDeVentas acotado a: UNA clausula en el resolver + la
+  rama del snapshot en la fase DECIDE + DOS llamadas guardeadas (una en
+  transaccion, una en AnularAsync via RETURNING ensanchado) — el orden
+  pineado y los loops de stock/CC BYTE-IDENTICOS y una venta comun emite
+  CERO statements extra (dos redes como la 16); las DOS redes del PRE
+  con evidencia de mutacion (guard del resolver + tipo inactivo en seed
+  y data); el test de mutacion de la venta fantasma (emitir PRE con
+  items = 400 SIEMPRE); la enmienda de la garantia de stock a CUATRO
+  write sites como delta EXPLICITO del spec de stock con su test de
+  concurrencia propio del cuarto sitio.
 phases:
   explore:
     status: done
