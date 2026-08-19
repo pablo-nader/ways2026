@@ -284,6 +284,26 @@ solo al cerrar; qué pasa con las diferencias de precio entre la OC y la factura
 la recepción mueve stock por sí misma o solo lo hace la confirmación del comprobante; cómo
 interactúa con los lotes de la Etapa 12 si esta ya está activa.
 
+> **COMPLETA Y ARCHIVADA** (2026-08-19, `2026-08-19-stage-16-ordenes-de-compra`, 6 PRs
+> #140–#145). Las cuatro decisiones abiertas se resolvieron: la recepción **NO mueve stock por
+> sí misma** — cada recepción física ES un comprobante de compra ligado (FK
+> `comprobantes_compra.id_orden_compra NULL`, 1 OC → N comprobantes), así el motor
+> `ConfirmarAsync` de las etapas 8/12/15 quedó **byte-idéntico** (criterio vinculante de
+> cero-statements-extra con dos redes probadas); los lotes se resuelven donde siempre (dentro
+> del confirm); las **diferencias de precio son informativas** (desvío estimado-vs-real por
+> artículo y total a nivel línea de la porción cotizada — jamás extrapolación, el CRITICAL de
+> producción que judgment-day cazó pre-merge), sin mecanismo bloqueante (política del dueño,
+> diferida). Migración aditiva pura (enum de 5 estados + 2 tablas + 1 ALTER, 12 índices
+> contados y verificados por definición); numeración propia con la serie 'OC' sin schema
+> nuevo; estado = proyección del libro en 3 statements (lock explícito antes del recompute —
+> EvalPlanQual no revalida subqueries bajo READ COMMITTED); anulación gobernada por el libro
+> con guards lock-free (el deadlock del FOR SHARE probado real una vez y el invariante con
+> red estructural permanente); cierre manual inmutable. Web completa con generar-OC desde
+> Reposición (Admin-only) y pre-carga de recepción por pendientes. Judgment-day: ~12
+> hallazgos severos pre-merge en 6 slices; las reglas 12b/12c de `mutation-proof-tests`
+> crecieron con la etapa. Suites al cierre: Domain 526 · Application 291 · Integration 1402 ·
+> vitest 796.
+
 ### Etapa 17 — Presupuestos y remitos
 
 **Alcance.** El lado venta del ciclo documental. **Presupuesto:** no mueve stock ni caja, tiene

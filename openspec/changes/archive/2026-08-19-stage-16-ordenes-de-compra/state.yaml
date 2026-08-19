@@ -238,6 +238,24 @@ phases:
       VINCULANTE del archive: la prosa del Purpose de
       reposicion-de-stock (T1 de la fase spec) se actualiza en la fusion.
   archive:
-    status: pending
+    status: done
     artifact: archive-report.md
     depends_on: [verify]
+    note: >-
+      Archived 2026-08-19. 3 fusiones de spec con prueba de fidelidad por
+      diff vacio: ordenes-de-compra creada como capability nueva (cp
+      mecanico); comprobantes-compra append aditivo puro (+76, cero
+      preexistentes tocadas); reposicion-de-stock con el MODIFIED
+      byte-identico al delta + el CARRYOVER VINCULANTE del Purpose (la
+      prosa "until Etapa 16..." ahora falsa, reescrita citando la OD5 —
+      el transito sigue fuera de la formula como extension diferida
+      registrada). El archive-report (428 lineas) lleva los 6 PRs
+      #140-#145, el log completo de decisiones (12+16+9+29), el resumen
+      de judgment-day (el CRITICAL de produccion de TotalEstimado, el
+      MAJOR de regla 12 del lock-free, los 3 CRITICALs 12b, el CRITICAL
+      refutado con la regla nueva main...HEAD, la flakiness cazada con su
+      causa raiz), las 2 reglas de la skill que crecieron en la etapa,
+      el W1 4ta-ocurrencia con su codificacion hacia adelante, las
+      suites de cierre y el backlog diferido. Fase solo-contenido — la
+      mudanza y docs/11 los ejecuta el orquestador con python shutil +
+      assert count>0 + filecmp.

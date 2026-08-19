@@ -11,8 +11,13 @@ no-movement rule, the rotation figure and which `movimientos_stock` rows
 count as consumption, the suggested-quantity formula and its honest nulls,
 and the reposición report with its `/resumen` tile and `/export` sibling.
 "Stock en tránsito" is documented here as intentionally **omitted** from
-the suggestion formula (decision 4) — not a field, not hard-coded to zero
-— until Etapa 16 gives orders a state and an expected arrival.
+the suggestion formula (decision 4) — not a field, not hard-coded to zero.
+As of Etapa 16, `ordenes_compra` now gives orders an `estado` and an
+expected arrival (`fecha_esperada`), so the omission is no longer a
+structural absence — it remains a **deliberate deferral** (Etapa 16
+explore, Orchestrator Decision 5), with the reopen condition being the
+first customer who over-orders because the report ignores what is
+already on the way.
 
 ## Requirements
 
@@ -127,9 +132,17 @@ already enforces on ajuste/decomiso.
 MUST NEVER be omitted. Each row's suggested purchase quantity MUST be
 `sugerido = reposicion IS NULL ? null : max(0, reposicion - cantidad)` —
 `sugerido` MUST be `null`, never `0`, when `reposicion` is unset. The
-formula MUST NOT subtract any "stock en tránsito" term — that concept is
-structurally absent from this system's model (no order-with-state entity
-exists) and is documented, not hard-coded to zero.
+formula MUST NOT subtract any "stock en tránsito" term. As of Etapa 16,
+`ordenes_compra` gives orders an `estado` and an expected arrival
+(`fecha_esperada`), and the pending quantity per artículo is now derivable
+from that capability — so the omission is no longer a structural absence.
+It remains a **deliberate deferral**: subtracting it is out of scope for
+this formula, with the reopen condition being the first customer who
+over-orders because the report ignores what is already on the way.
+(Previously: justified the omission with "that concept is structurally
+absent from this system's model (no order-with-state entity exists)" — no
+longer true once Etapa 16 ships; the formula and every scenario below stay
+byte-identical.)
 
 #### Scenario: An articulo with no proveedor habitual appears under Sin proveedor
 - GIVEN articulo 12 is below its minimo and has `id_proveedor_habitual =
@@ -151,6 +164,13 @@ exists) and is documented, not hard-coded to zero.
 - GIVEN a user with role Vendedor
 - WHEN they call the reposición report or its export
 - THEN the response is `403`
+
+#### Scenario: The formula stays byte-identical after Etapa 16 ships
+- GIVEN the same stock/minimo/reposicion inputs as before Etapa 16, and an
+  `ordenes_compra` row now derivable for that proveedor
+- WHEN the reposición report runs
+- THEN `sugerido` computes exactly as before — no "stock en tránsito" term
+  is subtracted
 
 ### Requirement: Rotation Excludes Purchase-Reversal Anulaciones And Is Advisory-Only
 
