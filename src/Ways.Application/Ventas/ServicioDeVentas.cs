@@ -56,7 +56,13 @@ public class ServicioDeVentas(
         // pisar esto.
         var idEmpleado = contexto.UsuarioId;
 
-        var lineas = ExigirLineasValidas(solicitud.Lineas);
+        // stage-17-presupuestos-y-remitos, Slice 3 (design: Transactions — ":59"): con
+        // idPresupuestoOrigen, lineas tiene que llegar vacío/ausente (400 lineas_no_admitidas,
+        // dto-contract-honesty regla 1) — el valor REAL (los items del presupuesto) se resuelve
+        // más abajo, en la rama del snapshot (p6), reasignando esta misma variable.
+        var lineas = solicitud.IdPresupuestoOrigen is null
+            ? ExigirLineasValidas(solicitud.Lineas)
+            : ExigirSinLineas(solicitud.Lineas);
         var pagos = solicitud.Pagos ?? [];
 
         // Pineado UNA sola vez acá — nunca se vuelve a leer dentro de la lambda reintentable
@@ -83,12 +89,38 @@ public class ServicioDeVentas(
         ReglaDeComprobantes.ValidarComprobanteAsociado(
             tipo.Signo, solicitud.IdComprobanteAsociado, asociado, puntoVenta.Id, cliente.Id);
 
+        // stage-17-presupuestos-y-remitos, Slice 3 (design: Transactions — "RAMA DEL SNAPSHOT",
+        // decisión 2): corre SOLO con idPresupuestoOrigen. p1-p6 del design, en orden. Reemplaza,
+        // para esta venta, el precio "mostrado por el carrito" por una decisión de servidor
+        // ANTERIOR (la del presupuesto), nunca por lo que el request diga — la autoridad de
+        // precio sigue siendo el servidor (fact 1 de design: Technical Approach).
+        Presupuesto? presupuestoOrigen = null;
+        DateOnly? hoyEnZonaDelPuntoVenta = null;
+        IReadOnlyList<ItemPresupuesto>? itemsPresupuestoOrigen = null;
+
+        if (solicitud.IdPresupuestoOrigen is { } idPresupuestoOrigen)
+        {
+            (presupuestoOrigen, itemsPresupuestoOrigen, hoyEnZonaDelPuntoVenta, cliente) =
+                await ResolverConversionDesdePresupuestoAsync(
+                    idPresupuestoOrigen, puntoVenta.Id, tipo.Signo, solicitud.IdCliente, momento, ct);
+
+            // p6: lineas := items del presupuesto (IdLote null: FEFO se resuelve abajo, sin
+            // cambios) — reemplaza el resultado vacío de ExigirSinLineas de arriba.
+            lineas = itemsPresupuestoOrigen
+                .Select(i => new LineaDeVenta(i.IdArticulo, i.Cantidad, CodigoBarra: null))
+                .ToList();
+        }
+
         // 7 consultas (ServicioDeOfertas.ResolverAsync, design: Technical Approach) — la
-        // autoridad de precio ÚNICA, nunca lo que mostró el carrito (design decisión 3).
+        // autoridad de precio ÚNICA, nunca lo que mostró el carrito (design decisión 3). Con
+        // idPresupuestoOrigen, la resolución YA está congelada en items_presupuesto — este
+        // llamado se salta entero (decisión 2: "resolucion ←→ sintetizada desde items_presupuesto").
         var lineasDeResolucion = lineas
             .Select(l => new LineaDeResolucion(l.IdArticulo, puntoVenta.IdEmpresa, cliente.IdListaPrecio, l.Cantidad))
             .ToList();
-        var resolucion = await servicioDeOfertas.ResolverAsync(lineasDeResolucion, momento, ct);
+        var resolucion = presupuestoOrigen is null
+            ? await servicioDeOfertas.ResolverAsync(lineasDeResolucion, momento, ct)
+            : null;
 
         // 2 consultas: snapshot de articulos + alicuotas (design: The Sale Transaction). Sin
         // segunda validación de existencia de articulo — ResolverAsync ya la hizo (400
@@ -104,7 +136,30 @@ public class ServicioDeVentas(
             .Where(a => idsAlicuota.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, a => a.Porcentaje, ct);
 
-        var (items, totales) = MaterializarItems(tipo.Signo, lineas, resolucion, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio);
+        // stage-17-presupuestos-y-remitos, Slice 3 (design decisión 3, fact 2): con
+        // idPresupuestoOrigen, MaterializarItems NO puede reusarse — lee IdAlicuotaIva/
+        // porcentaje_iva de HOY, ambos parte de la promesa congelada. MaterializarItemsDesdePresupuesto
+        // es un materializador PRIVADO SEPARADO, MaterializarItems (:1007 y siguientes) queda
+        // literalmente intacto — los dos corren CalculadorDeTotales.Calcular como única
+        // autoridad aritmética (tensión T2).
+        var (items, totales) = presupuestoOrigen is null
+            ? MaterializarItems(tipo.Signo, lineas, resolucion!, articuloPorId, porcentajePorAlicuota, cliente.IdListaPrecio)
+            : MaterializarItemsDesdePresupuesto(itemsPresupuestoOrigen!, articuloPorId);
+
+        // Aserción de fidelidad de totales (design decisión 4, mutation target 30, CONFLICT #4 —
+        // presupuesto_inconsistente): los totales recomputados por CalculadorDeTotales sobre el
+        // snapshot congelado tienen que coincidir EXACTO con el header ya guardado del
+        // presupuesto — un raw UPDATE que desincroniza presupuestos.total de sus items nunca
+        // produce una venta silenciosamente distinta, produce este 409.
+        if (presupuestoOrigen is not null
+            && (totales.Subtotal != presupuestoOrigen.Subtotal
+                || totales.DescuentoTotal != presupuestoOrigen.DescuentoTotal
+                || totales.Total != presupuestoOrigen.Total))
+        {
+            throw new ErrorDominio(
+                "presupuesto_inconsistente",
+                "El presupuesto está inconsistente con sus items; no se puede convertir.", 409);
+        }
 
         // 1 consulta batcheada (stage-12, design decisión 2 / spec parametros-operativos: "A
         // Single Batched Query Resolves All Three Keys"): tolerancia_pago + vuelto_maximo +
@@ -265,7 +320,8 @@ public class ServicioDeVentas(
             idTenant, idEmpleado, tipo.Id, tipo.Codigo, momento, puntoVenta.Id, turno.Id, cliente.Id,
             solicitud.IdComprobanteAsociado, items, totales.Subtotal, totales.DescuentoTotal, totales.Total,
             pagosDelPlan, cliente.LimiteCredito, cliente.CreditoIlimitado,
-            NormalizarOpcional(solicitud.DireccionEntrega), NormalizarOpcional(solicitud.Observaciones));
+            NormalizarOpcional(solicitud.DireccionEntrega), NormalizarOpcional(solicitud.Observaciones),
+            presupuestoOrigen?.Id, hoyEnZonaDelPuntoVenta);
 
         // Corrección de esta slice al decisión 2 original (ver el doc-comment de
         // VentasAtomicidadYConcurrenciaTests): la numeración se reserva y COMITEA en su PROPIA
@@ -772,6 +828,36 @@ public class ServicioDeVentas(
         // así que ve esta misma transacción recién abierta.
         await servicioDeTurnos.ExigirTurnoAbiertoBajoLockAsync(plan.IdTurnoCaja, ct);
 
+        // stage-17-presupuestos-y-remitos, Slice 3 (design decisión 6): conexión/transacción
+        // cruda obtenidas ACÁ — antes de esta slice se obtenían recién antes del paso 5 (stock);
+        // el paso 1.5 de abajo las necesita ANTES del INSERT del comprobante. El cuerpo de los
+        // pasos 5/6 más abajo queda byte-idéntico, solo reusa estas mismas variables en vez de
+        // redeclararlas.
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        // 1.5. Conversión de presupuesto (design decisión 6, mutation targets 34-35) — POSICIÓN
+        // 1.5, entre el turno (paso 0) y el INSERT del comprobante (paso 2): presupuestos es el
+        // primer lock CONTENDIBLE de esta transacción (el comprobante de abajo es una fila
+        // NUEVA, nunca una posición del orden — T10), así que el perdedor de una carrera de
+        // conversión no llega a escribir nada. Para una venta común (idPresupuestoOrigen null),
+        // esto es CERO statements extra (mutation target 34).
+        if (plan.IdPresupuestoOrigen is { } idPresupuestoOrigenDelPlan)
+        {
+            var convertido = await EscriturasDePresupuesto.MarcarConvertidoAsync(
+                conexion, transaccionCruda, plan.IdTenant, idPresupuestoOrigenDelPlan, plan.IdPuntoVenta,
+                plan.HoyDelPuntoVenta!.Value, plan.Momento, ct);
+
+            if (!convertido)
+            {
+                // 0 filas: reclasifica bajo FOR UPDATE en la causa precisa (404/409/400) — nunca
+                // sigue de largo hacia el INSERT del comprobante.
+                await EscriturasDePresupuesto.ExigirCausaDelRechazoAsync(
+                    conexion, transaccionCruda, plan.IdTenant, idPresupuestoOrigenDelPlan, plan.IdPuntoVenta,
+                    plan.HoyDelPuntoVenta!.Value, ct);
+            }
+        }
+
         // 1. Numeración — YA reservada y comprometida por AsignarNumeroComprometidoAsync, en su
         // propia transacción (ver el comentario de EmitirAsync). Esta transacción arranca
         // directo en el paso 2: el número que recibe como parámetro es un dato de solo lectura
@@ -788,6 +874,7 @@ public class ServicioDeVentas(
             IdEmpleado = plan.IdEmpleado,
             IdCliente = plan.IdCliente,
             IdComprobanteAsociado = plan.IdComprobanteAsociado,
+            IdPresupuestoOrigen = plan.IdPresupuestoOrigen,
             Subtotal = plan.Subtotal,
             DescuentoTotal = plan.DescuentoTotal,
             Total = plan.Total,
@@ -848,9 +935,6 @@ public class ServicioDeVentas(
         db.PagosComprobante.AddRange(pagosEntidad);
 
         await db.SaveChangesAsync(ct);
-
-        var conexion = await ObtenerConexionAbiertaAsync(ct);
-        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
 
         // 5. Stock — ORDEN ASCENDENTE por (id_articulo, id_lote NULLS FIRST) (design decisión 2/8/9,
         // no negociable): el upsert de abajo toma su propio row lock de forma implícita, así que
@@ -927,7 +1011,13 @@ public class ServicioDeVentas(
         // El POS solo emite tipos de venta no fiscales (TX/NCX, design: "neither of which is
         // fiscal") — un código de factura/nota real (fiscal) queda afuera de este camino a
         // propósito, no solo por no existir el flujo de facturación electrónica todavía.
-        if (tipo is null || !tipo.Activo || tipo.Clase != ClaseComprobante.Venta || tipo.EsFiscal)
+        // stage-17-presupuestos-y-remitos, Slice 3 (design decisión 1, net 2 — la segunda red,
+        // independiente de la desactivación del catálogo/data statement 1): incondicional sobre
+        // afecta_stock, nunca condicionado a si la solicitud trae líneas de producto — un PRE
+        // itemless (o cualquier otro tipo activo con afecta_stock=false, incluso fuera de banda)
+        // ya no puede colarse por este resolver. RC nunca pasa por acá (tiene su propio
+        // ResolverTipoRcAsync, ServicioDeCuentaCorriente.cs).
+        if (tipo is null || !tipo.Activo || tipo.Clase != ClaseComprobante.Venta || tipo.EsFiscal || !tipo.AfectaStock)
         {
             throw new ErrorDominio(
                 "tipo_comprobante_invalido", $"'{codigo}' no es un tipo de comprobante válido para el POS.", 400);
@@ -995,6 +1085,168 @@ public class ServicioDeVentas(
             JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.ToleranciaPago.Clave]),
             JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.VueltoMaximo.Clave]),
             JsonSerializer.Deserialize<bool>(resueltoPorClave[ParametroConocido.LotesHabilitado.Clave]));
+    }
+
+    // ---- stage-17-presupuestos-y-remitos, Slice 3: rama del snapshot (design: Transactions —
+    // "RAMA DEL SNAPSHOT") ------------------------------------------------------------------------
+
+    /// <summary>p1-p6 del design, en orden. Corre SOLO cuando <c>SolicitudDeVenta.IdPresupuestoOrigen</c>
+    /// llega presente — nunca para una venta común. Devuelve el presupuesto (para la aserción de
+    /// fidelidad de totales de más arriba), sus items congelados, el "hoy" YA resuelto en la zona
+    /// del punto de venta (decisión 10 — pineado UNA vez, reusado adentro de la transacción por el
+    /// UPDATE guardado) y el cliente correcto (el del presupuesto, nunca lo que trajo el
+    /// request).</summary>
+    private async Task<(Presupuesto Presupuesto, IReadOnlyList<ItemPresupuesto> Items, DateOnly Hoy, Cliente Cliente)>
+        ResolverConversionDesdePresupuestoAsync(
+            int idPresupuestoOrigen, int idPuntoVenta, short signoTipoComprobante, int? idClienteSolicitado,
+            DateTimeOffset momento, CancellationToken ct)
+    {
+        // p1: leer presupuesto (AsNoTracking) · exigir mismo tenant/PV. El filtro de tenant lo
+        // aplica el query filter global de EF (+ RLS) — invisible ⇒ 404, ADR-8.
+        var presupuesto = await db.Presupuestos.AsNoTracking().FirstOrDefaultAsync(p => p.Id == idPresupuestoOrigen, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el presupuesto {idPresupuestoOrigen}.");
+
+        if (presupuesto.IdPuntoVenta != idPuntoVenta)
+        {
+            throw new ErrorDominio(
+                "punto_venta_no_coincide", "El presupuesto pertenece a otro punto de venta.", 400);
+        }
+
+        // p2: hoy resuelto en la zona del PV (decisión 10) — deliberadamente DISTINTO del hoy
+        // UTC-naive que usa el FEFO de más abajo (tensión T4, byte-idéntico, sin cambios).
+        var (_, zona) = await ResolverZonaDelPuntoVentaAsync(idPuntoVenta, ct);
+        var hoy = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(momento, zona).DateTime);
+
+        // p3: ReglaDePresupuestos.EsConvertible — PRE-CHEQUEO, NO la autoridad (design decisión
+        // 5): la autoridad es el UPDATE guardado de EscriturasDePresupuesto.MarcarConvertidoAsync,
+        // dentro de la transacción, en la POSICIÓN 1.5. Mismo orden de causas que
+        // EscriturasDePresupuesto.ExigirCausaDelRechazoAsync usa bajo lock.
+        if (presupuesto.Estado == EstadoPresupuesto.Convertido)
+        {
+            throw new ErrorDominio(
+                "presupuesto_ya_convertido", "El presupuesto ya fue convertido en una venta.", 409);
+        }
+
+        if (presupuesto.Estado != EstadoPresupuesto.Enviado)
+        {
+            throw new ErrorDominio(
+                "presupuesto_no_convertible", "El presupuesto no está en un estado convertible.", 409);
+        }
+
+        if (ReglaDePresupuestos.EstaVencido(presupuesto.Estado, presupuesto.Vencimiento, hoy))
+        {
+            throw new ErrorDominio("presupuesto_vencido", "El presupuesto está vencido.", 409);
+        }
+
+        // p4: cliente := el del presupuesto; idCliente en conflicto ⇒ 400 (nunca silenciosamente
+        // pisado — un idCliente que el request trae y que no coincide es un error real, no un
+        // valor a ignorar).
+        if (idClienteSolicitado is { } idClienteEnConflicto && idClienteEnConflicto != presupuesto.IdCliente)
+        {
+            throw new ErrorDominio(
+                "cliente_no_coincide", "El cliente indicado no coincide con el del presupuesto.", 400);
+        }
+
+        var cliente = await ResolverClienteAsync(presupuesto.IdCliente, ct);
+
+        // p5: tipo.Signo <= 0 ⇒ 400 — una conversión nunca es una devolución (NCX), el
+        // presupuesto congelado no tiene ninguna noción de signo negativo.
+        if (signoTipoComprobante <= 0)
+        {
+            throw new ErrorDominio(
+                "conversion_requiere_signo_positivo",
+                "El tipo de comprobante de una conversión tiene que ser de signo positivo.", 400);
+        }
+
+        // p6: lineas := items del presupuesto — el llamador arma la LineaDeVenta equivalente
+        // (IdLote null: FEFO se resuelve más abajo, sin cambios).
+        var items = await db.ItemsPresupuesto.AsNoTracking()
+            .Where(i => i.IdPresupuesto == idPresupuestoOrigen)
+            .OrderBy(i => i.Orden)
+            .ToListAsync(ct);
+
+        return (presupuesto, items, hoy, cliente);
+    }
+
+    /// <summary>design decisión 10 — "hoy" del vencimiento del presupuesto se resuelve en la zona
+    /// del PUNTO DE VENTA. Consulta DIRECTA (sin inyectar <c>ServicioDeParametros</c>: el binding
+    /// verify criterion de esta slice acota el diff de esta clase a la rama del snapshot, y un
+    /// constructor nuevo rompería los seis sitios de test que instancian <c>ServicioDeVentas</c>
+    /// directo — <c>VentasCheckoutTests</c>/<c>VentasAtomicidadYConcurrenciaTests</c>/
+    /// <c>PlanDeVentaFefoTests</c>/<c>VentaEscrituraLoteTests</c>/<c>VentasTurnoWiringTests</c>).
+    /// Mismo criterio de resolución (<c>ResolucionDeParametros.Resolver</c>, ya importado por
+    /// <see cref="ResolverParametrosDeVentaAsync"/>) que <c>ServicioDePresupuestos.ResolverZonaAsync</c>.</summary>
+    private async Task<(string ZonaId, TimeZoneInfo Zona)> ResolverZonaDelPuntoVentaAsync(int idPuntoVenta, CancellationToken ct)
+    {
+        var puntoVenta = await db.PuntosVenta.AsNoTracking()
+            .Where(pv => pv.Id == idPuntoVenta)
+            .Select(pv => new { pv.IdEmpresa })
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {idPuntoVenta}.");
+
+        var candidatos = await db.Parametros
+            .Where(p => p.Clave == ParametroConocido.ZonaHoraria.Clave && p.IdEmpresa == puntoVenta.IdEmpresa
+                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
+            .ToListAsync(ct);
+
+        var zonaId = JsonSerializer.Deserialize<string>(
+            ResolucionDeParametros.Resolver(ParametroConocido.ZonaHoraria.Clave, candidatos, idPuntoVenta))!;
+
+        return (zonaId, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
+    }
+
+    /// <summary>design decisión 3, fact 2: el SEGUNDO materializador privado — <see
+    /// cref="MaterializarItems"/> (más abajo) queda literalmente intacto. Ambos corren
+    /// <see cref="CalculadorDeTotales.Calcular"/> como única autoridad aritmética (tensión T2).
+    /// <c>precio_unitario</c>/<c>descuento</c>/<c>id_lista_precio</c>/<c>id_oferta</c>/
+    /// <c>id_alicuota_iva</c>/<c>porcentaje_iva</c>/<c>descripcion</c> SIEMPRE salen congeladas de
+    /// <paramref name="itemsPresupuesto"/> (mutation targets 25-28), nunca re-resueltas contra el
+    /// catálogo de hoy — solo <c>costo_unitario</c> sale de <c>articulo.CostoNominal</c> de HOY
+    /// (mutation target 29, decisión 4 del proposal: el costo es a la fecha de emisión, no de
+    /// cotización).</summary>
+    private static (IReadOnlyList<LineaDelPlan> Items, TotalesCalculados Totales) MaterializarItemsDesdePresupuesto(
+        IReadOnlyList<ItemPresupuesto> itemsPresupuesto,
+        IReadOnlyDictionary<int, Articulo> articuloPorId)
+    {
+        // OD9/T3: un único id_lista_precio para todo el documento es un invariante DE SERVICIO,
+        // nunca una restricción de esquema — items_presupuesto lo carga por línea. Un presupuesto
+        // se cotiza siempre contra UNA resolución, así que un desacuerdo acá es un invariante de
+        // escritura roto, no un caso de negocio.
+        var idsListaPrecio = itemsPresupuesto.Select(i => i.IdListaPrecio).Distinct().ToList();
+        if (idsListaPrecio.Count > 1)
+        {
+            throw new InvalidOperationException(
+                $"El presupuesto tiene items con distintas listas de precio ({string.Join(", ", idsListaPrecio)}) " +
+                "— invariante de servicio violado (una lista por documento).");
+        }
+
+        var lineasParaCalcular = itemsPresupuesto
+            .Select(i => new LineaParaCalcular(
+                i.Cantidad, i.PrecioUnitario, i.Cantidad == 0m ? 0m : i.Descuento / i.Cantidad))
+            .ToList();
+
+        var totales = CalculadorDeTotales.Calcular(lineasParaCalcular);
+
+        // Defensa en profundidad (design: Domain rules first) — un presupuesto nunca es una
+        // devolución (p5 arriba ya exige signo positivo), así que esto siempre pasa; si no pasa,
+        // es un bug de esta clase.
+        ReglaDeComprobantes.ValidarSignoDeLineas(signoTipoComprobante: (short)1, totales.Items.Select(it => it.Cantidad).ToList());
+
+        var items = new List<LineaDelPlan>(itemsPresupuesto.Count);
+        for (var i = 0; i < itemsPresupuesto.Count; i++)
+        {
+            var item = itemsPresupuesto[i];
+            var calculado = totales.Items[i];
+            var articulo = articuloPorId[item.IdArticulo];
+
+            items.Add(new LineaDelPlan(
+                item.IdArticulo, item.Descripcion, CodigoBarra: null, articulo.IdArea,
+                item.IdListaPrecio, item.IdOferta, item.IdAlicuotaIva, item.PorcentajeIva,
+                calculado.Cantidad, calculado.PrecioUnitario, calculado.Descuento, calculado.Total,
+                articulo.EsProducto, articulo.CostoNominal));
+        }
+
+        return (items, totales);
     }
 
     /// <summary>Corre <see cref="CalculadorDeTotales"/> (pura) sobre las líneas ya resueltas y
@@ -1209,6 +1461,25 @@ public class ServicioDeVentas(
         return lineas;
     }
 
+    /// <summary>stage-17-presupuestos-y-remitos, Slice 3 (design: Transactions — ":59", mutation
+    /// target 36): la mitad complementaria de <see cref="ExigirLineasValidas"/> — con
+    /// <c>idPresupuestoOrigen</c> presente, <c>lineas</c> tiene que llegar vacío/ausente
+    /// (<c>dto-contract-honesty</c> regla 1: un campo que el servidor ignoraría en silencio no se
+    /// acepta). Devuelve una lista vacía — el valor REAL se resuelve después, en la rama del
+    /// snapshot (p6), reasignando la variable del llamador.</summary>
+    private static IReadOnlyList<LineaDeVenta> ExigirSinLineas(IReadOnlyList<LineaDeVenta>? lineas)
+    {
+        if (lineas is { Count: > 0 })
+        {
+            throw new ErrorDominio(
+                "lineas_no_admitidas",
+                "Una venta con idPresupuestoOrigen no admite líneas propias: el precio sale del presupuesto.",
+                400);
+        }
+
+        return [];
+    }
+
     private static string? NormalizarOpcional(string? valor)
     {
         var limpio = valor?.Trim();
@@ -1256,7 +1527,8 @@ public class ServicioDeVentas(
             .ToList(),
         pagos
             .Select(p => new PagoEmitido(p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto))
-            .ToList());
+            .ToList(),
+        comprobante.IdPresupuestoOrigen);
 
     // ---- El plan inmutable (design: "PlanDeVenta(immutable)") --------------------------------
 
@@ -1287,5 +1559,11 @@ public class ServicioDeVentas(
         decimal ClienteLimiteCredito,
         bool ClienteCreditoIlimitado,
         string? DireccionEntrega,
-        string? Observaciones);
+        string? Observaciones,
+        // stage-17-presupuestos-y-remitos, Slice 3: IdPresupuestoOrigen null ⇒ venta común, CERO
+        // statements extra en EjecutarTransaccionAsync/EjecutarAnulacionAsync (design decisión 6).
+        // HoyDelPuntoVenta viaja YA resuelto (design decisión 10) — pineado una vez en la fase
+        // decide, nunca vuelto a calcular dentro de la transacción reintentable.
+        int? IdPresupuestoOrigen = null,
+        DateOnly? HoyDelPuntoVenta = null);
 }
