@@ -861,7 +861,7 @@ if this slice overflows — decision 3 above.
   files under `Migraciones/` (`git diff --stat main -- .../Migraciones/` empty); `git diff --stat`
   confirms no file under `src/Ways.Application/Ventas/` or `src/Ways.Application/Stock/` appears
   (verified empty). Gate holds, no deviation.
-- [ ] 3.40 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
+- [x] 3.40 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
   RUN by `sdd-apply`** — same executor-contract carve-out as slice 1 task 1.38 / slice 2 task
   2.26: this executor cannot launch sub-agents/reviewers. Left for the orchestrator to run before
   merge.
