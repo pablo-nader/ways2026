@@ -139,7 +139,12 @@ so deleting the clause under test changes nothing the test can see.
    (c) **Identity predicate**: seeding ONE entity per tenant makes `Where(Id == x)`
    undeletable-undetectable; every listing/estado test seeds a SECOND sibling of the
    same tenant with its own rows and asserts exact counts + row identity, so
-   cross-entity leaks fail loudly.
+   cross-entity leaks fail loudly. This applies to WRITE paths too, not just reads:
+   a replace-set `DELETE`/`RemoveRange` whose scope predicate is widened to the whole
+   table survives every single-entity fixture (stage 16 slice 2: the unscoped item
+   delete passed 11/11 — second occurrence of the class after stage 15 slice 4's
+   read-side `Where(IdProveedor)`). Every scoped destructive write gets a sibling
+   seed whose rows must remain intact, asserted by exact count and identity.
 
 ## Decision Gate
 
