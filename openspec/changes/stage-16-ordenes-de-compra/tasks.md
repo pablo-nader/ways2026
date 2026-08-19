@@ -183,6 +183,24 @@
       (`test(stage16-slice2): endurece replace-set y FechaEsperada/Observaciones (judgment-day juez
       B)`).
 
+19. **`judgment-day` round 1 (juez A): 1 WARNING documental registrado + 1 CRITICAL REFUTADO
+    con evidencia.**
+    - **WARNING (drift de nombre, este registro es el cierre)**: design.md:243 nombra el rechazo
+      de pre-lectura del enviar como `orden_compra_ya_enviada`; el código shipped usa
+      `orden_compra_no_enviable` y REUSA el mismo código para el caso 0-filas de la carrera del
+      PUT que muda de PV. El nombre del código es DELIBERADAMENTE más general que el del design:
+      cubre ambas causas reales de no-enviabilidad (estado ≠ borrador y la reclasificación por
+      carrera) con una sola verdad; ningún spec ni test pinea el string del design. El design
+      queda como texto stale en esa línea; este registro es la desviación que faltaba.
+    - **CRITICAL REFUTADO**: el juez A reportó que el diff "borra" la extensión de la regla 12c
+      de mutation-proof-tests. Falso positivo del método de congelado: el orquestador commiteó
+      esa extensión a main (87d612d) DESPUÉS de que esta rama naciera (dcb517f), y el diff de
+      dos puntos `main..HEAD` muestra el avance de main como reversa. Evidencia: `git log
+      main..HEAD --name-only` no contiene ningún archivo de `.claude/` (la rama jamás tocó la
+      skill) y el diff three-dot `main...HEAD` (merge-base) trae solo los 7 archivos reales del
+      slice. El merge three-way preserva la regla en main. Regla de proceso nueva: los diffs de
+      judgment se congelan con `main...HEAD`.
+
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
 word-budget overage is a house precedent, no action; T5 (spec OD7) — `cuenta-corriente-de-
