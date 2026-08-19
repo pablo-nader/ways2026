@@ -1496,7 +1496,7 @@ deviation) if this slice overflows — decision 3 above.
   RUN by `sdd-apply`** — same executor-boundary reason as every prior slice (1.38/2.27/3.x/4.x):
   `judgment-day` is an orchestrator-level dual-review protocol this executor cannot invoke. Left for
   the orchestrator to run before merge.
-- [ ] 5.20 Branch `feat/stage16-slice5-lectura` off `main` (parent: slice 4); PR; merge
+- [x] 5.20 Branch `feat/stage16-slice5-lectura` off `main` (parent: slice 4); PR; merge
   stacked-to-main. **PARTIAL**: the worktree was already provisioned on
   `feat/stage16-slice5-lectura` off `main` (`6f8a25f`, slice 4 merged) before this phase started —
   branching is done. PR creation/merge is explicitly out of scope (`NO pushees` instruction) — left
