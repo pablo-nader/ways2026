@@ -55,4 +55,11 @@ public class ComprobanteCompra : EntidadTenant
     public string? Observaciones { get; set; }
 
     public EstadoCompra Estado { get; set; } = EstadoCompra.Borrador;
+
+    /// <summary>Etapa 16 (proposal: Modelo de datos propuesto — §D): la orden de compra que esta
+    /// recepción cubre. <c>NULL</c> = 100% del tráfico anterior a esta etapa, un estado
+    /// permanentemente legítimo — no toda compra viene de una OC. Seteable mientras
+    /// <see cref="EstadoCompra.Borrador"/> (<c>ExigirOrdenLigableAsync</c>, slice 3); congelado
+    /// una vez que el comprobante deja de ser borrador.</summary>
+    public int? IdOrdenCompra { get; set; }
 }

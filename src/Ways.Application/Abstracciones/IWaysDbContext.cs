@@ -118,6 +118,11 @@ public interface IWaysDbContext
     // (slice 2) no lo necesita (opera raw-ADO, mismo criterio que EscriturasDeCuentaCorriente).
     DbSet<MovimientoCuentaCorrienteProveedor> MovimientosCuentaCorrienteProveedor { get; }
 
+    // stage-16-ordenes-de-compra, Slice 2: ServicioDeOrdenesDeCompra es el primer consumidor de
+    // Application de estos 2 — Slice 1 solo adelanta el modelo a la migración (proposal §B/§C).
+    DbSet<OrdenCompra> OrdenesCompra { get; }
+    DbSet<ItemOrdenCompra> ItemsOrdenCompra { get; }
+
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>
     /// y <c>BeginTransactionAsync</c> no tienen un equivalente más angosto en este proyecto.

@@ -113,6 +113,9 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                     // modelo vivo de este contexto manualmente curado diverge del snapshot real
                     // (que sí conoce tipo_movimiento_cc_proveedor desde slice 1).
                     npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                    // stage-16-ordenes-de-compra, Slice 1: mismo gap, ahora con
+                    // estado_orden_compra (slice 1).
+                    npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
                 })
                 .Options;
 

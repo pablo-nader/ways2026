@@ -215,6 +215,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
             })
             .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
@@ -250,6 +251,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;
@@ -286,6 +288,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

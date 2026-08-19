@@ -466,6 +466,16 @@ según margen del grupo/proveedor. `anulada` revierte con contramovimientos.
 > existente y se aplica por una acción explícita separada — nunca dentro del confirm (decisión
 > 3 de la propuesta). Anular una compra **no** revierte los gastos ya ligados: quedan como
 > historial de un pago real (decisión 6, sin motor de reversión de gastos en el proyecto).
+>
+> **Estado (Etapa 16, Slice 1):** `comprobantes_compra` gana `id_orden_compra integer NULL` —
+> ALTER aditivo, metadata-only en PG 11+, sin rewrite de tabla. FK 9
+> `fk_comprobantes_compra_orden_compra` compuesta `(id_orden_compra, id_tenant)` contra
+> `ordenes_compra`, RESTRICT, MATCH SIMPLE (el default): con `id_orden_compra` NULL la
+> constraint no se chequea, mismo precedente que `gastos.id_comprobante_compra`. Ninguna CHECK
+> ata `id_orden_compra` a `estado`: el link se setea mientras `borrador` y se congela después
+> por el guard de servicio (`ExigirOrdenLigableAsync`, slice 3), no por esquema. `NULL` sigue
+> siendo el 100% del tráfico anterior a esta etapa, un estado permanentemente legítimo: no toda
+> compra viene de una orden.
 
 **Relación con gastos:** la compra registra la mercadería; el gasto registra la plata.
 `gastos` gana `id_comprobante_compra NULL`: pagarle al proveedor referencia la factura.
@@ -503,6 +513,57 @@ van a `movimientos_caja` (§7).
 > cuando `categoria = proveedor` y la compra referenciada está `confirmada`. El vínculo es
 > historia, no un bloqueo: anular la compra vinculada sigue permitido (design decisión 6 —
 > ningún camino de reversión de gasto existe todavía).
+
+### Órdenes de compra (Etapa 16)
+
+La intención colocada sobre un proveedor ANTES de que exista un `comprobantes_compra`
+(doc-11:268-285). Greenfield: el legacy nunca tuvo este documento (doc-01:203-208).
+
+```sql
+ordenes_compra (               -- [operativa]
+    id_orden_compra, id_tenant, id_punto_venta,  -- a qué local llega la mercadería
+    id_proveedor,
+    id_empleado,                                 -- quién la creó
+    numero                bigint      NULL,       -- correlativo propio por PV, serie 'OC';
+                                                  -- se asigna únicamente al ENVIAR
+    fecha_emision          timestamptz NOT NULL,   -- IRelojDelSistema, sin DEFAULT now()
+    fecha_envio            timestamptz NULL,       -- par de `numero`
+    fecha_esperada         date        NULL,       -- ETA declarada
+    fecha_cierre           timestamptz NULL,       -- solo con estado = 'cerrada'
+    id_empleado_cierre     integer     NULL,       -- NOT NULL ⇒ cierre MANUAL, nunca revertido
+    observaciones,
+    estado estado_orden_compra NOT NULL            -- enum: borrador | enviada | recibida_parcial
+                                                    --     | cerrada | anulada
+);
+
+items_orden_compra (
+    id_item, id_orden_compra, orden,
+    id_articulo,                       -- NOT NULL: sin artículo no puede recibirse contra stock
+    descripcion text,                  -- snapshot
+    cantidad_pedida         numeric(12,3),
+    costo_unitario_estimado numeric(14,4) NULL     -- intención, jamás un hecho; NULL = no cotizado
+    -- SIN cantidad_recibida: siempre se deriva del libro de recepción, nunca se cachea.
+);
+```
+
+**Estado (Etapa 16, Slice 1 — schema + backstops, DB CHANGE GATE ejercido y aprobado
+2026-08-18):** creadas por la migración `OrdenesDeCompraEtapa16`, aditiva pura, cero data
+statements. `EntidadBase`: **SÍ** en las dos tablas — a diferencia de
+`movimientos_cuenta_corriente_proveedor`/`auditoria` (ledgers append-only, etapas 14/15), una OC
+es mutable durante `borrador` (replace-set completo bajo `SELECT … FOR UPDATE`) y se edita de
+nuevo en `enviar`/`cerrar`/`anular` — hereda el filtro de tenant estándar y `EstamparTenant()`
+como `ComprobanteCompra`, sin filtro clonado. `ux_ordenes_compra_numero` es **UNIQUE PARCIAL**
+`WHERE numero IS NOT NULL` — a diferencia de `ux_comprobantes_compra_numero_externo`, NO excluye
+`anulada`: una serie propia jamás reusa números (los huecos son legítimos), el `numero_externo`
+es del proveedor y sí puede repetirse tras anular. `estado_orden_compra` se registra únicamente
+vía `npgsql.MapEnum<EstadoOrdenCompra>` en `DependencyInjection.cs`/`WaysDbContextFactory.cs` —
+nunca también con `HasPostgresEnum`. `ManejadorDeErrores.cs` gana 6 ramas exactas: 2 `23505`
+(`ux_ordenes_compra_numero` → `numero_de_orden_duplicado`, **tercera ocurrencia** del ordering
+trap, resuelta por encima de `ClasificarUnicidad`; `ux_items_orden_compra_orden` →
+`orden_de_item_duplicado`) + 4 `23514` (las dos CHECKs de cada tabla). El proyector puro
+(`ProyectorDeEstadoDeOrden`, `Ways.Domain.Compras`) y el motor de escritura
+(`EscriturasDeOrdenDeCompra`) son slice 3; `ServicioDeOrdenesDeCompra` (draft CRUD, `enviar`,
+`cerrar`, `anular`, lectura) es slices 2-5.
 
 ## 6. Stock
 
