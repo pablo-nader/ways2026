@@ -261,6 +261,43 @@
       non-regression criterion (mutation target #34's trailing row) holds across the whole tree, not
       only the `ComprasConfirmar`/`ComprasAnular` suites named there.
 
+25. **`judgment-day` round confirmed 3 CRITICAL (juez B) on `OrdenesCompraLecturaTests.cs` —
+    closed with focused fixes, tests-only, producción intacta.** Tercera ocurrencia registrada en
+    el programa de una violación de la regla 12b de `mutation-proof-tests` (design.md:420, "every
+    projected money/date field asserted with per-row discriminating values") — las dos previas
+    incluyen stage-15 slice 4 ("15-s4"); esta, la tercera, en esta slice.
+    - **CRITICAL 1**: `CoberturaDeArticulo.Pendiente` solo se asserteaba en `0` (7-7 en el fixture
+      rico y `Math.Max(0-1,0)` en el recibido-no-pedido) — un `var pendiente = 0m;` fijo en
+      `ObtenerCoberturaAsync` sobrevivía 11/11. **Fix**: nuevo test dedicado
+      `CoberturaPendienteEsPositivaCuandoLaRecepcionNoCompletaLoPedido` (pedida 7, recibida 5 ⇒
+      Pendiente 2, asserteado explícitamente).
+    - **CRITICAL 2**: `OrdenDeCompraDetalle.TotalEstimado`/`TotalReal`/`DesvioTotal` jamás se
+      asserteaban con valores positivos (un solo `Assert.Null` en el fixture "nunca cotizada") — un
+      `12345m` fijo sobrevivía. **Fix**: en el fixture rico
+      (`CoberturaPorArticuloDiscriminaCorrectamenteYLaProyeccionCoincideConLaColumna`) se agregaron
+      los tres agregados calculados a mano: `TotalEstimado = 700m` (100×7), `TotalReal = 834m`
+      (112×7 + 50×1), `DesvioTotal = 19.14m` ((834-700)/700×100) — pairwise-distintos.
+    - **CRITICAL 3**: `IdProveedor`/`IdPuntoVenta` del detalle (dos `int` posicionales adyacentes
+      en un record de 17 parámetros) jamás se leían de vuelta — un SWAP de ambos en el constructor
+      de `OrdenDeCompraDetalle` sobrevivía 197/197. **Fix**: nuevo test integral
+      `DetalleDevuelveCadaCampoPosicionalConSuVerdad` que assertea ambos ids contra
+      `IdProveedor2`/`IdPuntoVenta2` (desincronizados, con una precondición `Assert.NotEqual` que
+      falla ruidosamente si algún día colisionaran) y, por ser la misma causa raíz (ningún campo
+      posicional leído de vuelta), extiende la lectura a TODOS los campos hasta ahora sin cobertura
+      del detalle y de la fila del listado: `Numero`, `FechaEnvio`, `FechaEsperada`, `FechaCierre`,
+      `CierreManual`, `Observaciones`, `Estado` (detalle) y `Estado` (fila de `PaginaDeOrdenesDeCompra`) —
+      todos con valores distintos entre sí.
+    - **Evidencia de mutación** (tres ciclos, `dotnet build --no-incremental` + test filtrado +
+      `git checkout -- src/` + rebuild entre cada uno, `git status` limpio en cada punto): (a)
+      `pendiente = 0m` fijo → `CoberturaPendienteEsPositivaCuandoLaRecepcionNoCompletaLoPedido`
+      FALLA (`Expected: 2, Actual: 0`) → revert verificado; (b) `totalEstimado = 12345m` fijo →
+      `CoberturaPorArticuloDiscriminaCorrectamenteYLaProyeccionCoincideConLaColumna` FALLA
+      (`Expected: 700, Actual: 12345`) → revert verificado; (c) swap de
+      `IdProveedor`/`IdPuntoVenta` en el constructor de `OrdenDeCompraDetalle` →
+      `DetalleDevuelveCadaCampoPosicionalConSuVerdad` FALLA (`Expected: 2, Actual: 4`) → revert
+      verificado. Corrida final completa del archivo: **13/13 verde**, `git status` con solo el
+      archivo de test modificado.
+
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
 word-budget overage is a house precedent, no action; T5 (spec OD7) — `cuenta-corriente-de-

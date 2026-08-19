@@ -159,6 +159,14 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
         return JsonSerializer.Deserialize<OrdenDeCompraBorrador>(cuerpo, OpcionesJson)!;
     }
 
+    private static async Task<OrdenDeCompraBorrador> CerrarOrdenAsync(Contexto ctx, int id, HttpClient? cliente = null)
+    {
+        var respuesta = await (cliente ?? ctx.Admin).PostAsync($"/api/ordenes-compra/{id}/cerrar", null);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        return JsonSerializer.Deserialize<OrdenDeCompraBorrador>(cuerpo, OpcionesJson)!;
+    }
+
     private static async Task<OrdenDeCompraBorrador> CrearYEnviarOrdenAsync(
         Contexto ctx, IReadOnlyList<LineaDeOrdenSolicitada> items, int? idProveedor = null,
         int? idPuntoVenta = null, DateOnly? fechaEsperada = null)
@@ -430,6 +438,15 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.NotNull(coberturaArticulo2.CostoReal);
         Assert.Null(coberturaArticulo2.Desvio); // no comparable — un lado ausente, nunca 0
 
+        // CRITICAL 2 (judgment-day, juez B): TotalEstimado/TotalReal/DesvioTotal del detalle,
+        // calculados a mano desde el fixture de arriba. Solo articulo1 tiene CostoEstimado (100,
+        // pedida 7) ⇒ TotalEstimado = 100*7 = 700. TotalReal suma AMBOS artículos con CostoReal
+        // (articulo1: 112*7 = 784; articulo2: 50*1 = 50) ⇒ TotalReal = 834. DesvioTotal =
+        // (834-700)/700*100 = 19.14. Los tres valores son pairwise-distintos entre sí.
+        Assert.Equal(700m, detalle.TotalEstimado);
+        Assert.Equal(834m, detalle.TotalReal);
+        Assert.Equal(19.14m, detalle.DesvioTotal);
+
         // ComprobantesLigados incluye el borrador (todo comprobante ligado, cualquier estado).
         Assert.True(detalle.ComprobantesLigados.Count >= 4);
 
@@ -447,6 +464,27 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
         var detalleHermana = await ObtenerDetalleAsync(ctx, hermana.Id);
         Assert.Equal(EstadoOrdenCompra.Enviada, detalleHermana.Estado);
         Assert.Equal(3m, Assert.Single(detalleHermana.Cobertura).Pedida);
+    }
+
+    // ====================================================================================================
+    // CRITICAL 1 (judgment-day, juez B, regla 12b): Pendiente solo se asserteaba en 0 (7-7 y
+    // Math.Max(0-1,0)) — un `var pendiente = 0m;` fijo en producción sobrevivía. Fixture dedicado
+    // con Pendiente POSITIVO discriminante.
+    // ====================================================================================================
+
+    [Fact]
+    public async Task CoberturaPendienteEsPositivaCuandoLaRecepcionNoCompletaLoPedido()
+    {
+        var ctx = await PrepararAsync(nameof(CoberturaPendienteEsPositivaCuandoLaRecepcionNoCompletaLoPedido));
+
+        var orden = await CrearYEnviarOrdenAsync(ctx, [new LineaDeOrdenSolicitada(ctx.IdArticulo, "L", 7m, 10m)]);
+        await RecibirYConfirmarAsync(ctx, orden.Id, cantidad: 5m, costoUnitario: 10m);
+
+        var detalle = await ObtenerDetalleAsync(ctx, orden.Id);
+        var cobertura = Assert.Single(detalle.Cobertura);
+        Assert.Equal(7m, cobertura.Pedida);
+        Assert.Equal(5m, cobertura.Recibida);
+        Assert.Equal(2m, cobertura.Pendiente); // Math.Max(7 - 5, 0) = 2, nunca 0 fijo
     }
 
     // ====================================================================================================
@@ -566,6 +604,58 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
 
         var respuesta = await ctxB.Admin.GetAsync($"/api/ordenes-compra/{ordenDeA.Id}");
         Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
+    }
+
+    // ====================================================================================================
+    // CRITICAL 3 (judgment-day, juez B, regla 12b): IdProveedor/IdPuntoVenta del detalle son dos
+    // ints posicionales adyacentes en un record de 17 parámetros que jamás se leían de vuelta — el
+    // SWAP de ambos en el constructor sobrevivía 197/197. Ya que la causa raíz es la misma (ningún
+    // campo posicional del detalle/listado leído de vuelta), un solo test integral asserta CADA
+    // campo posicional hoy sin cobertura (Numero, FechaEnvio, FechaCierre, CierreManual,
+    // Observaciones, FechaEsperada, y el Estado de la fila del listado) con valores todos
+    // distintos entre sí.
+    // ====================================================================================================
+
+    [Fact]
+    public async Task DetalleDevuelveCadaCampoPosicionalConSuVerdad()
+    {
+        var ctx = await PrepararAsync(nameof(DetalleDevuelveCadaCampoPosicionalConSuVerdad));
+
+        // Precondición (regla 11): IdProveedor2/IdPuntoVenta2 nacen en tablas distintas — si algún
+        // día colisionaran numéricamente el swap quedaría indetectable. Falla acá primero, ruidosamente,
+        // en vez de dar un verde falso más abajo.
+        Assert.NotEqual(ctx.IdProveedor2, ctx.IdPuntoVenta2);
+
+        var fechaEsperada = new DateOnly(2027, 3, 15);
+        const string observaciones = "observacion-distintiva-critical-3";
+
+        var solicitud = new SolicitudDeOrdenDeCompra(
+            ctx.IdProveedor2, ctx.IdPuntoVenta2, fechaEsperada, observaciones,
+            [new LineaDeOrdenSolicitada(ctx.IdArticulo, "Linea unica", 6m, 60m)]);
+        var creada = await CrearBorradorDeOrdenAsync(ctx, solicitud);
+        var enviada = await EnviarOrdenAsync(ctx, creada.Id);
+        var cerrada = await CerrarOrdenAsync(ctx, creada.Id);
+
+        var detalle = await ObtenerDetalleAsync(ctx, creada.Id);
+
+        Assert.Equal(creada.Id, detalle.Id);
+        Assert.Equal(ctx.IdProveedor2, detalle.IdProveedor);
+        Assert.Equal(ctx.IdPuntoVenta2, detalle.IdPuntoVenta);
+        Assert.NotNull(detalle.Numero);
+        Assert.Equal(enviada.Numero, detalle.Numero);
+        Assert.NotNull(detalle.FechaEnvio);
+        Assert.Equal(enviada.FechaEnvio, detalle.FechaEnvio);
+        Assert.Equal(fechaEsperada, detalle.FechaEsperada);
+        Assert.NotNull(detalle.FechaCierre);
+        Assert.Equal(cerrada.FechaCierre, detalle.FechaCierre);
+        Assert.True(detalle.CierreManual);
+        Assert.Equal(observaciones, detalle.Observaciones);
+        Assert.Equal(EstadoOrdenCompra.Cerrada, detalle.Estado);
+
+        // Estado de la fila del listado — nunca asserteado hasta ahora.
+        var pagina = await ListarAsync(ctx, $"?idProveedor={ctx.IdProveedor2}");
+        var filaListado = Assert.Single(pagina.Items, i => i.Id == creada.Id);
+        Assert.Equal(EstadoOrdenCompra.Cerrada, filaListado.Estado);
     }
 
     // ---- gate guard (task 5.18) --------------------------------------------------------------------
