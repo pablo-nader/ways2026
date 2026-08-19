@@ -1731,7 +1731,7 @@ and drop the `Reposicion.tsx` action; a documented reduction, never silent (deci
   RUN by `sdd-apply`** — same executor-boundary reason as every prior slice: `judgment-day` is an
   orchestrator-level dual-review protocol this executor cannot invoke. Left for the orchestrator to
   run before merge.
-- [ ] 6.20 Branch `feat/stage16-slice6-web` off `main` (parent: slice 5); PR; merge
+- [x] 6.20 Branch `feat/stage16-slice6-web` off `main` (parent: slice 5); PR; merge
   stacked-to-main. **PARTIAL**: the worktree was already provisioned on `feat/stage16-slice6-web`
   off `main` (`c531d45`, slice 5 merged) before this phase started — branching is done, one commit
   landed (`b36b78d`). PR creation/merge is explicitly out of scope (`NO pushees` instruction) —
