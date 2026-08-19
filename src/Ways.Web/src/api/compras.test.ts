@@ -194,6 +194,7 @@ describe('aSolicitudDeCompra', () => {
         numeroExterno: '   ',
         fechaComprobante: '',
         observaciones: '  ',
+        idOrdenCompra: null,
       },
       [],
     )
@@ -211,6 +212,7 @@ describe('aSolicitudDeCompra', () => {
         numeroExterno: '0003-00012345',
         fechaComprobante: '2026-08-05',
         observaciones: '',
+        idOrdenCompra: null,
       },
       [],
     )
@@ -226,10 +228,29 @@ describe('aSolicitudDeCompra', () => {
         numeroExterno: '',
         fechaComprobante: '',
         observaciones: '',
+        idOrdenCompra: null,
       },
       [lineaFixture({ clave: 1 }), lineaFixture({ clave: 2, idArticulo: '' })],
     )
     expect(solicitud.items).toHaveLength(1)
+  })
+
+  // stage-16-ordenes-de-compra, Slice 6: idOrdenCompra viaja tal cual desde el encabezado — ni
+  // recortado ni defaulteado a 0/undefined, campo posicional final de SolicitudDeCompra.
+  it('idOrdenCompra viaja tal cual desde el encabezado (mutation-proof-tests regla 12b)', () => {
+    const solicitud = aSolicitudDeCompra(
+      { idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: 42 },
+      [],
+    )
+    expect(solicitud.idOrdenCompra).toBe(42)
+  })
+
+  it('idOrdenCompra ausente viaja como null, nunca 0', () => {
+    const solicitud = aSolicitudDeCompra(
+      { idProveedor: 1, idTipoComprobante: 5, idPuntoVenta: 2, numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: null },
+      [],
+    )
+    expect(solicitud.idOrdenCompra).toBeNull()
   })
 })
 

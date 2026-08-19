@@ -8,10 +8,12 @@
  */
 import { api } from './cliente'
 import type {
+  CoberturaDeArticulo,
   CompraDetalle,
   EstadoCompra,
   EstadoPago,
   ItemDeCompra,
+  ItemDeOrden,
   LineaDeCompraSolicitada,
   PaginaDeCompras,
   ResultadoAnulacion,
@@ -190,6 +192,24 @@ export function itemAFormulario(clave: number, item: ItemDeCompra): LineaDeCompr
   }
 }
 
+/** stage-16-ordenes-de-compra, Slice 6: una fila de `CoberturaDeArticulo` (`Pendiente > 0`) de una
+ * orden de compra → una línea del formulario de recepción de `CompraEditor.tsx` (design: "reads
+ * `idOrdenCompra` from `useSearchParams`, pre-fills … one line per artículo with `Pendiente > 0`").
+ * `unidades` arranca en el pendiente (lo que falta recibir); `costoUnitario` arranca en el
+ * `costoEstimado` de la OC cuando existe (`''` — nunca `'0'` — cuando nunca se cotizó, para que
+ * `lineaCompletaParaEnvio` siga exigiendo que el operador lo confirme). `descripcion` se resuelve
+ * contra la línea original de la orden (mismo artículo) — nunca inventada. */
+export function lineaDesdeCoberturaDeOrden(clave: number, cobertura: CoberturaDeArticulo, itemsDeOrden: ItemDeOrden[]): LineaDeCompraFormulario {
+  const itemOriginal = itemsDeOrden.find((i) => i.idArticulo === cobertura.idArticulo)
+  return {
+    ...lineaDeCompraVacia(clave),
+    idArticulo: cobertura.idArticulo,
+    descripcion: itemOriginal?.descripcion ?? `Artículo #${cobertura.idArticulo}`,
+    unidades: String(cobertura.pendiente),
+    costoUnitario: cobertura.costoEstimado === null ? '' : String(cobertura.costoEstimado),
+  }
+}
+
 function numero(valor: string): number {
   const n = Number(valor)
   return valor.trim() === '' || !Number.isFinite(n) ? 0 : n
@@ -237,6 +257,10 @@ export type EncabezadoDeCompraFormulario = {
   numeroExterno: string
   fechaComprobante: string
   observaciones: string
+  /** stage-16-ordenes-de-compra, Slice 6: la OC que esta compra liga (pre-carga desde
+   * `?idOrdenCompra=` en `CompraEditor`, design decisión — "Registrar recepción" de
+   * `OrdenDeCompra.tsx`). `null` = compra sin OC, el 100% del tráfico previo a esta etapa. */
+  idOrdenCompra: number | null
 }
 
 /** `fechaComprobante` es `date` (`DateOnly`), no `timestamptz` — viaja tal cual el
@@ -254,6 +278,7 @@ export function aSolicitudDeCompra(
     fechaComprobante: encabezado.fechaComprobante === '' ? null : encabezado.fechaComprobante,
     observaciones: encabezado.observaciones.trim() === '' ? null : encabezado.observaciones.trim(),
     items: lineas.filter(lineaCompletaParaEnvio).map(aLineaSolicitada),
+    idOrdenCompra: encabezado.idOrdenCompra,
   }
 }
 

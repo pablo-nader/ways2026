@@ -22,6 +22,8 @@ import { Inicio } from './paginas/Inicio'
 import { Login } from './paginas/Login'
 import { NuevoTenant } from './paginas/NuevoTenant'
 import { Ofertas } from './paginas/Ofertas'
+import { OrdenDeCompra } from './paginas/OrdenDeCompra'
+import { OrdenesDeCompra } from './paginas/OrdenesDeCompra'
 import { PaginaCatalogo } from './paginas/PaginaCatalogo'
 import { Parametros } from './paginas/Parametros'
 import { Pos } from './paginas/Pos'
@@ -265,6 +267,28 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
                   <CompraEditor />
+                </RutaProtegida>
+              }
+            />
+
+            {/* stage-16-ordenes-de-compra (Slice 6, design: Web composition, decisión 16): mismo
+                gate de lectura que /compras (Politicas.OperacionDePos) — la escritura
+                (borrador/enviar/cerrar/anular) es Admin-only, cosmético acá y real en
+                GestionDeCatalogo del lado del servidor (puedeEscribir oculta esas acciones para
+                el resto de los roles, mismo criterio que /compras). */}
+            <Route
+              path="/ordenes-compra"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <OrdenesDeCompra />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/ordenes-compra/:id"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <OrdenDeCompra />
                 </RutaProtegida>
               }
             />
