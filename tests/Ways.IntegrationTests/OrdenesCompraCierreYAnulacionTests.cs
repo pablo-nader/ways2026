@@ -386,6 +386,66 @@ public class OrdenesCompraCierreYAnulacionTests(WaysApiFixture fixture) : IClass
         Assert.Equal(EstadoOrdenCompra.RecibidaParcial, (await LeerOrdenAsync(ctx, enviada.Id)).Estado);
     }
 
+    /// <summary>mutation-proof-tests regla 3 ("kill the confounds, not the layers") — el test de
+    /// arriba NO discrimina el guard de statement 2 en aislamiento: cualquier recepción confirmada
+    /// real ya mueve el estado vía <see cref="EscriturasDeOrdenDeCompra"/> fuera de
+    /// <c>('borrador','enviada')</c>, así que statement 1 SOLO ya rechaza — borrar statement 2
+    /// entero no cambia el resultado observable de ese fixture (confound verificado por mutación,
+    /// ver PR body / mutation target #33). Este test rutea POR DEBAJO del confound (regla 3):
+    /// siembra directo por EF una OC en <c>enviada</c> (bypass total de la proyección) CON un
+    /// comprobante confirmado ya ligado — un estado que la proyección normal jamás produce, pero
+    /// que <c>TieneRecepcionConfirmadaAsync</c> tiene que ver igual (statement 2 es una lectura
+    /// honesta del libro, no una confianza en que el estado ya lo refleja). Statements 1 y 3 pasan
+    /// limpio acá; SOLO statement 2 puede rechazar.</summary>
+    [Fact]
+    public async Task UnaOrdenEnviadaConUnaRecepcionConfirmadaLigadaDirectaNoPuedeAnularse409()
+    {
+        var ctx = await PrepararAsync(nameof(UnaOrdenEnviadaConUnaRecepcionConfirmadaLigadaDirectaNoPuedeAnularse409));
+        var ahora = DateTimeOffset.UtcNow;
+
+        int idOrden;
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var orden = new OrdenCompra
+            {
+                IdTenant = ctx.IdTenant, IdPuntoVenta = ctx.IdPuntoVenta, IdProveedor = ctx.IdProveedor,
+                IdEmpleado = ctx.IdEmpleadoAdmin, Numero = 950, FechaEmision = ahora, FechaEnvio = ahora,
+                Estado = EstadoOrdenCompra.Enviada, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.OrdenesCompra.Add(orden);
+            await db.SaveChangesAsync();
+            idOrden = orden.Id;
+
+            var comprobante = new ComprobanteCompra
+            {
+                IdTenant = ctx.IdTenant, IdProveedor = ctx.IdProveedor, IdTipoComprobante = ctx.IdTipoCFA,
+                NumeroExterno = $"0001-{Guid.NewGuid():N}"[..8], FechaComprobante = DateOnly.FromDateTime(DateTime.UtcNow),
+                FechaRecepcion = ahora, IdPuntoVenta = ctx.IdPuntoVenta, IdEmpleado = ctx.IdEmpleadoAdmin,
+                Subtotal = 1000m, DescuentoTotal = 0m, Total = 1000m, IvaTotal = 210m,
+                Estado = EstadoCompra.Confirmada, IdOrdenCompra = idOrden, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.ComprobantesCompra.Add(comprobante);
+            await db.SaveChangesAsync();
+
+            db.ItemsComprobanteCompra.Add(new ItemComprobanteCompra
+            {
+                IdTenant = ctx.IdTenant, IdComprobanteCompra = comprobante.Id, Orden = 1, IdArticulo = ctx.IdArticulo,
+                Descripcion = "Item confirmado ligado directo (statement 2 aislado)", Cantidad = 4m,
+                CostoUnitario = 100m, Descuento = 0m, IdAlicuotaIva = ctx.IdAlicuotaIva21, PorcentajeIva = 21m,
+                Total = 484m
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var respuesta = await AnularHttpAsync(ctx, idOrden);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal("orden_compra_con_recepciones", problema.GetProperty("codigo").GetString());
+
+        Assert.Equal(EstadoOrdenCompra.Enviada, (await LeerOrdenAsync(ctx, idOrden)).Estado);
+    }
+
     [Fact]
     public async Task UnaOrdenConBorradorLigadoConfirmableNoPuedeAnularse409()
     {
