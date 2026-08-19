@@ -248,6 +248,23 @@ por proveedor versus reconstrucción desde el historial de compras); si el gasto
 siendo el mecanismo de pago o se reemplaza por un movimiento de pago propio; retenciones y
 notas de crédito de proveedor.
 
+> **COMPLETA Y ARCHIVADA** (2026-08-18, `2026-08-18-stage-15-cc-proveedores-ledger`, 6 PRs
+> #134–#139). Las tres decisiones abiertas se resolvieron: migración por **asiento de
+> apertura** con la fórmula exacta del spec retirado (tipo `apertura` propio, sin actor ni PV
+> — jamás replay sintético); el pago **sigue siendo el gasto** (turno-scoped, visible al
+> arqueo) con el movimiento `pago` escrito en la misma transacción; retenciones y notas de
+> crédito **diferidas** (enum mínimo `apertura|compra|pago|ajuste`, sin valores
+> especulativos). La PRIMERA migración no-aditiva del programa (backfill idempotente +
+> `proveedores.saldo` + AK nueva en `gastos`; gate ejercido, 7 índices contados y verificados
+> contra `pg_indexes`). Estado de pago por compra con la fórmula OD7 (gastos ligados +
+> ajustes imputados — las fórmulas del proposal y del design fueron RECHAZADAS con evidencia
+> pre-cutover); estado de cuenta paginado sin `/export` (extensión más barata registrada);
+> ajuste manual bajo policy propia `SupervisionDeCuentaDeProveedor`; contramovimiento en
+> anulación con fallback pre-cutover. Judgment-day: 7 CRITICALs reales pre-merge (las 3
+> clases de lectura y el test auto-derrotado del slice 4, el Link sin state del slice 6) que
+> parieron las reglas 11–12 de `mutation-proof-tests`. Suites al cierre: Domain 492 ·
+> Application 286 · Integration 1297 · vitest 730.
+
 ### Etapa 16 — Órdenes de compra
 
 **Alcance.** El circuito completo de compra: orden de compra → recepción (total o parcial) →

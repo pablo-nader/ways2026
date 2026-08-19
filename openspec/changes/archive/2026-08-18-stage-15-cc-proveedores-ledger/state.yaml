@@ -238,6 +238,24 @@ phases:
       confirmado correcto). SUGGESTION 1 (indice de la secuencia 1-44 en
       tasks.md): aplicada. SUGGESTION 2: registro, sin accion.
   archive:
-    status: pending
+    status: done
     artifact: archive-report.md
     depends_on: [verify]
+    note: >-
+      Archived 2026-08-18. 5 fusiones de spec con prueba de fidelidad por
+      diff vacio: cuenta-corriente-de-proveedores creada como capability
+      nueva (cp mecanico); saldo-de-proveedor con cirugia real MODIFIED+
+      2 REMOVED (precedente etapa 7: los REMOVED no dejan residuo de
+      Reason/Migration en el spec principal); gastos/comprobantes-compra/
+      operacion-de-pos append aditivo puro (cero lineas preexistentes
+      tocadas). El archive-report lleva los 6 PRs #134-#139, el log
+      completo de decisiones (9 proposal + 16 design + 9 OD + enmienda
+      post-tasks + 44 entradas de tasks.md), los 7 CRITICALs del
+      judgment-day y las 2 reglas nuevas de mutation-proof-tests (11-12),
+      W1/W2 con disposicion final, las suites de cierre (Domain 492 ·
+      Application 286 · Integration 1297 · vitest 730), la primera
+      migracion NO-aditiva del programa con su gate, y el backlog
+      diferido (export sibling OD6, retenciones/NC, gap del nombre
+      Admin-only por URL directa). Fase solo-contenido — la mudanza a
+      openspec/changes/archive/ y el cierre de docs/11 los ejecuta el
+      orquestador con copia python shutil + assert count>0 + filecmp.
