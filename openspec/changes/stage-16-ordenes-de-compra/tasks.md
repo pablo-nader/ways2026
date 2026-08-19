@@ -865,7 +865,7 @@ if this slice overflows — decision 3 above.
   RUN by `sdd-apply`** — same executor-contract carve-out as slice 1 task 1.38 / slice 2 task
   2.26: this executor cannot launch sub-agents/reviewers. Left for the orchestrator to run before
   merge.
-- [ ] 3.41 Branch `feat/stage16-slice3-ligadura-y-proyeccion` off `main` (parent: slice 2); PR;
+- [x] 3.41 Branch `feat/stage16-slice3-ligadura-y-proyeccion` off `main` (parent: slice 2); PR;
   merge stacked-to-main. **PARTIAL**: the worktree was already provisioned on
   `feat/stage16-slice3-ligadura` off `main` (`8b720d3`, slice 2 already merged) before this phase
   started — branching is done, naming differs by dropping `-y-proyeccion` (cosmetic, not re-branched
