@@ -1727,7 +1727,7 @@ and drop the `Reposicion.tsx` action; a documented reduction, never silent (deci
   evidence per the gate's own criterion ("zero new files under `Migraciones/`"). `npm run build`
   (`tsc -b && vite build`) clean: 0 TypeScript errors, `dist/` emitted, only a pre-existing chunk-
   size advisory (983 kB bundle, unrelated to this slice's ~4 new files' size).
-- [ ] 6.19 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
+- [x] 6.19 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
   RUN by `sdd-apply`** — same executor-boundary reason as every prior slice: `judgment-day` is an
   orchestrator-level dual-review protocol this executor cannot invoke. Left for the orchestrator to
   run before merge.
