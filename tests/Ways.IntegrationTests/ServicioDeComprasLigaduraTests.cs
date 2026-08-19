@@ -1,7 +1,10 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Compras;
 using Ways.Application.Organizacion;
@@ -13,6 +16,7 @@ using Ways.Domain.Organizacion;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
 
 namespace Ways.IntegrationTests;
@@ -47,7 +51,7 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
 
     private sealed record Contexto(
         int IdTenant, int IdPuntoVenta, HttpClient Admin, int IdProveedor, int IdProveedor2, int IdArticulo,
-        int IdArticulo2, int IdAlicuotaIva21, int IdTipoCFA, int IdEmpleadoAdmin);
+        int IdArticulo2, int IdAlicuotaIva21, int IdTipoCFA, int IdEmpleadoAdmin, string MailAdmin, string PasswordAdmin);
 
     /// <summary>Decisión 13 (tasks.md): ids deliberadamente desincronizados — cada entidad nace en
     /// su propia tabla, ninguna forzada a alinearse con otra.</summary>
@@ -114,7 +118,7 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
 
         return new Contexto(
             resultado.IdTenant, resultado.IdPuntoVenta, admin, proveedor.Id, proveedor2.Id, articulo1.Id, articulo2.Id,
-            idAlicuotaIva21, idTipoCFA, idEmpleadoAdmin);
+            idAlicuotaIva21, idTipoCFA, idEmpleadoAdmin, mailAdmin, resultado.PasswordTemporal);
     }
 
     // ---- helpers: órdenes de compra (slice 2, vía HTTP) ------------------------------------------
@@ -419,7 +423,66 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
         var anulacion = await AnularCompraHttpAsync(ctx, recepcion.Id);
         Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
 
-        Assert.Equal(EstadoOrdenCompra.Enviada, await LeerEstadoDeOrdenAsync(ctx, orden.Id));
+        var final = await LeerOrdenAsync(ctx, orden.Id);
+        Assert.Equal(EstadoOrdenCompra.Enviada, final.Estado);
+        // Mutation target #28: la regresión tiene que LIMPIAR fecha_cierre en el mismo statement —
+        // dejarla vieja violaría ck_ordenes_compra_cierre ((fecha_cierre IS NULL) = (estado <>
+        // 'cerrada')).
+        Assert.Null(final.FechaCierre);
+    }
+
+    /// <summary>Mutation target #26: el cortocircuito de cierre MANUAL nunca se revierte. Sembrado
+    /// directo por EF (<c>POST /{id}/cerrar</c> es slice 4) — lo que <c>ProyectarEstadoAsync</c>
+    /// interpreta es <c>id_empleado_cierre IS NOT NULL</c> en la fila, no el camino que lo
+    /// escribió.</summary>
+    [Fact]
+    public async Task AnularUnaRecepcionDeUnaOrdenCerradaManualmenteNoLaReabre()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnaRecepcionDeUnaOrdenCerradaManualmenteNoLaReabre));
+        var orden = await CrearYEnviarOrdenAsync(ctx, cantidad: 30m);
+        var recepcion = await CrearYConfirmarRecepcionAsync(ctx, orden.Id, unidades: 10m); // parcial a propósito
+        Assert.Equal(EstadoOrdenCompra.RecibidaParcial, await LeerEstadoDeOrdenAsync(ctx, orden.Id));
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var fila = await db.OrdenesCompra.FirstAsync(o => o.Id == orden.Id);
+            fila.Estado = EstadoOrdenCompra.Cerrada;
+            fila.IdEmpleadoCierre = ctx.IdEmpleadoAdmin;
+            fila.FechaCierre = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var anulacion = await AnularCompraHttpAsync(ctx, recepcion.Id);
+        Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
+
+        var final = await LeerOrdenAsync(ctx, orden.Id);
+        Assert.Equal(EstadoOrdenCompra.Cerrada, final.Estado); // NUNCA se revierte
+        Assert.NotNull(final.IdEmpleadoCierre);
+    }
+
+    /// <summary>Mutation target #27: <c>anulada</c> es terminal — el camino de ANULAR (no el de
+    /// confirmar) también tiene que respetarlo. Se llega a una OC ya anulada por EF (el endpoint es
+    /// slice 4); lo importante es que <c>ProyectarEstadoAsync</c>, llamado desde
+    /// <c>EjecutarAnulacionAsync</c>, nunca la resucite.</summary>
+    [Fact]
+    public async Task AnularUnaRecepcionLigadaAUnaOrdenYaAnuladaNoLaResucita()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnaRecepcionLigadaAUnaOrdenYaAnuladaNoLaResucita));
+        var orden = await CrearYEnviarOrdenAsync(ctx, cantidad: 30m);
+        var recepcion = await CrearYConfirmarRecepcionAsync(ctx, orden.Id, unidades: 10m);
+        Assert.Equal(EstadoOrdenCompra.RecibidaParcial, await LeerEstadoDeOrdenAsync(ctx, orden.Id));
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var fila = await db.OrdenesCompra.FirstAsync(o => o.Id == orden.Id);
+            fila.Estado = EstadoOrdenCompra.Anulada;
+            await db.SaveChangesAsync();
+        }
+
+        var anulacion = await AnularCompraHttpAsync(ctx, recepcion.Id);
+        Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
+
+        Assert.Equal(EstadoOrdenCompra.Anulada, await LeerEstadoDeOrdenAsync(ctx, orden.Id));
     }
 
     // ================================================================================================
@@ -634,6 +697,78 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
         var hermanaDespues = await LeerOrdenAsync(ctx, hermana.Id);
         Assert.Equal(hermanaAntes.Estado, hermanaDespues.Estado);
         Assert.Equal(hermanaAntes.UpdatedAt, hermanaDespues.UpdatedAt); // ni un statement la tocó
+    }
+
+    // ================================================================================================
+    // task 3.27 / mutation target #20: id_orden_compra tiene que venir del RETURNING del lock, nunca
+    // de preLectura — una carrera de relink concurrente lo hace discriminante.
+    // ================================================================================================
+
+    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
+        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
+    {
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
+            CancellationToken cancellationToken = default)
+        {
+            transaccionIniciada.TrySetResult();
+            await puedeContinuar.Task;
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
+        }
+    }
+
+    /// <summary>Mutation target #20: si <c>encabezado.IdOrdenCompra</c> se leyera de
+    /// <c>preLectura</c> (capturada ANTES de la transacción) en vez del <c>RETURNING</c> ensanchado
+    /// de <c>ConfirmarHeaderAsync</c>, esta prueba lo detecta. Pausa <c>EjecutarConfirmarAsync</c>
+    /// justo tras <c>BeginTransactionAsync</c> (mismo patrón que
+    /// <c>ServicioDeOrdenesDeCompraTests.InterceptorDePausaTrasIniciarLaTransaccion</c>); mientras
+    /// está pausado, un <c>PUT</c> concurrente relinkea el borrador de OC-A a OC-B y COMMITEA. Con
+    /// el valor correcto (leído bajo el lock), la proyección opera sobre OC-B; con el mutante,
+    /// operaría sobre la OC-A stale de <c>preLectura</c> — discriminado por cuál OC efectivamente
+    /// se mueve.</summary>
+    [Fact]
+    public async Task ConfirmarUsaElIdOrdenCompraVistoBajoElLockNoElDePreLectura()
+    {
+        var ctx = await PrepararAsync(nameof(ConfirmarUsaElIdOrdenCompraVistoBajoElLockNoElDePreLectura));
+        var ordenA = await CrearYEnviarOrdenAsync(ctx, cantidad: 10m, idArticulo: ctx.IdArticulo);
+        var ordenB = await CrearYEnviarOrdenAsync(ctx, cantidad: 10m, idArticulo: ctx.IdArticulo);
+
+        var (_, creada, _) = await CrearBorradorDeCompraAsync(
+            ctx, SolicitudDeCompraSimple(ctx, unidades: 10m, idArticulo: ctx.IdArticulo, idOrdenCompra: ordenA.Id));
+
+        var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var clienteConfirmar = factory.CreateClient();
+        var login = await clienteConfirmar.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tareaConfirmar = clienteConfirmar.PostAsync($"/api/compras/{creada!.Id}/confirmar", null);
+
+        await transaccionIniciada.Task;
+
+        var solicitudRelink = SolicitudDeCompraSimple(ctx, unidades: 10m, idArticulo: ctx.IdArticulo, idOrdenCompra: ordenB.Id);
+        var respuestaPut = await ctx.Admin.PutAsJsonAsync($"/api/compras/{creada.Id}", solicitudRelink);
+        var cuerpoPut = await respuestaPut.Content.ReadAsStringAsync();
+        Assert.True(respuestaPut.StatusCode == HttpStatusCode.OK, cuerpoPut);
+
+        puedeContinuar.TrySetResult();
+
+        var respuestaConfirmar = await tareaConfirmar;
+        var cuerpoConfirmar = await respuestaConfirmar.Content.ReadAsStringAsync();
+        Assert.True(respuestaConfirmar.StatusCode == HttpStatusCode.OK, cuerpoConfirmar);
+
+        // La OC efectivamente movida es OC-B (los 10 recibidos cubren sus 10 pedidos ⇒ cierre
+        // automático): si el código leyera preLectura en vez del RETURNING bajo lock, la
+        // proyección operaría sobre OC-A en su lugar, y esta aserción fallaría.
+        Assert.Equal(EstadoOrdenCompra.Cerrada, await LeerEstadoDeOrdenAsync(ctx, ordenB.Id));
+        Assert.Equal(EstadoOrdenCompra.Enviada, await LeerEstadoDeOrdenAsync(ctx, ordenA.Id));
     }
 
     // ================================================================================================
