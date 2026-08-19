@@ -283,10 +283,15 @@
       `DetalleDevuelveCadaCampoPosicionalConSuVerdad` que assertea ambos ids contra
       `IdProveedor2`/`IdPuntoVenta2` (desincronizados, con una precondición `Assert.NotEqual` que
       falla ruidosamente si algún día colisionaran) y, por ser la misma causa raíz (ningún campo
-      posicional leído de vuelta), extiende la lectura a TODOS los campos hasta ahora sin cobertura
-      del detalle y de la fila del listado: `Numero`, `FechaEnvio`, `FechaEsperada`, `FechaCierre`,
-      `CierreManual`, `Observaciones`, `Estado` (detalle) y `Estado` (fila de `PaginaDeOrdenesDeCompra`) —
-      todos con valores distintos entre sí.
+      posicional leído de vuelta), extiende la lectura a los campos del detalle hasta ahora sin
+      cobertura: `Numero`, `FechaEnvio`, `FechaEsperada`, `FechaCierre`, `CierreManual`,
+      `Observaciones`, `Estado` — y a `Estado` de la fila de `PaginaDeOrdenesDeCompra`, todos con
+      valores distintos entre sí.
+      **Corrección (decisión 26, judgment-day ronda 2, juez A — CRITICAL 2)**: la frase original de
+      este punto ("extiende la lectura a TODOS los campos ... del detalle y de la fila del listado")
+      era falsa para la fila del listado — solo `Estado` quedó cubierto ahí; `IdProveedor`/
+      `IdPuntoVenta` de `OrdenDeCompraListada` (el mismo swap posicional, pero en el `Select` de
+      `ListarAsync`) seguían sin ningún assert y ese swap pasaba 13/13. Ver decisión 26 para el fix.
     - **Evidencia de mutación** (tres ciclos, `dotnet build --no-incremental` + test filtrado +
       `git checkout -- src/` + rebuild entre cada uno, `git status` limpio en cada punto): (a)
       `pendiente = 0m` fijo → `CoberturaPendienteEsPositivaCuandoLaRecepcionNoCompletaLoPedido`
@@ -297,6 +302,49 @@
       `DetalleDevuelveCadaCampoPosicionalConSuVerdad` FALLA (`Expected: 2, Actual: 4`) → revert
       verificado. Corrida final completa del archivo: **13/13 verde**, `git status` con solo el
       archivo de test modificado.
+
+26. **`judgment-day` ronda 2 (juez A) confirmó 1 CRITICAL de producción + 1 CRITICAL de
+    tests/docs, 1 WARNING, 1 SUGGESTION — cerrados con fixes acotados.**
+    - **CRITICAL 1 (producción)**: `TotalEstimado` (`ObtenerDetalleAsync`) fabricaba costo —
+      agregaba desde `Cobertura` (`CostoEstimado` por-artículo × `Pedida` TOTAL del artículo), pero
+      `CostoEstimado` ya es un promedio ponderado que promedia SOLO las líneas cotizadas de ese
+      artículo, mientras que `Pedida` suma TODAS sus líneas, cotizadas o no — extrapolación
+      silenciosa alcanzable con un POST de dos líneas del mismo artículo, una cotizada y otra sin
+      costo (p.ej. 3 unidades a 100 + 4 sin costo ⇒ el bug daba 100×7=700 en vez de los 300
+      reales). **Fix**: `TotalEstimado` se recalcula a NIVEL LÍNEA — `sum(CostoUnitarioEstimado *
+      CantidadPedida)` sobre `items` (ya materializado en `ObtenerDetalleAsync`) SOLO para las
+      líneas con costo seteado; `null` cuando ninguna lo tiene. `CoberturaDeArticulo.CostoEstimado`
+      (el promedio por-artículo, display) NO se toca — sigue siendo el criterio correcto para esa
+      columna. **Verificado y descartado el mismo patrón en `TotalReal`/`DesvioTotal`**: `CostoReal`
+      y `Recibida` por artículo (`ObtenerCoberturaAsync`, `recibidoPorArticulo`) derivan siempre de
+      la MISMA población de `itemsRecibido` para ese artículo (mismo `GroupBy`, mismo `Cantidad`
+      agregado) — no existe una línea "recibida sin costo" que desacople ambos lados como pasaba en
+      el lado estimado, así que `TotalReal` se deja agregando desde `Cobertura` sin cambios.
+    - **CRITICAL 2 (tests + docs)**: `OrdenDeCompraListada.IdProveedor`/`IdPuntoVenta` jamás se
+      asserteaban (el swap de ambos en el `Select` de `ListarAsync` pasa 13/13) y la decisión 25
+      afirmaba falsamente cobertura de "la fila del listado" cuando solo `Estado` estaba cubierto.
+      **Fix**: `DetalleDevuelveCadaCampoPosicionalConSuVerdad` ahora assertea ambos ids de la fila
+      del listado contra `IdProveedor2`/`IdPuntoVenta2` (desincronizados, discriminantes); la
+      afirmación de la decisión 25 corregida in situ (ver arriba).
+    - **WARNING**: `ComprobantesLigados` (fixture rico de la cobertura) solo se asserteaba con
+      `Count >= 4`, dejando pasar un comprobante extra o de menos en silencio. **Fix**: assert de
+      conjunto exacto contra los 5 ids esperados (los cuatro confirmados + el borrador).
+    - **SUGGESTION**: variable muerta `pasadoManana` eliminada de
+      `CadaFiltroIgnoradoDevolveriaDeMasConSemillasAsimetricas`.
+    - **Tests nuevos obligatorios del CRITICAL 1**: `TotalEstimadoSumaSoloLasLineasCotizadasSin
+      ExtrapolarAlPromedioDelArticulo` (caso mixto: 3 unidades cotizadas a 100 + 4 sin costo del
+      mismo artículo ⇒ `TotalEstimado = 300`, jamás 700 por promedio); el caso todo-sin-costo ⇒
+      `null` ya existía (`UnaLineaNuncaCotizadaReportaNoComparableNuncaCero`) y sigue verde.
+    - **Evidencia de mutación** (dos ciclos, commit primero, `dotnet build --no-incremental` + test
+      filtrado + `git checkout -- src/...` + rebuild entre cada uno, `git status` limpio en cada
+      punto — la producción NUEVA es el estado ya committeado, el mutante es la fórmula/Select
+      viejos): (a) revertida la fórmula de `TotalEstimado` a `promedio × pedida total` →
+      `TotalEstimadoSumaSoloLasLineasCotizadasSinExtrapolarAlPromedioDelArticulo` FALLA (`Expected:
+      300, Actual: 700`) → revert verificado; (b) swap de `IdProveedor`/`IdPuntoVenta` en el
+      `Select` de `ListarAsync` → `DetalleDevuelveCadaCampoPosicionalConSuVerdad` FALLA (`Expected:
+      2, Actual: 4`, el nuevo assert de la fila del listado) → revert verificado. Corrida final
+      completa del archivo: **14/14 verde**; regresión filtrada `Compras`/`OC`: **254/254 verde**;
+      `git status` limpio.
 
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
