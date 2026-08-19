@@ -366,6 +366,45 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
         await InsertarVentaAsync(cruda, e, idTipoComprobante, numero: 2); // no debe tirar — ambos NULL
     }
 
+    /// <summary>Targets #4/#5 — PROVABLY EQUIVALENT AT RUNTIME, prueba de TEXTO FUENTE en su
+    /// lugar (mutation-proof-tests regla 3 agotada primero, hallazgo registrado en tasks.md).
+    /// Confirmado empíricamente (no razonado — regla 2): borrar `filter: "numero IS NOT NULL"`/
+    /// `filter: "id_presupuesto_origen IS NOT NULL"` de la migración deja las dos pruebas de
+    /// arriba en VERDE de todos modos. Postgres nunca considera dos filas duplicadas bajo un
+    /// índice UNIQUE si CUALQUIER columna indexada es NULL en cualquiera de las dos (semántica
+    /// SQL estándar: NULL no es igual a NULL para propósitos de unicidad) — y en ambos índices
+    /// la única columna que puede ser NULL (`numero`/`id_presupuesto_origen`) es exactamente la
+    /// que discrimina el escenario de "sin asignar/sin convertir" de estas pruebas, así que NUNCA
+    /// hay colisión con o sin el filtro parcial. Ningún fixture a nivel Postgres puede matar este
+    /// mutante — el filtro parcial es correcto y necesario igual (documenta la intención,
+    /// reduce el tamaño del índice, y es el shape exacto de todo índice `ux_*_numero` del
+    /// repo), pero su ausencia no es observable en tiempo de ejecución para ESTE par de columnas.
+    /// La única prueba que sí detecta el mutante es de texto fuente: ambos `filter:` tienen que
+    /// seguir presentes en el archivo real de la migración.</summary>
+    [Fact]
+    public void ElTextoFuenteDeLaMigracionConservaLosDosFiltrosParcialesTargets4Y5()
+    {
+        var rutaMigracion = Path.Combine(
+            Path.GetDirectoryName(RutaDeEsteArchivo())!,
+            "..", "..", "src", "Ways.Infrastructure", "Persistencia", "Migraciones",
+            "20260819195638_PresupuestosEtapa17.cs");
+
+        Assert.True(File.Exists(rutaMigracion), $"No se encontró la migración en {rutaMigracion}");
+
+        var fuente = File.ReadAllText(rutaMigracion);
+
+        Assert.Contains(
+            "name: \"ux_presupuestos_numero\"", fuente);
+        Assert.Contains(
+            "filter: \"numero IS NOT NULL\"", fuente);
+        Assert.Contains(
+            "name: \"ux_comprobantes_venta_presupuesto_origen\"", fuente);
+        Assert.Contains(
+            "filter: \"id_presupuesto_origen IS NOT NULL\"", fuente);
+    }
+
+    private static string RutaDeEsteArchivo([System.Runtime.CompilerServices.CallerFilePath] string ruta = "") => ruta;
+
     private static async Task<int> ObtenerIdTipoComprobanteAsync(NpgsqlConnection cruda, string codigo)
     {
         await using var comando = cruda.CreateCommand();
