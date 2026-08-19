@@ -150,9 +150,33 @@ phases:
       ratificado. Desviacion de presupuesto de palabras registrada
       (precedente de casa).
   tasks:
-    status: pending
+    status: done
     artifact: tasks.md
     depends_on: [spec, design]
+    notes: >-
+      6 slices stacked-to-main (~2540 lineas, riesgo High, outturn 7-8
+      PRs, splits pre-autorizados 1a/1b, 3a/3b, 5a/5b + accion web
+      droppable — jamas un test recortado), merge order 1->6:
+      (1) schema+backstops (migracion completa + entidades +
+      ProyectorDeEstadoDeOrden + las 6 ramas de ManejadorDeErrores con
+      pruebas out-of-band + doc-10), targets con el ordering trap;
+      (2) borrador+envio con los DOS tests de concurrencia vinculantes
+      (OCs distintas sin 409 / misma OC 200+409 numero quemado — 2.14 y
+      2.15); (3) ligadura+proyeccion con la prueba de cero-statements-
+      extra y ambas carreras; (4) cierre/anulacion con matrices 409 y de
+      autorizacion + prueba de EXISTS sin lock; (5) lectura paginada con
+      cobertura por articulo y desvio informativo; (6) web con el boton
+      de Reposicion gateado a Admin y la pre-carga en CompraEditor.
+      34/34 mutation targets 1:1. Cuatro conflictos spec/design
+      reconciliados con OD7/OD8 (enviar concurrente, codigos de
+      ligadura, OC vacia, CompraDetalle+IdOrdenCompra). CONFLICTO NUEVO
+      RESUELTO POR EL ORQUESTADOR (OD9): los pre-checks 404 de
+      proveedor/PV del servicio de OC son RESOLVERS PRIVADOS PROPIOS
+      copiando la forma de los de ServicioDeCompras — precedente del
+      repo (cada ciclo registral tiene su servicio y sus guards
+      privados; la 15 hizo lo mismo, desviacion #34 de su tasks.md);
+      una extraccion compartida seria refactor fuera de alcance y una
+      exposicion internal rompe el encapsulamiento sin necesidad.
   apply:
     status: pending
     artifact: tasks.md + PRs
