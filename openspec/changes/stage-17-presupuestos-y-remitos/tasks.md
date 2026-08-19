@@ -310,6 +310,19 @@ overflows. **Done** = tests green + `judgment-day` clean round + PR merged.
 - [x] 1.35 Raw duplicate insert on `ux_comprobantes_venta_presupuesto_origen` → translated
   `presupuesto_ya_convertido`. *(mutation target 8)* — same `ManejadorDeErroresPresupuestosTests`
   vehicle as 1.34.
+
+  **FINDING REGISTERED (target 8, mutation-proof-tests rule 2)**: the literal "move it below
+  `ClasificarUnicidad`" mutation, run for real, does **NOT** turn `UxComprobantesVentaPresupuestoOrigenSeTraduceA409PresupuestoYaConvertido`
+  red — confirmed empirically. `"ux_comprobantes_venta_presupuesto_origen"` matches none of
+  `ClasificarUnicidad`'s substring triggers (`_numero`/`_nombre`/`_codigo`/`_vigente`/`_default`/
+  `_cuit`), so its `when ClasificarUnicidad(ux) is { } familia` guard fails and falls through to
+  the next arm regardless of position, as long as it stays before the terminal `_ => null` — a
+  real structural non-equivalence with target 7's `_numero` collision, not a copy-paste error.
+  The mutation that DOES discriminate this exact-name arm's necessity is deleting it outright
+  (run, confirmed red — both the EF and raw-ADO paths fall through to `500 error_interno`;
+  reverted, confirmed green). The branch stays exactly where task 1.22 places it (above
+  `ClasificarUnicidad`, matching every sibling exact-name arm's convention) — only the specific
+  "which mutation proves it" claim is corrected.
 - [x] 1.36 [P] Domain unit — `ReglaDePresupuestos` full truth table: 4 estados × (`vencimiento`
   before/equal/after `hoy`) × NULL; `EstaVencido` false for every non-`enviado` estado; the
   boundary `vencimiento == hoy` ⇒ convertible. *(design.md:494)*
