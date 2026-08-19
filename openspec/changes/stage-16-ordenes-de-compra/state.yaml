@@ -211,9 +211,32 @@ phases:
       — cerrada determinista con 3 fulls consecutivas verdes). Suites al
       cierre del apply: backend 2216/2216 (s5) · vitest 796/796 x3 (s6).
   verify:
-    status: pending
+    status: done
     artifact: verify-report.md
     depends_on: [apply]
+    note: >-
+      PASS WITH WARNINGS (2026-08-19, main ae00fca): 0 CRITICAL. 15
+      requirements / 48 escenarios trazados a tests que pasan. Gate
+      vinculante verificado: UNA migracion, 12 indices contra el DDL, las
+      6 ramas exactas de ManejadorDeErrores con el ordering trap arriba de
+      ClasificarUnicidad, cero data statements, los 2 tests de
+      concurrencia vinculantes y las dos redes del cero-statements-extra.
+      14 decisiones muestreadas (incl. las corregidas 19/22/23/24/26/28):
+      todas verdaderas. No-regresion: VentasCheckoutTests/Ventas/Stock/
+      Politicas ausentes de los 6 merges; el motor de compras
+      byte-identico salvo los puntos de insercion. Suites de cierre:
+      Domain 526 · Application 291 · Integration 1402 (re-corrida aislada
+      tras 3 fallas de flakiness — 4ta ocurrencia del patron, verde) ·
+      vitest 796 (x3). W1 (anotacion doc-10 congelada en slice 1 — 4ta
+      ocurrencia de la clase): REMEDIADO pre-archive + clase codificada
+      hacia adelante (tarea explicita de refresco en el ultimo slice de
+      toda etapa futura). W2 (checkboxes 1.38/1.39/2.26/2.27 sin marcar):
+      REMEDIADO. W3 (claim stale de design.md:309 sobre el allowlist):
+      registrado como decision 29 — el archivo es un allowlist de
+      omisiones, las rutas de OC apilan la policy correctamente.
+      SUGGESTION informativa registrada en el reporte. Carryover
+      VINCULANTE del archive: la prosa del Purpose de
+      reposicion-de-stock (T1 de la fase spec) se actualiza en la fusion.
   archive:
     status: pending
     artifact: archive-report.md

@@ -467,7 +467,7 @@ según margen del grupo/proveedor. `anulada` revierte con contramovimientos.
 > 3 de la propuesta). Anular una compra **no** revierte los gastos ya ligados: quedan como
 > historial de un pago real (decisión 6, sin motor de reversión de gastos en el proyecto).
 >
-> **Estado (Etapa 16, Slice 1):** `comprobantes_compra` gana `id_orden_compra integer NULL` —
+> **Estado (Etapa 16): implementada — etapa completa (PRs #140-#145).** `comprobantes_compra` gana `id_orden_compra integer NULL` —
 > ALTER aditivo, metadata-only en PG 11+, sin rewrite de tabla. FK 9
 > `fk_comprobantes_compra_orden_compra` compuesta `(id_orden_compra, id_tenant)` contra
 > `ordenes_compra`, RESTRICT, MATCH SIMPLE (el default): con `id_orden_compra` NULL la
@@ -546,9 +546,12 @@ items_orden_compra (
 );
 ```
 
-**Estado (Etapa 16, Slice 1 — schema + backstops, DB CHANGE GATE ejercido y aprobado
-2026-08-18):** creadas por la migración `OrdenesDeCompraEtapa16`, aditiva pura, cero data
-statements. `EntidadBase`: **SÍ** en las dos tablas — a diferencia de
+**Estado (Etapa 16, DB CHANGE GATE ejercido y aprobado 2026-08-18): implementada — etapa
+completa (PRs #140-#145).** Creadas por la migración `OrdenesDeCompraEtapa16`, aditiva pura, cero
+data statements. El circuito completo vive: borrador/envío con serie propia 'OC' (slice 2),
+ligadura y proyección de estado desde el libro (slice 3), cierre manual y anulación gobernada
+por el libro (slice 4), read model con cobertura por artículo y desvío informativo (slice 5),
+y las pantallas web con el botón de generar OC desde Reposición (slice 6). `EntidadBase`: **SÍ** en las dos tablas — a diferencia de
 `movimientos_cuenta_corriente_proveedor`/`auditoria` (ledgers append-only, etapas 14/15), una OC
 es mutable durante `borrador` (replace-set completo bajo `SELECT … FOR UPDATE`) y se edita de
 nuevo en `enviar`/`cerrar`/`anular` — hereda el filtro de tenant estándar y `EstamparTenant()`

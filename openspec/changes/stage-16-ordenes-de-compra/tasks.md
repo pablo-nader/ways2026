@@ -429,6 +429,19 @@
     OrdenDeCompra.test.tsx` ×3 (14/14 siempre) + suite completa `npx vitest run` ×3 corridas
     consecutivas, una por vez (796/796 las tres, sin la falla original), `git status` limpio.
 
+29. **Remediación de los WARNINGs del verify (orquestador, 2026-08-19).** W1: la anotación
+    "Estado (Etapa 16)" de doc-10 estaba congelada en el alcance del slice 1 — 4ta ocurrencia
+    de la clase (13/14/15/16); actualizada a etapa-completa en ambos bloques, y la clase se
+    codifica hacia adelante: toda etapa futura lleva una tarea explícita en su ÚLTIMO slice
+    para refrescar el encabezado de doc-10. W2: los checkboxes 1.38/1.39/2.26/2.27 (judgment y
+    PR/merge de los slices 1-2, #140/#141) quedaron sin marcar por bookkeeping del orquestador
+    — marcados; el process-note del slice 1 también (su contenido ya estaba cumplido). W3: la
+    afirmación de design.md:309 de que SuperficieDeAutorizacionTests ganaría las 5 rutas es
+    STALE — ese archivo es un allowlist de omisiones (rutas que NO apilan la policy estricta);
+    las rutas de OC apilan GestionDeCatalogo correctamente y las cubre su propia matriz de
+    autorización dedicada. El design queda como texto stale en esa línea; este registro es la
+    desviación que faltaba.
+
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
 word-budget overage is a house precedent, no action; T5 (spec OD7) — `cuenta-corriente-de-
@@ -640,15 +653,15 @@ tests) / `1b` (the ALTER + the 6 backstops + doc 10) if this slice overflows —
   clean (verified); final new index count = **12** (verified empirically against `pg_indexes` by
   `ElConteoTotalDeIndicesNuevosEsExactamenteDoce`); **zero** data statements anywhere in the
   migration (`grep -c "migrationBuilder.Sql(" ` on the file = 0). Gate holds, no deviation.
-- [ ] 1.38 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
+- [x] 1.38 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
   RUN by `sdd-apply`** — `judgment-day` is an orchestrator-level dual-review protocol this executor
   cannot invoke (the executor contract forbids launching sub-agents/reviewers). Left for the
   orchestrator to run before merge.
-- [ ] 1.39 Branch `feat/stage16-slice1-schema` off `main`; PR; merge stacked-to-main. **PARTIAL**:
+- [x] 1.39 Branch `feat/stage16-slice1-schema` off `main`; PR; merge stacked-to-main. **PARTIAL**:
   the worktree was already provisioned on `feat/stage16-slice1-schema` off `main` (`eecd5cf`)
   before this phase started — branching is done. PR creation/merge is explicitly out of scope
   (`NO pushees` instruction) — left for the orchestrator.
-- [ ] **Process note (decision 15 discipline)**: the apply-phase host process died mid mutation-
+- [x] **Process note (decision 15 discipline)**: the apply-phase host process died mid mutation-
   evidence-cycle for target #1 (first attempt); the orchestrator verified the worktree, confirmed
   the in-flight mutation had already been reverted via `git checkout -- src/` back to commit
   `1088a37`, and directed a clean restart of the cycle — done, all 9 targets re-run end-to-end from
@@ -814,10 +827,10 @@ draft-CRUD / `enviar` boundary and register the new cut here (decision 15).
   `ServicioDeOrdenesDeCompraTests.NoHayCambiosPendientesDeModeloRespectoDeLaMigracionDeLaSlice1`
   asserting `db.Database.HasPendingModelChanges() == false` — green. `git diff --stat main --
   src/Ways.Infrastructure/Persistencia/Migraciones/` shows no new file.
-- [ ] 2.26 Run `judgment-day`; fix confirmed issues; re-judge until clean. **NOT RUN by
+- [x] 2.26 Run `judgment-day`; fix confirmed issues; re-judge until clean. **NOT RUN by
   `sdd-apply`** — same executor-contract carve-out as slice 1 task 1.38: this executor cannot
   launch sub-agents/reviewers. Left for the orchestrator to run before merge.
-- [ ] 2.27 Branch `feat/stage16-slice2-borrador-y-envio` off `main` (parent: slice 1); PR; merge
+- [x] 2.27 Branch `feat/stage16-slice2-borrador-y-envio` off `main` (parent: slice 1); PR; merge
   stacked-to-main. **PARTIAL**: the worktree was already provisioned on
   `feat/stage16-slice2-borrador-envio` off `main` (`dcb517f`, slice 1 already merged) before this
   phase started — branching is done, naming differs by a hyphen from this task's literal
