@@ -121,6 +121,38 @@
     (`Assert.Equal` expected `["id_proveedor","id_tenant"]`, got `["id_tenant","id_proveedor"]`),
     reverted with `git checkout -- src/`, rebuilt, full `OrdenesCompraSchemaTests` green (19/19)
     after revert, `git status` clean.
+17. **Slice 2 apply-phase decisions and deviations (decision 15 discipline).**
+    - **OD9 (orchestrator, launch prompt for this phase): the FK 2/FK 3 pre-check resolvers of
+      `ServicioDeOrdenesDeCompra` are PRIVATE and PROPER to that class**, copying the FORM of
+      `ServicioDeCompras.ResolverProveedorAsync`/`ResolverPuntoVentaAsync` (both `private` there,
+      so there is nothing to reuse by composition) instead of promoting them to a shared helper —
+      same criterion `ServicioDeGastos` already applies against `ServicioDeCompras` for the same
+      pair of resolutions. Followed verbatim; `ResolverProveedorAsync`/`ResolverPuntoVentaAsync`/
+      `ExigirArticulosExistentesAsync` in `ServicioDeOrdenesDeCompra.cs` are `private`, simplified
+      to existence checks (`AnyAsync` → `ErrorDominio.NoEncontrado`/`referencia_invalida`) since the
+      draft path never needs the resolved entity's other columns the way `ServicioDeCompras` does.
+    - **Response DTO deviation**: this slice introduces `OrdenDeCompraBorrador`
+      (`ContratosDeOrdenDeCompra.cs`) instead of populating design's single `OrdenDeCompraDetalle`
+      early — the latter's `Cobertura`/`TotalEstimado`/`TotalReal`/`DesvioTotal`/
+      `ComprobantesLigados` fields cannot be honestly filled before the reception book exists
+      (slice 3) and the read model that computes them (slice 5, task 5.1 — which still *creates*
+      `OrdenDeCompraDetalle`, unmodified from the original plan). `dto-contract-honesty` rule 1: a
+      field that would always be `null`/empty in this slice is not a contract, it's filler.
+    - **DELETE endpoint / `EliminarAsync` NOT implemented**, despite being named in this phase's
+      launch prompt ("PUNTOS CLAVE"/"ARTEFACTOS"). Neither `tasks.md` (this file, before this
+      phase), `design.md`'s API Surface table (7 routes: `GET /`, `GET /{id}`, `POST /`,
+      `PUT /{id}`, `POST /{id}/enviar`, `POST /{id}/cerrar`, `POST /{id}/anular` — no `DELETE`) nor
+      `design.md`'s `File Changes`/authorization-matrix task (4.11, "the five new non-GET routes")
+      name a delete route. Adding a sixth write route not covered by the slice-4 authorization
+      allowlist test would silently break that binding count. Treated as a launch-prompt/artifact
+      conflict resolved in favor of the authoritative SDD artifacts (`sdd-apply`'s contract: follow
+      design decisions, don't freelance); flagged here for the orchestrator to decide whether a
+      future task should add it.
+    - **Process note**: the apply-phase host process did not die mid-cycle this slice (unlike
+      slice 1's task 1.39-adjacent note) — all 8 mutation-evidence cycles (targets #10-#17) ran
+      end-to-end in one pass, each verified FAIL → revert → green before proceeding to the next.
+      Docker Desktop was already healthy at the start of this phase (verified with `docker info`
+      before the first test run).
 
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
@@ -370,78 +402,161 @@ disappear, schema unused for these paths, nothing to repair. **Done** = tests gr
 **Budget note**: no pre-authorized split named for this slice; if it overflows, split at the
 draft-CRUD / `enviar` boundary and register the new cut here (decision 15).
 
-- [ ] 2.1 Create `src/Ways.Application/Compras/ContratosDeOrdenDeCompra.cs` — the write records
+- [x] 2.1 Create `src/Ways.Application/Compras/ContratosDeOrdenDeCompra.cs` — the write records
   (`SolicitudDeOrdenDeCompra`, `LineaDeOrdenSolicitada`, `ItemDeOrden`); `orden` is server-assigned
-  1..N, never accepted from the request. *(design.md:166-174, mutation target #14)*
-- [ ] 2.2 Create `src/Ways.Application/Compras/ServicioDeOrdenesDeCompra.cs` — `CrearBorradorAsync`
+  1..N, never accepted from the request (no `orden` field exists on the request records at all —
+  stronger than "accepted but overwritten"). *(design.md:166-174, mutation target #14)* —
+  **DEVIATION registered (decision 17 below)**: this file also defines `OrdenDeCompraBorrador`, a
+  slice-2-scoped response record (header + items only) instead of design's single
+  `OrdenDeCompraDetalle` (which needs `Cobertura`/`TotalEstimado`/`TotalReal`/`DesvioTotal`/
+  `ComprobantesLigados` — all derived from the reception book that doesn't exist until slice 3/5).
+  `OrdenDeCompraDetalle` is created in slice 5 (task 5.1) exactly as originally planned.
+- [x] 2.2 Create `src/Ways.Application/Compras/ServicioDeOrdenesDeCompra.cs` — `CrearBorradorAsync`
   (`INSERT`, `estado='borrador'`, `numero NULL`). *(proposal.md:266, design.md:376)*
-- [ ] 2.3 Same file: `ActualizarBorradorAsync` — full replace-set under `SELECT … FOR UPDATE …
+- [x] 2.3 Same file: `ActualizarBorradorAsync` — full replace-set under `SELECT … FOR UPDATE …
   WHERE estado = 'borrador'`, `RemoveRange`/`AddRange` items, the `BloquearBorradorAsync` pattern.
   *(proposal.md:267, mutation targets #10, #15)*
-- [ ] 2.4 Same file: `EnviarAsync` — outside the caller's transaction, wrapped in
+- [x] 2.4 Same file: `EnviarAsync` — outside the caller's transaction, wrapped in
   `db.Database.CreateExecutionStrategy()`, call `AsignadorDeNumeroComprobante.
   AsignarComprometidoAsync(db, idTenant, idPuntoVenta, "OC")`; then `EstrategiaSinReintento ⇒
   UPDATE ordenes_compra SET numero, fecha_envio, estado='enviada' WHERE id AND tenant AND
   estado='borrador' AND id_punto_venta = $pv RETURNING numero`; 0 rows ⇒ reclassify under read
-  (409), number stays burnt. *(design.md:36-40, 244-250, mutation targets #11-#13, #16)*
-- [ ] 2.5 Guard: refuse `enviar` on an OC with zero items — `orden_compra_sin_items`, 400 —
+  (409, `orden_compra_no_enviable`), number stays burnt. *(design.md:36-40, 244-250, mutation
+  targets #11-#13, #16)*
+- [x] 2.5 Guard: refuse `enviar` on an OC with zero items — `orden_compra_sin_items`, 400 —
   mirroring `compra_sin_items`. *(design.md:62, decision 7; mutation target #17; conflict #3
   above)*
-- [ ] 2.6 Every raw-ADO parameter through `ParametrosDeComando.Agregar`/`AgregarNulo` — no hand-
+- [x] 2.6 Every raw-ADO parameter through `ParametrosDeComando.Agregar`/`AgregarNulo` — no hand-
   built parameter without `ToUniversalTime()`. *(design.md, mutation target #16)*
-- [ ] 2.7 Create `src/Ways.Api/Endpoints/OrdenesDeCompraEndpoints.cs` — `POST /`, `PUT /{id}`,
-  `POST /{id}/enviar`, grouped under `OperacionDePos`, stacking `GestionDeCatalogo` on writes.
-  *(design.md:301-307, decision 16)*
-- [ ] 2.8 [P] Integration — `PUT` on a `borrador` OC replaces items exactly (add + remove in one
-  request, no stale row). *(ordenes-de-compra/spec.md:52-55)*
-- [ ] 2.9 [P] Integration — `PUT` on a non-`borrador` OC is rejected `409`.
+- [x] 2.7 Create `src/Ways.Api/Endpoints/OrdenesDeCompraEndpoints.cs` — `POST /`, `PUT /{id}`,
+  `POST /{id}/enviar`, grouped under `OperacionDePos`, stacking `GestionDeCatalogo` on writes —
+  gate copied verbatim from `ComprasEndpoints.cs:20-22, 76-109`. Registered in `Program.cs`
+  (`app.MapearOrdenesDeCompra()`, after `MapearCompras()`) and `Ways.Application/
+  DependencyInjection.cs` (`AddScoped<ServicioDeOrdenesDeCompra>()`). *(design.md:301-307,
+  decision 16)* — **DEVIATION registered (decision 17 below)**: no `DELETE /api/ordenes-compra`
+  endpoint/`EliminarAsync` was implemented — not named in `tasks.md`/`design.md`'s API Surface (7
+  routes total, no DELETE) nor in the slice-4 authorization matrix (task 4.11 pins exactly 5 write
+  routes). Adding one would silently break both binding counts.
+- [x] 2.8 [P] Integration — `PUT` on a `borrador` OC replaces items exactly (add + remove in one
+  request, no stale row). `ServicioDeOrdenesDeCompraTests.
+  ItemsSeReemplazanCompletosEnUnRequestAgregandoYQuitando`. *(ordenes-de-compra/spec.md:52-55)*
+- [x] 2.9 [P] Integration — `PUT` on a non-`borrador` OC is rejected `409`.
+  `ServicioDeOrdenesDeCompraTests.EditarUnaOrdenNoBorradorEsRechazada409`.
   *(ordenes-de-compra/spec.md:57-60, mutation target #10)*
-- [ ] 2.10 [P] Integration — `enviar` on a fresh PV assigns `numero = 1`, sets `fecha_envio`,
-  `estado = enviada`. *(ordenes-de-compra/spec.md:73-76)*
-- [ ] 2.11 [P] Integration — re-sending an already-`enviada` OC is rejected `409`, `numero` not
-  reassigned. *(ordenes-de-compra/spec.md:83-86)*
-- [ ] 2.12 [P] Integration — `enviar` on an OC with no items is rejected `orden_compra_sin_items`,
-  400. *(conflict #3 above, mutation target #17)*
-- [ ] 2.13 [P] Integration — the `-03:00` offset test on `fecha_envio`: `RelojFijo(2026-08-19T12:
-  00:00Z)` at offset zero AND a real `-03:00` write both persist the exact fixed instant.
-  *(decision 13 above, mutation target #16)*
-- [ ] 2.14 [P] **Binding gate test (b), part 1** — two concurrent `enviar` on **two distinct** OCs
-  at one punto de venta ⇒ two distinct `numero` values, **neither** response `409`.
+- [x] 2.10 [P] Integration — `enviar` on a fresh PV assigns `numero = 1`, sets `fecha_envio`,
+  `estado = enviada`. `ServicioDeOrdenesDeCompraTests.
+  EnviarAsignaElPrimerNumeroParaUnPuntoDeVentaFresco`. *(ordenes-de-compra/spec.md:73-76)*
+- [x] 2.11 [P] Integration — re-sending an already-`enviada` OC is rejected `409`, `numero` not
+  reassigned. `ServicioDeOrdenesDeCompraTests.
+  ReenviarUnaOrdenYaEnviadaEsRechazada409SinReasignarNumero`. *(ordenes-de-compra/spec.md:83-86)*
+- [x] 2.12 [P] Integration — `enviar` on an OC with no items is rejected `orden_compra_sin_items`,
+  400. `ServicioDeOrdenesDeCompraTests.EnviarUnaOrdenSinItemsEsRechazadaConOrdenCompraSinItems400`.
+  *(conflict #3 above, mutation target #17)*
+- [x] 2.13 [P] Integration — the `-03:00` offset test on `fecha_envio`: `RelojFijo` returning the
+  same instant as `2026-08-19T12:00:00Z` but expressed with real offset `-03:00` persists the
+  exact fixed instant (a hand-built, non-normalized parameter would 500 on the offset≠0-vs-
+  timestamptz Npgsql rejection — see the `datetimeoffset-utc-npgsql` memory note). `ServicioDeOrdenesDeCompraTests.
+  EnviarConOffsetMenosTresPersisteElInstanteFijoExacto`. *(decision 13 above, mutation target #16)*
+- [x] 2.14 [P] **Binding gate test (b), part 1 — VINCULANTE** — two concurrent `enviar` on **two
+  distinct** OCs at one punto de venta ⇒ two distinct `numero` values, **neither** response `409`.
+  `ServicioDeOrdenesDeCompraTests.
+  DosEnviarConcurrentesDeOrdenesDistintasEnElMismoPuntoDeVentaDanNumerosDistintosSin409`.
   *(ordenes-de-compra/spec.md:78-81; design.md decision T1; conflict #1 above)*
-- [ ] 2.15 [P] **Binding gate test (b), part 2** — two concurrent `enviar` on the **same** OC ⇒
-  one `200` + one `409`, the loser's number burnt (never reassigned). *(design.md T1, conflict #1
+- [x] 2.15 [P] **Binding gate test (b), part 2 — VINCULANTE** — two concurrent `enviar` on the
+  **same** OC ⇒ one `200` + one `409`, the loser's number burnt (never reassigned) — verified by a
+  follow-up `enviar` on a fresh OC of the same PV jumping straight to `numero = 3` (1 = winner, 2 =
+  burnt by the loser). `ServicioDeOrdenesDeCompraTests.
+  DosEnviarConcurrentesDeLaMismaOrdenDanUn200YUn409ConNumeroQuemado`. *(design.md T1, conflict #1
   above)*
-- [ ] 2.16 [P] Integration — concurrent `PUT`-moves-the-PV race: a `PUT` relinking the OC's punto
+- [x] 2.16 [P] Integration — concurrent `PUT`-moves-the-PV race: a `PUT` relinking the OC's punto
   de venta between the pre-read and the `enviar` lock leaves the number correctly scoped to the
-  **old** series (0 rows under the mismatched `WHERE`, reclassified). *(design.md:61, mutation
-  target #11)*
-- [ ] 2.17 [P] **Mutation target #10** — `WHERE estado = 'borrador'` in the draft lock → delete →
-  `PUT` on an `enviada` OC ⇒ expected 409 (2.9) must fail.
-- [ ] 2.18 [P] **Mutation target #11** — `AND id_punto_venta = $pv` in the `enviar` UPDATE →
-  delete → the concurrent-`PUT`-moves-the-PV test (2.16) must fail.
-- [ ] 2.19 [P] **Mutation target #12** — `AsignarComprometidoAsync` → replace with `MAX(numero) +
-  1` → two concurrent `enviar` on one PV (2.14) ⇒ same number / `23505` must surface.
-- [ ] 2.20 [P] **Mutation target #13** — the assigner call moved **inside** the `enviar`
+  **old** series (0 rows under the mismatched `WHERE`, reclassified `409 orden_compra_no_enviable`)
+  — forced deterministically with a `DbTransactionInterceptor` pausing right after
+  `EjecutarEnvioAsync`'s `BeginTransactionAsync` (same pattern as `ComprasAnulacionYConcurrenciaTests.
+  InterceptorDePausaTrasIniciarLaTransaccion`), never left to real timing. `ServicioDeOrdenesDeCompraTests.
+  UnPutQueMuevePuntoDeVentaConcurrenteConEnviarReclasificaA409YElNumeroQuedaEnLaSerieVieja`.
+  *(design.md:61, mutation target #11)*
+- [x] 2.17 [P] **Mutation target #10** — `WHERE estado = 'borrador'` in the draft lock → delete →
+  `PUT` on an `enviada` OC ⇒ expected 409 (2.9) must fail. **Evidence**: deleted `AND estado =
+  'borrador'::estado_orden_compra` from `BloquearBorradorAsync`'s SQL → `dotnet build
+  --no-incremental` (clean) → `EditarUnaOrdenNoBorradorEsRechazada409` FAILED (expected `Conflict`,
+  actual `OK`) → `git checkout -- src/` → `git status` clean → rebuilt → green (1/1).
+- [x] 2.18 [P] **Mutation target #11** — `AND id_punto_venta = $pv` in the `enviar` UPDATE →
+  delete → the concurrent-`PUT`-moves-the-PV test (2.16) must fail. **Evidence**: deleted `AND
+  id_punto_venta = $5` from `EnviarHeaderAsync`'s SQL → build clean →
+  `UnPutQueMuevePuntoDeVentaConcurrenteConEnviarReclasificaA409YElNumeroQuedaEnLaSerieVieja` FAILED
+  (the `enviar` succeeded — `200`, `estado: Enviada`, `idPuntoVenta: 4` — instead of the expected
+  `409`, proving the number landed in the relinked PV's series) → reverted, clean → green (1/1).
+- [x] 2.19 [P] **Mutation target #12** — `AsignarComprometidoAsync` → replace with `MAX(numero) +
+  1` → two concurrent `enviar` on one PV (2.14) ⇒ same number / `23505` must surface. **Evidence**:
+  replaced the call with a non-atomic `db.OrdenesCompra.Where(...).MaxAsync()+1` LINQ read → build
+  clean → `DosEnviarConcurrentesDeOrdenesDistintasEnElMismoPuntoDeVentaDanNumerosDistintosSin409`
+  FAILED (`Assert.NotEqual` — one response was `Conflict`, proving the racy MAX+1 let both draw the
+  same number and collide on `ux_ordenes_compra_numero`) → reverted, clean → green (1/1).
+- [x] 2.20 [P] **Mutation target #13** — the assigner call moved **inside** the `enviar`
   transaction → nested-transaction failure / the burnt-number semantics test (2.15) must fail.
-- [ ] 2.21 [P] **Mutation target #14** — server-assigned `orden` 1..N replaced with the request's
-  own value → `ux_items_orden_compra_orden` ⇒ `orden_de_item_duplicado` test (1.24) must fail.
-- [ ] 2.22 [P] **Mutation target #15** — `RemoveRange(itemsExistentes)` in the replace-set →
-  delete → the per-line count/identity assertion (2.8) must fail.
-- [ ] 2.23 [P] **Mutation target #16** — `ParametrosDeComando.Agregar` on `fecha_envio` → hand-
+  **Evidence**: moved `AsignarComprometidoAsync` (which itself opens `BeginTransactionAsync`) to
+  right after `EjecutarEnvioAsync`'s own `BeginTransactionAsync`, on the same `DbContext` → build
+  clean → `DosEnviarConcurrentesDeLaMismaOrdenDanUn200YUn409ConNumeroQuemado` FAILED (`Assert.Equal`
+  expected 1 winner, actual 0 — the nested transaction attempt broke BOTH concurrent requests, no
+  200 survived) → reverted, clean → green (1/1).
+- [x] 2.21 [P] **Mutation target #14** — server-assigned `orden` 1..N replaced with a non-
+  incrementing value (the request DTO carries no `orden` field to "take" — the closest faithful
+  mutation is defeating the server-side sequential assignment itself) → `ux_items_orden_compra_orden`
+  ⇒ `orden_de_item_duplicado` must surface on a multi-item replace-set. **Evidence**: changed
+  `MaterializarItems`'s `Orden = orden++` to a constant `Orden = 1` → build clean →
+  `ItemsSeReemplazanCompletosEnUnRequestAgregandoYQuitando` FAILED with `409
+  orden_de_item_duplicado` (the exact translated code from `ManejadorDeErrores`'s slice-1 backstop,
+  confirming both the service-level defense and the schema backstop end-to-end) → reverted, clean →
+  green (1/1).
+- [x] 2.22 [P] **Mutation target #15** — `RemoveRange(itemsExistentes)` in the replace-set →
+  delete → the per-line count/identity assertion (2.8) must fail. **Evidence**: deleted the
+  `db.ItemsOrdenCompra.RemoveRange(itemsExistentes)` line (and its now-unused read) in
+  `EjecutarActualizacionAsync` → build clean →
+  `ItemsSeReemplazanCompletosEnUnRequestAgregandoYQuitando` FAILED with `409
+  orden_de_item_duplicado` (the stale row from the first PUT collided with the new set's `orden=1`
+  under `ux_items_orden_compra_orden`) → reverted, clean → green (1/1).
+- [x] 2.23 [P] **Mutation target #16** — `ParametrosDeComando.Agregar` on `fecha_envio` → hand-
   built parameter without `ToUniversalTime()` → the `-03:00` offset test (2.13) must fail.
-- [ ] 2.24 [P] **Mutation target #17** — the `orden_compra_sin_items` guard → delete → an empty OC
-  projects straight to `cerrada` (2.12 regresses).
-- [ ] 2.25 Gate guard: `dotnet ef migrations has-pending-model-changes` clean; zero new files under
-  `Migraciones/`.
-- [ ] 2.26 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  **Evidence**: replaced the `ParametrosDeComando.Agregar(comando, momento)` call in
+  `EnviarHeaderAsync` with a hand-built `DbParameter` (`Value = momento` directly, no
+  normalization) → build clean → `EnviarConOffsetMenosTresPersisteElInstanteFijoExacto` FAILED with
+  a `500 error_interno` (Npgsql's offset≠0-vs-`timestamptz` rejection surfacing as an unhandled
+  exception, not a domain 409/400 — exactly the documented failure mode) → reverted, clean → green
+  (1/1).
+- [x] 2.24 [P] **Mutation target #17** — the `orden_compra_sin_items` guard → delete → an empty OC
+  projects straight to `cerrada` (2.12 regresses). **Evidence**: deleted the `tieneItems` check and
+  its `throw` in `EnviarAsync` → build clean →
+  `EnviarUnaOrdenSinItemsEsRechazadaConOrdenCompraSinItems400` FAILED (expected `BadRequest`,
+  actual `OK` — an empty OC now sends successfully) → reverted, clean → green (1/1).
+- [x] 2.25 Gate guard: `dotnet ef migrations has-pending-model-changes` clean; zero new files under
+  `Migraciones/`. Verified two ways: (a) `dotnet ef migrations has-pending-model-changes --project
+  src/Ways.Infrastructure/Ways.Infrastructure.csproj --startup-project
+  src/Ways.Infrastructure/Ways.Infrastructure.csproj` → *"No changes have been made to the model
+  since the last migration."* (running it with `Ways.Api` as the startup project errors — that
+  project doesn't reference `Microsoft.EntityFrameworkCore.Design`, a pre-existing environment
+  quirk unrelated to this slice); (b) the in-process
+  `ServicioDeOrdenesDeCompraTests.NoHayCambiosPendientesDeModeloRespectoDeLaMigracionDeLaSlice1`
+  asserting `db.Database.HasPendingModelChanges() == false` — green. `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` shows no new file.
+- [ ] 2.26 Run `judgment-day`; fix confirmed issues; re-judge until clean. **NOT RUN by
+  `sdd-apply`** — same executor-contract carve-out as slice 1 task 1.38: this executor cannot
+  launch sub-agents/reviewers. Left for the orchestrator to run before merge.
 - [ ] 2.27 Branch `feat/stage16-slice2-borrador-y-envio` off `main` (parent: slice 1); PR; merge
-  stacked-to-main.
+  stacked-to-main. **PARTIAL**: the worktree was already provisioned on
+  `feat/stage16-slice2-borrador-envio` off `main` (`dcb517f`, slice 1 already merged) before this
+  phase started — branching is done, naming differs by a hyphen from this task's literal
+  `-borrador-y-envio` (cosmetic, not re-branched to avoid losing the provisioned worktree — flagged
+  for the orchestrator). PR creation/merge is explicitly out of scope (`NO pushees` instruction) —
+  left for the orchestrator.
 
 **Test plan**: replace-set (2.8-2.9); enviar happy/blocked paths (2.10-2.12); the `-03:00` offset
-(2.13); the two binding concurrency tests (2.14-2.15); the PV-relink race (2.16); 8 mutation
-targets (2.17-2.24).
+(2.13); the two binding concurrency tests (2.14-2.15) — **VINCULANTES**; the PV-relink race (2.16);
+8 mutation targets (2.17-2.24); the gate guard regression check (2.25 evidence).
 
-**Verify**: `dotnet test --filter FullyQualifiedName~ServicioDeOrdenesDeCompra`
+**Verify**: `dotnet test --filter FullyQualifiedName~ServicioDeOrdenesDeCompra` — 11/11 green
+(`OrdenesCompraSchemaTests`/`ManejadorDeErroresOrdenesDeCompraTests` from slice 1 re-run clean,
+34/34; the full `Compras` regression suite, 137/137).
 
 ---
 
