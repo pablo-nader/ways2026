@@ -23,7 +23,15 @@ public sealed record LineaDeCompraSolicitada(
 
 /// <summary>Cuerpo de <c>POST /api/compras</c> (crea un borrador) y de <c>PUT
 /// /api/compras/{id}</c> (design decisión 2: replace-set completo del header + los items — un
-/// PUT reemplaza <see cref="Items"/> entero, nunca un CRUD incremental por item).</summary>
+/// PUT reemplaza <see cref="Items"/> entero, nunca un CRUD incremental por item).
+///
+/// <see cref="IdOrdenCompra"/> — stage-16-ordenes-de-compra, Slice 3 (design: Interfaces/
+/// Contracts; spec comprobantes-compra: "A Comprobante Compra MAY Carry A Linked Orden De
+/// Compra"). Al final del record, con default <c>null</c>, para no romper ningún call site
+/// posicional existente (`dto-contract-honesty` regla 3 — el campo se traza hasta
+/// <c>ServicioDeCompras.ExigirOrdenLigableAsync</c>/<c>ComprobanteCompra.IdOrdenCompra</c>, nunca
+/// solo declarado). Seteable/cambiable solo mientras el comprobante es <c>borrador</c>; congelado
+/// después (spec: "The link is frozen once the compra is confirmed").</summary>
 public sealed record SolicitudDeCompra(
     int IdProveedor,
     int IdTipoComprobante,
@@ -31,7 +39,8 @@ public sealed record SolicitudDeCompra(
     string? NumeroExterno,
     DateOnly? FechaComprobante,
     string? Observaciones,
-    IReadOnlyList<LineaDeCompraSolicitada> Items);
+    IReadOnlyList<LineaDeCompraSolicitada> Items,
+    int? IdOrdenCompra = null);
 
 /// <summary>Un item ya persistido, con su <c>precioSugerido</c> (design: API Surface — "Header +
 /// items + precioSugerido per item"). Sin <c>unidades</c> propio: solo <see cref="Cantidad"/>
@@ -59,7 +68,12 @@ public sealed record ItemDeCompra(
     int? IdLote);
 
 /// <summary>Detalle completo de una compra — respuesta de <c>GET /api/compras/{id}</c>,
-/// <c>POST /api/compras</c>, <c>PUT /api/compras/{id}</c>, <c>POST …/confirmar</c>.</summary>
+/// <c>POST /api/compras</c>, <c>PUT /api/compras/{id}</c>, <c>POST …/confirmar</c>.
+///
+/// <see cref="IdOrdenCompra"/> — stage-16-ordenes-de-compra, Slice 3 (conflicto #4 de tasks.md,
+/// `state.yaml` OD8/T7): corrige el "no response shape changes" original del proposal bajo
+/// `dto-contract-honesty` regla 2 — un campo request-only no puede satisfacer la aserción de
+/// round-trip (task 3.16).</summary>
 public sealed record CompraDetalle(
     int Id,
     int IdProveedor,
@@ -74,7 +88,8 @@ public sealed record CompraDetalle(
     decimal Total,
     string? Observaciones,
     EstadoCompra Estado,
-    IReadOnlyList<ItemDeCompra> Items);
+    IReadOnlyList<ItemDeCompra> Items,
+    int? IdOrdenCompra);
 
 /// <summary>Fila de <c>GET /api/compras</c> — shape reducido, mismo criterio que
 /// <c>ComprobanteListado</c>/<c>GastoListado</c>. <see cref="EstadoPago"/> lo resuelve

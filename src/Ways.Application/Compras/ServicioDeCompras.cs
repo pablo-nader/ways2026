@@ -159,6 +159,16 @@ public class ServicioDeCompras(
         var (tipo, _, _, _, porcentajePorAlicuota, margenes) = await ResolverContextoAsync(solicitud, ct);
         var (lineas, calculada) = Calcular(solicitud.Items, tipo.DiscriminaIva, porcentajePorAlicuota, margenes);
 
+        // stage-16-ordenes-de-compra, Slice 3 (design decisión 8, spec ordenes-de-compra:
+        // "Ligadura Invariant"): sin transacción propia acá (CrearBorradorAsync no abre una), así
+        // que el FOR SHARE de ExigirOrdenLigableAsync se toma y libera de inmediato — validación de
+        // coherencia, no lock TOCTOU (design: "honest residue"). La autoridad VINCULANTE contra una
+        // carrera real es el lock de posición 2 de EjecutarConfirmarAsync.
+        if (solicitud.IdOrdenCompra is { } idOrdenCompraSolicitada)
+        {
+            await ExigirOrdenLigableAsync(idOrdenCompraSolicitada, idTenant, solicitud.IdProveedor, solicitud.IdPuntoVenta, ct);
+        }
+
         var comprobante = new ComprobanteCompra
         {
             IdTenant = idTenant,
@@ -175,6 +185,7 @@ public class ServicioDeCompras(
             Total = calculada.Total,
             Observaciones = NormalizarOpcional(solicitud.Observaciones),
             Estado = EstadoCompra.Borrador,
+            IdOrdenCompra = solicitud.IdOrdenCompra,
             CreatedAt = momento,
             UpdatedAt = momento
         };
@@ -235,6 +246,15 @@ public class ServicioDeCompras(
         // tras TomarLockDelParAsync).
         var comprobante = await db.ComprobantesCompra.FirstAsync(c => c.Id == id, ct);
 
+        // stage-16-ordenes-de-compra, Slice 3 (design decisión 8): DENTRO de esta transacción — acá
+        // el FOR SHARE de ExigirOrdenLigableAsync SÍ es un guard TOCTOU real contra una anulación
+        // concurrente de la OC (la anulación toma su propio lock EXCLUSIVO como primer statement,
+        // slice 4). Unlink permitido mientras borrador (solicitud.IdOrdenCompra == null).
+        if (solicitud.IdOrdenCompra is { } idOrdenCompraSolicitada)
+        {
+            await ExigirOrdenLigableAsync(idOrdenCompraSolicitada, idTenant, solicitud.IdProveedor, solicitud.IdPuntoVenta, ct);
+        }
+
         var itemsExistentes = await db.ItemsComprobanteCompra.Where(i => i.IdComprobanteCompra == id).ToListAsync(ct);
         db.ItemsComprobanteCompra.RemoveRange(itemsExistentes);
 
@@ -244,6 +264,7 @@ public class ServicioDeCompras(
         comprobante.FechaComprobante = solicitud.FechaComprobante;
         comprobante.IdPuntoVenta = solicitud.IdPuntoVenta;
         comprobante.Observaciones = NormalizarOpcional(solicitud.Observaciones);
+        comprobante.IdOrdenCompra = solicitud.IdOrdenCompra;
         comprobante.Subtotal = calculada.Subtotal;
         comprobante.DescuentoTotal = calculada.DescuentoTotal;
         comprobante.IvaTotal = calculada.IvaTotal;
@@ -351,6 +372,21 @@ public class ServicioDeCompras(
             }
 
             throw new ErrorDominio("compra_no_es_borrador", "La compra ya no está en borrador.", 409);
+        }
+
+        // 1.b. stage-16-ordenes-de-compra, Slice 3 (design decisiones 6/9; Transactions —
+        // CONFIRMAR COMPRA): si la compra está ligada a una OC, su lock va en POSICIÓN 2 —
+        // inmediatamente después del header y ANTES de lotes/stock/proveedores (decisión 3 del
+        // design: "proveedores es el ÚLTIMO row lock", mutation target #21). Con
+        // encabezado.IdOrdenCompra IS NULL (100% del tráfico anterior a esta etapa) este bloque no
+        // emite NINGÚN statement extra (mutation target #29). BloquearYExigirNoAnuladaAsync tira
+        // 409 orden_compra_anulada ANTES de que ProyectarEstadoAsync escriba nada (decisión 9,
+        // defensa en profundidad); ProyectarEstadoAsync hace su propio lock → cortocircuito →
+        // derivación → UPDATE condicional (design decisión 2, EscriturasDeOrdenDeCompra).
+        if (encabezado.IdOrdenCompra is { } idOc)
+        {
+            await EscriturasDeOrdenDeCompra.BloquearYExigirNoAnuladaAsync(conexion, transaccionCruda, idTenant, idOc, ct);
+            await EscriturasDeOrdenDeCompra.ProyectarEstadoAsync(conexion, transaccionCruda, idTenant, idOc, momento, ct);
         }
 
         // 2. El read set de items queda congelado bajo el lock del header (design decisión 1).
@@ -556,6 +592,19 @@ public class ServicioDeCompras(
                 valorAnteriorCompraAnulacion, valorNuevoCompraAnulacion),
             ct);
 
+        // 1.6. stage-16-ordenes-de-compra, Slice 3 (design decisión 9; Transactions — ANULAR
+        // COMPRA): si la compra anulada estaba ligada a una OC, re-proyectar su estado — MISMA
+        // posición 2, MISMA transacción que la reversa de stock (design: "Failure semantics: any
+        // throw rolls the comprobante and the OC estado back together"). Puede REGRESAR
+        // cerrada→recibida_parcial→enviada; nunca sale de `anulada` ni de un cierre manual
+        // (cortocircuitos de EscriturasDeOrdenDeCompra.ProyectarEstadoAsync). Con
+        // encabezadoAnulado.Value.IdOrdenCompra IS NULL este bloque no emite ningún statement
+        // extra (mismo criterio que el confirm, mutation target #29).
+        if (encabezadoAnulado.Value.IdOrdenCompra is { } idOc)
+        {
+            await EscriturasDeOrdenDeCompra.ProyectarEstadoAsync(conexion, transaccionCruda, idTenant, idOc, momento, ct);
+        }
+
         // 2. El ledger ORIGINAL, nunca recalculado desde items (design: doc-comment de
         // ServicioDeVentas.AnularAsync, mismo criterio acá). Orden ascendente (id_articulo,
         // id_lote) — etapa 12, slice 6, mismo criterio de lock que el confirmar (decisión 8/9).
@@ -699,8 +748,14 @@ public class ServicioDeCompras(
     /// escritura del ledger de proveedor los necesita y este lock ya los tiene, así que leerlos
     /// del <c>preLectura</c> anterior o con un <c>SELECT</c> aparte sería confiar en un valor que
     /// un <c>PUT</c> concurrente pudo cambiar entre esa lectura y este lock (mutation target
-    /// #15).</summary>
-    private readonly record struct EncabezadoConfirmado(int IdPuntoVenta, int IdTipoComprobante, int IdProveedor, decimal Total);
+    /// #15).
+    ///
+    /// <see cref="IdOrdenCompra"/> ensancha el <c>RETURNING</c> otra vez (stage-16-ordenes-de-
+    /// compra, Slice 3, mismo criterio que decisión 4 de la 15 — mutation target #20): leerlo de
+    /// <c>preLectura</c> (fuera de la transacción) confiaría en un valor que un <c>PUT</c>
+    /// concurrente pudo cambiar entre esa lectura y ESTE lock.</summary>
+    private readonly record struct EncabezadoConfirmado(
+        int IdPuntoVenta, int IdTipoComprobante, int IdProveedor, decimal Total, int? IdOrdenCompra);
 
     /// <summary>El predicado incluye <c>numero_externo</c>/<c>fecha_comprobante IS NOT NULL</c>
     /// además de <c>estado='borrador'</c> — validación bajo el mismo lock, resuelta por el propio
@@ -721,7 +776,7 @@ public class ServicioDeCompras(
             "UPDATE comprobantes_compra SET estado = 'confirmada'::estado_compra, fecha_recepcion = $1, updated_at = $1 " +
             "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'borrador'::estado_compra " +
             "AND numero_externo IS NOT NULL AND fecha_comprobante IS NOT NULL " +
-            "RETURNING id_punto_venta, id_tipo_comprobante, id_proveedor, total";
+            "RETURNING id_punto_venta, id_tipo_comprobante, id_proveedor, total, id_orden_compra";
 
         ParametrosDeComando.Agregar(comando, momento);
         ParametrosDeComando.Agregar(comando, id);
@@ -733,7 +788,9 @@ public class ServicioDeCompras(
             return null;
         }
 
-        return new EncabezadoConfirmado(lector.GetInt32(0), lector.GetInt32(1), lector.GetInt32(2), lector.GetDecimal(3));
+        return new EncabezadoConfirmado(
+            lector.GetInt32(0), lector.GetInt32(1), lector.GetInt32(2), lector.GetDecimal(3),
+            lector.IsDBNull(4) ? null : lector.GetInt32(4));
     }
 
     /// <summary>Fila devuelta por el UPDATE...RETURNING de <see cref="MarcarAnuladaAsync"/>.
@@ -746,7 +803,11 @@ public class ServicioDeCompras(
     /// exactamente la razón que decisión 4 da para ensanchar en primer lugar. `total` no cambia
     /// tras confirmar (spec comprobantes-compra: "confirmada... MUST be immutable"), así que este
     /// valor es tan autoritativo como cualquier otro leído bajo este lock.</summary>
-    private readonly record struct EncabezadoAnulado(int IdPuntoVenta, int IdProveedor, decimal Total);
+    /// <c>IdOrdenCompra</c> ensancha el <c>RETURNING</c> otra vez (stage-16-ordenes-de-compra,
+    /// Slice 3, mismo criterio que <c>EncabezadoConfirmado</c>): el paso 1.6 de
+    /// <c>EjecutarAnulacionAsync</c> lo necesita para el guard de proyección, y este lock ya lo
+    /// tiene.
+    private readonly record struct EncabezadoAnulado(int IdPuntoVenta, int IdProveedor, decimal Total, int? IdOrdenCompra);
 
     private static async Task<EncabezadoAnulado?> MarcarAnuladaAsync(
         DbConnection conexion, DbTransaction? transaccion, int id, int idTenant, DateTimeOffset momento, CancellationToken ct)
@@ -756,7 +817,7 @@ public class ServicioDeCompras(
         comando.CommandText =
             "UPDATE comprobantes_compra SET estado = 'anulada'::estado_compra, updated_at = $1 " +
             "WHERE id_comprobante_compra = $2 AND id_tenant = $3 AND estado = 'confirmada'::estado_compra " +
-            "RETURNING id_punto_venta, id_proveedor, total";
+            "RETURNING id_punto_venta, id_proveedor, total, id_orden_compra";
 
         ParametrosDeComando.Agregar(comando, momento);
         ParametrosDeComando.Agregar(comando, id);
@@ -768,7 +829,8 @@ public class ServicioDeCompras(
             return null;
         }
 
-        return new EncabezadoAnulado(lector.GetInt32(0), lector.GetInt32(1), lector.GetDecimal(2));
+        return new EncabezadoAnulado(
+            lector.GetInt32(0), lector.GetInt32(1), lector.GetDecimal(2), lector.IsDBNull(3) ? null : lector.GetInt32(3));
     }
 
     private static async Task<bool> BloquearBorradorAsync(
@@ -786,6 +848,74 @@ public class ServicioDeCompras(
 
         var resultado = await comando.ExecuteScalarAsync(ct);
         return resultado is not null;
+    }
+
+    /// <summary>stage-16-ordenes-de-compra, Slice 3 (design decisión 8, spec ordenes-de-compra:
+    /// "Ligadura Invariant"; spec comprobantes-compra: "A Comprobante Compra MAY Carry A Linked
+    /// Orden De Compra") — <c>SELECT ... FOR SHARE</c> crudo, MISMO shape que
+    /// <c>ServicioDeGastos.ExigirCompraLigableAsync</c> (<c>:224-267</c>): bajo la transacción de
+    /// <see cref="EjecutarActualizacionAsync"/> es un guard TOCTOU real contra una anulación
+    /// concurrente de la MISMA OC (la anulación toma su propio lock EXCLUSIVO como primer
+    /// statement, slice 4); en <see cref="CrearBorradorAsync"/> (sin transacción propia) se toma y
+    /// libera de inmediato — validación de coherencia, no lock (design: "honest residue"). La
+    /// autoridad VINCULANTE contra la carrera real es el lock de posición 2 de
+    /// <see cref="EjecutarConfirmarAsync"/> (<c>EscriturasDeOrdenDeCompra.BloquearYExigirNoAnuladaAsync</c>).
+    /// Linkable: <c>enviada</c>/<c>recibida_parcial</c>/<c>cerrada</c> (design decisión 8, conflicto
+    /// #2 de tasks.md — `state.yaml` OD8/T2 ratifica que `cerrada` SIGUE ligable: una entrega tardía
+    /// tras un cierre automático es la misma postura informativa de la derivación). Refusadas:
+    /// <c>borrador</c> (mutation target #30 no aplica acá, es el conjunto proveedor/PV) y
+    /// <c>anulada</c>.</summary>
+    private async Task ExigirOrdenLigableAsync(
+        int idOrdenCompra, int idTenant, int idProveedor, int idPuntoVenta, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccionCruda;
+        comando.CommandText =
+            "SELECT estado::text, id_proveedor, id_punto_venta FROM ordenes_compra " +
+            "WHERE id_orden_compra = $1 AND id_tenant = $2 FOR SHARE";
+        ParametrosDeComando.Agregar(comando, idOrdenCompra);
+        ParametrosDeComando.Agregar(comando, idTenant);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            // ADR-8: mismo 404 para "no existe" y "es de otro tenant".
+            throw ErrorDominio.NoEncontrado($"No existe la orden de compra {idOrdenCompra}.");
+        }
+
+        var estado = lector.GetString(0);
+        var idProveedorDeLaOrden = lector.GetInt32(1);
+        var idPuntoVentaDeLaOrden = lector.GetInt32(2);
+
+        if (estado == "borrador")
+        {
+            throw new ErrorDominio(
+                "orden_compra_no_enviada", "La orden de compra ligada todavía no fue enviada.", 409);
+        }
+
+        if (estado == "anulada")
+        {
+            throw new ErrorDominio("orden_compra_anulada", "La orden de compra ligada está anulada.", 409);
+        }
+
+        // mutation target #30: cada conjunto es su propia línea — borrar cualquiera de los dos
+        // deja pasar una ligadura cruzada de proveedor o de punto de venta.
+        if (idProveedorDeLaOrden != idProveedor)
+        {
+            throw new ErrorDominio(
+                "proveedor_no_coincide_con_la_orden",
+                "El proveedor indicado no coincide con el de la orden de compra.", 400);
+        }
+
+        if (idPuntoVentaDeLaOrden != idPuntoVenta)
+        {
+            throw new ErrorDominio(
+                "punto_de_venta_no_coincide_con_la_orden",
+                "El punto de venta indicado no coincide con el de la orden de compra.", 400);
+        }
     }
 
     private static async Task InsertarMovimientoStockAsync(
@@ -1120,5 +1250,6 @@ public class ServicioDeCompras(
                 i.Orden, i.IdArticulo, i.Descripcion, i.Cantidad, i.Bultos, i.UnidadesPorBulto,
                 i.CostoUnitario, i.Descuento, i.IdAlicuotaIva, i.PorcentajeIva, i.Total, i.ActualizaCosto,
                 i.PrecioSugerido, i.CodigoLote, i.FechaVencimiento, i.IdLote))
-            .ToList());
+            .ToList(),
+        comprobante.IdOrdenCompra);
 }
