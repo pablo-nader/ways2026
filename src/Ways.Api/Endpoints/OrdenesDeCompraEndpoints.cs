@@ -1,5 +1,6 @@
 using Ways.Api.Seguridad;
 using Ways.Application.Compras;
+using Ways.Domain.Compras;
 
 namespace Ways.Api.Endpoints;
 
@@ -13,7 +14,11 @@ namespace Ways.Api.Endpoints;
 /// (numeración propia). Slice 4: <c>POST /{id}/cerrar</c> (cierre manual), <c>POST /{id}/anular</c>
 /// (gobernada por el libro, design decisión 9) — mismo gate que las tres rutas de arriba (task
 /// 4.11, matriz de autorización: las CINCO rutas de escritura apilan <c>GestionDeCatalogo</c>).
-/// <c>GET /</c>/<c>GET /{id}</c> llegan en slice 5 (necesitan el detalle con cobertura).
+///
+/// Slice 5 (design: API Surface, decisiones 12-15): <c>GET /</c> (listado paginado) y
+/// <c>GET /{id}</c> (detalle con cobertura por artículo + desvío) — SIN apilar
+/// <c>GestionDeCatalogo</c>: son lecturas, mismo gate que <c>ComprasEndpoints.cs:24, 67</c>
+/// (Vendedor lee, no escribe).
 /// </summary>
 public static class OrdenesDeCompraEndpoints
 {
@@ -22,6 +27,23 @@ public static class OrdenesDeCompraEndpoints
         var grupo = app.MapGroup("/api/ordenes-compra")
             .WithTags("OrdenesDeCompra")
             .RequireAuthorization(Politicas.OperacionDePos);
+
+        grupo.MapGet("/", (
+            ServicioDeOrdenesDeCompra servicio,
+            int? idProveedor,
+            int? idPuntoVenta,
+            EstadoOrdenCompra? estado,
+            DateTimeOffset? desde,
+            DateTimeOffset? hasta,
+            int? pagina,
+            int? tamanio,
+            CancellationToken ct) =>
+            servicio.ListarAsync(idProveedor, idPuntoVenta, estado, desde, hasta, pagina ?? 1, tamanio ?? 25, ct))
+        .WithSummary("Lista órdenes de compra con filtros y paginado.");
+
+        grupo.MapGet("/{id:int}", (ServicioDeOrdenesDeCompra servicio, int id, CancellationToken ct) =>
+            servicio.ObtenerDetalleAsync(id, ct))
+        .WithSummary("Detalle de una orden de compra: header + items + cobertura por artículo + desvío de precio.");
 
         grupo.MapPost("/", async (
             ServicioDeOrdenesDeCompra servicio, SolicitudDeOrdenDeCompra solicitud, CancellationToken ct) =>

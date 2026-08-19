@@ -31,6 +31,244 @@ namespace Ways.Application.Compras;
 /// </summary>
 public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto)
 {
+    // ---- lectura: listado paginado (design decisión 15, task 5.2) ---------------------------------
+
+    /// <summary>design: Interfaces/Contracts — <c>ConstruirQuery</c> (mismo patrón que
+    /// <c>ServicioDeCuentaCorrienteDeProveedor.ObtenerEstadoDeCuentaAsync</c>/<c>ServicioDeCompras.
+    /// ListarAsync</c>): <c>CountAsync</c> sobre el mismo <see cref="IQueryable{T}"/> que después
+    /// pagina. Orden <c>fecha_emision DESC, id_orden_compra DESC</c> (design decisión 15) — el
+    /// desempate por <c>Id</c> NO es cosmético: <c>fecha_emision</c> es un solo <c>reloj.Ahora</c>
+    /// por operación, así que un fixture entero bajo <c>RelojFijo</c> empata por construcción y la
+    /// paginación duplica/saltea filas sin él (mutation target #34b, parte 1).</summary>
+    public async Task<PaginaDeOrdenesDeCompra> ListarAsync(
+        int? idProveedor = null,
+        int? idPuntoVenta = null,
+        EstadoOrdenCompra? estado = null,
+        DateTimeOffset? desde = null,
+        DateTimeOffset? hasta = null,
+        int pagina = 1,
+        int tamanio = 25,
+        CancellationToken ct = default)
+    {
+        pagina = Math.Max(pagina, 1);
+        tamanio = Math.Clamp(tamanio, 1, 200);
+
+        var query = ConstruirQuery(idProveedor, idPuntoVenta, estado, desde, hasta);
+
+        var total = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderByDescending(o => o.FechaEmision)
+            .ThenByDescending(o => o.Id)
+            .Skip((pagina - 1) * tamanio)
+            .Take(tamanio)
+            .Select(o => new OrdenDeCompraListada(
+                o.Id, o.IdProveedor, o.IdPuntoVenta, o.Numero, o.FechaEmision, o.FechaEsperada, o.Estado))
+            .ToListAsync(ct);
+
+        return new PaginaDeOrdenesDeCompra(items, total, pagina, tamanio);
+    }
+
+    /// <summary>Cláusulas bajo prueba (<c>mutation-proof-tests</c>, design.md:194-204, mutation
+    /// target #34b), en orden de daño si se pierden:
+    ///   <c>Where(o => o.IdProveedor == p)</c> / <c>Where(o => o.Id == id)</c> → una OC filtra las
+    ///                                                                          de otra entidad
+    ///   <c>ThenByDescending(o => o.Id)</c> → con <c>fecha_emision</c> empatada (<c>RelojFijo</c>)
+    ///                                        la paginación duplica y saltea
+    ///   cada <c>if (idProveedor/idPuntoVenta/estado/desde/hasta is { } x)</c> → un filtro ignorado
+    ///                                                                          devuelve de más, en silencio
+    /// </summary>
+    private IQueryable<OrdenCompra> ConstruirQuery(
+        int? idProveedor, int? idPuntoVenta, EstadoOrdenCompra? estado, DateTimeOffset? desde, DateTimeOffset? hasta)
+    {
+        var query = db.OrdenesCompra.AsQueryable();
+
+        if (idProveedor is { } p)
+        {
+            query = query.Where(o => o.IdProveedor == p);
+        }
+
+        if (idPuntoVenta is { } pv)
+        {
+            query = query.Where(o => o.IdPuntoVenta == pv);
+        }
+
+        if (estado is { } e)
+        {
+            query = query.Where(o => o.Estado == e);
+        }
+
+        if (desde is { } d)
+        {
+            query = query.Where(o => o.FechaEmision >= d);
+        }
+
+        if (hasta is { } h)
+        {
+            query = query.Where(o => o.FechaEmision <= h);
+        }
+
+        return query;
+    }
+
+    // ---- lectura: detalle con cobertura por artículo + desvío informativo (design decisiones 12-14, task 5.3) ----
+
+    /// <summary>design decisión 12: <see cref="OrdenCompra.Estado"/> se LEE de la columna — esta
+    /// clase NUNCA re-deriva el estado (lo escribe únicamente <see
+    /// cref="EscriturasDeOrdenDeCompra"/>, slices 3/4). <c>mutation-proof-tests</c> regla 12(a) se
+    /// prueba literal: un <c>UPDATE</c> crudo que desincroniza <c>estado</c> a un sentinela hace que
+    /// este endpoint devuelva el sentinela (task 5.8/5.9).
+    ///
+    /// La cobertura (design decisión 13) y el desvío (decisión 14) SÍ tienen su propia derivación
+    /// LINQ, deliberadamente separada de la derivación raw-ADO de <see
+    /// cref="EscriturasDeOrdenDeCompra.ProyectarEstadoAsync"/>: esa clase solo necesita dos
+    /// booleanos agregados (<c>completa</c>/<c>algoRecibido</c>) para decidir una transición; esta
+    /// lectura necesita las filas per-artículo completas, incluyendo recibido-no-pedido (<c>Pedida
+    /// = 0</c>) y los costos, que la derivación de escritura ni calcula. La consistencia entre
+    /// ambas la prueba la fixture de "projection fidelity" (design: Testing Strategy, task 5.9):
+    /// recomputar <c>ProyectorDeEstadoDeOrden.Proyectar</c> desde los números de ESTA lectura debe
+    /// coincidir con la columna — nunca compartir SQL entre escritura y lectura.</summary>
+    public async Task<OrdenDeCompraDetalle> ObtenerDetalleAsync(int id, CancellationToken ct = default)
+    {
+        var orden = await db.OrdenesCompra.AsNoTracking().FirstOrDefaultAsync(o => o.Id == id, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe la orden de compra {id}.");
+
+        var items = await db.ItemsOrdenCompra.AsNoTracking()
+            .Where(i => i.IdOrdenCompra == id)
+            .OrderBy(i => i.Orden)
+            .Select(i => new ItemDeOrden(i.Orden, i.IdArticulo, i.Descripcion, i.CantidadPedida, i.CostoUnitarioEstimado))
+            .ToListAsync(ct);
+
+        var cobertura = await ObtenerCoberturaAsync(id, ct);
+
+        // TotalEstimado: el total estimado de la PORCIÓN COTIZADA, calculado a NIVEL LÍNEA — sum
+        // (CostoUnitarioEstimado * CantidadPedida) SOLO sobre los items que tienen costo seteado;
+        // null cuando ninguno lo tiene. Judgment-day (juez A, ronda 2): NO puede agregarse desde
+        // Cobertura (CostoEstimado por-artículo × Pedida TOTAL del artículo) — CostoEstimado ya es
+        // un promedio ponderado que promedia SOLO las líneas cotizadas, mientras que Pedida suma
+        // TODAS las líneas del artículo, cotizadas o no; multiplicarlos extrapola en silencio el
+        // costo de una línea nunca cotizada (p.ej. 3 unidades a 100 + 4 sin costo del mismo
+        // artículo daría 100×7=700 en vez de los 300 reales). La suma línea a línea es inmune: cada
+        // línea aporta su propio costo×cantidad, o nada si no está cotizada — cero extrapolación,
+        // nulls honestos de verdad.
+        var itemsConCostoEstimado = items.Where(i => i.CostoUnitarioEstimado is not null).ToList();
+        decimal? totalEstimado = itemsConCostoEstimado.Count > 0
+            ? itemsConCostoEstimado.Sum(i => i.CostoUnitarioEstimado!.Value * i.CantidadPedida)
+            : null;
+
+        // TotalReal: SÍ puede agregar desde Cobertura, a diferencia de TotalEstimado — verificado
+        // en la misma ronda. CostoReal y Recibida por artículo (ObtenerCoberturaAsync,
+        // recibidoPorArticulo) derivan SIEMPRE de la MISMA población de itemsRecibido para ese
+        // artículo (mismo GroupBy, mismo Cantidad agregado) — no hay línea "recibida sin costo" que
+        // desacople a las dos poblaciones como pasa del lado estimado, así que no hay extrapolación
+        // posible acá. Sumando SOLO los artículos con ese lado comparable (dto-contract-honesty: un
+        // total que mezclara ceros fabricados con datos reales sería deshonesto). null cuando
+        // NINGÚN artículo aporta ese lado.
+        var conCostoReal = cobertura.Where(c => c.CostoReal is not null).ToList();
+        decimal? totalReal = conCostoReal.Count > 0
+            ? conCostoReal.Sum(c => c.CostoReal!.Value * c.Recibida)
+            : null;
+
+        decimal? desvioTotal = totalEstimado is { } te && te != 0m && totalReal is { } tr
+            ? Math.Round((tr - te) / te * 100m, 2, MidpointRounding.AwayFromZero)
+            : null;
+
+        var comprobantesLigados = await db.ComprobantesCompra.AsNoTracking()
+            .Where(c => c.IdOrdenCompra == id)
+            .OrderBy(c => c.Id)
+            .Select(c => c.Id)
+            .ToListAsync(ct);
+
+        return new OrdenDeCompraDetalle(
+            orden.Id, orden.IdProveedor, orden.IdPuntoVenta, orden.Numero, orden.FechaEmision, orden.FechaEnvio,
+            orden.FechaEsperada, orden.FechaCierre, orden.IdEmpleadoCierre is not null, orden.Observaciones,
+            orden.Estado, items, cobertura, totalEstimado, totalReal, desvioTotal, comprobantesLigados);
+    }
+
+    /// <summary>Deriva la cobertura per-artículo (design decisión 13): agrupa <c>items_orden_compra</c>
+    /// (pedido) e <c>items_comprobante_compra</c> de comprobantes CONFIRMADOS ligados a esta orden
+    /// (recibido) — mismo criterio de "confirmada" que <see
+    /// cref="EscriturasDeOrdenDeCompra"/>. Ambos lados se traen materializados (<c>ToListAsync</c>)
+    /// porque <see cref="CalculadorDeCompra.CalcularCostoEfectivoDesdeItem"/> es Domain puro en C#,
+    /// no traducible a SQL — el promedio ponderado por artículo se calcula en memoria, LINQ-to-
+    /// Objects (design decisión 14). La unión de artículos pedidos ∪ recibidos es lo que hace
+    /// visible un recibido-no-pedido con <c>Pedida = 0</c> (decisión 13).</summary>
+    private async Task<IReadOnlyList<CoberturaDeArticulo>> ObtenerCoberturaAsync(int idOrdenCompra, CancellationToken ct)
+    {
+        // deleted_at IS NULL explícito en ambos lados — mismo defense-in-depth que la derivación
+        // raw-ADO de EscriturasDeOrdenDeCompra.DerivarAsync (design decisión 3). Ninguna entidad de
+        // este repo tiene HasQueryFilter global (RLS cubre tenant, nada cubre soft-delete acá), así
+        // que sin este filtro explícito una recepción soft-deleted contaría en esta lectura pero NO
+        // en la derivación de escritura — exactamente la divergencia que la fixture de "soft-deleted
+        // reception" (design: Testing Strategy) y la prueba de projection fidelity (task 5.9) están
+        // para atrapar.
+        var itemsPedido = await db.ItemsOrdenCompra.AsNoTracking()
+            .Where(i => i.IdOrdenCompra == idOrdenCompra && i.DeletedAt == null)
+            .Select(i => new { i.IdArticulo, i.CantidadPedida, i.CostoUnitarioEstimado })
+            .ToListAsync(ct);
+
+        var itemsRecibido = await (
+            from ic in db.ItemsComprobanteCompra.AsNoTracking()
+            join c in db.ComprobantesCompra.AsNoTracking() on ic.IdComprobanteCompra equals c.Id
+            join t in db.TiposComprobante.AsNoTracking() on c.IdTipoComprobante equals t.Id
+            where c.IdOrdenCompra == idOrdenCompra && c.Estado == EstadoCompra.Confirmada
+                  && c.DeletedAt == null && ic.DeletedAt == null
+            select new { ic.IdArticulo, ic.Cantidad, ic.Total, ic.PorcentajeIva, t.DiscriminaIva })
+            .ToListAsync(ct);
+
+        var pedidaPorArticulo = itemsPedido
+            .GroupBy(i => i.IdArticulo)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.CantidadPedida));
+
+        // Promedio ponderado por cantidad SOLO sobre las líneas cotizadas (CostoUnitarioEstimado
+        // != null) — una línea sin cotizar no aporta ceros al promedio del artículo.
+        var costoEstimadoPorArticulo = itemsPedido
+            .Where(i => i.CostoUnitarioEstimado is not null)
+            .GroupBy(i => i.IdArticulo)
+            .ToDictionary(g => g.Key, g =>
+            {
+                var cantidad = g.Sum(x => x.CantidadPedida);
+                return cantidad > 0m
+                    ? g.Sum(x => x.CostoUnitarioEstimado!.Value * x.CantidadPedida) / cantidad
+                    : (decimal?)null;
+            });
+
+        var recibidoPorArticulo = itemsRecibido
+            .GroupBy(i => i.IdArticulo)
+            .ToDictionary(g => g.Key, g =>
+            {
+                var cantidad = g.Sum(x => x.Cantidad);
+                var totalEfectivo = g.Sum(x =>
+                    CalculadorDeCompra.CalcularCostoEfectivoDesdeItem(x.Total, x.Cantidad, x.PorcentajeIva, x.DiscriminaIva) * x.Cantidad);
+                return (Cantidad: cantidad, CostoReal: cantidad > 0m ? (decimal?)(totalEfectivo / cantidad) : null);
+            });
+
+        var idsArticulo = pedidaPorArticulo.Keys.Union(recibidoPorArticulo.Keys).OrderBy(x => x);
+
+        var resultado = new List<CoberturaDeArticulo>();
+        foreach (var idArticulo in idsArticulo)
+        {
+            var pedida = pedidaPorArticulo.GetValueOrDefault(idArticulo, 0m);
+            var costoEstimado = costoEstimadoPorArticulo.GetValueOrDefault(idArticulo);
+
+            var tieneRecibido = recibidoPorArticulo.TryGetValue(idArticulo, out var recibidoDeArticulo);
+            var recibida = tieneRecibido ? recibidoDeArticulo.Cantidad : 0m;
+            var costoReal = tieneRecibido ? recibidoDeArticulo.CostoReal : null;
+
+            var pendiente = Math.Max(pedida - recibida, 0m);
+
+            // Desvio null cuando cualquiera de los dos lados no es comparable — JAMÁS 0
+            // (mutation target #34b, parte 3; ordenes-de-compra/spec.md: "no comparable, never 0").
+            decimal? desvio = costoEstimado is { } ce && ce != 0m && costoReal is { } cr
+                ? Math.Round((cr - ce) / ce * 100m, 2, MidpointRounding.AwayFromZero)
+                : null;
+
+            resultado.Add(new CoberturaDeArticulo(idArticulo, pedida, recibida, pendiente, costoEstimado, costoReal, desvio));
+        }
+
+        return resultado;
+    }
+
     // ---- borrador: crear + replace-set (mismo criterio que ServicioDeCompras) --------------------
 
     public async Task<OrdenDeCompraBorrador> CrearBorradorAsync(
