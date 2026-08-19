@@ -1,0 +1,68 @@
+change: stage-17-presupuestos-y-remitos
+phase: explore
+status: done
+artifact_store: openspec
+execution_mode: automatic-autonomous
+delivery_strategy: auto-chain
+chain_strategy: stacked-to-main
+db_gate: PENDIENTE
+phases:
+  explore:
+    status: done
+    artifact: explore.md
+    depends_on: []
+    notes: >-
+      Greenfield puro (0 paridad: grep exhaustivo sobre doc-01 y alsina/
+      sin coincidencias). HALLAZGO CRITICO: tipos_comprobante.PRE ya esta
+      sembrado (InicializadorDeBaseDeDatos.cs:79, activo=true) y HOY pasa
+      ResolverTipoComprobanteAsync (solo evalua Activo/Clase/EsFiscal —
+      AfectaStock no se lee en NINGUN gate de escritura) ⇒ un POST de
+      venta con PRE decrementaria stock y CC como un TX: venta fantasma
+      latente en main. El precedente RC logra no-tocar-stock
+      ESTRUCTURALMENTE (cero items), no por flag. SIETE Orchestrator
+      Decisions al pie del explore.md: (1) presupuesto = tabla propia
+      espejo de la OC (checkout byte-identico por construccion);
+      (2) el PRE se cierra EN ESTA ETAPA con DOS redes — activo=false por
+      data statement + guard quirurgico de AfectaStock en el RESOLVER
+      (fase decide, jamas la lambda); (3) sin reserva de stock (cotizacion,
+      no apartado — diferido); (4) precio CONGELADO al convertir, el
+      vencimiento gobierna (presupuesto vencido no convertible; la
+      reliquidacion NO se replica); (5) remito = tabla propia con
+      ServicioDeRemitos como CUARTO write site FORMAL — la garantia de
+      "tres write sites" del spec de stock se ENMIENDA explicitamente a
+      cuatro con el mismo contrato (lock order duplicado intencional +
+      test de concurrencia propio); motivo nuevo 'remito' via ALTER TYPE
+      ADD VALUE (irreversible ACEPTADO, nace con escritor); (6) conversion
+      por FK sin puentes — comprobantes_venta.id_presupuesto_origen NULL
+      y remitos.id_comprobante_venta NULL (N remitos -> 1 factura; el
+      tipo fiscal de la consolidacion es de la 19); (7) para-venta
+      pre-carga el POS del lado del presupuesto, convertido marcado en
+      transaccion segura del lado del presupuesto.
+  propose:
+    status: pending
+    artifact: proposal.md
+    depends_on: [explore]
+  spec:
+    status: pending
+    artifact: specs/
+    depends_on: [propose]
+  design:
+    status: pending
+    artifact: design.md
+    depends_on: [propose]
+  tasks:
+    status: pending
+    artifact: tasks.md
+    depends_on: [spec, design]
+  apply:
+    status: pending
+    artifact: tasks.md + PRs
+    depends_on: [tasks]
+  verify:
+    status: pending
+    artifact: verify-report.md
+    depends_on: [apply]
+  archive:
+    status: pending
+    artifact: archive-report.md
+    depends_on: [verify]
