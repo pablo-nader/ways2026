@@ -42,7 +42,14 @@ so deleting the clause under test changes nothing the test can see.
    the test BELOW the confound: call the component directly with hand-built inputs the
    upper layers would never produce (e.g. a PV list containing another tenant's id),
    or widen the data so the clause alone decides the outcome (multi-day range so the
-   bucket LABEL, not row admission, carries the assertion).
+   bucket LABEL, not row admission, carries the assertion). The most common confound
+   of this class is a PRE-CHECK that mirrors a transactional guard: the sequential
+   test path always dies at the pre-check, so every WHERE conjunct of the guarded
+   UPDATE survives deletion (stage 17 slice 3: all three conjuncts of the conversion
+   guard survived 17/17 — the guard exists for the RACES the pre-check cannot see).
+   A guard mirrored by an earlier check needs BOTH a direct below-the-confound test
+   (0 rows on each conjunct) AND its real TOCTOU race test (pre-check reads stale →
+   the other transaction commits → the guard alone must refuse).
 
 4. **Assert the discriminating value.** Prefer asserting the value only the clause can
    produce (the bucket label, the affected-row count, the SQLSTATE) over asserting
