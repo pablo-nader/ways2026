@@ -178,9 +178,38 @@ phases:
       una extraccion compartida seria refactor fuera de alcance y una
       exposicion internal rompe el encapsulamiento sin necesidad.
   apply:
-    status: pending
+    status: done
     artifact: tasks.md + PRs
     depends_on: [tasks]
+    notes: >-
+      6 slices mergeados stacked-to-main, PRs #140-#145 (2026-08-19),
+      corrida 100% autonoma. 28 decisiones/desviaciones acumuladas en
+      tasks.md (una renumerada por colision — la del slice 5 paso de 20 a
+      24). Judgment-day por slice: s1 1 MAJOR de B (test de indices
+      name-only — el swap de columnas sobrevivia; red nueva por indexdef)
+      + 1 SUGGESTION de A (test vacuo eliminado) + 1 CRITICAL de A
+      REFUTADO con evidencia (artefacto del diff de dos puntos contra un
+      main avanzado — regla nueva: congelar con main...HEAD); s2 2 MAJORs
+      de B (DELETE del replace-set sin scope — 2da ocurrencia de la clase
+      12c, extendida en la skill a escrituras scoped; campos
+      aceptados-y-descartables) + WARNING documental de A (drift de nombre
+      de codigo registrado); s3 1 WARNING de B (la prueba comportamental
+      de cero-statements moria por la razon equivocada — mina FK-ligada a
+      la hermana co-ubicada; el pass silencioso pre-fix reproducido via
+      git show) + 1 WARNING de A (doble FOR UPDATE no-op auto-divulgado);
+      s4 1 MAJOR de B de regla 12 (afirmacion falsa de cobertura del
+      invariante lock-free tras remover el test temporal del deadlock —
+      red estructural permanente por texto fuente) + A limpio; s5 el mas
+      duro: 3 CRITICALs de B (clase 12b — Pendiente solo en 0, totales
+      sin lectura de vuelta, swap del detalle) y en ronda 2 de A 1
+      CRITICAL DE PRODUCCION (TotalEstimado extrapolaba costo no cotizado
+      — fix a nivel linea) + el analogo del listado + regla 12b endurecida
+      en la skill (todo campo posicional leido de vuelta); s6 B limpio en
+      10 ciclos (las lecciones rindieron), A 2 WARNINGs (puedeRecepcionar
+      sin puedeEscribir; same-tick solo en Enviar) + la pasada B cazo
+      flakiness real del test nuevo (carrera de hidratacion del useEffect
+      — cerrada determinista con 3 fulls consecutivas verdes). Suites al
+      cierre del apply: backend 2216/2216 (s5) · vitest 796/796 x3 (s6).
   verify:
     status: pending
     artifact: verify-report.md
