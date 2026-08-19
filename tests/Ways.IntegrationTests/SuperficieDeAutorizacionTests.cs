@@ -85,6 +85,14 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // SupervisionDeCuentaDeProveedor en vez de GestionDeCatalogo. 403 Vendedor cubierto en
         // AjusteDeCuentaCorrienteDeProveedorTests.
         ("POST", "/api/proveedores/{idProveedor:int}/cuenta-corriente/ajustes"),
+        // stage-17-presupuestos-y-remitos (Slice 2, design decisión 17/proposal decisión 10):
+        // /api/presupuestos agrupa SOLO bajo OperacionDePos, nada apilado — a diferencia de
+        // /api/ordenes-compra, que SÍ apila GestionDeCatalogo. Un Vendedor tiene que poder
+        // quotear/enviar/anular un presupuesto, mismo criterio que "/api/ventas/".
+        ("POST", "/api/presupuestos/"),
+        ("PUT", "/api/presupuestos/{id:int}"),
+        ("POST", "/api/presupuestos/{id:int}/enviar"),
+        ("POST", "/api/presupuestos/{id:int}/anular"),
 
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).

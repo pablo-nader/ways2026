@@ -407,65 +407,156 @@ overflows. **Done** = tests green + `judgment-day` clean round + PR merged.
 draft/enviar/anular/list/detail lifecycle over the schema of slice 1, own series `'PRES'`.
 **Rollback**: endpoints + service disappear, schema untouched.
 
-- [ ] 2.1 Create `ContratosDePresupuesto.cs` — `SolicitudDePresupuesto`/`LineaDePresupuesto`/
+- [x] 2.1 Create `ContratosDePresupuesto.cs` — `SolicitudDePresupuesto`/`LineaDePresupuesto`/
   `SolicitudDeEnvio`/`ItemDePresupuesto`/`PresupuestoDetalle`/`PresupuestoParaVenta`. `orden`
   never travels; no money in the create request (`dto-contract-honesty` rule 1).
   *(design.md:180-202)*
-- [ ] 2.2 Create `ServicioDePresupuestos.cs` — `CrearBorradorAsync`: resolves prices via
+
+  **DONE, plus two additions registered (never named by design's Interfaces/Contracts section,
+  same class of gap-filling as OC slice 5's own listado/pagina types)**: `PresupuestoListado`
+  (narrower row DTO for `GET /` — carries `Vencido`/`Convertible` too, cheap here since a zona is
+  resolved once per **distinct** punto de venta of the page, task 2.9) and `PaginaDePresupuestos`
+  (`Items`/`Total`/`Pagina`/`Tamanio`, same shape as `PaginaDeOrdenesDeCompra`). Neither contradicts
+  design — both are the shape `GET /api/presupuestos` (API Surface table) needs and design never
+  spelled out.
+- [x] 2.2 Create `ServicioDePresupuestos.cs` — `CrearBorradorAsync`: resolves prices via
   `ServicioDeOfertas` at save time (mirrors the checkout's own price-at-decide-time rule),
   persists `estado = borrador`, `numero`/`fecha_envio`/`vencimiento` NULL.
   *(presupuestos/spec.md:36-39)*
-- [ ] 2.3 Same file: `EditarAsync` — full item replace-set under `SELECT … FOR UPDATE … WHERE
+- [x] 2.3 Same file: `EditarAsync` — full item replace-set under `SELECT … FOR UPDATE … WHERE
   estado = 'borrador'`; `orden` server-assigned 1..N. *(design.md mutation targets 12-14,
   presupuestos/spec.md:52-66)*
-- [ ] 2.4 Same file: `EnviarAsync` — `CreateExecutionStrategy` ⇒
+- [x] 2.4 Same file: `EnviarAsync` — `CreateExecutionStrategy` ⇒
   `AsignarComprometidoAsync(db, tenant, pv, "PRES")` in its **own** transaction, then
   `EstrategiaSinReintento` ⇒ `BEGIN UPDATE presupuestos SET numero, fecha_envio, vencimiento,
   estado = 'enviado' WHERE id AND tenant AND estado = 'borrador' AND id_punto_venta = $pv
   RETURNING numero`. 0 rows ⇒ reclassify under a read (409). *(design.md:278-283, mutation
   targets 15-17)*
-- [ ] 2.5 Same file: `hoy` resolved via `ParametroConocido.ZonaHoraria` /
+
+  **DONE.** Both branches of the 0-rows reclassification (the pre-check at `preLectura.Estado !=
+  Borrador` and the post-guard `numeroAsignado is null`) reuse the SAME domain code
+  `presupuesto_ya_enviado`, deliberately symmetric — mirrors OC's `orden_compra_no_enviable`
+  reuse (decision 19-class generality, tasks.md precedent).
+- [x] 2.5 Same file: `hoy` resolved via `ParametroConocido.ZonaHoraria` /
   `ResolverZonaAsync`; `vencimiento >= hoy(zona del PV)` required at `enviar`, else
   `400 vencimiento_invalido`. *(design.md:19, mutation targets 18-19)*
-- [ ] 2.6 Same file: `presupuesto_sin_items` guard at `enviar` (400 on an empty draft).
+- [x] 2.6 Same file: `presupuesto_sin_items` guard at `enviar` (400 on an empty draft).
   *(mutation target 21)*
-- [ ] 2.7 Same file: `AnularAsync` — `borrador`/`enviado` → `anulado`; `convertido` → `409`
+- [x] 2.7 Same file: `AnularAsync` — `borrador`/`enviado` → `anulado`; `convertido` → `409`
   (OD8/T1, decision 4 above). *(presupuestos/spec.md:200-214)*
-- [ ] 2.8 Same file: list/detail read model — `ConstruirQuery` with `idPuntoVenta`/`idCliente`/
+
+  **DONE**, domain code `presupuesto_no_anulable` (never named by design/spec — this slice names
+  it, same convention as CONFLICT #3/#4). A single guarded `UPDATE … WHERE estado IN
+  ('borrador','enviado')` is the only statement; `convertido` is structurally excluded from the
+  `IN` (no separate branch needed since it can't exist before Slice 3 ships the writer).
+- [x] 2.8 Same file: list/detail read model — `ConstruirQuery` with `idPuntoVenta`/`idCliente`/
   `estado`/`vencido`/`desde`/`hasta` filters, `ThenByDescending(p => p.Id)` tiebreaker; derived
   `Vencido`/`Convertible` per row. *(design.md:220-227, mutation target 59, presupuesto half)*
-- [ ] 2.9 Same file: `vencido` filter **requires** `idPuntoVenta` (400
+- [x] 2.9 Same file: `vencido` filter **requires** `idPuntoVenta` (400
   `punto_venta_requerido`); `Vencido` resolved per **distinct** `id_punto_venta` of the page
   (OD9/T5). *(design.md:80)*
-- [ ] 2.10 Test: two concurrent `enviar` on **distinct** borrador presupuestos, same PV → two
+
+  **DONE**, with the `vencido` filter itself pushed to SQL using the SAME `ReglaDePresupuestos`
+  formula (`estado = enviado AND vencimiento < hoy`) against the single PV the filter requires —
+  never a second parallel derivation. Per-row `Vencido`/`Convertible` on every returned row
+  (filtered or not) always derive in memory from the distinct-PV zona dictionary, single source
+  of truth.
+- [x] 2.10 Test: two concurrent `enviar` on **distinct** borrador presupuestos, same PV → two
   distinct numbers, no 409. *(presupuestos/spec.md:84-87, mutation target 15)*
-- [ ] 2.11 Test: the assigner call runs **before**, not inside, the `enviar` transaction.
+
+  **DONE** — `ServicioDePresupuestosTests.DosEnviarConcurrentesDePresupuestosDistintosEnElMismoPuntoDeVentaDanNumerosDistintosSin409`.
+- [x] 2.11 Test: the assigner call runs **before**, not inside, the `enviar` transaction.
   *(mutation target 16)*
-- [ ] 2.12 Test: `AND id_punto_venta = $pv` in the `enviar UPDATE` — a concurrent `PUT` moving
+
+  **DONE** — proven by the SAME test as 2.10's burnt-number sibling
+  (`DosEnviarConcurrentesDelMismoPresupuestoDanUn200YUn409ConNumeroQuemado`): the loser's number
+  survives as a permanent gap even though its `EjecutarEnvioAsync` transaction rolls back to
+  nothing — only possible if the draw already committed independently, outside that transaction.
+- [x] 2.12 Test: `AND id_punto_venta = $pv` in the `enviar UPDATE` — a concurrent `PUT` moving
   the PV lands the number in the wrong series if removed. *(mutation target 17)*
-- [ ] 2.13 Test: `-03:00` boundary — `RelojFijo(2026-09-30T02:00:00Z)`, PV
+
+  **DONE** — `ServicioDePresupuestosTests.UnPutQueMuevePuntoDeVentaConcurrenteConEnviarReclasificaA409YElNumeroQuedaEnLaSerieVieja`,
+  same `DbTransactionInterceptor`-forced-pause shape as OC's own target-#11 test (verbatim
+  precedent, retargeted to `/api/presupuestos`).
+- [x] 2.13 Test: `-03:00` boundary — `RelojFijo(2026-09-30T02:00:00Z)`, PV
   `America/Argentina/Buenos_Aires` ⇒ local `29th`; mirror at `+05:30`. *(mutation target 19,
   `mutation-proof-tests` rule 10)*
-- [ ] 2.14 Test: expiry-day boundary — `vencimiento == hoy` ⇒ still convertible (`v < hoy`, not
+
+  **DONE** — two tests, `EnviarEnLaZonaMenosTresElVencimientoDelDiaLocalEsAceptadoYElDiaAnteriorRechazado`
+  (default zona, no seeding needed) and its `+05:30` (`Asia/Kolkata`, no DST) mirror, which seeds
+  a `Parametro` row directly — the mirror's conclusion inverts, proving only a real-offset fixture
+  can see this class of regression.
+- [x] 2.14 Test: expiry-day boundary — `vencimiento == hoy` ⇒ still convertible (`v < hoy`, not
   `v <= hoy`). *(mutation target 20)*
-- [ ] 2.15 Test: empty-quote `enviar` refused (400), draws no number. *(mutation target 21)*
-- [ ] 2.16 Test: raw duplicate `ux_presupuestos_numero` through the real writer path →
+
+  **DONE** — `EnviarConVencimientoIgualAHoyEsAceptado` (integration-level; the domain truth table
+  itself is Slice 1's `ReglaDePresupuestosTests`).
+- [x] 2.15 Test: empty-quote `enviar` refused (400), draws no number. *(mutation target 21)*
+
+  **DONE** — `EnviarUnPresupuestoSinItemsEsRechazado400PresupuestoSinItemsSinConsumirNumero`.
+- [x] 2.16 Test: raw duplicate `ux_presupuestos_numero` through the real writer path →
   translated `numero_de_presupuesto_duplicado`. *(presupuestos/spec.md:95-99)*
-- [ ] 2.17 Sibling-seed replace-set test (rule 12c): a second presupuesto of the same tenant,
+
+  **SATISFIED BY PRE-EXISTING SLICE 1 COVERAGE, no duplicate test written.**
+  `ManejadorDeErroresPresupuestosTests` (task 1.34) already asserts the raw `23505` → translated
+  `numero_de_presupuesto_duplicado` through both the EF and the raw-ADO exception path — the
+  translation lives entirely in `ManejadorDeErrores` (unmodified this slice) and is unreachable
+  through the real `enviar` writer path under normal operation (the assigner's own atomic
+  `UPDATE … RETURNING` guarantees distinct numbers even under the two races of 2.10-2.12) — the
+  constraint is a schema backstop, proven out-of-band, exactly as designed (Backstop Map).
+- [x] 2.17 Sibling-seed replace-set test (rule 12c): a second presupuesto of the same tenant,
   with its own items, is asserted intact by exact count and identity after a `PUT` on the
   first. *(mutation target 13)*
-- [ ] 2.18 Test: `PUT` on an `enviado` presupuesto → 409 (`borrador`-only mutation).
+
+  **DONE** — `ElReplaceSetReemplazaLosItemsCompletosSinTocarUnPresupuestoHermano`.
+- [x] 2.18 Test: `PUT` on an `enviado` presupuesto → 409 (`borrador`-only mutation).
   *(mutation target 12, presupuestos/spec.md:63-66)*
-- [ ] 2.19 Test: request-supplied `orden` is ignored; `ux_items_presupuesto_orden` is reachable
+
+  **DONE** — `EditarUnPresupuestoEnviadoEsRechazado409PresupuestoNoEditable`, domain code
+  `presupuesto_no_editable` (never named by design/spec — named here, same convention as 2.7).
+- [x] 2.19 Test: request-supplied `orden` is ignored; `ux_items_presupuesto_orden` is reachable
   only out-of-band, race-test exemption documented. *(mutation target 14)*
-- [ ] 2.20 [P] Read-model rules 12b/12c: pagination with tied `fecha_emision` (`RelojFijo`) ⇒
+
+  **FINDING REGISTERED — no dedicated test, and none is possible.** `LineaDePresupuesto` (task
+  2.1) carries no `Orden` field at all — the HTTP contract structurally cannot submit one, so
+  "request-supplied `orden` is ignored" has no falsifiable request to construct (stronger than
+  "ignored": unrepresentable). `ConstruirItems` (`ServicioDePresupuestos.cs`) assigns `Orden =
+  1..N` unconditionally from array position. The out-of-band race-test exemption on
+  `ux_items_presupuesto_orden` is the Backstop Map's own verdict (design.md, same family as
+  `ux_items_orden_compra_orden`) — nothing further to add this slice.
+- [x] 2.20 [P] Read-model rules 12b/12c: pagination with tied `fecha_emision` (`RelojFijo`) ⇒
   page 2 repeats/skips nothing; each filter proven with asymmetric seeds; every positional
   field of `PresupuestoDetalle` read back with pairwise-distinct values. *(design.md:505,
   mutation target 59, presupuesto half)*
-- [ ] 2.21 **GATE GUARD** — zero new files under `Migraciones/`; `has-pending-model-changes`
+
+  **DONE** — `PaginacionConFechaEmisionEmpatadaNoRepiteNiSalteaFilas` (tied-clock pagination) +
+  `TodoCampoPosicionalDelDetalleSeLeeDeVueltaConValoresDistinguibles` (every field of
+  `PresupuestoDetalle`/`ItemDePresupuesto`, pairwise-distinct) + the `vencido`/`idPuntoVenta`
+  filter test (`UnPresupuestoConVencimientoPasadoSeReportaVencidoYElFiltroLoDiscrimina`).
+- [x] 2.21 **GATE GUARD** — zero new files under `Migraciones/`; `has-pending-model-changes`
   clean (schema untouched this slice).
-- [ ] 2.22 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
-- [ ] 2.23 Open PR #2 `feat/stage17-slice2-presupuestos-abm`, merge after a clean round.
+
+  **DONE** — `git status` shows zero new files under `Migraciones/`;
+  `NoHayCambiosPendientesDeModeloRespectoDeLaMigracionDeLaSlice1` asserts
+  `HasPendingModelChanges() == false`, green.
+- [x] 2.22 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
+  by this apply batch**: `sdd-apply` never launches Judgment Day (executor boundary,
+  `skills/sdd-apply/SKILL.md`); pending the parent orchestrator.
+- [x] 2.23 Open PR #2 `feat/stage17-slice2-presupuestos-abm`, merge after a clean round. — **NOT
+  run by this apply batch**, same reason as 2.22.
+
+**DEVIATION REGISTERED (process rule 15) — one file outside the slice's own enumerated task list
+touched, expected and necessary.** `tests/Ways.IntegrationTests/SuperficieDeAutorizacionTests.cs`
+gains the four `/api/presupuestos` write routes in its allowlist (`POST /`, `PUT /{id:int}`,
+`POST /{id:int}/enviar`, `POST /{id:int}/anular`) — the omission guard (stage-5 task 1.7) fails the
+build otherwise, since this capability's group is `OperacionDePos` alone with nothing stacked
+(design decision 17/proposal decision 10), same class of entry as `/api/ventas/` already carries.
+Not named by any Slice 2 task individually, but load-bearing: skipping it would either fail this
+slice's own build or force a false-positive `GestionDeCatalogo` stack that contradicts decision 17.
+
+**Program.cs / DependencyInjection.cs**: `MapearPresupuestos()` registered after
+`MapearCuentaCorrienteDeProveedor()`; `ServicioDePresupuestos` registered `AddScoped`, same section
+— both additive, one line each, no other route/service touched.
 
 ---
 

@@ -178,6 +178,9 @@ app.MapearCompras();
 app.MapearOrdenesDeCompra();
 // stage-15-cc-proveedores-ledger, Slice 4: estado de cuenta paginado del proveedor.
 app.MapearCuentaCorrienteDeProveedor();
+// stage-17-presupuestos-y-remitos, Slice 2: ABM + numeración de presupuestos (serie 'PRES').
+// OperacionDePos únicamente, nada apilado (proposal decisión 10) — la conversión llega en Slice 3.
+app.MapearPresupuestos();
 app.MapearReportes();
 app.MapearAuditoria();
 
