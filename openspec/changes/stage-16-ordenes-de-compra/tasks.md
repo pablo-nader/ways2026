@@ -1117,7 +1117,7 @@ the authorization matrix are proven; the anulación guard reads `comprobantes_co
 - [x] 4.19 Run `judgment-day`; fix confirmed issues; re-judge until clean. **NOT RUN by
   `sdd-apply`** — same executor-contract carve-out as slices 1-3: this executor cannot launch
   sub-agents/reviewers. Left for the orchestrator to run before merge.
-- [ ] 4.20 Branch `feat/stage16-slice4-cierre-y-anulacion` off `main` (parent: slice 3); PR; merge
+- [x] 4.20 Branch `feat/stage16-slice4-cierre-y-anulacion` off `main` (parent: slice 3); PR; merge
   stacked-to-main. **PARTIAL**: the worktree was already provisioned on
   `feat/stage16-slice4-cierre-anulacion` off `main` (`a89e7c0`, slice 3 already merged) before this
   phase started — branching is done, naming differs by dropping `-y-` (same cosmetic deviation
