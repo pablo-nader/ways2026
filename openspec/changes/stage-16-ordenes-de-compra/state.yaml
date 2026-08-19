@@ -85,9 +85,32 @@ phases:
     artifact: proposal.md
     depends_on: [explore]
   spec:
-    status: pending
+    status: done
     artifact: specs/
     depends_on: [propose]
+    notes: >-
+      3 archivos: ordenes-de-compra NUEVA (11 requirements / 33 escenarios:
+      ciclo de vida completo con proyeccion del libro, regresion de estado
+      por anulacion salvo cierre manual, ordering trap 3ra ocurrencia,
+      23514 de ambos CHECKs, RLS, matriz de autorizacion espejo de
+      /api/compras, cero-statements-extra del confirm sin OC, dos enviar
+      concurrentes con numeros distintos, pre-carga desde reposicion);
+      comprobantes-compra delta 3 ADDED / 9 escenarios (ligadura con
+      guards, re-proyeccion en confirm/anular); reposicion-de-stock delta
+      1 MODIFIED / 5 escenarios (enmienda de honestidad de la nota de
+      transito SIN tocar la formula). CINCO TENSIONES ARBITRADAS
+      (Orchestrator Decision 7): (T1) la prosa del Purpose de
+      reposicion-de-stock que la 16 vuelve falsa NO es expresable en el
+      formato delta — INSTRUCCION VINCULANTE PARA LA FASE ARCHIVE:
+      actualizar el Purpose del spec principal junto con la fusion del
+      delta; (T2) el mirroring de la ligadura en dos capabilities es el
+      patron de la 15 (Confirmar Writes A Compra Movement), no
+      duplicacion; (T3) los codigos de dominio sin nombre (ligadura
+      mismatch, doble enviar/cerrar) los NOMBRA el design — si no lo
+      hace, tasks los reconcilia con la convencion del repo; (T4)
+      presupuesto de palabras superado por precedente de casa (specs
+      reales de 300-500+ lineas); (T5) cuenta-corriente-de-proveedores
+      verificada intocada.
   design:
     status: pending
     artifact: design.md
