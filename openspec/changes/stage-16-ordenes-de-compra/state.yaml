@@ -1,0 +1,62 @@
+change: stage-16-ordenes-de-compra
+phase: explore
+status: done
+artifact_store: openspec
+execution_mode: automatic-autonomous
+delivery_strategy: auto-chain
+chain_strategy: stacked-to-main
+db_gate: PENDIENTE
+phases:
+  explore:
+    status: done
+    artifact: explore.md
+    depends_on: []
+    notes: >-
+      Greenfield real: el legacy alsina jamas tuvo OC (C3 nunca persistia,
+      doc-01:203-208) — el precedente de disenio es interno. El circuito
+      actual arranca en comprobantes_compra; ConfirmarAsync es el motor
+      unico (una transaccion ADO, orden de locks fijo, proveedores ultimo,
+      ledger de la 15 al final). La spec de reposicion-de-stock (13) dejo
+      anotado "stock en transito omitido hasta que la 16 de ETA y estado"
+      — la 16 es la consumidora prevista. SEIS Orchestrator Decisions al
+      pie del explore.md: (1) la recepcion NO mueve stock — cada recepcion
+      es un comprobante de compra ligado (la invariante del motor se
+      preserva intacta); (2) 1 OC -> N comprobantes via FK
+      comprobantes_compra.id_orden_compra NULL (precedente
+      gastos.id_comprobante_compra); (3) desvio de precio OC vs factura
+      informativo, jamas bloqueante; (4) estado_orden_compra enum nativo
+      (maquina de estados de 5 valores, precedente estado_compra +
+      decision 8 de la 14); (5) la formula de reposicion NO se toca —
+      stock en transito queda como extension diferida con el insumo listo
+      (fecha_esperada + pendientes); integracion unidireccional: pre-carga
+      del borrador de OC desde la lista por proveedor; (6) anular solo
+      desde borrador/enviada sin recepciones confirmadas — con recepciones
+      se CIERRA, nunca se anula.
+  propose:
+    status: pending
+    artifact: proposal.md
+    depends_on: [explore]
+  spec:
+    status: pending
+    artifact: specs/
+    depends_on: [propose]
+  design:
+    status: pending
+    artifact: design.md
+    depends_on: [propose]
+  tasks:
+    status: pending
+    artifact: tasks.md
+    depends_on: [spec, design]
+  apply:
+    status: pending
+    artifact: tasks.md + PRs
+    depends_on: [tasks]
+  verify:
+    status: pending
+    artifact: verify-report.md
+    depends_on: [apply]
+  archive:
+    status: pending
+    artifact: archive-report.md
+    depends_on: [verify]
