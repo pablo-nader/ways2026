@@ -309,14 +309,12 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
 
         // desde/hasta — ventana estrictamente futura no debe traer la orden objetivo
         var manana = DateTimeOffset.UtcNow.AddDays(1);
-        var pasadoManana = DateTimeOffset.UtcNow.AddDays(2);
         var porDesde = await ListarAsync(ctx, $"?desde={Uri.EscapeDataString(manana.ToString("O"))}");
         Assert.DoesNotContain(porDesde.Items, i => i.Id == objetivo.Id);
 
         var haceUnDia = DateTimeOffset.UtcNow.AddDays(-1);
         var porHasta = await ListarAsync(ctx, $"?hasta={Uri.EscapeDataString(haceUnDia.ToString("O"))}");
         Assert.DoesNotContain(porHasta.Items, i => i.Id == objetivo.Id);
-        _ = pasadoManana;
     }
 
     // ====================================================================================================
@@ -389,15 +387,16 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
             ]);
 
         // Recepción partida: 2 luego 5 (completa exactamente 7), costo real 112 (⇒ desvío +12%).
-        await RecibirYConfirmarAsync(ctx, objetivo.Id, cantidad: 2m, costoUnitario: 112m);
+        var confirmadaPrimera = await RecibirYConfirmarAsync(ctx, objetivo.Id, cantidad: 2m, costoUnitario: 112m);
         var confirmadaFinal = await RecibirYConfirmarAsync(ctx, objetivo.Id, cantidad: 5m, costoUnitario: 112m);
         Assert.Equal(EstadoCompra.Confirmada, confirmadaFinal.Estado);
 
         // Recibido-no-pedido: articulo2, jamás en items_orden_compra de esta orden.
         var reciboExtra = await RecibirYConfirmarAsync(ctx, objetivo.Id, cantidad: 1m, costoUnitario: 50m, idArticulo: ctx.IdArticulo2);
 
-        // Un comprobante ligado todavía en borrador — NO debe contar (solo confirmados cuentan).
-        await CrearBorradorDeCompraAsync(
+        // Un comprobante ligado todavía en borrador — NO debe contar en la cobertura (solo
+        // confirmados cuentan) pero SÍ debe aparecer en ComprobantesLigados (cualquier estado).
+        var comprobanteBorrador = await CrearBorradorDeCompraAsync(
             ctx,
             new SolicitudDeCompra(
                 ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, $"0001-{Guid.NewGuid():N}"[..8],
@@ -447,8 +446,16 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(834m, detalle.TotalReal);
         Assert.Equal(19.14m, detalle.DesvioTotal);
 
-        // ComprobantesLigados incluye el borrador (todo comprobante ligado, cualquier estado).
-        Assert.True(detalle.ComprobantesLigados.Count >= 4);
+        // ComprobantesLigados: CONJUNTO EXACTO (judgment-day, juez A, ronda 2 — WARNING) — los
+        // CINCO comprobantes ligados a esta orden, incluido el borrador (todo estado cuenta), nunca
+        // solo un Count.Count >= N que un extra silencioso pasaría igual.
+        Assert.Equal(
+            new[]
+            {
+                confirmadaPrimera.Id, confirmadaFinal.Id, reciboExtra.Id, comprobanteBorrador.Id,
+                recepcionSoftDeleted.Id
+            }.OrderBy(x => x),
+            detalle.ComprobantesLigados.OrderBy(x => x));
 
         // ---- fidelidad de proyección (task 5.9): recomputar Proyectar desde ESTA lectura ----------
         var completa = detalle.Cobertura.All(c => c.Pendiente <= 0m);
@@ -525,6 +532,39 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.NotNull(cobertura.CostoReal);
         Assert.Null(cobertura.Desvio); // NUNCA 0m
         Assert.Null(detalle.TotalEstimado); // ningún artículo comparable del lado estimado
+    }
+
+    // ====================================================================================================
+    // CRITICAL 1 (judgment-day, juez A, ronda 2): TotalEstimado fabricaba costo — agregaba desde
+    // Cobertura (promedio ponderado por-artículo, que promedia SOLO las líneas cotizadas) ×
+    // Pedida TOTAL del artículo (incluidas las líneas SIN cotizar), extrapolando en silencio.
+    // Fixture dedicado: mismo artículo, una línea cotizada + una sin cotizar.
+    // ====================================================================================================
+
+    [Fact]
+    public async Task TotalEstimadoSumaSoloLasLineasCotizadasSinExtrapolarAlPromedioDelArticulo()
+    {
+        var ctx = await PrepararAsync(nameof(TotalEstimadoSumaSoloLasLineasCotizadasSinExtrapolarAlPromedioDelArticulo));
+
+        // Mismo artículo, dos líneas: 3 unidades cotizadas a 100 + 4 unidades SIN cotizar (null).
+        // Cobertura.CostoEstimado (promedio ponderado, SOLO sobre la línea cotizada) = 100 — sigue
+        // siendo un display por-artículo correcto. Pedida total del artículo = 7. El bug agregaba
+        // TotalEstimado = 100 * 7 = 700 (extrapolando el costo a las 4 unidades nunca cotizadas);
+        // el total honesto es la suma línea a línea SOLO de lo cotizado: 100 * 3 = 300.
+        var orden = await CrearYEnviarOrdenAsync(
+            ctx,
+            [
+                new LineaDeOrdenSolicitada(ctx.IdArticulo, "Cotizada", 3m, 100m),
+                new LineaDeOrdenSolicitada(ctx.IdArticulo, "Sin cotizar", 4m, null)
+            ]);
+
+        var detalle = await ObtenerDetalleAsync(ctx, orden.Id);
+
+        var cobertura = Assert.Single(detalle.Cobertura);
+        Assert.Equal(7m, cobertura.Pedida);
+        Assert.Equal(100m, cobertura.CostoEstimado); // el promedio por-artículo sigue siendo 100
+
+        Assert.Equal(300m, detalle.TotalEstimado); // JAMÁS 700 (100*7) ni 233.33 (100*7/3)
     }
 
     // ====================================================================================================
@@ -656,6 +696,13 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
         var pagina = await ListarAsync(ctx, $"?idProveedor={ctx.IdProveedor2}");
         var filaListado = Assert.Single(pagina.Items, i => i.Id == creada.Id);
         Assert.Equal(EstadoOrdenCompra.Cerrada, filaListado.Estado);
+
+        // CRITICAL 2 (judgment-day, juez A, ronda 2): IdProveedor/IdPuntoVenta de la fila del
+        // listado tampoco se leían de vuelta — mismo hueco de causa raíz que el swap del detalle,
+        // pero en el Select de ListarAsync. Ids desincronizados (IdProveedor2/IdPuntoVenta2)
+        // discriminan un swap en ese Select.
+        Assert.Equal(ctx.IdProveedor2, filaListado.IdProveedor);
+        Assert.Equal(ctx.IdPuntoVenta2, filaListado.IdPuntoVenta);
     }
 
     // ---- gate guard (task 5.18) --------------------------------------------------------------------
