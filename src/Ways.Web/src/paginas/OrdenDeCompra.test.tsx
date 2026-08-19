@@ -208,6 +208,7 @@ describe('OrdenDeCompra — detalle (lectura)', () => {
     await screen.findByText('Enviada')
     expect(screen.queryByRole('button', { name: 'Cerrar' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Anular' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Registrar recepción' })).not.toBeInTheDocument()
   })
 })
 
@@ -326,6 +327,87 @@ describe('OrdenDeCompra — doble click (react-async-state regla 9)', () => {
     await act(async () => {
       resolverEnviar(borradorFixture({ estado: 'Enviada' }))
       await enviarPendiente
+    })
+  })
+
+  it('un doble click en "Cerrar" dispara exactamente un POST', async () => {
+    mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(detalleFixture({ estado: 'Enviada' })) : undefined))
+
+    let resolverCerrar: (v: OrdenDeCompraBorrador) => void = () => {}
+    const cerrarPendiente = new Promise<OrdenDeCompraBorrador>((resolve) => {
+      resolverCerrar = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => (ruta === '/ordenes-compra/30/cerrar' ? cerrarPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+
+    renderPantalla()
+    const boton = await screen.findByRole('button', { name: 'Cerrar' })
+
+    // Mismo patrón same-tick que "Enviar" arriba — replica la red de reentrancia de `cerrandoRef`.
+    act(() => {
+      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
+
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ordenes-compra/30/cerrar')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Cerrando…' })).toBeDisabled()
+
+    await act(async () => {
+      resolverCerrar(borradorFixture({ estado: 'Cerrada' }))
+      await cerrarPendiente
+    })
+  })
+
+  it('un doble click en "Anular" dispara exactamente un POST', async () => {
+    mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(detalleFixture({ estado: 'Enviada' })) : undefined))
+
+    let resolverAnular: (v: OrdenDeCompraBorrador) => void = () => {}
+    const anularPendiente = new Promise<OrdenDeCompraBorrador>((resolve) => {
+      resolverAnular = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => (ruta === '/ordenes-compra/30/anular' ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+
+    renderPantalla()
+    const boton = await screen.findByRole('button', { name: 'Anular' })
+
+    // Mismo patrón same-tick — replica la red de reentrancia de `anulandoRef`.
+    act(() => {
+      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
+
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ordenes-compra/30/anular')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Anulando…' })).toBeDisabled()
+
+    await act(async () => {
+      resolverAnular(borradorFixture({ estado: 'Anulada' }))
+      await anularPendiente
+    })
+  })
+
+  it('un doble click en "Guardar borrador" dispara exactamente un PUT', async () => {
+    mockearReferencia((ruta) => (ruta === '/ordenes-compra/30' ? Promise.resolve(detalleFixture({ estado: 'Borrador' })) : undefined))
+
+    let resolverGuardar: (v: OrdenDeCompraBorrador) => void = () => {}
+    const guardarPendiente = new Promise<OrdenDeCompraBorrador>((resolve) => {
+      resolverGuardar = resolve
+    })
+    apiPutMock.mockImplementation((ruta: string) => (ruta === '/ordenes-compra/30' ? guardarPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+
+    renderPantalla()
+    const boton = await screen.findByRole('button', { name: 'Guardar borrador' })
+
+    // Mismo patrón same-tick — replica la red de reentrancia de `guardandoRef`.
+    act(() => {
+      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      boton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
+
+    expect(apiPutMock.mock.calls.filter((c) => c[0] === '/ordenes-compra/30')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+
+    await act(async () => {
+      resolverGuardar(borradorFixture({ estado: 'Borrador' }))
+      await guardarPendiente
     })
   })
 })

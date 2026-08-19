@@ -504,7 +504,7 @@ function PantallaOrdenDeCompra({ idOrden, precarga }: PropsPantalla) {
   const puedeEnviar = puedeEscribir && !esNuevo && detalle?.estado === 'Borrador'
   const puedeCerrar = puedeEscribir && (detalle?.estado === 'Enviada' || detalle?.estado === 'RecibidaParcial')
   const puedeAnular = puedeEscribir && (detalle?.estado === 'Borrador' || detalle?.estado === 'Enviada')
-  const puedeRecepcionar = detalle !== null && (detalle.estado === 'Enviada' || detalle.estado === 'RecibidaParcial' || detalle.estado === 'Cerrada')
+  const puedeRecepcionar = puedeEscribir && detalle !== null && (detalle.estado === 'Enviada' || detalle.estado === 'RecibidaParcial' || detalle.estado === 'Cerrada')
 
   return (
     <div className="container-fluid py-4">
