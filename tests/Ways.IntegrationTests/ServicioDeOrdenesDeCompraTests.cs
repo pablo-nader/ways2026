@@ -159,6 +159,19 @@ public class ServicioDeOrdenesDeCompraTests(WaysApiFixture fixture) : IClassFixt
         var creada = await CrearBorradorAsync(ctx.Admin, SolicitudSimple(ctx));
         Assert.Single(creada.Items);
 
+        // Regla 12c: una OC HERMANA del mismo tenant con items propios discriminantes — el
+        // replace-set de "creada" nunca debe tocarla (el DELETE del replace-set debe seguir
+        // scopeado a IdOrdenCompra == creada.Id, jamás ensanchado a toda la tabla).
+        var hermana = await CrearBorradorAsync(
+            ctx.Admin,
+            new SolicitudDeOrdenDeCompra(
+                ctx.IdProveedor, ctx.IdPuntoVenta, null, null,
+                [
+                    new LineaDeOrdenSolicitada(ctx.IdArticulo, "Hermana item 1", 77m, 770m),
+                    new LineaDeOrdenSolicitada(ctx.IdArticulo2, "Hermana item 2", 88m, 880m)
+                ]));
+        Assert.Equal(2, hermana.Items.Count);
+
         var conDosItems = new SolicitudDeOrdenDeCompra(
             ctx.IdProveedor, ctx.IdPuntoVenta, null, null,
             [
@@ -184,6 +197,74 @@ public class ServicioDeOrdenesDeCompraTests(WaysApiFixture fixture) : IClassFixt
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(1, await db.ItemsOrdenCompra.CountAsync(i => i.IdOrdenCompra == creada.Id));
+
+        // Regla 12c: los DOS replace-sets de arriba sobre "creada" (agregar+quitar) no tocaron a
+        // la hermana — sus items siguen siendo exactamente los dos originales, con las mismas
+        // cantidades discriminantes.
+        var itemsHermana = await db.ItemsOrdenCompra
+            .Where(i => i.IdOrdenCompra == hermana.Id)
+            .OrderBy(i => i.Orden)
+            .ToListAsync();
+        Assert.Equal(2, itemsHermana.Count);
+        Assert.Equal(ctx.IdArticulo, itemsHermana[0].IdArticulo);
+        Assert.Equal(77m, itemsHermana[0].CantidadPedida);
+        Assert.Equal(ctx.IdArticulo2, itemsHermana[1].IdArticulo);
+        Assert.Equal(88m, itemsHermana[1].CantidadPedida);
+    }
+
+    // ---- task 2.8/2.9: FechaEsperada/Observaciones sobreviven el ciclo completo (dto-contract-honesty) ----
+
+    /// <summary>dto-contract-honesty regla 1: <c>FechaEsperada</c>/<c>Observaciones</c> no son
+    /// relleno — se persisten y se leen de vuelta con el valor exacto enviado, y el replace-set
+    /// del PUT los CAMBIA (incluida la limpieza explícita a <c>null</c>), nunca los ignora ni los
+    /// fuerza a <c>null</c> por default.</summary>
+    [Fact]
+    public async Task FechaEsperadaYObservacionesSePersistenYSeActualizanEnElReplaceSet()
+    {
+        var ctx = await PrepararAsync(nameof(FechaEsperadaYObservacionesSePersistenYSeActualizanEnElReplaceSet));
+        var fechaEsperadaInicial = new DateOnly(2026, 9, 15);
+        var solicitudInicial = new SolicitudDeOrdenDeCompra(
+            ctx.IdProveedor, ctx.IdPuntoVenta, fechaEsperadaInicial, "Observación inicial discriminante",
+            [new LineaDeOrdenSolicitada(ctx.IdArticulo, "Item de prueba", 10m, 100m)]);
+
+        var creada = await CrearBorradorAsync(ctx.Admin, solicitudInicial);
+        Assert.Equal(fechaEsperadaInicial, creada.FechaEsperada);
+        Assert.Equal("Observación inicial discriminante", creada.Observaciones);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var persistida = await db.OrdenesCompra.AsNoTracking().FirstAsync(o => o.Id == creada.Id);
+            Assert.Equal(fechaEsperadaInicial, persistida.FechaEsperada);
+            Assert.Equal("Observación inicial discriminante", persistida.Observaciones);
+        }
+
+        var fechaEsperadaNueva = new DateOnly(2026, 12, 24);
+        var solicitudActualizada = new SolicitudDeOrdenDeCompra(
+            ctx.IdProveedor, ctx.IdPuntoVenta, fechaEsperadaNueva, "Observación actualizada distinta",
+            [new LineaDeOrdenSolicitada(ctx.IdArticulo, "Item de prueba", 10m, 100m)]);
+        var respuestaPut = await ctx.Admin.PutAsJsonAsync($"/api/ordenes-compra/{creada.Id}", solicitudActualizada);
+        var cuerpoPut = await respuestaPut.Content.ReadAsStringAsync();
+        Assert.True(respuestaPut.StatusCode == HttpStatusCode.OK, cuerpoPut);
+        var actualizada = JsonSerializer.Deserialize<OrdenDeCompraBorrador>(cuerpoPut, OpcionesJson)!;
+        Assert.Equal(fechaEsperadaNueva, actualizada.FechaEsperada);
+        Assert.Equal("Observación actualizada distinta", actualizada.Observaciones);
+
+        var solicitudLimpiando = new SolicitudDeOrdenDeCompra(
+            ctx.IdProveedor, ctx.IdPuntoVenta, null, null,
+            [new LineaDeOrdenSolicitada(ctx.IdArticulo, "Item de prueba", 10m, 100m)]);
+        var respuestaPutLimpiando = await ctx.Admin.PutAsJsonAsync($"/api/ordenes-compra/{creada.Id}", solicitudLimpiando);
+        var cuerpoPutLimpiando = await respuestaPutLimpiando.Content.ReadAsStringAsync();
+        Assert.True(respuestaPutLimpiando.StatusCode == HttpStatusCode.OK, cuerpoPutLimpiando);
+        var limpia = JsonSerializer.Deserialize<OrdenDeCompraBorrador>(cuerpoPutLimpiando, OpcionesJson)!;
+        Assert.Null(limpia.FechaEsperada);
+        Assert.Null(limpia.Observaciones);
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var final = await db.OrdenesCompra.AsNoTracking().FirstAsync(o => o.Id == creada.Id);
+            Assert.Null(final.FechaEsperada);
+            Assert.Null(final.Observaciones);
+        }
     }
 
     [Fact]
