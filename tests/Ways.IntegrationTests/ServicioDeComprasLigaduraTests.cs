@@ -703,7 +703,21 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
 
     // ================================================================================================
     // task 3.12: binding gate test (a) — zero-extra-statements (proxy comportamental, ver
-    // EscriturasDeOrdenDeCompraLockOrderTests para la prueba de texto fuente complementaria)
+    // EscriturasDeOrdenDeCompraLockOrderTests para la prueba de texto fuente complementaria).
+    //
+    // Judgment-day (ronda 2, hallazgo WARNING del juez B, decisión 21 de tasks.md): el criterio
+    // cero-statements-extra tiene DOS redes, ninguna sola alcanza. (1) El guard estructural de
+    // EscriturasDeOrdenDeCompraLockOrderTests caza el mutante LITERAL (llamada incondicional con
+    // `?? 0`) — pero ese mutante NUNCA llega a los asserts byte-idénticos de acá abajo: revienta
+    // antes con un 500 (invariante de FK roto en BloquearYLeerAsync, "orden 0 no existe"), y
+    // ConfirmarCompraAsync ya falla por el StatusCode != OK. (2) Los asserts byte-idénticos de
+    // esta prueba cazan el mutante REALISTA — uno que resuelve la OC "por coincidencia"
+    // (proveedor + PV del encabezado) en vez del FK real y encuentra una fila legítima — algo que
+    // el guard estructural, por definición, no puede ver (no hay texto fuente que lo delate: la
+    // llamada SÍ tiene un argumento válido). Verificado por mutación real: con la hermana en el
+    // MISMO proveedor/PV que "creada" pero SIN el landmine de abajo, ese mutante pasa la prueba
+    // en silencio (ProyectarEstadoAsync sobre la hermana es un no-op idempotente — nada que
+    // comparar). El landmine lo convierte en observable.
     // ================================================================================================
 
     [Fact]
@@ -711,8 +725,46 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
     {
         var ctx = await PrepararAsync(nameof(UnConfirmSinOrdenLigadaNoTocaNingunaOrdenDeCompraExistente));
 
-        // Regla 12c: una OC hermana, completamente ajena a la compra que se va a confirmar.
+        // Regla 12c: una OC hermana, completamente ajena a la compra que se va a confirmar — del
+        // MISMO proveedor y MISMO PV que "creada" (default de CrearYEnviarOrdenAsync/
+        // SolicitudDeCompraSimple, ambos ctx.IdProveedor/ctx.IdPuntoVenta). A propósito: es lo que
+        // hace que el mutante "por coincidencia" (proveedor/PV) encuentre justo esta fila en vez
+        // de ninguna.
         var hermana = await CrearYEnviarOrdenAsync(ctx);
+
+        // Landmine: una recepción YA confirmada, ligada a la hermana por FK REAL, sembrada directo
+        // por EF — bypass total de ServicioDeCompras/EscriturasDeOrdenDeCompra (el único camino
+        // para dejar ordenes_compra.estado deliberadamente stale respecto de lo que una
+        // re-derivación en vivo calcularía; mismo criterio que SembrarOrdenAnuladaAsync: el estado
+        // de la fila es lo que importa, no el camino que lo produjo). Cubre exactamente la
+        // cantidad pedida (10) → una re-derivación en vivo vería completa=true y CERRARÍA la
+        // hermana. Bajo la producción correcta (id_orden_compra de "creada" es NULL → el bloque
+        // 1.b entero saltea, mutation target #29) esa re-derivación JAMÁS corre — la hermana se
+        // queda 'enviada' tal cual, stale, para siempre en este test.
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var ahora = DateTimeOffset.UtcNow;
+            var comprobante = new ComprobanteCompra
+            {
+                IdTenant = ctx.IdTenant, IdProveedor = ctx.IdProveedor, IdTipoComprobante = ctx.IdTipoCFA,
+                NumeroExterno = $"0001-{Guid.NewGuid():N}"[..8], FechaComprobante = DateOnly.FromDateTime(DateTime.UtcNow),
+                FechaRecepcion = ahora, IdPuntoVenta = ctx.IdPuntoVenta, IdEmpleado = ctx.IdEmpleadoAdmin,
+                Subtotal = 1000m, DescuentoTotal = 0m, Total = 1000m, IvaTotal = 210m,
+                Estado = EstadoCompra.Confirmada, IdOrdenCompra = hermana.Id, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.ComprobantesCompra.Add(comprobante);
+            await db.SaveChangesAsync();
+
+            db.ItemsComprobanteCompra.Add(new ItemComprobanteCompra
+            {
+                IdTenant = ctx.IdTenant, IdComprobanteCompra = comprobante.Id, Orden = 1, IdArticulo = ctx.IdArticulo,
+                Descripcion = "Item de recepción (landmine, ver doc-comment de la clase)", Cantidad = 10m,
+                CostoUnitario = 100m, Descuento = 0m, IdAlicuotaIva = ctx.IdAlicuotaIva21, PorcentajeIva = 21m,
+                Total = 1000m
+            });
+            await db.SaveChangesAsync();
+        }
+
         var hermanaAntes = await LeerOrdenAsync(ctx, hermana.Id);
 
         var (_, creada, _) = await CrearBorradorDeCompraAsync(ctx, SolicitudDeCompraSimple(ctx, idOrdenCompra: null));

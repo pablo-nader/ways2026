@@ -676,7 +676,20 @@ if this slice overflows — decision 3 above.
   `DbCommandInterceptor`/`ContadorDeComandos` "command count" is structurally blind to this slice's
   raw-ADO statements (same empirically-proven limitation `ServicioDeComprasLockOrderTests`'s own
   doc-comment already recorded for the lock-order proof) — `mutation-proof-tests` rule 3 escape
-  hatch applied, same as the one task 3.24 pre-authorized.
+  hatch applied, same as the one task 3.24 pre-authorized. **Corrected (decision 21 below,
+  judgment-day round 2, WARNING closed)**: the two nets are NOT redundant covers of the same
+  mutant — each catches a DIFFERENT one, and neither alone is complete. The structural lock-order
+  test catches the LITERAL unconditional-call mutant (`?? 0`), but that mutant never actually
+  reaches the byte-identical asserts of the behavioral test — it dies earlier with a `500`
+  (`BloquearYLeerAsync`'s FK-invariant throw on the sentinel id `0`), so those two specific asserts
+  are dead code for that mutant. The byte-identical asserts' real, independently-provable target is
+  a REALISTIC soft mutant — one that resolves the OC "by coincidence" (proveedor + PV of the
+  header) instead of the real FK and finds a legitimately existing row — which the structural test,
+  by construction, cannot see (the call site still has a syntactically valid guard). The behavioral
+  test was strengthened with a same-proveedor/same-PV sibling plus an EF-seeded "landmine" receipt
+  (a confirmed, FK-linked reception the production code never re-derives against because the
+  unlinked confirm's `id_orden_compra` is `NULL`) so that soft mutant becomes observable instead of
+  a silent idempotent no-op — verified by mutation (see decision 21).
 - [x] 3.13 [P] Integration — a borrador draft links to a matching (`enviada`) OC; persisted.
   *(comprobantes-compra/spec.md:14-17)*
 - [x] 3.14 [P] Integration — a mismatched proveedor/PV/tenant cannot link, refused before any
@@ -910,6 +923,37 @@ if this slice overflows — decision 3 above.
       staleness the target names), so the observed `409 orden_compra_cierre_incoherente` confirms
       the test suite rejects this SQL shape, but does not, on its own, isolate the exact stale-read
       mechanism in prose. Recorded honestly per mutation-proof-tests rule 2 rather than reshaped.
+
+21. **Judgment-day round 2, WARNING closed — the 3.12 doc-comment overclaimed the byte-identical
+    asserts were "the" behavioral proxy for zero-extra-statements, when they were dead code for the
+    literal mutant already recorded under 3.36.** The judge (round-2 blind reviewer B) flagged that
+    `UnConfirmSinOrdenLigadaNoTocaNingunaOrdenDeCompraExistente`'s doc-comment and this file both
+    called the test "the byte-identical sibling" proof without noting that, under the literal
+    `?? 0` mutant, execution never reaches lines 723-724 at all — `ConfirmarHeaderAsync`'s caller
+    dies first with a `500` from `BloquearYLeerAsync`'s FK-invariant throw, and the test's failure
+    (correctly recorded under 3.36) actually comes from `ConfirmarCompraAsync`'s generic
+    `StatusCode == OK` assert, not from the two byte-identical lines. Verified by mutation
+    (`mutation-proof-tests` rule 2, run before this fix and again after):
+    - **Before the fix**: applied a REALISTIC soft mutant to `EjecutarConfirmarAsync` — resolve
+      `idOc` via `encabezado.IdOrdenCompra ?? <lookup ordenes_compra by id_tenant/id_proveedor/
+      id_punto_venta, most recent>` instead of the literal `?? 0` — against the pre-fix test (sibling
+      already at the same proveedor/PV by the existing test helper defaults, no landmine). Build
+      clean → the pre-fix test **PASSED** (`0` failures) — the mutant is caught by neither net: the
+      structural test can't see it (syntactically valid guard argument) and the byte-identical
+      asserts see a genuine idempotent no-op (`ProyectarEstadoAsync` on the sibling derives the same
+      state it already has, so statement 3 never runs) — confirming the WARNING.
+    - **The fix**: added an EF-seeded "landmine" — a `Confirmada` receipt FK-linked to the sibling
+      OC that covers its full pedido, written directly (bypassing `ServicioDeCompras`/
+      `EscriturasDeOrdenDeCompra` entirely, same pattern as `SembrarOrdenAnuladaAsync`). Under
+      correct production code the sibling is never re-derived (`id_orden_compra` of the unlinked
+      confirm is `NULL`) so it stays stale-but-untouched forever — asserts pass. Re-ran the SAME
+      soft mutant against the strengthened test → build clean → the test **FAILED** at
+      `Assert.Equal(hermanaAntes.Estado, hermanaDespues.Estado)` (`Enviada` vs `Cerrada` — the
+      landmine's `completa = true` closed the sibling once the mutant's coincidental lookup handed
+      it to `ProyectarEstadoAsync`) → `git checkout -- src/` → `git status` clean → rebuild → green.
+    - Doc-comments in `ServicioDeComprasLigaduraTests.cs` (task 3.12 test) and this task's line 3.12
+      above corrected to name BOTH nets and what each one independently catches, instead of implying
+      the byte-identical asserts alone are sufficient.
 
 **Test plan**: zero-extra-statements (3.12); link happy/blocked paths incl. state-gating
 (3.13-3.16); the projection scenarios (3.17-3.20); derivation fidelity (3.21); confirm×confirm race
