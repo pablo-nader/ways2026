@@ -511,6 +511,31 @@ public class ServicioDeComprasLigaduraTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal(EstadoOrdenCompra.Cerrada, await LeerEstadoDeOrdenAsync(ctx, orden.Id));
     }
 
+    /// <summary>Mutation target #24, versión DISCRIMINANTE: 3+4=7 pedidos, se reciben 5 — mayor
+    /// que CUALQUIER línea individual (3 y 4) pero MENOR que la suma agrupada (7). Si el <c>GROUP
+    /// BY</c> del lado pedido matcheara línea a línea en vez de por artículo, cada línea
+    /// individual (3 y 4) leería "cubierta" contra 5 recibidos y la orden cerraría de más — el
+    /// agrupado correcto exige comparar contra la SUMA (7 &gt; 5, sigue pendiente).</summary>
+    [Fact]
+    public async Task DosLineasDelMismoArticuloComparanContraLaSumaNoContraCadaLineaIndividual()
+    {
+        var ctx = await PrepararAsync(nameof(DosLineasDelMismoArticuloComparanContraLaSumaNoContraCadaLineaIndividual));
+
+        var creadaOrden = await CrearBorradorDeOrdenAsync(
+            ctx,
+            new SolicitudDeOrdenDeCompra(
+                ctx.IdProveedor, ctx.IdPuntoVenta, null, null,
+                [
+                    new LineaDeOrdenSolicitada(ctx.IdArticulo, "Linea A", 3m, 100m),
+                    new LineaDeOrdenSolicitada(ctx.IdArticulo, "Linea B", 4m, 100m)
+                ]));
+        var orden = await EnviarOrdenAsync(ctx, creadaOrden.Id);
+
+        await CrearYConfirmarRecepcionAsync(ctx, orden.Id, unidades: 5m);
+
+        Assert.Equal(EstadoOrdenCompra.RecibidaParcial, await LeerEstadoDeOrdenAsync(ctx, orden.Id));
+    }
+
     /// <summary>Mutation target #25: <c>algoRecibido</c> tiene que salir del lado RECEPCIÓN. Un
     /// artículo NUNCA pedido, recibido por sustitución, no cubre lo pedido (sigue
     /// <c>recibida_parcial</c>, nunca <c>enviada</c>) — si <c>algoRecibido</c> se derivara (mal) del
