@@ -391,6 +391,29 @@
       `npm run build` (`tsc -b && vite build`) clean, `npm run lint` (`oxlint`) clean with zero new
       warnings in any file touched this slice.
 
+28. **`judgment-day` ronda 1 (juez A) confirmó 2 WARNING sobre `OrdenDeCompra.tsx` — ambos
+    cerrados con fix acotado (commit `74472a3`).** WARNING 1 (producción): `puedeRecepcionar`
+    (línea 507) era el único gate de acción de los cinco (`puedeEnviar`/`puedeCerrar`/
+    `puedeAnular`/`puedeGuardar`) que no ANDeaba `puedeEscribir` — un Vendedor/Supervisor podía ver
+    "Registrar recepción" pese a que la escritura sigue siendo server-Admin-only. Cerrado agregando
+    `puedeEscribir &&` al gate y ensanchando el test del Vendedor ("un Vendedor lee el detalle pero
+    no ve ninguna acción de escritura") para assertar también la ausencia de "Registrar recepción".
+    WARNING 2 (tests + docs): el test same-tick de doble click (dos `dispatchEvent` nativos dentro
+    de un mismo `act()`) probado en la 6.11 solo cubría `enviar`, pese a que los cuatro guards de
+    reentrancia (`cerrandoRef`/`anulandoRef`/`guardandoRef`/`enviandoRef`) existen desde esa misma
+    tarea — 6.11 afirmaba una cobertura que no era literalmente cierta. Cerrado replicando el mismo
+    patrón same-tick para `Cerrar`, `Anular` y `Guardar borrador` (este último contra
+    `apiPutMock`, ya que `guardarBorrador` en una orden existente hace `PUT /ordenes-compra/{id}`,
+    no `POST`), dejando la 6.11 ahora literalmente verdadera. **Evidencia de mutación (ciclo
+    commit-primero → mutar → falla esperada → revertir con `git checkout --` → limpio)**:
+    (a) quitar `puedeEscribir` del gate → el test del Vendedor FALLÓ (botón "Registrar recepción"
+    encontrado) → revertido; (b) quitar el guard `cerrandoRef.current` de `cerrar()` → el nuevo
+    test same-tick de Cerrar FALLÓ (2 POSTs en vez de 1) → revertido; (c) ídem con
+    `anulandoRef.current` en `anular()` → el test de Anular FALLÓ (2 POSTs) → revertido. Corrida
+    final del archivo verde (14 tests), suite completa verde (`npx vitest run`, sin filtro: 48
+    archivos, 796 tests), `npm run build` limpio (mismo advisory de chunk-size pre-existente, sin
+    errores de TypeScript nuevos), `git status` limpio entre cada ciclo.
+
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
 word-budget overage is a house precedent, no action; T5 (spec OD7) — `cuenta-corriente-de-
@@ -1636,10 +1659,15 @@ and drop the `Reposicion.tsx` action; a documented reduction, never silent (deci
   (`filasDeReposicionAOrdenDeCompra.test.ts`) and the end-to-end integration test
   (`Reposicion.test.tsx`, click → real `/ordenes-compra/nueva` destination route reading
   `location.state`, never a mocked `useNavigate`).
-- [x] 6.11 [P] Vitest — a double click on `enviar`/`cerrar`/`anular` issues exactly one POST
-  (`react-async-state` rule 9). — `OrdenDeCompra.test.tsx`: "un doble click en 'Enviar' dispara
-  exactamente un POST", two native `dispatchEvent` calls inside one `act()` (same-tick, beats the
-  `disabled` re-render — `BotonDeDescarga.test.tsx`/`CuentaCorrienteDeProveedor.test.tsx` pattern).
+- [x] 6.11 [P] Vitest — a double click on `enviar`/`cerrar`/`anular`/`guardarBorrador` issues
+  exactly one write (`react-async-state` rule 9). — `OrdenDeCompra.test.tsx`: "un doble click en
+  'Enviar'/'Cerrar'/'Anular'/'Guardar borrador' dispara exactamente un POST/PUT", two native
+  `dispatchEvent` calls inside one `act()` per action (same-tick, beats the `disabled` re-render —
+  `BotonDeDescarga.test.tsx`/`CuentaCorrienteDeProveedor.test.tsx` pattern). **CLOSED WARNING
+  (judgment-day ronda 1, juez A — decision 28)**: the first apply pass only shipped the `Enviar`
+  case even though all four reentrancy refs already existed; `Cerrar`/`Anular`/`Guardar borrador`
+  now have the same same-tick coverage, with mutation evidence on `cerrandoRef`/`anulandoRef`
+  recorded in decision 28.
 - [x] 6.12 [P] Vitest — a stale response is discarded, resolved **inside `act`** (`react-async-
   state` rule 7). — `OrdenDeCompra.test.tsx`: "una respuesta de refetch desactualizada nunca pisa
   la más reciente" (two competing detail refetches from `enviar` then `anular`; the older one
