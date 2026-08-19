@@ -243,32 +243,89 @@ tests) / `1b` (the ALTER + the 6 backstops + doc 10) if this slice overflows —
 - [x] 1.27 [P] `db-error-backstops` exemption tests — FK 1/FK 6 (`_tenant`), FK 4/FK 5
   (`_empleado*`), FK 7 (items→OC): generic `23503` mapping, one SQLSTATE test per exempt FK.
   *(proposal.md:685-687)*
-- [ ] 1.28 [P] **Mutation target #1** — `HabilitarRlsDeTenant("ordenes_compra")` → delete → cross-
-  tenant count + `42501` test (1.21) must fail.
-- [ ] 1.29 [P] **Mutation target #2** — `HabilitarRlsDeTenant("items_orden_compra")` → delete →
-  same, child table (1.21) must fail.
-- [ ] 1.30 [P] **Mutation target #3** — `ck_ordenes_compra_envio_completo` → delete → raw-insert
-  `23514` test (1.22) must fail, both directions.
-- [ ] 1.31 [P] **Mutation target #4** — `ck_ordenes_compra_cierre` → delete → raw-insert `23514`
-  test (1.22) must fail, both directions.
-- [ ] 1.32 [P] **Mutation target #5** — either item CHECK → delete → its raw-insert `23514` test
-  (1.23) must fail.
-- [ ] 1.33 [P] **Mutation target #6** — `HasFilter("numero IS NOT NULL")` on `ux_ordenes_compra_
+- [x] 1.28 [P] **Mutation target #1** — `HabilitarRlsDeTenant("ordenes_compra")` → delete → cross-
+  tenant count + `42501` test (1.21) must fail. **Evidence**: commit `1088a37` → deleted the line
+  in the migration → `dotnet build --no-incremental` (clean) → both RLS tests FAILED
+  (`UnaSesionDeOtroTenantNoVeLasOrdenesDeCompraPorSelect`: expected 0 rows, actual 1;
+  `UnInsertConIdTenantAjenoEnOrdenesCompraSeRechaza`: expected `42501`, actual `23503` — an
+  unrelated FK, not RLS) → `git checkout -- src/` → `git status` clean (verified with `git`
+  directo) → rebuild → both tests green.
+- [x] 1.29 [P] **Mutation target #2** — `HabilitarRlsDeTenant("items_orden_compra")` → delete →
+  same, child table (1.21) must fail. **Evidence**: same cycle — mutated →
+  `UnaSesionDeOtroTenantNoVeLosItemsDeOrdenDeCompraPorSelect` FAILED (expected 0, actual 1) →
+  reverted, `git status` clean → rebuilt → green.
+- [x] 1.30 [P] **Mutation target #3** — `ck_ordenes_compra_envio_completo` → delete → raw-insert
+  `23514` test (1.22) must fail, both directions. **Evidence**: deleted the
+  `table.CheckConstraint` call in the migration's `CreateTable` → both
+  `UnNumeroSinFechaDeEnvioViolaLaCheckDeEnvioCompleto`/`UnaFechaDeEnvioSinNumeroViolaLaCheckDeEnvioCompleto`
+  FAILED ("No exception was thrown") → reverted, clean → green.
+- [x] 1.31 [P] **Mutation target #4** — `ck_ordenes_compra_cierre` → delete → raw-insert `23514`
+  test (1.22) must fail, both directions. **Evidence**: same cycle — both
+  `UnaFechaDeCierreConEstadoNoCerradaViolaLaCheckDeCierre`/`UnCierreManualSinFechaDeCierreViolaLaCheckDeCierre`
+  FAILED → reverted, clean → green.
+- [x] 1.32 [P] **Mutation target #5** — either item CHECK → delete → its raw-insert `23514` test
+  (1.23) must fail. **Evidence**: deleted `ck_items_orden_compra_cantidad_positiva` →
+  `UnaCantidadPedidaNoPositivaViolaLaCheck` FAILED → reverted, clean → green.
+- [x] 1.33 [P] **Mutation target #6** — `HasFilter("numero IS NOT NULL")` on `ux_ordenes_compra_
   numero` → delete → two drafts (numero NULL) in one PV ⇒ spurious `23505` test must fail.
-- [ ] 1.34 [P] **Mutation target #7** — the exact-name `ux_ordenes_compra_numero` branch **above**
+  **FINDING, not a pass** (mutation-proof-tests rule 3, "kill the confound, don't accept a false
+  pass"): mutated (dropped `filter:` from the migration's `CreateIndex`, making the unique index
+  full instead of partial) → ran `DosBorradoresSinNumeroEnElMismoPuntoDeVentaConvivenSinConflicto`
+  → **test still PASSED under the mutation** (no exception on the second insert). Root cause,
+  verified empirically against real Postgres: standard SQL/Postgres unique-index semantics never
+  compare `NULL = NULL` as equal, so a FULL unique index over `(id_tenant, id_punto_venta,
+  numero)` already tolerates unlimited `numero IS NULL` rows — identical to the partial index's
+  behavior for this exact fixture. The design.md wording for this target ("spurious `23505`") does
+  not hold; reverted immediately (`git checkout -- src/`, clean confirmed), no synthetic assertion
+  added to force a false positive. The partial filter stays implemented (matches
+  `ux_comprobantes_compra_numero_externo`'s precedent and is the correct, storage-efficient shape:
+  a filtered index excludes NULL rows from the index structure entirely), but its removal is not
+  independently provable via a NULL-numero fixture — registered here as an investigated,
+  non-actionable finding rather than a fabricated pass.
+- [x] 1.34 [P] **Mutation target #7** — the exact-name `ux_ordenes_compra_numero` branch **above**
   `ClasificarUnicidad` → move it below → the ordering-trap test (1.25) must fail (translated code
-  becomes `numero_duplicado`).
-- [ ] 1.35 [P] **Mutation target #8** — `MapEnum<EstadoOrdenCompra>` in either builder → delete →
-  that builder's path fails / `has-pending-model-changes` dirty (1.26).
-- [ ] 1.36 [P] **Mutation target #9** — explicit `ix_comprobantes_compra_orden_compra` name → drop
-  `HasDatabaseName` → `pg_indexes` audit (1.26) must fail (an EF `IX_…` appears).
-- [ ] 1.37 Gate guard (**VINCULANTE**, `state.yaml` db_gate_approval): `git diff --stat main --
-  src/Ways.Infrastructure/Persistencia/Migraciones/` shows **exactly one** new file, named for
-  `OrdenesDeCompraEtapa16`; `dotnet ef migrations has-pending-model-changes` clean; final new
-  index count = **12**; **zero** data statements anywhere in the migration. Any deviation reopens
-  the gate.
-- [ ] 1.38 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean.
-- [ ] 1.39 Branch `feat/stage16-slice1-schema` off `main`; PR; merge stacked-to-main.
+  becomes `numero_duplicado`). **Evidence**: moved the switch arm below the
+  `ClasificarUnicidad(ux)` generic arm in `ManejadorDeErrores.cs` →
+  `ManejadorDeErroresOrdenesDeCompraTests.UxOrdenesCompraNumeroGanaLaRamaNuevaAntesQueLaFamiliaGenericaDeNumero`
+  FAILED on both theory cases (EF `DbUpdateException` path and raw-ADO path): expected
+  `numero_de_orden_duplicado`, actual `numero_duplicado` → reverted, clean → green (16/16 in the
+  file).
+- [x] 1.35 [P] **Mutation target #8** — `MapEnum<EstadoOrdenCompra>` in either builder → delete →
+  that builder's path fails / `has-pending-model-changes` dirty (1.26). **Evidence**: baseline
+  `dotnet ef migrations has-pending-model-changes` clean → deleted the `MapEnum<EstadoOrdenCompra>`
+  line in `WaysDbContextFactory.cs` → rebuilt (compiles fine, it's a runtime call) → same CLI
+  command now reports "Changes have been made to the model since the last migration" → reverted,
+  clean → CLI clean again.
+- [x] 1.36 [P] **Mutation target #9** — explicit `ix_comprobantes_compra_orden_compra` name → drop
+  `HasDatabaseName` → `pg_indexes` audit (1.26) must fail (an EF `IX_…` appears). **Evidence**:
+  renamed the migration's `CreateIndex` for that index to the EF default-convention name
+  (`IX_comprobantes_compra_id_orden_compra_id_tenant`, simulating `HasDatabaseName` dropped) →
+  `ElConteoTotalDeIndicesNuevosEsExactamenteDoce` FAILED (`Assert.NotNull` on the hand-named index
+  lookup returned null) → reverted, clean → green.
+- [x] 1.37 Gate guard (**VINCULANTE**, `state.yaml` db_gate_approval): `git diff --stat main --
+  src/Ways.Infrastructure/Persistencia/Migraciones/` shows **exactly one** new migration
+  (`20260819042145_OrdenesDeCompraEtapa16.cs`/`.Designer.cs`, `WaysDbContextModelSnapshot.cs`
+  updated as expected — no other migration file); `dotnet ef migrations has-pending-model-changes`
+  clean (verified); final new index count = **12** (verified empirically against `pg_indexes` by
+  `ElConteoTotalDeIndicesNuevosEsExactamenteDoce`); **zero** data statements anywhere in the
+  migration (`grep -c "migrationBuilder.Sql(" ` on the file = 0). Gate holds, no deviation.
+- [ ] 1.38 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
+  RUN by `sdd-apply`** — `judgment-day` is an orchestrator-level dual-review protocol this executor
+  cannot invoke (the executor contract forbids launching sub-agents/reviewers). Left for the
+  orchestrator to run before merge.
+- [ ] 1.39 Branch `feat/stage16-slice1-schema` off `main`; PR; merge stacked-to-main. **PARTIAL**:
+  the worktree was already provisioned on `feat/stage16-slice1-schema` off `main` (`eecd5cf`)
+  before this phase started — branching is done. PR creation/merge is explicitly out of scope
+  (`NO pushees` instruction) — left for the orchestrator.
+- [ ] **Process note (decision 15 discipline)**: the apply-phase host process died mid mutation-
+  evidence-cycle for target #1 (first attempt); the orchestrator verified the worktree, confirmed
+  the in-flight mutation had already been reverted via `git checkout -- src/` back to commit
+  `1088a37`, and directed a clean restart of the cycle — done, all 9 targets re-run end-to-end from
+  a verified-clean tree. Separately, Docker Desktop was found down (daemon unreachable) at the
+  start of the mutation-evidence phase; restarted (`Start-Process 'Docker Desktop.exe'`), waited
+  for health, then proceeded — the one test run that hit this (target #1's first attempt) reported
+  `[FAIL]` for an infrastructure reason (`Docker is either not running or misconfigured`), not
+  genuine mutation evidence, and was discarded/re-run once Docker was confirmed healthy.
 
 **Test plan**: Domain truth table (1.20); RLS (1.21); both CHECKs both directions (1.22-1.23);
 both `23505` families incl. race exemption (1.24); the ordering trap (1.25); index-count audit
