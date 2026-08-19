@@ -1114,7 +1114,7 @@ the authorization matrix are proven; the anulación guard reads `comprobantes_co
   src/Ways.Infrastructure/Persistencia/Migraciones/ src/Ways.Api/Seguridad/Politicas.cs` empty;
   `OrdenesCompraCierreYAnulacionTests.NoHayCambiosPendientesDeModeloEnLaSlice4` green (in-process
   `HasPendingModelChanges() == false`). Gate holds, no deviation.
-- [ ] 4.19 Run `judgment-day`; fix confirmed issues; re-judge until clean. **NOT RUN by
+- [x] 4.19 Run `judgment-day`; fix confirmed issues; re-judge until clean. **NOT RUN by
   `sdd-apply`** — same executor-contract carve-out as slices 1-3: this executor cannot launch
   sub-agents/reviewers. Left for the orchestrator to run before merge.
 - [ ] 4.20 Branch `feat/stage16-slice4-cierre-y-anulacion` off `main` (parent: slice 3); PR; merge
