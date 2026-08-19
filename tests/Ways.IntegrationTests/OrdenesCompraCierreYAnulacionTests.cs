@@ -502,6 +502,57 @@ public class OrdenesCompraCierreYAnulacionTests(WaysApiFixture fixture) : IClass
         Assert.Null(persistida.Numero);
     }
 
+    /// <summary>Verifica el guard existente de slice 3
+    /// (<c>EscriturasDeOrdenDeCompra.BloquearYExigirNoAnuladaAsync</c>,
+    /// <c>ServicioDeComprasLigaduraTests.ConfirmarContraUnaOrdenAnuladaEsRechazada409SinEscribirNada</c>)
+    /// contra una OC REALMENTE anulada por el endpoint nuevo de esta slice (<c>POST /anular</c>),
+    /// no sembrada por EF como hace el test de slice 3 — el primer camino end-to-end que puede
+    /// producir esta combinación sin bypass. Igual que en slice 3, el comprobante ligado-borrador
+    /// tiene que sembrarse por EF porque no hay forma honesta de ligar un borrador a una OC ya
+    /// anulada (<c>ExigirOrdenLigableAsync</c> lo rechaza en el link).</summary>
+    [Fact]
+    public async Task ConfirmarUnaRecepcionLigadaAUnaOrdenRealmenteAnuladaPorElEndpointEsRechazada409()
+    {
+        var ctx = await PrepararAsync(nameof(ConfirmarUnaRecepcionLigadaAUnaOrdenRealmenteAnuladaPorElEndpointEsRechazada409));
+        var creada = await CrearBorradorDeOrdenAsync(ctx);
+
+        var anular = await AnularHttpAsync(ctx, creada.Id);
+        Assert.Equal(HttpStatusCode.OK, anular.StatusCode);
+        Assert.Equal(EstadoOrdenCompra.Anulada, (await LeerOrdenAsync(ctx, creada.Id)).Estado);
+
+        int idComprobante;
+        var ahora = DateTimeOffset.UtcNow;
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var comprobante = new ComprobanteCompra
+            {
+                IdTenant = ctx.IdTenant, IdProveedor = ctx.IdProveedor, IdTipoComprobante = ctx.IdTipoCFA,
+                NumeroExterno = $"0001-{Guid.NewGuid():N}"[..8], FechaComprobante = DateOnly.FromDateTime(DateTime.UtcNow),
+                IdPuntoVenta = ctx.IdPuntoVenta, IdEmpleado = ctx.IdEmpleadoAdmin,
+                Subtotal = 1000m, DescuentoTotal = 0m, Total = 1000m, IvaTotal = 210m,
+                Estado = EstadoCompra.Borrador, IdOrdenCompra = creada.Id, CreatedAt = ahora, UpdatedAt = ahora
+            };
+            db.ComprobantesCompra.Add(comprobante);
+            await db.SaveChangesAsync();
+            idComprobante = comprobante.Id;
+
+            db.ItemsComprobanteCompra.Add(new ItemComprobanteCompra
+            {
+                IdTenant = ctx.IdTenant, IdComprobanteCompra = idComprobante, Orden = 1, IdArticulo = ctx.IdArticulo,
+                Descripcion = "Item de recepción (OC anulada de verdad)", Cantidad = 5m,
+                CostoUnitario = 100m, Descuento = 0m, IdAlicuotaIva = ctx.IdAlicuotaIva21, PorcentajeIva = 21m,
+                Total = 605m
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var respuesta = await ConfirmarCompraHttpAsync(ctx, idComprobante);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Conflict, cuerpo);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal("orden_compra_anulada", problema.GetProperty("codigo").GetString());
+    }
+
     // ================================================================================================
     // task 4.10 / mutation target #33 (segunda cláusula) / decisión 20.2: RACE 1 — anular OC ×
     // confirmar el comprobante ligado, en AMBOS órdenes (interceptor). Ver doc-comment de la clase.

@@ -1130,9 +1130,14 @@ the authorization matrix are proven; the anulación guard reads `comprobantes_co
 mutation targets incl. 34a (4.14-4.17).
 
 **Verify**: `dotnet test --filter FullyQualifiedName~OrdenesCompraCierreYAnulacion|FullyQualifiedName~SuperficieDeAutorizacion`
-— 20/20 green in `OrdenesCompraCierreYAnulacionTests`, combined with slices 1-3's re-run suites
-(222/222 across all `Compras`/`OrdenesCompra`/`SuperficieDeAutorizacion`/`ManejadorDeErrores`
-integration tests; 11/11 in `Ways.Application.Tests`; 58/58 in `Ways.Domain.Tests`).
+— 21/21 green in `OrdenesCompraCierreYAnulacionTests` (includes
+`ConfirmarUnaRecepcionLigadaAUnaOrdenRealmenteAnuladaPorElEndpointEsRechazada409`, verifying the
+existing slice-3 guard `EscriturasDeOrdenDeCompra.BloquearYExigirNoAnuladaAsync` against an OC
+anulada by THIS slice's real `POST /anular` endpoint, not EF-seeded — the first end-to-end path
+that can produce this combination without bypassing `ExigirOrdenLigableAsync`), combined with
+slices 1-3's re-run suites (223/223 across all `Compras`/`OrdenesCompra`/
+`SuperficieDeAutorizacion`/`ManejadorDeErrores` integration tests; 11/11 in
+`Ways.Application.Tests`; 58/58 in `Ways.Domain.Tests`).
 
 22. **Slice 4 apply-phase decisions and deviations (decision 15 discipline).**
     - **Domain code convention for `AnularAsync`/`CerrarAsync`**: the spec's own literal contract
