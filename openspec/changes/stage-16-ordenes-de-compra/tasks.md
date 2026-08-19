@@ -201,7 +201,9 @@
       slice. El merge three-way preserva la regla en main. Regla de proceso nueva: los diffs de
       judgment se congelan con `main...HEAD`.
 
-20. **Slice 5 apply-phase decisions and deviations (decision 15 discipline).**
+24. **Slice 5 apply-phase decisions and deviations (decision 15 discipline).**
+    (Renumerada por el orquestador: el apply la registró como "20", colisionando con la 20 del
+    slice 3 — la secuencia real llegaba a 23.)
     - **Pre-load (tasks 5.4/5.12) is NOT a backend method — deviation from this file's own prior
       wording, resolved in favor of `design.md`.** `design.md:347-351` (the Web section) and its
       Testing Strategy row for "Web (vitest)" place the reposición→OC mapping — `{IdArticulo,
