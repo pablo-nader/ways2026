@@ -124,9 +124,48 @@ phases:
       (T4) engram no disponible en el executor — registro del
       orquestador.
   design:
-    status: pending
+    status: done
     artifact: design.md
     depends_on: [propose]
+    notes: >-
+      18 decisiones con call sites, 60 mutation targets, 8 slices, cero
+      DDL nuevo. Nucleo: el toque a ServicioDeVentas es EXACTO al criterio
+      del gate — una clausula en :930, la rama del snapshot en DECIDE
+      (:59/:91/:107), llamada guardeada en POSICION 1.5 (entre el turno
+      :773 y el INSERT del comprobante :781 — el comprobante es fila
+      NUEVA, no espera a nadie: presupuestos es el primer lock contendible
+      y el perdedor de la carrera de conversion no escribe NADA) y otra
+      en 1.6. DOS refutaciones al brief con codigo: (1) anular una venta
+      convertida NO revierte convertido→enviado — revertir exigiria
+      nullear id_presupuesto_origen (el partial unique rechaza la segunda
+      venta si no) borrando lo que realmente paso; el RETURNING se
+      ensancha con subquery escalar del codigo del tipo, no una columna;
+      (2) el guard never-negative de compras es CODIGO MUERTO para el
+      remito (la reversion SUMA — postura ya documentada verbatim en
+      ServicioDeVentas:1130-1135). TRAMPA CAZADA: MaterializarItems lee
+      IdAlicuotaIva/porcentaje de HOY (:1049,:103-105) — el snapshot
+      congelado exige un SEGUNDO materializador privado con
+      CalculadorDeTotales como unica autoridad aritmetica (target #30:
+      totales recomputados == header del presupuesto o 409). Clausula
+      nueva del lock order escrita: un INSERT de fila nueva NO es una
+      posicion del orden (la consolidacion y la anulacion TXR no son
+      ciclo — T10). DOS hoy deliberados: FEFO conserva el hoy UTC-naive
+      del checkout (divergencia silenciosa si el 4to site eligiera OTRO
+      lote — target #47); el vencimiento usa la zona del PV. Slices: 8
+      con las ramas de ManejadorDeErrores movidas a los DOS slices de
+      schema (precedente 16-d10) y el Estado header de doc-10 abierto en
+      1/4 y CERRADO EN EL SLICE 8 (la regla nueva del programa).
+      TENSIONES T1-T12 ARBITRADAS (Orchestrator Decision 9): TODAS
+      ratificadas a favor del design — las clave: (T3) UNA lista de
+      precios por presupuesto como invariante de servicio (si el spec
+      dijo per-line, tasks reconcilia a per-quote); (T5/T12) los
+      rechazos extra del design son guards legitimos; (T6) el perdedor
+      de la carrera de conversion QUEMA un numero de la serie de VENTA —
+      aceptado con registro (huecos legitimos, precedente OC); (T7)
+      ComprobanteEmitido GANA IdPresupuestoOrigen — corrige el "no
+      response shape changes" por dto-contract-honesty (mismo arbitraje
+      que la T7 de la 16); (T10) la clausula del lock order queda
+      escrita en el spec-side de tasks.
   tasks:
     status: pending
     artifact: tasks.md
