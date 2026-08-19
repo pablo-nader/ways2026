@@ -111,11 +111,16 @@
     the AK's implicit unique index, both `items_orden_compra` FK-support indexes,
     `ux_items_orden_compra_orden`, `ix_comprobantes_compra_orden_compra`), plus a loop asserting no
     composite index is led by `id_tenant` except the one that carries it by design
-    (`ux_ordenes_compra_numero`). Mutation evidence: committed the test first, then repeated the
-    judge's exact swap in `OrdenCompraConfiguration.cs`'s `ix_ordenes_compra_proveedor` — the new
-    test failed (`Assert.Equal` expected `["id_proveedor","id_tenant"]`, got
-    `["id_tenant","id_proveedor"]`), reverted with `git checkout -- src/`, rebuilt, full
-    `OrdenesCompraSchemaTests` green (19/19) after revert.
+    (`ux_ordenes_compra_numero`). Mutation evidence: committed the test first (`9c0b29e`), then
+    swapped the columns in `OrdenCompraConfiguration.cs`'s live EF model first — build green,
+    ALL tests still green, because the fixture applies the pre-generated migration file
+    (`20260819042145_OrdenesDeCompraEtapa16.cs`), not the live model, so an `IEntityTypeConfiguration`
+    edit alone never reaches the test database; reverted that no-op attempt. Repeated the judge's
+    exact swap on the actual DDL instead — `CreateIndex(name: "ix_ordenes_compra_proveedor", …
+    columns: new[] { "id_tenant", "id_proveedor" })` in the migration file — the new test failed
+    (`Assert.Equal` expected `["id_proveedor","id_tenant"]`, got `["id_tenant","id_proveedor"]`),
+    reverted with `git checkout -- src/`, rebuilt, full `OrdenesCompraSchemaTests` green (19/19)
+    after revert, `git status` clean.
 
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
