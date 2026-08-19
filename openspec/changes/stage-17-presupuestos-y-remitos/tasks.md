@@ -863,6 +863,52 @@ itself checks, in the same priority order. Tests: `ParaVentaDevuelveElShapeConge
 (`SuperficieDeAutorizacionTests`'s non-GET allowlist explicitly excludes GET routes from its own
 scope, verified by reading the file's own guard comment).
 
+**DEVIATION REGISTERED (judgment-day, Slice 3, juez B — 1 CRITICAL + 3 MAJOR + 1 WARNING, all
+fixed).** Four survivors, none a production bug — production was correct; the gaps were coverage
+and documentation truth:
+
+- **Target 31 (CRITICAL) / 32-33 (MAJOR)** — the three `WHERE` clauses of
+  `EscriturasDePresupuesto.MarcarConvertidoAsync` (`estado='enviado'`, `vencimiento >= $4`,
+  `id_punto_venta = $3`) survived deletion because `ResolverConversionDesdePresupuestoAsync`'s
+  pre-check eclipses them sequentially — any row reaching the guarded `UPDATE` already passed the
+  same three predicates. Fixed per mutation-proof-tests rule 3 (route below the confound):
+  `MarcarConvertidoAsyncDevuelveCeroFilasSiElEstadoYaNoEsEnviadoAlMomentoDelUpdate` /
+  `...SiHoyYaPasoElVencimiento` / `...SiElPuntoVentaNoCoincide` call
+  `EscriturasDePresupuesto.MarcarConvertidoAsync` DIRECT against a raw connection
+  (`AbrirConexionCrudaAsync`), never through `ServicioDeVentas` — each clause isolated from the
+  pre-check. Plus the TOCTOU joya,
+  `LaCarreraAnularXConvertirDejaCeroVentasYElUpdateGuardeadoRechazaConPresupuestoNoConvertible`: a
+  deterministic pause interceptor (`InterceptorDePausaEnLaSegundaTransaccion`) stops the conversion
+  right as its write transaction opens — pre-check already read `enviado` — while a real
+  `anular` commits underneath it; on resume the guarded `UPDATE` returns 0 rows and the loser gets
+  `409 presupuesto_no_convertible` with zero comprobantes created, proving the `estado` clause of
+  the guarded `UPDATE`, not the pre-check, is the real production net. Mutation evidence recorded
+  in the apply-progress artifact (delete each clause → the matching direct test + the race test go
+  red under `--no-incremental` → revert).
+- **Target 35 (MAJOR) — doc truth on POSITION 1.5.** The 1.5 doc-comment previously claimed the
+  *position* (between turno and the comprobante `INSERT`) was what kept the loser from writing
+  anything. False: the judge moved the block to right before `COMMIT` and the full suite, including
+  the interceptor-driven convertir×convertir race, stayed green. Re-documented honest in
+  `ServicioDeVentas.cs`: correctness comes from transaction ATOMICITY (any throw rolls back
+  everything already written, regardless of line position) plus the partial unique index
+  `ux_comprobantes_venta_presupuesto_origen` (DB backstop); position 1.5 is FAIL-FAST DEFENSIVE
+  (saves materializing items/stock/CC and their lock time for a conversion that's going to fail
+  anyway) — never a correctness claim. Pinned by source-text structural test (same technique as
+  `EscriturasDeOrdenDeCompraLockOrderTests`):
+  `tests/Ways.Application.Tests/Ventas/ServicioDeVentasPosicionDeConversionTests.cs` →
+  `ElBloqueDeConversionVaDespuesDelGuardDeTurnoYAntesDelInsertDelComprobantePorFailFastNoPorCorrectitud`.
+- **Target 34 (WARNING) — doc truth on the "16 queries" counter.** `ContadorDeComandos` only sees
+  EF's `ReaderExecuting[Async]` pipeline — it's blind to raw ADO run via `ExecuteScalarAsync`
+  (how `MarcarConvertidoAsync` runs), so it cannot by itself prove "zero extra statements for a
+  common sale" — it only proves the EF pipeline is unchanged (16 queries). Re-documented honest in
+  both `ServicioDeVentas.cs`'s 1.5 comment and
+  `UnaVentaComunSigueEmitiendoDieciseisConsultasConLaRamaDelSnapshotPresente`'s doc-comment
+  (`ServicioDeVentasConversionTests.cs`): the real net for the unconditional-call risk is the
+  structural guard, added as
+  `ServicioDeVentasPosicionDeConversionTests.LaLlamadaAMarcarConvertidoAsyncNuncaOcurreFueraDelGuardNuloDeIdPresupuestoOrigen`
+  (source-text: the call can only appear inside `if (plan.IdPresupuestoOrigen is { } ...)`, never
+  unconditional) — the query counter stays as evidence for the EF pipeline only, said explicitly.
+
 ---
 
 ## Slice 4: Schema remitos + ALTER TYPE aislado + ramas (PR 4)
