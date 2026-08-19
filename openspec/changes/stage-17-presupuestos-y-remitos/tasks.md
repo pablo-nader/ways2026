@@ -539,10 +539,10 @@ draft/enviar/anular/list/detail lifecycle over the schema of slice 1, own series
   **DONE** — `git status` shows zero new files under `Migraciones/`;
   `NoHayCambiosPendientesDeModeloRespectoDeLaMigracionDeLaSlice1` asserts
   `HasPendingModelChanges() == false`, green.
-- [x] 2.22 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
+- [ ] 2.22 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
   by this apply batch**: `sdd-apply` never launches Judgment Day (executor boundary,
   `skills/sdd-apply/SKILL.md`); pending the parent orchestrator.
-- [x] 2.23 Open PR #2 `feat/stage17-slice2-presupuestos-abm`, merge after a clean round. — **NOT
+- [ ] 2.23 Open PR #2 `feat/stage17-slice2-presupuestos-abm`, merge after a clean round. — **NOT
   run by this apply batch**, same reason as 2.22.
 
 **DEVIATION REGISTERED (process rule 15) — one file outside the slice's own enumerated task list
