@@ -593,6 +593,15 @@ criterion is exercised against (state.yaml). **Rollback**: the guarded call + re
 snapshot branch disappear; the checkout reverts to byte-identical pre-stage behavior; schema
 untouched.
 
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~ServicioDeVentasConversion"` — 17/17 green |
+| Runtime harness command/scenario and result | `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~VentasCheckoutTests\|FullyQualifiedName~AnulacionTests\|FullyQualifiedName~VentasAtomicidadYConcurrenciaTests"` (the three named non-regression suites) — 72/72 green; full suite `dotnet test tests/Ways.IntegrationTests` — 1476/1476 green, real Postgres 17 via Testcontainers |
+| Mutation evidence (apply-time, `--no-incremental`, reverted via `git checkout --` after each) | Target 23 (net 2 clause): removed → `UnTipoDeVentaFueraDeBandaConAfectaStockFalseEsRechazadoAunqueEsteActivo` RED (`201` instead of `400`) → reverted, green. Target 34 (position-1.5 guard, **two networks**): guard removed (unconditional call) → BOTH `UnaVentaComunSigueEmitiendoDieciseisConsultasConLaRamaDelSnapshotPresente` (this file) AND `VentasCheckoutTests.ElCheckoutEmiteUnaCantidadConstanteDeConsultasIndependienteDeLaCantidadDeLineas` (the UNEDITED sibling) turned RED together (`ErrorDominio: No existe el presupuesto 0`) → reverted, both green. Target 30 (totals-fidelity assertion): short-circuited to `if (false)` → `UnRawUpdateQueDesincronizaElTotalDelHeaderEsRechazado409PresupuestoInconsistente` RED (`201` instead of `409`) → reverted, green. Remaining targets (24-29, 31-33, 35-37) verified by code inspection against the mutation table + their dedicated test's assertion shape (not independently mutation-run this batch, given apply-time budget) |
+| Rollback boundary | `git revert` of this commit (`5902ba5`) alone: `SolicitudDeVenta`/`ComprobanteEmitido` drop their trailing optional field, `ServicioDeVentas.cs` reverts to byte-identical pre-slice behavior (the guard/branch/materializer/guarded-call disappear together), `EscriturasDePresupuesto.cs` and `ServicioDeVentasConversionTests.cs` are deleted, `ServicioDePresupuestos.ObtenerParaVentaAsync` and its route disappear. No schema touched, no other slice's file touched |
+
 - [x] 3.1 Modify `ServicioDeVentas.cs:930` — append `|| !tipo.AfectaStock` to the existing
   boolean chain (**net 2**). No signature change, no new statement, no new error code.
   *(design.md decision 1, mutation target 23)*
