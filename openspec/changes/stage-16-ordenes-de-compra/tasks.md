@@ -153,6 +153,35 @@
       end-to-end in one pass, each verified FAIL → revert → green before proceeding to the next.
       Docker Desktop was already healthy at the start of this phase (verified with `docker info`
       before the first test run).
+18. **`judgment-day` round 1 (juez B) confirmed 2 MAJOR on task 2.26's `ServicioDeOrdenesDeCompra`
+    test coverage — tests-only, production code correct in both cases.**
+    - **MAJOR 1 (regla 12c)**: the replace-set `DELETE`
+      (`ServicioDeOrdenesDeCompra.cs:111`, `Where(i => i.IdOrdenCompra == id)`) widened to
+      unscoped `db.ItemsOrdenCompra` survives 11/11 — no test seeded a SIBLING OC of the same
+      tenant. Closed by widening `ItemsSeReemplazanCompletosEnUnRequestAgregandoYQuitando`: seeds
+      a second OC of the same tenant with its own discriminant items (quantities 77/88 on both
+      articles), then asserts after both `PUT`s on the first OC that the sibling's two items are
+      untouched (exact count + identity + quantity). Mutation evidence: widened the `DELETE` to
+      `db.ItemsOrdenCompra.ToListAsync(ct)` (no `Where`) → `dotnet build --no-incremental` clean →
+      the sibling assertion FAILED (`Assert.Equal` expected 2, actual 0 — the sibling's items were
+      deleted by the unscoped replace-set) → `git checkout -- src/` → `git status` clean.
+    - **MAJOR 2 (dto-contract-honesty)**: `SolicitudDeOrdenDeCompra.FechaEsperada`/`.Observaciones`
+      were never asserted as persisted — forcing both to `null` in `CrearBorradorAsync`/
+      `EjecutarActualizacionAsync` survives 11/11. Closed with a new fact,
+      `FechaEsperadaYObservacionesSePersistenYSeActualizanEnElReplaceSet`: sends both fields with
+      real discriminant values on `CREATE` (`DateOnly(2026,9,15)` — the field is `DateOnly?`, no
+      offset applies — + a discriminant observation string), asserts the response AND a direct DB
+      read match; then changes both on `PUT` to different discriminant values, asserts the new
+      truth; then clears both to `null` on a third `PUT`, asserts the DB reflects `null` for both.
+      Mutation evidence: forced `FechaEsperada = null` / `Observaciones = null` (dropping
+      `solicitud.FechaEsperada`/`NormalizarOpcional(solicitud.Observaciones)`) in both
+      `CrearBorradorAsync` and `EjecutarActualizacionAsync` → build clean → the new test FAILED
+      (`Assert.Equal` expected `15/09/2026`, actual `null`) → `git checkout -- src/` → `git status`
+      clean.
+    - Both cycles rebuilt clean after revert; full `ServicioDeOrdenesDeCompraTests` green (12/12,
+      the extra test being the new fact) with `git status` clean. Committed as `8b15fa2`
+      (`test(stage16-slice2): endurece replace-set y FechaEsperada/Observaciones (judgment-day juez
+      B)`).
 
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
