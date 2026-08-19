@@ -1492,7 +1492,7 @@ deviation) if this slice overflows — decision 3 above.
   `OrdenesCompraLecturaTests.NoHayCambiosPendientesDeModeloRespectoDeLaMigracionDeLaSlice1`); zero
   new files under `Migraciones/` (`git diff --stat main -- src/Ways.Infrastructure/Persistencia/
   Migraciones/` empty). Gate holds, no deviation.
-- [ ] 5.19 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
+- [x] 5.19 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
   RUN by `sdd-apply`** — same executor-boundary reason as every prior slice (1.38/2.27/3.x/4.x):
   `judgment-day` is an orchestrator-level dual-review protocol this executor cannot invoke. Left for
   the orchestrator to run before merge.
