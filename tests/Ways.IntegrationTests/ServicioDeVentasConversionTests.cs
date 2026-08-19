@@ -615,15 +615,24 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
         public int? IdTenant { get; } = idTenant;
     }
 
-    /// <summary>Mutation target 34 (task 3.21, RED 1 — el guard estructural del <c>if
-    /// (plan.IdPresupuestoOrigen is { } ...)</c>): una venta SIN <c>idPresupuestoOrigen</c> tiene
+    /// <summary>Mutation target 34 (task 3.21): una venta SIN <c>idPresupuestoOrigen</c> tiene
     /// que emitir EXACTAMENTE la misma cantidad de consultas que antes de esta slice.
     /// <c>ServicioDeVentas</c> instanciado DIRECTO (mismo criterio que
     /// <c>VentasCheckoutTests.EmitirYContarConsultasAsync</c>) — sin pasar por HTTP/login, así
     /// el conteo aísla exclusivamente el checkout, sin el ruido de aprovisionamiento. Vive en ESTE
     /// archivo (co-ubicada con la rama del snapshot que introduce el riesgo), no solo en
-    /// <c>VentasCheckoutTests</c> (INTOCADO — RED 1 de esa non-regression), así que un mutante que
-    /// condiciona la rama de forma distinta a <c>is null</c> queda atrapado acá también.</summary>
+    /// <c>VentasCheckoutTests</c> (INTOCADO — RED 1 de esa non-regression).
+    ///
+    /// Honestidad documental (judgment-day slice-3, juez B, re-documentado): <c>ContadorDeComandos</c>
+    /// solo ve <c>ReaderExecuting[Async]</c> del pipeline de EF — es CIEGO a SQL crudo corrido vía
+    /// <c>ExecuteScalarAsync</c> (así corre <c>EscriturasDePresupuesto.MarcarConvertidoAsync</c>),
+    /// así que este contador por sí solo NO distingue "el bloque de conversión nunca corre" de "el
+    /// bloque corre pero su statement crudo es invisible acá" — sigue probando el pipeline EF (16
+    /// consultas, sin cambios), pero la red REAL de "cero statements extra para una venta común" es
+    /// el guard ESTRUCTURAL del <c>if (plan.IdPresupuestoOrigen is { } ...)</c>, verificado por
+    /// texto fuente en
+    /// <c>ServicioDeVentasPosicionDeConversionTests.LaLlamadaAMarcarConvertidoAsyncNuncaOcurreFueraDelGuardNuloDeIdPresupuestoOrigen</c>
+    /// (<c>tests/Ways.Application.Tests/Ventas</c>).</summary>
     [Fact]
     public async Task UnaVentaComunSigueEmitiendoDieciseisConsultasConLaRamaDelSnapshotPresente()
     {
@@ -802,5 +811,160 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
         Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
         var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
         Assert.Equal("presupuesto_no_convertible", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- judgment-day slice-3 (juez B): mutantes sobrevivientes del WHERE guardado ------------------
+
+    /// <summary>Mutation targets 31-33 (judgment-day slice-3, juez B, CRITICAL+MAJOR): las tres
+    /// cláusulas del <c>WHERE</c> de <see cref="EscriturasDePresupuesto.MarcarConvertidoAsync"/>
+    /// (<c>estado = 'enviado'</c>, <c>vencimiento >= $hoy</c>, <c>id_punto_venta = $pv</c>)
+    /// sobrevivían borradas porque <c>ResolverConversionDesdePresupuestoAsync</c> las eclipsa
+    /// secuencialmente — cualquier fila que llegue hasta el UPDATE guardado YA pasó ese
+    /// pre-chequeo con los mismos tres predicados, así que un mutante que borra una cláusula del
+    /// UPDATE nunca se nota a través del servicio completo (mutation-proof-tests regla 3: rutear
+    /// POR DEBAJO del confound). Los tres tests de acá llaman
+    /// <see cref="EscriturasDePresupuesto.MarcarConvertidoAsync"/> DIRECTO, contra una conexión
+    /// cruda (mismo patrón que <c>AbrirConexionCrudaAsync</c> usa en las pruebas de RLS de este
+    /// mismo archivo de tests), nunca a través de
+    /// <c>ServicioDeVentas</c>/<c>ResolverConversionDesdePresupuestoAsync</c> — así cada cláusula
+    /// queda probada en aislamiento, sin el pre-chequeo por delante. La carrera real (pre-check
+    /// pasa, la fila cambia DESPUÉS, el UPDATE guardado es la red) está más abajo, la JOYA.</summary>
+    [Fact]
+    public async Task MarcarConvertidoAsyncDevuelveCeroFilasSiElEstadoYaNoEsEnviadoAlMomentoDelUpdate()
+    {
+        var ctx = await PrepararAsync(nameof(MarcarConvertidoAsyncDevuelveCeroFilasSiElEstadoYaNoEsEnviadoAlMomentoDelUpdate));
+        var enviado = await CrearYEnviarAsync(ctx.Admin, ctx);
+
+        var anulacion = await ctx.Admin.PostAsync($"/api/presupuestos/{enviado.Id}/anular", null);
+        Assert.Equal(HttpStatusCode.OK, anulacion.StatusCode);
+
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        var convertido = await EscriturasDePresupuesto.MarcarConvertidoAsync(
+            conexion, null, ctx.IdTenant, enviado.Id, ctx.IdPuntoVenta,
+            DateOnly.FromDateTime(DateTime.UtcNow), DateTimeOffset.UtcNow, CancellationToken.None);
+
+        Assert.False(convertido);
+    }
+
+    /// <summary>Mutation target 32 (judgment-day slice-3, juez B): la cláusula <c>vencimiento >=
+    /// $hoy</c>, probada pasándole a <see cref="EscriturasDePresupuesto.MarcarConvertidoAsync"/> un
+    /// <c>hoyEnZonaDelPuntoVenta</c> POSTERIOR al vencimiento real — la fila sigue en
+    /// <c>enviado</c>, sin tocar por SQL, así que si esta cláusula estuviera borrada el UPDATE la
+    /// convertiría igual.</summary>
+    [Fact]
+    public async Task MarcarConvertidoAsyncDevuelveCeroFilasSiHoyYaPasoElVencimiento()
+    {
+        var ctx = await PrepararAsync(nameof(MarcarConvertidoAsyncDevuelveCeroFilasSiHoyYaPasoElVencimiento));
+        var enviado = await CrearYEnviarAsync(ctx.Admin, ctx);
+
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        var convertido = await EscriturasDePresupuesto.MarcarConvertidoAsync(
+            conexion, null, ctx.IdTenant, enviado.Id, ctx.IdPuntoVenta,
+            enviado.Vencimiento!.Value.AddDays(1), DateTimeOffset.UtcNow, CancellationToken.None);
+
+        Assert.False(convertido);
+    }
+
+    /// <summary>Mutation target 33 (judgment-day slice-3, juez B): la cláusula <c>id_punto_venta =
+    /// $pv</c>, probada pasándole a <see cref="EscriturasDePresupuesto.MarcarConvertidoAsync"/> el
+    /// PV equivocado — el presupuesto sigue vigente y sin tocar en <c>ctx.IdPuntoVenta</c>.</summary>
+    [Fact]
+    public async Task MarcarConvertidoAsyncDevuelveCeroFilasSiElPuntoVentaNoCoincide()
+    {
+        var ctx = await PrepararAsync(nameof(MarcarConvertidoAsyncDevuelveCeroFilasSiElPuntoVentaNoCoincide));
+        var enviado = await CrearYEnviarAsync(ctx.Admin, ctx, idPuntoVenta: ctx.IdPuntoVenta);
+
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+        var convertido = await EscriturasDePresupuesto.MarcarConvertidoAsync(
+            conexion, null, ctx.IdTenant, enviado.Id, ctx.IdPuntoVenta2,
+            DateOnly.FromDateTime(DateTime.UtcNow), DateTimeOffset.UtcNow, CancellationToken.None);
+
+        Assert.False(convertido);
+    }
+
+    /// <summary>Pausa la SEGUNDA transacción abierta por el <see cref="DbContext"/> de la
+    /// conversión (la de <c>EjecutarTransaccionAsync</c> — la primera es la mini-transacción del
+    /// asignador de número) justo al abrirse, ANTES de que corra
+    /// <see cref="EscriturasDePresupuesto.MarcarConvertidoAsync"/>. Variante de un solo
+    /// rendez-vous de <see cref="InterceptorDeRendezvousEnLaSegundaTransaccion"/> (arriba, task
+    /// 3.17): acá no empareja dos transacciones concurrentes, solo bloquea UNA hasta que el test la
+    /// libera — así se puede correr una operación distinta (la anulación) a completitud, con commit
+    /// real, mientras la conversión sigue parada.</summary>
+    private sealed class InterceptorDePausaEnLaSegundaTransaccion : DbTransactionInterceptor
+    {
+        private readonly HashSet<object> _contextosVistos = [];
+        private readonly TaskCompletionSource _pausada = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _reanudar = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task EsperarPausaAsync() => _pausada.Task;
+
+        public void Reanudar() => _reanudar.TrySetResult();
+
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
+            CancellationToken cancellationToken = default)
+        {
+            bool esLaSegundaTransaccionDeEsteContexto;
+            lock (_contextosVistos)
+            {
+                esLaSegundaTransaccionDeEsteContexto = eventData.Context is not null
+                    && !_contextosVistos.Add(eventData.Context);
+            }
+
+            if (esLaSegundaTransaccionDeEsteContexto)
+            {
+                _pausada.TrySetResult();
+                await _reanudar.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            }
+
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
+        }
+    }
+
+    /// <summary>LA JOYA (judgment-day slice-3, juez B, targets 31/35): la carrera TOCTOU real —
+    /// anular×convertir — probada de punta a punta con el interceptor determinista de arriba. El
+    /// pre-chequeo de <c>ResolverConversionDesdePresupuestoAsync</c> lee <c>enviado</c> bien atrás,
+    /// ANTES de que exista cualquier transacción — en ese momento la anulación todavía no corrió.
+    /// La conversión PAUSA justo al abrir su transacción de escritura; mientras está parada, la
+    /// anulación corre y COMITEA completo, dejando el presupuesto en <c>anulado</c>. Al reanudar,
+    /// el UPDATE guardado (bajo la MISMA cláusula <c>estado = 'enviado'</c> del target 31) ya no
+    /// matchea la fila — 0 filas, <c>ExigirCausaDelRechazoAsync</c> bajo <c>FOR UPDATE</c> deriva
+    /// <c>presupuesto_no_convertible</c> (el estado real, <c>anulado</c>, no es <c>convertido</c>
+    /// ni <c>enviado</c>), y CERO venta se crea — la prueba de que la cláusula <c>estado</c> del
+    /// UPDATE guardado es la RED REAL de producción, nunca el pre-chequeo (que para esta fila YA
+    /// había pasado).</summary>
+    [Fact]
+    public async Task LaCarreraAnularXConvertirDejaCeroVentasYElUpdateGuardeadoRechazaConPresupuestoNoConvertible()
+    {
+        var ctx = await PrepararAsync(nameof(LaCarreraAnularXConvertirDejaCeroVentasYElUpdateGuardeadoRechazaConPresupuestoNoConvertible));
+        var enviado = await CrearYEnviarAsync(ctx.Admin, ctx);
+
+        var interceptor = new InterceptorDePausaEnLaSegundaTransaccion();
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var clienteConversion = await LoginAsync(factory, ctx);
+        using var clienteAnular = await LoginAsync(factory, ctx);
+
+        var conversion = SolicitudDeConversion(ctx, enviado.Id, importe: 200m);
+        var tareaConversion = clienteConversion.PostAsJsonAsync("/api/ventas", conversion);
+
+        await interceptor.EsperarPausaAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        var anulacion = await clienteAnular.PostAsync($"/api/presupuestos/{enviado.Id}/anular", null);
+        var cuerpoAnulacion = await anulacion.Content.ReadAsStringAsync();
+        Assert.True(anulacion.StatusCode == HttpStatusCode.OK, cuerpoAnulacion);
+
+        interceptor.Reanudar();
+        var respuestaConversion = await tareaConversion;
+        var cuerpoConversion = await respuestaConversion.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.Conflict, respuestaConversion.StatusCode);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpoConversion, OpcionesJson);
+        Assert.Equal("presupuesto_no_convertible", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.ComprobantesVenta.CountAsync(c => c.IdPresupuestoOrigen == enviado.Id));
+        Assert.Equal(EstadoPresupuesto.Anulado, (await db.Presupuestos.FirstAsync(p => p.Id == enviado.Id)).Estado);
     }
 }
