@@ -391,7 +391,7 @@ overflows. **Done** = tests green + `judgment-day` clean round + PR merged.
   `MapEnum<EstadoPresupuesto>("estado_presupuesto")` alongside the existing
   `MapEnum<EstadoOrdenCompra>` line, matching the precedent each already carries from stage 16.
   Full suite confirmed green after both fixes: **1438/1438**.
-- [ ] 1.42 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 1.42 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round. — **NOT run by this apply batch**: `sdd-apply` never launches Judgment Day (the
   parent orchestrator runs it after apply, per the executor boundary in
   `skills/sdd-apply/SKILL.md`).
