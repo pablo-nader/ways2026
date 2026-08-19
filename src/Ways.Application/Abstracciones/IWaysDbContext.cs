@@ -123,6 +123,14 @@ public interface IWaysDbContext
     DbSet<OrdenCompra> OrdenesCompra { get; }
     DbSet<ItemOrdenCompra> ItemsOrdenCompra { get; }
 
+    // stage-17-presupuestos-y-remitos, Slice 1 (task 1.17, design.md:448): expuestos desde esta
+    // slice — a diferencia del "modelo adelantado a la migración" de OrdenCompra/ItemOrdenCompra
+    // arriba (sin consumidor de Application en su propio lote), acá el task list del slice pide
+    // explícitamente los dos `DbSet` en esta interfaz ya en slice 1. `ServicioDePresupuestos`
+    // (slice 2) es el primer consumidor real.
+    DbSet<Presupuesto> Presupuestos { get; }
+    DbSet<ItemPresupuesto> ItemsPresupuesto { get; }
+
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>
     /// y <c>BeginTransactionAsync</c> no tienen un equivalente más angosto en este proyecto.

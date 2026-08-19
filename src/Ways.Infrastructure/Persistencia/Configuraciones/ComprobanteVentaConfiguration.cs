@@ -55,6 +55,11 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
         builder.Property(c => c.IdCliente).HasColumnName("id_cliente").IsRequired();
         builder.Property(c => c.IdComprobanteAsociado).HasColumnName("id_comprobante_asociado");
 
+        // stage-17-presupuestos-y-remitos (proposal §G): la columna ya existía NULL desde esta
+        // migración de slice 1 — nullable, metadata-only, sin rewrite de tabla. FK 23 e índice
+        // 29 se declaran más abajo.
+        builder.Property(c => c.IdPresupuestoOrigen).HasColumnName("id_presupuesto_origen");
+
         builder.Property(c => c.Subtotal).HasColumnName("subtotal").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.DescuentoTotal).HasColumnName("descuento_total").HasColumnType("numeric(14,2)").IsRequired();
         builder.Property(c => c.Total).HasColumnName("total").HasColumnType("numeric(14,2)").IsRequired();
@@ -103,6 +108,15 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
         // soporte de fk_comprobantes_venta_turno, además el acceso de la derivación
         // (LectorDeMovimientosDelTurno, Slice 4) para "pagos/vueltos de este turno".
         builder.HasIndex(c => new { c.IdTurnoCaja, c.IdTenant }).HasDatabaseName("ix_comprobantes_venta_turno");
+
+        // Index 29 (proposal §G): UNIQUE PARCIAL — la garantía de 1:1 de conversión (decisión 8)
+        // Y el índice de soporte de FK 23 a la vez, declarada explícita con nombre doc-10 en vez
+        // de dejar que EF autogenere una PascalCase (trampa documentada en
+        // NumeracionComprobanteConfiguration.cs:44-49). Mismas columnas que la FK, mismo orden.
+        builder.HasIndex(c => new { c.IdPresupuestoOrigen, c.IdTenant })
+            .HasDatabaseName("ux_comprobantes_venta_presupuesto_origen")
+            .IsUnique()
+            .HasFilter("id_presupuesto_origen IS NOT NULL");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -164,6 +178,19 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             .HasForeignKey(c => new { c.IdTurnoCaja, c.IdTenant })
             .HasPrincipalKey(t => new { t.Id, t.IdTenant })
             .HasConstraintName("fk_comprobantes_venta_turno")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // FK 23 (proposal §G): compuesta, nullable, MATCH SIMPLE (default) — con
+        // id_presupuesto_origen NULL la constraint no se chequea (100% del tráfico anterior a
+        // esta etapa, permanentemente legítimo). Ninguna CHECK ata esta columna a nada: el
+        // acuerdo presupuesto↔venta (mismo tenant/cliente, no vencido, todavía enviado) es una
+        // regla cross-table que el esquema no puede expresar — la aplica el UPDATE guardado de
+        // EscriturasDePresupuesto.MarcarConvertidoAsync (slice 3).
+        builder.HasOne<Presupuesto>()
+            .WithMany()
+            .HasForeignKey(c => new { c.IdPresupuestoOrigen, c.IdTenant })
+            .HasPrincipalKey(p => new { p.Id, p.IdTenant })
+            .HasConstraintName("fk_comprobantes_venta_presupuesto_origen")
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

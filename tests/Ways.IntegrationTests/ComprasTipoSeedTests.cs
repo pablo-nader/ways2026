@@ -69,8 +69,16 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal(CodigosDeVentaEsperados.OrderBy(c => c), venta);
         Assert.Equal(CodigosDeCompraEsperados.OrderBy(c => c), compra);
 
-        var todosActivos = await db.TiposComprobante.AllAsync(t => t.Activo);
-        Assert.True(todosActivos);
+        // stage-17-presupuestos-y-remitos (Slice 1, net 1b del PRE latente): PRE nace inactivo
+        // a propósito desde esta etapa — la aserción "todos activos" de antes de esta etapa ya
+        // no es cierta por diseño (auxiliary-catalogs/spec.md: "A freshly seeded database has
+        // PRE inactive"). Todo lo demás sigue naciendo activo — esta prueba fija el alcance
+        // EXACTO de la desactivación: solo PRE, ningún otro código de venta/compra.
+        var codigosInactivos = await db.TiposComprobante
+            .Where(t => !t.Activo)
+            .Select(t => t.Codigo)
+            .ToListAsync();
+        Assert.Equal(["PRE"], codigosInactivos);
     }
 
     [Fact]
@@ -116,6 +124,7 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                     // stage-16-ordenes-de-compra, Slice 1: mismo gap, ahora con
                     // estado_orden_compra (slice 1).
                     npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
+                    npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                 })
                 .Options;
 

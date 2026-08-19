@@ -733,15 +733,32 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             idArticuloSinCosto = await InsertarArticuloAsync($"{nombre}-sin-costo", null);
         }
 
-        var comprobante = new ComprobanteVenta
+        // stage-17-presupuestos-y-remitos: esquema todavía en stage 8 acá, ANTES de
+        // id_presupuesto_origen (etapa 17) — SQL crudo con la lista de columnas de ANTES de esa
+        // etapa, nunca vía EF (que, con el modelo HEAD, incluiría la columna nueva en el INSERT
+        // y rompería contra el esquema viejo con 42703, mismo motivo que la trampa ya documentada
+        // para articulos/items_comprobante_venta en este mismo archivo).
+        int idComprobante;
+        await using (var crudaComprobante = new NpgsqlConnection(cadenaConexion))
         {
-            IdTenant = tenant.Id, IdTipoComprobante = tipoTx.Id, Numero = 1, Fecha = ahora,
-            IdPuntoVenta = puntoVenta.Id, IdEmpleado = usuario.Id, IdCliente = cliente.Id,
-            Subtotal = 200m, DescuentoTotal = 0m, Total = 200m, Estado = EstadoComprobante.Emitido,
-            CreatedAt = ahora, UpdatedAt = ahora
-        };
-        db.ComprobantesVenta.Add(comprobante);
-        await db.SaveChangesAsync();
+            await crudaComprobante.OpenAsync();
+            await using var comando = crudaComprobante.CreateCommand();
+            comando.CommandText =
+                "INSERT INTO comprobantes_venta " +
+                "(id_tenant, id_tipo_comprobante, numero, fecha, id_punto_venta, id_turno_caja, id_empleado, " +
+                " id_cliente, id_comprobante_asociado, subtotal, descuento_total, total, neto_gravado, iva_total, " +
+                " direccion_entrega, observaciones, estado, created_at, updated_at, deleted_at) " +
+                "VALUES ($1, $2, 1, $3, $4, NULL, $5, $6, NULL, 200, 0, 200, NULL, NULL, NULL, NULL, " +
+                " 'emitido'::estado_comprobante, $3, $3, NULL) " +
+                "RETURNING id_comprobante_venta";
+            comando.Parameters.Add(new NpgsqlParameter { Value = tenant.Id });
+            comando.Parameters.Add(new NpgsqlParameter { Value = tipoTx.Id });
+            comando.Parameters.Add(new NpgsqlParameter { Value = ahora });
+            comando.Parameters.Add(new NpgsqlParameter { Value = puntoVenta.Id });
+            comando.Parameters.Add(new NpgsqlParameter { Value = usuario.Id });
+            comando.Parameters.Add(new NpgsqlParameter { Value = cliente.Id });
+            idComprobante = (int)(await comando.ExecuteScalarAsync())!;
+        }
 
         // Esquema todavía en stage 8 acá: SQL crudo, sin las columnas de costo (no existen todavía).
         await using (var cruda = new NpgsqlConnection(cadenaConexion))
@@ -758,7 +775,7 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
                     "VALUES ($1, $2, (SELECT COALESCE(MAX(orden), 0) + 1 FROM items_comprobante_venta " +
                     "WHERE id_comprobante_venta = $2), $3, $4, $5, $6, $7, 0, 1, 100, 0, 100, now(), now())";
                 comando.Parameters.Add(new NpgsqlParameter { Value = tenant.Id });
-                comando.Parameters.Add(new NpgsqlParameter { Value = comprobante.Id });
+                comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
                 comando.Parameters.Add(new NpgsqlParameter { Value = (object?)idArticulo ?? DBNull.Value });
                 comando.Parameters.Add(new NpgsqlParameter { Value = descripcion });
                 comando.Parameters.Add(new NpgsqlParameter { Value = area.Id });
@@ -772,6 +789,6 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             await InsertarItemAsync(null, "linea-concepto-libre");
         }
 
-        return (comprobante.Id, idArticuloConCosto, idArticuloSinCosto);
+        return (idComprobante, idArticuloConCosto, idArticuloSinCosto);
     }
 }

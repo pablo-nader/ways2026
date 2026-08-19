@@ -64,27 +64,39 @@ public class InicializadorDeBaseDeDatos(
     /// porque no existía otra clase con camino de seed.
     /// <c>ux_tipos_comprobante_codigo</c> es UNIQUE sobre <c>codigo</c> SOLO (sin <c>clase</c>),
     /// así que el prefijo <c>C-</c> es BINDING, no cosmético (design decisión 7, "the key gate
-    /// finding"): sin él, un código de compra podría colisionar con uno de venta.</summary>
-    private static readonly (ClaseComprobante Clase, string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock)[] TiposComprobanteBase =
+    /// finding"): sin él, un código de compra podría colisionar con uno de venta.
+    ///
+    /// stage-17-presupuestos-y-remitos (Slice 1, proposal decisión 2, gate §I, **net 1b del
+    /// PRE latente**): campo <c>Activo</c> explícito por fila — <c>false</c> únicamente para
+    /// <c>PRE</c>, <c>true</c> para el resto. Sin este campo, una base sembrada FRESCA reabre el
+    /// hueco: el data statement 1 de la migración (<c>UPDATE ... WHERE codigo = 'PRE'</c>) solo
+    /// corre contra filas EXISTENTES, y el seeder corre después de las migraciones, contra una
+    /// base VACÍA (<c>:432</c>) — sin el <c>Activo = false</c> de acá, el `PRE` recién sembrado
+    /// quedaría activo de nuevo. Net 1 (la migración) y net 1b (este seed) se prueban
+    /// INDEPENDIENTEMENTE (mutation targets 10/11, task 1.38/1.39): remover cualquiera de los
+    /// dos, solo, tiene que fallar su propio test.</summary>
+    private static readonly (ClaseComprobante Clase, string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock, bool Activo)[] TiposComprobanteBase =
     [
-        (ClaseComprobante.Venta, "FA", "Factura A", 'A', 1, true, true, true),
-        (ClaseComprobante.Venta, "FB", "Factura B", 'B', 1, false, true, true),
-        (ClaseComprobante.Venta, "FC", "Factura C", 'C', 1, false, true, true),
-        (ClaseComprobante.Venta, "NCA", "Nota de Crédito A", 'A', -1, true, true, true),
-        (ClaseComprobante.Venta, "NCB", "Nota de Crédito B", 'B', -1, false, true, true),
-        (ClaseComprobante.Venta, "NCC", "Nota de Crédito C", 'C', -1, false, true, true),
-        (ClaseComprobante.Venta, "NDA", "Nota de Débito A", 'A', 1, true, true, true),
-        (ClaseComprobante.Venta, "TX", "Ticket X", 'X', 1, false, false, true),
-        (ClaseComprobante.Venta, "NCX", "Nota de Crédito X", 'X', -1, false, false, true),
-        (ClaseComprobante.Venta, "PRE", "Presupuesto", null, 1, false, false, false),
-        (ClaseComprobante.Venta, "RC", "Recibo de cobranza", null, 1, false, false, false),
+        (ClaseComprobante.Venta, "FA", "Factura A", 'A', 1, true, true, true, true),
+        (ClaseComprobante.Venta, "FB", "Factura B", 'B', 1, false, true, true, true),
+        (ClaseComprobante.Venta, "FC", "Factura C", 'C', 1, false, true, true, true),
+        (ClaseComprobante.Venta, "NCA", "Nota de Crédito A", 'A', -1, true, true, true, true),
+        (ClaseComprobante.Venta, "NCB", "Nota de Crédito B", 'B', -1, false, true, true, true),
+        (ClaseComprobante.Venta, "NCC", "Nota de Crédito C", 'C', -1, false, true, true, true),
+        (ClaseComprobante.Venta, "NDA", "Nota de Débito A", 'A', 1, true, true, true, true),
+        (ClaseComprobante.Venta, "TX", "Ticket X", 'X', 1, false, false, true, true),
+        (ClaseComprobante.Venta, "NCX", "Nota de Crédito X", 'X', -1, false, false, true, true),
+        // stage-17: PRE nace desactivado en el seed (net 1b) — el hallazgo del "PRE latente"
+        // (explore.md): un tipo activo, afecta_stock=false, colaba como venta fantasma.
+        (ClaseComprobante.Venta, "PRE", "Presupuesto", null, 1, false, false, false, false),
+        (ClaseComprobante.Venta, "RC", "Recibo de cobranza", null, 1, false, false, false, true),
 
         // stage-8-compras-transferencias-inventario (design decisión 12/7 del proposal): solo
         // tres tipos — notas de crédito de proveedor están fuera de alcance (anulación es la
         // única reversión). es_fiscal=false: nunca EMITIMOS la factura del proveedor.
-        (ClaseComprobante.Compra, "C-FA", "Factura A de compra", 'A', 1, true, false, true),
-        (ClaseComprobante.Compra, "C-FB", "Factura B de compra", 'B', 1, false, false, true),
-        (ClaseComprobante.Compra, "C-FC", "Factura C de compra", 'C', 1, false, false, true)
+        (ClaseComprobante.Compra, "C-FA", "Factura A de compra", 'A', 1, true, false, true, true),
+        (ClaseComprobante.Compra, "C-FB", "Factura B de compra", 'B', 1, false, false, true, true),
+        (ClaseComprobante.Compra, "C-FC", "Factura C de compra", 'C', 1, false, false, true, true)
     ];
 
     public async Task EjecutarAsync(SemillaRoot semilla, CancellationToken ct = default)
@@ -441,6 +453,7 @@ public class InicializadorDeBaseDeDatos(
                 DiscriminaIva = t.DiscriminaIva,
                 EsFiscal = t.EsFiscal,
                 AfectaStock = t.AfectaStock,
+                Activo = t.Activo,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             }));
