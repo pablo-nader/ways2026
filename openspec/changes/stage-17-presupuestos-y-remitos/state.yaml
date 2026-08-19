@@ -102,9 +102,27 @@ phases:
     artifact: proposal.md
     depends_on: [explore]
   spec:
-    status: pending
+    status: done
     artifact: specs/
     depends_on: [propose]
+    notes: >-
+      6 archivos: presupuestos NUEVA (12 req / 24 esc), remitos NUEVA
+      (9 / 22), comprobantes-venta delta (4 ADDED + 1 MODIFIED / 13),
+      stock delta (3 MODIFIED — la garantia a CUATRO write sites, el
+      noveno motivo, el schema con id_remito / 15), lotes-y-vencimientos
+      delta (FEFO ampliado a lineas de remito / 7), auxiliary-catalogs
+      delta (PRE inactivo + TXR / 4). No tocadas verificadas contra la
+      lista explicita del proposal. CUATRO TENSIONES ARBITRADAS
+      (Orchestrator Decision 8 del change): (T1) anular un presupuesto
+      convertido = 409 RATIFICADO — terminalidad de la decision 9,
+      patron de la anulada de OC; (T2) el escenario de doble-anulacion
+      de remito FALTA — se agrega via tasks como paridad con
+      comprobantes-venta; (T3) la composicion TXR-anulacion (loop de
+      items vacio + pagos/CC no vacios) NO queda "plausible por
+      construccion": tasks exige escenario/test discriminante propio —
+      leccion del slice 3 de la 16, las composiciones se prueban;
+      (T4) engram no disponible en el executor — registro del
+      orquestador.
   design:
     status: pending
     artifact: design.md
