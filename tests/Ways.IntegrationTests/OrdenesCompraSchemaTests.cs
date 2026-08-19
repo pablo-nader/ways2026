@@ -740,29 +740,6 @@ public class OrdenesCompraSchemaTests(WaysApiFixture fixture) : IClassFixture<Wa
         Assert.Equal("fk_items_orden_compra_orden_compra", excepcion.ConstraintName);
     }
 
-    /// <summary><c>ManejadorDeErrores.cs</c>: smoke test de que los nombres de FK nuevos siguen
-    /// el prefijo genérico <c>fk_</c> que la clasificación por prefijo ya cubre sin ningún caso
-    /// hardcodeado adicional (excepto FK 9, que sí lo tiene por ser client-reachable — probado
-    /// aparte en slice 3, `ExigirOrdenLigableAsync`).</summary>
-    [Fact]
-    public void LosNombresDeFkNuevosDeOrdenesDeCompraEmpiezanConElPrefijoGenericoFk()
-    {
-        string[] nombres =
-        [
-            "fk_ordenes_compra_tenant",
-            "fk_ordenes_compra_punto_venta",
-            "fk_ordenes_compra_proveedor",
-            "fk_ordenes_compra_empleado",
-            "fk_ordenes_compra_empleado_cierre",
-            "fk_items_orden_compra_tenant",
-            "fk_items_orden_compra_orden_compra",
-            "fk_items_orden_compra_articulo",
-            "fk_comprobantes_compra_orden_compra"
-        ];
-
-        Assert.All(nombres, n => Assert.StartsWith("fk_", n));
-    }
-
     private async Task<int> InsertarBorradorAsync(Escenario e)
     {
         await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", e.IdTenant);
