@@ -620,119 +620,308 @@ green + `judgment-day` clean round + PR merged.
 call + confirm×confirm race) / `3b` (anulación call + estado regression + anular×confirmar race)
 if this slice overflows — decision 3 above.
 
-- [ ] 3.1 Create `src/Ways.Application/Compras/EscriturasDeOrdenDeCompra.cs` — static class,
+- [x] 3.1 Create `src/Ways.Application/Compras/EscriturasDeOrdenDeCompra.cs` — static class,
   `ProyectarEstadoAsync` (lock → short-circuit → derive → conditional `UPDATE … RETURNING`, 3
   statements) and `BloquearYExigirNoAnuladaAsync` (defense-in-depth guard). *(design.md:78-99,
   decisions 1-2)*
-- [ ] 3.2 Same file, statement 1: `SELECT estado::text, (id_empleado_cierre IS NOT NULL) FOR
+- [x] 3.2 Same file, statement 1: `SELECT estado::text, (id_empleado_cierre IS NOT NULL) FOR
   UPDATE`; `anulada` OR manual close ⇒ return **without** statements 2/3. *(design.md:102-108,
   mutation targets #18, #26, #27)*
-- [ ] 3.3 Same file, statement 2: the derivation CTE — `pedido`/`recibido` grouped by
+- [x] 3.3 Same file, statement 2: the derivation CTE — `pedido`/`recibido` grouped by
   `id_articulo` on **both** sides, `c.estado = 'confirmada'`, `deleted_at IS NULL` on both joined
   tables, `algoRecibido` sourced from the **reception** side. *(design.md:110-129, mutation targets
   #22-#25)*
-- [ ] 3.4 Same file, statement 3: `UPDATE ordenes_compra SET estado, fecha_cierre (CASE, regresión
+- [x] 3.4 Same file, statement 3: `UPDATE ordenes_compra SET estado, fecha_cierre (CASE, regresión
   limpia NULL), updated_at WHERE … AND estado = $anterior RETURNING`, **skipped** when projected ==
   current. *(design.md:131-139, mutation targets #19, #28)*
-- [ ] 3.5 Modify `ServicioDeCompras.cs`'s `ConfirmarHeaderAsync` — widen `RETURNING` to add
+- [x] 3.5 Modify `ServicioDeCompras.cs`'s `ConfirmarHeaderAsync` — widen `RETURNING` to add
   `id_orden_compra`. *(design.md:44-46, mutation target #20)*
-- [ ] 3.6 Modify `ServicioDeCompras.cs`'s `MarcarAnuladaAsync` — same widening.
+- [x] 3.6 Modify `ServicioDeCompras.cs`'s `MarcarAnuladaAsync` — same widening.
   *(design.md:44-46)*
-- [ ] 3.7 Modify `ServicioDeCompras.cs`'s `EjecutarConfirmarAsync` — after step 1 (header lock),
+- [x] 3.7 Modify `ServicioDeCompras.cs`'s `EjecutarConfirmarAsync` — after step 1 (header lock),
   before lotes: `if (encabezado.IdOrdenCompra is { } idOc) { BloquearYExigirNoAnuladaAsync; }` at
-  lock position 2, before `proveedores`. *(design.md:214-221, mutation targets #21, #29)*
-- [ ] 3.8 Modify `ServicioDeCompras.cs`'s `EjecutarAnulacionAsync` — same guarded call at position
+  lock position 2, before `proveedores`. *(design.md:214-221, mutation targets #21, #29)* —
+  **DEVIATION registered (decision 20 below)**: the literal pinned signatures (design's Interfaces/
+  Contracts — `BloquearYExigirNoAnuladaAsync` has NO `momento` parameter) mean this call site issues
+  **both** `BloquearYExigirNoAnuladaAsync` (its own `SELECT … FOR UPDATE`) **and then**
+  `ProyectarEstadoAsync` (which takes the **same** row lock again as its own statement 1) — two
+  redundant-but-safe re-locks of the same row within the transaction, not one shared lock. Postgres
+  re-acquiring `FOR UPDATE` on a row already locked by the same transaction is a documented no-op
+  (re-verifies visibility, does not block, cannot deadlock against itself); this reading matches the
+  two separate public method signatures design pins verbatim and their doc-comment framing ("ANTES
+  DE QUE LA PROYECCIÓN ESCRIBA").
+- [x] 3.8 Modify `ServicioDeCompras.cs`'s `EjecutarAnulacionAsync` — same guarded call at position
   2, after the (unmoved) audit step. *(design.md:229-236)*
-- [ ] 3.9 Modify `ServicioDeCompras.cs`'s draft path (both `CrearBorradorAsync` and
+- [x] 3.9 Modify `ServicioDeCompras.cs`'s draft path (both `CrearBorradorAsync` and
   `ActualizarBorradorAsync`) — accept `idOrdenCompra`, call `ExigirOrdenLigableAsync` (`SELECT …
   FOR SHARE`) validating tenant + proveedor + punto de venta + linkable estado
   (`enviada`/`recibida_parcial`/`cerrada`; refuse `borrador` → `orden_compra_no_enviada` 409,
   `anulada` → `orden_compra_anulada` 409). *(design.md:63, conflict #2 above, mutation target #30)*
-- [ ] 3.10 Modify `src/Ways.Api/Endpoints/ComprasEndpoints.cs` — `SolicitudDeCompra` gains `int?
-  IdOrdenCompra`; **no route/policy change**. *(design.md:206-208)*
-- [ ] 3.11 Modify `ComprasEndpoints.cs`'s response contract — `CompraDetalle` gains `int?
+- [x] 3.10 Modify `src/Ways.Application/Compras/Contratos.cs` — `SolicitudDeCompra` gains `int?
+  IdOrdenCompra`; **no route/policy change**. *(design.md:206-208)* — **DEVIATION (cosmetic)**: the
+  field lives in `Contratos.cs` (the actual repo filename for these DTOs), not
+  `ComprasEndpoints.cs` as the task literally names — `ComprasEndpoints.cs` itself needed zero
+  changes since the endpoint already threads the whole `SolicitudDeCompra`/`CompraDetalle` record
+  through unmodified.
+- [x] 3.11 Modify `Contratos.cs`'s response contract — `CompraDetalle` gains `int?
   IdOrdenCompra`. *(design.md:206-208, conflict #4 above)*
-- [ ] 3.12 [P] Integration — **binding gate test (a): zero-extra-statements**. A confirm with
-  `id_orden_compra IS NULL` issues the exact pre-stage command count; existing
-  `ComprasConfirmarTests`/`ComprasAnularTests` green and **unedited** in the diff.
-  *(comprobantes-compra/spec.md:50-54, 75-79; design.md, Testing Strategy)*
-- [ ] 3.13 [P] Integration — a borrador draft links to a matching (`enviada`) OC; persisted.
+- [x] 3.12 [P] Integration — **binding gate test (a): zero-extra-statements**.
+  `UnConfirmSinOrdenLigadaNoTocaNingunaOrdenDeCompraExistente` (behavioral: a sibling OC's `estado`/
+  `updated_at` stay byte-identical) + `EscriturasDeOrdenDeCompraLockOrderTests.
+  LasLlamadasAEscriturasDeOrdenDeCompraEnConfirmarNuncaOcurrenFueraDelGuardNulo` (structural: the
+  calls never appear outside the null-check guard). `ComprasLifecycleTests`/
+  `ComprasAnulacionYConcurrenciaTests` green and **unedited** in the diff (verified: 87/87, `git
+  status` shows neither file touched). *(comprobantes-compra/spec.md:50-54, 75-79; design.md,
+  Testing Strategy)* — **DEVIATION registered (decision 20 below)**: a literal EF
+  `DbCommandInterceptor`/`ContadorDeComandos` "command count" is structurally blind to this slice's
+  raw-ADO statements (same empirically-proven limitation `ServicioDeComprasLockOrderTests`'s own
+  doc-comment already recorded for the lock-order proof) — `mutation-proof-tests` rule 3 escape
+  hatch applied, same as the one task 3.24 pre-authorized.
+- [x] 3.13 [P] Integration — a borrador draft links to a matching (`enviada`) OC; persisted.
   *(comprobantes-compra/spec.md:14-17)*
-- [ ] 3.14 [P] Integration — a mismatched proveedor/PV/tenant cannot link, refused before any
+- [x] 3.14 [P] Integration — a mismatched proveedor/PV/tenant cannot link, refused before any
   write. *(ordenes-de-compra/spec.md:196-204, comprobantes-compra/spec.md:19-22)*
-- [ ] 3.15 [P] Integration — linking to a `borrador` OC ⇒ `409 orden_compra_no_enviada`; linking to
+- [x] 3.15 [P] Integration — linking to a `borrador` OC ⇒ `409 orden_compra_no_enviada`; linking to
   an `anulada` OC ⇒ `409 orden_compra_anulada`; linking to a `cerrada` OC succeeds. *(conflict #2
   above)*
-- [ ] 3.16 [P] Integration — the link is frozen once confirmed; `CompraDetalle.IdOrdenCompra`
+- [x] 3.16 [P] Integration — the link is frozen once confirmed; `CompraDetalle.IdOrdenCompra`
   round-trips exactly what was set at draft time. *(comprobantes-compra/spec.md:24-27, conflict #4
   above)*
-- [ ] 3.17 [P] Integration — confirming a linked reception moves the OC to `recibida_parcial` in
+- [x] 3.17 [P] Integration — confirming a linked reception moves the OC to `recibida_parcial` in
   the same transaction. *(ordenes-de-compra/spec.md:109-112, comprobantes-compra/spec.md:39-43)*
-- [ ] 3.18 [P] Integration — confirming the remainder closes the OC automatically,
+- [x] 3.18 [P] Integration — confirming the remainder closes the OC automatically,
   `id_empleado_cierre IS NULL`. *(ordenes-de-compra/spec.md:114-117)*
-- [ ] 3.19 [P] Integration — confirming against an `anulada` OC is refused `409
+- [x] 3.19 [P] Integration — confirming against an `anulada` OC is refused `409
   orden_compra_anulada`, no write. *(ordenes-de-compra/spec.md:185-188, comprobantes-
   compra/spec.md:45-48)*
-- [ ] 3.20 [P] Integration — annulling the only reception of an automatically-closed OC returns it
+- [x] 3.20 [P] Integration — annulling the only reception of an automatically-closed OC returns it
   to `enviada`. *(ordenes-de-compra/spec.md:119-122, comprobantes-compra/spec.md:65-68)*
-- [ ] 3.21 [P] Integration — **derivation fidelity** (rule 11): two OC lines of one artículo (3+4
-  ⇒ 7 pedidas), a reception splitting it (2 then 5), an artículo received but never ordered, an
-  over-delivery (8 against 7), a soft-deleted reception, a linked `borrador` reception, a reception
-  of another OC of the same proveedor — every `Recibida`/`Pendiente` asserted per artículo, never a
-  fresh 1-line/1-reception seed. *(design.md, Testing Strategy; ordenes-de-compra/spec.md:124-129;
-  decision 13 above — desynchronized ids)*
-- [ ] 3.22 [P] Integration — **the two races**: confirm × confirm of two receptions of one OC (both
-  commit, no deadlock, resulting estado = the sum of both, never only one); anular OC × confirmar
-  reception in both orders (one `200` + one `409`, never a reception lands on an `anulada` OC,
-  never a deadlock). *(ordenes-de-compra/spec.md:131-135, design.md Concurrency guarantees)*
-- [ ] 3.23 [P] Integration — a fault injected after the projection leaves the OC untouched
-  (fault-point test, both confirm and anular paths). *(design.md, Testing Strategy)*
-- [ ] 3.24 [P] Integration — the pinned lock order holds: `comprobantes_compra → ordenes_compra →
-  lotes → stock/stock_lotes → proveedores → ledger`, verified by source-order or interceptor per
-  the stage-15 precedent if a live rendezvous cannot discriminate it (`mutation-proof-tests` rule
-  3 escape hatch, registered if invoked). *(design.md:268-282)*
-- [ ] 3.25 [P] **Mutation target #18** — `SELECT … FOR UPDATE` (statement 1) → delete, keep
-  derive+update → confirm×confirm rendezvous (3.22) ⇒ stale estado.
-- [ ] 3.26 [P] **Mutation target #19** — the derivation folded into one `UPDATE … FROM (SELECT
-  …)` → same rendezvous (3.22) ⇒ `EvalPlanQual` stale snapshot.
-- [ ] 3.27 [P] **Mutation target #20** — `id_orden_compra` read from `preLectura` instead of the
-  widened `RETURNING` → confirm under a concurrent `PUT` that relinks the draft must fail.
-- [ ] 3.28 [P] **Mutation target #21** — OC lock moved after the `proveedores` lock → confirm×
-  confirm rendezvous (3.22) ⇒ deadlock/timeout.
-- [ ] 3.29 [P] **Mutation target #22** — `c.estado = 'confirmada'` widened to any estado → a
-  linked `borrador` reception moves the OC (3.21 fixture) must fail.
-- [ ] 3.30 [P] **Mutation target #23** — either `deleted_at IS NULL` deleted → the soft-deleted-
-  reception fixture (3.21) must fail.
-- [ ] 3.31 [P] **Mutation target #24** — `GROUP BY id_articulo` on the ordered side matched line-
-  to-line → the duplicate-OC-lines fixture (3.21, 3+4⇒7) must fail.
-- [ ] 3.32 [P] **Mutation target #25** — `algoRecibido` sourced from the ordered side's coalesced
+- [x] 3.21 [P] Integration — **derivation fidelity** (rule 11): two OC lines of one artículo (3+4
+  ⇒ 7 pedidas, plus a DISCRIMINANT 5-of-7 partial receive that over-delivery alone could not have
+  proven), an artículo received but never ordered, a soft-deleted reception, a linked `borrador`
+  reception, a reception of another OC of the same proveedor — every fixture asserted via the
+  resulting projected `estado` (the only slice-3-observable artifact; per-artículo `Recibida`/
+  `Pendiente` numbers are a slice-5 read-model concern, not yet built). *(design.md, Testing
+  Strategy; ordenes-de-compra/spec.md:124-129; decision 13 above — desynchronized ids)*
+- [x] 3.22 [P] Integration — **the two races**: confirm × confirm of two receptions of one OC (both
+  commit, no deadlock, resulting estado = the sum of both, never only one) — **DONE**,
+  `DosConfirmacionesConcurrentesDeDosRecepcionesDeUnaOrdenNuncaSeSobreescriben`. **DEVIATION
+  registered (decision 20 below)**: "anular OC × confirmar reception in both orders" is **NOT
+  implementable in this slice** — `POST /{id}/anular` for an OC and
+  `ServicioDeOrdenesDeCompra.AnularAsync` are slice-4 tasks (4.2/4.3); no OC-anulación write path
+  exists anywhere in this slice's scope to race against. Deferred to slice 4, where the endpoint
+  will exist. *(ordenes-de-compra/spec.md:131-135, design.md Concurrency guarantees)*
+- [x] 3.23 [P] Integration — a fault injected after the projection leaves the OC untouched
+  (fault-point test) — **confirm path DONE** (`UnaFallaDespuesDeLaProyeccionEnConfirmarDejaLaOrdenSinCambios`,
+  a zero-item borrador linked to an OC trips `compra_sin_items` in step 2, AFTER step 1.b's
+  projection already ran inside the aborted transaction). **Anular path NOT implemented** — every
+  guard in `EjecutarAnulacionAsync` after its own OC-projection call (1.6) is pre-existing,
+  unmodified stage-8/12 stock-negative logic; constructing a fault there specific to THIS slice's
+  call-ordering claim would duplicate `ComprasAnulacionYConcurrenciaTests`' own stock-negative
+  coverage without adding a new signal, so it was not duplicated here — registered as a gap, not a
+  fabricated pass. *(design.md, Testing Strategy)*
+- [x] 3.24 [P] Integration — the pinned lock order holds — **DONE via the `mutation-proof-tests`
+  rule 3 escape hatch, invoked**: `EscriturasDeOrdenDeCompraLockOrderTests` asserts the lock-order
+  claim by SOURCE TEXT (same reasoning as `ServicioDeComprasLockOrderTests`'s own precedent — a
+  `DbCommandInterceptor` cannot see this slice's raw-ADO statements). The behavioral rendezvous test
+  (3.22) does **not** independently discriminate a same-path reorder (see decision 20 below,
+  mutation target #21 finding) — the source-text test is the actual functioning detector.
+  *(design.md:268-282)*
+- [x] 3.25 [P] **Mutation target #18** — `SELECT … FOR UPDATE` (statement 1) → delete, keep
+  derive+update → confirm×confirm rendezvous (3.22) ⇒ stale estado. **Evidence**: deleted `FOR
+  UPDATE` from `BloquearYLeerAsync`'s SQL → `dotnet build --no-incremental` clean →
+  `DosConfirmacionesConcurrentesDeDosRecepcionesDeUnaOrdenNuncaSeSobreescriben` FAILED (one
+  concurrent confirm surfaced `500 error_interno` — the loser's conditional `UPDATE … WHERE estado =
+  $5` no longer matched under the lockless race) → `git checkout -- src/` → rebuilt → green.
+- [x] 3.26 [P] **Mutation target #19** — the derivation folded into one `UPDATE … FROM (SELECT
+  …)` → same rendezvous (3.22) ⇒ `EvalPlanQual` stale snapshot. **Evidence**: replaced
+  `ProyectarEstadoAsync`'s derive+update tail with a single self-referential `WITH pedido, recibido
+  UPDATE ordenes_compra … FROM …` (statement 1's lock kept intact, isolating this claim from #18) →
+  build clean → the rendezvous test FAILED (`409 orden_compra_cierre_incoherente` — the simplified
+  merged statement also dropped `fecha_cierre` handling, so the observed failure mode is a CHECK
+  violation rather than a pure stale-read assertion; recorded honestly, not reshaped into a cleaner
+  narrative) → `git checkout -- src/` → rebuilt → green.
+- [x] 3.27 [P] **Mutation target #20** — `id_orden_compra` read from `preLectura` instead of the
+  widened `RETURNING` → confirm under a concurrent `PUT` that relinks the draft must fail. **New
+  test added**: `ConfirmarUsaElIdOrdenCompraVistoBajoElLockNoElDePreLectura` (`DbTransactionInterceptor`
+  pausing `EjecutarConfirmarAsync` right after `BeginTransactionAsync`, same pattern as
+  `ServicioDeOrdenesDeCompraTests.InterceptorDePausaTrasIniciarLaTransaccion`) — a borrador linked to
+  OC-A is relinked to OC-B by a concurrent `PUT` while paused; OC-B must close, OC-A must stay
+  untouched. **Evidence**: threaded `preLectura.IdOrdenCompra` into `EjecutarConfirmarAsync` in place
+  of `encabezado.IdOrdenCompra` → build clean → test FAILED (OC-B stayed `Enviada` — the projection
+  wrongly targeted stale OC-A instead) → `git checkout -- src/` → rebuilt → green.
+- [x] 3.28 [P] **Mutation target #21** — OC lock moved after the `proveedores` lock. **FINDING,
+  not a clean pass** (mutation-proof-tests rule 3): moved the guarded block to right after the
+  `proveedores` lock in `EjecutarConfirmarAsync` → the SOURCE-TEXT test
+  (`ElGuardDeLaOrdenDeCompraEstaEnPosicion2…`) FAILED immediately, as expected. The BEHAVIORAL
+  rendezvous test (3.22) **stayed green under this exact mutation** — verified empirically (rule 2):
+  a confirm×confirm reordering of the SAME code path takes both locks in the SAME relative order on
+  both sides (`proveedores → OC` for both concurrent callers), which cannot form a genuine
+  lock-cycle with itself; a real deadlock needs a *different* call path taking the two locks in the
+  opposite order, and no such path exists inside this slice (only slice 4's `AnularAsync` would be a
+  candidate, and it already takes `OC` **before** any stock/proveedores work per its own guarded
+  call). Design's "confirm × confirm rendezvous ⇒ deadlock/timeout" phrasing for this target does
+  not hold for the confirm×confirm sub-case specifically; the source-text test is the real,
+  functioning detector. Reverted (`git checkout -- src/`), rebuilt, both tests green.
+- [x] 3.29 [P] **Mutation target #22** — `c.estado = 'confirmada'` widened to any estado → a
+  linked `borrador` reception moves the OC (3.21 fixture) must fail. **Evidence**: replaced the
+  filter with `AND true` → build clean →
+  `UnaRecepcionEnBorradorLigadaNoCuentaParaLaDerivacion` FAILED (expected `RecibidaParcial`, actual
+  `Cerrada` — the unconfirmed borrador's quantity leaked into the derivation) → reverted, clean →
+  green.
+- [x] 3.30 [P] **Mutation target #23** — `ic.deleted_at IS NULL` deleted → the soft-deleted-
+  reception fixture (3.21) must fail. **Evidence**: dropped `ic.deleted_at IS NULL` from the
+  `recibido` CTE's `WHERE` → build clean →
+  `UnItemDeRecepcionSoftDeleteadoDejaDeContarEnLaDerivacion` FAILED (expected `RecibidaParcial`,
+  actual `Cerrada` — the soft-deleted item's quantity still counted) → reverted, clean → green.
+- [x] 3.31 [P] **Mutation target #24** — `GROUP BY id_articulo` on the ordered side matched line-
+  to-line → the duplicate-OC-lines fixture must fail. **New DISCRIMINANT test added**
+  (`DosLineasDelMismoArticuloComparanContraLaSumaNoContraCadaLineaIndividual`, 3+4=7 pedidos vs. 5
+  recibidos — the pre-existing 8-vs-7 over-delivery test does NOT discriminate this mutation, since
+  8 exceeds every individual line too; 5 exceeds neither individual line (3, 4) but IS less than the
+  correct sum (7), so only the correct grouping reports `RecibidaParcial`). **Evidence**: changed
+  `GROUP BY i.id_articulo` to `GROUP BY i.id_articulo, i.id_item` in the `pedido` CTE → build clean →
+  the new test FAILED (expected `RecibidaParcial`, actual `Cerrada` — each individual line read
+  "covered" against the shared 5-unit receipt) → reverted, clean → green.
+- [x] 3.32 [P] **Mutation target #25** — `algoRecibido` sourced from the ordered side's coalesced
   sum instead of the reception side → the pure-substitution fixture (OC stays `enviada`) must
-  fail.
-- [ ] 3.33 [P] **Mutation target #26** — `id_empleado_cierre IS NOT NULL` short-circuit deleted →
-  annulling a reception of a manually-closed OC reopens it (3.20's sibling test) must fail.
-- [ ] 3.34 [P] **Mutation target #27** — `estado = 'anulada'` terminal short-circuit deleted →
-  the projection resurrects an annulled OC (3.19's sibling test) must fail.
-- [ ] 3.35 [P] **Mutation target #28** — `fecha_cierre = NULL` on regression kept as old value →
-  `ck_ordenes_compra_cierre` ⇒ `23514` (3.20 regresses).
-- [ ] 3.36 [P] **Mutation target #29** — `if (encabezado.IdOrdenCompra is { } idOc)` called
-  unconditionally → the zero-extra-statements command count (3.12) must fail.
-- [ ] 3.37 [P] **Mutation target #30** — `id_proveedor`/`id_punto_venta` equality dropped in
-  `ExigirOrdenLigableAsync` → the cross-proveedor/cross-PV link test (3.14) must fail.
-- [ ] 3.38 [P] `db-error-backstops` — FK 9 (`fk_comprobantes_compra_orden_compra`) client-
-  reachable test: linking to an OC being annulled concurrently (race) + generic `23503` mapping.
-  *(design.md:325)*
-- [ ] 3.39 Gate guard: `dotnet ef migrations has-pending-model-changes` clean; zero new files under
-  `Migraciones/`; `git diff --stat` confirms no file under `src/Ways.Application/Ventas/` or
-  `src/Ways.Application/Stock/` appears.
-- [ ] 3.40 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  fail. **Evidence**: changed `algo_recibido` to `SUM(r2.recibida) FROM pedido p2 JOIN recibido r2
+  ON r2.id_articulo = p2.id_articulo` (inner join against ordered lines only) → build clean →
+  `UnaEntregaPorSustitucionNuncaPedidaMuevaAOrdenARecibidaParcial` FAILED (expected
+  `RecibidaParcial`, actual `Enviada` — the substitution delivery, received but never ordered,
+  became invisible) → reverted, clean → green.
+- [x] 3.33 [P] **Mutation target #26** — `id_empleado_cierre IS NOT NULL` short-circuit deleted →
+  annulling a reception of a manually-closed OC reopens it. **New test added**
+  (`AnularUnaRecepcionDeUnaOrdenCerradaManualmenteNoLaReabre`, OC seeded `Cerrada`+
+  `IdEmpleadoCierre` directly by EF — `POST /{id}/cerrar` is slice 4). **FINDING**: deleting ONLY the
+  C# early-return (`|| lockeado.CierreManual`) is a FALSE PASS by itself —
+  `ProyectorDeEstadoDeOrden.Proyectar`'s OWN domain logic ALSO checks `cierreManual` first
+  (defense-in-depth, already exhaustively truth-tabled in slice 1), so the no-op branch still lands
+  on `Cerrada` even without the early-return. Routed below the confound (rule 3): mutated the
+  early-return AND hardcoded `cierreManual: false` in the `Proyectar` call together → build clean →
+  the new test FAILED (`409` instead of `200`/stayed-`Cerrada`) → reverted BOTH lines
+  (`git checkout -- src/`), clean → green.
+- [x] 3.34 [P] **Mutation target #27** — `estado = 'anulada'` terminal short-circuit deleted.
+  **INVESTIGATED, NOT independently provable via a single-layer mutation** (mutation-proof-tests
+  rule 3, same class as stage-16 slice-1 target #6's precedent): deleted ONLY the C# early-return's
+  `estadoActual == EstadoOrdenCompra.Anulada ||` clause → new test
+  `AnularUnaRecepcionLigadaAUnaOrdenYaAnuladaNoLaResucita` (OC seeded `Anulada` directly by EF)
+  **STAYED GREEN** — `ProyectorDeEstadoDeOrden.Proyectar`'s own first arm
+  (`estadoActual is Anulada ⇒ Anulada`) already redundantly protects the terminal rule, and since
+  the recomputed `nuevoEstado` still equals `estadoActual`, statement 3 is skipped as a no-op either
+  way — same final observable state. The invariant IS proven, exhaustively, by slice 1's domain
+  truth-table unit test (`ProyectorDeEstadoDeOrdenTests`, "`anulada` terminal from every input") —
+  this is a genuine two-layer defense, not a production gap. Not pursued further (a combined
+  mutation like target #26's would require also lying about `estadoActual` to `Proyectar`, at which
+  point the test would stop exercising this specific early-return at all). Reverted, clean → green
+  (unchanged, since nothing was left mutated).
+- [x] 3.35 [P] **Mutation target #28** — `fecha_cierre = NULL` on regression kept as old value →
+  `ck_ordenes_compra_cierre` ⇒ `23514` (3.20 regresses). **Evidence**: changed the `CASE` to `ELSE
+  fecha_cierre` (keep the pre-update value) instead of `ELSE NULL` → build clean →
+  `AnularLaUnicaRecepcionDeUnaOrdenCerradaAutomaticamenteLaDevuelveAEnviada` FAILED (`409`, the
+  `ck_ordenes_compra_cierre` CHECK rejected the regression that left a stale `fecha_cierre` on a
+  non-`cerrada` row) → reverted, clean → green. Strengthened the base test with an explicit
+  `Assert.Null(final.FechaCierre)` in the same pass.
+- [x] 3.36 [P] **Mutation target #29** — `if (encabezado.IdOrdenCompra is { } idOc)` called
+  unconditionally → the zero-extra-statements proof (3.12) must fail. **Evidence**: replaced the
+  guard with an unconditional block (`idOc = encabezado.IdOrdenCompra ?? 0`) → build clean → BOTH
+  detectors failed: the structural test
+  (`LasLlamadasAEscriturasDeOrdenDeCompraEnConfirmarNuncaOcurrenFueraDelGuardNulo`, "no se encontró
+  el guard nulo") and the behavioral test (`UnConfirmSinOrdenLigadaNoTocaNingunaOrdenDeCompraExistente`,
+  `500` — the sentinel id `0` broke the FK invariant) → reverted, clean → both green.
+- [x] 3.37 [P] **Mutation target #30** — `id_proveedor`/`id_punto_venta` equality dropped in
+  `ExigirOrdenLigableAsync` → the cross-proveedor/cross-PV link test (3.14) must fail. **Evidence**:
+  ran BOTH conjuncts independently. Dropping the `id_proveedor` check → build clean →
+  `UnProveedorNoCoincidenteNoPuedeLigar` FAILED (expected `BadRequest`, actual `Created`) → reverted.
+  Dropping the `id_punto_venta` check → build clean → `UnPuntoDeVentaNoCoincidenteNoPuedeLigar`
+  FAILED (same shape) → reverted. `git status` clean after both, rebuilt, both green.
+- [x] 3.38 [P] `db-error-backstops` — FK 9 (`fk_comprobantes_compra_orden_compra`) client-
+  reachable test: **DONE** for the primary path (`LigarAUnaOrdenInexistenteEsRechazadaComo404` —
+  `ExigirOrdenLigableAsync`'s own 404 pre-check catches an invalid `idOrdenCompra` before any write;
+  under normal operation this makes the raw `23503`/generic-mapping backstop unreachable, the same
+  "backstop of last resort" posture as other exempted FKs in this repo). **The race sub-clause
+  ("linking to an OC being annulled concurrently") is NOT implemented** — same reason as 3.22's
+  deferred half: no OC-anulación write path exists in this slice to race against; deferred to slice
+  4. Generic `23503` → `referencia_invalida` mapping itself needed zero new code (already covers any
+  `fk_*`-prefixed constraint since slice 1). *(design.md:325)*
+- [x] 3.39 Gate guard: `dotnet ef migrations has-pending-model-changes` clean (verified); zero new
+  files under `Migraciones/` (`git diff --stat main -- .../Migraciones/` empty); `git diff --stat`
+  confirms no file under `src/Ways.Application/Ventas/` or `src/Ways.Application/Stock/` appears
+  (verified empty). Gate holds, no deviation.
+- [ ] 3.40 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
+  RUN by `sdd-apply`** — same executor-contract carve-out as slice 1 task 1.38 / slice 2 task
+  2.26: this executor cannot launch sub-agents/reviewers. Left for the orchestrator to run before
+  merge.
 - [ ] 3.41 Branch `feat/stage16-slice3-ligadura-y-proyeccion` off `main` (parent: slice 2); PR;
-  merge stacked-to-main.
+  merge stacked-to-main. **PARTIAL**: the worktree was already provisioned on
+  `feat/stage16-slice3-ligadura` off `main` (`8b720d3`, slice 2 already merged) before this phase
+  started — branching is done, naming differs by dropping `-y-proyeccion` (cosmetic, not re-branched
+  to avoid losing the provisioned worktree — flagged for the orchestrator). PR creation/merge is
+  explicitly out of scope (`NO pushees` instruction) — left for the orchestrator.
+
+20. **Slice 3 apply-phase decisions and deviations (decision 15 discipline).**
+    - **Double lock in `EjecutarConfirmarAsync`'s guarded block**: the literal pinned interface
+      (two separate public methods, `BloquearYExigirNoAnuladaAsync` carrying NO `momento` parameter)
+      means the confirm call site issues `BloquearYExigirNoAnuladaAsync` followed by
+      `ProyectarEstadoAsync`, each taking its OWN `SELECT … FOR UPDATE` on the same OC row —
+      Postgres re-acquiring a lock already held by the same transaction is a documented, harmless
+      no-op (verifies visibility, never blocks, cannot self-deadlock). Followed literally rather
+      than collapsed into a single shared-lock helper, since the design's own interface pins two
+      distinct signatures with distinct throwing semantics.
+    - **`ContadorDeComandos`/`DbCommandInterceptor` cannot prove "zero extra statements" for this
+      slice** — same empirically-recorded limitation `ServicioDeComprasLockOrderTests`'s own
+      doc-comment already established for the lock-order proof (raw `conexion.CreateCommand()`
+      statements never enter EF's command pipeline, with or without the guard executing). Resolved
+      via the `mutation-proof-tests` rule 3 escape hatch: a source-text structural proof (the calls
+      appear ONLY inside the null-check guard) plus a behavioral sibling-untouched proof (an
+      unrelated OC's `estado`/`updated_at` stay byte-identical across an unlinked confirm).
+    - **Mutation target #21's "deadlock/timeout" claim does not hold for the confirm×confirm
+      sub-case** — verified empirically (mutation-proof-tests rule 2, "run it, don't reason it"):
+      reordering the OC guard to after the `proveedores` lock leaves the BEHAVIORAL rendezvous test
+      green, because both concurrent confirmations traverse the SAME code path and therefore take
+      the two locks in the SAME relative order on both sides — no lock-order inversion, no cycle.
+      The SOURCE-TEXT test is the actual functioning detector for this target; registered so it is
+      not read as a gap.
+    - **Mutation target #27 investigated, found non-independently-provable via a single-layer
+      mutation** — same class as stage-16 slice-1 target #6's "investigated finding, not a
+      fabricated pass": `ProyectorDeEstadoDeOrden.Proyectar`'s own domain-level terminal check on
+      `Anulada` redundantly protects the invariant this slice's C# early-return also protects,
+      so deleting only the early-return produces the same final observable state (no-op skip).
+      Mutation target #26 needed the SAME combined treatment (early-return deleted AND
+      `cierreManual` lied about to `Proyectar`) to become independently provable — both cycles run
+      together, evidence recorded under 3.33 above. Neither is a production gap: both invariants are
+      separately, exhaustively proven at the domain-unit level by slice 1's
+      `ProyectorDeEstadoDeOrdenTests` truth table.
+    - **Two race sub-clauses deferred to slice 4** (tasks 3.22, 3.38): "anular OC × confirmar
+      reception" and "linking to an OC being annulled concurrently" both require an OC-anulación
+      write path (`POST /{id}/anular`, `ServicioDeOrdenesDeCompra.AnularAsync`) that does not exist
+      anywhere in this slice's scope — those are slice-4 tasks 4.2/4.3. Registered here rather than
+      silently narrowed; the guard code they would exercise (`BloquearYExigirNoAnuladaAsync`'s 409,
+      the no-lock `EXISTS` read of decision 9) IS already fully implemented and unit/structurally
+      covered — only the CONCURRENT race proof against a not-yet-existing endpoint is deferred.
+    - **Mutation target #23's fault-point (task 3.23) covers only the CONFIRM path** — the ANULAR
+      path's every post-projection guard is pre-existing stage-8/12 stock-negative logic already
+      covered by `ComprasAnulacionYConcurrenciaTests`; duplicating it here would not add a new
+      signal specific to this slice's ordering claim, so it was not duplicated (registered as an
+      intentional gap, not fabricated coverage).
+    - **Mutation target #19's evidence surfaced via a CHECK-constraint violation, not a pure
+      stale-snapshot assertion** — the temporary merged-statement mutation used for evidence dropped
+      `fecha_cierre` handling for simplicity (a genuinely different bug from the EvalPlanQual
+      staleness the target names), so the observed `409 orden_compra_cierre_incoherente` confirms
+      the test suite rejects this SQL shape, but does not, on its own, isolate the exact stale-read
+      mechanism in prose. Recorded honestly per mutation-proof-tests rule 2 rather than reshaped.
 
 **Test plan**: zero-extra-statements (3.12); link happy/blocked paths incl. state-gating
-(3.13-3.16); the projection scenarios (3.17-3.20); derivation fidelity (3.21); both races (3.22);
-fault points (3.23); lock order (3.24); 13 mutation targets (3.25-3.37); FK 9 race (3.38).
+(3.13-3.16); the projection scenarios (3.17-3.20); derivation fidelity (3.21); confirm×confirm race
+(3.22, anular×confirmar deferred to slice 4); fault point, confirm path (3.23); lock order (3.24);
+13 mutation targets (3.25-3.37, two registered as investigated/non-actionable defense-in-depth
+findings rather than fabricated passes — #27 alone, #21's behavioral half); FK 9 primary path (3.38,
+race deferred to slice 4).
 
 **Verify**: `dotnet test --filter FullyQualifiedName~EscriturasDeOrdenDeCompra|FullyQualifiedName~ServicioDeCompras`
+— 25/25 green in `ServicioDeComprasLigaduraTests` + `EscriturasDeOrdenDeCompraLockOrderTests`
+combined with slices 1-2's re-run suites (177/177 across all Compras/OrdenesCompra/
+SuperficieDeAutorizacion/GastosLigadosACompra integration tests; 289/289 in `Ways.Application.Tests`).
 
 ---
 
