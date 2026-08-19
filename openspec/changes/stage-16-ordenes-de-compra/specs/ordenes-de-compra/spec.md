@@ -265,7 +265,10 @@ never `0`.
 `GET /api/reportes/stock/reposicion`'s rows, mapping `FilaDeReposicion.{IdArticulo, Sugerido} →
 {IdArticulo, CantidadPedida}`, filtered by proveedor. Rows in the `"Sin proveedor"` group MUST NOT
 be able to pre-load an OC. Rows with `sugerido = null` MUST be excluded, never defaulted to `0`.
-Stage 13's endpoint and response shape MUST remain unchanged.
+Stage 13's endpoint and response shape MUST remain unchanged. The web's per-group *"Generar OC"*
+action on the reposición screen MUST only be offered to a session whose role can write an OC
+(Admin) — the reposición screen itself remains visible to every role that already reads it
+(Supervisor, Admin).
 
 #### Scenario: A pre-load excludes null-sugerido rows
 - GIVEN a reposición list with one row where `sugerido = null`
@@ -281,3 +284,9 @@ Stage 13's endpoint and response shape MUST remain unchanged.
 - GIVEN `GET /api/reportes/stock/reposicion` before and after this stage
 - WHEN both responses are compared for identical parameters
 - THEN the response shape and figures are identical — Etapa 13 stays a read-only source
+
+#### Scenario: The Generar OC action is Admin-gated in the web, the screen stays as-is for others
+- GIVEN a Supervisor session viewing the reposición screen
+- WHEN the per-group actions are rendered
+- THEN no *"Generar OC"* button appears for any group, while every other part of the screen
+  (filters, table, download) renders exactly as it does today

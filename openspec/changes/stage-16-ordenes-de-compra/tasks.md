@@ -346,6 +346,51 @@
       completa del archivo: **14/14 verde**; regresión filtrada `Compras`/`OC`: **254/254 verde**;
       `git status` limpio.
 
+27. **Slice 6 apply-phase decisions and deviations (decision 15 discipline).** Web-only slice,
+    cero cambios de API/backend (`git diff --stat main -- src/Ways.Api src/Ways.Application
+    src/Ways.Domain src/Ways.Infrastructure` vacío en todo el diff de la slice).
+    - **DEVIATION — `Compras.tsx` no gana una columna de OC ligada (task 6.6).** `CompraListada`
+      (la fila de `GET /api/compras`) nunca fue ensanchada con `IdOrdenCompra` — solo
+      `CompraDetalle` lo tiene (`design.md:206-208`, decisión 7/tensión T7 de slices anteriores).
+      Con cero cambios de backend autorizados esta slice, el listado literalmente no tiene el dato
+      para mostrar; inventar un fetch N+1 por fila sería alcance que el design nunca pidió.
+      Resuelto siguiendo el contrato DTO autoritativo (mismo criterio que las desviaciones 17/20):
+      "el link" se realiza donde el dato realmente vive — `CompraEditor.tsx` (task 6.4) muestra
+      `Vinculada a la orden de compra #{id}` con un `Link` a `/ordenes-compra/{id}`, para una
+      compra pre-cargada Y para una ya existente. `Compras.tsx` queda sin modificar.
+    - **APPLY-TIME FIX — `OrdenDeCompra.tsx`'s `cargarDetalle` (task 6.3).** El diseño pide
+      explícitamente "the post-write refetch has its own try/catch" (`design.md:341`, regla 6 de
+      `react-async-state`) porque `enviar`/`cerrar`/`anular` devuelven `OrdenDeCompraBorrador` (sin
+      cobertura) — a diferencia de `CompraEditor.tsx`, que nunca necesita un refetch porque
+      `confirmar`/`anular` de compras YA devuelven el `CompraDetalle` completo. La primera
+      implementación del catch de ese refetch vaciaba `detalle` a `null` en TODA falla, incluida
+      una posterior a una escritura 2xx — eso hubiera reemplazado la pantalla entera (incluido el
+      `aviso` de éxito recién seteado) por la pantalla de error bloqueante, violando la regla 6
+      literalmente ("a committed write is never reported as a failure"). Cerrado: el catch ya no
+      toca `detalle` (los datos stale-pero-reales siguen visibles), `errorDetalle` se muestra chico
+      cuando `detalle` ya existe, y la pantalla de error bloqueante queda reservada a la carga
+      inicial genuinamente fallida (`detalle === null`). Encontrado escribiendo el test primero
+      (`OrdenDeCompra.test.tsx`, "un 2xx de enviar/cerrar/anular nunca se reporta como fallo").
+    - **El escenario web del botón "Generar OC" se agregó a `specs/ordenes-de-compra/spec.md`
+      (Requirement "Pre-Load From The Reposición List…"), NO a `specs/reposicion-de-stock/spec.md`.**
+      El botón es una escritura de OC (capability `ordenes-de-compra`) que consume el reporte de
+      reposición como fuente, no un cambio de comportamiento del reporte mismo — `reposicion-de-
+      stock`'s propia decisión 14 (`state.yaml`, este archivo) ya acota su delta a la fórmula/
+      Purpose, "byte-identical" en todo lo demás; agregarle un escenario de UI ajeno rompería esa
+      frontera. El gate Admin-only queda expresado como escenario en la capability que
+      efectivamente lo posee.
+    - **`idAlicuotaIva` deliberadamente sin precargar en `CompraEditor.tsx` (task 6.4).** La OC no
+      tiene ningún concepto de IVA (`ContratosDeOrdenDeCompra.cs` no lo carga) — `dto-contract-
+      honesty`: inventar una alícuota sería fabricar un dato que la fuente no tiene. Una línea
+      pre-cargada queda "incompleta" (no viaja al guardar) hasta que el operador elige una — el
+      mismo criterio de `lineaCompletaParaEnvio` ya aplicado al resto del formulario.
+    - **`judgment-day` NOT run** (task 6.19) — same executor-boundary reason as every prior slice.
+      Full solution test suite NOT re-run end-to-end this slice (web-only diff, zero backend
+      files touched — `dotnet test` unaffected by construction); the web suite ran full end-to-end
+      post-implementation: **48 test files, 793 tests green** (`npx vitest run`, no filter),
+      `npm run build` (`tsc -b && vite build`) clean, `npm run lint` (`oxlint`) clean with zero new
+      warnings in any file touched this slice.
+
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
 word-budget overage is a house precedent, no action; T5 (spec OD7) — `cuenta-corriente-de-
@@ -1521,53 +1566,133 @@ clean round + PR merged.
 **Budget note**: pre-approved degradation — if this slice overflows, ship list + detail + draft
 and drop the `Reposicion.tsx` action; a documented reduction, never silent (decision 3 above).
 
-- [ ] 6.1 Create `src/Ways.Web/src/api/ordenesDeCompra.ts` (+ `.test.ts`) — client + pure mappers;
-  `tipos.ts` mirrors the read/write DTOs. *(design.md:353, 385)*
-- [ ] 6.2 Create `src/Ways.Web/src/paginas/OrdenesDeCompra.tsx` (+ `.test.tsx`) — route
+- [x] 6.1 Create `src/Ways.Web/src/api/ordenesDeCompra.ts` (+ `.test.ts`) — client + pure mappers;
+  `tipos.ts` mirrors the read/write DTOs. *(design.md:353, 385)* — client (`listar`/`obtener`/
+  `crear`/`actualizar`/`enviar`/`cerrar`/`anular`), query builder with `fechaIsoConOffset` (rule
+  10), formatters (`formatearCantidadNullable`/`formatearDesvio`/`formatearMonedaNullable`), and
+  the borrador-formulario helpers (`EncabezadoDeOrdenFormulario`/`LineaDeOrdenFormulario`/
+  `aSolicitudDeOrdenDeCompra`) mirroring `compras.ts`'s shape.
+- [x] 6.2 Create `src/Ways.Web/src/paginas/OrdenesDeCompra.tsx` (+ `.test.tsx`) — route
   `/ordenes-compra`, `RutaProtegida rolesPermitidos={[Vendedor,Supervisor,Admin]}` (the read gate);
   filters + pager. *(design.md:330-333)*
-- [ ] 6.3 Create `src/Ways.Web/src/paginas/OrdenDeCompra.tsx` (+ `.test.tsx`) — draft editor +
+- [x] 6.3 Create `src/Ways.Web/src/paginas/OrdenDeCompra.tsx` (+ `.test.tsx`) — draft editor +
   detail with cobertura table (`—` never `0` when `null`) + `enviar`/`cerrar`/`anular` actions +
   "Registrar recepción" → `navigate('/compras/nueva?idOrdenCompra=' + id)`. `key={idOrden ??
-  'nueva'}` on the subtree; `generacionRef` per fetch; generation bumps before each write;
+  'nueva-' + ...}` on the subtree; `generacionRef` per fetch; generation bumps before each write;
   post-write refetch has its own `try/catch`; first-line re-entrancy guard + full-window disable
-  on `enviar`/`cerrar`/`anular`. *(design.md:334-343, `react-async-state` rules 2,3,6,8,9)*
-- [ ] 6.4 Modify `src/Ways.Web/src/paginas/CompraEditor.tsx` — read `idOrdenCompra` from
+  on `enviar`/`cerrar`/`anular`. *(design.md:334-343, `react-async-state` rules 2,3,6,8,9)* —
+  APPLY-TIME FIX registered: `cargarDetalle`'s failure path originally nulled `detalle` on EVERY
+  failure, including a post-write refetch failure — that would have replaced the whole screen
+  (including the just-set success `aviso`) with the blocking full-page error, contradicting rule 6
+  ("a committed write is never reported as a failure"). Fixed: the catch no longer touches
+  `detalle` (stale-but-real data stays visible), `errorDetalle` renders as a small inline warning
+  when `detalle` is already populated, and the blocking full-page error is reserved for the
+  genuinely-first failed load (`detalle === null`). Caught by writing the test first
+  (`OrdenDeCompra.test.tsx`, "un 2xx de enviar/cerrar/anular nunca se reporta como fallo").
+- [x] 6.4 Modify `src/Ways.Web/src/paginas/CompraEditor.tsx` — read `idOrdenCompra` from
   `useSearchParams`, pre-fill proveedor/PV/OC and one line per artículo with `Pendiente > 0`;
-  `key={idNumerico ?? 'nuevo-' + (idOrdenCompra ?? 's')}`. *(design.md:344-346)*
-- [ ] 6.5 Modify `src/Ways.Web/src/paginas/Reposicion.tsx` — per-group "Generar OC" button
+  `key={idNumerico ?? 'nuevo-' + (idOrdenCompra ?? 's')}`. *(design.md:344-346)* — the pure mapper
+  `lineaDesdeCoberturaDeOrden` (`compras.ts`) seeds `unidades` from `Pendiente` (never `Pedida`)
+  and `costoUnitario` from the OC's per-artículo `costoEstimado` (`''` — never `'0'` — when never
+  quoted); `idAlicuotaIva` is deliberately left unset (an OC carries no IVA concept), so a
+  pre-loaded line stays "incomplete" until the operator picks one — `dto-contract-honesty`, never
+  fabricate a rate the source data doesn't have.
+- [x] 6.5 Modify `src/Ways.Web/src/paginas/Reposicion.tsx` — per-group "Generar OC" button
   rendered only when `grupo.idProveedor !== null` **and** `useAuth().usuario.rolId === ROL.Admin`;
   posts `filas.filter(f => f.sugerido !== null)` mapped `{IdArticulo, Sugerido} →
   {IdArticulo, CantidadPedida}`; `"Sin proveedor"` renders without the action. *(design.md:347-351,
-  decision 16, mutation target #34c)*
-- [ ] 6.6 Modify `src/Ways.Web/src/paginas/Compras.tsx` — show the linked OC with a link to it.
-  *(design.md:352)*
-- [ ] 6.7 Modify `src/Ways.Web/src/App.tsx` — two new routes.
-  *(design.md:File Changes)*
-- [ ] 6.8 [P] `web-descriptor-tests` — colocated tests for every new pure helper (reposición→OC
-  mapper, cobertura formatter, filter builder) and both screens' descriptors. *(design.md:359)*
-- [ ] 6.9 [P] Vitest — the `"Sin proveedor"` bucket offers no action; a Supervisor session renders
-  no action. *(mutation target #34c)*
-- [ ] 6.10 [P] Vitest — a `sugerido === null` row is excluded from the pre-load.
-  *(mutation target #34c)*
-- [ ] 6.11 [P] Vitest — a double click on `enviar`/`cerrar`/`anular` issues exactly one POST
-  (`react-async-state` rule 9).
-- [ ] 6.12 [P] Vitest — a stale response is discarded, resolved **inside `act`** (`react-async-
-  state` rule 7).
-- [ ] 6.13 [P] Vitest — pager disabled at the edges.
-- [ ] 6.14 [P] `react-async-state` rule 10 — grep every recovery path added on one screen and
-  replicate it in its sibling in the same commit; record the grep evidence in the PR body.
-- [ ] 6.15 [P] **Mutation target #34c (part 1)** — the `grupo.idProveedor !== null` branch deleted
-  → the "Sin proveedor" no-action test (6.9) must fail.
-- [ ] 6.16 [P] **Mutation target #34c (part 2)** — the `rolId === ROL.Admin` branch deleted → the
-  Supervisor no-action test (6.9) must fail.
-- [ ] 6.17 [P] **Mutation target #34c (part 3)** — the `sugerido !== null` filter deleted → the
-  pre-load exclusion test (6.10) must fail.
-- [ ] 6.18 Gate guard: `dotnet ef migrations has-pending-model-changes` clean (no schema drift from
-  this slice); `npm run build` clean.
-- [ ] 6.19 Run `judgment-day`; fix confirmed issues; re-judge until clean.
+  decision 16, mutation target #34c)* — the filter+map lives in a colocated pure helper
+  (`filasDeReposicionAOrdenDeCompra.ts`, task 6.8) rather than inline; `navigate(...,{state})`
+  carries `idProveedor`/`idPuntoVenta`/`items` already resolved (the Slice 6-of-stage-15 Link
+  lesson — the destination never re-fetches decorative data it could have received as `state`).
+- [x] 6.6 Modify `src/Ways.Web/src/paginas/Compras.tsx` — show the linked OC with a link to it.
+  *(design.md:352)* — **DEVIATION registered (resolved in favor of the authoritative DTO
+  contract, same criterion as decisions 17/20 above):** `CompraListada` (the row shape of `GET
+  /api/compras`) does NOT carry `IdOrdenCompra` — only `CompraDetalle` (`GET /api/compras/{id}`)
+  does, per design.md's own Interfaces/Contracts section (`design.md:206-208`), which was never
+  widened for the listing row. With zero backend changes authorized this slice, `Compras.tsx`'s
+  list literally has no data to show a linked-OC column with — inventing an N+1 per-row fetch
+  would be scope creep design never asked for. "The linked OC shown … with a link to it" is
+  realized honestly where the data actually lives: `CompraEditor.tsx`'s detail (task 6.4) renders
+  `Vinculada a la orden de compra #{id}` with a `Link` to `/ordenes-compra/{id}`, sourced from
+  `CompraDetalle.idOrdenCompra` (already round-tripped by slice 3's task 3.16), for BOTH a
+  pre-loaded new draft and an already-linked existing compra. `Compras.tsx` itself is unmodified.
+- [x] 6.7 Modify `src/Ways.Web/src/App.tsx` — two new routes.
+  *(design.md:File Changes)* — `/ordenes-compra` and `/ordenes-compra/:id` (the latter also
+  serves `/ordenes-compra/nueva`, same `id === 'nueva'` convention as `/compras/:id`), both
+  `rolesPermitidos={[Vendedor,Supervisor,Admin]}` (the read gate; write is server-Admin-only).
+- [x] 6.8 [P] `web-descriptor-tests` — colocated tests for every new pure helper (reposición→OC
+  mapper, cobertura formatter, filter builder) and both screens' descriptors. *(design.md:359)* —
+  `ordenesDeCompra.test.ts` (69 assertions across query builder, formatters, formulario helpers),
+  `filasDeReposicionAOrdenDeCompra.test.ts` (the reposición→OC mapper, 5 tests incl. the null-vs-
+  zero discrimination), `compras.test.ts` (extended: `idOrdenCompra` round-trip in
+  `aSolicitudDeCompra`, 2 new tests), plus descriptor-level tests in both new screens'
+  `.test.tsx` files.
+- [x] 6.9 [P] Vitest — the `"Sin proveedor"` bucket offers no action; a Supervisor session renders
+  no action. *(mutation target #34c)* — `Reposicion.test.tsx`: "un Admin ve el botón por grupo con
+  proveedor; 'Sin proveedor' nunca lo ofrece" + "un Supervisor no ve ningún botón 'Generar OC'".
+- [x] 6.10 [P] Vitest — a `sugerido === null` row is excluded from the pre-load.
+  *(mutation target #34c)* — proven at BOTH layers: the pure-helper unit test
+  (`filasDeReposicionAOrdenDeCompra.test.ts`) and the end-to-end integration test
+  (`Reposicion.test.tsx`, click → real `/ordenes-compra/nueva` destination route reading
+  `location.state`, never a mocked `useNavigate`).
+- [x] 6.11 [P] Vitest — a double click on `enviar`/`cerrar`/`anular` issues exactly one POST
+  (`react-async-state` rule 9). — `OrdenDeCompra.test.tsx`: "un doble click en 'Enviar' dispara
+  exactamente un POST", two native `dispatchEvent` calls inside one `act()` (same-tick, beats the
+  `disabled` re-render — `BotonDeDescarga.test.tsx`/`CuentaCorrienteDeProveedor.test.tsx` pattern).
+- [x] 6.12 [P] Vitest — a stale response is discarded, resolved **inside `act`** (`react-async-
+  state` rule 7). — `OrdenDeCompra.test.tsx`: "una respuesta de refetch desactualizada nunca pisa
+  la más reciente" (two competing detail refetches from `enviar` then `anular`; the older one
+  resolves LAST, inside `act`, and must not overwrite the newer `Anulada` state).
+- [x] 6.13 [P] Vitest — pager disabled at the edges. — `OrdenesDeCompra.test.tsx`, mirrors the
+  `CuentaCorrienteDeProveedor.tsx` pager tests.
+- [x] 6.14 [P] `react-async-state` rule 10 — grep every recovery path added on one screen and
+  replicate it in its sibling in the same commit; record the grep evidence in the PR body. —
+  Evidence: `generacionRef` present and wired identically in `OrdenDeCompra.tsx` (×2, detail read +
+  the four writes bumping it before each POST), `OrdenesDeCompra.tsx`, `Reposicion.tsx` (pre-
+  existing) and `CompraEditor.tsx` (pre-existing + the new pre-carga effect); first-line
+  re-entrancy `Ref.current` guards present on all four `OrdenDeCompra.tsx` write actions
+  (`guardando`/`enviando`/`cerrando`/`anulando`), same shape as `CompraEditor.tsx`'s
+  `guardando`/`confirmando`/`anulando`/`aplicando`. No sibling gap found: `Reposicion.tsx`'s
+  "Generar OC" is a pure `navigate` (no async write, no guard needed); `OrdenesDeCompra.tsx` has
+  no write actions.
+- [x] 6.15 [P] **Mutation target #34c (part 1)** — the `grupo.idProveedor !== null` branch deleted
+  → the "Sin proveedor" no-action test (6.9) must fail. **Evidence**: replaced `{grupo.idProveedor
+  !== null && esAdmin && (` with `{esAdmin && (` in `Reposicion.tsx` → `npx vitest run … -t "Sin
+  proveedor"` FAILED (`Generar OC` button found inside the "Sin proveedor" header row, expected
+  none) → `git checkout -- src/Ways.Web/src/paginas/Reposicion.tsx` → `git status` clean → full
+  suite green again.
+- [x] 6.16 [P] **Mutation target #34c (part 2)** — the `rolId === ROL.Admin` branch deleted → the
+  Supervisor no-action test (6.9) must fail. **Evidence**: replaced `usuario !== null &&
+  usuario.rolId === ROL.Admin` with `usuario !== null` (`esAdmin`) → `npx vitest run … -t "un
+  Supervisor no ve ningún botón"` FAILED (button found for a Supervisor session) → reverted,
+  `git status` clean → green.
+- [x] 6.17 [P] **Mutation target #34c (part 3)** — the `sugerido !== null` filter deleted → the
+  pre-load exclusion test (6.10) must fail. **Evidence**: removed the `.filter((fila) =>
+  fila.sugerido !== null)` call from `itemsDeOrdenDesdeFilasDeReposicion`, defaulting
+  `cantidadPedida` to `fila.sugerido ?? 0` → BOTH the unit test ("excluye las filas con sugerido =
+  null…", expected length 1, got 2) AND the integration test ("…excluyendo sugerido = null…", same
+  mismatch) FAILED → `git checkout -- src/Ways.Web/src/paginas/filasDeReposicionAOrdenDeCompra.ts`
+  → `git status` clean → full suite green (48 files, 793 tests).
+- [x] 6.18 Gate guard: `dotnet ef migrations has-pending-model-changes` clean (no schema drift from
+  this slice); `npm run build` clean. — Zero backend files touched this slice (`git diff --stat
+  main -- src/Ways.Api src/Ways.Application src/Ways.Domain src/Ways.Infrastructure` empty, incl.
+  `Migraciones/`), so the migrations tree cannot have drifted; `dotnet ef migrations
+  has-pending-model-changes` itself could not run standalone in this worktree (the tool's design
+  package resolution against `Ways.Api` as startup project failed independent of any change in
+  this diff — `dotnet build` of the full solution succeeds) — the git-diff proof is the binding
+  evidence per the gate's own criterion ("zero new files under `Migraciones/`"). `npm run build`
+  (`tsc -b && vite build`) clean: 0 TypeScript errors, `dist/` emitted, only a pre-existing chunk-
+  size advisory (983 kB bundle, unrelated to this slice's ~4 new files' size).
+- [ ] 6.19 Run `judgment-day` on the slice diff; fix confirmed issues; re-judge until clean. **NOT
+  RUN by `sdd-apply`** — same executor-boundary reason as every prior slice: `judgment-day` is an
+  orchestrator-level dual-review protocol this executor cannot invoke. Left for the orchestrator to
+  run before merge.
 - [ ] 6.20 Branch `feat/stage16-slice6-web` off `main` (parent: slice 5); PR; merge
-  stacked-to-main.
+  stacked-to-main. **PARTIAL**: the worktree was already provisioned on `feat/stage16-slice6-web`
+  off `main` (`c531d45`, slice 5 merged) before this phase started — branching is done, one commit
+  landed (`b36b78d`). PR creation/merge is explicitly out of scope (`NO pushees` instruction) —
+  left for the orchestrator.
 
 **Test plan**: descriptor tests (6.8); gating branches (6.9); pre-load exclusion (6.10); double-
 click guard (6.11); stale-response discard (6.12); pager edges (6.13); 3 mutation sub-targets
