@@ -486,6 +486,15 @@ draft/enviar/anular/list/detail lifecycle over the schema of slice 1, own series
   (default zona, no seeding needed) and its `+05:30` (`Asia/Kolkata`, no DST) mirror, which seeds
   a `Parametro` row directly — the mirror's conclusion inverts, proving only a real-offset fixture
   can see this class of regression.
+
+  **FINDING REGISTERED (mutation target 22) — no dedicated test, and none is possible**, same
+  convention as 2.19's target-14 registration. `ParametrosDeComando.Agregar`/`AgregarNulo`
+  (`ParametrosDeComando.cs:31-32`) route every `DateTimeOffset` — including `fecha_envio` — through
+  `Normalizar`, which unconditionally calls `ToUniversalTime()` before the raw-ADO write; there is
+  no hand-built-parameter code path that skips it. The design's own falsifier (design.md:541, "the
+  `-03:00` offset test") could never distinguish a mutant here from the healthy build, because
+  the mutation is structurally unreachable — the centralized helper normalizes every call site,
+  not just this one.
 - [x] 2.14 Test: expiry-day boundary — `vencimiento == hoy` ⇒ still convertible (`v < hoy`, not
   `v <= hoy`). *(mutation target 20)*
 
@@ -533,6 +542,21 @@ draft/enviar/anular/list/detail lifecycle over the schema of slice 1, own series
   `TodoCampoPosicionalDelDetalleSeLeeDeVueltaConValoresDistinguibles` (every field of
   `PresupuestoDetalle`/`ItemDePresupuesto`, pairwise-distinct) + the `vencido`/`idPuntoVenta`
   filter test (`UnPresupuestoConVencimientoPasadoSeReportaVencidoYElFiltroLoDiscrimina`).
+
+  **DEVIATION REGISTERED (judgment-day, MAJOR, fixed) — 2nd variant of the rule-12b coincidence
+  class, this time by zero-discount, not by null/default.** The original
+  `TodoCampoPosicionalDelDetalleSeLeeDeVueltaConValoresDistinguibles` asserted the doc-comment's
+  own "pairwise-distinguishable" claim with `Subtotal == Total == 550m` — no fixture seeded a
+  discount, so `DescuentoTotal` was always `0m`, and a `Subtotal`/`Total` field swap at either
+  construction site (`ServicioDePresupuestos.cs:715-717`'s `PresupuestoDetalle`, and its
+  `ProyectarListado` mirror which reads the same swapped `presupuesto.Total`) would have passed
+  green — the same failure shape rule 12b already names for null/default, now hitting a
+  coincidentally-equal non-null value instead. Fixed by seeding a real 20% `Oferta` on
+  `ctx.IdArticulo2` (via `POST /api/ofertas`, same helper shape as `OfertasResolucionTests`) so
+  the header reads `Subtotal = 550m`, `DescuentoTotal = 50m`, `Total = 500m` — pairwise-distinct —
+  asserted both on the detail response and on the matching `/api/presupuestos` listing row's
+  `Total`, closing the `ProyectarListado` mirror gap too. Mutation-proof: reverting the swap at
+  either construction site now fails this test.
 - [x] 2.21 **GATE GUARD** — zero new files under `Migraciones/`; `has-pending-model-changes`
   clean (schema untouched this slice).
 

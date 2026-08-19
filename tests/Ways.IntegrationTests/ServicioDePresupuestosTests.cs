@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
+using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Application.Ventas;
@@ -163,6 +164,20 @@ public class ServicioDePresupuestosTests(WaysApiFixture fixture) : IClassFixture
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
         return JsonSerializer.Deserialize<PresupuestoDetalle>(cuerpo, OpcionesJson)!;
+    }
+
+    /// <summary>Mismo shape que <c>OfertasResolucionTests.OfertaDeArticulo</c> — oferta directa
+    /// (sin <c>cantidad_minima</c>), sin ventana de vigencia, alcance a un único artículo.</summary>
+    private static AltaOferta OfertaDeArticulo(int idArticulo, decimal porcentaje) => new(
+        Nombre: "oferta de prueba", IdEmpresa: null, IdArticulo: idArticulo, IdGrupo: null, IdCategoria: null,
+        FechaDesde: null, FechaHasta: null, HoraDesde: null, HoraHasta: null, DiasSemana: null,
+        CantidadMinima: null, PrecioUnitario: null, Porcentaje: porcentaje, ImporteFijo: null,
+        Prioridad: 0, Acumulable: false);
+
+    private static async Task CrearOfertaAsync(HttpClient cliente, AltaOferta datos)
+    {
+        var respuesta = await cliente.PostAsJsonAsync("/api/ofertas", datos);
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
     // ---- task 2.2: crear borrador, precio resuelto al guardar --------------------------------------
@@ -738,11 +753,19 @@ public class ServicioDePresupuestosTests(WaysApiFixture fixture) : IClassFixture
     /// <summary>Regla 12b: cada campo posicional de <see cref="PresupuestoDetalle"/>/
     /// <see cref="ItemDePresupuesto"/> se lee de vuelta con un valor DISTINTO al de sus vecinos —
     /// un test que solo comparara con <c>null</c>/default no discriminaría un mapeo de campos
-    /// desordenado (p.ej. <c>Subtotal</c>/<c>Total</c> swappeados).</summary>
+    /// desordenado (p.ej. <c>Subtotal</c>/<c>Total</c> swappeados). Variante por descuento-cero
+    /// (judgment-day, mismo mecanismo pero con un valor no-null coincidentemente igual): sin una
+    /// oferta real sembrada, <c>DescuentoTotal</c> es siempre <c>0m</c> y <c>Subtotal == Total</c>
+    /// — un swap de esos dos campos en el sitio de construcción (<c>ServicioDePresupuestos.cs</c>,
+    /// tanto el <see cref="PresupuestoDetalle"/> como su espejo en <c>ProyectarListado</c>)
+    /// pasaría verde. Se siembra una oferta del 20% sobre <c>ctx.IdArticulo2</c> para que los tres
+    /// valores del header sean pairwise-distintos.</summary>
     [Fact]
     public async Task TodoCampoPosicionalDelDetalleSeLeeDeVueltaConValoresDistinguibles()
     {
         var ctx = await PrepararAsync(nameof(TodoCampoPosicionalDelDetalleSeLeeDeVueltaConValoresDistinguibles));
+        await CrearOfertaAsync(ctx.Admin, OfertaDeArticulo(ctx.IdArticulo2, porcentaje: 20m));
+
         var creado = await CrearBorradorAsync(
             ctx.Admin,
             new SolicitudDePresupuesto(
@@ -760,10 +783,11 @@ public class ServicioDePresupuestosTests(WaysApiFixture fixture) : IClassFixture
         Assert.False(creado.Convertible);
         Assert.Equal("America/Argentina/Buenos_Aires", creado.ZonaId);
         Assert.Equal("observacion distinguible", creado.Observaciones);
-        // item1: 3 * 100 = 300; item2: 1 * 250 = 250; header Subtotal/Total = 550 (sin descuento).
+        // item1: 3 * 100 = 300 (sin oferta); item2: 1 * 250 con oferta 20% = 250 - 50 = 200;
+        // header Subtotal = 550, DescuentoTotal = 50, Total = 500 — los tres pairwise-distintos.
         Assert.Equal(550m, creado.Subtotal);
-        Assert.Equal(0m, creado.DescuentoTotal);
-        Assert.Equal(550m, creado.Total);
+        Assert.Equal(50m, creado.DescuentoTotal);
+        Assert.Equal(500m, creado.Total);
         Assert.Equal(EstadoPresupuesto.Borrador, creado.Estado);
         Assert.Null(creado.IdComprobanteVenta);
 
@@ -778,6 +802,13 @@ public class ServicioDePresupuestosTests(WaysApiFixture fixture) : IClassFixture
         Assert.Null(item1.IdOferta);
         Assert.Equal(ctx.IdAlicuotaIva, item1.IdAlicuotaIva);
         Assert.Equal(21m, item1.PorcentajeIva);
+
+        // Mismo swap Subtotal/Total en el sitio de construcción también pasaría verde en el
+        // listado (ProyectarListado lee presupuesto.Total) — se confirma la fila.
+        var listado = await ctx.Admin.GetFromJsonAsync<PaginaDePresupuestos>(
+            $"/api/presupuestos?idPuntoVenta={ctx.IdPuntoVenta}&pagina=1&tamanio=10", OpcionesJson);
+        var filaListado = listado!.Items.Single(p => p.Id == creado.Id);
+        Assert.Equal(500m, filaListado.Total);
 
         var enviar = await ctx.Admin.PostAsJsonAsync($"/api/presupuestos/{creado.Id}/enviar", new SolicitudDeEnvio(FechaFutura()));
         var enviado = (await enviar.Content.ReadFromJsonAsync<PresupuestoDetalle>(OpcionesJson))!;
