@@ -90,11 +90,16 @@ public sealed record CoberturaDeArticulo(
 /// Testing Strategy de design.md, task 5.9 — no la reutilización de SQL: la escritura solo
 /// necesita dos booleanos agregados por su propio <c>WITH</c>, mientras que esta lectura necesita
 /// las filas per-artículo incluyendo recibido-no-pedido, un shape distinto). <see
-/// cref="TotalEstimado"/>/<see cref="TotalReal"/>/<see cref="DesvioTotal"/> agregan <see
-/// cref="CoberturaDeArticulo"/> ponderando por <c>Pedida</c>/<c>Recibida</c> respectivamente,
-/// <c>null</c> cuando ningún artículo tiene el lado comparable. <see cref="ComprobantesLigados"/>
-/// son TODOS los comprobantes con <c>id_orden_compra</c> = esta orden (cualquier estado —
-/// informativo, design: API Surface "linked comprobante ids").</summary>
+/// cref="TotalEstimado"/> es el total estimado de la PORCIÓN COTIZADA, sumado a NIVEL LÍNEA
+/// (<c>CostoUnitarioEstimado * CantidadPedida</c> sobre los items con costo seteado — judgment-day
+/// ronda 2: jamás el promedio por-artículo de <see cref="CoberturaDeArticulo.CostoEstimado"/>
+/// multiplicado por la <c>Pedida</c> total del artículo, que extrapolaría en silencio el costo de
+/// una línea nunca cotizada). <see cref="TotalReal"/>/<see cref="DesvioTotal"/> SÍ agregan <see
+/// cref="CoberturaDeArticulo"/> ponderando por <c>Recibida</c> (población coherente: <c>CostoReal</c>
+/// y <c>Recibida</c> derivan siempre del mismo grupo de items recibidos, sin línea "recibida sin
+/// costo" que las desacople), <c>null</c> cuando ningún artículo tiene el lado comparable. <see
+/// cref="ComprobantesLigados"/> son TODOS los comprobantes con <c>id_orden_compra</c> = esta orden
+/// (cualquier estado — informativo, design: API Surface "linked comprobante ids").</summary>
 public sealed record OrdenDeCompraDetalle(
     int Id,
     int IdProveedor,

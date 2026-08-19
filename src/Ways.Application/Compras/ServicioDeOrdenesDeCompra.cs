@@ -141,15 +141,29 @@ public class ServicioDeOrdenesDeCompra(IWaysDbContext db, IRelojDelSistema reloj
 
         var cobertura = await ObtenerCoberturaAsync(id, ct);
 
-        // TotalEstimado/TotalReal: agregan Cobertura ponderando por Pedida/Recibida
-        // respectivamente, sumando SOLO los artículos con ese lado comparable (dto-contract-
-        // honesty: un total que mezclara ceros fabricados con datos reales sería deshonesto).
-        // null cuando NINGÚN artículo aporta ese lado.
-        var conCostoEstimado = cobertura.Where(c => c.CostoEstimado is not null).ToList();
-        decimal? totalEstimado = conCostoEstimado.Count > 0
-            ? conCostoEstimado.Sum(c => c.CostoEstimado!.Value * c.Pedida)
+        // TotalEstimado: el total estimado de la PORCIÓN COTIZADA, calculado a NIVEL LÍNEA — sum
+        // (CostoUnitarioEstimado * CantidadPedida) SOLO sobre los items que tienen costo seteado;
+        // null cuando ninguno lo tiene. Judgment-day (juez A, ronda 2): NO puede agregarse desde
+        // Cobertura (CostoEstimado por-artículo × Pedida TOTAL del artículo) — CostoEstimado ya es
+        // un promedio ponderado que promedia SOLO las líneas cotizadas, mientras que Pedida suma
+        // TODAS las líneas del artículo, cotizadas o no; multiplicarlos extrapola en silencio el
+        // costo de una línea nunca cotizada (p.ej. 3 unidades a 100 + 4 sin costo del mismo
+        // artículo daría 100×7=700 en vez de los 300 reales). La suma línea a línea es inmune: cada
+        // línea aporta su propio costo×cantidad, o nada si no está cotizada — cero extrapolación,
+        // nulls honestos de verdad.
+        var itemsConCostoEstimado = items.Where(i => i.CostoUnitarioEstimado is not null).ToList();
+        decimal? totalEstimado = itemsConCostoEstimado.Count > 0
+            ? itemsConCostoEstimado.Sum(i => i.CostoUnitarioEstimado!.Value * i.CantidadPedida)
             : null;
 
+        // TotalReal: SÍ puede agregar desde Cobertura, a diferencia de TotalEstimado — verificado
+        // en la misma ronda. CostoReal y Recibida por artículo (ObtenerCoberturaAsync,
+        // recibidoPorArticulo) derivan SIEMPRE de la MISMA población de itemsRecibido para ese
+        // artículo (mismo GroupBy, mismo Cantidad agregado) — no hay línea "recibida sin costo" que
+        // desacople a las dos poblaciones como pasa del lado estimado, así que no hay extrapolación
+        // posible acá. Sumando SOLO los artículos con ese lado comparable (dto-contract-honesty: un
+        // total que mezclara ceros fabricados con datos reales sería deshonesto). null cuando
+        // NINGÚN artículo aporta ese lado.
         var conCostoReal = cobertura.Where(c => c.CostoReal is not null).ToList();
         decimal? totalReal = conCostoReal.Count > 0
             ? conCostoReal.Sum(c => c.CostoReal!.Value * c.Recibida)
