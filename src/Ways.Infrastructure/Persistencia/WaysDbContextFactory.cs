@@ -46,6 +46,7 @@ public class WaysDbContextFactory : IDesignTimeDbContextFactory<WaysDbContext>
                 npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                 npgsql.MapEnum<EstadoCompra>("estado_compra");
                 npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
             })
             .Options;
 

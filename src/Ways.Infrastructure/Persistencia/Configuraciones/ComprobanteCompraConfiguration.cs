@@ -71,6 +71,11 @@ public class ComprobanteCompraConfiguration : IEntityTypeConfiguration<Comproban
             .HasColumnType("estado_compra")
             .IsRequired();
 
+        // Etapa 16 (proposal §D): ALTER aditivo, metadata-only en PG 11+ — NULL = una compra
+        // que llegó sin orden, el 100% del tráfico previo a esta etapa y un estado
+        // permanentemente legítimo.
+        builder.Property(c => c.IdOrdenCompra).HasColumnName("id_orden_compra");
+
         builder.Property(c => c.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(c => c.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(c => c.DeletedAt).HasColumnName("deleted_at");
@@ -132,5 +137,20 @@ public class ComprobanteCompraConfiguration : IEntityTypeConfiguration<Comproban
             .HasForeignKey(c => c.IdEmpleado)
             .HasConstraintName("fk_comprobantes_compra_empleado")
             .OnDelete(DeleteBehavior.Restrict);
+
+        // FK 9 (proposal §D): compuesta, MATCH SIMPLE (el default) — con id_orden_compra NULL
+        // la constraint no se chequea, mismo precedente que fk_auditoria_punto_venta/
+        // gastos.id_comprobante_compra. Índice de soporte declarado a mano (nombrado por
+        // doc-10, nunca el IX_... autogenerado que ArticuloEmpresaConfiguration/
+        // NumeracionComprobanteConfiguration.cs:44-49 ya documentan como trampa).
+        builder.HasOne<OrdenCompra>()
+            .WithMany()
+            .HasForeignKey(c => new { c.IdOrdenCompra, c.IdTenant })
+            .HasPrincipalKey(o => new { o.Id, o.IdTenant })
+            .HasConstraintName("fk_comprobantes_compra_orden_compra")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(c => new { c.IdOrdenCompra, c.IdTenant })
+            .HasDatabaseName("ix_comprobantes_compra_orden_compra");
     }
 }

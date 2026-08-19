@@ -145,6 +145,29 @@ public class ManejadorDeErrores(
                 when string.Equals(uxOrdenCompra, "ux_items_comprobante_compra_orden", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en esta compra.", "orden_de_item_duplicado"),
 
+            // stage-16-ordenes-de-compra (Slice 1, task 1.19, db-error-backstops, design decisión
+            // 10-11): ux_ordenes_compra_numero tiene que resolverse por nombre EXACTO, ANTES de
+            // ClasificarUnicidad — su nombre contiene "_numero", así que la rama genérica de más
+            // abajo (la familia de ux_clientes_numero) lo atraparía primero y lo clasificaría
+            // como "numero_duplicado". TERCERA ocurrencia del ordering trap, mismo tratamiento
+            // exacto que ux_comprobantes_venta_numero (:127-129) y
+            // ux_comprobantes_compra_numero_externo (:136-138) — bajo operación normal esta rama
+            // es inalcanzable (el único escritor es AsignadorDeNumeroComprobante, cuya atomicidad
+            // ya está probada por la etapa 5/8), queda como backstop de esquema puro, probado por
+            // un INSERT crudo out-of-band (slice 1) y por la concurrencia real de dos `enviar`
+            // simultáneos en un mismo punto de venta (slice 2).
+            { SqlState: "23505", ConstraintName: string uxOrdenCompraNumero }
+                when string.Equals(uxOrdenCompraNumero, "ux_ordenes_compra_numero", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe una orden de compra con ese número en este punto de venta.", "numero_de_orden_duplicado"),
+
+            // stage-16-ordenes-de-compra (Slice 1, task 1.19, db-error-backstops): orden es
+            // server-asignado dentro del replace-set del borrador (slice 2) — exención
+            // documentada de prueba de carrera, misma familia que
+            // ux_items_comprobante_compra_orden de arriba.
+            { SqlState: "23505", ConstraintName: string uxItemOrdenCompra }
+                when string.Equals(uxItemOrdenCompra, "ux_items_orden_compra_orden", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en esta orden de compra.", "orden_de_item_duplicado"),
+
             // stage-12-lotes-vencimientos (Slice 1, task 1.16, db-error-backstops, design
             // decisión 5): ux_lotes_articulo_codigo tiene que resolverse por nombre EXACTO,
             // ANTES de llegar a ClasificarUnicidad (el caso genérico de más abajo) — su nombre
@@ -272,6 +295,20 @@ public class ManejadorDeErrores(
                         || ckCompra.StartsWith("ck_items_comprobante_compra_", StringComparison.Ordinal))
                     && ClasificarCheckDeCompras(ckCompra) is { } checkCompra =>
                 (checkCompra.EstadoHttp, checkCompra.Titulo, checkCompra.Codigo),
+
+            // stage-16-ordenes-de-compra (Slice 1, task 1.19, db-error-backstops, design
+            // decisión 10, proposal §E): switch por nombre EXACTO detrás de un guard de prefijo
+            // "ck_ordenes_compra_"/"ck_items_orden_compra_" — mismo criterio que ckCompra de
+            // arriba. Las dos CHECKs de ordenes_compra son server-derivadas (ninguna llega desde
+            // input de cliente); las dos de items_orden_compra sí reciben input de cliente
+            // (cantidad/costo) y ya se validan en el servicio antes de escribir (Slice 2) — bajo
+            // operación normal ninguna de las cuatro ramas es alcanzable, quedan como backstop
+            // de una escritura cruda/fuera de banda, cada una probada con SQL directo (slice 1).
+            { SqlState: "23514", ConstraintName: string ckOrdenCompra }
+                when (ckOrdenCompra.StartsWith("ck_ordenes_compra_", StringComparison.Ordinal)
+                        || ckOrdenCompra.StartsWith("ck_items_orden_compra_", StringComparison.Ordinal))
+                    && ClasificarCheckDeOrdenesDeCompra(ckOrdenCompra) is { } checkOrdenCompra =>
+                (checkOrdenCompra.EstadoHttp, checkOrdenCompra.Titulo, checkOrdenCompra.Codigo),
 
             // Backstop genérico (db-error-backstops, judgment-day slice 3 ronda 1): cualquier
             // valor numérico que desborda la precisión/escala de su columna (p.ej. un margen o
@@ -675,6 +712,41 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "Un ítem con codigo_lote tiene que traer también fecha_vencimiento.",
                     "lote_input_incompleto"),
+
+            _ => null
+        };
+
+    /// <summary>stage-16-ordenes-de-compra (Slice 1, task 1.19, design decisión 10, proposal §E):
+    /// switch por nombre EXACTO de las cuatro CHECKs nuevas de <c>ordenes_compra</c>/
+    /// <c>items_orden_compra</c>, detrás del guard de prefijo del caso de arriba. CHECK 1/CHECK 2
+    /// son 409 (server-derivadas, ninguna entra por input de cliente — un rechazo de esquema acá
+    /// solo puede significar una escritura cruda). CHECK 3/CHECK 4 son 400, misma familia y
+    /// mismo status que <c>ck_items_comprobante_compra_cantidad_positiva</c>/
+    /// <c>..._costo_no_negativo</c> en <see cref="ClasificarCheckDeCompras"/>: ambas reciben
+    /// input real de cliente (cantidad pedida, costo estimado) y el servicio ya las valida
+    /// primero con el mismo código de dominio — esta rama es solo el backstop de esquema.</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarCheckDeOrdenesDeCompra(string nombreDeCheck) =>
+        nombreDeCheck switch
+        {
+            "ck_ordenes_compra_envio_completo" =>
+                (StatusCodes.Status409Conflict,
+                    "El número y la fecha de envío de la orden de compra tienen que llegar juntos.",
+                    "orden_compra_envio_incompleto"),
+
+            "ck_ordenes_compra_cierre" =>
+                (StatusCodes.Status409Conflict,
+                    "El cierre de la orden de compra es inconsistente.",
+                    "orden_compra_cierre_incoherente"),
+
+            "ck_items_orden_compra_cantidad_positiva" =>
+                (StatusCodes.Status400BadRequest,
+                    "La cantidad pedida de un ítem de orden de compra tiene que ser positiva.",
+                    "cantidad_pedida_invalida"),
+
+            "ck_items_orden_compra_costo_no_negativo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El costo estimado de un ítem de orden de compra no puede ser negativo.",
+                    "costo_estimado_invalido"),
 
             _ => null
         };
