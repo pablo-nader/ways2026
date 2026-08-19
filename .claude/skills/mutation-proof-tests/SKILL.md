@@ -135,7 +135,15 @@ so deleting the clause under test changes nothing the test can see.
    in-sync fixtures make both sources indistinguishable by construction.
    (b) **Projection**: EVERY projected money/date field of a returned item gets
    asserted with per-row discriminating values — a `SaldoResultante = 0m` hardcode
-   survived 8/8 tests because no test read the field back.
+   survived 8/8 tests because no test read the field back. Third occurrence
+   (stage 16 slice 5) sharpened the rule: EVERY positional field of a response
+   record gets read back at least once with values pairwise-distinct across
+   fields — a 17-parameter positional constructor with two adjacent ints is one
+   swap away from shipping proveedor and punto de venta exchanged with 197/197
+   green; rich fixtures on the "interesting" derived fields do not cover the
+   identity/aggregate fields (Pendiente asserted only where it equals 0, totals
+   never read back). One integral "the detail returns every field with its
+   truth" test per response DTO closes the whole class.
    (c) **Identity predicate**: seeding ONE entity per tenant makes `Where(Id == x)`
    undeletable-undetectable; every listing/estado test seeds a SECOND sibling of the
    same tenant with its own rows and asserts exact counts + row identity, so
