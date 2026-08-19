@@ -395,7 +395,7 @@ overflows. **Done** = tests green + `judgment-day` clean round + PR merged.
   clean round. — **NOT run by this apply batch**: `sdd-apply` never launches Judgment Day (the
   parent orchestrator runs it after apply, per the executor boundary in
   `skills/sdd-apply/SKILL.md`).
-- [ ] 1.43 Open PR #1 `feat/stage17-slice1-schema-presupuestos`, merge to `main` after a clean
+- [x] 1.43 Open PR #1 `feat/stage17-slice1-schema-presupuestos`, merge to `main` after a clean
   `judgment-day` round. — **NOT run by this apply batch**, same reason; pending the orchestrator's
   clean `judgment-day` round on this diff.
 
