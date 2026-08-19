@@ -89,6 +89,10 @@ public static class DependencyInjection
         // (design decisión 11) — dedicado, no extiende ServicioDeProveedores.
         services.AddScoped<ServicioDeSaldoDeProveedor>();
 
+        // stage-16-ordenes-de-compra, Slice 2: borrador CRUD + enviar (numeración propia, serie
+        // 'OC', vía AsignadorDeNumeroComprobante — no se toca). cerrar/anular llegan en slice 4.
+        services.AddScoped<ServicioDeOrdenesDeCompra>();
+
         // stage-15-cc-proveedores-ledger, Slice 4: el lado de lectura del ledger de proveedores —
         // estado de cuenta paginado (task 4.3).
         services.AddScoped<ServicioDeCuentaCorrienteDeProveedor>();

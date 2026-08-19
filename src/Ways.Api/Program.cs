@@ -174,6 +174,8 @@ app.MapearCaja();
 app.MapearGastos();
 app.MapearCuentaCorriente();
 app.MapearCompras();
+// stage-16-ordenes-de-compra, Slice 2: borrador CRUD + enviar (numeración propia, serie 'OC').
+app.MapearOrdenesDeCompra();
 // stage-15-cc-proveedores-ledger, Slice 4: estado de cuenta paginado del proveedor.
 app.MapearCuentaCorrienteDeProveedor();
 app.MapearReportes();
