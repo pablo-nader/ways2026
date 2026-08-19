@@ -215,9 +215,28 @@ phases:
       lectura) a mitad de la etapa. El agente del slice 1 se colgo tras
       generar la migracion y SendMessage lo resucito (7ma recuperacion).
   verify:
-    status: pending
+    status: done
     artifact: verify-report.md
     depends_on: [apply]
+    note: >-
+      PASS WITH WARNINGS (2026-08-18, main 8c03226): 0 CRITICAL. 17 deltas de
+      requirements / 38 escenarios trazados a tests que pasan. Gate vinculante
+      verificado en vivo: UNA migracion CuentaCorrienteDeProveedoresEtapa15,
+      has-pending-model-changes limpio, 7 indices (prueba empirica contra
+      pg_indexes ubicada y verde), fidelidad del backfill con discriminantes.
+      OD7/OD8/OD9 verificadas contra el codigo real; /export inexistente
+      (OD6). No-regresion: VentasCheckoutTests/Ventas/ManejadorDeErrores
+      ausentes de los 6 merges; los 16 asserts de SaldoDeProveedorTests de
+      stage-8 byte-identicos. 10 de 44 desviaciones muestreadas: todas
+      verdaderas (regla 12). Suites de cierre: Domain 492 · Application 286 ·
+      Integration 1297 (re-corrida en aislamiento tras 20 fallas de
+      flakiness Testcontainers — 3ra ocurrencia del patron, verde) ·
+      vitest 730. W1 (anotacion doc-10 congelada en slice 1 — TERCERA
+      ocurrencia de la clase, 13/14/15): REMEDIADO pre-archive por el
+      orquestador. W2 informativo (narrativa de mutacion de OD7 no
+      replayable por construccion — limitacion de proceso, codigo
+      confirmado correcto). SUGGESTION 1 (indice de la secuencia 1-44 en
+      tasks.md): aplicada. SUGGESTION 2: registro, sin accion.
   archive:
     status: pending
     artifact: archive-report.md

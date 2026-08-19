@@ -715,7 +715,12 @@ movimientos_cuenta_corriente_proveedor (   -- [operativa — id_punto_venta NULL
 );
 ```
 
-> **Estado (Etapa 15, stage-15-cc-proveedores-ledger, Slice 1 — schema + backfill): implementada.**
+> **Estado (Etapa 15, stage-15-cc-proveedores-ledger): implementada — etapa completa (PRs #134-#139).**
+> Los 4 caminos de escritura activos (apertura por backfill, `compra` en confirmación, `pago` vía
+> gasto, `ajuste` por contramovimiento de anulación y por el endpoint manual bajo
+> `SupervisionDeCuentaDeProveedor`); estado de cuenta paginado y `ServicioDeSaldoDeProveedor`
+> re-sourceado sobre el ledger (fórmula OD7: gastos ligados + ajustes imputados; los `pago` no se
+> cuentan).
 > Mismo criterio que `movimientos_cuenta_corriente` (§8): ledger append-only, sin `EntidadBase`
 > (sin `updated_at`, sin soft delete), `id_tenant` escrito explícito (nunca `EstamparTenant()`).
 > **Sin clave alterna ni self-FK** — a diferencia de la tabla de clientes, esta etapa no incluye
@@ -742,7 +747,7 @@ movimientos_cuenta_corriente_proveedor (   -- [operativa — id_punto_venta NULL
 > `id_proveedor` (Slice 3); `ajuste` ← el contramovimiento de `ServicioDeCompras.AnularAsync`
 > (Slice 2) y el ajuste manual bajo `Politicas.SupervisionDeCuentaDeProveedor` (Slice 5). El
 > estado de cuenta paginado (`GET /api/proveedores/{id}/cuenta-corriente`) y el estado de pago
-> por compra re-sourced desde el ledger llegan en Slice 4.
+> por compra re-sourced desde el ledger (Slice 4). Todos mergeados.
 
 ## 9. Parámetros operativos
 

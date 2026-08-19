@@ -2,6 +2,11 @@
 
 ## Orchestrator Decisions Recorded This Phase
 
+> Índice de la secuencia 1-44 (SUGGESTION 1 del verify): las entradas 1-14 son
+> decisiones de la fase tasks; las 15-44 son desviaciones registradas durante
+> sdd-apply y judgment-day, en orden cronológico por slice (15-18 s1, 19-24 s2,
+> 25-26 s3, 27-32 s4, 33-35 s5, 36-44 s6).
+
 1. **6 slices, 6 PRs, stacked-to-main** — design.md's ratified breakdown
    (re-confirmed, not re-scoped, from the proposal's own tentative plan).
    Merge order: `1 → 2 → 3 → 4 → 5 → 6`, exactly as both proposal.md and
