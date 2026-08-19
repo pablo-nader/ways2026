@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import {
   aSolicitudDeCompra,
   calcularTotalesDeCompra,
@@ -8,6 +8,7 @@ import {
   itemAFormulario,
   lineaCompletaParaEnvio,
   lineaDeCompraVacia,
+  lineaDesdeCoberturaDeOrden,
   lineaFormularioACalculo,
   lineaConDescuentoInvalido,
   type EncabezadoDeCompraFormulario,
@@ -16,6 +17,7 @@ import {
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
+import { clienteDeOrdenesDeCompra } from '../api/ordenesDeCompra'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDePrecios } from '../api/precios'
 import { ROL } from '../api/tipos'
@@ -24,6 +26,7 @@ import type {
   ArticuloListado,
   CompraDetalle,
   ListaPrecioListado,
+  OrdenDeCompraDetalle,
   PaginaDe,
   ProveedorListado,
   PuntoVentaListado,
@@ -45,7 +48,7 @@ function formatearFechaHora(iso: string | null): string {
 }
 
 function encabezadoVacio(): EncabezadoDeCompraFormulario {
-  return { idProveedor: '', idTipoComprobante: '', idPuntoVenta: '', numeroExterno: '', fechaComprobante: '', observaciones: '' }
+  return { idProveedor: '', idTipoComprobante: '', idPuntoVenta: '', numeroExterno: '', fechaComprobante: '', observaciones: '', idOrdenCompra: null }
 }
 
 function encabezadoDesdeDetalle(c: CompraDetalle): EncabezadoDeCompraFormulario {
@@ -56,6 +59,7 @@ function encabezadoDesdeDetalle(c: CompraDetalle): EncabezadoDeCompraFormulario 
     numeroExterno: c.numeroExterno ?? '',
     fechaComprobante: c.fechaComprobante ?? '',
     observaciones: c.observaciones ?? '',
+    idOrdenCompra: c.idOrdenCompra,
   }
 }
 
@@ -482,11 +486,12 @@ function PanelAplicarPrecios({ idCompra, listas, disabled, onAntesDeEscribir, on
 
 // ---- Pantalla principal -------------------------------------------------------------------------
 
-type PropsPantalla = { idCompra: number | null }
+type PropsPantalla = { idCompra: number | null; idOrdenCompra: number | null }
 
-/** Remontada por `key={idCompra ?? 'nuevo'}` (react-async-state regla 8) — ningún estado de acá
- * (borrador en edición, paneles de confirmar/anular) sobrevive a un cambio de compra. */
-function PantallaCompraEditor({ idCompra }: PropsPantalla) {
+/** Remontada por `key={idCompra ?? 'nuevo-' + (idOrdenCompra ?? 's')}` (react-async-state regla 8)
+ * — ningún estado de acá (borrador en edición, paneles de confirmar/anular) sobrevive a un cambio
+ * de compra. */
+function PantallaCompraEditor({ idCompra, idOrdenCompra }: PropsPantalla) {
   const navigate = useNavigate()
   const { usuario } = useAuth()
   const puedeEscribir = usuario !== null && usuario.rolId === ROL.Admin
@@ -596,10 +601,50 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
     }
   }, [esNuevo, idCompra])
 
+  // ---- pre-carga desde una orden de compra (stage-16-ordenes-de-compra, Slice 6): "Registrar
+  // recepción" de OrdenDeCompra.tsx navega acá con `?idOrdenCompra=`; se resuelve UNA vez, solo
+  // para un borrador NUEVO (una compra existente ya trae su propio idOrdenCompra, decisión
+  // congelada al confirmar) — design: "pre-fills idProveedor, idPuntoVenta, idOrdenCompra and one
+  // line per artículo with Pendiente > 0". -----------------------------------------------------
+  const [ordenParaPrecargar, setOrdenParaPrecargar] = useState<OrdenDeCompraDetalle | null>(null)
+  const [errorOrdenParaPrecargar, setErrorOrdenParaPrecargar] = useState('')
+
+  useEffect(() => {
+    if (!esNuevo || idOrdenCompra === null) return
+    let vigente = true
+
+    clienteDeOrdenesDeCompra
+      .obtener(idOrdenCompra)
+      .then((detalle) => {
+        if (!vigente) return
+        setOrdenParaPrecargar(detalle)
+      })
+      .catch((e) => {
+        if (!vigente) return
+        setErrorOrdenParaPrecargar(e instanceof ErrorApi ? e.message : 'No se pudo cargar la orden de compra a recepcionar.')
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [esNuevo, idOrdenCompra])
+
   // ---- formulario editable (nuevo o borrador existente) ------------------------------------------
   const [encabezado, setEncabezado] = useState<EncabezadoDeCompraFormulario>(encabezadoVacio())
   const proximaClaveRef = useRef(1)
   const [lineas, setLineas] = useState<LineaDeCompraFormulario[]>([])
+
+  useEffect(() => {
+    if (ordenParaPrecargar === null) return
+    setEncabezado((prev) => ({
+      ...prev,
+      idProveedor: ordenParaPrecargar.idProveedor,
+      idPuntoVenta: ordenParaPrecargar.idPuntoVenta,
+      idOrdenCompra: ordenParaPrecargar.id,
+    }))
+    const pendientes = ordenParaPrecargar.cobertura.filter((c) => c.pendiente > 0)
+    setLineas(pendientes.map((c) => lineaDesdeCoberturaDeOrden(proximaClaveRef.current++, c, ordenParaPrecargar.items)))
+  }, [ordenParaPrecargar])
 
   useEffect(() => {
     if (compra === null) return
@@ -804,6 +849,13 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
         {errorReferencia && (
           <div className="alert alert-warning rounded-0 py-1 px-2 small">
             {errorReferencia} No se pueden registrar operaciones de compra hasta que esto se resuelva.
+          </div>
+        )}
+        {errorOrdenParaPrecargar && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorOrdenParaPrecargar}</div>}
+        {encabezado.idOrdenCompra !== null && (
+          <div className="alert alert-info rounded-0 py-1 px-2 small">
+            Vinculada a la orden de compra{' '}
+            <Link to={`/ordenes-compra/${encabezado.idOrdenCompra}`}>#{encabezado.idOrdenCompra}</Link>.
           </div>
         )}
 
@@ -1174,9 +1226,17 @@ function PantallaCompraEditor({ idCompra }: PropsPantalla) {
  */
 export function CompraEditor() {
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
   const esNuevo = id === undefined || id === 'nueva'
   const idNumerico = esNuevo ? null : Number(id)
   const idValido = esNuevo || Number.isFinite(idNumerico)
+
+  // stage-16-ordenes-de-compra, Slice 6: solo aplica a un borrador NUEVO — una compra existente
+  // ya tiene su propio `idOrdenCompra` congelado (design: "reads idOrdenCompra from
+  // useSearchParams").
+  const idOrdenCompraParam = esNuevo ? searchParams.get('idOrdenCompra') : null
+  const idOrdenCompra =
+    idOrdenCompraParam !== null && Number.isFinite(Number(idOrdenCompraParam)) ? Number(idOrdenCompraParam) : null
 
   if (!idValido) {
     return (
@@ -1191,5 +1251,11 @@ export function CompraEditor() {
     )
   }
 
-  return <PantallaCompraEditor key={idNumerico ?? 'nuevo'} idCompra={idNumerico} />
+  return (
+    <PantallaCompraEditor
+      key={idNumerico ?? `nuevo-${idOrdenCompra ?? 's'}`}
+      idCompra={idNumerico}
+      idOrdenCompra={idOrdenCompra}
+    />
+  )
 }

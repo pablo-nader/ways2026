@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Reposicion } from './Reposicion'
 import { RutaProtegida } from '../auth/RutaProtegida'
@@ -285,5 +285,87 @@ describe('Reposicion — role gating (mismo gate que Vencimientos: Politicas.Lec
 
     expect(await screen.findByText('Inicio (redirigido)')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('Reposición')).not.toBeInTheDocument())
+  })
+})
+
+// stage-16-ordenes-de-compra, Slice 6 (design decisión 16, tasks.md decisión 24; mutation target
+// #34c): el botón "Generar OC" por grupo — gateado a Admin, ausente en "Sin proveedor", y el
+// mapeo reposición→OC probado de punta a punta contra la pantalla destino real (nunca un
+// `useNavigate` mockeado: la lección del Link de la 15 es que el destino lee `location.state`, no
+// un fetch propio).
+function ProbeDeOrdenDeCompraNueva() {
+  const location = useLocation()
+  const state = location.state as { idProveedor: number; idPuntoVenta: number; items: { idArticulo: number; cantidadPedida: number }[] } | null
+  if (state === null) return <div>Sin precarga</div>
+  return (
+    <div>
+      <div>idProveedor={state.idProveedor}</div>
+      <div>idPuntoVenta={state.idPuntoVenta}</div>
+      <div>items={JSON.stringify(state.items)}</div>
+    </div>
+  )
+}
+
+function renderReposicionConDestino() {
+  return render(
+    <MemoryRouter initialEntries={['/reportes/stock/reposicion']}>
+      <Routes>
+        <Route path="/reportes/stock/reposicion" element={<Reposicion />} />
+        <Route path="/ordenes-compra/nueva" element={<ProbeDeOrdenDeCompraNueva />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+describe('Reposicion — "Generar OC" (stage-16-ordenes-de-compra, Slice 6)', () => {
+  it('un Admin ve el botón por grupo con proveedor; "Sin proveedor" nunca lo ofrece (mutation target #34c, parte 1)', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
+    const filaConProveedor = filaFixture({ idArticulo: 1, idProveedor: 1, proveedor: 'Proveedor Uno' })
+    const filaSinProveedor = filaFixture({ idArticulo: 2, idProveedor: null, proveedor: null })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([filaConProveedor, filaSinProveedor]))
+      return undefined
+    })
+    renderReposicionConDestino()
+
+    const filaProveedorUno = (await screen.findByText('Proveedor Uno (1)')).closest('tr')!
+    expect(within(filaProveedorUno).getByRole('button', { name: 'Generar OC' })).toBeInTheDocument()
+
+    const filaSinProveedorHeader = screen.getByText('Sin proveedor (1)').closest('tr')!
+    expect(within(filaSinProveedorHeader).queryByRole('button', { name: 'Generar OC' })).not.toBeInTheDocument()
+  })
+
+  it('un Supervisor no ve ningún botón "Generar OC" (mutation target #34c, parte 2) — la pantalla sigue igual', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Supervisor, rol: 'Supervisor' })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) {
+        return Promise.resolve(reposicionFixture([filaFixture({ idProveedor: 1, proveedor: 'Proveedor Uno' })]))
+      }
+      return undefined
+    })
+    renderReposicionConDestino()
+
+    await screen.findByText('Yerba mate 1kg')
+    expect(screen.queryByRole('button', { name: 'Generar OC' })).not.toBeInTheDocument()
+  })
+
+  it('al click navega a /ordenes-compra/nueva con idProveedor/idPuntoVenta/items ya resueltos, excluyendo sugerido = null (mutation target #34c, parte 3)', async () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Admin, rol: 'Admin' })
+    const filaConSugerido = filaFixture({ idArticulo: 1, idProveedor: 5, proveedor: 'Proveedor Cinco', sugerido: 17 })
+    const filaSinSugerido = filaFixture({ idArticulo: 2, idProveedor: 5, proveedor: 'Proveedor Cinco', sugerido: null })
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/reportes/stock/reposicion?')) return Promise.resolve(reposicionFixture([filaConSugerido, filaSinSugerido]))
+      return undefined
+    })
+    const usuario = userEvent.setup()
+    renderReposicionConDestino()
+
+    await usuario.click(await screen.findByRole('button', { name: 'Generar OC' }))
+
+    expect(await screen.findByText('idProveedor=5')).toBeInTheDocument()
+    expect(screen.getByText('idPuntoVenta=10')).toBeInTheDocument()
+    const items = JSON.parse(screen.getByText(/^items=/).textContent!.replace('items=', ''))
+    expect(items).toHaveLength(1)
+    expect(items[0].idArticulo).toBe(1)
   })
 })

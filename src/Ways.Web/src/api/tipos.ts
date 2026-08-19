@@ -1129,7 +1129,12 @@ export type LineaDeCompraSolicitada = {
 }
 
 /** Cuerpo de `POST /api/compras` (crea un borrador) y `PUT /api/compras/{id}` (replace-set
- * completo del header + los items — espejo de `SolicitudDeCompra`). */
+ * completo del header + los items — espejo de `SolicitudDeCompra`).
+ *
+ * `idOrdenCompra` — stage-16-ordenes-de-compra, Slice 3/6: liga esta compra a una orden de compra
+ * existente (recepción). `null` = compra sin OC (100% del tráfico previo a esta etapa, sin cambio
+ * de comportamiento). Seteable/cambiable solo mientras la compra es `Borrador`; congelado después
+ * (espejo del campo posicional final de `SolicitudDeCompra`, C#, default `null`). */
 export type SolicitudDeCompra = {
   idProveedor: number
   idTipoComprobante: number
@@ -1138,6 +1143,7 @@ export type SolicitudDeCompra = {
   fechaComprobante: string | null
   observaciones: string | null
   items: LineaDeCompraSolicitada[]
+  idOrdenCompra: number | null
 }
 
 /** Un item ya persistido, con su `precioSugerido` (espejo de `ItemDeCompra`). */
@@ -1163,7 +1169,10 @@ export type ItemDeCompra = {
   idLote: number | null
 }
 
-/** Detalle completo de una compra (espejo de `CompraDetalle`). */
+/** Detalle completo de una compra (espejo de `CompraDetalle`).
+ *
+ * `idOrdenCompra` — stage-16-ordenes-de-compra, Slice 3/6 (`dto-contract-honesty` regla 2: un
+ * campo request-only no satisface el round-trip). `null` = compra sin OC ligada. */
 export type CompraDetalle = {
   id: number
   idProveedor: number
@@ -1179,6 +1188,7 @@ export type CompraDetalle = {
   observaciones: string | null
   estado: EstadoCompra
   items: ItemDeCompra[]
+  idOrdenCompra: number | null
 }
 
 /** Fila de `GET /api/compras` — shape reducido (espejo de `CompraListada`). */
@@ -1738,3 +1748,115 @@ export const CATALOGO_DE_ACCIONES_AUDITADAS: { valor: string; etiqueta: string }
   { valor: 'usuario.desbloqueo', etiqueta: 'Desbloqueo de usuario' },
   { valor: 'usuario.password', etiqueta: 'Cambio de contraseña' },
 ]
+
+// --- Órdenes de compra (stage-16-ordenes-de-compra, Slice 6) --------------------------------
+// Espejo de `Ways.Application.Compras.ContratosDeOrdenDeCompra`/`EstadoOrdenCompra`
+// (`Ways.Domain.Compras`) — la intención puesta en un proveedor antes de que exista un
+// `comprobantes_compra`. `estado` viaja como el string del enum nativo (`JsonStringEnumConverter`
+// sin naming policy, mismo criterio que `EstadoCompra`).
+
+/** Espejo de `EstadoOrdenCompra` — el orden de los miembros ES el orden de ciclo de vida
+ * (`design.md`: "member order = native type order"). */
+export type EstadoOrdenCompra = 'Borrador' | 'Enviada' | 'RecibidaParcial' | 'Cerrada' | 'Anulada'
+
+/** Una línea del cuerpo de `POST`/`PUT /api/ordenes-compra` (espejo de `LineaDeOrdenSolicitada`).
+ * `orden` NO viaja: es server-asignado 1..N dentro del replace-set. `costoUnitarioEstimado` es
+ * intención de precio, jamás un hecho — `null` = no cotizado. */
+export type LineaDeOrdenSolicitada = {
+  idArticulo: number
+  descripcion: string
+  cantidadPedida: number
+  costoUnitarioEstimado: number | null
+}
+
+/** Cuerpo de `POST /api/ordenes-compra` (crea un borrador) y `PUT /api/ordenes-compra/{id}`
+ * (replace-set completo del header + los items — espejo de `SolicitudDeOrdenDeCompra`). */
+export type SolicitudDeOrdenDeCompra = {
+  idProveedor: number
+  idPuntoVenta: number
+  fechaEsperada: string | null
+  observaciones: string | null
+  items: LineaDeOrdenSolicitada[]
+}
+
+/** Un item ya persistido — `orden` es el valor server-asignado (espejo de `ItemDeOrden`). */
+export type ItemDeOrden = {
+  orden: number
+  idArticulo: number
+  descripcion: string
+  cantidadPedida: number
+  costoUnitarioEstimado: number | null
+}
+
+/** Respuesta de `POST /`, `PUT /{id}`, `POST /{id}/enviar`, `POST /{id}/cerrar` y
+ * `POST /{id}/anular` (espejo de `OrdenDeCompraBorrador`) — header + items, SIN cobertura (esa
+ * derivación solo la trae `GET /{id}`, `dto-contract-honesty`: un campo que este camino de
+ * escritura no puede llenar honestamente no viaja acá). */
+export type OrdenDeCompraBorrador = {
+  id: number
+  idProveedor: number
+  idPuntoVenta: number
+  numero: number | null
+  fechaEmision: string
+  fechaEnvio: string | null
+  fechaEsperada: string | null
+  fechaCierre: string | null
+  idEmpleadoCierre: number | null
+  observaciones: string | null
+  estado: EstadoOrdenCompra
+  items: ItemDeOrden[]
+}
+
+/** Cobertura POR ARTÍCULO (nunca por línea — espejo de `CoberturaDeArticulo`). `pedida` puede ser
+ * `0` (recibido-no-pedido); `pendiente` nunca es negativa (`Math.Max(pedida - recibida, 0)`).
+ * `costoEstimado`/`costoReal`/`desvio` son `null` cuando no hay dato comparable — JAMÁS `0`
+ * (spec ordenes-de-compra: "no comparable, never zero"). `desvio` es un PORCENTAJE ya redondeado
+ * (`(costoReal - costoEstimado) / costoEstimado * 100`), listo para renderizar con signo. */
+export type CoberturaDeArticulo = {
+  idArticulo: number
+  pedida: number
+  recibida: number
+  pendiente: number
+  costoEstimado: number | null
+  costoReal: number | null
+  desvio: number | null
+}
+
+/** Detalle de `GET /api/ordenes-compra/{id}` (espejo de `OrdenDeCompraDetalle`). `estado` es
+ * SIEMPRE la columna proyectada server-side — esta pantalla nunca la re-deriva. `totalEstimado`/
+ * `totalReal`/`desvioTotal` son `null` cuando ningún artículo aporta ese lado comparable.
+ * `comprobantesLigados` son ids de TODOS los comprobantes ligados (cualquier estado). */
+export type OrdenDeCompraDetalle = {
+  id: number
+  idProveedor: number
+  idPuntoVenta: number
+  numero: number | null
+  fechaEmision: string
+  fechaEnvio: string | null
+  fechaEsperada: string | null
+  fechaCierre: string | null
+  cierreManual: boolean
+  observaciones: string | null
+  estado: EstadoOrdenCompra
+  items: ItemDeOrden[]
+  cobertura: CoberturaDeArticulo[]
+  totalEstimado: number | null
+  totalReal: number | null
+  desvioTotal: number | null
+  comprobantesLigados: number[]
+}
+
+/** Fila de `GET /api/ordenes-compra` — shape reducido, sin cobertura ni desvío (espejo de
+ * `OrdenDeCompraListada`). */
+export type OrdenDeCompraListada = {
+  id: number
+  idProveedor: number
+  idPuntoVenta: number
+  numero: number | null
+  fechaEmision: string
+  fechaEsperada: string | null
+  estado: EstadoOrdenCompra
+}
+
+/** Página de `GET /api/ordenes-compra` (espejo de `PaginaDeOrdenesDeCompra`). */
+export type PaginaDeOrdenesDeCompra = { items: OrdenDeCompraListada[]; total: number; pagina: number; tamanio: number }

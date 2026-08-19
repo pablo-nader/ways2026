@@ -1,12 +1,16 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDeReportes, rutasDeExportacion } from '../api/reportes'
+import { ROL } from '../api/tipos'
 import type { PuntoVentaListado, Reposicion as ReposicionRespuesta } from '../api/tipos'
+import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
-import { agruparPorProveedor } from './agruparPorProveedor'
+import { agruparPorProveedor, type GrupoDeReposicion } from './agruparPorProveedor'
+import { itemsDeOrdenDesdeFilasDeReposicion } from './filasDeReposicionAOrdenDeCompra'
 
 function formatearCantidad(valor: number): string {
   return valor.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
@@ -27,8 +31,22 @@ function formatearCantidadNullable(valor: number | null): string {
  * el servidor (`agruparPorProveedor`, design decisión 4) — nunca un sort del lado del cliente.
  * Misma política que `/tablero`/`/reportes/existencias` (`Politicas.LecturaDeReportes`:
  * Supervisor + Admin).
+ *
+ * stage-16-ordenes-de-compra, Slice 6 (design decisión 16, tasks.md decisión 24): el botón "Generar
+ * OC" por grupo se gatea a `grupo.idProveedor !== null` **y** `usuario.rolId === ROL.Admin` — las
+ * escrituras de OC son Admin-only del lado del servidor (`GestionDeCatalogo`); un Supervisor sigue
+ * viendo esta pantalla exactamente igual que hoy, solo sin el botón. El mapeo reposición→OC es
+ * ENTERAMENTE client-side (`itemsDeOrdenDesdeFilasDeReposicion`) — postea a la `POST
+ * /api/ordenes-compra` ya existente, sin tocar `GET /api/reportes/stock/reposicion`. El `Link`/
+ * `navigate` de entrada pasa `state` con los datos ya resueltos (lección de la Slice 6 de la etapa
+ * 15: nunca un destino que dependa de un fetch decorativo para recuperar lo que el origen ya
+ * tenía).
  */
 export function Reposicion() {
+  const navigate = useNavigate()
+  const { usuario } = useAuth()
+  const esAdmin = usuario !== null && usuario.rolId === ROL.Admin
+
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
   const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
 
@@ -87,6 +105,17 @@ export function Reposicion() {
   }, [cargar])
 
   const grupos = reposicion ? agruparPorProveedor(reposicion.filas) : []
+
+  // El "Sin proveedor" (idProveedor null) nunca llega acá: no hay a quién enviarle la OC
+  // (ordenes-de-compra/spec.md: "The Sin proveedor bucket cannot produce an OC") — el botón ni se
+  // renderiza para ese grupo (mutation target #34c, parte 1). Pasa el header + los items ya
+  // mapeados por `location.state`, nunca un fetch redundante en la pantalla destino.
+  function generarOrdenDeCompra(grupo: GrupoDeReposicion) {
+    if (grupo.idProveedor === null || idPuntoVenta === null) return
+    navigate('/ordenes-compra/nueva', {
+      state: { idProveedor: grupo.idProveedor, idPuntoVenta, items: itemsDeOrdenDesdeFilasDeReposicion(grupo.filas) },
+    })
+  }
 
   return (
     <div className="container-fluid py-4">
@@ -158,7 +187,20 @@ export function Reposicion() {
                       <Fragment key={grupo.idProveedor ?? 'sin-proveedor'}>
                         <tr className="table-secondary">
                           <td colSpan={5}>
-                            {grupo.proveedor ?? 'Sin proveedor'} ({grupo.filas.length})
+                            <div className="d-flex justify-content-between align-items-center">
+                              <span>
+                                {grupo.proveedor ?? 'Sin proveedor'} ({grupo.filas.length})
+                              </span>
+                              {grupo.idProveedor !== null && esAdmin && (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-primary rounded-0"
+                                  onClick={() => generarOrdenDeCompra(grupo)}
+                                >
+                                  Generar OC
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                         {grupo.filas.map((fila) => (

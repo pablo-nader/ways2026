@@ -198,6 +198,7 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
     observaciones: null,
     estado: 'Borrador',
     items: [itemFixture()],
+    idOrdenCompra: null,
     ...sobrescribir,
   }
 }
@@ -205,6 +206,18 @@ function compraFixture(sobrescribir: Partial<CompraDetalle> = {}): CompraDetalle
 function renderEditor(idCompra: string | number = 1) {
   return render(
     <MemoryRouter initialEntries={[`/compras/${idCompra}`]}>
+      <Routes>
+        <Route path="/compras/:id" element={<CompraEditor />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+/** stage-16-ordenes-de-compra, Slice 6: monta con una ruta completa (incluye `?idOrdenCompra=`
+ * cuando hace falta) — `renderEditor` fija `/compras/:id` sin lugar para query params. */
+function renderEditorEnRuta(ruta: string) {
+  return render(
+    <MemoryRouter initialEntries={[ruta]}>
       <Routes>
         <Route path="/compras/:id" element={<CompraEditor />} />
       </Routes>
@@ -722,5 +735,128 @@ describe('CompraEditor — carga inicial', () => {
     resolverGet(compraFixture())
     await waitFor(() => expect(screen.queryByText('Cargando…')).not.toBeInTheDocument())
     expect(await screen.findByDisplayValue('0003-00012345')).toBeInTheDocument()
+  })
+})
+
+// stage-16-ordenes-de-compra, Slice 6: pre-carga desde `?idOrdenCompra=` — "Registrar recepción"
+// de OrdenDeCompra.tsx navega acá con la OC en la URL, nunca en location.state (a diferencia del
+// botón de Reposicion.tsx, que sí usa state — acá el origen es un Link real de otra pantalla que
+// puede recargarse en frío).
+function coberturaFixture(sobrescribir: Partial<{ idArticulo: number; pedida: number; recibida: number; pendiente: number; costoEstimado: number | null; costoReal: number | null; desvio: number | null }> = {}) {
+  return { idArticulo: 10, pedida: 7, recibida: 5, pendiente: 2, costoEstimado: 100, costoReal: null, desvio: null, ...sobrescribir }
+}
+
+// idProveedor/idPuntoVenta usan los mismos ids que `proveedorFixture()`/`puntoVentaFixture()` (1/2)
+// — la lista de referencia mockeada por `mockearReferencia` solo trae esos dos, así que un id
+// distinto nunca tendría una <option> para reflejar (no es un bug de producción, es la fixture).
+function ordenFixture(sobrescribir: Partial<{ id: number; idProveedor: number; idPuntoVenta: number; cobertura: ReturnType<typeof coberturaFixture>[]; items: { orden: number; idArticulo: number; descripcion: string; cantidadPedida: number; costoUnitarioEstimado: number | null }[] }> = {}) {
+  return {
+    id: 30,
+    idProveedor: 1,
+    idPuntoVenta: 2,
+    numero: 12,
+    fechaEmision: '2026-08-19T12:00:00Z',
+    fechaEnvio: '2026-08-19T12:00:00Z',
+    fechaEsperada: null,
+    fechaCierre: null,
+    cierreManual: false,
+    observaciones: null,
+    estado: 'Enviada',
+    items: [{ orden: 1, idArticulo: 10, descripcion: 'Yerba mate 1kg', cantidadPedida: 7, costoUnitarioEstimado: 100 }],
+    cobertura: [coberturaFixture()],
+    totalEstimado: 700,
+    totalReal: null,
+    desvioTotal: null,
+    comprobantesLigados: [],
+    ...sobrescribir,
+  }
+}
+
+describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)', () => {
+  it('precarga proveedor/punto de venta/idOrdenCompra y una línea por artículo con Pendiente > 0', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/ordenes-compra/30') return Promise.resolve(ordenFixture())
+      return undefined
+    })
+
+    renderEditorEnRuta('/compras/nueva?idOrdenCompra=30')
+
+    expect(await screen.findByText(/Vinculada a la orden de compra/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '#30' })).toHaveAttribute('href', '/ordenes-compra/30')
+
+    // Los proveedores/puntos de venta de referencia cargan en un fetch INDEPENDIENTE del de la
+    // orden a precargar — hasta que aterriza, el <select> no tiene ninguna <option value="4">
+    // para reflejar; se auto-corrige apenas React monta esas opciones (sin bug de producción).
+    await waitFor(() => {
+      expect((screen.getByLabelText('Proveedor') as HTMLSelectElement).value).toBe('1')
+      expect((screen.getByLabelText('Punto de venta') as HTMLSelectElement).value).toBe('2')
+    })
+    expect(screen.getByLabelText('Unidades')).toHaveValue(2) // Pendiente, no Pedida
+    expect(screen.getByLabelText('Costo unitario')).toHaveValue(100) // CostoEstimado de la cobertura
+  })
+
+  it('excluye artículos con Pendiente = 0 (ya recibidos por completo)', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/ordenes-compra/30') {
+        return Promise.resolve(
+          ordenFixture({ cobertura: [coberturaFixture({ idArticulo: 10, pendiente: 0 }), coberturaFixture({ idArticulo: 11, pendiente: 3 })] }),
+        )
+      }
+      return undefined
+    })
+
+    renderEditorEnRuta('/compras/nueva?idOrdenCompra=30')
+
+    await screen.findByText(/Vinculada a la orden de compra/)
+    expect(screen.getAllByLabelText('Unidades')).toHaveLength(1)
+    expect(screen.getByLabelText('Unidades')).toHaveValue(3)
+  })
+
+  it('un artículo nunca cotizado precarga costo unitario vacío, nunca "0"', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/ordenes-compra/30') return Promise.resolve(ordenFixture({ cobertura: [coberturaFixture({ costoEstimado: null })] }))
+      return undefined
+    })
+
+    renderEditorEnRuta('/compras/nueva?idOrdenCompra=30')
+
+    await screen.findByText(/Vinculada a la orden de compra/)
+    expect(screen.getByLabelText('Costo unitario')).toHaveValue(null)
+  })
+
+  it('sin ?idOrdenCompra= no dispara ningún fetch a /ordenes-compra ni muestra el aviso de vínculo', async () => {
+    mockearReferencia()
+    renderEditor('nueva')
+
+    await screen.findByLabelText('Proveedor')
+    expect(screen.queryByText(/Vinculada a la orden de compra/)).not.toBeInTheDocument()
+    expect(apiGetMock.mock.calls.some((c: unknown[]) => (c[0] as string).startsWith('/ordenes-compra'))).toBe(false)
+  })
+
+  it('una compra existente (no nueva) ignora ?idOrdenCompra= — solo aplica a un borrador nuevo', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/compras/1') return Promise.resolve(compraFixture({ idOrdenCompra: 7 }))
+      return undefined
+    })
+
+    renderEditorEnRuta('/compras/1?idOrdenCompra=30')
+
+    // El vínculo mostrado viene del `idOrdenCompra` YA PERSISTIDO de la compra (7), nunca del
+    // query param (30) — una compra existente no se re-precarga.
+    expect(await screen.findByRole('link', { name: '#7' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '#30' })).not.toBeInTheDocument()
+    expect(apiGetMock.mock.calls.some((c: unknown[]) => (c[0] as string) === '/ordenes-compra/30')).toBe(false)
+  })
+
+  it('un fallo al cargar la orden de compra muestra un aviso, sin bloquear el resto de la pantalla', async () => {
+    mockearReferencia((ruta) => {
+      if (ruta === '/ordenes-compra/30') return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No existe la orden de compra 30.'))
+      return undefined
+    })
+
+    renderEditorEnRuta('/compras/nueva?idOrdenCompra=30')
+
+    expect(await screen.findByText('No existe la orden de compra 30.')).toBeInTheDocument()
+    expect(await screen.findByLabelText('Proveedor')).toBeInTheDocument()
   })
 })
