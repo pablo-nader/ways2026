@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Ways.Domain.Articulos;
@@ -530,6 +531,106 @@ public class OrdenesCompraSchemaTests(WaysApiFixture fixture) : IClassFixture<Wa
 
         // El total del gate: 7 (ordenes_compra) + 4 (items_orden_compra) + 1 (comprobantes_compra) = 12.
         Assert.Equal(12, indicesDeSoporteOrdenes.Count + indicesDeSoporteItems.Count + 1);
+    }
+
+    /// <summary>Hallazgo MAJOR de judgment-day (juez B): el conteo de arriba compara solo
+    /// <c>indexname</c> contra <c>pg_indexes</c> — un swap de columnas en un índice compuesto
+    /// (p. ej. <c>ix_ordenes_compra_proveedor</c> de <c>(id_proveedor, id_tenant)</c> a
+    /// <c>(id_tenant, id_proveedor)</c>, que derrota la cobertura por prefijo de la FK 3 —
+    /// proposal líneas 594-597) conserva el nombre y el conteo, así que ese test sigue en verde.
+    /// Esta prueba asserta el DDL completo (<c>pg_indexes.indexdef</c>) de cada índice compuesto
+    /// nuevo de la etapa contra el contrato del gate, incluyendo el orden exacto de columnas, el
+    /// filtro parcial y el flag UNIQUE — y que ningún índice compuesto quede liderado por
+    /// <c>id_tenant</c> salvo el único que lo lleva por diseño.</summary>
+    [Fact]
+    public async Task LasDefinicionesDeLosIndicesCompuestosRespetanElOrdenDeColumnasDelContrato()
+    {
+        using var _ = fixture.CreateClient();
+
+        await using var cruda = new NpgsqlConnection(fixture.OwnerConnectionString);
+        await cruda.OpenAsync();
+
+        AssertOrdenDeColumnas(
+            await ObtenerIndexDefAsync(cruda, "ordenes_compra", "ix_ordenes_compra_punto_venta_fecha"),
+            "id_punto_venta", "id_tenant", "fecha_emision");
+
+        AssertOrdenDeColumnas(
+            await ObtenerIndexDefAsync(cruda, "ordenes_compra", "ix_ordenes_compra_proveedor"),
+            "id_proveedor", "id_tenant");
+
+        var defNumero = await ObtenerIndexDefAsync(cruda, "ordenes_compra", "ux_ordenes_compra_numero");
+        AssertOrdenDeColumnas(defNumero, "id_tenant", "id_punto_venta", "numero");
+        Assert.Contains("CREATE UNIQUE INDEX", defNumero);
+        Assert.Contains("WHERE (numero IS NOT NULL)", defNumero);
+
+        var defAk = await ObtenerIndexDefAsync(cruda, "ordenes_compra", "ak_ordenes_compra_id_orden_compra_id_tenant");
+        AssertOrdenDeColumnas(defAk, "id_orden_compra", "id_tenant");
+        Assert.Contains("CREATE UNIQUE INDEX", defAk);
+
+        AssertOrdenDeColumnas(
+            await ObtenerIndexDefAsync(cruda, "items_orden_compra", "ix_items_orden_compra_orden_compra"),
+            "id_orden_compra", "id_tenant");
+
+        AssertOrdenDeColumnas(
+            await ObtenerIndexDefAsync(cruda, "items_orden_compra", "ix_items_orden_compra_articulo"),
+            "id_articulo", "id_tenant");
+
+        var defUxOrden = await ObtenerIndexDefAsync(cruda, "items_orden_compra", "ux_items_orden_compra_orden");
+        AssertOrdenDeColumnas(defUxOrden, "id_orden_compra", "orden");
+        Assert.Contains("CREATE UNIQUE INDEX", defUxOrden);
+
+        AssertOrdenDeColumnas(
+            await ObtenerIndexDefAsync(cruda, "comprobantes_compra", "ix_comprobantes_compra_orden_compra"),
+            "id_orden_compra", "id_tenant");
+
+        // Ningún índice compuesto nuevo de esta etapa queda liderado por id_tenant, salvo
+        // ux_ordenes_compra_numero (ya cubierto arriba) — un swap como el del juez B rompería
+        // esta cobertura por prefijo y lo agarra sin depender del conteo de nombres.
+        var compuestosSinLiderarPorTenant = new[]
+        {
+            ("ordenes_compra", "ix_ordenes_compra_punto_venta_fecha"),
+            ("ordenes_compra", "ix_ordenes_compra_proveedor"),
+            ("ordenes_compra", "ak_ordenes_compra_id_orden_compra_id_tenant"),
+            ("items_orden_compra", "ix_items_orden_compra_orden_compra"),
+            ("items_orden_compra", "ix_items_orden_compra_articulo"),
+            ("items_orden_compra", "ux_items_orden_compra_orden"),
+            ("comprobantes_compra", "ix_comprobantes_compra_orden_compra")
+        };
+
+        foreach (var (tabla, nombre) in compuestosSinLiderarPorTenant)
+        {
+            var columnas = await ObtenerColumnasDelIndiceAsync(cruda, tabla, nombre);
+            Assert.NotEqual("id_tenant", columnas[0]);
+        }
+    }
+
+    private static async Task<string> ObtenerIndexDefAsync(NpgsqlConnection cruda, string tabla, string indexname)
+    {
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText = "SELECT indexdef FROM pg_indexes WHERE tablename = $1 AND indexname = $2";
+        comando.Parameters.Add(new NpgsqlParameter { Value = tabla });
+        comando.Parameters.Add(new NpgsqlParameter { Value = indexname });
+
+        var indexdef = (string?)await comando.ExecuteScalarAsync();
+        Assert.NotNull(indexdef);
+        return indexdef!;
+    }
+
+    private static void AssertOrdenDeColumnas(string indexdef, params string[] columnasEsperadas)
+    {
+        Assert.Equal(columnasEsperadas, ExtraerColumnas(indexdef));
+    }
+
+    private static async Task<string[]> ObtenerColumnasDelIndiceAsync(NpgsqlConnection cruda, string tabla, string indexname)
+    {
+        return ExtraerColumnas(await ObtenerIndexDefAsync(cruda, tabla, indexname));
+    }
+
+    private static string[] ExtraerColumnas(string indexdef)
+    {
+        var match = Regex.Match(indexdef, @"USING btree \(([^)]*)\)");
+        Assert.True(match.Success, $"No se pudo parsear el orden de columnas de: {indexdef}");
+        return match.Groups[1].Value.Split(", ", StringSplitOptions.TrimEntries);
     }
 
     private static async Task<List<string>> ListarIndicesAsync(NpgsqlConnection cruda, string tabla)

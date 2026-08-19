@@ -97,6 +97,25 @@
 15. **Process rule (stage-12/14/15 discipline): every deviation `sdd-apply` takes from this plan
     is registered IN `tasks.md`** — as a task-level note or a new numbered decision appended to
     this section — never left to verify-phase archaeology.
+16. **`judgment-day` round 1 (juez B) confirmed 1 MAJOR on task 1.26's gate guard — the count-only
+    test let a column-order mutant survive.** `ElConteoTotalDeIndicesNuevosEsExactamenteDoce`
+    asserts only `indexname` against `pg_indexes` (names and count), never column order. The judge
+    mutated `ix_ordenes_compra_proveedor` from `(id_proveedor, id_tenant)` to `(id_tenant,
+    id_proveedor)` — defeating FK 3's prefix coverage per the proposal audit (`proposal.md:594-
+    597`, "No index is led by `id_tenant` except 1 … and 6") — and the test stayed green. Closed
+    tests-only (production code is correct — the gap was coverage, not a defect): added
+    `LasDefinicionesDeLosIndicesCompuestosRespetanElOrdenDeColumnasDelContrato`
+    (`OrdenesCompraSchemaTests.cs`) asserting the full `pg_indexes.indexdef` DDL — exact column
+    order — of every composite index new to this slice (`ix_ordenes_compra_punto_venta_fecha`,
+    `ix_ordenes_compra_proveedor`, `ux_ordenes_compra_numero` incl. its `UNIQUE`/partial `WHERE`,
+    the AK's implicit unique index, both `items_orden_compra` FK-support indexes,
+    `ux_items_orden_compra_orden`, `ix_comprobantes_compra_orden_compra`), plus a loop asserting no
+    composite index is led by `id_tenant` except the one that carries it by design
+    (`ux_ordenes_compra_numero`). Mutation evidence: committed the test first, then repeated the
+    judge's exact swap in `OrdenCompraConfiguration.cs`'s `ix_ordenes_compra_proveedor` — the new
+    test failed (`Assert.Equal` expected `["id_proveedor","id_tenant"]`, got
+    `["id_tenant","id_proveedor"]`), reverted with `git checkout -- src/`, rebuilt, full
+    `OrdenesCompraSchemaTests` green (19/19) after revert.
 
 **Not a new conflict, no action required** (already resolved in earlier phases): T3 (spec OD7) —
 the `comprobantes-compra` mirroring is the stage-15 pattern, not duplication; T4 (spec OD7) — the
