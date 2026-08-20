@@ -77,9 +77,16 @@ public class LotesMigracionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     /// <summary>Ocho motivos en total (seis previos + los dos de esta etapa) — asegura que la
-    /// migración no perdió ninguno de los preexistentes al reescribir el enum.</summary>
+    /// migración no perdió ninguno de los preexistentes al reescribir el enum.
+    ///
+    /// stage-17-presupuestos-y-remitos (Slice 4, proposal §B): el conteo real sobre la base
+    /// COMPARTIDA de <c>WaysApiFixture</c> pasa a NUEVE — <c>RemitosEtapa17</c> agrega
+    /// <c>'remito'</c> vía otro <c>ALTER TYPE ... ADD VALUE</c>, mismo mecanismo que
+    /// <c>decomiso</c>/<c>reclasificacion</c>. Actualizado para no romper por un tipo que sigue
+    /// preexistiendo — el punto de esta prueba (ningún valor previo se pierde) sigue
+    /// intacto.</summary>
     [Fact]
-    public async Task ElEnumMotivoStockTieneLosOchoValores()
+    public async Task ElEnumMotivoStockTieneLosNueveValores()
     {
         await using var cruda = await AbrirAsync();
         await using var comando = cruda.CreateCommand();
@@ -88,6 +95,6 @@ public class LotesMigracionTests(WaysApiFixture fixture) : IClassFixture<WaysApi
             "WHERE t.typname = 'motivo_stock'";
 
         var total = (long)(await comando.ExecuteScalarAsync())!;
-        Assert.Equal(8, total);
+        Assert.Equal(9, total);
     }
 }

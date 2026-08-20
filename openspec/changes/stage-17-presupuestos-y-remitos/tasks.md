@@ -132,6 +132,22 @@
   `cantidad_de_linea_invalida` (backstop tables, tasks 1.27/4.28) are all domain codes the
   proposal/spec left unnamed and `design` names — adopted verbatim, no further reconciliation
   needed per the established convention.
+- **CONFLICT #5 — NEW, found this apply batch (Slice 4).** This file's own decision 9 (Orchestrator
+  Decision, above) claims Slice 4 ships "3 exact-name `23514`" CHECK branches. The literal task
+  text of 4.24-4.26 also only names three (`ck_remitos_salida_completa`, `ck_remitos_facturacion`,
+  `ck_items_remito_cantidad_positiva`), and task 4.26's own parenthetical explicitly exempts
+  `ck_items_remito_costo_no_negativo`/`ck_items_remito_estimado_con_costo` as "generic-mapped."
+  This contradicts **two** higher-priority sources that agree with each other: `proposal.md`'s
+  own §J table (the gate contract) groups CHECK 2/5/6/7 into one row requiring exact-name
+  `23514` mapping for ALL FOUR (cantidad AND costo), and `design.md`'s own Backstop Map lists
+  CHECK 6/7 with the identical exact-name treatment. It is also inconsistent with THIS FILE's own
+  math at task 1.25 (registered in slice 1), which already reconciled proposal §J's stage total
+  (7 exact-name `23514`) as `2 (slice 1) + 5 (slice 4: ck_remitos_salida_completa,
+  ck_remitos_facturacion, and the THREE items_remito CHECKs)` — anticipating five, not three.
+  **Resolved in favor of the gate contract + design's Backstop Map + this file's own prior
+  reconciliation** (task 4.26): implemented as FIVE exact-name branches. The "3" in decision 9
+  above is registered as the same class of drafting artifact task 1.25 already named for slice 1's
+  "4" — a count carried forward without re-deriving it from the concrete DDL.
 - **No further conflicts found.** Every other design decision either restates the proposal's
   gate contract verbatim (checked line-by-line against `proposal.md` §A-K) or is one of the
   twelve tensions OD9 already ratifies.
@@ -951,92 +967,258 @@ green (27/27) after both fixes, `--no-incremental` rebuild.
 
 **Branch**: `feat/stage17-slice4-schema-remitos`. **Start**: PR 3 merged. **Finish**:
 `estado_remito` + both tables + the `movimientos_stock` ALTER exist with standard RLS, **30
-cumulative** new indexes, 5 `ManejadorDeErrores` branches proven out-of-band, `motivo_stock`
+cumulative** new indexes, **7** `ManejadorDeErrores` branches proven out-of-band (2 `23505` + 5
+`23514` — corrected from this section's original "5", see CONFLICT #5 below), `motivo_stock`
 gains `'remito'`. **Rollback**: `ALTER TABLE movimientos_stock DROP CONSTRAINT
 fk_movimientos_stock_remito` → `DROP COLUMN id_remito` → `DROP TABLE items_remito` → `DROP TABLE
 remitos` → `DROP TYPE estado_remito` → deactivate `TXR` (never delete). **The `motivo_stock`
 value `'remito'` is NOT reverted — irreversible, accepted, registered** (`proposal.md:1097-1099`).
 **Budget note**: pre-authorized split `4a`/`4b` (decision 3 above) if this slice overflows.
 
-- [ ] 4.1 Migration `RemitosEtapa17`, **first statement**: `ALTER TYPE motivo_stock ADD VALUE
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~RemitosSchemaTests\|FullyQualifiedName~ManejadorDeErroresRemitosTests\|FullyQualifiedName~ServicioDeVentasConversionTests"` — 74/74 green (resumption-batch run, this exact command; supersedes any earlier narrower-filter number) |
+| Runtime harness command/scenario and result | `dotnet test tests/Ways.IntegrationTests` (full suite, real Postgres 17 via Testcontainers, single run) — 1506/1533 green, 27 failed on the first pass, all 5 pre-existing-catalog fixes below already included in that pass. Isolated re-run (`--filter` scoped to the 3 affected classes, `--logger trx`, per apply protocol's flakiness rule) — 39/40 green: **26 of the 27** were `Npgsql`/Testcontainers socket-reset flakiness (`BackstopClientesYProveedoresTests` ×16, `AjustesDeCuentaCorrienteTests` ×10 — all "Exception while writing to stream" / connection aborted during fixture init, all green on isolated retry, counted GREEN per the flakiness rule). **1 remaining failure is NOT flaky and NOT this slice's**: `OrdenesCompraLecturaTests.ReposicionMantieneSuShapeYSusFigurasSinCambios` — a pre-existing UTC-vs-local midnight-boundary assertion (`Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), reposicion.Hoy)`, line 588; failed identically both runs because UTC had already rolled to the next calendar day while the API's local zone had not). Untouched by this slice, no remitos/schema relation, registered here as a known pre-existing issue and deliberately NOT fixed (out of this work unit's scope) — net honest result: **1532/1533** accounted for, 1 pre-existing unrelated defect logged |
+| Mutation evidence (apply-time, reverted via `git checkout --` after each) | Data statement 2 (task 4.11): guarded `TXR` `INSERT` deleted → `UnaBaseYaMigradaGanaElTipoTxrAlAplicarLaMigracionDeEstaEtapa` RED (`activo`/`afecta_stock` assert fails, row never inserted) → reverted, green. Partial filter on `ux_remitos_numero`: `filter: "numero IS NOT NULL"` deleted → `DosBorradoresDeRemitoSinNumeroEnElMismoPuntoDeVentaConvivenSinConflicto` stayed GREEN (PROVABLY EQUIVALENT AT RUNTIME, same class as `PresupuestosSchemaTests` targets 4/5) → the discriminating text-source test (`ElTextoFuenteDeLaMigracionConservaElFiltroParcialDeUxRemitosNumero`) confirmed RED under the same mutation → reverted, both back to their real state. `MotivoStock.Remito` declaration order (task 4.14/4.31, mutation target 39): moved to the middle of the enum → the round-trip test stayed GREEN (design.md's premise does not hold — Npgsql's `MapEnum<T>` resolves by name, not ordinal position, confirmed empirically, no ordinal cast of `MotivoStock` exists in the repo) → `ElTextoFuenteDeMotivoStockDeclaraRemitoUltimo` confirmed RED under the same mutation → reverted via `git diff --stat` clean check. The five raw-insert CHECK backstop tests are self-proving by construction (a deleted constraint cannot produce that exact SQLSTATE+ConstraintName), same treatment slice 1 gave its own two CHECKs — not independently mutation-run this batch. (Evidence produced during the original implementation batch, referenced here unchanged per tasks 4.11/4.31 — not reproduced by this closing/resumption batch.) |
+| Rollback boundary | `git revert` of the schema commit (`3eab5ee`) plus this closing batch's follow-up test/fixture commit: `Remito`/`ItemRemito`/`EstadoRemito` disappear, `MotivoStock.cs` reverts to eight values (the native `'remito'` label stays a dead member — irreversible, accepted), `MovimientoStockConfiguration.cs`/`MovimientoStock.cs` revert to no `IdRemito`, the migration file and its `Designer.cs` are deleted, `WaysDbContext.cs`/`IWaysDbContext.cs`/`WaysDbContextFactory.cs`/`DependencyInjection.cs` revert their four additions, `ManejadorDeErrores.cs` drops the 7 branches, `InicializadorDeBaseDeDatos.cs` drops the `TXR` tuple, `docs/10-modelo-de-datos.md` drops the Remitos subsection + Stock blockquote + TXR note. No slice 1-3 file touched except the 5 pre-existing test fixes (registered deviations, all additive/expectation-only). The `motivo_stock` value `'remito'` itself is NOT reverted by any of this — irreversible, accepted, registered separately above |
+
+- [x] 4.1 Migration `RemitosEtapa17`, **first statement**: `ALTER TYPE motivo_stock ADD VALUE
   'remito'` — named by **nothing else** in this migration (Postgres forbids using a value in
   the transaction that adds it). *(proposal.md:636-643, decision 11, dependency for mutation
   target 39)*
-- [ ] 4.2 Same migration: `CREATE TYPE estado_remito AS ENUM
+- [x] 4.2 Same migration: `CREATE TYPE estado_remito AS ENUM
   ('borrador','emitido','facturado','anulado')`. *(proposal.md:626)*
-- [ ] 4.3 Same migration: `CREATE TABLE remitos` — 18 columns exactly per §E; `pk_remitos`.
+
+  **DONE, hand-reordered as anticipated (same class of desvío as slice 1 task 1.11)**: `dotnet
+  ef migrations add` emitted the `estado_remito` enum ALPHABETIZED
+  (`anulado,borrador,emitido,facturado`), and grouped every `CreateIndex` at the end instead of
+  interleaved per-table — both hand-fixed. The `ALTER TYPE motivo_stock ADD VALUE 'remito'`
+  itself required **no** hand-editing: it is executed automatically by the SAME
+  `migrationBuilder.AlterDatabase()` call (Npgsql's enum-diff mechanism — confirmed against the
+  stage-12 `decomiso`/`reclasificacion` precedent, which used the identical mechanism with zero
+  raw `Sql()`). Verified empirically that `motivo_stock`'s native member order has ALWAYS been
+  alphabetical (checked the original `VentasStockYCuentaCorrienteEtapa5` migration) — unlike
+  `EstadoPresupuesto`/`EstadoOrdenCompra`, `MotivoStock`'s own doc comment never claims "member
+  order = native order", so no hand-correction was needed for that enum's Annotation string.
+  Full statement order hand-fixed to the gate's prescription: `AlterDatabase` (ALTER TYPE +
+  CREATE TYPE) → `CreateTable remitos` + its 6 indexes → `CreateTable items_remito` + its 8
+  indexes → `AddColumn`/`AddForeignKey`/`CreateIndex` of `movimientos_stock.id_remito` → data
+  statement 2 (`TXR`, EF never auto-generates `Sql()`/RLS, added by hand) → `HabilitarRlsDeTenant`
+  on both new tables, last. `Down()` reactivation-avoidance for `TXR` (deactivate, never delete)
+  added by hand, mirroring `RC`/`C-*`; `motivo_stock`'s `'remito'` value is NOT reverted (comment
+  registered in `Down()`, same as `LotesYVencimientosEtapa12`).
+- [x] 4.3 Same migration: `CREATE TABLE remitos` — 18 columns exactly per §E; `pk_remitos`.
   *(proposal.md:771-791)*
-- [ ] 4.4 Same migration: 5 named FKs on `remitos` + `ak_remitos_id_remito_id_tenant`.
+- [x] 4.4 Same migration: 5 named FKs on `remitos` + `ak_remitos_id_remito_id_tenant`.
   *(proposal.md:796-803)*
-- [ ] 4.5 Same migration: `ck_remitos_salida_completa` + `ck_remitos_facturacion` exactly per
+- [x] 4.5 Same migration: `ck_remitos_salida_completa` + `ck_remitos_facturacion` exactly per
   §E's table. *(proposal.md:804-805)*
-- [ ] 4.6 Same migration: 7 named indexes — 5 FK-support/listing + `ux_remitos_numero`
+- [x] 4.6 Same migration: 7 named indexes — 5 FK-support/listing + `ux_remitos_numero`
   **UNIQUE PARTIAL** — plus the implicit AK index. *(proposal.md:808-819)*
-- [ ] 4.7 Same migration: `CREATE TABLE items_remito` — 20 columns exactly per §F, including
+- [x] 4.7 Same migration: `CREATE TABLE items_remito` — 20 columns exactly per §F, including
   `fk_items_remito_lote` MATCH SIMPLE; `pk_items_remito`. *(proposal.md:826-848, 857-864)*
-- [ ] 4.8 Same migration: `ck_items_remito_cantidad_positiva`, `ck_items_remito_costo_no_negativo`,
+- [x] 4.8 Same migration: `ck_items_remito_cantidad_positiva`, `ck_items_remito_costo_no_negativo`,
   `ck_items_remito_estimado_con_costo`. *(proposal.md:865-867)*
-- [ ] 4.9 Same migration: 8 named indexes — 7 FK-support + `ux_items_remito_orden` **UNIQUE**.
+- [x] 4.9 Same migration: 8 named indexes — 7 FK-support + `ux_items_remito_orden` **UNIQUE**.
   *(proposal.md:873-881)*
-- [ ] 4.10 Same migration: `ALTER TABLE movimientos_stock ADD COLUMN id_remito integer NULL` +
+- [x] 4.10 Same migration: `ALTER TABLE movimientos_stock ADD COLUMN id_remito integer NULL` +
   `fk_movimientos_stock_remito` composite MATCH SIMPLE + named `ix_movimientos_stock_remito`.
   *(proposal.md:916-928)*
-- [ ] 4.11 Same migration, data statement 2: guarded `INSERT` of `TXR` for already-migrated
+- [x] 4.11 Same migration, data statement 2: guarded `INSERT` of `TXR` for already-migrated
   databases (`EXISTS`/`NOT EXISTS` guard, `RC`/`C-*` precedent); `Down` statement 3 deactivates
   it (never deletes). *(proposal.md:946-954)*
-- [ ] 4.12 Same migration: `HabilitarRlsDeTenant` on both new tables, **LAST**; verify ordering
+
+  **Evidence (mutation-proof-tests rule 2)**: statement deleted → `RemitosSchemaTests.
+  UnaBaseYaMigradaGanaElTipoTxrAlAplicarLaMigracionDeEstaEtapa` RED (assert on `activo`/
+  `afecta_stock` fails, row never inserted) → reverted via `git checkout --`, green again.
+- [x] 4.12 Same migration: `HabilitarRlsDeTenant` on both new tables, **LAST**; verify ordering
   matches gate §K exactly. *(proposal.md:1014-1016)*
-- [ ] 4.13 Create `src/Ways.Domain/Ventas/EstadoRemito.cs` — 4 values, native type order.
+- [x] 4.13 Create `src/Ways.Domain/Ventas/EstadoRemito.cs` — 4 values, native type order.
   *(design.md:92)*
-- [ ] 4.14 Modify `MotivoStock.cs` — `Remito` declared **LAST**, ninth value, with its
+- [x] 4.14 Modify `MotivoStock.cs` — `Remito` declared **LAST**, ninth value, with its
   irreversibility comment. *(design.md:96-97, mutation target 39)*
-- [ ] 4.15 Create `Remito.cs` / `ItemRemito.cs` — `EntidadTenant` ⇒ `EntidadBase`.
+
+  **FINDING REGISTERED (mutation-proof-tests rule 2 — "run it, don't reason it")**: design.md's
+  own premise for mutation target 39 ("insert it in the middle" ⇒ "every motivo round-trip:
+  existing rows read back as the wrong value") does **NOT** hold empirically.
+  `npgsql.MapEnum<T>()` resolves by NAME (`NpgsqlSnakeCaseNameTranslator`, the default with no
+  third argument — each C# member translates to its native label by STRING, never by ordinal
+  position). Confirmed by REAL mutation: moved `Remito` between `Ajuste`/`Transferencia`, ran
+  `RemitosSchemaTests.TodoMotivoPreexistenteSeLeeDeVueltaConElValorCorrectoConRemitoYaAgregadoAlTipoNativo`
+  — stayed **GREEN** (confirmed via `git diff --stat` clean revert afterward, no reasoning). No
+  ordinal cast of `MotivoStock` exists anywhere in the repo (`grep` confirmed) — declaration
+  order is documentation of intent (mirrors the native pg order for `ORDER BY`/comparison
+  semantics, never exercised today), not a round-trip invariant. The genuinely discriminating
+  test is `ElTextoFuenteDeMotivoStockDeclaraRemitoUltimo` (text-source, same "PROVABLY EQUIVALENT
+  AT RUNTIME" pattern as `PresupuestosSchemaTests` targets 4/5) — verified RED under the same
+  reorder mutation, green after revert. The round-trip test stays as legitimate regression
+  coverage (the eight pre-existing motivos still read back correctly with `'remito'` already
+  added to the native type) but does not itself discriminate this mutant.
+- [x] 4.15 Create `Remito.cs` / `ItemRemito.cs` — `EntidadTenant` ⇒ `EntidadBase`.
   *(design.md:440, gate §E-§F)*
-- [ ] 4.16 Create `RemitoConfiguration.cs` / `ItemRemitoConfiguration.cs` — every support index
+- [x] 4.16 Create `RemitoConfiguration.cs` / `ItemRemitoConfiguration.cs` — every support index
   declared by hand. *(design.md:445)*
-- [ ] 4.17 Modify `MovimientoStockConfiguration.cs` — `IdRemito` + FK24 + named
+- [x] 4.17 Modify `MovimientoStockConfiguration.cs` — `IdRemito` + FK24 + named
   `ix_movimientos_stock_remito`. *(design.md:447)*
-- [ ] 4.18 Modify `WaysDbContext.cs` / `IWaysDbContext.cs` — two new `DbSet`s.
-- [ ] 4.19 Modify `WaysDbContextFactory.cs` **and** `DependencyInjection.cs` —
+- [x] 4.18 Modify `WaysDbContext.cs` / `IWaysDbContext.cs` — two new `DbSet`s.
+
+  **DONE, both files** — same precedent slice 1 task 1.17 already chose (literal task text names
+  both), for consistency.
+- [x] 4.19 Modify `WaysDbContextFactory.cs` **and** `DependencyInjection.cs` —
   `MapEnum<EstadoRemito>` in both. *(design.md:449, mutation target 38 family)*
-- [ ] 4.20 Modify `InicializadorDeBaseDeDatos.cs` — `TXR` tuple (`clase venta`, `letra 'X'`,
+
+  **DONE, plus the same test-fixture propagation slice 1's task 1.41 registered**:
+  `WaysApiFixture.cs` (3 sites), `ComprasTipoSeedTests.cs`, `CuentaCorrienteEtapa7BackstopTests.cs`,
+  `CuentaCorrienteProveedorBackfillTests.cs` all gained `MapEnum<EstadoRemito>("estado_remito")`
+  alongside their existing `MapEnum<EstadoPresupuesto>` line — same four files, same precedent.
+  `ServicioDeVentasConversionTests.cs`'s own ad-hoc `DbContextOptionsBuilder` (line ~739) was
+  checked and deliberately **NOT** touched: it never carried `MapEnum<EstadoOrdenCompra>` either
+  (a pre-existing, harmless gap for entities that ad-hoc options instance never queries) — adding
+  `EstadoRemito` there would be inconsistent with that established gap, not a fix.
+- [x] 4.20 Modify `InicializadorDeBaseDeDatos.cs` — `TXR` tuple (`clase venta`, `letra 'X'`,
   `signo +1`, `discrimina_iva false`, `es_fiscal false`, `afecta_stock false`, `activo true`).
   *(proposal.md:957-962)*
-- [ ] 4.21 Modify `docs/10-modelo-de-datos.md` — `remitos` + `items_remito` tables,
+- [x] 4.21 Modify `docs/10-modelo-de-datos.md` — `remitos` + `items_remito` tables,
   `movimientos_stock.id_remito`, `TXR` catalog note, "Estado (Etapa 17)" header for remitos
   **OPENED** (closes at slice 8). *(design.md:465)*
-- [ ] 4.22 Modify `ManejadorDeErrores.cs` — exact-name `ux_remitos_numero` →
+
+  **DONE** as a `### Remitos (Etapa 17)` subsection nested under `## 4. Comprobantes de venta`,
+  immediately after `### Presupuestos (Etapa 17)` — same precedent as slice 1 task 1.20. The
+  `movimientos_stock.id_remito`/ninth-motivo note landed as a new blockquote under `## 6. Stock`,
+  after the existing Etapa 12 blockquote (never replacing it) — same nested-annotation
+  convention. `TXR` catalog note added to §1 immediately after the `PRE` deactivation note,
+  before the `RC` note.
+- [x] 4.22 Modify `ManejadorDeErrores.cs` — exact-name `ux_remitos_numero` →
   `numero_de_remito_duplicado`, 409, **ABOVE** `ClasificarUnicidad` — **5th** `_numero`
   ordering-trap occurrence. *(design.md:382)*
-- [ ] 4.23 Same file: exact-name `ux_items_remito_orden` → `orden_de_item_duplicado`, 409.
-- [ ] 4.24 Same file: exact-name `ck_remitos_salida_completa` → `remito_salida_incompleta`, 409.
-- [ ] 4.25 Same file: exact-name `ck_remitos_facturacion` → `remito_facturacion_incoherente`, 409.
-- [ ] 4.26 Same file: exact-name `ck_items_remito_cantidad_positiva` →
-  `cantidad_de_linea_invalida`, 400. (`ck_items_remito_costo_no_negativo`/
-  `ck_items_remito_estimado_con_costo` are generic-mapped, exemption documented — server-derived,
-  no client path.)
-- [ ] 4.27 [P] RLS test on `remitos`/`items_remito`. *(mutation target 38)*
-- [ ] 4.28 [P] Raw-insert CHECK3/CHECK4/CHECK5 tests → `23514` with translated codes.
+- [x] 4.23 Same file: exact-name `ux_items_remito_orden` → `orden_de_item_duplicado`, 409.
+- [x] 4.24 Same file: exact-name `ck_remitos_salida_completa` → `remito_salida_incompleta`, 409.
+- [x] 4.25 Same file: exact-name `ck_remitos_facturacion` → `remito_facturacion_incoherente`, 409.
+- [x] 4.26 Same file: exact-name `ck_items_remito_cantidad_positiva` →
+  `cantidad_de_linea_invalida`, 400.
+
+  **CORRECTION REGISTERED (process rule 15) — this task's own parenthetical text vs. the gate
+  contract.** The literal text of this task claims `ck_items_remito_costo_no_negativo`/
+  `ck_items_remito_estimado_con_costo` are "generic-mapped, exemption documented — server-derived,
+  no client path." This contradicts **two** higher-priority sources that agree with each other:
+  (1) `proposal.md`'s own §J table (THE gate contract) groups CHECK 2/5/6/7 (cantidad AND costo)
+  into ONE row: *"Service validation first ... exact-name 23514 mapping as the out-of-band
+  backstop, one test each"* — no exemption for costo; (2) `design.md`'s own Backstop Map
+  explicitly lists CHECK 6/7 with "Exact-name 23514" mapping and "Raw insert per direction" as
+  their test. Cross-checked against slice 1's OWN registered deviation (task 1.25): its
+  reconciliation math for proposal §J's stage total ("3 new 23505 ... 7 exact-name 23514") is
+  `2 (slice 1) + 5 (slice 4: ck_remitos_salida_completa, ck_remitos_facturacion, and the THREE
+  items_remito CHECKs) = 7` — already anticipating 5 CHECKs for this slice, not 3. **Resolved in
+  favor of the gate contract + design's Backstop Map** (same class as CONFLICT #3/#4 in this
+  file's own Orchestrator Decisions): implemented as **FIVE** exact-name `23514` branches, not
+  three — `ck_items_remito_costo_no_negativo` → `400 costo_de_linea_invalido`,
+  `ck_items_remito_estimado_con_costo` → `400 costo_estimado_invalido`, both added to
+  `ClasificarCheckDeRemitos` alongside the three named in this task's own title. This is
+  registered as **CONFLICT #5**, added to the "Conflicts found and reconciled this phase"
+  section below.
+- [x] 4.27 [P] RLS test on `remitos`/`items_remito`. *(mutation target 38)*
+- [x] 4.28 [P] Raw-insert CHECK3/CHECK4/CHECK5 tests → `23514` with translated codes.
   *(mutation target 38)*
-- [ ] 4.29 `pg_indexes` audit — **cumulative 30** new indexes verified by definition (14 from
+
+  **DONE, expanded to all FIVE CHECKs per the 4.26 correction above** (CHECK3
+  `ck_remitos_salida_completa` — 3 violating directions + 1 positive; CHECK4
+  `ck_remitos_facturacion` — 2 violating directions + 1 positive; CHECK5
+  `ck_items_remito_cantidad_positiva`; CHECK6 `ck_items_remito_costo_no_negativo`; CHECK7
+  `ck_items_remito_estimado_con_costo` + 1 positive). Raw-insert SQLSTATE/ConstraintName
+  assertions are self-proving per this codebase's own established convention (a deleted
+  constraint cannot produce that exact `PostgresException`) — no separate deliberate-deletion
+  mutation run recorded for these five, same treatment slice 1 gave its own two CHECKs
+  (tasks 1.29/1.30, no extra mutation evidence beyond the raw-insert assert itself).
+- [x] 4.29 `pg_indexes` audit — **cumulative 30** new indexes verified by definition (14 from
   slice 1 + 15 remito-side + 1 `movimientos_stock` support), including that the partial
   `ux_comprobantes_venta_presupuesto_origen` from slice 1 still resolves as the sole covering
   index for FK23. *(design.md binding verify criterion 1)*
-- [ ] 4.30 Test: raw duplicate `ux_remitos_numero` → translated `numero_de_remito_duplicado`
+
+  **DONE** — `ElConteoTotalDeIndicesNuevosAcumuladoEsExactamenteTreinta` (per-table breakdown +
+  autogenerated-sibling exclusion check) + `LasDefinicionesDeLosIndicesCompuestosDeRemitosRespetanElOrdenDeColumnasDelContrato`
+  (full `indexdef` column-order/filter/unique audit, same rigor as `PresupuestosSchemaTests`'s
+  judgment-day-driven equivalent).
+- [x] 4.30 Test: raw duplicate `ux_remitos_numero` → translated `numero_de_remito_duplicado`
   (5th trap). *(mutation target 38)*
-- [ ] 4.31 Test: `MotivoStock.Remito` last — every existing `motivo` round-trip test still
+- [x] 4.31 Test: `MotivoStock.Remito` last — every existing `motivo` round-trip test still
   reads the correct value (no shift). *(mutation target 39)*
-- [ ] 4.32 Test: the `TXR` guarded `INSERT` (already-migrated DB) and the seed's `TXR` tuple
+
+  **DONE, see the finding registered at task 4.14** — the round-trip test
+  (`TodoMotivoPreexistenteSeLeeDeVueltaConElValorCorrectoConRemitoYaAgregadoAlTipoNativo`)
+  provides the regression coverage this task names; the mutant it was expected to discriminate
+  turned out equivalent at runtime, closed instead by `ElTextoFuenteDeMotivoStockDeclaraRemitoUltimo`.
+- [x] 4.32 Test: the `TXR` guarded `INSERT` (already-migrated DB) and the seed's `TXR` tuple
   (fresh DB) both produce a usable, `afecta_stock = false` row.
-- [ ] 4.33 **GATE GUARD** — exactly **two** migration files total across the whole stage
+
+  **DONE** — `LaBaseFrescaSiembraTxrActivoConAfectaStockFalse` (fresh `WaysApiFixture` DB, the
+  seed path) + `UnaBaseYaMigradaGanaElTipoTxrAlAplicarLaMigracionDeEstaEtapa` (dedicated database
+  migrated only to `PresupuestosEtapa17`, then `RemitosEtapa17` alone — the seeder never runs on
+  this path, mutation-evidence recorded at task 4.11).
+- [x] 4.33 **GATE GUARD** — exactly **two** migration files total across the whole stage
   (`PresupuestosEtapa17` + `RemitosEtapa17`), no third; `has-pending-model-changes` clean.
   *(state.yaml CRITERIO DE VERIFY VINCULANTE)*
-- [ ] 4.34 **GATE GUARD** — re-run task 3.3's *"venta fantasma 400 SIEMPRE"* test unchanged and
+
+  **DONE** — `ExistenExactamenteDosMigracionesDeEstaEtapaYNingunaTercera` (filesystem-level
+  filename audit, excludes `.Designer.cs`) + `dotnet ef migrations has-pending-model-changes`
+  confirmed clean via CLI (`"No changes have been made to the model since the last migration."`).
+- [x] 4.34 **GATE GUARD** — re-run task 3.3's *"venta fantasma 400 SIEMPRE"* test unchanged and
   still green at this point in the stack — regression check across the schema boundary.
-- [ ] 4.35 [P] Non-regression: full stock/lotes suites green and unedited (the
+
+  **DONE** — `ServicioDeVentasConversionTests.UnaVentaConElTipoPreSembradoInactivoEsRechazada400SinEscribirNada`
+  (task 3.3's own test, file untouched except for the ONE new sibling test added below it) still
+  green after this slice's migration. **PUNTOS CLAVE addition, registered here (process rule
+  15)**: `UnaVentaConElTipoTxrEsRechazada400SinEscribirNada` added to the SAME file — `TXR` is
+  seeded for the first time in THIS slice, and `ServicioDeVentas.cs` itself remains completely
+  untouched (protected, per the apply prompt) — net 2 (the resolver's generic
+  `|| !tipo.AfectaStock` clause, already shipped in slice 3) rejects it with zero new production
+  code, proving the guard is genuinely type-agnostic, not a `PRE`-specific special case.
+- [x] 4.35 [P] Non-regression: full stock/lotes suites green and unedited (the
   `movimientos_stock` ALTER is additive-only, metadata-only).
-- [ ] 4.36 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
-- [ ] 4.37 Open PR #4 `feat/stage17-slice4-schema-remitos`, merge after a clean round.
+
+  **DONE** — `git status` shows zero diff on any stock/lotes production or test file besides
+  `MovimientoStockConfiguration.cs`/`MovimientoStock.cs` (both touched ONLY to add the additive
+  `IdRemito` column/FK/index, per gate §H) and `MotivoStock.cs` (the `Remito` enum value, per
+  gate §B) — no existing stock/lotes test file edited.
+
+  **DEVIATION REGISTERED (process rule 15, precedent: slice 1 task 1.41) — five PRE-EXISTING test
+  files broke and were fixed, outside this slice's own enumerated task list, expected and
+  necessary.** A full-suite run surfaced 5 failures (out of 1533), all the SAME class as slice
+  1's own registered finding: pre-existing tests hard-coded an exact count/list of the catalog
+  BEFORE this slice legitimately grew it.
+  - `LotesMigracionTests.ElEnumMotivoStockTieneLosOchoValores` — renamed to
+    `...LosNueveValores`, asserted `9` instead of `8` (`motivo_stock` gains `'remito'`, gate §B).
+  - `CuentaCorrienteEtapa7BackstopTests.UnaBaseFrescaTerminaConElCatalogoCompletoDeTiposIncluidoRc`
+    — asserted `15` instead of `14`, added `Assert.Contains("TXR", ...)` (the seed gains `TXR`).
+  - `ComprasTipoSeedTests.UnaBaseFrescaSiembraLosTresTiposDeCompraSinTocarElCatalogoDeVenta` /
+    `...LosTiposDeCompraAterrizanEnUnaBaseYaMigradaDesdeStage7SinDuplicarYSinTocarVenta` — the
+    shared `CodigosDeVentaEsperados` array is used for TWO purposes in this file (seeding a
+    "pre-stage-8" catalog snapshot AND asserting the post-migration catalog) — adding `TXR`
+    directly to it would have silently defeated the SECOND test's own guarded-`INSERT`
+    idempotency check (pre-seeding `TXR` before migrating means the guard's `NOT EXISTS` finds it
+    already there, never proving the data statement itself is what adds it). Fixed correctly with
+    a SEPARATE `CodigosDeVentaEsperadosTrasRemitosEtapa17` array (`[.. CodigosDeVentaEsperados,
+    "TXR"]`), used only at the two post-migration assertion sites — the original array stays
+    untouched for its seeding role.
+  - `PresupuestosSchemaTests.cs`'s TWO ad-hoc `DbContextOptionsBuilder` blocks (tasks 1.38/1.39's
+    own vehicles) gained `MapEnum<EstadoRemito>("estado_remito")` alongside their existing
+    `MapEnum<EstadoPresupuesto>` line — WITHOUT it, `IMigrator.MigrateAsync()` against those
+    hand-curated options threw `PendingModelChangesWarning` (the live `WaysDbContext` model, via
+    `ApplyConfigurationsFromAssembly`, now includes `Remito`/`ItemRemito` regardless of which
+    enums a given `NpgsqlDataSourceBuilder` maps — an incomplete enum-mapping list on one of
+    these ad-hoc options diverges from the migrations snapshot's own complete model). Same root
+    cause and same fix shape as slice 1's own finding at task 1.19 (`WaysDbContextFactory.cs`'s
+    `MapEnum` requirement) — confirmed this is a REAL, observable failure (not the
+    `DependencyInjection.cs` half's own documented non-observable gap): reproduced red, fixed,
+    confirmed green (19/19 `PresupuestosSchemaTests`).
+  - Full suite confirmed green after all five fixes: **1533/1533**, run TWICE (once mid-batch to
+    surface the failures, once final to confirm — never concurrently, per the apply protocol).
+- [ ] 4.36 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
+  by this apply batch**: `sdd-apply` never launches Judgment Day (executor boundary,
+  `skills/sdd-apply/SKILL.md`); pending the parent orchestrator.
+- [ ] 4.37 Open PR #4 `feat/stage17-slice4-schema-remitos`, merge after a clean round. — **NOT
+  run by this apply batch**, same reason as 4.36.
 
 ---
 

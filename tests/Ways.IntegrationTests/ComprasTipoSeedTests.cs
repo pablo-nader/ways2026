@@ -42,8 +42,21 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
 {
     private const string MigracionStage7 = "20260805050151_CuentaCorrienteEtapa7";
 
+    // Los once códigos de venta previos a esta etapa — usado tal cual para SEMBRAR el catálogo
+    // "como si fuera stage 7" (línea ~144, ANTES de que RemitosEtapa17 exista) — nunca debe
+    // ganar "TXR" acá, o el data statement guardado de RemitosEtapa17 lo encontraría ya
+    // presente y el test dejaría de probar que ESE statement es quien realmente lo agrega.
     private static readonly string[] CodigosDeVentaEsperados =
         ["FA", "FB", "FC", "NCA", "NCB", "NCC", "NDA", "TX", "NCX", "PRE", "RC"];
+
+    // stage-17-presupuestos-y-remitos (Slice 4, proposal §I): TXR se agrega al catálogo de venta
+    // DESPUÉS de sembrar/migrar — tanto por el seed estático (fresh-host-boot,
+    // TiposComprobanteBase) como por el data statement 2 guardado de RemitosEtapa17 (una base
+    // migrada hasta el final, sin pasar por el seeder, también lo gana) — mismo mecanismo exacto
+    // que PRE/RC ya cubren en este archivo. Usado solo en las dos ASERCIONES post-migración,
+    // nunca en el seed de arriba.
+    private static readonly string[] CodigosDeVentaEsperadosTrasRemitosEtapa17 =
+        [.. CodigosDeVentaEsperados, "TXR"];
 
     private static readonly string[] CodigosDeCompraEsperados = ["C-FA", "C-FB", "C-FC"];
 
@@ -66,7 +79,7 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             .OrderBy(c => c)
             .ToListAsync();
 
-        Assert.Equal(CodigosDeVentaEsperados.OrderBy(c => c), venta);
+        Assert.Equal(CodigosDeVentaEsperadosTrasRemitosEtapa17.OrderBy(c => c), venta);
         Assert.Equal(CodigosDeCompraEsperados.OrderBy(c => c), compra);
 
         // stage-17-presupuestos-y-remitos (Slice 1, net 1b del PRE latente): PRE nace inactivo
@@ -177,7 +190,7 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
             }
 
             Assert.Equal(CodigosDeCompraEsperados.OrderBy(c => c), await ListarCodigosAsync("compra"));
-            Assert.Equal(CodigosDeVentaEsperados.OrderBy(c => c), await ListarCodigosAsync("venta"));
+            Assert.Equal(CodigosDeVentaEsperadosTrasRemitosEtapa17.OrderBy(c => c), await ListarCodigosAsync("venta"));
 
             // Re-ejecuta a mano el mismo INSERT idempotente de la migración (simula un reintento
             // de arranque) y confirma que sigue sin duplicar.

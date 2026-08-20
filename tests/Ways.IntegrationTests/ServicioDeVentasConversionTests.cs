@@ -275,6 +275,36 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
         Assert.Equal("tipo_comprobante_invalido", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>stage-17-presupuestos-y-remitos, Slice 4 (proposal §I/§J, design decisión 1/18,
+    /// PUNTOS CLAVE del apply): <c>TXR</c> — sembrado por primera vez en esta slice
+    /// (<c>InicializadorDeBaseDeDatos.TiposComprobanteBase</c>), <c>afecta_stock = false</c> —
+    /// es el mismo net 2 (la cláusula del resolver, target 23, ya vigente desde slice 3) el que
+    /// lo rechaza, sin cambio alguno a <c>ServicioDeVentas.cs</c> en esta slice: el guard es
+    /// genérico sobre cualquier tipo <c>afecta_stock = false</c>, no una lista de códigos. Test
+    /// agregado a este archivo (nunca a <c>ServicioDeVentas.cs</c>, protegido) porque reutiliza
+    /// el helper <see cref="PrepararAsync"/> — mismo criterio que la prueba hermana de
+    /// <c>PRE</c> inmediatamente arriba, mismo dominio de código, ninguna escritura.</summary>
+    [Fact]
+    public async Task UnaVentaConElTipoTxrEsRechazada400SinEscribirNada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaVentaConElTipoTxrEsRechazada400SinEscribirNada));
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, ctx.IdCliente, "TXR", null,
+            [new LineaDeVenta(ctx.IdArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 100m, null, 0m)], null, null);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("tipo_comprobante_invalido", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.ComprobantesVenta.CountAsync());
+        Assert.Equal(0, await db.MovimientosStock.CountAsync());
+        Assert.Equal(0, await db.MovimientosCuentaCorriente.CountAsync());
+    }
+
     // ---- task 3.14: fidelidad del precio congelado — fixture DISCRIMINANTE -------------------------
 
     /// <summary>Mutation targets 24-28 (mutation-proof-tests rule 11): el fixture NUNCA deja que
