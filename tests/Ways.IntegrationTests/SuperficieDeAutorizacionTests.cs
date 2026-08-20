@@ -209,7 +209,16 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // trap, ver ProveedoresEndpoints.cs). El prefijo también alcanza GET /api/proveedores
         // (listado) y GET /api/proveedores/{id} (detalle), que siguen bajo GestionDeCatalogo —
         // ambas ya cubiertas por PoliticasAlMenosTanEstrictasComoOperacionDePos de abajo.
-        "/api/proveedores"
+        "/api/proveedores",
+        // judgment-day Slice 5, ronda 2, juez A — WARNING: omisión preexistente del Slice 2 que
+        // este hallazgo destapó. stage-17-presupuestos-y-remitos (Slice 2, task 2.x): GET
+        // /api/presupuestos (listado) y GET /api/presupuestos/{id}/{para-venta} — el grupo agrupa
+        // SOLO bajo OperacionDePos (mismo criterio que "/api/stock"/"/api/gastos"), pero nunca se
+        // había agregado a este segundo guard.
+        "/api/presupuestos",
+        // stage-17-presupuestos-y-remitos (Slice 5, design decisión 17/proposal decisión 10): GET
+        // /api/remitos (listado) y GET /api/remitos/{id} — mismo criterio que "/api/presupuestos".
+        "/api/remitos"
     ];
 
     // Policies que, de aparecer en vez de OperacionDePos, siguen siendo un gate válido —

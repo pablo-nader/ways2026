@@ -443,6 +443,42 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(idLoteViejo, itemPersistido.IdLote);
     }
 
+    // ---- judgment-day Slice 5, ronda 2, juez A — WARNING: el spec (scenario "A remito line
+    // honours a supplied idLote over the FEFO pick") no tenía test discriminante: todo fixture con
+    // idLote explícito sembraba un solo lote por artículo, así que un resolver que IGNORARA el pick
+    // explícito y corriera FEFO igual pasaba en verde (regla 14 — si hay fechas en juego, discriminan).
+    [Fact]
+    public async Task EmitirConIdLoteExplicitoHonraElPickSobreElFefo()
+    {
+        var ctx = await PrepararAsync(nameof(EmitirConIdLoteExplicitoHonraElPickSobreElFefo), conLotesHabilitado: true);
+        var idArticulo = await SembrarArticuloAsync(ctx, "Rem Lote Explicito", 60m, controlaLote: true);
+        var idLoteViejo = await SembrarLoteAsync(ctx, idArticulo, "L-VIEJO-EXP", new DateOnly(2099, 1, 1), 5m);
+        var idLoteNuevo = await SembrarLoteAsync(ctx, idArticulo, "L-NUEVO-EXP", new DateOnly(2099, 6, 1), 5m);
+
+        // El pick EXPLÍCITO manda el lote que vence DESPUÉS — si el resolver ignorara item.IdLote y
+        // corriera FEFO igual, elegiría idLoteViejo (vence antes).
+        var creado = await CrearBorradorAsync(ctx.Admin, SolicitudSimple(ctx, idArticulo, 2m, idLoteNuevo));
+
+        var respuesta = await ctx.Admin.PostAsync($"/api/remitos/{creado.Id}/emitir", null);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        var emitido = JsonSerializer.Deserialize<RemitoDetalle>(cuerpo, OpcionesJson)!;
+
+        Assert.Equal(idLoteNuevo, emitido.Items.Single().IdLote);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var itemPersistido = await db.ItemsRemito.SingleAsync(i => i.IdRemito == creado.Id);
+        Assert.Equal(idLoteNuevo, itemPersistido.IdLote);
+
+        var movimiento = await db.MovimientosStock.SingleAsync(m => m.IdRemito == creado.Id);
+        Assert.Equal(idLoteNuevo, movimiento.IdLote);
+
+        var stockLoteNuevo = await db.StockLotes.SingleAsync(s => s.IdLote == idLoteNuevo);
+        Assert.Equal(3m, stockLoteNuevo.Cantidad);
+        var stockLoteViejo = await db.StockLotes.SingleAsync(s => s.IdLote == idLoteViejo);
+        Assert.Equal(5m, stockLoteViejo.Cantidad);
+    }
+
     [Fact]
     public async Task EmitirUnRemitoVacioEsRechazado400()
     {
@@ -670,6 +706,44 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         Assert.Equal(1, await db.MovimientosStock.CountAsync(m => m.IdRemito == creado.Id && m.Motivo == MotivoStock.Anulacion));
+    }
+
+    // ---- judgment-day Slice 5, ronda 2, juez A — WARNING: el guard ensanchado `estado IN
+    // ('borrador','emitido')` (desviación 5.9) nunca se ejercitaba para BORRADOR vía HTTP — un
+    // borrador nunca movió stock, así que anularlo no debe escribir ningún movimiento (ledger exacto
+    // antes/después, regla 12c: un hermano emitido con su propio movimiento debe quedar intacto).
+    [Fact]
+    public async Task AnularUnRemitoBorradorLoAnulaSinEscribirMovimientosYSinTocarUnHermanoEmitido()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnRemitoBorradorLoAnulaSinEscribirMovimientosYSinTocarUnHermanoEmitido));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Rem Anular Borrador", 45m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 20m);
+
+        // Hermano EMITIDO — sí movió stock, y tiene que quedar intacto.
+        var hermano = await CrearBorradorAsync(ctx.Admin, SolicitudSimple(ctx, idArticulo, 3m));
+        Assert.Equal(HttpStatusCode.OK, (await ctx.Admin.PostAsync($"/api/remitos/{hermano.Id}/emitir", null)).StatusCode);
+
+        var borrador = await CrearBorradorAsync(ctx.Admin, SolicitudSimple(ctx, idArticulo, 2m));
+        Assert.Equal(EstadoRemito.Borrador, borrador.Estado);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var movimientosAntes = await db.MovimientosStock.CountAsync();
+        var movimientoHermanoAntes = await db.MovimientosStock.SingleAsync(m => m.IdRemito == hermano.Id);
+
+        var anulado = await ctx.Admin.PostAsync($"/api/remitos/{borrador.Id}/anular", null);
+        var cuerpo = await anulado.Content.ReadAsStringAsync();
+        Assert.True(anulado.StatusCode == HttpStatusCode.OK, cuerpo);
+        var detalle = JsonSerializer.Deserialize<RemitoDetalle>(cuerpo, OpcionesJson)!;
+        Assert.Equal(EstadoRemito.Anulado, detalle.Estado);
+
+        await using var dbDespues = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var movimientosDespues = await dbDespues.MovimientosStock.CountAsync();
+        Assert.Equal(movimientosAntes, movimientosDespues);
+        Assert.Equal(0, await dbDespues.MovimientosStock.CountAsync(m => m.IdRemito == borrador.Id));
+
+        var movimientoHermanoDespues = await dbDespues.MovimientosStock.SingleAsync(m => m.IdRemito == hermano.Id);
+        Assert.Equal(movimientoHermanoAntes.Cantidad, movimientoHermanoDespues.Cantidad);
+        Assert.Equal(movimientoHermanoAntes.Motivo, movimientoHermanoDespues.Motivo);
     }
 
     [Fact]

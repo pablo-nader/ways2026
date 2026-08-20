@@ -1495,6 +1495,53 @@ nuevos: `DobleEmitirConcurrenteEsRechazado409ViaElGuardNoViaElPreCheck`,
 `LaParidadFefoEligeElLoteQueVenceHoyEnElBordeExactoEnElRemitoYEnElCheckout` — nunca full suite, per
 regla 15/mutation-proof-tests).
 
+**DEVIATION REGISTERED (judgment-day, Slice 5, ronda 2 — juez A, APPROVE con 3 WARNINGs
+test-only, all fixed per protocol).** Producción correcta en los tres casos — los tres hallazgos
+son gaps de cobertura, fixed by the `jd-fix-agent`:
+
+- **WARNING — escenario del spec sin test discriminante ("A remito line honours a supplied idLote
+  over the FEFO pick", `lotes-y-vencimientos/spec.md`).** Todo fixture de remito con `idLote`
+  explícito sembraba un solo lote por artículo — un resolver que ignorara el pick explícito y
+  corriera FEFO igual pasaba en verde (regla 14: si hay fechas en juego, discriminan). Fijado:
+  `EmitirConIdLoteExplicitoHonraElPickSobreElFefo` — dos lotes (`L-VIEJO-EXP` vence antes,
+  `L-NUEVO-EXP` vence después), la línea manda explícitamente `L-NUEVO-EXP` (que FEFO NO elegiría);
+  assertea `items_remito.id_lote`, `movimientos_stock.id_lote` y `stock_lotes` de AMBOS lotes
+  (el explícito descontado, el FEFO-preferido intacto). EVIDENCIA DE MUTACIÓN: rama de `idLote`
+  explícito de `ResolverFefoAsync` (`ServicioDeRemitos.cs`, `if (item.IdLote is { } idLote)`)
+  mutada a `if (false && item.IdLote is { } idLote)` (siempre corre FEFO) → `dotnet build
+  --no-incremental` + filtro `FullyQualifiedName~EmitirConIdLoteExplicitoHonraElPickSobreElFefo` →
+  ROJO (`Expected: <id lote nuevo> / Actual: <id lote viejo>`, el mutante ignoró el pick explícito).
+  Revertido (`git checkout --`): VERDE.
+- **WARNING — transición borrador→anulado (guard ensanchado `estado IN ('borrador','emitido')`,
+  desviación 5.9) nunca ejercitada vía HTTP.** Fijado:
+  `AnularUnRemitoBorradorLoAnulaSinEscribirMovimientosYSinTocarUnHermanoEmitido` — `POST
+  /api/remitos/{id}/anular` sobre un BORRADOR → 200, estado `anulado`, conteo exacto de
+  `movimientos_stock` idéntico antes/después (el borrador nunca movió stock, cero filas nuevas) y
+  cero filas con `IdRemito == borrador.Id`; regla 12c: un hermano EMITIDO con su propio movimiento
+  queda intacto (mismo `Cantidad`/`Motivo` antes y después). EVIDENCIA DE MUTACIÓN: quitado
+  `'borrador'::estado_remito` del `IN` de `MarcarAnuladoAsync` (:643) → `dotnet build
+  --no-incremental` + filtro
+  `FullyQualifiedName~AnularUnRemitoBorradorLoAnulaSinEscribirMovimientosYSinTocarUnHermanoEmitido`
+  → ROJO (500 `error_interno` — el borrador ya no matchea el `UPDATE` guardado, cae en la rama de
+  invariante roto). Revertido: VERDE.
+- **WARNING — guard de regresión de autorización (`SuperficieDeAutorizacionTests.cs`) sin
+  `/api/remitos` NI `/api/presupuestos` en `PrefijosDeLecturaReGateados`.** La omisión de
+  `/api/presupuestos` es preexistente del Slice 2, destapada por este hallazgo (nombrada
+  explícitamente por el juez). Fijado: agregadas ambas rutas a `PrefijosDeLecturaReGateados` —
+  la protección runtime YA existe a nivel `MapGroup`, esto solo cierra la red de regresión.
+  EVIDENCIA DE MUTACIÓN: quitado temporalmente `.RequireAuthorization(Politicas.OperacionDePos)`
+  del `MapGroup("/api/remitos")` en `RemitosEndpoints.cs:23` → `dotnet build --no-incremental` +
+  filtro `FullyQualifiedName~TodoEndpointGetBajoLasSuperficiesReGateadasApilaOperacionDePos` →
+  ROJO (`Endpoint(s) GET sin OperacionDePos ...: GET /api/remitos/, GET /api/remitos/{id:int}`).
+  Revertido: VERDE.
+
+Tests dirigidos finales tras la ronda 2: `dotnet test tests/Ways.IntegrationTests --filter
+"FullyQualifiedName~ServicioDeRemitosTests|FullyQualifiedName~SuperficieDeAutorizacionTests"` —
+**28/28 VERDE** (26 preexistentes + 2 nuevos: `EmitirConIdLoteExplicitoHonraElPickSobreElFefo`,
+`AnularUnRemitoBorradorLoAnulaSinEscribirMovimientosYSinTocarUnHermanoEmitido`; el tercer fix es
+allowlist-only, sin `[Fact]` nuevo — cubierto por el `TodoEndpointGetBajoLasSuperficiesReGateadasApilaOperacionDePos`
+existente). Nunca full suite, per regla 15/mutation-proof-tests.
+
 ---
 
 ## Slice 6: consolidación TXR (PR 6)
