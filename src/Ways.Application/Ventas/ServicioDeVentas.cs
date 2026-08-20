@@ -97,8 +97,8 @@ public class ServicioDeVentas(
         // la rama) y (b) devolvía 404 "no existe el cliente" para un idCliente inexistente en la
         // solicitud, en vez del 400 cliente_no_coincide que p4 exige (p4 compara ids crudos, nunca
         // resueltos). ValidarComprobanteAsociado (más abajo) queda DESPUÉS de esta resolución a
-        // propósito — es el único uso de cliente.Id aguas abajo, y necesita el valor ya definitivo
-        // de cualquiera de las dos ramas.
+        // propósito — es el primer uso de cliente.Id aguas abajo (PlanDeVenta lo vuelve a leer
+        // después), y necesita el valor ya definitivo de cualquiera de las dos ramas.
         Cliente cliente;
 
         if (solicitud.IdPresupuestoOrigen is { } idPresupuestoOrigen)

@@ -845,7 +845,7 @@ untouched.
   `VentasAnulacionTests` name is `AnulacionTests.cs` in the actual tree, same file); full run
   72/72 green (`VentasCheckoutTests` 44, `AnulacionTests` ~20, `VentasAtomicidadYConcurrenciaTests`
   the remainder — exact counts in the apply-progress artifact).
-- [ ] 3.25 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
+- [x] 3.25 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
   by this apply batch**: `sdd-apply` never launches Judgment Day (executor boundary,
   `skills/sdd-apply/SKILL.md`); pending the parent orchestrator.
 - [ ] 3.26 Open PR #3 `feat/stage17-slice3-guard-y-conversion`, merge after a clean round. —
