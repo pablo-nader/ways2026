@@ -1422,8 +1422,8 @@ site, and reverses cleanly on annulment (including the double-annulment guard, O
   borrador sin escrituras, prefijos `/api/remitos` + `/api/presupuestos` en el guard de
   regresión) — ronda limpia. La skill `mutation-proof-tests` creció a v1.1 (regla 3 reforzada +
   reglas 13/14 nuevas) por la reincidencia y las dos clases nuevas.
-- [ ] 5.24 Open PR #5 `feat/stage17-slice5-remito-write-site`, merge after a clean round. — **NOT
-  run by this apply batch**, same reason as 5.23.
+- [x] 5.24 Open PR #5 `feat/stage17-slice5-remito-write-site`, merge after a clean round. — **DONE
+  by the orchestrator**: PR #151, merged `322fb19` after the clean round (see 5.23).
 
 **DEVIATION REGISTERED (judgment-day, Slice 5, ronda 1 — juez B, 4 MAJOR, all fixed).** Four
 survivors, none a production bug — production was correct; the gaps were coverage only
