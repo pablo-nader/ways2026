@@ -1412,9 +1412,16 @@ site, and reverses cleanly on annulment (including the double-annulment guard, O
   `ServicioDeVentas.cs`/`ServicioDeCompras.cs`/`ServicioDeStock.cs` untouched by this diff
   (verified by `git status`/`git diff --stat` at commit time, only the files listed in the Files
   Changed section of the return summary were touched).
-- [ ] 5.23 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
-  by this apply batch**: `sdd-apply` never launches Judgment Day (executor boundary,
-  `skills/sdd-apply/SKILL.md`); pending the parent orchestrator.
+- [x] 5.23 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **DONE by
+  the orchestrator**: ronda 1 juez B REJECT (4 MAJOR — targets 40/41/47 SURVIVED + conjunct
+  `estado` de emitir eclipsado por el pre-check, la 2da ocurrencia de la clase del slice 3) →
+  fixes `8bc1e1f` (4 tests discriminantes; el 40P01 vivo resultó no forzable sobre raw ADO y se
+  reemplazó por redes estructurales con paridad de estándar contra `VentaEscrituraLoteTests`) →
+  re-ronda acotada de B APPROVE (los 4 mutantes re-corridos, todos RED). Juez A APPROVE con 3
+  WARNINGs test-only → fixes `62d3957` (idLote explícito sobre FEFO con dos lotes, anular
+  borrador sin escrituras, prefijos `/api/remitos` + `/api/presupuestos` en el guard de
+  regresión) — ronda limpia. La skill `mutation-proof-tests` creció a v1.1 (regla 3 reforzada +
+  reglas 13/14 nuevas) por la reincidencia y las dos clases nuevas.
 - [ ] 5.24 Open PR #5 `feat/stage17-slice5-remito-write-site`, merge after a clean round. — **NOT
   run by this apply batch**, same reason as 5.23.
 
