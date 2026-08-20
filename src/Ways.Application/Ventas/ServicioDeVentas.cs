@@ -594,9 +594,9 @@ public class ServicioDeVentas(
         // Postgres toma el row lock de la primera, la segunda espera y, al retomarlo, re-evalúa
         // el WHERE contra el estado YA COMITEADO por la primera — 'anulado' no matchea 'emitido',
         // 0 filas, nunca un 500 ni una condición de carrera silenciosa.
-        var idPuntoVentaAnulacion = await MarcarAnuladoAsync(conexion, transaccionCruda, idTenant, id, ct);
+        var resultadoAnulacion = await MarcarAnuladoAsync(conexion, transaccionCruda, idTenant, id, ct);
 
-        if (idPuntoVentaAnulacion is null)
+        if (resultadoAnulacion is null)
         {
             // ADR-8: mismo 404 para "no existe" y "es de otro tenant" (filtro de EF + RLS ya
             // deja invisible un comprobante ajeno) — solo si NINGUNA fila visible tiene ese id
@@ -609,6 +609,23 @@ public class ServicioDeVentas(
             }
 
             throw new ErrorDominio("comprobante_ya_anulado", "El comprobante ya está anulado.", 409);
+        }
+
+        var (idPuntoVentaAnulacion, codigoTipoAnulado) = resultadoAnulacion.Value;
+
+        // stage-17-presupuestos-y-remitos, Slice 6 (design: Transactions — "ANULAR VENTA", decisión
+        // 4/7, mutation targets 55/56/58): POSICIÓN 1.6 — inmediatamente DESPUÉS de MarcarAnuladoAsync
+        // (paso 1) y ANTES de la auditoría (paso 1.5, preexistente) — nunca después del loop de stock
+        // ni de cuenta corriente (design: "posición 2, nunca después de stock/clientes"). El `if` de
+        // abajo es ESTRUCTURAL (mutation target 56): para una anulación ordinaria (`codigoTipoAnulado
+        // != "TXR"`) esto es CERO statements extra — mismo criterio que la rama del snapshot de la
+        // conversión (Slice 3, `if (plan.IdPresupuestoOrigen is { } ...)`). `codigoTipoAnulado` sale
+        // del scalar subquery ensanchado de `MarcarAnuladoAsync` (mutation target 55) — nunca un
+        // `SELECT` separado, que agregaría un statement extra a TODA anulación, no solo a la de un
+        // TXR.
+        if (codigoTipoAnulado == "TXR")
+        {
+            await EscriturasDeRemito.DesligarAsync(conexion, transaccionCruda, idTenant, id, momento, ct);
         }
 
         // 1.5. Auditoría (stage-14-auditoria-trazabilidad, Slice 3; spec auditoria-de-operaciones;
@@ -807,8 +824,17 @@ public class ServicioDeVentas(
     /// 3 (design decisión 8, precedente exacto <c>ServicioDeTurnos.MarcarCerradoAsync</c>):
     /// <c>RETURNING id_punto_venta</c> en vez de <c>id_comprobante_venta</c> — el mismo lock que
     /// ya decide "¿pasó la transición?" contesta también "¿en qué PV?", sin una lectura extra ni
-    /// confiar en el pre-read <c>AsNoTracking()</c>.</summary>
-    private static async Task<int?> MarcarAnuladoAsync(
+    /// confiar en el pre-read <c>AsNoTracking()</c>.
+    ///
+    /// stage-17-presupuestos-y-remitos, Slice 6 (design decisión 7, mutation target 55):
+    /// <c>RETURNING</c> ensanchado con un SUBQUERY ESCALAR — <c>(SELECT t.codigo FROM
+    /// tipos_comprobante t WHERE t.id_tipo_comprobante = comprobantes_venta.id_tipo_comprobante)</c>,
+    /// nunca una columna nueva — el mismo <c>UPDATE</c> guardado que ya decide la transición
+    /// también contesta "¿de qué tipo es?", sin un <c>SELECT</c> separado que agregaría un
+    /// statement extra a TODA anulación (no solo a la de un <c>TXR</c>). El llamador usa
+    /// <c>codigoTipo</c> para el guard estructural de la posición 1.6 (¿hay que desligar
+    /// remitos?).</summary>
+    private static async Task<(int IdPuntoVenta, string CodigoTipo)?> MarcarAnuladoAsync(
         DbConnection conexion, DbTransaction? transaccion, int idTenant, int idComprobanteVenta, CancellationToken ct)
     {
         await using var comando = conexion.CreateCommand();
@@ -816,15 +842,21 @@ public class ServicioDeVentas(
         comando.CommandText =
             "UPDATE comprobantes_venta SET estado = $1 " +
             "WHERE id_comprobante_venta = $2 AND id_tenant = $3 AND estado = $4 " +
-            "RETURNING id_punto_venta";
+            "RETURNING id_punto_venta, " +
+            "(SELECT t.codigo FROM tipos_comprobante t WHERE t.id_tipo_comprobante = comprobantes_venta.id_tipo_comprobante)";
 
         ParametrosDeComando.Agregar(comando, EstadoComprobante.Anulado);
         ParametrosDeComando.Agregar(comando, idComprobanteVenta);
         ParametrosDeComando.Agregar(comando, idTenant);
         ParametrosDeComando.Agregar(comando, EstadoComprobante.Emitido);
 
-        var resultado = await comando.ExecuteScalarAsync(ct);
-        return resultado is null ? null : Convert.ToInt32(resultado);
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+        if (!await lector.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return (lector.GetInt32(0), lector.GetString(1));
     }
 
     // ---- La transacción (design: The Sale Transaction, orden de statements pineado) ----------

@@ -100,6 +100,9 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("PUT", "/api/remitos/{id:int}"),
         ("POST", "/api/remitos/{id:int}/emitir"),
         ("POST", "/api/remitos/{id:int}/anular"),
+        // stage-17-presupuestos-y-remitos (Slice 6, design decisión 17/proposal decisión 10): la
+        // consolidación — mismo grupo, mismo criterio que las cuatro rutas de arriba.
+        ("POST", "/api/remitos/facturacion"),
 
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).

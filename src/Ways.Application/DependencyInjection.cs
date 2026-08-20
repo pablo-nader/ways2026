@@ -103,9 +103,12 @@ public static class DependencyInjection
         services.AddScoped<ServicioDePresupuestos>();
 
         // stage-17-presupuestos-y-remitos, Slice 5: ABM + emitir (numeración propia, serie 'REM',
-        // FEFO, el cuarto write site de stock) + anular. La consolidación
-        // (ServicioDeFacturacionDeRemitos) llega en Slice 6.
+        // FEFO, el cuarto write site de stock) + anular.
         services.AddScoped<ServicioDeRemitos>();
+
+        // stage-17-presupuestos-y-remitos, Slice 6: la consolidación — N remitos emitidos en UN
+        // comprobante TXR itemless (serie 'TXR', vía AsignadorDeNumeroComprobante — no se toca).
+        services.AddScoped<ServicioDeFacturacionDeRemitos>();
 
         // stage-10-agregacion-dashboard, Slice 2: LectorDeSerieTemporal es la única superficie de
         // SQL crudo de toda la etapa (design decisión 2) — ServicioDeReportesDeVentas es su
