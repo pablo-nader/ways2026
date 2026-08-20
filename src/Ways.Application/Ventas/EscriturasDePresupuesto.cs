@@ -80,6 +80,16 @@ public static class EscriturasDePresupuesto
         var vencimiento = lector.IsDBNull(1) ? (DateOnly?)null : lector.GetFieldValue<DateOnly>(1);
         var idPuntoVentaReal = lector.GetInt32(2);
 
+        // judgment-day slice-3 ronda 2 (juez A, WARNING): el PV va INMEDIATAMENTE después del
+        // 404-equivalente de arriba — mismo orden que el pre-chequeo de ServicioDeVentas
+        // (punto_venta_no_coincide corre antes de convertido/no_convertible/vencido allá también),
+        // así el claim de "mismo criterio de prioridad" del doc-comment de la clase queda cierto.
+        if (idPuntoVentaReal != idPuntoVenta)
+        {
+            throw new ErrorDominio(
+                "punto_venta_no_coincide", "El presupuesto pertenece a otro punto de venta.", 400);
+        }
+
         if (estado == "convertido")
         {
             throw new ErrorDominio(
@@ -95,12 +105,6 @@ public static class EscriturasDePresupuesto
         if (vencimiento is null || vencimiento < hoyEnZonaDelPuntoVenta)
         {
             throw new ErrorDominio("presupuesto_vencido", "El presupuesto está vencido.", 409);
-        }
-
-        if (idPuntoVentaReal != idPuntoVenta)
-        {
-            throw new ErrorDominio(
-                "punto_venta_no_coincide", "El presupuesto pertenece a otro punto de venta.", 400);
         }
 
         // Defensa en profundidad: bajo el MISMO lock que el UPDATE guardado ya evaluó, cada

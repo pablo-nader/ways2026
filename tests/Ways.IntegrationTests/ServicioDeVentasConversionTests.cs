@@ -14,6 +14,7 @@ using Ways.Application.Ventas;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Stock;
@@ -553,6 +554,30 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
         Assert.Equal("cliente_no_coincide", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>judgment-day slice-3 ronda 2 (juez A, MAJOR): un <c>idCliente</c> que NO EXISTE en
+    /// la base, pero que además es distinto del cliente real del presupuesto, tiene que devolver el
+    /// MISMO 400 <c>cliente_no_coincide</c> que un id existente en conflicto — nunca el 404 "no
+    /// existe el cliente" de <c>ResolverClienteAsync</c>. Antes del fix, la línea 83 de
+    /// <c>ServicioDeVentas.EmitirAsync</c> resolvía el cliente de la solicitud
+    /// INCONDICIONALMENTE, antes de la rama del snapshot — un id apócrifo tiraba 404 ahí, sin
+    /// llegar nunca a p4 (que compara ids CRUDOS, sin resolver). El fix hace esa resolución
+    /// condicional a <c>IdPresupuestoOrigen is null</c>.</summary>
+    [Fact]
+    public async Task UnIdClienteInexistenteYDistintoDelPresupuestoEsRechazado400ClienteNoCoincideNoNoEncontrado()
+    {
+        var ctx = await PrepararAsync(nameof(UnIdClienteInexistenteYDistintoDelPresupuestoEsRechazado400ClienteNoCoincideNoNoEncontrado));
+        var enviado = await CrearYEnviarAsync(ctx.Admin, ctx);
+
+        const int idClienteInexistente = 999_999_999;
+
+        var conversion = SolicitudDeConversion(ctx, enviado.Id, importe: 200m, idCliente: idClienteInexistente);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", conversion);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal("cliente_no_coincide", problema.GetProperty("codigo").GetString());
+    }
+
     // ---- task 3.9/3.20 (CONFLICT #4, mutation target 30): totales desincronizados ------------------
 
     [Fact]
@@ -678,6 +703,60 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
         await servicioDeVentas.EmitirAsync(solicitud);
 
         Assert.Equal(16, contador.Consultas);
+    }
+
+    /// <summary>judgment-day slice-3 ronda 2 (juez A, MAJOR, evidencia de mutación (b)): antes del
+    /// fix, una conversión exitosa pagaba una query EF DESPERDICIADA — <c>ResolverClienteAsync</c>
+    /// corriendo incondicional en la línea 83 de <c>EmitirAsync</c>, pisada acto seguido por la
+    /// asignación de la rama del snapshot. Mismo patrón directo (sin HTTP) que
+    /// <see cref="UnaVentaComunSigueEmitiendoDieciseisConsultasConLaRamaDelSnapshotPresente"/> de
+    /// arriba, así el contador de comandos EF (que SÍ ve esta query — <c>ResolverClienteAsync</c>
+    /// corre por el pipeline EF normal, a diferencia de <c>MarcarConvertidoAsync</c>) fija el
+    /// conteo de una conversión exitosa como RED.</summary>
+    [Fact]
+    public async Task UnaConversionExitosaNoPagaLaResolucionDeClienteDesperdiciada()
+    {
+        var ctx = await PrepararAsync(nameof(UnaConversionExitosaNoPagaLaResolucionDeClienteDesperdiciada));
+        var enviado = await CrearYEnviarAsync(ctx.Admin, ctx);
+
+        var contador = new ContadorDeComandos();
+        var tenantActual = new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant);
+
+        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
+            .UseNpgsql(fixture.AppConnectionString, npgsql =>
+            {
+                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<MotivoStock>("motivo_stock");
+                npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
+                npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
+            })
+            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
+            .Options;
+
+        await using var db = new WaysDbContext(opciones, tenantActual);
+
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var contexto = new ContextoFijo(ctx.IdTenant, ctx.IdUsuarioAdmin);
+        var servicioDePrecios = new Ways.Application.Precios.ServicioDePrecios(db, reloj, contexto);
+        var servicioDeOfertas = new ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
+        var lectorDeMovimientos = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
+        var servicioDeTurnos = new Ways.Application.Caja.ServicioDeTurnos(db, reloj, contexto, lectorDeMovimientos);
+        var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
+        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
+
+        var conversion = SolicitudDeConversion(ctx, enviado.Id, importe: 200m);
+
+        await servicioDeVentas.EmitirAsync(conversion);
+
+        Assert.Equal(15, contador.Consultas);
     }
 
     // ---- task 3.22: round-trip de IdPresupuestoOrigen + carrera de índice único con presupuestos DISTINTOS --
@@ -880,6 +959,29 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
             DateOnly.FromDateTime(DateTime.UtcNow), DateTimeOffset.UtcNow, CancellationToken.None);
 
         Assert.False(convertido);
+    }
+
+    /// <summary>judgment-day slice-3 ronda 2 (juez A, WARNING): discrimina el ORDEN real de
+    /// <see cref="EscriturasDePresupuesto.ExigirCausaDelRechazoAsync"/> — PV vs vencido, en un
+    /// presupuesto que es AMBAS cosas a la vez ante esta llamada (PV equivocado, y un
+    /// <c>hoyEnZonaDelPuntoVenta</c> posterior al vencimiento real). Antes del fix el vencido
+    /// corría primero (el PV se chequeaba al final); el fix lo alinea con el pre-chequeo de
+    /// <c>ResolverConversionDesdePresupuestoAsync</c> (PV inmediatamente después del
+    /// 404-equivalente). El código de error devuelto es la única forma de observar la prioridad —
+    /// mismo criterio (mutation-proof-tests regla 3) que los tres tests de arriba.</summary>
+    [Fact]
+    public async Task ExigirCausaDelRechazoAsyncPriorizaPuntoVentaSobreVencidoMismoOrdenQueElPreChequeo()
+    {
+        var ctx = await PrepararAsync(nameof(ExigirCausaDelRechazoAsyncPriorizaPuntoVentaSobreVencidoMismoOrdenQueElPreChequeo));
+        var enviado = await CrearYEnviarAsync(ctx.Admin, ctx, idPuntoVenta: ctx.IdPuntoVenta);
+
+        await using var conexion = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant);
+
+        var excepcion = await Assert.ThrowsAsync<ErrorDominio>(() => EscriturasDePresupuesto.ExigirCausaDelRechazoAsync(
+            conexion, null, ctx.IdTenant, enviado.Id, ctx.IdPuntoVenta2,
+            enviado.Vencimiento!.Value.AddDays(1), CancellationToken.None));
+
+        Assert.Equal("punto_venta_no_coincide", excepcion.Codigo);
     }
 
     /// <summary>Pausa la SEGUNDA transacción abierta por el <see cref="DbContext"/> de la

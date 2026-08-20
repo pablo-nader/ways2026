@@ -80,15 +80,6 @@ public class ServicioDeVentas(
         // pricing work).
         var turno = await servicioDeTurnos.ResolverTurnoAbiertoAsync(puntoVenta.Id, ct);
 
-        var cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
-
-        var asociado = solicitud.IdComprobanteAsociado is { } idAsociado
-            ? await db.ComprobantesVenta.FirstOrDefaultAsync(c => c.Id == idAsociado, ct)
-            : null;
-
-        ReglaDeComprobantes.ValidarComprobanteAsociado(
-            tipo.Signo, solicitud.IdComprobanteAsociado, asociado, puntoVenta.Id, cliente.Id);
-
         // stage-17-presupuestos-y-remitos, Slice 3 (design: Transactions — "RAMA DEL SNAPSHOT",
         // decisión 2): corre SOLO con idPresupuestoOrigen. p1-p6 del design, en orden. Reemplaza,
         // para esta venta, el precio "mostrado por el carrito" por una decisión de servidor
@@ -97,6 +88,18 @@ public class ServicioDeVentas(
         Presupuesto? presupuestoOrigen = null;
         DateOnly? hoyEnZonaDelPuntoVenta = null;
         IReadOnlyList<ItemPresupuesto>? itemsPresupuestoOrigen = null;
+
+        // judgment-day slice-3 ronda 2 (juez A, MAJOR): resolución de cliente CONDICIONAL — con
+        // idPresupuestoOrigen presente, el cliente correcto lo resuelve la rama del snapshot
+        // (p4/p6, desde presupuesto.IdCliente, comparando contra solicitud.IdCliente SIN resolver
+        // primero) inmediatamente abajo. Resolverlo acá también, incondicional, era (a) una query
+        // EF desperdiciada en TODA conversión exitosa (el resultado se pisaba con la asignación de
+        // la rama) y (b) devolvía 404 "no existe el cliente" para un idCliente inexistente en la
+        // solicitud, en vez del 400 cliente_no_coincide que p4 exige (p4 compara ids crudos, nunca
+        // resueltos). ValidarComprobanteAsociado (más abajo) queda DESPUÉS de esta resolución a
+        // propósito — es el único uso de cliente.Id aguas abajo, y necesita el valor ya definitivo
+        // de cualquiera de las dos ramas.
+        Cliente cliente;
 
         if (solicitud.IdPresupuestoOrigen is { } idPresupuestoOrigen)
         {
@@ -110,6 +113,17 @@ public class ServicioDeVentas(
                 .Select(i => new LineaDeVenta(i.IdArticulo, i.Cantidad, CodigoBarra: null))
                 .ToList();
         }
+        else
+        {
+            cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);
+        }
+
+        var asociado = solicitud.IdComprobanteAsociado is { } idAsociado
+            ? await db.ComprobantesVenta.FirstOrDefaultAsync(c => c.Id == idAsociado, ct)
+            : null;
+
+        ReglaDeComprobantes.ValidarComprobanteAsociado(
+            tipo.Signo, solicitud.IdComprobanteAsociado, asociado, puntoVenta.Id, cliente.Id);
 
         // 7 consultas (ServicioDeOfertas.ResolverAsync, design: Technical Approach) — la
         // autoridad de precio ÚNICA, nunca lo que mostró el carrito (design decisión 3). Con
