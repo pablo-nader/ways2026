@@ -339,11 +339,6 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            // gate §I, data statement 3 (proposal.md:952-954) — desactiva en vez de borrar, para
-            // que un TXR ya emitido siga siendo legible después de un rollback (mismo criterio
-            // que CuentaCorrienteEtapa7/ComprasYTransferenciasEtapa8 con RC/C-*).
-            migrationBuilder.Sql("UPDATE tipos_comprobante SET activo = false WHERE codigo = 'TXR';");
-
             migrationBuilder.DropForeignKey(
                 name: "fk_movimientos_stock_remito",
                 table: "movimientos_stock");
@@ -407,6 +402,12 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 .OldAnnotation("Npgsql:Enum:tipo_movimiento_tesoreria", "ajuste,deposito,gasto,retiro_caja")
                 .OldAnnotation("Npgsql:Enum:unidad_venta", "peso,unidad")
                 .OldAnnotation("Npgsql:PostgresExtension:citext", ",,");
+
+            // gate §I, data statement 3 (proposal.md:952-954) — desactiva en vez de borrar, para
+            // que un TXR ya emitido siga siendo legible después de un rollback (mismo criterio
+            // que CuentaCorrienteEtapa7/ComprasYTransferenciasEtapa8 con RC/C-*). Último paso del
+            // Down (proposal.md:1092-1095, rollback plan), después de revertir todo lo demás.
+            migrationBuilder.Sql("UPDATE tipos_comprobante SET activo = false WHERE codigo = 'TXR';");
         }
     }
 }

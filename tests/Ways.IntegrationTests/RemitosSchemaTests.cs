@@ -251,6 +251,32 @@ public class RemitosSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiF
         Assert.Equal("42501", excepcion.SqlState);
     }
 
+    [Fact]
+    public async Task UnInsertConIdTenantAjenoEnItemsRemitoSeRechaza()
+    {
+        var a = await SembrarEscenarioAsync(nameof(UnInsertConIdTenantAjenoEnItemsRemitoSeRechaza) + "-A");
+        var b = await SembrarEscenarioAsync(nameof(UnInsertConIdTenantAjenoEnItemsRemitoSeRechaza) + "-B");
+
+        await using var comoA = await fixture.AbrirConexionCrudaAsync("tenant", a.IdTenant);
+        var idRemito = await InsertarBorradorAsync(comoA, a);
+
+        await using var comando = comoA.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO items_remito " +
+            "(id_tenant, id_remito, orden, id_articulo, descripcion, cantidad, precio_unitario, " +
+            " descuento, total, id_lista_precio, id_oferta, id_alicuota_iva, porcentaje_iva, " +
+            " costo_unitario, costo_es_estimado, id_lote, created_at, updated_at, deleted_at) " +
+            "VALUES ($1, $2, 1, $3, 'seed', 2, 10, 0, 20, $4, NULL, $5, 21, NULL, false, NULL, now(), now(), NULL)";
+        comando.Parameters.Add(new NpgsqlParameter { Value = b.IdTenant }); // ajeno a la sesión (tenant A)
+        comando.Parameters.Add(new NpgsqlParameter { Value = idRemito });
+        comando.Parameters.Add(new NpgsqlParameter { Value = a.IdArticulo });
+        comando.Parameters.Add(new NpgsqlParameter { Value = a.IdListaPrecio });
+        comando.Parameters.Add(new NpgsqlParameter { Value = a.IdAlicuotaIva });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("42501", excepcion.SqlState);
+    }
+
     // ---------------------------------------------------------------------------------------
     // ck_remitos_salida_completa (task 4.28, mutation target #38)
     // ---------------------------------------------------------------------------------------

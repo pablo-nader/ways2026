@@ -1214,11 +1214,37 @@ value `'remito'` is NOT reverted — irreversible, accepted, registered** (`prop
     confirmed green (19/19 `PresupuestosSchemaTests`).
   - Full suite confirmed green after all five fixes: **1533/1533**, run TWICE (once mid-batch to
     surface the failures, once final to confirm — never concurrently, per the apply protocol).
-- [ ] 4.36 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
-  by this apply batch**: `sdd-apply` never launches Judgment Day (executor boundary,
-  `skills/sdd-apply/SKILL.md`); pending the parent orchestrator.
+- [x] 4.36 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
 - [ ] 4.37 Open PR #4 `feat/stage17-slice4-schema-remitos`, merge after a clean round. — **NOT
   run by this apply batch**, same reason as 4.36.
+
+**DEVIATION REGISTERED (judgment-day, Slice 4, ronda 1 — 1 WARNING de juez B + 1 SUGGESTION de
+juez A, ambos APPROVE, fixed anyway per protocol).**
+
+- **WARNING (juez B) — faltaba el espejo WITH CHECK de RLS para `items_remito`.**
+  `RemitosSchemaTests.cs` ya cubría el lado SELECT de `items_remito`
+  (`UnaSesionDeOtroTenantNoVeLosItemsDeRemitoPorSelect`) y el lado WITH CHECK de `remitos`
+  (`UnInsertConIdTenantAjenoEnRemitosSeRechaza`), pero nunca el WITH CHECK de `items_remito`.
+  Agregado `UnInsertConIdTenantAjenoEnItemsRemitoSeRechaza`, calcado del patrón de
+  `UnInsertConIdTenantAjenoEnRemitosSeRechaza` (mismo assert de SQLSTATE `42501`), con un remito
+  padre sembrado por la sesión A como fixture mínimo. Evidencia de mutación
+  (mutation-proof-tests regla 2): con `HabilitarRlsDeTenant("items_remito")` quitado de la
+  migración, `dotnet build --no-incremental` + `dotnet test ... --filter
+  "FullyQualifiedName~RemitosSchemaTests"` cayeron 2/28 en ROJO — el test nuevo (`42501` esperado,
+  `23503` real: sin RLS el INSERT llega hasta la FK, que también choca porque la combinación
+  `id_remito`/`id_tenant` ajena no existe) y el SELECT preexistente
+  (`UnaSesionDeOtroTenantNoVeLosItemsDeRemitoPorSelect`, esperaba 0 filas y vio 1). Revertido el
+  `HabilitarRlsDeTenant("items_remito")`, rebuild `--no-incremental`, 28/28 VERDE de nuevo.
+- **SUGGESTION (juez A) — el `Down()` de la migración ejecutaba la desactivación de `TXR` PRIMERO,
+  no ÚLTIMO como narra el Rollback Plan del proposal (`proposal.md:1092-1095`).** Movido el
+  `Sql("UPDATE tipos_comprobante SET activo = false WHERE codigo = 'TXR';")` al final del `Down()`,
+  después del `AlterDatabase()` que revierte `estado_remito`/`motivo_stock` — el resto del orden
+  inverso (`DropForeignKey`/`DropIndex`/`DropColumn`/`DropTable`) queda intacto. Verificación:
+  `dotnet build --no-incremental` limpio + `RemitosSchemaTests` 28/28 verde (incluye el fixture
+  `WaysApiFixture` que aplica esta migración completa al levantar el host).
+
+Ambos hallazgos, ambos jueces en APPROVE — fixeados igual per protocolo (findings baratos que el
+protocolo corrige aunque no bloqueen el merge).
 
 ---
 
