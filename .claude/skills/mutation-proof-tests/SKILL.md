@@ -4,7 +4,7 @@ description: "Trigger: writing a test whose PURPOSE is to prove one specific cla
 license: Apache-2.0
 metadata:
   author: ways-project
-  version: "1.0"
+  version: "1.1"
 ---
 
 ## Activation Contract
@@ -50,6 +50,12 @@ so deleting the clause under test changes nothing the test can see.
    A guard mirrored by an earlier check needs BOTH a direct below-the-confound test
    (0 rows on each conjunct) AND its real TOCTOU race test (pre-check reads stale →
    the other transaction commits → the guard alone must refuse).
+   **Enumerate the conjuncts — coverage of one says nothing about its neighbors.**
+   Second occurrence of the class (stage 17 slice 5): the SAME guarded UPDATE had a
+   real race test for its `id_punto_venta` conjunct, and its `estado` conjunct still
+   survived deletion — the sequential double-emit test died at the pre-check. At
+   apply time, list EVERY conjunct of EVERY guarded UPDATE in the slice and pair each
+   one with the test that kills it, before writing a single test.
 
 4. **Assert the discriminating value.** Prefer asserting the value only the clause can
    produce (the bucket label, the affected-row count, the SQLSTATE) over asserting
@@ -161,6 +167,33 @@ so deleting the clause under test changes nothing the test can see.
    read-side `Where(IdProveedor)`). Every scoped destructive write gets a sibling
    seed whose rows must remain intact, asserted by exact count and identity.
 
+13. **An ORDER guarantee (lock acquisition, write sequence) is invisible to a
+   single-resource race test.** Both order mutants of the fourth stock write site
+   (ascending `OrderBy` inverted; `stock`/`stock_lotes` upsert pair swapped) survived
+   the remitir×checkout AND remitir×remitir rendezvous tests, because the fixture
+   held ONE `(artículo, lote)` pair — with no AB/BA cross-contention, direction is
+   unobservable. And a live deadlock (`40P01`) cannot be forced when the writes are
+   raw ADO: they bypass `DbCommandInterceptor`, so there is no mid-loop pause point
+   (8 synchronized runs, zero deadlocks) — never ship a probabilistic race as the
+   net. The standard nets, per the checkout precedent (`VentaEscrituraLoteTests`):
+   (a) WRITE order asserted structurally — read the ledger rows back ordered by `Id`
+   and assert the per-resource sequence; (b) LOCK order asserted by polling
+   `pg_locks` from a separate connection while the transaction is held open at a
+   known point, with a bounded timeout (fails on wrong order, never randomly).
+   Mutation evidence per net: each structural test goes RED on its own order mutant.
+   (Stage 17 slice 5, judgment round 1: three MAJORs of this class in one verdict.)
+
+14. **A date-comparison clause needs a fixture row ON the boundary.** The FEFO
+   `hoy` mutant (`AddDays(1)`) survived 20/20 tests because no lote's
+   `fecha_vencimiento` sat within one day of "hoy" — mid-range fixtures cannot see a
+   one-day shift. Every clause of the form `fecha < hoy` / `fecha <= hoy` gets a
+   fixture row that FLIPS across the boundary (a lote expiring exactly today:
+   eligible today, ineligible tomorrow), under a pinned clock, asserted through
+   every parity path the clause serves (remito AND checkout). Rule 10 fixes the
+   offset the REQUEST sends; this rule fixes the DATA the clause compares against.
+   (Stage 17 slice 5 target 47; same family as the stage-12 inclusive-boundary
+   decision 13 — vencido = `fecha < hoy` STRICT.)
+
 ## Decision Gate
 
 | Situation | Action |
@@ -169,4 +202,7 @@ so deleting the clause under test changes nothing the test can see.
 | Test passes with the clause deleted | Re-route below the confound (rule 3) — never call it done |
 | RLS-related assertion | ways_app connection, statement-level, row counts |
 | Test sends a date boundary as `...Z` | Confound (rule 10) — resend with a real negative offset |
+| Test proves a lock/write ORDER | Single-resource races are blind (rule 13) — structural nets: ledger order + `pg_locks` |
+| Clause compares against a date | Fixture row ON the boundary under a pinned clock (rule 14) |
+| Guarded UPDATE with several conjuncts | Enumerate them; one kill per conjunct (rule 3) |
 | Cannot name the clause under test | Ordinary coverage — this skill does not apply |
