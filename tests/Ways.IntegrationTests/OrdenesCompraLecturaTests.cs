@@ -574,7 +574,17 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
     [Fact]
     public async Task ReposicionMantieneSuShapeYSusFigurasSinCambios()
     {
-        var ctx = await PrepararAsync(nameof(ReposicionMantieneSuShapeYSusFigurasSinCambios));
+        // Reloj pineado en el borde del día UTC: 01:30Z ya es "mañana" en UTC pero sigue siendo
+        // 2026-08-19 22:30 en America/Argentina/Buenos_Aires (la zona sembrada del PV). El
+        // contrato del endpoint resuelve "hoy" en la zona del PV, nunca en UTC (spec de la
+        // etapa 13, vinculante) — assertar la fecha UTC del reloj de pared hacía fallar este
+        // test todas las noches en la franja 21:00-00:00 locales.
+        var instanteFijo = new DateTimeOffset(2026, 8, 20, 1, 30, 0, TimeSpan.Zero);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services => services.AddSingleton<IRelojDelSistema>(new RelojFijo(instanteFijo))));
+
+        var ctx = await PrepararAsync(nameof(ReposicionMantieneSuShapeYSusFigurasSinCambios), factory);
 
         var respuesta = await ctx.Admin.GetAsync($"/api/reportes/stock/reposicion?idPuntoVenta={ctx.IdPuntoVenta}");
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -585,8 +595,8 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
         // (ordenes-de-compra/spec.md: "Etapa 13 stays a read-only source").
         var reposicion = JsonSerializer.Deserialize<Reposicion>(cuerpo, OpcionesJson)!;
         Assert.Equal(ctx.IdPuntoVenta, reposicion.IdPuntoVenta);
-        Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), reposicion.Hoy);
-        Assert.NotNull(reposicion.ZonaHoraria);
+        Assert.Equal("America/Argentina/Buenos_Aires", reposicion.ZonaHoraria);
+        Assert.Equal(new DateOnly(2026, 8, 19), reposicion.Hoy);
         Assert.NotNull(reposicion.Filas);
     }
 
