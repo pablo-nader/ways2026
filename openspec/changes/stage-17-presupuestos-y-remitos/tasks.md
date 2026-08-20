@@ -848,7 +848,7 @@ untouched.
 - [x] 3.25 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
   by this apply batch**: `sdd-apply` never launches Judgment Day (executor boundary,
   `skills/sdd-apply/SKILL.md`); pending the parent orchestrator.
-- [ ] 3.26 Open PR #3 `feat/stage17-slice3-guard-y-conversion`, merge after a clean round. —
+- [x] 3.26 Open PR #3 `feat/stage17-slice3-guard-y-conversion`, merge after a clean round. —
   **NOT run by this apply batch**, same reason as 3.25.
 
 **ADDITION REGISTERED (process rule 15) — `GET /{id}/para-venta`, never given its own numbered
