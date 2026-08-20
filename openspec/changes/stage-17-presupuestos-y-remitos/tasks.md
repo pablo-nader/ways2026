@@ -909,6 +909,42 @@ and documentation truth:
   (source-text: the call can only appear inside `if (plan.IdPresupuestoOrigen is { } ...)`, never
   unconditional) — the query counter stays as evidence for the EF pipeline only, said explicitly.
 
+**DEVIATION REGISTERED (judgment-day, Slice 3, ronda 2, juez A — 1 MAJOR + 1 WARNING, both
+fixed).**
+
+- **MAJOR — `ServicioDeVentas.EmitirAsync` resolved `cliente` unconditionally, before the
+  snapshot branch.** `var cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);` ran
+  BEFORE the `if (solicitud.IdPresupuestoOrigen is { } ...)` branch, so it always executed even
+  for a conversion — (a) an `idCliente` that doesn't exist in the request returned `404 no existe
+  el cliente` instead of the `400 cliente_no_coincide` that p4 (compares raw ids, never resolved)
+  requires; (b) every successful conversion paid a wasted EF query, immediately overwritten by the
+  branch's own assignment. Fixed: the resolution is now conditional to
+  `solicitud.IdPresupuestoOrigen is null` (`else` branch); `ReglaDeComprobantes.ValidarComprobanteAsociado`
+  (the only downstream use of `cliente.Id`) moved to run AFTER both branches leave `cliente`
+  definitively assigned, so no path reads it before the reassignment. Tests:
+  `UnIdClienteInexistenteYDistintoDelPresupuestoEsRechazado400ClienteNoCoincideNoNoEncontrado` (400,
+  not 404) and `UnaConversionExitosaNoPagaLaResolucionDeClienteDesperdiciada` (EF command counter,
+  15 not 16 — `ResolverClienteAsync` runs through the normal EF pipeline, so the counter DOES see
+  it, unlike `MarcarConvertidoAsync`'s raw ADO call). Mutation evidence: reverting the
+  conditionality and rebuilding `--no-incremental` turns both tests red (404 instead of 400; 16
+  instead of 15) — recorded in the fix-agent transcript, then reverted clean via `git checkout --
+  src/`.
+- **WARNING — `EscriturasDePresupuesto.ExigirCausaDelRechazoAsync` checked the PV LAST while its
+  own doc-comment claimed "mismo criterio de prioridad" as the pre-check (which checks PV
+  FIRST, right after the 404-equivalent).** Reordered: PV now checked immediately after the
+  404-equivalent (`!await lector.ReadAsync(ct)`), before `convertido`/`no_convertible`/`vencido` —
+  matching `ResolverConversionDesdePresupuestoAsync`'s pre-check order, making the doc-comment's
+  claim true. Discriminating test (order is behaviorally observable, not just documentation):
+  `ExigirCausaDelRechazoAsyncPriorizaPuntoVentaSobreVencidoMismoOrdenQueElPreChequeo` calls
+  `ExigirCausaDelRechazoAsync` directly against a presupuesto that is BOTH PV-mismatched and
+  vencido (via a `hoyEnZonaDelPuntoVenta` after its vencimiento) and asserts
+  `punto_venta_no_coincide`, not `presupuesto_vencido`. Mutation evidence: moving the PV check back
+  to the end turns this test red (`presupuesto_vencido` instead of `punto_venta_no_coincide`) —
+  recorded in the fix-agent transcript, then reverted clean via `git checkout -- src/`.
+
+Full `ServicioDeVentasConversionTests` run green (24/24) + `VentasCheckoutTests` untouched and
+green (27/27) after both fixes, `--no-incremental` rebuild.
+
 ---
 
 ## Slice 4: Schema remitos + ALTER TYPE aislado + ramas (PR 4)
