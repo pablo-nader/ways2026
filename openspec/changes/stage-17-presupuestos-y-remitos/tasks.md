@@ -1559,64 +1559,240 @@ stock movements, including the OD8/T3 discriminant test. **Budget note**: pre-au
 `6a`/`6b` (decision 3 above). **Rollback**: guarded call + service disappear, checkout anulación
 reverts to pre-stage.
 
-- [ ] 6.1 Create `EscriturasDeRemito.cs` — `BloquearAscendenteAsync` (`FOR UPDATE ORDER BY
+- [x] 6.1 Create `EscriturasDeRemito.cs` — `BloquearAscendenteAsync` (`FOR UPDATE ORDER BY
   id_remito`) + `LigarAsync` (guarded N-row `UPDATE`) + `DesligarAsync`. *(design.md:131-149,
   mutation targets 48-50)*
-- [ ] 6.2 Create `ServicioDeFacturacionDeRemitos.cs` — pre-tx: load remitos + items, same
+
+  **DONE.** `BloquearAscendenteAsync` returns the locked rows' `(IdRemito, Estado, IdComprobante)`
+  for the caller's use, but deliberately does **not** re-validate/throw on them itself — see
+  the class doc-comment: doing so would create a guard EQUIVALENT to `LigarAsync`'s under the
+  SAME lock (nothing can change those rows between the SELECT and the UPDATE within one
+  transaction), which would make a mutant that deletes `LigarAsync`'s own guard undetectable by
+  any race test. `LigarAsync`/`DesligarAsync` use `ExecuteNonQueryAsync` (rowcount authority),
+  matching `ServicioDeReliquidacion.MarcarConsumosCubiertosAsync`'s `= ANY($n)` precedent.
+- [x] 6.2 Create `ServicioDeFacturacionDeRemitos.cs` — pre-tx: load remitos + items, same
   tenant/cliente/PV, all `emitido` and unlinked; `totales := Σ headers` asserted against `Σ
   items`; `ValidadorDePagos`; turno-abierto check.
-- [ ] 6.3 Same file: `EstrategiaSinReintento` ⇒ `BEGIN ExigirTurnoAbiertoBajoLockAsync` as
+
+  **DONE**, plus two gap-filling additions (never named by design's Interfaces/Contracts
+  section, same class as prior slices' listado/pagina gaps): `SolicitudDeFacturacionDeRemitos`
+  added to `ContratosDeRemito.cs` (design.md:211-212 specs it but it was never actually
+  declared); domain code `remitos_no_seleccionados` (400) for an empty `IdsRemito` — no task
+  names it, added defensively so `BloquearAscendenteAsync`'s `= ANY(empty array)` can never
+  silently produce a zero-total, zero-item TXR. Endpoint wiring
+  (`POST /api/remitos/facturacion` in `RemitosEndpoints.cs` + `AddScoped<ServicioDeFacturacionDeRemitos>()`
+  in `DependencyInjection.cs`) — **DEVIATION REGISTERED**, no task 6.x names these files
+  individually, same convention `RemitosEndpoints.cs`'s own doc-comment already registered for
+  Slice 5: without them the service is unreachable by HTTP. `SuperficieDeAutorizacionTests.cs`
+  allowlist gained the one new route (same group, `Politicas.OperacionDePos` only).
+
+  The totals-fidelity assertion (Σ headers vs. Σ items recomputed via `CalculadorDeTotales`) is
+  implemented as an `InvalidOperationException` (defense in depth, structurally unreachable
+  under normal operation), not a domain `ErrorDominio` — no task/design names a dedicated test
+  for it (unlike the presupuesto-side `presupuesto_inconsistente` 409 of Slice 3, which Task 3.9
+  explicitly required); registered here as a deliberate scope boundary, not an omission.
+- [x] 6.3 Same file: `EstrategiaSinReintento` ⇒ `BEGIN ExigirTurnoAbiertoBajoLockAsync` as
   statement 0 (decision 13 of the proposal — unlike the plain remito, which requires none).
   *(design.md:313, mutation target 54)*
-- [ ] 6.4 `BloquearAscendenteAsync` **before** the comprobante `INSERT` and before `clientes` —
+- [x] 6.4 `BloquearAscendenteAsync` **before** the comprobante `INSERT` and before `clientes` —
   the `INSERT` is not a lock-order position (T10). *(design.md decision 12, mutation target 49)*
-- [ ] 6.5 Itemless `TXR` comprobante `INSERT` — `RC` precedent, **zero items by construction**.
+- [x] 6.5 Itemless `TXR` comprobante `INSERT` — `RC` precedent, **zero items by construction**.
   *(design.md decision 5, mutation target 52)*
-- [ ] 6.6 Pagos + cuenta corriente via the existing `EscriturasDeCuentaCorriente` (unchanged).
+- [x] 6.6 Pagos + cuenta corriente via the existing `EscriturasDeCuentaCorriente` (unchanged).
   *(design.md:317)*
-- [ ] 6.7 **Credit-limit backstop re-implemented inside the transaction** (parity with
+- [x] 6.7 **Credit-limit backstop re-implemented inside the transaction** (parity with
   `ServicioDeVentas.cs:901-908` — OD9/T9). *(design.md decision 13, mutation target 53)*
-- [ ] 6.8 `LigarAsync` — filas == N or `409 remito_no_facturable` (CONFLICT #4).
+- [x] 6.8 `LigarAsync` — filas == N or `409 remito_no_facturable` (CONFLICT #4).
   *(design.md:318, mutation target 50)*
-- [ ] 6.9 `AsignadorDeNumeroComprobante` reused with `'TXR'`. *(design.md:311)*
-- [ ] 6.10 Widen `MarcarAnuladoAsync`'s `RETURNING` with a scalar subquery — `(SELECT t.codigo
+- [x] 6.9 `AsignadorDeNumeroComprobante` reused with `'TXR'`. *(design.md:311)*
+- [x] 6.10 Widen `MarcarAnuladoAsync`'s `RETURNING` with a scalar subquery — `(SELECT t.codigo
   FROM tipos_comprobante t WHERE t.id_tipo_comprobante = comprobantes_venta.id_tipo_comprobante)
   AS codigo_tipo`. *(design.md decision 7, mutation target 55)*
-- [ ] 6.11 Guarded call at **POSITION 1.6** in `EjecutarAnulacionAsync` — `if (codigoTipo ==
+
+  **DONE.** `MarcarAnuladoAsync`'s return type widened from `int?` to `(int IdPuntoVenta, string
+  CodigoTipo)?`, switched from `ExecuteScalarAsync` to `ExecuteReaderAsync` (two columns now) —
+  same SQL statement, same lock, one extra column via the scalar subquery, never a second
+  `SELECT`.
+- [x] 6.11 Guarded call at **POSITION 1.6** in `EjecutarAnulacionAsync` — `if (codigoTipo ==
   "TXR")` ⇒ `EscriturasDeRemito.DesligarAsync`, never after the CC loop. *(design.md decision
   4/7, mutation targets 56, 58)*
-- [ ] 6.12 `DesligarAsync` — clears `estado` **and** `id_comprobante_venta` **together**
+- [x] 6.12 `DesligarAsync` — clears `estado` **and** `id_comprobante_venta` **together**
   (`ck_remitos_facturacion`). *(design.md:146-148, mutation target 57)*
-- [ ] 6.13 Test: consolidating two remitos emits **one** itemless `TXR`, total == Σ frozen
+- [x] 6.13 Test: consolidating two remitos emits **one** itemless `TXR`, total == Σ frozen
   lines, **zero** `movimientos_stock` rows. *(remitos/spec.md:135-139, mutation target 52)*
-- [ ] 6.14 Test: **facturar × facturar** race over overlapping sets — exactly one 201 + one
+
+  **DONE** — `DosRemitosConsolidanEnUnTxrItemlessConTotalIgualALaSumaDeLosHeadersYCeroMovimientosDeStock`.
+- [x] 6.14 Test: **facturar × facturar** race over overlapping sets — exactly one 201 + one
   409, ascending lock order. *(mutation targets 48, 50; remitos/spec.md:141-145)*
-- [ ] 6.15 Test: **facturar × anular-remito** race, both orders. *(mutation target 49)*
-- [ ] 6.16 Test: mixed-customer / mixed-PV / already-invoiced set refused 409 before any write.
+
+  **DONE** — `FacturarXFacturarSobreSetsSuperpuestosDaExactamenteUn201YUn409` (the race, same
+  `DbTransactionInterceptor`-pause pattern as `ServicioDeRemitosTests`'s own precedent — target
+  50) + `ElOrderByDeBloquearAscendenteEsAscendentePorIdRemitoNuncaDescendente` (source-text, the
+  ASC-order half — target 48; see the FINDING below on why the pause-based rendezvous alone
+  cannot discriminate lock order).
+- [x] 6.15 Test: **facturar × anular-remito** race, both orders. *(mutation target 49)*
+
+  **DONE**, two tests: `FacturarGanaLaCarreraContraAnularRemitoYAnularRecibe409RemitoFacturado`
+  and `AnularRemitoGanaLaCarreraContraFacturarYFacturarRecibe409RemitoNoFacturable`. Both
+  correctly assert the OUTCOME (whoever's transaction runs unimpeded wins) — see the FINDING
+  below on why this pause-based shape cannot discriminate the lock's exact intra-transaction
+  POSITION, closed instead by `ServicioDeFacturacionDeRemitosPosicionDeLockTests` (source-text).
+- [x] 6.16 Test: mixed-customer / mixed-PV / already-invoiced set refused 409 before any write.
   *(mutation target 51)*
-- [ ] 6.17 Test: credit-limit exceeded by a **concurrent** sale between pre-check and commit →
+
+  **DONE**, three tests (mutation-proof-tests regla 3, one kill per conjunct):
+  `UnSetConClientesMixtosEsRechazado409AntesDeEscribir`,
+  `UnSetConPuntosDeVentaMixtosEsRechazado409AntesDeEscribir`,
+  `UnRemitoYaFacturadoDentroDelSetEsRechazado409AntesDeEscribir`. See the FINDING below: the
+  third test's own conjunct (`estado`/`IdComprobanteVenta`) is backstopped by `LigarAsync` and
+  survives the pre-tx guard's removal alone — registered, not silently accepted.
+- [x] 6.17 Test: credit-limit exceeded by a **concurrent** sale between pre-check and commit →
   400. *(mutation target 53)*
-- [ ] 6.18 Test: closed-turno 409 for the consolidation; deliberate **absence** of that
+
+  **DONE** — `LimiteDeCreditoExcedidoPorConsolidacionConcurrenteEntrePreChequeoYCommit`, same
+  `Task.WhenAll`-of-two-identical-requests shape as
+  `VentasAtomicidadYConcurrenciaTests.DosVentasConcurrentesDeCuentaCorrienteNuncaSuperanElLimite`
+  (no interceptor needed — the natural row-lock serialization on `clientes.saldo`'s `UPDATE …
+  RETURNING` is the rendezvous).
+- [x] 6.18 Test: closed-turno 409 for the consolidation; deliberate **absence** of that
   requirement for plain `emitir` (decision 13, both directions asserted). *(mutation target 54)*
-- [ ] 6.19 Test: an **ordinary** anulación (non-`TXR`) issues the exact pre-stage command
+
+  **DONE**, two tests: `LaConsolidacionSinTurnoAbiertoEsRechazada409TurnoNoAbierto` +
+  `EmitirUnRemitoNoExigeNingunTurnoAbierto`. **FINDING REGISTERED**: both directions are killed
+  by the PRE-tx `ResolverTurnoAbiertoAsync` check (outside the transaction, always evaluated) —
+  the in-tx `ExigirTurnoAbiertoBajoLockAsync` re-check (statement 0, the actual mutation-target-54
+  guard) is defense-in-depth for the TOCTOU race (turno closes between pre-check and commit) and
+  is NOT independently race-tested in this batch, same accepted boundary as the identical
+  pre-check+in-tx-recheck pattern already shipped, unraced, in `ServicioDeVentas`/
+  `ServicioDeCuentaCorriente`/`ServicioDeTurnos.RegistrarMovimientoAsync` (no dedicated race test
+  exists for any of those either — grep-verified against `VentasTurnoWiringTests.cs`).
+- [x] 6.19 Test: an **ordinary** anulación (non-`TXR`) issues the exact pre-stage command
   count. *(mutation targets 55-56)*
-- [ ] 6.20 Test: annulling a `TXR` returns its remitos to `emitido`, clears
+
+  **DONE via source-text, not `ContadorDeComandos`** — `ServicioDeVentasPosicionDeDesligueTests.cs`
+  (three tests). **FINDING REGISTERED, mirrors Slice 3's own target-34 finding verbatim**:
+  `EscriturasDeRemito.DesligarAsync` runs raw SQL via `ExecuteNonQueryAsync` on a manually
+  created `DbCommand` (`conexion.CreateCommand()`) — this NEVER passes through EF Core's
+  `DbCommandInterceptor.ReaderExecuting[Async]` pipeline (that pipeline only sees commands EF's
+  own LINQ/`SaveChanges` machinery issues), so `ContadorDeComandos` would report the IDENTICAL
+  query count whether the guarded call is present, absent, or unconditional — a real
+  equivalence, not an instrumentation gap. Same resolution as
+  `ServicioDeVentasPosicionDeConversionTests`/`LaLlamadaAMarcarConvertidoAsyncNuncaOcurreFueraDelGuardNuloDeIdPresupuestoOrigen`:
+  source-text proves (a) `DesligarAsync` sits strictly inside `if (codigoTipoAnulado == "TXR")`,
+  never outside it (mutation target 56); (b) that position is immediately after
+  `MarcarAnuladoAsync` and strictly before the stock/CC loops (mutation target 58); (c)
+  `codigoTipoAnulado` is sourced only from the widened `RETURNING`'s scalar subquery, never a
+  second `SELECT` against `tipos_comprobante` (mutation target 55).
+- [x] 6.20 Test: annulling a `TXR` returns its remitos to `emitido`, clears
   `id_comprobante_venta`, reverses CC, **zero** stock movements — the double-decrement and
   phantom-restock traps proven unreachable. *(comprobantes-venta/spec.md:79-83, mutation
   target 52)*
-- [ ] 6.21 **[OD8/T3, discriminant test]** TXR-anulación composition: a `TXR` whose original
+
+  **DONE** — `AnularUnTxrDevuelveSusRemitosAEmitidoLimpiaLaLigaduraYNoEscribeMovimientosDeStock`.
+- [x] 6.21 **[OD8/T3, discriminant test]** TXR-anulación composition: a `TXR` whose original
   consolidation used cuenta corriente, annulled — the test asserts **both** halves together in
   one transaction: (a) zero `movimientos_stock` rows created, AND (b) the CC balance reversed by
   the **exact** original amount. Proves the composition is not "plausible by construction"
   (state.yaml OD8/T3, stage-16-slice-3 lesson).
-- [ ] 6.22 Test: `ck_remitos_facturacion` — `DesligarAsync` clearing only one of the two
+
+  **DONE** — `LaAnulacionDeUnTxrConCuentaCorrienteOriginalRevierteAmbasMitadesJuntasEnUnaSolaTransaccion`.
+  mutation-proof-tests regla 11 (discriminant prior debt): cliente seeded at `Saldo = 800m`
+  BEFORE the TXR (never a fresh 0-balance cliente) — saldo after facturar is `800 + 1500 = 2300`
+  (not the coincidental `0 + 1500`), and after anulación the assert is the exact prior debt
+  `800m`, never the reversal's own importe `-1500m` in isolation. Both halves asserted from the
+  SAME post-anulación read.
+- [x] 6.22 Test: `ck_remitos_facturacion` — `DesligarAsync` clearing only one of the two
   columns → `23514`. *(mutation target 57)*
-- [ ] 6.23 Test: **anular-TXR × facturar** race — whoever takes `comprobantes_venta`/`remitos`
+
+  **DONE** — `UnUpdateQueLimpiaSoloUnaDeLasDosColumnasDeLaLigaduraViolaCkRemitosFacturacion`, run
+  against TWO real remitos actually facturados via the service (never a synthetic raw `INSERT`,
+  unlike `RemitosSchemaTests`'s own Slice-4 CHECK tests) — this IS the literal mutation of
+  `DesligarAsync` the task names: one raw `UPDATE` per direction (`estado` only / `id_comprobante_venta`
+  only), both asserting `23514`/`ck_remitos_facturacion`.
+- [x] 6.23 Test: **anular-TXR × facturar** race — whoever takes `comprobantes_venta`/`remitos`
   first wins, no cycle (T10). *(mutation target 58)*
-- [ ] 6.24 [P] Non-regression: existing anulación suites green and not edited beyond the one
+
+  **DONE** — `AnularUnTxrXFacturarLosMismosRemitosNoDeadlockeaYAmbosResuelvenEnTiempoAcotado`:
+  anular-TXR paused (interceptor) right after opening its transaction — the remito is still
+  `facturado`/linked at that instant, so a concurrent `facturar` on the SAME remito reads that
+  state at its own (unlocked) pre-tx guard and rejects `409 remito_no_facturable` WITHOUT ever
+  attempting a lock (`SELECT` under READ COMMITTED never blocks on another session's uncommitted
+  row lock) — proving no deadlock is possible by construction (facturar never takes
+  `comprobantes_venta` as a lock position, T10), both requests resolve inside a bounded 15s
+  `WaitAsync` timeout, and a genuinely-unblocked follow-up `facturar` afterward confirms the
+  remito was left truly free.
+- [x] 6.24 [P] Non-regression: existing anulación suites green and not edited beyond the one
   guarded call.
-- [ ] 6.25 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
-- [ ] 6.26 Open PR #6 `feat/stage17-slice6-consolidacion`, merge after a clean round.
+
+  **DONE** — `git diff --stat` confirms `ServicioDeVentas.cs` is the only pre-existing file
+  touched in this slice, and its diff is exactly the two named surfaces (`MarcarAnuladoAsync`'s
+  `RETURNING` widening + the one guarded call at position 1.6) — no other line changed. Focused
+  filter `VentasCheckoutTests|VentasAnulacionTests|VentasAtomicidadYConcurrenciaTests|SuperficieDeAutorizacionTests|RemitosSchemaTests|ServicioDeRemitosTests|ServicioDeFacturacionDeRemitosTests`
+  — 110/110 green. See Work Unit Evidence for the full-suite runs.
+- [ ] 6.25 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
+  by this apply batch**: `sdd-apply` never launches Judgment Day (the parent orchestrator runs
+  it after apply, per the executor boundary in `skills/sdd-apply/SKILL.md`).
+- [ ] 6.26 Open PR #6 `feat/stage17-slice6-consolidacion`, merge after a clean round. — **NOT
+  run by this apply batch**, same reason; pending the orchestrator's clean `judgment-day` round
+  on this diff.
+
+**DEVIATION REGISTERED (mutation-proof-tests regla 2/3, apply-time — target 48 lock ORDER, run
+for real).** The facturar×facturar rendezvous of task 6.14 (a `DbTransactionInterceptor` pauses
+one request right after `BeginTransactionAsync`, before it attempts any lock, while the other
+runs to full completion unimpeded) was run against the REAL mutation `ORDER BY id_remito DESC`
+in `BloquearAscendenteAsync` — the full `ServicioDeFacturacionDeRemitosTests` suite stayed
+green, confirmed empirically, not reasoned. Root cause: that rendezvous shape never puts two
+transactions in genuine concurrent contention over rows in reverse order — one side is
+completely idle until the other has already committed, so the ACQUISITION ORDER is never
+externally observable through it, regardless of direction. A below-the-confound two-connection
+NOWAIT-probe test (same technique as `ServicioDeRemitosTests.EmitirRemitoObservandoOrdenDeLocksAsync`,
+target 40) was attempted; an isolated two-session `psql` experiment against a throwaway 2-row
+table FIRST confirmed Postgres genuinely locks `ORDER BY id FOR UPDATE` rows incrementally in
+ascending order (a NOWAIT probe on the lower id failed with `55P03` while the higher id was
+still held by a separate blocking session) — but the SAME technique reimplemented against the
+full `WebApplicationFactory` harness could not reliably reproduce the signal (a leftover DESC
+mutation from the earlier real-mutation run turned out to be the actual cause once diagnosed,
+not harness noise — corrected). Given the added complexity/fragility of a live two-connection
+harness test for marginal gain over an already-real SQL-level confirmation, the shipped kill
+test is a stable source-text assertion
+(`ElOrderByDeBloquearAscendenteEsAscendentePorIdRemitoNuncaDescendente`) — run for real against
+both the correct code (green) and the `DESC` mutation (red, confirmed, reverted).
+
+**DEVIATION REGISTERED (mutation-proof-tests regla 2/3, apply-time — target 49 lock POSITION,
+run for real; same class as judgment-day slice-3 juez B's finding on the presupuesto-conversion
+POSITION 1.5).** `EscriturasDeRemito.BloquearAscendenteAsync` was moved for real from position 1
+(before the comprobante `INSERT`) to just before `LigarAsync` (after the CC loop) — BOTH task
+6.15 rendezvous tests, and the task 6.23 rendezvous, stayed green. Confirmed: the position is
+FAIL-FAST DEFENSIVE (saves materializing comprobante/pagos/CC for a consolidation that would
+fail anyway) and keeps the Lock order table's documented total order, never a correctness
+guarantee — the transaction's own atomicity (any throw reverts everything already written) plus
+`LigarAsync`'s final guard (mutation target 50) are what actually make the outcome correct
+regardless of exactly which line takes this lock. Closed with a source-text positional test,
+`ServicioDeFacturacionDeRemitosPosicionDeLockTests.ElLockAscendenteVaAntesDelInsertDelComprobanteYAntesDeLaCuentaCorriente`
+— run for real against both the correct position (green) and the moved position (red,
+confirmed, reverted).
+
+**DEVIATION REGISTERED (mutation-proof-tests regla 3, apply-time — target 51's third conjunct,
+run for real).** Removing the ENTIRE pre-tx agreement guard (`todosFacturables`) was run for
+real: `UnSetConClientesMixtosEsRechazado409AntesDeEscribir` and
+`UnSetConPuntosDeVentaMixtosEsRechazado409AntesDeEscribir` both went RED (confirmed, reverted) —
+these two conjuncts have NO backstop anywhere else (`LigarAsync`'s `WHERE` never checks
+cliente/PV). `UnRemitoYaFacturadoDentroDelSetEsRechazado409AntesDeEscribir` SURVIVED the same
+mutation (stayed green) — its conjunct (`estado`/`IdComprobanteVenta`) IS independently
+backstopped by `LigarAsync`'s own guarded `UPDATE` (mutation target 50), so removing only the
+pre-tx half still leaves the request correctly rejected, just later (via a rolled-back
+transaction instead of a pre-tx read) — a real, accepted redundancy (defense in depth by
+design), not a gap. The cliente/PV conjuncts remain the load-bearing, uniquely-tested half of
+this guard.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `dotnet test tests/Ways.Application.Tests` — 297/297 green; `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~ServicioDeFacturacionDeRemitosTests"` — 15/15 green |
+| Runtime harness command/scenario and result | `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~ServicioDeRemitosTests\|FullyQualifiedName~VentasCheckoutTests\|FullyQualifiedName~VentasAnulacionTests\|FullyQualifiedName~VentasAtomicidadYConcurrenciaTests\|FullyQualifiedName~SuperficieDeAutorizacionTests\|FullyQualifiedName~RemitosSchemaTests\|FullyQualifiedName~ServicioDeFacturacionDeRemitosTests"` (non-regression: remitos ABM/emitir/anular, checkout, checkout anulación, checkout concurrency, the authorization allowlist, the remitos schema/backstop suite, plus this slice's own suite) — 110/110 green, real Postgres 17 via Testcontainers. **Full suite** `dotnet test tests/Ways.IntegrationTests` (no filter): first pass — 1575/1575 green, 11m21s, clean single pass; a post-pass fix (a self-caught regression from the target-49 mutation-revert cycle — `BloquearAscendenteAsync`'s call briefly dropped, caught before commit by re-running the focused filters, never shipped) required a second full pass — 1575/1575 green, 11m18s, clean single pass, zero flakiness either run (rule 17's isolated-re-run clause never triggered). |
+| Mutation evidence (apply-time, all real, applied then reverted) | **Target 50** (`LigarAsync`'s `estado`/`id_comprobante_venta` conjuncts + rowcount): dropped both from the `WHERE` → `FacturarXFacturarSobreSetsSuperpuestosDaExactamenteUn201YUn409` RED (both sides showed 201) → reverted, green. **Target 48** (ascending `ORDER BY`): `id_remito` → `id_remito DESC` → `ElOrderByDeBloquearAscendenteEsAscendentePorIdRemitoNuncaDescendente` RED → reverted, green (see FINDING above for why the rendezvous test alone doesn't discriminate this). **Target 49** (lock position): moved after the CC loop → `ServicioDeFacturacionDeRemitosPosicionDeLockTests` RED → reverted, green (see FINDING above). **Target 51** (agreement guard, all four conjuncts at once): `todosFacturables = true` → cliente/PV tests RED, already-facturado test SURVIVED (documented finding above) → reverted, green. **Target 52** (itemless + no stock loop): inserted one raw `movimientos_stock` row before commit → `DosRemitosConsolidanEnUnTxrItemlessConTotalIgualALaSumaDeLosHeadersYCeroMovimientosDeStock`, `AnularUnTxrDevuelveSusRemitosAEmitidoLimpiaLaLigaduraYNoEscribeMovimientosDeStock`, `LaAnulacionDeUnTxrConCuentaCorrienteOriginalRevierteAmbasMitadesJuntasEnUnaSolaTransaccion` all RED → reverted, green (the itemless half is proven by construction — `Proyectar` hardcodes `[]`, no items-write code exists to mutate). **Target 53** (credit-limit backstop): removed the `if` block → `LimiteDeCreditoExcedidoPorConsolidacionConcurrenteEntrePreChequeoYCommit` RED → reverted, green. **Target 58** (desligue position): moved `EscriturasDeRemito.DesligarAsync`'s guarded call from position 1.6 to after the CC loop in `ServicioDeVentas.cs` → `ServicioDeVentasPosicionDeDesligueTests.ElDesligueDeRemitosVaInmediatamenteDespuesDeMarcarAnuladoYAntesDeLaAuditoria` RED → reverted, green. **Target 57**: proven directly by task 6.22's own real-remito raw-`UPDATE` test (no separate apply-time mutation needed — the test IS the mutation). **Target 54** (in-tx turno re-check): not independently race-tested this batch — see the FINDING under task 6.18 (same accepted boundary as the identical pattern elsewhere in this codebase). **Targets 55/56**: verified via source-text tests only (`ServicioDeVentasPosicionDeDesligueTests`), consistent with target 34's own precedent that `ContadorDeComandos` cannot see raw-ADO statements. |
+| Rollback boundary | `git revert` of this slice's commit(s) alone: `EscriturasDeRemito.cs`/`ServicioDeFacturacionDeRemitos.cs`/`ServicioDeFacturacionDeRemitosTests.cs`/the two positional test files deleted; the `MapPost("/facturacion", ...)` line and `AddScoped<ServicioDeFacturacionDeRemitos>()` line and the one allowlist entry revert; `ServicioDeVentas.cs`'s `MarcarAnuladoAsync` `RETURNING` widening and the one guarded call at position 1.6 revert cleanly (both isolated to that one file, no schema touched, no other slice's file touched) |
 
 ---
 
