@@ -74,7 +74,17 @@ public class InicializadorDeBaseDeDatos(
     /// base VACÍA (<c>:432</c>) — sin el <c>Activo = false</c> de acá, el `PRE` recién sembrado
     /// quedaría activo de nuevo. Net 1 (la migración) y net 1b (este seed) se prueban
     /// INDEPENDIENTEMENTE (mutation targets 10/11, task 1.38/1.39): remover cualquiera de los
-    /// dos, solo, tiene que fallar su propio test.</summary>
+    /// dos, solo, tiene que fallar su propio test.
+    ///
+    /// stage-17-presupuestos-y-remitos (Slice 4, proposal §I data statement 2, task 4.20):
+    /// <c>TXR</c> — el comprobante consolidado de la facturación de remitos (slice 6), SIN items
+    /// por construcción (precedente <c>RC</c>) — cierra el doble decremento de stock y el stock
+    /// fantasma de <c>AnularAsync</c> por diseño, nunca por flag. <c>afecta_stock = false</c> lo
+    /// vuelve inemitible por mostrador: el guard del resolver de <c>ServicioDeVentas</c> (slice
+    /// 3, <c>|| !tipo.AfectaStock</c>) lo rechaza igual que <c>PRE</c>. Se siembra dos veces,
+    /// mismo mecanismo que <c>RC</c>/<c>C-*</c>: acá para una base nueva y, de forma idempotente,
+    /// dentro de la migración <c>RemitosEtapa17</c> para una base ya migrada — ese seed corre
+    /// solo cuando la tabla está vacía.</summary>
     private static readonly (ClaseComprobante Clase, string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock, bool Activo)[] TiposComprobanteBase =
     [
         (ClaseComprobante.Venta, "FA", "Factura A", 'A', 1, true, true, true, true),
@@ -90,6 +100,10 @@ public class InicializadorDeBaseDeDatos(
         // (explore.md): un tipo activo, afecta_stock=false, colaba como venta fantasma.
         (ClaseComprobante.Venta, "PRE", "Presupuesto", null, 1, false, false, false, false),
         (ClaseComprobante.Venta, "RC", "Recibo de cobranza", null, 1, false, false, false, true),
+        // stage-17-presupuestos-y-remitos (proposal §I, decisión 2/7 del explore): comprobante
+        // consolidado de facturación de remitos, sin items por construcción — nace ACTIVO pero
+        // INEMITIBLE por mostrador (afecta_stock=false, mismo guard del resolver que bloquea PRE).
+        (ClaseComprobante.Venta, "TXR", "Ticket X por remitos", 'X', 1, false, false, false, true),
 
         // stage-8-compras-transferencias-inventario (design decisión 12/7 del proposal): solo
         // tres tipos — notas de crédito de proveedor están fuera de alcance (anulación es la

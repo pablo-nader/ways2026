@@ -125,6 +125,7 @@ public class ComprasTipoSeedTests(WaysApiFixture fixture) : IClassFixture<WaysAp
                     // estado_orden_compra (slice 1).
                     npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
                     npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
+                    npgsql.MapEnum<EstadoRemito>("estado_remito");
                 })
                 .Options;
 

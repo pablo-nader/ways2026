@@ -231,6 +231,28 @@ public class ManejadorDeErrores(
                 when string.Equals(uxItemPresupuesto, "ux_items_presupuesto_orden", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en este presupuesto.", "orden_de_item_duplicado"),
 
+            // stage-17-presupuestos-y-remitos (Slice 4, task 4.22, db-error-backstops, design
+            // decisión 18, proposal §J): ux_remitos_numero tiene que resolverse por nombre
+            // EXACTO, ANTES de ClasificarUnicidad — su nombre contiene "_numero", así que la
+            // rama genérica de más abajo lo atraparía primero y lo clasificaría como
+            // "numero_duplicado" (el mensaje de ux_clientes_numero). QUINTA ocurrencia del
+            // ordering trap, mismo tratamiento exacto que ux_presupuestos_numero (:209-211) —
+            // bajo operación normal esta rama es inalcanzable (el único escritor es
+            // AsignadorDeNumeroComprobante con la serie 'REM'), queda como backstop de esquema
+            // puro, probado por un INSERT crudo out-of-band (slice 4) y por la concurrencia real
+            // de dos `emitir` simultáneos en un mismo punto de venta (slice 5).
+            { SqlState: "23505", ConstraintName: string uxRemitoNumero }
+                when string.Equals(uxRemitoNumero, "ux_remitos_numero", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un remito con ese número en este punto de venta.", "numero_de_remito_duplicado"),
+
+            // stage-17-presupuestos-y-remitos (Slice 4, task 4.23, db-error-backstops): orden es
+            // server-asignado dentro del replace-set del borrador (slice 5) — exención
+            // documentada de prueba de carrera, misma familia que
+            // ux_items_presupuesto_orden/ux_items_orden_compra_orden.
+            { SqlState: "23505", ConstraintName: string uxItemRemito }
+                when string.Equals(uxItemRemito, "ux_items_remito_orden", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en este remito.", "orden_de_item_duplicado"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
@@ -357,6 +379,24 @@ public class ManejadorDeErrores(
                         || ckPresupuesto.StartsWith("ck_items_presupuesto_", StringComparison.Ordinal))
                     && ClasificarCheckDePresupuestos(ckPresupuesto) is { } checkPresupuesto =>
                 (checkPresupuesto.EstadoHttp, checkPresupuesto.Titulo, checkPresupuesto.Codigo),
+
+            // stage-17-presupuestos-y-remitos (Slice 4, tasks 4.24-4.26, db-error-backstops,
+            // design decisión 18/Backstop Map, proposal §J): switch por nombre EXACTO detrás de
+            // un guard de prefijo "ck_remitos_"/"ck_items_remito_" — mismo criterio que
+            // ckPresupuesto de arriba. CINCO ramas (no tres): proposal §J agrupa las CHECKs 2/5/6/7
+            // (cantidad Y costo) en una sola fila "exact-name 23514 mapping ... one test each", y
+            // design.md's Backstop Map lista explícitamente CHECK 6/7 (costo) con la misma
+            // mapping — el conteo de "3" de la Orchestrator Decision 9 de este archivo es un
+            // artefacto de redacción (registrado como desvío, no una omisión): reconciliado a 5
+            // para que el total del proposal (7 = 2 slice 1 + 5 slice 4) cierre. Todas
+            // alcanzables solo por escritura cruda/fuera de banda — ServicioDeRemitos (slice 5)
+            // ya valida cantidad en el camino de servicio antes de escribir; costo es
+            // server-derivado, ningún input de cliente lo dispara.
+            { SqlState: "23514", ConstraintName: string ckRemito }
+                when (ckRemito.StartsWith("ck_remitos_", StringComparison.Ordinal)
+                        || ckRemito.StartsWith("ck_items_remito_", StringComparison.Ordinal))
+                    && ClasificarCheckDeRemitos(ckRemito) is { } checkRemito =>
+                (checkRemito.EstadoHttp, checkRemito.Titulo, checkRemito.Codigo),
 
             // Backstop genérico (db-error-backstops, judgment-day slice 3 ronda 1): cualquier
             // valor numérico que desborda la precisión/escala de su columna (p.ej. un margen o
@@ -821,6 +861,48 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "La cantidad de una línea de presupuesto tiene que ser positiva.",
                     "cantidad_de_linea_invalida"),
+
+            _ => null
+        };
+
+    /// <summary>stage-17-presupuestos-y-remitos (Slice 4, tasks 4.24-4.26, design decisión 18,
+    /// proposal §J): switch por nombre EXACTO de las cinco CHECKs nuevas de
+    /// <c>remitos</c>/<c>items_remito</c>, detrás del guard de prefijo del caso de arriba.
+    /// <c>ck_remitos_salida_completa</c>/<c>ck_remitos_facturacion</c> son server-derivadas
+    /// (ningún input de cliente las dispara directo) → 409, mismo criterio que
+    /// <c>ck_presupuestos_envio_completo</c>. <c>ck_items_remito_cantidad_positiva</c> recibe
+    /// input real de cliente y el servicio ya la valida primero con el mismo código de dominio
+    /// (<c>cantidad_de_linea_invalida</c>) → 400. <c>ck_items_remito_costo_no_negativo</c>/
+    /// <c>ck_items_remito_estimado_con_costo</c> son server-derivadas (el costo se congela al
+    /// emitir, slice 5) → 400, mismo criterio que
+    /// <see cref="ClasificarCheckDeVentas"/>'s CHECKs de costo.</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarCheckDeRemitos(string nombreDeCheck) =>
+        nombreDeCheck switch
+        {
+            "ck_remitos_salida_completa" =>
+                (StatusCodes.Status409Conflict,
+                    "El número y la fecha de salida del remito tienen que llegar juntos.",
+                    "remito_salida_incompleta"),
+
+            "ck_remitos_facturacion" =>
+                (StatusCodes.Status409Conflict,
+                    "El estado facturado y la factura ligada del remito tienen que llegar juntos.",
+                    "remito_facturacion_incoherente"),
+
+            "ck_items_remito_cantidad_positiva" =>
+                (StatusCodes.Status400BadRequest,
+                    "La cantidad de una línea de remito tiene que ser positiva.",
+                    "cantidad_de_linea_invalida"),
+
+            "ck_items_remito_costo_no_negativo" =>
+                (StatusCodes.Status400BadRequest,
+                    "El costo de una línea de remito no puede ser negativo.",
+                    "costo_de_linea_invalido"),
+
+            "ck_items_remito_estimado_con_costo" =>
+                (StatusCodes.Status400BadRequest,
+                    "Una línea de remito marcada como costo estimado tiene que tener un costo.",
+                    "costo_estimado_invalido"),
 
             _ => null
         };

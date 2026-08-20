@@ -202,6 +202,7 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
                     // PendingModelChangesWarning.
                     npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
                     npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
+                    npgsql.MapEnum<EstadoRemito>("estado_remito");
                 })
                 .Options;
 

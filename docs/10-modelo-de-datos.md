@@ -105,6 +105,16 @@ filas existentes. Los dos nets se prueban de forma independiente (mutation targe
 tercera red, en el resolver de `ServicioDeVentas` (`|| !tipo.AfectaStock`, slice 3), refuerza el
 cierre contra cualquier tipo `afecta_stock = false` futuro, no solo `PRE`.
 
+**`TXR` (etapa 17 — consolidación de remitos, doc 10 §4 "Remitos"):** mismo perfil que `RC`/`PRE`
+— `letra 'X'`, `es_fiscal false`, `afecta_stock false`, `discrimina_iva false` —, pero `signo +1`
+(el comprobante consolida N remitos SIN items por construcción, precedente `RC`). Nace `activo
+true` pero **inemitible por mostrador**: `afecta_stock = false` lo bloquea el mismo guard del
+resolver que cierra `PRE` (`ServicioDeVentas`, `|| !tipo.AfectaStock`, slice 3) — el único
+escritor legítimo es `ServicioDeFacturacionDeRemitos` (slice 6), nunca `POST /api/ventas`. Se
+siembra dos veces: en la lista de arriba para una base nueva y, de forma idempotente, dentro de
+la migración `RemitosEtapa17` para una base ya migrada — este seed corre solo cuando la tabla
+está vacía.
+
 **`RC` (etapa 7 — pago a cuenta, doc 10 §8):** mismo perfil que `PRE` — `letra NULL`,
 `es_fiscal false`, `afecta_stock false`, `discrimina_iva false` —, pero `signo +1` porque el
 dinero entra (el signo negativo vive en el movimiento de cuenta corriente, nunca en el total
@@ -486,6 +496,67 @@ zona horaria del punto de venta. `ServicioDePresupuestos` (draft CRUD, `enviar` 
 `'PRES'`, `anular`, la lectura con `vencido` derivado) es slice 2; la conversión dentro de la
 transacción de venta (`EscriturasDePresupuesto`, el guard en `ServicioDeVentas`) es slice 3.
 
+### Remitos (Etapa 17)
+
+La mercadería que sale bajo su propio documento, ANTES de la factura que la consolida
+(doc-11:307-324, proposal decisión 6/7 del explore). Estructural mirror de `presupuestos`: vive
+en su propia tabla, nunca en `comprobantes_venta` — la consolidación (`ServicioDeFacturacionDeRemitos`,
+slice 6) recién crea el `comprobantes_venta` (tipo `TXR`, SIN items, N remitos → 1) que la
+factura.
+
+```sql
+remitos (                      -- [operativa]
+    id_remito, id_tenant, id_punto_venta,
+    id_cliente, id_empleado,
+    numero                  bigint      NULL,       -- correlativo propio por PV, serie 'REM';
+                                                     -- se asigna únicamente al EMITIR
+    fecha_emision            timestamptz NOT NULL,   -- creación del borrador (IRelojDelSistema)
+    fecha_salida             timestamptz NULL,       -- par de `numero`: cuándo salió la mercadería
+    direccion_entrega        text NULL,
+    observaciones,
+    subtotal, descuento_total, total,
+    estado estado_remito NOT NULL,                  -- enum: borrador | emitido | facturado
+                                                     --     | anulado
+    id_comprobante_venta     integer NULL           -- la factura consolidada (N remitos → 1);
+                                                     -- id_tipo_comprobante = 'TXR'
+);
+
+items_remito (
+    id_item, id_tenant, id_remito, orden,
+    id_articulo,                        -- NOT NULL: un remito entrega mercadería, nunca un
+                                         -- servicio
+    descripcion text,
+    cantidad         numeric(12,3),
+    precio_unitario  numeric(14,2),
+    descuento        numeric(14,2) NOT NULL DEFAULT 0,
+    total            numeric(14,2),
+    id_lista_precio  integer,
+    id_oferta        integer NULL,
+    id_alicuota_iva  integer, porcentaje_iva numeric(5,2),
+    costo_unitario    numeric(14,2) NULL,     -- congelado al SALIR la mercadería (etapa 9)
+    costo_es_estimado boolean NOT NULL DEFAULT false,
+    id_lote           integer NULL            -- FEFO resuelto y congelado, como el ítem de venta
+    -- A diferencia de items_presupuesto, ESTA línea SÍ congela costo y lote: la mercadería
+    -- efectivamente sale por este write site.
+);
+```
+
+**Estado (Etapa 17, slice 4 — schema + backstops, DB CHANGE GATE ejercido y aprobado):
+implementada — schema.** Creadas por la migración `RemitosEtapa17`, junto con el `ALTER TYPE
+motivo_stock ADD VALUE 'remito'` (§6, **el único artefacto IRREVERSIBLE de la etapa**, aceptado y
+registrado) y el ALTER de `movimientos_stock` (§6, `id_remito`). `EntidadBase`: **SÍ** en las dos
+tablas, mismo criterio que `presupuestos`. `ux_remitos_numero` es **UNIQUE PARCIAL** `WHERE
+numero IS NOT NULL`; `ck_remitos_salida_completa` exige que `numero`/`fecha_salida` lleguen
+juntos, salvo `anulado`; `ck_remitos_facturacion` exige que `estado = 'facturado'` y
+`id_comprobante_venta` viajen JUNTOS, en ambas direcciones — el desligue de la anulación de un
+`TXR` (slice 6) los limpia a la vez. `estado_remito` se registra únicamente vía
+`npgsql.MapEnum<EstadoRemito>` en `DependencyInjection.cs`/`WaysDbContextFactory.cs` — nunca
+también con `HasPostgresEnum`. `ManejadorDeErrores.cs` gana 7 ramas exactas: 2 `23505`
+(`ux_remitos_numero` → `numero_de_remito_duplicado`, **quinta ocurrencia** del ordering trap;
+`ux_items_remito_orden` → `orden_de_item_duplicado`) + 5 `23514` (las cinco CHECKs de este
+slice). `ServicioDeRemitos` (draft CRUD, `emitir` — el cuarto write site — con la serie `'REM'`,
+`anular`) es slice 5; la consolidación (`ServicioDeFacturacionDeRemitos`) es slice 6.
+
 ## 5. Comprobantes de compra
 
 Hoy las compras se cargan como gastos sin detalle; esta es la pieza nueva completa.
@@ -677,9 +748,11 @@ movimientos_stock (           -- [operativa]
     motivo   motivo_stock,                   -- enum: venta | compra | anulacion | ajuste
                                              --     | transferencia | inventario
                                              --     | decomiso | reclasificacion (Etapa 12)
+                                             --     | remito (Etapa 17, noveno valor)
     id_comprobante_venta NULL, id_comprobante_compra NULL,
     id_punto_venta_destino NULL,             -- transferencias entre locales (nuevo)
     id_lote NULL,                            -- dimensión de lote (Etapa 12)
+    id_remito NULL,                          -- documento del cuarto write site (Etapa 17)
     id_empleado, observaciones, creado_el
 );
 
@@ -754,6 +827,22 @@ stock_lotes (                  -- [operativa] (Etapa 12)
 > Control efectivo = `articulos.controla_lote` AND parámetro `lotes_habilitado` (empresa);
 > selección FEFO particionada no-vencidos-primero (`ReglaDeLotes.ElegirFefo`); vencido =
 > `fecha_vencimiento < hoy` estricto, con "hoy" en la zona horaria del punto de venta.
+>
+> **Estado (Etapa 17, slice 4 — schema + backstops, DB CHANGE GATE ejercido y aprobado):
+> `movimientos_stock.id_remito` implementada — sin escritor todavía (abre en slice 5).**
+> `ALTER TABLE movimientos_stock ADD COLUMN id_remito integer NULL` + `fk_movimientos_stock_remito`
+> compuesta MATCH SIMPLE + `ix_movimientos_stock_remito` — mismo shape exacto que
+> `fk_movimientos_stock_comprobante_venta`/`..._comprobante_compra`. Metadata-only en PG 11+
+> (columna nullable sin default), sin table rewrite. Sin esta columna, una fila de `motivo =
+> remito` sería la única inatribuible de un ledger append-only cuyo propósito es la
+> reconstrucción. `motivo_stock` gana su **noveno** valor, `'remito'`, vía `ALTER TYPE ... ADD
+> VALUE` en `RemitosEtapa17` — **el único artefacto IRREVERSIBLE de la etapa** (Postgres no
+> soporta `DROP VALUE`; mismo mecanismo y misma aceptación que `decomiso`/`reclasificacion` en
+> la Etapa 12, precedente citado por el proposal §B) — ningún `Sql()` de esa misma migración
+> puede nombrarlo. `motivo = remito` abre camino de escritura recién en slice 5
+> (`ServicioDeRemitos.EmitirAsync`, el cuarto write site — la garantía de "tres write sites" del
+> spec de stock se enmienda explícitamente a cuatro, mismo contrato/lock order duplicado
+> intencional).
 
 `stock.cantidad` es un cache mantenido en la misma transacción del movimiento.
 Transferencia entre locales: dos movimientos espejados — feature nueva que el legacy
