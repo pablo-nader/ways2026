@@ -59,9 +59,13 @@ public class ItemRemito : EntidadTenant
     /// irrepresentable, mismo criterio que <c>ItemComprobanteVenta.CostoEsEstimado</c>.</summary>
     public bool CostoEsEstimado { get; set; }
 
-    /// <summary>FEFO resuelto y congelado al <c>emitir</c> (proposal §F) — <c>NULL</c> para un
-    /// artículo que no controla lote, poblado para uno lot-effective (invariante cruzado entre
-    /// tablas, probado con un test de integración dedicado, mismo criterio que
+    /// <summary>El pick explícito del cliente (si vino) ya persiste ACÁ desde el borrador —
+    /// pre-chequeado contra <c>lotes</c> (backstop map FK 22) por
+    /// <c>ServicioDeRemitos.ResolverYMaterializarAsync</c>, decisión registrada del slice 5
+    /// (desviación 1, <c>tasks.md</c>). <c>emitir</c> lo honra tal cual, o re-resuelve FEFO si vino
+    /// <c>NULL</c>, y siempre lo re-congela con el saldo VIGENTE al momento de emitir. <c>NULL</c>
+    /// para un artículo que no controla lote, poblado para uno lot-effective (invariante cruzado
+    /// entre tablas, probado con un test de integración dedicado, mismo criterio que
     /// <c>MovimientoStock.IdLote</c>).</summary>
     public int? IdLote { get; set; }
 }

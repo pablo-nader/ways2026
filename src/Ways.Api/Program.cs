@@ -181,6 +181,9 @@ app.MapearCuentaCorrienteDeProveedor();
 // stage-17-presupuestos-y-remitos, Slice 2: ABM + numeración de presupuestos (serie 'PRES').
 // OperacionDePos únicamente, nada apilado (proposal decisión 10) — la conversión llega en Slice 3.
 app.MapearPresupuestos();
+// stage-17-presupuestos-y-remitos, Slice 5: ABM + emitir/anular de remitos (serie 'REM'), el
+// cuarto write site de stock. OperacionDePos únicamente — la consolidación llega en Slice 6.
+app.MapearRemitos();
 app.MapearReportes();
 app.MapearAuditoria();
 
