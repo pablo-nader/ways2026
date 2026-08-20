@@ -1418,6 +1418,83 @@ site, and reverses cleanly on annulment (including the double-annulment guard, O
 - [ ] 5.24 Open PR #5 `feat/stage17-slice5-remito-write-site`, merge after a clean round. — **NOT
   run by this apply batch**, same reason as 5.23.
 
+**DEVIATION REGISTERED (judgment-day, Slice 5, ronda 1 — juez B, 4 MAJOR, all fixed).** Four
+survivors, none a production bug — production was correct; the gaps were coverage only
+(`ServicioDeRemitos.cs` untouched except the doc-comment fix below):
+
+- **MAJOR — el conjunto `estado = 'borrador'::estado_remito` del `UPDATE` guardado de
+  `EmitirHeaderAsync` (:588) quedaba eclipsado por el pre-check de `EmitirAsync` (:258).**
+  `DobleEmitirEsRechazado409` corre secuencial: el segundo `emitir` ya rechaza en el pre-check,
+  nunca llega al guard. Fijado (mutation-proof-tests regla 3, route below the confound):
+  `DobleEmitirConcurrenteEsRechazado409ViaElGuardNoViaElPreCheck` fuerza la carrera real, mismo
+  patrón que `UnPutQueMuevePuntoDeVentaConcurrenteConEmitir...` — un interceptor pausa el primer
+  `emitir` justo tras abrir su transacción (su propio pre-check YA leyó `borrador`), un segundo
+  `emitir` corre completo y transiciona el remito a `emitido`, el primero reanuda y su `UPDATE`
+  guardado, con 0 filas, rechaza 409. EVIDENCIA DE MUTACIÓN: quitado el conjunto `estado =
+  'borrador'::estado_remito` del `WHERE` → `dotnet build --no-incremental` + filtro
+  `FullyQualifiedName~DobleEmitirConcurrenteEsRechazado409ViaElGuardNoViaElPreCheck` → ROJO (el
+  primero, antes 409, ahora devuelve 200 y emite dos veces el mismo remito). Revertido, mismo
+  filtro: VERDE.
+- **MAJOR (mutation target 40) — `OrderBy(x => x.Item.IdArticulo)` de `EjecutarEmisionAsync`
+  (:434-436) sin cobertura discriminante.** Los rendezvous preexistentes tocan UN SOLO
+  articulo/lote — sin un segundo recurso, ninguna inversión de orden es observable. Fijado sin
+  necesitar concurrencia (mismo técnica que
+  `VentaEscrituraLoteTests.LosMovimientosDeDosLotesDelMismoArticuloSeEscribenEnOrdenAscendentePorIdLote`):
+  `LosMovimientosDeDosArticulosSeEscribenEnOrdenAscendentePorIdArticulo` — dos articulos, líneas
+  enviadas en la solicitud en orden descendente (mayor primero, para que un sort estable no
+  enmascare el mutante), lee `movimientos_stock` ordenado por `Id` (INSERT-only, autoincremental
+  ⇒ testigo directo del orden de escritura) y assertea que el articulo MENOR se escribió primero.
+  EVIDENCIA DE MUTACIÓN: `OrderBy` → `OrderByDescending` → ROJO (`Expected: <id menor> / Actual:
+  <id mayor>`, el mutante escribió el articulo mayor primero). Revertido: VERDE.
+- **MAJOR (mutation target 41) — invertir `UpsertStockLoteAsync`/`UpsertStockAsync` (:451-461) sin
+  cobertura discriminante.** Mismo problema de fondo (sin un segundo recurso ni concurrencia real,
+  el orden interno stock-antes-de-stock_lotes nunca era observable). Fijado con la misma técnica
+  que `VentaEscrituraLoteTests.UnCheckoutBloqueaStockAntesQueStockLotesParaElMismoPar` (los
+  statements crudos de `ServicioDeRemitos` bypasean el pipeline de `DbCommandInterceptor` de EF
+  Core, así que la prueba observa el ESTADO DE LOCKS real en `pg_locks`): `ServicioDeRemitos`
+  instanciado DIRECTO (bypass HTTP, mismo patrón que `PlanDeVentaFefoTests`/
+  `VentaEscrituraLoteTests` para tener el PID de backend dedicado), una tercera conexión sostiene
+  el lock de `stock_lotes` con `FOR UPDATE` sin comitear, y
+  `UnRemitoBloqueaStockAntesQueStockLotesParaElMismoPar` poll-ea `pg_locks` hasta observar el lock
+  de `stock` YA otorgado mientras el remito espera `stock_lotes`. EVIDENCIA DE MUTACIÓN: invertido
+  el orden (`UpsertStockLoteAsync` antes de `UpsertStockAsync`) → ROJO (`"Nunca se observó al
+  remito con el lock de stock ya otorgado mientras esperaba stock_lotes."` — el mutante bloquea en
+  `stock_lotes` primero, sin haber tocado `stock` todavía). Revertido: VERDE.
+
+  Nota sobre el diseño original de este fix (proceso rule 15, transparencia del intento): el primer
+  abordaje intentado fue un rendezvous vivo remito-vs-checkout sobre DOS articulos (misma forma
+  general que los rendezvous preexistentes, pero con dos recursos para permitir un ciclo de locks),
+  incluso con un interceptor de sincronización que fuerza a ambas transacciones de escritura a
+  estar abiertas a la vez antes de soltar el `puedeContinuar` — 8 corridas contra el mutante del
+  target 40 (`OrderByDescending`) dieron VERDE las 8, ninguna disparó el `40P01` esperado. Los
+  statements de stock son raw ADO (bypasean `DbCommandInterceptor`), así que no hay forma de pausar
+  determinísticamente ENTRE el primer y el segundo item de cada participante — sin ese punto de
+  sincronización intermedio, forzar el entrelazado exacto que abre la ventana de deadlock quedó
+  fuera de un esfuerzo honesto y acotado. Reemplazado por las dos pruebas estructurales
+  determinísticas de arriba, que sí discriminan ambos mutantes sin depender de temporización.
+- **MAJOR (mutation target 47) — paridad FEFO `hoy` UTC-naive sin borde.** La paridad FEFO
+  preexistente (`LaParidadFefoEligeElMismoLoteEnElCheckoutYEnElRemito`) solo compara vencimientos
+  lejos de cualquier borde (2099-01-01 vs. 2099-06-01). Fijado:
+  `LaParidadFefoEligeElLoteQueVenceHoyEnElBordeExactoEnElRemitoYEnElCheckout` — un lote vence
+  EXACTAMENTE `hoy` (vía `RelojFijo` + `WithWebHostBuilder`, elegible hoy,
+  `ReglaDeLotes.EstaVencido` lo excluiría recién mañana) contra otro lejos en el futuro; assertea
+  el lote elegido por el remito Y por el checkout sobre el mismo borde (extiende la paridad de la
+  task 5.14). EVIDENCIA DE MUTACIÓN: `AddDays(1)` sobre `hoy` (:358) → ROJO (`Expected: <lote de
+  hoy> / Actual: <lote futuro>`, el mutante excluyó el lote de hoy de la partición "no vencidos").
+  Revertido: VERDE.
+
+Adicional (WARNING, sin evidencia de mutación — cambio documental puro, sin lógica tocada):
+`ItemRemito.cs:62-65`'s doc-comment de `IdLote` implicaba `NULL` hasta `emitir`, pero la decisión
+registrada de la desviación 1 de este slice (arriba) es que `IdLote` persiste en el borrador
+(pre-check FK 22). Actualizado el comentario para reflejar la decisión real.
+
+Tests dirigidos finales, `ServicioDeRemitosTests` completo: **24/24 VERDE** (19 preexistentes + 4
+nuevos: `DobleEmitirConcurrenteEsRechazado409ViaElGuardNoViaElPreCheck`,
+`LosMovimientosDeDosArticulosSeEscribenEnOrdenAscendentePorIdArticulo`,
+`UnRemitoBloqueaStockAntesQueStockLotesParaElMismoPar`,
+`LaParidadFefoEligeElLoteQueVenceHoyEnElBordeExactoEnElRemitoYEnElCheckout` — nunca full suite, per
+regla 15/mutation-proof-tests).
+
 ---
 
 ## Slice 6: consolidación TXR (PR 6)

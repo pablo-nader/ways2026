@@ -492,6 +492,64 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(1, await db.MovimientosStock.CountAsync(m => m.IdRemito == creado.Id));
     }
 
+    /// <summary>judgment-day Slice 5, ronda 1, juez B — MAJOR: el conjunto `estado='borrador'` del
+    /// UPDATE guardado de <c>EmitirHeaderAsync</c> (:588) quedaba eclipsado por el pre-check de
+    /// <see cref="ServicioDeRemitos.EmitirAsync"/> (:258) en <c>DobleEmitirEsRechazado409</c> — ese
+    /// test siempre corre secuencial, así que el segundo `emitir` YA rechaza en el pre-check, nunca
+    /// llega al guard. Acá se fuerza la carrera real (mismo patrón que
+    /// <see cref="UnPutQueMuevePuntoDeVentaConcurrenteConEmitirReclasificaA409YElNumeroQuedaEnLaSerieVieja"/>):
+    /// el primer `emitir` pausa justo tras abrir SU transacción — su propio pre-check YA leyó
+    /// `borrador` — mientras un segundo `emitir` corre completo y transiciona el remito a
+    /// `emitido`. Al reanudar, el primero llega al UPDATE guardado con un pre-check que dio verde
+    /// pero un estado real ya cambiado: solo el conjunto `estado='borrador'::estado_remito` del
+    /// propio UPDATE (no el pre-check, que ya pasó) puede rechazarlo con 0 filas → 409. Sin ese
+    /// conjunto, el UPDATE matchearía igual y el remito se emitiría dos veces.</summary>
+    [Fact]
+    public async Task DobleEmitirConcurrenteEsRechazado409ViaElGuardNoViaElPreCheck()
+    {
+        var ctx = await PrepararAsync(nameof(DobleEmitirConcurrenteEsRechazado409ViaElGuardNoViaElPreCheck));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Rem Doble Emitir Concurrente", 45m);
+        var creado = await CrearBorradorAsync(ctx.Admin, SolicitudSimple(ctx, idArticulo, 1m));
+
+        var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor))));
+
+        using var clientePrimerEmitir = factory.CreateClient();
+        var login = await clientePrimerEmitir.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var tareaPrimerEmitir = clientePrimerEmitir.PostAsync($"/api/remitos/{creado.Id}/emitir", null);
+
+        await transaccionIniciada.Task;
+
+        // El segundo `emitir` corre COMPLETO por fuera del interceptor — su propio pre-check
+        // todavía lee `borrador` (el primero nunca escribió nada), pasa, transiciona y commitea.
+        var segundo = await ctx.Admin.PostAsync($"/api/remitos/{creado.Id}/emitir", null);
+        var cuerpoSegundo = await segundo.Content.ReadAsStringAsync();
+        Assert.True(segundo.StatusCode == HttpStatusCode.OK, cuerpoSegundo);
+
+        puedeContinuar.TrySetResult();
+
+        var primero = await tareaPrimerEmitir;
+        var cuerpoPrimero = await primero.Content.ReadAsStringAsync();
+        Assert.True(primero.StatusCode == HttpStatusCode.Conflict, cuerpoPrimero);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpoPrimero, OpcionesJson);
+        Assert.Equal("remito_ya_emitido", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var actual = await db.Remitos.FirstAsync(r => r.Id == creado.Id);
+        Assert.Equal(EstadoRemito.Emitido, actual.Estado);
+        // El perdedor de la carrera (el primero, pausado) nunca escribió movimiento alguno: su
+        // transacción nunca commiteó — solo el ganador (segundo) dejó rastro en el ledger.
+        Assert.Equal(1, await db.MovimientosStock.CountAsync(m => m.IdRemito == creado.Id));
+    }
+
     // ---- mutation target 44 (mitad id_punto_venta): la carrera del relink de PV --------------------
 
     private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
@@ -733,6 +791,198 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(2, await db.MovimientosStock.CountAsync(m => m.IdLote == idLote && m.Motivo == MotivoStock.Remito));
     }
 
+    /// <summary>judgment-day Slice 5, ronda 1, juez B — MAJOR (mutation target 40): los dos
+    /// rendezvous de arriba tocan UN SOLO articulo — con un único recurso, ninguna inversión de
+    /// orden de locks es OBSERVABLE entre concurrentes (sin ciclo alcanzable), así que nunca
+    /// ejercitaron el <c>OrderBy(x => x.Item.IdArticulo)</c> de <c>EjecutarEmisionAsync</c>
+    /// (:434-436). <c>movimientos_stock</c> nunca se actualiza, solo se INSERTA — su <c>Id</c>
+    /// autoincremental es un testigo directo y determinístico del orden de escritura real, sin
+    /// necesitar concurrencia (mismo técnica que
+    /// <c>VentaEscrituraLoteTests.LosMovimientosDeDosLotesDelMismoArticuloSeEscribenEnOrdenAscendentePorIdLote</c>).
+    /// Las líneas se envían en la solicitud en orden DESCENDENTE (articulo mayor primero) para que
+    /// un sort estable que preservara el orden de arribo (en vez de reordenar) no enmascare el
+    /// mutante.</summary>
+    [Fact]
+    public async Task LosMovimientosDeDosArticulosSeEscribenEnOrdenAscendentePorIdArticulo()
+    {
+        var ctx = await PrepararAsync(nameof(LosMovimientosDeDosArticulosSeEscribenEnOrdenAscendentePorIdArticulo));
+        var idArticuloMenor = await SembrarArticuloAsync(ctx, "Rem Orden Articulo Menor", 10m);
+        var idArticuloMayor = await SembrarArticuloAsync(ctx, "Rem Orden Articulo Mayor", 10m);
+        Assert.True(idArticuloMenor < idArticuloMayor);
+
+        var solicitud = new SolicitudDeRemito(
+            ctx.IdPuntoVenta, ctx.IdCliente, null, null,
+            [new LineaDeRemito(idArticuloMayor, 3m, null), new LineaDeRemito(idArticuloMenor, 5m, null)]);
+        var creado = await CrearBorradorAsync(ctx.Admin, solicitud);
+
+        var respuesta = await ctx.Admin.PostAsync($"/api/remitos/{creado.Id}/emitir", null);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var movimientos = await db.MovimientosStock
+            .Where(m => m.IdRemito == creado.Id)
+            .OrderBy(m => m.Id)
+            .ToListAsync();
+
+        Assert.Equal(2, movimientos.Count);
+        Assert.Equal(idArticuloMenor, movimientos[0].IdArticulo);
+        Assert.Equal(idArticuloMayor, movimientos[1].IdArticulo);
+    }
+
+    private sealed class ContextoFijo(int idTenant, int usuarioId) : IContextoDeUsuario
+    {
+        public bool EstaAutenticado => true;
+        public int UsuarioId => usuarioId;
+        public string NombreUsuario => "actor-de-prueba";
+        public RolConocido Rol => RolConocido.Admin;
+        public int? IdTenant { get; } = idTenant;
+    }
+
+    /// <summary>Igual técnica que <c>VentaEscrituraLoteTests.EmitirObservandoOrdenDeLocksAsync</c>
+    /// (doc-comment ahí: los statements crudos de <c>ServicioDeRemitos</c> NUNCA pasan por el
+    /// pipeline de <c>DbCommandInterceptor</c> de EF Core, así que la prueba de orden observa el
+    /// ESTADO DE LOCKS real en <c>pg_locks</c> desde una conexión separada — instancia
+    /// <see cref="ServicioDeRemitos"/> directo (bypass HTTP) para tener el PID de backend dedicado
+    /// que necesita el poll.</summary>
+    private async Task<(RemitoDetalle Emitido, bool StockYaBloqueadoMientrasEsperaStockLotes)> EmitirRemitoObservandoOrdenDeLocksAsync(
+        Contexto ctx, int idRemito, int idArticulo, int idLote, CancellationToken ct = default)
+    {
+        var tenantActual = new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant);
+
+        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
+            .UseNpgsql(fixture.AppConnectionString, npgsql =>
+            {
+                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<MotivoStock>("motivo_stock");
+                npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
+                npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoCaja>("tipo_movimiento_caja");
+                npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
+                npgsql.MapEnum<Ways.Domain.Gastos.CategoriaGasto>("categoria_gasto");
+                npgsql.MapEnum<Ways.Domain.Compras.EstadoCompra>("estado_compra");
+                npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
+                npgsql.MapEnum<Ways.Domain.Ventas.EstadoPresupuesto>("estado_presupuesto");
+                npgsql.MapEnum<EstadoRemito>("estado_remito");
+            })
+            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
+            .Options;
+
+        await using var db = new WaysDbContext(opciones, tenantActual);
+        await db.Database.OpenConnectionAsync(ct);
+        var conexionRemito = (NpgsqlConnection)db.Database.GetDbConnection();
+        var pidRemito = (int)(await new NpgsqlCommand("SELECT pg_backend_pid()", conexionRemito).ExecuteScalarAsync(ct))!;
+
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var contexto = new ContextoFijo(ctx.IdTenant, ctx.IdUsuarioAdmin);
+        var servicioDePrecios = new Ways.Application.Precios.ServicioDePrecios(db, reloj, contexto);
+        var servicioDeOfertas = new Ways.Application.Ofertas.ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
+        var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
+        var servicioDeRemitos = new ServicioDeRemitos(db, reloj, contexto, servicioDeOfertas, servicioDeLotes);
+
+        // Conexión que SOSTIENE el lock de stock_lotes — deliberadamente sin comitear todavía, para
+        // forzar al remito a bloquearse justo ahí. RLS exige el mismo GUC que
+        // InterceptorDeContextoDeTenant setea sobre cada conexión física.
+        await using var conexionBloqueo = new NpgsqlConnection(fixture.AppConnectionString);
+        await conexionBloqueo.OpenAsync(ct);
+        await using (var comandoGuc = new NpgsqlCommand(
+            "SELECT set_config('app.acceso', 'tenant', false), set_config('app.tenant_id', $1, false)",
+            conexionBloqueo))
+        {
+            comandoGuc.Parameters.AddWithValue(ctx.IdTenant.ToString());
+            await comandoGuc.ExecuteNonQueryAsync(ct);
+        }
+
+        await using var transaccionBloqueo = await conexionBloqueo.BeginTransactionAsync(ct);
+        await using (var comandoBloqueo = new NpgsqlCommand(
+            "SELECT cantidad FROM stock_lotes WHERE id_articulo = $1 AND id_punto_venta = $2 AND id_lote = $3 FOR UPDATE",
+            conexionBloqueo, transaccionBloqueo))
+        {
+            comandoBloqueo.Parameters.AddWithValue(idArticulo);
+            comandoBloqueo.Parameters.AddWithValue(ctx.IdPuntoVenta);
+            comandoBloqueo.Parameters.AddWithValue(idLote);
+            await comandoBloqueo.ExecuteScalarAsync(ct);
+        }
+
+        var remitoTask = servicioDeRemitos.EmitirAsync(idRemito, ct);
+
+        await using var conexionPoll = new NpgsqlConnection(fixture.AppConnectionString);
+        await conexionPoll.OpenAsync(ct);
+
+        var observado = false;
+        var limite = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < limite)
+        {
+            await using var comandoPoll = new NpgsqlCommand(
+                "SELECT " +
+                "  bool_or(l.locktype = 'relation' AND l.relation::regclass::text = 'stock' AND l.granted) AS stock_otorgado, " +
+                "  bool_or(NOT l.granted) AS esperando_algo " +
+                "FROM pg_locks l WHERE l.pid = $1",
+                conexionPoll);
+            comandoPoll.Parameters.AddWithValue(pidRemito);
+
+            await using var lector = await comandoPoll.ExecuteReaderAsync(ct);
+            if (await lector.ReadAsync(ct))
+            {
+                var stockOtorgado = !lector.IsDBNull(0) && lector.GetBoolean(0);
+                var esperandoAlgo = !lector.IsDBNull(1) && lector.GetBoolean(1);
+                if (stockOtorgado && esperandoAlgo)
+                {
+                    observado = true;
+                    break;
+                }
+            }
+
+            await Task.Delay(25, ct);
+        }
+
+        // Libera el lock retenido — el remito, hasta acá bloqueado, ahora puede completar.
+        await transaccionBloqueo.RollbackAsync(ct);
+
+        var emitido = await remitoTask;
+
+        return (emitido, observado);
+    }
+
+    /// <summary>judgment-day Slice 5, ronda 1, juez B — MAJOR (mutation target 41): idem target 40
+    /// — sin un segundo recurso ni concurrencia real, invertir <c>UpsertStockLoteAsync</c>/
+    /// <c>UpsertStockAsync</c> (:451-461) nunca era observable. <c>stock</c> es el único statement
+    /// que toma el row lock que reemplaza al advisory lock (design decisión 8) — <c>stock_lotes</c>
+    /// tiene que seguirlo SIEMPRE, nunca precederlo, mismo criterio que
+    /// <c>VentaEscrituraLoteTests.UnCheckoutBloqueaStockAntesQueStockLotesParaElMismoPar</c>.</summary>
+    [Fact]
+    public async Task UnRemitoBloqueaStockAntesQueStockLotesParaElMismoPar()
+    {
+        var ctx = await PrepararAsync(
+            nameof(UnRemitoBloqueaStockAntesQueStockLotesParaElMismoPar), conLotesHabilitado: true);
+        var idArticulo = await SembrarArticuloAsync(ctx, "Rem Orden Lock Stock", 40m, controlaLote: true);
+        var idLote = await SembrarLoteAsync(ctx, idArticulo, "L-LOCK-ORDER", new DateOnly(2099, 1, 1), 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 10m);
+
+        var creado = await CrearBorradorAsync(ctx.Admin, SolicitudSimple(ctx, idArticulo, 1m, idLote));
+
+        var (emitido, observado) = await EmitirRemitoObservandoOrdenDeLocksAsync(ctx, creado.Id, idArticulo, idLote);
+
+        Assert.True(
+            observado,
+            "Nunca se observó al remito con el lock de stock ya otorgado mientras esperaba stock_lotes.");
+        Assert.Single(emitido.Items);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var stock = await db.Stock
+            .Where(s => s.IdArticulo == idArticulo && s.IdPuntoVenta == ctx.IdPuntoVenta)
+            .Select(s => s.Cantidad).FirstAsync();
+        Assert.Equal(9m, stock);
+    }
+
     // ---- task 5.14: paridad FEFO entre write site 1 (checkout) y write site 4 (remito) -------------
 
     [Fact]
@@ -758,6 +1008,62 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var emitido = (await respuesta.Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
 
         Assert.Equal(idLoteViejoRemito, emitido.Items.Single().IdLote);
+    }
+
+    private sealed class RelojFijo(DateTimeOffset ahora) : IRelojDelSistema
+    {
+        public DateTimeOffset Ahora { get; } = ahora;
+    }
+
+    /// <summary>judgment-day Slice 5, ronda 1, juez B — MAJOR: la paridad FEFO del test anterior
+    /// solo compara lotes con vencimientos lejos de cualquier borde (2099-01-01 vs. 2099-06-01) —
+    /// nunca ejercita el borde exacto de la derivación de `hoy` (mutation target 47,
+    /// <c>ServicioDeRemitos.cs:358</c>). Acá un lote vence EXACTAMENTE `hoy` (UTC, vía
+    /// <see cref="RelojFijo"/> — elegible hoy, <see cref="ReglaDeLotes.EstaVencido"/> lo excluiría
+    /// recién MAÑANA) contra otro que vence muy después: con `hoy` correcto, el lote de hoy gana
+    /// FEFO por vencimiento más próximo (ninguno vencido, la partición "no vencidos" contiene a
+    /// ambos); con `hoy` mutado a mañana (`AddDays(1)`), el lote de hoy pasa a `EstaVencido` y
+    /// queda excluido de esa partición, cambiando el lote elegido — extiende la paridad de la task
+    /// 5.14 al remito Y al checkout sobre el mismo borde.</summary>
+    [Fact]
+    public async Task LaParidadFefoEligeElLoteQueVenceHoyEnElBordeExactoEnElRemitoYEnElCheckout()
+    {
+        var ctx = await PrepararAsync(
+            nameof(LaParidadFefoEligeElLoteQueVenceHoyEnElBordeExactoEnElRemitoYEnElCheckout),
+            conTurnoAbierto: true, conLotesHabilitado: true);
+
+        var instanteFijo = new DateTimeOffset(2030, 3, 15, 12, 0, 0, TimeSpan.Zero);
+        var hoyFijo = DateOnly.FromDateTime(instanteFijo.UtcDateTime);
+
+        var idArticuloRemito = await SembrarArticuloAsync(ctx, "Fefo Borde Remito", 10m, controlaLote: true);
+        var idLoteHoyRemito = await SembrarLoteAsync(ctx, idArticuloRemito, "R-BORDE-HOY", hoyFijo, 5m);
+        await SembrarLoteAsync(ctx, idArticuloRemito, "R-BORDE-FUTURO", hoyFijo.AddMonths(1), 5m);
+
+        var idArticuloVenta = await SembrarArticuloAsync(ctx, "Fefo Borde Venta", 10m, controlaLote: true);
+        var idLoteHoyVenta = await SembrarLoteAsync(ctx, idArticuloVenta, "V-BORDE-HOY", hoyFijo, 5m);
+        await SembrarLoteAsync(ctx, idArticuloVenta, "V-BORDE-FUTURO", hoyFijo.AddMonths(1), 5m);
+
+        await using var factory = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services => services.AddSingleton<IRelojDelSistema>(new RelojFijo(instanteFijo))));
+
+        using var cliente = factory.CreateClient();
+        var login = await cliente.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var remito = await CrearBorradorAsync(cliente, SolicitudSimple(ctx, idArticuloRemito, 1m));
+        var respuestaEmitir = await cliente.PostAsync($"/api/remitos/{remito.Id}/emitir", null);
+        var cuerpoEmitir = await respuestaEmitir.Content.ReadAsStringAsync();
+        Assert.True(respuestaEmitir.StatusCode == HttpStatusCode.OK, cuerpoEmitir);
+        var emitido = JsonSerializer.Deserialize<RemitoDetalle>(cuerpoEmitir, OpcionesJson)!;
+        Assert.Equal(idLoteHoyRemito, emitido.Items.Single().IdLote);
+
+        var respuestaVenta = await cliente.PostAsJsonAsync(
+            "/api/ventas", SolicitudDeVentaSimple(ctx, idArticuloVenta, 1m, null));
+        var cuerpoVenta = await respuestaVenta.Content.ReadAsStringAsync();
+        Assert.True(respuestaVenta.StatusCode == HttpStatusCode.Created, cuerpoVenta);
+        var ventaEmitida = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoVenta, OpcionesJson)!;
+        Assert.Equal(idLoteHoyVenta, ventaEmitida.Items.Single().IdLote);
     }
 
     // ---- task 5.15: consistencia de nueve motivos ---------------------------------------------------
