@@ -9,7 +9,8 @@ namespace Ways.Api.Endpoints;
 /// 10). Grupo bajo <c>Politicas.OperacionDePos</c> ÚNICAMENTE — sin apilar
 /// <c>GestionDeCatalogo</c>, a diferencia de <c>OrdenesDeCompraEndpoints</c>: un Vendedor puede
 /// vender, y quotear/enviar/anular un presupuesto es vender (design: "un Vendedor tiene que poder
-/// vender"). <c>POST /{id:int}/para-venta</c> y la conversión llegan en la Slice 3.
+/// vender"). <c>GET /{id:int}/para-venta</c> (Slice 3) es lectura pura — la conversión en sí
+/// (<c>idPresupuestoOrigen</c>) vive en <c>POST /api/ventas</c>, no acá.
 /// </summary>
 public static class PresupuestosEndpoints
 {
@@ -36,6 +37,13 @@ public static class PresupuestosEndpoints
         grupo.MapGet("/{id:int}", (ServicioDePresupuestos servicio, int id, CancellationToken ct) =>
             servicio.ObtenerDetalleAsync(id, ct))
         .WithSummary("Detalle de un presupuesto: header + items + Vencido/Convertible derivados.");
+
+        // stage-17-presupuestos-y-remitos, Slice 3 (design: API Surface, decisión 2): lectura
+        // PARA MOSTRAR — nunca la autoridad de precio, nunca escribe. Refusa un presupuesto
+        // vencido/no-enviado/ya-convertido con el mismo código que la conversión.
+        grupo.MapGet("/{id:int}/para-venta", (ServicioDePresupuestos servicio, int id, CancellationToken ct) =>
+            servicio.ObtenerParaVentaAsync(id, ct))
+        .WithSummary("Precarga el POS con los items congelados de un presupuesto enviado y no vencido.");
 
         grupo.MapPost("/", async (
             ServicioDePresupuestos servicio, SolicitudDePresupuesto solicitud, CancellationToken ct) =>

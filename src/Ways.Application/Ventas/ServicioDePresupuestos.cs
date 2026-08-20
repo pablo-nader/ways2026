@@ -27,8 +27,9 @@ namespace Ways.Application.Ventas;
 /// la venta resultante NO revive el presupuesto, así que <c>AnularAsync</c> no necesita saberlo).
 ///
 /// La conversión (<c>estado = 'convertido'</c>, escrita por <c>EscriturasDePresupuesto</c> desde
-/// <c>ServicioDeVentas</c>) y <c>/para-venta</c> llegan en la Slice 3 — esta clase nunca escribe
-/// <c>convertido</c> ni conoce <c>ServicioDeVentas</c> (design: "la contención ES el producto").
+/// <c>ServicioDeVentas</c>, Slice 3) — esta clase nunca escribe <c>convertido</c> ni conoce
+/// <c>ServicioDeVentas</c> (design: "la contención ES el producto"). <see cref="ObtenerParaVentaAsync"/>
+/// (Slice 3) SÍ vive acá: es lectura pura, nunca escribe y nunca es la autoridad de precio.
 ///
 /// OD9 (orquestador, apply de esta slice, precedente stage-16 slice 2): los resolvers 404 de
 /// punto de venta/cliente son PRIVADOS y PROPIOS de esta clase — copian la forma exacta de
@@ -144,6 +145,58 @@ public class ServicioDePresupuestos(
         }
 
         return query;
+    }
+
+    // ---- /para-venta: lectura para mostrar, jamás la autoridad de precio (Slice 3, design
+    // decisión 2, dto-contract-honesty regla 1) -----------------------------------------------------
+
+    /// <summary>stage-17-presupuestos-y-remitos, Slice 3 (design: API Surface, decisión 2;
+    /// registrado en tasks.md — el endpoint se cablea recién acá, `ContratosDePresupuesto.cs`
+    /// declaró el shape desde la Slice 2). Refusa el mismo par de causas que la conversión
+    /// (`ServicioDeVentas.ResolverConversionDesdePresupuestoAsync`), ANTES de la autoridad real —
+    /// esta lectura NUNCA escribe nada y NUNCA es la autoridad de precio: la conversión
+    /// (`POST /api/ventas` con `idPresupuestoOrigen`) es la única fuente de verdad.</summary>
+    public async Task<PresupuestoParaVenta> ObtenerParaVentaAsync(int id, CancellationToken ct = default)
+    {
+        var presupuesto = await db.Presupuestos.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el presupuesto {id}.");
+
+        var (_, zona) = await ResolverZonaAsync(presupuesto.IdPuntoVenta, ct);
+        var hoy = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(reloj.Ahora, zona).DateTime);
+
+        if (presupuesto.Estado == EstadoPresupuesto.Convertido)
+        {
+            throw new ErrorDominio(
+                "presupuesto_ya_convertido", "El presupuesto ya fue convertido en una venta.", 409);
+        }
+
+        if (presupuesto.Estado != EstadoPresupuesto.Enviado)
+        {
+            throw new ErrorDominio(
+                "presupuesto_no_convertible", "El presupuesto no está en un estado convertible.", 409);
+        }
+
+        if (ReglaDePresupuestos.EstaVencido(presupuesto.Estado, presupuesto.Vencimiento, hoy))
+        {
+            throw new ErrorDominio("presupuesto_vencido", "El presupuesto está vencido.", 409);
+        }
+
+        var convertible = ReglaDePresupuestos.EsConvertible(presupuesto.Estado, presupuesto.Vencimiento, hoy);
+
+        var items = await db.ItemsPresupuesto.AsNoTracking()
+            .Where(i => i.IdPresupuesto == id)
+            .OrderBy(i => i.Orden)
+            .ToListAsync(ct);
+
+        return new PresupuestoParaVenta(
+            presupuesto.Id, presupuesto.Numero, presupuesto.IdPuntoVenta, presupuesto.IdCliente,
+            presupuesto.Vencimiento, Vencido: false, convertible, presupuesto.Subtotal, presupuesto.DescuentoTotal,
+            presupuesto.Total,
+            items
+                .Select(i => new ItemDePresupuesto(
+                    i.Orden, i.IdArticulo, i.Descripcion, i.Cantidad, i.PrecioUnitario, i.Descuento, i.Total,
+                    i.IdListaPrecio, i.IdOferta, i.IdAlicuotaIva, i.PorcentajeIva))
+                .ToList());
     }
 
     public async Task<PresupuestoDetalle> ObtenerDetalleAsync(int id, CancellationToken ct = default)

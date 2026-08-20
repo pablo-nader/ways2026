@@ -11,6 +11,15 @@ namespace Ways.Application.Ventas;
 /// Final"). Sin campo de empleado a propósito (design decisión 11, forward obligation de Slice
 /// 3): <c>id_empleado</c> siempre sale de <c>IContextoDeUsuario.UsuarioId</c>, nunca de este
 /// contrato.
+///
+/// stage-17-presupuestos-y-remitos, Slice 3 (design: Interfaces/Contracts, decisión 2/tensión
+/// T7): <see cref="IdPresupuestoOrigen"/> convierte un presupuesto <c>enviado</c> en esta venta —
+/// con él presente, <see cref="Lineas"/> tiene que llegar vacío/ausente (400
+/// <c>lineas_no_admitidas</c>, <c>dto-contract-honesty</c> regla 1: un campo que el servidor
+/// ignoraría no se acepta en silencio) y el precio de cada línea sale congelado de
+/// <c>items_presupuesto</c>, nunca de <see cref="Ofertas.ServicioDeOfertas.ResolverAsync"/>.
+/// Parámetro opcional al final (default <c>null</c>) — preserva el constructor posicional de
+/// todo call site preexistente de una venta común.
 /// </summary>
 public sealed record SolicitudDeVenta(
     int IdPuntoVenta,
@@ -20,7 +29,8 @@ public sealed record SolicitudDeVenta(
     IReadOnlyList<LineaDeVenta>? Lineas,
     IReadOnlyList<PagoDeVenta>? Pagos,
     string? DireccionEntrega,
-    string? Observaciones);
+    string? Observaciones,
+    int? IdPresupuestoOrigen = null);
 
 /// <summary><see cref="Cantidad"/> siempre positiva, sin importar el tipo de comprobante — el
 /// signo lo deriva <see cref="ServicioDeVentas"/> a partir de <c>tipos_comprobante.signo</c>
@@ -74,7 +84,13 @@ public sealed record PagoEmitido(int IdMedioPago, decimal Importe, string? Refer
 
 /// <summary>Respuesta de checkout/reprint (spec: operacion-de-pos / Checkout Orchestration
 /// Contract) — <see cref="NumeroVisible"/> es <c>NumeroDeComprobante.Formatear(IdPuntoVenta,
-/// Numero)</c>, ya formateado para no obligar al front a reimplementar el padding.</summary>
+/// Numero)</c>, ya formateado para no obligar al front a reimplementar el padding.
+///
+/// stage-17-presupuestos-y-remitos, Slice 3 (design: Interfaces/Contracts, OD9/T7): <see
+/// cref="IdPresupuestoOrigen"/> — <c>null</c> en el 100% del tráfico previo a esta etapa,
+/// round-trip del presupuesto convertido cuando la venta nació de uno
+/// (<c>dto-contract-honesty</c> regla 2: un campo request-only no alcanza para probar el
+/// round-trip).</summary>
 public sealed record ComprobanteEmitido(
     int Id,
     long Numero,
@@ -90,7 +106,8 @@ public sealed record ComprobanteEmitido(
     string? DireccionEntrega,
     string? Observaciones,
     IReadOnlyList<ItemEmitido> Items,
-    IReadOnlyList<PagoEmitido> Pagos);
+    IReadOnlyList<PagoEmitido> Pagos,
+    int? IdPresupuestoOrigen = null);
 
 /// <summary>Fila de <c>GET /api/ventas</c> (listado paginado) — sin items/pagos, mismo criterio
 /// que los demás <c>*Listado</c> del proyecto (evita el N+1 de traer el detalle completo de cada

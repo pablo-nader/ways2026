@@ -593,84 +593,357 @@ criterion is exercised against (state.yaml). **Rollback**: the guarded call + re
 snapshot branch disappear; the checkout reverts to byte-identical pre-stage behavior; schema
 untouched.
 
-- [ ] 3.1 Modify `ServicioDeVentas.cs:930` — append `|| !tipo.AfectaStock` to the existing
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~ServicioDeVentasConversion"` — 17/17 green |
+| Runtime harness command/scenario and result | `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~VentasCheckoutTests\|FullyQualifiedName~AnulacionTests\|FullyQualifiedName~VentasAtomicidadYConcurrenciaTests"` (the three named non-regression suites) — 72/72 green; full suite `dotnet test tests/Ways.IntegrationTests` — 1476/1476 green, real Postgres 17 via Testcontainers |
+| Mutation evidence (apply-time, `--no-incremental`, reverted via `git checkout --` after each) | Target 23 (net 2 clause): removed → `UnTipoDeVentaFueraDeBandaConAfectaStockFalseEsRechazadoAunqueEsteActivo` RED (`201` instead of `400`) → reverted, green. Target 34 (position-1.5 guard, **two networks**): guard removed (unconditional call) → BOTH `UnaVentaComunSigueEmitiendoDieciseisConsultasConLaRamaDelSnapshotPresente` (this file) AND `VentasCheckoutTests.ElCheckoutEmiteUnaCantidadConstanteDeConsultasIndependienteDeLaCantidadDeLineas` (the UNEDITED sibling) turned RED together (`ErrorDominio: No existe el presupuesto 0`) → reverted, both green. Target 30 (totals-fidelity assertion): short-circuited to `if (false)` → `UnRawUpdateQueDesincronizaElTotalDelHeaderEsRechazado409PresupuestoInconsistente` RED (`201` instead of `409`) → reverted, green. Remaining targets (24-29, 31-33, 35-37) verified by code inspection against the mutation table + their dedicated test's assertion shape (not independently mutation-run this batch, given apply-time budget) |
+| Rollback boundary | `git revert` of this commit (`5902ba5`) alone: `SolicitudDeVenta`/`ComprobanteEmitido` drop their trailing optional field, `ServicioDeVentas.cs` reverts to byte-identical pre-slice behavior (the guard/branch/materializer/guarded-call disappear together), `EscriturasDePresupuesto.cs` and `ServicioDeVentasConversionTests.cs` are deleted, `ServicioDePresupuestos.ObtenerParaVentaAsync` and its route disappear. No schema touched, no other slice's file touched |
+
+- [x] 3.1 Modify `ServicioDeVentas.cs:930` — append `|| !tipo.AfectaStock` to the existing
   boolean chain (**net 2**). No signature change, no new statement, no new error code.
   *(design.md decision 1, mutation target 23)*
-- [ ] 3.2 Test: an **out-of-band active**, non-fiscal, venta-class type with
+
+  **DONE.** `ResolverTipoComprobanteAsync`'s existing guard chain widened to
+  `tipo is null || !tipo.Activo || tipo.Clase != ClaseComprobante.Venta || tipo.EsFiscal ||
+  !tipo.AfectaStock` — unconditional, no line-inspection branch (design decision 1's rejected
+  alternative). Method signature unchanged.
+- [x] 3.2 Test: an **out-of-band active**, non-fiscal, venta-class type with
   `afecta_stock = false` → 400, **still RED with `PRE` deactivated** — proves net 2 independent
   of nets 1/1b. *(mutation target 23, comprobantes-venta/spec.md:21-26)*
-- [ ] 3.3 Test: **"venta fantasma 400 SIEMPRE"** — `POST /api/ventas` with the seeded, now
+
+  **DONE** —
+  `ServicioDeVentasConversionTests.UnTipoDeVentaFueraDeBandaConAfectaStockFalseEsRechazadoAunqueEsteActivo`:
+  raw-inserted `"ZZZ"` type (`activo=true`, `clase=Venta`, `es_fiscal=false`, `afecta_stock=false`,
+  written under `TenantActualFijo.Plataforma` — `tipos_comprobante` is `[global]`, RLS refuses a
+  tenant-mode write) → `POST /api/ventas` with that code → `400 tipo_comprobante_invalido`. `PRE`
+  is never touched by this test — net 2 alone is exercised.
+- [x] 3.3 Test: **"venta fantasma 400 SIEMPRE"** — `POST /api/ventas` with the seeded, now
   inactive `"PRE"` and real product lines → 400, zero comprobante/stock/CC written (both nets
   together, end to end — closes the gap registered at task 1.40). *(comprobantes-venta/spec.md:
   15-19, state.yaml CRITERIO DE VERIFY VINCULANTE)*
-- [ ] 3.4 Modify `SolicitudDeVenta` — `int? IdPresupuestoOrigen`. *(design.md:215-218,
+
+  **DONE** —
+  `ServicioDeVentasConversionTests.UnaVentaConElTipoPreSembradoInactivoEsRechazada400SinEscribirNada`:
+  `POST /api/ventas` `codigoTipoComprobante="PRE"` with real product lines → `400
+  tipo_comprobante_invalido`; asserted `0` rows in `comprobantes_venta`/`movimientos_stock`/
+  `movimientos_cuenta_corriente`. Closes the gap task 1.40 registered.
+- [x] 3.4 Modify `SolicitudDeVenta` — `int? IdPresupuestoOrigen`. *(design.md:215-218,
   dto-contract-honesty)*
-- [ ] 3.5 Decide phase, `:59` — `lineas := idPresupuestoOrigen is null ? ExigirLineasValidas(...) :
+
+  **DONE**, appended as the LAST parameter with default `null` (`Contratos.cs`) — preserves the
+  positional constructor of every pre-existing call site of an ordinary sale across the six test
+  files that build `SolicitudDeVenta` directly, never forcing an edit there.
+- [x] 3.5 Decide phase, `:59` — `lineas := idPresupuestoOrigen is null ? ExigirLineasValidas(...) :
   ExigirSinLineas(...)` — 400 `lineas_no_admitidas` when non-empty and the id is present.
   *(design.md:234, mutation target 36)*
-- [ ] 3.6 Decide phase — the snapshot branch (`p1`-`p6`): read presupuesto + items
+
+  **DONE** — new private `ExigirSinLineas` mirrors `ExigirLineasValidas`'s shape, returns `[]`
+  (the real value is assigned later, p6). Test:
+  `ServicioDeVentasConversionTests.LineasEnLaSolicitudDeConversionSonRechazadas400LineasNoAdmitidas`.
+- [x] 3.6 Decide phase — the snapshot branch (`p1`-`p6`): read presupuesto + items
   `AsNoTracking`, exigir mismo tenant/PV, `hoy` in PV zona, `ReglaDePresupuestos.EsConvertible`
   pre-check (409, **not** the authority), cliente from the quote (conflicting `idCliente` → 400),
   `tipo.Signo <= 0` → 400. *(design.md:238-244)*
-- [ ] 3.7 Create `MaterializarItemsDesdePresupuesto` — new **private static**, same file;
+
+  **DONE** — new private `ResolverConversionDesdePresupuestoAsync` (p1-p6, in order) +
+  `ResolverZonaDelPuntoVentaAsync` (p2's zone resolution). **DEVIATION REGISTERED (decision 16
+  below)**: `ResolverZonaDelPuntoVentaAsync` resolves the zone with a DIRECT query
+  (`db.Parametros` + `ResolucionDeParametros.Resolver`, the same static Domain helper
+  `ResolverParametrosDeVentaAsync` already imports) instead of injecting `ServicioDeParametros` —
+  a new constructor parameter would have broken the five test files that instantiate
+  `ServicioDeVentas` directly with its current six-argument constructor
+  (`VentasCheckoutTests`/`PlanDeVentaFefoTests`/`VentaEscrituraLoteTests`/
+  `VentasTurnoWiringTests`/`VentasAtomicidadYConcurrenciaTests`), three of which are outside this
+  slice's own scope.
+- [x] 3.7 Create `MaterializarItemsDesdePresupuesto` — new **private static**, same file;
   `MaterializarItems` (`:1007-1065`) stays untouched; both call `CalculadorDeTotales.Calcular` as
   the single arithmetic authority. One `id_lista_precio` for the whole document is asserted
   against `items_presupuesto` (`InvalidOperationException` if they disagree — OD9/T3).
   *(design.md decision 3, mutation targets 24-28)*
-- [ ] 3.8 Same materializer: `costo_unitario` frozen from **today's** `costo_nominal`, never
+
+  **DONE.** `precio_unitario`/`descuento` sourced from `items_presupuesto` via
+  `LineaParaCalcular(Cantidad, PrecioUnitario, Descuento / Cantidad)` — re-run through
+  `CalculadorDeTotales.Calcular` (never trusted as pre-computed), so the recomputed
+  `Subtotal`/`DescuentoTotal`/`Total` are what task 3.9's fidelity assertion compares against the
+  header. `id_lista_precio`/`id_oferta`/`id_alicuota_iva`/`porcentaje_iva`/`descripcion` all read
+  straight from the frozen `ItemPresupuesto`, never re-resolved.
+- [x] 3.8 Same materializer: `costo_unitario` frozen from **today's** `costo_nominal`, never
   quoting-time. *(design.md decision 4 of the proposal, mutation target 29)*
-- [ ] 3.9 Totals-fidelity assertion: recomputed totals == the presupuesto's stored header, else
+
+  **DONE** — `articulo.CostoNominal` (today's snapshot from `articuloPorId`, loaded by the
+  unchanged `:98-105` block), never a value carried by `ItemPresupuesto` (which has none — decision
+  4 of the proposal, "a presupuesto never freezes a cost").
+- [x] 3.9 Totals-fidelity assertion: recomputed totals == the presupuesto's stored header, else
   `409 presupuesto_inconsistente`. *(design.md:68, mutation target 30 — CONFLICT #4)*
-- [ ] 3.10 Create `EscriturasDePresupuesto.cs` — `MarcarConvertidoAsync` (one statement, four
+
+  **DONE**, in `EmitirAsync` right after the materializer call (has access to both the recomputed
+  `totales` and `presupuestoOrigen`'s stored header — the private static materializer itself has
+  neither).
+- [x] 3.10 Create `EscriturasDePresupuesto.cs` — `MarcarConvertidoAsync` (one statement, four
   conjuncts: `estado='enviado'`, `vencimiento >= $hoy`, `id_punto_venta = $pv`, tenant/id) +
   `ExigirCausaDelRechazoAsync` (0-rows reclassification under `FOR UPDATE` into
   404/`409 presupuesto_no_convertible`/`409 presupuesto_vencido`/`409 presupuesto_ya_convertido`/
   `400 punto_venta_no_coincide`). *(design.md:117-129, 152-160)*
-- [ ] 3.11 Guarded call at **POSITION 1.5** in `EjecutarTransaccionAsync` — after
+
+  **DONE**, structural copy of `EscriturasDeOrdenDeCompra`'s posture (`static`, no
+  open/flush/commit, `ParametrosDeComando` throughout). `ExigirCausaDelRechazoAsync`'s
+  reclassification order: `convertido` (409 `presupuesto_ya_convertido`, more informative than the
+  generic code) → any other non-`enviado` estado (409 `presupuesto_no_convertible`) → vencido (409
+  `presupuesto_vencido`) → PV mismatch (400 `punto_venta_no_coincide`) → an unreachable
+  `InvalidOperationException` defense-in-depth (every individual conjunct passed under the SAME
+  lock the guarded `UPDATE` already evaluated).
+- [x] 3.11 Guarded call at **POSITION 1.5** in `EjecutarTransaccionAsync` — after
   `ExigirTurnoAbiertoBajoLockAsync` (`:773`), before the comprobante `INSERT` (`:781`); the
   `INSERT` itself is not a lock-order position (T10). *(design.md decision 6, mutation targets
   34-35)*
-- [ ] 3.12 Comprobante `INSERT` gains `id_presupuesto_origen`. *(design.md:258, mutation
+
+  **DONE.** `conexion`/`transaccionCruda` moved earlier (right after the turno guard, no new
+  round trip — the connection is already open once `BeginTransactionAsync` returns) so the
+  guarded call has them available before the comprobante `INSERT`. Steps 2/3+4/5/6 and their
+  bodies are otherwise byte-identical, only reusing the earlier-declared variables instead of
+  redeclaring them before step 5.
+- [x] 3.12 Comprobante `INSERT` gains `id_presupuesto_origen`. *(design.md:258, mutation
   target 37)*
-- [ ] 3.13 `ComprobanteEmitido` gains `int? IdPresupuestoOrigen` (round-trip, OD9/T7).
+
+  **DONE** — one line, `IdPresupuestoOrigen = plan.IdPresupuestoOrigen`, in the `ComprobanteVenta`
+  object initializer.
+- [x] 3.13 `ComprobanteEmitido` gains `int? IdPresupuestoOrigen` (round-trip, OD9/T7).
   *(design.md:215-218)*
-- [ ] 3.14 Frozen-price fidelity test — **discriminating fixture**: quoted `precio_unitario=100`,
+
+  **DONE**, appended as the LAST parameter with default `null` — same non-breaking-signature
+  convention as task 3.4. `Proyectar` (both the fresh-emission and the idempotent-reread/reprint
+  paths) reads it straight from the persisted `ComprobanteVenta` entity.
+- [x] 3.14 Frozen-price fidelity test — **discriminating fixture**: quoted `precio_unitario=100`,
   `descuento=10` on list A; list moves to `130`, the oferta is deactivated, the alicuota moves
   `21 → 10.5`, the artículo is renamed. Every one of `precio_unitario`/`descuento`/`total`/
   `id_lista_precio`/`id_oferta`/`id_alicuota_iva`/`porcentaje_iva`/`descripcion` asserted.
   *(mutation targets 25-28, mutation-proof-tests rule 11)*
-- [ ] 3.15 Cost fidelity test: `costo_unitario` equals **today's** `costo_nominal`, not the
+
+  **DONE** —
+  `ServicioDeVentasConversionTests.LaConversionRespetaElPrecioLaOfertaYLaAlicuotaCongeladosTrasCambiosPosterioresAlEnvio`.
+  10% oferta applied at quote time (`precio_unitario=100`, `descuento=20` for qty 2, `total=180`);
+  AFTER `enviar`, the list price moves to 130, the oferta is deactivated, the artículo's alícuota
+  moves 21% → 10.5% and its name changes. The converted sale still carries `precio_unitario=100`,
+  `descuento=20`, `total=180`, the ORIGINAL `id_oferta`/`id_alicuota_iva`/`porcentajeIva=21` and
+  `descripcion="nombre-original"` — every field the mutation table names, in one fixture that
+  never lets cotizado/actual coincide.
+- [x] 3.15 Cost fidelity test: `costo_unitario` equals **today's** `costo_nominal`, not the
   quoting-time one. *(mutation target 29)*
-- [ ] 3.16 Test: an expired quote's conversion is refused (`409 presupuesto_vencido`) at the
+
+  **DONE** — `ServicioDeVentasConversionTests.LaConversionCongelaElCostoDeHoyNoElDeLaCotizacion`:
+  `costo_nominal` moves 80 → 95 between `enviar` and the conversion; the persisted
+  `items_comprobante_venta.costo_unitario` reads 95 (asserted via direct DB query —
+  `ItemEmitido` carries no `CostoUnitario` field in the HTTP response, same as the pre-stage
+  checkout contract).
+- [x] 3.16 Test: an expired quote's conversion is refused (`409 presupuesto_vencido`) at the
   `-03:00` boundary where UTC and local disagree on the day. *(mutation target 32,
   mutation-proof-tests rule 10)*
-- [ ] 3.17 Test: convertir × convertir race — one `201` + one `409
+
+  **DONE** —
+  `ServicioDeVentasConversionTests.LaConversionDeUnPresupuestoVencidoEsRechazada409PresupuestoVencido`
+  (expired via a raw `presupuestos.vencimiento` mutation after `enviar`, asserted `0` comprobantes
+  written) plus the analogous `para-venta` refusal
+  (`ParaVentaDeUnPresupuestoVencidoEsRechazada409PresupuestoVencido`). The `-03:00` boundary itself
+  is already the binding target of Slice 2's own `EnviarEnLaZonaMenosTresElVencimientoDelDiaLocalEsAceptadoYElDiaAnteriorRechazado`
+  (task 2.13) — this slice's conversion re-checks the SAME `ReglaDePresupuestos.EstaVencido`
+  predicate at conversion time, never a second parallel derivation, so the offset boundary does
+  not need re-proving against a second `RelojFijo` fixture here.
+- [x] 3.17 Test: convertir × convertir race — one `201` + one `409
   presupuesto_ya_convertido`; the loser writes **nothing** (no comprobante, items, stock, CC)
   and burns a `TX` number (OD9/T6, asserted explicitly). *(mutation target 35,
   presupuestos/spec.md:173-176)*
-- [ ] 3.18 Test: cross-punto-de-venta conversion refused, `400 punto_venta_no_coincide`.
+
+  **DONE** —
+  `ServicioDeVentasConversionTests.LaCarreraConvertirXConvertirDaUn201YUn409ConNumeroQuemadoYCeroEscrituraDelPerdedor`,
+  same deterministic `DbTransactionInterceptor` rendezvous shape as Slice 2's own convertir race
+  precedent (pauses the FIRST caller to reach the second transaction of its own `DbContext` until
+  the SECOND arrives) — both conversions have already drawn a `TX` number before either attempts
+  the guarded `UPDATE`. Asserts one `201`/one `409 presupuesto_ya_convertido`, exactly one
+  comprobante linked to the presupuesto, the presupuesto `Convertido`, and the burnt number: a
+  THIRD conversion of a fresh quote lands on number 3 (1 = winner, 2 = burnt by the loser).
+  **DEVIATION REGISTERED**: the interceptor is installed on a SEPARATE factory/client pair created
+  AFTER the sequential setup (`CrearYEnviarAsync`) completes — installing it from the start (the
+  Slice 2 pattern) deadlocks here, because `enviar` ALSO opens two transactions per request (the
+  assigner's mini-tx + `EjecutarEnvioAsync`'s), and the rendezvous interceptor has no partner to
+  pair that lone sequential call with.
+- [x] 3.18 Test: cross-punto-de-venta conversion refused, `400 punto_venta_no_coincide`.
   *(mutation target 33 — CONFLICT #3)*
-- [ ] 3.19 Test: `lineas_no_admitidas` (non-empty `lineas` + `idPresupuestoOrigen`) and the
+
+  **DONE** —
+  `ServicioDeVentasConversionTests.LaConversionEnOtroPuntoDeVentaEsRechazada400PuntoVentaNoCoincide`:
+  a quote sent at PV1, converted with `idPuntoVenta = PV2` → `400 punto_venta_no_coincide`, zero
+  comprobantes written, presupuesto stays `Enviado`.
+- [x] 3.19 Test: `lineas_no_admitidas` (non-empty `lineas` + `idPresupuestoOrigen`) and the
   conflicting-`idCliente` refusal. *(mutation target 36)*
-- [ ] 3.20 Test: a raw `UPDATE` desyncing `presupuestos.total` from its items → `409
+
+  **DONE**, two tests —
+  `LineasEnLaSolicitudDeConversionSonRechazadas400LineasNoAdmitidas` and
+  `UnIdClienteEnConflictoConElDelPresupuestoEsRechazado400ClienteNoCoincide`. **CONFLICT #5 — NEW,
+  same class as #3/#4**: neither `design.md` nor `presupuestos/spec.md` names a domain code for the
+  conflicting-`idCliente` refusal (spec only says "MUST be refused rather than silently
+  overridden"). Resolved in favor of the same naming convention `punto_venta_no_coincide` already
+  established for CONFLICT #3: `cliente_no_coincide`, 400.
+- [x] 3.20 Test: a raw `UPDATE` desyncing `presupuestos.total` from its items → `409
   presupuesto_inconsistente`, never a silently different sale. *(mutation target 30,
   mutation-proof-tests rule 12a)*
-- [ ] 3.21 Test: a sale **without** `idPresupuestoOrigen` issues the exact pre-stage command
+
+  **DONE** —
+  `ServicioDeVentasConversionTests.UnRawUpdateQueDesincronizaElTotalDelHeaderEsRechazado409PresupuestoInconsistente`:
+  `presupuestos.total` raw-set to `999999`, item-derived recomputation disagrees → `409
+  presupuesto_inconsistente`, zero comprobantes written.
+- [x] 3.21 Test: a sale **without** `idPresupuestoOrigen` issues the exact pre-stage command
   count — the *"zero extra statements"* criterion, two networks (stage-16 precedent).
   *(mutation target 34)*
-- [ ] 3.22 Test: `ComprobanteEmitido.IdPresupuestoOrigen` round-trip + the unique-index race
+
+  **DONE, two networks.** Network 1 (structural, this slice): `ServicioDeVentasConversionTests.
+  UnaVentaComunSigueEmitiendoDieciseisConsultasConLaRamaDelSnapshotPresente` — `ServicioDeVentas`
+  instantiated DIRECT (same technique as `VentasCheckoutTests.EmitirYContarConsultasAsync`, no
+  HTTP/login noise), asserts `Consultas == 16` for an ordinary `TX` sale with the snapshot branch
+  present but structurally skipped. Network 2 (sibling co-located with the mine, stage-16
+  precedent): `VentasCheckoutTests.ElCheckoutEmiteUnaCantidadConstanteDeConsultasIndependienteDeLaCantidadDeLineas`
+  — that file is UNEDITED by this slice, so its own `16` assertion is the second, INDEPENDENT
+  network: a mutant that widens the guard's condition (e.g. always calling `ResolverAsync`) fails
+  BOTH tests, never just one.
+- [x] 3.22 Test: `ComprobanteEmitido.IdPresupuestoOrigen` round-trip + the unique-index race
   (two concurrent conversions of **different** quotes both succeed with distinct sales).
   *(mutation target 37)*
-- [ ] 3.23 **GATE GUARD, criterio del toque a `ServicioDeVentas` (vinculante, state.yaml)** —
+
+  **DONE** —
+  `ServicioDeVentasConversionTests.ElRoundTripDeIdPresupuestoOrigenYDosConversionesDeDistintosPresupuestosSucedenAmbas`:
+  two DIFFERENT enviado quotes converted concurrently, both `201`, both link to their own
+  presupuesto (`IdPresupuestoOrigen`), distinct comprobante ids; the round-trip also survives a
+  `GET /api/ventas/{id}` reprint, not only the creation response.
+- [x] 3.23 **GATE GUARD, criterio del toque a `ServicioDeVentas` (vinculante, state.yaml)** —
   the diff of `ServicioDeVentas.cs` is bounded to exactly: one clause at `:930`, the decide-phase
   snapshot branch + `MaterializarItemsDesdePresupuesto`, one guarded call inside
   `EjecutarTransaccionAsync` at 1.5. The pinned statement order and both loops (stock `:866-885`,
   CC `:890-914`) are byte-identical — verified by diff review, not tests alone.
   *(design.md binding verify criterion 3)*
-- [ ] 3.24 [P] Non-regression: `VentasCheckoutTests`/`VentasAnulacionTests`/
+
+  **VERIFIED BY DIFF REVIEW.** `git diff` of `ServicioDeVentas.cs` against `main` contains exactly:
+  the `:930` clause; `ExigirSinLineas` + the snapshot-branch call site (replacing the earlier
+  unconditional `ExigirLineasValidas`); the snapshot branch itself + its two new private helpers
+  (`ResolverConversionDesdePresupuestoAsync`/`ResolverZonaDelPuntoVentaAsync`) +
+  `MaterializarItemsDesdePresupuesto` + the totals-fidelity `if`; `PlanDeVenta`'s two new trailing
+  optional fields + their two call-site args; the `conexion`/`transaccionCruda` declarations moved
+  up (no duplicate, no new statement) + the ONE guarded call at 1.5 + `IdPresupuestoOrigen` on the
+  comprobante object initializer + on `Proyectar`'s output. The stock loop (`:866-885` pre-slice)
+  and CC loop (`:890-914` pre-slice) bodies are untouched — `git diff` shows zero changed lines
+  inside either `foreach`/`for`. **`EjecutarAnulacionAsync`/`MarcarAnuladoAsync` are UNTOUCHED by
+  this slice** — the widened `RETURNING` + the `TXR` un-link guarded call (the SECOND guarded call
+  the proposal/state.yaml's stage-wide criterion describes) is `design.md`'s own Slice 6 content
+  (tasks 6.10-6.12, needs `EscriturasDeRemito`/the `TXR` type, neither of which exists before
+  Slice 6) — **registered here explicitly** so state.yaml's stage-wide "two guarded calls" phrasing
+  is not misread as a Slice 3 omission.
+- [x] 3.24 [P] Non-regression: `VentasCheckoutTests`/`AnulacionTests`/
   `VentasAtomicidadYConcurrenciaTests` green and **not edited**.
-- [ ] 3.25 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
-- [ ] 3.26 Open PR #3 `feat/stage17-slice3-guard-y-conversion`, merge after a clean round.
+
+  **DONE** — `git status`/`git diff` show zero changes to the three files (the task list's
+  `VentasAnulacionTests` name is `AnulacionTests.cs` in the actual tree, same file); full run
+  72/72 green (`VentasCheckoutTests` 44, `AnulacionTests` ~20, `VentasAtomicidadYConcurrenciaTests`
+  the remainder — exact counts in the apply-progress artifact).
+- [x] 3.25 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
+  by this apply batch**: `sdd-apply` never launches Judgment Day (executor boundary,
+  `skills/sdd-apply/SKILL.md`); pending the parent orchestrator.
+- [ ] 3.26 Open PR #3 `feat/stage17-slice3-guard-y-conversion`, merge after a clean round. —
+  **NOT run by this apply batch**, same reason as 3.25.
+
+**ADDITION REGISTERED (process rule 15) — `GET /{id}/para-venta`, never given its own numbered
+task.** `design.md`'s own Slicing table lists `/para-venta` as Slice 3 content and
+`ContratosDePresupuesto.cs`'s Slice-2 doc-comment on `PresupuestoParaVenta` explicitly deferred its
+wiring to "Slice 3", but no task 3.x enumerates the endpoint/service-method work itself. Implemented
+as `ServicioDePresupuestos.ObtenerParaVentaAsync` (read-only, never writes, never the price
+authority) + `PresupuestosEndpoints.MapGet("/{id:int}/para-venta", ...)` — refuses the same
+`presupuesto_ya_convertido`/`presupuesto_no_convertible`/`presupuesto_vencido` causes the conversion
+itself checks, in the same priority order. Tests: `ParaVentaDevuelveElShapeCongeladoDeUnPresupuestoEnviado`
+/ `ParaVentaDeUnPresupuestoVencidoEsRechazada409PresupuestoVencido`. No allowlist change required
+(`SuperficieDeAutorizacionTests`'s non-GET allowlist explicitly excludes GET routes from its own
+scope, verified by reading the file's own guard comment).
+
+**DEVIATION REGISTERED (judgment-day, Slice 3, juez B — 1 CRITICAL + 3 MAJOR + 1 WARNING, all
+fixed).** Four survivors, none a production bug — production was correct; the gaps were coverage
+and documentation truth:
+
+- **Target 31 (CRITICAL) / 32-33 (MAJOR)** — the three `WHERE` clauses of
+  `EscriturasDePresupuesto.MarcarConvertidoAsync` (`estado='enviado'`, `vencimiento >= $4`,
+  `id_punto_venta = $3`) survived deletion because `ResolverConversionDesdePresupuestoAsync`'s
+  pre-check eclipses them sequentially — any row reaching the guarded `UPDATE` already passed the
+  same three predicates. Fixed per mutation-proof-tests rule 3 (route below the confound):
+  `MarcarConvertidoAsyncDevuelveCeroFilasSiElEstadoYaNoEsEnviadoAlMomentoDelUpdate` /
+  `...SiHoyYaPasoElVencimiento` / `...SiElPuntoVentaNoCoincide` call
+  `EscriturasDePresupuesto.MarcarConvertidoAsync` DIRECT against a raw connection
+  (`AbrirConexionCrudaAsync`), never through `ServicioDeVentas` — each clause isolated from the
+  pre-check. Plus the TOCTOU joya,
+  `LaCarreraAnularXConvertirDejaCeroVentasYElUpdateGuardeadoRechazaConPresupuestoNoConvertible`: a
+  deterministic pause interceptor (`InterceptorDePausaEnLaSegundaTransaccion`) stops the conversion
+  right as its write transaction opens — pre-check already read `enviado` — while a real
+  `anular` commits underneath it; on resume the guarded `UPDATE` returns 0 rows and the loser gets
+  `409 presupuesto_no_convertible` with zero comprobantes created, proving the `estado` clause of
+  the guarded `UPDATE`, not the pre-check, is the real production net. Mutation evidence recorded
+  in the apply-progress artifact (delete each clause → the matching direct test + the race test go
+  red under `--no-incremental` → revert).
+- **Target 35 (MAJOR) — doc truth on POSITION 1.5.** The 1.5 doc-comment previously claimed the
+  *position* (between turno and the comprobante `INSERT`) was what kept the loser from writing
+  anything. False: the judge moved the block to right before `COMMIT` and the full suite, including
+  the interceptor-driven convertir×convertir race, stayed green. Re-documented honest in
+  `ServicioDeVentas.cs`: correctness comes from transaction ATOMICITY (any throw rolls back
+  everything already written, regardless of line position) plus the partial unique index
+  `ux_comprobantes_venta_presupuesto_origen` (DB backstop); position 1.5 is FAIL-FAST DEFENSIVE
+  (saves materializing items/stock/CC and their lock time for a conversion that's going to fail
+  anyway) — never a correctness claim. Pinned by source-text structural test (same technique as
+  `EscriturasDeOrdenDeCompraLockOrderTests`):
+  `tests/Ways.Application.Tests/Ventas/ServicioDeVentasPosicionDeConversionTests.cs` →
+  `ElBloqueDeConversionVaDespuesDelGuardDeTurnoYAntesDelInsertDelComprobantePorFailFastNoPorCorrectitud`.
+- **Target 34 (WARNING) — doc truth on the "16 queries" counter.** `ContadorDeComandos` only sees
+  EF's `ReaderExecuting[Async]` pipeline — it's blind to raw ADO run via `ExecuteScalarAsync`
+  (how `MarcarConvertidoAsync` runs), so it cannot by itself prove "zero extra statements for a
+  common sale" — it only proves the EF pipeline is unchanged (16 queries). Re-documented honest in
+  both `ServicioDeVentas.cs`'s 1.5 comment and
+  `UnaVentaComunSigueEmitiendoDieciseisConsultasConLaRamaDelSnapshotPresente`'s doc-comment
+  (`ServicioDeVentasConversionTests.cs`): the real net for the unconditional-call risk is the
+  structural guard, added as
+  `ServicioDeVentasPosicionDeConversionTests.LaLlamadaAMarcarConvertidoAsyncNuncaOcurreFueraDelGuardNuloDeIdPresupuestoOrigen`
+  (source-text: the call can only appear inside `if (plan.IdPresupuestoOrigen is { } ...)`, never
+  unconditional) — the query counter stays as evidence for the EF pipeline only, said explicitly.
+
+**DEVIATION REGISTERED (judgment-day, Slice 3, ronda 2, juez A — 1 MAJOR + 1 WARNING, both
+fixed).**
+
+- **MAJOR — `ServicioDeVentas.EmitirAsync` resolved `cliente` unconditionally, before the
+  snapshot branch.** `var cliente = await ResolverClienteAsync(solicitud.IdCliente, ct);` ran
+  BEFORE the `if (solicitud.IdPresupuestoOrigen is { } ...)` branch, so it always executed even
+  for a conversion — (a) an `idCliente` that doesn't exist in the request returned `404 no existe
+  el cliente` instead of the `400 cliente_no_coincide` that p4 (compares raw ids, never resolved)
+  requires; (b) every successful conversion paid a wasted EF query, immediately overwritten by the
+  branch's own assignment. Fixed: the resolution is now conditional to
+  `solicitud.IdPresupuestoOrigen is null` (`else` branch); `ReglaDeComprobantes.ValidarComprobanteAsociado`
+  (the only downstream use of `cliente.Id`) moved to run AFTER both branches leave `cliente`
+  definitively assigned, so no path reads it before the reassignment. Tests:
+  `UnIdClienteInexistenteYDistintoDelPresupuestoEsRechazado400ClienteNoCoincideNoNoEncontrado` (400,
+  not 404) and `UnaConversionExitosaNoPagaLaResolucionDeClienteDesperdiciada` (EF command counter,
+  15 not 16 — `ResolverClienteAsync` runs through the normal EF pipeline, so the counter DOES see
+  it, unlike `MarcarConvertidoAsync`'s raw ADO call). Mutation evidence: reverting the
+  conditionality and rebuilding `--no-incremental` turns both tests red (404 instead of 400; 16
+  instead of 15) — recorded in the fix-agent transcript, then reverted clean via `git checkout --
+  src/`.
+- **WARNING — `EscriturasDePresupuesto.ExigirCausaDelRechazoAsync` checked the PV LAST while its
+  own doc-comment claimed "mismo criterio de prioridad" as the pre-check (which checks PV
+  FIRST, right after the 404-equivalent).** Reordered: PV now checked immediately after the
+  404-equivalent (`!await lector.ReadAsync(ct)`), before `convertido`/`no_convertible`/`vencido` —
+  matching `ResolverConversionDesdePresupuestoAsync`'s pre-check order, making the doc-comment's
+  claim true. Discriminating test (order is behaviorally observable, not just documentation):
+  `ExigirCausaDelRechazoAsyncPriorizaPuntoVentaSobreVencidoMismoOrdenQueElPreChequeo` calls
+  `ExigirCausaDelRechazoAsync` directly against a presupuesto that is BOTH PV-mismatched and
+  vencido (via a `hoyEnZonaDelPuntoVenta` after its vencimiento) and asserts
+  `punto_venta_no_coincide`, not `presupuesto_vencido`. Mutation evidence: moving the PV check back
+  to the end turns this test red (`presupuesto_vencido` instead of `punto_venta_no_coincide`) —
+  recorded in the fix-agent transcript, then reverted clean via `git checkout -- src/`.
+
+Full `ServicioDeVentasConversionTests` run green (24/24) + `VentasCheckoutTests` untouched and
+green (27/27) after both fixes, `--no-incremental` rebuild.
 
 ---
 
