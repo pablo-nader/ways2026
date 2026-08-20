@@ -131,6 +131,12 @@ public interface IWaysDbContext
     DbSet<Presupuesto> Presupuestos { get; }
     DbSet<ItemPresupuesto> ItemsPresupuesto { get; }
 
+    // stage-17-presupuestos-y-remitos, Slice 4 (task 4.18, design.md:448): expuestos desde esta
+    // slice, mismo criterio que Presupuesto/ItemPresupuesto (task 1.17) — ServicioDeRemitos
+    // (slice 5) es el primer consumidor real.
+    DbSet<Remito> Remitos { get; }
+    DbSet<ItemRemito> ItemsRemito { get; }
+
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>
     /// y <c>BeginTransactionAsync</c> no tienen un equivalente más angosto en este proyecto.

@@ -67,6 +67,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
                 npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
                 // stage-17-presupuestos-y-remitos, Slice 1: mismo gap, mismo motivo.
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
+                npgsql.MapEnum<EstadoRemito>("estado_remito");
             })
             .Options;
 

@@ -112,6 +112,7 @@ public static class DependencyInjection
             npgsql.MapEnum<TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
             npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
             npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
+            npgsql.MapEnum<EstadoRemito>("estado_remito");
             npgsql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(3), null);
         });
 }

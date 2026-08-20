@@ -145,6 +145,12 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Presupuesto> Presupuestos => Set<Presupuesto>();
     public DbSet<ItemPresupuesto> ItemsPresupuesto => Set<ItemPresupuesto>();
 
+    // stage-17-presupuestos-y-remitos, Slice 4 (schema + backstops, DB CHANGE GATE aprobado):
+    // mismo trámite que Presupuesto/ItemPresupuesto en slice 1 — ServicioDeRemitos (slice 5) es
+    // el primer consumidor de Application.
+    public DbSet<Remito> Remitos => Set<Remito>();
+    public DbSet<ItemRemito> ItemsRemito => Set<ItemRemito>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>

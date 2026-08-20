@@ -14,6 +14,15 @@ namespace Ways.Domain.Stock;
 /// dentro de la misma transacción que lo agregó). <see cref="Decomiso"/> abre camino de
 /// escritura recién en slice 11 (<c>ServicioDeStock.EjecutarDecomisoAsync</c>);
 /// <see cref="Reclasificacion"/> en slice 4 (<c>ServicioDeLotes.ReconciliarAsync</c>).
+///
+/// <see cref="Remito"/> (etapa 17, proposal §B, decisión 5 del explore/gate §B): NOVENO valor,
+/// declarado ÚLTIMO — mismo mecanismo que <see cref="Decomiso"/>/<see cref="Reclasificacion"/>,
+/// agregado vía <c>ALTER TYPE ... ADD VALUE 'remito'</c> en <c>RemitosEtapa17</c> (slice 4);
+/// ningún <c>Sql()</c> de esa misma migración puede nombrarlo. **IRREVERSIBLE, aceptado y
+/// registrado** (proposal §B): Postgres no soporta <c>DROP VALUE</c>, así que el <c>Down()</c>
+/// de <c>RemitosEtapa17</c> no lo revierte — el valor nace CON su escritor en la misma slice
+/// (<c>ServicioDeRemitos.EmitirAsync</c>, el cuarto write site, slice 5), a diferencia de
+/// <see cref="Decomiso"/>/<see cref="Reclasificacion"/> (schema-only en su slice de origen).
 /// </summary>
 public enum MotivoStock
 {
@@ -24,5 +33,6 @@ public enum MotivoStock
     Transferencia,
     Inventario,
     Decomiso,
-    Reclasificacion
+    Reclasificacion,
+    Remito
 }

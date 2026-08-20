@@ -57,6 +57,15 @@ public class MovimientoStock
     /// slices 4-12 (ningún escritor nuevo en esta slice: schema + seed gate).</summary>
     public int? IdLote { get; set; }
 
+    /// <summary>Etapa 17 (proposal §H, decisión 5 del explore): documento del cuarto write site
+    /// — poblado solo cuando <see cref="Motivo"/> es <see cref="MotivoStock.Remito"/> o la
+    /// <see cref="MotivoStock.Anulacion"/> que lo revierte, mismo criterio que
+    /// <see cref="IdComprobanteCompra"/>. Sin este link, un movimiento de remito sería la única
+    /// fila inatribuible de un ledger append-only cuyo propósito es la reconstrucción. Columna
+    /// creada en esta slice (schema + seed gate), escrita recién desde slice 5
+    /// (<c>ServicioDeRemitos.EmitirAsync</c>/<c>AnularAsync</c>).</summary>
+    public int? IdRemito { get; set; }
+
     public int IdEmpleado { get; set; }
 
     public string? Observaciones { get; set; }

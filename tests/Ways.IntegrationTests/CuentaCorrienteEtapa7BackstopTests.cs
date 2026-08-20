@@ -137,6 +137,10 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
     // mismo motivo que RC en su momento: TiposComprobanteBase ahora también incluye C-FA/C-FB/
     // C-FC (design: Table Shapes — E), y el mismo guard AND EXISTS del seed de compra deja una
     // base fresca intacta para que este seeder la puebla completa y atómica.
+    //
+    // stage-17-presupuestos-y-remitos (Slice 4, proposal §I): el total pasa de 14 a 15 — TXR se
+    // agrega al mismo seed estático (TiposComprobanteBase), mismo mecanismo exacto que C-FA/C-FB/
+    // C-FC en su momento.
     [Fact]
     public async Task UnaBaseFrescaTerminaConElCatalogoCompletoDeTiposIncluidoRc()
     {
@@ -147,10 +151,11 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
 
         var codigos = await db.TiposComprobante.Select(t => t.Codigo).OrderBy(c => c).ToListAsync();
 
-        Assert.Equal(14, codigos.Count);
+        Assert.Equal(15, codigos.Count);
         Assert.Contains("RC", codigos);
         Assert.Contains("FA", codigos);
         Assert.Contains("TX", codigos);
+        Assert.Contains("TXR", codigos);
         Assert.Contains("C-FA", codigos);
         Assert.Contains("C-FB", codigos);
         Assert.Contains("C-FC", codigos);
@@ -202,6 +207,7 @@ public class CuentaCorrienteEtapa7BackstopTests(WaysApiFixture fixture) : IClass
                     // PendingModelChangesWarning.
                     npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
                     npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
+                    npgsql.MapEnum<EstadoRemito>("estado_remito");
                 })
                 .Options;
 

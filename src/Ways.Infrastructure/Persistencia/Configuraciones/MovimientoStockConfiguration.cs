@@ -56,6 +56,10 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
         // slice 4.
         builder.Property(m => m.IdLote).HasColumnName("id_lote");
 
+        // Etapa 17 (proposal §H, decisión 5 del explore): columna creada acá, escrita recién
+        // desde slice 5 (ServicioDeRemitos.EmitirAsync/AnularAsync, el cuarto write site).
+        builder.Property(m => m.IdRemito).HasColumnName("id_remito");
+
         builder.Property(m => m.IdEmpleado).HasColumnName("id_empleado").IsRequired();
         builder.Property(m => m.Observaciones).HasColumnName("observaciones").HasColumnType("text");
 
@@ -83,6 +87,10 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
         // Etapa 12 (proposal decisión 5, gate §C): soporte de fk_movimientos_stock_lote y
         // reconstrucción del ledger por lote.
         builder.HasIndex(m => new { m.IdLote, m.IdArticulo, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_lote");
+
+        // Etapa 17 (proposal §H, index 30, gate §H): soporte de FK 24 + la lectura "los
+        // movimientos de este remito", mirrors ix_movimientos_stock_comprobante_venta.
+        builder.HasIndex(m => new { m.IdRemito, m.IdTenant }).HasDatabaseName("ix_movimientos_stock_remito");
 
         builder.HasOne<Tenant>()
             .WithMany()
@@ -134,6 +142,16 @@ public class MovimientoStockConfiguration : IEntityTypeConfiguration<MovimientoS
             .HasForeignKey(m => new { m.IdLote, m.IdArticulo, m.IdTenant })
             .HasPrincipalKey(l => new { l.Id, l.IdArticulo, l.IdTenant })
             .HasConstraintName("fk_movimientos_stock_lote")
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // FK 24 (proposal §H): composite, nullable, MATCH SIMPLE — el documento del cuarto
+        // write site, misma forma exacta que fk_movimientos_stock_comprobante_venta/
+        // ..._comprobante_compra.
+        builder.HasOne<Remito>()
+            .WithMany()
+            .HasForeignKey(m => new { m.IdRemito, m.IdTenant })
+            .HasPrincipalKey(r => new { r.Id, r.IdTenant })
+            .HasConstraintName("fk_movimientos_stock_remito")
             .OnDelete(DeleteBehavior.Restrict);
 
         // id_empleado: FK SIMPLE (no compuesta), misma deviación deliberada que
