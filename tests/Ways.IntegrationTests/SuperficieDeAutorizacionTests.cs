@@ -93,6 +93,13 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("PUT", "/api/presupuestos/{id:int}"),
         ("POST", "/api/presupuestos/{id:int}/enviar"),
         ("POST", "/api/presupuestos/{id:int}/anular"),
+        // stage-17-presupuestos-y-remitos (Slice 5, design decisión 17/proposal decisión 10):
+        // /api/remitos agrupa SOLO bajo OperacionDePos, mismo criterio que /api/presupuestos —
+        // un Vendedor tiene que poder despachar un remito.
+        ("POST", "/api/remitos/"),
+        ("PUT", "/api/remitos/{id:int}"),
+        ("POST", "/api/remitos/{id:int}/emitir"),
+        ("POST", "/api/remitos/{id:int}/anular"),
 
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).

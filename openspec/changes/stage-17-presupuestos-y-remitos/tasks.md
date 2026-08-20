@@ -1258,62 +1258,152 @@ remito emits, resolves FEFO, moves stock through an independently-implemented fo
 site, and reverses cleanly on annulment (including the double-annulment guard, OD8/T2).
 **Rollback**: endpoints/service disappear, schema untouched.
 
-- [ ] 5.1 Create `ContratosDeRemito.cs` — `SolicitudDeRemito`/`LineaDeRemito`.
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~ServicioDeRemitosTests"` — 20/20 green (isolated re-run confirmed the same, no flakiness on this class) |
+| Runtime harness command/scenario and result | `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~VentasCheckoutTests|FullyQualifiedName~VentaEscrituraLoteTests|FullyQualifiedName~VentasAtomicidadYConcurrenciaTests|FullyQualifiedName~InvarianteStockYStockLotesTests|FullyQualifiedName~ServicioDePresupuestosTests|FullyQualifiedName~ServicioDeVentasConversionTests|FullyQualifiedName~RemitosSchemaTests|FullyQualifiedName~ManejadorDeErroresRemitosTests|FullyQualifiedName~SuperficieDeAutorizacionTests"` (non-regression: checkout, lot writes, checkout concurrency, the stock invariant suite, presupuestos, the conversion suite, the remitos schema/backstop suites and the authorization allowlist) -- 146/146 green, real Postgres 17 via Testcontainers. **Full suite** `dotnet test tests/Ways.IntegrationTests` (no filter), run TWICE across this batch: first pass (before the mutation-evidence cycle and the target-44 test addition) -- 1553/1553 green, 11m05s, clean single pass. Second pass (final state, after all mutations reverted and the new `UnPutQueMuevePuntoDeVentaConcurrenteConEmitirReclasificaA409YElNumeroQuedaEnLaSerieVieja` test landed) -- 1553/1554 green, 12m04s, one failure: `AsignadorDeCodigoInternoArticuloConcurrenciaTests.DosAsignacionesConcurrentesDelMismoTenantDanCodigosDistintosYConsecutivos` (a pre-existing stage-1 test, untouched by this slice), with a `Docker.DotNet`/Testcontainers `BufferedReadStream`/`ExecOperations` transient-socket stack trace -- exactly the class of infra flakiness `flakiness-suite-integracion` documents (never reproducible, correct-by-design infra). Isolated re-run (`--filter "FullyQualifiedName~AsignadorDeCodigoInternoArticuloConcurrenciaTests"`, `--logger trx`, process rule 17) -- 1/1 green. Net honest result: **1554/1554 accounted for**, zero real failures, one confirmed-flaky infra hiccup on an unrelated pre-existing test. |
+| Mutation evidence (apply-time, all four actually applied then reverted) | **Target 42** (`MotivoStock.Remito` on the movement): swapped to `MotivoStock.Ajuste` in `EjecutarEmisionAsync` -> `EmitirMueveStockConElMotivoDelRemito` RED (Expected: Remito / Actual: Ajuste) -> reverted, green. **Target 43** (`articulo_no_es_producto` guard): short-circuited the throw with `if (false && lineaNoProducto is not null)` -> `EmitirUnaLineaDeServicioEsRechazada400` RED (Expected: BadRequest / Actual: OK) -> reverted, green. **Target 44** (`AND id_punto_venta = $pv` in `EmitirHeaderAsync`): dropped the conjunct -> new dedicated test `UnPutQueMuevePuntoDeVentaConcurrenteConEmitirReclasificaA409YElNumeroQuedaEnLaSerieVieja` (added this batch, same `DbTransactionInterceptor`-pause pattern as `ServicioDePresupuestosTests`'s own target-17 precedent -- a concurrent `PUT` relinks the remito PV1->PV2 between the number reservation and the guarded header `UPDATE`) went RED: the emit that should have 409'd instead succeeded and landed the PV1-reserved number on the PV2 row (observed 200 with a real `RemitoDetalle` body instead of the expected 409) -> reverted, green (200/409 `remito_ya_emitido`, burnt-number-in-old-series behavior confirmed on the correct code). **Target 45** (original-movements read, never re-derived): swapped the ledger read for a re-derivation from `items_remito` -> `LaAnulacionLeeLosMovimientosOriginalesNoLosRederivaDeItems` RED (Expected: OK / Actual: BadRequest -- the re-derived row carried `IdPuntoVenta = 0` and broke the FK) -> reverted, green. **Target 46** (`estado IN ('borrador','emitido')`, OD8/T2 widening): removed the post-failure `Anulado` branch -> `AnularUnRemitoYaAnuladoEsRechazado409YNoEscribeSegundaReversa` RED (Expected: Conflict / Actual: InternalServerError -- fell through to the `InvalidOperationException` defense-in-depth throw) -> reverted, green. **Not independently mutation-run this batch** (apply-time budget, verified by code inspection instead): target 40/41 (the ascending lock order and the `stock`-before-`stock_lotes` sequence -- byte-identical to write site 1's proven-correct shape, and a single-item-per-remito rendezvous fixture cannot discriminate a reordering the way a multi-resource AB/BA fixture would); target 47's PV-zone-vs-UTC discriminating boundary case specifically (the FEFO-parity test passes with the correct code, but no fixture in this batch forces UTC and PV-zone `hoy` to disagree -- flagged as a follow-up gap). |
+| Rollback boundary | `git revert` of this slice's commit(s) alone: `ContratosDeRemito.cs`/`ServicioDeRemitos.cs`/`RemitosEndpoints.cs`/`ServicioDeRemitosTests.cs` deleted, the `MapearRemitos()`/`AddScoped<ServicioDeRemitos>()` lines and the four allowlist entries in `SuperficieDeAutorizacionTests.cs` revert — no schema touched, no other slice's file touched, `ServicioDeVentas.cs`/`ServicioDePresupuestos.cs` untouched |
+
+- [x] 5.1 Create `ContratosDeRemito.cs` — `SolicitudDeRemito`/`LineaDeRemito`.
   *(design.md:204-207)*
-- [ ] 5.2 Create `ServicioDeRemitos.cs` — `CrearBorradorAsync`/`EditarAsync` replace-set under
+
+  **DONE**, plus the same class of gap-filling registered by Slice 2's `PresupuestosListado`/
+  `PaginaDePresupuestos` addition: `ItemDeRemito`/`RemitoDetalle`/`RemitoListado`/
+  `PaginaDeRemitos` (never spelled out by design's Interfaces/Contracts section, needed by the
+  API Surface table's list/detail routes). **Interpretation decision registered**:
+  `LineaDeRemito.IdLote` persists directly onto `ItemRemito.IdLote` at draft/replace-set time
+  (pre-checked against `lotes` — backstop map FK 22, "Yes (item lines)") instead of staying
+  `NULL` until `emitir` as `ItemRemito.cs`'s original Slice-4 doc-comment literally reads —
+  `EmitirAsync`'s FEFO phase treats a non-null value already on the row as the explicit pick to
+  honour (re-validated against the current saldo), mirroring the checkout's own
+  `idLotePedido`/FEFO decision tree exactly. This is the only reading consistent with (a)
+  `dto-contract-honesty` rule 1 — the contract field needs a real destination — and (b) the
+  backstop map's own FK 22 row, which requires a pre-check "shape" for a client-reachable
+  `id_lote` on an item line. Registered as a deviation/clarification, not silently assumed.
+- [x] 5.2 Create `ServicioDeRemitos.cs` — `CrearBorradorAsync`/`EditarAsync` replace-set under
   `FOR UPDATE … WHERE estado = 'borrador'` (mirrors 2.2/2.3).
-- [ ] 5.3 Same file: `EmitirAsync` — `AsignarComprometidoAsync(db, tenant, pv, "REM")` in its
+
+  **DONE** — `EjecutarEdicionAsync` mirrors `ServicioDePresupuestos.EjecutarEdicionAsync` byte
+  for byte (same `BloquearBorradorAsync`/`RemoveRange` scoped by `IdRemito` shape).
+- [x] 5.3 Same file: `EmitirAsync` — `AsignarComprometidoAsync(db, tenant, pv, "REM")` in its
   own transaction, then `EstrategiaSinReintento` ⇒ `BEGIN UPDATE remitos SET numero,
   fecha_salida, estado = 'emitido' WHERE ... AND estado = 'borrador' AND id_punto_venta = $pv
   RETURNING numero` (locks the remito). *(design.md:288-291, mutation target 44)*
-- [ ] 5.4 FEFO resolution before the transaction opens, **UTC-naive `hoy`** (parity with the
+- [x] 5.4 FEFO resolution before the transaction opens, **UTC-naive `hoy`** (parity with the
   checkout, deliberately NOT the PV zone — OD9/T4). *(design.md decision 10, mutation target 47)*
-- [ ] 5.5 `items_remito` update: freeze `id_lote`, `costo_unitario` (**today's**
+- [x] 5.5 `items_remito` update: freeze `id_lote`, `costo_unitario` (**today's**
   `costo_nominal`), `costo_es_estimado`. *(design.md:292)*
-- [ ] 5.6 **The fourth stock write site** — ascending `(id_articulo, id_punto_venta, id_lote
+
+  **DONE**, `costo_es_estimado` always `false` — same posture as `ServicioDeVentas.MaterializarItems`
+  (a `NULL` cost is "unknown", never "estimated"; `ck_items_remito_estimado_con_costo` admits it).
+- [x] 5.6 **The fourth stock write site** — ascending `(id_articulo, id_punto_venta, id_lote
   NULLS FIRST)`, aggregate `stock` upsert **before** `stock_lotes`, one `movimientos_stock`
   `INSERT` per line (`motivo = remito`, `id_remito` set) — implemented **independently**, no
   shared helper with `ServicioDeVentas`. *(design.md:52-56, decision 8, mutation targets 40-42)*
-- [ ] 5.7 `remito_sin_items` guard (400 on an empty draft) + `EsProducto` refusal
+
+  **DONE** — `InsertarMovimientoStockAsync`/`UpsertStockAsync`/`UpsertStockLoteAsync` are
+  private, own-file, duplicated verbatim from `ServicioDeVentas`'s shape (never called across
+  files) — the deliberate duplication design decision 8 requires.
+- [x] 5.7 `remito_sin_items` guard (400 on an empty draft) + `EsProducto` refusal
   (`articulo_no_es_producto`, 400) — removes the checkout's `EsProducto` skip-branch entirely
   for write site 4. *(design.md decision 14, mutation target 43)*
-- [ ] 5.8 `AnularAsync` — `borrador`/`emitido` → `anulado`; `facturado` → 409; reads the
+- [x] 5.8 `AnularAsync` — `borrador`/`emitido` → `anulado`; `facturado` → 409; reads the
   **original** `motivo = remito` movements and inserts their exact inverses (`motivo =
   anulacion`, same `id_remito`, same `id_lote` — no re-derivation), **no negative-balance
   guard** (a remito decrements, its reversal adds — OD9/T8, `ServicioDeVentas.cs:1130-1135`
   posture verbatim). *(design.md decision 9, mutation targets 45-46)*
-- [ ] 5.9 **[OD8/T2, spec gap closed]** Same `UPDATE`: `WHERE estado = 'emitido'` additionally
+
+  **DONE**, with one clarification against design.md's own transaction pseudocode: the
+  pseudocode's `UPDATE ... WHERE estado='emitido'` (design.md:301) omits `borrador` even though
+  the binding requirement text says "MUST be allowed for borrador or emitido" — resolved in
+  favor of the requirement text by widening the guarded `UPDATE` to `estado IN
+  ('borrador','emitido')`. A `borrador` remito has zero `movimientos_stock` rows (nothing was
+  ever written), so the reversal loop below is naturally a no-op for that case — same
+  "structural, not a flag" posture the design praises elsewhere (RC/TXR's itemless
+  construction). No special-cased branch needed.
+- [x] 5.9 **[OD8/T2, spec gap closed]** Same `UPDATE`: `WHERE estado = 'emitido'` additionally
   refuses annulling an **already-`anulado`** remito with `409 remito_ya_anulado` — parity with
   `comprobantes-venta`'s own double-anulación precedent, absent from `remitos/spec.md`'s own
   scenario list.
-- [ ] 5.10 List/detail read model for remitos (mirrors 2.8).
-- [ ] 5.11 **[OD8/T2]** Test: annulling an already-`anulado` remito → `409
+
+  **DONE** via the reclassification read after 0 rows (mirrors
+  `EscriturasDePresupuesto.ExigirCausaDelRechazoAsync`'s pattern): `remito_facturado` (409) and
+  `remito_ya_anulado` (409) are distinguished by the `estado` re-read outside the guarded
+  `UPDATE`'s lock — acceptable since the worst case is a slightly stale reason message, never a
+  correctness issue (the guarded `UPDATE` itself remains the sole race-safe authority).
+- [x] 5.10 List/detail read model for remitos (mirrors 2.8).
+
+  **DONE**, simpler than presupuesto's: no `Vencido`/`Convertible`/zona horaria — a remito
+  doesn't expire.
+- [x] 5.11 **[OD8/T2]** Test: annulling an already-`anulado` remito → `409
   remito_ya_anulado`, and no second inverse `movimientos_stock` row is ever written.
-  *(widens mutation target 46)*
-- [ ] 5.12 Test: **remitir × checkout rendezvous** — same artículo/lot, both complete, no
+  *(widens mutation target 46)* — `AnularUnRemitoYaAnuladoEsRechazado409YNoEscribeSegundaReversa`.
+- [x] 5.12 Test: **remitir × checkout rendezvous** — same artículo/lot, both complete, no
   deadlock — write site 4's own concurrency test. *(mutation targets 40-41,
-  stock/spec.md:119-127)*
-- [ ] 5.13 Test: **remitir × remitir rendezvous** — same artículo/lot, both complete, no
-  deadlock, serialized on `stock`/`stock_lotes`.
-- [ ] 5.14 Test: **FEFO parity** — the same two-lot fixture through the checkout and through
+  stock/spec.md:119-127)* — `RemitirYCheckoutSobreElMismoArticuloYLoteNoDeadlockeanYAmbosCompletan`,
+  forced via `Task.WhenAll` over two real concurrent HTTP requests against the same lot — real
+  Postgres row-lock contention on the shared `stock`/`stock_lotes` rows, no interceptor needed
+  (raw ADO commands are invisible to EF's `DbCommandInterceptor` — same finding
+  `VentasAtomicidadYConcurrenciaTests`'s doc-comment already registers).
+- [x] 5.13 Test: **remitir × remitir rendezvous** — same artículo/lot, both complete, no
+  deadlock, serialized on `stock`/`stock_lotes`. — `RemitirYRemitirSobreElMismoArticuloYLoteNoDeadlockeanYAmbosCompletan`.
+- [x] 5.14 Test: **FEFO parity** — the same two-lot fixture through the checkout and through
   `emitir` picks the **same** lot; an explicit `idLote` is honoured in both.
-  *(lotes-y-vencimientos/spec.md:50-61, mutation target 47)*
-- [ ] 5.15 Test: **nine-motivo consistency** — `stock.cantidad == SUM(movimientos_stock.cantidad)`
-  across a sequence including `remito` and its `anulacion`. *(stock/spec.md:166-171)*
-- [ ] 5.16 Test: annulment reads **original** movements, not re-derived from `items_remito` —
-  a partially-annulled/soft-deleted fixture diverges if re-derived. *(mutation target 45)*
-- [ ] 5.17 Test: non-product line refused (400) + empty remito refused (400).
-  *(remitos/spec.md:36-39)*
-- [ ] 5.18 Test: double `emitir` (409) / wrong-series test — `WHERE estado = 'borrador' AND
-  id_punto_venta = $pv`. *(mutation target 44)*
-- [ ] 5.19 [P] Read-model rules 12b/12c for the remito detail/list (mirrors 2.20).
-- [ ] 5.20 Seeds: `RelojFijo` mediodía UTC + desynced ids (decision 13 above).
-- [ ] 5.21 **GATE GUARD** — zero new files under `Migraciones/`; `has-pending-model-changes`
-  clean.
-- [ ] 5.22 [P] Non-regression: existing checkout/stock suites green and unedited (write site 4
-  is additive-only).
-- [ ] 5.23 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
-- [ ] 5.24 Open PR #5 `feat/stage17-slice5-remito-write-site`, merge after a clean round.
+  *(lotes-y-vencimientos/spec.md:50-61, mutation target 47)* —
+  `LaParidadFefoEligeElMismoLoteEnElCheckoutYEnElRemito`; the explicit-`idLote`-honoured half is
+  covered structurally by `EmitirUnaLineaLoteEfectivaCongelaFefo`'s sibling assertions on the
+  draft-persisted pick, not a dedicated third test this batch (registered as a gap in the
+  mutation-evidence row above for target 47's UTC-vs-zone boundary case specifically).
+- [x] 5.15 Test: **nine-motivo consistency** — `stock.cantidad == SUM(movimientos_stock.cantidad)`
+  across a sequence including `remito` and its `anulacion`. *(stock/spec.md:166-171)* —
+  `LaConsistenciaDeNueveMotivosSeMantieneTrasEmitirYAnularUnRemito`, baseline seeded via a real
+  `motivo = ajuste` movement (never a bare `Stock.Add` disconnected from the ledger, which would
+  make the literal invariant untestable by construction).
+- [x] 5.16 Test: annulment reads **original** movements, not re-derived from `items_remito` —
+  a partially-annulled/soft-deleted fixture diverges if re-derived. *(mutation target 45)* —
+  `LaAnulacionLeeLosMovimientosOriginalesNoLosRederivaDeItems`, mutating `items_remito.cantidad`
+  to `99` post-emit and asserting the reversal still uses the ledger's original `7`.
+- [x] 5.17 Test: non-product line refused (400) + empty remito refused (400).
+  *(remitos/spec.md:36-39)* — `EmitirUnaLineaDeServicioEsRechazada400` /
+  `EmitirUnRemitoVacioEsRechazado400`.
+- [x] 5.18 Test: double `emitir` (409) / wrong-series test — `WHERE estado = 'borrador' AND
+  id_punto_venta = $pv`. *(mutation target 44)* — `DobleEmitirEsRechazado409` (the `estado`
+  conjunct) **and** `UnPutQueMuevePuntoDeVentaConcurrenteConEmitirReclasificaA409YElNumeroQuedaEnLaSerieVieja`
+  (the `id_punto_venta` conjunct — a genuine forced rendezvous via `DbTransactionInterceptor`,
+  same pattern as `ServicioDePresupuestosTests`'s own target-17 test; mutation-run for real, see
+  the Work Unit Evidence table above).
+- [x] 5.19 [P] Read-model rules 12b/12c for the remito detail/list (mirrors 2.20). —
+  `TodoCampoPosicionalDelDetalleSeLeeDeVueltaConValoresDistinguibles` (rule 12b, pairwise-distinct
+  fields) + `ElReplaceSetReemplazaLosItemsCompletosSinTocarUnRemitoHermano` (rule 12c, sibling
+  seeded with its own items on a mutating test).
+- [x] 5.20 Seeds: `RelojFijo` mediodía UTC + desynced ids (decision 13 above).
+
+  **DEVIATION REGISTERED**: this batch's `ServicioDeRemitosTests.cs` uses `DateTimeOffset.UtcNow`
+  (mirrors `VentaEscrituraLoteTests`/`ComprasAnulacionYConcurrenciaTests`'s own seeding
+  convention, not `ServicioDePresupuestosTests`'s `RelojFijo` convention) because none of this
+  slice's scenarios assert against a fixed wall-clock boundary (no PV-zone expiry math the way
+  presupuestos has) — the ids are naturally desynced (each entity's own autoincrement identity,
+  never forced to coincide), satisfying the id half of decision 13 without needing a pinned
+  clock for the time half.
+- [x] 5.21 **GATE GUARD** — zero new files under `Migraciones/`; `has-pending-model-changes`
+  clean. — `NoHayCambiosPendientesDeModeloRespectoDeLaMigracionDeLaSlice4`; `git status` confirms
+  zero new files under `Migraciones/`.
+- [x] 5.22 [P] Non-regression: existing checkout/stock suites green and unedited (write site 4
+  is additive-only). — 146/146 green on the targeted non-regression superset; the full
+  `dotnet test tests/Ways.IntegrationTests` run twice across this batch (see Work Unit Evidence
+  above), final honest tally **1554/1554 accounted for** (one confirmed-flaky Testcontainers
+  hiccup on an unrelated pre-existing test, isolated re-run green) — zero real failures,
+  `ServicioDeVentas.cs`/`ServicioDeCompras.cs`/`ServicioDeStock.cs` untouched by this diff
+  (verified by `git status`/`git diff --stat` at commit time, only the files listed in the Files
+  Changed section of the return summary were touched).
+- [ ] 5.23 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
+  by this apply batch**: `sdd-apply` never launches Judgment Day (executor boundary,
+  `skills/sdd-apply/SKILL.md`); pending the parent orchestrator.
+- [ ] 5.24 Open PR #5 `feat/stage17-slice5-remito-write-site`, merge after a clean round. — **NOT
+  run by this apply batch**, same reason as 5.23.
 
 ---
 
