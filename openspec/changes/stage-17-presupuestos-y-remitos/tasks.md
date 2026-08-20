@@ -1215,8 +1215,11 @@ value `'remito'` is NOT reverted — irreversible, accepted, registered** (`prop
   - Full suite confirmed green after all five fixes: **1533/1533**, run TWICE (once mid-batch to
     surface the failures, once final to confirm — never concurrently, per the apply protocol).
 - [x] 4.36 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
-- [ ] 4.37 Open PR #4 `feat/stage17-slice4-schema-remitos`, merge after a clean round. — **NOT
-  run by this apply batch**, same reason as 4.36.
+- [x] 4.37 Open PR #4 `feat/stage17-slice4-schema-remitos`, merge after a clean round. — **DONE
+  by the orchestrator**: PR #150, merged `7c8fdf5` after the clean round (B APPROVE 10/10
+  mutantes muertos + A APPROVE 1 SUGGESTION + ronda 1 de fixes `05840a5` + pasada acotada de B
+  sobre el delta de producción: APPROVE). The pre-existing UTC-boundary defect surfaced by this
+  slice's full-suite runs was fixed separately in PR #149 (merged before this one).
 
 **DEVIATION REGISTERED (judgment-day, Slice 4, ronda 1 — 1 WARNING de juez B + 1 SUGGESTION de
 juez A, ambos APPROVE, fixed anyway per protocol).**
