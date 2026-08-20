@@ -1376,9 +1376,22 @@ site, and reverses cleanly on annulment (including the double-annulment guard, O
   same pattern as `ServicioDePresupuestosTests`'s own target-17 test; mutation-run for real, see
   the Work Unit Evidence table above).
 - [x] 5.19 [P] Read-model rules 12b/12c for the remito detail/list (mirrors 2.20). —
-  `TodoCampoPosicionalDelDetalleSeLeeDeVueltaConValoresDistinguibles` (rule 12b, pairwise-distinct
-  fields) + `ElReplaceSetReemplazaLosItemsCompletosSinTocarUnRemitoHermano` (rule 12c, sibling
-  seeded with its own items on a mutating test).
+  `TodoCampoPosicionalDelDetalleSeLeeDeVueltaConValoresDistinguibles` (rule 12b) +
+  `ElReplaceSetReemplazaLosItemsCompletosSinTocarUnRemitoHermano` (rule 12c, sibling seeded with
+  its own items on a mutating test).
+
+  **STRENGTHENED (mutation-proof-tests rule 12b, self-caught before commit)**: the first draft of
+  the 12b test only asserted a handful of fields with an implicit `Subtotal == Total`
+  (no-discount) fixture — the exact confound rule 12b's own doc-comment warns about. Rebuilt with
+  a real 20% oferta (`Subtotal=766/DescuentoTotal=20/Total=746`, pairwise-distinct, mirrors
+  `ServicioDePresupuestosTests`'s own 12b fix) plus a post-`emitir` read covering
+  `Numero`/`NumeroFormateado`/`FechaSalida`/`Estado`/per-item `CostoUnitario` (null vs. frozen)
+  and the listing row's mirrored fields. One assertion attempt (`Id`/`IdPuntoVenta`/`IdCliente`/
+  `IdEmpleado` pairwise-distinct) was REVERTED after it failed on a real fixture — cross-table
+  autoincrement ids can coincide by pure sequence coincidence, not by any code invariant, so that
+  assertion was flaky-by-construction rather than discriminating; replaced with an exact-value
+  read-back against the known seeded ids instead (still catches a positional swap, without
+  asserting an accident of test-run ordering).
 - [x] 5.20 Seeds: `RelojFijo` mediodía UTC + desynced ids (decision 13 above).
 
   **DEVIATION REGISTERED**: this batch's `ServicioDeRemitosTests.cs` uses `DateTimeOffset.UtcNow`

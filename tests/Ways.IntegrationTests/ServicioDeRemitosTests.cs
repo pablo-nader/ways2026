@@ -299,35 +299,88 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
     public async Task TodoCampoPosicionalDelDetalleSeLeeDeVueltaConValoresDistinguibles()
     {
         var ctx = await PrepararAsync(nameof(TodoCampoPosicionalDelDetalleSeLeeDeVueltaConValoresDistinguibles));
-        var idArticulo1 = await SembrarArticuloAsync(ctx, "Rem Distinto A", 111m);
+        var idArticulo1 = await SembrarArticuloAsync(ctx, "Rem Distinto A", 100m, costoNominal: 40m);
         var idArticulo2 = await SembrarArticuloAsync(ctx, "Rem Distinto B", 222m);
+
+        // mutation-proof-tests rule 12b: una oferta real hace que Subtotal/DescuentoTotal/Total
+        // sean pairwise-distintos (sin descuento, Subtotal == Total siempre, y un swap de esos dos
+        // campos pasaría en verde) — mismo fix que ServicioDePresupuestosTests's propio 12b.
+        await CrearOfertaAsync(ctx.Admin, OfertaDeArticulo(idArticulo1, 20m));
 
         var solicitud = new SolicitudDeRemito(
             ctx.IdPuntoVenta, ctx.IdCliente, "direccion distinguible", "obs distinguible",
             [new LineaDeRemito(idArticulo1, 1m, null), new LineaDeRemito(idArticulo2, 3m, null)]);
         var creado = await CrearBorradorAsync(ctx.Admin, solicitud);
 
+        // Subtotal = 100 + 666 = 766; descuento = 20 (20% de 100); Total = 746 — los tres
+        // pairwise-distintos, cierra la clase de mutante "swap Subtotal<->Total" en el header.
+        Assert.Equal(766m, creado.Subtotal);
+        Assert.Equal(20m, creado.DescuentoTotal);
+        Assert.Equal(746m, creado.Total);
+        Assert.NotEqual(creado.Subtotal, creado.DescuentoTotal);
+        Assert.NotEqual(creado.Subtotal, creado.Total);
+        Assert.NotEqual(creado.DescuentoTotal, creado.Total);
+
         Assert.Equal(2, creado.Items.Count);
         var item1 = creado.Items.Single(i => i.IdArticulo == idArticulo1);
         var item2 = creado.Items.Single(i => i.IdArticulo == idArticulo2);
 
-        // Subtotal == 111 + 666 == 777, sin descuento — pero DescuentoTotal/Subtotal/Total siguen
-        // siendo campos DISTINTOS entre sí (0 != 777 != 777... el par Subtotal/Total coincide sin
-        // descuento, así que el valor discriminante real acá es item1.Total != item2.Total y
-        // item1.Orden != item2.Orden, cubriendo la clase de mutante "swap de dos campos del
-        // mismo item").
         Assert.NotEqual(item1.Total, item2.Total);
         Assert.NotEqual(item1.Orden, item2.Orden);
         Assert.NotEqual(item1.PrecioUnitario, item2.PrecioUnitario);
+        Assert.NotEqual(item1.Descuento, item2.Descuento);
         Assert.Equal("direccion distinguible", creado.DireccionEntrega);
         Assert.Equal("obs distinguible", creado.Observaciones);
         Assert.Equal(ctx.IdPuntoVenta, creado.IdPuntoVenta);
         Assert.Equal(ctx.IdCliente, creado.IdCliente);
+        Assert.Equal(EstadoRemito.Borrador, creado.Estado);
+        Assert.Null(creado.Numero);
+        Assert.Null(creado.NumeroFormateado);
+        Assert.Null(creado.FechaSalida);
+        Assert.Null(creado.IdComprobanteVenta);
+
+        // rule 12b, mitad post-emitir: Numero/FechaSalida/CostoUnitario pasan de null a un valor
+        // real y distinguible — la identidad (Id/IdPuntoVenta/IdCliente/IdEmpleado, cuatro ints
+        // consecutivos en el constructor posicional) se lee de vuelta pairwise-distinta.
+        var emitido = (await (await ctx.Admin.PostAsync($"/api/remitos/{creado.Id}/emitir", null))
+            .Content.ReadFromJsonAsync<RemitoDetalle>(OpcionesJson))!;
+
+        Assert.Equal(EstadoRemito.Emitido, emitido.Estado);
+        Assert.Equal(1, emitido.Numero);
+        Assert.Equal($"{ctx.IdPuntoVenta:D4}-00000001", emitido.NumeroFormateado);
+        Assert.NotNull(emitido.FechaSalida);
+        Assert.True(emitido.FechaSalida >= emitido.FechaEmision);
+        // Identidad leída de vuelta contra los valores REALES sembrados — nunca una comparación
+        // cruzada entre ids de tablas distintas (esas coinciden por casualidad de secuencia, no
+        // por invariante alguno; una assertion así sería flaky por construcción, no discriminante).
+        Assert.Equal(creado.Id, emitido.Id);
+        Assert.Equal(ctx.IdPuntoVenta, emitido.IdPuntoVenta);
+        Assert.Equal(ctx.IdCliente, emitido.IdCliente);
+        Assert.Equal(ctx.IdUsuarioAdmin, emitido.IdEmpleado);
+        Assert.Equal(40m, emitido.Items.Single(i => i.IdArticulo == idArticulo1).CostoUnitario);
+        Assert.Null(emitido.Items.Single(i => i.IdArticulo == idArticulo2).CostoUnitario);
 
         var listado = await ctx.Admin.GetFromJsonAsync<PaginaDeRemitos>(
             $"/api/remitos?idPuntoVenta={ctx.IdPuntoVenta}", OpcionesJson);
         var fila = listado!.Items.Single(r => r.Id == creado.Id);
-        Assert.Equal(creado.Total, fila.Total);
+        Assert.Equal(emitido.Total, fila.Total);
+        Assert.Equal(emitido.Numero, fila.Numero);
+        Assert.Equal(emitido.NumeroFormateado, fila.NumeroFormateado);
+        Assert.Equal(emitido.Estado, fila.Estado);
+    }
+
+    /// <summary>Mismo shape que <c>ServicioDePresupuestosTests.OfertaDeArticulo</c> — oferta
+    /// directa, sin ventana de vigencia, alcance a un único artículo.</summary>
+    private static Ways.Application.Ofertas.AltaOferta OfertaDeArticulo(int idArticulo, decimal porcentaje) => new(
+        Nombre: "oferta de remito de prueba", IdEmpresa: null, IdArticulo: idArticulo, IdGrupo: null,
+        IdCategoria: null, FechaDesde: null, FechaHasta: null, HoraDesde: null, HoraHasta: null,
+        DiasSemana: null, CantidadMinima: null, PrecioUnitario: null, Porcentaje: porcentaje,
+        ImporteFijo: null, Prioridad: 0, Acumulable: false);
+
+    private static async Task CrearOfertaAsync(HttpClient cliente, Ways.Application.Ofertas.AltaOferta datos)
+    {
+        var respuesta = await cliente.PostAsJsonAsync("/api/ofertas", datos);
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
     // ---- task 5.3-5.6: emitir — el cuarto write site (mutation targets 40-42) ----------------------
