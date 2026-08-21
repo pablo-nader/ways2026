@@ -1,0 +1,171 @@
+change: stage-18-etiquetas-y-consulta
+phase: propose
+status: done
+artifact_store: openspec
+execution_mode: automatic-autonomous
+delivery_strategy: auto-chain
+chain_strategy: stacked-to-main
+db_gate: CERO-SCHEMA-APROBADO
+db_gate_approval: >-
+  PROPUESTO 2026-08-21 por sdd-propose bajo mandato autonomo delegado:
+  CERO CAMBIOS DE SCHEMA para toda la etapa — cero migraciones, cero
+  tablas, cero columnas, cero enums, cero ALTER, cero data statements,
+  cero cambios de seed, cero indices. RATIFICADO POR EL ORQUESTADOR (2026-08-21, verificacion
+  independiente registrada): (1) el proposal no contiene ningun CREATE/
+  ALTER/data statement — grep verificado; (2) la ultima migracion del
+  arbol es 20260820004658_RemitosEtapa17 y el criterio vinculante exige
+  que SIGA siendo la ultima al verify (ruta real corregida en el
+  proposal: src/Ways.Infrastructure/Persistencia/Migraciones/);
+  (3) has-pending-model-changes limpio como segundo criterio; (4) las
+  3 OD del orquestador (CSS-print con spike binario doble, consulta
+  bajo auth existente con B2 diferida al dueño, C3 plantillas fijas
+  con descriptor tipado) son la base del cero-schema — si cualquiera
+  se revierte, el gate se REABRE formalmente. La seccion 'Modelo de datos propuesto — CERO CAMBIOS DE
+  SCHEMA' del proposal es EL CONTRATO: cualquier DDL que proponga una
+  fase posterior es violacion de alcance y REABRE el gate. Consecuencia
+  directa de la Orchestrator Decision 3 (formatos C3 = plantillas fijas
+  en codigo, con el descriptor como TIPO interno de TypeScript
+  DescriptorDeFormato, no como fila) — la expansion C1 (tabla
+  formatos_etiqueta [catalogo], id_tenant + id_empresa NULL, doc-09:84)
+  queda registrada como camino de reapertura CON su propio gate.
+  Precedente: etapas 10, 11 y 13 entregaron etapas completas con cero
+  DDL. CRITERIO DE VERIFY VINCULANTE: ningun archivo nuevo bajo
+  src/Ways.Infrastructure/Migrations/ y
+  'dotnet ef migrations has-pending-model-changes' limpio.
+  SUPERFICIE DE AUTORIZACION: Politicas.cs INTOCADA (decision 10) —
+  ambas features bajo OperacionDePos, nada apilado; el DTO de etiquetas
+  NO lleva ningun campo de costo/proveedor (clausula de exposicion de
+  datos, dto-contract-honesty, aserta contra el JSON serializado).
+  API NUEVA: exactamente UN endpoint (POST /api/etiquetas/datos,
+  read-only POST, precedente /api/ofertas/resolver) + TRES query params
+  opcionales aditivos en GET /api/articulos (idArea, idCategoria con
+  descendientes, idMarca) con la ruta sin filtros byte-identica.
+orchestrator_decisions:
+  OD1: >-
+    IMPRESION = A1 (CSS print puro) extendiendo la infra de la etapa 11.
+    Cuatro descriptores fijos: dos grillas A4 troqueladas (A4-3x8,
+    70x37mm, 24/hoja; A4-2x7, 99x38mm, 14/hoja) y dos carteles (A4 hoja
+    completa, A5 media hoja). El SPIKE de alineacion es la TAREA 1 DEL
+    SLICE 1 con criterio de salida BINARIO: cada celda dentro de +-1.0mm
+    de su troquel nominal, deriva acumulada de la ultima fila dentro de
+    +-1.5mm, en al menos un navegador objetivo, Y las vistas de impresion
+    existentes (CajaZ, CuentaCorriente) sin regresion. QuestPDF sigue
+    RECHAZADO por la misma licencia de la etapa 11; si el spike falla se
+    documenta el corte y la decision de licencia SE ELEVA AL DUENO —
+    jamas se decide sola. DECISION PENDIENTE DEL DUENO registrada: si el
+    local ya tiene una hoja troquelada concreta, su geometria reemplaza
+    un descriptor ANTES de correr el spike.
+  OD2: >-
+    CONSULTA DE PRECIOS = vista responsive del sistema bajo la auth
+    EXISTENTE (primera opcion del doc 11), pantalla de salon con input de
+    escaneo autoFocus, tipografia grande, precio final + tachado si hay
+    oferta, bajo Politicas.OperacionDePos con un usuario Vendedor
+    dedicado del local. La superficie SIN LOGIN (token de dispositivo,
+    B2 del explore) queda DIFERIDA con registro explicito como decision
+    de APETITO DE RIESGO DEL DUENO — cero superficie de autorizacion
+    nueva decidida en modo autonomo. El explore mismo dio el argumento:
+    4 roles fijos, 11 policies todas RequireAuthenticatedUser, UNA sola
+    ruta AllowAnonymous en todo el API (explore.md:117-140). El diseno
+    NO cierra la puerta: la pantalla no lee ningun claim de rol, no
+    muestra identidad de usuario y no guarda estado por usuario.
+  OD3: >-
+    FORMATOS = C3 (2-4 plantillas fijas en codigo) con el descriptor de
+    formato como TIPO interno (DescriptorDeFormato en TS: tamano de
+    pagina, margenes, columnas, filas, paso de celda, canaletas y campos
+    de la celda), NUNCA milimetros hardcodeados en el componente, para
+    que la expansion a C1 (tabla formatos_etiqueta) sea natural si el
+    dueno la pide. CONSECUENCIA VINCULANTE: gate de DB = CERO CAMBIOS DE
+    SCHEMA para toda la etapa (precedente etapas 10/11/13).
+phases:
+  explore:
+    status: done
+    artifact: explore.md
+    depends_on: []
+    notes: >-
+      Greenfield puro (doc-06:158-159 pone ambos items explicitamente
+      fuera de la paridad; alsina/imprimirArticulos.php es la lista de
+      REPOSICION, no etiquetas). HALLAZGO CENTRAL: la mitad de precios ya
+      esta construida — POST /api/ofertas/resolver devuelve
+      PrecioOriginal/PrecioFinal/Aplicadas por linea (Contratos.cs:109-115)
+      resolviendo en lote con ~7 consultas via
+      ServicioDePrecios.PreciosVigentesEnLoteAsync (ServicioDeOfertas.cs:328,436):
+      el par "precio tachado / precio final" del cartel YA EXISTE. Escaneo
+      resuelto por GET /api/articulos/escaneo (ServicioDeEscaneo, identidad
+      pura, jamas precio — por diseno). SEGUNDO HALLAZGO: la etapa 11
+      difirio EXPLICITAMENTE la decision de QuestPDF a esta etapa
+      (archive/2026-08-12-stage-11.../proposal.md:206-214), asi que el
+      rechazo hay que revisitarlo con datos, no heredarlo por inercia.
+      TERCER HALLAZGO: no existe NINGUN precedente de acceso sin sesion ni
+      de rol minimo en todo el sistema — la vista de salon sin login seria
+      una superficie de autorizacion genuinamente nueva. Tres decisiones
+      abiertas (A formato, B autorizacion, C schema) que el explore dejo
+      como preguntas al dueno y el orquestador arbitro como OD1-OD3.
+  propose:
+    status: done
+    date: 2026-08-21
+    artifact: proposal.md
+    depends_on: [explore]
+    notes: >-
+      13 decisiones numeradas: OD1-OD3 del orquestador registradas con su
+      racional y su alternativa diferida, mas 10 autonomas que el proposal
+      tuvo que resolver. Las clave: (4) la lista de precios es una
+      SELECCION EXPLICITA en pantalla, preseteada al EsDefault que el
+      GET /api/listas-precio existente ya devuelve primero
+      (ServicioDeClientes.cs:219-224), y el nombre de la lista SE IMPRIME
+      en la hoja — el default silencioso del servidor es ademas ambiguo
+      porque ListaPrecioAsignable no lleva IdEmpresa (verificado);
+      (5) la etiqueta resuelve a CANTIDAD = 1, asi que una oferta con
+      cantidad_minima > 1 NO llega a la gondola (una etiqueta que promete
+      un precio inalcanzable con una unidad es un precio falso);
+      (6) articulo sin precio vigente NO se imprime (el resolver devuelve
+      null, Contratos.cs:104-115) y la pantalla muestra el conteo excluido
+      — ni $0 ni descarte silencioso; (7) copias 1-99 por fila y tope de
+      seleccion = 200 articulos, que es el clamp que YA existe
+      (ServicioDeArticulos.cs:50), sin constante nueva; (8) TENSION QUE EL
+      EXPLORE NO ENCONTRO: impresion.css se importa GLOBALMENTE
+      (main.tsx:7) y declara @page { margin: 12mm } para TODA impresion,
+      asi que la hoja de etiquetas necesita su propia caja de pagina SIN
+      regresionar CajaZ/CuentaCorriente — el mecanismo es SALIDA DEL SPIKE
+      (named pages vs declaracion global unica), no una adivinanza;
+      (9) SIN simbologia de codigo de barras (el codigo se imprime como
+      TEXTO): un simbolo escaneable exige dependencia nueva y un criterio
+      de aceptacion que el repo no puede automatizar (un lector fisico);
+      (10) sin policy nueva + clausula de exposicion: CERO campos de costo
+      en el DTO, no ocultos en la UI sino AUSENTES; (11) la pantalla de
+      salon suma CERO endpoints, no escribe nada, no persiste historial y
+      se RESETEA sola a los ~20s para que el proximo cliente no lea la
+      consulta del anterior; (12) UN endpoint nuevo compuesto
+      (POST /api/etiquetas/datos) + tres filtros aditivos, con idCategoria
+      expandiendo DESCENDIENTES y soloConOfertaVigente decidido por
+      ServicioDeOfertas.ResolverAsync (Aplicadas.Count > 0) — jamas una
+      segunda implementacion del matching; (13) tamano reevaluado de
+      "media" (doc-11:358) a MEDIA-BAJA: esa estimacion asumia B2 Y C1,
+      ambas diferidas. Plan: 4 slices stacked-to-main
+      (1 spike+formatos / 2 datos / 3 web etiquetas / 4 consulta precios)
+      con el slice 4 INDEPENDIENTE a proposito, para que un spike fallido
+      no deje la etapa entera varada. ~1620 lineas estimadas, riesgo de
+      presupuesto MEDIO, 3 puntos de corte preautorizados.
+  spec:
+    status: pending
+    artifact: specs/
+    depends_on: [propose]
+  design:
+    status: pending
+    artifact: design.md
+    depends_on: [propose]
+  tasks:
+    status: pending
+    artifact: tasks.md
+    depends_on: [spec, design]
+  apply:
+    status: pending
+    artifact: tasks.md + PRs
+    depends_on: [tasks]
+  verify:
+    status: pending
+    artifact: verify-report.md
+    depends_on: [apply]
+  archive:
+    status: pending
+    artifact: archive-report.md
+    depends_on: [verify]
