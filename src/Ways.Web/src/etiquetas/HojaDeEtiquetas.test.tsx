@@ -168,3 +168,29 @@ describe('HojaDeEtiquetas — named page (mutation target 1, estructural)', () =
     expect(bloque).toMatch(/page:\s*etiquetas/)
   })
 })
+
+// judgment-day s18-slice-1 ronda 2, fix 1 (CRITICAL): la regla horizontal, la regla vertical y el
+// cuadrado de escala vivían en FLUJO NORMAL dentro de `.hoja-de-etiquetas` (297mm de alto) — sumados
+// a la grilla, el total superaba una hoja A4 y el cuadrado caía en una segunda página impresa,
+// invisible para la precondición de nulidad de E1. jsdom no implementa paginación (`@page`) ni layout
+// real, así que el único contrato asertable es estructural: cada selector declara `position:absolute`
+// en la hoja de estilos (mismo patrón que el test de named page de arriba, mutation target 1).
+describe('HojaDeEtiquetas — calibración cabe en una sola hoja (judgment-day ronda 2, fix 1, estructural)', () => {
+  function bloqueDeclaradoPara(selector: string): string {
+    const inicio = cssTexto.indexOf(selector)
+    expect(inicio).toBeGreaterThanOrEqual(0)
+    const finDeAperturaDeLlave = cssTexto.indexOf('{', inicio)
+    const fin = cssTexto.indexOf('\n}', finDeAperturaDeLlave)
+    return cssTexto.slice(finDeAperturaDeLlave, fin)
+  }
+
+  it('`.regla-horizontal` y `.regla-vertical` declaran `position: absolute` — nunca flujo normal', () => {
+    const bloque = bloqueDeclaradoPara('.hoja-de-etiquetas .regla-horizontal,\n.hoja-de-etiquetas .regla-vertical')
+    expect(bloque).toMatch(/position:\s*absolute/)
+  })
+
+  it('`.cuadrado-de-escala` declara `position: absolute` — nunca flujo normal', () => {
+    const bloque = bloqueDeclaradoPara('.hoja-de-etiquetas .cuadrado-de-escala')
+    expect(bloque).toMatch(/position:\s*absolute/)
+  })
+})

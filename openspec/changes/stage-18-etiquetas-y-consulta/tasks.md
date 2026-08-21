@@ -289,6 +289,14 @@ None beyond the deviations above.
 | 1 | MAJOR | El test de la grilla de calibración (`HojaDeEtiquetas.test.tsx`) no asertaba la cruz de registro (`<span className="cruz-registro">`, `HojaDeEtiquetas.tsx:136`) ni la clase `celda-calibracion` (hook del hairline de 0.2mm) — ambos mutantes sobrevivían 6/6, y `design.md:79-80` exige ambos elementos | `data-testid={\`cruz-registro-f\${fila}c\${columna}\`}` agregado a la cruz (mismo patrón que `cuadrado-de-escala`/`regla-horizontal`); test asserta conteo exacto de cruces == columnas×filas (24, regla 12b), presencia por celda, `toHaveClass('celda-calibracion')`, y que el modo NORMAL no renderiza ninguno de los dos (discriminante de modo) | (a) borrado el `<span className="cruz-registro">` → RED (`getAllByTestId` no encontró coincidencias) → revertido → verde. (b) `celda celda-calibracion` → `celda` → RED (`toHaveClass('celda-calibracion')` falló) → revertido → verde |
 | 2 | MINOR | `design.md:82` especifica "1 mm ticks, 10 mm labels"; `ReglaHorizontal`/`ReglaVertical` solo dibujaban marcas cada 10mm | Ticks de 1mm agregados en ambas reglas (201 en la horizontal, 281 en la vertical), diferenciados por clase `regla-tick-mayor`/`regla-tick-menor` (label solo en los mayores, cada 10mm); CSS distingue alto/ancho por clase; test nuevo asserta conteo exacto de ticks totales y por clase | Paso de 1mm mutado a 2mm en la regla horizontal → RED (`toHaveLength(201)` recibió 101) → revertido → verde |
 
+### judgment-day Slice 1, ronda 2 — juez A (2 CRITICAL + 1 WARNING)
+
+| # | Severidad | Hallazgo | Fix | Ciclo mutación |
+|---|---|---|---|---|
+| 1 | CRITICAL | `ReglaHorizontal` + `ReglaVertical` (`position: relative`) + `CuadradoDeEscala` (sin `position`) vivían en FLUJO NORMAL dentro de `.hoja-de-etiquetas` (297mm de alto) — 0.2mm + 280mm + 100mm = 380.2mm, así que el cuadrado de escala caía en una segunda página impresa donde el dueño puede no verlo, arriesgando un veredicto E1 falso (la precondición de nulidad ±0.3mm exige el cuadrado EN LA MISMA hoja) | `etiquetas.css`: las tres reglas pasan a `position: absolute`. `.regla-horizontal`/`.regla-vertical` anclan en `top:0; left:0` (coincide con `design.md:82`: "a horizontal 200mm ruler (top) and a vertical 280mm ruler (left)"). `.cuadrado-de-escala` ancla en `right:0; bottom:0` — desviación registrada: el design no fija su ubicación, así que se eligió la esquina opuesta a las reglas (sin número mágico de mm, funciona para cualquier `paginaMm`); puede superponerse a la grilla porque el hairline de celda y el contorno del cuadrado son distinguibles a ojo y el design solo exige poder medirlo (design.md:83). Test estructural nuevo en `HojaDeEtiquetas.test.tsx` (mismo patrón que el test de named page existente): asserta `position:\s*absolute` en los bloques CSS de `.regla-horizontal`/`.regla-vertical` y `.cuadrado-de-escala` | Borrado `position: absolute` del bloque `.cuadrado-de-escala` → RED (`toMatch(/position:\s*absolute/)` falló) → `git checkout --` → revertido → verde |
+| 2 | CRITICAL | El criterio vinculante 4 exige "PASS on both E1 and E2 before slice 3 opens", pero el **Start** de slice 3 solo nombraba la tarea 1.4 (E1); la tercera prueba de E2 (comparación de page-box "Guardar como PDF" de `CajaZ`/`CuentaCorriente`, diferida en `spike-alineacion.md` §E2) no tenía ninguna tarea dueña en slice 3 | **Start** de slice 3 enmendado para exigir 1.4 (E1) **y** 1.5 (E2 completo, las tres pruebas), citando el criterio vinculante 4. Nueva tarea **3.0** (gate, antes de 3.1): re-correr la tercera prueba de E2 — PDF de `CajaZ`/`CuentaCorriente` antes y después de montar el primer consumidor real de `HojaDeEtiquetas`, comparación de page-box — y registrar el resultado en `spike-alineacion.md` §E2, cerrando la tarea 1.5 | N/A — cambio de documentación (`tasks.md`), no de código ejecutable; el gate en sí se verifica en slice 3 cuando 3.0 corra |
+| 3 | WARNING | La tarea 3.1 seguía diciendo "DTO mirrors of `.../FilaDeEtiqueta/...`", contradiciendo la propia recomendación de la desviación 4 de slice 1 ("Slice 3 should import `FilaDeEtiqueta` from `etiquetas/HojaDeEtiquetas.tsx` instead of redefining it") | Tarea 3.1 enmendada: `FilaDeEtiqueta` se **importa** de `etiquetas/HojaDeEtiquetas.tsx` (re-exportable desde `api/etiquetas.ts` si algún call site lo necesita ahí), nunca se redefine, citando la desviación 4 de slice 1 | N/A — cambio de documentación (`tasks.md`) |
+
 ---
 
 ## Slice 2: `ServicioDeEtiquetas` + endpoint + 3 filtros + tests (PR 2)
@@ -423,8 +431,11 @@ clean round + PR merged.
 ## Slice 3: `Etiquetas.tsx` (PR 3)
 
 **Branch**: `feat/stage18-slice3-web-etiquetas`. **Start**: PR 1 **and** PR 2 merged, **and** task
-1.4 (E1) recorded PASS in `spike-alineacion.md` — this slice is the one binding verify criterion 4
-gates (`design.md:401-414`). **Finish**: filters (búsqueda/área/categoría/marca/con oferta
+1.4 (E1) **and** task 1.5 (E2, all three proofs) recorded PASS in `spike-alineacion.md` — binding
+verify criterion 4 requires "PASS on both E1 and E2 before slice 3 opens" (`design.md:401-414`,
+`tasks.md` binding verify criterion 4), not E1 alone; judgment-day slice 1 ronda 2 juez A flagged
+this Start as under-specified because E2's third proof (the "Guardar como PDF" page-box comparison)
+had no owning task in this slice — task 3.0 below closes that gap. **Finish**: filters (búsqueda/área/categoría/marca/con oferta
 vigente), the `FacturarRemitos.tsx:134,142-144` multi-select reducer with "elegir todos", per-row
 copies 1-99 + "aplicar a todos", format + lista selectors (lista defaulted to the first
 `EsDefault` row), the "N etiquetas = M hojas" preview, the excluded-count notice, the
@@ -440,8 +451,17 @@ enumerated below.
 visible list cannot send a phantom id, `FacturarRemitos.tsx:138-140`). All four MUST have a
 dedicated test; the print button additionally has a re-entrancy conjunct (pending / not pending).
 
+- [ ] 3.0 **GATE** — close E2's third deferred proof (`spike-alineacion.md`, tarea 1.5) before any
+  other slice-3 task starts: print `CajaZ` and `CuentaCorriente` to PDF ANTES of mounting the first
+  real consumer of `HojaDeEtiquetas` (this slice's first commit) and again DESPUÉS (once `Etiquetas.tsx`
+  is mounted on its route), with the owner's or the environment's real browser, and compare the two
+  page-boxes for each view. Record the comparison result in `spike-alineacion.md` §E2, closing task
+  1.5 with all three E2 proofs `PASS`. *(binding verify criterion 4, `design.md:93-97`)*
 - [ ] 3.1 Create `src/Ways.Web/src/api/etiquetas.ts` — client + DTO mirrors of
-  `SolicitudDeEtiquetas`/`DatosDeEtiquetas`/`FilaDeEtiqueta`/`ArticuloExcluido`. *(design.md:296-297)*
+  `SolicitudDeEtiquetas`/`DatosDeEtiquetas`/`ArticuloExcluido`. `FilaDeEtiqueta` is **imported** from
+  `etiquetas/HojaDeEtiquetas.tsx` (re-exported from here if a call site needs it from `api/etiquetas.ts`)
+  — it is **never redefined**, per slice 1's deviation 4: two competing shapes for the same DTO is
+  exactly the drift that deviation warns against. *(design.md:296-297, slice 1 deviation 4)*
 - [ ] 3.2 [P] `etiquetas.ts.test.ts` — mapper/client descriptor tests. *(web-descriptor-tests)*
 - [ ] 3.3 Create `src/Ways.Web/src/etiquetas/expandirCeldas.ts` — pure `expandirCeldas(filas,
   copias)`, `1..99` clamp. *(design.md:55, 169, mutation target 32)*

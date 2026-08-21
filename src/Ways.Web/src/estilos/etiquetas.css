@@ -83,7 +83,16 @@
 }
 
 .hoja-de-etiquetas .cuadrado-de-escala {
-  /* 100.0×100.0 mm etiquetado — separa "la grilla está mal" de "el navegador imprimió al 96%". */
+  /* 100.0×100.0 mm etiquetado — separa "la grilla está mal" de "el navegador imprimió al 96%".
+     Ancla explícita en la esquina inferior-derecha de la hoja (judgment-day ronda 2, fix 1): las
+     reglas anclan en el borde superior/izquierdo (top:0/left:0 más abajo), así que right:0/bottom:0
+     lo mantiene fuera de esa esquina sin depender de un número mágico de mm — funciona para
+     cualquier `paginaMm` de cualquier descriptor. Puede superponerse a las celdas de la grilla: el
+     hairline de la celda y el contorno del cuadrado son distinguibles a ojo, y el design solo exige
+     poder MEDIRLO (design.md:83), no reservarle una zona libre. */
+  position: absolute;
+  right: 0;
+  bottom: 0;
   width: 100mm;
   height: 100mm;
   border: 0.2mm solid #000;
@@ -92,7 +101,14 @@
 
 .hoja-de-etiquetas .regla-horizontal,
 .hoja-de-etiquetas .regla-vertical {
-  position: relative;
+  /* judgment-day ronda 2, fix 1: estaban en FLUJO NORMAL (position:relative apila verticalmente
+     dentro de `.hoja-de-etiquetas`) — sumadas a `.cuadrado-de-escala`, empujaban la hoja a 380.2mm
+     y el cuadrado caía en una segunda página impresa. `position:absolute` con origen en la esquina
+     superior-izquierda de la hoja coincide con lo que design.md:82 ya fija: "a horizontal 200mm
+     ruler (top) and a vertical 280mm ruler (left)". */
+  position: absolute;
+  top: 0;
+  left: 0;
   background: #000;
 }
 
