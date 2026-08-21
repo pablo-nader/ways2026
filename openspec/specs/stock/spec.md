@@ -30,9 +30,15 @@ lot-effective articulos and MUST stay NULL for movements of non-lot
 articulos and for the `id_lote IS NULL` half of a `reclasificacion` pair —
 "`id_lote` NOT NULL when the articulo is lot-effective" is a cross-table
 conditional, not a database CHECK, and is asserted by a dedicated
-integration test.
-(Previously: silent on `id_comprobante_compra`/`id_lote` — the columns did
-not exist until stage 8/stage 12 respectively.)
+integration test. `movimientos_stock` additionally carries a nullable
+`id_remito` (composite FK `fk_movimientos_stock_remito` to `remitos`,
+`ON DELETE RESTRICT`), populated only for `motivo = remito` rows and for
+the `motivo = anulacion` rows that reverse them; every other motivo leaves
+it NULL — the same shape as `id_comprobante_compra`, because a `remito`
+movement with no document reference would be the only unattributable row
+in an append-only ledger built for reconstruction.
+(Previously: silent on `id_comprobante_compra`/`id_lote`/`id_remito` — the
+columns did not exist until stage 8/stage 12/stage 17 respectively.)
 
 #### Scenario: First sale of an articulo at a punto de venta creates the stock row
 - GIVEN no `stock` row exists for `(articulo 10, punto_venta 1)`
@@ -52,7 +58,7 @@ not exist until stage 8/stage 12 respectively.)
 #### Scenario: A lot-effective articulo's movement always carries a lot
 - GIVEN articulo 40 is lot-effective at its punto de venta's empresa
 - WHEN any `movimientos_stock` row for articulo 40 is inspected (venta,
-  compra, transferencia, ajuste, inventario, decomiso)
+  compra, transferencia, ajuste, inventario, decomiso, remito)
 - THEN `id_lote` is never NULL, except for the `id_lote IS NULL` half of a
   `reclasificacion` pair
 
@@ -66,6 +72,16 @@ not exist until stage 8/stage 12 respectively.)
 - WHEN a raw write attempts a `movimientos_stock` row with `id_articulo = 41,
   id_lote = 7`
 - THEN Postgres rejects it via `fk_movimientos_stock_lote`
+
+#### Scenario: A remito movement carries its remito link
+- GIVEN an emitido remito of id 9
+- WHEN its entry `movimientos_stock` rows are inspected
+- THEN each carries `id_remito = 9`
+
+#### Scenario: An anulación reversing a remito movement carries the same remito link
+- GIVEN a remito of id 9 is anulado after being emitido
+- WHEN its inverse `movimientos_stock` rows are inspected
+- THEN each carries `id_remito = 9` and `motivo = anulacion`
 
 ### Requirement: Sale Decrement Inside The Checkout Transaction
 
@@ -142,15 +158,15 @@ same transaction as the comprobante's `estado` change.
 
 At any point in time, `stock.cantidad` for a given `(id_articulo,
 id_punto_venta)` MUST equal `SUM(movimientos_stock.cantidad)` for that same
-pair, across all eight `motivo` values (`venta`, `anulacion`, `ajuste`,
-`compra`, `transferencia`, `inventario`, `decomiso`, `reclasificacion`). For
-a transferencia, each of the two mirrored rows counts only toward the
-`(id_articulo, id_punto_venta)` pair it names — the invariant is asserted
-independently per punto de venta, never as a combined total. A
+pair, across all nine `motivo` values (`venta`, `anulacion`, `ajuste`,
+`compra`, `transferencia`, `inventario`, `decomiso`, `reclasificacion`,
+`remito`). For a transferencia, each of the two mirrored rows counts only
+toward the `(id_articulo, id_punto_venta)` pair it names — the invariant is
+asserted independently per punto de venta, never as a combined total. A
 `reclasificacion` pair, by construction, sums to zero across its two rows
 and therefore cannot perturb the aggregate.
-(Previously: restated over six motivos, silent on `decomiso` and
-`reclasificacion`.)
+(Previously: restated over eight motivos, silent on `remito` — the ninth
+value, introduced by stage 17.)
 
 #### Scenario: Consistency holds after a mix of venta, ajuste and anulación
 - GIVEN a sequence of movements `venta -5`, `ajuste +100`, `venta -2`,
@@ -175,7 +191,14 @@ and therefore cannot perturb the aggregate.
 - THEN both equal `97`, and the two `reclasificacion` rows contribute net
   zero to that sum
 
-### Requirement: Lock Order Extends To The Lot Dimension, Identical At All Three Write Sites
+#### Scenario: Consistency holds after a sequence including remito and its anulación
+- GIVEN a sequence of `compra +50`, `remito -8` (with `id_remito` set),
+  `anulacion +8` (reversing that remito, same `id_remito`) for the same
+  articulo and punto de venta
+- WHEN `stock.cantidad` is compared against the sum of those movements
+- THEN both equal `50`
+
+### Requirement: Lock Order Extends To The Lot Dimension, Identical At All Four Write Sites
 
 Every transaction that touches stock MUST build one total ascending order
 over the keys it will lock, in the exact form
@@ -184,9 +207,12 @@ aggregate `stock` row is the element with `id_lote = NULL` — for each
 `(articulo, punto de venta)` in ascending order, the aggregate `stock`
 upsert happens first, then its `stock_lotes` rows upsert in ascending
 `id_lote`. This rule MUST be implemented identically and independently at
-all three write sites (`ServicioDeVentas`, `ServicioDeCompras`,
-`ServicioDeStock`), each with its own concurrency test — the duplication is
-not refactored away.
+all four write sites (`ServicioDeVentas`, `ServicioDeCompras`,
+`ServicioDeStock`, `ServicioDeRemitos`), each with its own concurrency
+test — the duplication is not refactored away.
+(Previously: named three write sites; `ServicioDeRemitos` is added as the
+fourth by stage 17, the first stage to extend this guarantee since it was
+written.)
 
 #### Scenario: A checkout locks stock before stock_lotes for the same pair
 - GIVEN a sale of a lot-effective articulo at a punto de venta
@@ -213,6 +239,16 @@ not refactored away.
   one lot per request, per design's write-site-3 shape. The only stock-write
   request carrying a lot LIST is `SolicitudDeConteo` (slice 12), which is
   where the multi-lot ascending lock order actually lives.)*
+
+#### Scenario: A concurrent remito and checkout of the same articulo and lot do not deadlock
+- GIVEN a remito emitting from lot 7 of articulo 40 at punto de venta 1, and
+  a concurrent checkout selling the same lot 7 of articulo 40, submitted at
+  the same time
+- WHEN both transactions run concurrently
+- THEN both complete (one may retry under contention) with no deadlock,
+  because `ServicioDeRemitos` builds the identical ascending
+  `(id_articulo, id_punto_venta, id_lote NULLS FIRST)` order, implemented
+  independently
 
 ### Requirement: Stock Read Access Under OperacionDePos
 

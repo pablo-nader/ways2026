@@ -171,7 +171,8 @@ phases:
     artifact: tasks.md
     depends_on: [spec, design]
   apply:
-    status: pending
+    status: done
+    date: 2026-08-20
     artifact: tasks.md + PRs
     depends_on: [tasks]
     notes: >
@@ -189,10 +190,21 @@ phases:
       independientemente). El presupuesto de 2 rondas de fix del
       slice 6 ya estaba agotado — por eso via slice 8, no via fix.
   verify:
-    status: pending
+    status: done
+    date: 2026-08-21
     artifact: verify-report.md
     depends_on: [apply]
+    notes: >-
+      PASS WITH WARNINGS (0 CRITICAL, 0 blockers, 9/9 binding criteria PASS,
+      29/29 requirements, 80/80 scenarios, 210/210 tasks). W1 (vitest count
+      discrepancy) and W2 (stale task 8.11 evidence cell) both remediated
+      same-day, before archive: final suites Domain 540/540, Application
+      297/297, Integration 1583/1583 (after regla-17 isolated re-run, 6th
+      documented Testcontainers-flakiness occurrence), vitest 906/906
+      (55 files) on consolidated main@231db65.
   archive:
-    status: pending
+    status: done
+    date: 2026-08-21
     artifact: archive-report.md
+    target: 2026-08-21-stage-17-presupuestos-y-remitos
     depends_on: [verify]
