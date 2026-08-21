@@ -91,3 +91,16 @@ public sealed record PaginaDeRemitos(
     int Total,
     int Pagina,
     int Tamanio);
+
+/// <summary>
+/// stage-17-presupuestos-y-remitos, Slice 6 (design.md:211-212, task 6.2). Cuerpo de
+/// <c>POST /api/remitos/facturacion</c> — consolida <see cref="IdsRemito"/> (N remitos, mismo
+/// cliente/PV, todos <c>emitido</c> y sin ligar) en UN comprobante <c>TXR</c> itemless. Sin
+/// <c>IdCliente</c> (dto-contract-honesty regla 1): el cliente se DERIVA de los remitos mismos
+/// (todos comparten uno, guard de <c>ServicioDeFacturacionDeRemitos</c>) — un valor en conflicto
+/// no tendría destino real, así que el campo ni siquiera existe en el contrato. <see cref="Pagos"/>
+/// mismo shape que <see cref="PagoDeVenta"/> del checkout — <see cref="ValidadorDePagos"/> los
+/// valida igual, incluido el backstop de límite de crédito re-implementado dentro de la
+/// transacción (OD9/T9).</summary>
+public sealed record SolicitudDeFacturacionDeRemitos(
+    int IdPuntoVenta, IReadOnlyList<int> IdsRemito, IReadOnlyList<PagoDeVenta> Pagos, string? Observaciones);

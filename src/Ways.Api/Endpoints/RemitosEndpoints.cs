@@ -11,8 +11,13 @@ namespace Ways.Api.Endpoints;
 /// individually, but load-bearing"): sin esto <c>ServicioDeRemitos</c> queda inalcanzable por
 /// HTTP. Grupo bajo <c>Politicas.OperacionDePos</c> ÚNICAMENTE — sin apilar
 /// <c>GestionDeCatalogo</c>, mismo criterio que <c>PresupuestosEndpoints</c>/<c>VentasEndpoints</c>:
-/// un Vendedor tiene que poder despachar un remito (design decisión 17). La consolidación
-/// (<c>POST /api/remitos/facturacion</c>) llega en Slice 6.
+/// un Vendedor tiene que poder despachar un remito (design decisión 17).
+///
+/// stage-17-presupuestos-y-remitos, Slice 6 (design: API Surface — "POST /api/remitos/facturacion").
+/// **DEVIATION REGISTERED** — ninguna tarea 6.x nombra este archivo individualmente, mismo criterio
+/// que el párrafo de arriba: sin esta ruta, <c>ServicioDeFacturacionDeRemitos</c> queda
+/// inalcanzable por HTTP. Mismo grupo, mismo criterio de autorización (un Vendedor consolida
+/// remitos igual que despacha uno).
 /// </summary>
 public static class RemitosEndpoints
 {
@@ -68,6 +73,14 @@ public static class RemitosEndpoints
             return Results.Ok(anulado);
         })
         .WithSummary("Anula un remito borrador/emitido, revirtiendo stock si ya había salido. Un remito facturado no puede anularse directamente.");
+
+        grupo.MapPost("/facturacion", async (
+            ServicioDeFacturacionDeRemitos servicio, SolicitudDeFacturacionDeRemitos solicitud, CancellationToken ct) =>
+        {
+            var facturado = await servicio.FacturarAsync(solicitud, ct);
+            return Results.Created($"/api/ventas/{facturado.Id}", facturado);
+        })
+        .WithSummary("Consolida N remitos emitidos del mismo cliente/punto de venta en un comprobante TXR sin items.");
 
         return app;
     }
