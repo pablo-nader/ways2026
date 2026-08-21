@@ -120,16 +120,20 @@ public class ServicioDePresupuestosTests(WaysApiFixture fixture) : IClassFixture
         db.Articulos.AddRange(articulo1, articulo2);
         await db.SaveChangesAsync();
 
+        // VigenteDesde va un año atrás, no un día: varios tests de este archivo pinean el reloj
+        // en instantes fijos del pasado (2026-08-19, 2026-09-30) y un seed relativo al reloj REAL
+        // deja de regir en el instante pineado apenas el calendario avanza — el precio tiene que
+        // ser vigente bajo ambos relojes.
         db.Precios.AddRange(
             new Precio
             {
                 IdTenant = resultado.IdTenant, IdArticulo = articulo1.Id, IdListaPrecio = lista.Id, Monto = 100m,
-                VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+                VigenteDesde = ahora.AddYears(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
             },
             new Precio
             {
                 IdTenant = resultado.IdTenant, IdArticulo = articulo2.Id, IdListaPrecio = lista.Id, Monto = 250m,
-                VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+                VigenteDesde = ahora.AddYears(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
             });
         await db.SaveChangesAsync();
 

@@ -134,12 +134,12 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
             new Precio
             {
                 IdTenant = resultado.IdTenant, IdArticulo = articulo1.Id, IdListaPrecio = lista.Id, Monto = 100m,
-                VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+                VigenteDesde = ahora.AddYears(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
             },
             new Precio
             {
                 IdTenant = resultado.IdTenant, IdArticulo = articulo2.Id, IdListaPrecio = lista.Id, Monto = 250m,
-                VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+                VigenteDesde = ahora.AddYears(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
             });
         await db.SaveChangesAsync();
 

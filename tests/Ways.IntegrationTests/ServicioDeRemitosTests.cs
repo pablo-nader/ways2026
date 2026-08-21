@@ -151,7 +151,7 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
         db.Precios.Add(new Precio
         {
             IdTenant = ctx.IdTenant, IdArticulo = articulo.Id, IdListaPrecio = ctx.IdListaPrecio, Monto = precio,
-            VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+            VigenteDesde = ahora.AddYears(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
         });
         await db.SaveChangesAsync();
 
