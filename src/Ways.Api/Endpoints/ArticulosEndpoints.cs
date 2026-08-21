@@ -20,9 +20,17 @@ public static class ArticulosEndpoints
             bool? incluirEliminados,
             int? pagina,
             int? tamanio,
+            // stage-18-etiquetas-y-consulta, Slice 2 (task 2.6; design.md:291): tres query params
+            // aditivos, opcionales — con los tres ausentes el listado queda byte-idéntico al de
+            // antes de esta slice (verify criterio 6).
+            int? idArea,
+            int? idCategoria,
+            int? idMarca,
             CancellationToken ct) =>
-            servicio.ListarAsync(busqueda, idEmpresa, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25, ct))
-        .WithSummary("Lista artículos con búsqueda, filtro de disponibilidad por empresa y paginado.");
+            servicio.ListarAsync(
+                busqueda, idEmpresa, incluirEliminados ?? false, pagina ?? 1, tamanio ?? 25,
+                idArea, idCategoria, idMarca, ct))
+        .WithSummary("Lista artículos con búsqueda, filtros de disponibilidad/área/categoría/marca y paginado.");
 
         // stage-5-pos-ventas (Slice 2, task 2.9, design: API Surface): resolución de escaneo
         // del POS — segmento literal, no colisiona con "/{id:int}" de abajo. Hereda

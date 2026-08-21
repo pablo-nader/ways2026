@@ -251,8 +251,11 @@ ConsultaPrecios.tsx ──GET /api/articulos/escaneo?entrada=…──→ identi
 ```
 
 **Query budget, declared and verifiable**: **≤ 11 EF commands per request, independent of N**
-(≤ 9 on the explicit-ids path). Asserted with the repo's own technique — a `DbCommandInterceptor`
-counting `ReaderExecuting`, the `OfertasResolucionTests.ContadorDeComandos` /
+(≤ 10 on the explicit-ids path — judgment-day Slice 2, ronda 2, juez A SUGGESTION: measured with
+the interceptor after the availability check was folded into the identity query as a correlated
+`EXISTS`, never a separate roundtrip; the number is 10, not the ≤ 9 estimated before the fix was
+implemented — amended here honestly, see tasks.md). Asserted with the repo's own technique — a
+`DbCommandInterceptor` counting `ReaderExecuting`, the `OfertasResolucionTests.ContadorDeComandos` /
 `VentasCheckoutTests.ContadorDeComandos` (`:930`) pattern — over a 1-artículo request **and** a
 200-artículo request, whose counts must be **equal**.
 

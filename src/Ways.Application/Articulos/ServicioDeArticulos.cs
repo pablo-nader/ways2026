@@ -5,6 +5,7 @@ using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
 using Ways.Domain.Common;
+using Ways.Domain.Ofertas;
 using Ways.Domain.Precios;
 
 namespace Ways.Application.Articulos;
@@ -38,16 +39,27 @@ namespace Ways.Application.Articulos;
 public class ServicioDeArticulos(
     IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes)
 {
+    /// <summary>stage-18-etiquetas-y-consulta, Slice 2 (task 2.4; design.md:60, decisión 9): el
+    /// tope de paginado/selección — YA existía como el literal <c>200</c> del clamp de abajo, la
+    /// promoción a constante pública es lo nuevo. <see cref="Etiquetas.ServicioDeEtiquetas"/> lo
+    /// referencia en vez de duplicar el número: un mutante del valor rompe el clamp de esta clase
+    /// Y el <c>truncado</c> de <c>ServicioDeEtiquetas</c> A LA VEZ (mutation target 18) — la
+    /// coupling es el punto, no un accidente.</summary>
+    public const int TamanioMaximoDePagina = 200;
+
     public async Task<PaginaDe<ArticuloListado>> ListarAsync(
         string? busqueda = null,
         int? idEmpresa = null,
         bool incluirEliminados = false,
         int pagina = 1,
         int tamanio = 25,
+        int? idArea = null,
+        int? idCategoria = null,
+        int? idMarca = null,
         CancellationToken ct = default)
     {
         pagina = Math.Max(pagina, 1);
-        tamanio = Math.Clamp(tamanio, 1, 200);
+        tamanio = Math.Clamp(tamanio, 1, TamanioMaximoDePagina);
 
         var query = db.Articulos.AsQueryable();
 
@@ -74,6 +86,35 @@ public class ServicioDeArticulos(
                 a.Nombre.Contains(termino) ||
                 a.CodigoInterno.Contains(termino) ||
                 db.CodigosBarra.Any(c => c.IdArticulo == a.Id && c.Codigo.Contains(termino)));
+        }
+
+        // stage-18-etiquetas-y-consulta, Slice 2 (task 2.5; design.md:219-224): tres filtros
+        // ADITIVOS, cada uno con su propia guarda `if (… is { } x)` — cada guarda es un conjunct
+        // independiente del AND (Reconciliación 4 de tasks.md), no una rama compartida; borrar
+        // cualquiera de las tres NO afecta a las otras dos ni al camino sin filtros (mutation
+        // target 26/27).
+        if (idArea is { } idAreaValor)
+        {
+            query = query.Where(a => a.IdArea == idAreaValor);
+        }
+
+        if (idMarca is { } idMarcaValor)
+        {
+            query = query.Where(a => a.IdMarca == idMarcaValor);
+        }
+
+        if (idCategoria is { } idCategoriaValor)
+        {
+            // Una sola proyección id→id_padre de TODO el tenant (mismo criterio que
+            // ServicioDeOfertas.ResolverAsync, design.md:32-34, decisión 8) — la expansión de
+            // descendientes corre en memoria, sin una consulta jerárquica por artículo.
+            var padrePorCategoria = await db.Categorias
+                .Select(c => new { c.Id, c.IdCategoriaPadre })
+                .ToDictionaryAsync(c => c.Id, c => c.IdCategoriaPadre, ct);
+
+            var descendientes = CadenaDeCategorias.ConstruirDescendientes(idCategoriaValor, padrePorCategoria);
+
+            query = query.Where(a => a.IdCategoria != null && descendientes.Contains(a.IdCategoria.Value));
         }
 
         var total = await query.CountAsync(ct);
