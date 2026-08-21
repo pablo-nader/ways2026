@@ -399,20 +399,93 @@ public class ServicioDeVentas(
         return Proyectar(comprobante, items, pagos);
     }
 
+    /// <summary>
+    /// stage-17-presupuestos-y-remitos, Slice 8 (OD10 — judgment slice 6, juez A; design T11;
+    /// comprobantes-venta/spec.md: "shows all N lines, sourced from items_remito, not from
+    /// items_comprobante_venta"). Un <c>TXR</c> nace itemless por construcción (precedente
+    /// <c>RC</c>) — <c>items_comprobante_venta</c> siempre devolvería 0 filas para él, así que su
+    /// detalle leído/impreso viene de las líneas CONGELADAS de <c>items_remito</c> de los remitos
+    /// que consolida (<c>Remito.IdComprobanteVenta == id</c>), nunca de la tabla de items del
+    /// comprobante. Cualquier otro tipo sigue el camino de siempre.</summary>
     public async Task<ComprobanteEmitido> ObtenerAsync(int id, CancellationToken ct = default)
     {
         var comprobante = await BuscarComprobanteAsync(id, ct);
+
+        var pagos = await db.PagosComprobante
+            .Where(p => p.IdComprobanteVenta == id)
+            .ToListAsync(ct);
+
+        var tipo = await db.TiposComprobante.AsNoTracking()
+            .FirstAsync(t => t.Id == comprobante.IdTipoComprobante, ct);
+
+        if (tipo.Codigo == "TXR")
+        {
+            var itemsTxr = await ObtenerItemsDeTxrAsync(id, ct);
+            return Proyectar(comprobante, itemsTxr, pagos);
+        }
 
         var items = await db.ItemsComprobanteVenta
             .Where(i => i.IdComprobanteVenta == id)
             .OrderBy(i => i.Orden)
             .ToListAsync(ct);
 
-        var pagos = await db.PagosComprobante
-            .Where(p => p.IdComprobanteVenta == id)
+        return Proyectar(comprobante, items, pagos);
+    }
+
+    /// <summary>OD10: junta <c>items_remito</c> de TODOS los remitos ligados a este <c>TXR</c>,
+    /// ordenados por remito (número visible, <c>Id</c> como desempate estable) y, dentro de cada
+    /// uno, por su propio <c>Orden</c> — renumerado 1..N de forma CONTINUA para el detalle
+    /// combinado (<c>ItemEmitido.Orden</c> es la posición mostrada, nunca la del remito de
+    /// origen). <c>IdArea</c> se resuelve del artículo VIGENTE hoy — <c>items_remito</c> no lo
+    /// congela, es un campo de agrupación visual/no monetario, a diferencia de precio/descuento/
+    /// IVA que sí vienen congelados de la línea. <c>CodigoBarra</c> y los campos de lote quedan
+    /// sin snapshot de escaneo (un remito nunca capturó un código de barras), salvo
+    /// <c>IdLote</c>, que items_remito sí congela.</summary>
+    private async Task<IReadOnlyList<ItemEmitido>> ObtenerItemsDeTxrAsync(int idComprobante, CancellationToken ct)
+    {
+        var remitos = await db.Remitos.AsNoTracking()
+            .Where(r => r.IdComprobanteVenta == idComprobante)
+            .OrderBy(r => r.Numero)
+            .ThenBy(r => r.Id)
             .ToListAsync(ct);
 
-        return Proyectar(comprobante, items, pagos);
+        if (remitos.Count == 0)
+        {
+            return [];
+        }
+
+        var idsRemito = remitos.Select(r => r.Id).ToList();
+        var ordenPorRemito = remitos
+            .Select((r, indice) => (r.Id, indice))
+            .ToDictionary(x => x.Id, x => x.indice);
+
+        var items = await db.ItemsRemito.AsNoTracking()
+            .Where(i => idsRemito.Contains(i.IdRemito))
+            .ToListAsync(ct);
+
+        var idsArticulo = items.Select(i => i.IdArticulo).Distinct().ToList();
+        var articuloPorId = await db.Articulos.AsNoTracking()
+            .Where(a => idsArticulo.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, ct);
+
+        var ordenados = items
+            .OrderBy(i => ordenPorRemito[i.IdRemito])
+            .ThenBy(i => i.Orden)
+            .ToList();
+
+        var resultado = new List<ItemEmitido>(ordenados.Count);
+        for (var indice = 0; indice < ordenados.Count; indice++)
+        {
+            var item = ordenados[indice];
+            var idArea = articuloPorId.TryGetValue(item.IdArticulo, out var articulo) ? articulo.IdArea : 0;
+
+            resultado.Add(new ItemEmitido(
+                indice + 1, item.IdArticulo, item.Descripcion, CodigoBarra: null, idArea, item.IdListaPrecio,
+                item.IdOferta, item.IdAlicuotaIva, item.PorcentajeIva, item.Cantidad, item.PrecioUnitario,
+                item.Descuento, item.Total, item.IdLote));
+        }
+
+        return resultado;
     }
 
     public async Task<PaginaDeVentas> ListarAsync(
@@ -1585,6 +1658,23 @@ public class ServicioDeVentas(
                     planItem?.IdLote ?? i.IdLote, planItem?.CodigoLote, planItem?.LoteVencido ?? false);
             })
             .ToList(),
+        pagos
+            .Select(p => new PagoEmitido(p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto))
+            .ToList(),
+        comprobante.IdPresupuestoOrigen);
+
+    /// <summary>OD10: overload para el detalle de un <c>TXR</c>, que ya llega proyectado a
+    /// <see cref="ItemEmitido"/> (join de <c>items_remito</c>, <see cref="ObtenerItemsDeTxrAsync"/>)
+    /// en vez de a partir de <see cref="ItemComprobanteVenta"/> — mismo tail de proyección del
+    /// header/pagos, distinto origen de items.</summary>
+    private static ComprobanteEmitido Proyectar(
+        ComprobanteVenta comprobante, IReadOnlyList<ItemEmitido> items, IReadOnlyList<PagoComprobante> pagos) => new(
+        comprobante.Id, comprobante.Numero,
+        NumeroDeComprobante.Formatear(comprobante.IdPuntoVenta, comprobante.Numero),
+        comprobante.Estado, comprobante.Fecha, comprobante.IdPuntoVenta, comprobante.IdCliente,
+        comprobante.IdComprobanteAsociado, comprobante.Subtotal, comprobante.DescuentoTotal, comprobante.Total,
+        comprobante.DireccionEntrega, comprobante.Observaciones,
+        items,
         pagos
             .Select(p => new PagoEmitido(p.IdMedioPago, p.Importe, p.Referencia, p.Vuelto))
             .ToList(),

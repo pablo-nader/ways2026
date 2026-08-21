@@ -1221,6 +1221,167 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
     }
 
     // =============================================================================================
+    // stage-17-presupuestos-y-remitos, Slice 8, task 8.10b [OD10 — judgment slice 6, juez A]:
+    // GET /api/ventas/{id} de un TXR arma su detalle a partir de items_remito (mismo criterio que
+    // el design T11/comprobantes-venta spec: "shows all N lines, sourced from items_remito, not
+    // from items_comprobante_venta"), un test de N=1 NOMBRADO como el borde deliberado (una
+    // consolidación de un solo remito no es un caso degenerado — el spec/design nunca hablan de un
+    // mínimo de 2), y un test de anulación de TXR con turno cerrado independiente del guard
+    // genérico de ventas (VentasTurnoWiringTests solo lo probó para un TX con items reales).
+    // =============================================================================================
+
+    [Fact]
+    public async Task ElDetalleDeUnTxrQueLigaDosRemitosMuestraLasCincoLineasCombinadasSourceadasDeItemsRemito()
+    {
+        var ctx = await PrepararAsync(nameof(ElDetalleDeUnTxrQueLigaDosRemitosMuestraLasCincoLineasCombinadasSourceadasDeItemsRemito));
+        var idArticulo1 = await SembrarArticuloAsync(ctx, "Txr Detalle Art 1", 100m);
+        var idArticulo2 = await SembrarArticuloAsync(ctx, "Txr Detalle Art 2", 200m);
+        var idArticulo3 = await SembrarArticuloAsync(ctx, "Txr Detalle Art 3", 300m);
+        var idArticulo4 = await SembrarArticuloAsync(ctx, "Txr Detalle Art 4", 400m);
+        var idArticulo5 = await SembrarArticuloAsync(ctx, "Txr Detalle Art 5", 500m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo1, 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo2, 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo3, 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo4, 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo5, 10m);
+
+        // GIVEN un TXR que liga dos remitos, con 2 y 3 líneas respectivamente (spec: "linking two
+        // remitos with 2 and 3 lines respectively").
+        var remitoDosLineas = await CrearYEmitirRemitoAsync(
+            ctx.Admin,
+            new SolicitudDeRemito(ctx.IdPuntoVenta, ctx.IdCliente, null, null,
+                [new LineaDeRemito(idArticulo1, 1m, null), new LineaDeRemito(idArticulo2, 2m, null)]));
+        var remitoTresLineas = await CrearYEmitirRemitoAsync(
+            ctx.Admin,
+            new SolicitudDeRemito(ctx.IdPuntoVenta, ctx.IdCliente, null, null,
+                [
+                    new LineaDeRemito(idArticulo3, 1m, null), new LineaDeRemito(idArticulo4, 2m, null),
+                    new LineaDeRemito(idArticulo5, 3m, null),
+                ]));
+
+        var facturado = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion",
+            SolicitudFacturacion(ctx, [remitoDosLineas.Id, remitoTresLineas.Id], remitoDosLineas.Total + remitoTresLineas.Total));
+        var cuerpoFacturado = await facturado.Content.ReadAsStringAsync();
+        Assert.True(facturado.StatusCode == HttpStatusCode.Created, cuerpoFacturado);
+        var txr = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoFacturado, OpcionesJson)!;
+
+        // Mutation target (OD10): items_comprobante_venta sigue vacío — el requirement "carries
+        // zero items_comprobante_venta rows" no se rompe por esta lectura.
+        await using var dbCero = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await dbCero.ItemsComprobanteVenta.CountAsync(i => i.IdComprobanteVenta == txr.Id));
+
+        // WHEN se lee su detalle impreso (GET /api/ventas/{id}).
+        var respuestaDetalle = await ctx.Admin.GetAsync($"/api/ventas/{txr.Id}");
+        var cuerpoDetalle = await respuestaDetalle.Content.ReadAsStringAsync();
+        Assert.True(respuestaDetalle.StatusCode == HttpStatusCode.OK, cuerpoDetalle);
+        var detalle = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoDetalle, OpcionesJson)!;
+
+        // THEN muestra las 5 líneas combinadas, sourceadas de items_remito — no items_comprobante_venta.
+        Assert.Equal(5, detalle.Items.Count);
+        var descripciones = detalle.Items.Select(i => i.Descripcion).ToList();
+        Assert.Equal(
+            new[] { "Txr Detalle Art 1", "Txr Detalle Art 2", "Txr Detalle Art 3", "Txr Detalle Art 4", "Txr Detalle Art 5" },
+            descripciones);
+        // Orden renumerado 1..N de forma continua sobre el detalle combinado (rule 12b: cada
+        // posición leída con su propia identidad, no solo el conteo).
+        Assert.Equal([1, 2, 3, 4, 5], detalle.Items.Select(i => i.Orden).ToArray());
+        Assert.Equal([1m, 2m, 1m, 2m, 3m], detalle.Items.Select(i => i.Cantidad).ToArray());
+        Assert.Equal([100m, 200m, 300m, 400m, 500m], detalle.Items.Select(i => i.PrecioUnitario).ToArray());
+
+        // Mutation target (OD10, mitad "no from items_comprobante_venta"): un mutante que volviera
+        // a leer items_comprobante_venta para un TXR vería 0 líneas acá — este assert lo mata.
+        Assert.NotEmpty(detalle.Items);
+    }
+
+    /// <summary>[borde deliberado N=1] El spec/design nunca imponen un mínimo de 2 remitos para
+    /// consolidar — un `TXR` de un solo remito tiene que comportarse igual que uno de N: itemless
+    /// en `items_comprobante_venta`, su detalle leído con la única línea del remito, cero
+    /// movimientos de stock.</summary>
+    [Fact]
+    public async Task LaConsolidacionDeUnSoloRemitoEsElBordeDeliberadoNIgualAUnoNoUnCasoDegenerado()
+    {
+        var ctx = await PrepararAsync(nameof(LaConsolidacionDeUnSoloRemitoEsElBordeDeliberadoNIgualAUnoNoUnCasoDegenerado));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Borde N Uno", 75m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 10m);
+
+        var remito = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 2m));
+
+        var facturado = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remito.Id], remito.Total));
+        var cuerpoFacturado = await facturado.Content.ReadAsStringAsync();
+        Assert.True(facturado.StatusCode == HttpStatusCode.Created, cuerpoFacturado);
+        var txr = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoFacturado, OpcionesJson)!;
+        Assert.Empty(txr.Items); // el POST ya proyecta itemless, N=1 igual que N>1.
+
+        var respuestaDetalle = await ctx.Admin.GetAsync($"/api/ventas/{txr.Id}");
+        var cuerpoDetalle = await respuestaDetalle.Content.ReadAsStringAsync();
+        Assert.True(respuestaDetalle.StatusCode == HttpStatusCode.OK, cuerpoDetalle);
+        var detalle = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoDetalle, OpcionesJson)!;
+
+        var unicoItem = Assert.Single(detalle.Items);
+        Assert.Equal(1, unicoItem.Orden);
+        Assert.Equal("Txr Borde N Uno", unicoItem.Descripcion);
+        Assert.Equal(2m, unicoItem.Cantidad);
+        Assert.Equal(75m, unicoItem.PrecioUnitario);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.ItemsComprobanteVenta.CountAsync(i => i.IdComprobanteVenta == txr.Id));
+        Assert.Equal(0, await db.MovimientosStock.CountAsync(m => m.IdComprobanteVenta == txr.Id));
+    }
+
+    /// <summary>[SUGGESTION del mismo veredicto OD10] `EjecutarAnulacionAsync`'s guard de turno
+    /// cerrado (`ExigirTurnoAbiertoAsync`/`turno_cerrado`, ver `VentasTurnoWiringTests`) nunca se
+    /// probó específicamente contra un `TXR` — la composición (loop de items VACÍO + el un-link
+    /// guardado en 1.6) podría, en teoría, tomar un camino que sortee el guard genérico. Prueba
+    /// discriminante: cierra el turno DESPUÉS de facturar (el TXR nació bajo turno abierto), y
+    /// confirma que el guard sigue disparando ANTES de mover cualquier remito o stock.</summary>
+    [Fact]
+    public async Task AnularUnTxrConSuTurnoYaCerradoEsRechazado409TurnoCerradoSinDesligarNiTocarStock()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnTxrConSuTurnoYaCerradoEsRechazado409TurnoCerradoSinDesligarNiTocarStock));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Turno Cerrado Anular", 60m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 10m);
+        var remito = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+
+        var facturado = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remito.Id], remito.Total));
+        var cuerpoFacturado = await facturado.Content.ReadAsStringAsync();
+        Assert.True(facturado.StatusCode == HttpStatusCode.Created, cuerpoFacturado);
+        var txr = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoFacturado, OpcionesJson)!;
+
+        await using var dbTurno = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var turno = await dbTurno.TurnosCaja
+            .Where(t => t.IdPuntoVenta == ctx.IdPuntoVenta && t.Estado == EstadoTurno.Abierto)
+            .SingleAsync();
+
+        var solicitudDeCierre = new Ways.Application.Caja.SolicitudDeCierre(
+            [new Ways.Application.Caja.ConteoDeclarado(ctx.IdMedioEfectivo, txr.Total)], null);
+        var respuestaCierre = await ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre", solicitudDeCierre);
+        var cuerpoCierre = await respuestaCierre.Content.ReadAsStringAsync();
+        Assert.True(respuestaCierre.StatusCode == HttpStatusCode.OK, cuerpoCierre);
+
+        await using var dbAntes = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var movimientosAntes = await dbAntes.MovimientosStock.CountAsync();
+
+        var respuestaAnular = await ctx.Admin.PostAsync($"/api/ventas/{txr.Id}/anulacion", null);
+        var cuerpoAnular = await respuestaAnular.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Conflict, respuestaAnular.StatusCode);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpoAnular, OpcionesJson);
+        Assert.Equal("turno_cerrado", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        // El guard disparó ANTES del un-link (posición 1.6) y antes de cualquier reversa de stock
+        // — el remito sigue facturado/ligado, cero movimientos nuevos.
+        var r = await db.Remitos.AsNoTracking().FirstAsync(x => x.Id == remito.Id);
+        Assert.Equal(EstadoRemito.Facturado, r.Estado);
+        Assert.Equal(txr.Id, r.IdComprobanteVenta);
+        Assert.Equal(movimientosAntes, await db.MovimientosStock.CountAsync());
+        Assert.Equal(EstadoComprobante.Emitido, (await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == txr.Id)).Estado);
+    }
+
+    // =============================================================================================
     // judgment-day Slice 6, ronda 1, juez B — SUGGESTION (fidelidad de totales, :100-107 de
     // ServicioDeFacturacionDeRemitos): desincronizamos `remitos.total` por escritura cruda ANTES
     // de facturar (sentinel distinto de la suma de items_remito congelados) y probamos el
