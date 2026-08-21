@@ -446,8 +446,9 @@ clean round + PR merged.
   Excluidos con identidad; referencia_invalida uniforme; presupuesto medido real = 10, design
   enmendado honesto) → pasada acotada B APPROVE + re-ronda A APPROVE (cero hallazgos). Ronda
   limpia.
-- [ ] 2.42 Open PR #2 `feat/stage18-slice2-datos-de-etiqueta`, merge to `main` after a clean
+- [x] 2.42 Open PR #2 `feat/stage18-slice2-datos-de-etiqueta`, merge to `main` after a clean
   `judgment-day` round.
+  **DONE by the orchestrator**: PR #157, merged `7b14ed2` after the clean round (see 2.41).
 
 ### Work Unit Evidence (Slice 2)
 
