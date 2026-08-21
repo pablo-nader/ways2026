@@ -2044,7 +2044,8 @@ slices 4-6). **Finish**: quote list/detail/draft + the POS conversion entry poin
   nullable en C#; mismatch de opcionalidad anterior a este slice, dirección benigna (el
   cliente TS es más estricto que el server) — no se toca `tipos.ts` en este fix. Commit
   `<pendiente>`.
-- [ ] 7.15 Open PR #7 `feat/stage17-slice7-web-presupuestos`, merge after a clean round.
+- [x] 7.15 Open PR #7 `feat/stage17-slice7-web-presupuestos`, merge after a clean round.
+  **DONE by the orchestrator**: PR #153, merged `4476b42` after the clean round (see 7.14).
 
 ### Work Unit Evidence
 
