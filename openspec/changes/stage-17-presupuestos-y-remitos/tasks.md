@@ -2010,7 +2010,7 @@ slices 4-6). **Finish**: quote list/detail/draft + the POS conversion entry poin
   31 pre-existing `render(<Pos />)` call sites mechanically became `renderPos()` (a `MemoryRouter`
   wrapper, since `Pos()` now calls `useSearchParams`) with **zero assertion changed**; full file
   green, see Work Unit Evidence.
-- [ ] 7.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **ronda 1
+- [x] 7.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **ronda 1
   juez B REJECT** (1 MAJOR + 2 WARNINGs) → fixes aplicados por el fix-agent: (1) MAJOR — el
   `key={idPresupuesto ?? 'libre'}` de `Pos()` sin cobertura, sobrevivía 53/53; agregado el test
   que rutea por `<Pos/>` real hasta `cobrar()` y `nuevaVenta()`, asertando que el ticket
@@ -2025,6 +2025,25 @@ slices 4-6). **Finish**: quote list/detail/draft + the POS conversion entry poin
   confirmada estructuralmente inalcanzable por mutación real (54/54 verdes con el chequeo de
   token quitado) — mismo patrón de confound que el `40P01` de la tarea 1.32. Commit
   `<pendiente>`. Pendiente: re-judge acotado a este diff.
+
+  **judgment-day Slice 7, ronda 2 — juez A (1 WARNING fixed, 1 SUGGESTION preexistente →
+  backlog).** WARNING — `Presupuesto.tsx:611-614`: el botón "Convertir en venta" no tenía
+  `disabled={ocupado}`, a diferencia de su hermano "Anular" del mismo grupo (línea 617) y de
+  todos los demás botones de escritura del archivo (`Enviar`/`Guardar`, líneas 550/556) — el
+  click durante una operación en vuelo no-opeaba en silencio (el guard interno de
+  `convertirEnVenta` lo frenaba) pero el botón quedaba visualmente habilitado, violando la
+  regla 5 de `react-async-state` que el resto del archivo aplica de forma consistente. Fix:
+  agregado `disabled={ocupado}` al botón. Test nuevo en `Presupuesto.test.tsx` ("mientras
+  'Anular' está en vuelo, 'Convertir en venta' también queda deshabilitado") — dispara
+  `anular`, deja el POST pendiente y asserta `toBeDisabled()` sobre el botón "Convertir en
+  venta" durante esa ventana. Ciclo RED/verde (mutation-proof-tests regla 2): quitado el
+  `disabled={ocupado}` → RED confirmado (`Received element is not disabled`) → revertido →
+  suite completa `Presupuesto.test.tsx` **12/12 verde**; `npx tsc -b` limpio. SUGGESTION
+  preexistente (no fixeada, registrada como backlog) — `tipos.ts:961` declara
+  `pagos: PagoDeVenta[]` requerido mientras `Contratos.cs` (`SolicitudDeVenta`) lo tiene
+  nullable en C#; mismatch de opcionalidad anterior a este slice, dirección benigna (el
+  cliente TS es más estricto que el server) — no se toca `tipos.ts` en este fix. Commit
+  `<pendiente>`.
 - [ ] 7.15 Open PR #7 `feat/stage17-slice7-web-presupuestos`, merge after a clean round.
 
 ### Work Unit Evidence
@@ -2032,6 +2051,7 @@ slices 4-6). **Finish**: quote list/detail/draft + the POS conversion entry poin
 | Evidence | Value |
 |---|---|
 | Focused test command and result | `npx vitest run src/api/presupuestos.test.ts src/paginas/Pos.test.tsx src/paginas/Presupuestos.test.tsx src/paginas/Presupuesto.test.tsx src/paginas/CuentaCorriente.test.tsx` — 5 files, 138/138 green |
+| Ronda 2 focused test command and result | `npx vitest run src/paginas/Presupuesto.test.tsx` — 12/12 green. RED/verde cycle: `disabled={ocupado}` removed from "Convertir en venta" → RED confirmed (`Received element is not disabled`) → reverted → 12/12 green. `npx tsc -b` clean |
 | Runtime harness command/scenario and result | Web-only slice — no server boundary (design: "the API still serves the shape", PR 3 already merged). Runtime harness is the full web suite: `npx vitest run` (no filter) — **51 files, 845/845 green**. `npm run build` (`tsc -b && vite build`) clean. `npm run lint` (oxlint) clean, zero new warnings. `dotnet build` of `Ways.Api` + all three test projects (`Ways.Domain.Tests`, `Ways.Application.Tests`, `Ways.IntegrationTests`) — clean, 0 errors, confirming zero backend regression (`git status` shows zero files touched outside `src/Ways.Web/**`) |
 | Mutation evidence | Web-only slice, no server-side clause to mutate. `web-descriptor-tests`/`mutation-proof-tests` rule 7 applied to the async paths: the stale-`/para-venta`-after-unmount test (task 7.10) and the pre-existing `OrdenesDeCompra`/`Presupuestos` generation-guard tests (both list screens share the identical `generacionRef` pattern, both proven with a real stale-response-lands-after-newer-one scenario resolved inside `act`) |
 | Rollback boundary | Isolated to `src/Ways.Web/**`: new files (`api/presupuestos.ts`, `api/presupuestos.test.ts`, `paginas/Presupuestos.tsx`, `paginas/Presupuestos.test.tsx`, `paginas/Presupuesto.tsx`, `paginas/Presupuesto.test.tsx`) plus modified files (`api/tipos.ts`, `api/ventas.ts`, `App.tsx`, `componentes/Layout.tsx`, `paginas/Pos.tsx`, `paginas/Pos.test.tsx`, `paginas/CuentaCorriente.test.tsx`). `git revert` of this slice's commit(s) alone removes the entire entry point; the API already serves `/api/presupuestos*` and `idPresupuestoOrigen` from PR 3, so nothing server-side reverts or breaks |

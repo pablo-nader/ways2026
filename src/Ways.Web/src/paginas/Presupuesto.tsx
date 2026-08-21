@@ -609,7 +609,7 @@ function PantallaPresupuesto({ idPresupuesto }: PropsPantalla) {
 
               <div className="d-flex gap-2 mb-3">
                 {puedeConvertir && (
-                  <button type="button" className="btn btn-primary rounded-0" onClick={convertirEnVenta}>
+                  <button type="button" className="btn btn-primary rounded-0" disabled={ocupado} onClick={convertirEnVenta}>
                     Convertir en venta
                   </button>
                 )}

@@ -282,6 +282,31 @@ describe('Presupuesto — doble click en "Anular"', () => {
       await anularPendiente
     })
   })
+
+  it('mientras "Anular" está en vuelo, "Convertir en venta" también queda deshabilitado (misma ventana de ocupado, judgment-day slice-7 ronda 2)', async () => {
+    mockearReferencia((ruta) => (ruta === '/presupuestos/30' ? Promise.resolve(detalleFixture()) : undefined))
+
+    let resolverAnular: (v: PresupuestoDetalle) => void = () => {}
+    const anularPendiente = new Promise<PresupuestoDetalle>((resolve) => {
+      resolverAnular = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => (ruta === '/presupuestos/30/anular' ? anularPendiente : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+
+    renderPantalla()
+    const botonAnular = await screen.findByRole('button', { name: 'Anular' })
+    const botonConvertir = screen.getByRole('button', { name: 'Convertir en venta' })
+    expect(botonConvertir).not.toBeDisabled()
+
+    await userEvent.click(botonAnular)
+
+    expect(screen.getByRole('button', { name: 'Anulando…' })).toBeDisabled()
+    expect(botonConvertir).toBeDisabled()
+
+    await act(async () => {
+      resolverAnular(detalleFixture({ estado: 'Anulado', convertible: false }))
+      await anularPendiente
+    })
+  })
 })
 
 describe('Presupuesto — role gating (mismo gate que /pos: Politicas.OperacionDePos, sin distinción admin-only)', () => {
