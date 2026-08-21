@@ -1,0 +1,371 @@
+change: stage-19-fiscal-arca
+scope: 19a
+phase: propose
+status: done
+artifact_store: openspec
+execution_mode: automatic-autonomous
+delivery_strategy: auto-chain
+chain_strategy: stacked-to-main
+db_gate: APROBADO — RATIFICADO POR EL ORQUESTADOR (2026-08-21, verificacion
+  independiente registrada): (1) codigo_afip smallint NULL confirmado en las TRES tablas de
+  catalogo del snapshot (WaysDbContextModelSnapshot.cs:690/895/1339) — los data statements del
+  §G no necesitan ALTER, doble red como la 17; (2) FA/FB/FC confirmados SEMBRADOS
+  (InicializadorDeBaseDeDatos.cs:90-92) — la decision 9 (angostar el guard, jamas removerlo) es
+  OBLIGATORIA, el precedente PRE-latente de la 17 aplica con un documento legalmente
+  irreversible; (3) el guard EsFiscal del resolver confirmado (ServicioDeVentas.cs:1162);
+  (4) Empresa.cs sin IdCondicionFiscal confirmado (solo Cuit:17) — el §B es real; (5) UNA sola
+  migracion FiscalArcaEtapa19a SIN artefactos irreversibles (dos CREATE TYPE, cero ALTER TYPE
+  ADD VALUE) — criterio vinculante: la migracion nueva es la ULTIMA y unica de la sub-etapa,
+  8 indices nuevos verificados POR DEFINICION al verify (regla 20), id_condicion_fiscal
+  NULLABLE sin default (la letra jamas se decide en silencio), ux_puntos_venta_numero_fiscal
+  UNIQUE PARCIAL como portante del mapa serie-ARCA, y la clave maestra de cifrado JAMAS en la
+  base ni en el repo (barrido de material de clave como criterio de verify).
+db_gate_approval: >-
+  PROPUESTO 2026-08-21 por sdd-propose bajo mandato autonomo delegado.
+  NO RATIFICADO TODAVIA — requiere aprobacion explicita del duenio antes de
+  iniciar el slice 1 (CLAUDE.md: "Database change gate (MANDATORY)"). Es el
+  PRIMER gate con schema desde la etapa 17. LA SECCION 'Modelo de datos
+  propuesto' DEL PROPOSAL ES EL CONTRATO: cualquier DDL que proponga una fase
+  posterior fuera de esa seccion es violacion de alcance y REABRE el gate.
+  ALCANCE PROPUESTO: UNA sola migracion (FiscalArcaEtapa19a), PostgreSQL 17.
+  (A) DOS enum types nuevos por CREATE TYPE — resultado_fiscal
+  ('pendiente','aprobado','aprobado_con_observaciones','rechazado') y
+  ambiente_fiscal ('homologacion','produccion'); CERO ALTER TYPE ADD VALUE,
+  asi que la sub-etapa NO TIENE NINGUN ARTEFACTO IRREVERSIBLE (a diferencia
+  de la 12 y la 17); todo valor nace con su escritor en 19a — sin valor de
+  CAEA (llega en 19c con su escritor, regla de la 17).
+  (B) empresas +id_condicion_fiscal integer NULL, FK simple a
+  condiciones_fiscales (catalogo global, ADR-11, precedente
+  fk_items_comprobante_venta_alicuota_iva) + ix simple de soporte (trampa de
+  la enmienda de la 14: un indice liderado por id_tenant NO cubre una FK
+  simple). NULLABLE A PROPOSITO: no existe default honesto — la condicion
+  del EMISOR decide la letra A/B/C, y defaultear a RI emitiria Factura A
+  silenciosamente; el camino fiscal exige el valor con un 409 nombrado.
+  (C) puntos_venta +numero_fiscal integer NULL, CHECK de rango 1..99999 y
+  ux_puntos_venta_numero_fiscal (id_tenant, id_empresa, numero_fiscal)
+  UNIQUE PARCIAL WHERE numero_fiscal IS NOT NULL — PORTANTE, no cosmetico:
+  es lo que vuelve INYECTIVO el mapa de la serie de ARCA (PtoVta, CbteTipo)
+  a la fila (id_punto_venta, codigo_afip); sin el, dos PV internos podrian
+  compartir PV fiscal con contadores separados y romper la correlatividad.
+  (D) comprobantes_venta +4 columnas NULL (cae varchar(14),
+  cae_vencimiento date, resultado_fiscal, observaciones_fiscales jsonb —
+  precedente Auditoria.cs:40-45) + 2 CHECKs (coherencia: los cuatro NULL
+  o resultado no-NULL con CAE sii aprobado/aprobado_con_observaciones y
+  cae/vencimiento juntos; y cae ~ '^[0-9]{14}$') + ix PARCIAL
+  WHERE resultado_fiscal = 'pendiente'. Aditivo puro: TODA fila existente
+  tiene las cuatro NULL y valida el CHECK trivialmente. SIN columna nueva
+  para el numero fiscal — comprobantes_venta.numero lo lleva, alimentado
+  por la serie fiscal en vez de la interna (disjuntas por tipo).
+  (E) TABLA NUEVA certificados_fiscales: 18 columnas (15+3 auditoria),
+  scoping id_tenant + id_empresa NOT NULL (DESVIACION DOCUMENTADA del
+  catalogo doc-09 con id_empresa NULL: un certificado es de UN CUIT y nunca
+  se comparte — forma de puntos_venta), EntidadBase SI, RLS estandar
+  (ENABLE+FORCE), 2 FKs (tenant simple; empresa compuesta contra la AK que
+  puntos_venta ya usa), 3 CHECKs (vigencia_hasta > vigencia_desde;
+  cuit_titular ~ '^[0-9]{11}$'; octet_length(nonce)=12 AND
+  octet_length(tag_autenticacion)=16 AND octet_length(clave_privada_cifrada)>0
+  — los tamanios de parametro de GCM impuestos por la BASE, asi que un blob
+  truncado falla al escribir y no en la primera factura), 3 indices
+  (ix_tenant, ix_empresa, ux_certificados_fiscales_activo UNIQUE PARCIAL
+  (id_tenant, id_empresa, ambiente) WHERE activo AND deleted_at IS NULL =
+  a lo sumo UN certificado activo por empresa+ambiente, garantia de base y
+  no de servicio). Sin AK: nadie la referencia.
+  MODELO DE CIFRADO EXPLICITO (decision 1): AES-256-GCM via
+  System.Security.Cryptography.AesGcm (BCL, cero dependencia); clave maestra
+  de APLICACION desde configuracion/entorno (Ways:Fiscal:ClaveMaestra, 32
+  bytes base64), NUNCA en la base ni en el repo, asi que un dump no filtra
+  nada usable; AAD = id_tenant|id_empresa|ambiente|huella_sha256 que ATA el
+  ciphertext A SU FILA (mover un blob a la fila de otra empresa falla la
+  autenticacion — propiedad antitamper estructural, costo cero);
+  id_clave_maestra versiona la clave para rotar fila por fila sin downtime;
+  clave maestra ausente = camino fiscal INERTE (409/503), JAMAS fallback a
+  texto plano; en memoria la privada vive solo dentro de la firma CMS en un
+  byte[] limpiado con CryptographicOperations.ZeroMemory; y
+  clave_privada_cifrada/nonce/tag_autenticacion estan AUSENTES de todo DTO,
+  no ocultos en la UI (dto-contract-honesty).
+  (F) TABLA NUEVA numeraciones_fiscales: 6 columnas, PK-only sin auditoria
+  ni baja logica (mismo criterio que NumeracionComprobante:10-13, asi que
+  exige filtro de tenant escrito a mano), scoping operativa
+  (id_tenant + id_punto_venta, doc-09:86), PK (id_punto_venta, codigo_afip)
+  espejando la forma de la hermana, columnas proximo_numero bigint DEFAULT 1
+  + ultimo_autorizado_arca bigint NULL + sincronizado_en timestamptz NULL,
+  2 FKs, 2 CHECKs (rango 1..99999999 de CbteDesde, con 0 legal para
+  "serie sin usar"; y (ultimo_autorizado_arca IS NULL) = (sincronizado_en
+  IS NULL)), 2 indices (ix_tenant para RLS+FK; ix_punto_venta
+  (id_punto_venta, id_tenant) que la PK NO cubre porque su segunda columna
+  es codigo_afip), RLS estandar. La FK a puntos_venta se ESPEJA de lo que
+  declare NumeracionComprobanteConfiguration — el design lo verifica; si la
+  hermana la omite, esta se omite tambien en vez de divergir en silencio.
+  (G) TRES data statements IDEMPOTENTES + TRES cambios de seed (doble red
+  de la 17, cada red testeada INDEPENDIENTEMENTE porque el seeder solo corre
+  contra tabla vacia y DESPUES de migrar, InicializadorDeBaseDeDatos.cs:432).
+  NINGUN ALTER hace falta: las tres tablas YA tienen codigo_afip smallint
+  NULL desde 20260801233937_CatalogosGlobales.cs:36,55,80, dejado NULL A
+  PROPOSITO (InicializadorDeBaseDeDatos.cs:34-36).
+  DS1 tipos_comprobante: FA=1, NDA=2, NCA=3, FB=6, NCB=8, FC=11, NCC=13 —
+  CERO filas insertadas, activadas o desactivadas.
+  DS2 condiciones_fiscales (RG 5616 CondicionIVAReceptorId): RI=1, EXENTO=4,
+  CF=5, MONOTRIBUTO=6; NO_RESP es la UNICA INCERTIDUMBRE FLAGGEADA (no tiene
+  contraparte exacta en esa tabla) — se confirma contra
+  FEParamGetCondicionIvaReceptor en 19b y hasta entonces ese receptor se
+  RECHAZA con 409 nombrado en vez de facturarse sobre una adivinanza.
+  DS3 alicuotas_iva: 0%=3, 10.5%=4, 21%=5, 27%=6 — 'Exento' y 'No gravado'
+  quedan NULL POR REGLA (no son alicuotas: sus importes van a ImpOpEx e
+  ImpTotConc y NUNCA al array Iva[]); un test asegura que siguen NULL.
+  (H) ManejadorDeErrores +2 ramas 23505 (los dos unique parciales) y
+  +8 ramas 23514 (los 8 CHECKs). Politicas.cs gana EXACTAMENTE UNA policy,
+  AdministracionFiscal (solo Admin) — riesgo genuinamente nuevo (material
+  de clave privada + identidad legal del emisor), criterio de la 15; la
+  EMISION fiscal queda bajo OperacionDePos (la letra, los totales y el CAE
+  los decide el servidor: el riesgo no es quien aprieta el boton).
+  TOTALES: 1 migracion, 2 enums nuevos, 2 tablas nuevas, 3 ALTER aditivos
+  (6 columnas, todas NULL), 5 FKs nuevas, 8 CHECKs nuevos, 8 INDICES nuevos
+  (excluyendo las 2 PKs nuevas), 3 data statements, 3 cambios de seed,
+  10 ramas de error, 1 policy nueva.
+  AUDITORIA DE COBERTURA DE FKs: 5 FKs, 5 indices de soporte; los 3 indices
+  restantes (los dos unique parciales y el parcial de pendientes) declarados
+  cada uno por su propia razon nombrada.
+  CRITERIOS DE VERIFY VINCULANTES: (1) exactamente UNA migracion llamada
+  FiscalArcaEtapa19a bajo src/Ways.Infrastructure/Persistencia/Migraciones/
+  y has-pending-model-changes limpio; (2) CERO ALTER TYPE ADD VALUE en toda
+  la migracion; (3) conteo de indices nuevos = 8 verificado POR DEFINICION
+  contra pg_indexes (leccion name-only de la 16), incluidos los parciales;
+  (4) conteo de CHECKs nuevos = 8, cada uno con test mutation-proof que lo
+  viole; (5) RLS presente y FORCEada en AMBAS tablas nuevas con el par de
+  tests cross-tenant lectura Y escritura; (6) una venta NO fiscal es
+  BYTE-IDENTICA a main — mismos caminos, CERO statements SQL extra — y un
+  POST de codigo fiscal a /api/ventas sigue devolviendo 400; (7) CERO
+  material PEM/PFX/clave privada bajo src/ o tests/ (barrido del repo);
+  (8) ningun hostname real de ARCA como default en configuracion mergeada.
+orchestrator_decisions:
+  OD1: >-
+    LA ETAPA 19 SE EJECUTA EN TRES SUB-ETAPAS alineadas al corte del explore
+    (approach 2), y este change cubre SOLO 19a.
+    19a (ESTE PROPOSAL, DESBLOQUEADA HOY): schema fiscal + dominio + maquina
+    de estados CAE + generador TRA/CMS con certificado de prueba autogenerado
+    + cliente WSAA/WSFE contra mocks con el contrato real del manual +
+    numeracion fiscal + almacenamiento cifrado de certificados + QR con
+    codAut sintetico.
+    19b (CHANGE FUTURO, NACE BLOQUEADO): homologacion real — apuntar el
+    cliente ya probado a wswhomo.afip.gov.ar, cargar el certificado real,
+    confirmar los catalogos FEParamGet*, correr un ciclo de CAE real.
+    RAZON DE BLOQUEO NOMBRADA Y VERIFICABLE: "alta WSASS pendiente del duenio
+    (login con Clave Fiscal Nivel 2)". NO SE PIDE, SE DOCUMENTA: sin slice,
+    sin estimacion, sin checkbox que parezca deuda del equipo. WSASS exige
+    login de una persona fisica real con Clave Fiscal — no existe CUIT
+    anonimo de testing para WSFE/WSAA.
+    19c (CHANGE FUTURO, depende de 19a, independiente de 19b salvo para un
+    CAE real en papel): impresion fiscal con QR, UI de configuracion de
+    certificado/PV/condicion fiscal, contingencia operativa (cola offline +
+    CAEA como ultimo recurso, con sus valores de enum y sus escritores),
+    tipo fiscal de la consolidacion de remitos CON su escritor, libro IVA.
+    OBJETIVO EXPLICITO DE 19a: que el dia que el duenio haga el alta, lo
+    UNICO que falte sea apuntar el cliente a wswhomo y cargar el certificado.
+    ITEM DE GATE REGISTRADO PARA 19b: tabla tickets_acceso_fiscal (persistir
+    el TA de WSAA), diferida por la decision 10 con su riesgo nombrado.
+  OD2: >-
+    Registro del arbitraje ya tomado por el orquestador y adoptado verbatim
+    por el proposal: 19b NACE FORMALMENTE BLOCKED. Ningun artefacto de 19a
+    puede contener un endpoint real de ARCA como valor por defecto
+    (criterio de verify 8), y ningun slice de 19a depende de una credencial.
+phases:
+  explore:
+    status: done
+    date: 2026-08-21
+    artifact: explore.md
+    depends_on: []
+    notes: >-
+      Ejecutado por sdd-explore (sonnet) bajo mandato autonomo; persistido
+      verbatim por el orquestador (el agente de fase no tenia Write).
+      HALLAZGO 1: el legado NUNCA facturo fiscalmente — alsina/ticket.php:16-30
+      es un window.print(), cero SOAP/certificado/CAE en todo el arbol
+      (confirma doc-11:410-411). Greenfield puro, sin contrato de paridad.
+      HALLAZGO 2: la capa fiscal del schema esta CONSTRUIDA PERO DORMIDA —
+      condiciones_fiscales/alicuotas_iva/tipos_comprobante con es_fiscal,
+      letra, discrimina_iva y codigo_afip existen con RLS desde la etapa 1, y
+      ResolvedorDeLetraComprobante esta exhaustivamente testeado y SIN NINGUN
+      CALLER (se autodocumenta "dormant"). ServicioDeVentas.cs:1162 bloquea
+      todo EsFiscal con 400 A PROPOSITO. HALLAZGO 3: faltan
+      empresas.id_condicion_fiscal, puntos_venta numero fiscal real (el PPPP
+      que se imprime hoy ES EL ID INTERNO) y las columnas de resultado
+      (CAE/vencimiento/resultado/observaciones). HALLAZGO 4: la tension de
+      numeracion — ARCA numera por PUNTO DE VENTA FISCAL, no por
+      id_punto_venta interno. HALLAZGO 5 (la linea del corte): el primer
+      bloqueo real es el certificado, y aun el de homologacion exige que el
+      duenio loguee en WSASS con Clave Fiscal. PROTOCOLO LEIDO DEL MANUAL
+      OFICIAL (manual-desarrollador-ARCA-COMPG-v4-0.pdf, RG 4291, rev.
+      15/01/2025): forma exacta de FECAESolicitar, TRES estados de respuesta
+      (aprobado / aprobado-con-observaciones / rechazado), payload del QR de
+      la RG 4291, TA de WSAA valido 12h con intervalo preventivo minimo, y
+      el cambio regulatorio de junio 2026 que dejo CAEA SOLO para
+      contingencia con tope del 5% mensual. Seis decisiones con recomendacion
+      y dos approaches; recomendado el 2 (sub-etapas alineadas al corte).
+  propose:
+    status: done
+    date: 2026-08-21
+    artifact: proposal.md
+    depends_on: [explore]
+    notes: >-
+      Cubre SOLO 19a (OD1). 13 decisiones numeradas: las 6 del explore
+      resueltas (4 adoptadas y endurecidas, 1 acotada, 1 ratificada verbatim)
+      mas 7 propias. LAS CLAVE:
+      (13) NUMERACION FISCAL = TABLA PROPIA. La tension real no es la forma
+      de la clave sino la DISCIPLINA TRANSACCIONAL:
+      AsignadorDeNumeroComprobante comitea su numero en su PROPIA transaccion
+      chica ANTES de la del llamador, a proposito, para que "el numero se
+      consume aunque falle el resto" (AsignadorDeNumeroComprobante.cs:29-32),
+      y los huecos internos son legitimos (la 17 acepto uno quemado en su T6).
+      Para una serie de ARCA eso es FATAL: CbteDesde tiene que ser
+      ultimo_autorizado+1, asi que un numero quemado no abre un hueco — DETIENE
+      la serie (error 10016). Extender numeraciones_comprobante pondria DOS
+      escritores de disciplina OPUESTA sobre una tabla cuyo doc-comment dice
+      que ese asignador es "el unico punto de escritura legitimo"
+      (NumeracionComprobante.cs:15-17) y el proximo mantenedor reusaria el
+      asignador equivocado con consecuencia LEGAL. Por eso:
+      numeraciones_fiscales propia + AsignadorDeNumeroFiscal que toma el
+      numero DENTRO de la transaccion de emision y lo mantiene atado al
+      comprobante 'pendiente'. Serializar la emision por (PV fiscal, tipo) no
+      es perdida de escalabilidad: ES la restriccion real del dominio.
+      (9) EL GUARD DEL POS SE ANGOSTA, NUNCA SE REMUEVE — LA CORRECCION MAS
+      IMPORTANTE AL EXPLORE. El explore ponia "activar es_fiscal en el
+      resolver" en la columna construible (:142); eso abriria el checkout a
+      FA/FB/FC, que YA ESTAN SEMBRADOS ACTIVOS con es_fiscal=true
+      (InicializadorDeBaseDeDatos.cs:90-96), reproduciendo la clase de la
+      venta fantasma del "PRE latente" de la 17 — salvo que aca el documento
+      escapado seria LEGALMENTE IRREVERSIBLE. ServicioDeVentas.cs:1162 NO se
+      toca en 19a: el camino fiscal tiene ResolverTipoFiscalAsync propio y
+      endpoint propio, con CUATRO gates nombrados (condicion fiscal de la
+      empresa, numero_fiscal del PV, certificado activo, tipo fiscal valido).
+      (1) CIFRADO EXPLICITO: AES-256-GCM con AAD atada a la fila, versionado
+      de clave maestra, sin fallback a texto plano, ausencia en el DTO.
+      (2) numero_fiscal UNIQUE PARCIAL por empresa — el explore no lo dijo y
+      es lo que vuelve inyectivo el mapa a la serie de ARCA.
+      (3) el tipo fiscal de la consolidacion se DIFIERE A 19c CON su escritor
+      (regla de la 17: un valor de catalogo nace con escritor) — la
+      restriccion de la 17 de no reemplazar TXR se honra igual.
+      (4) contingencia acotada: 19a lleva 'pendiente' + reintento exponencial
+      + circuit breaker; la cola durable y CAEA son 19c (una cola cuyo unico
+      productor no alcanza un servidor no tiene nada que drenar).
+      (6) FECompConsultar refinado: no "antes de cada FECAESolicitar" sino
+      antes de cada REINTENTO cuyo predecesor no fue definitivo (el chequeo
+      incondicional duplica el volumen en el camino feliz sin ganancia), y no
+      es solo antiduplicado — es lo que vuelve SOBREVIVIBLE al invariante I1
+      tras un timeout post-autorizacion. Los dos invariantes se cierran
+      mutuamente.
+      (7) SOAP RESUELTO CONTRA LA OPCION "OFICIAL": sobre SOAP 1.1 a mano con
+      HttpClient + XLinq aislado en UN archivo, y System.ServiceModel.Http
+      RECHAZADO. Motivos: un proxy generado del WSDL son miles de lineas
+      irrevisables contra un presupuesto de review adversarial de 400 lineas
+      (judgment-day no puede revisar codigo generado), y moveria los mocks
+      del CABLE a una interfaz, destruyendo justamente la propiedad que hace
+      valiosa a 19a sin credenciales. La parte sensible (PKCS#7) ya es BCL
+      (SignedCms), asi que ningun tercero toca material de clave. Riesgo
+      honesto (namespaces/SOAPAction/orden de elementos) mitigado con
+      goldens XML comparados BYTE A BYTE contra el sobre de ejemplo del
+      manual. Precedente invertido de ClosedXML: se aisla el PROTOCOLO en un
+      archivo en vez de una dependencia, y quedan CERO paquetes nuevos.
+      (8) LOS MOCKS SON EL CONTRATO Y ESTAN VERSIONADOS: cada fixture cita su
+      seccion del manual y el set se pinea a
+      manual-desarrollador-ARCA-COMPG-v4-0.pdf rev. 15/01/2025 +
+      Especificacion_Tecnica_WSAA_1.2.2.pdf, con REVISION.md — cuando ARCA
+      revise el manual, el diff entre sets ES el analisis de impacto.
+      Contenido minimo: LoginTicketRequest/Response, FECAESolicitar golden +
+      las TRES respuestas, FECompConsultar found/not-found,
+      FECompUltimoAutorizado con serie vacia (0), y la taxonomia de errores
+      500/501/502/600/601/602 mas el 10016 (numero no correlativo) que prueba
+      que I1 existe por una razon.
+      (10) TA en memoria detras de un puerto con IRelojDelSistema y margen de
+      seguridad; riesgo del throttle de WSAA tras reinicio NOMBRADO y la
+      tabla tickets_acceso_fiscal registrada como item de gate de 19b
+      (persistir un TA es persistir una credencial portadora: exigiria cifrar,
+      otra tabla y otro camino de clave, comprado por un valor que NO PUEDE
+      EXISTIR hasta 19b).
+      (11) el mapeo codigo_afip es DATA con doble red, sin ningun ALTER
+      (las tres tablas ya tienen la columna); Exento/No gravado quedan NULL
+      POR REGLA porque NO SON ALICUOTAS (van a ImpOpEx/ImpTotConc y jamas al
+      array Iva[]) — un mapeo ahi produciria facturas aritmeticamente validas
+      y legalmente equivocadas; NO_RESP es la unica incertidumbre flaggeada.
+      (12) el certificado de prueba lo GENERAN LOS TESTS en runtime
+      (CertificateRequest, BCL): cero material de clave en el repo jamas,
+      con barrido de verificacion — el musculo de review que dice "una clave
+      en un diff siempre esta mal" solo funciona sin excepciones.
+      MAQUINA DE ESTADOS CAE con CUATRO INVARIANTES: I1 sin huecos (un numero
+      asignado se autoriza o se reenvia CON EL MISMO numero; solo se libera si
+      es la cabeza de la serie, por accion explicita del operador);
+      I2 idempotencia (FECompConsultar antes de todo reintento no definitivo,
+      adoptando el CAE existente); I3 terminalidad (aprobado y
+      aprobado_con_observaciones son terminales — un CAE nunca se sobrescribe
+      ni se borra; corregir es nota de credito); I4 inercia (sin certificado
+      activo: 409 y CERO bytes en el cable). Y TRES estados de respuesta, no
+      dos: una aprobacion CON observaciones ES UNA FACTURA VALIDA — tratarla
+      como fallo duplicaria documentos en silencio.
+      3 capabilities nuevas (fiscal-arca, comprobante-fiscal,
+      certificados-fiscales) + numeracion-fiscal, y 4 modificadas
+      (comprobantes-venta, auxiliary-catalogs, tenant-organization,
+      operacion-de-pos). Plan: 5 slices stacked-to-main (1 schema /
+      2 WSAA / 3 WSFE+CAE / 4 numeracion+certificados / 5 emision+QR),
+      ~2240 lineas estimadas, riesgo de presupuesto ALTO, 3 puntos de corte
+      preautorizados, salida realista 6-8 PRs.
+      Decision needed before apply: Yes (ratificacion del gate de DB).
+      12 tensiones con el explore registradas; la 10 (activar es_fiscal en el
+      resolver) es la unica OVERRULE dura.
+  spec:
+    status: pending
+    artifact: specs/
+    depends_on: [propose]
+  design:
+    status: pending
+    artifact: design.md
+    depends_on: [propose]
+  tasks:
+    status: pending
+    artifact: tasks.md
+    depends_on: [spec, design]
+  apply:
+    status: pending
+    artifact: tasks.md + PRs
+    depends_on: [tasks]
+  verify:
+    status: pending
+    artifact: verify-report.md
+    depends_on: [apply]
+  archive:
+    status: pending
+    artifact: archive-report.md
+    depends_on: [verify]
+
+sub_etapas_futuras:
+  19b:
+    status: blocked
+    blocking_reason: >-
+      alta WSASS pendiente del duenio (login con Clave Fiscal Nivel 2 en el
+      Administrador de Relaciones). NO SE PIDE, SE DOCUMENTA. Sin ese alta no
+      hay certificado — ni de homologacion — y por lo tanto CERO pruebas
+      contra servidores reales de ARCA. No existe CUIT anonimo de testing para
+      WSFE/WSAA (el 20111111112 de los ejemplos es de WSPadron, no de WSFE).
+    depends_on: [stage-19-fiscal-arca/19a]
+    alcance: >-
+      Apuntar el cliente ya probado a wswhomo.afip.gov.ar; cargar el
+      certificado real; confirmar FEParamGetTiposCbte / FEParamGetTiposIva /
+      FEParamGetCondicionIvaReceptor contra los mapeos de codigo_afip de 19a
+      (incluida la incertidumbre flaggeada de NO_RESP); correr un ciclo real
+      de CAE; diff fixtures-vs-realidad como primera tarea; decidir la tabla
+      tickets_acceso_fiscal (item de gate registrado por la decision 10).
+  19c:
+    status: pending
+    depends_on: [stage-19-fiscal-arca/19a]
+    alcance: >-
+      Impresion fiscal con QR; UI de certificado / numero fiscal de PV /
+      condicion fiscal de la empresa; contingencia operativa (cola durable +
+      CAEA como ultimo recurso, con sus valores de enum y sus escritores);
+      tipo fiscal de la consolidacion de remitos CON su escritor y la
+      parametrizacion de ServicioDeFacturacionDeRemitos (default 'TXR', ruta
+      existente byte-identica); libro IVA. Independiente de 19b salvo para
+      verificar un CAE real impreso.
+
+# FASES (registro del orquestador)
+# explore: done 2026-08-21 (explore.md, corte documentado + 6 decisiones)
+# propose: done 2026-08-21 (proposal.md 19a; gate de DB PENDIENTE DE
+#   RATIFICACION — 1 migracion, 2 enums, 2 tablas, 3 ALTER aditivos,
+#   5 FKs, 8 CHECKs, 8 indices, 3 data statements, 3 seeds, 1 policy;
+#   OD1 sub-etapas con 19b BLOCKED por alta WSASS)
