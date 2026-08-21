@@ -2224,8 +2224,11 @@ serves the shape.
   Commit `fix(remitos): judgment-day slice-8 ronda 2 juez A — gate del tipo por items vacios y
   tail de proyeccion unico`. Ronda 2 era la ÚLTIMA del presupuesto nativo — cierra `judgment-day`
   para esta slice.
-- [ ] 8.15 Open PR #8 `feat/stage17-slice8-web-remitos`, merge after a clean round — **stage
+- [x] 8.15 Open PR #8 `feat/stage17-slice8-web-remitos`, merge after a clean round — **stage
   close**.
+  **DONE by the orchestrator**: PR #155, merged `bbf3ed8` after the clean round (see 8.14) —
+  the stage's implementation is complete (slices 1-8, PRs #146-#155, plus the two standalone
+  test-defect fixes #149 and #154 surfaced by this stage's full-suite runs).
 
 ### Work Unit Evidence
 
