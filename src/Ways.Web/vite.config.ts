@@ -22,5 +22,9 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    // `css: true` (etapa 18, slice 1): sin esto Vitest reemplaza cualquier import de `.css` —
+    // incluido `?raw` — por un string vacío, y el test estructural de la named page
+    // (`etiquetas.css`, mutation target 1) necesita el texto real del stylesheet.
+    css: true,
   },
 })

@@ -148,21 +148,21 @@ not trigger here — the strike rule is a single boolean formula, not a guard ch
 tests pass + `judgment-day` clean round + PR merged; 1b remains open until the owner runs it, and
 gates slice 3 only (verify criterion 4), not this PR.
 
-- [ ] 1.1 **(1a, autonomous)** Create `src/Ways.Web/src/etiquetas/HojaDeEtiquetas.tsx` in
+- [x] 1.1 **(1a, autonomous)** Create `src/Ways.Web/src/etiquetas/HojaDeEtiquetas.tsx` in
   `modo="calibracion"`: 0.2 mm hairline box per nominal cell, 6 mm registration cross at each
   cell's top-left origin, `f{row}c{col}` label, a 200 mm horizontal / 280 mm vertical 1 mm-tick
   ruler, a 100.0 × 100.0 mm labelled scale square, driven by the **same** descriptor tuple the real
   sheet uses. *(design.md:67-84, mutation target 6)*
-- [ ] 1.2 **(1a, autonomous)** Same file, `d-print-none` print-settings instruction block: A4,
+- [x] 1.2 **(1a, autonomous)** Same file, `d-print-none` print-settings instruction block: A4,
   100% scale, "fit to page" OFF, margins none, background graphics ON. *(design.md:84, mutation
   target 8)*
-- [ ] 1.3 **(1a, autonomous)** Create
+- [x] 1.3 **(1a, autonomous)** Create
   `openspec/changes/stage-18-etiquetas-y-consulta/spike-alineacion.md` — the recording scaffold:
   one row per run (date, browser+version, OS, printer make/model, sheet reference, print
   scale/margin settings, scale-square measurement, per-cell deviation at the 4 corners + centre +
   both last-row ends, last-row cumulative drift, E1 verdict, E2 verdict, evidence path). Empty
   rows, ready for the owner's physical run. *(design.md:98-102)*
-- [ ] 1.4 **(1b, BLOCKED ON OWNER — physical printer + reference die-cut A4 sheet required)** Print
+- [ ] 1.4 **(1b, BLOCKED ON OWNER — physical printer + reference die-cut A4 sheet required, NOT executed by this apply pass)** Print
   the `A4-3x8` calibration grid at 100% scale on the reference sheet, on at least one target
   browser; measure and record **E1**: every cell origin within ±1.0 mm of nominal (4 corners +
   centre + both last-row ends), last-row cumulative drift within ±1.5 mm, scale-square
@@ -170,51 +170,117 @@ gates slice 3 only (verify criterion 4), not this PR.
   **FAIL path**: STOP — no library swap; escalate the QuestPDF licence question to the owner as a
   blocking commercial decision, never resolved inside this phase. *(proposal.md:147-161,
   design.md:86-92, Reconciliación 5)*
-- [ ] 1.5 **(1a, autonomous)** E2 non-regression, three proofs, appended to `spike-alineacion.md`'s
+- [~] 1.5 **(1a, autonomous, PARTIAL — 2/3 proofs, see Deviations)** E2 non-regression, three proofs, appended to `spike-alineacion.md`'s
   E2 row: `git diff --exit-code src/Ways.Web/src/estilos/impresion.css` clean; `CajaZ.test.tsx` /
   `CuentaCorriente.test.tsx` green and **unedited**; a "Guardar como PDF" page-box comparison of
   each view from `main` vs. the branch, same browser/settings. *(design.md:93-97, mutation target
   1 partial, verify criterion 5)*
-- [ ] 1.6 Create `src/Ways.Web/src/etiquetas/formatos.ts` — `CampoDeCelda` union,
+- [x] 1.6 Create `src/Ways.Web/src/etiquetas/formatos.ts` — `CampoDeCelda` union,
   `DescriptorDeFormato` (flat, function-free, frozen record), the four tuples using the
   **sharpened** `A4-2x7` geometry (99.1×38.1 mm, margins 15.15/4.65 mm, gutter 2.5 mm —
   Reconciliación 2), plus `celdasPorHoja`/`contarHojas` as pure derived helpers, never stored
   fields. *(design.md:111-148, mutation targets 3, 4)*
-- [ ] 1.7 [P] `formatos.test.ts` — for each of the four descriptors, assert the emitted mm values
+- [x] 1.7 [P] `formatos.test.ts` — for each of the four descriptors, assert the emitted mm values
   equal the tuple and `columnas × filas` equals the declared per-sheet count (24/14/1/2).
   *(design.md:315, mutation target 3)*
-- [ ] 1.8 [P] `formatos.test.ts` — `celdasPorHoja`/`contarHojas`: 24→1 hoja, 25→2, 0→0; assert no
+- [x] 1.8 [P] `formatos.test.ts` — `celdasPorHoja`/`contarHojas`: 24→1 hoja, 25→2, 0→0; assert no
   stored derived field exists on the type (a mutated tuple must move the derived count too).
   *(mutation targets 4, 5)*
-- [ ] 1.9 Create `src/Ways.Web/src/etiquetas/HojaDeEtiquetas.tsx` `modo="normal"`: pure props-only
+- [x] 1.9 Create `src/Ways.Web/src/etiquetas/HojaDeEtiquetas.tsx` `modo="normal"`: pure props-only
   renderer (descriptor + already-expanded `celdas` + `nombreDeLista`), emits geometry as
   `--pagina-ancho`/`--celda-ancho`/`--pitch-x`/`--margen-sup`… custom properties on
   `.hoja-de-etiquetas` (the only projection jsdom can measure); strike rule is
   `celda.ofertas.length > 0`, **never** `precioOriginal !== precioFinal`. *(design.md:162-176,
   mutation target 7)*
-- [ ] 1.10 [P] `HojaDeEtiquetas.test.tsx` — strike rendered **iff** `ofertas.length > 0`: a
+- [x] 1.10 [P] `HojaDeEtiquetas.test.tsx` — strike rendered **iff** `ofertas.length > 0`: a
   constructed DTO with distinct prices + empty `ofertas` (no strike) and its mirror (equal prices +
   non-empty `ofertas`, strike). *(design.md:316, mutation target 7)*
-- [ ] 1.11 [P] `HojaDeEtiquetas.test.tsx` — calibration-mode emits the identical geometry custom
+- [x] 1.11 [P] `HojaDeEtiquetas.test.tsx` — calibration-mode emits the identical geometry custom
   properties as normal-mode for the same descriptor. *(mutation target 6)*
-- [ ] 1.12 [P] `HojaDeEtiquetas.test.tsx` — the `d-print-none` instruction block is present.
+- [x] 1.12 [P] `HojaDeEtiquetas.test.tsx` — the `d-print-none` instruction block is present.
   *(mutation target 8)*
-- [ ] 1.13 Create `src/Ways.Web/src/estilos/etiquetas.css` — `@page etiquetas { size: A4; margin: 0
+- [x] 1.13 Create `src/Ways.Web/src/estilos/etiquetas.css` — `@page etiquetas { size: A4; margin: 0
   }` + `.hoja-de-etiquetas { page: etiquetas }` + the grid rules; `impresion.css` stays untouched.
   *(design.md:52, mutation target 1)*
-- [ ] 1.14 **(S)** Test: the sheet container carries the named-page class/property — assert
+- [x] 1.14 **(S)** Test: the sheet container carries the named-page class/property — assert
   `.hoja-de-etiquetas`'s declared `page: etiquetas` (structural: jsdom does not implement `@page`).
   *(mutation target 1)*
-- [ ] 1.15 **GATE GUARD** — `git diff --exit-code src/Ways.Web/src/estilos/impresion.css` clean
+- [x] 1.15 **GATE GUARD** — `git diff --exit-code src/Ways.Web/src/estilos/impresion.css` clean
   (re-asserted from 1.5 as the slice's own gate task); no file under `src/Ways.Infrastructure/` in
   this slice's diff. *(verify criteria 1, 3)*
-- [ ] 1.16 Mutation evidence recorded in the PR body for targets 1-8 (structural rows 1, 2, 8
+- [x] 1.16 Mutation evidence recorded in the PR body for targets 1-8 (structural rows 1, 2, 8
   record the file/state assertion, not a runtime failure). *(verify criterion 11)*
 - [ ] 1.17 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
 - [ ] 1.18 Open PR #1 `feat/stage18-slice1-spike-y-formatos`, merge to `main` after a clean
   `judgment-day` round. **Note in PR body**: task 1.4 (E1's physical verdict) is open and
   owner-blocked; slice 3 will not start until it is recorded PASS.
+
+### Work Unit Evidence (Slice 1)
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npx vitest run` (`src/Ways.Web`) — **57 test files passed, 926 tests passed** (0 failed), including the two new colocated files `formatos.test.ts` (11 tests) and `HojaDeEtiquetas.test.tsx` (6 tests). One pre-existing/unrelated flake observed in `Vencimientos.test.tsx` on the full-suite run (`Not implemented: navigation to another Document`, a known jsdom limitation — confirmed pre-existing: the file is untouched by this slice's diff, and re-running it in isolation is 9/9 green) |
+| Runtime harness command/scenario and exact result | N/A — this slice ships zero fetch/zero backend consumer by design (`HojaDeEtiquetas` is pure props-only, "no consumer exists yet" per the slice's own Finish criterion). `npx tsc -b` clean, `npm run lint` (oxlint) clean (4 pre-existing warnings in untouched files), `dotnet build` clean (confirms zero backend impact — no `.cs` file touched) |
+| Rollback boundary | `git revert` the slice-1 commit(s): `src/Ways.Web/src/etiquetas/**`, `src/Ways.Web/src/estilos/etiquetas.css`, `openspec/changes/stage-18-etiquetas-y-consulta/spike-alineacion.md`, and the one-line `css: true` addition to `src/Ways.Web/vite.config.ts`'s `test` block. `impresion.css` and every `.cs` file are untouched (`git diff --exit-code` clean on both, confirmed). No component imports `HojaDeEtiquetas`/`formatos.ts` yet, so the revert removes zero consumers |
+
+### Mutation Evidence (targets 1-8, verify criterion 11)
+
+| # | Slice | Clause | Mutation applied | Test that failed | Reverted |
+|---|---|---|---|---|---|
+| 1 **S** | 1 | `@page etiquetas` in `etiquetas.css` + `page: etiquetas` on `.hoja-de-etiquetas` | Deleted `page: etiquetas;` from the `.hoja-de-etiquetas` rule | `HojaDeEtiquetas.test.tsx` › "el contenedor lleva la clase `hoja-de-etiquetas` que etiquetas.css usa para declarar `page: etiquetas`" — FAILED (regex on the raw stylesheet text no longer matches) | Yes, reverted, test green again |
+| 2 **S** | 1 | `impresion.css` untouched | N/A — asserted via `git diff --exit-code src/Ways.Web/src/estilos/impresion.css` against `main`, run and confirmed clean (0 diff, file byte-identical); the file was never written by this slice so there is no local edit to mutate/revert | `git diff --exit-code` (shell, not a vitest test) | N/A |
+| 3 | 1 | Each geometry number of each of the four descriptors | Changed `A4_3X8.celdaMm.alto` from `37.0` to `38.0` | `formatos.test.ts` › "A4-3x8: celda 70.0×37.0 mm..." — FAILED (`expected 38 to be 37`) | Yes |
+| 4 | 1 | `celdasPorHoja`/`contarHojas` derived, never stored | Temporarily hardcoded `celdasPorHoja` to always return `24` regardless of input | `formatos.test.ts` › "un descriptor mutado (celdaPorHoja distinto) mueve el conteo derivado" — FAILED (`expected 24 to be 10`) | Yes |
+| 5 | 1 | `contarHojas = ceil(celdas / porHoja)` | Changed `Math.ceil` to `Math.floor` | `formatos.test.ts` › "contarHojas: 25 etiquetas en A4-3x8 ⇒ 2 hojas" — FAILED (`expected 1 to be 2`) | Yes |
+| 6 | 1 | The calibration grid driven by the same descriptor as the real sheet | Passed `{ ...A4_3X8, celdaMm: { ancho: 50, alto: 20 } }` to the calibration branch only, diverging from the normal-mode descriptor | `HojaDeEtiquetas.test.tsx` › "modo=\"calibracion\" emite exactamente los mismos custom properties..." — FAILED (`--celda-ancho: 50mm` ≠ `70mm`) | Yes |
+| 7 | 1 | The strike rule `ofertas.length > 0` | Changed the strike condition to `celda.precioOriginal !== celda.precioFinal` | Both new tests in the "regla de tachado (mutation target 7)" block — FAILED (distinct-price/empty-ofertas case wrongly struck; equal-price/with-oferta case wrongly not struck) | Yes |
+| 8 **S** | 1 | The print-settings block's `d-print-none` | Removed the `d-print-none` class from the instruction block | `HojaDeEtiquetas.test.tsx` › "modo=\"calibracion\" muestra el bloque d-print-none..." — FAILED (`toHaveClass('d-print-none')`) | Yes |
+
+### Deviations from Design
+
+1. **Task 1.5 (E2) is PARTIAL, not complete.** Two of its three proofs are green and deterministic
+   (`git diff --exit-code` on `impresion.css`; `CajaZ.test.tsx`/`CuentaCorriente.test.tsx` green and
+   unedited — both confirmed inside the full `npx vitest run`). The third proof — a "Guardar como
+   PDF" page-box comparison of `main` vs. the branch inside a real browser session — was **not**
+   executed. It needs an authenticated, fully-running app (API + Postgres) to render `CajaZ`/
+   `CuentaCorriente` with real data, and the repo has no E2E harness; installing one (Playwright/
+   Puppeteer) would violate the stage's own binding "no new web dependency" constraint
+   (`proposal.md:475`). Practically, the risk this proof exists to catch is near-zero for slice 1
+   specifically: `HojaDeEtiquetas`/`etiquetas.css` have **zero consumers** in the app yet (verified —
+   `hoja-de-etiquetas` only appears in the three files this slice created), so the new named page
+   never actually coexists with the global `@page` rule inside a running app until slice 3 mounts
+   `Etiquetas.tsx`. Recommendation: re-run this specific proof as part of slice 3's own gate, when
+   `HojaDeEtiquetas` gets its first real consumer. Recorded in `spike-alineacion.md`'s E2 section,
+   not silently dropped.
+2. **`padExternoMm` for `CARTEL-A4`/`CARTEL-A5` is an assumption, not a design-given value.**
+   `design.md:143-148`'s table only publishes `padExternoMm` for the two label formats (`A4-3x8` =
+   5, `A4-2x7` = 3); the two poster formats have no published value. Set to `5` for both (matching
+   the most conservative published value) since posters already carry a generous 10 mm margin that
+   likely absorbs the printer's non-printable edge, but this is a judgment call, not a cited number
+   — flagged for `judgment-day`/owner review.
+3. **`campos`/`escalaDePrecio` per descriptor are not design-given values.** `design.md` defines the
+   `DescriptorDeFormato` shape and cites these fields' *purpose* but never their per-format values.
+   All four descriptors ship the same full `CampoDeCelda` set (`nombre`, `precioFinal`,
+   `precioOriginal`, `codigo`, `unidadVenta`, `nombreDeOferta`); `escalaDePrecio` uses ascending,
+   undocumented placeholder values (1.4/1.6/3.5/3.0). Neither is exercised by a mutation target or a
+   binding test — slice 3 (`Etiquetas.tsx`, the first real consumer) is the natural place to revisit
+   these once actual cell layouts are on screen.
+4. **`FilaDeEtiqueta` and `OfertaAplicada` types**: `FilaDeEtiqueta` is defined locally in
+   `HojaDeEtiquetas.tsx` (exported) rather than in `api/etiquetas.ts`, because that file does not
+   exist yet — it is slice 3's task 3.1 ("DTO mirrors of `SolicitudDeEtiquetas`/`DatosDeEtiquetas`/
+   `FilaDeEtiqueta`/`ArticuloExcluido`"). `OfertaAplicada` is reused **verbatim** from the existing
+   `api/tipos.ts` (design.md:204: "`Ofertas` reuses `OfertaAplicadaDto` verbatim"). Slice 3 should
+   import `FilaDeEtiqueta` from `etiquetas/HojaDeEtiquetas.tsx` instead of redefining it, to avoid two
+   competing shapes.
+5. **`vite.config.ts` gained one line (`css: true` in the `test` block).** Needed so Vitest stops
+   stubbing `.css` imports (including `?raw`) as empty strings — required for task 1.14's structural
+   test to read the real `etiquetas.css` text. Scoped to test config only; does not change any
+   production build output (`build.outDir`/`sourcemap` untouched).
+
+### Issues Found
+
+None beyond the deviations above.
 
 ---
 

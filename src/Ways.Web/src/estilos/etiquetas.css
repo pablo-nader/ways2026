@@ -1,0 +1,112 @@
+/*
+ * Etapa 18, Slice 1 (design.md:19-22, decisión 1): la hoja de etiquetas/carteles vive en su
+ * PROPIA página nombrada — nunca en `impresion.css`, que sigue byte-idéntica a `main`
+ * (verify criterio 3, mutation target 2). `@page` no admite un selector ordinario; las named
+ * pages de CSS (`@page etiquetas` + la propiedad `page` en el contenedor) son el único mecanismo
+ * que scopea la caja de página sin tocar el stylesheet global (mutation target 1).
+ */
+@page etiquetas {
+  size: A4;
+  margin: 0;
+}
+
+.hoja-de-etiquetas {
+  /* named page: gatea a `@page etiquetas` de arriba, nunca al `@page { margin: 12mm }` global
+     de `impresion.css` (mutation target 1). */
+  page: etiquetas;
+  position: relative;
+  box-sizing: border-box;
+  width: var(--pagina-ancho);
+  height: var(--pagina-alto);
+}
+
+.hoja-de-etiquetas .grilla-de-celdas {
+  position: absolute;
+  top: var(--margen-sup);
+  left: var(--margen-izq);
+  display: grid;
+  grid-template-columns: repeat(var(--columnas), var(--celda-ancho));
+  grid-template-rows: repeat(var(--filas), var(--celda-alto));
+  column-gap: var(--medianil-h, 0mm);
+  row-gap: var(--medianil-v, 0mm);
+}
+
+.hoja-de-etiquetas .celda {
+  box-sizing: border-box;
+  width: var(--celda-ancho);
+  height: var(--celda-alto);
+  padding: var(--pad-externo);
+  overflow: hidden;
+  position: relative;
+}
+
+/* --- Modo calibración (design.md:67-92, spike de alineación) --- */
+
+.hoja-de-etiquetas[data-modo='calibracion'] .celda-calibracion {
+  /* Hairline de 0.2 mm por celda nominal: lo que debería coincidir con el troquel. */
+  border: 0.2mm solid #000;
+}
+
+.hoja-de-etiquetas .cruz-registro {
+  /* Cruz de registro de 6 mm centrada en el origen (esquina superior-izquierda) de la celda —
+     el punto que se mide, no un borde difuso. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6mm;
+  height: 6mm;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.hoja-de-etiquetas .cruz-registro::before,
+.hoja-de-etiquetas .cruz-registro::after {
+  content: '';
+  position: absolute;
+  background: #000;
+}
+
+.hoja-de-etiquetas .cruz-registro::before {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 0.2mm;
+  transform: translateY(-50%);
+}
+
+.hoja-de-etiquetas .cruz-registro::after {
+  left: 50%;
+  top: 0;
+  height: 100%;
+  width: 0.2mm;
+  transform: translateX(-50%);
+}
+
+.hoja-de-etiquetas .cuadrado-de-escala {
+  /* 100.0×100.0 mm etiquetado — separa "la grilla está mal" de "el navegador imprimió al 96%". */
+  width: 100mm;
+  height: 100mm;
+  border: 0.2mm solid #000;
+  box-sizing: border-box;
+}
+
+.hoja-de-etiquetas .regla-horizontal,
+.hoja-de-etiquetas .regla-vertical {
+  position: relative;
+  background: #000;
+}
+
+.hoja-de-etiquetas .regla-horizontal {
+  width: 200mm;
+  height: 0.2mm;
+}
+
+.hoja-de-etiquetas .regla-vertical {
+  width: 0.2mm;
+  height: 280mm;
+}
+
+.hoja-de-etiquetas .regla-tick {
+  position: absolute;
+  background: #000;
+}
