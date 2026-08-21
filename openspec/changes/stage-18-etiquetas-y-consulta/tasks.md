@@ -219,9 +219,11 @@ gates slice 3 only (verify criterion 4), not this PR.
   y el gate E2 sin tarea exigible; + 1 WARNING de la tarea 3.1) → fixes `7e86886` (absolute
   anchors + Start del slice 3 con E1 Y E2 + tarea 3.0) → pasada acotada B APPROVE (razonamiento
   del layout físico confirmado) + re-ronda A APPROVE (cero hallazgos). Ronda limpia.
-- [ ] 1.18 Open PR #1 `feat/stage18-slice1-spike-y-formatos`, merge to `main` after a clean
+- [x] 1.18 Open PR #1 `feat/stage18-slice1-spike-y-formatos`, merge to `main` after a clean
   `judgment-day` round. **Note in PR body**: task 1.4 (E1's physical verdict) is open and
   owner-blocked; slice 3 will not start until it is recorded PASS.
+  **DONE by the orchestrator**: PR #156, merged `e8e9e4b` after the clean round (see 1.17).
+  Task 1.4 (E1 physical measurement) remains OPEN, owner-blocked — gates slice 3 only.
 
 ### Work Unit Evidence (Slice 1)
 
