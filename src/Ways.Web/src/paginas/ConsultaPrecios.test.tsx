@@ -361,6 +361,40 @@ describe('ConsultaPrecios — reset por inactividad (design decisión 14, mutati
 
       expect(screen.queryByTestId('resultado-resuelto')).not.toBeInTheDocument()
       expect(screen.queryByText('Sprite 1L')).not.toBeInTheDocument()
+
+      // El finally de esa corrida colgada acaba de correr con la generación ya rota por el reset
+      // — si `setBuscando(false)` siguiera gateado por esa misma generación (el bug real, judgment-day
+      // slice 4 ronda 2 juez A), `buscando` quedaría pegado en `true` PARA SIEMPRE y la pantalla
+      // muerta. Con el fix (`setBuscando(false)` incondicional), input y botón vuelven a habilitarse.
+      const entradaTrasReset = screen.getByLabelText('Código escaneado') as HTMLInputElement
+      expect(entradaTrasReset).not.toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Consultar' })).not.toBeDisabled()
+
+      // Y la prueba de que la pantalla no quedó muerta: un escaneo NUEVO después de esto funciona
+      // de punta a punta (1 GET + 1 POST nuevos, con resultado pintado).
+      apiGetMock.mockClear()
+      apiPostMock.mockClear()
+      apiGetMock.mockImplementationOnce((ruta: string) => {
+        if (ruta.startsWith('/articulos/escaneo?entrada=')) {
+          return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 3, nombre: 'Fanta 1L', codigoInterno: 'A0003' }))
+        }
+        return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      })
+      apiPostMock.mockImplementationOnce((ruta: string) => {
+        if (ruta === '/ofertas/resolver') {
+          return Promise.resolve<ResultadoDeResolucion[]>([resolucionFixture({ idArticulo: 3, precioOriginal: 80, precioFinal: 80 })])
+        }
+        return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      })
+
+      await escanearBajoFakeTimers('7790009999999')
+
+      expect(apiGetMock).toHaveBeenCalledTimes(1)
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('resultado-resuelto')).toHaveTextContent('Fanta 1L')
+
+      // Los asserts previos siguen vigentes: el escaneo B (descartado por el reset) nunca repintó.
+      expect(screen.queryByText('Sprite 1L')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
@@ -417,6 +451,40 @@ describe('ConsultaPrecios — reset por inactividad (design decisión 14, mutati
 
       expect(apiPostMock).not.toHaveBeenCalled()
       expect(screen.queryByTestId('resultado-resuelto')).not.toBeInTheDocument()
+      expect(screen.queryByText('Sprite 1L')).not.toBeInTheDocument()
+
+      // Misma carrera que arriba pero con el GET (no el POST) colgado: el finally corre con la
+      // generación ya rota por el reset — `setBuscando(false)` incondicional evita que la pantalla
+      // quede pegada en "Buscando…" para siempre (judgment-day slice 4 ronda 2 juez A).
+      const entradaTrasReset = screen.getByLabelText('Código escaneado') as HTMLInputElement
+      expect(entradaTrasReset).not.toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Consultar' })).not.toBeDisabled()
+
+      // Prueba de punta a punta de que la pantalla sigue viva: un escaneo nuevo dispara exactamente
+      // un GET y un POST nuevos, con el resultado pintado.
+      apiGetMock.mockClear()
+      apiPostMock.mockClear()
+      apiGetMock.mockImplementationOnce((ruta: string) => {
+        if (ruta.startsWith('/articulos/escaneo?entrada=')) {
+          return Promise.resolve(articuloEscaneadoFixture({ idArticulo: 3, nombre: 'Fanta 1L', codigoInterno: 'A0003' }))
+        }
+        return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      })
+      apiPostMock.mockImplementationOnce((ruta: string) => {
+        if (ruta === '/ofertas/resolver') {
+          return Promise.resolve<ResultadoDeResolucion[]>([resolucionFixture({ idArticulo: 3, precioOriginal: 80, precioFinal: 80 })])
+        }
+        return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      })
+
+      await escanearBajoFakeTimers('7790009999999')
+
+      expect(apiGetMock).toHaveBeenCalledTimes(1)
+      expect(apiPostMock).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('resultado-resuelto')).toHaveTextContent('Fanta 1L')
+
+      // Los asserts previos siguen vigentes: el escaneo B (descartado por el guard intermedio)
+      // nunca disparó el POST ni repintó.
       expect(screen.queryByText('Sprite 1L')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()

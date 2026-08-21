@@ -206,8 +206,15 @@ export function ConsultaPrecios() {
         setError(e instanceof ErrorApi ? e.message : 'No se pudo resolver el código escaneado.')
       }
     } finally {
+      // `buscando` marca "hay una corrida en vuelo", no "esta corrida sigue vigente" — un reset
+      // que bombea la generación MIENTRAS este `await` está pendiente no debe dejar la pantalla
+      // deshabilitada para siempre (judgment-day slice 4 ronda 2 juez A: CRITICAL de producción).
+      // La ventana disabled dura exactamente lo que dura el vuelo (react-async-state regla 5),
+      // nunca más — así que esto es INCONDICIONAL. El gate de generación sigue vivo para lo que
+      // sí es repintado stale: robarle el foco a un escaneo nuevo (o a un input que el reset ya
+      // devolvió al usuario) que arrancó después de este.
+      setBuscando(false)
       if (generacionRef.current === generacion) {
-        setBuscando(false)
         inputRef.current?.focus()
       }
     }
