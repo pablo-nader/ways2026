@@ -1947,6 +1947,24 @@ slices 4-6). **Finish**: quote list/detail/draft + the POS conversion entry poin
   posted, cart inputs disabled. *(design.md:508)* — `Pos.test.tsx` "conversión de presupuesto"
   describe block: banner + read-only hydration + PV/cliente disabled + zero `/ofertas/resolver`
   calls + POST body asserted to omit both `idCliente` and `lineas`.
+
+  **CORRECCIÓN REGISTRADA (judgment-day slice-7 ronda 1 juez B, WARNING — mutation-proof-tests
+  regla 2/3, apply-time, run for real).** El `if (modoPresupuesto) { …; return }` de
+  `Pos.tsx:595-600` (el "skip the price-resolution effect entirely" citado arriba) es
+  **inalcanzable-en-efecto**: bajo `?idPresupuesto=`, `lineas` queda `[]` durante toda la vida de
+  la instancia (el carrito se hidrata de `presupuesto.items`, jamás de `setLineas`), y el guard
+  preexistente de la línea 611 (`if (lineas.length === 0 || …) { …; return }`) ya corta el
+  efecto ANTES de llegar al fetch por esa sola razón, sin importar `modoPresupuesto`. Mutación
+  real (`--no-incremental`, no razonada): se borró el bloque `if (modoPresupuesto) {...}` entero
+  y se corrió la suite completa de `Pos.test.tsx` — **54/54 verdes**, incluida la aserción de
+  "cero llamadas a `/ofertas/resolver`" de este mismo test; revertido, confirmado verde de nuevo.
+  El bloque de `modoPresupuesto` es **defensivo** (segunda red, redundante con la de línea 611
+  para el estado que este modo puede alcanzar hoy) — la garantía observable que el test 7.7
+  prueba la da el guard de `lineas` vacías, no este bloque. No hay forma de discriminarlo sin
+  forzar `lineas` no-vacío bajo `modoPresupuesto`, un estado que la UI actual no permite alcanzar
+  (mutation-proof-tests regla 3: confound estructural, no producto de un test débil). El bloque
+  se conserva (documenta la intención server-side-price explícitamente y blindea contra un futuro
+  cambio que popule `lineas` bajo este modo) — solo se corrige qué evidencia lo respalda hoy.
 - [x] 7.8 Test: a non-convertible quote renders no "Convertir" action. — `Presupuesto.test.tsx`:
   `Enviado`+`vencido:true`+`convertible:false` and `Convertido` (terminal) both assert the
   button's absence; a third test asserts it renders when `convertible:true`.
@@ -1958,6 +1976,28 @@ slices 4-6). **Finish**: quote list/detail/draft + the POS conversion entry poin
   rule 7)* — `Pos.test.tsx`: a `/para-venta` fetch left pending, the screen unmounted, then the
   promise resolved inside `act` — asserts zero `console.error` (proves the `vigente` guard, not
   merely that nothing visibly changed).
+
+  **CORRECCIÓN REGISTRADA (judgment-day slice-7 ronda 1 juez B, WARNING — mutation-proof-tests
+  regla 2/3, apply-time, run for real).** La afirmación "proves the `vigente` guard" quedó
+  desactualizada bajo React 19: `setState` post-desmontaje pasó a ser un no-op silencioso, sin el
+  warning de `console.error` que React ≤18 emitía — `expect(errorSpy).not.toHaveBeenCalled()` da
+  verde exista o no el guard. Mutación real (`--no-incremental`, no razonada): se quitó el
+  chequeo de token (`tokenPresupuestoRef.current !== miToken`) de las tres ramas del `.then()` de
+  la carga de `/para-venta`, dejando solo `vigente` — se corrió la suite completa de
+  `Pos.test.tsx` y dio **54/54 verdes**, incluido este mismo test; revertido, confirmado verde de
+  nuevo. Se intentó además la forma discriminante que pide `mutation-proof-tests` regla 2 (dos
+  cargas de `/para-venta` compitiendo con la MISMA instancia montada, la stale resolviendo
+  después de la fresca): estructuralmente inalcanzable — el efecto que usa el token depende solo
+  de `[modoPresupuesto, idPresupuesto]`, y `Pos()` remonta `PantallaPos` entera por
+  `key={idPresupuesto ?? 'libre'}` en cuanto ese id cambia (react-async-state regla 8), así que
+  dentro de la vida de una instancia montada este efecto corre exactamente una vez; el único caso
+  real de doble corrida (el doble-invoke de `StrictMode` en desarrollo) tampoco discrimina, porque
+  la limpieza del primer run es síncrona y ocurre antes de que cualquier promesa tenga oportunidad
+  de resolver — `vigente` ya blindea ese caso por sí solo. Mismo patrón de confound que el
+  `40P01` de la tarea 1.32: confirmado empíricamente, no razonado. El test se conserva sin
+  cambios (sigue probando, honestamente, que un resolve tardío post-desmontaje no revienta el
+  proceso) con su anotación en el archivo corregida para no reclamar cobertura del guard de
+  token.
 - [x] 7.11 Test: `vencido` toggle disabled without `idPuntoVenta`; pager disabled at edges. —
   `Presupuestos.test.tsx`.
 - [x] 7.12 Rule 10: any recovery path added is grepped for and replicated in sibling screens in
@@ -1970,7 +2010,21 @@ slices 4-6). **Finish**: quote list/detail/draft + the POS conversion entry poin
   31 pre-existing `render(<Pos />)` call sites mechanically became `renderPos()` (a `MemoryRouter`
   wrapper, since `Pos()` now calls `useSearchParams`) with **zero assertion changed**; full file
   green, see Work Unit Evidence.
-- [ ] 7.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
+- [ ] 7.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **ronda 1
+  juez B REJECT** (1 MAJOR + 2 WARNINGs) → fixes aplicados por el fix-agent: (1) MAJOR — el
+  `key={idPresupuesto ?? 'libre'}` de `Pos()` sin cobertura, sobrevivía 53/53; agregado el test
+  que rutea por `<Pos/>` real hasta `cobrar()` y `nuevaVenta()`, asertando que el ticket
+  desaparece y el input de escaneo vuelve tras el remount — mutante quitando el `key` → RED
+  confirmado → revert → verde (ver 7.13's describe block, nuevo `it` en "conversión de
+  presupuesto"). (2) WARNING — anotación de la tarea 7.7 corregida: el skip de precios de
+  `Pos.tsx:595-600` es defensivo/redundante con el guard de `lineas` vacías de la línea 611,
+  confound estructural confirmado por mutación real (54/54 verdes con el bloque borrado). (3)
+  WARNING — anotación de la tarea 7.10 corregida: `expect(errorSpy).not.toHaveBeenCalled()` no
+  discrimina el guard de token bajo React 19 (setState post-desmontaje es no-op silencioso);
+  intentada la forma discriminante (dos cargas compitiendo con la misma instancia montada) y
+  confirmada estructuralmente inalcanzable por mutación real (54/54 verdes con el chequeo de
+  token quitado) — mismo patrón de confound que el `40P01` de la tarea 1.32. Commit
+  `<pendiente>`. Pendiente: re-judge acotado a este diff.
 - [ ] 7.15 Open PR #7 `feat/stage17-slice7-web-presupuestos`, merge after a clean round.
 
 ### Work Unit Evidence

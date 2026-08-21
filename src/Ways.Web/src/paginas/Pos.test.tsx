@@ -1578,7 +1578,61 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     expect(llamada[1]).not.toHaveProperty('lineas')
   })
 
-  it('una respuesta tardía de /para-venta tras desmontar la pantalla no dispara ningún error (mutation-proof-tests regla 7: resuelta dentro de act)', async () => {
+  it('"Nueva venta" bajo `?idPresupuesto=` navega a `/pos` y remonta la pantalla entera: el ticket de la venta convertida NO queda pegado (judgment-day slice-7 ronda 1 juez B, MAJOR)', async () => {
+    mockearApiGetPresupuesto()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture({ idPresupuestoOrigen: 1, total: 200, subtotal: 200 }))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderPos('/pos?idPresupuesto=1')
+    await screen.findByText('Coca Cola 1L')
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.type(importe, '200')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+
+    // `nuevaVenta()` bajo `modoPresupuesto` navega a `/pos` en vez de resetear `ventaEmitida`
+    // localmente (react-async-state regla 8): la ruta pierde `?idPresupuesto=`, el `key` de
+    // `Pos()` pasa de `1` a `'libre'` y `PantallaPos` se remonta entera — sin ese remount, el
+    // ticket de la venta ya convertida quedaría pegado en pantalla para siempre.
+    await waitFor(() => expect(screen.queryByText('Venta 0007-00000001')).not.toBeInTheDocument())
+    expect(await screen.findByLabelText('Código escaneado')).toBeInTheDocument()
+  })
+
+  /**
+   * CORRECCIÓN REGISTRADA (judgment-day slice-7 ronda 1 juez B, WARNING — mutation-proof-tests
+   * regla 2/3): este test se documentaba como prueba del guard `tokenPresupuestoRef.current !==
+   * miToken` del `.then()`/`.catch()`/`.finally()` de la carga de `/para-venta` — no lo es.
+   * React 19 volvió a un `setState` post-desmontaje un no-op silencioso (sin el warning de
+   * `console.error` que React ≤18 emitía), así que `expect(errorSpy).not.toHaveBeenCalled()` da
+   * verde exista o no CUALQUIERA de los dos guards (`vigente` o el token) — no discrimina nada
+   * bajo esta versión de React.
+   *
+   * El chequeo de `vigente` sigue siendo necesario y observable en otro sentido (evita el
+   * `setState` en sí, no solo su warning), pero el chequeo de TOKEN específicamente resultó, tras
+   * intentarlo, estructuralmente imposible de discriminar con un test montado: el efecto que lo
+   * usa depende solo de `[modoPresupuesto, idPresupuesto]`, y `Pos()` remonta `PantallaPos`
+   * entera por `key={idPresupuesto ?? 'libre'}` en cuanto ese id cambia (react-async-state regla
+   * 8) — dentro de la vida de UNA instancia montada, `idPresupuesto` nunca cambia, así que este
+   * efecto corre exactamente una vez (la única excepción real, el doble-invoke de `StrictMode` en
+   * desarrollo, tampoco sirve: la limpieza del primer run se ejecuta de forma síncrona, antes de
+   * que CUALQUIER promesa tenga oportunidad de resolver, así que `vigente` ya blinda ese caso por
+   * sí solo). No existe una re-carga real de `/para-venta` con la MISMA instancia montada que
+   * compita contra un token distinto — cualquier "segunda carga" observable en producción es, en
+   * los hechos, una instancia nueva (mismo patrón que el confound del `40P01` en la tarea 1.32:
+   * confirmado empíricamente, no razonado, y registrado como tal en vez de inflar la cobertura
+   * reclamada). El test se conserva sin cambios (prueba real, aunque no discriminante, de que un
+   * resolve tardío post-desmontaje no revienta el proceso) — solo se corrige la afirmación de qué
+   * prueba.
+   */
+  it('una respuesta tardía de /para-venta tras desmontar la pantalla no dispara ningún error (mutation-proof-tests regla 7: resuelta dentro de act — NO discrimina el guard de token, ver comentario arriba)', async () => {
     let resolverParaVenta: (p: PresupuestoParaVenta) => void = () => {}
     const pendiente = new Promise<PresupuestoParaVenta>((resolve) => {
       resolverParaVenta = resolve
