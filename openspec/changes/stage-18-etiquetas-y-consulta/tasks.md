@@ -170,7 +170,7 @@ gates slice 3 only (verify criterion 4), not this PR.
   **FAIL path**: STOP — no library swap; escalate the QuestPDF licence question to the owner as a
   blocking commercial decision, never resolved inside this phase. *(proposal.md:147-161,
   design.md:86-92, Reconciliación 5)*
-- [~] 1.5 **(1a, autonomous, PARTIAL — 2/3 proofs, see Deviations)** E2 non-regression, three proofs, appended to `spike-alineacion.md`'s
+- [ ] 1.5 **(1a, autonomous, PARTIAL — 2/3 proofs done, see Deviation 1 below — kept unchecked, not silently marked done)** E2 non-regression, three proofs, appended to `spike-alineacion.md`'s
   E2 row: `git diff --exit-code src/Ways.Web/src/estilos/impresion.css` clean; `CajaZ.test.tsx` /
   `CuentaCorriente.test.tsx` green and **unedited**; a "Guardar como PDF" page-box comparison of
   each view from `main` vs. the branch, same browser/settings. *(design.md:93-97, mutation target
