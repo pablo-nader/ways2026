@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Ways.Application.Abstracciones;
@@ -16,6 +17,7 @@ using Ways.Domain.Clientes;
 using Ways.Domain.CuentaCorriente;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
+using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
@@ -281,10 +283,14 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
     // — ruido de pool/timing del harness, no una falla de la implementación (la evidencia SQL
     // aislada ya la prueba). Se descartó esa prueba en vez de dejarla flaky/incorrecta.
     //
-    // Red REAL para este target (below-the-confound, estable): fuente de texto, mismo criterio que
+    // Red de texto fuente (below-the-confound, estable): fuente de texto, mismo criterio que
     // <c>PresupuestosSchemaTests.ElTextoFuenteDeLaMigracionConservaLosDosFiltrosParcialesTargets4Y5</c>
     // y <c>ServicioDeVentasPosicionDeConversionTests</c> — el ORDER BY exacto tiene que estar en el
-    // texto fuente de <c>BloquearAscendenteAsync</c>, nunca invertido.
+    // texto fuente de <c>BloquearAscendenteAsync</c>, nunca invertido. UPDATE (judgment-day Slice
+    // 6, ronda 1, juez B): la variante LIVIANA (sin WebApplicationFactory, DbContextOptionsBuilder
+    // directo) SÍ reprodujo la señal below-the-confound — ver
+    // <c>BloquearAscendenteAsyncTomaLosLocksEnOrdenAscendentePorIdRemitoAunConElArrayDeEntradaInvertido</c>,
+    // más abajo — así que este target queda con DOS redes complementarias, no solo la de texto.
     // =============================================================================================
 
     [Fact]
@@ -309,6 +315,174 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
     }
 
     private static string RutaDeEsteArchivo([System.Runtime.CompilerServices.CallerFilePath] string ruta = "") => ruta;
+
+    // =============================================================================================
+    // judgment-day Slice 6, ronda 1, juez B — MAJOR (mutation target 48, RETRY liviano): la nota
+    // de arriba solo documentó el intento CONTRA EL HARNESS COMPLETO (WebApplicationFactory +
+    // fixture.AbrirConexionCrudaAsync); el juez señaló, con razón, que la variante LIVIANA —
+    // DbContextOptionsBuilder directo contra fixture.AppConnectionString, mismo patrón que
+    // ServicioDeRemitosTests.EmitirRemitoObservandoOrdenDeLocksAsync — nunca se había intentado de
+    // verdad. Se intentó acá, honestamente, y ESTA VEZ SÍ REPRODUJO de forma determinística: sin
+    // WebApplicationFactory ni el pool de ~250 conexiones nuevas del harness completo, el ruido que
+    // mataba el experimento anterior desaparece. Técnica (below-the-confound, sin necesitar
+    // correlacionar ctid/page/tuple de pg_locks): sesión bloqueadora sostiene FOR UPDATE sobre el
+    // remito MENOR; el backend bajo prueba invoca BloquearAscendenteAsync DIRECTO con el array de
+    // entrada INVERTIDO ([mayor, menor]); confirmado que está genuinamente bloqueado, una tercera
+    // conexión intenta FOR UPDATE NOWAIT sobre el MAYOR — bajo la implementación correcta (ORDER BY
+    // id_remito ASC) todavía no lo tocó, así que el NOWAIT prueba libre; bajo el mutante (DESC) ya
+    // lo habría tomado ANTES de bloquearse en el menor, y el NOWAIT choca con 55P03.
+    //
+    // Diagnóstico real del primer intento (no descartado en silencio, mutation-proof-tests regla
+    // 2): la primera versión de este poll filtraba `pg_locks` por `relation =
+    // 'remitos'::regclass AND NOT granted` (la receta literal del juez) y NUNCA detectó el
+    // bloqueo — timeout de 5s, 0/1 corridas. Causa real, confirmada leyendo el resultado: el wait
+    // que Postgres expone acá es `locktype = 'transactionid'` (esperando a que termine la
+    // transacción bloqueadora), un lock SIN `relation` asociada — filtrar por `relation` produce
+    // un falso negativo permanente, no ruido de timing. Corregido a `pid = $1 AND NOT granted`
+    // (sin filtro de relación): 4/4 corridas en verde tras el fix, evidencia REAL contra el
+    // mutante DESC (55P03 exacto en el probe, ver tasks.md) — no razonado.
+    // =============================================================================================
+
+    [Fact]
+    public async Task BloquearAscendenteAsyncTomaLosLocksEnOrdenAscendentePorIdRemitoAunConElArrayDeEntradaInvertido()
+    {
+        var ctx = await PrepararAsync(nameof(BloquearAscendenteAsyncTomaLosLocksEnOrdenAscendentePorIdRemitoAunConElArrayDeEntradaInvertido));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Orden Lock Ascendente", 30m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 10m);
+
+        var remitoMenor = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+        var remitoMayor = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+        Assert.True(remitoMenor.Id < remitoMayor.Id);
+
+        // Sesión bloqueadora: sostiene FOR UPDATE sobre el remito MENOR, sin comitear.
+        await using var conexionBloqueo = new NpgsqlConnection(fixture.AppConnectionString);
+        await conexionBloqueo.OpenAsync();
+        await using (var comandoGuc = new NpgsqlCommand(
+            "SELECT set_config('app.acceso', 'tenant', false), set_config('app.tenant_id', $1, false)",
+            conexionBloqueo))
+        {
+            comandoGuc.Parameters.AddWithValue(ctx.IdTenant.ToString());
+            await comandoGuc.ExecuteNonQueryAsync();
+        }
+        await using var transaccionBloqueo = await conexionBloqueo.BeginTransactionAsync();
+        await using (var comandoBloqueo = new NpgsqlCommand(
+            "SELECT 1 FROM remitos WHERE id_remito = $1 FOR UPDATE", conexionBloqueo, transaccionBloqueo))
+        {
+            comandoBloqueo.Parameters.AddWithValue(remitoMenor.Id);
+            await comandoBloqueo.ExecuteScalarAsync();
+        }
+
+        // Backend bajo prueba: DbContextOptionsBuilder directo contra fixture.AppConnectionString
+        // (patrón liviano de EmitirRemitoObservandoOrdenDeLocksAsync) — array de entrada
+        // INVERTIDO ([mayor, menor]) para que un sort estable que preservara el orden de arribo no
+        // enmascare al mutante.
+        var tenantActual = new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant);
+        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
+            .UseNpgsql(fixture.AppConnectionString, npgsql =>
+            {
+                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<MotivoStock>("motivo_stock");
+                npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
+                npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoCaja>("tipo_movimiento_caja");
+                npgsql.MapEnum<Ways.Domain.Caja.TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
+                npgsql.MapEnum<Ways.Domain.Gastos.CategoriaGasto>("categoria_gasto");
+                npgsql.MapEnum<Ways.Domain.Compras.EstadoCompra>("estado_compra");
+                npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
+                npgsql.MapEnum<Ways.Domain.Ventas.EstadoPresupuesto>("estado_presupuesto");
+                npgsql.MapEnum<EstadoRemito>("estado_remito");
+            })
+            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
+            .Options;
+
+        await using var db = new WaysDbContext(opciones, tenantActual);
+        await db.Database.OpenConnectionAsync();
+        var conexionRemito = (NpgsqlConnection)db.Database.GetDbConnection();
+        var pidRemito = (int)(await new NpgsqlCommand("SELECT pg_backend_pid()", conexionRemito).ExecuteScalarAsync())!;
+
+        await using var transaccionRemito = await db.Database.BeginTransactionAsync();
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        var bloquearTask = EscriturasDeRemito.BloquearAscendenteAsync(
+            conexionRemito, transaccionCruda, ctx.IdTenant, [remitoMayor.Id, remitoMenor.Id], CancellationToken.None);
+
+        // Confirmamos que el backend bajo prueba está REALMENTE bloqueado (pg_locks,
+        // granted=false) antes de lanzar el probe — sin esto, un probe prematuro no discrimina
+        // nada (mismo riesgo que la rendezvous de task 6.14 documentó arriba).
+        await using var conexionPoll = new NpgsqlConnection(fixture.AppConnectionString);
+        await conexionPoll.OpenAsync();
+
+        var bloqueado = false;
+        var limite = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < limite)
+        {
+            // NOT granted alcanza — el bloqueo real que Postgres expone acá es un wait por
+            // locktype='transactionid' (esperando que termine la transacción bloqueadora), no un
+            // locktype='relation'/'tuple' sobre remitos: filtrar por relation acá habría dejado
+            // este poll en falso negativo permanente (diagnosticado empíricamente, ver nota del
+            // método).
+            await using var comandoPoll = new NpgsqlCommand(
+                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid = $1 AND NOT granted)",
+                conexionPoll);
+            comandoPoll.Parameters.AddWithValue(pidRemito);
+            bloqueado = (bool)(await comandoPoll.ExecuteScalarAsync())!;
+            if (bloqueado)
+            {
+                break;
+            }
+
+            await Task.Delay(25);
+        }
+
+        Assert.True(bloqueado, "El backend bajo prueba nunca quedó bloqueado — el experimento no discrimina nada.");
+
+        // Probe NOWAIT sobre el MAYOR mientras el backend bajo prueba sigue bloqueado en el
+        // menor: bajo la implementación correcta (ASC) todavía no lo tocó, así que prueba libre
+        // (sin excepción). Bajo el mutante (DESC) ya lo habría tomado, y esto chocaría con 55P03.
+        await using var conexionProbe = new NpgsqlConnection(fixture.AppConnectionString);
+        await conexionProbe.OpenAsync();
+        await using (var comandoGucProbe = new NpgsqlCommand(
+            "SELECT set_config('app.acceso', 'tenant', false), set_config('app.tenant_id', $1, false)",
+            conexionProbe))
+        {
+            comandoGucProbe.Parameters.AddWithValue(ctx.IdTenant.ToString());
+            await comandoGucProbe.ExecuteNonQueryAsync();
+        }
+        await using var transaccionProbe = await conexionProbe.BeginTransactionAsync();
+        PostgresException? excepcionDelProbe = null;
+        try
+        {
+            await using var comandoProbe = new NpgsqlCommand(
+                "SELECT 1 FROM remitos WHERE id_remito = $1 FOR UPDATE NOWAIT", conexionProbe, transaccionProbe);
+            comandoProbe.Parameters.AddWithValue(remitoMayor.Id);
+            await comandoProbe.ExecuteScalarAsync();
+        }
+        catch (PostgresException ex)
+        {
+            excepcionDelProbe = ex;
+        }
+        finally
+        {
+            await transaccionProbe.RollbackAsync();
+        }
+
+        Assert.Null(excepcionDelProbe);
+
+        // Libera el lock retenido — el backend bajo prueba, hasta acá bloqueado, ahora completa.
+        await transaccionBloqueo.RollbackAsync();
+        var filas = await bloquearTask;
+        Assert.Equal(2, filas.Count);
+
+        await transaccionRemito.RollbackAsync();
+    }
 
     // =============================================================================================
     // task 6.14: facturar × facturar sobre sets superpuestos — exactamente un 201 + un 409
@@ -740,6 +914,83 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
         Assert.Equal(movimientosAntes, movimientosDespues);
     }
 
+    // =============================================================================================
+    // judgment-day Slice 6, ronda 1, juez B — MAJOR (mutation target 57, regla 12c): sin esta red,
+    // un mutante que borra `id_comprobante_venta = $1` del WHERE de DesligarAsync sobrevive 15/15
+    // — ningún fixture existente tenía DOS TXRs activos a la vez, así que "WHERE id_tenant = $2
+    // AND estado = 'facturado'" solo, sin el filtro por comprobante, desliga CUALQUIER remito
+    // facturado del tenant, no solo los de ESTE TXR. Facturamos DOS consolidaciones
+    // independientes (TXR-A: remitos 1-2; TXR-B: remitos 3-4, mismo tenant/cliente/PV), anulamos
+    // SOLO TXR-A, y probamos exact count AND identity (mutation-proof-tests regla 12c) sobre los
+    // hermanos de B: siguen 'facturado', siguen ligados a B (no a null, no a A), y su saldo/
+    // movimientos de CC (medio cuenta corriente en ambos TXR) no se mueven un centavo — solo el
+    // de A revierte.
+    // =============================================================================================
+
+    [Fact]
+    public async Task AnularUnTxrDesligaSoloSusPropiosRemitosYDejaIntactosLosDeUnSegundoTxrActivo()
+    {
+        var ctx = await PrepararAsync(nameof(AnularUnTxrDesligaSoloSusPropiosRemitosYDejaIntactosLosDeUnSegundoTxrActivo));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Hermanos Intactos", 50m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 40m);
+
+        var remito1 = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+        var remito2 = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+        var remito3 = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+        var remito4 = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+
+        var facturadoA = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion",
+            SolicitudFacturacion(ctx, [remito1.Id, remito2.Id], remito1.Total + remito2.Total, ctx.IdMedioCuentaCorriente));
+        Assert.Equal(HttpStatusCode.Created, facturadoA.StatusCode);
+        var txrA = (await facturadoA.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+
+        var facturadoB = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion",
+            SolicitudFacturacion(ctx, [remito3.Id, remito4.Id], remito3.Total + remito4.Total, ctx.IdMedioCuentaCorriente));
+        Assert.Equal(HttpStatusCode.Created, facturadoB.StatusCode);
+        var txrB = (await facturadoB.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+
+        await using var dbAntes = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var saldoTrasAmbas = await dbAntes.Clientes.Where(c => c.Id == ctx.IdCliente).Select(c => c.Saldo).FirstAsync();
+        Assert.Equal(txrA.Total + txrB.Total, saldoTrasAmbas); // cliente fresco, discriminante contra 0.
+        var movimientosDeBAntes = await dbAntes.MovimientosCuentaCorriente.CountAsync(m => m.IdComprobanteVenta == txrB.Id);
+
+        // Anulamos SOLO A.
+        var anuladoA = await ctx.Admin.PostAsync($"/api/ventas/{txrA.Id}/anulacion", null);
+        var cuerpoAnuladoA = await anuladoA.Content.ReadAsStringAsync();
+        Assert.True(anuladoA.StatusCode == HttpStatusCode.OK, cuerpoAnuladoA);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+
+        // Los de A vuelven a emitido, ligadura limpia.
+        var r1 = await db.Remitos.AsNoTracking().FirstAsync(r => r.Id == remito1.Id);
+        var r2 = await db.Remitos.AsNoTracking().FirstAsync(r => r.Id == remito2.Id);
+        Assert.Equal(EstadoRemito.Emitido, r1.Estado);
+        Assert.Equal(EstadoRemito.Emitido, r2.Estado);
+        Assert.Null(r1.IdComprobanteVenta);
+        Assert.Null(r2.IdComprobanteVenta);
+
+        // Los de B siguen 'facturado' Y ligados a B — exact count AND identity (regla 12c): el
+        // mutante que borra `id_comprobante_venta = $1` del WHERE de DesligarAsync desligaría
+        // TAMBIÉN estos dos, dejándolos en 0/null — cualquiera de las dos aserciones de abajo por
+        // sí sola ya lo mata, las dos juntas cierran el par completo (count Y quién).
+        var r3 = await db.Remitos.AsNoTracking().FirstAsync(r => r.Id == remito3.Id);
+        var r4 = await db.Remitos.AsNoTracking().FirstAsync(r => r.Id == remito4.Id);
+        Assert.Equal(EstadoRemito.Facturado, r3.Estado);
+        Assert.Equal(EstadoRemito.Facturado, r4.Estado);
+        Assert.Equal(txrB.Id, r3.IdComprobanteVenta);
+        Assert.Equal(txrB.Id, r4.IdComprobanteVenta);
+        Assert.Equal(2, await db.Remitos.CountAsync(r => r.IdComprobanteVenta == txrB.Id));
+
+        // La CC solo revierte lo de A: el saldo baja exactamente el total de A, los movimientos
+        // de B (conteo Y ligadura por id_comprobante_venta) quedan exactamente como estaban.
+        var saldoFinal = await db.Clientes.Where(c => c.Id == ctx.IdCliente).Select(c => c.Saldo).FirstAsync();
+        Assert.Equal(txrB.Total, saldoFinal);
+        var movimientosDeBDespues = await db.MovimientosCuentaCorriente.CountAsync(m => m.IdComprobanteVenta == txrB.Id);
+        Assert.Equal(movimientosDeBAntes, movimientosDeBDespues);
+    }
+
     /// <summary>[OD8/T3, discriminant test] tasks.md decisión 6: un TXR anulado prueba AMBAS
     /// mitades de la composición JUNTAS, en la misma transacción — (a) cero
     /// <c>movimientos_stock</c> creados Y (b) el saldo de CC revertido por el importe EXACTO
@@ -929,5 +1180,50 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
         var facturarSiguiente = await ctx.Admin.PostAsJsonAsync(
             "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remito.Id], remito.Total));
         Assert.Equal(HttpStatusCode.Created, facturarSiguiente.StatusCode);
+    }
+
+    // =============================================================================================
+    // judgment-day Slice 6, ronda 1, juez B — SUGGESTION (fidelidad de totales, :100-107 de
+    // ServicioDeFacturacionDeRemitos): desincronizamos `remitos.total` por escritura cruda ANTES
+    // de facturar (sentinel distinto de la suma de items_remito congelados) y probamos el
+    // contrato EXACTO que el chequeo de fidelidad emite — InvalidOperationException, que
+    // ManejadorDeErrores traduce al catch-all genérico (500/"error_interno", nunca un 409 de
+    // negocio) porque un desacuerdo acá solo puede significar una escritura fuera de banda, no un
+    // caso de negocio alcanzable.
+    // =============================================================================================
+
+    [Fact]
+    public async Task FacturarRechazaCuandoElTotalDelHeaderDeUnRemitoFueDesincronizadoPorFueraDelServicio()
+    {
+        var ctx = await PrepararAsync(nameof(FacturarRechazaCuandoElTotalDelHeaderDeUnRemitoFueDesincronizadoPorFueraDelServicio));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Fidelidad Total", 40m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 10m);
+        var remito = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+
+        // Sentinel: total crudo distinto de la suma de items_remito congelados (nunca 0, nunca el
+        // valor original) — simula exactamente la escritura cruda/fuera de banda que el chequeo
+        // de fidelidad defiende.
+        var totalSentinel = remito.Total + 999m;
+        await using (var cruda = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant))
+        {
+            await using var comando = cruda.CreateCommand();
+            comando.CommandText = "UPDATE remitos SET total = $1 WHERE id_remito = $2";
+            comando.Parameters.Add(new NpgsqlParameter { Value = totalSentinel });
+            comando.Parameters.Add(new NpgsqlParameter { Value = remito.Id });
+            await comando.ExecuteNonQueryAsync();
+        }
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remito.Id], remito.Total));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.InternalServerError, respuesta.StatusCode);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo, OpcionesJson);
+        Assert.Equal("error_interno", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var r = await db.Remitos.AsNoTracking().FirstAsync(x => x.Id == remito.Id);
+        Assert.Equal(EstadoRemito.Emitido, r.Estado);
+        Assert.Null(r.IdComprobanteVenta);
     }
 }

@@ -1794,6 +1794,74 @@ this guard.
 | Mutation evidence (apply-time, all real, applied then reverted) | **Target 50** (`LigarAsync`'s `estado`/`id_comprobante_venta` conjuncts + rowcount): dropped both from the `WHERE` → `FacturarXFacturarSobreSetsSuperpuestosDaExactamenteUn201YUn409` RED (both sides showed 201) → reverted, green. **Target 48** (ascending `ORDER BY`): `id_remito` → `id_remito DESC` → `ElOrderByDeBloquearAscendenteEsAscendentePorIdRemitoNuncaDescendente` RED → reverted, green (see FINDING above for why the rendezvous test alone doesn't discriminate this). **Target 49** (lock position): moved after the CC loop → `ServicioDeFacturacionDeRemitosPosicionDeLockTests` RED → reverted, green (see FINDING above). **Target 51** (agreement guard, all four conjuncts at once): `todosFacturables = true` → cliente/PV tests RED, already-facturado test SURVIVED (documented finding above) → reverted, green. **Target 52** (itemless + no stock loop): inserted one raw `movimientos_stock` row before commit → `DosRemitosConsolidanEnUnTxrItemlessConTotalIgualALaSumaDeLosHeadersYCeroMovimientosDeStock`, `AnularUnTxrDevuelveSusRemitosAEmitidoLimpiaLaLigaduraYNoEscribeMovimientosDeStock`, `LaAnulacionDeUnTxrConCuentaCorrienteOriginalRevierteAmbasMitadesJuntasEnUnaSolaTransaccion` all RED → reverted, green (the itemless half is proven by construction — `Proyectar` hardcodes `[]`, no items-write code exists to mutate). **Target 53** (credit-limit backstop): removed the `if` block → `LimiteDeCreditoExcedidoPorConsolidacionConcurrenteEntrePreChequeoYCommit` RED → reverted, green. **Target 58** (desligue position): moved `EscriturasDeRemito.DesligarAsync`'s guarded call from position 1.6 to after the CC loop in `ServicioDeVentas.cs` → `ServicioDeVentasPosicionDeDesligueTests.ElDesligueDeRemitosVaInmediatamenteDespuesDeMarcarAnuladoYAntesDeLaAuditoria` RED → reverted, green. **Target 57**: proven directly by task 6.22's own real-remito raw-`UPDATE` test (no separate apply-time mutation needed — the test IS the mutation). **Target 54** (in-tx turno re-check): not independently race-tested this batch — see the FINDING under task 6.18 (same accepted boundary as the identical pattern elsewhere in this codebase). **Targets 55/56**: verified via source-text tests only (`ServicioDeVentasPosicionDeDesligueTests`), consistent with target 34's own precedent that `ContadorDeComandos` cannot see raw-ADO statements. |
 | Rollback boundary | `git revert` of this slice's commit(s) alone: `EscriturasDeRemito.cs`/`ServicioDeFacturacionDeRemitos.cs`/`ServicioDeFacturacionDeRemitosTests.cs`/the two positional test files deleted; the `MapPost("/facturacion", ...)` line and `AddScoped<ServicioDeFacturacionDeRemitos>()` line and the one allowlist entry revert; `ServicioDeVentas.cs`'s `MarcarAnuladoAsync` `RETURNING` widening and the one guarded call at position 1.6 revert cleanly (both isolated to that one file, no schema touched, no other slice's file touched) |
 
+**judgment-day Slice 6, ronda 1 — juez B (2 MAJOR + 1 SUGGESTION fixed; WARNING target 54 →
+backlog, clase preexistente).** Los tres fixes son TEST-ONLY (`ServicioDeFacturacionDeRemitosTests.cs`
+únicamente — cero cambio de producción salvo mutar-y-revertir como evidencia):
+
+- **MAJOR — `DesligarAsync` sin red de hermanos intactos (regla 12c, mutation target 57).** Ningún
+  fixture existente tenía DOS TXRs activos a la vez, así que un mutante que borra
+  `id_comprobante_venta = $1` del `WHERE` de `DesligarAsync` sobrevivía 15/15 — "WHERE id_tenant =
+  $2 AND estado = 'facturado'" solo desliga CUALQUIER remito facturado del tenant, no solo los de
+  ESTE TXR. Fijado: `AnularUnTxrDesligaSoloSusPropiosRemitosYDejaIntactosLosDeUnSegundoTxrActivo`
+  — factura DOS consolidaciones independientes (TXR-A: remitos 1-2; TXR-B: remitos 3-4, mismo
+  tenant/cliente/PV, medio cuenta corriente en ambos), anula SOLO TXR-A, y prueba exact count AND
+  identity sobre los hermanos de B (siguen `facturado`, siguen ligados a `txrB.Id`, count exacto
+  de 2) más la CC (el saldo baja exactamente el total de A, los movimientos de B — conteo Y
+  ligadura — quedan intactos). EVIDENCIA DE MUTACIÓN: quitado `id_comprobante_venta = $1` del
+  `WHERE` de `DesligarAsync` (`EscriturasDeRemito.cs:114`) → `dotnet build --no-incremental` +
+  filtro `FullyQualifiedName~AnularUnTxrDesligaSoloSusPropiosRemitosYDejaIntactosLosDeUnSegundoTxrActivo`
+  → ROJO (`Expected: Facturado / Actual: Emitido` — el mutante desligó también los remitos de B).
+  Revertido (`git checkout --`): VERDE.
+- **MAJOR — target 48, red pg_locks liviana RETRY (la nota original de arriba solo documentó el
+  intento contra el harness completo, WebApplicationFactory + `AbrirConexionCrudaAsync`; el juez
+  señaló que la variante liviana — `DbContextOptionsBuilder` directo contra
+  `fixture.AppConnectionString`, patrón `ServicioDeRemitosTests.EmitirRemitoObservandoOrdenDeLocksAsync`
+  — nunca se había intentado de verdad).** Intentada honestamente esta vez: SÍ reprodujo, de forma
+  determinística. Fijado: `BloquearAscendenteAsyncTomaLosLocksEnOrdenAscendentePorIdRemitoAunConElArrayDeEntradaInvertido`
+  — sesión bloqueadora sostiene `FOR UPDATE` sobre el remito MENOR sin comitear; el backend bajo
+  prueba invoca `EscriturasDeRemito.BloquearAscendenteAsync` DIRECTO (sin HTTP) con el array de
+  entrada INVERTIDO (`[mayor, menor]`); confirmado el bloqueo real vía `pg_locks`; una tercera
+  conexión intenta `FOR UPDATE NOWAIT` sobre el MAYOR — bajo la implementación correcta (ASC)
+  todavía no lo tocó (NOWAIT libre); bajo el mutante (DESC) ya lo habría tomado (NOWAIT choca con
+  `55P03`). Diagnóstico real del primer intento del poll (no descartado en silencio): la primera
+  versión filtraba `pg_locks` por `relation = 'remitos'::regclass AND NOT granted` (la receta
+  literal del juez) y NUNCA detectó el bloqueo (timeout de 5s, 0/1 corridas) — causa confirmada, no
+  ruido de timing: el wait real es `locktype = 'transactionid'` (esperando el fin de la
+  transacción bloqueadora), un lock SIN `relation` asociada. Corregido a `pid = $1 AND NOT
+  granted` (sin filtro de relación): 4/4 corridas en verde tras el fix. EVIDENCIA DE MUTACIÓN:
+  `ORDER BY id_remito` → `ORDER BY id_remito DESC` (`EscriturasDeRemito.cs:52`) → `dotnet build
+  --no-incremental` + filtro
+  `FullyQualifiedName~BloquearAscendenteAsyncTomaLosLocksEnOrdenAscendentePorIdRemitoAunConElArrayDeEntradaInvertido`
+  → ROJO real (`Npgsql.PostgresException: 55P03: could not obtain lock on row in relation
+  "remitos"`, exactamente el probe NOWAIT sobre el mayor chocando — el mutante ya lo había tomado).
+  Revertido: VERDE. La red de texto-fuente existente
+  (`ElOrderByDeBloquearAscendenteEsAscendentePorIdRemitoNuncaDescendente`) se queda igual, son
+  redes complementarias — no se retira ninguna cobertura previa.
+- **SUGGESTION — fidelidad de totales (barata, `ServicioDeFacturacionDeRemitos.cs:100-107`).**
+  Fijado: `FacturarRechazaCuandoElTotalDelHeaderDeUnRemitoFueDesincronizadoPorFueraDelServicio` —
+  raw `UPDATE remitos SET total = $1` (sentinel `remito.Total + 999`, nunca 0, nunca el valor
+  original) ANTES de facturar; assertea el contrato EXACTO que el chequeo de fidelidad emite:
+  `InvalidOperationException`, que `ManejadorDeErrores` traduce al catch-all genérico
+  (`500`/`error_interno`, nunca un 409 de negocio) porque el desacuerdo solo puede significar una
+  escritura fuera de banda. EVIDENCIA DE MUTACIÓN: el `if` de fidelidad mutado a `if (false)`
+  (`ServicioDeFacturacionDeRemitos.cs:100`) → `dotnet build --no-incremental` + filtro
+  `FullyQualifiedName~FacturarRechazaCuandoElTotalDelHeaderDeUnRemitoFueDesincronizadoPorFueraDelServicio`
+  → ROJO (`Expected: InternalServerError / Actual: BadRequest` — sin el chequeo, cae en
+  `ValidadorDePagos` con un código de rechazo distinto). Revertido: VERDE.
+- **WARNING (target 54, in-tx turno re-check) → NO fixed, backlog explícito.** El juez confirmó
+  que el checkout (`ServicioDeVentas`) tampoco tiene una red de carrera para su propio
+  re-chequeo de turno bajo lock — misma clase preexistente en todo el codebase, no una regresión
+  de esta slice. Queda como backlog: agregar una red de carrera para el re-chequeo de turno
+  bajo `FOR SHARE`/`FOR UPDATE` (aplica tanto a `ServicioDeFacturacionDeRemitos` como a
+  `ServicioDeVentas`), en cualquier slice futura que toque turnos/caja.
+
+Tests dirigidos finales tras la ronda 1: `dotnet test tests/Ways.IntegrationTests --filter
+"FullyQualifiedName~ServicioDeFacturacionDeRemitosTests"` — **18/18 VERDE** (15 preexistentes + 3
+nuevos: `AnularUnTxrDesligaSoloSusPropiosRemitosYDejaIntactosLosDeUnSegundoTxrActivo`,
+`BloquearAscendenteAsyncTomaLosLocksEnOrdenAscendentePorIdRemitoAunConElArrayDeEntradaInvertido`,
+`FacturarRechazaCuandoElTotalDelHeaderDeUnRemitoFueDesincronizadoPorFueraDelServicio`). Nunca full
+suite, per regla 15/mutation-proof-tests (reminder post-checkout tras cada revert = ruido benigno).
+
 ---
 
 ## Slice 7: web presupuestos + POS banner (PR 7)
