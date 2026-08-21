@@ -434,8 +434,18 @@ clean round + PR merged.
   indexes, asserted by definition). *(verify criteria 1, 2)*
 - [x] 2.40 Mutation evidence recorded in the PR body for targets 9-30 (structural row 29 records
   the file/state assertion). *(verify criterion 11)*
-- [ ] 2.41 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 2.41 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
+  **DONE by the orchestrator**: ronda 1 juez B REJECT (2 MAJOR: el echo del momento inverificable
+  bajo RelojFijo — un reloj congelado no discrimina lecturas dobles — y el orden del post-filter
+  vs Excluidos sin fixture sin-precio+solo-ofertas; + 2 MINOR) → fixes `75b4308` (RelojQueAvanza
+  con assert Lecturas == 1) → re-ronda B APPROVE. Ronda 2 juez A REJECT (1 CRITICAL de
+  producción POR LECTURA: el camino de ids sin scoping de disponibilidad por empresa —
+  asimétrico con el camino por filtro del MISMO archivo; + 1 WARNING del drop silencioso + 1
+  SUGGESTION del presupuesto) → fixes `51a1bd2` bajo arbitraje del orquestador (no-disponibles a
+  Excluidos con identidad; referencia_invalida uniforme; presupuesto medido real = 10, design
+  enmendado honesto) → pasada acotada B APPROVE + re-ronda A APPROVE (cero hallazgos). Ronda
+  limpia.
 - [ ] 2.42 Open PR #2 `feat/stage18-slice2-datos-de-etiqueta`, merge to `main` after a clean
   `judgment-day` round.
 
