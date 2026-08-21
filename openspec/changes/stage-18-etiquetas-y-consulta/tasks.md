@@ -210,8 +210,15 @@ gates slice 3 only (verify criterion 4), not this PR.
   this slice's diff. *(verify criteria 1, 3)*
 - [x] 1.16 Mutation evidence recorded in the PR body for targets 1-8 (structural rows 1, 2, 8
   record the file/state assertion, not a runtime failure). *(verify criterion 11)*
-- [ ] 1.17 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 1.17 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
+  **DONE by the orchestrator**: ronda 1 juez B REJECT (1 MAJOR: cruz de registro y hairline sin
+  red — mutantes DOM-observables SURVIVED 6/6; 1 MINOR: ticks de 1mm faltantes) → fixes `5bc6a05`
+  → re-ronda B APPROVE. Ronda 2 juez A REJECT (2 CRITICAL por LECTURA: el cuadrado de escala caía
+  en una SEGUNDA hoja física — 380.2mm de flujo en una página de 297 — falseando el veredicto E1;
+  y el gate E2 sin tarea exigible; + 1 WARNING de la tarea 3.1) → fixes `7e86886` (absolute
+  anchors + Start del slice 3 con E1 Y E2 + tarea 3.0) → pasada acotada B APPROVE (razonamiento
+  del layout físico confirmado) + re-ronda A APPROVE (cero hallazgos). Ronda limpia.
 - [ ] 1.18 Open PR #1 `feat/stage18-slice1-spike-y-formatos`, merge to `main` after a clean
   `judgment-day` round. **Note in PR body**: task 1.4 (E1's physical verdict) is open and
   owner-blocked; slice 3 will not start until it is recorded PASS.
