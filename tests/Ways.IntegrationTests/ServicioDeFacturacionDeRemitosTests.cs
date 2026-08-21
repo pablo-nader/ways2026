@@ -37,6 +37,11 @@ namespace Ways.IntegrationTests;
 [Collection("Ways.IntegrationTests secuencial")]
 public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
 {
+    // Literal fijo del pasado, jamas derivado del reloj real: los tests que pinean el reloj en
+    // instantes historicos necesitan un precio ya vigente bajo AMBOS relojes, hoy y siempre —
+    // un seed relativo a UtcNow se vuelve una bomba de calendario apenas la fecha real avanza.
+    private static readonly DateTimeOffset InicioDeVigenciaFijo = new(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
 
@@ -150,7 +155,7 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
         db.Precios.Add(new Precio
         {
             IdTenant = ctx.IdTenant, IdArticulo = articulo.Id, IdListaPrecio = ctx.IdListaPrecio, Monto = precio,
-            VigenteDesde = ahora.AddDays(-1), VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
+            VigenteDesde = InicioDeVigenciaFijo, VigenteHasta = null, CreatedAt = ahora, UpdatedAt = ahora
         });
         await db.SaveChangesAsync();
 
