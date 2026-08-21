@@ -332,108 +332,176 @@ clean round + PR merged.
   pairwise combination, all four together, and all four absent (byte-identical regression). Each
   filter's own `if (… is { } x)` guard is a separate conjunct (mutation target 26).
 
-- [ ] 2.1 Modify `src/Ways.Domain/Ofertas/CadenaDeCategorias.cs` — add
+- [x] 2.1 Modify `src/Ways.Domain/Ofertas/CadenaDeCategorias.cs` — add
   `ConstruirDescendientes(idCategoria, padrePorCategoria)`, same class, same one-query map, same
   `ReglaDeCategorias.ProfundidadMaxima` bound. *(design.md:207-215, mutation targets 15, 16)*
-- [ ] 2.2 [P] `CadenaDeCategoriasTests` — three-level forest: leaf ⇒ itself only; root ⇒ whole
+- [x] 2.2 [P] `CadenaDeCategoriasTests` — three-level forest: leaf ⇒ itself only; root ⇒ whole
   subtree; sibling subtree never leaks; corrupt cycle terminates (bound respected).
   *(design.md:314, mutation targets 15, 16)*
-- [ ] 2.3 [P] `CadenaDeCategoriasTests` — duality property test: `d ∈ ConstruirDescendientes(c) ⟺
+- [x] 2.3 [P] `CadenaDeCategoriasTests` — duality property test: `d ∈ ConstruirDescendientes(c) ⟺
   c ∈ ConstruirAncestros(d)` over every pair of the fixture. *(design.md:212, mutation target 17)*
-- [ ] 2.4 Modify `src/Ways.Application/Articulos/ServicioDeArticulos.cs` — `public const int
+- [x] 2.4 Modify `src/Ways.Application/Articulos/ServicioDeArticulos.cs` — `public const int
   TamanioMaximoDePagina = 200`; clamp becomes `Math.Clamp(tamanio, 1, TamanioMaximoDePagina)`.
   *(design.md:60, 221, mutation target 18)*
-- [ ] 2.5 Same file: `ListarAsync` gains `int? idArea, int? idCategoria, int? idMarca` **after**
+- [x] 2.5 Same file: `ListarAsync` gains `int? idArea, int? idCategoria, int? idMarca` **after**
   the existing parameters, each its own `if (… is { } x) query = query.Where(...)`; `idCategoria`
   loads the `id → id_padre` projection once and filters via `ConstruirDescendientes`. Ordering,
   paging, `busqueda` predicate untouched. *(design.md:219-224, mutation target 26)*
-- [ ] 2.6 Modify `src/Ways.Api/Endpoints/ArticulosEndpoints.cs` — three additive optional query
+- [x] 2.6 Modify `src/Ways.Api/Endpoints/ArticulosEndpoints.cs` — three additive optional query
   params on the existing `MapGet("/")`. *(design.md:291)*
-- [ ] 2.7 [P] Integration test: `idArea` alone, asymmetric seed. *(mutation target 26)*
-- [ ] 2.8 [P] Integration test: `idCategoria` alone on a grandparent returns the grandchild's
+- [x] 2.7 [P] Integration test: `idArea` alone, asymmetric seed. *(mutation target 26)*
+- [x] 2.8 [P] Integration test: `idCategoria` alone on a grandparent returns the grandchild's
   artículo — three-level fixture. *(articulos/spec.md:19-23, mutation targets 15, 26)*
-- [ ] 2.9 [P] Integration test: `idMarca` alone, asymmetric seed. *(articulos/spec.md:14-17,
+- [x] 2.9 [P] Integration test: `idMarca` alone, asymmetric seed. *(articulos/spec.md:14-17,
   mutation target 26)*
-- [ ] 2.10 [P] Integration test: the four-way AND matrix — pairwise combinations, all three/four
+- [x] 2.10 [P] Integration test: the four-way AND matrix — pairwise combinations, all three/four
   together, over disjoint seeds that would move if any filter defaulted. *(articulos/spec.md:32-35,
   Reconciliación 4, mutation target 26)*
-- [ ] 2.11 [P] Integration test: **byte-identical unfiltered regression** — with all three absent,
+- [x] 2.11 [P] Integration test: **byte-identical unfiltered regression** — with all three absent,
   items, order, total and paging identical to the pre-stage path over the same seed.
   *(articulos/spec.md:25-30, mutation target 27)*
-- [ ] 2.12 Create `src/Ways.Application/Etiquetas/Contratos.cs` — `FiltroDeEtiquetas`,
+- [x] 2.12 Create `src/Ways.Application/Etiquetas/Contratos.cs` — `FiltroDeEtiquetas`,
   `SolicitudDeEtiquetas` (no `Momento`, no `copias` — Reconciliación 1), `FilaDeEtiqueta` (with the
   exposure-clause doc comment naming every field it will never carry), `ArticuloExcluido`
   (identity-bearing — Reconciliación 3), `DatosDeEtiquetas`. *(design.md:178-202)*
-- [ ] 2.13 Create `src/Ways.Application/Etiquetas/ServicioDeEtiquetas.cs` — resolves
+- [x] 2.13 Create `src/Ways.Application/Etiquetas/ServicioDeEtiquetas.cs` — resolves
   `idPuntoVenta → idEmpresa`, `idListaPrecio → NombreDeLista` (404 if missing), selection (ids or
   `ListarAsync`-backed filtro), `codigos_barra` batch, `ResolverAsync(lineas @ cantidad=1,
   idEmpresa, momento=IRelojDelSistema.Ahora once)`. *(design.md:226-246)*
-- [ ] 2.14 Same file: XOR guard — both present ⇒ `400 seleccion_ambigua`; neither ⇒ `400
+- [x] 2.14 Same file: XOR guard — both present ⇒ `400 seleccion_ambigua`; neither ⇒ `400
   seleccion_requerida`. *(design.md:63, mutation target 21)*
-- [ ] 2.15 Same file: `idsArticulo.Count > TamanioMaximoDePagina` ⇒ `400 seleccion_excedida`
+- [x] 2.15 Same file: `idsArticulo.Count > TamanioMaximoDePagina` ⇒ `400 seleccion_excedida`
   (never a silent truncation). *(design.md:63, mutation target 20)*
-- [ ] 2.16 Same file: `IdEmpresa` taken from the punto de venta on every `LineaDeResolucion`,
+- [x] 2.16 Same file: `IdEmpresa` taken from the punto de venta on every `LineaDeResolucion`,
   `Cantidad = 1m` always. *(design.md:56, mutation targets 9, 10)*
-- [ ] 2.17 Same file: `PrecioFinal is null` ⇒ row moves to `Excluidos` (with identity), never
+- [x] 2.17 Same file: `PrecioFinal is null` ⇒ row moves to `Excluidos` (with identity), never
   emitted in `Filas`. *(design.md decision 6 restated, mutation targets 11, 12)*
-- [ ] 2.18 Same file: `soloConOfertaVigente` — post-filter over `Aplicadas.Count > 0`; the coarse
+- [x] 2.18 Same file: `soloConOfertaVigente` — post-filter over `Aplicadas.Count > 0`; the coarse
   candidate query does **not** join `ofertas`. *(design.md:57, mutation targets 13, 14)*
-- [ ] 2.19 Same file: `Truncado = pagina.Total > TamanioMaximoDePagina` from `ListarAsync`'s own
+- [x] 2.19 Same file: `Truncado = pagina.Total > TamanioMaximoDePagina` from `ListarAsync`'s own
   `Total`, never a second `COUNT`/`Take(cap+1)`. *(design.md:58, mutation target 19)*
-- [ ] 2.20 Same file: `NombreDeLista` read from `listas_precio` by the server, never taken from the
+- [x] 2.20 Same file: `NombreDeLista` read from `listas_precio` by the server, never taken from the
   request. *(design.md:62, mutation target 23)*
-- [ ] 2.21 Same file: one `momento` resolved for the whole sheet, echoed in
+- [x] 2.21 Same file: one `momento` resolved for the whole sheet, echoed in
   `DatosDeEtiquetas.Momento`. *(design.md:61, mutation target 25)*
-- [ ] 2.22 Create `src/Ways.Api/Endpoints/EtiquetasEndpoints.cs` — `POST /api/etiquetas/datos`
+- [x] 2.22 Create `src/Ways.Api/Endpoints/EtiquetasEndpoints.cs` — `POST /api/etiquetas/datos`
   under `Politicas.OperacionDePos`, nothing stacked. *(design.md:64, 293, mutation target 28)*
-- [ ] 2.23 Modify `Program.cs`/DI — `AddScoped<ServicioDeEtiquetas>()` + `MapearEtiquetas()`.
+- [x] 2.23 Modify `Program.cs`/DI — `AddScoped<ServicioDeEtiquetas>()` + `MapearEtiquetas()`.
   *(design.md:294)*
-- [ ] 2.24 **(S)** Modify `tests/Ways.IntegrationTests/SuperficieDeAutorizacionTests.cs` — one
+- [x] 2.24 **(S)** Modify `tests/Ways.IntegrationTests/SuperficieDeAutorizacionTests.cs` — one
   allowlist entry `("POST", "/api/etiquetas/datos")`. *(design.md:64, 295, mutation target 29)*
-- [ ] 2.25 [P] Integration test: the two 400s of the XOR guard, both directions + the boundary
+- [x] 2.25 [P] Integration test: the two 400s of the XOR guard, both directions + the boundary
   case (both absent, both present). *(mutation target 21)*
-- [ ] 2.26 [P] Integration test: 200/201 explicit-id boundary — 200 ids ⇒ proceeds, 201 ⇒ `400
+- [x] 2.26 [P] Integration test: 200/201 explicit-id boundary — 200 ids ⇒ proceeds, 201 ⇒ `400
   seleccion_excedida`. *(mutation target 20)*
-- [ ] 2.27 [P] Integration test: `cantidad_minima = 3` fixture — the row carries **no** oferta.
+- [x] 2.27 [P] Integration test: `cantidad_minima = 3` fixture — the row carries **no** oferta.
   *(mutation target 10)*
-- [ ] 2.28 [P] Integration test: oferta scoped to another empresa ⇒ absent from a sheet printed
+- [x] 2.28 [P] Integration test: oferta scoped to another empresa ⇒ absent from a sheet printed
   for a PV of this empresa. *(mutation target 9)*
-- [ ] 2.29 [P] Integration test: sin-precio fixture, both directions — absent from `Filas`,
+- [x] 2.29 [P] Integration test: sin-precio fixture, both directions — absent from `Filas`,
   present in `Excluidos` with identity. *(mutation targets 11, 12)*
-- [ ] 2.30 [P] Integration test: `soloConOfertaVigente` divergence — discriminating fixture (one
+- [x] 2.30 [P] Integration test: `soloConOfertaVigente` divergence — discriminating fixture (one
   artículo-scoped oferta in window, one categoría-scoped reaching a descendant, one out-of-window,
   one `cantidad_minima = 3`, one another-empresa) — filter result equals live resolver's
   `Aplicadas.Count > 0` exactly. *(design.md:319, mutation targets 13, 14)*
-- [ ] 2.31 [P] Integration test: 200/201-matching-artículos boundary via filtro — 200 ⇒
+- [x] 2.31 [P] Integration test: 200/201-matching-artículos boundary via filtro — 200 ⇒
   `Truncado = false`, 201 ⇒ `Truncado = true`. *(mutation target 19)*
-- [ ] 2.32 [P] Integration test: `TamanioMaximoDePagina` mutation couples the listing clamp test
+- [x] 2.32 [P] Integration test: `TamanioMaximoDePagina` mutation couples the listing clamp test
   **and** the `truncado` test — both fail together. *(mutation target 18)*
-- [ ] 2.33 [P] Integration test: raw `UPDATE` desyncing `listas_precio.nombre` to a sentinel after
+- [x] 2.33 [P] Integration test: raw `UPDATE` desyncing `listas_precio.nombre` to a sentinel after
   read must surface the sentinel (rule 12a). *(mutation target 23)*
-- [ ] 2.34 [P] Integration test: pinned-clock momento straddling an oferta's `hora_hasta` — one
+- [x] 2.34 [P] Integration test: pinned-clock momento straddling an oferta's `hora_hasta` — one
   `momento` for the whole sheet. *(mutation target 25)*
-- [ ] 2.35 [P] Integration test: pairwise-distinct read-back of every positional field of
+- [x] 2.35 [P] Integration test: pairwise-distinct read-back of every positional field of
   `FilaDeEtiqueta`/`DatosDeEtiquetas` (rule 12b); a sibling artículo of the same tenant seeded on
   every listing test (rule 12c). *(mutation target 24)*
-- [ ] 2.36 [P] Integration test: **exposure clause** — the serialized response, walked
+- [x] 2.36 [P] Integration test: **exposure clause** — the serialized response, walked
   recursively, contains no property named `costo`/`costoLista`/`costoNominal`/
   `descuentoProveedor`/`idProveedorHabitual`/`proveedor`/`margen`, matched by property **name**,
   never substring (`OfertaAplicadaDto.DescuentoUnitario` legitimately contains "descuento").
   *(design.md:318, mutation target 22)*
-- [ ] 2.37 [P] Integration test: authorization matrix — Vendedor/Supervisor/Admin 200, Root 403;
+- [x] 2.37 [P] Integration test: authorization matrix — Vendedor/Supervisor/Admin 200, Root 403;
   tenant B never sees tenant A's artículos. *(mutation target 28)*
-- [ ] 2.38 Integration test: `DbCommandInterceptor` command-count harness — 1-artículo and
+- [x] 2.38 Integration test: `DbCommandInterceptor` command-count harness — 1-artículo and
   200-artículo requests issue the **same** EF command count, ≤ 11 (≤ 9 on the explicit-ids path).
   *(design.md:253-256, mutation target 30)*
-- [ ] 2.39 **GATE GUARD** — `dotnet ef migrations has-pending-model-changes` clean; zero new files
+- [x] 2.39 **GATE GUARD** — `dotnet ef migrations has-pending-model-changes` clean; zero new files
   under `Migraciones/`; `pg_indexes` unchanged from `main` (the three filters ride existing
   indexes, asserted by definition). *(verify criteria 1, 2)*
-- [ ] 2.40 Mutation evidence recorded in the PR body for targets 9-30 (structural row 29 records
+- [x] 2.40 Mutation evidence recorded in the PR body for targets 9-30 (structural row 29 records
   the file/state assertion). *(verify criterion 11)*
 - [ ] 2.41 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
 - [ ] 2.42 Open PR #2 `feat/stage18-slice2-datos-de-etiqueta`, merge to `main` after a clean
   `judgment-day` round.
+
+### Work Unit Evidence (Slice 2)
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `dotnet test tests/Ways.Domain.Tests --filter FullyQualifiedName~CadenaDeCategoriasTests` — 9/9 green; `dotnet test tests/Ways.IntegrationTests --filter FullyQualifiedName~ArticulosFiltrosTests` — 5/5 green; `dotnet test tests/Ways.IntegrationTests --filter FullyQualifiedName~EtiquetasEndpointsTests` — 21/21 green (19 original + 1 empresa-scoped rewrite + 1 tenant-scoping addition) |
+| Runtime harness command/scenario and exact result | Real Postgres via `WaysApiFixture` (Testcontainers) for every Integration test above — `db.PuntosVenta`/`db.ListasPrecio`/`db.Articulos`/`db.CodigosBarra`/`db.Ofertas` exercised end to end through `POST /api/etiquetas/datos` and `GET /api/articulos`. `dotnet build src/Ways.Api` clean; full `dotnet test tests/Ways.Domain.Tests` — **545/545** green; full `dotnet test tests/Ways.Application.Tests` — **297/297** green; full `dotnet test tests/Ways.IntegrationTests` (single complete run, no filter) — **1607/1607** green, 11m52s. `dotnet ef migrations has-pending-model-changes` (Infrastructure as both `--project`/`--startup-project`, `Ways.Api` lacks the Design package) — clean. `npx tsc -b`/vitest **N/A**: zero `src/Ways.Web` files touched this slice (`git status --short` confirms) |
+| Rollback boundary | `git revert` the slice-2 commit(s): `src/Ways.Domain/Ofertas/CadenaDeCategorias.cs` (additive method only), `src/Ways.Application/Articulos/ServicioDeArticulos.cs` (additive params + promoted constant), `src/Ways.Api/Endpoints/ArticulosEndpoints.cs` (additive query params), `src/Ways.Application/Etiquetas/**` (new), `src/Ways.Api/Endpoints/EtiquetasEndpoints.cs` (new), the one-line `DependencyInjection.cs`/`Program.cs` registrations, the one `SuperficieDeAutorizacionTests.cs` allowlist entry, and the four new/modified test files. The three new `ListarAsync` query params are optional and unread by any existing caller; the endpoint has no consumer until slice 3 |
+
+### Guard Enumeration (rule 3, slice 2)
+
+| Guard | Cells | Test per cell |
+|---|---|---|
+| `idsArticulo`/`filtro` selection XOR | ids-only (proceed) / filtro-only (proceed) / both (`400 seleccion_ambigua`) / neither (`400 seleccion_requerida`) | `Con200IdsExplicitosProcede` (ids-only proceed); `SoloConOfertaVigenteCoincideExactamenteConElResolverReal` et al. (filtro-only proceed); `AmbosSelectoresPresentesDevuelve400SeleccionAmbigua`; `NingunSelectorPresenteDevuelve400SeleccionRequerida` |
+| Explicit-id cap | ≤200 (proceed) / >200 (`400 seleccion_excedida`, never truncated) | `Con200IdsExplicitosProcede`; `Con201IdsExplicitosDevuelve400SeleccionExcedida` |
+| `ListarAsync` four filters (`busqueda`, `idArea`, `idCategoria`, `idMarca`) — AND, each an independent conjunct | each alone / pairwise / all four / all four absent | `FiltrarPorIdAreaDevuelveSoloLosArticulosDeEsaArea`; `FiltrarPorIdMarcaDevuelveSoloLosArticulosDeEsaMarca`; `FiltrarPorIdCategoriaEnUnAbueloDevuelveElArticuloDelNieto`; `LosCuatroFiltrosComponenComoAnd` (pairwise + all four); `SinFiltrosElListadoQuedaByteIdenticoAlCaminoPrevio` (all absent) |
+| `ServicioDeEtiquetas.ComponerAsync` resolver IdEmpresa scoping | own-empresa oferta applies / other-empresa oferta excluded | `UnaOfertaDeOtraEmpresaNoApareceYUnaDeLaPropiaEmpresaSiAplica` (both directions, one fixture) |
+
+### Mutation Evidence (targets 9-30, verify criterion 11)
+
+| # | Slice | Clause | Mutation applied | Test that failed | Reverted |
+|---|---|---|---|---|---|
+| 9 | 2 | `IdEmpresa` from the PV on every `LineaDeResolucion` | `LineaDeResolucion(id, idEmpresa, …)` → `LineaDeResolucion(id, null, …)` | `UnaOfertaDeOtraEmpresaNoApareceYUnaDeLaPropiaEmpresaSiAplica` — FAILED (the own-empresa-scoped oferta stopped applying: `CoincideEmpresa(idEmpresaA, null)` is `false`) | Yes |
+| 10 | 2 | `Cantidad = 1m` on every `LineaDeResolucion` | `Cantidad: 1m` → `Cantidad: 3m` | `UnaOfertaConCantidadMinimaTresNoAplicaAUnaEtiqueta` — FAILED (the `cantidad_minima=3` oferta wrongly matched) | Yes |
+| 11 | 2 | `PrecioFinal is null` ⇒ `Excluidos`, never a row | Replaced the guard with an unconditional row emitting `?? 0m` for both prices | `UnArticuloSinPrecioVigenteQuedaExcluidoConIdentidadYNuncaEnFilas` — FAILED (the no-price artículo appeared in `Filas` at `$0`, `Excluidos` was empty) | Yes |
+| 12 | 2 | `Excluidos` carries identity, not just a count | `ArticuloExcluido(datos.Id, datos.CodigoInterno, datos.Nombre, …)` → `ArticuloExcluido(datos.Id, string.Empty, string.Empty, …)` | Same test — FAILED (`CodigoInterno`/`Nombre` empty) | Yes |
+| 13 | 2 | `soloConOfertaVigente ⇒ Aplicadas.Count > 0` | `f.Ofertas.Count > 0` → `f.PrecioFinal < f.PrecioOriginal` | Initial fixture PASSED under the mutant (confound: every offer in the fixture also happened to lower the price) — re-routed per rule 3: added an `ImporteFijo = 0m` oferta (applies, `Aplicadas.Count=1`, zero price movement) to `SoloConOfertaVigenteCoincideExactamenteConElResolverReal`; re-ran — FAILED (that artículo wrongly excluded). Reverted the mutant, confirmed GREEN with the strengthened fixture | Yes |
+| 14 | 2 | The coarse `ListarAsync` candidate query does **not** join `ofertas` | Added a post-filter in `ResolverPorFiltroAsync` narrowing to articulos with a **direct** `ofertas.id_articulo` row | `SoloConOfertaVigenteCoincideExactamenteConElResolverReal` — FAILED (the categoría-scoped articulo, matched only via ancestor category, has no direct oferta row — wrongly dropped from the candidate set entirely) | Yes |
+| 15 | 2 | `ConstruirDescendientes` direction | `return descendientes;` → `return new HashSet<int> { idCategoria };` | `UnaRaizDevuelveTodoElSubarbolYNuncaElArbolHermano` — FAILED (`{1,2,4,3}` expected, got `{1}`) | Yes |
+| 16 | 2 | Its `ProfundidadMaxima` bound | For-loop bound `ReglaDeCategorias.ProfundidadMaxima` → literal `1` | `UnaRaizDevuelveTodoElSubarbolYNuncaElArbolHermano` — FAILED (level-2 descendant `Cola` missing from a 3-level fixture) | Yes |
+| 17 | 2 | The duality invariant | Same "only-self" mutant as target 15 | `LaDualidadEntreDescendientesYAncestrosSeCumpleParaCadaParDelBosque` — FAILED | Yes |
+| 18 | 2 | `TamanioMaximoDePagina` shared by the clamp **and** the cap | `200` → `199` | `Con200IdsExplicitosProcede` **and** `Con200ArticulosMatcheadosPorFiltroTruncadoEsFalse` — BOTH FAILED together (the coupling is the point) | Yes |
+| 19 | 2 | `Truncado = pagina.Total > cap` | `>` → `>=` | `Con200ArticulosMatcheadosPorFiltroTruncadoEsFalse` — FAILED (`Truncado` flipped `true` at exactly 200) | Yes |
+| 20 | 2 | `idsArticulo.Count > cap` ⇒ `400 seleccion_excedida` | Guarded the whole `if` with `false &&` (never throws) | `Con201IdsExplicitosDevuelve400SeleccionExcedida` — FAILED (200 instead of 400) | Yes |
+| 21 | 2 | ids **XOR** filtro | Both guard `if`s replaced with `if (false)` | `AmbosSelectoresPresentesDevuelve400SeleccionAmbigua` **and** `NingunSelectorPresenteDevuelve400SeleccionRequerida` — BOTH FAILED | Yes |
+| 22 | 2 | The exposure clause: no cost/proveedor property in `FilaDeEtiqueta` | Added `decimal? CostoNominal = null` to the record | `LaRespuestaSerializadaNoContieneNingunaPropiedadDeCostoOProveedor` — FAILED (`costoNominal` property found by name) | Yes |
+| 23 | 2 | `NombreDeLista` read from `listas_precio` by the server | `await db.ListasPrecio…` → hardcoded `"General"` | `NombreDeListaDesincronizadoPorUnUpdateCrudoSurgeElSentinel` — FAILED (sentinel never surfaced) | Yes |
+| 24 | 2 | Every positional field of `FilaDeEtiqueta` | Transposed `Nombre`/`CodigoInterno` in the constructor call | `CadaCampoPosicionalDeFilaDeEtiquetaSeLeeDeVueltaConValoresDistintos` — FAILED | Yes |
+| 25 | 2 | One `momento` for the whole sheet, echoed in the response | `DatosDeEtiquetas.Momento` arg `momento` → `DateTimeOffset.UtcNow` | `UnMomentoPinneadoSeEchaExactoYGobiernaTodaLaHoja` — FAILED (echoed value ≠ pinned reloj value) | Yes |
+| 26 | 2 | Each `if (idArea/idCategoria/idMarca is { } x)` in `ListarAsync` | Deleted the `idMarca` guard | `FiltrarPorIdMarcaDevuelveSoloLosArticulosDeEsaMarca` — FAILED (all 40 returned instead of 12) | Yes |
+| 27 | 2 | The unfiltered listing path unchanged | `idArea` guard replaced with an unconditional `Where(a => a.IdArea == (idArea ?? 0))` | `SinFiltrosElListadoQuedaByteIdenticoAlCaminoPrevio` — FAILED (0 items instead of 2) | Yes |
+| 28 | 2 | `.RequireAuthorization(Politicas.OperacionDePos)` on the etiquetas group, nothing stacked | Stacked `.RequireAuthorization(Politicas.GestionDeCatalogo)` | `RolesDelPosPuedenComponerLaHoja(Vendedor)` **and** `(Supervisor)` — BOTH FAILED (403 instead of 200) | Yes |
+| 29 **S** | 2 | The `("POST", "/api/etiquetas/datos")` allowlist entry | Deleted the entry | `SuperficieDeAutorizacionTests.TodoEndpointNoGetFueraDelAllowlistApilaGestionDeCatalogo` — FAILED | Yes |
+| 30 | 2 | The ≤11 command budget (no per-row query) | Replaced the batched `codigos_barra` dictionary lookup with a per-row query inside the `filas` loop | `ElPresupuestoDeComandosEsIgualParaUnArticuloY200Articulos` — FAILED (1-artículo and 200-artículo counts diverged) | Yes |
+
+### Deviations from Design
+
+1. **`ServicioDeEtiquetas`'s filtro path passes `idEmpresa` to `ServicioDeArticulos.ListarAsync`.**
+   Not explicitly spelled out in design.md's query-budget breakdown (which lists "filtro →
+   ListarAsync (1 categorias + 1 count + 1 page)" without mentioning the param), but
+   `ListarAsync` already accepts an optional `idEmpresa` for exactly this purpose
+   (`DisponibleEnEmpresa`), it costs zero extra round trips (a correlated `EXISTS` inside the same
+   count/select queries), and omitting it would let a filtro-based sheet select articulos not
+   actually available at this PV's empresa. Not a design contradiction — a straightforward
+   application of an existing, already-budgeted parameter.
+2. **PV lookup uses 404, matching the lista's explicit 404 rather than the `400
+   referencia_invalida` precedent of `ServicioDePrecios.BuscarListaAsync`.** design.md explicitly
+   states "(404 si no existe)" for the missing-lista case; the missing-PV case is unstated. Chose
+   404 for both, for internal consistency of this one new endpoint (ADR-8's "same 404 uniform"
+   philosophy) rather than importing the other module's 400 convention.
+3. **`ArticuloExcluido.Motivo`** ships the literal string `"Sin precio vigente en la lista
+   seleccionada."` — design.md names the *shape* (`Motivo` field) but not exact wording; not
+   exercised by a specific-string assertion in any test (only non-blank), so this is a judgment
+   call, not a cited value.
+
+### Issues Found
+
+None beyond the deviations above.
 
 ---
 
