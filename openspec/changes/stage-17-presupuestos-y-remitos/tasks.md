@@ -2126,7 +2126,16 @@ serves the shape.
   `npm run build` clean, `npm run lint` clean. Numbers in Work Unit Evidence below.
 - [x] 8.13 **STAGE CLOSE** — re-verify design.md's binding verify criteria 1-9 against the
   merged stack. *(design.md:628-654)* See Work Unit Evidence below.
-- [ ] 8.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **ronda 1
+- [x] 8.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **ronda 1
+  **DONE by the orchestrator**: juez B REJECT ronda 1 (3 MAJOR test-only: el join de OD10 sin
+  fixture de dos TXRs — la clase 12c del slice 6 otra vez —, el POST de consolidación sin probar
+  los ids EXACTOS tildados, y las redes de stale sin replicar; + 1 MINOR del assert que no
+  discriminaba null) → fixes `25ea8f3` (las 3 pantallas tenían camino real de doble carga — cero
+  inalcanzabilidades) → re-ronda B APPROVE. Juez A APPROVE (1 WARNING: query nueva incondicional
+  en todo GET de detalle — la clase del 16→15 del slice 3; + 1 SUGGESTION de tail duplicado; + 1
+  SUGGESTION latente → backlog) → fixes `0912eb2` (gate items.Count == 0 estructuralmente probado
+  + ProyectarConItems único + test de conteo nuevo con RED/verde) → pasada acotada B APPROVE con
+  la verificación de los 3 caminos (emisión, anulación, conversión vía presupuesto_sin_items).
   juez B REJECT** (3 MAJOR + 1 MINOR, all test-only gaps over correct code) → fixes aplicados
   por el fix-agent:
 
