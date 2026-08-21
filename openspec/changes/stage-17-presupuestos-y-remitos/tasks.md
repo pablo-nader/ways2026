@@ -1862,6 +1862,28 @@ nuevos: `AnularUnTxrDesligaSoloSusPropiosRemitosYDejaIntactosLosDeUnSegundoTxrAc
 `FacturarRechazaCuandoElTotalDelHeaderDeUnRemitoFueDesincronizadoPorFueraDelServicio`). Nunca full
 suite, per regla 15/mutation-proof-tests (reminder post-checkout tras cada revert = ruido benigno).
 
+**judgment-day Slice 6, ronda 2 — juez B (1 MAJOR fixed, cota del probe de pg_locks).** El test
+`BloquearAscendenteAsyncTomaLosLocksEnOrdenAscendentePorIdRemitoAunConElArrayDeEntradaInvertido`
+(agregado en la ronda 1) se COLGABA indefinidamente bajo el mutante DESC en vez de fallar limpio:
+al lockear primero el MAYOR (libre) y bloquearse en el MENOR (retenido por `transaccionBloqueo`),
+el `Assert.Null(excepcionDelProbe)` lanzaba ANTES de la línea que liberaba ese lock — el `await
+using` del método intentaba entonces disponer `db`/`transaccionRemito` con el comando de
+`bloquearTask` todavía en vuelo sobre la MISMA conexión, y ese choque colgaba el proceso entero
+(no un fallo limpio y acotado — viola mutation-proof-tests regla 2, "una red que no termina no es
+evidencia válida"). Fijado TEST-ONLY (`ServicioDeFacturacionDeRemitosTests.cs`, cero cambio de
+producción salvo mutar-y-revertir como evidencia): todo el tramo poll+probe se movió a un `try`, y
+un `finally` incondicional ahora (a) libera `transaccionBloqueo` SIEMPRE, pase lo que pase arriba,
+y (b) espera `bloquearTask` con una cota de `Task.WhenAny(bloquearTask, Task.Delay(10s))` en vez de
+un `await` desnudo, antes de que el `await using` del método pueda tocar esas conexiones. EVIDENCIA
+DE MUTACIÓN: `ORDER BY id_remito` → `ORDER BY id_remito DESC` (`EscriturasDeRemito.cs:52`) →
+`dotnet build --no-incremental` + filtro
+`FullyQualifiedName~BloquearAscendenteAsyncTomaLosLocksEnOrdenAscendentePorIdRemitoAunConElArrayDeEntradaInvertido`
+— **3/3 ROJO limpio y acotado** (`Assert.Null() Failure` sobre `Npgsql.PostgresException: 55P03:
+could not obtain lock on row in relation "remitos"`, duración de test ~5-6s, proceso completo
+~12-13s, sin cuelgue). Revertido: `dotnet build --no-incremental` + mismo filtro — **3/3 VERDE**
+(duración de test ~3s, proceso completo ~8.5s). Suite dirigida completa tras el fix:
+`FullyQualifiedName~ServicioDeFacturacionDeRemitosTests` — **18/18 VERDE**.
+
 ---
 
 ## Slice 7: web presupuestos + POS banner (PR 7)

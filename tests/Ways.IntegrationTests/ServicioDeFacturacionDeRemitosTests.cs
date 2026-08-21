@@ -414,74 +414,112 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
         var bloquearTask = EscriturasDeRemito.BloquearAscendenteAsync(
             conexionRemito, transaccionCruda, ctx.IdTenant, [remitoMayor.Id, remitoMenor.Id], CancellationToken.None);
 
-        // Confirmamos que el backend bajo prueba está REALMENTE bloqueado (pg_locks,
-        // granted=false) antes de lanzar el probe — sin esto, un probe prematuro no discrimina
-        // nada (mismo riesgo que la rendezvous de task 6.14 documentó arriba).
-        await using var conexionPoll = new NpgsqlConnection(fixture.AppConnectionString);
-        await conexionPoll.OpenAsync();
-
-        var bloqueado = false;
-        var limite = DateTime.UtcNow.AddSeconds(5);
-        while (DateTime.UtcNow < limite)
-        {
-            // NOT granted alcanza — el bloqueo real que Postgres expone acá es un wait por
-            // locktype='transactionid' (esperando que termine la transacción bloqueadora), no un
-            // locktype='relation'/'tuple' sobre remitos: filtrar por relation acá habría dejado
-            // este poll en falso negativo permanente (diagnosticado empíricamente, ver nota del
-            // método).
-            await using var comandoPoll = new NpgsqlCommand(
-                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid = $1 AND NOT granted)",
-                conexionPoll);
-            comandoPoll.Parameters.AddWithValue(pidRemito);
-            bloqueado = (bool)(await comandoPoll.ExecuteScalarAsync())!;
-            if (bloqueado)
-            {
-                break;
-            }
-
-            await Task.Delay(25);
-        }
-
-        Assert.True(bloqueado, "El backend bajo prueba nunca quedó bloqueado — el experimento no discrimina nada.");
-
-        // Probe NOWAIT sobre el MAYOR mientras el backend bajo prueba sigue bloqueado en el
-        // menor: bajo la implementación correcta (ASC) todavía no lo tocó, así que prueba libre
-        // (sin excepción). Bajo el mutante (DESC) ya lo habría tomado, y esto chocaría con 55P03.
-        await using var conexionProbe = new NpgsqlConnection(fixture.AppConnectionString);
-        await conexionProbe.OpenAsync();
-        await using (var comandoGucProbe = new NpgsqlCommand(
-            "SELECT set_config('app.acceso', 'tenant', false), set_config('app.tenant_id', $1, false)",
-            conexionProbe))
-        {
-            comandoGucProbe.Parameters.AddWithValue(ctx.IdTenant.ToString());
-            await comandoGucProbe.ExecuteNonQueryAsync();
-        }
-        await using var transaccionProbe = await conexionProbe.BeginTransactionAsync();
+        // judgment-day Slice 6, ronda 2, juez B — MAJOR: bajo el mutante (DESC), el backend
+        // bajo prueba toma primero el MAYOR (libre) y queda bloqueado esperando el MENOR, que
+        // sigue retenido por `transaccionBloqueo` hasta que este método lo libera explícitamente
+        // más abajo. Si algo entre medio (el `Assert.True`/`Assert.Null` de esta sección) lanza
+        // ANTES de esa liberación, el `finally` de más abajo es el ÚNICO camino que la sigue
+        // liberando — sin él, `transaccionBloqueo` nunca se rollbackea, `bloquearTask` nunca
+        // termina, y el `await using` de `db`/`transaccionRemito` al final del método intenta
+        // disponer la MISMA conexión que `bloquearTask` sigue usando: eso cuelga el test entero
+        // en vez de fallar limpio (mutation-proof-tests regla 2, "una red que no termina no es
+        // evidencia válida"). Por eso: (a) todo lo que puede lanzar acá corre en `try`, y (b) el
+        // `finally` libera el lock y espera `bloquearTask` con una COTA (Task.WhenAny) — nunca un
+        // `await` desnudo — antes de dejar que el método termine de disponer sus recursos.
         PostgresException? excepcionDelProbe = null;
+        Exception? excepcionDelBackend = null;
+        var backendTerminoATiempo = false;
+        IReadOnlyList<(int IdRemito, string Estado, int? IdComprobante)>? filas = null;
         try
         {
-            await using var comandoProbe = new NpgsqlCommand(
-                "SELECT 1 FROM remitos WHERE id_remito = $1 FOR UPDATE NOWAIT", conexionProbe, transaccionProbe);
-            comandoProbe.Parameters.AddWithValue(remitoMayor.Id);
-            await comandoProbe.ExecuteScalarAsync();
-        }
-        catch (PostgresException ex)
-        {
-            excepcionDelProbe = ex;
+            // Confirmamos que el backend bajo prueba está REALMENTE bloqueado (pg_locks,
+            // granted=false) antes de lanzar el probe — sin esto, un probe prematuro no discrimina
+            // nada (mismo riesgo que la rendezvous de task 6.14 documentó arriba).
+            await using var conexionPoll = new NpgsqlConnection(fixture.AppConnectionString);
+            await conexionPoll.OpenAsync();
+
+            var bloqueado = false;
+            var limite = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < limite)
+            {
+                // NOT granted alcanza — el bloqueo real que Postgres expone acá es un wait por
+                // locktype='transactionid' (esperando que termine la transacción bloqueadora), no un
+                // locktype='relation'/'tuple' sobre remitos: filtrar por relation acá habría dejado
+                // este poll en falso negativo permanente (diagnosticado empíricamente, ver nota del
+                // método).
+                await using var comandoPoll = new NpgsqlCommand(
+                    "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid = $1 AND NOT granted)",
+                    conexionPoll);
+                comandoPoll.Parameters.AddWithValue(pidRemito);
+                bloqueado = (bool)(await comandoPoll.ExecuteScalarAsync())!;
+                if (bloqueado)
+                {
+                    break;
+                }
+
+                await Task.Delay(25);
+            }
+
+            Assert.True(bloqueado, "El backend bajo prueba nunca quedó bloqueado — el experimento no discrimina nada.");
+
+            // Probe NOWAIT sobre el MAYOR mientras el backend bajo prueba sigue bloqueado en el
+            // menor: bajo la implementación correcta (ASC) todavía no lo tocó, así que prueba libre
+            // (sin excepción). Bajo el mutante (DESC) ya lo habría tomado, y esto chocaría con 55P03.
+            await using var conexionProbe = new NpgsqlConnection(fixture.AppConnectionString);
+            await conexionProbe.OpenAsync();
+            await using (var comandoGucProbe = new NpgsqlCommand(
+                "SELECT set_config('app.acceso', 'tenant', false), set_config('app.tenant_id', $1, false)",
+                conexionProbe))
+            {
+                comandoGucProbe.Parameters.AddWithValue(ctx.IdTenant.ToString());
+                await comandoGucProbe.ExecuteNonQueryAsync();
+            }
+            await using var transaccionProbe = await conexionProbe.BeginTransactionAsync();
+            try
+            {
+                await using var comandoProbe = new NpgsqlCommand(
+                    "SELECT 1 FROM remitos WHERE id_remito = $1 FOR UPDATE NOWAIT", conexionProbe, transaccionProbe);
+                comandoProbe.Parameters.AddWithValue(remitoMayor.Id);
+                await comandoProbe.ExecuteScalarAsync();
+            }
+            catch (PostgresException ex)
+            {
+                excepcionDelProbe = ex;
+            }
+            finally
+            {
+                await transaccionProbe.RollbackAsync();
+            }
         }
         finally
         {
-            await transaccionProbe.RollbackAsync();
+            // Libera el lock retenido SIEMPRE — pase lo que pase arriba — y espera a
+            // `bloquearTask` con una cota de 10s en vez de un `await` desnudo: bajo el mutante,
+            // liberar el menor alcanza para que el backend (ya con el mayor tomado) complete; la
+            // cota es la red de seguridad para un cuelgue real que sobreviviera a la liberación.
+            await transaccionBloqueo.RollbackAsync();
+            var completo = await Task.WhenAny(bloquearTask, Task.Delay(TimeSpan.FromSeconds(10)));
+            backendTerminoATiempo = ReferenceEquals(completo, bloquearTask);
+            if (backendTerminoATiempo)
+            {
+                try
+                {
+                    filas = await bloquearTask;
+                }
+                catch (Exception ex)
+                {
+                    excepcionDelBackend = ex;
+                }
+            }
+
+            await transaccionRemito.RollbackAsync();
         }
 
         Assert.Null(excepcionDelProbe);
-
-        // Libera el lock retenido — el backend bajo prueba, hasta acá bloqueado, ahora completa.
-        await transaccionBloqueo.RollbackAsync();
-        var filas = await bloquearTask;
-        Assert.Equal(2, filas.Count);
-
-        await transaccionRemito.RollbackAsync();
+        Assert.True(backendTerminoATiempo,
+            "El backend bajo prueba no terminó tras liberar el lock retenido — probable cuelgue bajo el mutante.");
+        Assert.Null(excepcionDelBackend);
+        Assert.Equal(2, filas!.Count);
     }
 
     // =============================================================================================
