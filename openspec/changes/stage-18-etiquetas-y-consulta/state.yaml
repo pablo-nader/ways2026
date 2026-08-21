@@ -179,4 +179,8 @@ phases:
 #   named pages contra el @page global, 4 descriptores con geometria publicada,
 #   spike A4-3x8 con E1/E2 binarios y veredicto fisico HUMAN-IN-THE-LOOP del
 #   dueño; tensiones T1 copias / T2 tuples / T3 Excluidos — tasks reconcilia)
-# tasks: pending
+# tasks: done 2026-08-21 (103 tareas / 4 slices; reconciliaciones T1 copias
+#   client-side, T2 geometria del design por aritmetica exacta, T3 shape con
+#   identidad, AND explicito con enumeracion de 4 conjuncts; spike partido
+#   1a autonomo + 1b BLOQUEADO EN EL DUEÑO — solo gatea el slice 3)
+# apply: en curso (slices 1-4)
