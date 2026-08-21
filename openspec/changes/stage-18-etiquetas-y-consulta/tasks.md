@@ -653,52 +653,111 @@ guards this slice**, enumerated below.
   scan arriving before 20s (cancels the pending timer, exactly one reset ever fires across two
   scans). *(design.md:65, mutation targets 35, 36)*
 
-- [ ] 4.1 Create `src/Ways.Web/src/paginas/ConsultaPrecios.tsx` — `autoFocus`+`Enter` scan input
+- [x] 4.1 Create `src/Ways.Web/src/paginas/ConsultaPrecios.tsx` — `autoFocus`+`Enter` scan input
   (`Pos.tsx:1068-1078`); PV + lista from the same selectors the POS uses, remembered locally.
   *(design.md:270-274, consulta-de-precios/spec.md)*
-- [ ] 4.2 Same file: on scan, `GET /api/articulos/escaneo` → identity; on hit,
+- [x] 4.2 Same file: on scan, `GET /api/articulos/escaneo` → identity; on hit,
   `POST /api/ofertas/resolver` (1 línea @ `cantidad = 1`) → price. Exactly two calls, no third.
   *(design.md:248-250, consulta-de-precios/spec.md:15-25, mutation target 37)*
-- [ ] 4.3 Same file: unknown code (404) ⇒ "no encontrado", **no** resolver call issued.
+- [x] 4.3 Same file: unknown code (404) ⇒ "no encontrado", **no** resolver call issued.
   *(consulta-de-precios/spec.md:57-67, mutation target 37)*
-- [ ] 4.4 Same file: identified + `PrecioOriginal = null` ⇒ "consultá en caja", never `$0`.
+- [x] 4.4 Same file: identified + `PrecioOriginal = null` ⇒ "consultá en caja", never `$0`.
   *(consulta-de-precios/spec.md:69-72, mutation target 37)*
-- [ ] 4.5 Same file: `Aplicadas.length > 0` ⇒ `PrecioOriginal` struck + `PrecioFinal` prominent;
+- [x] 4.5 Same file: `Aplicadas.length > 0` ⇒ `PrecioOriginal` struck + `PrecioFinal` prominent;
   empty ⇒ one price, no strike. *(consulta-de-precios/spec.md:39-55)*
-- [ ] 4.6 Same file: oversized typography for the resolved price, responsive layout, input cleared
+- [x] 4.6 Same file: oversized typography for the resolved price, responsive layout, input cleared
   and refocused after each resolution. *(consulta-de-precios/spec.md:119-129)*
-- [ ] 4.7 Same file: idle-reset effect — `MS_DE_RESET = 20_000` (exported constant), `setTimeout`
+- [x] 4.7 Same file: idle-reset effect — `MS_DE_RESET = 20_000` (exported constant), `setTimeout`
   inside the effect, `clearTimeout` in the returned cleanup, `generacionRef` bump on fire/reset
   (`CompraEditor.tsx:90-110`/`Existencias.tsx:58-79` pattern, never a bare `useRef` timer id).
   *(design.md:65, mutation targets 35, 36)*
-- [ ] 4.8 Modify `App.tsx` + `Layout.tsx` — `/consulta-precios` route under `RutaProtegida
+  **Deviation (see below)**: the effect is keyed on the RESOLUTION per decision 14's own words —
+  the previous `resultado` stays on screen while a new scan's calls are in flight, it is never
+  eagerly nulled at scan-start. This is what gives the generation bump on reset actual teeth
+  (target 37): a slow scan spanning the reset boundary is legitimately discarded, matching the
+  design rationale verbatim ("stops a slow resolver from repainting the previous customer's price
+  after the screen already cleared").
+- [x] 4.8 Modify `App.tsx` + `Layout.tsx` — `/consulta-precios` route under `RutaProtegida
   rolesPermitidos={[Vendedor, Supervisor, Admin]}` + menu entry. *(design.md:261, 297,
   consulta-de-precios/spec.md:89-101)*
-- [ ] 4.9 [P] `ConsultaPrecios.test.tsx` — exactly two calls per scan, full mocked call log
+- [x] 4.9 [P] `ConsultaPrecios.test.tsx` — exactly two calls per scan, full mocked call log
   asserted (the zero-writes proof). *(design.md:326, mutation target 37)*
-- [ ] 4.10 [P] `ConsultaPrecios.test.tsx` — unknown code ⇒ "no encontrado", no resolver call.
+- [x] 4.10 [P] `ConsultaPrecios.test.tsx` — unknown code ⇒ "no encontrado", no resolver call.
   *(mutation target 37)*
-- [ ] 4.11 [P] `ConsultaPrecios.test.tsx` — null price ⇒ "consultá en caja", never `$0`.
+- [x] 4.11 [P] `ConsultaPrecios.test.tsx` — null price ⇒ "consultá en caja", never `$0`.
   *(mutation target 37)*
-- [ ] 4.12 [P] `ConsultaPrecios.test.tsx` — strike only with an active offer, both directions.
-- [ ] 4.13 [P] `ConsultaPrecios.test.tsx` — `vi.useFakeTimers`: 19.9s no reset / 20.0s reset
+- [x] 4.12 [P] `ConsultaPrecios.test.tsx` — strike only with an active offer, both directions.
+- [x] 4.13 [P] `ConsultaPrecios.test.tsx` — `vi.useFakeTimers`: 19.9s no reset / 20.0s reset
   boundary pair. *(mutation target 36)*
-- [ ] 4.14 [P] `ConsultaPrecios.test.tsx` — a second scan cancels the first timer; exactly one
+- [x] 4.14 [P] `ConsultaPrecios.test.tsx` — a second scan cancels the first timer; exactly one
   reset fires across two scans. *(mutation target 35)*
-- [ ] 4.15 [P] `ConsultaPrecios.test.tsx` — a resolution landing **after** a reset does not
+- [x] 4.15 [P] `ConsultaPrecios.test.tsx` — a resolution landing **after** a reset does not
   repaint the previous customer's price (generation bump). *(mutation target 37)*
-- [ ] 4.16 [P] `ConsultaPrecios.test.tsx` — no session/anonymous/device-token path exists; a
+- [x] 4.16 [P] `ConsultaPrecios.test.tsx` — no session/anonymous/device-token path exists; a
   request without a valid session is rejected 401 on both consumed endpoints.
   *(consulta-de-precios/spec.md:108-112)*
-- [ ] 4.17 Modify `docs/11-programa-post-paridad.md` — Etapa 18 status block, OD1-OD3 recorded as
+  **Deviation (see below)**: this is structurally a backend authorization concern (already
+  covered by `SuperficieDeAutorizacionTests`, unchanged this slice — zero policy diff). The
+  front-end-observable projection asserted here: a mocked 401 from the SAME shared `api` module
+  (the only HTTP client in the codebase, always `credentials: 'include'`, no anonymous variant
+  exists) surfaces as a visible error, triggers no alternate/bypass call, and never repaints a
+  price — proving there is no client-side authentication bypass, not re-proving server-side 401
+  enforcement (already gated by the unchanged `Politicas.OperacionDePos`).
+- [x] 4.17 Modify `docs/11-programa-post-paridad.md` — Etapa 18 status block, OD1-OD3 recorded as
   answered (last slice of the stage, `proposal.md:429`).
-- [ ] 4.18 **GATE GUARD** — zero migrations / `has-pending-model-changes` clean / `Politicas.cs`
+  **Deviation (see below)**: recorded OD1-OD3 as answered WITHOUT declaring the stage complete —
+  slices 1-3 (spike E1 physical verdict, `ServicioDeEtiquetas`/endpoint, `Etiquetas.tsx`) are not
+  done; task 1.4 (E1) remains owner-blocked. The status block says so explicitly to avoid an
+  archive-honesty violation.
+- [x] 4.18 **GATE GUARD** — zero migrations / `has-pending-model-changes` clean / `Politicas.cs`
   untouched (final confirmation for the whole stage). *(verify criteria 1, 3)*
-- [ ] 4.19 Mutation evidence recorded in the PR body for targets 35-37.
+- [x] 4.19 Mutation evidence recorded in the PR body for targets 35-37.
 - [ ] 4.20 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
 - [ ] 4.21 Open PR #4 `feat/stage18-slice4-consulta-precios`, merge to `main` after a clean
   `judgment-day` round.
+
+### Work Unit Evidence (Slice 4)
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npx vitest run ConsultaPrecios` (`src/Ways.Web`) — **14/14 tests green** in the new colocated `ConsultaPrecios.test.tsx` (4 display-branch tests, 3 idle-reset/generation tests under `vi.useFakeTimers`, 3 pure-mapper `aResultadoDeConsulta` tests, 2 zero-writes/call-log tests, 2 no-session-bypass tests) |
+| Runtime harness command/scenario and exact result | `vi.useFakeTimers` + `vi.advanceTimersByTimeAsync` is the runtime harness for the idle-reset boundary (19.9s/20.0s) and the generation-bump-on-reset race (a slow resolver held on a manually-controlled pending promise, resolved only after the reset already fired) — real integration/backend harness is **N/A**: this slice ships zero new endpoints and zero backend files (`git status --short` confirms only 4 web files touched). `npx tsc -b` clean; `npm run lint` (oxlint) clean (5 warnings, same pre-existing `react(only-export-components)` class as 4 untouched files — `ConsultaPrecios.tsx` adds a 5th because `MS_DE_RESET`/`aResultadoDeConsulta` are intentionally exported alongside the component, per task 4.7's own requirement); `dotnet build src/Ways.Api` clean (0 warnings, 0 errors, confirms zero backend impact); `dotnet ef migrations has-pending-model-changes` clean; `git diff --exit-code src/Ways.Api/Seguridad/Politicas.cs` clean (0 diff) |
+| Rollback boundary | `git revert` the slice-4 commit(s): `src/Ways.Web/src/paginas/ConsultaPrecios.tsx` + `.test.tsx` (new), the one-route addition to `App.tsx`, the one nav-entry addition to `Layout.tsx`, and the Etapa 18 status-block addition to `docs/11-programa-post-paridad.md`. No other slice's files are touched; the route/nav gate (`puedeOperarPos`) is the same helper every other POS-adjacent screen already uses, so reverting removes exactly one route and one menu entry with zero shared-surface risk |
+
+### Mutation Evidence (targets 35-37, verify criterion 11)
+
+| # | Slice | Clause | Mutation applied | Test that failed | Reverted |
+|---|---|---|---|---|---|
+| 35 | 4 | The idle reset's `clearTimeout` in the effect cleanup | Replaced the cleanup with a no-op (`return () => {}`) | "un segundo escaneo antes de los 20s reemplaza el resultado y el timer reinicia" — FAILED (the old, un-cleaned timer from the first scan fired at t=20s and wiped the still-valid second result, `resultado-resuelto` disappeared 5s early) | Yes, reverted, 14/14 green |
+| 36 | 4 | `MS_DE_RESET` consumed from the exported constant | Hardcoded the `setTimeout` delay to `25_000` instead of `MS_DE_RESET` | 3 tests failed: the 19.9s/20.0s boundary test (result still present after the real 20s boundary) plus the two other reset-timing tests that assume the 20s constant | Yes, reverted, 14/14 green |
+| 37a | 4 | The generation bump on reset (`generacionRef.current += 1` inside the reset handler) | Removed the bump, kept `setResultado(null)` | "una resolución lenta que llega DESPUÉS de que el reset ya disparó no repinta..." — FAILED (the late `Sprite 1L $90,00` resolution repainted after the reset, since its stale generation coincidentally still matched) | Yes, reverted, 14/14 green |
+| 37b | 4 | The never-`$0` branch (`PrecioOriginal`/`PrecioFinal null` ⇒ `sin_precio`) | Collapsed `aResultadoDeConsulta` to always return `resuelto`, coalescing null prices to `0` | Both the null-price display test and the pure-mapper unit test — FAILED (`$0,00` rendered instead of "Consultá en caja") | Yes, reverted, 14/14 green |
+| 37c | 4 | The no-encontrado (404) branch | Changed `if (e instanceof ErrorApi && e.estado === 404)` to `if (false)`, routing 404 to the generic error path | The 404 display test — FAILED (showed a generic error alert instead of "No encontrado", and the "no resolver call" assertion never got to run against the right branch) | Yes, reverted, 14/14 green |
+| 37d | 4 | The exact two-call log (one `escanear` + one `resolver`) | Added a duplicate, unconditional `clienteDeArticulos.escanear(codigo)` call before the resolver call | The exact-call-log test — FAILED (`apiGetMock` recorded 2 calls to the escaneo route instead of 1) | Yes, reverted, 14/14 green |
+
+### Deviations from Design
+
+1. **The idle-reset effect is keyed on the resolution, never eagerly cleared at scan-start** —
+   matches decision 14's exact wording ("keyed on the resolution") and is what makes the
+   generation-bump-on-reset mutation (target 37a) actually killable: a scan slow enough to span
+   the reset boundary is legitimately discarded, per the design's own stated rationale.
+2. **Task 4.16's test is a front-end-observable proxy for OD2's session requirement**, not a
+   restatement of `SuperficieDeAutorizacionTests` (backend, unchanged, slice 2). Documented above
+   at the task itself.
+3. **`docs/11-programa-post-paridad.md`'s Etapa 18 status block records OD1-OD3 as answered
+   without declaring the stage complete** — slices 1-3 remain in progress (task 1.4/E1 is
+   owner-blocked). Documented above at task 4.17.
+4. **`aResultadoDeConsulta` and `MS_DE_RESET` are exported alongside the component in the same
+   file** (no separate `api/consultaPrecios.ts`), matching design's own File Changes table which
+   lists only `ConsultaPrecios.tsx` (+ `.test.tsx`) for this slice — unlike `Etiquetas.tsx`, which
+   gets a dedicated `api/etiquetas.ts`. This is a deliberate design distinction (this screen reuses
+   two EXISTING clients wholesale, `clienteDeArticulos`/`clienteDeOfertas`, with no new DTO mirrors
+   to house), not an oversight.
+
+### Issues Found
+
+None beyond the deviations above.
 
 ---
 
