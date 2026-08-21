@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -141,6 +141,39 @@ describe('Remitos — filtro por estado', () => {
 
     await userEvent.selectOptions(screen.getByLabelText('Estado'), 'Facturado')
     await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('estado=Facturado')))
+  })
+
+  it('una respuesta stale de un filtro anterior no pisa la del filtro más nuevo (mutation-proof-tests regla 7)', async () => {
+    let resolverFacturado: (v: PaginaDeRemitos) => void = () => {}
+    let promesaFacturado: Promise<PaginaDeRemitos> = Promise.resolve(paginaFixture())
+    mockearRutasBase((ruta) => {
+      if (ruta.startsWith('/remitos?') && ruta.includes('estado=Facturado')) {
+        promesaFacturado = new Promise((resolve) => (resolverFacturado = resolve))
+        return promesaFacturado
+      }
+      if (ruta.startsWith('/remitos?') && ruta.includes('estado=Anulado')) {
+        return Promise.resolve(paginaFixture({ items: [remitoFixture({ id: 2, numeroFormateado: '0007-00000099' })] }))
+      }
+      return undefined
+    })
+    renderPantalla()
+    await screen.findByText('0007-00000012')
+
+    await userEvent.selectOptions(screen.getByLabelText('Estado'), 'Facturado')
+    // el fetch de "Facturado" queda en vuelo — `resolverFacturado` todavía no se llamó.
+
+    await userEvent.selectOptions(screen.getByLabelText('Estado'), 'Anulado')
+    await screen.findByText('0007-00000099')
+
+    // regla 7: el flush del microtask stale va DENTRO de act — un `waitFor` pasaría en su primer
+    // tick, antes de que el `.then` stale aterrice, y saldría verde sin probar nada.
+    await act(async () => {
+      resolverFacturado(paginaFixture({ items: [remitoFixture({ id: 3, numeroFormateado: '0007-00000199' })] }))
+      await promesaFacturado
+    })
+
+    expect(screen.getByText('0007-00000099')).toBeInTheDocument()
+    expect(screen.queryByText('0007-00000199')).not.toBeInTheDocument()
   })
 })
 

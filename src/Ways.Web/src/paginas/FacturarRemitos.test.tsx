@@ -254,6 +254,51 @@ describe('FacturarRemitos — multi-select (task 8.8)', () => {
   })
 })
 
+describe('FacturarRemitos — guard de stale en cargarRemitos (mutation-proof-tests regla 7)', () => {
+  it('una respuesta stale del cliente anterior no pisa la del cliente más nuevo, sobre la misma instancia montada', async () => {
+    let resolverListaClienteA: (v: PaginaDeRemitos) => void = () => {}
+    let promesaListaClienteA: Promise<PaginaDeRemitos> = Promise.resolve(paginaFixture())
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') return Promise.resolve([puntoVentaFixture()])
+      if (ruta === '/clientes')
+        return Promise.resolve({ items: [clienteFixture(), clienteFixture({ id: 2, numero: 2, nombre: 'Cliente B' })], total: 2, pagina: 1, tamanio: 25 })
+      if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioFixture()])
+      if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve({ clave: 'tolerancia_pago', valor: '0' } satisfies ParametroResuelto)
+      if (ruta.startsWith('/parametros/vuelto_maximo')) return Promise.resolve({ clave: 'vuelto_maximo', valor: '0' } satisfies ParametroResuelto)
+      // Cliente A (id 1): el fetch de sus remitos queda en vuelo — se resuelve MÁS TARDE, DESPUÉS
+      // de que el cambio a Cliente B ya haya recargado.
+      if (ruta.startsWith('/remitos?') && ruta.includes('idCliente=1')) {
+        promesaListaClienteA = new Promise((resolve) => (resolverListaClienteA = resolve))
+        return promesaListaClienteA
+      }
+      if (ruta.startsWith('/remitos?') && ruta.includes('idCliente=2')) {
+        return Promise.resolve(paginaFixture({ items: [remitoFixture({ id: 9, idCliente: 2, numeroFormateado: '0007-00000099' })] }))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderPantalla()
+    await screen.findByLabelText('Punto de venta')
+    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), 'Local Centro')
+    await userEvent.selectOptions(screen.getByLabelText('Cliente'), '#1 — Consumidor Final')
+    // El fetch de remitos del Cliente A queda en vuelo — `resolverListaClienteA` todavía no se llamó.
+
+    await userEvent.selectOptions(screen.getByLabelText('Cliente'), '#2 — Cliente B')
+    await screen.findByText('0007-00000099')
+
+    // regla 7: el flush del microtask stale va DENTRO de act — resolver DESPUÉS de que el
+    // cliente más nuevo ya aterrizó no puede pisar la lista mostrada.
+    await act(async () => {
+      resolverListaClienteA(paginaFixture({ items: [remitoFixture({ id: 1, numeroFormateado: '0007-00000012' })] }))
+      await promesaListaClienteA
+    })
+
+    expect(screen.getByText('0007-00000099')).toBeInTheDocument()
+    expect(screen.queryByText('0007-00000012')).not.toBeInTheDocument()
+  })
+})
+
 describe('FacturarRemitos — doble click en "Facturar" (react-async-state regla 9, tarea 8.10)', () => {
   it('dispara exactamente un POST', async () => {
     mockearRutasBase()
@@ -306,6 +351,44 @@ describe('FacturarRemitos — doble click en "Facturar" (react-async-state regla
 
     await userEvent.click(screen.getByRole('button', { name: 'Facturar' }))
 
-    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/remitos/facturacion', expect.not.objectContaining({ idCliente: expect.anything() })))
+    // judgment-day Slice 8, ronda 1, juez B — MINOR: `expect.not.objectContaining` con
+    // `expect.anything()` NO matchea un valor `null` explícito (el matcher de Jest/Vitest solo
+    // discrimina "está ausente", no "es null") — assert fuerte: la KEY `idCliente` no existe en
+    // absoluto en el body posteado.
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalled())
+    const [, bodyIdCliente] = apiPostMock.mock.calls.find((c) => c[0] === '/remitos/facturacion')!
+    expect(Object.keys(bodyIdCliente as object)).not.toContain('idCliente')
+  })
+
+  it('el POST lleva idsRemito EXACTAMENTE igual al subconjunto elegido, nunca todos los listados', async () => {
+    mockearRutasBase((ruta) =>
+      ruta.startsWith('/remitos?')
+        ? Promise.resolve(
+            paginaFixture({
+              items: [
+                remitoFixture({ id: 1, total: 500 }),
+                remitoFixture({ id: 2, numeroFormateado: '0007-00000013', total: 300 }),
+                remitoFixture({ id: 3, numeroFormateado: '0007-00000014', total: 200 }),
+              ],
+            }),
+          )
+        : undefined,
+    )
+    apiPostMock.mockImplementation((ruta: string) => (ruta === '/remitos/facturacion' ? Promise.resolve(comprobanteFixture()) : Promise.reject(new Error(`ruta no mockeada: ${ruta}`))))
+    renderPantalla()
+    await screen.findByLabelText('Punto de venta')
+    await elegirClientePuntoVenta()
+    await screen.findByText('0007-00000012')
+
+    // Subconjunto propio: remitos 1 y 3, NUNCA el 2 (listado pero sin tildar) — mutation target:
+    // un mapper que mandara TODOS los remitos listados en vez de los tildados lo delataría acá.
+    await userEvent.click(screen.getByLabelText('Elegir remito 0007-00000012'))
+    await userEvent.click(screen.getByLabelText('Elegir remito 0007-00000014'))
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
+    await userEvent.type(screen.getByLabelText(/Importe de Efectivo/), '700')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Facturar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/remitos/facturacion', expect.objectContaining({ idsRemito: [1, 3] })))
   })
 })

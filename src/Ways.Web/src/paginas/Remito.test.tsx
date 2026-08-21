@@ -306,6 +306,83 @@ describe('Remito — doble click en "Anular"', () => {
   })
 })
 
+describe('Remito — guard de stale en cargarDetalle tras dos escrituras en secuencia (mutation-proof-tests regla 7)', () => {
+  it('el refetch stale disparado por Emitir, resuelto DESPUÉS del disparado por Anular, no pisa el estado más nuevo', async () => {
+    let resolverGetStaleTrasEmitir: (v: RemitoDetalle) => void = () => {}
+    const getStaleTrasEmitirPendiente = new Promise<RemitoDetalle>((resolve) => {
+      resolverGetStaleTrasEmitir = resolve
+    })
+    let resolverGetNuevoTrasAnular: (v: RemitoDetalle) => void = () => {}
+    const getNuevoTrasAnularPendiente = new Promise<RemitoDetalle>((resolve) => {
+      resolverGetNuevoTrasAnular = resolve
+    })
+
+    let llamadasGetRemito = 0
+    mockearReferencia((ruta) => {
+      if (ruta === '/remitos/30') {
+        llamadasGetRemito += 1
+        if (llamadasGetRemito === 1) return Promise.resolve(borradorFixture())
+        if (llamadasGetRemito === 2) return getStaleTrasEmitirPendiente
+        if (llamadasGetRemito === 3) return getNuevoTrasAnularPendiente
+        return Promise.reject(new Error('GET /remitos/30 llamado más veces de las esperadas'))
+      }
+      return undefined
+    })
+
+    let resolverEmitir: (v: RemitoDetalle) => void = () => {}
+    const emitirPendiente = new Promise<RemitoDetalle>((resolve) => {
+      resolverEmitir = resolve
+    })
+    let resolverAnular: (v: RemitoDetalle) => void = () => {}
+    const anularPendiente = new Promise<RemitoDetalle>((resolve) => {
+      resolverAnular = resolve
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/remitos/30/emitir') return emitirPendiente
+      if (ruta === '/remitos/30/anular') return anularPendiente
+      return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+    })
+
+    renderPantalla()
+    await screen.findByRole('button', { name: 'Emitir' })
+
+    // Primera escritura: Emitir. Al resolver, dispara SU propio cargarDetalle (GET #2, queda en
+    // vuelo — `resolverGetStaleTrasEmitir` todavía no se llamó).
+    await userEvent.click(screen.getByRole('button', { name: 'Emitir' }))
+    await act(async () => {
+      resolverEmitir(borradorFixture())
+      await emitirPendiente
+    })
+    await waitFor(() => expect(llamadasGetRemito).toBe(2))
+
+    // Segunda escritura: Anular, sobre la MISMA instancia montada (todavía Borrador según el
+    // `detalle` vigente — el GET #2 stale ni siquiera aterrizó). Al resolver, dispara SU propio
+    // cargarDetalle (GET #3, discriminante: `observaciones` distinto del de arriba).
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+    await act(async () => {
+      resolverAnular(detalleFixture({ estado: 'Anulado', observaciones: 'nuevo-anular' }))
+      await anularPendiente
+    })
+    await waitFor(() => expect(llamadasGetRemito).toBe(3))
+
+    // regla 7: la respuesta MÁS NUEVA (GET #3) aterriza primero, y la MÁS VIEJA (GET #2, stale)
+    // se resuelve DESPUÉS — dentro de act, para no dejar el microtask stale sin flushear.
+    await act(async () => {
+      resolverGetNuevoTrasAnular(detalleFixture({ estado: 'Anulado', observaciones: 'nuevo-anular' }))
+      await getNuevoTrasAnularPendiente
+    })
+    await act(async () => {
+      resolverGetStaleTrasEmitir(borradorFixture({ observaciones: 'stale-post-emitir' }))
+      await getStaleTrasEmitirPendiente
+    })
+
+    // THEN el estado final es el de la respuesta MÁS NUEVA — estado Y observaciones (regla 12c),
+    // nunca el de la stale que aterrizó después.
+    expect(screen.getByText('Anulado')).toBeInTheDocument()
+    expect(screen.getByLabelText('Observaciones')).toHaveValue('nuevo-anular')
+  })
+})
+
 describe('Remito — crear borrador', () => {
   it('crea el borrador y navega a la ruta real del remito recién creado', async () => {
     mockearReferencia()

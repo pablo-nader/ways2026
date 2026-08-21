@@ -1294,6 +1294,76 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
         Assert.NotEmpty(detalle.Items);
     }
 
+    /// <summary>[judgment-day Slice 8, ronda 1, juez B — MAJOR] El filtro por comprobante de
+    /// <c>ObtenerItemsDeTxrAsync</c> (<c>r.IdComprobanteVenta == idComprobante</c>) nunca quedó
+    /// puesto a prueba con DOS TXRs independientes del MISMO tenant: cada test anterior crea un
+    /// solo TXR por tenant, así que un mutante que ensanche el filtro a
+    /// <c>r.IdComprobanteVenta != null</c> (trayendo remitos de CUALQUIER TXR del tenant) sigue
+    /// viendo el join correcto por casualidad — no hay un segundo TXR cuyas líneas puedan
+    /// filtrarse de más. Below-the-confound: dos consolidaciones separadas, cada una arma SU
+    /// propio detalle con SUS propias líneas — conteo Y identidad (artículo/cantidad,
+    /// discriminantes entre A y B, regla 12c) por cada lado.</summary>
+    [Fact]
+    public async Task DosConsolidacionesIndependientesDelMismoTenantCadaTxrMuestraSoloSusPropiasLineas()
+    {
+        var ctx = await PrepararAsync(nameof(DosConsolidacionesIndependientesDelMismoTenantCadaTxrMuestraSoloSusPropiasLineas));
+        var idArticuloA1 = await SembrarArticuloAsync(ctx, "Txr Discrim A1", 110m);
+        var idArticuloA2 = await SembrarArticuloAsync(ctx, "Txr Discrim A2", 220m);
+        var idArticuloB1 = await SembrarArticuloAsync(ctx, "Txr Discrim B1", 330m);
+        var idArticuloB2 = await SembrarArticuloAsync(ctx, "Txr Discrim B2", 440m);
+        await SembrarStockAgregadoAsync(ctx, idArticuloA1, 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticuloA2, 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticuloB1, 10m);
+        await SembrarStockAgregadoAsync(ctx, idArticuloB2, 10m);
+
+        // GIVEN dos TXRs INDEPENDIENTES del mismo tenant — A consolida un remito con
+        // artículos/cantidades DISTINTAS de B (discriminante entre ambos lados).
+        var remitoA = await CrearYEmitirRemitoAsync(
+            ctx.Admin,
+            new SolicitudDeRemito(ctx.IdPuntoVenta, ctx.IdCliente, null, null,
+                [new LineaDeRemito(idArticuloA1, 1m, null), new LineaDeRemito(idArticuloA2, 2m, null)]));
+        var remitoB = await CrearYEmitirRemitoAsync(
+            ctx.Admin,
+            new SolicitudDeRemito(ctx.IdPuntoVenta, ctx.IdCliente, null, null,
+                [new LineaDeRemito(idArticuloB1, 3m, null), new LineaDeRemito(idArticuloB2, 4m, null)]));
+
+        var facturadoA = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remitoA.Id], remitoA.Total));
+        var cuerpoA = await facturadoA.Content.ReadAsStringAsync();
+        Assert.True(facturadoA.StatusCode == HttpStatusCode.Created, cuerpoA);
+        var txrA = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoA, OpcionesJson)!;
+
+        var facturadoB = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remitoB.Id], remitoB.Total));
+        var cuerpoB = await facturadoB.Content.ReadAsStringAsync();
+        Assert.True(facturadoB.StatusCode == HttpStatusCode.Created, cuerpoB);
+        var txrB = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoB, OpcionesJson)!;
+
+        // WHEN se lee el detalle de CADA TXR por separado.
+        var respuestaA = await ctx.Admin.GetAsync($"/api/ventas/{txrA.Id}");
+        var cuerpoDetalleA = await respuestaA.Content.ReadAsStringAsync();
+        Assert.True(respuestaA.StatusCode == HttpStatusCode.OK, cuerpoDetalleA);
+        var detalleA = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoDetalleA, OpcionesJson)!;
+
+        var respuestaB = await ctx.Admin.GetAsync($"/api/ventas/{txrB.Id}");
+        var cuerpoDetalleB = await respuestaB.Content.ReadAsStringAsync();
+        Assert.True(respuestaB.StatusCode == HttpStatusCode.OK, cuerpoDetalleB);
+        var detalleB = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpoDetalleB, OpcionesJson)!;
+
+        // THEN cada detalle trae EXACTAMENTE sus propias líneas — mutation target: un filtro
+        // ensanchado a `!= null` traería las 4 líneas (de AMBOS TXRs) a cada lado; conteo (2, no
+        // 4) Y identidad (artículo/cantidad discriminantes) matan esa mutación.
+        Assert.Equal(2, detalleA.Items.Count);
+        Assert.Equal(
+            new[] { "Txr Discrim A1", "Txr Discrim A2" }, detalleA.Items.Select(i => i.Descripcion).ToArray());
+        Assert.Equal([1m, 2m], detalleA.Items.Select(i => i.Cantidad).ToArray());
+
+        Assert.Equal(2, detalleB.Items.Count);
+        Assert.Equal(
+            new[] { "Txr Discrim B1", "Txr Discrim B2" }, detalleB.Items.Select(i => i.Descripcion).ToArray());
+        Assert.Equal([3m, 4m], detalleB.Items.Select(i => i.Cantidad).ToArray());
+    }
+
     /// <summary>[borde deliberado N=1] El spec/design nunca imponen un mínimo de 2 remitos para
     /// consolidar — un `TXR` de un solo remito tiene que comportarse igual que uno de N: itemless
     /// en `items_comprobante_venta`, su detalle leído con la única línea del remito, cero

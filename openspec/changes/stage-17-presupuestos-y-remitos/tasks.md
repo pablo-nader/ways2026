@@ -2126,7 +2126,61 @@ serves the shape.
   `npm run build` clean, `npm run lint` clean. Numbers in Work Unit Evidence below.
 - [x] 8.13 **STAGE CLOSE** — re-verify design.md's binding verify criteria 1-9 against the
   merged stack. *(design.md:628-654)* See Work Unit Evidence below.
-- [ ] 8.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
+- [ ] 8.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **ronda 1
+  juez B REJECT** (3 MAJOR + 1 MINOR, all test-only gaps over correct code) → fixes aplicados
+  por el fix-agent:
+
+  **judgment-day Slice 8, ronda 1 — juez B (3 MAJOR + 1 MINOR, todos test-only).**
+
+  1. **MAJOR — el join de OD10 sin discriminar por comprobante (misma clase que slice 6).**
+     `ServicioDeVentas.ObtenerItemsDeTxrAsync` (:447) filtra
+     `Where(r => r.IdComprobanteVenta == idComprobante)`, pero cada test previo crea UN solo TXR
+     por tenant — un mutante ensanchado a `!= null` sobrevivía 3/3. Fix: nuevo test
+     `DosConsolidacionesIndependientesDelMismoTenantCadaTxrMuestraSoloSusPropiasLineas` en
+     `ServicioDeFacturacionDeRemitosTests.cs` — dos TXRs independientes del mismo tenant, cada
+     uno con artículos/cantidades discriminantes; assert de conteo (2, no 4) Y de identidad
+     (artículo/cantidad) por cada lado. Ciclo: mutado `== idComprobante` → `!= null` (`dotnet
+     build --no-incremental`) → **RED** (`Expected: 2, Actual: 4`) → revertido (`git checkout
+     --`) → suite completa del archivo **22/22 verde**.
+  2. **MAJOR — el POST de consolidación no probaba los ids exactos.** En
+     `FacturarRemitos.test.tsx`, un mutante que mandara TODOS los remitos listados en vez de los
+     seleccionados sobrevivía 8/8. Fix: nuevo test "el POST lleva idsRemito EXACTAMENTE igual al
+     subconjunto elegido, nunca todos los listados" — fixture con 3 remitos listados, se tildan
+     2 (subconjunto propio), `toEqual`/`objectContaining({ idsRemito: [1, 3] })`. Ciclo: mutado
+     `FacturarRemitos.tsx:256` (`seleccionados` → `(remitos ?? []).map(r => r.id)`) → **RED**
+     (timeout esperando el `toHaveBeenCalledWith` exacto) → revertido → **verde**.
+  3. **MAJOR — guards de stale sin red propia en las 3 pantallas.** El patrón de
+     promesa-stale (`Pos.test.tsx`, `SelectorDeLote`) nunca se replicó en `Remitos.tsx`,
+     `Remito.tsx` ni `FacturarRemitos.tsx`. Se intentó de verdad un camino real de recarga sobre
+     la MISMA instancia montada en las tres — las tres SÍ tienen un camino alcanzable (ninguna
+     inalcanzabilidad que registrar):
+     - `Remitos.tsx`: cambio de filtro `estado` dispara `cargar()` dos veces en secuencia;
+       resuelta la respuesta VIEJA (`estado=Facturado`) DESPUÉS de la NUEVA
+       (`estado=Anulado`), dentro de `act`. Ciclo: quitado el guard de generación del `.then()`
+       de `cargar` → **RED** (`Unable to find element with text: 0007-00000099`) → revertido →
+       **verde**.
+     - `Remito.tsx`: dos escrituras en secuencia sobre la misma instancia (Emitir → su propio
+       refetch queda en vuelo; Anular → su propio refetch, más nuevo) — resuelto el refetch de
+       Emitir DESPUÉS del de Anular, dentro de `act`; assert de estado (`Anulado`) Y de
+       `Observaciones` (discriminante). Ciclo: quitado el guard de generación del `.then()` de
+       `cargarDetalle` → **RED** (quedó en `Borrador`, el estado stale) → revertido → **verde**.
+     - `FacturarRemitos.tsx`: cambio de cliente dispara `cargarRemitos()` dos veces en
+       secuencia; resuelta la lista del cliente A DESPUÉS de la del cliente B, dentro de `act`.
+       Ciclo: quitado el guard de generación del `.then()` de `cargarRemitos` → **RED**
+       (`Unable to find element with text: 0007-00000099`) → revertido → **verde**.
+  4. **MINOR — assert que no discrimina `null`.** `FacturarRemitos.test.tsx:309` usaba
+     `expect.not.objectContaining({ idCliente: expect.anything() })`, que no matchea un valor
+     `null` explícito. Fix: assert fuerte — `Object.keys(body)).not.toContain('idCliente')`.
+     Ciclo: mutado el mapper `aSolicitudDeFacturacionDeRemitos` agregando `idCliente: null` al
+     objeto devuelto → **RED** (`expected [...] to not include 'idCliente'`) → revertido →
+     **verde**.
+
+  Focused tests tras los 4 fixes: `dotnet test --filter
+  "FullyQualifiedName~ServicioDeFacturacionDeRemitosTests"` — **22/22 verde**. `npx vitest run
+  src/paginas/FacturarRemitos.test.tsx src/paginas/Remitos.test.tsx src/paginas/Remito.test.tsx`
+  — **30/30 verde** (10 + 8 + 12). `npx tsc -b` — limpio. Commit
+  `fix(remitos): judgment-day slice-8 ronda 1 juez B — dos TXRs, ids exactos del POST y redes
+  de stale`. Pendiente: re-judge acotado a este diff (orquestador).
 - [ ] 8.15 Open PR #8 `feat/stage17-slice8-web-remitos`, merge after a clean round — **stage
   close**.
 
