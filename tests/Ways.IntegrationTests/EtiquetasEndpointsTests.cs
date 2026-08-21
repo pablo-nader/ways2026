@@ -206,7 +206,8 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
     }
 
     private async Task<int> SembrarArticuloAsync(
-        int idTenant, string nombre, int idArea, int idAlicuotaIva, int? idCategoria = null, string? codigoBarra = null)
+        int idTenant, string nombre, int idArea, int idAlicuotaIva, int? idCategoria = null, string? codigoBarra = null,
+        bool disponibleParaTodas = true, int? idEmpresaHabilitada = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
         var ahora = DateTimeOffset.UtcNow;
@@ -215,7 +216,7 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         {
             IdTenant = idTenant, CodigoInterno = $"{nombre}-{Guid.NewGuid():N}", Nombre = nombre, IdArea = idArea,
             IdCategoria = idCategoria, IdAlicuotaIva = idAlicuotaIva, UnidadVenta = UnidadVenta.Unidad,
-            EsProducto = true, CreatedAt = ahora, UpdatedAt = ahora
+            EsProducto = true, DisponibleParaTodas = disponibleParaTodas, CreatedAt = ahora, UpdatedAt = ahora
         };
         db.Articulos.Add(articulo);
         await db.SaveChangesAsync();
@@ -225,6 +226,15 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
             db.CodigosBarra.Add(new CodigoBarra
             {
                 IdTenant = idTenant, IdArticulo = articulo.Id, Codigo = codigoBarra, CreatedAt = ahora, UpdatedAt = ahora
+            });
+            await db.SaveChangesAsync();
+        }
+
+        if (idEmpresaHabilitada is { } idEmpresa)
+        {
+            db.ArticulosEmpresas.Add(new ArticuloEmpresa
+            {
+                IdTenant = idTenant, IdArticulo = articulo.Id, IdEmpresa = idEmpresa
             });
             await db.SaveChangesAsync();
         }
@@ -818,8 +828,12 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
     }
 
     /// <summary>task 2.37: tenant B nunca ve los artículos de tenant A — un admin de tenant B
-    /// pidiendo explícitamente los ids de tenant A no los recibe (el filtro global de EF/RLS los
-    /// deja invisibles), y el PV de tenant A es un 404 uniforme (ADR-8) para tenant B.</summary>
+    /// pidiendo explícitamente los ids de tenant A no los recibe, y el PV de tenant A es un 404
+    /// uniforme (ADR-8) para tenant B. judgment-day Slice 2, ronda 2 (juez A, WARNING): el
+    /// arbitraje del orquestador CAMBIA el contrato del id ajeno — el filtro global de EF/RLS lo
+    /// deja invisible en `db.Articulos`, así que no resuelve identidad, y ahora eso es el MISMO
+    /// 400 referencia_invalida que un id inexistente (ADR-8: cross-tenant indistinguible de
+    /// inexistente) — nunca un 200 con vacíos, que era un drop silencioso.</summary>
     [Fact]
     public async Task TenantBNuncaVeLosArticulosNiElPuntoDeVentaDeTenantA()
     {
@@ -840,15 +854,73 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(HttpStatusCode.NotFound, respuestaPvAjeno.StatusCode);
 
         // Pidiendo explícitamente el id de A desde el PV/lista de B: el filtro global de tenant ya
-        // lo deja invisible en `db.Articulos` — la fila nunca aparece en Filas ni en Excluidos con
-        // la identidad real de A.
+        // lo deja invisible en `db.Articulos` — no resuelve identidad, así que es el MISMO 400
+        // referencia_invalida indistinguible que un id inexistente (contrato del orquestador,
+        // arbitraje (a)) — nunca un 200 con Filas/Excluidos vacíos.
         var solicitudIdAjeno = new SolicitudDeEtiquetas(idPuntoVentaB, idListaB, [idArticuloDeA], null);
         var respuestaIdAjeno = await adminB.PostAsJsonAsync("/api/etiquetas/datos", solicitudIdAjeno);
-        Assert.Equal(HttpStatusCode.OK, respuestaIdAjeno.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, respuestaIdAjeno.StatusCode);
+        var problema = await respuestaIdAjeno.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
 
-        var datos = await respuestaIdAjeno.Content.ReadFromJsonAsync<DatosDeEtiquetas>();
-        Assert.Empty(datos!.Filas);
-        Assert.Empty(datos.Excluidos);
+    /// <summary>judgment-day Slice 2, ronda 2 (juez A, WARNING): un id explícito que directamente
+    /// no existe en el tenant — mismo 400 referencia_invalida que el cross-tenant de arriba, nunca
+    /// un drop silencioso del `Where(ContainsKey)` original.</summary>
+    [Fact]
+    public async Task UnIdExplicitoInexistenteDevuelve400ReferenciaInvalida()
+    {
+        var (_, _, idPuntoVenta, _, _, idLista, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(UnIdExplicitoInexistenteDevuelve400ReferenciaInvalida));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var solicitud = new SolicitudDeEtiquetas(idPuntoVenta, idLista, [-1], null);
+        var respuesta = await admin.PostAsJsonAsync("/api/etiquetas/datos", solicitud);
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>judgment-day Slice 2, ronda 2 (juez A, CRITICAL): fixture de DOS direcciones — un
+    /// artículo con <c>DisponibleParaTodas=false</c> SIN fila <c>ArticuloEmpresa</c> para la
+    /// empresa del PV (no disponible) Y un hermano <c>DisponibleParaTodas=true</c> por defecto
+    /// (disponible). El camino de ids explícitos manda al primero a Excluidos CON identidad y
+    /// motivo propio — nunca a Filas con precio — y deja pasar al segundo.</summary>
+    [Fact]
+    public async Task UnArticuloNoDisponibleEnLaEmpresaDelPvQuedaExcluidoConIdentidadYElHermanoDisponibleSale()
+    {
+        var (idTenant, _, idPuntoVenta, idArea, idAlicuotaIva, idLista, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(
+                nameof(UnArticuloNoDisponibleEnLaEmpresaDelPvQuedaExcluidoConIdentidadYElHermanoDisponibleSale));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var idEmpresaB = await SembrarEmpresaAsync(idTenant, "Empresa B de disponibilidad");
+
+        // No disponible en la empresa del PV (empresa A): DisponibleParaTodas=false y su única
+        // fila articulos_empresas apunta a la empresa B, nunca a la A.
+        var idNoDisponible = await SembrarArticuloAsync(
+            idTenant, "no-disponible-empresa-a", idArea, idAlicuotaIva, disponibleParaTodas: false, idEmpresaHabilitada: idEmpresaB);
+        await SembrarPrecioAsync(idNoDisponible, idLista, 100m);
+
+        // Hermano disponible (DisponibleParaTodas=true por defecto): con precio, debe salir en Filas.
+        var idDisponible = await SembrarArticuloAsync(idTenant, "disponible-empresa-a", idArea, idAlicuotaIva);
+        await SembrarPrecioAsync(idDisponible, idLista, 200m);
+
+        var solicitud = new SolicitudDeEtiquetas(idPuntoVenta, idLista, [idNoDisponible, idDisponible], null);
+        var respuesta = await admin.PostAsJsonAsync("/api/etiquetas/datos", solicitud);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var datos = await respuesta.Content.ReadFromJsonAsync<DatosDeEtiquetas>();
+
+        Assert.DoesNotContain(datos!.Filas, f => f.IdArticulo == idNoDisponible);
+        Assert.Contains(datos.Filas, f => f.IdArticulo == idDisponible);
+
+        var excluido = Assert.Single(datos.Excluidos);
+        Assert.Equal(idNoDisponible, excluido.IdArticulo);
+        Assert.False(string.IsNullOrWhiteSpace(excluido.CodigoInterno));
+        Assert.False(string.IsNullOrWhiteSpace(excluido.Nombre));
+        Assert.False(string.IsNullOrWhiteSpace(excluido.Motivo));
     }
 
     // ---- task 2.38: presupuesto de comandos, 1 y 200 artículos, mismo conteo ---------------
@@ -882,8 +954,14 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         await servicioMuchos.ComponerAsync(new SolicitudDeEtiquetas(idPuntoVenta, idLista, idsMuchos, null));
 
         Assert.Equal(contadorUno.Consultas, contadorMuchos.Consultas);
+        // judgment-day Slice 2, ronda 2 (juez A, SUGGESTION): el camino de ids explícitos tiene su
+        // PROPIO presupuesto, más angosto que el ≤ 11 general del camino por filtro (design.md:253)
+        // — nunca el mismo assert relajado para ambos. El número medido con el interceptor tras el
+        // FIX del CRITICAL (disponibilidad plegada en la MISMA consulta de identidad, sin roundtrip
+        // extra) es 10, no el ≤ 9 que el design proponía antes de medir — design.md enmendado con
+        // este mismo número (registro honesto, tasks.md judgment-day Slice 2 ronda 2).
         Assert.True(
-            contadorUno.Consultas <= 11,
-            $"Se esperaban a lo sumo 11 consultas (design: Testing Strategy), se emitieron {contadorUno.Consultas}.");
+            contadorUno.Consultas <= 10,
+            $"Se esperaban a lo sumo 10 consultas en el camino de ids explícitos (design: Testing Strategy), se emitieron {contadorUno.Consultas}.");
     }
 }

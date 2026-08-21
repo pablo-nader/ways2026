@@ -78,11 +78,34 @@ public class ServicioDeEtiquetas(
 
         // 1 consulta: identidad (código interno, nombre, unidad de venta) del conjunto elegido —
         // ResolverAsync solo proyecta Id/IdCategoria/IdGrupo (Ofertas.Contratos), nunca los campos
-        // que la etiqueta necesita imprimir.
+        // que la etiqueta necesita imprimir. judgment-day Slice 2, ronda 2 (juez A, CRITICAL):
+        // arbitraje del orquestador — la disponibilidad por empresa viaja en LA MISMA consulta
+        // (mismo EXISTS que ArticuloConsultas.DisponibleEnEmpresa) en vez de un roundtrip aparte,
+        // así el camino de ids sigue con el mismo presupuesto de comandos.
         var identidad = await db.Articulos
             .Where(a => idsArticulo.Contains(a.Id))
-            .Select(a => new { a.Id, a.CodigoInterno, a.Nombre, a.UnidadVenta })
+            .Select(a => new
+            {
+                a.Id, a.CodigoInterno, a.Nombre, a.UnidadVenta,
+                Disponible = a.DisponibleParaTodas ||
+                    db.ArticulosEmpresas.Any(ae => ae.IdArticulo == a.Id && ae.IdEmpresa == idEmpresa)
+            })
             .ToDictionaryAsync(a => a.Id, ct);
+
+        // Arbitraje del orquestador, contrato (a): un id explícito que NO resuelve identidad en el
+        // tenant (inexistente o cross-tenant, ya invisible por el filtro global de EF) es un 400 —
+        // mismo código de dominio que el guard de ServicioDeOfertas.ResolverAsync:356-360, nunca un
+        // drop silencioso. El camino por filtro nunca entra acá: sus ids salen de una consulta al
+        // mismo db.Articulos, así que siempre resuelven identidad.
+        if (hayIds)
+        {
+            var idsArticuloFaltantes = idsArticulo.Except(identidad.Keys).ToList();
+            if (idsArticuloFaltantes.Count > 0)
+            {
+                throw new ErrorDominio(
+                    "referencia_invalida", $"No existe el artículo {idsArticuloFaltantes[0]}.", 400);
+            }
+        }
 
         // 1 consulta: codigos_barra del conjunto — hasta uno por artículo (el primero por Id,
         // mismo criterio de orden que ServicioDeArticulos.ListarCodigosBarraAsync).
@@ -99,17 +122,37 @@ public class ServicioDeEtiquetas(
         // hipotético es un precio falso en la góndola.
         var momento = reloj.Ahora;
 
+        // Arbitraje del orquestador, contrato (b): un id que RESUELVE pero cuyo artículo no está
+        // disponible en la empresa del PV va a Excluidos con su identidad y motivo propio (mismo
+        // patrón que la decisión 6 de abajo — la identidad se conoce, la exclusión es honesta) —
+        // nunca a Filas, nunca resuelve precio para él. El camino por filtro no cae nunca acá:
+        // ResolverPorFiltroAsync ya scopea por DisponibleEnEmpresa antes de elegir los ids.
+        var excluidos = new List<ArticuloExcluido>();
+        var idsDisponibles = new List<int>(idsArticulo.Count);
+
+        foreach (var id in idsArticulo)
+        {
+            var datosDeIdentidad = identidad[id];
+            if (!datosDeIdentidad.Disponible)
+            {
+                excluidos.Add(new ArticuloExcluido(
+                    datosDeIdentidad.Id, datosDeIdentidad.CodigoInterno, datosDeIdentidad.Nombre,
+                    "No disponible en la empresa del punto de venta."));
+                continue;
+            }
+
+            idsDisponibles.Add(id);
+        }
+
         // Decisión 5 (design.md:56, mutation targets 9/10): cantidad=1 SIEMPRE, IdEmpresa del PV
         // en TODAS las líneas — nunca null, nunca la cantidad de copias.
-        var lineas = idsArticulo
-            .Where(identidad.ContainsKey)
+        var lineas = idsDisponibles
             .Select(id => new LineaDeResolucion(id, idEmpresa, solicitud.IdListaPrecio, Cantidad: 1m))
             .ToList();
 
         var resultados = await servicioDeOfertas.ResolverAsync(lineas, momento, ct);
 
         var filas = new List<FilaDeEtiqueta>();
-        var excluidos = new List<ArticuloExcluido>();
 
         foreach (var resultado in resultados)
         {
