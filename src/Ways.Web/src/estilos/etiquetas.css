@@ -107,6 +107,34 @@
 }
 
 .hoja-de-etiquetas .regla-tick {
+  /* design.md:82: "1 mm ticks, 10 mm labels" — la marca menor (cada 1mm) y la mayor (cada
+     10mm, con el número) comparten posicionamiento; solo el largo del trazo las distingue. */
   position: absolute;
   background: #000;
+}
+
+.hoja-de-etiquetas .regla-horizontal .regla-tick {
+  top: 0;
+  width: 0.2mm;
+}
+
+.hoja-de-etiquetas .regla-horizontal .regla-tick-mayor {
+  height: 3mm;
+}
+
+.hoja-de-etiquetas .regla-horizontal .regla-tick-menor {
+  height: 1.5mm;
+}
+
+.hoja-de-etiquetas .regla-vertical .regla-tick {
+  left: 0;
+  height: 0.2mm;
+}
+
+.hoja-de-etiquetas .regla-vertical .regla-tick-mayor {
+  width: 3mm;
+}
+
+.hoja-de-etiquetas .regla-vertical .regla-tick-menor {
+  width: 1.5mm;
 }

@@ -282,6 +282,13 @@ gates slice 3 only (verify criterion 4), not this PR.
 
 None beyond the deviations above.
 
+### judgment-day Slice 1, ronda 1 — juez B (1 MAJOR + 1 MINOR)
+
+| # | Severidad | Hallazgo | Fix | Ciclo mutación |
+|---|---|---|---|---|
+| 1 | MAJOR | El test de la grilla de calibración (`HojaDeEtiquetas.test.tsx`) no asertaba la cruz de registro (`<span className="cruz-registro">`, `HojaDeEtiquetas.tsx:136`) ni la clase `celda-calibracion` (hook del hairline de 0.2mm) — ambos mutantes sobrevivían 6/6, y `design.md:79-80` exige ambos elementos | `data-testid={\`cruz-registro-f\${fila}c\${columna}\`}` agregado a la cruz (mismo patrón que `cuadrado-de-escala`/`regla-horizontal`); test asserta conteo exacto de cruces == columnas×filas (24, regla 12b), presencia por celda, `toHaveClass('celda-calibracion')`, y que el modo NORMAL no renderiza ninguno de los dos (discriminante de modo) | (a) borrado el `<span className="cruz-registro">` → RED (`getAllByTestId` no encontró coincidencias) → revertido → verde. (b) `celda celda-calibracion` → `celda` → RED (`toHaveClass('celda-calibracion')` falló) → revertido → verde |
+| 2 | MINOR | `design.md:82` especifica "1 mm ticks, 10 mm labels"; `ReglaHorizontal`/`ReglaVertical` solo dibujaban marcas cada 10mm | Ticks de 1mm agregados en ambas reglas (201 en la horizontal, 281 en la vertical), diferenciados por clase `regla-tick-mayor`/`regla-tick-menor` (label solo en los mayores, cada 10mm); CSS distingue alto/ancho por clase; test nuevo asserta conteo exacto de ticks totales y por clase | Paso de 1mm mutado a 2mm en la regla horizontal → RED (`toHaveLength(201)` recibió 101) → revertido → verde |
+
 ---
 
 ## Slice 2: `ServicioDeEtiquetas` + endpoint + 3 filtros + tests (PR 2)

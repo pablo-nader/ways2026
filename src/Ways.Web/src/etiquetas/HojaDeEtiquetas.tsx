@@ -86,33 +86,47 @@ function CuadradoDeEscala() {
   )
 }
 
+/** design.md:82: "1 mm ticks, 10 mm labels" — una marca menor por milímetro, una marca mayor
+ * (con el número) cada 10 mm. La distinción visual entre menor/mayor es la clase, no el texto:
+ * ambas comparten `regla-tick`, solo la mayor suma `regla-tick-mayor` y el label. */
 function ReglaHorizontal() {
-  const marcas = Array.from({ length: 21 }, (_, i) => i * 10) // 0..200 mm, cada 10 mm
+  const marcas = Array.from({ length: 201 }, (_, i) => i) // 0..200 mm, cada 1 mm
   return (
     <div className="regla-horizontal" data-testid="regla-horizontal">
-      {marcas.map((mm) => (
-        <span
-          key={mm}
-          className="regla-tick"
-          data-testid={`regla-horizontal-${mm}`}
-          style={{ left: `${mm}mm` } as CSSProperties}
-        >
-          {mm}
-        </span>
-      ))}
+      {marcas.map((mm) => {
+        const esMayor = mm % 10 === 0
+        return (
+          <span
+            key={mm}
+            className={esMayor ? 'regla-tick regla-tick-mayor' : 'regla-tick regla-tick-menor'}
+            data-testid={`regla-horizontal-${mm}`}
+            style={{ left: `${mm}mm` } as CSSProperties}
+          >
+            {esMayor ? mm : null}
+          </span>
+        )
+      })}
     </div>
   )
 }
 
 function ReglaVertical() {
-  const marcas = Array.from({ length: 29 }, (_, i) => i * 10) // 0..280 mm, cada 10 mm
+  const marcas = Array.from({ length: 281 }, (_, i) => i) // 0..280 mm, cada 1 mm
   return (
     <div className="regla-vertical" data-testid="regla-vertical">
-      {marcas.map((mm) => (
-        <span key={mm} className="regla-tick" data-testid={`regla-vertical-${mm}`} style={{ top: `${mm}mm` } as CSSProperties}>
-          {mm}
-        </span>
-      ))}
+      {marcas.map((mm) => {
+        const esMayor = mm % 10 === 0
+        return (
+          <span
+            key={mm}
+            className={esMayor ? 'regla-tick regla-tick-mayor' : 'regla-tick regla-tick-menor'}
+            data-testid={`regla-vertical-${mm}`}
+            style={{ top: `${mm}mm` } as CSSProperties}
+          >
+            {esMayor ? mm : null}
+          </span>
+        )
+      })}
     </div>
   )
 }
@@ -133,7 +147,7 @@ function GrillaDeCalibracion({ descriptor }: { descriptor: DescriptorDeFormato }
         {filas.map((fila) =>
           columnas.map((columna) => (
             <div key={`f${fila}c${columna}`} className="celda celda-calibracion" data-testid={`celda-calibracion-f${fila}c${columna}`}>
-              <span className="cruz-registro" aria-hidden="true" />
+              <span className="cruz-registro" aria-hidden="true" data-testid={`cruz-registro-f${fila}c${columna}`} />
               <span>{`f${fila}c${columna}`}</span>
             </div>
           )),

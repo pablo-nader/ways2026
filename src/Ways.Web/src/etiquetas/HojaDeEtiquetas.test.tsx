@@ -73,7 +73,8 @@ describe('HojaDeEtiquetas — geometría compartida entre modos (mutation target
     render(<HojaDeEtiquetas descriptor={A4_3X8} celdas={[]} nombreDeLista="Lista general" modo="calibracion" />)
 
     const grilla = screen.getByTestId('grilla-de-calibracion')
-    expect(grilla.children).toHaveLength(A4_3X8.columnas * A4_3X8.filas)
+    const totalCeldas = A4_3X8.columnas * A4_3X8.filas // 3×8 = 24 (valor exacto, regla 12b)
+    expect(grilla.children).toHaveLength(totalCeldas)
 
     expect(screen.getByTestId('celda-calibracion-f0c0')).toHaveTextContent('f0c0')
     expect(screen.getByTestId('celda-calibracion-f7c2')).toHaveTextContent('f7c2')
@@ -81,6 +82,53 @@ describe('HojaDeEtiquetas — geometría compartida entre modos (mutation target
     expect(screen.getByTestId('etiqueta-cuadrado-de-escala')).toHaveTextContent('100.0 × 100.0 mm')
     expect(screen.getByTestId('regla-horizontal')).toBeInTheDocument()
     expect(screen.getByTestId('regla-vertical')).toBeInTheDocument()
+
+    // Mutante (a): el <span className="cruz-registro"> desaparece — una cruz por celda, sin excepción.
+    const cruces = screen.getAllByTestId(/^cruz-registro-f\d+c\d+$/)
+    expect(cruces).toHaveLength(totalCeldas)
+    for (let fila = 0; fila < A4_3X8.filas; fila += 1) {
+      for (let columna = 0; columna < A4_3X8.columnas; columna += 1) {
+        expect(screen.getByTestId(`cruz-registro-f${fila}c${columna}`)).toBeInTheDocument()
+      }
+    }
+
+    // Mutante (b): `celda celda-calibracion` → `celda` — el hook del hairline de 0.2mm.
+    expect(screen.getByTestId('celda-calibracion-f0c0')).toHaveClass('celda-calibracion')
+    expect(screen.getByTestId('celda-calibracion-f7c2')).toHaveClass('celda-calibracion')
+
+    // Discriminante de modo: el modo NORMAL no dibuja cruces ni celdas de calibración.
+    const { container: contenedorNormal } = render(
+      <HojaDeEtiquetas descriptor={A4_3X8} celdas={[]} nombreDeLista="Lista general" modo="normal" />,
+    )
+    expect(contenedorNormal.querySelector('.cruz-registro')).not.toBeInTheDocument()
+    expect(contenedorNormal.querySelector('.celda-calibracion')).not.toBeInTheDocument()
+  })
+
+  it('las reglas horizontal (200mm) y vertical (280mm) dibujan un tick por milímetro, con label cada 10mm (design.md:82)', () => {
+    render(<HojaDeEtiquetas descriptor={A4_3X8} celdas={[]} nombreDeLista="Lista general" modo="calibracion" />)
+
+    const reglaHorizontal = screen.getByTestId('regla-horizontal')
+    const reglaVertical = screen.getByTestId('regla-vertical')
+
+    // Mutante: el paso de 1mm pasa a 2mm (o se quitan los menores) — el conteo exacto lo detecta.
+    expect(reglaHorizontal.children).toHaveLength(201) // 0..200 mm inclusive, cada 1mm
+    expect(reglaVertical.children).toHaveLength(281) // 0..280 mm inclusive, cada 1mm
+
+    const ticksMayoresHorizontal = reglaHorizontal.querySelectorAll('.regla-tick-mayor')
+    const ticksMenoresHorizontal = reglaHorizontal.querySelectorAll('.regla-tick-menor')
+    expect(ticksMayoresHorizontal).toHaveLength(21) // 0,10,...,200
+    expect(ticksMenoresHorizontal).toHaveLength(180) // 201 - 21
+
+    const ticksMayoresVertical = reglaVertical.querySelectorAll('.regla-tick-mayor')
+    const ticksMenoresVertical = reglaVertical.querySelectorAll('.regla-tick-menor')
+    expect(ticksMayoresVertical).toHaveLength(29) // 0,10,...,280
+    expect(ticksMenoresVertical).toHaveLength(252) // 281 - 29
+
+    expect(screen.getByTestId('regla-horizontal-0')).toHaveTextContent('0')
+    expect(screen.getByTestId('regla-horizontal-200')).toHaveTextContent('200')
+    expect(screen.getByTestId('regla-horizontal-137')).toHaveTextContent('')
+    expect(screen.getByTestId('regla-vertical-280')).toHaveTextContent('280')
+    expect(screen.getByTestId('regla-vertical-93')).toHaveTextContent('')
   })
 })
 
