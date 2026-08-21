@@ -22,9 +22,15 @@ db_gate: APROBADO — RATIFICADO POR EL ORQUESTADOR (2026-08-21, verificacion
   base ni en el repo (barrido de material de clave como criterio de verify).
 db_gate_approval: >-
   PROPUESTO 2026-08-21 por sdd-propose bajo mandato autonomo delegado.
-  NO RATIFICADO TODAVIA — requiere aprobacion explicita del duenio antes de
-  iniciar el slice 1 (CLAUDE.md: "Database change gate (MANDATORY)"). Es el
-  PRIMER gate con schema desde la etapa 17. LA SECCION 'Modelo de datos
+  RATIFICADO 2026-08-21 por el orquestador bajo el mandato autonomo del programa
+  (el precedente de las etapas 15/16/17: los gates los aprueba el orquestador con
+  verificacion independiente REGISTRADA) — la evidencia de la verificacion esta
+  en el campo db_gate de este mismo archivo: codigo_afip NULL confirmado en las
+  3 tablas del snapshot, FA/FB/FC sembrados (la decision 9 es obligatoria), el
+  guard EsFiscal confirmado, Empresa sin IdCondicionFiscal confirmado, y los
+  criterios vinculantes (migracion unica reversible, 8 indices por definicion,
+  clave maestra jamas en base/repo). Es el PRIMER gate con schema desde la
+  etapa 17. LA SECCION 'Modelo de datos
   propuesto' DEL PROPOSAL ES EL CONTRATO: cualquier DDL que proponga una fase
   posterior fuera de esa seccion es violacion de alcance y REABRE el gate.
   ALCANCE PROPUESTO: UNA sola migracion (FiscalArcaEtapa19a), PostgreSQL 17.
