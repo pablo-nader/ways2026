@@ -83,6 +83,15 @@ export function Layout() {
                     </NavLink>
                   </li>
                 )}
+                {/* stage-18-etiquetas-y-consulta (Slice 4, design decisión 11): mismo gate que
+                    /pos (Politicas.OperacionDePos) — pantalla de salón, sin claim de rol propio. */}
+                {usuario && puedeOperarPos(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/consulta-precios">
+                      Consulta de precios
+                    </NavLink>
+                  </li>
+                )}
                 {/* stage-10-agregacion-dashboard (Slice 7, design: Web Composition): nav y ruta
                     comparten Politicas.LecturaDeReportes — Supervisor + Admin, ni Vendedor ni
                     Root. */}

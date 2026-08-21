@@ -355,12 +355,36 @@ local.
 cuando la infraestructura de impresión ya está resuelta y no hay que decidirla para esto.
 Ambos ítems vienen del roadmap del doc 06.
 
-**Dependencias.** Etapa 11 (infraestructura de impresión y descarga). **Tamaño:** media.
+**Dependencias.** Etapa 11 (infraestructura de impresión y descarga). **Tamaño:** media-baja
+(reevaluado — la estimación original de "media" asumía la superficie sin login y la tabla de
+formatos configurables, ambas diferidas).
 
 **Decisiones abiertas.** Qué formatos de etiqueta se soportan y si son configurables por
 empresa; si la consulta de precios es una vista responsive del sistema o una superficie
 separada con autenticación propia; qué precio muestra cuando hay ofertas y listas
 diferenciadas.
+
+> **Decisiones OD1-OD3 respondidas** (2026-08-21, `2026-08-21-stage-18-etiquetas-y-consulta`,
+> registro del orquestador tras `sdd-propose`). **Formatos**: C3 — 2-4 plantillas fijas en
+> código (dos grillas troqueladas A4-3x8/A4-2x7, dos carteles A4/A5 completos), no
+> configurables por empresa; el descriptor vive como tipo interno (`DescriptorDeFormato`), no
+> como fila, para que una expansión a una tabla `formatos_etiqueta` sea natural si el dueño la
+> pide más adelante (queda registrada como camino de reapertura con su propio gate). **Consulta
+> de precios**: vista responsive del sistema bajo la auth EXISTENTE (`Politicas.OperacionDePos`,
+> Vendedor + Supervisor + Admin) — la superficie sin login (token de dispositivo) queda
+> DIFERIDA como decisión de apetito de riesgo del dueño, cero superficie de autorización nueva
+> en este alcance. **Precio con ofertas/listas diferenciadas**: precio final + precio original
+> tachado cuando aplica una oferta (`Aplicadas.Count > 0` al resolver a `cantidad = 1`), la
+> lista de precios es una selección explícita en pantalla (preseteada al `EsDefault`), nunca un
+> default silencioso del servidor; artículo sin precio vigente en la lista elegida nunca muestra
+> `$0`. Slice 4 (`ConsultaPrecios.tsx`, PR #4, independiente de los slices 1-3 por diseño) entregó
+> esta última decisión completa: exactamente dos llamados existentes por escaneo
+> (`GET /api/articulos/escaneo` → `POST /api/ofertas/resolver`), cero endpoints nuevos, reset de
+> pantalla a los ~20s de inactividad. **Los slices 1-3 (spike de impresión + descriptor de datos
+> + `Etiquetas.tsx`) siguen en curso** — el spike de alineación física (tarea 1.4, E1) está
+> bloqueado en el dueño (requiere su impresora y la hoja troquelada de referencia) y gatea el
+> slice 3; este bloque NO declara la etapa completa, solo dos de sus tres decisiones abiertas
+> como resueltas por diseño.
 
 ### Etapa 19 — Facturación electrónica ARCA
 
