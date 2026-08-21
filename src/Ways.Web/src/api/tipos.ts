@@ -1979,3 +1979,93 @@ export type PresupuestoListado = {
 
 /** Página de `GET /api/presupuestos` (espejo de `PaginaDePresupuestos`). */
 export type PaginaDePresupuestos = { items: PresupuestoListado[]; total: number; pagina: number; tamanio: number }
+
+// --- Remitos (stage-17-presupuestos-y-remitos, Slice 8) — espejo de
+// `Ways.Application.Ventas.ContratosDeRemito` / `Ways.Domain.Ventas.EstadoRemito` -----------------
+
+/** Espejo de `EstadoRemito` — el orden de los miembros ES el orden de ciclo de vida (mismo
+ * criterio que `EstadoPresupuesto`). */
+export type EstadoRemito = 'Borrador' | 'Emitido' | 'Facturado' | 'Anulado'
+
+/** Una línea del cuerpo de `POST`/`PUT /api/remitos` (espejo de `LineaDeRemito`). `idLote` es la
+ * elección EXPLÍCITA del cliente antes de `emitir` (a diferencia de `LineaDePresupuesto`) — `null`
+ * es el camino feliz de cero tecleo, el servidor corre FEFO solo. */
+export type LineaDeRemito = { idArticulo: number; cantidad: number; idLote: number | null }
+
+/** Cuerpo de `POST /api/remitos` (crea un borrador) y `PUT /api/remitos/{id}` (replace-set
+ * completo del header + los items — espejo de `SolicitudDeRemito`). `idCliente` omitido resuelve a
+ * Consumidor Final, mismo criterio que `SolicitudDePresupuesto`. */
+export type SolicitudDeRemito = {
+  idPuntoVenta: number
+  idCliente: number | null
+  direccionEntrega: string | null
+  observaciones: string | null
+  lineas: LineaDeRemito[]
+}
+
+/** Un item ya persistido — espejo de `ItemDeRemito`. `costoUnitario`/`costoEsEstimado`/`idLote`
+ * quedan `null`/`false` mientras el remito está en `borrador` (salvo `idLote`, que el cliente
+ * puede fijar de antemano) y recién se congelan al `emitir`. */
+export type ItemDeRemito = {
+  orden: number
+  idArticulo: number
+  descripcion: string
+  cantidad: number
+  precioUnitario: number
+  descuento: number
+  total: number
+  idListaPrecio: number
+  idOferta: number | null
+  idAlicuotaIva: number
+  porcentajeIva: number
+  costoUnitario: number | null
+  costoEsEstimado: boolean
+  idLote: number | null
+}
+
+/** Respuesta de `POST/PUT /api/remitos`, `POST /{id}/emitir`, `POST /{id}/anular` y `GET /{id}` —
+ * espejo de `RemitoDetalle`. Sin `vencido`/`convertible`: un remito no expira. */
+export type RemitoDetalle = {
+  id: number
+  idPuntoVenta: number
+  idCliente: number
+  idEmpleado: number
+  numero: number | null
+  numeroFormateado: string | null
+  fechaEmision: string
+  fechaSalida: string | null
+  direccionEntrega: string | null
+  observaciones: string | null
+  subtotal: number
+  descuentoTotal: number
+  total: number
+  estado: EstadoRemito
+  idComprobanteVenta: number | null
+  items: ItemDeRemito[]
+}
+
+/** Fila de `GET /api/remitos` — espejo de `RemitoListado`. */
+export type RemitoListado = {
+  id: number
+  idPuntoVenta: number
+  idCliente: number
+  numero: number | null
+  numeroFormateado: string | null
+  fechaEmision: string
+  total: number
+  estado: EstadoRemito
+  idComprobanteVenta: number | null
+}
+
+/** Página de `GET /api/remitos` (espejo de `PaginaDeRemitos`). */
+export type PaginaDeRemitos = { items: RemitoListado[]; total: number; pagina: number; tamanio: number }
+
+/** Cuerpo de `POST /api/remitos/facturacion` (espejo de `SolicitudDeFacturacionDeRemitos`). Sin
+ * `idCliente` (`dto-contract-honesty` regla 1): el cliente se DERIVA de los remitos mismos — un
+ * valor en conflicto no tendría destino real. `pagos` mismo shape que el checkout. */
+export type SolicitudDeFacturacionDeRemitos = {
+  idPuntoVenta: number
+  idsRemito: number[]
+  pagos: PagoDeVenta[]
+  observaciones: string | null
+}

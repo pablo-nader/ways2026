@@ -22,6 +22,10 @@ export const clienteDeVentas = {
   /** `POST /api/ventas` (design: API Surface): checkout — 201 + body = comprobante emitido, sin
    * ningún campo de dinero re-derivable en el cliente (el servidor vuelve a resolver todo). */
   emitir: (solicitud: SolicitudDeVenta) => api.post<ComprobanteEmitido>('/ventas', solicitud),
+  /** `GET /api/ventas/{id}` (stage-17-presupuestos-y-remitos, Slice 8, OD10): reimpresión/lectura
+   * de un comprobante ya emitido — `Remito.tsx` lo usa para mostrar el link a la factura de un
+   * remito `facturado` (un `TXR`, cuyo detalle sale de `items_remito` del lado del servidor). */
+  obtener: (id: number) => api.get<ComprobanteEmitido>(`/ventas/${id}`),
 }
 
 /** Respuesta de `GET /api/articulos/escaneo` → acción `escanear` de `carrito.ts` (spec:
