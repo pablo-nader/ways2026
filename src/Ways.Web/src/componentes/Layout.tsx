@@ -74,6 +74,15 @@ export function Layout() {
                     </NavLink>
                   </li>
                 )}
+                {/* stage-17-presupuestos-y-remitos (Slice 8, design: Web composition): mismo gate
+                    que /presupuestos (Politicas.OperacionDePos) — nav y ruta comparten política. */}
+                {usuario && puedeOperarPos(usuario.rolId) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/remitos">
+                      Remitos
+                    </NavLink>
+                  </li>
+                )}
                 {/* stage-10-agregacion-dashboard (Slice 7, design: Web Composition): nav y ruta
                     comparten Politicas.LecturaDeReportes — Supervisor + Admin, ni Vendedor ni
                     Root. */}
