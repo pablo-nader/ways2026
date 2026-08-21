@@ -1,0 +1,156 @@
+/*
+ * Etapa 18, Slice 1 (design.md:19-22, decisión 1): la hoja de etiquetas/carteles vive en su
+ * PROPIA página nombrada — nunca en `impresion.css`, que sigue byte-idéntica a `main`
+ * (verify criterio 3, mutation target 2). `@page` no admite un selector ordinario; las named
+ * pages de CSS (`@page etiquetas` + la propiedad `page` en el contenedor) son el único mecanismo
+ * que scopea la caja de página sin tocar el stylesheet global (mutation target 1).
+ */
+@page etiquetas {
+  size: A4;
+  margin: 0;
+}
+
+.hoja-de-etiquetas {
+  /* named page: gatea a `@page etiquetas` de arriba, nunca al `@page { margin: 12mm }` global
+     de `impresion.css` (mutation target 1). */
+  page: etiquetas;
+  position: relative;
+  box-sizing: border-box;
+  width: var(--pagina-ancho);
+  height: var(--pagina-alto);
+}
+
+.hoja-de-etiquetas .grilla-de-celdas {
+  position: absolute;
+  top: var(--margen-sup);
+  left: var(--margen-izq);
+  display: grid;
+  grid-template-columns: repeat(var(--columnas), var(--celda-ancho));
+  grid-template-rows: repeat(var(--filas), var(--celda-alto));
+  column-gap: var(--medianil-h, 0mm);
+  row-gap: var(--medianil-v, 0mm);
+}
+
+.hoja-de-etiquetas .celda {
+  box-sizing: border-box;
+  width: var(--celda-ancho);
+  height: var(--celda-alto);
+  padding: var(--pad-externo);
+  overflow: hidden;
+  position: relative;
+}
+
+/* --- Modo calibración (design.md:67-92, spike de alineación) --- */
+
+.hoja-de-etiquetas[data-modo='calibracion'] .celda-calibracion {
+  /* Hairline de 0.2 mm por celda nominal: lo que debería coincidir con el troquel. */
+  border: 0.2mm solid #000;
+}
+
+.hoja-de-etiquetas .cruz-registro {
+  /* Cruz de registro de 6 mm centrada en el origen (esquina superior-izquierda) de la celda —
+     el punto que se mide, no un borde difuso. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6mm;
+  height: 6mm;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.hoja-de-etiquetas .cruz-registro::before,
+.hoja-de-etiquetas .cruz-registro::after {
+  content: '';
+  position: absolute;
+  background: #000;
+}
+
+.hoja-de-etiquetas .cruz-registro::before {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 0.2mm;
+  transform: translateY(-50%);
+}
+
+.hoja-de-etiquetas .cruz-registro::after {
+  left: 50%;
+  top: 0;
+  height: 100%;
+  width: 0.2mm;
+  transform: translateX(-50%);
+}
+
+.hoja-de-etiquetas .cuadrado-de-escala {
+  /* 100.0×100.0 mm etiquetado — separa "la grilla está mal" de "el navegador imprimió al 96%".
+     Ancla explícita en la esquina inferior-derecha de la hoja (judgment-day ronda 2, fix 1): las
+     reglas anclan en el borde superior/izquierdo (top:0/left:0 más abajo), así que right:0/bottom:0
+     lo mantiene fuera de esa esquina sin depender de un número mágico de mm — funciona para
+     cualquier `paginaMm` de cualquier descriptor. Puede superponerse a las celdas de la grilla: el
+     hairline de la celda y el contorno del cuadrado son distinguibles a ojo, y el design solo exige
+     poder MEDIRLO (design.md:83), no reservarle una zona libre. */
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 100mm;
+  height: 100mm;
+  border: 0.2mm solid #000;
+  box-sizing: border-box;
+}
+
+.hoja-de-etiquetas .regla-horizontal,
+.hoja-de-etiquetas .regla-vertical {
+  /* judgment-day ronda 2, fix 1: estaban en FLUJO NORMAL (position:relative apila verticalmente
+     dentro de `.hoja-de-etiquetas`) — sumadas a `.cuadrado-de-escala`, empujaban la hoja a 380.2mm
+     y el cuadrado caía en una segunda página impresa. `position:absolute` con origen en la esquina
+     superior-izquierda de la hoja coincide con lo que design.md:82 ya fija: "a horizontal 200mm
+     ruler (top) and a vertical 280mm ruler (left)". */
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: #000;
+}
+
+.hoja-de-etiquetas .regla-horizontal {
+  width: 200mm;
+  height: 0.2mm;
+}
+
+.hoja-de-etiquetas .regla-vertical {
+  width: 0.2mm;
+  height: 280mm;
+}
+
+.hoja-de-etiquetas .regla-tick {
+  /* design.md:82: "1 mm ticks, 10 mm labels" — la marca menor (cada 1mm) y la mayor (cada
+     10mm, con el número) comparten posicionamiento; solo el largo del trazo las distingue. */
+  position: absolute;
+  background: #000;
+}
+
+.hoja-de-etiquetas .regla-horizontal .regla-tick {
+  top: 0;
+  width: 0.2mm;
+}
+
+.hoja-de-etiquetas .regla-horizontal .regla-tick-mayor {
+  height: 3mm;
+}
+
+.hoja-de-etiquetas .regla-horizontal .regla-tick-menor {
+  height: 1.5mm;
+}
+
+.hoja-de-etiquetas .regla-vertical .regla-tick {
+  left: 0;
+  height: 0.2mm;
+}
+
+.hoja-de-etiquetas .regla-vertical .regla-tick-mayor {
+  width: 3mm;
+}
+
+.hoja-de-etiquetas .regla-vertical .regla-tick-menor {
+  width: 1.5mm;
+}
