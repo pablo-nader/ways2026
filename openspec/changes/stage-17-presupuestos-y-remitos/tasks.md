@@ -1741,8 +1741,8 @@ reverts to pre-stage.
   sus 2 SUGGESTIONs (N=1 nombrado, anulación TXR con turno cerrado); target 54 → backlog
   (clase preexistente, el checkout tampoco la tiene). Presupuesto de 2 rondas de fix agotado
   exactamente — por eso el WARNING va por slice 8 y no por fix.
-- [ ] 6.26 Open PR #6 `feat/stage17-slice6-consolidacion`, merge after a clean round. — **NOT
-  run by this apply batch**, same reason; pending the orchestrator's clean `judgment-day` round
+- [x] 6.26 Open PR #6 `feat/stage17-slice6-consolidacion`, merge after a clean round. — **DONE
+  by the orchestrator**: PR #152, merged `57fb624` after the clean round (see 6.25)
   on this diff.
 
 **DEVIATION REGISTERED (mutation-proof-tests regla 2/3, apply-time — target 48 lock ORDER, run
