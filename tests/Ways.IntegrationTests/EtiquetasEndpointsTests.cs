@@ -45,6 +45,30 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         public DateTimeOffset Ahora { get; } = ahora;
     }
 
+    /// <summary>judgment-day Slice 2, ronda 1 (juez B, MAJOR 1): a diferencia de <see cref="RelojFijo"/>,
+    /// devuelve un valor DISTINTO en cada lectura de <see cref="Ahora"/> (arranca en
+    /// <paramref name="inicio"/> y suma 1 segundo por get) — así un test puede distinguir "el
+    /// momento se resolvió UNA vez y se reusó" de "se leyó el reloj más de una vez" (design decisión
+    /// 10, mutation target 25 REAL bajo este reloj: con <see cref="RelojFijo"/> ambos escenarios son
+    /// indistinguibles porque el reloj fijo siempre devuelve lo mismo).</summary>
+    private sealed class RelojQueAvanza(DateTimeOffset inicio) : IRelojDelSistema
+    {
+        private DateTimeOffset _proximaLectura = inicio;
+
+        public int Lecturas { get; private set; }
+
+        public DateTimeOffset Ahora
+        {
+            get
+            {
+                Lecturas++;
+                var valor = _proximaLectura;
+                _proximaLectura = _proximaLectura.AddSeconds(1);
+                return valor;
+            }
+        }
+    }
+
     private sealed class ContextoFijo(int? idTenant) : IContextoDeUsuario
     {
         public bool EstaAutenticado => true;
@@ -248,7 +272,7 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
     /// <summary>Instancia <see cref="ServicioDeEtiquetas"/> de forma cruda, sin pasar por HTTP —
     /// necesario para el reloj fijado (momento pinneado) y para el contador de comandos, mismo
     /// criterio que <c>OfertasResolucionTests.ContarConsultasDeResolucionAsync</c>.</summary>
-    private (ServicioDeEtiquetas Servicio, ContadorDeComandos Contador) CrearServicioCrudo(int idTenant, DateTimeOffset momento)
+    private (ServicioDeEtiquetas Servicio, ContadorDeComandos Contador) CrearServicioCrudo(int idTenant, IRelojDelSistema reloj)
     {
         var tenantActual = new TenantActualFijo(ModoDeAcceso.Tenant, idTenant);
         var contador = new ContadorDeComandos();
@@ -268,7 +292,6 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
             .Options;
 
         var db = new WaysDbContext(opciones, tenantActual);
-        var reloj = new RelojFijo(momento);
         var contexto = new ContextoFijo(idTenant);
 
         var servicioDePrecios = new ServicioDePrecios(db, reloj, contexto);
@@ -313,6 +336,25 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("seleccion_requerida", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- judgment-day Slice 2, ronda 1 (juez B, MINOR 2): lista de precios inexistente -------
+
+    /// <summary>design.md:237, "(404 si no existe)" — la lectura de <c>listas_precio</c> por el
+    /// servidor devuelve 404 uniforme cuando <c>idListaPrecio</c> no existe, mismo criterio que el
+    /// 404 de <c>idPuntoVenta</c> (ADR-8).</summary>
+    [Fact]
+    public async Task IdListaPrecioInexistenteDevuelve404()
+    {
+        var (_, _, idPuntoVenta, _, _, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(IdListaPrecioInexistenteDevuelve404));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var solicitud = new SolicitudDeEtiquetas(idPuntoVenta, -1, [], null);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/etiquetas/datos", solicitud);
+
+        Assert.Equal(HttpStatusCode.NotFound, respuesta.StatusCode);
     }
 
     // ---- task 2.26: el límite explícito de 200 ---------------------------------------------
@@ -480,6 +522,13 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         // "PrecioFinal < PrecioOriginal" en vez de "Aplicadas.Count > 0" excluiría este artículo
         // incorrectamente.
         var idOfertaSinDescuento = await SembrarArticuloAsync(idTenant, "art-oferta-sin-descuento", idArea, idAlicuotaIva);
+        // judgment-day Slice 2, ronda 1 (juez B, MAJOR 2): discriminante contra el orden real del
+        // post-filtro (ServicioDeEtiquetas.cs:136-139 filtra `soloConOfertaVigente` SOLO sobre
+        // `Filas`, DESPUÉS de armar `Excluidos`) — un artículo SIN precio vigente, CON oferta
+        // vigente, para que un mutante que mueva el filtro ANTES del loop (descartándolo del
+        // candidato grueso en vez de post-filtrar sobre `Filas` ya resueltas) lo haga desaparecer
+        // de `Excluidos` en vez de dejarlo ahí con su identidad y motivo (regla 12c).
+        var idSinPrecioConOferta = await SembrarArticuloAsync(idTenant, "art-sin-precio-con-oferta", idArea, idAlicuotaIva);
 
         foreach (var id in new[] { idArticuloScoped, idCategoriaScoped, idFueraDeVentana, idCantidadMinima, idOtraEmpresa, idSinOferta, idOfertaSinDescuento })
         {
@@ -487,6 +536,7 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         }
 
         await CrearOfertaAsync(admin, OfertaDeArticulo(idArticuloScoped, porcentaje: 10m));
+        await CrearOfertaAsync(admin, OfertaDeArticulo(idSinPrecioConOferta, porcentaje: 10m));
         await CrearOfertaAsync(admin, OfertaDeCategoria(idBebidas, porcentaje: 10m));
 
         var ayer = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-2));
@@ -511,6 +561,16 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
 
         Assert.Equal(new HashSet<int> { idArticuloScoped, idCategoriaScoped, idOfertaSinDescuento }, idsDevueltos);
         Assert.True(idEmpresaA > 0);
+
+        // judgment-day Slice 2, ronda 1 (juez B, MAJOR 2): el sin-precio-con-oferta nunca es una
+        // fila (ni con ni sin `soloConOfertaVigente`), pero SIGUE en `Excluidos`, con su identidad
+        // y motivo — el post-filtro corre sobre `Filas` ya resueltas, nunca sobre el candidato
+        // grueso que arma `Excluidos`.
+        Assert.DoesNotContain(datos.Filas, f => f.IdArticulo == idSinPrecioConOferta);
+        var excluidoConOferta = Assert.Single(datos.Excluidos, e => e.IdArticulo == idSinPrecioConOferta);
+        Assert.False(string.IsNullOrWhiteSpace(excluidoConOferta.CodigoInterno));
+        Assert.False(string.IsNullOrWhiteSpace(excluidoConOferta.Nombre));
+        Assert.False(string.IsNullOrWhiteSpace(excluidoConOferta.Motivo));
     }
 
     // ---- task 2.31: 200/201 vía filtro — truncado ---------------------------------------------
@@ -582,27 +642,32 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
 
     // ---- task 2.34: un momento por hoja, pinneado, atravesando hora_hasta -------------------
 
-    /// <summary>mutation target 25: si el momento se resolviera por línea en vez de una vez para
-    /// toda la hoja, dos llamadas al mismo servicio con el reloj pinneado justo en el borde de
-    /// <c>hora_hasta</c> podrían divergir entre sí. Acá se prueba lo directamente observable: el
-    /// <c>Momento</c> devuelto es EXACTAMENTE el que el reloj fijado tenía, y determina un único
-    /// resultado consistente para todas las líneas de la misma hoja.</summary>
+    /// <summary>mutation target 25 (judgment-day Slice 2, ronda 1, juez B, MAJOR 1): con
+    /// <see cref="RelojFijo"/> "resuelto una vez" y "resuelto dos veces" son indistinguibles porque
+    /// el reloj fijo devuelve siempre el mismo valor — este test usa <see cref="RelojQueAvanza"/>
+    /// (suma 1 segundo por lectura) para que sí lo sean: el <c>Momento</c> echado tiene que ser
+    /// EXACTAMENTE el valor de la PRIMERA lectura, y toda la hoja (dos líneas) se resuelve con UNA
+    /// sola lectura del reloj — nunca una por línea (design decisión 10, "nunca uno por línea").</summary>
     [Fact]
     public async Task UnMomentoPinneadoSeEchaExactoYGobiernaTodaLaHoja()
     {
         var (idTenant, _, idPuntoVenta, idArea, idAlicuotaIva, idLista, _, _) =
             await AprovisionarTenantAsync(nameof(UnMomentoPinneadoSeEchaExactoYGobiernaTodaLaHoja));
 
-        var idArticulo = await SembrarArticuloAsync(idTenant, "art-momento", idArea, idAlicuotaIva);
-        await SembrarPrecioAsync(idArticulo, idLista, 100m);
+        var idUno = await SembrarArticuloAsync(idTenant, "art-momento-uno", idArea, idAlicuotaIva);
+        var idDos = await SembrarArticuloAsync(idTenant, "art-momento-dos", idArea, idAlicuotaIva);
+        await SembrarPrecioAsync(idUno, idLista, 100m);
+        await SembrarPrecioAsync(idDos, idLista, 200m);
 
-        var momentoPinneado = new DateTimeOffset(2026, 8, 21, 12, 0, 0, TimeSpan.Zero);
-        var (servicio, _) = CrearServicioCrudo(idTenant, momentoPinneado);
+        var primeraLectura = new DateTimeOffset(2026, 8, 21, 12, 0, 0, TimeSpan.Zero);
+        var reloj = new RelojQueAvanza(primeraLectura);
+        var (servicio, _) = CrearServicioCrudo(idTenant, reloj);
 
-        var solicitud = new SolicitudDeEtiquetas(idPuntoVenta, idLista, [idArticulo], null);
+        var solicitud = new SolicitudDeEtiquetas(idPuntoVenta, idLista, [idUno, idDos], null);
         var datos = await servicio.ComponerAsync(solicitud);
 
-        Assert.Equal(momentoPinneado, datos.Momento);
+        Assert.Equal(primeraLectura, datos.Momento);
+        Assert.Equal(1, reloj.Lecturas);
     }
 
     // ---- task 2.35: read-back pairwise de cada campo posicional (rule 12b/12c) --------------
@@ -810,10 +875,10 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
 
         var momento = DateTimeOffset.UtcNow;
 
-        var (servicioUno, contadorUno) = CrearServicioCrudo(idTenant, momento);
+        var (servicioUno, contadorUno) = CrearServicioCrudo(idTenant, new RelojFijo(momento));
         await servicioUno.ComponerAsync(new SolicitudDeEtiquetas(idPuntoVenta, idLista, [idArticuloUnico], null));
 
-        var (servicioMuchos, contadorMuchos) = CrearServicioCrudo(idTenant, momento);
+        var (servicioMuchos, contadorMuchos) = CrearServicioCrudo(idTenant, new RelojFijo(momento));
         await servicioMuchos.ComponerAsync(new SolicitudDeEtiquetas(idPuntoVenta, idLista, idsMuchos, null));
 
         Assert.Equal(contadorUno.Consultas, contadorMuchos.Consultas);

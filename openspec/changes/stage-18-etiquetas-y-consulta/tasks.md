@@ -336,7 +336,9 @@ clean round + PR merged.
   `ConstruirDescendientes(idCategoria, padrePorCategoria)`, same class, same one-query map, same
   `ReglaDeCategorias.ProfundidadMaxima` bound. *(design.md:207-215, mutation targets 15, 16)*
 - [x] 2.2 [P] `CadenaDeCategoriasTests` — three-level forest: leaf ⇒ itself only; root ⇒ whole
-  subtree; sibling subtree never leaks; corrupt cycle terminates (bound respected).
+  subtree; sibling subtree never leaks; corrupt cycle terminates (the visited-gate is the real
+  terminator — `ProfundidadMaxima` is depth-in-defense for the ≤3 contract, not the cycle-safety
+  mechanism).
   *(design.md:314, mutation targets 15, 16)*
 - [x] 2.3 [P] `CadenaDeCategoriasTests` — duality property test: `d ∈ ConstruirDescendientes(c) ⟺
   c ∈ ConstruirAncestros(d)` over every pair of the fixture. *(design.md:212, mutation target 17)*
@@ -502,6 +504,15 @@ clean round + PR merged.
 ### Issues Found
 
 None beyond the deviations above.
+
+### judgment-day Slice 2, ronda 1 — juez B (2 MAJOR + 2 MINOR)
+
+| # | Severidad | Hallazgo | Fix | Ciclo mutación |
+|---|---|---|---|---|
+| 1 | MAJOR | `UnMomentoPinneadoSeEchaExactoYGobiernaTodaLaHoja` usaba `RelojFijo`, que devuelve el MISMO valor en cada lectura de `Ahora` — "resuelto una vez" y "resuelto dos veces" eran indistinguibles, así que el test no probaba realmente el mutation target 25 | `RelojQueAvanza` agregado (test double que arranca en un instante fijo y suma 1 segundo por lectura de `Ahora`, con contador `Lecturas`); `CrearServicioCrudo` toma ahora `IRelojDelSistema` en vez de `DateTimeOffset`; test reescrito con dos artículos, assertando `datos.Momento == primeraLectura` **y** `reloj.Lecturas == 1` (una sola resolución para toda la hoja) | El argumento del echo (`ServicioDeEtiquetas.cs:141`) cambiado de `momento` a una segunda lectura `reloj.Ahora` → RED (`Expected: ...12:00:00...`, `Actual: ...12:00:01...`) → `git checkout --` → revertido → verde |
+| 2 | MAJOR | `ServicioDeEtiquetas.cs:136-139` filtra `soloConOfertaVigente` SOLO sobre `Filas`, DESPUÉS de armar `Excluidos` — ningún fixture de `SoloConOfertaVigenteCoincideExactamenteConElResolverReal` combinaba sin-precio con `soloConOfertaVigente=true`, así que un post-filtro mal ubicado (antes del loop, sobre el candidato grueso) pasaba sin que ningún test lo detectara | Fixture ampliado con `idSinPrecioConOferta` (sin precio vigente, CON oferta vigente); nuevas assertions: con `soloConOfertaVigente=true`, ese artículo nunca es una fila pero SIGUE en `Excluidos`, con identidad y motivo (regla 12c) | El filtro movido ANTES del loop que arma `Filas`/`Excluidos` (filtrando `resultados` por `Aplicadas.Count > 0` antes de iterar) → RED (`Assert.Single` no encontró el excluido — el sin-precio desapareció de ambas colecciones) → `git checkout --` → revertido → verde |
+| 3 | MINOR | El doc comment de `ConstruirDescendientes` (y la tarea 2.2 de este archivo) acreditaban al bound `ProfundidadMaxima` la terminación ante ciclos corruptos, pero el terminador real es el gate de visitados (`descendientes.Add(hijo)`) — quitar el bound del `for` no hace loopear la función | Doc comment de `ConstruirDescendientes` (`CadenaDeCategorias.cs`) corregido: el gate de visitados es quien termina el ciclo; el bound es defensa-en-profundidad del contrato de profundidad ≤3 (ADR-12). Anotación de la tarea 2.2 en este archivo corregida igual de honesta | N/A — corrección de comentario/documentación, no de código ejecutable |
+| 4 | MINOR | No existía ningún test para `POST /api/etiquetas/datos` con `idListaPrecio` inexistente → 404 (el caso "(404 si no existe)" de `design.md:237`) | `IdListaPrecioInexistenteDevuelve404` agregado: `idListaPrecio=-1` con un `idPuntoVenta` válido → asserta 404 | Guard de lista (`ServicioDeEtiquetas.cs:64-68`) mutado para no lanzar (`?? "MUTANTE-juez-B-MINOR-2"` en vez de `?? throw ...`) → RED (`Expected: NotFound, Actual: OK`) → `git checkout --` → revertido → verde |
 
 ---
 

@@ -49,7 +49,11 @@ public static class CadenaDeCategorias
     /// artículos too"). Invariante bajo prueba: <c>d ∈ ConstruirDescendientes(c) ⟺ c ∈
     /// ConstruirAncestros(d)</c>. Misma cota de <see cref="ReglaDeCategorias.ProfundidadMaxima"/>
     /// que <see cref="ConstruirAncestros"/> (BFS acotado en profundidad, no en cantidad de nodos
-    /// por nivel — un árbol ancho de un mismo nivel no cuenta contra la cota).</summary>
+    /// por nivel — un árbol ancho de un mismo nivel no cuenta contra la cota). Quien realmente
+    /// termina un ciclo corrupto es el gate de visitados (<c>descendientes.Add(hijo)</c>): un hijo
+    /// ya visto no vuelve a expandirse, así que el BFS no loopea aunque se quitara esta cota del
+    /// <c>for</c>. La cota en sí es defensa-en-profundidad del contrato de profundidad ≤3
+    /// (ADR-12), no el mecanismo de terminación ante ciclos.</summary>
     public static IReadOnlySet<int> ConstruirDescendientes(
         int idCategoria, IReadOnlyDictionary<int, int?> padrePorCategoria)
     {
