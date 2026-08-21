@@ -7,6 +7,7 @@ using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
 using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
+using Ways.Application.Etiquetas;
 using Ways.Application.Gastos;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
@@ -53,6 +54,11 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeArticulos>();
         services.AddScoped<ServicioDePrecios>();
         services.AddScoped<ServicioDeOfertas>();
+
+        // stage-18-etiquetas-y-consulta, Slice 2 (task 2.23): compone ServicioDeArticulos
+        // (selección por filtro) + ServicioDeOfertas (precio/ofertas) — registrado después de
+        // ambos, aunque el orden de AddScoped no importa para la resolución de DI.
+        services.AddScoped<ServicioDeEtiquetas>();
 
         services.AddScoped<ServicioDeEscaneo>();
         services.AddScoped<ServicioDeVentas>();

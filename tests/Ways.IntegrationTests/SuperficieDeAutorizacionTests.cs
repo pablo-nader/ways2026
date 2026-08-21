@@ -103,7 +103,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // stage-17-presupuestos-y-remitos (Slice 6, design decisión 17/proposal decisión 10): la
         // consolidación — mismo grupo, mismo criterio que las cuatro rutas de arriba.
         ("POST", "/api/remitos/facturacion"),
-
+        // stage-18-etiquetas-y-consulta (Slice 2, design decisión 13/proposal decisión 10):
+        // POST /api/etiquetas/datos agrupa SOLO bajo OperacionDePos, nada apilado — read-only
+        // POST, mismo criterio exacto que "/api/ofertas/resolver" de arriba.
+        ("POST", "/api/etiquetas/datos"),
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).
         ("POST", "/api/plataforma/tenants/"),

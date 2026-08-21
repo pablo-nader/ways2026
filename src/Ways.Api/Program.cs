@@ -168,6 +168,7 @@ app.MapearClientes();
 app.MapearProveedores();
 app.MapearArticulos();
 app.MapearOfertas();
+app.MapearEtiquetas();
 app.MapearVentas();
 app.MapearStock();
 app.MapearCaja();
