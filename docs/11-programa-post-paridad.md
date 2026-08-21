@@ -323,6 +323,27 @@ reprecia al convertir (la reliquidación de la Etapa 7 es el precedente conceptu
 propia o compartida con los tipos de comprobante existentes; qué comprobante fiscal
 corresponde a la facturación consolidada de remitos cuando llegue la Etapa 19.
 
+> **COMPLETA Y ARCHIVADA** (2026-08-21, `2026-08-21-stage-17-presupuestos-y-remitos`, 8 slices
+> en PRs #146–#155 + 2 fixes standalone #149/#154). Las decisiones abiertas se resolvieron: el
+> presupuesto **no reserva stock** (vende contra disponible al convertir); **conserva el precio
+> ofrecido** — la conversión materializa las líneas congeladas y el resolver genérico rechaza
+> todo tipo `afecta_stock = false` en `/api/ventas` (las dos redes independientes probadas por
+> mutación); numeración **propia** con las series `PRES`/`REM` y el tipo `TXR` para la
+> consolidación (clase venta, letra X, `afecta_stock = false`, sin items por construcción — el
+> comprobante fiscal de la consolidación queda para la Etapa 19, arbitraje registrado en el
+> gate). Dos migraciones exactas (gate sostenido; el `ALTER TYPE 'remito'` aislado e
+> irreversible, aceptado); 30 índices verificados por definición; el remito es el **cuarto
+> write site de stock** con lock order duplicado intencional y redes estructurales propias
+> (orden del ledger + `pg_locks` — la garantía enmendada del spec de stock); la anulación del
+> TXR revierte CC y des-liga con cero movimientos de stock (composición OD8/T3 probada). 10
+> Orchestrator Decisions (la OD10 nació de un WARNING de judgment: el detalle del TXR se lee
+> de `items_remito`). Judgment-day: ~20 hallazgos severos pre-merge en 8 slices; la skill
+> `mutation-proof-tests` creció a v1.1 (regla 3 reforzada + reglas 13/14). Dos defectos de
+> test de la clase temporal cazados y cerrados aparte: el assert contra reloj de pared (#149)
+> y la bomba de calendario reloj-pineado + seed relativo (#154). Suites al cierre: Domain 540
+> · Application 297 · Integration 1583 · vitest 906. 42 dominios de spec (presupuestos y
+> remitos nuevos).
+
 ### Etapa 18 — Etiquetas, carteles y consulta de precios
 
 **Alcance.** Etiquetas de góndola y carteles de precio imprimibles (formatos configurables,
