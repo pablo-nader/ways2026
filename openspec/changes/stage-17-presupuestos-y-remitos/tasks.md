@@ -2181,6 +2181,40 @@ serves the shape.
   — **30/30 verde** (10 + 8 + 12). `npx tsc -b` — limpio. Commit
   `fix(remitos): judgment-day slice-8 ronda 1 juez B — dos TXRs, ids exactos del POST y redes
   de stale`. Pendiente: re-judge acotado a este diff (orquestador).
+
+  **judgment-day Slice 8, ronda 2 — juez A (APPROVE, 1 WARNING + 2 SUGGESTIONs) — fixed 1
+  WARNING + 1 SUGGESTION, 1 SUGGESTION → backlog.**
+
+  1. **WARNING — query incondicional nueva en TODO `GET /api/ventas/{id}`.**
+     `ServicioDeVentas.ObtenerAsync` (:410-433, post ronda-1) consultaba `db.TiposComprobante`
+     SIEMPRE, aunque el camino ordinario solo usa el tipo para bifurcar a un `TXR` — misma clase
+     del MAJOR "query desperdiciada 16→15" de slice 3 (juez A). Fix: la consulta del tipo queda
+     GATEADA detrás de `items.Count == 0` — un comprobante ordinario SIEMPRE tiene items
+     (`ExigirLineasValidas` lo exige en `EmitirAsync`; un TXR nace itemless por construcción,
+     precedente `RC`), así que solo el caso raro (`items.Count == 0`) paga la query nueva. Nuevo
+     test `ElDetalleOrdinarioNuncaConsultaTiposComprobante` (`VentasCheckoutTests.cs`) — mide
+     con `ContadorDeConsultasSobreTabla("tipos_comprobante")` que un GET ordinario dispara CERO
+     consultas contra esa tabla. Ciclo: quitado el gate (vuelta a la consulta incondicional) →
+     **RED** (`Expected: 0, Actual: 1`) → revertido (edit manual, no `git checkout --` para no
+     perder el fix ni el de FIX 2 en el mismo archivo) → **verde**. Focused tests:
+     `dotnet test --filter
+     "FullyQualifiedName~VentasCheckoutTests|FullyQualifiedName~ServicioDeFacturacionDeRemitos"`
+     — **50/50 verde** (28 + 22).
+  2. **SUGGESTION — tail de proyección duplicado.** Las dos sobrecargas de `Proyectar` (:1651+)
+     duplicaban verbatim los 9 campos del header y el mapping de pagos. Extraído a
+     `ProyectarConItems(ComprobanteVenta, IReadOnlyList<ItemEmitido>, IReadOnlyList<PagoComprobante>)`
+     — ambas sobrecargas delegan; un campo futuro se agrega en un solo lugar. Cero cambio de
+     comportamiento (misma evidencia: 50/50 verde arriba, sin tocar ningún assert existente).
+  3. **SUGGESTION (backlog, NO fixeada) — asimetría latente de un TXR anulado.** Un `TXR`
+     anulado des-liga sus remitos (`EjecutarAnulacionAsync`), así que su `GET` devuelve
+     `items: []` — hoy inalcanzable desde la web porque `Remito.tsx` solo consulta con
+     `idComprobanteVenta != null`. Registrado como backlog del veredicto de juez A; referencia:
+     `openspec/changes/stage-17-presupuestos-y-remitos/design.md` (T11 / spec de anulación de
+     TXR).
+
+  Commit `fix(remitos): judgment-day slice-8 ronda 2 juez A — gate del tipo por items vacios y
+  tail de proyeccion unico`. Ronda 2 era la ÚLTIMA del presupuesto nativo — cierra `judgment-day`
+  para esta slice.
 - [ ] 8.15 Open PR #8 `feat/stage17-slice8-web-remitos`, merge after a clean round — **stage
   close**.
 

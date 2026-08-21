@@ -849,6 +849,72 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(150m, reimpreso.Items[0].PrecioUnitario);
     }
 
+    /// <summary>judgment-day slice-8 ronda 2, juez A (WARNING): <c>ObtenerAsync</c> consultaba
+    /// <c>TiposComprobante</c> INCONDICIONALMENTE en TODO GET /api/ventas/{id}, aunque el camino
+    /// ordinario solo la necesita para bifurcar a un <c>TXR</c> — misma clase del MAJOR "query
+    /// desperdiciada 16→15" de slice 3. Fix: gatear esa consulta detrás de <c>items.Count == 0</c>
+    /// (un comprobante ordinario SIEMPRE tiene items, <c>ExigirLineasValidas</c> lo exige en
+    /// <c>EmitirAsync</c>; un TXR nace itemless por construcción). Mutation target: quitar el gate
+    /// (volver la consulta incondicional) hace este assert caer RED.</summary>
+    [Fact]
+    public async Task ElDetalleOrdinarioNuncaConsultaTiposComprobante()
+    {
+        var ctx = await PrepararAsync(nameof(ElDetalleOrdinarioNuncaConsultaTiposComprobante));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-gate-tipo", 50m);
+        var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Gate Tipo");
+
+        var solicitud = new SolicitudDeVenta(
+            ctx.IdPuntoVenta, idCliente, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 50m, null, 0m)],
+            null, null);
+        var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+
+        var consultasSobreTipos = await ObtenerYContarConsultasSobreTablaAsync(ctx, emitido.Id, "tipos_comprobante");
+
+        Assert.Equal(0, consultasSobreTipos);
+    }
+
+    private async Task<int> ObtenerYContarConsultasSobreTablaAsync(Contexto ctx, int idComprobante, string tabla)
+    {
+        var contador = new ContadorDeConsultasSobreTabla(tabla);
+        var tenantActual = new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant);
+
+        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
+            .UseNpgsql(fixture.AppConnectionString, npgsql =>
+            {
+                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.MapEnum<TipoDocumento>("tipo_documento");
+                npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<MotivoStock>("motivo_stock");
+                npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
+            })
+            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
+            .Options;
+
+        await using var db = new WaysDbContext(opciones, tenantActual);
+
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var contexto = new ContextoFijo(ctx.IdTenant, usuarioId: 1);
+        var servicioDePrecios = new Ways.Application.Precios.ServicioDePrecios(db, reloj, contexto);
+        var servicioDeOfertas = new ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
+        var lectorDeMovimientos = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
+        var servicioDeTurnos = new Ways.Application.Caja.ServicioDeTurnos(db, reloj, contexto, lectorDeMovimientos);
+        var servicioDeLotes = new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto);
+        var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
+
+        await servicioDeVentas.ObtenerAsync(idComprobante);
+
+        return contador.Consultas;
+    }
+
     // ---- task 4.12: guard de presupuesto de consultas --------------------------------------------
 
     /// <summary>Cuenta cada comando que dispara <c>ReaderExecuting</c> — misma técnica que
