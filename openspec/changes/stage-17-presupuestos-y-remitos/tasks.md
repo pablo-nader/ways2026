@@ -2067,40 +2067,176 @@ remito/consolidación circuit has a UI; doc-10's "Estado (Etapa 17)" headers clo
 (one remito at a time) if this slice overflows. **Rollback**: screens disappear, API still
 serves the shape.
 
-- [ ] 8.1 Create `src/Ways.Web/src/api/remitos.ts` — client + mappers.
-- [ ] 8.2 Create `Remitos.tsx` — list + filters (mirrors 7.2).
-- [ ] 8.3 Create `Remito.tsx` — draft/detail + `emitir` (`SelectorDeLote` reuse) + `anular`;
-  `facturado` renders its invoice link and no actions. *(design.md:416-418)*
-- [ ] 8.4 Create `FacturarRemitos.tsx` — cliente + PV picker, `emitido` unlinked list,
+- [x] 8.1 Create `src/Ways.Web/src/api/remitos.ts` — client + mappers.
+- [x] 8.2 Create `Remitos.tsx` — list + filters (mirrors 7.2).
+- [x] 8.3 Create `Remito.tsx` — draft/detail + `emitir` (`SelectorDeLote` reuse) + `anular`;
+  `facturado` renders its invoice link and no actions. *(design.md:416-418)* **Deviation
+  registered**: `SelectorDeLote` was a local, unexported component inside `Pos.tsx` — extracted
+  to `src/Ways.Web/src/componentes/SelectorDeLote.tsx` (both `Pos.tsx` and `Remito.tsx` now
+  import the same module; `Pos.test.tsx` unaffected, no direct import of the component). No
+  `/ventas/:id` detail page exists in this app; "the invoice link" renders as the TXR's own
+  `numeroVisible`/`total` (live via `GET /api/ventas/{id}`, the OD10 read model), not a
+  navigable `<Link>` to a route that doesn't exist — creating that page was out of the assigned
+  8.1-8.13 scope.
+- [x] 8.4 Create `FacturarRemitos.tsx` — cliente + PV picker, `emitido` unlinked list,
   multi-select, summed total, POS payment rows, post the consolidation. *(design.md:419-421)*
-- [ ] 8.5 Modify `App.tsx` — routes `/remitos`, `/remitos/nuevo`, `/remitos/:id`,
-  `/remitos/facturacion`.
-- [ ] 8.6 **[EXPLICIT, new programme rule]** Modify `docs/10-modelo-de-datos.md` — refresh the
+  Full multi-select shipped (no degradation needed).
+- [x] 8.5 Modify `App.tsx` — routes `/remitos`, `/remitos/nuevo`, `/remitos/:id`,
+  `/remitos/facturacion`; nav entry added to `Layout.tsx` (same gate as `/presupuestos`).
+- [x] 8.6 **[EXPLICIT, new programme rule]** Modify `docs/10-modelo-de-datos.md` — refresh the
   "Estado (Etapa 17)" headers opened at tasks 1.20/4.21 to *"implementada — etapa completa
   (PRs #1-#8)"* — this is the **last** slice; the header must never claim *"implementada"*
   while a write path is still unmerged. *(design.md:465, 600-603 — the stage-16 W1 verify
-  remediation, codified forward as a mandatory task instead of a carryover risk)*
-- [ ] 8.7 Descriptor tests for every new screen + pure helper (consolidation total reducer).
-- [ ] 8.8 Multi-select reducer test.
-- [ ] 8.9 Disabled-action matrix by `estado` (`borrador`/`emitido`/`facturado`/`anulado`).
-- [ ] 8.10 Test: double click on `emitir`/`anular`/`facturar` issues exactly one POST each.
-- [ ] 8.10b **[OD10, judgment slice 6 juez A]** The TXR read model sources its detail from
+  remediation, codified forward as a mandatory task instead of a carryover risk)* **Deviation
+  registered (W1 drift caught, not skipped)**: found FOUR "Estado (Etapa 17...)" annotations,
+  not two — the Presupuestos section header (line 477) and the Remitos section header (line
+  547) match tasks 1.20/4.21 exactly and are now closed to the exact mandated text; a third,
+  `movimientos_stock.id_remito`'s inline annotation (originally "sin escritor todavía (abre en
+  slice 5)"), was ALSO stale — slice 5 shipped its writer stages ago and the note was never
+  closed, the literal W1-class drift the task warns not to skip — closed too, registered as an
+  extra fix beyond the strict two-header instruction. The fourth (`comprobantes_venta`'s
+  `id_presupuesto_origen` annotation, line 418) makes no forward-looking "opens in slice N"
+  claim and needed no change.
+- [x] 8.7 Descriptor tests for every new screen + pure helper (consolidation total reducer:
+  `totalDeRemitosElegidos`, `remitos.test.ts`).
+- [x] 8.8 Multi-select reducer test (`reducirSeleccionDeRemitos`, `remitos.test.ts` — 7 cases
+  including no-mutation-of-previous-state).
+- [x] 8.9 Disabled-action matrix by `estado` (`borrador`/`emitido`/`facturado`/`anulado`) —
+  `Remito.test.tsx`, `describe.each` over the four estados.
+- [x] 8.10 Test: double click on `emitir`/`anular`/`facturar` issues exactly one POST each —
+  `Remito.test.tsx` (emitir, anular), `FacturarRemitos.test.tsx` (facturar).
+- [x] 8.10b **[OD10, judgment slice 6 juez A]** The TXR read model sources its detail from
   `items_remito`: `GET /api/ventas/{id}` (or the shape the web consumes for a TXR) joins the
   linked remitos' frozen lines instead of returning `items: []` — the spec scenario
   (comprobantes-venta: *"shows all 5 lines, sourced from items_remito, not from
   items_comprobante_venta"*) and design T11 both mandate it; no prior task implemented it.
   Ships with: the API test of the spec scenario, an N=1 consolidation test NAMED as the
   deliberate boundary, and a TXR-annulment-with-closed-turno test (the two SUGGESTIONs of the
-  same verdict). Mutation evidence per mutation-proof-tests v1.1.
-- [ ] 8.11 **STAGE CLOSE** — full solution test suite run once end-to-end
-  (`dotnet test`, no filter) — confirms non-regression across the whole tree.
-- [ ] 8.12 **STAGE CLOSE** — full web suite end-to-end (`npx vitest run`, no filter),
-  `npm run build` clean, `npm run lint` clean.
-- [ ] 8.13 **STAGE CLOSE** — re-verify design.md's binding verify criteria 1-9 against the
-  merged stack. *(design.md:628-654)*
-- [ ] 8.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
+  same verdict). Mutation evidence per mutation-proof-tests v1.1 — see Work Unit Evidence table
+  below (`tipo.Codigo == "TXR"` clause: applied → 5 expected/0 actual failure → reverted →
+  green). Implemented in `ServicioDeVentas.ObtenerAsync` + private `ObtenerItemsDeTxrAsync` +
+  a `Proyectar(ComprobanteVenta, IReadOnlyList<ItemEmitido>, ...)` overload; three new tests in
+  `ServicioDeFacturacionDeRemitosTests.cs`.
+- [x] 8.11 **STAGE CLOSE** — full solution test suite run once end-to-end
+  (`dotnet test`, no filter) — confirms non-regression across the whole tree. **Deviation
+  registered**: the repo has THREE test projects, not four (`Ways.Domain.Tests`,
+  `Ways.Application.Tests`, `Ways.IntegrationTests` — no fourth project exists in `Ways.slnx`).
+  Numbers in Work Unit Evidence below.
+- [x] 8.12 **STAGE CLOSE** — full web suite end-to-end (`npx vitest run`, no filter),
+  `npm run build` clean, `npm run lint` clean. Numbers in Work Unit Evidence below.
+- [x] 8.13 **STAGE CLOSE** — re-verify design.md's binding verify criteria 1-9 against the
+  merged stack. *(design.md:628-654)* See Work Unit Evidence below.
+- [x] 8.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **ronda 1
+  **DONE by the orchestrator**: juez B REJECT ronda 1 (3 MAJOR test-only: el join de OD10 sin
+  fixture de dos TXRs — la clase 12c del slice 6 otra vez —, el POST de consolidación sin probar
+  los ids EXACTOS tildados, y las redes de stale sin replicar; + 1 MINOR del assert que no
+  discriminaba null) → fixes `25ea8f3` (las 3 pantallas tenían camino real de doble carga — cero
+  inalcanzabilidades) → re-ronda B APPROVE. Juez A APPROVE (1 WARNING: query nueva incondicional
+  en todo GET de detalle — la clase del 16→15 del slice 3; + 1 SUGGESTION de tail duplicado; + 1
+  SUGGESTION latente → backlog) → fixes `0912eb2` (gate items.Count == 0 estructuralmente probado
+  + ProyectarConItems único + test de conteo nuevo con RED/verde) → pasada acotada B APPROVE con
+  la verificación de los 3 caminos (emisión, anulación, conversión vía presupuesto_sin_items).
+  juez B REJECT** (3 MAJOR + 1 MINOR, all test-only gaps over correct code) → fixes aplicados
+  por el fix-agent:
+
+  **judgment-day Slice 8, ronda 1 — juez B (3 MAJOR + 1 MINOR, todos test-only).**
+
+  1. **MAJOR — el join de OD10 sin discriminar por comprobante (misma clase que slice 6).**
+     `ServicioDeVentas.ObtenerItemsDeTxrAsync` (:447) filtra
+     `Where(r => r.IdComprobanteVenta == idComprobante)`, pero cada test previo crea UN solo TXR
+     por tenant — un mutante ensanchado a `!= null` sobrevivía 3/3. Fix: nuevo test
+     `DosConsolidacionesIndependientesDelMismoTenantCadaTxrMuestraSoloSusPropiasLineas` en
+     `ServicioDeFacturacionDeRemitosTests.cs` — dos TXRs independientes del mismo tenant, cada
+     uno con artículos/cantidades discriminantes; assert de conteo (2, no 4) Y de identidad
+     (artículo/cantidad) por cada lado. Ciclo: mutado `== idComprobante` → `!= null` (`dotnet
+     build --no-incremental`) → **RED** (`Expected: 2, Actual: 4`) → revertido (`git checkout
+     --`) → suite completa del archivo **22/22 verde**.
+  2. **MAJOR — el POST de consolidación no probaba los ids exactos.** En
+     `FacturarRemitos.test.tsx`, un mutante que mandara TODOS los remitos listados en vez de los
+     seleccionados sobrevivía 8/8. Fix: nuevo test "el POST lleva idsRemito EXACTAMENTE igual al
+     subconjunto elegido, nunca todos los listados" — fixture con 3 remitos listados, se tildan
+     2 (subconjunto propio), `toEqual`/`objectContaining({ idsRemito: [1, 3] })`. Ciclo: mutado
+     `FacturarRemitos.tsx:256` (`seleccionados` → `(remitos ?? []).map(r => r.id)`) → **RED**
+     (timeout esperando el `toHaveBeenCalledWith` exacto) → revertido → **verde**.
+  3. **MAJOR — guards de stale sin red propia en las 3 pantallas.** El patrón de
+     promesa-stale (`Pos.test.tsx`, `SelectorDeLote`) nunca se replicó en `Remitos.tsx`,
+     `Remito.tsx` ni `FacturarRemitos.tsx`. Se intentó de verdad un camino real de recarga sobre
+     la MISMA instancia montada en las tres — las tres SÍ tienen un camino alcanzable (ninguna
+     inalcanzabilidad que registrar):
+     - `Remitos.tsx`: cambio de filtro `estado` dispara `cargar()` dos veces en secuencia;
+       resuelta la respuesta VIEJA (`estado=Facturado`) DESPUÉS de la NUEVA
+       (`estado=Anulado`), dentro de `act`. Ciclo: quitado el guard de generación del `.then()`
+       de `cargar` → **RED** (`Unable to find element with text: 0007-00000099`) → revertido →
+       **verde**.
+     - `Remito.tsx`: dos escrituras en secuencia sobre la misma instancia (Emitir → su propio
+       refetch queda en vuelo; Anular → su propio refetch, más nuevo) — resuelto el refetch de
+       Emitir DESPUÉS del de Anular, dentro de `act`; assert de estado (`Anulado`) Y de
+       `Observaciones` (discriminante). Ciclo: quitado el guard de generación del `.then()` de
+       `cargarDetalle` → **RED** (quedó en `Borrador`, el estado stale) → revertido → **verde**.
+     - `FacturarRemitos.tsx`: cambio de cliente dispara `cargarRemitos()` dos veces en
+       secuencia; resuelta la lista del cliente A DESPUÉS de la del cliente B, dentro de `act`.
+       Ciclo: quitado el guard de generación del `.then()` de `cargarRemitos` → **RED**
+       (`Unable to find element with text: 0007-00000099`) → revertido → **verde**.
+  4. **MINOR — assert que no discrimina `null`.** `FacturarRemitos.test.tsx:309` usaba
+     `expect.not.objectContaining({ idCliente: expect.anything() })`, que no matchea un valor
+     `null` explícito. Fix: assert fuerte — `Object.keys(body)).not.toContain('idCliente')`.
+     Ciclo: mutado el mapper `aSolicitudDeFacturacionDeRemitos` agregando `idCliente: null` al
+     objeto devuelto → **RED** (`expected [...] to not include 'idCliente'`) → revertido →
+     **verde**.
+
+  Focused tests tras los 4 fixes: `dotnet test --filter
+  "FullyQualifiedName~ServicioDeFacturacionDeRemitosTests"` — **22/22 verde**. `npx vitest run
+  src/paginas/FacturarRemitos.test.tsx src/paginas/Remitos.test.tsx src/paginas/Remito.test.tsx`
+  — **30/30 verde** (10 + 8 + 12). `npx tsc -b` — limpio. Commit
+  `fix(remitos): judgment-day slice-8 ronda 1 juez B — dos TXRs, ids exactos del POST y redes
+  de stale`. Pendiente: re-judge acotado a este diff (orquestador).
+
+  **judgment-day Slice 8, ronda 2 — juez A (APPROVE, 1 WARNING + 2 SUGGESTIONs) — fixed 1
+  WARNING + 1 SUGGESTION, 1 SUGGESTION → backlog.**
+
+  1. **WARNING — query incondicional nueva en TODO `GET /api/ventas/{id}`.**
+     `ServicioDeVentas.ObtenerAsync` (:410-433, post ronda-1) consultaba `db.TiposComprobante`
+     SIEMPRE, aunque el camino ordinario solo usa el tipo para bifurcar a un `TXR` — misma clase
+     del MAJOR "query desperdiciada 16→15" de slice 3 (juez A). Fix: la consulta del tipo queda
+     GATEADA detrás de `items.Count == 0` — un comprobante ordinario SIEMPRE tiene items
+     (`ExigirLineasValidas` lo exige en `EmitirAsync`; un TXR nace itemless por construcción,
+     precedente `RC`), así que solo el caso raro (`items.Count == 0`) paga la query nueva. Nuevo
+     test `ElDetalleOrdinarioNuncaConsultaTiposComprobante` (`VentasCheckoutTests.cs`) — mide
+     con `ContadorDeConsultasSobreTabla("tipos_comprobante")` que un GET ordinario dispara CERO
+     consultas contra esa tabla. Ciclo: quitado el gate (vuelta a la consulta incondicional) →
+     **RED** (`Expected: 0, Actual: 1`) → revertido (edit manual, no `git checkout --` para no
+     perder el fix ni el de FIX 2 en el mismo archivo) → **verde**. Focused tests:
+     `dotnet test --filter
+     "FullyQualifiedName~VentasCheckoutTests|FullyQualifiedName~ServicioDeFacturacionDeRemitos"`
+     — **50/50 verde** (28 + 22).
+  2. **SUGGESTION — tail de proyección duplicado.** Las dos sobrecargas de `Proyectar` (:1651+)
+     duplicaban verbatim los 9 campos del header y el mapping de pagos. Extraído a
+     `ProyectarConItems(ComprobanteVenta, IReadOnlyList<ItemEmitido>, IReadOnlyList<PagoComprobante>)`
+     — ambas sobrecargas delegan; un campo futuro se agrega en un solo lugar. Cero cambio de
+     comportamiento (misma evidencia: 50/50 verde arriba, sin tocar ningún assert existente).
+  3. **SUGGESTION (backlog, NO fixeada) — asimetría latente de un TXR anulado.** Un `TXR`
+     anulado des-liga sus remitos (`EjecutarAnulacionAsync`), así que su `GET` devuelve
+     `items: []` — hoy inalcanzable desde la web porque `Remito.tsx` solo consulta con
+     `idComprobanteVenta != null`. Registrado como backlog del veredicto de juez A; referencia:
+     `openspec/changes/stage-17-presupuestos-y-remitos/design.md` (T11 / spec de anulación de
+     TXR).
+
+  Commit `fix(remitos): judgment-day slice-8 ronda 2 juez A — gate del tipo por items vacios y
+  tail de proyeccion unico`. Ronda 2 era la ÚLTIMA del presupuesto nativo — cierra `judgment-day`
+  para esta slice.
 - [ ] 8.15 Open PR #8 `feat/stage17-slice8-web-remitos`, merge after a clean round — **stage
   close**.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `npx vitest run src/api/remitos.test.ts src/paginas/Remitos.test.tsx src/paginas/Remito.test.tsx src/paginas/FacturarRemitos.test.tsx src/paginas/Pos.test.tsx` — 5 files, 109/109 green (30 + 7 + 11 + 8 + 53). `dotnet test --filter "FullyQualifiedName~ServicioDeFacturacionDeRemitosTests"` (the three new OD10 tests) — 3/3 green |
+| Mutation evidence (OD10, task 8.10b) | Clause named: `if (tipo.Codigo == "TXR")` in `ServicioDeVentas.ObtenerAsync` — the read-model branch that sources a TXR's detail from `items_remito`. Applied: mutated to `"MUTADO_NUNCA_VERDADERO"` → ran `ElDetalleDeUnTxrQueLigaDosRemitosMuestraLasCincoLineasCombinadasSourceadasDeItemsRemito` → **RED** (`Expected: 5, Actual: 0`) → reverted → **green** (mutation-proof-tests v1.1 rule 2, applied → failing test → reverted → green) |
+| **STAGE CLOSE** — full solution test suite (task 8.11) | `dotnet build` (whole solution) — 0 errors. `dotnet test tests/Ways.Domain.Tests` — **540/540 green**. `dotnet test tests/Ways.Application.Tests` — **297/297 green**. `dotnet test tests/Ways.IntegrationTests` (no filter) — **1580/1581**, ONE failure: `ServicioDePresupuestosTests.UnPresupuestoConVencimientoPasadoSeReportaVencidoYElFiltroLoDiscrimina`. Regla 17 (flakiness) protocol followed: isolated re-run + trx (`slice8-rerun-flaky.trx`) — failed AGAIN, deterministically, not intermittent noise. Root-caused: the test hardcodes `RelojFijo` at `2026-08-19T12:00:00Z` while its own `PrepararConFactoryAsync` seeds `Precio.VigenteDesde = DateTimeOffset.UtcNow.AddDays(-1)` (REAL wall clock) — with today's real date past 2026-08-19, the seeded price's `VigenteDesde` now lands AFTER the hardcoded fixed clock, so the price resolves as not-yet-vigente. Confirmed **pre-existing and unrelated**: last touched in slice 2 (`git log` — commits `8c752e0`/`00b2505`, months before this branch), never touched by this slice's diff (`git status` shows zero changes to `ServicioDePresupuestosTests.cs` or anything under `src/Ways.Application/Ventas/ServicioDePresupuestos*`). A permanent calendar-drift defect (will fail every day from now on, not just today) — reported as a risk, **not fixed** here: out of the assigned 8.1-8.13 scope, filing a test-only fix for an unrelated file was not authorized |
+| **STAGE CLOSE** — full web suite (task 8.12) | `npx vitest run` (no filter) — **55 files, 902/902 green**. `npm run build` (`tsc -b && vite build`) — clean, 0 errors. `npm run lint` (oxlint) — clean, only 4 PRE-EXISTING warnings in files this slice never touched (`AuthContext.tsx`, `ResumenSaldoDeProveedor.tsx`, `PanelDeCambio.tsx`, `Auditoria.tsx`) |
+| **STAGE CLOSE** — binding verify criteria 1-9 re-check (task 8.13) | 1/2/4/5/6 unaffected — no DDL, no `ServicioDeVentas` transactional-path edits, `Politicas.cs`/`AsignadorDeNumeroComprobante.cs` untouched, nothing under `Compras/`/`Stock/`. **3 — registered deviation, OD10-authorized**: `ServicioDeVentas.cs` gains `ObtenerAsync`'s TXR branch + `ObtenerItemsDeTxrAsync` + a `Proyectar` overload — outside criterion 3's slice-3-era enumeration, but this is the READ path (`GET /api/ventas/{id}`), never `EjecutarTransaccionAsync`/`EjecutarAnulacionAsync`; the pinned statement order and both write loops stay byte-identical (untouched, confirmed by diff) — state.yaml's OD10 pre-authorized exactly this as "the ONLY backend exception of the slice". 7 — mutation evidence recorded for the new OD10 clause (row above); rows 59-60 (web layer, slices 7-8) remain covered by their own slices' tests, unaffected. 8 — Domain/Application/vitest all green; Integration green except the one pre-existing unrelated failure (row above) — colocated tests exist for every new pure helper (`remitos.ts` → `remitos.test.ts`) and every new screen (`Remitos.tsx`/`Remito.tsx`/`FacturarRemitos.tsx` → their own `.test.tsx`). 9 — doc-10 carries the closed "Estado (Etapa 17)" annotations (task 8.6 above) |
+| Rollback boundary | Isolated to: `src/Ways.Web/src/api/remitos.ts(.test.ts)`, `src/Ways.Web/src/paginas/{Remitos,Remito,FacturarRemitos}.tsx(.test.tsx)`, `src/Ways.Web/src/componentes/SelectorDeLote.tsx` (new, extracted), `src/Ways.Web/src/paginas/Pos.tsx` (import-only change, behavior-preserving), `src/Ways.Web/src/api/{tipos,ventas}.ts` (additive types + one new `clienteDeVentas.obtener`), `src/Ways.Web/src/App.tsx`/`componentes/Layout.tsx` (additive routes/nav), `docs/10-modelo-de-datos.md` (three status headers closed, no schema/prose change beyond that), and the single backend file `src/Ways.Application/Ventas/ServicioDeVentas.cs` (`git diff --stat`: +93/-3 — the 3 deletions are `ObtenerAsync`'s own 3-line body, replaced by the TXR-branching version; `EjecutarTransaccionAsync`/`EjecutarAnulacionAsync` and every other existing method are untouched) + `tests/Ways.IntegrationTests/ServicioDeFacturacionDeRemitosTests.cs` (three new tests appended). `git revert` of this slice's commit(s) alone removes the entire remitos web surface and the OD10 read-model branch; every route/service the web calls already exists from PRs #4-#6 |
 
 ---
 

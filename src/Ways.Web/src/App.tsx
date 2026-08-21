@@ -31,6 +31,9 @@ import { Presupuesto } from './paginas/Presupuesto'
 import { Presupuestos } from './paginas/Presupuestos'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
+import { FacturarRemitos } from './paginas/FacturarRemitos'
+import { Remito } from './paginas/Remito'
+import { Remitos } from './paginas/Remitos'
 import { Reposicion } from './paginas/Reposicion'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
 import { Tablero } from './paginas/Tablero'
@@ -320,6 +323,44 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
                   <Presupuesto />
+                </RutaProtegida>
+              }
+            />
+
+            {/* stage-17-presupuestos-y-remitos (Slice 8, design: Web composition, decisión 17):
+                mismo gate que /presupuestos (Politicas.OperacionDePos) — un Vendedor despacha
+                remitos igual que quotea. `/remitos/facturacion` va ANTES de `/remitos/:id` — un
+                literal más específico gana sobre el parámetro en react-router, pero declararlo
+                primero es el mismo criterio defensivo que el resto de las rutas con hijos. */}
+            <Route
+              path="/remitos"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <Remitos />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/remitos/facturacion"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <FacturarRemitos />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/remitos/nuevo"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <Remito />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/remitos/:id"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <Remito />
                 </RutaProtegida>
               }
             />

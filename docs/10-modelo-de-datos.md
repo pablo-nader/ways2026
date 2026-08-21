@@ -474,8 +474,8 @@ items_presupuesto (
 );
 ```
 
-**Estado (Etapa 17, slice 1 — schema + backstops, DB CHANGE GATE ejercido y aprobado):
-implementada — schema y los dos nets del PRE latente.** Creadas por la migración
+**Estado (Etapa 17, DB CHANGE GATE ejercido y aprobado en slice 1):
+implementada — etapa completa (PRs #1-#8).** Creadas por la migración
 `PresupuestosEtapa17`, junto con el ALTER de `comprobantes_venta` (§4) y el data statement 1
 del cierre del PRE (§1). `EntidadBase`: **SÍ** en las dos tablas — un presupuesto es mutable
 durante `borrador` (replace-set completo bajo `SELECT … FOR UPDATE`) y se edita de nuevo en
@@ -494,7 +494,10 @@ slice). `ReglaDePresupuestos` (`Ways.Domain.Ventas`, sin base de datos) es la ú
 de `EstaVencido`/`EsConvertible` — `vencimiento < hoy` (nunca `<=`), resuelto siempre en la
 zona horaria del punto de venta. `ServicioDePresupuestos` (draft CRUD, `enviar` con la serie
 `'PRES'`, `anular`, la lectura con `vencido` derivado) es slice 2; la conversión dentro de la
-transacción de venta (`EscriturasDePresupuesto`, el guard en `ServicioDeVentas`) es slice 3.
+transacción de venta (`EscriturasDePresupuesto`, el guard en `ServicioDeVentas`) es slice 3;
+`Presupuestos.tsx`/`Presupuesto.tsx` + la entrada de conversión en `Pos.tsx` son slice 7 —
+mergeados, la etapa cierra en slice 8 (regla 19 del programa: este header nunca queda claiming
+"implementada" mientras un write path siga sin mergear).
 
 ### Remitos (Etapa 17)
 
@@ -541,8 +544,8 @@ items_remito (
 );
 ```
 
-**Estado (Etapa 17, slice 4 — schema + backstops, DB CHANGE GATE ejercido y aprobado):
-implementada — schema.** Creadas por la migración `RemitosEtapa17`, junto con el `ALTER TYPE
+**Estado (Etapa 17, DB CHANGE GATE ejercido y aprobado en slice 4):
+implementada — etapa completa (PRs #1-#8).** Creadas por la migración `RemitosEtapa17`, junto con el `ALTER TYPE
 motivo_stock ADD VALUE 'remito'` (§6, **el único artefacto IRREVERSIBLE de la etapa**, aceptado y
 registrado) y el ALTER de `movimientos_stock` (§6, `id_remito`). `EntidadBase`: **SÍ** en las dos
 tablas, mismo criterio que `presupuestos`. `ux_remitos_numero` es **UNIQUE PARCIAL** `WHERE
@@ -555,7 +558,9 @@ también con `HasPostgresEnum`. `ManejadorDeErrores.cs` gana 7 ramas exactas: 2 
 (`ux_remitos_numero` → `numero_de_remito_duplicado`, **quinta ocurrencia** del ordering trap;
 `ux_items_remito_orden` → `orden_de_item_duplicado`) + 5 `23514` (las cinco CHECKs de este
 slice). `ServicioDeRemitos` (draft CRUD, `emitir` — el cuarto write site — con la serie `'REM'`,
-`anular`) es slice 5; la consolidación (`ServicioDeFacturacionDeRemitos`) es slice 6.
+`anular`) es slice 5; la consolidación (`ServicioDeFacturacionDeRemitos`) es slice 6;
+`Remitos.tsx`/`Remito.tsx`/`FacturarRemitos.tsx` son slice 8 — mergeados, la etapa cierra acá
+(regla 19 del programa).
 
 ## 5. Comprobantes de compra
 
@@ -828,8 +833,10 @@ stock_lotes (                  -- [operativa] (Etapa 12)
 > selección FEFO particionada no-vencidos-primero (`ReglaDeLotes.ElegirFefo`); vencido =
 > `fecha_vencimiento < hoy` estricto, con "hoy" en la zona horaria del punto de venta.
 >
-> **Estado (Etapa 17, slice 4 — schema + backstops, DB CHANGE GATE ejercido y aprobado):
-> `movimientos_stock.id_remito` implementada — sin escritor todavía (abre en slice 5).**
+> **Estado (Etapa 17, DB CHANGE GATE ejercido y aprobado en slice 4):
+> `movimientos_stock.id_remito` implementada — etapa completa (PRs #1-#8); el cuarto write
+> site (`ServicioDeRemitos.EmitirAsync`, slice 5) ya escribe esta columna — este header quedó
+> abierto entre las slices 4 y 5 y se cierra recién acá, siguiendo la regla 19 del programa.**
 > `ALTER TABLE movimientos_stock ADD COLUMN id_remito integer NULL` + `fk_movimientos_stock_remito`
 > compuesta MATCH SIMPLE + `ix_movimientos_stock_remito` — mismo shape exacto que
 > `fk_movimientos_stock_comprobante_venta`/`..._comprobante_compra`. Metadata-only en PG 11+
