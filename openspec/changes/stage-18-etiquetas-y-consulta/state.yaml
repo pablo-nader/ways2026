@@ -169,3 +169,14 @@ phases:
     status: pending
     artifact: archive-report.md
     depends_on: [verify]
+
+# FASES (registro del orquestador)
+# propose: done 2026-08-21 (proposal.md, gate cero-schema ratificado, OD1-3)
+# spec: done 2026-08-21 (4 dominios delta: etiquetas-y-carteles 10 req/22 esc,
+#   consulta-de-precios 7/16, articulos ADDED-only 1/4, operacion-de-pos 1/2;
+#   inferencia flaggeada: semantica AND de filtros combinados — tasks confirma)
+# design: done 2026-08-21 (13 decisiones, 37 mutation targets + 4 estructurales,
+#   named pages contra el @page global, 4 descriptores con geometria publicada,
+#   spike A4-3x8 con E1/E2 binarios y veredicto fisico HUMAN-IN-THE-LOOP del
+#   dueño; tensiones T1 copias / T2 tuples / T3 Excluidos — tasks reconcilia)
+# tasks: pending
