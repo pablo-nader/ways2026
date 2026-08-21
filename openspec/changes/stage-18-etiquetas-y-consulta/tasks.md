@@ -722,8 +722,11 @@ guards this slice**, enumerated below.
   quedaba deshabilitada PARA SIEMPRE) → fix `242c697` (disponibilidad incondicional, repaint
   gated — los cuatro caminos de salida verificados) → pasada acotada B APPROVE (argumento
   estructural: una sola corrida posible por vez) + re-ronda A APPROVE. Ronda limpia.
-- [ ] 4.21 Open PR #4 `feat/stage18-slice4-consulta-precios`, merge to `main` after a clean
+- [x] 4.21 Open PR #4 `feat/stage18-slice4-consulta-precios`, merge to `main` after a clean
   `judgment-day` round.
+  **DONE by the orchestrator**: PR #158, merged `480f8f9` after the clean round (see 4.20). La
+  parte AUTÓNOMA de la etapa 18 queda completa (slices 1/2/4 mergeados, PRs #156-#158); el
+  slice 3 espera el veredicto físico E1 del dueño (tarea 1.4) + la tarea 3.0 (E2 completo).
 
 ### Work Unit Evidence (Slice 4)
 
