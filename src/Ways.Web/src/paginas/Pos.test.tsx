@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pos } from './Pos'
 import { ErrorApi } from '../api/cliente'
@@ -11,9 +12,25 @@ import type {
   MedioPagoListado,
   PaginaDe,
   ParametroResuelto,
+  PresupuestoParaVenta,
   PuntoVentaListado,
   ResultadoDeResolucion,
 } from '../api/tipos'
+
+/** `Pos()` (stage-17-presupuestos-y-remitos, Slice 7) lee `useSearchParams` — necesita un Router
+ * para montar, mismo criterio que `OrdenDeCompra.test.tsx`/`CompraEditor.test.tsx`. `ruta` por
+ * defecto es la libre (`/pos`, sin `?idPresupuesto=`) para que los tests preexistentes no
+ * cambien de comportamiento. */
+function renderPos(ruta = '/pos') {
+  return render(
+    <MemoryRouter initialEntries={[ruta]}>
+      <Routes>
+        <Route path="/pos" element={<Pos />} />
+        <Route path="/presupuestos" element={<div>Presupuestos</div>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -138,6 +155,7 @@ function comprobanteEmitidoFixture(sobrescribir: Partial<ComprobanteEmitido> = {
       },
     ],
     pagos: [{ idMedioPago: 1, importe: 100, referencia: null, vuelto: 0 }],
+    idPresupuestoOrigen: null,
     ...sobrescribir,
   }
 }
@@ -220,7 +238,7 @@ beforeEach(() => {
 /** Deja el carrito con una línea de Coca Cola ($100, sin descuento) y el panel de pagos listo:
  * medio Efectivo elegido, importe = total. Punto de partida de los tests de checkout. */
 async function armarVentaLista() {
-  render(<Pos />)
+  renderPos()
   await screen.findByRole('option', { name: /Consumidor Final/ })
 
   await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -261,7 +279,7 @@ describe('Pos — formato de moneda negativa (regresión, INFO recurrente desde 
 
 describe('Pos — carga inicial', () => {
   it('selecciona el Consumidor Final por defecto y el único punto de venta disponible', async () => {
-    render(<Pos />)
+    renderPos()
 
     expect(await screen.findByRole('option', { name: /Consumidor Final/ })).toBeInTheDocument()
     expect(screen.getByLabelText('Cliente')).toHaveValue(String(consumidorFinal.id))
@@ -271,7 +289,7 @@ describe('Pos — carga inicial', () => {
 
 describe('Pos — escaneo', () => {
   it('escanear un código agrega una línea al carrito', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -282,7 +300,7 @@ describe('Pos — escaneo', () => {
   })
 
   it('re-escanear el mismo código suma la cantidad en la misma línea, no duplica', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     const entrada = screen.getByLabelText('Código escaneado')
@@ -300,7 +318,7 @@ describe('Pos — escaneo', () => {
   })
 
   it('el input de escaneo se limpia después de un escaneo exitoso', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     const entrada = screen.getByLabelText('Código escaneado')
@@ -324,7 +342,7 @@ describe('Pos — escaneo', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '999')
@@ -337,7 +355,7 @@ describe('Pos — escaneo', () => {
 
 describe('Pos — selector de cliente', () => {
   it('buscar y elegir otro cliente lo deja seleccionado', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
@@ -367,7 +385,7 @@ describe('Pos — regresión: carga inicial de clientes vs. selección del usuar
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
 
     await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
     await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
@@ -405,7 +423,7 @@ describe('Pos — vista previa de precios', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     const entrada = screen.getByLabelText('Código escaneado')
@@ -436,7 +454,7 @@ describe('Pos — vista previa de precios', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -469,7 +487,7 @@ describe('Pos — vista previa de precios', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -515,7 +533,7 @@ describe('Pos — vista previa de precios', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     const entrada = screen.getByLabelText('Código escaneado')
@@ -559,7 +577,7 @@ describe('Pos — vista previa de precios', () => {
       return Promise.resolve(resultados)
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     const entrada = screen.getByLabelText('Código escaneado')
@@ -590,7 +608,7 @@ describe('Pos — vista previa de precios', () => {
 
 describe('Pos — panel de pagos: precondiciones', () => {
   it('Cobrar está deshabilitado con el carrito vacío', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
@@ -611,7 +629,7 @@ describe('Pos — panel de pagos: precondiciones', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -631,7 +649,7 @@ describe('Pos — panel de pagos: precondiciones', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -665,7 +683,7 @@ describe('Pos — regresión: "resolviendo" no queda huérfano en `true`', () =>
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -690,7 +708,7 @@ describe('Pos — regresión: "resolviendo" no queda huérfano en `true`', () =>
 
 describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
   it('cuenta corriente no aparece como opción para el Consumidor Final', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     await screen.findByRole('option', { name: medioEfectivo.nombre })
 
@@ -698,7 +716,7 @@ describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
   })
 
   it('cuenta corriente aparece como opción para un cliente que no es Consumidor Final', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
@@ -710,7 +728,7 @@ describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
   })
 
   it('el input de vuelto está deshabilitado para un medio sin AdmiteVuelto', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     await screen.findByRole('option', { name: medioTarjeta.nombre })
 
@@ -720,7 +738,7 @@ describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
   })
 
   it('el input de vuelto queda habilitado para un medio con AdmiteVuelto', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     await screen.findByRole('option', { name: medioEfectivo.nombre })
 
@@ -774,7 +792,7 @@ describe('Pos — checkout', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '999')
@@ -983,7 +1001,7 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
 
 describe('Pos — checkout: split de pago con el mismo medio', () => {
   it('dos filas de Efectivo (split de pago) no colapsan: cada una envía su propio importe y vuelto', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
@@ -1045,7 +1063,7 @@ describe('Pos — badge de ofertas apiladas', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1059,7 +1077,7 @@ describe('Pos — badge de ofertas apiladas', () => {
 
 describe('Pos — edición de cantidad', () => {
   async function agregarLineaCocaCola() {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1114,7 +1132,7 @@ describe('Pos — edición de cantidad', () => {
 
 describe('Pos — debounce de la resolución de precios', () => {
   it('una edición debounce ~250ms y una segunda edición dentro de la ventana reemplaza a la primera; un escaneo resuelve sin demora', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     const entrada = screen.getByLabelText('Código escaneado')
@@ -1143,7 +1161,7 @@ describe('Pos — debounce de la resolución de precios', () => {
   })
 
   it('un cambio de cliente inmediatamente después de una edición de cantidad no hereda la demora de esa edición', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     const entrada = screen.getByLabelText('Código escaneado')
@@ -1183,7 +1201,7 @@ describe('Pos — debounce de la resolución de precios', () => {
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Pos />)
+    renderPos()
 
     const entrada = screen.getByLabelText('Código escaneado')
     await userEvent.type(entrada, '7790001234567')
@@ -1213,7 +1231,7 @@ describe('Pos — debounce de la resolución de precios', () => {
 
 describe('Pos — limpieza de ediciones en curso', () => {
   it('quitar una línea con una edición pendiente no deja un override fantasma para un artículo agregado de nuevo', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     const entrada = screen.getByLabelText('Código escaneado')
@@ -1237,7 +1255,7 @@ describe('Pos — limpieza de ediciones en curso', () => {
   })
 
   it('vaciar el carrito con una edición pendiente no deja overrides fantasma para las líneas siguientes', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     const entrada = screen.getByLabelText('Código escaneado')
@@ -1261,7 +1279,7 @@ describe('Pos — limpieza de ediciones en curso', () => {
   })
 
   it('un escaneo que suma sobre una línea existente descarta el override de edición pendiente de esa fila', async () => {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     const entrada = screen.getByLabelText('Código escaneado')
@@ -1299,7 +1317,7 @@ describe('Pos — picker de lote (stage-12-lotes-vencimientos, Slice 14, design 
   /** Deja el carrito con una sola línea de Coca Cola, sin pasar por el panel de pagos — punto de
    * partida de los tests del picker. */
   async function armarCarritoConUnaLinea() {
-    render(<Pos />)
+    renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -1465,5 +1483,179 @@ describe('Pos — ticket: warning de lote vencido (design decisión 12: "Expired
     expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
     const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
     expect(within(fila).queryByText('⚠ Lote vencido')).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, Slice 7, design: Web composition)', () => {
+  function presupuestoParaVentaFixture(sobrescribir: Partial<PresupuestoParaVenta> = {}): PresupuestoParaVenta {
+    return {
+      idPresupuesto: 1,
+      numero: 1,
+      idPuntoVenta: 7,
+      idCliente: 2,
+      vencimiento: '2026-09-30',
+      vencido: false,
+      convertible: true,
+      subtotal: 200,
+      descuentoTotal: 0,
+      total: 200,
+      items: [
+        {
+          orden: 1,
+          idArticulo: 1,
+          descripcion: 'Coca Cola 1L',
+          cantidad: 2,
+          precioUnitario: 100,
+          descuento: 0,
+          total: 200,
+          idListaPrecio: 1,
+          idOferta: null,
+          idAlicuotaIva: 1,
+          porcentajeIva: 21,
+        },
+      ],
+      ...sobrescribir,
+    }
+  }
+
+  function mockearApiGetPresupuesto(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/presupuestos/1/para-venta') return Promise.resolve(presupuestoParaVentaFixture())
+      if (ruta === '/clientes/2') return Promise.resolve(otroCliente)
+      const propia = sobrescribir?.(ruta) ?? rutaBaseDePos(ruta, [puntoVentaFixture({ id: 7 })])
+      if (propia) return propia
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+  }
+
+  it('renderiza el banner, hidrata el carrito congelado de solo lectura, fija punto de venta/cliente y NUNCA dispara la resolución de precio (tarea 7.7)', async () => {
+    mockearApiGetPresupuesto()
+    renderPos('/pos?idPresupuesto=1')
+
+    expect(await screen.findByText(/Esta venta viene del presupuesto N° 1/)).toBeInTheDocument()
+    expect(screen.getByText(/vence el/)).toBeInTheDocument()
+    expect(await screen.findByText('Coca Cola 1L')).toBeInTheDocument()
+
+    // El input de escaneo y "Quitar" NUNCA se renderizan bajo este modo — el carrito congelado
+    // no admite mutación (design: "disable scan/quantity/removal").
+    expect(screen.queryByLabelText('Código escaneado')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Quitar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Vaciar carrito' })).not.toBeInTheDocument()
+
+    // Punto de venta y cliente quedan fijados por el presupuesto, ambos deshabilitados.
+    await waitFor(() => expect(screen.getByLabelText('Punto de venta')).toHaveValue(String(7)))
+    expect(screen.getByLabelText('Punto de venta')).toBeDisabled()
+    await waitFor(() => expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id)))
+    expect(screen.getByLabelText('Cliente')).toBeDisabled()
+
+    // El total mostrado es el del presupuesto congelado, nunca uno recalculado por resolución.
+    expect(screen.getByText('$200,00', { selector: 'strong' })).toBeInTheDocument()
+
+    // Regla central de la tarea: ninguna resolución de precio bajo este modo.
+    expect(apiPostMock).not.toHaveBeenCalledWith('/ofertas/resolver', expect.anything())
+  })
+
+  it('cobrar postea la SolicitudDeVenta con idPresupuestoOrigen, sin idCliente ni lineas (dto-contract-honesty)', async () => {
+    mockearApiGetPresupuesto()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture({ idPresupuestoOrigen: 1, total: 200, subtotal: 200 }))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderPos('/pos?idPresupuesto=1')
+    await screen.findByText('Coca Cola 1L')
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.type(importe, '200')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ventas', expect.objectContaining({ idPresupuestoOrigen: 1 })))
+    const llamada = apiPostMock.mock.calls.find(([ruta]) => ruta === '/ventas') as [string, Record<string, unknown>]
+    expect(llamada[1]).not.toHaveProperty('idCliente')
+    expect(llamada[1]).not.toHaveProperty('lineas')
+  })
+
+  it('"Nueva venta" bajo `?idPresupuesto=` navega a `/pos` y remonta la pantalla entera: el ticket de la venta convertida NO queda pegado (judgment-day slice-7 ronda 1 juez B, MAJOR)', async () => {
+    mockearApiGetPresupuesto()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture({ idPresupuestoOrigen: 1, total: 200, subtotal: 200 }))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderPos('/pos?idPresupuesto=1')
+    await screen.findByText('Coca Cola 1L')
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.type(importe, '200')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+
+    // `nuevaVenta()` bajo `modoPresupuesto` navega a `/pos` en vez de resetear `ventaEmitida`
+    // localmente (react-async-state regla 8): la ruta pierde `?idPresupuesto=`, el `key` de
+    // `Pos()` pasa de `1` a `'libre'` y `PantallaPos` se remonta entera — sin ese remount, el
+    // ticket de la venta ya convertida quedaría pegado en pantalla para siempre.
+    await waitFor(() => expect(screen.queryByText('Venta 0007-00000001')).not.toBeInTheDocument())
+    expect(await screen.findByLabelText('Código escaneado')).toBeInTheDocument()
+  })
+
+  /**
+   * CORRECCIÓN REGISTRADA (judgment-day slice-7 ronda 1 juez B, WARNING — mutation-proof-tests
+   * regla 2/3): este test se documentaba como prueba del guard `tokenPresupuestoRef.current !==
+   * miToken` del `.then()`/`.catch()`/`.finally()` de la carga de `/para-venta` — no lo es.
+   * React 19 volvió a un `setState` post-desmontaje un no-op silencioso (sin el warning de
+   * `console.error` que React ≤18 emitía), así que `expect(errorSpy).not.toHaveBeenCalled()` da
+   * verde exista o no CUALQUIERA de los dos guards (`vigente` o el token) — no discrimina nada
+   * bajo esta versión de React.
+   *
+   * El chequeo de `vigente` sigue siendo necesario y observable en otro sentido (evita el
+   * `setState` en sí, no solo su warning), pero el chequeo de TOKEN específicamente resultó, tras
+   * intentarlo, estructuralmente imposible de discriminar con un test montado: el efecto que lo
+   * usa depende solo de `[modoPresupuesto, idPresupuesto]`, y `Pos()` remonta `PantallaPos`
+   * entera por `key={idPresupuesto ?? 'libre'}` en cuanto ese id cambia (react-async-state regla
+   * 8) — dentro de la vida de UNA instancia montada, `idPresupuesto` nunca cambia, así que este
+   * efecto corre exactamente una vez (la única excepción real, el doble-invoke de `StrictMode` en
+   * desarrollo, tampoco sirve: la limpieza del primer run se ejecuta de forma síncrona, antes de
+   * que CUALQUIER promesa tenga oportunidad de resolver, así que `vigente` ya blinda ese caso por
+   * sí solo). No existe una re-carga real de `/para-venta` con la MISMA instancia montada que
+   * compita contra un token distinto — cualquier "segunda carga" observable en producción es, en
+   * los hechos, una instancia nueva (mismo patrón que el confound del `40P01` en la tarea 1.32:
+   * confirmado empíricamente, no razonado, y registrado como tal en vez de inflar la cobertura
+   * reclamada). El test se conserva sin cambios (prueba real, aunque no discriminante, de que un
+   * resolve tardío post-desmontaje no revienta el proceso) — solo se corrige la afirmación de qué
+   * prueba.
+   */
+  it('una respuesta tardía de /para-venta tras desmontar la pantalla no dispara ningún error (mutation-proof-tests regla 7: resuelta dentro de act — NO discrimina el guard de token, ver comentario arriba)', async () => {
+    let resolverParaVenta: (p: PresupuestoParaVenta) => void = () => {}
+    const pendiente = new Promise<PresupuestoParaVenta>((resolve) => {
+      resolverParaVenta = resolve
+    })
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/presupuestos/1/para-venta') return pendiente
+      if (ruta === '/clientes/2') return Promise.resolve(otroCliente)
+      return rutaBaseDePos(ruta, [puntoVentaFixture({ id: 7 })]) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    const { unmount } = renderPos('/pos?idPresupuesto=1')
+    await screen.findByText('Cargando…')
+
+    unmount()
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await act(async () => {
+      resolverParaVenta(presupuestoParaVentaFixture())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(errorSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
   })
 })

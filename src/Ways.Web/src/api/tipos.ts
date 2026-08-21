@@ -946,15 +946,22 @@ export type MinimosDeStock = {
 export type LineaDeVenta = { idArticulo: number; cantidad: number; codigoBarra: string | null; idLote: number | null }
 export type PagoDeVenta = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
 
+/** stage-17-presupuestos-y-remitos, Slice 7 (design: Interfaces/Contracts, decisión 2/tensión
+ * T7): `idCliente`/`lineas` pasan a opcionales — con `idPresupuestoOrigen` presente, `lineas` NO
+ * viaja (`dto-contract-honesty` regla 1: un campo que el servidor ignoraría no se manda) y
+ * `idCliente` se omite para que el servidor lo derive del presupuesto (mandar uno en conflicto se
+ * rechaza en vez de sobreescribirse en silencio — espejo de `SolicitudDeVenta.IdCliente` en
+ * `Ways.Application.Ventas.Contratos`). Una venta común sigue mandando ambos como siempre. */
 export type SolicitudDeVenta = {
   idPuntoVenta: number
-  idCliente: number
+  idCliente?: number
   codigoTipoComprobante: 'TX' | 'NCX'
   idComprobanteAsociado: number | null
-  lineas: LineaDeVenta[]
+  lineas?: LineaDeVenta[]
   pagos: PagoDeVenta[]
   direccionEntrega: string | null
   observaciones: string | null
+  idPresupuestoOrigen?: number | null
 }
 
 export type EstadoComprobante = 'Emitido' | 'Anulado'
@@ -986,7 +993,12 @@ export type ItemEmitido = {
 export type PagoEmitido = { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }
 
 /** Respuesta de `POST /api/ventas` (checkout) y `GET /api/ventas/{id}` (reimpresión) — espejo
- * de `ComprobanteEmitido`. `numeroVisible` ya viene formateado `PPPP-NNNNNNNN`. */
+ * de `ComprobanteEmitido`. `numeroVisible` ya viene formateado `PPPP-NNNNNNNN`.
+ *
+ * stage-17-presupuestos-y-remitos, Slice 7 (design: Interfaces/Contracts, OD9/T7):
+ * `idPresupuestoOrigen` — `null` en el 100% del tráfico que no nace de un presupuesto, el id del
+ * presupuesto convertido en el resto (`dto-contract-honesty` regla 2: round-trip, siempre
+ * presente en la respuesta — nunca una clave ausente). */
 export type ComprobanteEmitido = {
   id: number
   numero: number
@@ -1003,6 +1015,7 @@ export type ComprobanteEmitido = {
   observaciones: string | null
   items: ItemEmitido[]
   pagos: PagoEmitido[]
+  idPresupuestoOrigen: number | null
 }
 
 // --- Cuenta corriente: estado de cuenta y pago a cuenta (stage-7-cuenta-corriente, Slice 5) ---
@@ -1860,3 +1873,109 @@ export type OrdenDeCompraListada = {
 
 /** Página de `GET /api/ordenes-compra` (espejo de `PaginaDeOrdenesDeCompra`). */
 export type PaginaDeOrdenesDeCompra = { items: OrdenDeCompraListada[]; total: number; pagina: number; tamanio: number }
+
+// --- Presupuestos (stage-17-presupuestos-y-remitos, Slice 7) — espejo de
+// `Ways.Application.Ventas.ContratosDePresupuesto` / `Ways.Domain.Ventas.EstadoPresupuesto` -------
+
+/** Espejo de `EstadoPresupuesto` — el orden de los miembros ES el orden de ciclo de vida
+ * (design.md: "Declaration order = lifecycle = C# member order"). */
+export type EstadoPresupuesto = 'Borrador' | 'Enviado' | 'Convertido' | 'Anulado'
+
+/** Una línea del cuerpo de `POST`/`PUT /api/presupuestos` (espejo de `LineaDePresupuesto`). Sin
+ * dinero — el precio lo resuelve el motor al guardar el borrador, igual que el checkout (design
+ * decisión 2). */
+export type LineaDePresupuesto = { idArticulo: number; cantidad: number }
+
+/** Cuerpo de `POST /api/presupuestos` (crea un borrador) y `PUT /api/presupuestos/{id}`
+ * (replace-set completo del header + los items — espejo de `SolicitudDePresupuesto`).
+ * `idCliente` omitido resuelve a Consumidor Final, mismo criterio que `SolicitudDeVenta`. */
+export type SolicitudDePresupuesto = {
+  idPuntoVenta: number
+  idCliente: number | null
+  observaciones: string | null
+  lineas: LineaDePresupuesto[]
+}
+
+/** Cuerpo de `POST /api/presupuestos/{id}/enviar` (espejo de `SolicitudDeEnvio`) —
+ * `vencimiento` es un `DateOnly`/`<input type="date">`, sin offset horario. */
+export type SolicitudDeEnvio = { vencimiento: string }
+
+/** Un item ya persistido — `orden` es el valor server-asignado; el resto es la procedencia de
+ * precio congelada al guardar el borrador (espejo de `ItemDePresupuesto`). */
+export type ItemDePresupuesto = {
+  orden: number
+  idArticulo: number
+  descripcion: string
+  cantidad: number
+  precioUnitario: number
+  descuento: number
+  total: number
+  idListaPrecio: number
+  idOferta: number | null
+  idAlicuotaIva: number
+  porcentajeIva: number
+}
+
+/** Respuesta de `POST/PUT /api/presupuestos`, `POST /{id}/enviar`, `POST /{id}/anular` y
+ * `GET /{id}` — espejo de `PresupuestoDetalle`. `vencido`/`convertible` son DERIVADOS en cada
+ * lectura (`ReglaDePresupuestos`, zona horaria del punto de venta), nunca columnas propias de
+ * este shape. */
+export type PresupuestoDetalle = {
+  id: number
+  idPuntoVenta: number
+  idCliente: number
+  idEmpleado: number
+  numero: number | null
+  numeroFormateado: string | null
+  fechaEmision: string
+  fechaEnvio: string | null
+  vencimiento: string | null
+  vencido: boolean
+  convertible: boolean
+  zonaId: string
+  observaciones: string | null
+  subtotal: number
+  descuentoTotal: number
+  total: number
+  estado: EstadoPresupuesto
+  idComprobanteVenta: number | null
+  items: ItemDePresupuesto[]
+}
+
+/** `GET /{id}/para-venta` — espejo de `PresupuestoParaVenta`. Lectura PARA MOSTRAR, jamás un
+ * `SolicitudDeVenta` pre-armado (`dto-contract-honesty` regla 1): un shape que el POS pudiera
+ * postear tal cual haría creíble al carrito para el dinero, exactamente lo que la congelación de
+ * precio (proposal decisión 4) existe para impedir. */
+export type PresupuestoParaVenta = {
+  idPresupuesto: number
+  numero: number | null
+  idPuntoVenta: number
+  idCliente: number
+  vencimiento: string | null
+  vencido: boolean
+  convertible: boolean
+  subtotal: number
+  descuentoTotal: number
+  total: number
+  items: ItemDePresupuesto[]
+}
+
+/** Fila de `GET /api/presupuestos` — espejo de `PresupuestoListado`. `vencido`/`convertible`
+ * viajan acá también: se resuelve una zona por punto de venta DISTINTO de la página completa
+ * (design decisión 16), no una consulta agregada por fila. */
+export type PresupuestoListado = {
+  id: number
+  idPuntoVenta: number
+  idCliente: number
+  numero: number | null
+  numeroFormateado: string | null
+  fechaEmision: string
+  vencimiento: string | null
+  vencido: boolean
+  convertible: boolean
+  total: number
+  estado: EstadoPresupuesto
+}
+
+/** Página de `GET /api/presupuestos` (espejo de `PaginaDePresupuestos`). */
+export type PaginaDePresupuestos = { items: PresupuestoListado[]; total: number; pagina: number; tamanio: number }

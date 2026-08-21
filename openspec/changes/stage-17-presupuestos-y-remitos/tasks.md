@@ -1901,35 +1901,160 @@ could not obtain lock on row in relation "remitos"`, duración de test ~5-6s, pr
 slices 4-6). **Finish**: quote list/detail/draft + the POS conversion entry point.
 **Rollback**: screens/branch disappear, API still serves the shape.
 
-- [ ] 7.1 Create `src/Ways.Web/src/api/presupuestos.ts` — client + pure mappers.
-- [ ] 7.2 Create `Presupuestos.tsx` — list, filters (PV/cliente/estado/`vencido`/desde-hasta),
+- [x] 7.1 Create `src/Ways.Web/src/api/presupuestos.ts` — client + pure mappers.
+- [x] 7.2 Create `Presupuestos.tsx` — list, filters (PV/cliente/estado/`vencido`/desde-hasta),
   `HistoricoDeCajas.tsx` pager pattern, `vencido` toggle disabled without a PV.
   *(design.md:399-403)*
-- [ ] 7.3 Create `Presupuesto.tsx` — draft editor (`CompraEditor.tsx` line grid) + detail +
+- [x] 7.3 Create `Presupuesto.tsx` — draft editor (`CompraEditor.tsx` line grid) + detail +
   expiry state + `enviar` (date input defaulted `hoy + 30` in PV zone) + `anular` +
   *"Convertir en venta"* (rendered only when `Convertible`). *(design.md:404-407)*
-- [ ] 7.4 Modify `Pos.tsx` — read `idPresupuesto` from `useSearchParams`, fetch `/para-venta`,
+  **DEVIATION REGISTERED**: the line grid mirrors `OrdenDeCompra.tsx`'s `SelectorDeArticulo` +
+  quantity-only row (article + cantidad, no cost/IVA/lista-precio columns), not
+  `CompraEditor.tsx`'s richer grid — `LineaDePresupuesto`/`ContratosDePresupuesto.cs` carries
+  **zero price fields** by design (decisión 2: the price is resolved server-side at save time,
+  never client-entered), so `CompraEditor.tsx`'s cost/discount/IVA columns have no destination
+  field to bind to. `OrdenDeCompra.tsx`'s simpler grid — itself the same `SelectorDeArticulo`
+  pattern, article+quantity only — is the structurally correct precedent for a request shape
+  with no money in it.
+- [x] 7.4 Modify `Pos.tsx` — read `idPresupuesto` from `useSearchParams`, fetch `/para-venta`,
   render the frozen-price banner, hydrate the cart **read-only**, **skip the price-resolution
   effect entirely**, disable scan/quantity/removal, post `{ idPuntoVenta,
   codigoTipoComprobante: 'TX', idPresupuestoOrigen, lineas: undefined, pagos }`,
   `key={idPresupuesto ?? 'libre'}`. *(design.md:408-415, react-async-state rule 8)*
-- [ ] 7.5 Modify `App.tsx` — routes `/presupuestos`, `/presupuestos/nuevo`,
-  `/presupuestos/:id`.
-- [ ] 7.6 Descriptor tests for every new pure helper (expiry-badge formatter, filter builder)
-  and every screen's descriptors. *(web-descriptor-tests)*
-- [ ] 7.7 Test: no price-resolution request issued under `?idPresupuesto=`, no `lineas`
-  posted, cart inputs disabled. *(design.md:508)*
-- [ ] 7.8 Test: a non-convertible quote renders no "Convertir" action.
-- [ ] 7.9 Test: double click on `enviar` issues exactly ONE POST (rule 9 re-entrancy + disable).
-  *(design.md:424-425)*
-- [ ] 7.10 Test: stale promise resolved **inside `act`** (rule 7). *(mutation-proof-tests
-  rule 7)*
-- [ ] 7.11 Test: `vencido` toggle disabled without `idPuntoVenta`; pager disabled at edges.
-- [ ] 7.12 Rule 10: any recovery path added is grepped for and replicated in sibling screens in
-  the same commit.
-- [ ] 7.13 [P] Non-regression: existing `Pos.test.tsx` green (only the new branch added).
-- [ ] 7.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round.
+  **DEVIATION REGISTERED**: "disable scan/quantity/removal" is implemented by **hiding** those
+  controls entirely under `?idPresupuesto=` (the scan input-group, every `Quitar` button,
+  `Vaciar carrito`) rather than rendering-but-disabling each one — the read-only cart is a
+  structurally separate render branch sourced directly from `PresupuestoParaVenta.items`, never
+  `lineas`/`precios`. Strictly stronger than disabled-but-present (nothing to click at all), same
+  outcome the task asks for.
+  `SolicitudDeVenta.idCliente`/`.lineas` widened to optional in `tipos.ts` (mirrors the already-
+  merged C# `SolicitudDeVenta(int? IdCliente, IReadOnlyList<LineaDeVenta>? Lineas, ...)` from
+  Slice 3) so the conversion POST can omit both, per `dto-contract-honesty` — `idCliente` is
+  never sent on this path (the server derives it from the presupuesto; sending a matching one
+  would be redundant, sending a mismatched one is refused). `ComprobanteEmitido.idPresupuestoOrigen`
+  added as a required round-trip field (`dto-contract-honesty` rule 2), which required two
+  mechanical fixture updates in already-existing test files (`Pos.test.tsx`,
+  `CuentaCorriente.test.tsx`) — zero assertion changed.
+- [x] 7.5 Modify `App.tsx` — routes `/presupuestos`, `/presupuestos/nuevo`,
+  `/presupuestos/:id`. Also modified `Layout.tsx` (nav entry, same `puedeOperarPos` gate as
+  `/pos`/`/compras` — not itself a numbered task, but required for the entry point to be
+  reachable at all).
+- [x] 7.6 Descriptor tests for every new pure helper (expiry-badge formatter, filter builder)
+  and every screen's descriptors. *(web-descriptor-tests)* — `api/presupuestos.test.ts` (43
+  cases: query builder incl. offset/vencido-without-PV guards, badge/label formatters, form
+  mappers, `aSolicitudDeVentaDesdePresupuesto`).
+- [x] 7.7 Test: no price-resolution request issued under `?idPresupuesto=`, no `lineas`
+  posted, cart inputs disabled. *(design.md:508)* — `Pos.test.tsx` "conversión de presupuesto"
+  describe block: banner + read-only hydration + PV/cliente disabled + zero `/ofertas/resolver`
+  calls + POST body asserted to omit both `idCliente` and `lineas`.
+
+  **CORRECCIÓN REGISTRADA (judgment-day slice-7 ronda 1 juez B, WARNING — mutation-proof-tests
+  regla 2/3, apply-time, run for real).** El `if (modoPresupuesto) { …; return }` de
+  `Pos.tsx:595-600` (el "skip the price-resolution effect entirely" citado arriba) es
+  **inalcanzable-en-efecto**: bajo `?idPresupuesto=`, `lineas` queda `[]` durante toda la vida de
+  la instancia (el carrito se hidrata de `presupuesto.items`, jamás de `setLineas`), y el guard
+  preexistente de la línea 611 (`if (lineas.length === 0 || …) { …; return }`) ya corta el
+  efecto ANTES de llegar al fetch por esa sola razón, sin importar `modoPresupuesto`. Mutación
+  real (`--no-incremental`, no razonada): se borró el bloque `if (modoPresupuesto) {...}` entero
+  y se corrió la suite completa de `Pos.test.tsx` — **54/54 verdes**, incluida la aserción de
+  "cero llamadas a `/ofertas/resolver`" de este mismo test; revertido, confirmado verde de nuevo.
+  El bloque de `modoPresupuesto` es **defensivo** (segunda red, redundante con la de línea 611
+  para el estado que este modo puede alcanzar hoy) — la garantía observable que el test 7.7
+  prueba la da el guard de `lineas` vacías, no este bloque. No hay forma de discriminarlo sin
+  forzar `lineas` no-vacío bajo `modoPresupuesto`, un estado que la UI actual no permite alcanzar
+  (mutation-proof-tests regla 3: confound estructural, no producto de un test débil). El bloque
+  se conserva (documenta la intención server-side-price explícitamente y blindea contra un futuro
+  cambio que popule `lineas` bajo este modo) — solo se corrige qué evidencia lo respalda hoy.
+- [x] 7.8 Test: a non-convertible quote renders no "Convertir" action. — `Presupuesto.test.tsx`:
+  `Enviado`+`vencido:true`+`convertible:false` and `Convertido` (terminal) both assert the
+  button's absence; a third test asserts it renders when `convertible:true`.
+- [x] 7.9 Test: double click on `enviar` issues exactly ONE POST (rule 9 re-entrancy + disable).
+  *(design.md:424-425)* — `Presupuesto.test.tsx`, same same-tick-`dispatchEvent`-inside-`act`
+  pattern as `OrdenDeCompra.test.tsx` (jsdom does not no-op a click on a `disabled` element).
+  Also covers `anular`'s same guard.
+- [x] 7.10 Test: stale promise resolved **inside `act`** (rule 7). *(mutation-proof-tests
+  rule 7)* — `Pos.test.tsx`: a `/para-venta` fetch left pending, the screen unmounted, then the
+  promise resolved inside `act` — asserts zero `console.error` (proves the `vigente` guard, not
+  merely that nothing visibly changed).
+
+  **CORRECCIÓN REGISTRADA (judgment-day slice-7 ronda 1 juez B, WARNING — mutation-proof-tests
+  regla 2/3, apply-time, run for real).** La afirmación "proves the `vigente` guard" quedó
+  desactualizada bajo React 19: `setState` post-desmontaje pasó a ser un no-op silencioso, sin el
+  warning de `console.error` que React ≤18 emitía — `expect(errorSpy).not.toHaveBeenCalled()` da
+  verde exista o no el guard. Mutación real (`--no-incremental`, no razonada): se quitó el
+  chequeo de token (`tokenPresupuestoRef.current !== miToken`) de las tres ramas del `.then()` de
+  la carga de `/para-venta`, dejando solo `vigente` — se corrió la suite completa de
+  `Pos.test.tsx` y dio **54/54 verdes**, incluido este mismo test; revertido, confirmado verde de
+  nuevo. Se intentó además la forma discriminante que pide `mutation-proof-tests` regla 2 (dos
+  cargas de `/para-venta` compitiendo con la MISMA instancia montada, la stale resolviendo
+  después de la fresca): estructuralmente inalcanzable — el efecto que usa el token depende solo
+  de `[modoPresupuesto, idPresupuesto]`, y `Pos()` remonta `PantallaPos` entera por
+  `key={idPresupuesto ?? 'libre'}` en cuanto ese id cambia (react-async-state regla 8), así que
+  dentro de la vida de una instancia montada este efecto corre exactamente una vez; el único caso
+  real de doble corrida (el doble-invoke de `StrictMode` en desarrollo) tampoco discrimina, porque
+  la limpieza del primer run es síncrona y ocurre antes de que cualquier promesa tenga oportunidad
+  de resolver — `vigente` ya blindea ese caso por sí solo. Mismo patrón de confound que el
+  `40P01` de la tarea 1.32: confirmado empíricamente, no razonado. El test se conserva sin
+  cambios (sigue probando, honestamente, que un resolve tardío post-desmontaje no revienta el
+  proceso) con su anotación en el archivo corregida para no reclamar cobertura del guard de
+  token.
+- [x] 7.11 Test: `vencido` toggle disabled without `idPuntoVenta`; pager disabled at edges. —
+  `Presupuestos.test.tsx`.
+- [x] 7.12 Rule 10: any recovery path added is grepped for and replicated in sibling screens in
+  the same commit. — No new error-recovery/self-heal path was added this slice (no new SQLSTATE
+  self-heal, no new filtered-save counter); `grep`-checked, nothing to replicate. Grepped for
+  `errorDetalle`/refetch-isolation shape shared with `OrdenDeCompra.tsx` — `Presupuesto.tsx`
+  already carries the same "refetch failure never blanks a stale-but-present detail" pattern
+  verbatim (same code shape, same comment).
+- [x] 7.13 [P] Non-regression: existing `Pos.test.tsx` green (only the new branch added). — all
+  31 pre-existing `render(<Pos />)` call sites mechanically became `renderPos()` (a `MemoryRouter`
+  wrapper, since `Pos()` now calls `useSearchParams`) with **zero assertion changed**; full file
+  green, see Work Unit Evidence.
+- [x] 7.14 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **ronda 1
+  juez B REJECT** (1 MAJOR + 2 WARNINGs) → fixes aplicados por el fix-agent: (1) MAJOR — el
+  `key={idPresupuesto ?? 'libre'}` de `Pos()` sin cobertura, sobrevivía 53/53; agregado el test
+  que rutea por `<Pos/>` real hasta `cobrar()` y `nuevaVenta()`, asertando que el ticket
+  desaparece y el input de escaneo vuelve tras el remount — mutante quitando el `key` → RED
+  confirmado → revert → verde (ver 7.13's describe block, nuevo `it` en "conversión de
+  presupuesto"). (2) WARNING — anotación de la tarea 7.7 corregida: el skip de precios de
+  `Pos.tsx:595-600` es defensivo/redundante con el guard de `lineas` vacías de la línea 611,
+  confound estructural confirmado por mutación real (54/54 verdes con el bloque borrado). (3)
+  WARNING — anotación de la tarea 7.10 corregida: `expect(errorSpy).not.toHaveBeenCalled()` no
+  discrimina el guard de token bajo React 19 (setState post-desmontaje es no-op silencioso);
+  intentada la forma discriminante (dos cargas compitiendo con la misma instancia montada) y
+  confirmada estructuralmente inalcanzable por mutación real (54/54 verdes con el chequeo de
+  token quitado) — mismo patrón de confound que el `40P01` de la tarea 1.32. Commit
+  `<pendiente>`. Pendiente: re-judge acotado a este diff.
+
+  **judgment-day Slice 7, ronda 2 — juez A (1 WARNING fixed, 1 SUGGESTION preexistente →
+  backlog).** WARNING — `Presupuesto.tsx:611-614`: el botón "Convertir en venta" no tenía
+  `disabled={ocupado}`, a diferencia de su hermano "Anular" del mismo grupo (línea 617) y de
+  todos los demás botones de escritura del archivo (`Enviar`/`Guardar`, líneas 550/556) — el
+  click durante una operación en vuelo no-opeaba en silencio (el guard interno de
+  `convertirEnVenta` lo frenaba) pero el botón quedaba visualmente habilitado, violando la
+  regla 5 de `react-async-state` que el resto del archivo aplica de forma consistente. Fix:
+  agregado `disabled={ocupado}` al botón. Test nuevo en `Presupuesto.test.tsx` ("mientras
+  'Anular' está en vuelo, 'Convertir en venta' también queda deshabilitado") — dispara
+  `anular`, deja el POST pendiente y asserta `toBeDisabled()` sobre el botón "Convertir en
+  venta" durante esa ventana. Ciclo RED/verde (mutation-proof-tests regla 2): quitado el
+  `disabled={ocupado}` → RED confirmado (`Received element is not disabled`) → revertido →
+  suite completa `Presupuesto.test.tsx` **12/12 verde**; `npx tsc -b` limpio. SUGGESTION
+  preexistente (no fixeada, registrada como backlog) — `tipos.ts:961` declara
+  `pagos: PagoDeVenta[]` requerido mientras `Contratos.cs` (`SolicitudDeVenta`) lo tiene
+  nullable en C#; mismatch de opcionalidad anterior a este slice, dirección benigna (el
+  cliente TS es más estricto que el server) — no se toca `tipos.ts` en este fix. Commit
+  `<pendiente>`.
 - [ ] 7.15 Open PR #7 `feat/stage17-slice7-web-presupuestos`, merge after a clean round.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `npx vitest run src/api/presupuestos.test.ts src/paginas/Pos.test.tsx src/paginas/Presupuestos.test.tsx src/paginas/Presupuesto.test.tsx src/paginas/CuentaCorriente.test.tsx` — 5 files, 138/138 green |
+| Ronda 2 focused test command and result | `npx vitest run src/paginas/Presupuesto.test.tsx` — 12/12 green. RED/verde cycle: `disabled={ocupado}` removed from "Convertir en venta" → RED confirmed (`Received element is not disabled`) → reverted → 12/12 green. `npx tsc -b` clean |
+| Runtime harness command/scenario and result | Web-only slice — no server boundary (design: "the API still serves the shape", PR 3 already merged). Runtime harness is the full web suite: `npx vitest run` (no filter) — **51 files, 845/845 green**. `npm run build` (`tsc -b && vite build`) clean. `npm run lint` (oxlint) clean, zero new warnings. `dotnet build` of `Ways.Api` + all three test projects (`Ways.Domain.Tests`, `Ways.Application.Tests`, `Ways.IntegrationTests`) — clean, 0 errors, confirming zero backend regression (`git status` shows zero files touched outside `src/Ways.Web/**`) |
+| Mutation evidence | Web-only slice, no server-side clause to mutate. `web-descriptor-tests`/`mutation-proof-tests` rule 7 applied to the async paths: the stale-`/para-venta`-after-unmount test (task 7.10) and the pre-existing `OrdenesDeCompra`/`Presupuestos` generation-guard tests (both list screens share the identical `generacionRef` pattern, both proven with a real stale-response-lands-after-newer-one scenario resolved inside `act`) |
+| Rollback boundary | Isolated to `src/Ways.Web/**`: new files (`api/presupuestos.ts`, `api/presupuestos.test.ts`, `paginas/Presupuestos.tsx`, `paginas/Presupuestos.test.tsx`, `paginas/Presupuesto.tsx`, `paginas/Presupuesto.test.tsx`) plus modified files (`api/tipos.ts`, `api/ventas.ts`, `App.tsx`, `componentes/Layout.tsx`, `paginas/Pos.tsx`, `paginas/Pos.test.tsx`, `paginas/CuentaCorriente.test.tsx`). `git revert` of this slice's commit(s) alone removes the entire entry point; the API already serves `/api/presupuestos*` and `idPresupuestoOrigen` from PR 3, so nothing server-side reverts or breaks |
 
 ---
 
