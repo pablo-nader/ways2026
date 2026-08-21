@@ -174,6 +174,20 @@ phases:
     status: pending
     artifact: tasks.md + PRs
     depends_on: [tasks]
+    notes: >
+      ORCHESTRATOR DECISION 10 (judgment slice 6, juez A — WARNING de
+      contrato): el delta spec de comprobantes-venta exige que el
+      detalle del TXR se lea de items_remito ("shows all 5 lines,
+      sourced from items_remito") y el design T11 lo AFIRMA ("the
+      printed detail joins the remitos" — lo deferido por el proposal
+      es imprimir/emailear, NO el detalle de lectura), pero NINGUNA
+      tarea lo implementaba: requirement sin task, gap de planning.
+      RESUELTO: tarea nueva 8.10b en el slice 8 (join de items_remito
+      en el read model del comprobante TXR + test), junto con los dos
+      SUGGESTIONs del mismo veredicto (N=1 nombrado como borde
+      deliberado; anulacion de TXR con turno cerrado probada
+      independientemente). El presupuesto de 2 rondas de fix del
+      slice 6 ya estaba agotado — por eso via slice 8, no via fix.
   verify:
     status: pending
     artifact: verify-report.md

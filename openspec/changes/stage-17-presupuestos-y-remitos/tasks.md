@@ -1729,9 +1729,18 @@ reverts to pre-stage.
   `RETURNING` widening + the one guarded call at position 1.6) — no other line changed. Focused
   filter `VentasCheckoutTests|VentasAnulacionTests|VentasAtomicidadYConcurrenciaTests|SuperficieDeAutorizacionTests|RemitosSchemaTests|ServicioDeRemitosTests|ServicioDeFacturacionDeRemitosTests`
   — 110/110 green. See Work Unit Evidence for the full-suite runs.
-- [ ] 6.25 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **NOT run
-  by this apply batch**: `sdd-apply` never launches Judgment Day (the parent orchestrator runs
-  it after apply, per the executor boundary in `skills/sdd-apply/SKILL.md`).
+- [x] 6.25 `judgment-day` round, fix confirmed findings, re-judge to a clean round. — **DONE by
+  the orchestrator**: juez B REJECT (2 MAJOR: `DesligarAsync` sin red de hermanos intactos —
+  cross-contaminación entre TXRs invisible 15/15 — y el target 48 cerrado por texto-fuente sin
+  intentar la red `pg_locks` liviana) → ronda 1 `41b18fe` (los 3 fixes; el probe liviano SÍ
+  funciona: el "ruido" original era un filtro por `relation` cuando la espera aparece como
+  `locktype='transactionid'`) → re-ronda B ESCALATED (el probe se colgaba bajo el mutante DESC)
+  → ronda 2 `8982be9` (cota total: try/finally + `Task.WhenAny` 10s; RED limpio 3/3 con 55P03)
+  → confirmación B APPROVE. Juez A APPROVE: 1 WARNING de contrato (detalle del TXR desde
+  `items_remito` — requirement sin task) resuelto como **OD10** → tarea nueva 8.10b, junto con
+  sus 2 SUGGESTIONs (N=1 nombrado, anulación TXR con turno cerrado); target 54 → backlog
+  (clase preexistente, el checkout tampoco la tiene). Presupuesto de 2 rondas de fix agotado
+  exactamente — por eso el WARNING va por slice 8 y no por fix.
 - [ ] 6.26 Open PR #6 `feat/stage17-slice6-consolidacion`, merge after a clean round. — **NOT
   run by this apply batch**, same reason; pending the orchestrator's clean `judgment-day` round
   on this diff.
@@ -1949,6 +1958,14 @@ serves the shape.
 - [ ] 8.8 Multi-select reducer test.
 - [ ] 8.9 Disabled-action matrix by `estado` (`borrador`/`emitido`/`facturado`/`anulado`).
 - [ ] 8.10 Test: double click on `emitir`/`anular`/`facturar` issues exactly one POST each.
+- [ ] 8.10b **[OD10, judgment slice 6 juez A]** The TXR read model sources its detail from
+  `items_remito`: `GET /api/ventas/{id}` (or the shape the web consumes for a TXR) joins the
+  linked remitos' frozen lines instead of returning `items: []` — the spec scenario
+  (comprobantes-venta: *"shows all 5 lines, sourced from items_remito, not from
+  items_comprobante_venta"*) and design T11 both mandate it; no prior task implemented it.
+  Ships with: the API test of the spec scenario, an N=1 consolidation test NAMED as the
+  deliberate boundary, and a TXR-annulment-with-closed-turno test (the two SUGGESTIONs of the
+  same verdict). Mutation evidence per mutation-proof-tests v1.1.
 - [ ] 8.11 **STAGE CLOSE** — full solution test suite run once end-to-end
   (`dotnet test`, no filter) — confirms non-regression across the whole tree.
 - [ ] 8.12 **STAGE CLOSE** — full web suite end-to-end (`npx vitest run`, no filter),
