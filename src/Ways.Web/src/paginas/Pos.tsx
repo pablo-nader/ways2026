@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCaja } from '../api/caja'
 import { reducirCarrito, type AccionCarrito, type LineaCarrito } from '../api/carrito'
@@ -19,6 +20,7 @@ import {
   validarPagosLocal,
   type FilaPago,
 } from '../api/pagos'
+import { aSolicitudDeVentaDesdePresupuesto, clienteDePresupuestos } from '../api/presupuestos'
 import { clienteDeStock } from '../api/stock'
 import type {
   ClienteListado,
@@ -27,6 +29,7 @@ import type {
   MedioPagoAlta,
   MedioPagoListado,
   ParametroResuelto,
+  PresupuestoParaVenta,
   PuntoVentaListado,
   ResultadoDeResolucion,
 } from '../api/tipos'
@@ -42,6 +45,7 @@ import {
   type LotesSeleccionados,
 } from '../api/ventas'
 import { Box } from '../componentes/Box'
+import { Cargando } from '../componentes/Cargando'
 
 const CLAVE_PUNTO_VENTA = 'ways.pos.idPuntoVenta'
 
@@ -311,13 +315,25 @@ function SelectorDeLote({ idPuntoVenta, idArticulo, nombreArticulo, idLoteElegid
   )
 }
 
+type PropsPantallaPos = { idPresupuesto: number | null }
+
 /**
  * Pantalla del POS (stage-5-pos-ventas, Slice 7, design: POS Screen Composition) — escaneo +
  * carrito + selección de punto de venta/cliente (Slice 6) + panel de pagos, checkout (`POST
  * /api/ventas`) y ticket (Slice 7, esta entrega). Precedente de forma: `Articulos.tsx`/`Ofertas.tsx`
  * tras sus rondas de judgment-day.
+ *
+ * stage-17-presupuestos-y-remitos (Slice 7, design: Web composition — "the POS banner, the
+ * read-only hydration, the skipped price effect, the key"): con `idPresupuesto` no nulo, la
+ * pantalla entera opera en modo conversión — carrito congelado de solo lectura, sin resolución de
+ * precio, `POST /api/ventas` con `idPresupuestoOrigen`. Remontada íntegra por `key` desde `Pos()`
+ * (react-async-state regla 8) — ningún estado de una venta libre o de otro presupuesto sobrevive
+ * al cambio de `?idPresupuesto=`.
  */
-export function Pos() {
+function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
+  const modoPresupuesto = idPresupuesto !== null
+  const navigate = useNavigate()
+
   const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
   const [idPuntoVenta, setIdPuntoVenta] = useState<number | ''>('')
   const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
@@ -376,6 +392,75 @@ export function Pos() {
 
   const [ventaEmitida, setVentaEmitida] = useState<{ comprobante: ComprobanteEmitido; cliente: ClienteListado } | null>(null)
 
+  // stage-17-presupuestos-y-remitos (Slice 7): el presupuesto congelado que gobierna esta venta
+  // bajo `?idPresupuesto=` — `null` en el camino libre. `cargandoPresupuesto`/`errorPresupuesto`
+  // gatean la pantalla ANTES de mostrar el carrito congelado, mismo criterio que `errorDetalle`
+  // en OrdenDeCompra.tsx.
+  const [presupuesto, setPresupuesto] = useState<PresupuestoParaVenta | null>(null)
+  const [cargandoPresupuesto, setCargandoPresupuesto] = useState(modoPresupuesto)
+  const [errorPresupuesto, setErrorPresupuesto] = useState('')
+  const tokenPresupuestoRef = useRef(0)
+
+  useEffect(() => {
+    if (!modoPresupuesto || idPresupuesto === null) return
+    const miToken = (tokenPresupuestoRef.current += 1)
+    let vigente = true
+    setCargandoPresupuesto(true)
+    setErrorPresupuesto('')
+
+    clienteDePresupuestos
+      .paraVenta(idPresupuesto)
+      .then((p) => {
+        if (!vigente || tokenPresupuestoRef.current !== miToken) return
+        setPresupuesto(p)
+      })
+      .catch((e) => {
+        if (!vigente || tokenPresupuestoRef.current !== miToken) return
+        setErrorPresupuesto(e instanceof ErrorApi ? e.message : 'No se pudo cargar el presupuesto.')
+      })
+      .finally(() => {
+        if (!vigente || tokenPresupuestoRef.current !== miToken) return
+        setCargandoPresupuesto(false)
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [modoPresupuesto, idPresupuesto])
+
+  // El punto de venta lo fija el presupuesto — nunca lo elige el cajero bajo este modo (el
+  // servidor recibe `idPuntoVenta` del body igual que siempre, pero acá viaja el del presupuesto,
+  // nunca uno distinto que el operador pudiera tipear).
+  useEffect(() => {
+    if (!presupuesto) return
+    setIdPuntoVenta(presupuesto.idPuntoVenta)
+  }, [presupuesto])
+
+  // El cliente lo trae el presupuesto por id — se hidrata el registro completo (no solo el id)
+  // porque el panel de pagos necesita `esConsumidorFinal`/`saldo`/`limiteCredito`/`creditoIlimitado`
+  // para su validación local, los mismos campos que la selección manual ya provee.
+  const tokenClientePresupuestoRef = useRef(0)
+  useEffect(() => {
+    if (!presupuesto) return
+    const miToken = (tokenClientePresupuestoRef.current += 1)
+    let vigente = true
+
+    clienteDeClientes
+      .obtener(presupuesto.idCliente)
+      .then((c) => {
+        if (!vigente || tokenClientePresupuestoRef.current !== miToken) return
+        setClienteSeleccionado(c)
+      })
+      .catch((e) => {
+        if (!vigente || tokenClientePresupuestoRef.current !== miToken) return
+        setErrorClientes(e instanceof ErrorApi ? e.message : 'No se pudo cargar el cliente del presupuesto.')
+      })
+
+    return () => {
+      vigente = false
+    }
+  }, [presupuesto])
+
   const puntoVentaSeleccionada = puntosVenta?.find((p) => p.id === idPuntoVenta) ?? null
 
   const medioPorId = useMemo(() => {
@@ -397,9 +482,15 @@ export function Pos() {
       .then((lista) => {
         if (!vigente) return
         setPuntosVenta(lista)
-        const guardado = leerPuntoVentaGuardado()
-        const porDefecto = lista.find((p) => p.id === guardado) ?? lista[0] ?? null
-        setIdPuntoVenta(porDefecto ? porDefecto.id : '')
+        // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el punto de venta lo
+        // fija el propio presupuesto (efecto dedicado más abajo) — este default NUNCA escribe
+        // acá, o ganaría una carrera contra esa asignación según cuál de las dos respuestas
+        // llegue primero.
+        if (!modoPresupuesto) {
+          const guardado = leerPuntoVentaGuardado()
+          const porDefecto = lista.find((p) => p.id === guardado) ?? lista[0] ?? null
+          setIdPuntoVenta(porDefecto ? porDefecto.id : '')
+        }
       })
       .catch((e) => {
         if (!vigente) return
@@ -416,8 +507,14 @@ export function Pos() {
       .then((pagina) => {
         if (!vigente || generacionClientesRef.current !== generacionClientes) return
         setOpcionesClientes(pagina.items)
-        const consumidorFinal = pagina.items.find((c) => c.esConsumidorFinal) ?? null
-        setClienteSeleccionado(consumidorFinal)
+        // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el cliente lo trae el
+        // presupuesto (efecto dedicado más abajo, hidrata el registro completo por id) — el
+        // default de Consumidor Final NUNCA escribe acá bajo este modo, mismo criterio que el
+        // punto de venta.
+        if (!modoPresupuesto) {
+          const consumidorFinal = pagina.items.find((c) => c.esConsumidorFinal) ?? null
+          setClienteSeleccionado(consumidorFinal)
+        }
       })
       .catch((e) => {
         if (!vigente || generacionClientesRef.current !== generacionClientes) return
@@ -439,7 +536,10 @@ export function Pos() {
     return () => {
       vigente = false
     }
-  }, [])
+    // `modoPresupuesto` es estable durante toda la vida de esta instancia (deriva de la prop
+    // `idPresupuesto`, y `PantallaPos` se remonta entera por `key` cuando cambia) — se declara
+    // igual para dejar el efecto exhaustivo, nunca dispara una segunda corrida.
+  }, [modoPresupuesto])
 
   // react-async-state regla 2: cada cambio de punto de venta dispara la resolución de
   // tolerancia_pago/vuelto_maximo (ADR-13: punto de venta > empresa > default) — una respuesta
@@ -486,6 +586,18 @@ export function Pos() {
   // Composition, regla 2 — "generacionResolucionRef gates every /resolver response").
   useEffect(() => {
     const generacion = (generacionResolucionRef.current += 1)
+
+    // stage-17-presupuestos-y-remitos (Slice 7, design: Web composition — "skip the
+    // price-resolution effect entirely"): el precio de una conversión sale congelado de
+    // `items_presupuesto`, jamás de `ServicioDeOfertas.ResolverAsync` — este efecto no dispara
+    // NINGÚN fetch bajo `?idPresupuesto=` (react-async-state regla 3: la generación igual se
+    // bumpea arriba para huerfanar cualquier resolución en vuelo de una corrida anterior).
+    if (modoPresupuesto) {
+      setPrecios({})
+      setAvisoPrecios('')
+      setResolviendo(false)
+      return
+    }
 
     // Una edición de cantidad se debounce (el usuario suele seguir tipeando); un escaneo
     // dispara la resolución de inmediato, es una única mutación discreta. La bandera se
@@ -537,7 +649,7 @@ export function Pos() {
       vigente = false
       clearTimeout(idTimeout)
     }
-  }, [lineas, clienteSeleccionado, puntoVentaSeleccionada, reintentoPrecios])
+  }, [lineas, clienteSeleccionado, puntoVentaSeleccionada, reintentoPrecios, modoPresupuesto])
 
   /** Reintenta la vista previa de precios sin mutar el carrito (bumpea `reintentoPrecios` para
    * que el efecto de arriba vuelva a correr con las mismas líneas/cliente/punto de venta). */
@@ -750,19 +862,31 @@ export function Pos() {
   // código antes de cobrar.
   function nuevaVenta() {
     if (cobrandoRef.current) return
+    // stage-17-presupuestos-y-remitos (Slice 7): el presupuesto que gobernó esta venta ya quedó
+    // `convertido` — "Nueva venta" navega a la ruta libre en vez de reabrir esta misma pantalla
+    // remontada (react-async-state regla 8: el `key` de `Pos()` es el propio `idPresupuesto`, un
+    // reset local acá dejaría el modo presupuesto pegado a una conversión ya consumida).
+    if (modoPresupuesto) {
+      navigate('/pos', { replace: true })
+      return
+    }
     setVentaEmitida(null)
     setErrorCobro('')
     setErrorEscaneo('')
   }
 
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
-  const totalActual = subtotalPrevia ?? 0
+  // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
+  // resolución de precios (que ni siquiera corre) — sale del propio presupuesto congelado.
+  const totalActual = modoPresupuesto ? (presupuesto?.total ?? 0) : (subtotalPrevia ?? 0)
 
   // Una vista previa fallida (`avisoPrecios` seteado, sin estar resolviendo) no cuenta como
   // precondición incumplida (decisión de diseño 3: el servidor es la autoridad final del total)
   // — solo la resolución en vuelo bloquea. `subtotalPrevia === null` sin aviso es el estado de
-  // carga inicial (todavía no hay nada que mostrar), ese sí sigue bloqueando.
-  const previaFallida = subtotalPrevia === null && avisoPrecios !== ''
+  // carga inicial (todavía no hay nada que mostrar), ese sí sigue bloqueando. Bajo
+  // `?idPresupuesto=` esta noción no aplica — el total sale ya congelado, nunca de una
+  // resolución que pudo fallar.
+  const previaFallida = !modoPresupuesto && subtotalPrevia === null && avisoPrecios !== ''
 
   // Con vista previa fallida, el total no es confiable — calcular vuelto/falta contra un total
   // sintético de 0 sugeriría como vuelto el importe tendido completo (judgment-day R3, CRITICAL).
@@ -776,7 +900,7 @@ export function Pos() {
   const excedente = previaFallida ? 0 : calcularExcedente(totalActual, pagosConVuelto)
 
   const rechazoLocal =
-    subtotalPrevia === null || !clienteSeleccionado || !parametros
+    (!modoPresupuesto && subtotalPrevia === null) || !clienteSeleccionado || !parametros
       ? null
       : validarPagosLocal({
           total: totalActual,
@@ -790,23 +914,35 @@ export function Pos() {
         })
 
   // react-async-state regla 7: si medios de pago o parámetros no cargaron, "Cobrar" queda
-  // efectivamente deshabilitado — no solo un aviso decorativo.
-  const precondicionesListas =
-    lineas.length > 0 &&
-    clienteSeleccionado !== null &&
-    puntoVentaSeleccionada !== null &&
-    medios !== null &&
-    errorMedios === '' &&
-    parametros !== null &&
-    errorParametros === '' &&
-    !resolviendo &&
-    (subtotalPrevia !== null || previaFallida)
+  // efectivamente deshabilitado — no solo un aviso decorativo. Bajo `?idPresupuesto=` la
+  // precondición de "hay líneas" es "el presupuesto cargó Y es `Convertible`" (la misma fuente de
+  // verdad server-side que oculta el botón "Convertir en venta" en Presupuesto.tsx).
+  const precondicionesListas = modoPresupuesto
+    ? presupuesto !== null &&
+      presupuesto.convertible &&
+      clienteSeleccionado !== null &&
+      puntoVentaSeleccionada !== null &&
+      medios !== null &&
+      errorMedios === '' &&
+      parametros !== null &&
+      errorParametros === ''
+    : lineas.length > 0 &&
+      clienteSeleccionado !== null &&
+      puntoVentaSeleccionada !== null &&
+      medios !== null &&
+      errorMedios === '' &&
+      parametros !== null &&
+      errorParametros === '' &&
+      !resolviendo &&
+      (subtotalPrevia !== null || previaFallida)
 
-  // Con vista previa disponible, se exige la validación local completa (`rechazoLocal`). Con
-  // vista previa fallida, alcanza un chequeo mínimo de sanidad (al menos una fila de pago con
-  // importe > 0): el servidor recalcula el total real y su rechazo se muestra igual de legible.
-  const puedeCobrar =
-    precondicionesListas && !cobrando && (subtotalPrevia !== null ? rechazoLocal === null : pagosConVuelto.length > 0)
+  // Con vista previa disponible (o bajo `?idPresupuesto=`, el total congelado), se exige la
+  // validación local completa (`rechazoLocal`). Con vista previa fallida en el camino libre,
+  // alcanza un chequeo mínimo de sanidad (al menos una fila de pago con importe > 0): el
+  // servidor recalcula el total real y su rechazo se muestra igual de legible.
+  const puedeCobrar = modoPresupuesto
+    ? precondicionesListas && !cobrando && rechazoLocal === null
+    : precondicionesListas && !cobrando && (subtotalPrevia !== null ? rechazoLocal === null : pagosConVuelto.length > 0)
 
   async function cobrar() {
     // react-async-state regla 9: guard de reentrancia de primera línea — un doble click en el
@@ -820,17 +956,25 @@ export function Pos() {
     setErrorCobro('')
 
     try {
-      const solicitud = aSolicitudDeVenta({
-        idPuntoVenta: puntoVentaSeleccionada.id,
-        idCliente: clienteSeleccionado.id,
-        codigoTipoComprobante: 'TX',
-        idComprobanteAsociado: null,
-        lineas,
-        lotesSeleccionados,
-        pagos: aPagosDeVenta(pagosConVuelto),
-        direccionEntrega: null,
-        observaciones: null,
-      })
+      // stage-17-presupuestos-y-remitos (Slice 7, design: Web composition — "post {
+      // idPuntoVenta, codigoTipoComprobante: 'TX', idPresupuestoOrigen, lineas: undefined,
+      // pagos }"): bajo `?idPresupuesto=` NUNCA se manda `lineas` ni `idCliente` — el precio y el
+      // cliente salen congelados server-side del presupuesto, jamás de lo que esta pantalla
+      // pudiera mostrar.
+      const solicitud =
+        modoPresupuesto && idPresupuesto !== null
+          ? aSolicitudDeVentaDesdePresupuesto(puntoVentaSeleccionada.id, idPresupuesto, aPagosDeVenta(pagosConVuelto))
+          : aSolicitudDeVenta({
+              idPuntoVenta: puntoVentaSeleccionada.id,
+              idCliente: clienteSeleccionado.id,
+              codigoTipoComprobante: 'TX',
+              idComprobanteAsociado: null,
+              lineas,
+              lotesSeleccionados,
+              pagos: aPagosDeVenta(pagosConVuelto),
+              direccionEntrega: null,
+              observaciones: null,
+            })
 
       const emitido = await clienteDeVentas.emitir(solicitud)
       if (generacionCobroRef.current !== miGeneracion) return
@@ -858,6 +1002,30 @@ export function Pos() {
         setCobrando(false)
       }
     }
+  }
+
+  // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=`, la pantalla entera espera
+  // el presupuesto congelado antes de mostrar nada operable — mismo criterio de carga/error
+  // bloqueante que `OrdenDeCompra.tsx`.
+  if (modoPresupuesto && cargandoPresupuesto && presupuesto === null) {
+    return (
+      <div className="container-fluid py-4">
+        <Cargando />
+      </div>
+    )
+  }
+
+  if (modoPresupuesto && errorPresupuesto && presupuesto === null) {
+    return (
+      <div className="container-fluid py-4">
+        <Box titulo="Presupuesto" variante="danger">
+          <p className="text-muted">{errorPresupuesto}</p>
+          <Link className="btn btn-outline-secondary rounded-0" to="/presupuestos">
+            Volver a presupuestos
+          </Link>
+        </Box>
+      </div>
+    )
   }
 
   if (gateTurno && puntoVentaSeleccionada) {
@@ -960,11 +1128,31 @@ export function Pos() {
 
   return (
     <div className="container-fluid py-4" key="venta-en-curso">
+      {/* stage-17-presupuestos-y-remitos (Slice 7, design: Web composition — "Esta venta viene
+          del presupuesto N° … (vence el …)"): el banner reemplaza cualquier duda sobre por qué
+          el carrito está congelado, en vez de dejar que el operador lo descubra tocando algo
+          deshabilitado. */}
+      {modoPresupuesto && presupuesto && (
+        <div className="row g-3 mb-3">
+          <div className="col-12">
+            <Box titulo="Venta desde presupuesto" variante="warning">
+              <p className="mb-0">
+                Esta venta viene del presupuesto N° {presupuesto.numero ?? presupuesto.idPresupuesto}
+                {presupuesto.vencimiento &&
+                  ` (vence el ${new Date(`${presupuesto.vencimiento}T00:00:00`).toLocaleDateString('es-AR')})`}
+                . El carrito quedó congelado con el precio ofrecido — no se puede escanear, editar cantidades ni quitar
+                líneas.
+              </p>
+            </Box>
+          </div>
+        </div>
+      )}
+
       <div className="row g-3">
         <div className="col-lg-8">
           <Box titulo="Carrito">
-            {errorEscaneo && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEscaneo}</div>}
-            {avisoPrecios && (
+            {errorEscaneo && !modoPresupuesto && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEscaneo}</div>}
+            {avisoPrecios && !modoPresupuesto && (
               <div className="alert alert-warning rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
                 <span>{avisoPrecios}</span>
                 <button
@@ -978,22 +1166,24 @@ export function Pos() {
               </div>
             )}
 
-            <div className="input-group mb-3">
-              <input
-                type="text"
-                className="form-control rounded-0"
-                placeholder="Escanear o tipear un código (ej. 3*7790001234567)"
-                aria-label="Código escaneado"
-                value={entradaEscaneo}
-                disabled={escaneando || cobrando}
-                onChange={(e) => setEntradaEscaneo(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), escanear())}
-                autoFocus
-              />
-              <button type="button" className="btn btn-primary rounded-0" disabled={escaneando || cobrando} onClick={escanear}>
-                {escaneando ? 'Buscando…' : 'Agregar'}
-              </button>
-            </div>
+            {!modoPresupuesto && (
+              <div className="input-group mb-3">
+                <input
+                  type="text"
+                  className="form-control rounded-0"
+                  placeholder="Escanear o tipear un código (ej. 3*7790001234567)"
+                  aria-label="Código escaneado"
+                  value={entradaEscaneo}
+                  disabled={escaneando || cobrando}
+                  onChange={(e) => setEntradaEscaneo(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), escanear())}
+                  autoFocus
+                />
+                <button type="button" className="btn btn-primary rounded-0" disabled={escaneando || cobrando} onClick={escanear}>
+                  {escaneando ? 'Buscando…' : 'Agregar'}
+                </button>
+              </div>
+            )}
 
             <div className="table-responsive">
               <table className="table table-striped table-hover table-bordered align-middle">
@@ -1009,83 +1199,98 @@ export function Pos() {
                   </tr>
                 </thead>
                 <tbody>
-                  {lineas.map((l) => {
-                    const resultado = precios[l.idArticulo]
-                    const previa = previaDeLinea(l, resultado)
-                    const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
-                    return (
-                      <tr key={l.idArticulo}>
-                        <td>{l.codigoBarra ?? l.codigoInterno}</td>
-                        <td>{l.nombre}</td>
-                        <td>
-                          <input
-                            type="number"
-                            step={CANTIDAD_MINIMA}
-                            min={CANTIDAD_MINIMA}
-                            className="form-control form-control-sm rounded-0"
-                            aria-label={`Cantidad de ${l.nombre}`}
-                            value={textoCantidad(l)}
-                            disabled={cobrando}
-                            onChange={(e) => cambiarCantidad(l.idArticulo, e.target.value)}
-                            onBlur={() => confirmarCantidad(l.idArticulo)}
-                          />
-                        </td>
-                        <td>
-                          {puntoVentaSeleccionada && (
-                            <SelectorDeLote
-                              idPuntoVenta={puntoVentaSeleccionada.id}
-                              idArticulo={l.idArticulo}
-                              nombreArticulo={l.nombre}
-                              idLoteElegido={lotesSeleccionados[l.idArticulo] ?? null}
-                              disabled={cobrando}
-                              onElegir={(idLote) => elegirLote(l.idArticulo, idLote)}
-                            />
-                          )}
-                        </td>
-                        <td className="text-end">
-                          {previa.precioUnitario === null ? (
-                            '—'
-                          ) : (
-                            <>
-                              {tieneDescuento && (
-                                <div className="text-decoration-line-through text-muted small">
-                                  {formatearMoneda(resultado.precioOriginal as number)}
-                                </div>
+                  {modoPresupuesto
+                    ? (presupuesto?.items ?? []).map((item) => (
+                        // stage-17-presupuestos-y-remitos (Slice 7): fila 100% de solo lectura,
+                        // sourced del propio presupuesto congelado — sin `precios`/`previaDeLinea`
+                        // (esos dependen de una resolución que este modo nunca dispara).
+                        <tr key={item.orden}>
+                          <td>—</td>
+                          <td>{item.descripcion}</td>
+                          <td>{item.cantidad}</td>
+                          <td>—</td>
+                          <td className="text-end">{formatearMoneda(item.precioUnitario)}</td>
+                          <td className="text-end">{formatearMoneda(item.total)}</td>
+                          <td className="text-end">—</td>
+                        </tr>
+                      ))
+                    : lineas.map((l) => {
+                        const resultado = precios[l.idArticulo]
+                        const previa = previaDeLinea(l, resultado)
+                        const tieneDescuento = previa.descuentoUnitario > 0 && resultado?.precioOriginal != null
+                        return (
+                          <tr key={l.idArticulo}>
+                            <td>{l.codigoBarra ?? l.codigoInterno}</td>
+                            <td>{l.nombre}</td>
+                            <td>
+                              <input
+                                type="number"
+                                step={CANTIDAD_MINIMA}
+                                min={CANTIDAD_MINIMA}
+                                className="form-control form-control-sm rounded-0"
+                                aria-label={`Cantidad de ${l.nombre}`}
+                                value={textoCantidad(l)}
+                                disabled={cobrando}
+                                onChange={(e) => cambiarCantidad(l.idArticulo, e.target.value)}
+                                onBlur={() => confirmarCantidad(l.idArticulo)}
+                              />
+                            </td>
+                            <td>
+                              {puntoVentaSeleccionada && (
+                                <SelectorDeLote
+                                  idPuntoVenta={puntoVentaSeleccionada.id}
+                                  idArticulo={l.idArticulo}
+                                  nombreArticulo={l.nombre}
+                                  idLoteElegido={lotesSeleccionados[l.idArticulo] ?? null}
+                                  disabled={cobrando}
+                                  onElegir={(idLote) => elegirLote(l.idArticulo, idLote)}
+                                />
                               )}
-                              <div>
-                                {formatearMoneda(previa.precioUnitario)}
-                                {tieneDescuento && resultado.aplicadas.length > 0 && (
-                                  <span
-                                    className="badge bg-success ms-1"
-                                    title={resultado.aplicadas.map((a) => a.nombre).join(', ')}
-                                  >
-                                    {resultado.aplicadas.length === 1
-                                      ? resultado.aplicadas[0].nombre
-                                      : `${resultado.aplicadas[0].nombre} +${resultado.aplicadas.length - 1}`}
-                                  </span>
-                                )}
-                              </div>
-                            </>
-                          )}
-                        </td>
-                        <td className="text-end">{previa.total === null ? '—' : formatearMoneda(previa.total)}</td>
-                        <td className="text-end">
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-outline-danger rounded-0"
-                            disabled={cobrando}
-                            onClick={() => mutarCarrito({ tipo: 'quitarLinea', idArticulo: l.idArticulo })}
-                          >
-                            Quitar
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                  {lineas.length === 0 && (
+                            </td>
+                            <td className="text-end">
+                              {previa.precioUnitario === null ? (
+                                '—'
+                              ) : (
+                                <>
+                                  {tieneDescuento && (
+                                    <div className="text-decoration-line-through text-muted small">
+                                      {formatearMoneda(resultado.precioOriginal as number)}
+                                    </div>
+                                  )}
+                                  <div>
+                                    {formatearMoneda(previa.precioUnitario)}
+                                    {tieneDescuento && resultado.aplicadas.length > 0 && (
+                                      <span
+                                        className="badge bg-success ms-1"
+                                        title={resultado.aplicadas.map((a) => a.nombre).join(', ')}
+                                      >
+                                        {resultado.aplicadas.length === 1
+                                          ? resultado.aplicadas[0].nombre
+                                          : `${resultado.aplicadas[0].nombre} +${resultado.aplicadas.length - 1}`}
+                                      </span>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                            </td>
+                            <td className="text-end">{previa.total === null ? '—' : formatearMoneda(previa.total)}</td>
+                            <td className="text-end">
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline-danger rounded-0"
+                                disabled={cobrando}
+                                onClick={() => mutarCarrito({ tipo: 'quitarLinea', idArticulo: l.idArticulo })}
+                              >
+                                Quitar
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                  {(modoPresupuesto ? (presupuesto?.items.length ?? 0) === 0 : lineas.length === 0) && (
                     <tr>
                       <td colSpan={7} className="text-center text-muted py-4">
-                        Escaneá o tipeá un código para empezar la venta.
+                        {modoPresupuesto ? 'Este presupuesto no tiene items.' : 'Escaneá o tipeá un código para empezar la venta.'}
                       </td>
                     </tr>
                   )}
@@ -1093,7 +1298,7 @@ export function Pos() {
               </table>
             </div>
 
-            {lineas.length > 0 && (
+            {!modoPresupuesto && lineas.length > 0 && (
               <button
                 type="button"
                 className="btn btn-outline-secondary btn-sm rounded-0"
@@ -1118,7 +1323,7 @@ export function Pos() {
                 id="pos-punto-venta"
                 className="form-select rounded-0"
                 value={idPuntoVenta}
-                disabled={puntosVenta === null || cobrando}
+                disabled={puntosVenta === null || cobrando || modoPresupuesto}
                 onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
               >
                 {puntosVenta === null && <option value="">Cargando…</option>}
@@ -1141,7 +1346,7 @@ export function Pos() {
                 id="pos-cliente"
                 className="form-select rounded-0"
                 value={clienteSeleccionado?.id ?? ''}
-                disabled={cobrando}
+                disabled={cobrando || modoPresupuesto}
                 onChange={(e) => cambiarCliente(Number(e.target.value))}
               >
                 {fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map((c) => (
@@ -1152,33 +1357,43 @@ export function Pos() {
               </select>
             </div>
 
-            <div className="input-group input-group-sm mb-3">
-              <input
-                type="search"
-                className="form-control rounded-0"
-                placeholder="Buscar otro cliente…"
-                aria-label="Buscar cliente"
-                value={terminoCliente}
-                disabled={buscandoClientes || cobrando}
-                onChange={(e) => setTerminoCliente(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscarClientes())}
-              />
-              <button
-                type="button"
-                className="btn btn-outline-primary rounded-0"
-                disabled={buscandoClientes || cobrando}
-                onClick={buscarClientes}
-              >
-                {buscandoClientes ? 'Buscando…' : 'Buscar'}
-              </button>
-            </div>
+            {!modoPresupuesto && (
+              <div className="input-group input-group-sm mb-3">
+                <input
+                  type="search"
+                  className="form-control rounded-0"
+                  placeholder="Buscar otro cliente…"
+                  aria-label="Buscar cliente"
+                  value={terminoCliente}
+                  disabled={buscandoClientes || cobrando}
+                  onChange={(e) => setTerminoCliente(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscarClientes())}
+                />
+                <button
+                  type="button"
+                  className="btn btn-outline-primary rounded-0"
+                  disabled={buscandoClientes || cobrando}
+                  onClick={buscarClientes}
+                >
+                  {buscandoClientes ? 'Buscando…' : 'Buscar'}
+                </button>
+              </div>
+            )}
 
             <hr />
 
             <div className="d-flex justify-content-between mb-3">
               <strong>Total previo</strong>
               <strong>
-                {resolviendo ? 'Calculando…' : subtotalPrevia === null ? '—' : formatearMoneda(subtotalPrevia)}
+                {modoPresupuesto
+                  ? cargandoPresupuesto
+                    ? 'Cargando…'
+                    : formatearMoneda(totalActual)
+                  : resolviendo
+                    ? 'Calculando…'
+                    : subtotalPrevia === null
+                      ? '—'
+                      : formatearMoneda(subtotalPrevia)}
               </strong>
             </div>
 
@@ -1290,4 +1505,18 @@ export function Pos() {
       </div>
     </div>
   )
+}
+
+/**
+ * `/pos` (stage-17-presupuestos-y-remitos, Slice 7, design: Web composition — `react-async-state`
+ * regla 8): lee `?idPresupuesto=` de la URL y remonta `PantallaPos` entera por `key` cuando
+ * cambia — un `idPresupuesto` inválido o ausente se trata como el camino libre, nunca un error
+ * bloqueante (la ruta sin query sigue siendo el POS de siempre).
+ */
+export function Pos() {
+  const [searchParams] = useSearchParams()
+  const crudo = searchParams.get('idPresupuesto')
+  const idPresupuesto = crudo !== null && Number.isFinite(Number(crudo)) ? Number(crudo) : null
+
+  return <PantallaPos key={idPresupuesto ?? 'libre'} idPresupuesto={idPresupuesto} />
 }

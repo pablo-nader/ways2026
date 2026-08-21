@@ -109,7 +109,7 @@ export function aSolicitudDeVenta(params: {
   pagos: PagoDeVenta[]
   direccionEntrega: string | null
   observaciones: string | null
-}): SolicitudDeVenta {
+}): SolicitudDeVenta & { idCliente: number; lineas: LineaDeVenta[] } {
   const lineasDeVenta: LineaDeVenta[] = params.lineas.map((l) => ({
     idArticulo: l.idArticulo,
     cantidad: l.cantidad,

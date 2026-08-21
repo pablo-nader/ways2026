@@ -163,6 +163,7 @@ function comprobanteFixture(sobrescribir: Partial<ComprobanteEmitido> = {}): Com
     observaciones: null,
     items: [],
     pagos: [{ idMedioPago: 1, importe: 500, referencia: null, vuelto: 0 }],
+    idPresupuestoOrigen: null,
     ...sobrescribir,
   }
 }

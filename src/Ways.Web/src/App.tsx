@@ -27,6 +27,8 @@ import { OrdenesDeCompra } from './paginas/OrdenesDeCompra'
 import { PaginaCatalogo } from './paginas/PaginaCatalogo'
 import { Parametros } from './paginas/Parametros'
 import { Pos } from './paginas/Pos'
+import { Presupuesto } from './paginas/Presupuesto'
+import { Presupuestos } from './paginas/Presupuestos'
 import { Proveedores } from './paginas/Proveedores'
 import { PuntosVenta } from './paginas/PuntosVenta'
 import { Reposicion } from './paginas/Reposicion'
@@ -289,6 +291,35 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
                   <OrdenDeCompra />
+                </RutaProtegida>
+              }
+            />
+
+            {/* stage-17-presupuestos-y-remitos (Slice 7, design: Web composition, decisión 17):
+                mismo gate que /pos (Politicas.OperacionDePos) para lectura Y escritura — un
+                Vendedor puede quotear igual que puede vender, sin la distinción admin-only de
+                /ordenes-compra. */}
+            <Route
+              path="/presupuestos"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <Presupuestos />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/presupuestos/nuevo"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <Presupuesto />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/presupuestos/:id"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <Presupuesto />
                 </RutaProtegida>
               }
             />
