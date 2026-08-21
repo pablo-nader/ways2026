@@ -712,8 +712,16 @@ guards this slice**, enumerated below.
 - [x] 4.18 **GATE GUARD** — zero migrations / `has-pending-model-changes` clean / `Politicas.cs`
   untouched (final confirmation for the whole stage). *(verify criteria 1, 3)*
 - [x] 4.19 Mutation evidence recorded in the PR body for targets 35-37.
-- [ ] 4.20 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 4.20 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
+  **DONE by the orchestrator**: ronda 1 juez B REJECT (2 MAJOR test-only: el guard intermedio de
+  generación del encadenamiento SURVIVED — sin él, el reset cruzando un escaneo lento dispara
+  llamadas extra invisibles en pantalla — y el guard de reentrancia sin cobertura) → fixes
+  `0474cb1` → re-ronda B APPROVE. Ronda 2 juez A REJECT (1 CRITICAL de producción POR LECTURA:
+  el reset en vuelo rompía la generación y el finally jamás restauraba `buscando` — la pantalla
+  quedaba deshabilitada PARA SIEMPRE) → fix `242c697` (disponibilidad incondicional, repaint
+  gated — los cuatro caminos de salida verificados) → pasada acotada B APPROVE (argumento
+  estructural: una sola corrida posible por vez) + re-ronda A APPROVE. Ronda limpia.
 - [ ] 4.21 Open PR #4 `feat/stage18-slice4-consulta-precios`, merge to `main` after a clean
   `judgment-day` round.
 
