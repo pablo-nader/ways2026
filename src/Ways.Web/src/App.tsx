@@ -12,6 +12,7 @@ import { CatalogosFiscales } from './paginas/CatalogosFiscales'
 import { Clientes } from './paginas/Clientes'
 import { Compras } from './paginas/Compras'
 import { CompraEditor } from './paginas/CompraEditor'
+import { ConsultaPrecios } from './paginas/ConsultaPrecios'
 import { ConteoDeInventario } from './paginas/ConteoDeInventario'
 import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { CuentaCorrienteDeProveedor } from './paginas/CuentaCorrienteDeProveedor'
@@ -83,6 +84,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
                   <Pos />
+                </RutaProtegida>
+              }
+            />
+            {/* stage-18-etiquetas-y-consulta (Slice 4, design decisión 11): pantalla de salón,
+                misma política que /pos (Politicas.OperacionDePos) — la superficie sin login (OD2)
+                queda diferida, esta ruta sigue exigiendo la sesión existente. */}
+            <Route
+              path="/consulta-precios"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <ConsultaPrecios />
                 </RutaProtegida>
               }
             />
