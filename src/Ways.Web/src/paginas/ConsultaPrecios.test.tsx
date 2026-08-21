@@ -365,6 +365,87 @@ describe('ConsultaPrecios — reset por inactividad (design decisión 14, mutati
       vi.useRealTimers()
     }
   })
+
+  it('un GET de escaneo lento cuyo reset dispara ANTES de resolver JAMÁS llega a invocar la resolución de precio (guard intermedio, judgment-day slice 4 ronda 1 juez B)', async () => {
+    await renderYEsperarSelectores()
+
+    vi.useFakeTimers()
+    try {
+      // Escaneo A: se muestra de inmediato y arma el timer de reset keyed en `resultado`.
+      await escanearBajoFakeTimers('7790001234567')
+      expect(screen.getByTestId('resultado-resuelto')).toHaveTextContent('Coca Cola 1L')
+
+      // Escaneo B bombea la generación pero su GET de escaneo (`clienteDeArticulos.escanear`)
+      // queda deliberadamente COLGADO en una promesa controlada a mano — corrida lenta ANTES de
+      // siquiera identificar el artículo, no en la resolución de precio (a diferencia del test de
+      // arriba, que cuelga el POST).
+      let resolverEscaneoB: (a: ArticuloEscaneado) => void = () => {}
+      const escaneoBPendiente = new Promise<ArticuloEscaneado>((resolve) => {
+        resolverEscaneoB = resolve
+      })
+      apiGetMock.mockImplementationOnce((ruta: string) => {
+        if (ruta.startsWith('/articulos/escaneo?entrada=')) return escaneoBPendiente
+        return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      })
+
+      const entrada = screen.getByLabelText('Código escaneado')
+      await act(async () => {
+        fireEvent.change(entrada, { target: { value: '7790007654321' } })
+        fireEvent.keyDown(entrada, { key: 'Enter' })
+        await vi.advanceTimersByTimeAsync(0)
+      })
+
+      // El reset de A dispara MIENTRAS el GET de B sigue pendiente: bombea la generación y limpia
+      // el resultado antes de que B sepa siquiera qué artículo escaneó.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000)
+      })
+      expect(screen.queryByTestId('resultado-resuelto')).not.toBeInTheDocument()
+
+      apiPostMock.mockClear()
+
+      // El GET colgado de B finalmente resuelve — con el guard intermedio (entre escanear() y
+      // resolver()) intacto, la generación capturada por B ya no coincide con la actual y la
+      // corrida se aborta ANTES de invocar `clienteDeOfertas.resolver`: cero llamadas de POST,
+      // nunca una silenciosa que el repintado posterior tapa.
+      await act(async () => {
+        resolverEscaneoB(articuloEscaneadoFixture({ idArticulo: 2, nombre: 'Sprite 1L', codigoInterno: 'A0002' }))
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(apiPostMock).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('resultado-resuelto')).not.toBeInTheDocument()
+      expect(screen.queryByText('Sprite 1L')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('ConsultaPrecios — reentrancia de consultar() (guard `buscando`, judgment-day slice 4 ronda 1 juez B)', () => {
+  it('un segundo Enter disparado mientras el primer escaneo sigue en vuelo NO dispara una segunda corrida (exactamente un GET y un POST)', async () => {
+    await renderYEsperarSelectores()
+    const entrada = screen.getByLabelText('Código escaneado')
+    apiGetMock.mockClear()
+    apiPostMock.mockClear()
+
+    // Los dos Enter se disparan dentro del mismo `act`: un doble click sobre el botón deshabilitado
+    // se no-opea en jsdom (no ejercita el guard real), así que la forma honesta de probar
+    // `if (buscando) return` es el doble `keyDown` de Enter, que SÍ llega al handler.
+    await act(async () => {
+      fireEvent.change(entrada, { target: { value: '7790001234567' } })
+      fireEvent.keyDown(entrada, { key: 'Enter' })
+      await Promise.resolve()
+      fireEvent.keyDown(entrada, { key: 'Enter' })
+    })
+
+    await screen.findByTestId('resultado-resuelto')
+
+    expect(apiGetMock).toHaveBeenCalledTimes(1)
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('ConsultaPrecios — ninguna superficie sin sesión (OD2, consulta-de-precios/spec.md:108-112)', () => {
