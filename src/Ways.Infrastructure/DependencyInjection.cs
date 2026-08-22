@@ -16,7 +16,9 @@ using Ways.Domain.Stock;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Application.Exportacion;
+using Ways.Application.Fiscal;
 using Ways.Infrastructure.Exportacion;
+using Ways.Infrastructure.Fiscal;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
 using Ways.Infrastructure.Seguridad;
@@ -88,6 +90,25 @@ public static class DependencyInjection
 
         services.Configure<SemillaRoot>(configuration.GetSection(SemillaRoot.Seccion));
         services.Configure<OpcionesDeExportacion>(configuration.GetSection(OpcionesDeExportacion.Seccion));
+
+        // stage-19a-slice2 (task 2.9): registro de test-host únicamente — ClienteWsaa no tiene
+        // ningún caller de producción hasta la slice 5 (ServicioDeFacturacionFiscal). Sin
+        // BaseAddress por defecto A PROPÓSITO (verify criterion 8: ningún hostname real de ARCA
+        // como default en configuración mergeada a main) — 19b la carga desde
+        // "Ways:Fiscal:UrlWsaa" recién cuando exista una credencial real.
+        services.AddSingleton<GeneradorDeTra>();
+        services.AddHttpClient<IClienteWsaa, ClienteWsaa>((sp, http) =>
+        {
+            var url = configuration["Ways:Fiscal:UrlWsaa"];
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                http.BaseAddress = new Uri(url);
+            }
+        });
+
+        services.AddSingleton<RepositorioEnMemoriaDeTicketDeAcceso>();
+        services.AddSingleton<IRepositorioDeTicketDeAcceso>(
+            sp => sp.GetRequiredService<RepositorioEnMemoriaDeTicketDeAcceso>());
 
         return services;
     }

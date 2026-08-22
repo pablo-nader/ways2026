@@ -334,64 +334,215 @@ transcribe the proposal's numbering; confirming the exact wire strings is a **19
 19a can detect a transcription error in the `LoginCms`/TRA fixtures; 19b's first task is the
 fixture-vs-reality diff.
 
-- [ ] 2.1 Create `src/Ways.Application/Fiscal/{IClienteWsaa,IRepositorioDeTicketDeAcceso}.cs` +
+**Gate de 19b (ítems nombrados a confirmar, judgment Slice 2 ronda 2, juez A — SUGGESTION,
+diferido por T3)**: `ClienteWsaa.cs:71`, `MapearFalla` hace `int.Parse(fault.FaultCode, …)` sobre
+el código de fault WSAA. Si el wire real emite un fault simbólico (`ns1:cms.sign.invalid` y
+similares, ver T3 arriba) en vez del número que asume el proposal, ese `int.Parse` tira
+`FormatException` en lugar de mapear a un `ErrorDominio` — no es un bug de 19a (la numeración
+500/501/502/600/601/602 es la que pide el proposal, y el doc-comment del propio método ya lo
+anota), pero 19b tiene que confirmarlo contra el wire real y decidir si el parseo necesita un
+`TryParse` defensivo con fallback a `wsaa_error_no_mapeado`, o si el wire realmente siempre manda
+el código numérico y el string simbólico es cosa de otra sección del manual. No se toca código en
+esta ronda — la numeración es del proposal y 19b la confirma contra el cable.
+
+- [x] 2.1 Create `src/Ways.Application/Fiscal/{IClienteWsaa,IRepositorioDeTicketDeAcceso}.cs` +
   `Contratos.cs` (`TicketDeAcceso`, `ClaveDeTicket`) — no key material in any port contract.
-  *(design.md:245-252, 371)*
-- [ ] 2.2 Create `src/Ways.Infrastructure/Fiscal/SobreSoap.cs` — pure static `Construir`/
+  *(design.md:245-252, 371)* **DEVIATION (registered)**: `Contratos.cs` also defines
+  `SolicitudDeTicket` (`ClaveDeTicket` + the signing `X509Certificate2`) — named in design's own
+  `IClienteWsaa.ObtenerTicketAsync(SolicitudDeTicket s, …)` signature (design.md:245) but not
+  listed in the task's abbreviated field list. `TicketDeAcceso.ToString()` is overridden (never
+  the compiler-generated one) so a stray log/exception interpolation cannot leak `Token`/`Sign`.
+- [x] 2.2 Create `src/Ways.Infrastructure/Fiscal/SobreSoap.cs` — pure static `Construir`/
   `AccionDe`/`Leer`, `XDeclaration` + `SaveOptions.DisableFormatting`, the only file in `src/`
-  naming SOAP. *(design.md D2:66, 176-210, 375)*
-- [ ] 2.3 Create `src/Ways.Infrastructure/Fiscal/GeneradorDeTra.cs` — puro salvo
+  naming SOAP. *(design.md D2:66, 176-210, 375)* **DEVIATION (registered)**: `Construir`/
+  `AccionDe` are `public` (design's snippet shows `internal`) — the repo has zero
+  `InternalsVisibleTo` anywhere, and `ExportadorXlsx` (the inverted precedent D2 itself cites) is
+  also `public`; `internal` would make target 28/30's golden tests unreachable from
+  `Ways.Application.Tests`. `Leer` stays `internal` (no caller outside `Ways.Infrastructure`).
+  The `XDeclaration`'s `encoding` is written by hand, not via `XDocument.Save` — verified
+  (scratchpad) that XLinq's writer normalizes `encoding` to lowercase from the destination
+  `TextWriter.Encoding`, never from the string passed to `XDeclaration`; the manual pins `UTF-8`
+  uppercase.
+- [x] 2.3 Create `src/Ways.Infrastructure/Fiscal/GeneradorDeTra.cs` — puro salvo
   `IRelojDelSistema`, `uniqueId` = unix seconds ⊕ `Interlocked` tiebreak, `Ventana` = 10 min.
-  *(design.md:212-224, 376)*
-- [ ] 2.4 Create `src/Ways.Infrastructure/Fiscal/FirmanteCms.cs` — `SignedCms` + `CmsSigner`
-  (SHA-256, `EndCertOnly`), BCL only. *(design.md:226-236, 376)*
-- [ ] 2.5 Create `src/Ways.Infrastructure/Fiscal/ClienteWsaa.cs` — implements `IClienteWsaa`, calls
+  *(design.md:212-224, 376)* **Note**: the tiebreak counter is an INSTANCE field, not static —
+  needed so a fresh `GeneradorDeTra` + one `Construir` call gives a deterministic `uniqueId` for
+  the golden test (D3's "constant uniqueId" pinned input); a static/process-wide counter would
+  make the golden non-reproducible across parallel test runs.
+- [x] 2.4 Create `src/Ways.Infrastructure/Fiscal/FirmanteCms.cs` — `SignedCms` + `CmsSigner`
+  (SHA-256, `EndCertOnly`), BCL only. *(design.md:226-236, 376)* **Clarification (not a
+  deviation)**: `System.Security.Cryptography.Pkcs` needs an explicit `PackageReference` even
+  though it is an in-box .NET assembly with zero third-party dependency (proposal decisión 7
+  stands) — the SDK does not reference it implicitly; confirmed with a throwaway console project.
+- [x] 2.5 Create `src/Ways.Infrastructure/Fiscal/ClienteWsaa.cs` — implements `IClienteWsaa`, calls
   `SobreSoap.Construir` + `HttpClient`, maps WSAA fault codes 500/501/502/600/601/602 to domain
   codes. *(design.md:377, error taxonomy 309-320)*
-- [ ] 2.6 Create `src/Ways.Infrastructure/Fiscal/RepositorioEnMemoriaDeTicketDeAcceso.cs` —
+- [x] 2.6 Create `src/Ways.Infrastructure/Fiscal/RepositorioEnMemoriaDeTicketDeAcceso.cs` —
   `ConcurrentDictionary` + per-key `SemaphoreSlim` single-flight, `MargenDeSeguridad` = 10 min
-  absolute (not a TTL percentage). *(design.md D8:72, 378)*
-- [ ] 2.7 Create `tests/**/Fiscal/CertificadoDePrueba.cs` — `CertificateRequest` self-signed,
+  absolute (not a TTL percentage). *(design.md D8:72, 378)* **Note**: `ObtenerOFirmarAsync`
+  (double-checked cache + single-flight orchestration) is an extra public method on the CONCRETE
+  class, not on `IRepositorioDeTicketDeAcceso` — the port interface is a narrow storage contract
+  (design's own two-method code block, verbatim); single-flight is specific to this in-memory
+  adapter (a distributed cache would need distributed locking, out of scope per decision 10) so it
+  does not belong on the port.
+  **AMPLIACIÓN (judgment Slice 2 ronda 2, juez A — WARNING ya-registrado, detalle de DI)**:
+  `DependencyInjection.cs:109-111` registra el tipo CONCRETO `RepositorioEnMemoriaDeTicketDeAcceso`
+  como singleton propio, y además registra `IRepositorioDeTicketDeAcceso` con una factory que
+  resuelve ese MISMO singleton (`sp => sp.GetRequiredService<RepositorioEnMemoriaDeTicketDeAcceso>()`)
+  — es decir, hoy conviven en el contenedor dos formas válidas de pedir la misma instancia: por el
+  puerto (solo ve los dos métodos del contrato) y por el tipo concreto (ve también
+  `ObtenerOFirmarAsync`). Es inerte en 19a porque `ClienteWsaa` no tiene caller de producción
+  todavía. **Obligación para el slice 5**: antes de cablear el primer caller real, resolver la
+  tensión — o `ObtenerOFirmarAsync` sube al puerto (si el orquestador real necesita invocar el
+  double-checked cache + single-flight sin conocer el tipo concreto), o el registro del tipo
+  concreto como singleton propio se retira de la DI (si ningún caller de producción debe poder
+  esquivar el puerto) y se documenta por qué. No dejar ambos registros conviviendo sin una decisión
+  explícita una vez que exista un consumer real.
+- [x] 2.7 Create `tests/**/Fiscal/CertificadoDePrueba.cs` — `CertificateRequest` self-signed,
   PKCS#12 round trip before signing (D7), **no key material committed**. *(design.md D7:71, 389)*
-- [ ] 2.8 Create `tests/**/Fiscal/Fixtures/**` WSAA — `LoginTicketRequest`/`Response` goldens,
+- [x] 2.8 Create `tests/**/Fiscal/Fixtures/**` WSAA — `LoginTicketRequest`/`Response` goldens,
   fault codes, `REVISION.md` pinning `manual-desarrollador-ARCA-COMPG-v4-0.pdf` rev. 15/01/2025 +
-  `Especificacion_Tecnica_WSAA_1.2.2.pdf`. *(proposal.md decision 8, design.md:388)*
-- [ ] 2.9 Modify DI registration — `IClienteWsaa`/`IRepositorioDeTicketDeAcceso` registered (test
-  host wiring only; no production caller yet).
-- [ ] 2.10 [P] TRA golden — element names/order (`uniqueId`, `generationTime`, `expirationTime`,
+  `Especificacion_Tecnica_WSAA_1.2.2.pdf`. *(proposal.md decision 8, design.md:388)* Fixtures are
+  read directly from the source tree via the `Ways.slnx`-anchored root resolver (same pattern as
+  `ContencionDelExportadorTests`), not copied to the test output directory.
+- [x] 2.9 Modify DI registration — `IClienteWsaa`/`IRepositorioDeTicketDeAcceso` registered (test
+  host wiring only; no production caller yet). `GeneradorDeTra` singleton; `ClienteWsaa` typed
+  `HttpClient` with **no default `BaseAddress`** (verify criterion 8 — `Ways:Fiscal:UrlWsaa` is
+  absent from all shipped configuration); `RepositorioEnMemoriaDeTicketDeAcceso` singleton (D8's
+  cache has to survive the app's lifetime, not one scope).
+- [x] 2.10 [P] TRA golden — element names/order (`uniqueId`, `generationTime`, `expirationTime`,
   `service`) byte-for-byte under `RelojFijo`. *(target 24)*
-- [ ] 2.11 [P] `generationTime = Ahora − 10 min`, `expirationTime = Ahora + 10 min` from
+- [x] 2.11 [P] `generationTime = Ahora − 10 min`, `expirationTime = Ahora + 10 min` from
   `IRelojDelSistema`, not `DateTimeOffset.UtcNow`. *(target 25)*
-- [ ] 2.12 [P] `uniqueId` tiebreak — two TRAs generated in the same clock tick must differ
+- [x] 2.12 [P] `uniqueId` tiebreak — two TRAs generated in the same clock tick must differ
   (`Interlocked`). *(target 26)*
-- [ ] 2.13 [P] `CmsSigner` structure test — digest OID SHA-256, certificate count = 1
+- [x] 2.13 [P] `CmsSigner` structure test — digest OID SHA-256, certificate count = 1
   (`EndCertOnly`). *(target 27)*
-- [ ] 2.14 [P] `LoginCms` envelope golden — namespace URI, `soapenv` prefix, `in0` element,
+- [x] 2.14 [P] `LoginCms` envelope golden — namespace URI, `soapenv` prefix, `in0` element,
   `SOAPAction: ""` — byte-for-byte. *(target 28)*
-- [ ] 2.15 **[S]** `rg` scan — `SobreSoap` is the only SOAP-naming file in `src/`. *(target 29)*
-- [ ] 2.16 [P] Every golden — `SaveOptions.DisableFormatting` + `XDeclaration` present, no
+- [x] 2.15 **[S]** `rg` scan — `SobreSoap` is the only SOAP-naming file in `src/`. *(target 29)*
+  Implemented as an xUnit source scan (`SobreSoapAislamientoTests`, same precedent as
+  `ContencionDelExportadorTests`), not a literal `rg` CLI invocation. The marker set is
+  `soapenv`/`schemas.xmlsoap.org`/`ServiceModel` — deliberately NOT a bare case-insensitive
+  `"soap"` substring, because the isolated type's own name (`SobreSoap`) legitimately appears in
+  every caller file (`ClienteWsaa`, and `ClienteWsfe` in slice 3); the scan strips `SobreSoap`
+  occurrences from each file's content before matching, so the abstraction stays callable without
+  tripping its own isolation guard. `SOAPAction` (the HTTP header NAME) is excluded from the
+  marker set on purpose: it is a wire-level HTTP concept every WSAA/WSFE caller legitimately sets
+  when attaching the header — the golden test (target 28) already pins its VALUE at the
+  `SobreSoap` level via `AccionDe`.
+- [x] 2.16 [P] Every golden — `SaveOptions.DisableFormatting` + `XDeclaration` present, no
   indentation. *(target 30)*
-- [ ] 2.17 [P] TA cache hit — a second emission within TTL issues zero extra `LoginCms` (spy
+- [x] 2.17 [P] TA cache hit — a second emission within TTL issues zero extra `LoginCms` (spy
   count). *(target 31)*
-- [ ] 2.18 [P] `MargenDeSeguridad` boundary pair under `RelojQueAvanza` — at `Expiracion − Margen −
-  1s` cached, at `Expiracion − Margen` a new `LoginCms`. *(target 32)*
-- [ ] 2.19 [P] Per-key single-flight — N concurrent cold asks ⇒ exactly one `LoginCms`.
+- [x] 2.18 [P] `MargenDeSeguridad` boundary pair under `RelojQueAvanza` — at `Expiracion − Margen −
+  1s` cached, at `Expiracion − Margen` a new `LoginCms`. *(target 32)* **CORRECTION (registered,
+  mutation-proof-tests rule 2 "run it, don't reason it")**: the first version of this test read
+  the expected margin from `RepositorioEnMemoriaDeTicketDeAcceso.MargenDeSeguridad` itself instead
+  of hardcoding `TimeSpan.FromMinutes(10)` — running the mutation (margin → `TimeSpan.Zero`)
+  confirmed the test stayed GREEN, because the test recomputed its own boundary from the same
+  mutated constant (an overdetermined test, rule 3). Fixed to hardcode the literal 10-minute
+  expectation plus a direct `Assert.Equal` pin on the constant; re-ran the same mutation and
+  confirmed RED.
+- [x] 2.19 [P] Per-key single-flight — N concurrent cold asks ⇒ exactly one `LoginCms`.
   *(target 33)*
-- [ ] 2.20 [P] WSAA fault taxonomy — one test per code (500/501/502/600/601/602), asserting the
+- [x] 2.20 [P] WSAA fault taxonomy — one test per code (500/501/502/600/601/602), asserting the
   domain code, not the HTTP status alone. *(target 34)*
-- [ ] 2.21 **[S]** Repository scan — no PEM/PFX/private-key material under `src/` or `tests/`.
+- [x] 2.21 **[S]** Repository scan — no PEM/PFX/private-key material under `src/` or `tests/`.
   *(target 35)*
-- [ ] 2.22 [P] D7 signing test — PKCS#12 re-load before signing, recorded as a platform-conditional
+- [x] 2.22 [P] D7 signing test — PKCS#12 re-load before signing, recorded as a platform-conditional
   kill (Windows). *(target 36)*
-- [ ] 2.23 Non-regression: full suite green, nothing wired to production DI yet.
-- [ ] 2.24 GATE GUARD — repository-wide PEM/PFX/private-key scan clean (reasserted, verify
-  criterion 7); zero new migrations this slice.
-- [ ] 2.25 Mutation evidence recorded in the PR body for targets 24-36 (**S** rows 29, 35 record
-  the file/state assertion).
-- [ ] 2.26 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 2.23 Non-regression: full suite green, nothing wired to production DI yet. `Ways.Application.Tests`
+  full run: 318/318. `Ways.IntegrationTests` full run (Docker Testcontainers, real Postgres):
+  see Work Unit Evidence below.
+- [x] 2.24 GATE GUARD — repository-wide PEM/PFX/private-key scan clean (reasserted, verify
+  criterion 7); zero new migrations this slice. `git status`/`git diff --stat` confirm zero files
+  under `Migraciones/` touched; `dotnet ef migrations has-pending-model-changes` clean.
+- [x] 2.25 Mutation evidence recorded in the PR body for targets 24-36 (**S** rows 29, 35 record
+  the file/state assertion). See "Work Unit Evidence" table below for the full per-target log.
+- [x] 2.26 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
+  **Slice 2 (19a), ronda 1 — juez B**: APPROVE con 1 WARNING + 1 MINOR (ambos fixeados igual, per
+  protocolo). WARNING: `ClienteWsaaTests.UnaRespuestaExitosaSeParseaAToken_Sign_Expiracion` nunca
+  leía `UltimaSolicitud.Content` — el mutante que renombra `in0`→`in99` en `ClienteWsaa.cs`
+  sobrevivía 25/25 porque el golden de `SobreSoapTests` prueba `SobreSoap` aislado, nunca la
+  integración `ClienteWsaa`→`SobreSoap`. Fix: el test del camino exitoso ahora captura el cuerpo
+  del request DURANTE `HttpMessageHandlerFalso.SendAsync` (el `Content` original queda
+  `Dispose`ado apenas `ObtenerTicketAsync` retorna), reconstruye el CMS esperado con un
+  `GeneradorDeTra`/`FirmanteCms` independientes contra el mismo reloj fijo y el mismo certificado,
+  y assertea el elemento `<in0>` exacto — no un `Contains` laxo. Ciclo mutation-proof-tests: mutante
+  `in0`→`in99` en `ClienteWsaa.cs` → RED (`Sequence contains no matching element`) → `git checkout
+  --` → verde (21/21). MINOR: el doc-comment de `SobreSoap.Construir` describía el enfoque
+  DESCARTADO (`XDeclaration`) en vez del real (concatenación de string cruda) — corregido.
+  **Estado honesto (regla 18, mismo precedente que la archive de la 16, tasks.md:830 "NOT RUN by
+  `sdd-apply`... left for the orchestrator")**: la ronda 1 del juez B está hecha y fixeada (arriba).
+  Este checkbox NO se marca `[x]` todavía — quedó marcado a medias por el fix agent de la ronda 1
+  (solo constaba el juez B) y se desmarca acá para corregir esa falsa señal de cierre. El cierre
+  real de esta tarea (veredicto del juez A + esta ronda 2, más cualquier ronda adicional que haga
+  falta hasta que quede limpia) lo asienta el ORQUESTADOR una vez que la ronda quede limpia — no un
+  fix agent, que no tiene autoridad para declarar la tarea terminada.
+  **Slice 2 (19a), ronda 2 — juez A**: 1 CRITICAL de ledger (este mismo checkbox marcado a medias,
+  corregido arriba) + 1 WARNING ya-registrado (ver nota ampliada en 2.6 sobre el puerto de
+  `ObtenerOFirmarAsync`) + 4 SUGGESTIONs (ToString anti-fuga en `SolicitudDeTicket`, scans de
+  `SinMaterialDeClaveTests`/`SobreSoapAislamientoTests` acotados a excluir `bin`/`obj`, helper
+  `ResolverRaizDelRepositorio` deduplicado en un único helper compartido, y el `int.Parse` del
+  fault ya diferido a 19b por T3 — ver nota en la sección "19b gate" más abajo). Fixes aplicados;
+  pendiente ronda de re-judge por el orquestador.
+  **Evidencia del fix agent (ronda 2)**: `dotnet build --no-incremental` — 0 errores (los 2
+  `NU1903` de `SSH.NET` son preexistentes, no tocados por este slice). Namespace
+  `Ways.Application.Tests.Fiscal` completo: 21/21 verde. `Ways.Application.Tests` completo (no
+  regresión, mismo conteo que el baseline): 318/318 verde. Ambos mutantes acotados por la
+  exclusión de `bin`/`obj` re-corridos en vivo (mutation-proof-tests regla 2): marcador
+  `schemas.xmlsoap.org` inyectado en `ClienteWsaa.cs` (archivo de `src/`, no de build) → RED
+  (`SobreSoapAislamientoTests`) → `git checkout --` → verde; archivo con
+  `-----BEGIN PRIVATE KEY-----` plantado bajo `tests/Ways.Application.Tests/Fiscal/` → RED
+  (`SinMaterialDeClaveTests`) → borrado → verde (21/21). Ningún archivo bajo `bin/`/`obj/` fue
+  necesario para la verificación porque la exclusión es estructural (por segmento de ruta), no
+  depende de contenido.
+  **CERRADO POR EL ORQUESTADOR (la autoridad que la nota de honestidad asigna)**: ronda 1 juez B
+  APPROVE (8 mutantes re-corridos + 1 WARNING del cuerpo del request sin assert + 1 MINOR del
+  doc-comment → fixes `ef5871c`); ronda 2 juez A (1 CRITICAL de LEDGER — este mismo checkbox
+  pre-marcado por el fix agent, la regla 18 exacta con el precedente de la etapa 16 citado — +
+  1 WARNING del puerto ya-registrado ampliado con el detalle de DI + 4 SUGGESTIONs → fixes
+  `49b6d05` con los mutantes de los scans re-plantados en vivo); pasada acotada B APPROVE
+  (exclusión por segmento exacto verificada; el ToString estructural en paridad honesta con su
+  hermano sin red). Ronda limpia.
 - [ ] 2.27 [ ] Open PR #2 `feat/stage19a-slice2-wsaa`, merge to `main` after a clean `judgment-day`
   round.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Mode | Standard (no `strict_tdd` config found; `mutation-proof-tests` v1.1 discipline followed — see per-target mutation log below) |
+| Focused test command | `dotnet test tests/Ways.Application.Tests/Ways.Application.Tests.csproj --filter "FullyQualifiedName~ClienteWsaaTests\|FullyQualifiedName~SobreSoapTests\|FullyQualifiedName~GeneradorDeTraTests"` → **13/13 passed** (0 failed); full `Ways.Application.Tests.Fiscal` namespace (all 8 test files for this slice): **21/21 passed** |
+| Runtime harness | N/A per the Suggested Work Units table — pure unit + byte-for-byte golden-file comparison, no container, no DB. `dotnet ef migrations has-pending-model-changes` re-confirmed clean (no schema touched this slice) |
+| `dotnet build --no-incremental` | Full solution (`Ways.slnx`, all 7 projects) built clean — 0 errors, 2 pre-existing unrelated `NU1903` warnings (SSH.NET, not touched by this slice) |
+| Full suite (non-regression, task 2.23) | `Ways.Application.Tests`: **318/318 passed** (297 pre-existing + 21 new). `Ways.IntegrationTests` (full suite, real Postgres 17 Testcontainer, run once per rule 17 because this slice edits production DI wiring in `Ways.Infrastructure/DependencyInjection.cs`): **1674/1674 passed**, 0 failed, 11 m 47 s — identical count to slice 1's baseline, confirming the new `AddHttpClient`/`AddSingleton` registrations do not perturb the test host boot or any existing suite |
+| Rollback boundary | `git revert` — no file in this slice has a production caller (`ClienteWsaa`'s first caller is slice 5); reverting removes `src/Ways.Application/Fiscal/{Contratos,IClienteWsaa,IRepositorioDeTicketDeAcceso}.cs`, `src/Ways.Infrastructure/Fiscal/*.cs`, the DI registration block, the two new `PackageReference`s, and `tests/Ways.Application.Tests/Fiscal/**` — nothing outside those paths |
+
+#### Mutation evidence log (targets 24-36)
+
+Every non-**S** target below was proven by literally applying the mutation, confirming the exact
+test failure text, then reverting and re-confirming green (mutation-proof-tests rule 2). **S**
+targets (29, 35) are structural/file-scan assertions, verified the same way (mutation → scan
+fails → revert → scan passes) rather than dressed up as a runtime kill.
+
+| Target | Mutation applied | Test that failed | Reverted, confirmed green |
+|---|---|---|---|
+| 24 | Swapped `generationTime`/`expirationTime` element order in `GeneradorDeTra.Construir` | `GeneradorDeTraTests.LaTraCoincideByteAByteConElGoldenDelManual` — `Assert.Equal` string diff at the swapped position | Yes |
+| 25 | `ahora = DateTimeOffset.UtcNow` instead of `reloj.Ahora` | Both `LaTraCoincideByteAByteConElGoldenDelManual` (uniqueId/timestamps drift from the golden) and `GenerationTimeYExpirationTimeSalenDeIRelojDelSistemaConLaVentanaDeDiezMinutos` (`Assert.Contains` fails) | Yes |
+| 26 | Hardcoded `desambiguador = 0`, dropped `Interlocked.Increment`'s contribution | `DosTrasArmadasEnElMismoTickDeRelojDifierenEnElUniqueId` — `Assert.NotEqual` failure, both uniqueIds `"1768482000000"` | Yes |
+| 27 | `Sha256` OID changed to the real SHA-1 OID (`1.3.14.3.2.26`) | `FirmanteCmsTests.ElCmsUsaSha256YExactamenteUnCertificado` — digest OID string mismatch | Yes |
+| 28 | Renamed the `soapenv` prefix to `soap` in `SobreSoap.Construir` | `SobreSoapTests.ElSobreLoginCmsCoincideByteAByteConElGoldenDelManual` — byte diff at the prefix | Yes |
+| 29 **S** | Added a `NamespaceDeMutante = "http://schemas.xmlsoap.org/soap/envelope/"` const to `ClienteWsaa.cs` | `SobreSoapAislamientoTests.SoloSobreSoapNombraElProtocoloSoapEnSrc` — reported `ClienteWsaa.cs` alongside `SobreSoap.cs` | Yes |
+| 30 | `SaveOptions.DisableFormatting` → `SaveOptions.None` | Both `ElSobreLoginCmsCoincideByteAByteConElGoldenDelManual` (byte diff, `\r\n  ` injected) and `TodoSobreLlevaLaDeclaracionXmlYCeroFormato` (`Assert.DoesNotContain('\n', …)` failure) | Yes |
+| 31 | Removed the cache short-circuit in `ObtenerOFirmarAsync` (both the pre-lock and the in-lock check) | `UnSegundoPedidoDentroDeLaVigenciaNoReemiteLoginCms` — factory called 2 times instead of 1 | Yes |
+| 32 | `MargenDeSeguridad` changed to `TimeSpan.Zero` | `ElMargenDeSeguridadEsElBordeExactoDeVigencia` — `00:10:00` expected vs `00:00:00` actual (only after fixing the test's own overdetermination — see task 2.18's registered correction) | Yes |
+| 33 | Removed the `SemaphoreSlim` acquisition (kept the cache checks) | `NConcurrentesEnFrioEmitenUnSoloLoginCms` — 10 factory calls instead of 1 | Yes |
+| 34 | Collapsed the `600 or 602` arm into the `500 or 501 or 502` arm | `CadaFaultDeLaTaxonomiaMapeaAlCodigoDeDominioEsperado` — both the `600` and `602` `[InlineData]` cases failed (`certificado_fiscal_rechazado` instead of `certificado_fiscal_sin_autorizacion`) | Yes |
+| 35 **S** | Planted a throwaway file under `tests/Ways.Application.Tests/Fiscal/` containing a literal `-----BEGIN PRIVATE KEY-----` block | `SinMaterialDeClaveTests.NingunArchivoDeSrcOTestsEsOContieneMaterialDeClave` — `Assert.DoesNotContain` found the marker | Yes (planted file deleted) |
+| 36 | N/A — the D7 kill (signing with the raw `CreateSelfSigned` result instead of the PKCS#12 reload) is a **platform-conditional** mutant per design.md's own wording: it only fails on Windows (the dev/owner machine), not on this Linux/CI-shaped execution environment. `FirmanteCmsTests.LaFirmaVerificaContraElCertificadoDePrueba` proves the round trip signs and verifies correctly (green), and `CertificadoDePrueba`'s doc comment records the platform-conditionality honestly instead of fabricating a kill this environment cannot observe | — | — |
 
 ---
 
