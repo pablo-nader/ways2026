@@ -281,8 +281,9 @@ green + `judgment-day` clean round + PR merged.
   CERO hallazgos (contrato del gate verificado columna por columna; NO_RESP=15 consistente en los
   3 lugares; ServicioDeVentas.cs ausente del patch — guard del POS byte-idéntico; los 2 fixtures
   raw-SQL preservan semántica). Ronda limpia.
-- [ ] 1.52 [ ] Open PR #1 `feat/stage19a-slice1-schema-fiscal`, merge to `main` after a clean
+- [x] 1.52 [ ] Open PR #1 `feat/stage19a-slice1-schema-fiscal`, merge to `main` after a clean
   `judgment-day` round.
+  **DONE by the orchestrator**: PR #159, merged `b5b3b35` after the clean round (see 1.51).
 
 ### Work Unit Evidence
 
