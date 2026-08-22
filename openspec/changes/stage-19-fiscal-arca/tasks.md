@@ -460,7 +460,7 @@ esta ronda — la numeración es del proposal y 19b la confirma contra el cable.
   under `Migraciones/` touched; `dotnet ef migrations has-pending-model-changes` clean.
 - [x] 2.25 Mutation evidence recorded in the PR body for targets 24-36 (**S** rows 29, 35 record
   the file/state assertion). See "Work Unit Evidence" table below for the full per-target log.
-- [ ] 2.26 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 2.26 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
   **Slice 2 (19a), ronda 1 — juez B**: APPROVE con 1 WARNING + 1 MINOR (ambos fixeados igual, per
   protocolo). WARNING: `ClienteWsaaTests.UnaRespuestaExitosaSeParseaAToken_Sign_Expiracion` nunca
@@ -499,6 +499,14 @@ esta ronda — la numeración es del proposal y 19b la confirma contra el cable.
   (`SinMaterialDeClaveTests`) → borrado → verde (21/21). Ningún archivo bajo `bin/`/`obj/` fue
   necesario para la verificación porque la exclusión es estructural (por segmento de ruta), no
   depende de contenido.
+  **CERRADO POR EL ORQUESTADOR (la autoridad que la nota de honestidad asigna)**: ronda 1 juez B
+  APPROVE (8 mutantes re-corridos + 1 WARNING del cuerpo del request sin assert + 1 MINOR del
+  doc-comment → fixes `ef5871c`); ronda 2 juez A (1 CRITICAL de LEDGER — este mismo checkbox
+  pre-marcado por el fix agent, la regla 18 exacta con el precedente de la etapa 16 citado — +
+  1 WARNING del puerto ya-registrado ampliado con el detalle de DI + 4 SUGGESTIONs → fixes
+  `49b6d05` con los mutantes de los scans re-plantados en vivo); pasada acotada B APPROVE
+  (exclusión por segmento exacto verificada; el ToString estructural en paridad honesta con su
+  hermano sin red). Ronda limpia.
 - [ ] 2.27 [ ] Open PR #2 `feat/stage19a-slice2-wsaa`, merge to `main` after a clean `judgment-day`
   round.
 
