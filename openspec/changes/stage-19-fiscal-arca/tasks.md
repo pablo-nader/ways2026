@@ -213,8 +213,11 @@ green + `judgment-day` clean round + PR merged.
   deviation (`id_empresa NOT NULL`) vs. the catálogo shape. *(proposal.md decision 5)*
 - [x] 1.24 Modify `docs/10-modelo-de-datos.md` — scoping table, §4-adjacent subsections, "Estado
   (Etapa 19a)" header **OPENED** (closes at slice 5, regla 19).
-- [x] 1.25 [P] Domain unit: enum-order test — C# member index ↔ `pg_enum.enumsortorder`, both
-  enums. *(target 1)*
+- [x] 1.25 [P] **[S]** Domain unit: enum-order test — C# member index ↔ `pg_enum.enumsortorder`,
+  both enums. *(target 1)* **RE-CLASIFICADO [S] (judgment ronda 1, juez B)**: `Npgsql.MapEnum`
+  resuelve por NOMBRE y ningún código de este slice ordena/compara los enums, así que el mutante
+  de orden es equivalente en runtime — el test es una aserción estructural de catálogo (misma
+  clase que targets 3/21/23), nunca un runtime kill.
 - [x] 1.26 **[S]** Migration-source scan: zero `ALTER TYPE … ADD VALUE` in the file. *(target 2)*
 - [x] 1.27 [P] `pg_indexes` by-definition comparison — all 8 new index definitions (8
   sub-mutations, count = 8). *(target 3, design.md:147-161)*
@@ -284,7 +287,7 @@ green + `judgment-day` clean round + PR merged.
 | `dotnet build --no-incremental` | `src/Ways.Api`, `src/Ways.Infrastructure`, `tests/Ways.IntegrationTests`, `tests/Ways.Application.Tests` all built clean (0 warnings, 0 errors) after every production edit in this slice |
 | `dotnet ef migrations has-pending-model-changes` | Clean — confirmed via CLI (`No changes have been made to the model since the last migration.`) after the hand-edited migration, and re-confirmed at runtime via `Database.HasPendingModelChanges()` in target 22's Up/Up-after-Down legs |
 | Full suite (non-regression, task 1.48) | `Ways.Application.Tests`: **297/297 passed**. `Ways.IntegrationTests` (full suite, all pre-existing + new fiscal tests): **1674/1674 passed**, 0 failed, 11 m 46 s — real Postgres 17 Testcontainer. First run surfaced 16 real failures (`PendingModelChangesWarning` in 7 files whose own throwaway-DB `MapEnum` lists predate this slice's two new enums; a `42804` type mismatch in 14 more files with the same gap touching `comprobantes_venta`; a `42703 column "id_condicion_fiscal" does not exist` in `CostoCongeladoTests`/`CuentaCorrienteProveedorBackfillTests`, whose pre-Etapa-19a throwaway databases now diverge from the EF model's `empresas`/`puntos_venta` shape — the FIRST such divergence since Etapa 1). All fixed (21 test files touched: `MapEnum<ResultadoFiscal>`/`MapEnum<AmbienteFiscal>` added to every hand-curated builder; `empresas`/`puntos_venta` writes switched to raw SQL in the two pre-migration seeding helpers, mirroring the file's own established `comprobantes_venta`/`articulos` pattern for the exact same reason). Re-run clean per rule 17 (isolated re-run with the fix applied) |
-| Rollback boundary | `dotnet ef migrations remove` / `Down()` — both `CREATE TYPE`s (`ambiente_fiscal`, `resultado_fiscal`) drop cleanly (zero `ALTER TYPE ADD VALUE` anywhere in the file, confirmed by target 2's source scan); no operational row is modified except the three catalogues' `codigo_afip`, reverted by the exact value `Up()` set (doubly-guarded `WHERE codigo = … AND codigo_afip = …`); confirmed empirically by target 22's Up→Down→Up test against a real throwaway database |
+| Rollback boundary | `dotnet ef migrations remove` / `Down()` — both `CREATE TYPE`s (`ambiente_fiscal`, `resultado_fiscal`) drop cleanly (zero `ALTER TYPE ADD VALUE` anywhere in the file, confirmed by target 2's source scan); no operational row is modified except the three catalogues' `codigo_afip`, reverted by the exact value `Up()` set (doubly-guarded `WHERE codigo = … AND codigo_afip = …`); the Up→Down→Up cycle of target 22 confirms Down() reverts what Up() set on a fresh database; the second guard half (`AND codigo_afip = …`) is NOT independently discriminated by any test (no fixture carries a pre-existing divergent codigo_afip — imposible hoy, barato de garantizar para siempre, honestidad registrada en judgment ronda 1) |
 
 **Deviations registered (not silent):**
 1. Task 1.19's `design.md:172` line "two `HasPostgresEnum` registrations" does not match the codebase's actual, uniform convention (`WaysDbContext.cs:210-213`'s own comment): every enum in this project is registered exclusively via `npgsql.MapEnum<T>()` in `WaysDbContextFactory.cs`/`DependencyInjection.cs` (task 1.20), never via `HasPostgresEnum` in `OnModelCreating` — declaring it in both places would emit the `CREATE TYPE` twice. Followed the established convention instead of the design line.
@@ -293,6 +296,14 @@ green + `judgment-day` clean round + PR merged.
 4. `WaysApiFixture.cs`'s three `MapEnum` blocks (test host DI) needed the two new enum registrations too — not listed in design.md's file table (which only names production `WaysDbContextFactory.cs`/`DependencyInjection.cs`) but required for the shared integration-test host to boot against the new schema, same convention every prior stage's slice-1 migration followed for this fixture.
 
 ---
+
+### Nota vinculante para el Slice 5 (judgment Slice 1 ronda 1, juez B — WARNING)
+
+El residual de la desviación 2 (NO_RESP → codigo_afip 15): `ServicioDeCatalogosFiscales`
+(preexistente) expone hoy ese 15 en el listado de catálogo — inerte porque no existe camino de
+emisión todavía. **El slice 5 DEBE confirmar que su guard de rechazo de NO_RESP decide por
+`Codigo`, jamás por `CodigoAfip`** (el 15 es provisional hasta la verificación de 19b contra
+`FEParamGetCondicionIvaReceptor`).
 
 ## Slice 2: SobreSoap + TRA/CMS + ClienteWsaa + caché TA + certificado de prueba + fixtures WSAA (PR 2)
 
