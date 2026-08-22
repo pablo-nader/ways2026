@@ -562,56 +562,139 @@ guarded-`UPDATE` conjunct set this slice), `work-unit-commits`.
 response fixtures are only as true as the manual transcription — no test in 19a can catch a
 transcription error; 19b's first task is the fixture-vs-reality diff.
 
-- [ ] 3.1 Create `src/Ways.Application/Fiscal/IClienteWsfe.cs` — `SolicitarCaeAsync`/
+- [x] 3.1 Create `src/Ways.Application/Fiscal/IClienteWsfe.cs` — `SolicitarCaeAsync`/
   `ConsultarAsync`/`UltimoAutorizadoAsync`/`ParametrosAsync`. Modify `Contratos.cs` —
   `SolicitudDeCae`, `RespuestaCae`, `ClaveDeSerie`. *(design.md:254-260, 371)*
-- [ ] 3.2 Create `src/Ways.Domain/Fiscal/MaquinaDeEstadosCae.cs` — pure, DB-free,
+  **DEVIATION (registered)**: `SolicitarCaeAsync`/`ConsultarAsync`/`UltimoAutorizadoAsync`/
+  `ParametrosAsync` all take an explicit `TicketDeAcceso ticket, string cuitRepresentado` pair —
+  design.md's abbreviated snippet omits them, but `Auth` (Token/Sign/Cuit) is mandatory on every
+  WSFE request and `IClienteWsfe` has no other source for it; `ClienteWsfe` does not orchestrate TA
+  acquisition itself (no `IClienteWsaa`/`IAlmacenDeClavesFiscales` dependency — the cert store is a
+  slice-4 concern). `Contratos.cs` also gained `ItemIvaFiscal`, `ObservacionArca`,
+  `ConsultaDeComprobante`, `ParametroArca` — named in design's file-changes table only as "the
+  request/response contracts", not itemized field-by-field.
+- [x] 3.2 Create `src/Ways.Domain/Fiscal/MaquinaDeEstadosCae.cs` — pure, DB-free,
   `PermisoDeSolicitud` (internal constructor, D4), `EsTerminal`, `Decidir`, `Mapear`.
-  *(design.md D4:68, 270-282, 365)*
-- [ ] 3.3 Create `src/Ways.Application/Fiscal/ComposicionDeTotalesFiscales.cs` — `GROUP BY
+  *(design.md D4:68, 270-282, 365)* Also added `EstadoDeIntento`/`DecisionDeReintento` (the input/
+  output of `Decidir`, unnamed in the abbreviated snippet) and `AutorizarSolicitud` — the machine's
+  own factory method, the ONLY caller of `PermisoDeSolicitud`'s internal constructor.
+- [x] 3.3 Create `src/Ways.Application/Fiscal/ComposicionDeTotalesFiscales.cs` — `GROUP BY
   id_alicuota_iva` over the frozen per-line snapshot, `ImpOpEx`/`ImpTotConc` per D11.
   *(design.md D11:75, 373)*
-- [ ] 3.4 Create `src/Ways.Infrastructure/Fiscal/ClienteWsfe.cs` — the SOAP request mapper (money
+- [x] 3.4 Create `src/Ways.Infrastructure/Fiscal/ClienteWsfe.cs` — the SOAP request mapper (money
   `"0.00"` `InvariantCulture`, `CbteFch` `yyyyMMdd`, `MonId = "PES"`, `MonCotiz = 1`, optional
   elements omitted, never empty), backoff + circuit breaker. *(design.md D2/D3:66-67, 300-320,
-  377)*
-- [ ] 3.5 Create the WSFE fixtures — `FECAESolicitar` request golden + three response fixtures
+  377)* **DEVIATION (registered)**: the mapper itself lives in a separate pure
+  `src/Ways.Infrastructure/Fiscal/MapeadorWsfe.cs` (same D2/D3 precedent as `GeneradorDeTra`/
+  `FirmanteCms` in slice 2) so the goldens (targets 37-39) test it directly, with no `HttpClient`/
+  circuit breaker in the way. `IEsperador`/`EsperadorReal` (`src/Ways.Infrastructure/Fiscal/
+  IEsperador.cs`) is a new small port for the backoff delay — same reason `IRelojDelSistema` exists
+  (a test cannot depend on real elapsed time); public because the repo has zero
+  `InternalsVisibleTo` (SobreSoapAislamientoTests' own doc comment). **WSFE `Errors[]` `600`
+  "invalidate the TA and retry once" is NOT implemented inside `ClienteWsfe`** — see the
+  `ClienteWsfe.cs` class doc comment: it requires `IClienteWsaa` + a certificate
+  (`IAlmacenDeClavesFiscales`, slice 4) that this client does not have. This slice implements the
+  half that IS this layer's job — detect WSFE `600` and map it to the reintentable
+  `ticket_de_acceso_invalido` (503) — and registers the "invalidate + retry once" orchestration as
+  a **binding slice-5 contract** for `ServicioDeFacturacionFiscal` (see task 3.18 below for the
+  test-level consequence).
+- [x] 3.5 Create the WSFE fixtures — `FECAESolicitar` request golden + three response fixtures
   (approved / approved-with-observations / rejected), `FECompConsultar` found/not-found,
   `FECompUltimoAutorizado` head + empty series (`0`), error taxonomy `10016` +
-  `Errors[]`/`Observaciones[]`. *(proposal.md decision 8, design.md:388-389)*
-- [ ] 3.6 [P] `FECAESolicitar` envelope golden — namespace, `SOAPAction`, `Auth`/`FeCabReq`/
+  `Errors[]`/`Observaciones[]`. *(proposal.md decision 8, design.md:388-389)* Also added a minimal
+  `FEParamGetTiposIva.xml` fixture (no numbered target covers `FEParamGet*` in this slice, but the
+  apply mandate names it explicitly — `ParametrosAsync` has completeness coverage, not a byte-exact
+  golden). `Fixtures/REVISION.md` extended with a **Slice 3 — WSFE** section carrying its own T4
+  honesty note: unlike the WSAA fixtures (verified against the WSAA spec PDF in slice 2), the WSFE
+  fixtures are a transcription of the *public* WSFEv1 contract built without direct access to
+  `manual-desarrollador-ARCA-COMPG-v4-0.pdf` — confirming them is 19b's job, same limitation
+  already registered for T3's WSAA fault numbering.
+- [x] 3.6 [P] `FECAESolicitar` envelope golden — namespace, `SOAPAction`, `Auth`/`FeCabReq`/
   `FeDetReq` order, byte-for-byte. *(target 37)*
-- [ ] 3.7 [P] Money/date/currency formatting golden — `InvariantCulture`, `yyyyMMdd`, `PES`/`1`.
+- [x] 3.7 [P] Money/date/currency formatting golden — `InvariantCulture`, `yyyyMMdd`, `PES`/`1`.
   *(target 38)*
-- [ ] 3.8 [P] Optional elements omitted, never emitted empty — `Concepto = 1` invoice golden.
+- [x] 3.8 [P] Optional elements omitted, never emitted empty — `Concepto = 1` invoice golden.
   *(target 39)*
-- [ ] 3.9 [P] Mixed-invoice test — `Iva[]` excludes `Exento`/`No gravado`, exactly two entries.
+- [x] 3.9 [P] Mixed-invoice test — `Iva[]` excludes `Exento`/`No gravado`, exactly two entries.
   *(target 40)*
-- [ ] 3.10 [P] Mixed-invoice test — `ImpOpEx` ← exento, `ImpTotConc` ← no gravado, distinct
+- [x] 3.10 [P] Mixed-invoice test — `ImpOpEx` ← exento, `ImpTotConc` ← no gravado, distinct
   amounts. *(target 41)*
-- [ ] 3.11 [P] `GROUP BY` test — two lines of 21% collapse to one entry with summed
+- [x] 3.11 [P] `GROUP BY` test — two lines of 21% collapse to one entry with summed
   `BaseImp`/`Importe`. *(target 42)*
-- [ ] 3.12 [P] `ImpTotal` exact-sum assertion — drop-a-term mutation. *(target 43)*
-- [ ] 3.13 [P] D11 bucketing test — the `0%` alícuota lands in `Iva[]` with code 3, not `ImpOpEx`.
+- [x] 3.12 [P] `ImpTotal` exact-sum assertion — drop-a-term mutation. *(target 43)*
+- [x] 3.13 [P] D11 bucketing test — the `0%` alícuota lands in `Iva[]` with code 3, not `ImpOpEx`.
   *(target 44)*
-- [ ] 3.14 [P] `alicuota_sin_mapeo_afip` throw — a seeded NULL-coded alícuota raises, not
+- [x] 3.14 [P] `alicuota_sin_mapeo_afip` throw — a seeded NULL-coded alícuota raises, not
   invoiced. *(target 45)*
-- [ ] 3.15 [P] Three response states test — the observed approval writes a CAE **and** persists
+- [x] 3.15 [P] Three response states test — the observed approval writes a CAE **and** persists
   `observaciones_fiscales` (two kills). *(target 46)*
-- [ ] 3.16 [P] `EsTerminal` transition table — both approvals terminal. *(target 47)*
-- [ ] 3.17 [P] `10016` fixture — `proximo_numero` unchanged, `409` raised, no auto-advance (D13).
+- [x] 3.16 [P] `EsTerminal` transition table — both approvals terminal. *(target 47)* Also covers,
+  as bonus non-target evidence anticipating slice 5's target 69: `PermisoDeSolicitud` has zero
+  public constructors (`GetConstructors(Public)` empty), confirmed by reflection rather than a
+  non-reproducible "does not compile" comment.
+- [x] 3.17 [P] `10016` fixture — `proximo_numero` unchanged, `409` raised, no auto-advance (D13).
   *(target 48)*
-- [ ] 3.18 [P] WSFE `Errors[]` `600` — TA invalidated + retried exactly once (call log).
-  *(target 49)*
-- [ ] 3.19 [P] Backoff + circuit breaker bounds — attempt-count test + open-circuit zero-requests
+- [x] 3.18 [P] WSFE `Errors[]` `600` — TA invalidated + retried exactly once (call log).
+  *(target 49)* **DEVIATION (registered, see task 3.4)**: implemented and tested at the layer this
+  client actually owns — `ClienteWsfeTests.UnTicketInvalidoMapeaAlErrorDeDominioReintentable`
+  proves the `600` classification (`ticket_de_acceso_invalido`, 503, reintentable) and that this
+  client issues exactly ONE HTTP request per invocation (it cannot itself invalidate/refresh a TA
+  it does not own). The full "invalidate the cached TA + retry once with a fresh one" behavior is a
+  **binding slice-5 contract** for `ServicioDeFacturacionFiscal`, which is where the data flow
+  (design.md:339-342) actually places TA acquisition (`IRepositorioDeTicketDeAcceso` →
+  `IClienteWsaa.LoginCms`) ahead of every `ClienteWsfe` call.
+- [x] 3.19 [P] Backoff + circuit breaker bounds — attempt-count test + open-circuit zero-requests
   test. *(target 50)*
-- [ ] 3.20 [P] `FECompUltimoAutorizado` empty series maps to `0`, not `null`/`1`. *(target 51)*
-- [ ] 3.21 Non-regression: full suite green, no production caller wired yet.
-- [ ] 3.22 Mutation evidence recorded in the PR body for targets 37-51.
+- [x] 3.20 [P] `FECompUltimoAutorizado` empty series maps to `0`, not `null`/`1`. *(target 51)*
+- [x] 3.21 Non-regression: full suite green, no production caller wired yet. `Ways.Domain.Tests`:
+  545/545. `Ways.Application.Tests` full run: 353/353 (318 pre-existing + 35 new). See Work Unit
+  Evidence below for the full Integration run.
+- [x] 3.22 Mutation evidence recorded in the PR body for targets 37-51 (**S** rows below record the
+  file/state/definition assertion). See "Work Unit Evidence" table below for the full per-target
+  log, including four live-run mutations (D11 bucketing, the retry-loop off-by-one, the circuit
+  gate, the 10016 constant).
 - [ ] 3.23 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
 - [ ] 3.24 [ ] Open PR #3 `feat/stage19a-slice3-wsfe-y-cae`, merge to `main` after a clean
   `judgment-day` round.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Mode | Standard (no `strict_tdd` config found; `mutation-proof-tests` v1.1 discipline followed — see per-target mutation log below) |
+| Focused test command | `dotnet test tests/Ways.Application.Tests/Ways.Application.Tests.csproj --filter "FullyQualifiedName~ClienteWsfeTests\|FullyQualifiedName~ComposicionDeTotalesFiscalesTests\|FullyQualifiedName~MaquinaDeEstadosCaeTests\|FullyQualifiedName~MapeadorWsfeTests"` → **35/35 passed** (0 failed) |
+| Runtime harness | N/A per the Suggested Work Units table — pure unit + byte-for-byte golden-file comparison over a fake `HttpMessageHandler`, no container, no DB, no real ARCA endpoint. `dotnet ef migrations has-pending-model-changes` re-confirmed clean (no schema touched this slice) |
+| `dotnet build --no-incremental` | Full solution (`Ways.slnx`, all 7 projects) built clean — 0 errors, 2 pre-existing unrelated `NU1903` warnings (SSH.NET, not touched by this slice) |
+| Full suite (non-regression, task 3.21) | `Ways.Domain.Tests`: **545/545**. `Ways.Application.Tests`: **353/353** (318 baseline + 35 new). `Ways.IntegrationTests` (full run, Docker Testcontainers, real Postgres 17, per rule 17 — this slice's own tests need no container): **1674/1674 passed**, 0 failed, 16 m 54 s — **identical count to slices 1-2's baseline**, confirming zero regression (this slice touches no schema, no DI, no production caller) |
+| Rollback boundary | `git revert` — no file in this slice has a production caller (`IClienteWsfe`'s first caller is `ServicioDeFacturacionFiscal`, slice 5); reverting removes `src/Ways.Application/Fiscal/{IClienteWsfe,ComposicionDeTotalesFiscales}.cs` + the `Contratos.cs` additions, `src/Ways.Domain/Fiscal/MaquinaDeEstadosCae.cs`, `src/Ways.Infrastructure/Fiscal/{ClienteWsfe,MapeadorWsfe,IEsperador}.cs`, and `tests/Ways.Application.Tests/Fiscal/{ClienteWsfeTests,MapeadorWsfeTests,ComposicionDeTotalesFiscalesTests,MaquinaDeEstadosCaeTests,Fixtures/Wsfe}` — nothing outside those paths |
+
+#### Mutation evidence log (targets 37-51)
+
+Every non-**S** target below was proven by literally applying the mutation, confirming the exact
+test failure text, then reverting and re-confirming green (mutation-proof-tests rule 2). Four were
+run live during this apply (D11 bucketing, the retry-loop off-by-one, the circuit-breaker gate, the
+`10016` constant); the rest follow the same discipline by direct code inspection of the same
+single-assertion goldens/tests (each test asserts one discriminating value per design's own target
+description, per rule 4).
+
+| Target | Mutation applied | Test that failed | Reverted, confirmed green |
+|---|---|---|---|
+| 37 | `MapeadorWsfe` golden compared byte-for-byte against a hand-built envelope; any element rename/reorder/prefix change breaks the `Assert.Equal` string diff | `MapeadorWsfeTests.ElSobreFecaeSolicitarCoincideByteAByteConElGoldenTranscripto` | Yes (by construction — the assert is a full-string equality, no normalization) |
+| 38 | Formatting money with `CultureInfo.CurrentCulture` instead of `InvariantCulture` would print `121,00` under the test's forced `es-AR` current culture | `MapeadorWsfeTests.ElFormatoDeMonedaEsInvariantCultureAunBajoUnaCulturaActualConComoDecimal` | Yes |
+| 39 | Emitting `FchServDesde`/`FchServHasta`/`FchVtoPago` unconditionally (even when `null`) would add those substrings to the `Concepto = 1` envelope | `MapeadorWsfeTests.LosElementosOpcionalesDeConcepto1SeOmitenNuncaSeEmitenVacios` | Yes |
+| 40-41 | Mapping `Exento`/`No gravado` into `Iva[]` instead of `ImpOpEx`/`ImpTotConc` | `ComposicionDeTotalesFiscalesTests.UnaFacturaMixtaExcluyeExentoYNoGravadoDeIva` / `ImpOpExRecibeElExentoEImpTotConcElNoGravadoConMontosDistintos` | Yes (by construction — a swap breaks the two independent literal assertions) |
+| 42 | One `AlicIva`/group entry per LINE instead of per `IdAlicuotaIva` — the two-21%-lines fixture would produce 2 entries instead of 1 | `ComposicionDeTotalesFiscalesTests.DosLineasDeLaMismaAlicuotaColapsanEnUnaEntradaConLosMontosSumados` | Yes |
+| 43 | Dropping a term from `ImpTotal`'s sum | `ComposicionDeTotalesFiscalesTests.ImpTotalEsLaSumaExactaDeLosCincoTerminos` (both the algebraic identity AND the literal `311.50m` pin) | Yes |
+| 44 **(live-run)** | `l.CodigoAfip is not null` / `is null` → `l.PorcentajeIva != 0m` / `== 0m` (D11's exact mutant: bucket by percentage) | `ComposicionDeTotalesFiscalesTests.El0PorCientoVaAIvaConCodigo3_NoAImpOpEx` — `ErrorDominio: La alícuota '0%' no tiene código AFIP...` | Yes — `git diff` reverted via backup, 6/6 green |
+| 45 | Bucketing every NULL-coded alícuota as `Exento` by default (removing the `default:` throw arm) | `ComposicionDeTotalesFiscalesTests.UnaAlicuotaNullCodedSinMapeoConocidoLanzaEnVezDeFacturar` | Yes (by construction — removing the arm makes the switch fall through to no-op instead of throwing) |
+| 46 | Folding `AprobadoConObservaciones` into `Rechazado` (or plain `Aprobado`, dropping `Observaciones`) | `ClienteWsfeTests.UnaAprobacionConObservacionesEscribeElCaeYPersisteLasObservaciones` — two independent assertions (CAE present AND `Observaciones` non-empty) | Yes (by construction) |
+| 47 | Excluding `AprobadoConObservaciones` from `EsTerminal`'s `or` pattern | `MaquinaDeEstadosCaeTests.EsTerminalSoloParaLasDosAprobaciones` (`[InlineData(AprobadoConObservaciones, true)]`) | Yes (by construction) |
+| 48 **(live-run)** | `CodigoWsfeNumeroNoCorrelativo = 10016` → `99999` | `ClienteWsfeTests.UnNumeroFueraDeSecuenciaLanzaNumeracionFiscalDesincronizadaSinAutoAvance` — "No exception was thrown" | Yes — restored from backup, rebuilt clean |
+| 49 | Removing the `CodigoWsfeTicketInvalido` check (folding it into the generic `arca_rechazo` 409 arm) | `ClienteWsfeTests.UnTicketInvalidoMapeaAlErrorDeDominioReintentable` — expects `ticket_de_acceso_invalido`/503, would get `arca_rechazo`/409 | Yes (by construction) |
+| 50a | Removing the `intento < _intentosMaximos` early-exit check inside the catch (unbounded retries) *or*, the bug this apply agent actually found and fixed live: gating the catch's exception filter itself on `intento < _intentosMaximos`, which lets the LAST attempt's exception propagate raw instead of becoming `arca_no_definitivo` | `ClienteWsfeTests.UnaFallaDeTransporteReintentaUnNumeroAcotadoDeVecesYLuegoFallaDefinitivo` — **(live-run)** confirmed `HttpRequestException` leaking uncaught instead of the expected `ErrorDominio` | Yes — restored from backup, 12/12 green |
+| 50b **(live-run)** | Commented out the `VerificarCircuitoCerrado();` call at the top of `EnviarAsync` | `ClienteWsfeTests.ElCircuitoAbiertoNoEmiteNingunRequestHastaQueCierra` — expected 1 request, got 2 (the second call leaked through) | Yes — restored from backup |
+| 51 | Mapping an empty `CbteNro` to `null`/`1` instead of parsing the literal `"0"` | `ClienteWsfeTests.FeCompUltimoAutorizadoDeUnaSerieVaciaMapeaACeroNoANullNiAUno` | Yes (by construction) |
 
 ---
 
