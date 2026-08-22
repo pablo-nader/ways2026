@@ -653,7 +653,7 @@ transcription error; 19b's first task is the fixture-vs-reality diff.
   file/state/definition assertion). See "Work Unit Evidence" table below for the full per-target
   log, including four live-run mutations (D11 bucketing, the retry-loop off-by-one, the circuit
   gate, the 10016 constant).
-- [ ] 3.23 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 3.23 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
   **judgment-day Slice 3 (19a), ronda 1 — juez B (1 CRITICAL + 1 MAJOR + 1 WARNING), fixes
   aplicados por el jd-fix-agent** (checkbox sin marcar hasta que el re-judge confirme ronda
@@ -705,6 +705,15 @@ transcription error; 19b's first task is the fixture-vs-reality diff.
     `permiso.Numero == s.CbteDesde` / `permiso.IdComprobante == comprobante` — hoy el gate es
     puramente estructural por tipo (D4), y el doc-comment de `IClienteWsfe` ya lo declara diferido
     a esta slice.
+  **CERRADO POR EL ORQUESTADOR**: ronda 1 juez B REJECT (el CRITICAL del record STRUCT — la
+  puerta trasera del ctor implícito insuprimible, PROBADA con proyecto externo; la garantía D4
+  era falsa para el tipo elegido → sealed record class con el assert !IsValueType, fixes
+  `30de47c`) → re-ronda B APPROVE (D4 ahora estructuralmente irrepresentable, verificado con su
+  propia sonda). Ronda 2 juez A REJECT (el CRITICAL del orden ImpIVA/ImpTrib INVERTIDO contra la
+  transcripción in-repo del manual — mapper+golden+record auto-consistentes en el error; un XSD
+  de secuencia rechazaría todo request en 19b → fixes `4bdcfd3` con la reconciliación campo por
+  campo + la nota T4 honesta + la cláusula terminal del 600) → pasada acotada B APPROVE
+  (reconciliación completa independiente) + re-ronda A APPROVE (cero hallazgos). Ronda limpia.
 - [ ] 3.24 [ ] Open PR #3 `feat/stage19a-slice3-wsfe-y-cae`, merge to `main` after a clean
   `judgment-day` round.
 
