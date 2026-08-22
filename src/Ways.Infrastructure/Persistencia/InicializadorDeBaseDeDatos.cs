@@ -31,26 +31,48 @@ public class InicializadorDeBaseDeDatos(
         (RolConocido.Vendedor,   "vendedor",   "Opera el punto de venta.")
     ];
 
-    /// <summary>Doc 10 §1. <c>CodigoAfip</c> queda <c>NULL</c> a propósito: los códigos AFIP
-    /// reales son un requisito de la facturación electrónica, todavía fuera de esta etapa —
-    /// completar acá con un valor inventado sería peor que dejarlo pendiente y visible.</summary>
-    private static readonly (string Codigo, string Nombre)[] CondicionesFiscalesBase =
+    /// <summary>Doc 10 §1. <c>CodigoAfip</c> queda <c>NULL</c> a propósito para las condiciones
+    /// que no aplican todavía: los códigos AFIP reales fueron un requisito de la facturación
+    /// electrónica, fuera de alcance hasta esta etapa — completar acá con un valor inventado
+    /// sería peor que dejarlo pendiente y visible (<c>InicializadorDeBaseDeDatos.cs:34-36</c>
+    /// histórico).
+    ///
+    /// stage-19a-slice1 (proposal.md §G, decisión 11, DS2 <c>condiciones_fiscales</c> / RG 5616
+    /// <c>CondicionIVAReceptorId</c>): net 1b del doble net — este seed es quien lo puebla en una
+    /// base FRESCA; el data statement de la migración (net 1) cierra el mismo hueco en una base
+    /// YA migrada. <c>RI</c>→1, <c>EXENTO</c>→4, <c>CF</c>→5, <c>MONOTRIBUTO</c>→6.
+    /// <c>NO_RESP</c> — LA ÚNICA INCERTIDUMBRE FLAGGEADA del proposal (decisión 11: "mapped to
+    /// the nearest value", sin dar el número): mapeado acá a <c>15</c> (RG 5616 "IVA No
+    /// Alcanzado"), la condición real de ARCA más cercana a un receptor sin categorizar — DESVÍO
+    /// REGISTRADO, no silencioso, y sin efecto de emisión: la capa de aplicación (slice 5)
+    /// rechaza un receptor <c>NO_RESP</c> por su <c>Codigo</c> con <c>409
+    /// condicion_fiscal_receptor_no_mapeada</c> ANTES de leer este <c>CodigoAfip</c>
+    /// (<c>ResolverTipoFiscalAsync</c>, spec comprobante-fiscal). Se confirma contra
+    /// <c>FEParamGetCondicionIvaReceptor</c> en 19b.</summary>
+    private static readonly (string Codigo, string Nombre, short? CodigoAfip)[] CondicionesFiscalesBase =
     [
-        ("RI", "Responsable Inscripto"),
-        ("MONOTRIBUTO", "Monotributista"),
-        ("EXENTO", "Exento"),
-        ("CF", "Consumidor Final"),
-        ("NO_RESP", "No Responsable")
+        ("RI", "Responsable Inscripto", 1),
+        ("MONOTRIBUTO", "Monotributista", 6),
+        ("EXENTO", "Exento", 4),
+        ("CF", "Consumidor Final", 5),
+        ("NO_RESP", "No Responsable", 15)
     ];
 
-    private static readonly (string Nombre, decimal Porcentaje)[] AlicuotasIvaBase =
+    /// <summary>stage-19a-slice1 (proposal.md §G, decisión 11, DS3 <c>alicuotas_iva</c> /
+    /// <c>FEParamGetTiposIva</c>): net 1b del doble net, mismo criterio que
+    /// <see cref="CondicionesFiscalesBase"/>. <c>0%</c>→3, <c>10.5%</c>→4, <c>21%</c>→5,
+    /// <c>27%</c>→6. <c>Exento</c>/<c>No gravado</c> quedan <c>CodigoAfip = null</c> A
+    /// PROPÓSITO — no son alícuotas (van a <c>ImpOpEx</c>/<c>ImpTotConc</c>, jamás al array
+    /// <c>Iva[]</c>): mapearlas produciría facturas aritméticamente válidas y legalmente
+    /// equivocadas.</summary>
+    private static readonly (string Nombre, decimal Porcentaje, short? CodigoAfip)[] AlicuotasIvaBase =
     [
-        ("21%", 21.00m),
-        ("10.5%", 10.50m),
-        ("27%", 27.00m),
-        ("0%", 0.00m),
-        ("Exento", 0.00m),
-        ("No gravado", 0.00m)
+        ("21%", 21.00m, 5),
+        ("10.5%", 10.50m, 4),
+        ("27%", 27.00m, 6),
+        ("0%", 0.00m, 3),
+        ("Exento", 0.00m, null),
+        ("No gravado", 0.00m, null)
     ];
 
     /// <summary>Doc 10 §1: "FA, FB, FC, NCA, NCB, NCC, NDA…, TX, NCX, PRE, RC" (lado venta) más
@@ -85,32 +107,36 @@ public class InicializadorDeBaseDeDatos(
     /// mismo mecanismo que <c>RC</c>/<c>C-*</c>: acá para una base nueva y, de forma idempotente,
     /// dentro de la migración <c>RemitosEtapa17</c> para una base ya migrada — ese seed corre
     /// solo cuando la tabla está vacía.</summary>
-    private static readonly (ClaseComprobante Clase, string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock, bool Activo)[] TiposComprobanteBase =
+    // stage-19a-slice1 (proposal.md §G, DS1 tipos_comprobante — 7 filas): net 1b del doble net.
+    // FA=1, NDA=2, NCA=3, NCB=8, FC=11, NCC=13, FB=6 — CERO filas insertadas/activadas/
+    // desactivadas, solo el campo nuevo. TX/NCX/PRE/RC/TXR y los tres C-* de compra quedan
+    // CodigoAfip = null (no son fiscales, decisión 9: el guard del POS jamás los deja emitir).
+    private static readonly (ClaseComprobante Clase, string Codigo, string Nombre, char? Letra, short Signo, bool DiscriminaIva, bool EsFiscal, bool AfectaStock, bool Activo, short? CodigoAfip)[] TiposComprobanteBase =
     [
-        (ClaseComprobante.Venta, "FA", "Factura A", 'A', 1, true, true, true, true),
-        (ClaseComprobante.Venta, "FB", "Factura B", 'B', 1, false, true, true, true),
-        (ClaseComprobante.Venta, "FC", "Factura C", 'C', 1, false, true, true, true),
-        (ClaseComprobante.Venta, "NCA", "Nota de Crédito A", 'A', -1, true, true, true, true),
-        (ClaseComprobante.Venta, "NCB", "Nota de Crédito B", 'B', -1, false, true, true, true),
-        (ClaseComprobante.Venta, "NCC", "Nota de Crédito C", 'C', -1, false, true, true, true),
-        (ClaseComprobante.Venta, "NDA", "Nota de Débito A", 'A', 1, true, true, true, true),
-        (ClaseComprobante.Venta, "TX", "Ticket X", 'X', 1, false, false, true, true),
-        (ClaseComprobante.Venta, "NCX", "Nota de Crédito X", 'X', -1, false, false, true, true),
+        (ClaseComprobante.Venta, "FA", "Factura A", 'A', 1, true, true, true, true, 1),
+        (ClaseComprobante.Venta, "FB", "Factura B", 'B', 1, false, true, true, true, 6),
+        (ClaseComprobante.Venta, "FC", "Factura C", 'C', 1, false, true, true, true, 11),
+        (ClaseComprobante.Venta, "NCA", "Nota de Crédito A", 'A', -1, true, true, true, true, 3),
+        (ClaseComprobante.Venta, "NCB", "Nota de Crédito B", 'B', -1, false, true, true, true, 8),
+        (ClaseComprobante.Venta, "NCC", "Nota de Crédito C", 'C', -1, false, true, true, true, 13),
+        (ClaseComprobante.Venta, "NDA", "Nota de Débito A", 'A', 1, true, true, true, true, 2),
+        (ClaseComprobante.Venta, "TX", "Ticket X", 'X', 1, false, false, true, true, null),
+        (ClaseComprobante.Venta, "NCX", "Nota de Crédito X", 'X', -1, false, false, true, true, null),
         // stage-17: PRE nace desactivado en el seed (net 1b) — el hallazgo del "PRE latente"
         // (explore.md): un tipo activo, afecta_stock=false, colaba como venta fantasma.
-        (ClaseComprobante.Venta, "PRE", "Presupuesto", null, 1, false, false, false, false),
-        (ClaseComprobante.Venta, "RC", "Recibo de cobranza", null, 1, false, false, false, true),
+        (ClaseComprobante.Venta, "PRE", "Presupuesto", null, 1, false, false, false, false, null),
+        (ClaseComprobante.Venta, "RC", "Recibo de cobranza", null, 1, false, false, false, true, null),
         // stage-17-presupuestos-y-remitos (proposal §I, decisión 2/7 del explore): comprobante
         // consolidado de facturación de remitos, sin items por construcción — nace ACTIVO pero
         // INEMITIBLE por mostrador (afecta_stock=false, mismo guard del resolver que bloquea PRE).
-        (ClaseComprobante.Venta, "TXR", "Ticket X por remitos", 'X', 1, false, false, false, true),
+        (ClaseComprobante.Venta, "TXR", "Ticket X por remitos", 'X', 1, false, false, false, true, null),
 
         // stage-8-compras-transferencias-inventario (design decisión 12/7 del proposal): solo
         // tres tipos — notas de crédito de proveedor están fuera de alcance (anulación es la
         // única reversión). es_fiscal=false: nunca EMITIMOS la factura del proveedor.
-        (ClaseComprobante.Compra, "C-FA", "Factura A de compra", 'A', 1, true, false, true, true),
-        (ClaseComprobante.Compra, "C-FB", "Factura B de compra", 'B', 1, false, false, true, true),
-        (ClaseComprobante.Compra, "C-FC", "Factura C de compra", 'C', 1, false, false, true, true)
+        (ClaseComprobante.Compra, "C-FA", "Factura A de compra", 'A', 1, true, false, true, true, null),
+        (ClaseComprobante.Compra, "C-FB", "Factura B de compra", 'B', 1, false, false, true, true, null),
+        (ClaseComprobante.Compra, "C-FC", "Factura C de compra", 'C', 1, false, false, true, true, null)
     ];
 
     public async Task EjecutarAsync(SemillaRoot semilla, CancellationToken ct = default)
@@ -435,6 +461,7 @@ public class InicializadorDeBaseDeDatos(
             {
                 Codigo = c.Codigo,
                 Nombre = c.Nombre,
+                CodigoAfip = c.CodigoAfip,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             }));
@@ -448,6 +475,7 @@ public class InicializadorDeBaseDeDatos(
             {
                 Nombre = a.Nombre,
                 Porcentaje = a.Porcentaje,
+                CodigoAfip = a.CodigoAfip,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             }));
@@ -468,6 +496,7 @@ public class InicializadorDeBaseDeDatos(
                 EsFiscal = t.EsFiscal,
                 AfectaStock = t.AfectaStock,
                 Activo = t.Activo,
+                CodigoAfip = t.CodigoAfip,
                 CreatedAt = ahora,
                 UpdatedAt = ahora
             }));

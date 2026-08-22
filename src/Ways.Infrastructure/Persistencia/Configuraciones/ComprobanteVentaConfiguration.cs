@@ -6,6 +6,10 @@ using Ways.Domain.Clientes;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
+// stage-19a: NO se agrega `using Ways.Domain.Fiscal;` a propósito — `ResultadoFiscal` (la
+// propiedad de ComprobanteVenta) y `ResultadoFiscal` (el enum) comparten nombre; el tipo se
+// referencia siempre calificado más abajo, mismo criterio que Ways.Domain.Auditoria.Auditoria
+// en WaysDbContext.cs.
 
 namespace Ways.Infrastructure.Persistencia.Configuraciones;
 
@@ -22,6 +26,18 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
         builder.ToTable("comprobantes_venta", t =>
         {
             t.HasCheckConstraint("ck_comprobantes_venta_numero_positivo", "numero > 0");
+
+            // stage-19a (proposal.md §D, 4 conjuntos): o las cuatro columnas fiscales están
+            // NULL (100% del tráfico no fiscal), o resultado_fiscal está seteado con cae/
+            // cae_vencimiento llegando JUNTOS y presentes SII resultado_fiscal es una de las dos
+            // aprobaciones. Valida trivialmente en toda fila existente (las cuatro NULL).
+            t.HasCheckConstraint(
+                "ck_comprobantes_venta_fiscal_coherente",
+                "(resultado_fiscal IS NULL AND cae IS NULL AND cae_vencimiento IS NULL AND observaciones_fiscales IS NULL) " +
+                "OR (resultado_fiscal IS NOT NULL AND ((cae IS NULL) = (cae_vencimiento IS NULL)) " +
+                "AND ((resultado_fiscal IN ('aprobado','aprobado_con_observaciones')) = (cae IS NOT NULL)))");
+
+            t.HasCheckConstraint("ck_comprobantes_venta_cae_digitos", "cae IS NULL OR cae ~ '^[0-9]{14}$'");
         });
 
         builder.HasKey(c => c.Id).HasName("pk_comprobantes_venta");
@@ -76,6 +92,16 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             .HasColumnType("estado_comprobante")
             .IsRequired();
 
+        // stage-19a (proposal.md §D): aditivas, NULLABLE — resultado_fiscal NULL significa "no
+        // es un comprobante fiscal", el 100% del tráfico TX/NCX/TXR/RC de siempre.
+        builder.Property(c => c.Cae).HasColumnName("cae").HasMaxLength(14);
+        builder.Property(c => c.CaeVencimiento).HasColumnName("cae_vencimiento").HasColumnType("date");
+        builder.Property(c => c.ResultadoFiscal).HasColumnName("resultado_fiscal").HasColumnType("resultado_fiscal");
+
+        // jsonb — precedente Auditoria.cs:40-45/AuditoriaConfiguration.cs:42-43: string ya
+        // serializado, nunca la respuesta cruda de ARCA (persistiría Token/Sign sin cifrado).
+        builder.Property(c => c.ObservacionesFiscales).HasColumnName("observaciones_fiscales").HasColumnType("jsonb");
+
         builder.Property(c => c.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(c => c.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(c => c.DeletedAt).HasColumnName("deleted_at");
@@ -117,6 +143,14 @@ public class ComprobanteVentaConfiguration : IEntityTypeConfiguration<Comprobant
             .HasDatabaseName("ux_comprobantes_venta_presupuesto_origen")
             .IsUnique()
             .HasFilter("id_presupuesto_origen IS NOT NULL");
+
+        // stage-19a (proposal.md §D, index 3): PARCIAL sobre un estado vacío en el 100% de las
+        // filas existentes — sin esto, resolver los 'pendiente' hace table scan sobre la tabla
+        // más caliente del sistema. Su consumidor (la reconciliación/reintento) llega en slice 5
+        // — criterio anti-especulación de la etapa 13.
+        builder.HasIndex(c => new { c.IdPuntoVenta, c.IdTenant })
+            .HasDatabaseName("ix_comprobantes_venta_fiscal_pendientes")
+            .HasFilter("resultado_fiscal = 'pendiente'::resultado_fiscal");
 
         builder.HasOne<Tenant>()
             .WithMany()

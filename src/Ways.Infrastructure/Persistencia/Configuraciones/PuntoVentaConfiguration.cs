@@ -8,7 +8,13 @@ public class PuntoVentaConfiguration : IEntityTypeConfiguration<PuntoVenta>
 {
     public void Configure(EntityTypeBuilder<PuntoVenta> builder)
     {
-        builder.ToTable("puntos_venta");
+        builder.ToTable("puntos_venta", t =>
+        {
+            // stage-19a (proposal.md §C): ARCA's PtoVta es de 5 dígitos.
+            t.HasCheckConstraint(
+                "ck_puntos_venta_numero_fiscal_rango",
+                "numero_fiscal IS NULL OR (numero_fiscal BETWEEN 1 AND 99999)");
+        });
 
         builder.HasKey(p => p.Id);
 
@@ -41,6 +47,10 @@ public class PuntoVentaConfiguration : IEntityTypeConfiguration<PuntoVenta>
         builder.Property(p => p.Facebook).HasColumnName("facebook").HasMaxLength(150);
         builder.Property(p => p.Web).HasColumnName("web").HasMaxLength(255);
 
+        // stage-19a (proposal.md §C, decisión 2): NULLABLE — un punto de venta que nunca
+        // factura fiscalmente sigue siendo legal para siempre.
+        builder.Property(p => p.NumeroFiscal).HasColumnName("numero_fiscal");
+
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(p => p.UpdatedAt).HasColumnName("updated_at").IsRequired();
         builder.Property(p => p.DeletedAt).HasColumnName("deleted_at");
@@ -60,5 +70,13 @@ public class PuntoVentaConfiguration : IEntityTypeConfiguration<PuntoVenta>
 
         builder.HasIndex(p => p.IdTenant).HasDatabaseName("ix_puntos_venta_tenant");
         builder.HasIndex(p => new { p.IdEmpresa, p.IdTenant }).HasDatabaseName("ix_puntos_venta_empresa");
+
+        // stage-19a (proposal.md §C, decisión 2): UNIQUE PARCIAL, portante — vuelve inyectivo el
+        // mapa de la serie de ARCA (PtoVta, CbteTipo) a (id_punto_venta, codigo_afip). Parcial
+        // porque la mayoría de los puntos de venta no tienen número fiscal.
+        builder.HasIndex(p => new { p.IdTenant, p.IdEmpresa, p.NumeroFiscal })
+            .HasDatabaseName("ux_puntos_venta_numero_fiscal")
+            .IsUnique()
+            .HasFilter("numero_fiscal IS NOT NULL");
     }
 }
