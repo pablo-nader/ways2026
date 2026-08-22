@@ -59,7 +59,7 @@ empresas (
     razon_social  citext NOT NULL,
     nombre_fantasia citext NULL,
     cuit          varchar(13) NULL,
-    -- condición IVA, domicilio fiscal, etc. cuando toque facturación electrónica
+    id_condicion_fiscal integer NULL REFERENCES condiciones_fiscales,  -- Etapa 19a, FK simple
     UNIQUE (id_empresa, id_tenant)          -- habilita FKs compuestas (ver Aislamiento)
 );
 
@@ -69,10 +69,26 @@ puntos_venta (
     id_empresa     integer NOT NULL,
     nombre         citext NOT NULL,
     domicilio, horario, whatsapp, instagram, facebook, web, ...,   -- lo que ya define el doc 03
+    numero_fiscal  integer NULL,             -- Etapa 19a: PtoVta ARCA, UNIQUE por empresa (1..99999)
     FOREIGN KEY (id_empresa, id_tenant) REFERENCES empresas (id_empresa, id_tenant),
     UNIQUE (id_punto_venta, id_tenant)
 );
 ```
+
+> **Estado (Etapa 19a, slice 1 — schema fiscal, apply en curso):** `empresas.id_condicion_fiscal`
+> y `puntos_venta.numero_fiscal` implementadas por la migración `FiscalArcaEtapa19a` — ambas
+> `NULL` a propósito, sin default honesto (`openspec/changes/stage-19-fiscal-arca/proposal.md`
+> §B/§C). `numero_fiscal` es `UNIQUE (id_tenant, id_empresa, numero_fiscal)` PARCIAL — vuelve
+> inyectivo el mapa de la serie de ARCA `(PtoVta, CbteTipo)` a `(id_punto_venta, codigo_afip)`.
+>
+> Esta etapa también agrega `certificados_fiscales`, una **DESVIACIÓN DOCUMENTADA** de la forma
+> de catálogo de esta sección: mientras un catálogo de tenant lleva `id_empresa NULL` = *"vale
+> para todas las empresas del tenant"* (ver la regla de scoping más abajo), `certificados_fiscales`
+> lleva **`id_empresa NOT NULL`** — un certificado X.509 pertenece a UN CUIT (una empresa) y
+> nunca se comparte entre empresas del mismo tenant, misma forma exacta que `puntos_venta`
+> (scoping operativa: `id_tenant` + `id_empresa`/`id_punto_venta` no-nulos). `numeraciones_fiscales`
+> es scoping **operativa** estándar (`id_tenant` + `id_punto_venta`), sin desvío — mismo criterio
+> que `numeraciones_comprobante`.
 
 ## Regla de scoping por tipo de tabla
 

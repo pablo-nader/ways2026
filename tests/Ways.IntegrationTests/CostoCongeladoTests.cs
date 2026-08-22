@@ -534,6 +534,8 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
                     npgsql.MapEnum<TipoMovimientoTesoreria>("tipo_movimiento_tesoreria");
                     npgsql.MapEnum<CategoriaGasto>("categoria_gasto");
                     npgsql.MapEnum<EstadoCompra>("estado_compra");
+                    npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
+                    npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
                 })
                 .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning))
                 .Options;
@@ -648,16 +650,40 @@ public class CostoCongeladoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         db.Tenants.Add(tenant);
         await db.SaveChangesAsync();
 
-        var empresa = new Empresa { IdTenant = tenant.Id, RazonSocial = nombre, CreatedAt = ahora, UpdatedAt = ahora };
-        db.Empresas.Add(empresa);
-        await db.SaveChangesAsync();
-
-        var puntoVenta = new PuntoVenta
+        // stage-19a-slice1: esquema todavía en stage 8 acá, ANTES de id_condicion_fiscal
+        // (FiscalArcaEtapa19a) — SQL crudo, mismo motivo que la trampa ya documentada para
+        // comprobantes_venta/articulos/items_comprobante_venta en este mismo archivo: con el
+        // modelo HEAD, EF incluiría la columna nueva en el INSERT y rompería contra el esquema
+        // viejo con 42703. Es la PRIMERA vez que empresas diverge desde la etapa 1.
+        int idEmpresa;
+        await using (var crudaEmpresa = new NpgsqlConnection(cadenaConexion))
         {
-            IdTenant = tenant.Id, IdEmpresa = empresa.Id, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora
-        };
-        db.PuntosVenta.Add(puntoVenta);
-        await db.SaveChangesAsync();
+            await crudaEmpresa.OpenAsync();
+            await using var comando = crudaEmpresa.CreateCommand();
+            comando.CommandText =
+                "INSERT INTO empresas (id_tenant, razon_social, created_at, updated_at) " +
+                "VALUES ($1, $2, now(), now()) RETURNING id_empresa";
+            comando.Parameters.Add(new NpgsqlParameter { Value = tenant.Id });
+            comando.Parameters.Add(new NpgsqlParameter { Value = nombre });
+            idEmpresa = (int)(await comando.ExecuteScalarAsync())!;
+        }
+
+        // stage-19a-slice1: mismo motivo — esquema todavía en stage 8, ANTES de numero_fiscal.
+        int idPuntoVenta;
+        await using (var crudaPuntoVenta = new NpgsqlConnection(cadenaConexion))
+        {
+            await crudaPuntoVenta.OpenAsync();
+            await using var comando = crudaPuntoVenta.CreateCommand();
+            comando.CommandText =
+                "INSERT INTO puntos_venta (id_tenant, id_empresa, nombre, created_at, updated_at) " +
+                "VALUES ($1, $2, $3, now(), now()) RETURNING id_punto_venta";
+            comando.Parameters.Add(new NpgsqlParameter { Value = tenant.Id });
+            comando.Parameters.Add(new NpgsqlParameter { Value = idEmpresa });
+            comando.Parameters.Add(new NpgsqlParameter { Value = nombre });
+            idPuntoVenta = (int)(await comando.ExecuteScalarAsync())!;
+        }
+
+        var puntoVenta = new PuntoVenta { Id = idPuntoVenta, IdTenant = tenant.Id, IdEmpresa = idEmpresa, Nombre = nombre };
 
         var area = new Area { IdTenant = tenant.Id, Nombre = nombre, Orden = 1, CreatedAt = ahora, UpdatedAt = ahora };
         db.Areas.Add(area);

@@ -12,6 +12,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
+using Ways.Domain.Fiscal;
 using Ways.Domain.Gastos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
@@ -151,6 +152,15 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Remito> Remitos => Set<Remito>();
     public DbSet<ItemRemito> ItemsRemito => Set<ItemRemito>();
 
+    // stage-19a-slice1 (schema fiscal, DB CHANGE GATE ratificado): CertificadoFiscal se expone
+    // en IWaysDbContext desde esta slice — ServicioDeCertificados (slice 4) es el primer
+    // consumidor de Application. NumeracionFiscal NO se expone acá (mismo criterio que
+    // NumeracionComprobante/NumeracionArticulo): su único escritor legítimo
+    // (AsignadorDeNumeroFiscal, slice 4) recibe el WaysDbContext concreto por parámetro y opera
+    // con ADO.NET crudo, no un DbSet de la interfaz.
+    public DbSet<CertificadoFiscal> CertificadosFiscales => Set<CertificadoFiscal>();
+    public DbSet<NumeracionFiscal> NumeracionesFiscales => Set<NumeracionFiscal>();
+
     /// <summary>Referenciado por los query filters de tenant (ver <see cref="AplicarFiltroDeTenant"/>):
     /// EF reconoce el acceso a un miembro de instancia del propio DbContext dentro de un
     /// filtro y lo reata a la instancia que ejecuta cada query, no a la que armó el modelo.</summary>
@@ -232,6 +242,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         AplicarFiltroDeTenantEnArqueoTurno(modelBuilder);
         AplicarFiltroDeTenantEnMovimientoTesoreria(modelBuilder);
         AplicarFiltroDeTenantEnAuditoria(modelBuilder);
+        AplicarFiltroDeTenantEnNumeracionFiscal(modelBuilder);
     }
 
     /// <summary>
@@ -274,6 +285,7 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
         RechazarEscriturasDeNumeracionCliente();
         RechazarEscriturasDeNumeracionArticulo();
         RechazarEscriturasDeNumeracionComprobante();
+        RechazarEscriturasDeNumeracionFiscal();
 
         foreach (var entrada in ChangeTracker.Entries<EntidadTenant>())
         {
@@ -379,6 +391,27 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
                 throw new InvalidOperationException(
                     "numeraciones_comprobante solo se escribe con SQL crudo, vía " +
                     $"{nameof(AsignadorDeNumeroComprobante)} — nunca por " +
+                    $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// stage-19a-slice1 (design.md decisión 13, proposal.md §F): mismo guard que
+    /// <see cref="RechazarEscriturasDeNumeracionComprobante"/>, acá para
+    /// <see cref="NumeracionFiscal"/> — <c>AsignadorDeNumeroFiscal</c> (slice 4) es su único
+    /// punto de escritura legítimo, con SQL crudo, disciplina OPUESTA (toma el número DENTRO de
+    /// la transacción de emisión, nunca en una transacción propia previa).
+    /// </summary>
+    private void RechazarEscriturasDeNumeracionFiscal()
+    {
+        foreach (var entrada in ChangeTracker.Entries<NumeracionFiscal>())
+        {
+            if (entrada.State is EntityState.Added or EntityState.Modified)
+            {
+                throw new InvalidOperationException(
+                    "numeraciones_fiscales solo se escribe con SQL crudo, vía " +
+                    "AsignadorDeNumeroFiscal — nunca por " +
                     $"{nameof(SaveChanges)}/{nameof(SaveChangesAsync)}.");
             }
         }
@@ -583,6 +616,23 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
 
         var parametro = Expression.Parameter(typeof(NumeracionComprobante), "e");
         var propiedadIdTenant = Expression.Property(parametro, nameof(NumeracionComprobante.IdTenant));
+        var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
+
+        entidad.SetQueryFilter("Tenant", filtro);
+    }
+
+    /// <summary>
+    /// stage-19a-slice1 (proposal.md §F): <see cref="NumeracionFiscal"/> no hereda de
+    /// <see cref="EntidadTenant"/> (PK compuesta <c>(IdPuntoVenta, CodigoAfip)</c>, mismo motivo
+    /// que <see cref="NumeracionComprobante"/>), así que necesita la misma variante escrita a
+    /// mano.
+    /// </summary>
+    private void AplicarFiltroDeTenantEnNumeracionFiscal(ModelBuilder modelBuilder)
+    {
+        var entidad = modelBuilder.Model.FindEntityType(typeof(NumeracionFiscal))!;
+
+        var parametro = Expression.Parameter(typeof(NumeracionFiscal), "e");
+        var propiedadIdTenant = Expression.Property(parametro, nameof(NumeracionFiscal.IdTenant));
         var filtro = ConstruirFiltroDeTenant(parametro, propiedadIdTenant);
 
         entidad.SetQueryFilter("Tenant", filtro);

@@ -133,131 +133,184 @@ guarded-`UPDATE` conjunct set in this slice — U1-U4 belong to slices 4-5), `db
 (the full **10** new branches: 2 × `23505` + 8 × `23514`), `work-unit-commits`. **Done** = tests
 green + `judgment-day` clean round + PR merged.
 
-- [ ] 1.1 Migration `FiscalArcaEtapa19a`, statement 01: `AlterDatabase()` emitting `CREATE TYPE
+- [x] 1.1 Migration `FiscalArcaEtapa19a`, statement 01: `AlterDatabase()` emitting `CREATE TYPE
   ambiente_fiscal ('homologacion','produccion')` and `CREATE TYPE resultado_fiscal
   ('pendiente','aprobado','aprobado_con_observaciones','rechazado')`, lifecycle order hand-corrected
   (EF serializes alphabetically), **zero** `ALTER TYPE … ADD VALUE`. *(design.md:84-93,
   proposal.md:490-501)*
-- [ ] 1.2 Same migration §B: `AddColumn empresas.id_condicion_fiscal integer NULL` + FK1
+- [x] 1.2 Same migration §B: `AddColumn empresas.id_condicion_fiscal integer NULL` + FK1
   `fk_empresas_condicion_fiscal` (simple, RESTRICT) + Index 1 `ix_empresas_condicion_fiscal`
   (simple, **not** `id_tenant`-led — the stage-14 amendment trap). *(design.md:94-96,
   proposal.md:503-521)*
-- [ ] 1.3 Same migration §C: `AddColumn puntos_venta.numero_fiscal integer NULL` + CHECK 1
+- [x] 1.3 Same migration §C: `AddColumn puntos_venta.numero_fiscal integer NULL` + CHECK 1
   `ck_puntos_venta_numero_fiscal_rango` (1..99999) + Index 2 `ux_puntos_venta_numero_fiscal`
   UNIQUE PARTIAL `WHERE numero_fiscal IS NOT NULL`. *(design.md:97-99, proposal.md:522-533)*
-- [ ] 1.4 Same migration §D: `AddColumn ×4` on `comprobantes_venta` (`cae`, `cae_vencimiento`,
+- [x] 1.4 Same migration §D: `AddColumn ×4` on `comprobantes_venta` (`cae`, `cae_vencimiento`,
   `resultado_fiscal`, `observaciones_fiscales`) + CHECK 2 `ck_comprobantes_venta_fiscal_coherente`
   (4 conjuncts) + CHECK 3 `ck_comprobantes_venta_cae_digitos` + Index 3
   `ix_comprobantes_venta_fiscal_pendientes` PARTIAL `WHERE resultado_fiscal = 'pendiente'`.
   *(design.md:100-103, proposal.md:535-557)*
-- [ ] 1.5 Same migration §E: `CreateTable certificados_fiscales` — 18 columns, PK, FK2 (tenant
+- [x] 1.5 Same migration §E: `CreateTable certificados_fiscales` — 18 columns, PK, FK2 (tenant
   simple), FK3 (empresa composite against `puntos_venta`'s AK), CHECK 4 `…vigencia`, CHECK 5
   `…cuit`, CHECK 6 GCM sizes (3 conjuncts) inline. *(design.md:104, proposal.md:559-606)*
-- [ ] 1.6 Same migration: `CreateIndex ×3` on `certificados_fiscales` — `ix_…_tenant`,
+- [x] 1.6 Same migration: `CreateIndex ×3` on `certificados_fiscales` — `ix_…_tenant`,
   `ix_…_empresa`, `ux_certificados_fiscales_activo` UNIQUE PARTIAL (2 filter conjuncts: `activo AND
   deleted_at IS NULL`). *(design.md:105, proposal.md:599-601)*
-- [ ] 1.7 Same migration §F: `CreateTable numeraciones_fiscales` — 6 columns, PK
+- [x] 1.7 Same migration §F: `CreateTable numeraciones_fiscales` — 6 columns, PK
   `(id_punto_venta, codigo_afip)`, FK4 (tenant), FK5 (punto_venta composite, **mirrored from**
   `NumeracionComprobanteConfiguration`), CHECK 7 `…rango` (0 legal for "serie sin usar"), CHECK 8
   `…sincronizacion` inline. *(design.md:106, proposal.md:607-641, fact 2:22-27)*
-- [ ] 1.8 Same migration: `CreateIndex ×2` on `numeraciones_fiscales` — `ix_…_tenant`,
+- [x] 1.8 Same migration: `CreateIndex ×2` on `numeraciones_fiscales` — `ix_…_tenant`,
   `ix_…_punto_venta` (not covered by the PK, whose second column is `codigo_afip`).
   *(design.md:107)*
-- [ ] 1.9 Same migration §G: `Sql` DS1 `tipos_comprobante` (7 rows, `WHERE codigo_afip IS NULL`),
+- [x] 1.9 Same migration §G: `Sql` DS1 `tipos_comprobante` (7 rows, `WHERE codigo_afip IS NULL`),
   DS2 `condiciones_fiscales` (5 rows), DS3 `alicuotas_iva` (4 rows) — all idempotent, **zero** rows
   inserted/activated/deactivated. *(design.md:108-110, proposal.md:649-670)*
-- [ ] 1.10 Same migration: `HabilitarRlsDeTenant` on `certificados_fiscales` and
+- [x] 1.10 Same migration: `HabilitarRlsDeTenant` on `certificados_fiscales` and
   `numeraciones_fiscales`, **LAST** in `Up()`. *(design.md:111-112)*
-- [ ] 1.11 Write `Down()` — exact inverse in reverse order: 3 doubly-guarded `UPDATE` reverts
+- [x] 1.11 Write `Down()` — exact inverse in reverse order: 3 doubly-guarded `UPDATE` reverts
   (DS3/DS2/DS1), `DropTable ×2`, `DropIndex`/`DropCheck`/`DropColumn ×4` on `comprobantes_venta`
   (**before** the `DROP TYPE`), same on `puntos_venta` and `empresas`, `AlterDatabase()` swap ⇒
   `DROP TYPE ×2`. *(design.md:122-145)*
-- [ ] 1.12 Create `src/Ways.Domain/Fiscal/{ResultadoFiscal,AmbienteFiscal}.cs` — member order =
+- [x] 1.12 Create `src/Ways.Domain/Fiscal/{ResultadoFiscal,AmbienteFiscal}.cs` — member order =
   lifecycle = `CREATE TYPE` order. *(design.md:363)*
-- [ ] 1.13 Create `src/Ways.Domain/Fiscal/{CertificadoFiscal,NumeracionFiscal}.cs` — `EntidadBase`
+- [x] 1.13 Create `src/Ways.Domain/Fiscal/{CertificadoFiscal,NumeracionFiscal}.cs` — `EntidadBase`
   **yes**/**no** respectively. *(design.md:364, proposal.md §E/§F)*
-- [ ] 1.14 Create `Configuraciones/CertificadoFiscalConfiguration.cs` — 18 columns, PK, 2 FKs, 3
+- [x] 1.14 Create `Configuraciones/CertificadoFiscalConfiguration.cs` — 18 columns, PK, 2 FKs, 3
   CHECKs, 3 indexes, explicit snake_case names. *(design.md:170)*
-- [ ] 1.15 Create `Configuraciones/NumeracionFiscalConfiguration.cs` — line-for-line mirror of
+- [x] 1.15 Create `Configuraciones/NumeracionFiscalConfiguration.cs` — line-for-line mirror of
   `NumeracionComprobanteConfiguration`: PK, `IdTenant` non-key, `ProximoNumero`
   `HasDefaultValue(1L)`, both index names hand-written, composite FK mirrored from the sibling.
   *(design.md:171, fact 2:22-27)*
-- [ ] 1.16 Modify `Configuraciones/EmpresaConfiguration.cs` — `id_condicion_fiscal` property +
+- [x] 1.16 Modify `Configuraciones/EmpresaConfiguration.cs` — `id_condicion_fiscal` property +
   simple `HasOne` + named index. *(design.md:167)*
-- [ ] 1.17 Modify `Configuraciones/PuntoVentaConfiguration.cs` — `numero_fiscal` + CHECK + named
+- [x] 1.17 Modify `Configuraciones/PuntoVentaConfiguration.cs` — `numero_fiscal` + CHECK + named
   filtered unique index. *(design.md:168)*
-- [ ] 1.18 Modify `Configuraciones/ComprobanteVentaConfiguration.cs` — 4 properties (`jsonb`
+- [x] 1.18 Modify `Configuraciones/ComprobanteVentaConfiguration.cs` — 4 properties (`jsonb`
   converter for `observaciones_fiscales`, the `Auditoria` precedent), 2 CHECKs, the partial index.
   *(design.md:169)*
-- [ ] 1.19 Modify `WaysDbContext.cs` — `DbSet<CertificadoFiscal>` (exposed in `IWaysDbContext`),
+- [x] 1.19 Modify `WaysDbContext.cs` — `DbSet<CertificadoFiscal>` (exposed in `IWaysDbContext`),
   `DbSet<NumeracionFiscal>` **not** exposed (sibling criterion), `AplicarFiltroDeTenantEnNumeracionFiscal`,
-  `RechazarEscriturasDeNumeracionFiscal`, two `HasPostgresEnum` registrations. *(design.md:172)*
-- [ ] 1.20 Modify `WaysDbContextFactory.cs` and `DependencyInjection.cs` —
-  `MapEnum<ResultadoFiscal>`/`MapEnum<AmbienteFiscal>` in both builders.
-- [ ] 1.21 Modify `InicializadorDeBaseDeDatos.cs` — three seed nets: `CodigoAfip` field on
+  `RechazarEscriturasDeNumeracionFiscal`. **DEVIATION (registered, not silent)**: the two enum
+  registrations use `npgsql.MapEnum<T>()` in `WaysDbContextFactory.cs`/`DependencyInjection.cs`
+  (task 1.20), never `HasPostgresEnum` in `OnModelCreating` — `WaysDbContext.cs:210-213`'s own
+  comment states this is the project's established convention for every prior enum
+  (`estado_usuario`/`estado_tenant`/…): declaring an enum in both places would generate the type
+  twice in the migration. `design.md:172`'s "two HasPostgresEnum registrations" line does not
+  match the codebase's actual mechanism. *(design.md:172)*
+- [x] 1.20 Modify `WaysDbContextFactory.cs` and `DependencyInjection.cs` —
+  `MapEnum<ResultadoFiscal>`/`MapEnum<AmbienteFiscal>` in both builders. Also added to the test
+  fixture's own three `MapEnum` blocks (`WaysApiFixture.cs`) — not listed in design.md's file
+  table but required for the shared test host to boot against the new schema (same convention
+  every prior stage's migration followed).
+- [x] 1.21 Modify `InicializadorDeBaseDeDatos.cs` — three seed nets: `CodigoAfip` field on
   `TiposComprobanteBase`/`CondicionesFiscalesBase`/`AlicuotasIvaBase`, each net tested
   **independently**. *(proposal.md:672-676)*
-- [ ] 1.22 Modify `src/Ways.Api/Seguridad/ManejadorDeErrores.cs` — 2 exact-name `23505` branches
+- [x] 1.22 Modify `src/Ways.Api/Seguridad/ManejadorDeErrores.cs` — 2 exact-name `23505` branches
   (`ux_puntos_venta_numero_fiscal`, `ux_certificados_fiscales_activo`) + 8 exact-name `23514`
   branches (CHECKs 1-8), each its own named domain error. *(proposal.md:680-682)*
-- [ ] 1.23 Modify `docs/09-multi-tenancy.md` — `certificados_fiscales`'s documented scoping
+- [x] 1.23 Modify `docs/09-multi-tenancy.md` — `certificados_fiscales`'s documented scoping
   deviation (`id_empresa NOT NULL`) vs. the catálogo shape. *(proposal.md decision 5)*
-- [ ] 1.24 Modify `docs/10-modelo-de-datos.md` — scoping table, §4-adjacent subsections, "Estado
+- [x] 1.24 Modify `docs/10-modelo-de-datos.md` — scoping table, §4-adjacent subsections, "Estado
   (Etapa 19a)" header **OPENED** (closes at slice 5, regla 19).
-- [ ] 1.25 [P] Domain unit: enum-order test — C# member index ↔ `pg_enum.enumsortorder`, both
-  enums. *(target 1)*
-- [ ] 1.26 **[S]** Migration-source scan: zero `ALTER TYPE … ADD VALUE` in the file. *(target 2)*
-- [ ] 1.27 [P] `pg_indexes` by-definition comparison — all 8 new index definitions (8
+- [x] 1.25 [P] **[S]** Domain unit: enum-order test — C# member index ↔ `pg_enum.enumsortorder`,
+  both enums. *(target 1)* **RE-CLASIFICADO [S] (judgment ronda 1, juez B)**: `Npgsql.MapEnum`
+  resuelve por NOMBRE y ningún código de este slice ordena/compara los enums, así que el mutante
+  de orden es equivalente en runtime — el test es una aserción estructural de catálogo (misma
+  clase que targets 3/21/23), nunca un runtime kill.
+- [x] 1.26 **[S]** Migration-source scan: zero `ALTER TYPE … ADD VALUE` in the file. *(target 2)*
+- [x] 1.27 [P] `pg_indexes` by-definition comparison — all 8 new index definitions (8
   sub-mutations, count = 8). *(target 3, design.md:147-161)*
-- [ ] 1.28 [P] Raw-insert CHECK 1 boundary — `numero_fiscal = 0` and `= 100000` ⇒ `23514`.
+- [x] 1.28 [P] Raw-insert CHECK 1 boundary — `numero_fiscal = 0` and `= 100000` ⇒ `23514`.
   *(target 4)*
-- [ ] 1.29 [P] Raw-insert CHECK 2 — four conjunct-killing writes: CAE without expiry; `rechazado`
+- [x] 1.29 [P] Raw-insert CHECK 2 — four conjunct-killing writes: CAE without expiry; `rechazado`
   with a CAE; `aprobado` without a CAE; `cae` set with `resultado_fiscal` NULL. *(target 5)*
-- [ ] 1.30 [P] Raw-insert CHECK 3 — a 13-digit and an alphanumeric CAE. *(target 6)*
-- [ ] 1.31 [P] Raw-insert CHECK 4 — equal `vigencia_hasta`/`vigencia_desde`. *(target 7)*
-- [ ] 1.32 [P] Raw-insert CHECK 5 — a 10-digit CUIT. *(target 8)*
-- [ ] 1.33 [P] Raw-insert CHECK 6 — three conjunct-killing writes: 11-byte nonce, 15-byte tag,
+- [x] 1.30 [P] Raw-insert CHECK 3 — a 13-digit and an alphanumeric CAE. *(target 6)*
+- [x] 1.31 [P] Raw-insert CHECK 4 — equal `vigencia_hasta`/`vigencia_desde`. *(target 7)*
+- [x] 1.32 [P] Raw-insert CHECK 5 — a 10-digit CUIT. *(target 8)*
+- [x] 1.33 [P] Raw-insert CHECK 6 — three conjunct-killing writes: 11-byte nonce, 15-byte tag,
   empty ciphertext. *(target 9)*
-- [ ] 1.34 [P] Raw-insert CHECK 7 — `proximo_numero = 0` must succeed, `100000000` must fail.
-  *(target 10)*
-- [ ] 1.35 [P] Raw-insert CHECK 8 — either half (`ultimo_autorizado_arca`/`sincronizado_en`)
+- [x] 1.34 [P] Raw-insert CHECK 7 — `proximo_numero = 0` must succeed, `100000000` must fail.
+  *(target 10)* **CORRECTION (registered, mutation-proof-tests rule 2 "run it, don't reason it")**:
+  the CHECK itself is `proximo_numero BETWEEN 1 AND 99999999 AND (ultimo_autorizado_arca IS NULL
+  OR ultimo_autorizado_arca BETWEEN 0 AND 99999999)` — `proximo_numero = 0` cannot succeed under
+  that range (1 is the floor); "0 is legal" is exclusively true of `ultimo_autorizado_arca`
+  ("serie sin usar", design.md's own row 10 wording). Tested both real behaviors:
+  `UnUltimoAutorizadoArcaEnCeroEsLegalYNoViolaLaCheckDeRango` (succeeds) and
+  `UnProximoNumeroEnCeroVIOLALaCheckDeRango` (fails, the literal wording's contradiction with the
+  CHECK, confirmed by running it) plus the `100000000` over-range kill.
+- [x] 1.35 [P] Raw-insert CHECK 8 — either half (`ultimo_autorizado_arca`/`sincronizado_en`)
   written alone. *(target 11)*
-- [ ] 1.36 [P] Duplicate-write test on `ux_puntos_venta_numero_fiscal` ⇒ `23505`; two `NULL`
+- [x] 1.36 [P] Duplicate-write test on `ux_puntos_venta_numero_fiscal` ⇒ `23505`; two `NULL`
   fiscal numbers still accepted (the filter's own kill). *(target 12)*
-- [ ] 1.37 [P] Duplicate-write test on `ux_certificados_fiscales_activo` ⇒ `23505`; a
+- [x] 1.37 [P] Duplicate-write test on `ux_certificados_fiscales_activo` ⇒ `23505`; a
   soft-deleted twin and an inactive twin must both be accepted. *(target 13)*
-- [ ] 1.38 [P] RLS cross-tenant read+write pair on `certificados_fiscales` via `ways_app`.
+- [x] 1.38 [P] RLS cross-tenant read+write pair on `certificados_fiscales` via `ways_app`.
   *(target 14)*
-- [ ] 1.39 [P] RLS cross-tenant read+write pair on `numeraciones_fiscales` via `ways_app`.
+- [x] 1.39 [P] RLS cross-tenant read+write pair on `numeraciones_fiscales` via `ways_app`.
   *(target 15)*
-- [ ] 1.40 [P] Delete `AplicarFiltroDeTenantEnNumeracionFiscal`, confirm a tenant-B context reads
+- [x] 1.40 [P] Delete `AplicarFiltroDeTenantEnNumeracionFiscal`, confirm a tenant-B context reads
   tenant A's counter through EF (mutation applied, red, reverted, green). *(target 16)*
-- [ ] 1.41 [P] Delete `RechazarEscriturasDeNumeracionFiscal`, confirm `SaveChangesAsync` over a
+- [x] 1.41 [P] Delete `RechazarEscriturasDeNumeracionFiscal`, confirm `SaveChangesAsync` over a
   tracked `NumeracionFiscal` throws. *(target 17)*
-- [ ] 1.42 [P] Each migration data statement (DS1/DS2/DS3) tested independently on an
+- [x] 1.42 [P] Each migration data statement (DS1/DS2/DS3) tested independently on an
   already-migrated DB — deleting one alone fails only its own test. *(target 18)*
-- [ ] 1.43 [P] Each seed net tested independently on a fresh DB — deleting one field alone fails
+- [x] 1.43 [P] Each seed net tested independently on a fresh DB — deleting one field alone fails
   only its own test. *(target 19)*
-- [ ] 1.44 [P] Assert `Exento`/`No gravado` remain `codigo_afip NULL` after DS3. *(target 20)*
-- [ ] 1.45 **[S]** `ix_empresas_condicion_fiscal` definition test — simple, not `(id_tenant,
+- [x] 1.44 [P] Assert `Exento`/`No gravado` remain `codigo_afip NULL` after DS3. *(target 20)*
+- [x] 1.45 **[S]** `ix_empresas_condicion_fiscal` definition test — simple, not `(id_tenant,
   id_condicion_fiscal)`. *(target 21)*
-- [ ] 1.46 **[S]** `Up → Down → Up` clean, `has-pending-model-changes` clean at each leg,
+- [x] 1.46 **[S]** `Up → Down → Up` clean, `has-pending-model-changes` clean at each leg,
   pre-state comparison of the three catalogues' `codigo_afip`. *(target 22)*
-- [ ] 1.47 **[S]** `NumeracionFiscalConfiguration`'s explicit `HasDatabaseName` definition test on
+- [x] 1.47 **[S]** `NumeracionFiscalConfiguration`'s explicit `HasDatabaseName` definition test on
   both indexes. *(target 23)*
-- [ ] 1.48 Non-regression: full domain/application/integration suite green;
+- [x] 1.48 Non-regression: full domain/application/integration suite green;
   `src/Ways.Application/Ventas/ServicioDeVentas.cs` untouched this slice (reasserted at slice 5).
-- [ ] 1.49 GATE GUARD — exactly one migration file `FiscalArcaEtapa19a`; `has-pending-model-changes`
+- [x] 1.49 GATE GUARD — exactly one migration file `FiscalArcaEtapa19a`; `has-pending-model-changes`
   clean; zero `ALTER TYPE ADD VALUE`; index count = 8; CHECK count = 8 — all **by definition**.
   *(proposal.md §I criteria 1-4; Binding Verify Criteria 1-4)*
-- [ ] 1.50 Mutation evidence recorded in the PR body for targets 1-23 (**S** rows 2, 3, 21, 22, 23
-  record the file/state/definition assertion, not a runtime failure).
-- [ ] 1.51 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 1.50 Mutation evidence recorded in the PR body for targets 1-23 (**S** rows 2, 3, 21, 22, 23
+  record the file/state/definition assertion, not a runtime failure). See "Work Unit Evidence"
+  table below.
+- [x] 1.51 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
+  **DONE by the orchestrator**: juez B APPROVE (5 spot-checks reproducen + el mutante extra del
+  orden de ManejadorDeErrores RED en ambos caminos; 1 MINOR de etiquetado — target 1 re-clasificado
+  [S] por equivalencia de runtime — + 1 SUGGESTION de honestidad del doble guard + 1 WARNING
+  diferido como nota vinculante del slice 5; fixes documentales `1df54ac`). Juez A APPROVE con
+  CERO hallazgos (contrato del gate verificado columna por columna; NO_RESP=15 consistente en los
+  3 lugares; ServicioDeVentas.cs ausente del patch — guard del POS byte-idéntico; los 2 fixtures
+  raw-SQL preservan semántica). Ronda limpia.
 - [ ] 1.52 [ ] Open PR #1 `feat/stage19a-slice1-schema-fiscal`, merge to `main` after a clean
   `judgment-day` round.
 
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Mode | Standard (no `strict_tdd` config found; `mutation-proof-tests` v1.1 discipline followed instead — see per-target evidence below) |
+| Focused test command | `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~FiscalSchemaTests\|FullyQualifiedName~ManejadorDeErroresFiscalTests"` → **63/63 passed** (0 failed), against a real Postgres 17 Testcontainer (Docker confirmed available in this environment) |
+| Runtime harness | Testcontainers Postgres 17 via `WaysApiFixture`, `ways_app` role (RLS-scoped, non-superuser connection) for every cross-tenant/CHECK/UNIQUE test; three ad-hoc throwaway databases created/dropped via raw `CREATE DATABASE`/`DROP DATABASE ... WITH (FORCE)` for the data-statement (target 18), seed-net (target 19), and Up→Down→Up (target 22) tests — real migrations applied via `IMigrator`, not simulated |
+| `dotnet build --no-incremental` | `src/Ways.Api`, `src/Ways.Infrastructure`, `tests/Ways.IntegrationTests`, `tests/Ways.Application.Tests` all built clean (0 warnings, 0 errors) after every production edit in this slice |
+| `dotnet ef migrations has-pending-model-changes` | Clean — confirmed via CLI (`No changes have been made to the model since the last migration.`) after the hand-edited migration, and re-confirmed at runtime via `Database.HasPendingModelChanges()` in target 22's Up/Up-after-Down legs |
+| Full suite (non-regression, task 1.48) | `Ways.Application.Tests`: **297/297 passed**. `Ways.IntegrationTests` (full suite, all pre-existing + new fiscal tests): **1674/1674 passed**, 0 failed, 11 m 46 s — real Postgres 17 Testcontainer. First run surfaced 16 real failures (`PendingModelChangesWarning` in 7 files whose own throwaway-DB `MapEnum` lists predate this slice's two new enums; a `42804` type mismatch in 14 more files with the same gap touching `comprobantes_venta`; a `42703 column "id_condicion_fiscal" does not exist` in `CostoCongeladoTests`/`CuentaCorrienteProveedorBackfillTests`, whose pre-Etapa-19a throwaway databases now diverge from the EF model's `empresas`/`puntos_venta` shape — the FIRST such divergence since Etapa 1). All fixed (21 test files touched: `MapEnum<ResultadoFiscal>`/`MapEnum<AmbienteFiscal>` added to every hand-curated builder; `empresas`/`puntos_venta` writes switched to raw SQL in the two pre-migration seeding helpers, mirroring the file's own established `comprobantes_venta`/`articulos` pattern for the exact same reason). Re-run clean per rule 17 (isolated re-run with the fix applied) |
+| Rollback boundary | `dotnet ef migrations remove` / `Down()` — both `CREATE TYPE`s (`ambiente_fiscal`, `resultado_fiscal`) drop cleanly (zero `ALTER TYPE ADD VALUE` anywhere in the file, confirmed by target 2's source scan); no operational row is modified except the three catalogues' `codigo_afip`, reverted by the exact value `Up()` set (doubly-guarded `WHERE codigo = … AND codigo_afip = …`); the Up→Down→Up cycle of target 22 confirms Down() reverts what Up() set on a fresh database; the second guard half (`AND codigo_afip = …`) is NOT independently discriminated by any test (no fixture carries a pre-existing divergent codigo_afip — imposible hoy, barato de garantizar para siempre, honestidad registrada en judgment ronda 1) |
+
+**Deviations registered (not silent):**
+1. Task 1.19's `design.md:172` line "two `HasPostgresEnum` registrations" does not match the codebase's actual, uniform convention (`WaysDbContext.cs:210-213`'s own comment): every enum in this project is registered exclusively via `npgsql.MapEnum<T>()` in `WaysDbContextFactory.cs`/`DependencyInjection.cs` (task 1.20), never via `HasPostgresEnum` in `OnModelCreating` — declaring it in both places would emit the `CREATE TYPE` twice. Followed the established convention instead of the design line.
+2. Target 10 / task 1.34's literal wording ("`proximo_numero = 0` must succeed") contradicts CHECK 7's own range (`proximo_numero BETWEEN 1 AND 99999999`) — confirmed by actually running the mutation (mutation-proof-tests rule 2: "run it, don't reason it"). The "0 is legal" clause applies exclusively to `ultimo_autorizado_arca` ("serie sin usar"). Both real behaviors are tested; see the task 1.34 note above.
+3. `NO_RESP`'s `codigo_afip` mapping (proposal.md decision 11 flags this as "the one uncertainty" but never states the numeric value): mapped to **15** (RG 5616 "IVA No Alcanzado", the closest real ARCA condition to an unregistered/non-categorized receptor). This value is never read by any runtime emission decision in this slice — the slice-5 rejection of a `NO_RESP` receptor checks `condiciones_fiscales.Codigo`, not `CodigoAfip` — and is explicitly flagged in both `InicializadorDeBaseDeDatos.cs` and `docs/10-modelo-de-datos.md` for confirmation against `FEParamGetCondicionIvaReceptor` in 19b.
+4. `WaysApiFixture.cs`'s three `MapEnum` blocks (test host DI) needed the two new enum registrations too — not listed in design.md's file table (which only names production `WaysDbContextFactory.cs`/`DependencyInjection.cs`) but required for the shared integration-test host to boot against the new schema, same convention every prior stage's slice-1 migration followed for this fixture.
+
 ---
+
+### Nota vinculante para el Slice 5 (judgment Slice 1 ronda 1, juez B — WARNING)
+
+El residual de la desviación 2 (NO_RESP → codigo_afip 15): `ServicioDeCatalogosFiscales`
+(preexistente) expone hoy ese 15 en el listado de catálogo — inerte porque no existe camino de
+emisión todavía. **El slice 5 DEBE confirmar que su guard de rechazo de NO_RESP decide por
+`Codigo`, jamás por `CodigoAfip`** (el 15 es provisional hasta la verificación de 19b contra
+`FEParamGetCondicionIvaReceptor`).
 
 ## Slice 2: SobreSoap + TRA/CMS + ClienteWsaa + caché TA + certificado de prueba + fixtures WSAA (PR 2)
 

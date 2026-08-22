@@ -7,6 +7,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Fiscal;
 using Ways.Domain.Gastos;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Organizacion;
@@ -136,6 +137,12 @@ public interface IWaysDbContext
     // (slice 5) es el primer consumidor real.
     DbSet<Remito> Remitos { get; }
     DbSet<ItemRemito> ItemsRemito { get; }
+
+    // stage-19a-slice1 (schema fiscal, DB CHANGE GATE ratificado): expuesto desde esta slice —
+    // ServicioDeCertificados (slice 4) es el primer consumidor de Application. NumeracionFiscal
+    // sigue sin exponerse acá (ver el comentario de WaysDbContext): AsignadorDeNumeroFiscal
+    // (slice 4) recibe el IWaysDbContext concreto por parámetro y opera con ADO.NET crudo.
+    DbSet<CertificadoFiscal> CertificadosFiscales { get; }
 
     /// <summary>Superficie de transacción/conexión de EF Core (slice 3, tarea 3F,
     /// <c>ServicioDeAprovisionamiento</c>, ADR-16): <c>CreateExecutionStrategy().ExecuteAsync</c>

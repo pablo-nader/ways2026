@@ -356,6 +356,8 @@ public class VentaEscrituraLoteTests(WaysApiFixture fixture) : IClassFixture<Way
                 npgsql.MapEnum<MotivoStock>("motivo_stock");
                 npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
                 npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
+                npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
+                npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

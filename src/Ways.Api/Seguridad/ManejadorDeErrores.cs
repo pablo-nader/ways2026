@@ -253,6 +253,28 @@ public class ManejadorDeErrores(
                 when string.Equals(uxItemRemito, "ux_items_remito_orden", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe un ítem con ese orden en este remito.", "orden_de_item_duplicado"),
 
+            // stage-19a-slice1 (task 1.22, db-error-backstops, proposal.md §H): ux_puntos_venta_numero_fiscal
+            // tiene que resolverse por nombre EXACTO, ANTES de ClasificarUnicidad — su nombre
+            // contiene "_numero", así que la rama genérica de esa substring (la familia de
+            // ux_clientes_numero) lo atraparía primero y lo clasificaría mal. SEXTA ocurrencia
+            // del ordering trap, mismo tratamiento exacto que ux_remitos_numero/
+            // ux_presupuestos_numero/ux_ordenes_compra_numero/ux_comprobantes_compra_numero_externo/
+            // ux_comprobantes_venta_numero — decisión 2 del proposal: es el índice PORTANTE que
+            // vuelve inyectivo el mapa serie-ARCA-a-fila. Sin camino de escritura de cliente en
+            // esta slice (la ABM llega en slice 4), probado solo con INSERT/UPDATE crudo.
+            { SqlState: "23505", ConstraintName: string uxNumeroFiscal }
+                when string.Equals(uxNumeroFiscal, "ux_puntos_venta_numero_fiscal", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un punto de venta con ese número fiscal para esta empresa.", "numero_fiscal_duplicado"),
+
+            // stage-19a-slice1 (task 1.22, db-error-backstops, proposal.md §E/§H): ux_certificados_fiscales_activo
+            // — a lo sumo un certificado activo por empresa+ambiente (decisión 1). Sin trampa de
+            // ordering: "_activo" no colisiona con ninguna substring de ClasificarUnicidad. Sin
+            // camino de escritura de cliente en esta slice (ServicioDeCertificados llega en slice
+            // 4), probado solo con INSERT crudo — el race test real de rotación vive en slice 4.
+            { SqlState: "23505", ConstraintName: string uxCertificadoActivo }
+                when string.Equals(uxCertificadoActivo, "ux_certificados_fiscales_activo", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Ya existe un certificado fiscal activo para esta empresa y ambiente.", "certificado_fiscal_activo_duplicado"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,
@@ -444,6 +466,15 @@ public class ManejadorDeErrores(
             { SqlState: "23505", ConstraintName: string pkNumeracion }
                 when string.Equals(pkNumeracion, "pk_numeraciones_comprobante", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe una numeración para ese punto de venta y tipo de comprobante.", "numeracion_duplicada"),
+
+            // stage-19a-slice1 (task 1.22, db-error-backstops, design: mutation targets 4-11):
+            // switch por nombre EXACTO de las 8 CHECKs nuevas de puntos_venta/comprobantes_venta/
+            // certificados_fiscales/numeraciones_fiscales — sin prefijo compartido entre las
+            // cuatro tablas (mismo criterio que ClasificarCheckDeVentas/ClasificarCheckDeCaja),
+            // así que el caso del switch de arriba llama directo a esta función.
+            { SqlState: "23514", ConstraintName: string ckFiscal }
+                when ClasificarCheckDeFiscal(ckFiscal) is { } checkFiscal =>
+                (checkFiscal.EstadoHttp, checkFiscal.Titulo, checkFiscal.Codigo),
 
             _ => null
         };
@@ -903,6 +934,64 @@ public class ManejadorDeErrores(
                 (StatusCodes.Status400BadRequest,
                     "Una línea de remito marcada como costo estimado tiene que tener un costo.",
                     "costo_estimado_invalido"),
+
+            _ => null
+        };
+
+    /// <summary>stage-19a-slice1 (task 1.22, db-error-backstops, design.md mutation targets
+    /// 4-11): switch por nombre EXACTO de las 8 CHECKs nuevas de <c>puntos_venta</c>/
+    /// <c>comprobantes_venta</c>/<c>certificados_fiscales</c>/<c>numeraciones_fiscales</c>, sin
+    /// prefijo compartido entre las cuatro tablas (mismo criterio que
+    /// <see cref="ClasificarCheckDeVentas"/>/<see cref="ClasificarCheckDeCaja"/>). El criterio de
+    /// status: una CHECK de FORMATO/RANGO de un valor (número, dígitos, tamaño de bytes) → 400;
+    /// una CHECK de COHERENCIA entre dos columnas que tienen que llegar juntas/coincidir → 409,
+    /// mismo criterio que <c>ck_remitos_facturacion</c>/<c>ck_ordenes_compra_envio_completo</c>
+    /// en <see cref="ClasificarCheckDeOrdenesDeCompra"/>/<see cref="ClasificarCheckDeRemitos"/>.
+    /// Sin camino de escritura de cliente en ESTA slice para ninguna de las 8 (el ABM de
+    /// certificados y la emisión fiscal llegan en slices 4/5) — todas probadas con INSERT/UPDATE
+    /// crudo, no con una carrera real.</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarCheckDeFiscal(string nombreDeCheck) =>
+        nombreDeCheck switch
+        {
+            "ck_puntos_venta_numero_fiscal_rango" =>
+                (StatusCodes.Status400BadRequest,
+                    "El número fiscal del punto de venta tiene que estar entre 1 y 99999.",
+                    "numero_fiscal_invalido"),
+
+            "ck_comprobantes_venta_fiscal_coherente" =>
+                (StatusCodes.Status409Conflict,
+                    "El estado fiscal del comprobante es inconsistente con su CAE.",
+                    "comprobante_fiscal_incoherente"),
+
+            "ck_comprobantes_venta_cae_digitos" =>
+                (StatusCodes.Status400BadRequest,
+                    "El CAE tiene que ser un número de 14 dígitos.",
+                    "cae_invalido"),
+
+            "ck_certificados_fiscales_vigencia" =>
+                (StatusCodes.Status400BadRequest,
+                    "La vigencia del certificado fiscal es inválida.",
+                    "vigencia_de_certificado_invalida"),
+
+            "ck_certificados_fiscales_cuit" =>
+                (StatusCodes.Status400BadRequest,
+                    "El CUIT titular del certificado tiene que tener 11 dígitos.",
+                    "cuit_titular_invalido"),
+
+            "ck_certificados_fiscales_material" =>
+                (StatusCodes.Status400BadRequest,
+                    "El material de clave cifrado del certificado es inválido.",
+                    "material_de_clave_invalido"),
+
+            "ck_numeraciones_fiscales_rango" =>
+                (StatusCodes.Status400BadRequest,
+                    "El número de la serie fiscal está fuera de rango.",
+                    "numero_fiscal_de_serie_invalido"),
+
+            "ck_numeraciones_fiscales_sincronizacion" =>
+                (StatusCodes.Status409Conflict,
+                    "El último autorizado por ARCA y su fecha de sincronización tienen que llegar juntos.",
+                    "numeracion_fiscal_sincronizacion_incoherente"),
 
             _ => null
         };

@@ -1,4 +1,5 @@
 using Ways.Domain.Common;
+using Ways.Domain.Fiscal;
 
 namespace Ways.Domain.Ventas;
 
@@ -70,4 +71,24 @@ public class ComprobanteVenta : EntidadTenant
     public string? Observaciones { get; set; }
 
     public EstadoComprobante Estado { get; set; } = EstadoComprobante.Emitido;
+
+    /// <summary>stage-19a (proposal.md §D): las cuatro columnas fiscales son ADITIVAS y llegan
+    /// juntas — <see cref="ResultadoFiscal"/> <c>NULL</c> significa "no es un comprobante
+    /// fiscal", el estado del 100% del tráfico TX/NCX/TXR/RC, permanentemente legítimo.
+    /// <c>ck_comprobantes_venta_fiscal_coherente</c> impone la coherencia entre las cuatro. Sin
+    /// columna nueva para el número fiscal: <see cref="Numero"/> ya lo lleva, alimentado por la
+    /// serie fiscal en vez de la interna — disjuntas por tipo de comprobante.</summary>
+    public string? Cae { get; set; }
+
+    /// <summary>Llega junto con <see cref="Cae"/> (mismo CHECK) — nunca <c>DEFAULT now()</c>,
+    /// viene del propio CAE que devuelve ARCA.</summary>
+    public DateOnly? CaeVencimiento { get; set; }
+
+    public ResultadoFiscal? ResultadoFiscal { get; set; }
+
+    /// <summary>Documento jsonb con <c>Observaciones[]</c>/<c>Errors[]</c> de ARCA
+    /// (<c>[{ "codigo": int, "mensaje": string }]</c>) — precedente <c>Auditoria.cs:40-45</c>.
+    /// Nunca la respuesta cruda: eso persistiría <c>Token</c>/<c>Sign</c>, una credencial
+    /// portadora, en una tabla sin camino de cifrado.</summary>
+    public string? ObservacionesFiscales { get; set; }
 }

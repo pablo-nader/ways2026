@@ -643,6 +643,8 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
                 npgsql.MapEnum<Ways.Domain.Stock.MotivoStock>("motivo_stock");
                 npgsql.MapEnum<TipoMovimientoCc>("tipo_movimiento_cc");
                 npgsql.MapEnum<EstadoTurno>("estado_turno");
+                npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
+                npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
             .Options;
