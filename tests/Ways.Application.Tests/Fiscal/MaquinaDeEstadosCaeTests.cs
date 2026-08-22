@@ -82,4 +82,21 @@ public class MaquinaDeEstadosCaeTests
 
         Assert.Empty(constructores);
     }
+
+    /// <summary>Judgment-day 19a-slice-3 ronda 1 (juez B, CRITICAL): la puerta trasera del struct.
+    /// TODO <c>struct</c> de C# sintetiza un constructor sin parámetros implícito e invocable desde
+    /// cualquier ensamblado — <c>default(PermisoDeSolicitud)</c> / <c>new PermisoDeSolicitud()</c>
+    /// hubieran fabricado un permiso con <c>IdComprobante</c>/<c>Numero</c> en 0 sin pasar jamás por
+    /// <see cref="MaquinaDeEstadosCae.AutorizarSolicitud"/>, incluso desde un ensamblado externo que
+    /// solo referencia <c>Ways.Domain</c> — el ctor <c>internal</c> por sí solo NO cerraba esa vía.
+    /// Este assert impide la regresión silenciosa a <c>record struct</c>: si alguien revierte el
+    /// tipo a struct, <see cref="PermisoDeSolicitudNoTieneNingunConstructorPublico"/> arriba sigue
+    /// en VERDE (el struct también reporta cero ctores públicos vía reflexión sobre
+    /// <c>GetConstructors</c> — no lista el ctor sin parámetros implícito), así que hace falta este
+    /// assert de tipo por referencia para que la regresión falle.</summary>
+    [Fact]
+    public void PermisoDeSolicitudEsUnTipoPorReferenciaNoUnStruct()
+    {
+        Assert.False(typeof(PermisoDeSolicitud).IsValueType);
+    }
 }

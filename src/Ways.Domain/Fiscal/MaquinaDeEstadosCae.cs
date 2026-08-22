@@ -8,10 +8,25 @@ namespace Ways.Domain.Fiscal;
 /// ningún código de <c>Ways.Application</c>/<c>Ways.Infrastructure</c> puede fabricar una instancia
 /// sin pasar por la máquina. No es un booleano (<c>bool consultarPrimero</c>) a propósito: un
 /// booleano se pisa con un <c>if</c> descuidado e invisible en review; un tipo que no compila fuera
-/// de este archivo vuelve el error IRREPRESENTABLE, no solo improbable (I2/I3, el invariante más
-/// caro de violar de toda la sub-etapa).
+/// de este archivo vuelve el error IMPROBABLE por reflexión, no IRREPRESENTABLE — ver la nota sobre
+/// <c>record class</c> vs. <c>record struct</c> más abajo (I2/I3, el invariante más caro de violar
+/// de toda la sub-etapa).
+/// <para>
+/// Es deliberadamente <c>record class</c> y NO <c>record struct</c>: todo <c>struct</c> de C#
+/// conserva un constructor sin parámetros implícito e invocable desde cualquier ensamblado
+/// (<c>default(PermisoDeSolicitud)</c> / <c>new PermisoDeSolicitud()</c> lo fabrican con
+/// <c>IdComprobante</c>/<c>Numero</c> en 0 sin pasar jamás por <see cref="AutorizarSolicitud"/>,
+/// incluso desde un ensamblado externo que solo referencia <c>Ways.Domain</c>) — el gate
+/// <c>internal</c> del ctor con parámetros es real, pero el struct igual deja una puerta trasera.
+/// Un <c>record class</c> NO sintetiza ningún constructor sin parámetros: el único ctor declarado
+/// es el <c>internal</c> de abajo, así que el gate de ensamblado es real y no hay vía alternativa
+/// de fabricación. El costo es que ahora viaja por referencia y puede ser <c>null</c>; los
+/// firmantes (<see cref="IClienteWsfe.SolicitarCaeAsync"/>/`ClienteWsfe`) lo tratan como parámetro
+/// no anulable ordinario (nullable reference types), así que un <c>null</c> es un error de
+/// compilación en el caller, igual que antes lo era construir el tipo.
+/// </para>
 /// </summary>
-public readonly record struct PermisoDeSolicitud
+public sealed record PermisoDeSolicitud
 {
     public int IdComprobante { get; }
     public long Numero { get; }

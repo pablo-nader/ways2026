@@ -655,6 +655,26 @@ transcription error; 19b's first task is the fixture-vs-reality diff.
   gate, the 10016 constant).
 - [ ] 3.23 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
+  **judgment-day Slice 3 (19a), ronda 1 — juez B (1 CRITICAL + 1 MAJOR + 1 WARNING), fixes
+  aplicados por el jd-fix-agent** (checkbox sin marcar hasta que el re-judge confirme ronda
+  limpia, regla 18):
+  - **CRITICAL** (la puerta trasera del struct, `MaquinaDeEstadosCae.cs:14-24`): `PermisoDeSolicitud`
+    pasó de `readonly record struct` a `sealed record` (clase) — todo struct de C# sintetiza un
+    ctor sin parámetros invocable desde cualquier ensamblado, lo que fabricaba un permiso con
+    `IdComprobante=0` sin pasar por `AutorizarSolicitud`; el ctor `internal` por sí solo no cerraba
+    esa vía. Doc-comment corregido (ya no dice "IRREPRESENTABLE"). Test reforzado con
+    `PermisoDeSolicitudEsUnTipoPorReferenciaNoUnStruct` (`!IsValueType`). Ciclo: (a) revert a
+    `record struct` → el nuevo assert `IsValueType` RED → revert → verde; (b) ctor `internal` →
+    `public` → el assert `GetConstructors(Public)` existente RED → revert → verde.
+  - **MAJOR** (la nota vinculante del 600 sin propagar): agregada la sección dedicada "### Nota
+    vinculante para el Slice 5 (WSFE 600 — invalidación del TA)" inmediatamente después de la
+    tabla/log de evidencia del slice 3 (mismo patrón que la nota del slice 1 sobre `NO_RESP`), más
+    la reafirmación en el header del slice 5 junto a T1/T2/U2.
+  - **WARNING** (el backoff sin forma): `ClienteWsfeTests.UnaFallaDeTransporteReintentaUnNumeroAcotadoDeVecesYLuegoFallaDefinitivo`
+    ahora asserta las duraciones exactas de `EsperadorFalso.Esperas` (1ms, 2ms — exponencial
+    acotado con `retardoBase = 1ms`), no solo su cantidad. Ciclo: mutante del juez
+    (`1L << (intento - 1)` → `1L`) → RED (`00:00:00.0020000` esperado vs. `00:00:00.0010000`
+    real) → revert → verde.
 - [ ] 3.24 [ ] Open PR #3 `feat/stage19a-slice3-wsfe-y-cae`, merge to `main` after a clean
   `judgment-day` round.
 
@@ -697,6 +717,17 @@ description, per rule 4).
 | 51 | Mapping an empty `CbteNro` to `null`/`1` instead of parsing the literal `"0"` | `ClienteWsfeTests.FeCompUltimoAutorizadoDeUnaSerieVaciaMapeaACeroNoANullNiAUno` | Yes (by construction) |
 
 ---
+
+### Nota vinculante para el Slice 5 (WSFE 600 — invalidación del TA)
+
+Contrato enterrado en las tareas 3.4/3.18: `ClienteWsfe` detecta WSFE `Errors[]` `600` y lo mapea a
+`ticket_de_acceso_invalido` (503, reintentable) — es TODO lo que este cliente puede hacer, porque
+no es dueño del `TicketDeAcceso` ni del `IClienteWsaa`. **El slice 5 DEBE implementar la mitad que
+falta**: `ServicioDeFacturacionFiscal` es el ÚNICO orquestador válido de "WSFE `600` ⇒ invalidar el
+TA cacheado (vía `IRepositorioDeTicketDeAcceso`) + reintentar exactamente una vez con un TA recién
+firmado (`IClienteWsaa.LoginCms`)" — el flujo de datos que design.md:339-342 ya ubica antes de cada
+llamada a `ClienteWsfe`. Un reintento silencioso con el MISMO TA inválido, o ningún reintento en
+absoluto, deja el `600` sin resolver pese a que `ClienteWsfe` ya lo clasificó correctamente.
 
 ## Slice 4: AsignadorDeNumeroFiscal + reconciliación + cifrado + policy/ABM (PR 4)
 
@@ -817,6 +848,11 @@ supplies them, and target 75 must go **RED** then.
 
 **T2 reasserted (design.md:638-642)**: no operator-release route ships in this slice either — it
 remains a 19c deliverable.
+
+**WSFE 600 reasserted (tasks 3.4/3.18, see the binding note right after Slice 3's evidence table
+above)**: `ServicioDeFacturacionFiscal` is the ONLY valid orchestrator of "WSFE `600` ⇒ invalidate
+the cached TA + retry exactly once with a freshly-signed one" — `ClienteWsfe` (slice 3) only
+detects and classifies the `600`, it cannot invalidate/refresh a `TicketDeAcceso` it does not own.
 
 **Guard enumeration (mutation-proof-tests rule 3 v1.1, design.md:420-433)**:
 - **U2** `UPDATE comprobantes_venta SET cae…, resultado_fiscal… WHERE …` — conjuncts (a)

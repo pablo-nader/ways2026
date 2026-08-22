@@ -192,6 +192,13 @@ public class ClienteWsfeTests
         Assert.Equal(503, error.EstadoHttp);
         Assert.Equal(3, handler.Solicitudes); // acotado, no infinito
         Assert.Equal(2, esperador.Esperas.Count); // backoff entre intentos 1→2 y 2→3, nunca tras el último
+        // Judgment-day 19a-slice-3 ronda 1 (juez B, WARNING): el mutante `1L << (intento - 1)` →
+        // `1L` sobrevivía porque solo se contaban las esperas, nunca su DURACIÓN — pese a que
+        // `IEsperador` existe justo para hacerlas observables. Forma exponencial acotada con
+        // `retardoBase = 1ms` (ver `Construir`): intento 1→2 espera `retardoBase * 2^0 = 1ms`;
+        // intento 2→3 espera `retardoBase * 2^1 = 2ms`.
+        Assert.Equal(TimeSpan.FromMilliseconds(1), esperador.Esperas[0]);
+        Assert.Equal(TimeSpan.FromMilliseconds(2), esperador.Esperas[1]);
     }
 
     [Fact]
