@@ -15,6 +15,11 @@
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- stage-19a-slice2: System.Security.Cryptography.Pkcs (SignedCms/CmsSigner) es un
+         ensamblado "in-box" de .NET que el SDK no referencia implícitamente — sigue siendo BCL
+         pura (proposal decisión 7), sin ninguna dependencia de terceros; solo necesita esta
+         referencia de compilación explícita, resuelta por el propio runtime en ejecución. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.11" />
   </ItemGroup>
 
   <PropertyGroup>
