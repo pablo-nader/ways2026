@@ -28,13 +28,14 @@ public static class SobreSoap
         espacioDeNombres == EspacioWsaa ? string.Empty : espacioDeNombres + operacion;
 
     /// <summary>
-    /// Arma el sobre completo con <c>XDeclaration("1.0", "UTF-8", null)</c> +
-    /// <see cref="SaveOptions.DisableFormatting"/> (D3: sin indentación, sin salto de línea —
-    /// esos son parte del contrato byte a byte). El <c>encoding</c> de la declaración se escribe
-    /// a mano (no vía <c>XDocument.Save</c>) porque el writer de XLinq normaliza el atributo
-    /// <c>encoding</c> a minúsculas tomándolo del <see cref="System.IO.TextWriter.Encoding"/> del
-    /// destino, nunca del texto pasado a <see cref="XDeclaration"/> — verificado antes de fijar el
-    /// golden; el manual pinea <c>UTF-8</c> en mayúsculas.
+    /// Arma el sobre completo concatenando la declaración XML como texto crudo (NO vía
+    /// <see cref="XDeclaration"/>) + <see cref="SaveOptions.DisableFormatting"/> (D3: sin
+    /// indentación, sin salto de línea — esos son parte del contrato byte a byte). El
+    /// <c>encoding</c> se escribe a mano porque el writer de XLinq normaliza ese atributo a
+    /// minúsculas tomándolo del <see cref="System.IO.TextWriter.Encoding"/> del destino, sin
+    /// importar el texto pasado a <see cref="XDeclaration"/> — cualquier ruta que pase por
+    /// <c>XDeclaration</c>/<c>XDocument.Save</c> termina en <c>encoding="utf-8"</c>, verificado
+    /// antes de fijar el golden; el manual pinea <c>UTF-8</c> en mayúsculas.
     /// </summary>
     public static string Construir(string espacioDeNombres, string operacion, params object[] cuerpo)
     {

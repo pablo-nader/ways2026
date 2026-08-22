@@ -436,8 +436,20 @@ fixture-vs-reality diff.
   under `Migraciones/` touched; `dotnet ef migrations has-pending-model-changes` clean.
 - [x] 2.25 Mutation evidence recorded in the PR body for targets 24-36 (**S** rows 29, 35 record
   the file/state assertion). See "Work Unit Evidence" table below for the full per-target log.
-- [ ] 2.26 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 2.26 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
+  **Slice 2 (19a), ronda 1 — juez B**: APPROVE con 1 WARNING + 1 MINOR (ambos fixeados igual, per
+  protocolo). WARNING: `ClienteWsaaTests.UnaRespuestaExitosaSeParseaAToken_Sign_Expiracion` nunca
+  leía `UltimaSolicitud.Content` — el mutante que renombra `in0`→`in99` en `ClienteWsaa.cs`
+  sobrevivía 25/25 porque el golden de `SobreSoapTests` prueba `SobreSoap` aislado, nunca la
+  integración `ClienteWsaa`→`SobreSoap`. Fix: el test del camino exitoso ahora captura el cuerpo
+  del request DURANTE `HttpMessageHandlerFalso.SendAsync` (el `Content` original queda
+  `Dispose`ado apenas `ObtenerTicketAsync` retorna), reconstruye el CMS esperado con un
+  `GeneradorDeTra`/`FirmanteCms` independientes contra el mismo reloj fijo y el mismo certificado,
+  y assertea el elemento `<in0>` exacto — no un `Contains` laxo. Ciclo mutation-proof-tests: mutante
+  `in0`→`in99` en `ClienteWsaa.cs` → RED (`Sequence contains no matching element`) → `git checkout
+  --` → verde (21/21). MINOR: el doc-comment de `SobreSoap.Construir` describía el enfoque
+  DESCARTADO (`XDeclaration`) en vez del real (concatenación de string cruda) — corregido.
 - [ ] 2.27 [ ] Open PR #2 `feat/stage19a-slice2-wsaa`, merge to `main` after a clean `judgment-day`
   round.
 
