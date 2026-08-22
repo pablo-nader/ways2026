@@ -714,8 +714,9 @@ transcription error; 19b's first task is the fixture-vs-reality diff.
   de secuencia rechazaría todo request en 19b → fixes `4bdcfd3` con la reconciliación campo por
   campo + la nota T4 honesta + la cláusula terminal del 600) → pasada acotada B APPROVE
   (reconciliación completa independiente) + re-ronda A APPROVE (cero hallazgos). Ronda limpia.
-- [ ] 3.24 [ ] Open PR #3 `feat/stage19a-slice3-wsfe-y-cae`, merge to `main` after a clean
+- [x] 3.24 [ ] Open PR #3 `feat/stage19a-slice3-wsfe-y-cae`, merge to `main` after a clean
   `judgment-day` round.
+  **DONE by the orchestrator**: PR #161, merged `757acc4` after the clean round (see 3.23).
 
 ### Work Unit Evidence
 
