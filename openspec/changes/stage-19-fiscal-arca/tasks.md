@@ -507,8 +507,9 @@ esta ronda — la numeración es del proposal y 19b la confirma contra el cable.
   `49b6d05` con los mutantes de los scans re-plantados en vivo); pasada acotada B APPROVE
   (exclusión por segmento exacto verificada; el ToString estructural en paridad honesta con su
   hermano sin red). Ronda limpia.
-- [ ] 2.27 [ ] Open PR #2 `feat/stage19a-slice2-wsaa`, merge to `main` after a clean `judgment-day`
+- [x] 2.27 [ ] Open PR #2 `feat/stage19a-slice2-wsaa`, merge to `main` after a clean `judgment-day`
   round.
+  **DONE by the orchestrator**: PR #160, merged `3fd2d79` after the clean round (see 2.26).
 
 ### Work Unit Evidence
 
