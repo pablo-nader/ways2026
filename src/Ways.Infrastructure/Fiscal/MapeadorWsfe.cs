@@ -73,8 +73,8 @@ public static class MapeadorWsfe
         yield return new XElement("ImpTotConc", FormatearMoneda(s.ImpTotConc));
         yield return new XElement("ImpNeto", FormatearMoneda(s.ImpNeto));
         yield return new XElement("ImpOpEx", FormatearMoneda(s.ImpOpEx));
-        yield return new XElement("ImpIVA", FormatearMoneda(s.ImpIVA));
         yield return new XElement("ImpTrib", FormatearMoneda(s.ImpTrib));
+        yield return new XElement("ImpIVA", FormatearMoneda(s.ImpIVA));
 
         if (s.FchServDesde is { } fchServDesde)
         {

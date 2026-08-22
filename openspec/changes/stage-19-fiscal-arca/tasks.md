@@ -675,6 +675,36 @@ transcription error; 19b's first task is the fixture-vs-reality diff.
     acotado con `retardoBase = 1ms`), no solo su cantidad. Ciclo: mutante del juez
     (`1L << (intento - 1)` → `1L`) → RED (`00:00:00.0020000` esperado vs. `00:00:00.0010000`
     real) → revert → verde.
+  **judgment-day Slice 3 (19a), ronda 2 — juez A (1 CRITICAL + 2 WARNINGs + 1 SUGGESTION), fixes
+  aplicados por el jd-fix-agent** (checkbox sin marcar hasta que el re-judge confirme ronda
+  limpia, regla 18):
+  - **CRITICAL** (`ImpIVA`/`ImpTrib` invertidos contra el manual): explore.md:87-96 transcribe el
+    orden EXACTO del `FECAEDetRequest` leído del XML de ejemplo del manual —
+    `...ImpTotal, ImpTotConc, ImpNeto, ImpOpEx, ImpTrib, ImpIVA...` — pero el slice emitía `ImpIVA`
+    ANTES de `ImpTrib`, auto-consistente en tres lugares: los `yield` de `MapeadorWsfe.cs:76-77`,
+    `FecaeSolicitarRequestGolden.xml`, y el orden posicional del record `SolicitudDeCae` en
+    `Contratos.cs:83-84`. Corregidos los tres a `ImpTrib` antes de `ImpIVA`. Los dos únicos call
+    sites de `SolicitudDeCae` (`MapeadorWsfeTests.cs:22-37`, `ClienteWsfeTests.cs:27-42`) usan
+    argumentos NOMBRADOS (`ImpIVA: 21.00m, ImpTrib: 0.00m,`), así que el reorder posicional del
+    record no les pisó ningún valor por posición — reconciliado campo por campo contra
+    explore.md:87-96 completo. Ciclo: mutante re-invirtiendo el orden en el mapper →
+    `MapeadorWsfeTests.ElSobreFecaeSolicitarCoincideByteAByteConElGoldenTranscripto` RED (diff
+    byte a byte contra el golden) → revert → verde.
+  - **WARNING** (nota T4 incompleta en `Fixtures/REVISION.md`): decía "sin acceso directo al
+    PDF... indetectable hasta 19b", pero el cross-check in-repo (explore.md, transcripción directa
+    del manual) existía y no se usó — de hecho habría cazado el CRITICAL de arriba. Nota corregida:
+    los fixtures WSFE fueron reconciliados contra la transcripción in-repo de explore.md:87-96 en
+    esta ronda; el pedigree sigue siendo menor que el de los fixtures WSAA (sin PDF directo); 19b
+    sigue confirmando contra el cable real.
+  - **WARNING** (contrato del 600 sin la cláusula del segundo 600): agregada la cláusula terminal
+    a la "Nota vinculante para el Slice 5 (WSFE 600 — invalidación del TA)" — si el segundo intento
+    (con TA recién firmado) también devuelve 600, el error es DEFINITIVO y se surface como error de
+    dominio, nunca un loop de re-firma.
+  - **SUGGESTION** (cross-check runtime del permiso): agregada al header del slice 5 (junto a
+    T1/T2/U2/la nota del 600) la obligación de implementar el chequeo runtime
+    `permiso.Numero == s.CbteDesde` / `permiso.IdComprobante == comprobante` — hoy el gate es
+    puramente estructural por tipo (D4), y el doc-comment de `IClienteWsfe` ya lo declara diferido
+    a esta slice.
 - [ ] 3.24 [ ] Open PR #3 `feat/stage19a-slice3-wsfe-y-cae`, merge to `main` after a clean
   `judgment-day` round.
 
@@ -728,6 +758,11 @@ TA cacheado (vía `IRepositorioDeTicketDeAcceso`) + reintentar exactamente una v
 firmado (`IClienteWsaa.LoginCms`)" — el flujo de datos que design.md:339-342 ya ubica antes de cada
 llamada a `ClienteWsfe`. Un reintento silencioso con el MISMO TA inválido, o ningún reintento en
 absoluto, deja el `600` sin resolver pese a que `ClienteWsfe` ya lo clasificó correctamente.
+**Cláusula terminal (judgment 19a-slice-3 ronda 2, juez A — WARNING)**: si el SEGUNDO intento (ya
+con el TA recién firmado) también devuelve `600`, el error es DEFINITIVO — se surface al caller
+como error de dominio (no reintentable con el mismo mecanismo), jamás dispara un tercer intento ni
+ningún loop de re-firma. `ServicioDeFacturacionFiscal` invalida y refirma como máximo una vez por
+llamada a `ClienteWsfe`.
 
 ## Slice 4: AsignadorDeNumeroFiscal + reconciliación + cifrado + policy/ABM (PR 4)
 
@@ -853,6 +888,16 @@ remains a 19c deliverable.
 above)**: `ServicioDeFacturacionFiscal` is the ONLY valid orchestrator of "WSFE `600` ⇒ invalidate
 the cached TA + retry exactly once with a freshly-signed one" — `ClienteWsfe` (slice 3) only
 detects and classifies the `600`, it cannot invalidate/refresh a `TicketDeAcceso` it does not own.
+If the SECOND attempt (with the freshly-signed TA) also returns `600`, the error is DEFINITIVE and
+surfaces to the caller as a domain error — never a re-signing loop (see the terminal clause on
+Slice 3's binding note).
+
+**PermisoDeSolicitud runtime cross-check (judgment 19a-slice-3 ronda 2, juez A — SUGGESTION,
+`IClienteWsfe`'s doc-comment already defers this)**: today `MaquinaDeEstadosCae`'s gate is purely
+structural by type (D4) — it does not verify that the `PermisoDeSolicitud` in hand actually
+authorizes the specific `SolicitudDeCae` being sent. This slice MUST implement the runtime check:
+`permiso.Numero` must match `s.CbteDesde`, and `permiso.IdComprobante` must match the comprobante
+being emitted, before `ClienteWsfe.SolicitarCaeAsync` is called with that pair.
 
 **Guard enumeration (mutation-proof-tests rule 3 v1.1, design.md:420-433)**:
 - **U2** `UPDATE comprobantes_venta SET cae…, resultado_fiscal… WHERE …` — conjuncts (a)

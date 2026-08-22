@@ -28,15 +28,19 @@ manual section so a future manual revision shows up as a diff between fixture se
 
 ## Contents (slice 3 — WSFE)
 
-**Honesty note, reasserted (T4)**: unlike the WSAA fixtures above (verified against
-`Especificacion_Tecnica_WSAA_1.2.2.pdf` during slice 2), the WSFE fixtures below are a
-best-effort transcription of the **public** WSFEv1 contract built by this agent **without direct
-access to `manual-desarrollador-ARCA-COMPG-v4-0.pdf`**. Element names, nesting (`Auth`/`FeCabReq`/
-`FeDetReq`/`FeDetResp`), and the split between call-level `Errors[]` and per-detail
-`Observaciones[]` follow the well-documented public WSFEv1 shape, but no test in 19a can catch a
-transcription error against the real manual or the real wire — confirming this set against the PDF
-and against a real WSFE response is 19b's first task (same limitation already recorded for the
-WSAA fault-code numbering, T3).
+**Honesty note, reasserted and corrected (T4, judgment-day round 2)**: the WSFE fixtures below
+were reconciled in this round against the in-repo transcription of the manual's own
+`FECAESolicitar` example (`openspec/changes/stage-19-fiscal-arca/explore.md:87-96`, itself a
+direct reading of `manual-desarrollador-ARCA-COMPG-v4-0.pdf`, RG 4291, rev. 15/01/2025) — that
+cross-check exists in-repo and was not consulted before round 1, which let a field-order defect
+(`ImpIVA` emitted before `ImpTrib`, the manual's example has `ImpTrib` before `ImpIVA`) ship
+auto-consistently across the mapper, the golden, and the request contract. Round 2 fixed the
+order in all three places and reconciled every `FECAEDetRequest` field against explore.md:87-96.
+The WSFE fixtures' pedigree still sits below the WSAA fixtures above (verified directly against
+`Especificacion_Tecnica_WSAA_1.2.2.pdf` during slice 2): explore.md's transcription is not a
+captured wire trace, no 19a test can catch an error in explore.md itself against the real PDF, and
+nothing here has been confirmed against a real WSFE response yet — that remains 19b's first task
+(same limitation already recorded for the WSAA fault-code numbering, T3).
 
 | File | What it represents |
 |---|---|
