@@ -371,7 +371,14 @@ sub_etapas_futuras:
 
 # FASES (registro del orquestador)
 # explore: done 2026-08-21 (explore.md, corte documentado + 6 decisiones)
-# propose: done 2026-08-21 (proposal.md 19a; gate de DB PENDIENTE DE
-#   RATIFICACION — 1 migracion, 2 enums, 2 tablas, 3 ALTER aditivos,
-#   5 FKs, 8 CHECKs, 8 indices, 3 data statements, 3 seeds, 1 policy;
+# propose: done 2026-08-21 (proposal.md 19a; gate de DB RATIFICADO por el
+#   orquestador el mismo dia — ver campos db_gate/db_gate_approval arriba —
+#   1 migracion, 2 enums, 2 tablas, 3 ALTER aditivos, 5 FKs, 8 CHECKs,
+#   8 indices, 3 data statements, 3 seeds, 1 policy;
 #   OD1 sub-etapas con 19b BLOCKED por alta WSASS)
+# spec: done 2026-08-21 (8 dominios, 32 req/51 esc)
+# design: done 2026-08-21 (76 mutation targets, conjuncts U1-U4 por adelantado,
+#   lock singleton-prefijo, goldens byte a byte, T1-T4 registradas)
+# tasks: done 2026-08-21 (159 tareas / 5 slices, 76 targets mapeados 1:1,
+#   6 reconciliaciones)
+# apply: en curso (slices 1-5)
