@@ -272,8 +272,15 @@ green + `judgment-day` clean round + PR merged.
 - [x] 1.50 Mutation evidence recorded in the PR body for targets 1-23 (**S** rows 2, 3, 21, 22, 23
   record the file/state/definition assertion, not a runtime failure). See "Work Unit Evidence"
   table below.
-- [ ] 1.51 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 1.51 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
+  **DONE by the orchestrator**: juez B APPROVE (5 spot-checks reproducen + el mutante extra del
+  orden de ManejadorDeErrores RED en ambos caminos; 1 MINOR de etiquetado — target 1 re-clasificado
+  [S] por equivalencia de runtime — + 1 SUGGESTION de honestidad del doble guard + 1 WARNING
+  diferido como nota vinculante del slice 5; fixes documentales `1df54ac`). Juez A APPROVE con
+  CERO hallazgos (contrato del gate verificado columna por columna; NO_RESP=15 consistente en los
+  3 lugares; ServicioDeVentas.cs ausente del patch — guard del POS byte-idéntico; los 2 fixtures
+  raw-SQL preservan semántica). Ronda limpia.
 - [ ] 1.52 [ ] Open PR #1 `feat/stage19a-slice1-schema-fiscal`, merge to `main` after a clean
   `judgment-day` round.
 
