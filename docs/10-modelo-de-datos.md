@@ -92,6 +92,19 @@ tipos_comprobante (           -- [global]
 )
 ```
 
+> **Estado (Etapa 19a, slice 1 — schema fiscal, apply en curso):** `codigo_afip` de los tres
+> catálogos de arriba deja de ser `NULL` a propósito y se puebla vía tres data statements
+> idempotentes de la migración `FiscalArcaEtapa19a` (`WHERE codigo_afip IS NULL`) + sus tres
+> seed nets gemelos en `InicializadorDeBaseDeDatos` (doble red, cada net probado
+> independientemente). `tipos_comprobante`: `FA`→1, `NDA`→2, `NCA`→3, `FB`→6, `NCB`→8, `FC`→11,
+> `NCC`→13. `condiciones_fiscales` (RG 5616 `CondicionIVAReceptorId`): `RI`→1, `EXENTO`→4,
+> `CF`→5, `MONOTRIBUTO`→6, `NO_RESP`→15 (mapeo a la condición más cercana, la ÚNICA
+> incertidumbre flaggeada — se confirma contra `FEParamGetCondicionIvaReceptor` en 19b; hasta
+> entonces un receptor `NO_RESP` se rechaza por su código, no por este valor). `alicuotas_iva`
+> (`FEParamGetTiposIva`): `0%`→3, `10.5%`→4, `21%`→5, `27%`→6 — `Exento`/`No gravado` quedan
+> `codigo_afip NULL` **por regla**: no son alícuotas, sus importes van a `ImpOpEx`/`ImpTotConc`
+> y jamás al array `Iva[]` de ARCA.
+
 **`PRE` — desactivado desde la etapa 17 (el cierre del PRE latente).** `PRE` era un tipo
 `activo`, `afecta_stock = false`, sin ningún camino de escritura propio — una venta fantasma
 podía colarse por `POST /api/ventas` con `codigoTipoComprobante = "PRE"`, decrementar stock y
@@ -355,7 +368,12 @@ comprobantes_venta (          -- [operativa]
     neto_gravado NULL, iva_total NULL,       -- solo si discrimina_iva
     -- entrega
     direccion_entrega text NULL, observaciones text NULL,
-    estado  estado_comprobante NOT NULL      -- enum: emitido | anulado
+    estado  estado_comprobante NOT NULL,     -- enum: emitido | anulado
+    -- Etapa 19a: aditivas, las cuatro NULL ⇒ "no es un comprobante fiscal" (TX/NCX/TXR/RC)
+    cae                    varchar(14) NULL,
+    cae_vencimiento        date        NULL,
+    resultado_fiscal       resultado_fiscal NULL,  -- enum: pendiente|aprobado|aprobado_con_observaciones|rechazado
+    observaciones_fiscales jsonb       NULL         -- [{ "codigo": int, "mensaje": string }]
 );
 -- UNIQUE (id_punto_venta, id_tipo_comprobante, numero)
 
@@ -430,6 +448,84 @@ movimientos, y los movimientos no se editan.
 > "Presupuestos" más abajo). `ComprobanteEmitido` gana `IdPresupuestoOrigen` en el
 > round-trip (`dto-contract-honesty` regla 2).
 >
+> **Estado (Etapa 19a, slice 1 — schema fiscal, apply en curso — header ABIERTO, cierra en
+> slice 5, regla 19):** `comprobantes_venta` gana las cuatro columnas de arriba (migración
+> `FiscalArcaEtapa19a`), aditivas puras — CERO statement extra en una venta no fiscal.
+> `ck_comprobantes_venta_fiscal_coherente` (4 conjuntos): o las cuatro son `NULL`, o
+> `resultado_fiscal` está seteado con `cae`/`cae_vencimiento` llegando juntos y presentes SII
+> `resultado_fiscal` es una de las dos aprobaciones (`aprobado`/`aprobado_con_observaciones` —
+> una aprobación CON observaciones **es** una factura válida, I3 de la máquina CAE la trata
+> como terminal). `ck_comprobantes_venta_cae_digitos` exige 14 dígitos. Índice PARCIAL
+> `ix_comprobantes_venta_fiscal_pendientes` `WHERE resultado_fiscal = 'pendiente'` — su
+> consumidor (resolución de pendientes/reintento, invariante I2) llega en slice 5. Sin columna
+> nueva para el número fiscal: `numero` ya lo lleva, alimentado por la serie fiscal
+> (`numeraciones_fiscales`, ver "Fiscal ARCA" más abajo) en vez de la interna — disjuntas por
+> tipo de comprobante. `observaciones_fiscales` sigue el precedente `jsonb` de `Auditoria` —
+> nunca la respuesta cruda de ARCA (persistiría `Token`/`Sign`, una credencial portadora, sin
+> cifrado). El camino de escritura fiscal (`ServicioDeFacturacionFiscal`) llega en slice 5; esta
+> slice no tiene ningún caller.
+
+### Fiscal ARCA (Etapa 19a)
+
+El núcleo fiscal buildable sin credenciales (`openspec/changes/stage-19-fiscal-arca/`, slice 1
+— schema): el certificado activo es el gate estructural, no un feature flag — sin uno, el
+camino fiscal devuelve 409 y realiza **cero** llamadas de red (invariante I4). `resultado_fiscal`
+y `ambiente_fiscal` son enums nativos nuevos, **enteramente creados por `CREATE TYPE`** — CERO
+`ALTER TYPE … ADD VALUE`, así que esta sub-etapa no deja ningún artefacto irreversible tras un
+`Down()` (a diferencia de las etapas 12/17).
+
+```sql
+certificados_fiscales (         -- [id_tenant + id_empresa NOT NULL] — DESVIACIÓN del catálogo,
+                                 -- ver doc 09: un certificado es de UN CUIT, nunca compartido
+    id_certificado, id_tenant, id_empresa,
+    ambiente               ambiente_fiscal NOT NULL,  -- enum: homologacion | produccion
+    alias                  varchar(60)  NOT NULL,     -- etiqueta humana ("Homo 2026")
+    cuit_titular            varchar(11) NOT NULL,      -- CUIT al que ARCA emitió el certificado
+    certificado_pem         text        NOT NULL,      -- parte PÚBLICA: no es secreto
+    clave_privada_cifrada   bytea       NOT NULL,      -- AES-256-GCM
+    nonce                   bytea       NOT NULL,      -- 12 bytes
+    tag_autenticacion       bytea       NOT NULL,      -- 16 bytes
+    id_clave_maestra        varchar(30) NOT NULL,      -- versión de la clave maestra (rotación)
+    huella_sha256           varchar(64) NOT NULL,      -- fingerprint: trazar sin descifrar
+    vigencia_desde, vigencia_hasta timestamptz NOT NULL,  -- del propio X.509
+    activo                  boolean     NOT NULL
+    -- EntidadBase completa (created_at/updated_at/deleted_at) — la rotación da de baja lógica
+    -- la fila superada
+);
+-- UNIQUE (id_tenant, id_empresa, ambiente) WHERE activo AND deleted_at IS NULL
+--   ⇒ a lo sumo UN certificado activo por empresa+ambiente
+
+numeraciones_fiscales (         -- [operativa] id_tenant + id_punto_venta, PK-only sin auditoría
+                                 -- (mismo criterio que numeraciones_comprobante, doc 09)
+    id_punto_venta integer  NOT NULL,   -- el interno; su numero_fiscal es UNIQUE (ver arriba)
+    codigo_afip    smallint NOT NULL,   -- CbteTipo de ARCA (1, 3, 6, 8, 11, 13, …)
+    id_tenant      integer  NOT NULL,
+    proximo_numero bigint   NOT NULL DEFAULT 1,
+    ultimo_autorizado_arca bigint      NULL,   -- de FECompUltimoAutorizado; 0 = serie sin usar
+    sincronizado_en         timestamptz NULL   -- par del anterior (IRelojDelSistema)
+    -- PK (id_punto_venta, codigo_afip)
+);
+```
+
+**Estado (Etapa 19a, slice 1 — schema fiscal, DB CHANGE GATE ratificado por el orquestador —
+apply en curso).** Creadas por la migración `FiscalArcaEtapa19a`, junto con los tres ALTERs
+aditivos de arriba (`empresas`, `puntos_venta`, `comprobantes_venta`) y las dos nuevas `CREATE
+TYPE`. RLS estándar (`ENABLE` + `FORCE`) en ambas tablas. `certificados_fiscales`: `EntidadBase`
+**SÍ** — key material que se rota, nunca se edita in place. `numeraciones_fiscales`:
+`EntidadBase` **NO** — mismo criterio exacto que `numeraciones_comprobante` (doc 09), necesita
+filtro de tenant escrito a mano (`WaysDbContext.AplicarFiltroDeTenantEnNumeracionFiscal`) y un
+guard de rechazo de escritura por `SaveChangesAsync` — su único escritor legítimo es
+`AsignadorDeNumeroFiscal` (slice 4), con SQL crudo, **disciplina OPUESTA** a
+`AsignadorDeNumeroComprobante`: toma el número DENTRO de la transacción de emisión (nunca en una
+transacción propia previa) porque en una serie de ARCA un número quemado no abre un hueco
+legítimo — **detiene la serie** (error 10016 de ARCA). El `codigo_afip` de los tres catálogos
+(`tipos_comprobante`, `condiciones_fiscales`, `alicuotas_iva`) queda poblado por esta misma
+migración vía tres data statements idempotentes + sus tres seed nets gemelos en
+`InicializadorDeBaseDeDatos` (doble red de la etapa 17) — sin ningún `ALTER`, las tres tablas ya
+tenían `codigo_afip smallint NULL` desde la etapa 1. Ningún camino de escritura de negocio existe
+todavía en esta slice: `ServicioDeFacturacionFiscal` (la emisión, slices 4-5),
+`AsignadorDeNumeroFiscal` y `ServicioDeCertificados` llegan en slices posteriores — esta slice es
+schema puro.
 
 ### Presupuestos (Etapa 17)
 
