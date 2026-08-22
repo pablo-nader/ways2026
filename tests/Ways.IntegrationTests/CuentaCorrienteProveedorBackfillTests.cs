@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -9,6 +10,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Fiscal;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
@@ -68,6 +70,8 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
                 // stage-17-presupuestos-y-remitos, Slice 1: mismo gap, mismo motivo.
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
+                npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
+                npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
             })
             .Options;
 
@@ -84,16 +88,41 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         db.Tenants.Add(tenant);
         await db.SaveChangesAsync();
 
-        var empresa = new Empresa { IdTenant = tenant.Id, RazonSocial = nombre, CreatedAt = ahora, UpdatedAt = ahora };
-        db.Empresas.Add(empresa);
-        await db.SaveChangesAsync();
-
-        var puntoVenta = new PuntoVenta
+        // stage-19a-slice1: esquema todavía en AuditoriaEtapa14 acá, ANTES de id_condicion_fiscal/
+        // numero_fiscal (FiscalArcaEtapa19a) — SQL crudo sobre la MISMA conexión de `db`, mismo
+        // motivo que la trampa ya documentada en CostoCongeladoTests.cs para esta primera
+        // divergencia física de empresas/puntos_venta desde la etapa 1.
+        var conexionCruda = (NpgsqlConnection)db.Database.GetDbConnection();
+        if (conexionCruda.State != ConnectionState.Open)
         {
-            IdTenant = tenant.Id, IdEmpresa = empresa.Id, Nombre = nombre, CreatedAt = ahora, UpdatedAt = ahora
-        };
-        db.PuntosVenta.Add(puntoVenta);
-        await db.SaveChangesAsync();
+            await conexionCruda.OpenAsync();
+        }
+
+        int idEmpresa;
+        await using (var comandoEmpresa = conexionCruda.CreateCommand())
+        {
+            comandoEmpresa.CommandText =
+                "INSERT INTO empresas (id_tenant, razon_social, created_at, updated_at) " +
+                "VALUES ($1, $2, now(), now()) RETURNING id_empresa";
+            comandoEmpresa.Parameters.Add(new NpgsqlParameter { Value = tenant.Id });
+            comandoEmpresa.Parameters.Add(new NpgsqlParameter { Value = nombre });
+            idEmpresa = (int)(await comandoEmpresa.ExecuteScalarAsync())!;
+        }
+
+        int idPuntoVenta;
+        await using (var comandoPuntoVenta = conexionCruda.CreateCommand())
+        {
+            comandoPuntoVenta.CommandText =
+                "INSERT INTO puntos_venta (id_tenant, id_empresa, nombre, created_at, updated_at) " +
+                "VALUES ($1, $2, $3, now(), now()) RETURNING id_punto_venta";
+            comandoPuntoVenta.Parameters.Add(new NpgsqlParameter { Value = tenant.Id });
+            comandoPuntoVenta.Parameters.Add(new NpgsqlParameter { Value = idEmpresa });
+            comandoPuntoVenta.Parameters.Add(new NpgsqlParameter { Value = nombre });
+            idPuntoVenta = (int)(await comandoPuntoVenta.ExecuteScalarAsync())!;
+        }
+
+        var empresa = new Empresa { Id = idEmpresa, IdTenant = tenant.Id, RazonSocial = nombre };
+        var puntoVenta = new PuntoVenta { Id = idPuntoVenta, IdTenant = tenant.Id, IdEmpresa = idEmpresa, Nombre = nombre };
 
         // Rol/CondicionFiscal/TipoComprobante son catálogos [global] que en producción siembra
         // InicializadorDeBaseDeDatos al arrancar el host — acá se siembran a mano una sola vez,

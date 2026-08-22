@@ -544,6 +544,8 @@ public class OfertasResolucionTests(WaysApiFixture fixture) : IClassFixture<Ways
                 npgsql.MapEnum<TipoDocumento>("tipo_documento");
                 npgsql.MapEnum<ModoLista>("modo_lista");
                 npgsql.MapEnum<UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
+                npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
             .Options;

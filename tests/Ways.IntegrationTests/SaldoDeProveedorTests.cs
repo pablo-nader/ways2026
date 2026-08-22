@@ -452,6 +452,8 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
                 // MovimientosCuentaCorrienteProveedor (re-sourcing OD7) — este contexto
                 // manually-curated necesita el mapeo o Npgsql no sabe traducir el enum.
                 npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCcProveedor>("tipo_movimiento_cc_proveedor");
+                npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
+                npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
             .Options;

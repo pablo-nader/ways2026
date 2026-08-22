@@ -715,6 +715,8 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
                 npgsql.MapEnum<MotivoStock>("motivo_stock");
                 npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
                 npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
+                npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
+                npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
             .Options;
@@ -772,6 +774,8 @@ public class ServicioDeVentasConversionTests(WaysApiFixture fixture) : IClassFix
                 npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
                 npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
                 npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
+                npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
+                npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual), contador)
             .Options;

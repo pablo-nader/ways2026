@@ -14,6 +14,7 @@ using Ways.Domain.Articulos;
 using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
+using Ways.Domain.Fiscal;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Precios;
 using Ways.Domain.Stock;
@@ -951,6 +952,8 @@ public class ServicioDeRemitosTests(WaysApiFixture fixture) : IClassFixture<Ways
                 npgsql.MapEnum<Ways.Domain.Compras.EstadoOrdenCompra>("estado_orden_compra");
                 npgsql.MapEnum<Ways.Domain.Ventas.EstadoPresupuesto>("estado_presupuesto");
                 npgsql.MapEnum<EstadoRemito>("estado_remito");
+                npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
+                npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
             })
             .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
             .Options;

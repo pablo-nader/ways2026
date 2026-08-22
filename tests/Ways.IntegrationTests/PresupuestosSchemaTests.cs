@@ -13,6 +13,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Fiscal;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Stock;
@@ -761,6 +762,8 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                     npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                     npgsql.MapEnum<EstadoRemito>("estado_remito");
+                    npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
+                    npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
                 })
                 .Options;
 
@@ -859,6 +862,8 @@ public class PresupuestosSchemaTests(WaysApiFixture fixture) : IClassFixture<Way
                     npgsql.MapEnum<EstadoOrdenCompra>("estado_orden_compra");
                     npgsql.MapEnum<EstadoPresupuesto>("estado_presupuesto");
                     npgsql.MapEnum<EstadoRemito>("estado_remito");
+                    npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
+                    npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
                 })
                 .Options;
 
