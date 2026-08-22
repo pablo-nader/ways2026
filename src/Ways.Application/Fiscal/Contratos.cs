@@ -32,6 +32,12 @@ public sealed record TicketDeAcceso(string Token, string Sign, DateTimeOffset Ex
 /// persiste ni viaja más allá de esta solicitud — en 19a quien la arma es siempre un test
 /// (<c>CertificadoDePrueba</c>, D7); el resolver real de producción
 /// (<c>IAlmacenDeClavesFiscales</c>) llega en la slice 4, y <c>ClienteWsaa</c> no tiene ningún
-/// caller de producción hasta la slice 5.
+/// caller de producción hasta la slice 5. El <see cref="ToString"/> generado por el compilador
+/// para un <c>record</c> imprime TODAS las propiedades, incluido el <see cref="X509Certificate2"/>
+/// vivo — sobreescrito acá, mismo motivo que <see cref="TicketDeAcceso"/> arriba, para que un
+/// log/excepción que interpole esta instancia no filtre el certificado.
 /// </summary>
-public sealed record SolicitudDeTicket(ClaveDeTicket Clave, X509Certificate2 Certificado);
+public sealed record SolicitudDeTicket(ClaveDeTicket Clave, X509Certificate2 Certificado)
+{
+    public override string ToString() => $"SolicitudDeTicket {{ Clave = {Clave} }}";
+}

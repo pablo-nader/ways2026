@@ -1,4 +1,5 @@
 using Ways.Application.Abstracciones;
+using Ways.Application.Tests.Infraestructura;
 using Ways.Infrastructure.Fiscal;
 
 namespace Ways.Application.Tests.Fiscal;
@@ -21,7 +22,7 @@ public class GeneradorDeTraTests
     [Fact]
     public void LaTraCoincideByteAByteConElGoldenDelManual()
     {
-        var raiz = ResolverRaizDelRepositorio();
+        var raiz = RaizDelRepositorio.Resolver();
         var golden = File.ReadAllText(Path.Combine(
             raiz, "tests", "Ways.Application.Tests", "Fiscal", "Fixtures", "Wsaa", "TraGolden.xml"));
 
@@ -62,15 +63,4 @@ public class GeneradorDeTraTests
         return tra[inicio..fin];
     }
 
-    private static string ResolverRaizDelRepositorio()
-    {
-        var directorio = AppContext.BaseDirectory;
-
-        while (directorio is not null && !File.Exists(Path.Combine(directorio, "Ways.slnx")))
-        {
-            directorio = Path.GetDirectoryName(directorio.TrimEnd(Path.DirectorySeparatorChar));
-        }
-
-        return directorio ?? throw new InvalidOperationException("No se encontró la raíz del repositorio (Ways.slnx).");
-    }
 }

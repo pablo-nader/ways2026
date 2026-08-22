@@ -1,3 +1,5 @@
+using Ways.Application.Tests.Infraestructura;
+
 namespace Ways.Application.Tests.Fiscal;
 
 /// <summary>
@@ -17,13 +19,20 @@ public class SobreSoapAislamientoTests
     private const string ArchivoAutorizado = "SobreSoap.cs";
     private static readonly string[] Marcadores = ["soapenv", "schemas.xmlsoap.org", "ServiceModel"];
 
+    /// <summary>Carpetas de build que el scan no tiene que atravesar — `obj/` en particular puede
+    /// contener `.cs` generados (p. ej. `GlobalUsings.g.cs`) que no son fuente propia del
+    /// proyecto.</summary>
+    private static readonly string[] CarpetasExcluidas = ["bin", "obj"];
+
     [Fact]
     public void SoloSobreSoapNombraElProtocoloSoapEnSrc()
     {
-        var raiz = ResolverRaizDelRepositorio();
+        var raiz = RaizDelRepositorio.Resolver();
         var srcDir = Path.Combine(raiz, "src");
 
-        var archivosCs = Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories).ToList();
+        var archivosCs = Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+            .Where(archivo => !EstaBajoCarpetaExcluida(srcDir, archivo))
+            .ToList();
 
         foreach (var marcador in Marcadores)
         {
@@ -43,15 +52,10 @@ public class SobreSoapAislamientoTests
         }
     }
 
-    private static string ResolverRaizDelRepositorio()
+    private static bool EstaBajoCarpetaExcluida(string raizDeBusqueda, string archivo)
     {
-        var directorio = AppContext.BaseDirectory;
-
-        while (directorio is not null && !File.Exists(Path.Combine(directorio, "Ways.slnx")))
-        {
-            directorio = Path.GetDirectoryName(directorio.TrimEnd(Path.DirectorySeparatorChar));
-        }
-
-        return directorio ?? throw new InvalidOperationException("No se encontró la raíz del repositorio (Ways.slnx).");
+        var relativo = Path.GetRelativePath(raizDeBusqueda, archivo);
+        var segmentos = relativo.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return segmentos.Any(segmento => CarpetasExcluidas.Contains(segmento, StringComparer.OrdinalIgnoreCase));
     }
 }

@@ -1,4 +1,5 @@
 using System.Xml.Linq;
+using Ways.Application.Tests.Infraestructura;
 using Ways.Infrastructure.Fiscal;
 
 namespace Ways.Application.Tests.Fiscal;
@@ -16,7 +17,7 @@ public class SobreSoapTests
     [Fact]
     public void ElSobreLoginCmsCoincideByteAByteConElGoldenDelManual()
     {
-        var raiz = ResolverRaizDelRepositorio();
+        var raiz = RaizDelRepositorio.Resolver();
         var golden = File.ReadAllText(Path.Combine(
             raiz, "tests", "Ways.Application.Tests", "Fiscal", "Fixtures", "Wsaa", "LoginCmsEnvelopeGolden.xml"));
 
@@ -53,15 +54,4 @@ public class SobreSoapTests
         Assert.DoesNotContain("  ", sobre, StringComparison.Ordinal);
     }
 
-    private static string ResolverRaizDelRepositorio()
-    {
-        var directorio = AppContext.BaseDirectory;
-
-        while (directorio is not null && !File.Exists(Path.Combine(directorio, "Ways.slnx")))
-        {
-            directorio = Path.GetDirectoryName(directorio.TrimEnd(Path.DirectorySeparatorChar));
-        }
-
-        return directorio ?? throw new InvalidOperationException("No se encontró la raíz del repositorio (Ways.slnx).");
-    }
 }

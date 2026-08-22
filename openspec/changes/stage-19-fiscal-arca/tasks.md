@@ -334,6 +334,17 @@ transcribe the proposal's numbering; confirming the exact wire strings is a **19
 19a can detect a transcription error in the `LoginCms`/TRA fixtures; 19b's first task is the
 fixture-vs-reality diff.
 
+**Gate de 19b (ítems nombrados a confirmar, judgment Slice 2 ronda 2, juez A — SUGGESTION,
+diferido por T3)**: `ClienteWsaa.cs:71`, `MapearFalla` hace `int.Parse(fault.FaultCode, …)` sobre
+el código de fault WSAA. Si el wire real emite un fault simbólico (`ns1:cms.sign.invalid` y
+similares, ver T3 arriba) en vez del número que asume el proposal, ese `int.Parse` tira
+`FormatException` en lugar de mapear a un `ErrorDominio` — no es un bug de 19a (la numeración
+500/501/502/600/601/602 es la que pide el proposal, y el doc-comment del propio método ya lo
+anota), pero 19b tiene que confirmarlo contra el wire real y decidir si el parseo necesita un
+`TryParse` defensivo con fallback a `wsaa_error_no_mapeado`, o si el wire realmente siempre manda
+el código numérico y el string simbólico es cosa de otra sección del manual. No se toca código en
+esta ronda — la numeración es del proposal y 19b la confirma contra el cable.
+
 - [x] 2.1 Create `src/Ways.Application/Fiscal/{IClienteWsaa,IRepositorioDeTicketDeAcceso}.cs` +
   `Contratos.cs` (`TicketDeAcceso`, `ClaveDeTicket`) — no key material in any port contract.
   *(design.md:245-252, 371)* **DEVIATION (registered)**: `Contratos.cs` also defines
@@ -374,6 +385,19 @@ fixture-vs-reality diff.
   (design's own two-method code block, verbatim); single-flight is specific to this in-memory
   adapter (a distributed cache would need distributed locking, out of scope per decision 10) so it
   does not belong on the port.
+  **AMPLIACIÓN (judgment Slice 2 ronda 2, juez A — WARNING ya-registrado, detalle de DI)**:
+  `DependencyInjection.cs:109-111` registra el tipo CONCRETO `RepositorioEnMemoriaDeTicketDeAcceso`
+  como singleton propio, y además registra `IRepositorioDeTicketDeAcceso` con una factory que
+  resuelve ese MISMO singleton (`sp => sp.GetRequiredService<RepositorioEnMemoriaDeTicketDeAcceso>()`)
+  — es decir, hoy conviven en el contenedor dos formas válidas de pedir la misma instancia: por el
+  puerto (solo ve los dos métodos del contrato) y por el tipo concreto (ve también
+  `ObtenerOFirmarAsync`). Es inerte en 19a porque `ClienteWsaa` no tiene caller de producción
+  todavía. **Obligación para el slice 5**: antes de cablear el primer caller real, resolver la
+  tensión — o `ObtenerOFirmarAsync` sube al puerto (si el orquestador real necesita invocar el
+  double-checked cache + single-flight sin conocer el tipo concreto), o el registro del tipo
+  concreto como singleton propio se retira de la DI (si ningún caller de producción debe poder
+  esquivar el puerto) y se documenta por qué. No dejar ambos registros conviviendo sin una decisión
+  explícita una vez que exista un consumer real.
 - [x] 2.7 Create `tests/**/Fiscal/CertificadoDePrueba.cs` — `CertificateRequest` self-signed,
   PKCS#12 round trip before signing (D7), **no key material committed**. *(design.md D7:71, 389)*
 - [x] 2.8 Create `tests/**/Fiscal/Fixtures/**` WSAA — `LoginTicketRequest`/`Response` goldens,
@@ -436,7 +460,7 @@ fixture-vs-reality diff.
   under `Migraciones/` touched; `dotnet ef migrations has-pending-model-changes` clean.
 - [x] 2.25 Mutation evidence recorded in the PR body for targets 24-36 (**S** rows 29, 35 record
   the file/state assertion). See "Work Unit Evidence" table below for the full per-target log.
-- [x] 2.26 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [ ] 2.26 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
   **Slice 2 (19a), ronda 1 — juez B**: APPROVE con 1 WARNING + 1 MINOR (ambos fixeados igual, per
   protocolo). WARNING: `ClienteWsaaTests.UnaRespuestaExitosaSeParseaAToken_Sign_Expiracion` nunca
@@ -450,6 +474,31 @@ fixture-vs-reality diff.
   `in0`→`in99` en `ClienteWsaa.cs` → RED (`Sequence contains no matching element`) → `git checkout
   --` → verde (21/21). MINOR: el doc-comment de `SobreSoap.Construir` describía el enfoque
   DESCARTADO (`XDeclaration`) en vez del real (concatenación de string cruda) — corregido.
+  **Estado honesto (regla 18, mismo precedente que la archive de la 16, tasks.md:830 "NOT RUN by
+  `sdd-apply`... left for the orchestrator")**: la ronda 1 del juez B está hecha y fixeada (arriba).
+  Este checkbox NO se marca `[x]` todavía — quedó marcado a medias por el fix agent de la ronda 1
+  (solo constaba el juez B) y se desmarca acá para corregir esa falsa señal de cierre. El cierre
+  real de esta tarea (veredicto del juez A + esta ronda 2, más cualquier ronda adicional que haga
+  falta hasta que quede limpia) lo asienta el ORQUESTADOR una vez que la ronda quede limpia — no un
+  fix agent, que no tiene autoridad para declarar la tarea terminada.
+  **Slice 2 (19a), ronda 2 — juez A**: 1 CRITICAL de ledger (este mismo checkbox marcado a medias,
+  corregido arriba) + 1 WARNING ya-registrado (ver nota ampliada en 2.6 sobre el puerto de
+  `ObtenerOFirmarAsync`) + 4 SUGGESTIONs (ToString anti-fuga en `SolicitudDeTicket`, scans de
+  `SinMaterialDeClaveTests`/`SobreSoapAislamientoTests` acotados a excluir `bin`/`obj`, helper
+  `ResolverRaizDelRepositorio` deduplicado en un único helper compartido, y el `int.Parse` del
+  fault ya diferido a 19b por T3 — ver nota en la sección "19b gate" más abajo). Fixes aplicados;
+  pendiente ronda de re-judge por el orquestador.
+  **Evidencia del fix agent (ronda 2)**: `dotnet build --no-incremental` — 0 errores (los 2
+  `NU1903` de `SSH.NET` son preexistentes, no tocados por este slice). Namespace
+  `Ways.Application.Tests.Fiscal` completo: 21/21 verde. `Ways.Application.Tests` completo (no
+  regresión, mismo conteo que el baseline): 318/318 verde. Ambos mutantes acotados por la
+  exclusión de `bin`/`obj` re-corridos en vivo (mutation-proof-tests regla 2): marcador
+  `schemas.xmlsoap.org` inyectado en `ClienteWsaa.cs` (archivo de `src/`, no de build) → RED
+  (`SobreSoapAislamientoTests`) → `git checkout --` → verde; archivo con
+  `-----BEGIN PRIVATE KEY-----` plantado bajo `tests/Ways.Application.Tests/Fiscal/` → RED
+  (`SinMaterialDeClaveTests`) → borrado → verde (21/21). Ningún archivo bajo `bin/`/`obj/` fue
+  necesario para la verificación porque la exclusión es estructural (por segmento de ruta), no
+  depende de contenido.
 - [ ] 2.27 [ ] Open PR #2 `feat/stage19a-slice2-wsaa`, merge to `main` after a clean `judgment-day`
   round.
 

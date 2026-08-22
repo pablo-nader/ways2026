@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Xml.Linq;
 using Ways.Application.Fiscal;
+using Ways.Application.Tests.Infraestructura;
 using Ways.Domain.Common;
 using Ways.Domain.Fiscal;
 using Ways.Infrastructure.Fiscal;
@@ -104,22 +105,10 @@ public class ClienteWsaaTests
 
     private static string LeerFixture(string rutaRelativa)
     {
-        var raiz = ResolverRaizDelRepositorio();
+        var raiz = RaizDelRepositorio.Resolver();
         var carpetaFixtures = Path.Combine(
             raiz, "tests", "Ways.Application.Tests", "Fiscal", "Fixtures", "Wsaa");
         var ruta = Path.Combine([carpetaFixtures, .. rutaRelativa.Split('/')]);
         return File.ReadAllText(ruta);
-    }
-
-    private static string ResolverRaizDelRepositorio()
-    {
-        var directorio = AppContext.BaseDirectory;
-
-        while (directorio is not null && !File.Exists(Path.Combine(directorio, "Ways.slnx")))
-        {
-            directorio = Path.GetDirectoryName(directorio.TrimEnd(Path.DirectorySeparatorChar));
-        }
-
-        return directorio ?? throw new InvalidOperationException("No se encontró la raíz del repositorio (Ways.slnx).");
     }
 }

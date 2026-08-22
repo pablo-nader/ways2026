@@ -1,3 +1,5 @@
+using Ways.Application.Tests.Infraestructura;
+
 namespace Ways.Application.Tests.Fiscal;
 
 /// <summary>
@@ -28,10 +30,16 @@ public class SinMaterialDeClaveTests
     private static readonly string[] ExtensionesDeTexto =
         [".cs", ".csproj", ".json", ".xml", ".md", ".config", ".sql", ".yaml", ".yml"];
 
+    /// <summary>Carpetas de build que el scan no tiene que atravesar: no son fuente, y en
+    /// <c>bin/</c> en particular puede haber binarios grandes — leerlos con
+    /// <see cref="File.ReadAllText(string)"/> es costo real, no solo ruido de falsos
+    /// positivos.</summary>
+    private static readonly string[] CarpetasExcluidas = ["bin", "obj"];
+
     [Fact]
     public void NingunArchivoDeSrcOTestsEsOContieneMaterialDeClave()
     {
-        var raiz = ResolverRaizDelRepositorio();
+        var raiz = RaizDelRepositorio.Resolver();
 
         foreach (var carpeta in new[] { "src", "tests" })
         {
@@ -39,6 +47,11 @@ public class SinMaterialDeClaveTests
 
             foreach (var archivo in Directory.EnumerateFiles(directorio, "*", SearchOption.AllDirectories))
             {
+                if (EstaBajoCarpetaExcluida(directorio, archivo))
+                {
+                    continue;
+                }
+
                 var extension = Path.GetExtension(archivo);
 
                 Assert.DoesNotContain(
@@ -59,15 +72,10 @@ public class SinMaterialDeClaveTests
         }
     }
 
-    private static string ResolverRaizDelRepositorio()
+    private static bool EstaBajoCarpetaExcluida(string raizDeBusqueda, string archivo)
     {
-        var directorio = AppContext.BaseDirectory;
-
-        while (directorio is not null && !File.Exists(Path.Combine(directorio, "Ways.slnx")))
-        {
-            directorio = Path.GetDirectoryName(directorio.TrimEnd(Path.DirectorySeparatorChar));
-        }
-
-        return directorio ?? throw new InvalidOperationException("No se encontró la raíz del repositorio (Ways.slnx).");
+        var relativo = Path.GetRelativePath(raizDeBusqueda, archivo);
+        var segmentos = relativo.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return segmentos.Any(segmento => CarpetasExcluidas.Contains(segmento, StringComparer.OrdinalIgnoreCase));
     }
 }
