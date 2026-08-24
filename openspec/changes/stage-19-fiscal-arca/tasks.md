@@ -138,6 +138,14 @@ proof.
 
 ---
 
+### Cierre de suites del programa (backfill del orquestador, verify W3)
+
+Suites finales sobre `main@21c3294` (post-#163, primera pasada, CERO flakes): Domain **545/545**
+· Application **373/373** · Integration **1725/1725** (el 1715 de la tarea 5.25 era pre-rondas
+de judgment: +10 tests de las rondas 1/2 del slice 5) · vitest verde completo. Las enmiendas de
+"Four→Six gates" en los dos delta specs (comprobante-fiscal:64, operacion-de-pos:23) se
+asentaron en el verify (W1/W2) para no fusionar texto stale a los specs permanentes.
+
 ## Slice 1: Schema fiscal completo + RLS + ramas de error + docs 09/10 (PR 1)
 
 **Branch**: `feat/stage19a-slice1-schema-fiscal`. **Start**: `main`. **Finish**: two `CREATE TYPE`

@@ -20,7 +20,7 @@ a genuinely new risk tier (private key material and the emitter's legal identity
 gated by the existing `Politicas.OperacionDePos` (Vendedor + Supervisor + Admin) — the letter, the
 totals, and the CAE are all server-decided, so the risk being gated is not who presses the button.
 
-#### Scenario: A Vendedor can attempt a fiscal emission (subject to the four gates)
+#### Scenario: A Vendedor can attempt a fiscal emission (subject to the six gates)
 - GIVEN a user with role Vendedor and an empresa with no active certificate
 - WHEN they call `POST /api/fiscal/comprobantes`
 - THEN the request is authorized (and then rejected with `409 certificado_fiscal_ausente` by the

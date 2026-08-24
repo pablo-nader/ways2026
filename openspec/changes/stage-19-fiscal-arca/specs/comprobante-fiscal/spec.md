@@ -61,7 +61,12 @@ invoice MUST require a nota de crédito, never a rewrite of the existing row.
 - WHEN the retry endpoint (`POST /api/fiscal/comprobantes/{id}/reintentar`) is called for it
 - THEN it is rejected — a terminal comprobante never re-enters `FECAESolicitar`
 
-### Requirement: The Fiscal Emission Use Case Has Four Independent Named Gates, Including Invariant I4
+### Requirement: The Fiscal Emission Use Case Has Six Independent Named Gates, Including Invariant I4
+
+*(Amended at verify: the shipped implementation carries SIX named pre-transaction 409 gates —
+the original four plus `condicion_fiscal_receptor_no_mapeada` and the letter cross-check
+`tipo_fiscal_letra_no_coincide` added by judgment-day slice-5 ronda 1/2 — see design.md D10 and
+tasks.md Reconciliación 8. The count below is the binding one.)*
 
 Fiscal emission MUST require, each as its own named 409 rather than a single boolean flag: the
 empresa's `id_condicion_fiscal` is set, the punto de venta's `numero_fiscal` is set, an active
