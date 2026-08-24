@@ -110,4 +110,66 @@ public class RepositorioEnMemoriaDeTicketDeAccesoTests
         Assert.Equal(1, llamadas);
         Assert.All(resultados, r => Assert.Equal(resultados[0].Token, r.Token));
     }
+
+    // --- InvalidarAsync (judgment 19a-slice-5 ronda 2, juez A — WARNING: el 600 tiene que pedir el
+    //     TA fresco VÍA el single-flight de ObtenerOFirmarAsync, nunca firmando directo por fuera del
+    //     cerrojo) ---
+
+    [Fact]
+    public async Task InvalidarAsyncDescartaElTicketCacheadoYElProximoObtenerOFirmarVuelveAFabricar()
+    {
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var repositorio = new RepositorioEnMemoriaDeTicketDeAcceso(reloj);
+        await repositorio.GuardarAsync(Clave, new TicketDeAcceso("viejo", "sig", reloj.Ahora.AddHours(12)), CancellationToken.None);
+
+        await repositorio.InvalidarAsync(Clave, CancellationToken.None);
+
+        Assert.Null(await repositorio.ObtenerVigenteAsync(Clave, CancellationToken.None));
+
+        var fresco = await repositorio.ObtenerOFirmarAsync(
+            Clave, _ => Task.FromResult(new TicketDeAcceso("fresco", "sig", reloj.Ahora.AddHours(12))), CancellationToken.None);
+        Assert.Equal("fresco", fresco.Token);
+    }
+
+    [Fact]
+    public async Task InvalidarAsyncSobreUnaClaveSinTicketCacheadoEsUnNoOp()
+    {
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var repositorio = new RepositorioEnMemoriaDeTicketDeAcceso(reloj);
+
+        await repositorio.InvalidarAsync(Clave, CancellationToken.None); // idempotente, no revienta
+
+        Assert.Null(await repositorio.ObtenerVigenteAsync(Clave, CancellationToken.None));
+    }
+
+    /// <summary>El costo barato que el fix pedía: dos pedidos concurrentes DESPUÉS de invalidar
+    /// comparten UNA sola re-firma — el mismo <c>SemaphoreSlim</c> por clave que ya prueba
+    /// <see cref="NConcurrentesEnFrioEmitenUnSoloLoginCms"/>, ahora ejercido tras un
+    /// <see cref="RepositorioEnMemoriaDeTicketDeAcceso.InvalidarAsync"/> — el shape exacto del 600:
+    /// invalidar + N pedidos concurrentes por el TA fresco.</summary>
+    [Fact]
+    public async Task DosConcurrentesTrasInvalidarComparteUnaSolaReFirma()
+    {
+        var reloj = new RelojFijo(DateTimeOffset.UtcNow);
+        var repositorio = new RepositorioEnMemoriaDeTicketDeAcceso(reloj);
+        await repositorio.GuardarAsync(Clave, new TicketDeAcceso("viejo", "sig", reloj.Ahora.AddHours(12)), CancellationToken.None);
+        await repositorio.InvalidarAsync(Clave, CancellationToken.None);
+
+        var reFirmas = 0;
+
+        async Task<TicketDeAcceso> Fabricar(CancellationToken ct)
+        {
+            Interlocked.Increment(ref reFirmas);
+            await Task.Delay(50, ct);
+            return new TicketDeAcceso("fresco", "sig", DateTimeOffset.UtcNow.AddHours(12));
+        }
+
+        var tareas = Enumerable.Range(0, 5)
+            .Select(_ => repositorio.ObtenerOFirmarAsync(Clave, Fabricar, CancellationToken.None))
+            .ToArray();
+        var resultados = await Task.WhenAll(tareas);
+
+        Assert.Equal(1, reFirmas);
+        Assert.All(resultados, r => Assert.Equal("fresco", r.Token));
+    }
 }

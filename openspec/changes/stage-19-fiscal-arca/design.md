@@ -324,10 +324,13 @@ are forbidden here — the stage-1-slice-2 finding the sibling documents at `:14
 ```
 POST /api/fiscal/comprobantes                    [OperacionDePos]
   │
-  ├─ FUERA de toda transacción — los CUATRO GATES (D10), cada uno su 409 nombrado:
+  ├─ FUERA de toda transacción — los SEIS GATES (D10), cada uno su 409 nombrado (registrado como
+  │    drift en judgment-day Slice 5 (19a), ronda 2, juez A — WARNING; este archivo decía "CUATRO
+  │    GATES" desde antes de que el gate D10 de la letra se agregara en la ronda 1):
   │    empresas.id_condicion_fiscal ─┐  puntos_venta.numero_fiscal ─┐
   │    ResolverTipoFiscalAsync ──────┤  clientes.id_condicion_fiscal (NO_RESP ⇒ 409)
-  │    certificados_fiscales activo ─┘        ⇒ I4: CERO bytes en el cable
+  │    certificados_fiscales activo ─┘  tipoFiscal.Letra ≠ letra resuelta (D10) ─┘
+  │        ⇒ I4: CERO bytes en el cable
   ├─ ResolvedorDeLetraComprobante.Resolver(emisor, receptor)   ← SU PRIMER CALLER
   └─ ComposicionDeTotalesFiscales  (GROUP BY id_alicuota_iva sobre el snapshot por línea)
 

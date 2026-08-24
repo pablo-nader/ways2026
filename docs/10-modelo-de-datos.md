@@ -92,7 +92,7 @@ tipos_comprobante (           -- [global]
 )
 ```
 
-> **Estado (Etapa 19a, slice 1 — schema fiscal, apply en curso):** `codigo_afip` de los tres
+> **Estado (Etapa 19a — CERRADA):** `codigo_afip` de los tres
 > catálogos de arriba deja de ser `NULL` a propósito y se puebla vía tres data statements
 > idempotentes de la migración `FiscalArcaEtapa19a` (`WHERE codigo_afip IS NULL`) + sus tres
 > seed nets gemelos en `InicializadorDeBaseDeDatos` (doble red, cada net probado
@@ -448,9 +448,9 @@ movimientos, y los movimientos no se editan.
 > "Presupuestos" más abajo). `ComprobanteEmitido` gana `IdPresupuestoOrigen` en el
 > round-trip (`dto-contract-honesty` regla 2).
 >
-> **Estado (Etapa 19a, slice 1 — schema fiscal, apply en curso — header ABIERTO, cierra en
-> slice 5, regla 19):** `comprobantes_venta` gana las cuatro columnas de arriba (migración
-> `FiscalArcaEtapa19a`), aditivas puras — CERO statement extra en una venta no fiscal.
+> **Estado (Etapa 19a — CERRADA, regla 19):** `comprobantes_venta` gana las cuatro columnas de
+> arriba (migración `FiscalArcaEtapa19a`), aditivas puras — CERO statement extra en una venta no
+> fiscal.
 > `ck_comprobantes_venta_fiscal_coherente` (4 conjuntos): o las cuatro son `NULL`, o
 > `resultado_fiscal` está seteado con `cae`/`cae_vencimiento` llegando juntos y presentes SII
 > `resultado_fiscal` es una de las dos aprobaciones (`aprobado`/`aprobado_con_observaciones` —
@@ -462,8 +462,9 @@ movimientos, y los movimientos no se editan.
 > (`numeraciones_fiscales`, ver "Fiscal ARCA" más abajo) en vez de la interna — disjuntas por
 > tipo de comprobante. `observaciones_fiscales` sigue el precedente `jsonb` de `Auditoria` —
 > nunca la respuesta cruda de ARCA (persistiría `Token`/`Sign`, una credencial portadora, sin
-> cifrado). El camino de escritura fiscal (`ServicioDeFacturacionFiscal`) llega en slice 5; esta
-> slice no tiene ningún caller.
+> cifrado). El camino de escritura fiscal es `ServicioDeFacturacionFiscal` (slice 5) — el único
+> escritor de estas cuatro columnas, vía la guarded `UPDATE` U2 (`WHERE … AND resultado_fiscal =
+> 'pendiente'`).
 
 ### Fiscal ARCA (Etapa 19a)
 
@@ -507,8 +508,8 @@ numeraciones_fiscales (         -- [operativa] id_tenant + id_punto_venta, PK-on
 );
 ```
 
-**Estado (Etapa 19a, slice 1 — schema fiscal, DB CHANGE GATE ratificado por el orquestador —
-apply en curso).** Creadas por la migración `FiscalArcaEtapa19a`, junto con los tres ALTERs
+**Estado (Etapa 19a — CERRADA, DB CHANGE GATE ratificado por el orquestador).** Creadas por la
+migración `FiscalArcaEtapa19a`, junto con los tres ALTERs
 aditivos de arriba (`empresas`, `puntos_venta`, `comprobantes_venta`) y las dos nuevas `CREATE
 TYPE`. RLS estándar (`ENABLE` + `FORCE`) en ambas tablas. `certificados_fiscales`: `EntidadBase`
 **SÍ** — key material que se rota, nunca se edita in place. `numeraciones_fiscales`:
@@ -522,10 +523,10 @@ legítimo — **detiene la serie** (error 10016 de ARCA). El `codigo_afip` de lo
 (`tipos_comprobante`, `condiciones_fiscales`, `alicuotas_iva`) queda poblado por esta misma
 migración vía tres data statements idempotentes + sus tres seed nets gemelos en
 `InicializadorDeBaseDeDatos` (doble red de la etapa 17) — sin ningún `ALTER`, las tres tablas ya
-tenían `codigo_afip smallint NULL` desde la etapa 1. Ningún camino de escritura de negocio existe
-todavía en esta slice: `ServicioDeFacturacionFiscal` (la emisión, slices 4-5),
-`AsignadorDeNumeroFiscal` y `ServicioDeCertificados` llegan en slices posteriores — esta slice es
-schema puro.
+tenían `codigo_afip smallint NULL` desde la etapa 1. Los caminos de escritura de negocio llegaron
+en slices posteriores: `AsignadorDeNumeroFiscal`/`ServicioDeCertificados` (slice 4) y
+`ServicioDeFacturacionFiscal` — la emisión end-to-end contra mocks, primer y único caller real de
+`ResolvedorDeLetraComprobante` — (slice 5, cierre de la sub-etapa).
 
 ### Presupuestos (Etapa 17)
 

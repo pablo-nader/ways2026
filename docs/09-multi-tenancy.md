@@ -75,7 +75,7 @@ puntos_venta (
 );
 ```
 
-> **Estado (Etapa 19a, slice 1 — schema fiscal, apply en curso):** `empresas.id_condicion_fiscal`
+> **Estado (Etapa 19a — CERRADA, `openspec/changes/stage-19-fiscal-arca/`):** `empresas.id_condicion_fiscal`
 > y `puntos_venta.numero_fiscal` implementadas por la migración `FiscalArcaEtapa19a` — ambas
 > `NULL` a propósito, sin default honesto (`openspec/changes/stage-19-fiscal-arca/proposal.md`
 > §B/§C). `numero_fiscal` es `UNIQUE (id_tenant, id_empresa, numero_fiscal)` PARCIAL — vuelve

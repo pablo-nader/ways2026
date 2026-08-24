@@ -106,15 +106,33 @@ public static class DependencyInjection
             }
         });
 
-        services.AddSingleton<RepositorioEnMemoriaDeTicketDeAcceso>();
-        services.AddSingleton<IRepositorioDeTicketDeAcceso>(
-            sp => sp.GetRequiredService<RepositorioEnMemoriaDeTicketDeAcceso>());
+        // stage-19a-slice5 (task 5.7): primer registro de IClienteWsfe — sin caller de producción
+        // hasta esta slice (ServicioDeFacturacionFiscal). Mismo criterio que IClienteWsaa arriba:
+        // SIN BaseAddress por defecto (verify criterion 8) — "Ways:Fiscal:UrlWsfe" recién en 19b.
+        services.AddHttpClient<IClienteWsfe, ClienteWsfe>((sp, http) =>
+        {
+            var url = configuration["Ways:Fiscal:UrlWsfe"];
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                http.BaseAddress = new Uri(url);
+            }
+        });
+
+        // stage-19a-slice5: tensión de la slice 2 resuelta (judgment ronda 2 juez A) —
+        // ObtenerOFirmarAsync subió al puerto IRepositorioDeTicketDeAcceso, así que el tipo
+        // concreto YA NO se registra por separado: una sola forma de resolver la instancia.
+        services.AddSingleton<IRepositorioDeTicketDeAcceso, RepositorioEnMemoriaDeTicketDeAcceso>();
 
         // stage-19a-slice4 (design D5/D6): AES-256-GCM, clave maestra desde configuración/entorno
         // — Ways:Fiscal:ClaveMaestraActual + Ways:Fiscal:ClavesMaestras:<id>, JAMÁS en appsettings
         // commiteado (verify criterion 8 lo cubre para el hostname de ARCA; la clave maestra en sí
         // no tiene default alguno acá, así que ausente es el estado de base honesto en 19a).
         services.AddScoped<IAlmacenDeClavesFiscales, CifradoDeClavesFiscales>();
+
+        // stage-19a-slice5: el orquestador end-to-end — OpcionesFiscales bindable (Ways:Fiscal,
+        // solo la clave Ambiente en 19a; ver el doc-comment de OpcionesFiscales sobre el default).
+        services.Configure<OpcionesFiscales>(configuration.GetSection(OpcionesFiscales.Seccion));
+        services.AddScoped<ServicioDeFacturacionFiscal>();
 
         return services;
     }

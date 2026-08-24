@@ -15,11 +15,14 @@ public enum CondicionFiscalCodigo
 
 /// <summary>
 /// Resuelve la letra de un comprobante fiscal (A/B/C) por el cruce condición fiscal emisor ×
-/// condición fiscal receptor (doc 10 §1 "Regla de la letra"; design decisión 8, spec:
-/// Comprobante-Letter Resolution Stays Dormant). Pura, sin acceso a base de datos, y
-/// <b>dormant</b>: el POS de esta etapa solo emite TX/NCX (<c>es_fiscal = false</c>), así que
-/// ningún endpoint ni servicio la invoca — vive acá, exhaustivamente testeada, para el día en
-/// que la facturación electrónica aterrice.
+/// condición fiscal receptor (doc 10 §1 "Regla de la letra"; design decisión 8). Pura, sin acceso
+/// a base de datos.
+///
+/// <b>YA NO DORMANT (stage-19a, Slice 5, task 5.8)</b>: <c>ServicioDeFacturacionFiscal</c> es su
+/// PRIMER caller real (design.md data flow, "SU PRIMER CALLER") — la emisión fiscal end-to-end
+/// contra mocks lo invoca después de los cinco gates (D10), para informar la letra efectiva del
+/// comprobante emitido. El POS ordinario (<c>ServicioDeVentas</c>) sigue sin invocarlo: TX/NCX/TXR/RC
+/// (<c>es_fiscal = false</c>) nunca tienen letra, esa mitad de la regla no cambió.
 ///
 /// Regla explícita de doc 10: <c>RI → RI</c> emite A; <c>RI → </c>cualquier otra cosa emite B;
 /// un emisor Monotributo emite C a todos. Doc 10 no especifica el resto de los emisores

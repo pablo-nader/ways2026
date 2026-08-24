@@ -5,11 +5,13 @@ namespace Ways.Api.Endpoints;
 
 /// <summary>
 /// El ABM de certificados fiscales + la carga de condición fiscal de empresa / número fiscal de
-/// punto de venta (stage-19a, Slice 4; proposal.md API surface 705-710) — las TRES rutas van bajo
-/// <see cref="Politicas.AdministracionFiscal"/> (solo Admin, target 63). La emisión fiscal en sí
-/// (<c>POST /api/fiscal/comprobantes</c>, <c>.../reintentar</c>) llega en Slice 5, bajo
-/// <see cref="Politicas.OperacionDePos"/> — un grupo de ruta distinto, esta clase solo mapea la
-/// mitad de configuración de esta slice.
+/// punto de venta (stage-19a, Slice 4; proposal.md API surface 705-710) bajo
+/// <see cref="Politicas.AdministracionFiscal"/> (solo Admin, target 63), MÁS la emisión fiscal en sí
+/// (Slice 5: <c>POST /api/fiscal/comprobantes</c> / <c>.../reintentar</c>) bajo
+/// <see cref="Politicas.OperacionDePos"/> — grupo de ruta DISTINTO a propósito (spec
+/// operacion-de-pos: "Fiscal Emission Stays Under OperacionDePos, Not AdministracionFiscal" — la
+/// letra, los totales y el CAE los decide el servidor, el riesgo gateado no es quién aprieta el
+/// botón).
 /// </summary>
 public static class FiscalEndpoints
 {
@@ -58,6 +60,27 @@ public static class FiscalEndpoints
             return Results.NoContent();
         })
         .WithSummary("Carga el punto de venta ARCA de un punto de venta interno.");
+
+        // Slice 5: la emisión fiscal en sí — OperacionDePos, NUNCA AdministracionFiscal (spec
+        // operacion-de-pos: la letra/totales/CAE los decide el servidor, target 5.24).
+        var emision = app.MapGroup("/api/fiscal/comprobantes")
+            .WithTags("Fiscal")
+            .RequireAuthorization(Politicas.OperacionDePos);
+
+        emision.MapPost("/", async (
+            ServicioDeFacturacionFiscal servicio, SolicitudDeEmisionFiscal solicitud, CancellationToken ct) =>
+        {
+            var emitido = await servicio.EmitirAsync(solicitud, ct);
+            return Results.Created($"/api/fiscal/comprobantes/{emitido.Id}", emitido);
+        })
+        .WithSummary("Emite un comprobante fiscal end-to-end contra WSAA/WSFE (I2/I3/I4).");
+
+        emision.MapPost("/{id:int}/reintentar", async (
+            ServicioDeFacturacionFiscal servicio, int id, CancellationToken ct) =>
+            Results.Ok(await servicio.ReintentarAsync(id, ct)))
+        .WithSummary(
+            "Reintenta un comprobante fiscal 'pendiente' — FECompConsultar primero (I2), adopta el " +
+            "CAE si ARCA ya lo autorizó.");
 
         return app;
     }
