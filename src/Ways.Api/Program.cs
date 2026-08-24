@@ -187,6 +187,9 @@ app.MapearPresupuestos();
 app.MapearRemitos();
 app.MapearReportes();
 app.MapearAuditoria();
+// stage-19a-slice4: ABM de certificados fiscales + condición fiscal de empresa / número fiscal de
+// PV, bajo Politicas.AdministracionFiscal. La emisión fiscal en sí llega en Slice 5.
+app.MapearFiscal();
 
 // Cualquier ruta que no sea /api la resuelve el router de React.
 // Una /api/... inexistente tiene que dar 404, no devolver el index.html.

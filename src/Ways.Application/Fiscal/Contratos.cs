@@ -116,3 +116,55 @@ public sealed record ConsultaDeComprobante(
 /// Sin consumidor en 19a (los mapeos ya están en la migración, decisión 11); confirmarlos contra
 /// esto es tarea de 19b.</summary>
 public sealed record ParametroArca(string Id, string Descripcion);
+
+/// <summary>
+/// Alta de un certificado fiscal (slice 4, <c>ServicioDeCertificados</c>) — el operador sube el
+/// PFX exportado desde ARCA con su contraseña; el servicio extrae la parte pública (PEM), la
+/// huella SHA-256, la vigencia (del propio X.509, nunca <c>DEFAULT now()</c>) y la clave privada,
+/// que cifra antes de persistir (<c>IAlmacenDeClavesFiscales.CifrarAsync</c>, D5). <see cref="Pfx"/>/
+/// <see cref="PasswordPfx"/> viven SOLO durante este request — no hay columna que los guarde tal
+/// cual (dto-contract-honesty: nada especulativo, ningún campo de acá aparece en
+/// <see cref="CertificadoFiscalDto"/>). LÍMITE HONESTO (judgment-day 19a-slice-4 ronda 2 juez A,
+/// completado en la misma ronda tras la pasada acotada del juez B): el <c>try/finally</c> de
+/// <see cref="ServicioDeCertificados.RegistrarAsync"/> arranca ANTES de cargar el PFX, así que
+/// <see cref="System.Security.Cryptography.CryptographicOperations.ZeroMemory"/> limpia
+/// <see cref="Pfx"/> en TODOS los caminos de salida — incluido el más probable del ABM, contraseña
+/// incorrecta (PFX inválido), y el PFX sin clave RSA — no solo el camino feliz. Es un <c>byte[]</c>,
+/// se puede. <see cref="PasswordPfx"/> NO: es un
+/// <see cref="string"/> inmutable de .NET, nunca se puede zerear de forma confiable (queda en el
+/// heap gestionado hasta que el GC lo recolecte, potencialmente duplicado por interning o por
+/// promoción de generación) — no hay API que lo garantice, y fingir que sí sería una garantía
+/// falsa.</summary>
+public sealed record RegistroDeCertificadoFiscal(
+    int IdEmpresa,
+    AmbienteFiscal Ambiente,
+    string Alias,
+    string CuitTitular,
+    byte[] Pfx,
+    string PasswordPfx);
+
+/// <summary>
+/// Lectura de un certificado fiscal — <c>dto-contract-honesty</c> rule 1 (design T5): SIN
+/// <c>CertificadoPem</c> (público, pero sin consumidor hasta la pantalla de 19c) y, sobre todo,
+/// SIN <see cref="Domain.Fiscal.CertificadoFiscal.ClavePrivadaCifrada"/>/<c>Nonce</c>/
+/// <c>TagAutenticacion</c>/<c>IdClaveMaestra</c> — ninguno de los cuatro tiene una propiedad acá,
+/// ni con otro nombre (spec certificados-fiscales: "Key Material Never Appears In Any DTO, Log,
+/// Or API Response").</summary>
+public sealed record CertificadoFiscalDto(
+    int Id,
+    int IdEmpresa,
+    AmbienteFiscal Ambiente,
+    string Alias,
+    string CuitTitular,
+    DateTimeOffset VigenciaDesde,
+    DateTimeOffset VigenciaHasta,
+    bool Activo);
+
+/// <summary>Body de <c>PUT /api/fiscal/empresas/{id}/condicion-fiscal</c> — proposal.md §B: sin
+/// default honesto, el camino fiscal exige el valor explícito.</summary>
+public sealed record CondicionFiscalDeEmpresaEdicion(int IdCondicionFiscal);
+
+/// <summary>Body de <c>PUT /api/fiscal/puntos-venta/{id}/numero-fiscal</c> — proposal.md §C
+/// decisión 2: el punto de venta ARCA (1..99999, <c>ck_puntos_venta_numero_fiscal_rango</c>),
+/// separado de <c>PuntoVenta.Id</c>.</summary>
+public sealed record NumeroFiscalDePuntoVentaEdicion(int NumeroFiscal);

@@ -8,6 +8,7 @@ using Ways.Application.Clientes;
 using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
 using Ways.Application.Etiquetas;
+using Ways.Application.Fiscal;
 using Ways.Application.Gastos;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
@@ -146,6 +147,11 @@ public static class DependencyInjection
         // stage-11-exportacion-reportes, Slice 9 (proposal decisión 10, droppable a Etapa 13):
         // existencias — LINQ puro sobre stock ⋈ articulos, sin dependencia de LectorDeSerieTemporal.
         services.AddScoped<ServicioDeReportesDeStock>();
+
+        // stage-19a-slice4: el ABM de certificados fiscales bajo Politicas.AdministracionFiscal —
+        // IAlmacenDeClavesFiscales se registra del lado de Infrastructure (DependencyInjection.cs),
+        // que es donde vive la implementación concreta del cifrado (CifradoDeClavesFiscales).
+        services.AddScoped<ServicioDeCertificados>();
 
         return services;
     }

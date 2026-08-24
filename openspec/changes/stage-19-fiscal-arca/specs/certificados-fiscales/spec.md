@@ -27,8 +27,10 @@ policy, admitting only `RolConocido.Admin`.
 
 `clave_privada_cifrada` MUST be encrypted with `System.Security.Cryptography.AesGcm` using an AAD
 composed of `id_tenant | id_empresa | ambiente | huella_sha256`, so the ciphertext is authenticated
-against its own row identity. The master key MUST come from configuration/environment
-(`Ways:Fiscal:ClaveMaestra`) and MUST NEVER be stored in the database or the repository.
+against its own row identity. The master key MUST come from configuration/environment, versioned
+(`Ways:Fiscal:ClaveMaestraActual` names the active key id; `Ways:Fiscal:ClavesMaestras:<id>` holds
+the 32-byte base64 key for that id — design D6) and MUST NEVER be stored in the database or the
+repository.
 
 #### Scenario: A certificate's private key round-trips through AES-GCM
 - GIVEN a certificate registered with its private key encrypted under its row's AAD
@@ -42,7 +44,8 @@ against its own row identity. The master key MUST come from configuration/enviro
 - THEN `AesGcm` decryption fails — the AAD no longer matches the row identity
 
 #### Scenario: A missing master key makes the fiscal path inert, never a plaintext fallback
-- GIVEN `Ways:Fiscal:ClaveMaestra` is unset or unreadable
+- GIVEN `Ways:Fiscal:ClaveMaestraActual` (or its resolved `Ways:Fiscal:ClavesMaestras:<id>`) is
+  unset, too short, or otherwise unreadable
 - WHEN any fiscal signing operation is attempted
 - THEN it fails loudly (409/503) — the system never decrypts to, or falls back to, plaintext
 

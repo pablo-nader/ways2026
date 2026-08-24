@@ -110,6 +110,12 @@ public static class DependencyInjection
         services.AddSingleton<IRepositorioDeTicketDeAcceso>(
             sp => sp.GetRequiredService<RepositorioEnMemoriaDeTicketDeAcceso>());
 
+        // stage-19a-slice4 (design D5/D6): AES-256-GCM, clave maestra desde configuración/entorno
+        // — Ways:Fiscal:ClaveMaestraActual + Ways:Fiscal:ClavesMaestras:<id>, JAMÁS en appsettings
+        // commiteado (verify criterion 8 lo cubre para el hostname de ARCA; la clave maestra en sí
+        // no tiene default alguno acá, así que ausente es el estado de base honesto en 19a).
+        services.AddScoped<IAlmacenDeClavesFiscales, CifradoDeClavesFiscales>();
+
         return services;
     }
 
