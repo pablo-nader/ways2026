@@ -969,6 +969,22 @@ the same rows.
     ningún test estructural cubría este archivo todavía, se agrega siguiendo el mismo patrón
     source-read + `Contains` discriminante del test de `UsarCertificadoAsync`). Ciclo: quitar la
     línea `ZeroMemory(datos.Pfx)` → RED (`Contains` no encuentra el string) → revert → verde.
+    **COMPLECIÓN del fix 3 (arbitraje del orquestador — el `finally` no cubría el camino de
+    `CargarPfx`; confirmado por la pasada acotada de B)**: el `try` que agregó el `ZeroMemory(datos.Pfx)`
+    arrancaba DESPUÉS de `CargarPfx(datos.Pfx, datos.PasswordPfx)` y del `GetRSAPrivateKey() ?? throw`
+    — el camino de fallo más probable del ABM (password incorrecta → `pfx_invalido`) y el de PFX sin
+    clave RSA quedaban AMBOS fuera del `finally`. Movido el `try` para que arranque antes de
+    `CargarPfx` (`clavePrivada` declarada `byte[]?` fuera del `try`, zeroeada solo si fue asignada —
+    `CryptographicOperations.ZeroMemory` acepta `null` como span vacío, no hace falta el null-check
+    explícito en el `finally`). Doc-comment de `Contratos.cs:120-134` corregido para nombrar
+    explícitamente que el zeroing cubre TODOS los caminos de salida, incluidos ambos fallos
+    tempranos. Test nuevo `RegistrarConPasswordIncorrectaLimpiaElBufferPfxAunqueFalleLaCarga`
+    (`ServicioDeCertificadosTests.cs`, integración): password incorrecta → `pfx_invalido` Y el
+    array `datos.Pfx` (misma referencia que conserva el caller) queda todo-cero tras la llamada.
+    Ciclo: mutante restaurando el `try` tardío → RED (`Assert.Equal(0, b)` falla, el buffer conserva
+    bytes ≠0 tras el fallo de password) → revert → verde. `CifradoDeClavesFiscalesTests` (12/12) y
+    `ServicioDeCertificadosTests` (21/21) completos, verdes; `dotnet build --no-incremental` limpio
+    (0 errores).
   - **WARNING** (drift preexistente pero del artefacto activo — `spec.md` nombraba
     `Ways:Fiscal:ClaveMaestra` sin versionar, contra D6/implementación real
     `Ways:Fiscal:ClaveMaestraActual` + `Ways:Fiscal:ClavesMaestras:<id>`): `spec.md` enmendado in

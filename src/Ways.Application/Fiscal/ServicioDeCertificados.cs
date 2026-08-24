@@ -40,20 +40,22 @@ public class ServicioDeCertificados(IWaysDbContext db, IRelojDelSistema reloj, I
         var empresa = await db.Empresas.FirstOrDefaultAsync(e => e.Id == datos.IdEmpresa, ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe la empresa {datos.IdEmpresa}.");
 
-        using var certificado = CargarPfx(datos.Pfx, datos.PasswordPfx);
-
-        var certificadoPem = certificado.ExportCertificatePem();
-        var huellaSha256 = Convert.ToHexStringLower(SHA256.HashData(certificado.RawData));
-
-        using var rsa = certificado.GetRSAPrivateKey()
-            ?? throw new ErrorDominio(
-                "certificado_sin_clave_rsa",
-                "El PFX no contiene una clave privada RSA — solo RSA está soportado en 19a.", 400);
-
-        var clavePrivada = rsa.ExportPkcs8PrivateKey();
+        byte[]? clavePrivada = null;
 
         try
         {
+            using var certificado = CargarPfx(datos.Pfx, datos.PasswordPfx);
+
+            var certificadoPem = certificado.ExportCertificatePem();
+            var huellaSha256 = Convert.ToHexStringLower(SHA256.HashData(certificado.RawData));
+
+            using var rsa = certificado.GetRSAPrivateKey()
+                ?? throw new ErrorDominio(
+                    "certificado_sin_clave_rsa",
+                    "El PFX no contiene una clave privada RSA — solo RSA está soportado en 19a.", 400);
+
+            clavePrivada = rsa.ExportPkcs8PrivateKey();
+
             // EnableRetryOnFailure exige que BeginTransactionAsync viva DENTRO de la lambda del
             // execution strategy (mismo criterio que ServicioDePrecios.EstablecerPrecioAsync) —
             // sin esto, EF tira InvalidOperationException al primer BeginTransactionAsync manual.

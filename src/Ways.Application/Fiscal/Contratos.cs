@@ -124,10 +124,13 @@ public sealed record ParametroArca(string Id, string Descripcion);
 /// que cifra antes de persistir (<c>IAlmacenDeClavesFiscales.CifrarAsync</c>, D5). <see cref="Pfx"/>/
 /// <see cref="PasswordPfx"/> viven SOLO durante este request — no hay columna que los guarde tal
 /// cual (dto-contract-honesty: nada especulativo, ningún campo de acá aparece en
-/// <see cref="CertificadoFiscalDto"/>). LÍMITE HONESTO (judgment-day 19a-slice-4 ronda 2 juez A):
-/// <see cref="ServicioDeCertificados.RegistrarAsync"/> limpia <see cref="Pfx"/> con
-/// <see cref="System.Security.Cryptography.CryptographicOperations.ZeroMemory"/> en su
-/// <c>finally</c> — es un <c>byte[]</c>, se puede. <see cref="PasswordPfx"/> NO: es un
+/// <see cref="CertificadoFiscalDto"/>). LÍMITE HONESTO (judgment-day 19a-slice-4 ronda 2 juez A,
+/// completado en la misma ronda tras la pasada acotada del juez B): el <c>try/finally</c> de
+/// <see cref="ServicioDeCertificados.RegistrarAsync"/> arranca ANTES de cargar el PFX, así que
+/// <see cref="System.Security.Cryptography.CryptographicOperations.ZeroMemory"/> limpia
+/// <see cref="Pfx"/> en TODOS los caminos de salida — incluido el más probable del ABM, contraseña
+/// incorrecta (PFX inválido), y el PFX sin clave RSA — no solo el camino feliz. Es un <c>byte[]</c>,
+/// se puede. <see cref="PasswordPfx"/> NO: es un
 /// <see cref="string"/> inmutable de .NET, nunca se puede zerear de forma confiable (queda en el
 /// heap gestionado hasta que el GC lo recolecte, potencialmente duplicado por interning o por
 /// promoción de generación) — no hay API que lo garantice, y fingir que sí sería una garantía

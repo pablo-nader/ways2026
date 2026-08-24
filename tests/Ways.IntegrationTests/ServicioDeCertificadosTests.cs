@@ -544,6 +544,41 @@ public class ServicioDeCertificadosTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(0, cantidad);
     }
 
+    // --- Completación del fix 3 de la ronda 2 (arbitraje del orquestador): el finally que zerea
+    // datos.Pfx tiene que cubrir TAMBIÉN el camino de fallo más probable del ABM — password
+    // incorrecta en CargarPfx —, no solo el camino feliz. ---
+
+    /// <summary>El try/finally arranca ANTES de <c>CargarPfx</c> (fix de completación):
+    /// <c>pfx_invalido</c> por password incorrecta es una excepción, y aun así
+    /// <see cref="System.Security.Cryptography.CryptographicOperations.ZeroMemory"/> tiene que
+    /// haber corrido sobre <paramref name="datos"/>.Pfx antes de que la excepción llegue al
+    /// caller — mismo array, misma referencia, por eso se asertea el contenido DESPUÉS de la
+    /// llamada en vez de un mock/spy sobre ZeroMemory.</summary>
+    [Fact]
+    public async Task RegistrarConPasswordIncorrectaLimpiaElBufferPfxAunqueFalleLaCarga()
+    {
+        var idEmpresa = await SembrarTenantConEmpresaAsync(
+            nameof(RegistrarConPasswordIncorrectaLimpiaElBufferPfxAunqueFalleLaCarga));
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        var almacen = new CifradoDeClavesFiscales(db, ConfiguracionConClaveMaestra());
+        var reloj = new RelojFijoDeReferencia(Ahora);
+        var servicio = new ServicioDeCertificados(db, reloj, almacen);
+
+        var (pfx, _) = GenerarPfx("CN=Ways Test Password Incorrecta");
+        // Guard: el PFX generado no es todo-cero de entrada — si no lo fuera, el assert final
+        // sería un falso-positivo trivial (nunca hubo nada que zerear).
+        Assert.Contains(pfx, b => b != 0);
+
+        var datos = new RegistroDeCertificadoFiscal(
+            idEmpresa, AmbienteFiscal.Homologacion, "Alias", "20111111112", pfx, "password-incorrecta-a-proposito");
+
+        var error = await Assert.ThrowsAsync<Domain.Common.ErrorDominio>(() => servicio.RegistrarAsync(datos));
+
+        Assert.Equal("pfx_invalido", error.Codigo);
+        Assert.All(pfx, b => Assert.Equal(0, b));
+    }
+
     private sealed class RelojFijoDeReferencia(DateTimeOffset ahora) : Application.Abstracciones.IRelojDelSistema
     {
         public DateTimeOffset Ahora { get; } = ahora;
