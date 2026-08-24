@@ -6,7 +6,9 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Fiscal;
 using Ways.Application.Organizacion;
@@ -20,6 +22,7 @@ using Ways.Domain.Precios;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Fiscal;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 
 namespace Ways.IntegrationTests;
 
@@ -143,6 +146,29 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         "<Resultado>A</Resultado><Observaciones /></ResultGet><Errors /></FECompConsultarResult></FECompConsultarResponse>" +
         "</soapenv:Body></soapenv:Envelope>";
 
+    /// <summary>Mismo fixture (texto) que `FecaeSolicitarTicketInvalido.xml` de
+    /// `ClienteWsfeTests`/`Fixtures/Wsfe/Respuestas` (slice 3) — el 600 "TokenSign no se corresponde
+    /// a la solicitud dada", nivel-de-llamada (sin `FeDetResp`).</summary>
+    private static string FecaeTicketInvalido() =>
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
+        "<soapenv:Body><FECAESolicitarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECAESolicitarResult>" +
+        "<FeCabResp><Cuit>20111111111</Cuit><PtoVta>0</PtoVta><CbteTipo>0</CbteTipo>" +
+        "<FchProceso>20260115121500</FchProceso><CantReg>0</CantReg><Resultado>R</Resultado><Reproceso>N</Reproceso></FeCabResp>" +
+        "<Errors><Err><Code>600</Code><Msg>El TokenSign no se corresponde a la solicitud dada.</Msg></Err></Errors><Events />" +
+        "</FECAESolicitarResult></FECAESolicitarResponse></soapenv:Body></soapenv:Envelope>";
+
+    private static string FecaeAprobadoConObservaciones(long cbteDesde, string cae = "70123456789013") =>
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
+        "<soapenv:Body><FECAESolicitarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECAESolicitarResult>" +
+        "<FeCabResp><Cuit>20111111112</Cuit><PtoVta>1</PtoVta><CbteTipo>1</CbteTipo>" +
+        "<FchProceso>20260115121500</FchProceso><CantReg>1</CantReg><Resultado>A</Resultado><Reproceso>N</Reproceso></FeCabResp>" +
+        "<FeDetResp><FECAEDetResponse><Concepto>1</Concepto><DocTipo>99</DocTipo><DocNro>0</DocNro>" +
+        $"<CbteDesde>{cbteDesde}</CbteDesde><CbteHasta>{cbteDesde}</CbteHasta><CbteFch>20260115</CbteFch>" +
+        "<Resultado>A</Resultado><Observaciones><Obs><Code>2101</Code>" +
+        $"<Msg>El comprobante fue autorizado con observaciones.</Msg></Obs></Observaciones><CAE>{cae}</CAE>" +
+        "<CAEFchVto>20260125</CAEFchVto></FECAEDetResponse></FeDetResp>" +
+        "<Errors /><Events /></FECAESolicitarResult></FECAESolicitarResponse></soapenv:Body></soapenv:Envelope>";
+
     private static string FecompConsultarNoEncontrado() =>
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?><soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\">" +
         "<soapenv:Body><FECompConsultarResponse xmlns=\"http://ar.gov.afip.dif.FEV1/\"><FECompConsultarResult>" +
@@ -153,7 +179,7 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
 
     private sealed record Contexto(
         int IdTenant, int IdEmpresa, int IdPuntoVenta, int IdArea, int IdListaPrecio, int IdAlicuota21,
-        int IdClienteRi, int IdClienteConsumidorFinal, int IdClienteNoResp);
+        int IdClienteRi, int IdClienteConsumidorFinal, int IdClienteNoResp, string MailAdmin, string PasswordAdmin);
 
     private static (byte[] Pfx, string Password) GenerarPfx(string cn)
     {
@@ -254,7 +280,7 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
 
         var ctx = new Contexto(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, area.Id, lista.Id, idAlicuota21,
-            clienteRi.Id, clienteCf.Id, clienteNoResp.Id);
+            clienteRi.Id, clienteCf.Id, clienteNoResp.Id, mailAdmin, resultado.PasswordTemporal);
 
         return (ctx, admin, vendedor, root);
     }
@@ -354,10 +380,11 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
     // --- Emisión exitosa: letra resuelta (target 70), D12 gap (target 75), DTO honesto (5.23) ---
 
     [Theory]
-    [InlineData(true, 'A')]  // RI → RI ⇒ A
-    [InlineData(false, 'B')] // RI → CF ⇒ B
+    [InlineData(true, 'A', "FA")]  // RI → RI ⇒ A, FA calza con el catálogo
+    [InlineData(false, 'B', "FB")] // RI → CF ⇒ B — FB (letra B del catálogo) calza; FA NO (ver el
+                                    // test del mismatch explícito más abajo, gate D10)
     public async Task LaLetraResueltaPorElCruceDeCondicionesEsCorrectaYLaEmisionEsAprobada(
-        bool receptorEsRi, char letraEsperada)
+        bool receptorEsRi, char letraEsperada, string codigo)
     {
         var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
         var espiaWsfe = new EspiaWsfe();
@@ -368,7 +395,7 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         espiaWsfe.Solicitar = req => RespuestaXml(FecaeAprobado(1));
 
         var idCliente = receptorEsRi ? ctx.IdClienteRi : ctx.IdClienteConsumidorFinal;
-        var respuesta = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, idCliente));
+        var respuesta = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, idCliente, codigo));
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
 
         var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
@@ -393,6 +420,32 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         {
             Assert.DoesNotContain(prohibido, crudo, StringComparison.OrdinalIgnoreCase);
         }
+    }
+
+    // --- Gate D10: la letra del catálogo tiene que cruzar con la letra resuelta (target 68/70,
+    //     judgment 19a-slice-5 ronda 1 juez B — MAJOR, corrige la Deviation 2 registrada al cierre
+    //     de la slice, que subestimaba el defecto) ---
+
+    [Fact]
+    public async Task UnaFacturaAContraUnConsumidorFinalConLetraQueNoCruzaEsRechazada409TipoFiscalLetraNoCoincide()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe();
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(UnaFacturaAContraUnConsumidorFinalConLetraQueNoCruzaEsRechazada409TipoFiscalLetraNoCoincide),
+            espiaWsaa, espiaWsfe);
+
+        // RI → CF resuelve letra 'B', pero la solicitud pide 'FA' (letra 'A' del catálogo) — el
+        // caso que la suite ya reproducía como un 201 indebido (Deviation 2) antes de este gate.
+        var respuesta = await admin.PostAsJsonAsync(
+            "/api/fiscal/comprobantes", SolicitudEmision(ctx, ctx.IdClienteConsumidorFinal, codigo: "FA"));
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.Conflict, "tipo_fiscal_letra_no_coincide");
+
+        // El gate corre ANTES de resolver ningún puerto (D10, mismo criterio que I4): CERO bytes en
+        // el cable.
+        Assert.Equal(0, espiaWsaa.Solicitudes);
+        Assert.Empty(espiaWsfe.Operaciones);
     }
 
     [Fact]
@@ -496,6 +549,61 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         Assert.Equal(["FECompConsultar", "FECAESolicitar"], espiaWsfe.Operaciones);
     }
 
+    // --- La nota del 600: invalidar-TA + reintentar UNA vez, el segundo es DEFINITIVO (judgment
+    //     19a-slice-5 ronda 1 juez B — MAJOR: el 600 nunca se ejerció con el espía WSFE) ---
+
+    [Fact]
+    public async Task UnSeiscientoEnLaPrimeraLlamadaConExitoEnLaSegundaReFirmaElTaUnaSolaVezYPersisteElCae()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var intentos = 0;
+        var espiaWsfe = new EspiaWsfe
+        {
+            Solicitar = _ => RespuestaXml(++intentos == 1 ? FecaeTicketInvalido() : FecaeAprobado(1, "70444444444444"))
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(UnSeiscientoEnLaPrimeraLlamadaConExitoEnLaSegundaReFirmaElTaUnaSolaVezYPersisteElCae),
+            espiaWsaa, espiaWsfe);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, ctx.IdClienteRi));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
+        Assert.Equal(ResultadoFiscal.Aprobado, emitido.ResultadoFiscal);
+        Assert.Equal("70444444444444", emitido.Cae);
+
+        // Exactamente dos FECAESolicitar (el que dio 600 + el reintento con el TA fresco) y
+        // exactamente UNA re-firma del TA (el firmante WSAA: la firma inicial + la única re-firma
+        // post-600, nunca un loop).
+        Assert.Equal(["FECAESolicitar", "FECAESolicitar"], espiaWsfe.Operaciones);
+        Assert.Equal(2, espiaWsaa.Solicitudes);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var persistido = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == emitido.Id);
+        Assert.Equal("70444444444444", persistido.Cae); // el CAE de la SEGUNDA llamada, la única que aplicó
+    }
+
+    [Fact]
+    public async Task DosSeiscientosConsecutivosSonDefinitivosConExactamenteDosLlamadasWsfeNuncaUnaTercera()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe { Solicitar = _ => RespuestaXml(FecaeTicketInvalido()) };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(DosSeiscientosConsecutivosSonDefinitivosConExactamenteDosLlamadasWsfeNuncaUnaTercera),
+            espiaWsaa, espiaWsfe);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, ctx.IdClienteRi));
+
+        // El segundo 600 (con un TA recién firmado) es DEFINITIVO — se propaga tal cual, nunca otro
+        // reintento (nota vinculante del header de la clase).
+        await AssertCodigoAsync(respuesta, HttpStatusCode.ServiceUnavailable, "ticket_de_acceso_invalido");
+
+        // EXACTAMENTE dos FECAESolicitar — jamás una tercera (el mutante del juez agrega un catch
+        // extra que reintentaría el segundo 600 también).
+        Assert.Equal(["FECAESolicitar", "FECAESolicitar"], espiaWsfe.Operaciones);
+        Assert.Equal(2, espiaWsaa.Solicitudes);
+    }
+
     // --- U2 conjuncts (target 68) ---
 
     [Fact]
@@ -526,6 +634,135 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         await using var verificacion = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var actual = await verificacion.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == idComprobante);
         Assert.Equal("70000000000099", actual.Cae); // intocado
+    }
+
+    /// <summary>Mismo patrón que <c>ServicioDeFacturacionDeRemitosTests.InterceptorDePausaTrasIniciarLaTransaccion</c>
+    /// (task 6.14) — pausa justo tras <c>TransactionStartedAsync</c>: el servicio bajo prueba usa la
+    /// transacción EF del caller (D1), así que este interceptor la ve directo, sin necesitar un
+    /// rendezvous de comandos.</summary>
+    private sealed class InterceptorDePausaTrasIniciarLaTransaccion(
+        TaskCompletionSource transaccionIniciada, TaskCompletionSource puedeContinuar) : DbTransactionInterceptor
+    {
+        public override async ValueTask<System.Data.Common.DbTransaction> TransactionStartedAsync(
+            System.Data.Common.DbConnection connection, TransactionEndEventData eventData,
+            System.Data.Common.DbTransaction transaction, CancellationToken cancellationToken = default)
+        {
+            transaccionIniciada.TrySetResult();
+            await puedeContinuar.Task;
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
+        }
+    }
+
+    /// <summary>judgment 19a-slice-5 ronda 1 juez B — CRITICAL: el conjunct <c>AND resultado_fiscal =
+    /// 'pendiente'</c> del <c>UPDATE</c> guardeado sobrevivía 9/9 a su eliminación porque
+    /// <c>ElReintentoSobreUnComprobanteYaTerminalNoLoTocaINunca</c> deja la fila 'aprobado' ANTES de
+    /// llamar — muere en la lectura externa de <c>ReintentarAsync</c> (404), el <c>UPDATE</c>
+    /// guardeado jamás se alcanza. La CARRERA REAL acá: la lectura externa SÍ pasa (fila
+    /// 'pendiente'), el reintento pausa justo tras abrir SU transacción (antes de tocar la fila), y
+    /// una SEGUNDA conexión cruda commitea la fila a 'aprobado' con SU PROPIO CAE mientras el
+    /// reintento sigue pausado. Al reanudar, el reintento consulta/solicita contra el WSFE mockeado
+    /// (que devuelve un CAE DISTINTO) pero el <c>UPDATE</c> guardeado ya no matchea 'pendiente' — 0
+    /// filas, rollback, y el reintento relee el CAE del GANADOR de la carrera, nunca pisándolo.</summary>
+    [Fact]
+    public async Task ElReintentoBajoUnaCarreraRealDondeOtraConexionApruebaEntreLaLecturaYElUpdateGuardeadoNoPisaElCaeGanador()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(FecompConsultarNoEncontrado()),
+            Solicitar = _ => RespuestaXml(FecaeAprobado(62, "70111111111111"))
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoBajoUnaCarreraRealDondeOtraConexionApruebaEntreLaLecturaYElUpdateGuardeadoNoPisaElCaeGanador),
+            espiaWsaa, espiaWsfe);
+
+        var idComprobante = await SembrarPendienteAsync(ctx, 62);
+
+        var transaccionIniciada = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var puedeContinuar = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var interceptor = new InterceptorDePausaTrasIniciarLaTransaccion(transaccionIniciada, puedeContinuar);
+
+        await using var factory = fixture.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            services.AddHttpClient<IClienteWsaa, ClienteWsaa>(http => http.BaseAddress = new Uri("https://wsaa.espia.test/"))
+                .ConfigurePrimaryHttpMessageHandler(() => espiaWsaa);
+            services.AddHttpClient<IClienteWsfe, ClienteWsfe>(http => http.BaseAddress = new Uri("https://wsfe.espia.test/"))
+                .ConfigurePrimaryHttpMessageHandler(() => espiaWsfe);
+            services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor));
+        }));
+
+        using var clientePausado = factory.CreateClient();
+        var login = await clientePausado.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(ctx.MailAdmin, ctx.PasswordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        // El reintento pausado: la lectura externa (`ResultadoFiscal == Pendiente`, todavía sin
+        // transacción) ya corrió y encontró la fila 'pendiente' — el interceptor pausa recién
+        // DESPUÉS, justo tras abrir SU transacción y ANTES de tocar la fila.
+        var tareaReintento = clientePausado.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+
+        await transaccionIniciada.Task;
+
+        // Segunda conexión cruda, COMMITEADA mientras el reintento sigue pausado: gana la carrera
+        // de verdad, con SU PROPIO CAE — ajeno al que el WSFE mockeado del reintento pausado vaya a
+        // devolver.
+        const string caeDelGanadorDeLaCarrera = "70999999999900";
+        await using (var racer = await fixture.AbrirConexionCrudaAsync("tenant", ctx.IdTenant))
+        {
+            await using var comando = racer.CreateCommand();
+            comando.CommandText =
+                "UPDATE comprobantes_venta SET cae = $1, cae_vencimiento = '2026-06-01', " +
+                "resultado_fiscal = 'aprobado', updated_at = now() " +
+                "WHERE id_comprobante_venta = $2 AND resultado_fiscal = 'pendiente'";
+            comando.Parameters.Add(new NpgsqlParameter { Value = caeDelGanadorDeLaCarrera });
+            comando.Parameters.Add(new NpgsqlParameter { Value = idComprobante });
+            var filasDeLaCarrera = await comando.ExecuteNonQueryAsync();
+            Assert.Equal(1, filasDeLaCarrera); // confirma que la carrera ganó ANTES del UPDATE guardeado
+        }
+
+        puedeContinuar.TrySetResult();
+
+        var respuesta = await tareaReintento;
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        var emitido = JsonSerializer.Deserialize<ComprobanteFiscalEmitido>(cuerpo, OpcionesJson)!;
+
+        // El perdedor de la carrera (este reintento) nunca pisa lo que el ganador ya commiteó.
+        Assert.Equal(caeDelGanadorDeLaCarrera, emitido.Cae);
+        Assert.Equal(ResultadoFiscal.Aprobado, emitido.ResultadoFiscal);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var persistido = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == idComprobante);
+        Assert.Equal(caeDelGanadorDeLaCarrera, persistido.Cae); // intacto — el UPDATE guardeado afectó 0 filas
+    }
+
+    // --- Observaciones (Resultado 'A' con Observaciones no vacías): persistidas, no descartadas
+    //     (judgment 19a-slice-5 ronda 1 juez B — WARNING, el wiring nunca se probó en runtime) ---
+
+    [Fact]
+    public async Task UnaAprobacionConObservacionesLasPersisteEnLaFilaLeidasDeVuelta()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe { Solicitar = _ => RespuestaXml(FecaeAprobadoConObservaciones(1, "70123456789013")) };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(UnaAprobacionConObservacionesLasPersisteEnLaFilaLeidasDeVuelta), espiaWsaa, espiaWsfe);
+
+        var respuesta = await admin.PostAsJsonAsync("/api/fiscal/comprobantes", SolicitudEmision(ctx, ctx.IdClienteRi));
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteFiscalEmitido>(OpcionesJson))!;
+        Assert.Equal(ResultadoFiscal.AprobadoConObservaciones, emitido.ResultadoFiscal);
+        Assert.Equal("70123456789013", emitido.Cae);
+
+        // Leídas de vuelta de la fila (12b) — valores discriminantes, no un placeholder: el código
+        // 2101 y el mensaje real de la observación tienen que sobrevivir el viaje de ida y vuelta.
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var persistido = await db.ComprobantesVenta.AsNoTracking().FirstAsync(c => c.Id == emitido.Id);
+        Assert.NotNull(persistido.ObservacionesFiscales);
+        using var documento = JsonDocument.Parse(persistido.ObservacionesFiscales!);
+        var observacion = Assert.Single(documento.RootElement.EnumerateArray());
+        Assert.Equal(2101, observacion.GetProperty("codigo").GetInt32());
+        Assert.Equal("El comprobante fue autorizado con observaciones.", observacion.GetProperty("mensaje").GetString());
     }
 
     // --- Reasersión del guard del POS (target 73) + autorización de la emisión (task 5.24) ---

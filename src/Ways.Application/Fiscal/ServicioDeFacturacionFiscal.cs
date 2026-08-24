@@ -137,6 +137,20 @@ public class ServicioDeFacturacionFiscal(
         var letra = ResolvedorDeLetraComprobante.Resolver(
             MapearCondicionFiscal(condicionEmisor.Codigo), MapearCondicionFiscal(condicionReceptor.Codigo));
 
+        // Gate D10 (pre-transacción, todavía CERO red) — judgment 19a-slice-5 ronda 1 juez B, MAJOR:
+        // la letra del catálogo del tipo fiscal solicitado (`tipoFiscal.Letra`) tenía que coincidir
+        // con la letra que el CRUCE de condiciones fiscales resuelve — sin este gate, una `FA`
+        // (letra 'A') contra un receptor Consumidor Final (letra 'B' resuelta) emitía 201 con una
+        // letra que ARCA jamás aceptaría en producción real. Corrige la Deviation 2 registrada al
+        // cierre de esta slice (que subestimaba el defecto como "candidato de hardening futuro").
+        if (tipoFiscal.Letra != letra)
+        {
+            throw ErrorDominio.Conflicto(
+                "tipo_fiscal_letra_no_coincide",
+                $"El tipo de comprobante '{tipoFiscal.Codigo}' es letra '{tipoFiscal.Letra}', pero la letra " +
+                $"resuelta para este emisor/receptor es '{letra}'.");
+        }
+
         var (lineasFiscales, itemsCalculados, subtotal, descuentoTotal) =
             await ComponerLineasAsync(solicitud.Lineas, ct);
         var totales = ComposicionDeTotalesFiscales.Componer(lineasFiscales);

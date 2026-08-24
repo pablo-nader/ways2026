@@ -1174,10 +1174,16 @@ being emitted, before `ClienteWsfe.SolicitarCaeAsync` is called with that pair.
   already-`aprobado` direct call (I3); TOCTOU rendezvous. *(target 68)* Kills (a)/(b) covered by
   the same guarded-`UPDATE` statement shape already race-proven by U1/U3/U4 in slices 1/4 (same
   raw-ADO `WHERE id_comprobante_venta = $ AND id_tenant = $` conjuncts, same
-  `ParametrosDeComando` helper) plus the live already-`aprobado`/TOCTOU test below; the
-  cross-tenant `ways_app` half is the same RLS mechanism already exhaustively tested for
-  `comprobantes_venta` in prior stages (no new RLS policy in this slice) — registered as [S] for
-  that specific conjunct rather than re-proving RLS from scratch here.
+  `ParametrosDeComando` helper); the cross-tenant `ways_app` half is the same RLS mechanism already
+  exhaustively tested for `comprobantes_venta` in prior stages (no new RLS policy in this slice) —
+  registered as [S] for that specific conjunct rather than re-proving RLS from scratch here.
+  **CORRECCIÓN (judgment-day Slice 5 (19a), ronda 1, juez B — CRITICAL, evidencia inflada)**: la
+  formulación original citaba "already-`aprobado` direct call (I3); TOCTOU rendezvous" como si
+  fueran dos kills separados cubiertos por el mismo test — NO lo eran. El test citado
+  (`ElReintentoSobreUnComprobanteYaTerminalNoLoTocaINunca`) deja la fila `aprobado` ANTES de llamar
+  al reintento: muere en la lectura externa (404), el `UPDATE` guardeado jamás se alcanza —
+  9/9 al eliminar el conjunct. La carrera TOCTOU real quedó sin cubrir hasta este fix; ver el ciclo
+  completo en el log de judgment-day debajo de 5.30.
 - [x] 5.15 **[S]** D4's `PermisoDeSolicitud` gate — structural assertion that
   `MaquinaDeEstadosCae` is the only producer (no public constructor path). *(target 69)* Already
   implemented and green from slice 3:
@@ -1225,6 +1231,69 @@ being emitted, before `ClienteWsfe.SolicitarCaeAsync` is called with that pair.
   76 record the file/state/definition assertion). See Work Unit Evidence below.
 - [ ] 5.30 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
+  **judgment-day Slice 5 (19a), ronda 1 — juez B (1 CRITICAL de evidencia inflada + 2 MAJOR + 2
+  WARNINGs), fixes aplicados por el jd-fix-agent** (checkbox sin marcar hasta que el re-judge
+  confirme ronda limpia, regla 18):
+  - **CRITICAL** (evidencia inflada del target 68 — el conjunct `AND resultado_fiscal = 'pendiente'`
+    del `UPDATE` guardeado sobrevivía 9/9 a su eliminación: el test citado deja la fila `aprobado`
+    ANTES de llamar, así que muere en la lectura externa de `ReintentarAsync` como 404, el `UPDATE`
+    guardeado jamás se alcanza): implementada la CARRERA REAL —
+    `ElReintentoBajoUnaCarreraRealDondeOtraConexionApruebaEntreLaLecturaYElUpdateGuardeadoNoPisaElCaeGanador`.
+    La lectura externa pasa (fila `pendiente`), el reintento pausa justo tras abrir SU transacción
+    (`InterceptorDePausaTrasIniciarLaTransaccion`, mismo patrón que `ServicioDeFacturacionDeRemitosTests`
+    task 6.14 — el servicio usa la tx EF del caller, el interceptor la ve directo) y una SEGUNDA
+    conexión cruda (`fixture.AbrirConexionCrudaAsync`) commitea la fila a `aprobado` con SU PROPIO
+    CAE mientras el reintento sigue pausado. Al reanudar, el `UPDATE` guardeado del reintento afecta
+    0 filas de verdad (no por construcción del fixture), hace rollback, y relee/devuelve el CAE del
+    GANADOR de la carrera — el CAE mockeado por el WSFE espía de ESTE reintento (distinto al del
+    ganador) nunca se persiste. Ciclo: mutante del juez (quitar el conjunct) → RED (`Assert.Equal`
+    del CAE: esperado el del ganador de la carrera, actual el del WSFE mockeado del perdedor) →
+    revert → verde. Corrige la Deviation de la tarea 5.14 y de la Nota vinculante ítem 2 (evidencia
+    inflada — no eran el mismo test).
+  - **MAJOR** (el 600 sin cobertura runtime — la nota vinculante del header nunca se ejerció contra
+    el espía WSFE con los fixtures reales del slice 3): dos tests nuevos con
+    `FecaeTicketInvalido()`/`FecaeAprobado(...)` (mismo texto que `FecaeSolicitarTicketInvalido.xml`
+    de `ClienteWsfeTests`, slice 3). (a)
+    `UnSeiscientoEnLaPrimeraLlamadaConExitoEnLaSegundaReFirmaElTaUnaSolaVezYPersisteElCae` — 600 en
+    la primera llamada, éxito en la segunda: exactamente UNA re-firma del TA (`espiaWsaa.Solicitudes
+    == 2`, la firma inicial + la única re-firma post-600) y el CAE de la SEGUNDA llamada persistido.
+    (b) `DosSeiscientosConsecutivosSonDefinitivosConExactamenteDosLlamadasWsfeNuncaUnaTercera` — 600
+    dos veces: el error `ticket_de_acceso_invalido` (503) propaga DEFINITIVO y EXACTAMENTE dos
+    `FECAESolicitar`, jamás una tercera. Ciclo: mutante del juez (catch extra que reintenta el
+    segundo 600 con un TA re-firmado otra vez) → RED en (b) (`Collections differ`: tres
+    `FECAESolicitar` en vez de dos) → revert → verde.
+  - **MAJOR** (la letra sin cruzar, PRODUCCIÓN — Deviation 2 subestimaba el defecto: una `FA` letra
+    'A' contra un receptor Consumidor Final, letra 'B' resuelta, emitía 201 con una letra que ARCA
+    rechazaría): gate D10 nuevo en `ServicioDeFacturacionFiscal.EmitirAsync`, pre-transacción, CERO
+    red — compara `tipoFiscal.Letra` del catálogo contra la letra resuelta por
+    `ResolvedorDeLetraComprobante` → `409 tipo_fiscal_letra_no_coincide` si difieren. El test
+    paramétrico existente (`LaLetraResueltaPorElCruceDeCondicionesEsCorrectaYLaEmisionEsAprobada`)
+    actualizado: el caso `(false, 'B')` ahora manda `FB` (calza) en vez de `FA` (default, mismatch).
+    Test nuevo del mismatch explícito:
+    `UnaFacturaAContraUnConsumidorFinalConLetraQueNoCruzaEsRechazada409TipoFiscalLetraNoCoincide` —
+    FA a Consumidor Final → 409, CERO requests HTTP (mismo criterio que I4). Ciclo: mutante del juez
+    (quitar el gate) → RED en el test del mismatch (500 en vez de 409 — el espía WSFE sin `Solicitar`
+    configurado revienta al llegar sin el 409 previo) → revert → verde. Deviation 2 corregida (tachada
+    + nota de corrección) en la lista de abajo.
+  - **WARNING** (las Observaciones sin wiring probado — `Resultado='A'` con Observaciones no vacías
+    nunca se ejerció en runtime): test nuevo
+    `UnaAprobacionConObservacionesLasPersisteEnLaFilaLeidasDeVuelta` con
+    `FecaeAprobadoConObservaciones` (mismo texto que `FecaeSolicitarAprobadoConObservaciones.xml` de
+    `ClienteWsfeTests`, slice 3) — `ResultadoFiscal.AprobadoConObservaciones` persistido, y las
+    Observaciones leídas de vuelta de la fila (`observaciones_fiscales`, 12b): código 2101 y mensaje
+    real, valores discriminantes. Ciclo: mutante del juez (descartar Observaciones en el brazo no-
+    rechazado de `AplicarResultadoGuardadoAsync`) → RED (`Assert.NotNull` — la columna queda `NULL`)
+    → revert → verde.
+  - **WARNING** (el branch name sin registrar — tasks.md/design.md dicen
+    `feat/stage19a-slice5-emision-y-qr`, la rama real es `feat/stage19a-slice5-emision`, creada así
+    por el orquestador al armar el worktree): registrada como Deviation 7 — cosmético, cero impacto
+    funcional.
+
+  **Higiene**: `dotnet build --no-incremental` limpio (0 errores) tras cada ciclo de mutante/revert;
+  `ServicioDeFacturacionFiscalTests` completo **14/14** verde (9 preexistentes + 5 nuevos: la
+  carrera TOCTOU real, los dos tests del 600, el mismatch de letra, las Observaciones persistidas);
+  `Ways.Application.Tests --filter Fiscal` **77/77** verde; `git diff --stat` del archivo de
+  producción confirma que solo el gate D10 quedó como cambio neto (todos los mutantes revertidos).
 - [ ] 5.31 [ ] Open PR #5 `feat/stage19a-slice5-emision-y-qr`, merge to `main` after a clean
   `judgment-day` round.
 
@@ -1243,22 +1312,30 @@ being emitted, before `ClienteWsfe.SolicitarCaeAsync` is called with that pair.
 
 **Deviations registered (not silent):**
 1. Gate 4 (`condicion_fiscal_receptor_no_mapeada`) checks `condicionReceptor.Codigo == "NO_RESP"` explicitly, never `CodigoAfip is null` — `NO_RESP` carries a sembrado, provisional `CodigoAfip = 15` (`InicializadorDeBaseDeDatos.cs` `CondicionesFiscalesBase`, RG 5616 "IVA No Alcanzado"). A defensive `CodigoAfip is null` fallback remains for any future unmapped catalogue code.
-2. The resolved letter (`ResolvedorDeLetraComprobante`'s first real call) is surfaced on `ComprobanteFiscalEmitido.Letra` as informational, server-computed data — 19a does not reject a client-submitted `CodigoTipoComprobante` that mismatches the resolved letter (no such 409 exists anywhere in design.md's error taxonomy or the 76-target mutation table); flagged as a candidate hardening for a follow-up, not invented silently.
+2. ~~The resolved letter (`ResolvedorDeLetraComprobante`'s first real call) is surfaced on `ComprobanteFiscalEmitido.Letra` as informational, server-computed data — 19a does not reject a client-submitted `CodigoTipoComprobante` that mismatches the resolved letter (no such 409 exists anywhere in design.md's error taxonomy or the 76-target mutation table); flagged as a candidate hardening for a follow-up, not invented silently.~~ **CORRECCIÓN (judgment-day Slice 5 (19a), ronda 1, juez B — MAJOR)**: esta deviation subestimaba el defecto — no era un candidato de hardening futuro, era un 201 real con una letra que ARCA rechazaría en producción (`FA` letra 'A' contra un receptor Consumidor Final, letra 'B' resuelta). Cerrada: el gate D10 (`tipo_fiscal_letra_no_coincide`, 409, pre-transacción, CERO red) ahora compara `tipoFiscal.Letra` del catálogo contra la letra resuelta por `ResolvedorDeLetraComprobante` — ver el ciclo del fix en el log de judgment-day de abajo.
 3. `SolicitudDeEmisionFiscal`/`LineaDeEmisionFiscal` carry already-resolved line data (`IdArea`/`IdListaPrecio`/`PrecioUnitario`/`DescuentoUnitario`) rather than running a pricing/oferta engine — D12/D9 scope this slice to `comprobante + items` only with zero touch of `ServicioDeVentas`'s machinery, and design.md names no pricing resolver for this slice.
 4. The automatic path from a first `POST /api/fiscal/comprobantes` attempt to a durably-persisted `pendiente` row (the precondition `POST .../reintentar` needs) is narrow under this slice's literal one-transaction implementation (design.md's data-flow diagram: one `BEGIN…COMMIT` spanning the whole round trip, D1) — a non-definitive WSFE failure rolls back everything, including the number reservation, which is I1-consistent but means `/reintentar`'s trigger in practice is the same rare "commit ambiguous" residual risk `EstrategiaSinReintento` already accepts elsewhere in this codebase, not a routine occurrence. `ReintentarAsync` itself is fully implemented and tested (targets 66/67/68) against a directly-seeded `pendiente` row, matching its own task description literally.
 5. AFIP `DocTipo`/`DocNro`/QR `tipoDocRec`/`nroDocRec` mapping (`MapearDocumentoArca`) is a slice-5 addition beyond design.md's abbreviated snippet — 80=CUIT, 86=CUIL, 96=DNI, 94=Pasaporte, 99+0=Consumidor Final/sin documento/`Otro`/no-numérico (never blocks emission, degrades to the anonymous-receptor shape instead).
 6. `Ways:Fiscal:Ambiente` (which ambiente the emission's certificate/TA lookup targets) is a slice-5 addition (`OpcionesFiscales`) — design.md's D6 only fixes that ambiente is part of the master-key/certificate lookup shape, not where emission reads it from. Defaults to `Homologacion` when absent/unparseable — never silently `Produccion`.
+7. **(registrada en el fix de judgment-day ronda 1, juez B — WARNING)** El nombre real de la rama es `feat/stage19a-slice5-emision` (sin el sufijo `-y-qr` que este archivo y design.md usan) — creada así por el orquestador al armar el worktree de esta slice. Cosmético, cero impacto funcional: el header de esta sección y el resto de las referencias a `feat/stage19a-slice5-emision-y-qr` quedan como la intención original documentada, no como el nombre real de la rama.
 
 ### Nota vinculante del header — las seis obligaciones acumuladas, cumplidas una por una
 
 1. **T1 (BINDING WARNING)** — transcrita verbatim en el doc-comment de `ServicioDeFacturacionFiscal`
    y reasertada en `docs/11-programa-post-paridad.md`; target 75 implementado como el trip-wire
    documentado (zero-rows sobre las tres tablas, labelled "known 19c gap").
-2. **U2 (los dos kills de `resultado_fiscal='pendiente'`)** — el conjunct (c) prueba EL DIRECTO
-   below-the-confound (`ElReintentoSobreUnComprobanteYaTerminalNoLoTocaINunca`, I3) Y la carrera
-   TOCTOU (la misma prueba: la fila queda `aprobado` fuera de banda, el reintento la relee como
-   404 en vez de pisarla — el guard `resultado_fiscal = 'pendiente'` del `UPDATE` es lo que hace
-   que 0 filas se vean afectadas).
+2. **U2 (los dos kills de `resultado_fiscal='pendiente'`)** — **CORRECCIÓN (judgment-day Slice 5
+   (19a), ronda 1, juez B — CRITICAL, evidencia inflada)**: la formulación original conflaba EL
+   DIRECTO below-the-confound (`ElReintentoSobreUnComprobanteYaTerminalNoLoTocaINunca`, I3 — la
+   fila queda `aprobado` ANTES de llamar, muere en la lectura externa como 404, el `UPDATE`
+   guardeado jamás se alcanza) con la carrera TOCTOU real — NO eran la misma prueba. El conjunct
+   `AND resultado_fiscal = 'pendiente'` sobrevivía 9/9 a su eliminación bajo el test citado. Ahora
+   hay DOS pruebas separadas: `ElReintentoSobreUnComprobanteYaTerminalNoLoTocaINunca` (I3, el kill
+   directo) Y `ElReintentoBajoUnaCarreraRealDondeOtraConexionApruebaEntreLaLecturaYElUpdateGuardeadoNoPisaElCaeGanador`
+   (la carrera REAL: interceptor de rendezvous tras `TransactionStartedAsync` + segunda conexión
+   cruda que commitea `aprobado` con su propio CAE mientras el reintento sigue pausado — el `UPDATE`
+   guardeado afecta 0 filas de verdad, no por construcción del fixture, y el reintento relee el CAE
+   del ganador sin pisarlo).
 3. **La nota del 600** — `SolicitarCaeConReintentoDeTicketAsync` es el ÚNICO orquestador de
    invalidar-TA+reintentar-una-vez; el segundo 600 se deja propagar tal cual, sin ningún loop
    (código y doc-comment en `ServicioDeFacturacionFiscal.cs`).
