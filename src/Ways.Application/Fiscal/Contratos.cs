@@ -168,3 +168,53 @@ public sealed record CondicionFiscalDeEmpresaEdicion(int IdCondicionFiscal);
 /// decisión 2: el punto de venta ARCA (1..99999, <c>ck_puntos_venta_numero_fiscal_rango</c>),
 /// separado de <c>PuntoVenta.Id</c>.</summary>
 public sealed record NumeroFiscalDePuntoVentaEdicion(int NumeroFiscal);
+
+// --- Slice 5: ServicioDeFacturacionFiscal — POST /api/fiscal/comprobantes(.../reintentar) ---
+
+/// <summary>Una línea de la emisión fiscal (design.md D12/T1: el write plan es
+/// <c>comprobante + items</c> ÚNICAMENTE — sin motor de precios/ofertas/stock). Llega YA resuelta
+/// por el llamador: <see cref="IdArea"/>/<see cref="IdListaPrecio"/> son <c>NOT NULL</c> en
+/// <c>items_comprobante_venta</c> desde la slice 1, así que viajan explícitos en vez de resolverse
+/// contra <c>ServicioDeOfertas</c>/el motor de precios que este camino, a propósito, nunca toca
+/// (D9: <c>ResolverTipoFiscalAsync</c> "nunca toca <c>ServicioDeVentas</c>"). <see cref="Cantidad"/>/
+/// <see cref="PrecioUnitario"/>/<see cref="DescuentoUnitario"/> pasan por
+/// <c>Ways.Domain.Ventas.CalculadorDeTotales</c> (dominio puro, no <c>ServicioDeVentas</c>) para el
+/// mismo redondeo (<c>MidpointRounding.AwayFromZero</c>) que el resto del proyecto.</summary>
+public sealed record LineaDeEmisionFiscal(
+    int? IdArticulo,
+    string Descripcion,
+    int IdArea,
+    int IdListaPrecio,
+    int IdAlicuotaIva,
+    decimal Cantidad,
+    decimal PrecioUnitario,
+    decimal DescuentoUnitario);
+
+/// <summary>Body de <c>POST /api/fiscal/comprobantes</c>. <see cref="CodigoTipoComprobante"/> es el
+/// código del catálogo (<c>FA</c>/<c>FB</c>/<c>FC</c> en 19a) — <c>ResolverTipoFiscalAsync</c>
+/// (D9, gate 3) lo valida; el <b>letra</b> efectiva del comprobante la sigue decidiendo el servidor
+/// vía <c>ResolvedorDeLetraComprobante</c> (su primer caller, design.md data flow), nunca el
+/// request.</summary>
+public sealed record SolicitudDeEmisionFiscal(
+    int IdPuntoVenta,
+    string CodigoTipoComprobante,
+    int IdCliente,
+    IReadOnlyList<LineaDeEmisionFiscal> Lineas,
+    string? Observaciones);
+
+/// <summary>Respuesta de la emisión/reintento fiscal — <c>dto-contract-honesty</c>: ningún campo de
+/// certificado ni de material de clave (task 5.23, mismo scan recursivo por nombre de propiedad que
+/// el target 62 de la slice 4). <see cref="PayloadQr"/> viaja solo cuando el comprobante quedó
+/// aprobado (con o sin observaciones) — un <c>pendiente</c>/<c>rechazado</c> no tiene CAE que
+/// codificar en el QR (RG 4291).</summary>
+public sealed record ComprobanteFiscalEmitido(
+    int Id,
+    string CodigoTipoComprobante,
+    char Letra,
+    int IdPuntoVenta,
+    long Numero,
+    DateOnly Fecha,
+    ResultadoFiscal ResultadoFiscal,
+    string? Cae,
+    DateOnly? CaeVencimiento,
+    string? PayloadQr);

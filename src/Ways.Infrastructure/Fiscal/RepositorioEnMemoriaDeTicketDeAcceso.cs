@@ -11,11 +11,12 @@ namespace Ways.Infrastructure.Fiscal;
 /// ABSOLUTO (10 min), no un porcentaje del TTL de 12h: el riesgo nombrado es el intervalo mínimo
 /// de WSAA (10 min Testing / 2 min Producción) — este cache no reintenta <c>loginCms</c> en
 /// caliente, y un porcentaje del TTL desperdiciaría un tercio de cada ticket.
-/// <see cref="ObtenerOFirmarAsync"/> es la orquestación cache+single-flight; el puerto
-/// <see cref="IRepositorioDeTicketDeAcceso"/> solo expone las dos operaciones de storage — la
-/// composición vive acá porque el single-flight es un detalle de ESTA implementación en memoria
-/// (un cache distribuido necesitaría locking distribuido, fuera de alcance en 19a, decisión 10).
-/// Sin caller de producción hasta la slice 5.
+/// <see cref="ObtenerOFirmarAsync"/> es la orquestación cache+single-flight — DESDE la slice 5 vive
+/// también en el puerto <see cref="IRepositorioDeTicketDeAcceso"/> (tensión de la slice 2 resuelta:
+/// ver el doc-comment del método en la interfaz), así que <c>ServicioDeFacturacionFiscal</c> la
+/// invoca sin conocer este tipo concreto. Sigue implementada acá porque el single-flight es un
+/// detalle de ESTA implementación en memoria (un cache distribuido necesitaría locking distribuido,
+/// fuera de alcance en 19a, decisión 10) — el puerto expone el comportamiento, no el mecanismo.
 /// </summary>
 public sealed class RepositorioEnMemoriaDeTicketDeAcceso(IRelojDelSistema reloj) : IRepositorioDeTicketDeAcceso
 {

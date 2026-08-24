@@ -423,6 +423,41 @@ durante su propio proposal.
 crédito electrónica; qué se hace con el histórico no fiscal al activar el modo fiscal; si la
 homologación se hace por empresa o una sola vez a nivel plataforma.
 
+> **Estado (Etapa 19a — completa, `openspec/changes/stage-19-fiscal-arca/`).** La etapa se
+> ejecuta en TRES sub-etapas alineadas al corte del explore (OD1). **19a — el núcleo buildable
+> sin credenciales — está IMPLEMENTADA** (5 slices stacked-to-main; los primeros cuatro ya
+> mergeados a `main`, el quinto — esta emisión end-to-end — cierra la sub-etapa tras su propio
+> judgment-day): schema fiscal completo + RLS (bloque 1), cliente WSAA (TRA/CMS + caché de TA),
+> cliente WSFE (`FECAESolicitar`/
+> `FECompConsultar`/`FECompUltimoAutorizado`/`FEParamGet*`) + máquina de estados CAE + composición
+> de totales (bloques 2-3), numeración fiscal (I1) + almacenamiento cifrado de certificados
+> (bloque 1/4), y la emisión end-to-end contra MOCKS + QR RG 4291 con `codAut` sintético (bloques
+> 2-3-6, parcial). `ResolvedorDeLetraComprobante` deja de estar dormant (bloque 2): su primer
+> caller real es `ServicioDeFacturacionFiscal`. El guard `es_fiscal` del POS se **angostó, nunca
+> se removió** (decisión 9 del proposal) — la emisión fiscal es un endpoint propio
+> (`POST /api/fiscal/comprobantes`), `ServicioDeVentas.cs` sigue byte-idéntico.
+>
+> **Lo que 19a deliberadamente NO hace** (bloques 4/5/7 de arriba, y la mitad del bloque 6):
+> ningún byte sale hacia un servidor ARCA real (invariante I4 lo hace estructuralmente inerte sin
+> certificado); CERO impresión/UI (bloque 6, pantalla de configuración y vista de impresión);
+> CERO contingencia CAEA/cola offline (bloque 5); la emisión fiscal en 19a escribe SOLO
+> `comprobantes_venta` + `items_comprobante_venta` — sin stock, pagos, cuenta corriente ni turno
+> (D12/T1, gap DOCUMENTADO y con su propio test trip-wire, target 75).
+>
+> **19b (bloques 4/7, FUTURO, NACE BLOQUEADO)**: apuntar el cliente ya probado a
+> `wswhomo.afip.gov.ar`, cargar el certificado real, confirmar los catálogos `FEParamGet*`, correr
+> un ciclo de CAE real. **Razón de bloqueo nombrada y verificable**: alta WSASS pendiente del
+> dueño (login con Clave Fiscal Nivel 2) — no existe CUIT anónimo de testing para WSFE/WSAA. No se
+> pide, se documenta.
+>
+> **19c (bloques 5/6, FUTURO, depende de 19a)**: impresión fiscal con QR, UI de configuración de
+> certificado/PV/condición fiscal, contingencia operativa (cola durable + CAEA), el tipo fiscal de
+> la consolidación de remitos con su escritor, libro IVA. Independiente de 19b salvo para
+> verificar un CAE real impreso.
+>
+> Esta nota **no declara la Etapa 19 completa** — solo su primera sub-etapa, la que no dependía de
+> una credencial externa.
+
 ---
 
 ## Grafo de dependencias

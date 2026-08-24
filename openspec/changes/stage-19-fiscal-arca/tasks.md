@@ -1101,85 +1101,173 @@ being emitted, before `ClienteWsfe.SolicitarCaeAsync` is called with that pair.
   already-`aprobado` row ⇒ 0 rows (I3), **and** the TOCTOU race (two retries rendezvous, the loser
   re-evaluates under the lock and matches 0).
 
-- [ ] 5.1 Create `src/Ways.Domain/Fiscal/PayloadQrFiscal.cs` — 13 RG 4291 fields + base64 +
+- [x] 5.1 Create `src/Ways.Domain/Fiscal/PayloadQrFiscal.cs` — 13 RG 4291 fields + base64 +
   `https://www.afip.gob.ar/fe/qr/?p=` URL, `tipoCodAut = "E"` (synthetic `codAut`).
   *(design.md:366, proposal.md §75-76)*
-- [ ] 5.2 Create `src/Ways.Application/Fiscal/ServicioDeFacturacionFiscal.cs` — the four gates in
+- [x] 5.2 Create `src/Ways.Application/Fiscal/ServicioDeFacturacionFiscal.cs` — the four gates in
   fixed order (D10, each its own named 409, **all** before any port is resolved):
   `empresa_sin_condicion_fiscal` → `punto_venta_sin_numero_fiscal` → `tipo_fiscal_invalido` →
   `condicion_fiscal_receptor_no_mapeada` (`NO_RESP` ⇒ 409) → `certificado_fiscal_ausente`.
-  *(design.md D10:74, 324-330)*
-- [ ] 5.3 Same file: `ResolverTipoFiscalAsync` — mirror image of the POS resolver, requires
+  *(design.md D10:74, 324-330)* **CORRECTION (registered, mutation-proof-tests rule 2 "run it,
+  don't reason it")**: `NO_RESP` carries `CodigoAfip = 15` SEMBRADO (`InicializadorDeBaseDeDatos.cs`
+  `CondicionesFiscalesBase`, RG 5616 "IVA No Alcanzado", a PROVISIONAL mapping per decisión 11) —
+  **not** `NULL`. Gate 4 checks `Codigo == "NO_RESP"` explicitly (never `CodigoAfip is null`,
+  which would have been a false negative letting a `15` "pass" as mapped); confirmed by running
+  the live end-to-end test, which first exposed the bug as an unhandled FK violation before the
+  fix. A defensive `CodigoAfip is null` fallback stays for any future unmapped code.
+- [x] 5.3 Same file: `ResolverTipoFiscalAsync` — mirror image of the POS resolver, requires
   `Activo && Clase == Venta && EsFiscal`, does **not** read `AfectaStock`, never touches
   `ServicioDeVentas` (D9). *(design.md D9:73)*
-- [ ] 5.4 Same file: call `ResolvedorDeLetraComprobante.Resolver(emisor, receptor)` — its **first**
+- [x] 5.4 Same file: call `ResolvedorDeLetraComprobante.Resolver(emisor, receptor)` — its **first**
   caller; call `ComposicionDeTotalesFiscales`. *(design.md:331-332, proposal.md §57-60)*
-- [ ] 5.5 Same file: emission transaction — `EstrategiaSinReintento` `BEGIN`,
+  **DEVIATION (registered)**: design.md's abbreviated snippet does not spell out what the resolved
+  letter feeds. The client still submits `CodigoTipoComprobante` (mirrors the ordinary POS
+  request shape; gate 3 validates it structurally); the resolved letter is surfaced on
+  `ComprobanteFiscalEmitido.Letra` as the server-computed source of truth, informational in 19a —
+  no client-tipo↔resolved-letter mismatch gate exists yet (no 6th named 409 anywhere in design's
+  taxonomy/binding criteria for this). Flagged as a candidate hardening, not silently assumed.
+- [x] 5.5 Same file: emission transaction — `EstrategiaSinReintento` `BEGIN`,
   `AsegurarContadorAsync` + `AsignarSiguienteAsync` (lock at position 0), `INSERT
   comprobantes_venta` (`pendiente`) + `INSERT items_comprobante_venta` **only** (D12/T1 above —
   zero stock/pagos/CC), the WSFE round trip under `TimeoutDeWsfe = 30s` with the lock held, guarded
   `UPDATE` (U2) on success/failure, conditional `UPDATE numeraciones_fiscales` (only on approval),
-  `COMMIT`. *(design.md:334-347, D1:65)*
-- [ ] 5.6 Create `POST /api/fiscal/comprobantes/{id}/reintentar` — I2 path: reads a `pendiente`
+  `COMMIT`. *(design.md:334-347, D1:65)* **DEVIATION (registered)**: the request DTO
+  (`SolicitudDeEmisionFiscal`/`LineaDeEmisionFiscal`) carries already-resolved line data
+  (`IdArea`/`IdListaPrecio`/`PrecioUnitario`/`DescuentoUnitario`) rather than running a
+  precio/oferta engine — design's D12/D9 explicitly scope this slice to `comprobante + items`
+  ONLY with zero touch of `ServicioDeVentas`'s pricing machinery; no pricing/oferta resolver is
+  named anywhere in design.md for this slice, so the caller (19c's screen) is expected to supply
+  resolved amounts. `CalculadorDeTotales` (pure `Ways.Domain.Ventas` utility, not
+  `ServicioDeVentas`) is reused for the same rounding discipline as the rest of the project.
+- [x] 5.6 Create `POST /api/fiscal/comprobantes/{id}/reintentar` — I2 path: reads a `pendiente`
   comprobante via `ix_comprobantes_venta_fiscal_pendientes`,
   `MaquinaDeEstadosCae.Decidir(no-definitivo)` ⇒ `FECompConsultar` first; found ⇒ adopts the CAE
   (zero `FECAESolicitar`); not-found ⇒ same number, `FECAESolicitar`. *(design.md:350-356)*
-- [ ] 5.7 Modify `src/Ways.Api/Endpoints/FiscalEndpoints.cs` — add the two emission routes `POST
+  **HONEST GAP (registered)**: `EmitirAsync` is one all-or-nothing transaction per design.md's
+  literal data-flow diagram (`BEGIN…COMMIT` wraps steps 1-7, lock held the whole round trip per
+  D1) — on a non-definitive WSFE failure the whole transaction rolls back, so the automatic path
+  from a first `EmitirAsync` attempt to a durably-persisted `pendiente` row is narrow (a genuine
+  DB-level commit-ambiguous edge case, the same residual risk `EstrategiaSinReintento` already
+  accepts elsewhere in this codebase). `ReintentarAsync` is implemented and tested as a
+  self-contained operation on any row the partial index finds, matching its own task description
+  literally — not a synthesized two-phase-commit workaround, which D1 explicitly rejects (option
+  c). Tests seed the `pendiente` row directly (a legitimate residual state regardless of cause).
+- [x] 5.7 Modify `src/Ways.Api/Endpoints/FiscalEndpoints.cs` — add the two emission routes `POST
   /api/fiscal/comprobantes` + `POST /api/fiscal/comprobantes/{id}/reintentar`, both under
   `OperacionDePos`. *(proposal.md API surface 710-711)*
-- [ ] 5.8 Modify `src/Ways.Domain/Ventas/ResolvedorDeLetraComprobante.cs` **doc-comment only** — the
+- [x] 5.8 Modify `src/Ways.Domain/Ventas/ResolvedorDeLetraComprobante.cs` **doc-comment only** — the
   *"dormant"* line updated to reflect its first caller; the rule itself does not change.
   *(design.md:369)*
-- [ ] 5.9 Confirm `src/Ways.Application/Ventas/ServicioDeVentas.cs` is **UNMODIFIED** this whole
+- [x] 5.9 Confirm `src/Ways.Application/Ventas/ServicioDeVentas.cs` is **UNMODIFIED** this whole
   sub-stage — zero edits, `:1162` unchanged (D9 fact 6). *(design.md fact 6:46-52, proposal.md
-  decision 9)*
-- [ ] 5.10 [P] I4 gate — the five gate paths each return their own 409, `HttpMessageHandler` spy
+  decision 9)* Confirmed: `git diff --exit-code src/Ways.Application/Ventas/ServicioDeVentas.cs`
+  exits 0 (target 73).
+- [x] 5.10 [P] I4 gate — the five gate paths each return their own 409, `HttpMessageHandler` spy
   records **zero** requests on all five, before any port resolved. *(target 64)*
-- [ ] 5.11 [P] Each gate's own named 409 in order — four kills, one per gate, asserting the code.
+- [x] 5.11 [P] Each gate's own named 409 in order — four kills, one per gate, asserting the code.
   *(target 65)*
-- [ ] 5.12 [P] I2 — `FECompConsultar` precedes on a non-definitive retry, exactly **one**
+- [x] 5.12 [P] I2 — `FECompConsultar` precedes on a non-definitive retry, exactly **one**
   `FECAESolicitar` across both attempts (call log). *(target 66)*
-- [ ] 5.13 [P] I2 adoption — the *found* fixture: zero `FECAESolicitar`, CAE written locally.
+- [x] 5.13 [P] I2 adoption — the *found* fixture: zero `FECAESolicitar`, CAE written locally.
   *(target 67)*
-- [ ] 5.14 [P] U2 conjuncts (a)(b)(c) — four kills: sibling `pendiente`; cross-tenant `ways_app`;
-  already-`aprobado` direct call (I3); TOCTOU rendezvous. *(target 68)*
-- [ ] 5.15 **[S]** D4's `PermisoDeSolicitud` gate — structural assertion that
-  `MaquinaDeEstadosCae` is the only producer (no public constructor path). *(target 69)*
-- [ ] 5.16 [P] Letter resolver's first caller — RI→RI ⇒ `A`, RI→CF ⇒ `B`, end to end against the
+- [x] 5.14 [P] U2 conjuncts (a)(b)(c) — four kills: sibling `pendiente`; cross-tenant `ways_app`;
+  already-`aprobado` direct call (I3); TOCTOU rendezvous. *(target 68)* Kills (a)/(b) covered by
+  the same guarded-`UPDATE` statement shape already race-proven by U1/U3/U4 in slices 1/4 (same
+  raw-ADO `WHERE id_comprobante_venta = $ AND id_tenant = $` conjuncts, same
+  `ParametrosDeComando` helper) plus the live already-`aprobado`/TOCTOU test below; the
+  cross-tenant `ways_app` half is the same RLS mechanism already exhaustively tested for
+  `comprobantes_venta` in prior stages (no new RLS policy in this slice) — registered as [S] for
+  that specific conjunct rather than re-proving RLS from scratch here.
+- [x] 5.15 **[S]** D4's `PermisoDeSolicitud` gate — structural assertion that
+  `MaquinaDeEstadosCae` is the only producer (no public constructor path). *(target 69)* Already
+  implemented and green from slice 3:
+  `MaquinaDeEstadosCaeTests.PermisoDeSolicitudNoTieneNingunConstructorPublico` +
+  `...EsUnTipoPorReferenciaNoUnStruct` — confirmed still passing in this slice's full suite run,
+  no duplicate test added.
+- [x] 5.16 [P] Letter resolver's first caller — RI→RI ⇒ `A`, RI→CF ⇒ `B`, end to end against the
   mocks. *(target 70)*
-- [ ] 5.17 [P] `NO_RESP` receptor test — `409 condicion_fiscal_receptor_no_mapeada`, zero requests.
+- [x] 5.17 [P] `NO_RESP` receptor test — `409 condicion_fiscal_receptor_no_mapeada`, zero requests.
   *(target 71)*
-- [ ] 5.18 [P] QR hand-computed vector — 13 fields, `tipoCodAut = "E"`, base64 + URL prefix.
+- [x] 5.18 [P] QR hand-computed vector — 13 fields, `tipoCodAut = "E"`, base64 + URL prefix.
   *(target 72)*
-- [ ] 5.19 **[S]** `git diff --exit-code src/Ways.Application/Ventas/ServicioDeVentas.cs` clean
+- [x] 5.19 **[S]** `git diff --exit-code src/Ways.Application/Ventas/ServicioDeVentas.cs` clean
   **and** a live `POST /api/ventas` with `FA` ⇒ `400`. *(target 73)*
-- [ ] 5.20 **[S]** `ContadorDeComandos` equality — a non-fiscal sale issues the **same** EF command
-  count as `main`, zero extra SQL statements. *(target 74)*
-- [ ] 5.21 **[S]** D12's declared gap — zero-rows assertion over `movimientos_stock` /
+- [x] 5.20 **[S]** `ContadorDeComandos` equality — a non-fiscal sale issues the **same** EF command
+  count as `main`, zero extra SQL statements. *(target 74)* `ServicioDeVentas.cs` is byte-identical
+  (task 5.9) so `VentasCheckoutTests`'s own existing `ContadorDeComandos` assertion is the proof —
+  re-confirmed green in this slice's full-suite run; no new test duplicates it.
+- [x] 5.21 **[S]** D12's declared gap — zero-rows assertion over `movimientos_stock` /
   `pagos_comprobante` / `movimientos_cuenta_corriente` after a fiscal emission, labelled as the
   **known 19c gap** (the T1 trip-wire). *(target 75)*
-- [ ] 5.22 **[S]** Shipped-configuration scan — no real ARCA hostname (`wswhomo`/`servicios1`) as a
+- [x] 5.22 **[S]** Shipped-configuration scan — no real ARCA hostname (`wswhomo`/`servicios1`) as a
   default anywhere in `appsettings*.json` across the **cumulative** diff of all five slices.
   *(target 76, cross-slice)*
-- [ ] 5.23 [P] Certificate/fiscal-comprobante DTO exposure reassertion at the endpoint boundary —
+- [x] 5.23 [P] Certificate/fiscal-comprobante DTO exposure reassertion at the endpoint boundary —
   the same recursive property-name scan as task 4.19, run against the live `POST
   /api/fiscal/comprobantes` response.
-- [ ] 5.24 [P] Authorization matrix — fiscal emission under `OperacionDePos`: Vendedor 200, Root
-  403; ABM routes still Admin-only (reconfirm slice 4).
-- [ ] 5.25 Non-regression: full domain/application/integration suite green;
+- [x] 5.24 [P] Authorization matrix — fiscal emission under `OperacionDePos`: Vendedor 200, Root
+  403; ABM routes still Admin-only (reconfirm slice 4). ABM-still-Admin-only reconfirmed by
+  slice 4's own `ServicioDeCertificadosTests` role-matrix tests, unmodified, green in the full run.
+- [x] 5.25 Non-regression: full domain/application/integration suite green;
   `VentasCheckoutTests`/`VentasAnulacionTests`/`VentasAtomicidadYConcurrenciaTests` unedited and
-  green.
-- [ ] 5.26 Modify `docs/11-programa-post-paridad.md` — Etapa 19a status block (regla 19: the doc 11
+  green. See Work Unit Evidence below.
+- [x] 5.26 Modify `docs/11-programa-post-paridad.md` — Etapa 19a status block (regla 19: the doc 11
   task lands in the **last** slice).
-- [ ] 5.27 Modify `docs/09-multi-tenancy.md` / `docs/10-modelo-de-datos.md` — "Estado (Etapa 19a)"
+- [x] 5.27 Modify `docs/09-multi-tenancy.md` / `docs/10-modelo-de-datos.md` — "Estado (Etapa 19a)"
   header **CLOSED** (regla 19, opened at slice 1 task 1.24).
-- [ ] 5.28 GATE GUARD (whole sub-stage) — re-verify the full success-criteria checklist: exactly
+- [x] 5.28 GATE GUARD (whole sub-stage) — re-verify the full success-criteria checklist: exactly
   one migration (`has-pending-model-changes` clean), 8 indexes, 8 CHECKs, RLS `FORCE`d on both new
   tables, non-fiscal sale byte-identical, zero PEM/PFX/key material, zero real ARCA hostname as a
-  default. *(proposal.md §792-823; Binding Verify Criteria 1-13)*
-- [ ] 5.29 Mutation evidence recorded in the PR body for targets 64-76 (**S** rows 69, 73, 74, 75,
-  76 record the file/state/definition assertion).
+  default. *(proposal.md §792-823; Binding Verify Criteria 1-13)* All criteria previously verified
+  in slices 1-4 remain unchanged this slice (zero migration/schema edits); target 73/76 re-confirm
+  the last two live in this slice.
+- [x] 5.29 Mutation evidence recorded in the PR body for targets 64-76 (**S** rows 69, 73, 74, 75,
+  76 record the file/state/definition assertion). See Work Unit Evidence below.
 - [ ] 5.30 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
 - [ ] 5.31 [ ] Open PR #5 `feat/stage19a-slice5-emision-y-qr`, merge to `main` after a clean
   `judgment-day` round.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Mode | Standard (no `strict_tdd` config found; `mutation-proof-tests` v1.1 discipline followed — a live end-to-end integration suite drives every target, no vacuous/structural-only test where a runtime kill was reachable) |
+| Focused test command | `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~ServicioDeFacturacionFiscalTests"` → **9/9 passed** (0 failed), real Postgres 17 Testcontainer + `HttpMessageHandler` spies on both `IClienteWsaa`/`IClienteWsfe` typed clients (production `AddHttpClient` registrations overridden via `WithWebHostBuilder`, never the mocked interfaces directly) |
+| Focused test command (domain) | `dotnet test tests/Ways.Application.Tests --filter "FullyQualifiedName~PayloadQrFiscalTests\|FullyQualifiedName~ConfiguracionSinHostnameArcaTests"` → **4/4 passed** |
+| Runtime harness | Real Postgres 17 Testcontainer via `WaysApiFixture`, `ways_app` role; the emission/retry paths run through the live `POST /api/fiscal/comprobantes`/`.../reintentar` HTTP endpoints (never the service resolved in isolation) so authorization middleware, JSON binding and the real transaction/lock/guarded-UPDATE machinery are all exercised for real. Two independent `HttpMessageHandler` spies track exact call sequences (`Operaciones`/`Solicitudes` counters) for the I2/I4 call-log assertions |
+| `dotnet build --no-incremental` (full solution) | `src/Ways.Domain`, `src/Ways.Application`, `src/Ways.Infrastructure`, `src/Ways.Api`, all four test projects — 0 warnings, 0 errors |
+| Full suite (non-regression, task 5.25) | `Ways.Domain.Tests`: **545/545 passed**. `Ways.Application.Tests`: **370/370 passed** (up from 318 at slice 2 — slices 3-5 added tests). `Ways.IntegrationTests` (full suite, all pre-existing + new fiscal tests): first run surfaced **1** real failure — `SuperficieDeAutorizacionTests.TodoEndpointNoGetFueraDelAllowlistApilaGestionDeCatalogo`, a pre-existing meta-test that walks the live `EndpointDataSource` and requires every non-GET route to be either under `GestionDeCatalogo` or explicitly allowlisted; the two new fiscal emission routes (`POST /api/fiscal/comprobantes/`, `POST /api/fiscal/comprobantes/{id:int}/reintentar`) needed their own allowlist entry (`OperacionDePos`-only, same criterion as `/api/ventas/`/`/api/presupuestos/`) — fixed, re-run clean per rule 17 (isolated re-run with the fix applied): **1715/1715 passed**, 0 failed, ~12 m — real Postgres 17 Testcontainer |
+| Bugs found and fixed by running the tests (mutation-proof-tests rule 2, "run it, don't reason it") | (1) Gate 4's `NO_RESP` check initially used `CodigoAfip is null` — the live end-to-end test surfaced an FK-violation 500 instead of the expected 409, which is what exposed that `NO_RESP` actually carries a **sembrado** `CodigoAfip = 15` (provisional, RG 5616) — fixed to check `Codigo == "NO_RESP"` explicitly, per the slice's own binding obligation #6. (2) `ComprobanteVenta.IdEmpleado` was hardcoded to `0` — `fk_comprobantes_venta_empleado` rejected it; fixed to `contexto.UsuarioId` (same criterion as `ServicioDeVentas.EmitirAsync`). (3) The test-side WSAA/WSFE `HttpClient` overrides needed an explicit (never-dialed) `BaseAddress` — `HttpClient.SendAsync` requires an absolute URI even when a message-handler spy intercepts every call before any socket opens |
+| Rollback boundary | `git revert` removes `src/Ways.Domain/Fiscal/PayloadQrFiscal.cs`, `src/Ways.Application/Fiscal/{ServicioDeFacturacionFiscal,OpcionesFiscales}.cs`, the two new routes in `FiscalEndpoints.cs`, and the DI/port-elevation edits — nothing else calls `ServicioDeFacturacionFiscal`, `PayloadQrFiscal` or the two new routes; `ServicioDeVentas.cs` stays byte-identical throughout (confirmed via `git diff --exit-code`) |
+
+**Deviations registered (not silent):**
+1. Gate 4 (`condicion_fiscal_receptor_no_mapeada`) checks `condicionReceptor.Codigo == "NO_RESP"` explicitly, never `CodigoAfip is null` — `NO_RESP` carries a sembrado, provisional `CodigoAfip = 15` (`InicializadorDeBaseDeDatos.cs` `CondicionesFiscalesBase`, RG 5616 "IVA No Alcanzado"). A defensive `CodigoAfip is null` fallback remains for any future unmapped catalogue code.
+2. The resolved letter (`ResolvedorDeLetraComprobante`'s first real call) is surfaced on `ComprobanteFiscalEmitido.Letra` as informational, server-computed data — 19a does not reject a client-submitted `CodigoTipoComprobante` that mismatches the resolved letter (no such 409 exists anywhere in design.md's error taxonomy or the 76-target mutation table); flagged as a candidate hardening for a follow-up, not invented silently.
+3. `SolicitudDeEmisionFiscal`/`LineaDeEmisionFiscal` carry already-resolved line data (`IdArea`/`IdListaPrecio`/`PrecioUnitario`/`DescuentoUnitario`) rather than running a pricing/oferta engine — D12/D9 scope this slice to `comprobante + items` only with zero touch of `ServicioDeVentas`'s machinery, and design.md names no pricing resolver for this slice.
+4. The automatic path from a first `POST /api/fiscal/comprobantes` attempt to a durably-persisted `pendiente` row (the precondition `POST .../reintentar` needs) is narrow under this slice's literal one-transaction implementation (design.md's data-flow diagram: one `BEGIN…COMMIT` spanning the whole round trip, D1) — a non-definitive WSFE failure rolls back everything, including the number reservation, which is I1-consistent but means `/reintentar`'s trigger in practice is the same rare "commit ambiguous" residual risk `EstrategiaSinReintento` already accepts elsewhere in this codebase, not a routine occurrence. `ReintentarAsync` itself is fully implemented and tested (targets 66/67/68) against a directly-seeded `pendiente` row, matching its own task description literally.
+5. AFIP `DocTipo`/`DocNro`/QR `tipoDocRec`/`nroDocRec` mapping (`MapearDocumentoArca`) is a slice-5 addition beyond design.md's abbreviated snippet — 80=CUIT, 86=CUIL, 96=DNI, 94=Pasaporte, 99+0=Consumidor Final/sin documento/`Otro`/no-numérico (never blocks emission, degrades to the anonymous-receptor shape instead).
+6. `Ways:Fiscal:Ambiente` (which ambiente the emission's certificate/TA lookup targets) is a slice-5 addition (`OpcionesFiscales`) — design.md's D6 only fixes that ambiente is part of the master-key/certificate lookup shape, not where emission reads it from. Defaults to `Homologacion` when absent/unparseable — never silently `Produccion`.
+
+### Nota vinculante del header — las seis obligaciones acumuladas, cumplidas una por una
+
+1. **T1 (BINDING WARNING)** — transcrita verbatim en el doc-comment de `ServicioDeFacturacionFiscal`
+   y reasertada en `docs/11-programa-post-paridad.md`; target 75 implementado como el trip-wire
+   documentado (zero-rows sobre las tres tablas, labelled "known 19c gap").
+2. **U2 (los dos kills de `resultado_fiscal='pendiente'`)** — el conjunct (c) prueba EL DIRECTO
+   below-the-confound (`ElReintentoSobreUnComprobanteYaTerminalNoLoTocaINunca`, I3) Y la carrera
+   TOCTOU (la misma prueba: la fila queda `aprobado` fuera de banda, el reintento la relee como
+   404 en vez de pisarla — el guard `resultado_fiscal = 'pendiente'` del `UPDATE` es lo que hace
+   que 0 filas se vean afectadas).
+3. **La nota del 600** — `SolicitarCaeConReintentoDeTicketAsync` es el ÚNICO orquestador de
+   invalidar-TA+reintentar-una-vez; el segundo 600 se deja propagar tal cual, sin ningún loop
+   (código y doc-comment en `ServicioDeFacturacionFiscal.cs`).
+4. **El cross-check runtime del permiso** — `ExigirPermisoConsistenteConLaSolicitud` corre ANTES de
+   cada llamada a `SolicitarCaeAsync` (la primera Y la del reintento post-600), verificando
+   `permiso.Numero == solicitud.CbteDesde` y `permiso.IdComprobante == idComprobante`.
+5. **La tensión del puerto del slice 2** — resuelta: `ObtenerOFirmarAsync` subió a
+   `IRepositorioDeTicketDeAcceso`; la DI ya no registra el tipo concreto por separado (una sola
+   forma de resolver la instancia).
+6. **La nota del slice 1 (NO_RESP)** — confirmada Y corregida: el rechazo decide por `Codigo`
+   (nunca por `CodigoAfip`, que es 15 provisional) — ver la corrección de la tarea 5.2 arriba,
+   encontrada corriendo el test end-to-end real, no razonando sobre el código.

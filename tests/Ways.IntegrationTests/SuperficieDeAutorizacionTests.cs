@@ -107,6 +107,13 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // POST /api/etiquetas/datos agrupa SOLO bajo OperacionDePos, nada apilado — read-only
         // POST, mismo criterio exacto que "/api/ofertas/resolver" de arriba.
         ("POST", "/api/etiquetas/datos"),
+        // stage-19a-slice5 (task 5.7, spec operacion-de-pos: "Fiscal Emission Stays Under
+        // OperacionDePos, Not AdministracionFiscal"): la emisión fiscal en sí — SOLO
+        // OperacionDePos, nada apilado, mismo criterio que "/api/ventas/"/"/api/presupuestos/" —
+        // la letra/totales/CAE los decide el servidor, el riesgo gateado no es quién aprieta el
+        // botón (target 5.24, task 5.24).
+        ("POST", "/api/fiscal/comprobantes/"),
+        ("POST", "/api/fiscal/comprobantes/{id:int}/reintentar"),
         // Aprovisionamiento y administración de tenants — SoloPlataforma, root-only, jamás
         // admite Vendedor (Politicas.cs).
         ("POST", "/api/plataforma/tenants/"),
