@@ -41,6 +41,15 @@ public sealed class RepositorioEnMemoriaDeTicketDeAcceso(IRelojDelSistema reloj)
         return Task.CompletedTask;
     }
 
+    /// <summary>judgment 19a-slice-5 ronda 2 juez A — WARNING: solo remueve la entrada del cache;
+    /// nunca toca <see cref="_cerrojos"/> — el mismo <see cref="SemaphoreSlim"/> de la clave sigue
+    /// sirviendo de single-flight para el próximo <see cref="ObtenerOFirmarAsync"/>.</summary>
+    public Task InvalidarAsync(ClaveDeTicket clave, CancellationToken ct)
+    {
+        _tickets.TryRemove(clave, out _);
+        return Task.CompletedTask;
+    }
+
     /// <summary>Si hay un TA vigente lo devuelve sin invocar <paramref name="obtenerNuevo"/>; si
     /// no, adquiere el cerrojo de ESTA clave y, ya adentro, vuelve a chequear el cache
     /// (double-checked locking) antes de invocar el factory — el segundo (tercero, ...) pedido

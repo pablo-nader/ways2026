@@ -5,6 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
@@ -317,6 +318,61 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         Observaciones = (string?)null
     };
 
+    /// <summary>Variante de <see cref="SolicitudEmision"/> con la línea sobreescribible — judgment
+    /// 19a-slice-5 ronda 2 juez A, MAJOR: los tres guards de <c>ExigirLineasFiscalesValidas</c>
+    /// (cantidad ≤ 0, precio negativo, descuento negativo).</summary>
+    private static object SolicitudEmisionConLinea(
+        Contexto ctx, decimal cantidad, decimal precioUnitario, decimal descuentoUnitario) => new
+    {
+        IdPuntoVenta = ctx.IdPuntoVenta,
+        CodigoTipoComprobante = "FA",
+        IdCliente = ctx.IdClienteRi,
+        Lineas = new[]
+        {
+            new
+            {
+                IdArticulo = (int?)null, Descripcion = "Producto fiscal", IdArea = ctx.IdArea,
+                IdListaPrecio = ctx.IdListaPrecio, IdAlicuotaIva = ctx.IdAlicuota21, Cantidad = cantidad,
+                PrecioUnitario = precioUnitario, DescuentoUnitario = descuentoUnitario
+            }
+        },
+        Observaciones = (string?)null
+    };
+
+    // --- El MAJOR de judgment 19a-slice-5 ronda 2 juez A: ComponerLineasAsync aceptaba Cantidad ≤ 0
+    //     y precios/descuentos negativos — un Vendedor podía acuñar un comprobante fiscal
+    //     I3-irreversible con monto cero o negativo. Mismo criterio que el precedente del POS
+    //     (ServicioDeVentas.ExigirLineasValidas). ---
+
+    [Theory]
+    [InlineData(0, 100, 0, "cantidad_de_linea_invalida")]
+    [InlineData(-1, 100, 0, "cantidad_de_linea_invalida")]
+    [InlineData(1, -100, 0, "precio_unitario_invalido")]
+    [InlineData(1, 100, -1, "descuento_unitario_invalido")]
+    public async Task UnaLineaInvalidaEsRechazada400ConCeroLlamadasHttpYCeroNumeroQuemado(
+        decimal cantidad, decimal precioUnitario, decimal descuentoUnitario, string codigoEsperado)
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        var espiaWsfe = new EspiaWsfe();
+        var sufijo = Guid.NewGuid().ToString("N")[..8];
+        var (ctx, admin, _, _) = await PrepararAsync(
+            $"{nameof(UnaLineaInvalidaEsRechazada400ConCeroLlamadasHttpYCeroNumeroQuemado)}-{sufijo}",
+            espiaWsaa, espiaWsfe);
+
+        var respuesta = await admin.PostAsJsonAsync(
+            "/api/fiscal/comprobantes", SolicitudEmisionConLinea(ctx, cantidad, precioUnitario, descuentoUnitario));
+
+        await AssertCodigoAsync(respuesta, HttpStatusCode.BadRequest, codigoEsperado);
+
+        // Pre-gate: CERO bytes en el cable (mismo criterio que I4) — el guard corre ANTES de tocar
+        // numeraciones_fiscales.
+        Assert.Equal(0, espiaWsaa.Solicitudes);
+        Assert.Empty(espiaWsfe.Operaciones);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.False(await db.ComprobantesVenta.AnyAsync(c => c.IdTenant == ctx.IdTenant)); // CERO número quemado
+    }
+
     // --- I4: los cinco gates, CERO requests HTTP en cada uno (target 64/65) ---
 
     [Fact]
@@ -473,7 +529,19 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
 
     // --- I2: FECompConsultar SIEMPRE antes de reintentar (targets 66/67) ---
 
-    private async Task<int> SembrarPendienteAsync(Contexto ctx, long numero)
+    /// <summary>Línea del seed de <see cref="SembrarPendienteAsync"/>: ya con el <c>Total</c> final
+    /// (con IVA incluido cuando <see cref="CodigoAfip"/> no es <c>null</c>) — el mismo shape
+    /// congelado que <c>items_comprobante_venta</c> guarda de verdad.</summary>
+    private sealed record LineaDeItemSembrado(int IdAlicuotaIva, decimal PorcentajeIva, decimal Total);
+
+    /// <summary>judgment 19a-slice-5 ronda 2 juez A — CRITICAL: desde el fix, <c>ReintentarAsync</c>
+    /// relee <c>items_comprobante_venta</c> para recomponer el desglose fiscal — este seed AHORA
+    /// también siembra la(s) línea(s), nunca solo la fila del comprobante. Default: una sola línea
+    /// 21%-gravada con <c>Total = 100</c> (neto 82.64/iva 17.36 — los mismos valores que el header
+    /// del comprobante ya usaba), preservando byte-a-byte el comportamiento de los tests
+    /// preexistentes que no pasan <paramref name="lineas"/> explícitas.</summary>
+    private async Task<int> SembrarPendienteAsync(
+        Contexto ctx, long numero, IReadOnlyList<LineaDeItemSembrado>? lineas = null)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -481,6 +549,9 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         var proximoNumero = numero + 1;
         await db.Database.ExecuteSqlAsync(
             $"INSERT INTO numeraciones_fiscales (id_punto_venta, codigo_afip, id_tenant, proximo_numero) VALUES ({ctx.IdPuntoVenta}, 1, {ctx.IdTenant}, {proximoNumero}) ON CONFLICT (id_punto_venta, codigo_afip) DO UPDATE SET proximo_numero = {proximoNumero}");
+
+        var lineasEfectivas = lineas ?? [new LineaDeItemSembrado(ctx.IdAlicuota21, 21.00m, 100m)];
+        var total = lineasEfectivas.Sum(l => l.Total);
 
         var idEmpleado = await db.Usuarios.Select(u => u.Id).FirstAsync();
         var comprobante = new Ways.Domain.Ventas.ComprobanteVenta
@@ -492,9 +563,9 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
             IdPuntoVenta = ctx.IdPuntoVenta,
             IdEmpleado = idEmpleado,
             IdCliente = ctx.IdClienteRi,
-            Subtotal = 100m,
+            Subtotal = total,
             DescuentoTotal = 0m,
-            Total = 100m,
+            Total = total,
             NetoGravado = 82.64m,
             IvaTotal = 17.36m,
             Estado = Ways.Domain.Ventas.EstadoComprobante.Emitido,
@@ -504,6 +575,30 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
         };
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
+
+        var orden = 1;
+        foreach (var linea in lineasEfectivas)
+        {
+            db.ItemsComprobanteVenta.Add(new Ways.Domain.Ventas.ItemComprobanteVenta
+            {
+                IdTenant = ctx.IdTenant,
+                IdComprobanteVenta = comprobante.Id,
+                Orden = orden++,
+                Descripcion = "Item fiscal sembrado",
+                IdArea = ctx.IdArea,
+                IdListaPrecio = ctx.IdListaPrecio,
+                IdAlicuotaIva = linea.IdAlicuotaIva,
+                PorcentajeIva = linea.PorcentajeIva,
+                Cantidad = 1m,
+                PrecioUnitario = linea.Total,
+                Descuento = 0m,
+                Total = linea.Total,
+                CreatedAt = ahora,
+                UpdatedAt = ahora
+            });
+        }
+        await db.SaveChangesAsync();
+
         return comprobante.Id;
     }
 
@@ -547,6 +642,70 @@ public class ServicioDeFacturacionFiscalTests(WaysApiFixture fixture) : IClassFi
 
         // target 66: FECompConsultar PRECEDE, y exactamente UN FECAESolicitar en todo el reintento.
         Assert.Equal(["FECompConsultar", "FECAESolicitar"], espiaWsfe.Operaciones);
+    }
+
+    // --- El CRITICAL de judgment 19a-slice-5 ronda 2 juez A: la re-emisión (rama no-adoptada de
+    //     ReintentarAsync) tenía que recomponer el desglose fiscal COMPLETO desde el snapshot
+    //     congelado de items_comprobante_venta, nunca fabricar ImpOpEx=0/Iva[]=[] — el invariante
+    //     vinculante del spec (comprobante-fiscal:82-88) exige alícuotas MIXTAS (gravada 21% +
+    //     Exento) para discriminar de un total hardcodeado en cero. ---
+
+    [Fact]
+    public async Task ElReintentoConAlicuotasMixtasRecomponeElDesgloseFiscalCompletoYElInvarianteDeTotalesExacto()
+    {
+        var espiaWsaa = new EspiaWsaa(LoginCmsGolden());
+        string? cuerpoCapturado = null;
+        var espiaWsfe = new EspiaWsfe
+        {
+            Consultar = _ => RespuestaXml(FecompConsultarNoEncontrado()),
+            Solicitar = req =>
+            {
+                cuerpoCapturado = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+                return RespuestaXml(FecaeAprobado(70, "70555555555555"));
+            }
+        };
+        var (ctx, admin, _, _) = await PrepararAsync(
+            nameof(ElReintentoConAlicuotasMixtasRecomponeElDesgloseFiscalCompletoYElInvarianteDeTotalesExacto),
+            espiaWsaa, espiaWsfe);
+
+        await using var dbSeed = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var idAlicuotaExento = await dbSeed.AlicuotasIva.Where(a => a.Nombre == "Exento").Select(a => a.Id).FirstAsync();
+
+        // Línea gravada 21% con Total = 121.00 (neto 100.00, iva 21.00 EXACTOS, sin deriva de
+        // redondeo) + línea Exento con Total = 50.00 — valores DISCRIMINANTES: ImpOpEx=0/Iva[]=[]
+        // fabricados (el estado viejo) jamás reconstruyen ImpTotal=171.00 a partir de estas dos
+        // líneas.
+        var idComprobante = await SembrarPendienteAsync(ctx, 70,
+        [
+            new LineaDeItemSembrado(ctx.IdAlicuota21, 21.00m, 121.00m),
+            new LineaDeItemSembrado(idAlicuotaExento, 0.00m, 50.00m)
+        ]);
+
+        var respuesta = await admin.PostAsync($"/api/fiscal/comprobantes/{idComprobante}/reintentar", null);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        Assert.NotNull(cuerpoCapturado);
+        // MapeadorWsfe.ConstruirDetalle: solo la raíz de la operación lleva el prefijo `ar:` — sus
+        // hijos (FeCAEReq/FeDetReq/FECAEDetRequest/…) quedan sin namespace propio.
+        var detalle = XDocument.Parse(cuerpoCapturado).Descendants("FECAEDetRequest").Single();
+
+        string Valor(string nombre) => detalle.Element(nombre)!.Value;
+
+        // 12b — el invariante vinculante del spec (comprobante-fiscal:82-88), campo por campo, con
+        // los valores REALES compuestos desde los items, jamás los ceros fabricados del estado
+        // viejo.
+        Assert.Equal("171.00", Valor("ImpTotal"));
+        Assert.Equal("0.00", Valor("ImpTotConc"));
+        Assert.Equal("100.00", Valor("ImpNeto"));
+        Assert.Equal("50.00", Valor("ImpOpEx"));
+        Assert.Equal("0.00", Valor("ImpTrib"));
+        Assert.Equal("21.00", Valor("ImpIVA"));
+
+        var alicIva = detalle.Element("Iva")!.Elements("AlicIva").Single();
+        Assert.Equal("5", alicIva.Element("Id")!.Value); // codigo_afip = 5 ⇒ 21%
+        Assert.Equal("100.00", alicIva.Element("BaseImp")!.Value);
+        Assert.Equal("21.00", alicIva.Element("Importe")!.Value);
     }
 
     // --- La nota del 600: invalidar-TA + reintentar UNA vez, el segundo es DEFINITIVO (judgment

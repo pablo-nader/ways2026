@@ -30,4 +30,11 @@ public interface IRepositorioDeTicketDeAcceso
     /// (target 33, D8).</summary>
     Task<TicketDeAcceso> ObtenerOFirmarAsync(
         ClaveDeTicket clave, Func<CancellationToken, Task<TicketDeAcceso>> obtenerNuevo, CancellationToken ct);
+
+    /// <summary>Descarta el TA cacheado de <paramref name="clave"/> (judgment 19a-slice-5 ronda 2 juez
+    /// A — WARNING): el WSFE <c>600</c> lo llama para que el re-firmado post-600 vuelva a pasar por
+    /// <see cref="ObtenerOFirmarAsync"/> — su single-flight — en vez de firmar directo por fuera del
+    /// cerrojo, de modo que dos emisiones concurrentes con el mismo TA invalidado compartan UNA sola
+    /// re-firma. Idempotente: invalidar una clave sin ticket cacheado es un no-op.</summary>
+    Task InvalidarAsync(ClaveDeTicket clave, CancellationToken ct);
 }

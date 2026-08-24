@@ -76,6 +76,15 @@ no-key-material scan (design.md:576-578).
    judgment-day 19a-slice-4 ronda 2 juez A (WARNING). The spec is amended in place to the shipped
    versioned shape — this is the active change's own artifact, not a downstream document, so the
    correction lands directly rather than through a follow-up change.
+8. **`design.md`'s data-flow diagram gate count — drift corrected, same precedent as Reconciliación
+   7.** `design.md:327` said "los CUATRO GATES (D10)" for `EmitirAsync`'s pre-transaction gates —
+   stale since judgment-day Slice 5 (19a) ronda 1 added the sixth named 409
+   (`tipo_fiscal_letra_no_coincide`, the D10 letter cross-check) on top of the five original gates
+   (`empresa_sin_condicion_fiscal`/`punto_venta_sin_numero_fiscal`/`tipo_fiscal_invalido`/
+   `condicion_fiscal_receptor_no_mapeada`/`certificado_fiscal_ausente`) without updating the
+   diagram's header count or its own bullet list. Found by judgment-day Slice 5 (19a), ronda 2, juez
+   A (WARNING). Amended in place to "los SEIS GATES (D10)" with the letter cross-check added to the
+   bullet list — this is the active change's own artifact, corrected directly.
 
 ## Binding Verify Criteria (all slices)
 
@@ -1294,6 +1303,75 @@ being emitted, before `ClienteWsfe.SolicitarCaeAsync` is called with that pair.
   carrera TOCTOU real, los dos tests del 600, el mismatch de letra, las Observaciones persistidas);
   `Ways.Application.Tests --filter Fiscal` **77/77** verde; `git diff --stat` del archivo de
   producción confirma que solo el gate D10 quedó como cambio neto (todos los mutantes revertidos).
+
+  **judgment-day Slice 5 (19a), ronda 2 — juez A (1 CRITICAL + 1 MAJOR + 3 WARNINGs + 1
+  SUGGESTION), fixes aplicados por el jd-fix-agent** (checkbox de 5.30 sigue sin marcar hasta que el
+  re-judge confirme ronda limpia, regla 18):
+  - **CRITICAL** (la re-emisión con ceros fabricados — `ReintentarAsync`, rama no-adoptada: construía
+    `SolicitudDeCae` con `ImpTotConc=0`/`ImpOpEx=0`/`Iva[]=[]` hardcodeados, sin consultar jamás los
+    items del comprobante — para uno con líneas Exento/No-gravado, `ImpTotal ≠
+    ImpNeto+ImpIVA+ImpOpEx+ImpTotConc+ImpTrib` en el cable, violando el invariante vinculante del
+    spec, `comprobante-fiscal:82-88`): nuevo `ComponerLineasFiscalesDesdeItemsAsync` — relee
+    `items_comprobante_venta` (el snapshot congelado), reconstruye el mismo shape de `LineaFiscal`
+    que `ComponerLineasAsync` arma en la emisión (el lookup de alícuota compartido, extraído a
+    `ObtenerAlicuotasAsync` para que ambos caminos nunca diverjan) y llama
+    `ComposicionDeTotalesFiscales.Componer` para el desglose COMPLETO. Test nuevo
+    `ElReintentoConAlicuotasMixtasRecomponeElDesgloseFiscalCompletoYElInvarianteDeTotalesExacto` —
+    fixture con alícuotas MIXTAS (gravada 21% + Exento, valores discriminantes) capturando el
+    `SolicitudDeCae` real del wire vía el espía WSFE: `ImpOpEx`/`ImpNeto`/`ImpIVA`/`ImpTotal`
+    exactos y el bucket de `Iva[]` correcto, el invariante 12b campo por campo. Ciclo: mutante
+    (revertir a los ceros fabricados) → RED (`ImpNeto` esperado "100.00", actual "82.64" — el header
+    stale del comprobante, nunca el desglose real) → revert → verde.
+  - **MAJOR** (la validación de líneas ausente — `ComponerLineasAsync` aceptaba `Cantidad ≤ 0` y
+    precios/descuentos negativos: un Vendedor podía acuñar un comprobante fiscal I3-irreversible con
+    monto cero o negativo): nuevo `ExigirLineasFiscalesValidas`, mismo criterio que el precedente del
+    POS (`ServicioDeVentas.ExigirLineasValidas`) — `Cantidad > 0` ⇒ `400 cantidad_de_linea_invalida`;
+    `PrecioUnitario`/`DescuentoUnitario` no-negativos ⇒ `400 precio_unitario_invalido`/
+    `400 descuento_unitario_invalido` (nombres propios, coherentes con el resto del catálogo de
+    errores — el precedente del POS no valida precio/descuento). Pre-gate: corre ANTES de la
+    consulta de alícuotas, CERO red. Test nuevo (`Theory`, 4 casos)
+    `UnaLineaInvalidaEsRechazada400ConCeroLlamadasHttpYCeroNumeroQuemado` — cantidad 0, cantidad
+    negativa, precio negativo, descuento negativo → el 400 nombrado, CERO llamadas WSAA/WSFE, CERO
+    fila en `comprobantes_venta` (número nunca quemado). Ciclo: mutante (quitar el guard) → RED
+    (4/4: `500 error_interno` en vez de `400` — `CalculadorDeTotales`/el resto de la tubería no
+    tolera los valores inválidos) → revert → verde.
+  - **WARNING** (el 600 esquiva el single-flight — `SolicitarCaeConReintentoDeTicketAsync` llamaba
+    `FirmarTicketNuevoAsync` directo, por fuera del cerrojo de `ObtenerOFirmarAsync`): el catch del
+    600 ahora invalida el TA vía el puerto (`IRepositorioDeTicketDeAcceso.InvalidarAsync`, primitiva
+    nueva agregada a la interfaz — coherente, es la slice que elevó `ObtenerOFirmarAsync` al puerto)
+    y pide el fresco VÍA `ObtenerOFirmarAsync`, así que dos emisiones concurrentes con el mismo TA
+    invalidado comparten UNA sola re-firma. `RepositorioEnMemoriaDeTicketDeAcceso.InvalidarAsync`
+    solo remueve la entrada de `_tickets`, nunca toca `_cerrojos` — el mismo `SemaphoreSlim` de la
+    clave sigue sirviendo de single-flight. Tests nuevos (barato, determinístico, mismo patrón que
+    `NConcurrentesEnFrioEmitenUnSoloLoginCms`): `InvalidarAsyncDescartaElTicketCacheadoY...`,
+    `InvalidarAsyncSobreUnaClaveSinTicketCacheadoEsUnNoOp`,
+    `DosConcurrentesTrasInvalidarComparteUnaSolaReFirma` (5 pedidos concurrentes tras invalidar ⇒
+    UNA sola re-firma). Ciclo: mutante (`InvalidarAsync` no-op) → RED (2/2: el TA viejo sigue
+    cacheado; 5 concurrentes ⇒ 0 re-firmas en vez de 1) → revert → verde.
+  - **WARNING** (`design.md` con el conteo de gates viejo — el diagrama de data flow seguía diciendo
+    "los CUATRO GATES (D10)" mientras el código ya tenía los cinco 409 nombrados originales + el
+    sexto de la letra, agregado en la ronda 1): `design.md:327` enmendado a "los SEIS GATES (D10)"
+    con el gate de la letra agregado a la lista de viñetas. Enmienda registrada como Reconciliación 8
+    de este mismo archivo, mismo precedente que la Reconciliación 7 (stage-15: todo drift se
+    registra, nunca se parchea en silencio).
+  - **SUGGESTION** (el borde de `char? Letra` en el gate D10 sin documentar): doc-comment de una
+    línea agregado inmediatamente antes de `if (tipoFiscal.Letra != letra)` explicando que
+    `tipoFiscal.Letra` es `char?` — un catálogo sin letra cargada compara `null != letra` y cae en el
+    mismo `409` (falla cerrado), nunca en una `NullReferenceException`.
+  - **REGISTRADO SIN FIXEAR** (informacional, no un defecto de esta slice): (a) la letra que
+    `ReintentarAsync` recomputa en cada intento (`ResolvedorDeLetraComprobante.Resolver`) puede
+    divergir de la letra con la que el comprobante se emitió originalmente si la condición fiscal del
+    emisor/receptor cambió entre intentos — display-only hoy (la letra viaja en la respuesta, nunca
+    se valida contra ningún catálogo persistido en el reintento); anotado como nota para 19c, donde
+    la UI mostrará esta letra recomputada.
+
+  **Higiene (ronda 2)**: `dotnet build --no-incremental` limpio (0 errores) tras cada ciclo de
+  mutante/revert de los tres fixes con test; `ServicioDeFacturacionFiscalTests` completo **19/19**
+  verde (14 preexistentes + 5 nuevos: alícuotas mixtas del CRITICAL, las 4 líneas inválidas del
+  MAJOR); `Ways.Application.Tests` completo **373/373** verde (370 preexistentes + 3 nuevos de
+  `InvalidarAsync`); `Ways.Domain.Tests` completo **545/545** verde (sin tocar); `git status
+  --short` confirma que solo los archivos de este ciclo de fixes quedaron modificados (todos los
+  mutantes revertidos).
 - [ ] 5.31 [ ] Open PR #5 `feat/stage19a-slice5-emision-y-qr`, merge to `main` after a clean
   `judgment-day` round.
 
