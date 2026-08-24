@@ -128,7 +128,7 @@ public class ServicioDeCertificadosTests(WaysApiFixture fixture) : IClassFixture
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/fiscal/certificados", new RegistroDeCertificadoFiscal(
             ctx.IdEmpresa, AmbienteFiscal.Homologacion, "Homo principal", "20111111112", pfx, password));
 
-        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
     }
 
     [Theory]
@@ -223,7 +223,7 @@ public class ServicioDeCertificadosTests(WaysApiFixture fixture) : IClassFixture
 
         var alta = await ctx.Admin.PostAsJsonAsync("/api/fiscal/certificados", new RegistroDeCertificadoFiscal(
             ctx.IdEmpresa, AmbienteFiscal.Homologacion, "Homo a desactivar", "20111111112", pfx, password));
-        Assert.Equal(HttpStatusCode.OK, alta.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
         var creado = await alta.Content.ReadFromJsonAsync<CertificadoFiscalDto>(OpcionesJson);
 
         var respuesta = await ctx.Admin.DeleteAsync($"/api/fiscal/certificados/{creado!.Id}");
@@ -256,7 +256,7 @@ public class ServicioDeCertificadosTests(WaysApiFixture fixture) : IClassFixture
 
         var alta = await ctx.Admin.PostAsJsonAsync("/api/fiscal/certificados", new RegistroDeCertificadoFiscal(
             ctx.IdEmpresa, AmbienteFiscal.Homologacion, "Homo principal", "20222222223", pfx, password));
-        Assert.Equal(HttpStatusCode.OK, alta.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
 
         var listado = await ctx.Admin.GetAsync("/api/fiscal/certificados");
         Assert.Equal(HttpStatusCode.OK, listado.StatusCode);
@@ -504,12 +504,12 @@ public class ServicioDeCertificadosTests(WaysApiFixture fixture) : IClassFixture
         var (pfx1, password1) = GenerarPfx("CN=Ways Test Rotacion 1");
         var alta1 = await ctx.Admin.PostAsJsonAsync("/api/fiscal/certificados", new RegistroDeCertificadoFiscal(
             ctx.IdEmpresa, AmbienteFiscal.Homologacion, "Homo v1", "20111111112", pfx1, password1));
-        Assert.Equal(HttpStatusCode.OK, alta1.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, alta1.StatusCode);
 
         var (pfx2, password2) = GenerarPfx("CN=Ways Test Rotacion 2");
         var alta2 = await ctx.Admin.PostAsJsonAsync("/api/fiscal/certificados", new RegistroDeCertificadoFiscal(
             ctx.IdEmpresa, AmbienteFiscal.Homologacion, "Homo v2", "20111111112", pfx2, password2));
-        Assert.Equal(HttpStatusCode.OK, alta2.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, alta2.StatusCode);
 
         var listadoRespuesta = await ctx.Admin.GetAsync("/api/fiscal/certificados");
         var listado = await listadoRespuesta.Content.ReadFromJsonAsync<List<CertificadoFiscalDto>>(OpcionesJson);

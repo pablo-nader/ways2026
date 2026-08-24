@@ -340,7 +340,14 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
 
             foreach (var (prefijo, policyExigida) in PrefijosDeLecturaMasEstrictosQueOperacionDePos)
             {
-                if (!patron.StartsWith(prefijo, StringComparison.Ordinal))
+                // Match por SEGMENTO, no por substring crudo (judgment-day 19a-slice-4 ronda 2
+                // juez A, SUGGESTION): "/api/fiscal" no puede capturar un futuro
+                // "/api/fiscalizacion" solo porque comparte el prefijo de caracteres — o el patrón
+                // es EXACTAMENTE el prefijo, o el prefijo sigue con un separador de ruta.
+                var coincideSegmento = patron.Equals(prefijo, StringComparison.Ordinal)
+                    || patron.StartsWith(prefijo + "/", StringComparison.Ordinal);
+
+                if (!coincideSegmento)
                 {
                     continue;
                 }

@@ -106,6 +106,7 @@ public class ServicioDeCertificados(IWaysDbContext db, IRelojDelSistema reloj, I
         finally
         {
             CryptographicOperations.ZeroMemory(clavePrivada);
+            CryptographicOperations.ZeroMemory(datos.Pfx);
         }
     }
 

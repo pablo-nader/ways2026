@@ -28,7 +28,12 @@ namespace Ways.Infrastructure.Fiscal;
 /// (<c>Ways:Fiscal:ClaveMaestraActual</c> + <c>Ways:Fiscal:ClavesMaestras:&lt;id&gt;</c>, 32 bytes
 /// base64) para cifrar material NUEVO; <see cref="UsarCertificadoAsync{T}"/> resuelve la clave por
 /// la versión guardada en la fila (<c>id_clave_maestra</c>) para descifrar una existente. Ausente/
-/// corta ⇒ el error nombrado de D6, nunca una excepción de crypto pelada ni texto plano.
+/// corta ⇒ el error nombrado de D6, nunca una excepción de crypto pelada ni texto plano. Y si la
+/// clave maestra SÍ resuelve pero <see cref="Descifrar"/> igual falla (clave equivocada para esta
+/// fila, o fila corrupta/manipulada — <see cref="AesGcm"/> no distingue las dos, judgment-day
+/// 19a-slice-4 ronda 2 juez A), <see cref="UsarCertificadoAsync{T}"/> traduce la
+/// <see cref="CryptographicException"/> pelada al mismo tipo de error nombrado (<c>409
+/// certificado_fiscal_ilegible</c>), nunca la deja propagar cruda.
 /// </summary>
 public sealed class CifradoDeClavesFiscales(IWaysDbContext db, IConfiguration configuration)
     : IAlmacenDeClavesFiscales
@@ -83,15 +88,26 @@ public sealed class CifradoDeClavesFiscales(IWaysDbContext db, IConfiguration co
         byte[]? clavePrivadaPlana = null;
         try
         {
-            clavePrivadaPlana = Descifrar(
-                claveMaestra,
-                certificado.ClavePrivadaCifrada,
-                certificado.Nonce,
-                certificado.TagAutenticacion,
-                certificado.IdTenant,
-                certificado.IdEmpresa,
-                certificado.Ambiente,
-                certificado.HuellaSha256);
+            try
+            {
+                clavePrivadaPlana = Descifrar(
+                    claveMaestra,
+                    certificado.ClavePrivadaCifrada,
+                    certificado.Nonce,
+                    certificado.TagAutenticacion,
+                    certificado.IdTenant,
+                    certificado.IdEmpresa,
+                    certificado.Ambiente,
+                    certificado.HuellaSha256);
+            }
+            catch (CryptographicException)
+            {
+                // No distinguir en el mensaje si falló por clave-incorrecta o por fila-manipulada
+                // (judgment-day 19a-slice-4 ronda 2 juez A): un mensaje que lo revelara sería una
+                // fuga de información sobre CUÁL de las dos cosas está mal, útil para un atacante
+                // que sondea filas — un único código opaco, siempre el mismo, para ambos casos.
+                throw CertificadoIlegible();
+            }
 
             using var publico = X509Certificate2.CreateFromPem(certificado.CertificadoPem);
             using var rsa = RSA.Create();
@@ -115,6 +131,18 @@ public sealed class CifradoDeClavesFiscales(IWaysDbContext db, IConfiguration co
             "certificado_fiscal_ausente",
             "No hay certificado fiscal activo (o su clave maestra no está disponible) para esta " +
             "empresa y ambiente.",
+            409);
+
+    /// <summary>La clave maestra resolvió, pero el descifrado autenticado (<see cref="AesGcm"/>)
+    /// falló igual — clave equivocada para esta fila y fila corrupta/manipulada producen la MISMA
+    /// excepción de la BCL (<see cref="CryptographicException"/>/<see cref="AuthenticationTagMismatchException"/>)
+    /// y este código no las distingue a propósito (judgment-day 19a-slice-4 ronda 2 juez A: el
+    /// mensaje jamás debe filtrar cuál de las dos pasó).</summary>
+    private static ErrorDominio CertificadoIlegible() =>
+        new(
+            "certificado_fiscal_ilegible",
+            "El certificado fiscal activo no pudo leerse para esta empresa y ambiente — el camino " +
+            "fiscal queda inerte.",
             409);
 
     // --- Crypto puro (targets 57-59): sin IConfiguration ni IWaysDbContext, testeable directo. ---

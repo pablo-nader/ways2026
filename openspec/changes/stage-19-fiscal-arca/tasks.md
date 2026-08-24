@@ -66,6 +66,16 @@ no-key-material scan (design.md:576-578).
    `IAlmacenDeClavesFiscales`/`CertificadoFiscalDto` → Slice 4 — each later slice **extending** the
    same `Contratos.cs` file rather than redefining it. Registered per the stage-17 process-rule
    precedent (every deviation registered, never left to verify-phase archaeology).
+7. **`specs/certificados-fiscales/spec.md` master-key config name — drift corrected, per the
+   stage-15 parallel-phase-drift precedent (every drift registered, never silently patched).**
+   `proposal.md`/`design.md:70` (D6) and the shipped `CifradoDeClavesFiscales` implementation both
+   use the **versioned** shape `Ways:Fiscal:ClaveMaestraActual` (an id) +
+   `Ways:Fiscal:ClavesMaestras:<id>` (the 32-byte base64 key for that id) — the spec's Requirement
+   "The Private Key Is Encrypted With AES-256-GCM Bound To Its Own Row" instead named a single
+   unversioned `Ways:Fiscal:ClaveMaestra`, an earlier (pre-D6) shape that never shipped. Found by
+   judgment-day 19a-slice-4 ronda 2 juez A (WARNING). The spec is amended in place to the shipped
+   versioned shape — this is the active change's own artifact, not a downstream document, so the
+   correction lands directly rather than through a follow-up change.
 
 ## Binding Verify Criteria (all slices)
 
@@ -925,6 +935,50 @@ the same rows.
     desapercibido — la metadata de `IAuthorizeData` del grupo sigue presente, es el middleware el
     que la ignora en runtime). Ciclo: mutante del juez (`.AllowAnonymous()` en el `MapGet` de
     `FiscalEndpoints.cs`) → RED por el guard nuevo Y por los cuatro tests de rol → revert → verde.
+
+  **judgment-day Slice 4 (19a), ronda 2 — juez A (1 CRITICAL + 3 WARNINGs + 1 SUGGESTION), fixes
+  aplicados por el jd-fix-agent** (checkbox sin marcar hasta que el re-judge confirme ronda limpia,
+  regla 18):
+  - **CRITICAL** (`CryptographicException` pelada — `UsarCertificadoAsync` sin `catch`; una clave
+    maestra RESOLUBLE contra un ciphertext corrupto/manipulado propagaba la excepción cruda de
+    `AesGcm`, contradiciendo el contrato de `IAlmacenDeClavesFiscales:42-43`): `catch
+    (CryptographicException)` alrededor de la llamada a `Descifrar` en
+    `CifradoDeClavesFiscales.UsarCertificadoAsync`, traducido a un código NOMBRADO nuevo y opaco —
+    `409 certificado_fiscal_ilegible` — con mensaje neutro que NO distingue clave-equivocada de
+    fila-manipulada (esa distinción sería una fuga de información útil para un atacante sondeando
+    filas). Doc-comment del contrato (`IAlmacenDeClavesFiscales.cs`) actualizado para nombrar AMBOS
+    códigos honestos: `certificado_fiscal_ausente` (ausente) y `certificado_fiscal_ilegible`
+    (ilegible). Test nuevo
+    `UsarCertificadoAsyncConCiphertextCorruptoTraduceLaExcepcionDeCryptoAlErrorNombrado`
+    (`CifradoDeClavesFiscalesTests.cs`) — clave maestra resoluble, fila sembrada con un byte del
+    ciphertext flipeado. Ciclo: quitar el `catch` → RED (`AuthenticationTagMismatchException` cruda,
+    no `ErrorDominio`) → revert → verde.
+  - **WARNING** (POST 200 en vez de la convención `Results.Created` del resto del repo — 12 archivos
+    citados por el juez): `FiscalEndpoints.cs`'s `MapPost("/")` ahora devuelve
+    `Results.Created($"/api/fiscal/certificados/{creado.Id}", creado)`. Los cinco asserts de
+    `ServicioDeCertificadosTests.cs` que esperaban `HttpStatusCode.OK` tras un alta exitosa pasan a
+    `HttpStatusCode.Created`. Ciclo: revertir a la lambda síncrona (200) → RED
+    (`UnAdminEsAceptadoAlRegistrarUnCertificadoFiscal`: `Expected: Created, Actual: OK`) → re-aplicar
+    → verde.
+  - **WARNING** (el PFX sin zeroear — `ServicioDeCertificados.RegistrarAsync` solo limpiaba
+    `clavePrivada`, nunca `datos.Pfx`, igual de sensible): `CryptographicOperations.ZeroMemory(datos.Pfx)`
+    agregado al mismo `finally`. El password (`string` inmutable de .NET) documentado como límite
+    honesto en el doc-comment de `RegistroDeCertificadoFiscal` — no se puede zerear de forma
+    confiable, y no se finge una garantía que no existe. Test estructural nuevo
+    `RegistrarAsyncLimpiaLaClavePrivadaYElPfxEnUnFinally` (`CifradoDeClavesFiscalesTests.cs` —
+    ningún test estructural cubría este archivo todavía, se agrega siguiendo el mismo patrón
+    source-read + `Contains` discriminante del test de `UsarCertificadoAsync`). Ciclo: quitar la
+    línea `ZeroMemory(datos.Pfx)` → RED (`Contains` no encuentra el string) → revert → verde.
+  - **WARNING** (drift preexistente pero del artefacto activo — `spec.md` nombraba
+    `Ways:Fiscal:ClaveMaestra` sin versionar, contra D6/implementación real
+    `Ways:Fiscal:ClaveMaestraActual` + `Ways:Fiscal:ClavesMaestras:<id>`): `spec.md` enmendado in
+    place al shape versionado real (Requirement body + su scenario). Enmienda registrada como
+    Reconciliación 7 de este mismo archivo, per el precedente de stage-15 (todo drift se registra,
+    nunca se parchea en silencio).
+  - **SUGGESTION** (el borde de segmento en `SuperficieDeAutorizacionTests.cs:341-346` — `StartsWith`
+    crudo dejaría que un futuro `/api/fiscalizacion` cayera bajo el prefijo `/api/fiscal` solo por
+    compartir caracteres; fallaba cerrado pero era una trampa): matcheo por segmento —
+    `patron.Equals(prefijo, ...) || patron.StartsWith(prefijo + "/", ...)`.
 - [ ] 4.25 [ ] Open PR #4 `feat/stage19a-slice4-numeracion-y-certificados`, merge to `main` after a
   clean `judgment-day` round.
 

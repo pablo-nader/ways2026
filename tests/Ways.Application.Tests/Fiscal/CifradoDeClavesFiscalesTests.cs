@@ -201,6 +201,56 @@ public class CifradoDeClavesFiscalesTests
         Assert.True(idCertificado > 0);
     }
 
+    // --- judgment-day 19a-slice-4 ronda 2 juez A (CRITICAL): clave maestra RESOLUBLE pero
+    // ciphertext corrupto/manipulado — la excepción de crypto pelada de AesGcm NUNCA debe cruzar
+    // el puerto, tiene que traducirse al error nombrado. ---
+
+    [Fact]
+    public async Task UsarCertificadoAsyncConCiphertextCorruptoTraduceLaExcepcionDeCryptoAlErrorNombrado()
+    {
+        var nombreDeBase = nameof(UsarCertificadoAsyncConCiphertextCorruptoTraduceLaExcepcionDeCryptoAlErrorNombrado);
+        var configuracion = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Ways:Fiscal:ClaveMaestraActual"] = "v1",
+                ["Ways:Fiscal:ClavesMaestras:v1"] = Convert.ToBase64String(ClaveMaestra)
+            })
+            .Build();
+
+        using var certificadoDePrueba = GenerarCertificadoDePrueba();
+        var certificadoPem = certificadoDePrueba.ExportCertificatePem();
+        using var rsaPrivada = certificadoDePrueba.GetRSAPrivateKey()!;
+        var clavePrivadaPkcs8 = rsaPrivada.ExportPkcs8PrivateKey();
+
+        byte[] ciphertext, nonce, tag;
+        await using (var db = CrearContexto(nombreDeBase))
+        {
+            var almacen = new CifradoDeClavesFiscales(db, configuracion);
+            string idClaveMaestra;
+            (ciphertext, nonce, tag, idClaveMaestra) = await almacen.CifrarAsync(
+                clavePrivadaPkcs8, IdTenant, IdEmpresa, Ambiente, Huella, CancellationToken.None);
+
+            // Un solo byte del ciphertext, flipeado — misma clase de tamper que un tag/nonce
+            // corrupto (target 57 ya cubre mover la fila entera; esto es la fila QUEDÁNDOSE en su
+            // lugar pero con el blob dañado, la clave sigue resolviendo igual).
+            ciphertext[0] ^= 0xFF;
+
+            var certificado = CrearCertificadoDePrueba(certificadoPem, ciphertext, nonce, tag, idClaveMaestra);
+            db.CertificadosFiscales.Add(certificado);
+            await db.SaveChangesAsync();
+        }
+
+        await using var dbLectura = CrearContexto(nombreDeBase);
+        var almacenLectura = new CifradoDeClavesFiscales(dbLectura, configuracion);
+
+        var error = await Assert.ThrowsAsync<Domain.Common.ErrorDominio>(() =>
+            almacenLectura.UsarCertificadoAsync(
+                IdEmpresa, Ambiente, _ => Task.FromResult(true), CancellationToken.None));
+
+        Assert.Equal("certificado_fiscal_ilegible", error.Codigo);
+        Assert.Equal(409, error.EstadoHttp);
+    }
+
     // --- Target 60 [S]: UsarCertificadoAsync limpia su buffer descifrado en un finally. ---
 
     [Fact]
@@ -231,6 +281,39 @@ public class CifradoDeClavesFiscalesTests
         // del método, es lo que hace la aserción estructural discriminante.
         Assert.Contains("ZeroMemory(claveMaestra)", cuerpoFinally, StringComparison.Ordinal);
         Assert.Contains("ZeroMemory(clavePrivadaPlana)", cuerpoFinally, StringComparison.Ordinal);
+    }
+
+    // --- WARNING (judgment-day 19a-slice-4 ronda 2 juez A): ServicioDeCertificados.RegistrarAsync
+    // recibe el PFX crudo (datos.Pfx) — igual de sensible que la clave privada que sale de él —
+    // pero solo limpiaba clavePrivada, nunca el Pfx en sí. Mismo criterio estructural que el test
+    // de arriba (source-read + Contains discriminante por nombre de variable, no un mock que un
+    // mutante podría esquivar), aplicado al archivo correcto (Application, no Infrastructure). No
+    // existía un test estructural previo para este método — se agrega, no se "extiende" uno viejo,
+    // porque ninguno cubría este archivo.
+
+    [Fact]
+    public void RegistrarAsyncLimpiaLaClavePrivadaYElPfxEnUnFinally()
+    {
+        var directorioDeEsteArchivo = Path.GetDirectoryName(RutaDeEsteArchivo())!;
+        var ruta = Path.GetFullPath(Path.Combine(
+            directorioDeEsteArchivo, "..", "..", "..", "src", "Ways.Application", "Fiscal", "ServicioDeCertificados.cs"));
+        var fuente = File.ReadAllText(ruta);
+
+        var inicio = fuente.IndexOf(
+            "public async Task<CertificadoFiscalDto> RegistrarAsync(", StringComparison.Ordinal);
+        Assert.True(inicio >= 0, "No se encontró el método RegistrarAsync en el archivo fuente.");
+
+        // El método completo (incluye la transacción + el finally que le sigue) — un rango generoso
+        // en vez de parsear C#, mismo criterio que el test de CifradoDeClavesFiscales.
+        var bloque = fuente.Substring(inicio, Math.Min(4000, fuente.Length - inicio));
+
+        Assert.Contains("finally", bloque, StringComparison.Ordinal);
+
+        var indiceFinally = bloque.IndexOf("finally", StringComparison.Ordinal);
+        var cuerpoFinally = bloque[indiceFinally..];
+
+        Assert.Contains("ZeroMemory(clavePrivada)", cuerpoFinally, StringComparison.Ordinal);
+        Assert.Contains("ZeroMemory(datos.Pfx)", cuerpoFinally, StringComparison.Ordinal);
     }
 
     private static string RutaDeEsteArchivo([System.Runtime.CompilerServices.CallerFilePath] string ruta = "") => ruta;

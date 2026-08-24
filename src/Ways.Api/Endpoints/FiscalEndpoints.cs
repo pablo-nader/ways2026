@@ -19,9 +19,12 @@ public static class FiscalEndpoints
             .WithTags("Fiscal")
             .RequireAuthorization(Politicas.AdministracionFiscal);
 
-        certificados.MapPost("/", (
+        certificados.MapPost("/", async (
             ServicioDeCertificados servicio, RegistroDeCertificadoFiscal datos, CancellationToken ct) =>
-            servicio.RegistrarAsync(datos, ct))
+        {
+            var creado = await servicio.RegistrarAsync(datos, ct);
+            return Results.Created($"/api/fiscal/certificados/{creado.Id}", creado);
+        })
         .WithSummary("Registra (o rota, si ya hay uno activo) un certificado fiscal.");
 
         certificados.MapGet("/", (ServicioDeCertificados servicio, CancellationToken ct) =>

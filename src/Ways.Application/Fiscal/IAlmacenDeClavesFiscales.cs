@@ -38,9 +38,12 @@ public interface IAlmacenDeClavesFiscales
     /// privada adjunta y lo entrega a <paramref name="uso"/>. El material descifrado vive SOLO
     /// dentro de este callback; el buffer se limpia con
     /// <see cref="System.Security.Cryptography.CryptographicOperations.ZeroMemory"/> en un
-    /// <c>finally</c>, pase lo que pase. Sin certificado activo, o sin la clave maestra que lo
-    /// descifra ⇒ <c>409 certificado_fiscal_ausente</c> — el camino fiscal queda INERTE (I4),
-    /// JAMÁS una excepción de crypto pelada.</summary>
+    /// <c>finally</c>, pase lo que pase. Dos códigos nombrados, nunca una excepción de crypto
+    /// pelada: sin certificado activo, o sin la clave maestra que lo descifra ⇒ <c>409
+    /// certificado_fiscal_ausente</c>; con la clave maestra resuelta pero el descifrado autenticado
+    /// igual falla (clave equivocada para esta fila, o fila corrupta/manipulada — a propósito
+    /// indistinguibles en el mensaje, para no filtrar cuál de las dos pasó) ⇒ <c>409
+    /// certificado_fiscal_ilegible</c>. En ambos casos el camino fiscal queda INERTE (I4).</summary>
     Task<T> UsarCertificadoAsync<T>(
         int idEmpresa,
         AmbienteFiscal ambiente,

@@ -124,7 +124,14 @@ public sealed record ParametroArca(string Id, string Descripcion);
 /// que cifra antes de persistir (<c>IAlmacenDeClavesFiscales.CifrarAsync</c>, D5). <see cref="Pfx"/>/
 /// <see cref="PasswordPfx"/> viven SOLO durante este request — no hay columna que los guarde tal
 /// cual (dto-contract-honesty: nada especulativo, ningún campo de acá aparece en
-/// <see cref="CertificadoFiscalDto"/>).</summary>
+/// <see cref="CertificadoFiscalDto"/>). LÍMITE HONESTO (judgment-day 19a-slice-4 ronda 2 juez A):
+/// <see cref="ServicioDeCertificados.RegistrarAsync"/> limpia <see cref="Pfx"/> con
+/// <see cref="System.Security.Cryptography.CryptographicOperations.ZeroMemory"/> en su
+/// <c>finally</c> — es un <c>byte[]</c>, se puede. <see cref="PasswordPfx"/> NO: es un
+/// <see cref="string"/> inmutable de .NET, nunca se puede zerear de forma confiable (queda en el
+/// heap gestionado hasta que el GC lo recolecte, potencialmente duplicado por interning o por
+/// promoción de generación) — no hay API que lo garantice, y fingir que sí sería una garantía
+/// falsa.</summary>
 public sealed record RegistroDeCertificadoFiscal(
     int IdEmpresa,
     AmbienteFiscal Ambiente,
