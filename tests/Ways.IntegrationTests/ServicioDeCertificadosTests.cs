@@ -158,6 +158,52 @@ public class ServicioDeCertificadosTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
+    // --- Target 63 (GET, judgment-day 19a-slice-4 ronda 1 juez B): matriz de roles sobre la
+    // lectura — el ABM de escritura ya tenía la matriz completa, el GET no. ---
+
+    [Fact]
+    public async Task UnAdminEsAceptadoAlListarCertificadosFiscales()
+    {
+        var ctx = await PrepararAsync(nameof(UnAdminEsAceptadoAlListarCertificadosFiscales));
+
+        var respuesta = await ctx.Admin.GetAsync("/api/fiscal/certificados");
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(nameof(RolConocido.Supervisor))]
+    [InlineData(nameof(RolConocido.Vendedor))]
+    public async Task UnSupervisorOVendedorEsRechazadoAlListarCertificadosFiscales(string rol)
+    {
+        var ctx = await PrepararAsync(nameof(UnSupervisorOVendedorEsRechazadoAlListarCertificadosFiscales) + rol);
+        var cliente = rol == nameof(RolConocido.Supervisor) ? ctx.Supervisor : ctx.Vendedor;
+
+        var respuesta = await cliente.GetAsync("/api/fiscal/certificados");
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnRootEsRechazadoAlListarCertificadosFiscales()
+    {
+        var ctx = await PrepararAsync(nameof(UnRootEsRechazadoAlListarCertificadosFiscales));
+
+        var respuesta = await ctx.Root.GetAsync("/api/fiscal/certificados");
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnAnonimoEsRechazadoAlListarCertificadosFiscales()
+    {
+        using var cliente = fixture.CreateClient();
+
+        var respuesta = await cliente.GetAsync("/api/fiscal/certificados");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, respuesta.StatusCode);
+    }
+
     [Fact]
     public async Task UnAdminEsAceptadoAlCargarLaCondicionFiscalDeUnaEmpresa()
     {

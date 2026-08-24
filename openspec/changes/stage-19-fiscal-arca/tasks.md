@@ -893,6 +893,38 @@ the same rows.
   per-target log.
 - [ ] 4.24 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
+  **judgment-day Slice 4 (19a), ronda 1 — juez B (3 MAJOR test-only; la 3ra ocurrencia de la clase
+  GET-authz cierra con guard estructural), fixes aplicados por el jd-fix-agent** (checkbox sin
+  marcar hasta que el re-judge confirme ronda limpia, regla 18):
+  - **MAJOR** (D13 sin test — el auto-heal de `proximo_numero` en `ReconciliarAsync` sobrevivía
+    9/9): nuevo test dedicado `ReconciliarUnaSerieConDeudaPreviaNoTocaElProximoNumero`
+    (`AsignadorDeNumeroFiscalTests.cs`), con deuda previa NO trivial (regla 11: `proximo_numero`
+    arranca en 4 — tres asignaciones ya comiteadas —, `ultimoAutorizadoArca = 2`, ninguno es 1 ni
+    coincide con lo que produciría el auto-heal). Ciclo: mutante del juez
+    (`proximo_numero = $1 + 1` agregado al `UPDATE` de `ReconciliarAsync`) → RED (`Expected: 4,
+    Actual: 3`) → revert → verde.
+  - **MAJOR** (la carrera que serializaba por suerte — `Task.WhenAll` desnudo sin rendezvous real):
+    `DosAsignacionesConcurrentesDeLaMismaSerieDanNumerosDistintosYConsecutivos` reescrito con
+    `InterceptorDeRendezvousEnAmbasTransacciones` (mismo patrón que
+    `InterceptorDeRendezvousEnLaSegundaTransaccion` de `ServicioDeVentasConversionTests.cs:437`,
+    adaptado: acá hay UNA sola transacción por contexto, no dos, así que el barrier retiene la
+    PRIMERA `TransactionStartedAsync` hasta que la SEGUNDA también arrancó). El entrelazado SÍ fue
+    forzable por interceptor para este camino — no hizo falta el precedente del 40P01. Ciclo:
+    mutante lost-update del juez (`SELECT proximo_numero` sin lock + `UPDATE` separado, en vez del
+    `UPDATE ... RETURNING` atómico) → RED bajo el rendezvous (`Assert.NotEqual` — ambas tareas
+    devolvieron 1, la carrera real de lost-update) → revert → verde.
+  - **MAJOR** (el GET sin authz test — 3ra ocurrencia de la clase, después de
+    `/api/catalogos-fiscales` y `/api/presupuestos`): (a) matriz de roles agregada a
+    `ServicioDeCertificadosTests.cs` para `GET /api/fiscal/certificados` (Admin 200; Supervisor/
+    Vendedor/Root 403; anónimo 401). (b) TERCER guard estructural en
+    `SuperficieDeAutorizacionTests.cs` —
+    `TodoEndpointGetBajoSuperficiesMasEstrictasQueOperacionDePosApilaSuPolicyExigida` — con un
+    registro de prefijos `(Prefijo, PolicyExigida)` (`/api/fiscal` → `AdministracionFiscal`) y un
+    walker que exige tanto la policy exacta como la AUSENCIA de `IAllowAnonymous` (sin ese segundo
+    chequeo, `.AllowAnonymous()` sobre un endpoint que ya heredaba la policy del grupo pasaría
+    desapercibido — la metadata de `IAuthorizeData` del grupo sigue presente, es el middleware el
+    que la ignora en runtime). Ciclo: mutante del juez (`.AllowAnonymous()` en el `MapGet` de
+    `FiscalEndpoints.cs`) → RED por el guard nuevo Y por los cuatro tests de rol → revert → verde.
 - [ ] 4.25 [ ] Open PR #4 `feat/stage19a-slice4-numeracion-y-certificados`, merge to `main` after a
   clean `judgment-day` round.
 

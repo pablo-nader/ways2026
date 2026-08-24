@@ -1,10 +1,16 @@
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Fiscal;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Usuarios;
+using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 
 namespace Ways.IntegrationTests;
 
@@ -329,7 +335,105 @@ public class AsignadorDeNumeroFiscalTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal(0L, await LeerUltimoAutorizadoAsync(idPuntoVenta, CodigoAfipFa));
     }
 
+    // --- D13: ReconciliarAsync nunca auto-sana proximo_numero (judgment-day 19a-slice-4, ronda 1,
+    // juez B) ---
+
+    /// <summary>D13 (design.md, doc-comment de <see cref="AsignadorDeNumeroFiscal.ReconciliarAsync"/>):
+    /// reconciliar escribe SOLO <c>ultimo_autorizado_arca</c>/<c>sincronizado_en</c>, nunca
+    /// <c>proximo_numero</c> — ni siquiera ante una divergencia real y no trivial entre ambos
+    /// contadores (nosotros adelante de ARCA, el caso legítimo que dispara el 409
+    /// <c>numeracion_fiscal_desincronizada</c>). Semilla deliberada (regla 11): <c>proximo_numero</c>
+    /// arranca en 4 (≠1, tres asignaciones ya comiteadas) y <c>ultimoAutorizadoArca</c> es 2 (≠1 y
+    /// ≠ proximo_numero) — así un mutante de auto-heal (<c>proximo_numero = ultimoAutorizadoArca +
+    /// 1 = 3</c>) produce un valor DISTINTO del vigente (4), detectable, no uno que coincida por
+    /// casualidad con el ya persistido.</summary>
+    [Fact]
+    public async Task ReconciliarUnaSerieConDeudaPreviaNoTocaElProximoNumero()
+    {
+        var (idTenant, idPuntoVenta) = await SembrarPuntoVentaAsync(
+            nameof(ReconciliarUnaSerieConDeudaPreviaNoTocaElProximoNumero));
+        await AsegurarAsync(idTenant, idPuntoVenta, CodigoAfipFa);
+
+        await AsignarComiteadoAsync(idPuntoVenta, CodigoAfipFa); // consume 1
+        await AsignarComiteadoAsync(idPuntoVenta, CodigoAfipFa); // consume 2
+        await AsignarComiteadoAsync(idPuntoVenta, CodigoAfipFa); // consume 3
+        Assert.Equal(4L, await LeerProximoNumeroAsync(idPuntoVenta, CodigoAfipFa));
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        await AsignadorDeNumeroFiscal.ReconciliarAsync(
+            db, idPuntoVenta, CodigoAfipFa, ultimoAutorizadoArca: 2, new RelojFijo(DateTimeOffset.UtcNow));
+
+        Assert.Equal(4L, await LeerProximoNumeroAsync(idPuntoVenta, CodigoAfipFa));
+        Assert.Equal(2L, await LeerUltimoAutorizadoAsync(idPuntoVenta, CodigoAfipFa));
+    }
+
     // --- spec: concurrencia serializada (Requirement: Concurrent Emissions Are Serialized) ---
+
+    /// <summary>Rendezvous forzado (design.md:450, judgment-day 19a-slice-4 ronda 1 juez B): un
+    /// <c>Task.WhenAll</c> desnudo no garantiza que las dos transacciones lleguen a pelear por el
+    /// mismo row lock — el scheduler puede correrlas de punta a punta sin solaparse nunca, y ahí un
+    /// mutante lost-update (<c>SELECT</c> sin lock + <c>UPDATE</c> separado) sobrevive por pura
+    /// suerte. Este interceptor retiene la PRIMERA transacción que arranca hasta que la SEGUNDA
+    /// también arrancó la suya — recién ahí libera a ambas, así los dos <c>UPDATE ... RETURNING</c>
+    /// (o, bajo el mutante, los dos <c>SELECT</c>) corren genuinamente solapados.</summary>
+    private sealed class InterceptorDeRendezvousEnAmbasTransacciones : DbTransactionInterceptor
+    {
+        private readonly TaskCompletionSource _primeraLlego = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _segundaLlego = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction transaction,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_primeraLlego.TrySetResult())
+            {
+                _segundaLlego.TrySetResult();
+            }
+            else
+            {
+                await _segundaLlego.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            }
+
+            return await base.TransactionStartedAsync(connection, eventData, transaction, cancellationToken);
+        }
+    }
+
+    private WaysDbContext CrearContextoConInterceptor(DbTransactionInterceptor interceptor)
+    {
+        var opciones = new DbContextOptionsBuilder<WaysDbContext>()
+            .UseNpgsql(fixture.AppConnectionString, npgsql =>
+            {
+                npgsql.MapEnum<EstadoUsuario>("estado_usuario");
+                npgsql.MapEnum<EstadoTenant>("estado_tenant");
+                npgsql.MapEnum<ComportamientoMedioPago>("comportamiento_medio_pago");
+                npgsql.MapEnum<ClaseComprobante>("clase_comprobante");
+                npgsql.MapEnum<Ways.Domain.Clientes.TipoDocumento>("tipo_documento");
+                npgsql.MapEnum<ModoLista>("modo_lista");
+                npgsql.MapEnum<Ways.Domain.Articulos.UnidadVenta>("unidad_venta");
+                npgsql.MapEnum<EstadoComprobante>("estado_comprobante");
+                npgsql.MapEnum<Ways.Domain.Stock.MotivoStock>("motivo_stock");
+                npgsql.MapEnum<Ways.Domain.CuentaCorriente.TipoMovimientoCc>("tipo_movimiento_cc");
+                npgsql.MapEnum<Ways.Domain.Caja.EstadoTurno>("estado_turno");
+                npgsql.MapEnum<Ways.Domain.Fiscal.ResultadoFiscal>("resultado_fiscal");
+                npgsql.MapEnum<Ways.Domain.Fiscal.AmbienteFiscal>("ambiente_fiscal");
+            })
+            .AddInterceptors(new InterceptorDeContextoDeTenant(TenantActualFijo.Plataforma), interceptor)
+            .Options;
+
+        return new WaysDbContext(opciones, TenantActualFijo.Plataforma);
+    }
+
+    private async Task<long> AsignarComiteadoConInterceptorAsync(
+        int idPuntoVenta, short codigoAfip, DbTransactionInterceptor interceptor)
+    {
+        await using var db = CrearContextoConInterceptor(interceptor);
+        await using var transaccion = await db.Database.BeginTransactionAsync();
+
+        var numero = await AsignadorDeNumeroFiscal.AsignarSiguienteAsync(db, idPuntoVenta, codigoAfip);
+
+        await transaccion.CommitAsync();
+        return numero;
+    }
 
     [Fact]
     public async Task DosAsignacionesConcurrentesDeLaMismaSerieDanNumerosDistintosYConsecutivos()
@@ -338,8 +442,9 @@ public class AsignadorDeNumeroFiscalTests(WaysApiFixture fixture) : IClassFixtur
             nameof(DosAsignacionesConcurrentesDeLaMismaSerieDanNumerosDistintosYConsecutivos));
         await AsegurarAsync(idTenant, idPuntoVenta, CodigoAfipFa);
 
-        var tareaA = AsignarComiteadoAsync(idPuntoVenta, CodigoAfipFa);
-        var tareaB = AsignarComiteadoAsync(idPuntoVenta, CodigoAfipFa);
+        var interceptor = new InterceptorDeRendezvousEnAmbasTransacciones();
+        var tareaA = AsignarComiteadoConInterceptorAsync(idPuntoVenta, CodigoAfipFa, interceptor);
+        var tareaB = AsignarComiteadoConInterceptorAsync(idPuntoVenta, CodigoAfipFa, interceptor);
 
         var numeros = await Task.WhenAll(tareaA, tareaB);
 

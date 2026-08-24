@@ -290,4 +290,75 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
             faltantes.Count == 0,
             $"Endpoint(s) GET sin OperacionDePos (o una policy más estricta) bajo las superficies re-gateadas: {string.Join(", ", faltantes)}");
     }
+
+    /// <summary>
+    /// TERCER guard (judgment-day 19a-slice-4, ronda 1, juez B — 3ra ocurrencia de la clase
+    /// GET-authz omitido, después de <c>/api/catalogos-fiscales</c> (Slice 1) y
+    /// <c>/api/presupuestos</c> (WARNING preexistente, señalado en judgment-day Slice 5 ronda 2
+    /// juez A): los dos guards de arriba solo saben pedir "algo al menos tan estricto como
+    /// OperacionDePos" — un Vendedor/Supervisor colándose vía OperacionDePos en un GET bajo
+    /// <c>/api/fiscal</c> sería una regresión real de superficie (material de clave privada
+    /// cifrado, identidad legal del emisor) que NINGUNO de los dos detecta. Este walker registra
+    /// prefijos cuya policy exigida es MÁS estricta que <see cref="Politicas.OperacionDePos"/> y
+    /// falla-cerrado si algún GET bajo ellos no apila esa policy exacta O lleva
+    /// <see cref="IAllowAnonymous"/> — sin este segundo chequeo, un <c>.AllowAnonymous()</c>
+    /// agregado sobre un endpoint que YA heredaba la policy del grupo pasaría desapercibido: la
+    /// metadata de <see cref="IAuthorizeData"/> del grupo sigue presente, es el middleware de
+    /// autorización el que la ignora en runtime al ver <see cref="IAllowAnonymous"/>.
+    /// </summary>
+    private static readonly (string Prefijo, string PolicyExigida)[] PrefijosDeLecturaMasEstrictosQueOperacionDePos =
+    [
+        // stage-19a-slice4 (target 63, judgment-day ronda 1 juez B): GET /api/fiscal/certificados
+        // — solo Admin, mismo criterio que POST/PUT/DELETE del mismo grupo (FiscalEndpoints.cs).
+        // Registrado a nivel de prefijo de GRUPO ("/api/fiscal"), no de ruta puntual, para que un
+        // GET nuevo bajo /api/fiscal/empresas/... o /api/fiscal/puntos-venta/... (sin GET hoy)
+        // caiga bajo este guard sin edición.
+        ("/api/fiscal", Politicas.AdministracionFiscal)
+    ];
+
+    [Fact]
+    public void TodoEndpointGetBajoSuperficiesMasEstrictasQueOperacionDePosApilaSuPolicyExigida()
+    {
+        var fuente = fixture.Services.GetRequiredService<EndpointDataSource>();
+
+        var faltantes = new List<string>();
+
+        foreach (var endpoint in fuente.Endpoints)
+        {
+            if (endpoint is not RouteEndpoint ruta)
+            {
+                continue;
+            }
+
+            var metodos = ruta.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods;
+            if (metodos is null || !metodos.Contains("GET"))
+            {
+                continue;
+            }
+
+            var patron = ruta.RoutePattern.RawText ?? string.Empty;
+
+            foreach (var (prefijo, policyExigida) in PrefijosDeLecturaMasEstrictosQueOperacionDePos)
+            {
+                if (!patron.StartsWith(prefijo, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var noEsAnonimo = ruta.Metadata.GetMetadata<IAllowAnonymous>() is null;
+                var apilaLaPolicyExigida = noEsAnonimo && ruta.Metadata
+                    .GetOrderedMetadata<IAuthorizeData>()
+                    .Any(dato => dato.Policy == policyExigida);
+
+                if (!apilaLaPolicyExigida)
+                {
+                    faltantes.Add($"GET {patron} (esperaba {policyExigida})");
+                }
+            }
+        }
+
+        Assert.True(
+            faltantes.Count == 0,
+            $"Endpoint(s) GET sin su policy exigida bajo una superficie más estricta que OperacionDePos: {string.Join(", ", faltantes)}");
+    }
 }
