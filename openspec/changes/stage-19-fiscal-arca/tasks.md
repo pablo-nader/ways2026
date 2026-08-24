@@ -901,7 +901,7 @@ the same rows.
 - [x] 4.23 Mutation evidence recorded in the PR body for targets 52-63 (**S** rows 55, 60 record
   the assertion, not a runtime failure). See "Work Unit Evidence" table below for the full
   per-target log.
-- [ ] 4.24 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 4.24 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
   **judgment-day Slice 4 (19a), ronda 1 — juez B (3 MAJOR test-only; la 3ra ocurrencia de la clase
   GET-authz cierra con guard estructural), fixes aplicados por el jd-fix-agent** (checkbox sin
@@ -935,6 +935,16 @@ the same rows.
     desapercibido — la metadata de `IAuthorizeData` del grupo sigue presente, es el middleware el
     que la ignora en runtime). Ciclo: mutante del juez (`.AllowAnonymous()` en el `MapGet` de
     `FiscalEndpoints.cs`) → RED por el guard nuevo Y por los cuatro tests de rol → revert → verde.
+  **CERRADO POR EL ORQUESTADOR**: ronda 1 juez B REJECT (3 MAJOR test-only: D13 sin test — el
+  auto-heal sobrevivía; la carrera que serializaba por suerte — resuelta con el rendezvous REAL
+  de interceptor; el GET sin authz — 3ra ocurrencia de la clase, cerrada con el TERCER guard
+  estructural de superficies) → fixes `48a4ed8` → re-ronda B APPROVE. Ronda 2 juez A REJECT
+  (1 CRITICAL: la CryptographicException PELADA ante ciphertext corrupto contra el contrato del
+  propio doc-comment → certificado_fiscal_ilegible 409 opaco; + Created, PFX zeroeado, spec
+  versionado, borde de segmento) → fixes `fb70eec` + COMPLECIÓN `2dddb53` (arbitraje del
+  orquestador: el finally no cubría el camino de CargarPfx — cazado por la pasada acotada de B,
+  el try movido antes de la carga, probado byte a byte) → confirmación B APPROVE + re-ronda A
+  APPROVE (cero hallazgos). Ronda limpia.
 
   **judgment-day Slice 4 (19a), ronda 2 — juez A (1 CRITICAL + 3 WARNINGs + 1 SUGGESTION), fixes
   aplicados por el jd-fix-agent** (checkbox sin marcar hasta que el re-judge confirme ronda limpia,
