@@ -91,6 +91,16 @@ public static class Politicas
     /// sube el gate.</summary>
     public const string SupervisionDeCuentaDeProveedor = "supervision_cuenta_proveedor";
 
+    /// <summary>Solo admin — la puerta del ABM de certificados fiscales y de la carga de
+    /// condición fiscal de empresa / número fiscal de punto de venta (stage-19a, Slice 4;
+    /// design.md fact 7, proposal.md §H). Riesgo genuinamente nuevo: material de clave
+    /// privada cifrado más la identidad legal del emisor ante ARCA — mismo criterio de la
+    /// etapa 15 que separó <see cref="LecturaDeAuditoria"/> de <see cref="LecturaDeRentabilidad"/>
+    /// en vez de reusar <see cref="GestionDeCatalogo"/>. Root queda afuera (root administra
+    /// tenants, no opera ninguno); la EMISIÓN fiscal en sí (slice 5) va bajo
+    /// <see cref="OperacionDePos"/> — esta policy es solo la puerta de configuración/ABM.</summary>
+    public const string AdministracionFiscal = "administracion_fiscal";
+
     public static AuthorizationBuilder AgregarPoliticasWays(this AuthorizationBuilder builder)
     {
         return builder
@@ -150,6 +160,9 @@ public static class Politicas
                         .RequireClaim(
                             ClaimsWays.RolId,
                             ((int)RolConocido.Supervisor).ToString(),
-                            ((int)RolConocido.Admin).ToString()));
+                            ((int)RolConocido.Admin).ToString()))
+            .AddPolicy(AdministracionFiscal, politica =>
+                politica.RequireAuthenticatedUser()
+                        .RequireClaim(ClaimsWays.RolId, ((int)RolConocido.Admin).ToString()));
     }
 }

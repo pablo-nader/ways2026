@@ -124,7 +124,16 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("PUT", "/api/usuarios/{id:int}"),
         ("POST", "/api/usuarios/{id:int}/password"),
         ("POST", "/api/usuarios/{id:int}/desbloquear"),
-        ("DELETE", "/api/usuarios/{id:int}")
+        ("DELETE", "/api/usuarios/{id:int}"),
+
+        // stage-19a-slice4 (task 4.7/4.8): ABM de certificados fiscales + carga de condición
+        // fiscal de empresa / número fiscal de PV — AdministracionFiscal (solo Admin, sin
+        // Vendedor, sin Root), superficie administrativa propia igual que GestionDeUsuarios/
+        // GestionDeOrganizacion de arriba — nunca GestionDeCatalogo.
+        ("POST", "/api/fiscal/certificados/"),
+        ("DELETE", "/api/fiscal/certificados/{id:int}"),
+        ("PUT", "/api/fiscal/empresas/{id:int}/condicion-fiscal"),
+        ("PUT", "/api/fiscal/puntos-venta/{id:int}/numero-fiscal")
     ];
 
     [Fact]
