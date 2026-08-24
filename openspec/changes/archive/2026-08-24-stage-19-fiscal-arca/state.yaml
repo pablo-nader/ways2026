@@ -316,31 +316,63 @@ phases:
       12 tensiones con el explore registradas; la 10 (activar es_fiscal en el
       resolver) es la unica OVERRULE dura.
   spec:
-    status: pending
+    status: done
+    date: 2026-08-21
     artifact: specs/
     depends_on: [propose]
   design:
-    status: pending
+    status: done
+    date: 2026-08-21
     artifact: design.md
     depends_on: [propose]
   tasks:
-    status: pending
+    status: done
+    date: 2026-08-21
     artifact: tasks.md
     depends_on: [spec, design]
   apply:
-    status: pending
+    status: done
+    date: 2026-08-22/23
     artifact: tasks.md + PRs
     depends_on: [tasks]
+    notes: >-
+      5 slices, 159/159 tareas, 5 PRs (#159-#163) mergeados a main con ronda limpia de
+      judgment-day cada uno. Merge SHAs: b5b3b35, 3fd2d79, 757acc4, 3c30f21, 7606aab.
   verify:
-    status: pending
+    status: done
+    date: 2026-08-24
     artifact: verify-report.md
     depends_on: [apply]
+    notes: >-
+      Veredicto PASS WITH WARNINGS — 0 CRITICAL, 3 WARNING (W1/W2: residuo textual "four
+      gates" en dos specs delta; W3: total final de Ways.IntegrationTests no restablecido
+      verbatim en tasks.md). Las tres remediadas en 8576f6f antes del archive.
   archive:
-    status: pending
+    status: done
+    date: 2026-08-24
     artifact: archive-report.md
+    target: openspec/changes/archive/2026-08-24-stage-19-fiscal-arca
     depends_on: [verify]
+    notes: >-
+      W1/W2/W3 confirmados remediados en 8576f6f (six gates en ambos specs delta, cifra
+      final de Integration 1725/1725 asentada en tasks.md) por lectura directa antes de la
+      fusión. Los 8 delta specs fusionados a openspec/specs/ (4 capabilities nuevas
+      copiadas completas: fiscal-arca, comprobante-fiscal, certificados-fiscales,
+      numeracion-fiscal; 4 deltas fusionados sobre specs existentes: comprobantes-venta,
+      auxiliary-catalogs, operacion-de-pos, tenant-organization). 19b y 19c NO son fases
+      pendientes de este change — son changes SDD futuros, separados, aún no creados (ver
+      sub_etapas_futuras abajo): 19b nace BLOCKED (alta WSASS del dueño, nunca pedida,
+      solo documentada) y 19c queda pending sin bloqueo propio salvo un CAE real impreso.
+      Este change (stage-19-fiscal-arca) cierra su ciclo SDD completo cubriendo
+      EXCLUSIVAMENTE el alcance 19a.
 
 sub_etapas_futuras:
+  # REGISTRO EXPLICITO (fase archive, 2026-08-24): 19b y 19c son CHANGES SDD FUTUROS,
+  # separados de este change y aun no creados como carpetas en openspec/changes/ — NO son
+  # fases pendientes de stage-19-fiscal-arca. Este change cierra su ciclo completo
+  # (explore/propose/spec/design/tasks/apply/verify/archive) cubriendo exclusivamente 19a.
+  # Cuando corresponda, cada sub-etapa futura se abre como su propio change (propio
+  # proposal/spec/design/tasks), con depends_on apuntando a este change ya archivado.
   19b:
     status: blocked
     blocking_reason: >-
