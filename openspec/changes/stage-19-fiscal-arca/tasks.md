@@ -1238,7 +1238,7 @@ being emitted, before `ClienteWsfe.SolicitarCaeAsync` is called with that pair.
   the last two live in this slice.
 - [x] 5.29 Mutation evidence recorded in the PR body for targets 64-76 (**S** rows 69, 73, 74, 75,
   76 record the file/state/definition assertion). See Work Unit Evidence below.
-- [ ] 5.30 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
+- [x] 5.30 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
   **judgment-day Slice 5 (19a), ronda 1 — juez B (1 CRITICAL de evidencia inflada + 2 MAJOR + 2
   WARNINGs), fixes aplicados por el jd-fix-agent** (checkbox sin marcar hasta que el re-judge
@@ -1297,6 +1297,17 @@ being emitted, before `ClienteWsfe.SolicitarCaeAsync` is called with that pair.
     `feat/stage19a-slice5-emision-y-qr`, la rama real es `feat/stage19a-slice5-emision`, creada así
     por el orquestador al armar el worktree): registrada como Deviation 7 — cosmético, cero impacto
     funcional.
+  **CERRADO POR EL ORQUESTADOR**: ronda 1 juez B REJECT (1 CRITICAL de EVIDENCIA INFLADA — el
+  TOCTOU del target 68 no existía, el test moría en el filtro de lectura; + el 600 sin cobertura
+  runtime + la letra sin cruzar: la propia suite emitía FA a Consumidor Final) → fixes `ab185d5`
+  (la carrera REAL de interceptor+conexión cruda con los CAEs discriminantes; los dos tests del
+  600; el gate D10 de letra) → re-ronda B APPROVE. Ronda 2 juez A REJECT (1 CRITICAL: la
+  re-emisión fabricaba CEROS para ImpOpEx/ImpTotConc/Iva[] — el invariante de totales del spec
+  violado en el cable para facturas con exentos; + las líneas sin validar — documentos
+  irreversibles con montos cero/negativos) → fixes `5bea411` (el desglose recompuesto desde
+  items con el helper COMPARTIDO; los tres 400 pre-gates; el 600 por el single-flight con
+  InvalidarAsync elevada al puerto; SEIS GATES en el design) → pasada acotada B APPROVE +
+  re-ronda A APPROVE (cero hallazgos). Ronda limpia — la ÚLTIMA del programa autónomo.
 
   **Higiene**: `dotnet build --no-incremental` limpio (0 errores) tras cada ciclo de mutante/revert;
   `ServicioDeFacturacionFiscalTests` completo **14/14** verde (9 preexistentes + 5 nuevos: la
