@@ -1005,8 +1005,9 @@ the same rows.
     crudo dejaría que un futuro `/api/fiscalizacion` cayera bajo el prefijo `/api/fiscal` solo por
     compartir caracteres; fallaba cerrado pero era una trampa): matcheo por segmento —
     `patron.Equals(prefijo, ...) || patron.StartsWith(prefijo + "/", ...)`.
-- [ ] 4.25 [ ] Open PR #4 `feat/stage19a-slice4-numeracion-y-certificados`, merge to `main` after a
+- [x] 4.25 [ ] Open PR #4 `feat/stage19a-slice4-numeracion-y-certificados`, merge to `main` after a
   clean `judgment-day` round.
+  **DONE by the orchestrator**: PR #162, merged `3c30f21` after the clean round (see 4.24).
 
 ### Work Unit Evidence
 
