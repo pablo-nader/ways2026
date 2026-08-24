@@ -1383,8 +1383,11 @@ being emitted, before `ClienteWsfe.SolicitarCaeAsync` is called with that pair.
   `InvalidarAsync`); `Ways.Domain.Tests` completo **545/545** verde (sin tocar); `git status
   --short` confirma que solo los archivos de este ciclo de fixes quedaron modificados (todos los
   mutantes revertidos).
-- [ ] 5.31 [ ] Open PR #5 `feat/stage19a-slice5-emision-y-qr`, merge to `main` after a clean
+- [x] 5.31 [ ] Open PR #5 `feat/stage19a-slice5-emision-y-qr`, merge to `main` after a clean
   `judgment-day` round.
+  **DONE by the orchestrator**: PR #163, merged `7606aab` after the clean round (see 5.30) —
+  los 5 slices de la 19a mergeados (PRs #159-#163). La implementación del programa autónomo
+  está COMPLETA.
 
 ### Work Unit Evidence
 
