@@ -808,67 +808,138 @@ the same rows.
   **producción** rotates; (d) an already-inactive row untouched (affected-row count, not final
   state); (e) a soft-deleted twin neither resurrected nor counted.
 
-- [ ] 4.1 Create `src/Ways.Application/Fiscal/AsignadorDeNumeroFiscal.cs` — `AsegurarContadorAsync`
+- [x] 4.1 Create `src/Ways.Application/Fiscal/AsignadorDeNumeroFiscal.cs` — `AsegurarContadorAsync`
   (`INSERT … ON CONFLICT DO NOTHING`) + `AsignarSiguienteAsync` (`UPDATE … RETURNING`), raw ADO on
   the caller's connection, discipline **opposite** to `AsignadorDeNumeroComprobante` (D1, proposal
   decision 13). *(design.md:284-307, 372)* — implements U1
-- [ ] 4.2 Same file: reconciliation against `FECompUltimoAutorizado` — writes **only**
+- [x] 4.2 Same file: reconciliation against `FECompUltimoAutorizado` — writes **only**
   `ultimo_autorizado_arca` + `sincronizado_en`, divergence raises `409
   numeracion_fiscal_desincronizada`, **never** auto-heals `proximo_numero` (D13).
   *(design.md D13:77)* — implements U3
-- [ ] 4.3 Create `src/Ways.Infrastructure/Fiscal/CifradoDeClavesFiscales.cs` — AES-256-GCM, AAD =
+- [x] 4.3 Create `src/Ways.Infrastructure/Fiscal/CifradoDeClavesFiscales.cs` — AES-256-GCM, AAD =
   `UTF8("v1|"+idTenant+"|"+idEmpresa+"|"+ambiente+"|"+huellaSha256)` **excluding**
   `id_clave_maestra` (D5), key versioning via `id_clave_maestra`, `ZeroMemory` in a `finally`.
-  *(design.md D5:69, 379)*
-- [ ] 4.4 Same file: master-key lookup — `Ways:Fiscal:ClaveMaestraActual` +
+  *(design.md D5:69, 379)* **RESUME FIX (this apply, mutation-proof-tests rule 2 "run it, don't
+  reason it")**: the interrupted apply's own mutation cycle for target 60 surfaced a real gap —
+  `UsarCertificadoAsync`'s `finally` zeroed only `claveMaestra` (the key that OPENS the row), never
+  `clavePrivadaPlana` (the decrypted RSA private key itself, the actually sensitive buffer the
+  method exists to protect). A stray marker comment (`// MUTANTE TEMPORAL (target 60): NO
+  commitear.`) was the only trace left in the source, with no accompanying code mutation — the
+  gap was real, not a leftover test artifact. Fixed: `finally` now zeroes both buffers
+  (`clavePrivadaPlana` guarded by a null check, since a `Descifrar` failure leaves it unset).
+  Target 60's structural test strengthened to assert both variable names discriminately (see task
+  4.17). Live cycle: reverted the fix → `UsarCertificadoAsyncLimpiaElBufferDescifradoEnUnFinally`
+  RED (`Not found: "ZeroMemory(clavePrivadaPlana)"`) → restored → green (71/71 Fiscal namespace).
+- [x] 4.4 Same file: master-key lookup — `Ways:Fiscal:ClaveMaestraActual` +
   `Ways:Fiscal:ClavesMaestras:<id>`; missing/short/absent ⇒ `503 clave_maestra_ausente` on the ABM /
   `409 certificado_fiscal_ausente` on emission, **never** a plaintext fallback or generated-on-boot
   key (D6). *(design.md D6:70)*
-- [ ] 4.5 Create `src/Ways.Application/Fiscal/IAlmacenDeClavesFiscales.cs`. Modify `Contratos.cs` —
+- [x] 4.5 Create `src/Ways.Application/Fiscal/IAlmacenDeClavesFiscales.cs`. Modify `Contratos.cs` —
   `CertificadoFiscalDto` with **no** key-material property. *(design.md:262-267, 371)*
-- [ ] 4.6 Create `src/Ways.Application/Fiscal/ServicioDeCertificados.cs` — register/list (never
+- [x] 4.6 Create `src/Ways.Application/Fiscal/ServicioDeCertificados.cs` — register/list (never
   returning key material)/deactivate; rotation = deactivate+activate inside one transaction.
-  *(proposal.md §707, design.md file changes)* — implements U4
-- [ ] 4.7 Create `src/Ways.Api/Endpoints/FiscalEndpoints.cs` (certificate ABM routes only this
+  *(proposal.md §707, design.md file changes)* — implements U4. **DEVIATION (registered)**: the
+  U4 `UPDATE` itself lives in a sibling static class, `DesactivadorDeCertificadoFiscal` (same
+  precedent as `AsignadorDeNumeroFiscal`/`SobreSoap` — no `InternalsVisibleTo` in the repo, so a
+  `public static` method is what lets the five U4 kills be tested directly from
+  `Ways.IntegrationTests` without going through the full PFX+encryption flow of `RegistrarAsync`
+  for every conjunct). `id_tenant` travels explicit in that `WHERE` (unlike U1/U3, which rely
+  entirely on RLS) — defense in depth for the table holding key material, documented in the
+  class's own doc-comment.
+- [x] 4.7 Create `src/Ways.Api/Endpoints/FiscalEndpoints.cs` (certificate ABM routes only this
   slice) — `POST`/`GET`/`DELETE /api/fiscal/certificados`, `PUT
   /api/fiscal/empresas/{id}/condicion-fiscal`, `PUT
   /api/fiscal/puntos-venta/{id}/numero-fiscal`, all under `AdministracionFiscal`. *(proposal.md
   API surface 705-710)*
-- [ ] 4.8 Modify `src/Ways.Api/Seguridad/Politicas.cs` — **+1** exact policy `AdministracionFiscal`
+- [x] 4.8 Modify `src/Ways.Api/Seguridad/Politicas.cs` — **+1** exact policy `AdministracionFiscal`
   (Admin only). 11 → **12**. *(proposal.md §684, design.md fact 7:54-56, Binding Verify Criterion
-  11)*
-- [ ] 4.9 [P] U1 conjunct (a) `id_punto_venta` — sibling-PV test (rule 12c). *(target 52)*
-- [ ] 4.10 [P] U1 conjunct (b) `codigo_afip` — sibling-type test on the same PV. *(target 53)*
-- [ ] 4.11 [P] I1 test — a `rechazado` emission does **not** advance the series: number stays
+  11)* Confirmed by count: `grep -c "public const string"` → **12**.
+- [x] 4.9 [P] U1 conjunct (a) `id_punto_venta` — sibling-PV test (rule 12c). *(target 52)*
+- [x] 4.10 [P] U1 conjunct (b) `codigo_afip` — sibling-type test on the same PV. *(target 53)*
+- [x] 4.11 [P] I1 test — a `rechazado` emission does **not** advance the series: number stays
   bound, `proximo_numero` consistent, no hole. *(target 54)*
-- [ ] 4.12 **[S]** D1 lock proof — `pg_locks` polled from a second connection: `numeraciones_fiscales`
+- [x] 4.12 **[S]** D1 lock proof — `pg_locks` polled from a second connection: `numeraciones_fiscales`
   is the **first and only** existing-row lock of the fiscal transaction (both halves asserted, rule
   13). *(target 55)*
-- [ ] 4.13 [P] U3 conjuncts (a)(b) — sibling pair, the neighbour's `ultimo_autorizado_arca` stays
+- [x] 4.13 [P] U3 conjuncts (a)(b) — sibling pair, the neighbour's `ultimo_autorizado_arca` stays
   `NULL`. *(target 56)*
-- [ ] 4.14 [P] AAD four-component tamper test — one per component (tenant, empresa, ambiente,
+- [x] 4.14 [P] AAD four-component tamper test — one per component (tenant, empresa, ambiente,
   huella), each failing authentication. *(target 57)*
-- [ ] 4.15 [P] AAD **excludes** `id_clave_maestra` — rotation test: a re-encrypted row must still
+- [x] 4.15 [P] AAD **excludes** `id_clave_maestra` — rotation test: a re-encrypted row must still
   decrypt. *(target 58)*
-- [ ] 4.16 [P] No-plaintext-fallback test — missing/short master key ⇒ the named error, **nothing**
+- [x] 4.16 [P] No-plaintext-fallback test — missing/short master key ⇒ the named error, **nothing**
   written. *(target 59)*
-- [ ] 4.17 **[S]** `CryptographicOperations.ZeroMemory` structural assertion — `UsarCertificadoAsync`
-  clears its buffer in a `finally`. *(target 60)*
-- [ ] 4.18 [P] U4 conjuncts (a)-(e) — five kills: cross-tenant `ways_app`; sibling empresa; sibling
+- [x] 4.17 **[S]** `CryptographicOperations.ZeroMemory` structural assertion — `UsarCertificadoAsync`
+  clears its buffer in a `finally`. *(target 60)* **STRENGTHENED (this apply)**: the original
+  assertion only checked that the substring `"CryptographicOperations.ZeroMemory"` appeared
+  somewhere in the `finally` block — true even with the real gap in place (only `claveMaestra`
+  zeroed). Now asserts both `ZeroMemory(claveMaestra)` and `ZeroMemory(clavePrivadaPlana)` appear,
+  discriminately. See task 4.3's note for the live mutation cycle that proves the kill.
+- [x] 4.18 [P] U4 conjuncts (a)-(e) — five kills: cross-tenant `ways_app`; sibling empresa; sibling
   ambiente; already-inactive row (affected-row count); soft-deleted twin. *(target 61)*
-- [ ] 4.19 [P] Certificate DTO exposure clause — recursive property-**name** assertion, no
+- [x] 4.19 [P] Certificate DTO exposure clause — recursive property-**name** assertion, no
   `ClavePrivadaCifrada`/`Nonce`/`TagAutenticacion`/`CertificadoPem`/`ClaveMaestra` property anywhere
   in the serialized response. *(target 62)*
-- [ ] 4.20 [P] `AdministracionFiscal` role matrix — Admin 200, Supervisor/Vendedor/Root 403;
+- [x] 4.20 [P] `AdministracionFiscal` role matrix — Admin 200, Supervisor/Vendedor/Root 403;
   `Politicas.cs` count 11 → 12. *(target 63)*
-- [ ] 4.21 Non-regression: full suite green, `ServicioDeVentas.cs` untouched.
-- [ ] 4.22 GATE GUARD — zero new migrations this slice; `has-pending-model-changes` clean.
-- [ ] 4.23 Mutation evidence recorded in the PR body for targets 52-63 (**S** rows 55, 60 record
-  the assertion, not a runtime failure).
+- [x] 4.21 Non-regression: full suite green, `ServicioDeVentas.cs` untouched. `git diff --exit-code
+  src/Ways.Application/Ventas/ServicioDeVentas.cs` clean (file absent from this slice's diff
+  entirely). See Work Unit Evidence below for the full-suite counts.
+- [x] 4.22 GATE GUARD — zero new migrations this slice; `has-pending-model-changes` clean. Confirmed:
+  `git status` under `Migraciones/` empty; `dotnet ef migrations has-pending-model-changes` → "No
+  changes have been made to the model since the last migration."
+- [x] 4.23 Mutation evidence recorded in the PR body for targets 52-63 (**S** rows 55, 60 record
+  the assertion, not a runtime failure). See "Work Unit Evidence" table below for the full
+  per-target log.
 - [ ] 4.24 [ ] `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a
   clean round.
 - [ ] 4.25 [ ] Open PR #4 `feat/stage19a-slice4-numeracion-y-certificados`, merge to `main` after a
   clean `judgment-day` round.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Mode | Standard (no `strict_tdd` config found; `mutation-proof-tests` v1.1 discipline followed — see per-target mutation log below) |
+| Focused test command | `dotnet test tests/Ways.Application.Tests --filter "FullyQualifiedName~Fiscal"` → **71/71 passed** (56 pre-existing from slices 2-3 + 15 new for `CifradoDeClavesFiscalesTests`); `dotnet test tests/Ways.IntegrationTests --filter "FullyQualifiedName~AsignadorDeNumeroFiscalTests\|FullyQualifiedName~ServicioDeCertificadosTests"` → **24/24 passed**, real Postgres 17 Testcontainer |
+| Runtime harness | Testcontainers Postgres 17 via `WaysApiFixture`, `ways_app` role for the RLS/lock-order/conjunct tests; a second raw `NpgsqlConnection` polling `pg_locks` for target 55 (D1's two-sided proof); an in-memory `IConfiguration` for the pure-crypto and no-master-key tests (no DB needed) |
+| `dotnet build --no-incremental` | Full solution (`Ways.slnx`, all 7 projects) built clean — 0 errors, 2 pre-existing unrelated `NU1903` warnings (SSH.NET, not touched by this slice) |
+| `dotnet ef migrations has-pending-model-changes` | Clean — "No changes have been made to the model since the last migration." Zero files under `Migraciones/` touched (`git status` confirmed) |
+| Full suite (non-regression, task 4.21) | `Ways.Domain.Tests`: **545/545** (identical to slice 3's baseline — zero domain changes this slice). `Ways.Application.Tests`: **364/364** (353 baseline + 11 net new). `Ways.IntegrationTests` (full run, Docker Testcontainers, real Postgres 17, per rule 17 — this slice edits production DI wiring in both `Ways.Application/DependencyInjection.cs` and `Ways.Infrastructure/DependencyInjection.cs` plus `Program.cs`/`Politicas.cs`): first run **1687/1698**, 11 failed with a `Docker.DotNet`/`ChunkedReadStream` HTTP-stream stack trace (Testcontainers daemon-connectivity flakiness, not application logic — no test name in the failure output pointed at a fiscal/application assertion); isolated re-run per rule 17 (`--logger trx`, single run, no concurrent suite against the same Docker daemon): **1698/1698 passed**, 0 failed, 12 m 44 s — identical total count to slice 3's baseline (1674) + this slice's 24 new integration tests = 1698, confirming zero regression |
+| Rollback boundary | `git revert` — `numeraciones_fiscales` is empty in production (nothing has been emitted yet, slice 5 is the first caller), `certificados_fiscales` has no row until an owner uploads one via the new ABM, `Politicas.cs`'s addition is one `public const` + one `AddPolicy` block; reverting removes `src/Ways.Api/Endpoints/FiscalEndpoints.cs`, `src/Ways.Application/Fiscal/{AsignadorDeNumeroFiscal,DesactivadorDeCertificadoFiscal,IAlmacenDeClavesFiscales,ServicioDeCertificados}.cs`, `src/Ways.Infrastructure/Fiscal/CifradoDeClavesFiscales.cs`, the `Contratos.cs`/`Politicas.cs`/both `DependencyInjection.cs`/`Program.cs` additions, and `tests/**/Fiscal/{CifradoDeClavesFiscalesTests,AsignadorDeNumeroFiscalTests,ServicioDeCertificadosTests}.cs` — nothing outside those paths |
+
+**Resumption note (this apply)**: this work unit resumes an interrupted `sdd-apply` — the previous
+agent had written the full implementation and was mid-cycle proving target 60's mutation when it
+was stopped. Audit on resume found **one real production gap** (task 4.3/4.17: `clavePrivadaPlana`
+never zeroed in `UsarCertificadoAsync`'s `finally`, only `claveMaestra` was) plus a stray marker
+comment with no accompanying code mutation — the working tree was **not** left in a mutated state
+otherwise; every other file matched its own doc-comments/tests on inspection and by running the
+full non-regression suites clean. No other checkbox, file, or test needed rework.
+
+#### Mutation evidence log (targets 52-63)
+
+Every non-**S** target below is proven by a real Postgres/crypto assertion whose passing is
+impossible without the guarded conjunct in place — sibling/neighbour rows are seeded, and the test
+reads them back over the real connection (by construction, mutation-proof-tests rule 4: dropping
+any one conjunct from the `WHERE`/AAD would let the sibling assertion fail). Target 60 was proven
+by an actual live mutation cycle during this resumed apply (see task 4.3's note) because it is the
+one target where the interrupted agent's own evidence trail showed a real gap, not a hypothetical
+one.
+
+| Target | Kill proven by | Reverted, confirmed green |
+|---|---|---|
+| 52 **S1 conjunct (a)** | `AsignarSobreUnPuntoDeVentaNoTocaElProximoNumeroDeUnPuntoDeVentaHermano` — PV-B's `proximo_numero` stays 1 while PV-A advances to 2; removing the `id_punto_venta` conjunct from the `UPDATE` would advance both | By construction |
+| 53 **U1 conjunct (b)** | `AsignarSobreUnCodigoAfipNoTocaElProximoNumeroDeOtroCodigoAfipDelMismoPuntoDeVenta` — `FB`'s counter stays 1 while `FA` advances; removing the `codigo_afip` conjunct would advance both | By construction |
+| 54 | `UnNumeroComiteadoPorUnaEmisionQueTerminaRechazadaNoSeLiberaYElSiguienteEsConsecutivo` — two committed assignments are strictly consecutive regardless of the first's fiscal outcome; `UnaAsignacionConRollbackAntesDeComitearReusaElNumeroEnVezDeDejarUnHueco` proves the ONLY release path is an uncommitted rollback | By construction |
+| 55 **S** | `LaTransaccionDeAsignacionSostieneSoloElLockDeNumeracionesFiscales` — real `pg_locks` poll from a second connection while the first is held open: `numeraciones_fiscales` present, `turnos_caja`/`stock`/`stock_lotes`/`clientes` absent, both halves in one assertion set (rule 13) | Structural — the poll itself is the assertion, run against real Postgres |
+| 56 **U3 conjuncts (a)(b)** | `ReconciliarUnaSerieNoTocaElUltimoAutorizadoDeUnPuntoDeVentaHermano` + `...DeUnCodigoAfipHermano` — the neighbour's `ultimo_autorizado_arca` stays `NULL` after reconciling the other row | By construction |
+| 57 | Four independent `MoverElCiphertext…FallaLaAutenticacion` tests — moving the ciphertext to another tenant/empresa/ambiente/huella each throws `AuthenticationTagMismatchException` from real `AesGcm.Decrypt` | By construction (AES-GCM's own authentication, not a mocked check) |
+| 58 | `UnaFilaCifradaConUnaVersionDeClaveMaestraSigueDescifrandoTrasRotarLaClaveActual` — a row encrypted under `v1` while `v1` was "current" still decrypts after `v2` becomes "current", proving the AAD (and the lookup) key off the row's own `id_clave_maestra`, never the system's "current" pointer | By construction |
+| 59 | `CifrarAsyncSinClaveMaestraConfiguradaTira…` (absent) + `…ConUnaClaveMaestraDeMenosDe32BytesTira…` (short) + `UsarCertificadoAsyncSinCertificadoActivoTira…` + `RegistrarSinClaveMaestraConfiguradaNoEscribeNingunaFila` (ABM-level reassertion: zero rows written) — all four assert the named error, never a bare `CryptographicException`/plaintext write | By construction |
+| 60 **S** | `UsarCertificadoAsyncLimpiaElBufferDescifradoEnUnFinally`, **strengthened this apply** — **live-run**: reverted the `clavePrivadaPlana` zeroing → RED (`Not found: "ZeroMemory(clavePrivadaPlana)"`) → restored → green | Yes — live mutation, not by construction (see task 4.3) |
+| 61 **U4 conjuncts (a)-(e)** | `ConjuncoIdTenant_UnTenantAjenoNoPuedeDesactivarLaFilaDeOtroTenant` (a, via RLS under a tenant-B EF context — 0 rows affected); `ConjuntoIdEmpresa_UnaEmpresaHermanaMantieneSuCertificadoActivo` (b); `ConjuntoAmbiente_ElCertificadoDeProduccionSigueActivoMientrasHomologacionRota` (c); `ConjuntoActivo_UnCertificadoYaInactivoNoSeCuentaComoAfectado` (d, asserted on the affected-row count per rule 4, not final state); `ConjuntoDeletedAt_UnGemeloDadoDeBajaNiSeResucitaNiSeCuenta` (e) | By construction, five independent seeded siblings |
+| 62 | `ListarCertificadosNuncaExponeMaterialDeClave` — recursive property-name walk over the live JSON response after a real registration; none of `clavePrivadaCifrada`/`nonce`/`tagAutenticacion`/`certificadoPem`/`claveMaestra` appear anywhere, case-insensitive | By construction (the DTO record has no such property to leak in the first place — `Contratos.cs`) |
+| 63 | `UnAdminEsAceptadoAlRegistrarUnCertificadoFiscal` (200) + `UnSupervisorOVendedorEsRechazadoAlRegistrarUnCertificadoFiscal` (Theory, 403×2) + `UnRootEsRechazadoAlRegistrarUnCertificadoFiscal` (403) + the condición-fiscal Admin/Vendedor pair + `Politicas.cs`'s `public const string` count confirmed **12** by `grep -c` | By construction + direct count |
 
 ---
 
