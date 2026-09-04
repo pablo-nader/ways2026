@@ -324,7 +324,7 @@ mutation was then reverted (`git checkout --`) and the test observed GREEN again
 | M6 | 1.12 | The API never fabricates the `"Plataforma"` literal (S1/D14) | `… .FirstOrDefault() ?? "Plataforma"` in `ServicioDeUsuarios.ListarAsync` | `ElListadoDeUsuariosLlevaElTenantDeCadaCuentaYNuncaFabricaLaEtiquetaPlataforma` — `Assert.Null() Failure: Value is not null / Actual: "Plataforma"` |
 | M7 | 1.15 (ronda 1, hallazgo 1) | The **explicit** `t.DeletedAt == null` of the usuarios subquery — `IgnoreQueryFilters` is query-level, so `incluirEliminados=true` also stripped the filter from the correlated subquery | `.Where(t => t.Id == u.IdTenant && t.DeletedAt == null)` → `.Where(t => t.Id == u.IdTenant)` | `UnaCuentaCuyoTenantFueDadoDeBajaNoTraeNombreDeTenantEnNingunoDeLosTresCaminos` — `Assert.Null() Failure: Value is not null / Actual: "Huerfano-A-252cafab"`, on the `incluirEliminados=true` path only (the default listing and the detail stayed green — that is the discrepancy the finding named) |
 | M8 | 1.15 (ronda 1, hallazgo 2) | `ServicioDeUsuarios.NombreDeTenantAsync` — the source of `NombreTenant` on **every** non-listing path (`ObtenerAsync`, the `POST` 201 body, the `PUT` body) | body replaced by `return null;` (keeping one instance read so CA1822 does not mask the mutant) | `ElAltaElDetalleYLaEdicionDeUsuarioDevuelvenLosDiezCamposProyectados` — `Assert.Equal() Failure: Strings differ / Expected: "Detalle-usuario-8dc6ccae" / Actual: null`, on the **201 body** of `POST /api/usuarios`. Before this round the same mutation left the entire suite green |
-| M9 | 1.15 (ronda 1, hallazgo 5) | The `e.Id == p.IdEmpresa` correlation of `RazonSocialEmpresa` — needs a sibling of the **same owner** (`mutation-proof-tests` rule 12c) | `.Where(e => e.Id == p.IdEmpresa)` → `.Where(e => e.IdTenant == p.IdTenant)` | `LosListadosDeEmpresasYPuntosDeVentaLlevanLosNombresDeSusDuenios` — `Assert.Equal() Failure: Strings differ / Expected: "Norte Anexo SRL" / Actual: "Norte SRL"`. The kill is deterministic: the tenant now owns two empresas with two puntos de venta, so whichever row the base picks, one of the two assertions fails |
+| M9 | 1.15 (ronda 1, hallazgo 5) | The `e.Id == p.IdEmpresa` correlation of `RazonSocialEmpresa` — needs a sibling of the **same owner** (`mutation-proof-tests` rule 12c) | `.Where(e => e.Id == p.IdEmpresa)` → `.Where(e => e.IdTenant == p.IdTenant)` | `LosListadosDeEmpresasYPuntosDeVentaLlevanLosNombresDeSusDuenios` — `Assert.Equal() Failure: Strings differ / Expected: "Norte Anexo SRL" / Actual: "Norte SRL"`. Observed RED when run; the kill is NOT claimed as universal — an unordered `FirstOrDefault` owes nobody the same row on every correlated evaluation, so in theory the mutant could hit both empresas correctly. Softened here to match the test doc-comment (R2-7) |
 
 **Task 1.13 carries NO mutation evidence, and that is stated rather than papered over.** It is a
 **regression** test over behaviour this slice does not add: tenant scoping on `GET /api/usuarios`
@@ -336,7 +336,7 @@ excludes ("if you cannot name a clause this change introduces, it is ordinary co
 
 1. `Assert.True(tenant.Id > 4)` in task 1.11 was **order-dependent**: on a container where only
    that test ran, the tenant id was 3 and the assertion failed for a reason unrelated to any
-   mutation. Fixed by seeding three **deliberately unbalanced** filler tenants first (different
+   mutation. Fixed by seeding four **deliberately unbalanced** filler tenants first (`TenantsDeRelleno`, defined as the largest seeded counter) (different
    numbers of empresas, puntos de venta and usuarios each), which desynchronises the four identity
    sequences. That is what makes `id`, `idTenant` and `idEmpresa` pairwise distinct **by
    construction** instead of by luck — the exact condition rule 12b needs to kill a swap.
@@ -668,6 +668,32 @@ confound). Do **not** add creation endpoints. This latency is reported to the ow
 
 **BINDING — OD6.** A cascade-deleted admin gets **401 `credenciales_invalidas`**, not 403. The
 `tenant-organization` scenario claiming 403 is superseded (Reconciliación 1).
+
+**BINDING — INPUTS CARRIED FROM SLICE 1 (judgment-day FINAL re-judgment).** Three items were
+confirmed by both judges after the two permitted correction rounds were spent. None has user impact
+today; all three become reachable exactly when this slice adds the deletion writers, so this slice
+closes them deliberately rather than inheriting them silently.
+
+1. **The three `Count` subqueries of `ProyeccionDeTenant` are not hardened.**
+   `ServicioDeOrganizacion.cs:40-42` (`db.Empresas.Count`, `db.PuntosVenta.Count`,
+   `db.Usuarios.Count`) still lean on the ambient `"BajaLogica"` filter, while the four owner-name
+   subqueries carry an explicit `DeletedAt == null` after R2-2. Worse, the file now states two
+   contradictory rules for the identical risk: the doc-comment at `:29-34` says no explicit
+   predicate is needed, and the one at `:116-120` says the opposite. Round 1's M3 already observed
+   this exact mechanism firing on a counter. **This slice must harden the three counters and
+   reconcile the two doc-comments into one rule.**
+2. **Four production predicates ship with four SURVIVING mutants.** `mutation-proof-tests`'s
+   decision gate says a clause whose deletion the suite survives must be **re-routed below the
+   confound, never called done**. Today no path strips the ambient filter, so no RED is reachable
+   and the surviving mutants were honestly recorded rather than dressed up — but the debt is real.
+   **This slice makes them provable**: the deletion writers are the reachable path, so each of the
+   four predicates gets a real kill here, or the predicate is removed as unprovable. Do not carry a
+   third unproven round.
+3. **`TenantsDeRelleno = UsuariosDelTenantLeido` is an unenforced coincidence.**
+   `ProyeccionDeOrganizacionTests.cs:45-50` guarantees the tenant under test outranks every seeded
+   counter only because `4` happens to be the maximum of `{2, 3, 4}`. Lowering that const or raising
+   a sibling silently breaks the bound with no compile-time or runtime check. **Tie it to the actual
+   maximum** when this slice next touches that fixture.
 
 **BINDING — INPUT CARRIED FROM SLICE 1 (judgment-day ronda 2).** Slice 1's write paths
 (`ActualizarTenantAsync`, `CambiarEstadoTenantAsync`, `ActualizarEmpresaAsync`,
