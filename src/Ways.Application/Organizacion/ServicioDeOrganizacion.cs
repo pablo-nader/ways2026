@@ -98,9 +98,11 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
     /// <summary>Reproyecta después de escribir: los contadores no viven en la entidad, así que el
     /// único lugar donde están es la consulta. Es una ida extra sobre una acción de plataforma
     /// puntual — el presupuesto de "una sola consulta" es el de los LISTADOS, que son los que
-    /// escalan con la cantidad de filas.</summary>
-    private Task<TenantListado> ProyectarTenantAsync(int id, CancellationToken ct) =>
-        db.Tenants.Where(t => t.Id == id).Select(ProyeccionDeTenant).FirstAsync(ct);
+    /// escalan con la cantidad de filas. Si entre la escritura y esta relectura la fila quedó
+    /// invisible, corresponde el mismo 404 de dominio que dan las lecturas, no un 500.</summary>
+    private async Task<TenantListado> ProyectarTenantAsync(int id, CancellationToken ct) =>
+        await db.Tenants.Where(t => t.Id == id).Select(ProyeccionDeTenant).FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el tenant {id}.");
 
     private async Task<Tenant> BuscarTenantAsync(int id, CancellationToken ct) =>
         await db.Tenants.FirstOrDefaultAsync(t => t.Id == id, ct)
@@ -154,7 +156,14 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
         empresa.UpdatedAt = reloj.Ahora;
 
         await db.SaveChangesAsync(ct);
-        return await db.Empresas.Where(e => e.Id == empresa.Id).Select(ProyeccionDeEmpresa).FirstAsync(ct);
+
+        // Misma forma que ObtenerEmpresaAsync: si la fila quedó invisible entre la escritura y la
+        // relectura, es un 404 de dominio, no un 500.
+        return await db.Empresas
+            .Where(e => e.Id == empresa.Id)
+            .Select(ProyeccionDeEmpresa)
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe la empresa {id}.");
     }
 
     private async Task<Empresa> BuscarEmpresaAsync(int id, CancellationToken ct)
@@ -220,10 +229,14 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
         puntoVenta.UpdatedAt = reloj.Ahora;
 
         await db.SaveChangesAsync(ct);
+
+        // Misma forma que ObtenerPuntoVentaAsync: 404 de dominio, nunca un 500, si la fila quedó
+        // invisible entre la escritura y la relectura.
         return await db.PuntosVenta
             .Where(p => p.Id == puntoVenta.Id)
             .Select(ProyeccionDePuntoVenta)
-            .FirstAsync(ct);
+            .FirstOrDefaultAsync(ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el punto de venta {id}.");
     }
 
     private async Task<PuntoVenta> BuscarPuntoVentaAsync(int id, CancellationToken ct)

@@ -366,6 +366,13 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
     /// MUTACIÓN registrada: reemplazar el <c>Where</c> de <c>ProyeccionDeEmpresa</c> por un
     /// <c>db.Tenants.Select(t => t.Nombre).FirstOrDefault()</c> sin correlación hace que ambas
     /// empresas reporten el mismo nombre y la prueba se cae.
+    ///
+    /// Para <c>RazonSocialEmpresa</c> el hermano tiene que ser del MISMO dueño (regla 12c): con
+    /// una sola empresa por tenant, un mutante que correlacionara por <c>e.IdTenant == p.IdTenant</c>
+    /// devolvería la misma razón social y sobreviviría. Por eso el tenant A lleva una SEGUNDA
+    /// empresa con su propio punto de venta. MUTACIÓN registrada: correlacionar por
+    /// <c>e.IdTenant == p.IdTenant</c> hace que los dos puntos de venta de A reporten la misma
+    /// razón social y una de las dos aserciones se cae, cualquiera sea la fila que elija la base.
     /// </summary>
     [Fact]
     public async Task LosListadosDeEmpresasYPuntosDeVentaLlevanLosNombresDeSusDuenios()
@@ -378,6 +385,9 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
             nameof(LosListadosDeEmpresasYPuntosDeVentaLlevanLosNombresDeSusDuenios) + "-B",
             razonSocialEmpresa: "Sur SA",
             nombrePuntoVenta: "Sur - Local 1");
+
+        var anexoDeA = await SembrarEmpresaAsync(a.Tenant.Id, "Norte Anexo SRL");
+        var puntoDelAnexo = await SembrarPuntoVentaAsync(a.Tenant.Id, anexoDeA.Id, "Norte - Local 2");
 
         using var cliente = await ClienteComoRootAsync();
 
@@ -399,6 +409,15 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal("Norte SRL", puntoA.RazonSocialEmpresa);
         Assert.Equal(b.Tenant.Nombre, puntoB.NombreTenant);
         Assert.Equal("Sur SA", puntoB.RazonSocialEmpresa);
+
+        // El hermano del MISMO dueño: mismo tenant, otra empresa. Un mutante que correlacionara
+        // por tenant tiene que elegir una de las dos razones sociales y romper la otra aserción.
+        var puntoAnexo = Assert.Single(puntos!, p => p.Id == puntoDelAnexo.Id);
+        Assert.Equal(a.Tenant.Nombre, puntoAnexo.NombreTenant);
+        Assert.Equal("Norte Anexo SRL", puntoAnexo.RazonSocialEmpresa);
+        Assert.Equal(a.Tenant.Id, puntoAnexo.IdTenant);
+        Assert.Equal(anexoDeA.Id, puntoAnexo.IdEmpresa);
+        Assert.NotEqual(puntoA.RazonSocialEmpresa, puntoAnexo.RazonSocialEmpresa);
     }
 
     // ---- task 1.9: los contadores solo cuentan hijos vivos ------------------------------------
@@ -762,5 +781,296 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
 
         Assert.DoesNotContain(pagina.Items, u => u.Id == b.Admin.Id);
         Assert.DoesNotContain($"Alcance-vecino-{sufijo}", crudo, StringComparison.Ordinal);
+    }
+
+    // ---- ronda 1 de judgment-day: el huérfano en los TRES caminos de usuarios ----------------
+
+    /// <summary>
+    /// La cláusula bajo prueba es el <c>t.DeletedAt == null</c> EXPLÍCITO de la subconsulta de
+    /// <c>ServicioDeUsuarios.ListarAsync</c>. EF aplica <c>IgnoreQueryFilters</c> a nivel CONSULTA,
+    /// así que con <c>incluirEliminados=true</c> la subconsulta correlacionada perdía también el
+    /// filtro de baja lógica: la MISMA cuenta traía el nombre del tenant dado de baja en ese
+    /// camino y <c>null</c> en el listado por defecto y en el detalle. Se afirman los tres.
+    ///
+    /// El hermano vivo se afirma en el mismo request: un predicado que apagara la proyección
+    /// entera también pasaría la aserción de nulidad, así que sola no discrimina.
+    ///
+    /// MUTACIÓN registrada: sacar <c>&amp;&amp; t.DeletedAt == null</c> de la subconsulta deja el
+    /// camino <c>incluirEliminados=true</c> devolviendo el nombre del tenant y la prueba se cae.
+    /// </summary>
+    [Fact]
+    public async Task UnaCuentaCuyoTenantFueDadoDeBajaNoTraeNombreDeTenantEnNingunoDeLosTresCaminos()
+    {
+        var sufijo = Guid.NewGuid().ToString("N")[..8];
+
+        var huerfana = await SembrarTenantAsync(
+            $"Huerfano-A-{sufijo}", nombreUsuarioAdmin: $"huerfano-a-{sufijo}");
+        var viva = await SembrarTenantAsync(
+            $"Huerfano-B-{sufijo}", nombreUsuarioAdmin: $"huerfano-b-{sufijo}");
+
+        await DarDeBajaAlTenantAsync(huerfana.Tenant.Id);
+
+        using var cliente = await ClienteComoRootAsync();
+
+        var porDefecto = await LeerCuerpoAsync<PaginaDe<UsuarioListado>>(
+            await cliente.GetAsync($"/api/usuarios?busqueda={sufijo}&tamanio=200"));
+        AfirmarHuerfano(Assert.Single(porDefecto.Items, u => u.Id == huerfana.Admin.Id));
+        AfirmarVivo(Assert.Single(porDefecto.Items, u => u.Id == viva.Admin.Id));
+
+        var conEliminados = await LeerCuerpoAsync<PaginaDe<UsuarioListado>>(
+            await cliente.GetAsync($"/api/usuarios?busqueda={sufijo}&incluirEliminados=true&tamanio=200"));
+        AfirmarHuerfano(Assert.Single(conEliminados.Items, u => u.Id == huerfana.Admin.Id));
+        AfirmarVivo(Assert.Single(conEliminados.Items, u => u.Id == viva.Admin.Id));
+
+        AfirmarHuerfano(await LeerCuerpoAsync<UsuarioListado>(
+            await cliente.GetAsync($"/api/usuarios/{huerfana.Admin.Id}")));
+
+        void AfirmarHuerfano(UsuarioListado cuenta)
+        {
+            Assert.Equal(huerfana.Tenant.Id, cuenta.IdTenant);
+            Assert.Null(cuenta.NombreTenant);
+        }
+
+        void AfirmarVivo(UsuarioListado cuenta)
+        {
+            Assert.Equal(viva.Tenant.Id, cuenta.IdTenant);
+            Assert.Equal($"Huerfano-B-{sufijo}", cuenta.NombreTenant);
+        }
+    }
+
+    // ---- ronda 1 de judgment-day: readback de los caminos que NO son el listado ---------------
+
+    /// <summary>
+    /// <c>mutation-proof-tests</c> regla 12b sobre los caminos de respuesta que el slice dejaba sin
+    /// leer: detalle, edición, suspensión y reactivación devuelven el MISMO record que el listado,
+    /// y ningún test leía de vuelta los campos nuevos por esos caminos (reemplazar el cuerpo de la
+    /// proyección por constantes sobrevivía a la suite entera). Los tres contadores valen 2, 3 y 4
+    /// —distintos entre sí y distintos del id— para que un intercambio posicional muera acá.
+    /// </summary>
+    [Fact]
+    public async Task ElDetalleYLasEscriturasDeTenantDevuelvenLosSieteCamposProyectados()
+    {
+        var sufijo = Guid.NewGuid().ToString("N")[..8];
+        await SembrarRellenoDesbalanceadoAsync(sufijo);
+
+        var a = await SembrarTenantAsync(
+            $"Detalle-tenant-{sufijo}", nombreUsuarioAdmin: $"det-admin-{sufijo}");
+        var segundaEmpresa = await SembrarEmpresaAsync(a.Tenant.Id, $"Detalle empresa dos {sufijo} SRL");
+        await SembrarPuntoVentaAsync(a.Tenant.Id, a.Empresa.Id, $"Detalle local dos {sufijo}");
+        await SembrarPuntoVentaAsync(a.Tenant.Id, segundaEmpresa.Id, $"Detalle local tres {sufijo}");
+        await SembrarUsuarioAsync(a.Tenant.Id, $"det-uno-{sufijo}", RolConocido.Vendedor);
+        await SembrarUsuarioAsync(a.Tenant.Id, $"det-dos-{sufijo}", RolConocido.Supervisor);
+        await SembrarUsuarioAsync(a.Tenant.Id, $"det-tres-{sufijo}", RolConocido.Vendedor);
+
+        using var cliente = await ClienteComoRootAsync();
+
+        AfirmarTenant(
+            await LeerCuerpoAsync<TenantListado>(
+                await cliente.GetAsync($"/api/plataforma/tenants/{a.Tenant.Id}")),
+            $"Detalle-tenant-{sufijo}",
+            EstadoTenant.Activo);
+
+        AfirmarTenant(
+            await LeerCuerpoAsync<TenantListado>(
+                await cliente.PutAsJsonAsync(
+                    $"/api/plataforma/tenants/{a.Tenant.Id}",
+                    new TenantEdicion($"Detalle-tenant-editado-{sufijo}"))),
+            $"Detalle-tenant-editado-{sufijo}",
+            EstadoTenant.Activo);
+
+        AfirmarTenant(
+            await LeerCuerpoAsync<TenantListado>(
+                await cliente.PostAsync($"/api/plataforma/tenants/{a.Tenant.Id}/suspender", null)),
+            $"Detalle-tenant-editado-{sufijo}",
+            EstadoTenant.Suspendido);
+
+        AfirmarTenant(
+            await LeerCuerpoAsync<TenantListado>(
+                await cliente.PostAsync($"/api/plataforma/tenants/{a.Tenant.Id}/reactivar", null)),
+            $"Detalle-tenant-editado-{sufijo}",
+            EstadoTenant.Activo);
+
+        void AfirmarTenant(TenantListado tenant, string nombreEsperado, EstadoTenant estadoEsperado)
+        {
+            Assert.Equal(a.Tenant.Id, tenant.Id);
+            Assert.True(tenant.Id > 4, "el id tiene que ser distinguible de los tres contadores");
+            Assert.Equal(nombreEsperado, tenant.Nombre);
+            Assert.Equal(estadoEsperado, tenant.Estado);
+            Assert.True(
+                (tenant.CreatedAt - a.Tenant.CreatedAt).Duration() < TimeSpan.FromSeconds(1),
+                "createdAt tiene que ser el del tenant sembrado");
+            Assert.Equal(2, tenant.CantidadEmpresas);
+            Assert.Equal(3, tenant.CantidadPuntosVenta);
+            Assert.Equal(4, tenant.CantidadUsuarios);
+        }
+    }
+
+    /// <summary>Mismo criterio que la prueba anterior, sobre <c>EmpresaListado</c> (6 campos) y
+    /// <c>PuntoVentaListado</c> (12): detalle y edición devuelven todos los campos con su verdad,
+    /// con <c>id</c>, <c>idTenant</c> e <c>idEmpresa</c> distintos entre sí por construcción.</summary>
+    [Fact]
+    public async Task ElDetalleYLaEdicionDeEmpresaYPuntoDeVentaDevuelvenTodosLosCamposProyectados()
+    {
+        var sufijo = Guid.NewGuid().ToString("N")[..8];
+        await SembrarRellenoDesbalanceadoAsync(sufijo);
+
+        var a = await SembrarTenantAsync(
+            $"Detalle-org-{sufijo}",
+            razonSocialEmpresa: $"Detalle org empresa {sufijo} SRL",
+            nombrePuntoVenta: $"Detalle org local {sufijo}");
+
+        using var cliente = await ClienteComoRootAsync();
+
+        AfirmarEmpresa(await LeerCuerpoAsync<EmpresaListado>(
+            await cliente.PutAsJsonAsync(
+                $"/api/empresas/{a.Empresa.Id}",
+                new EmpresaEdicion(
+                    $"Detalle org empresa {sufijo} SRL", $"Fantasia {sufijo}", "20-22222222-2"))));
+
+        AfirmarEmpresa(await LeerCuerpoAsync<EmpresaListado>(
+            await cliente.GetAsync($"/api/empresas/{a.Empresa.Id}")));
+
+        AfirmarPuntoVenta(await LeerCuerpoAsync<PuntoVentaListado>(
+            await cliente.PutAsJsonAsync(
+                $"/api/puntos-venta/{a.PuntoVenta.Id}",
+                new PuntoVentaEdicion(
+                    $"Detalle org local {sufijo}",
+                    $"Domicilio {sufijo}",
+                    $"Horario {sufijo}",
+                    $"Whatsapp {sufijo}",
+                    $"Instagram {sufijo}",
+                    $"Facebook {sufijo}",
+                    $"Web {sufijo}"))));
+
+        AfirmarPuntoVenta(await LeerCuerpoAsync<PuntoVentaListado>(
+            await cliente.GetAsync($"/api/puntos-venta/{a.PuntoVenta.Id}")));
+
+        void AfirmarEmpresa(EmpresaListado empresa)
+        {
+            Assert.Equal(a.Empresa.Id, empresa.Id);
+            Assert.Equal(a.Tenant.Id, empresa.IdTenant);
+            Assert.NotEqual(empresa.Id, empresa.IdTenant);
+            Assert.Equal($"Detalle org empresa {sufijo} SRL", empresa.RazonSocial);
+            Assert.Equal($"Fantasia {sufijo}", empresa.NombreFantasia);
+            Assert.Equal("20-22222222-2", empresa.Cuit);
+            Assert.Equal($"Detalle-org-{sufijo}", empresa.NombreTenant);
+        }
+
+        void AfirmarPuntoVenta(PuntoVentaListado punto)
+        {
+            Assert.Equal(a.PuntoVenta.Id, punto.Id);
+            Assert.Equal(a.Tenant.Id, punto.IdTenant);
+            Assert.Equal(a.Empresa.Id, punto.IdEmpresa);
+            Assert.NotEqual(punto.Id, punto.IdTenant);
+            Assert.NotEqual(punto.Id, punto.IdEmpresa);
+            Assert.NotEqual(punto.IdTenant, punto.IdEmpresa);
+            Assert.Equal($"Detalle org local {sufijo}", punto.Nombre);
+            Assert.Equal($"Domicilio {sufijo}", punto.Domicilio);
+            Assert.Equal($"Horario {sufijo}", punto.Horario);
+            Assert.Equal($"Whatsapp {sufijo}", punto.Whatsapp);
+            Assert.Equal($"Instagram {sufijo}", punto.Instagram);
+            Assert.Equal($"Facebook {sufijo}", punto.Facebook);
+            Assert.Equal($"Web {sufijo}", punto.Web);
+            Assert.Equal($"Detalle-org-{sufijo}", punto.NombreTenant);
+            Assert.Equal($"Detalle org empresa {sufijo} SRL", punto.RazonSocialEmpresa);
+        }
+    }
+
+    /// <summary>Los tres caminos de <c>UsuarioListado</c> que no son el listado: el 201 del alta,
+    /// el detalle y el cuerpo del PUT — los tres devuelven el record de
+    /// <c>ServicioDeUsuarios.ObtenerAsync</c>, que era el que sobrevivía a un
+    /// <c>NombreDeTenantAsync</c> reemplazado por <c>return null;</c>.</summary>
+    [Fact]
+    public async Task ElAltaElDetalleYLaEdicionDeUsuarioDevuelvenLosDiezCamposProyectados()
+    {
+        var sufijo = Guid.NewGuid().ToString("N")[..8];
+        await SembrarRellenoDesbalanceadoAsync(sufijo);
+
+        var a = await SembrarTenantAsync($"Detalle-usuario-{sufijo}");
+
+        using var cliente = await ClienteComoRootAsync();
+
+        var mailAlta = $"alta-{sufijo}@ways.test";
+        var creado = await LeerCuerpoAsync<UsuarioListado>(
+            await cliente.PostAsJsonAsync(
+                "/api/usuarios",
+                new CrearUsuario(
+                    $"alta-{sufijo}", mailAlta, (int)RolConocido.Supervisor, Password,
+                    EstadoUsuario.Activo, a.Tenant.Id)),
+            HttpStatusCode.Created);
+
+        AfirmarUsuario(creado, $"alta-{sufijo}", mailAlta, RolConocido.Supervisor, "supervisor", EstadoUsuario.Activo);
+
+        AfirmarUsuario(
+            await LeerCuerpoAsync<UsuarioListado>(await cliente.GetAsync($"/api/usuarios/{creado.Id}")),
+            $"alta-{sufijo}", mailAlta, RolConocido.Supervisor, "supervisor", EstadoUsuario.Activo);
+
+        var mailEditado = $"editado-{sufijo}@ways.test";
+        AfirmarUsuario(
+            await LeerCuerpoAsync<UsuarioListado>(
+                await cliente.PutAsJsonAsync(
+                    $"/api/usuarios/{creado.Id}",
+                    new ActualizarUsuario(
+                        $"editado-{sufijo}", mailEditado, (int)RolConocido.Vendedor,
+                        EstadoUsuario.Inactivo))),
+            $"editado-{sufijo}", mailEditado, RolConocido.Vendedor, "vendedor", EstadoUsuario.Inactivo);
+
+        void AfirmarUsuario(
+            UsuarioListado usuario,
+            string nombre,
+            string mail,
+            RolConocido rol,
+            string nombreRol,
+            EstadoUsuario estado)
+        {
+            Assert.Equal(creado.Id, usuario.Id);
+            Assert.Equal(nombre, usuario.Usuario);
+            Assert.Equal(mail, usuario.Mail);
+            Assert.Equal((int)rol, usuario.RolId);
+            Assert.Equal(nombreRol, usuario.Rol);
+            Assert.Equal(estado, usuario.Estado);
+            Assert.Null(usuario.UltimaConexion);
+            Assert.NotEqual(default, usuario.CreatedAt);
+            Assert.Equal(a.Tenant.Id, usuario.IdTenant);
+            Assert.Equal($"Detalle-usuario-{sufijo}", usuario.NombreTenant);
+            Assert.NotEqual(usuario.Id, usuario.IdTenant);
+            Assert.NotEqual(usuario.Id, usuario.RolId);
+        }
+    }
+
+    /// <summary>Relleno DESBALANCEADO, mismo criterio que la task 1.11: cada tenant de relleno se
+    /// lleva una cantidad distinta de empresas, puntos de venta y usuarios, así las cuatro
+    /// secuencias de identidad se desincronizan y <c>id</c>, <c>idTenant</c> e <c>idEmpresa</c>
+    /// quedan distintos POR CONSTRUCCIÓN, no por el orden en que xUnit corrió la clase.</summary>
+    private async Task SembrarRellenoDesbalanceadoAsync(string sufijo)
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            var relleno = await SembrarTenantAsync($"Relleno-{i}-{sufijo}");
+
+            for (var j = 0; j < 2; j++)
+            {
+                var empresaRelleno = await SembrarEmpresaAsync(
+                    relleno.Tenant.Id, $"Relleno {i}-{j} {sufijo} SRL");
+                await SembrarPuntoVentaAsync(
+                    relleno.Tenant.Id, empresaRelleno.Id, $"Relleno local {i}-{j} {sufijo}");
+                await SembrarUsuarioAsync(
+                    relleno.Tenant.Id, $"relleno-{i}-{j}-{sufijo}", RolConocido.Vendedor);
+            }
+
+            await SembrarPuntoVentaAsync(
+                relleno.Tenant.Id, relleno.Empresa.Id, $"Relleno local extra {i} {sufijo}");
+        }
+    }
+
+    private static async Task<T> LeerCuerpoAsync<T>(
+        HttpResponseMessage respuesta, HttpStatusCode esperado = HttpStatusCode.OK)
+    {
+        Assert.Equal(esperado, respuesta.StatusCode);
+
+        var cuerpo = await respuesta.Content.ReadFromJsonAsync<T>(OpcionesJson);
+        Assert.NotNull(cuerpo);
+
+        return cuerpo!;
     }
 }
