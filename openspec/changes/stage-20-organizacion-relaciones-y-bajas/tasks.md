@@ -86,6 +86,22 @@ carry the entire safety argument.**
    the same reason. A 530-word checklist cannot carry OD4/OD5/OD6, N1-N4, U1-U8 and the ZERO-SCHEMA
    criteria without dropping load-bearing content, and dropping it is what verify would then have to
    reconstruct by archaeology.
+8. **V9 means "the projection adds no round trip", and for `GET /api/usuarios` the literal reading
+   is false.** Measured on the merged slice-1 code: the three organization listings cost exactly
+   **1** database command each; `GET /api/usuarios` costs **2**. The second one is the pagination
+   `CountAsync` (`ServicioDeUsuarios.cs:70`) — usuarios is the **only paginated** listing — and it
+   **predates this change**: it is emitted by code slice 1 never touched. The projection itself adds
+   **zero** commands on all four endpoints; if it added one, the usuarios count would be 3. Task 1.7
+   asserts exactly that (`1` for each organization listing, `2` for usuarios) and
+   `CadaListadoCuestaExactamenteUnaIdaALaBase`'s doc-comment records the reason at the assertion.
+   **The pagination is NOT changed to make a sentence true.** The sentence *"`GET /api/usuarios`
+   MUST still execute a single database round trip"* (`specs/usuarios-tenant-scoping/spec.md:14-15`)
+   and its scenario *"The tenant column costs no extra round trip"* (`:29-32`) are left
+   **byte-identical** — deltas of this change are not edited mid-flight — and are **superseded by
+   this reconciliation**, the same handling Reconciliación 1 gives OD6. Verify must read V9
+   (`tasks.md`, `design.md:469`) through it: the property the criterion protects (no N+1, no second
+   query per row, no extra round trip **caused by the projection**) is preserved and proven; only
+   the absolute number for the one paginated listing differs.
 
 ## Binding Verify Criteria (all slices)
 
@@ -107,7 +123,10 @@ slice**, and every slice re-asserts V1-V6 (they are invariants of the whole stag
    implementations change (`rg ": IWaysDbContext"` over `src/` and `tests/` returns zero matches).
 8. **N3's golden is checked in and green**; any regeneration inside a PR is accompanied by a written
    classification decision for each changed line.
-9. Each of the four list endpoints performs **exactly one** database round trip (`ContadorDeComandos`).
+9. Each of the four list endpoints performs **exactly one** database round trip (`ContadorDeComandos`)
+   — read through **Reconciliación 8**: the criterion is that the **projection** adds no round trip.
+   `GET /api/usuarios` costs 2 because it is the only paginated listing and its `CountAsync`
+   predates this change; the other three cost 1.
 10. `InspectorDeUso` has **zero callers** in the slice-3 diff (`rg` over `src/`).
 11. Mutation evidence recorded in the PR body for **every** U-row belonging to that slice; structural
     rows record the file/state/definition assertion instead of a runtime failure, **and say so**.
@@ -283,6 +302,9 @@ mutation was then reverted (`git checkout --`) and the test observed GREEN again
 | M4 | 1.10 | The owner name is a correlated **subquery**, not a JOIN | `ListarEmpresasAsync` rewritten as `db.Empresas.Join(db.Tenants, …)` | `UnaEmpresaCuyoTenantFueDadoDeBajaSigueApareciendoConNombreDeTenantNulo` — `Assert.Single() Failure: The collection did not contain any matching items`; the orphan empresa vanished from the listing, which is precisely the trap D13 exists to avoid |
 | M5 | 1.11 | Positional argument order of `TenantListado` | `CantidadEmpresas` and `CantidadPuntosVenta` swapped in `ProyeccionDeTenant` | `CadaCampoPosicionalDeLosCuatroListadosSeLeeDeVueltaConValoresDistintos` — `Expected: 2 / Actual: 3` |
 | M6 | 1.12 | The API never fabricates the `"Plataforma"` literal (S1/D14) | `… .FirstOrDefault() ?? "Plataforma"` in `ServicioDeUsuarios.ListarAsync` | `ElListadoDeUsuariosLlevaElTenantDeCadaCuentaYNuncaFabricaLaEtiquetaPlataforma` — `Assert.Null() Failure: Value is not null / Actual: "Plataforma"` |
+| M7 | 1.15 (ronda 1, hallazgo 1) | The **explicit** `t.DeletedAt == null` of the usuarios subquery — `IgnoreQueryFilters` is query-level, so `incluirEliminados=true` also stripped the filter from the correlated subquery | `.Where(t => t.Id == u.IdTenant && t.DeletedAt == null)` → `.Where(t => t.Id == u.IdTenant)` | `UnaCuentaCuyoTenantFueDadoDeBajaNoTraeNombreDeTenantEnNingunoDeLosTresCaminos` — `Assert.Null() Failure: Value is not null / Actual: "Huerfano-A-252cafab"`, on the `incluirEliminados=true` path only (the default listing and the detail stayed green — that is the discrepancy the finding named) |
+| M8 | 1.15 (ronda 1, hallazgo 2) | `ServicioDeUsuarios.NombreDeTenantAsync` — the source of `NombreTenant` on **every** non-listing path (`ObtenerAsync`, the `POST` 201 body, the `PUT` body) | body replaced by `return null;` (keeping one instance read so CA1822 does not mask the mutant) | `ElAltaElDetalleYLaEdicionDeUsuarioDevuelvenLosDiezCamposProyectados` — `Assert.Equal() Failure: Strings differ / Expected: "Detalle-usuario-8dc6ccae" / Actual: null`, on the **201 body** of `POST /api/usuarios`. Before this round the same mutation left the entire suite green |
+| M9 | 1.15 (ronda 1, hallazgo 5) | The `e.Id == p.IdEmpresa` correlation of `RazonSocialEmpresa` — needs a sibling of the **same owner** (`mutation-proof-tests` rule 12c) | `.Where(e => e.Id == p.IdEmpresa)` → `.Where(e => e.IdTenant == p.IdTenant)` | `LosListadosDeEmpresasYPuntosDeVentaLlevanLosNombresDeSusDuenios` — `Assert.Equal() Failure: Strings differ / Expected: "Norte Anexo SRL" / Actual: "Norte SRL"`. The kill is deterministic: the tenant now owns two empresas with two puntos de venta, so whichever row the base picks, one of the two assertions fails |
 
 **Task 1.13 carries NO mutation evidence, and that is stated rather than papered over.** It is a
 **regression** test over behaviour this slice does not add: tenant scoping on `GET /api/usuarios`
@@ -334,6 +356,27 @@ excludes ("if you cannot name a clause this change introduces, it is ordinary co
   call sites changed; it is what lets task 1.7 count commands on a service call.
 - **No web file was touched** — `tipos.ts` mirrors land in slice 2, and adding fields to the JSON
   payload is backward compatible for the screens as they stand.
+
+- **Judgment-day, ronda 1 (task 1.15): six confirmed findings, six fixes, three new mutations.**
+  (1) `IgnoreQueryFilters(["BajaLogica"])` is applied at **query** level, so `incluirEliminados=true`
+  also stripped the soft-delete filter from the correlated tenant-name subquery: the same account
+  showed a soft-deleted tenant's name on that path and `null` on the other two. Fixed by making the
+  subquery's predicate explicit (`t.DeletedAt == null`) instead of leaning on the ambient filter;
+  the `IgnoreQueryFilters` call and its ADR-6 comment are untouched. Killed by M7 on all three
+  paths. (2) Every non-listing response path shipped untested — `return null;` in
+  `NombreDeTenantAsync` left the whole suite green. Three new readback tests now cover
+  `Obtener/Actualizar/Suspender/Reactivar` of tenant, `Obtener/Actualizar` of empresa and punto de
+  venta, and the `POST` 201 / `GET {id}` / `PUT` bodies of usuario, with pairwise-distinct values
+  (rule 12b). Killed by M8. (3) The three re-projections after `SaveChangesAsync` used `FirstAsync`,
+  which turns a row that became invisible between write and re-read into a 500 while the sibling
+  read paths return a domain 404; all three now use `FirstOrDefaultAsync` + `ErrorDominio.NoEncontrado`
+  — this matters for slice 4, which adds concurrent deleters on exactly those rows. (4) V9 is not
+  literally satisfied for usuarios: recorded as **Reconciliación 8**, no code change, the spec file
+  left byte-identical. (5) `RazonSocialEmpresa`'s correlation had no deterministic kill (one empresa
+  per tenant); task 1.8's fixture now seeds a second empresa **of the same tenant** with its own
+  punto de venta. Killed by M9. (6) The `NombreTenant` doc-comments claimed null **iff** `IdTenant`
+  is null, which is false for the D13 orphan; both `Contratos.cs` and `NombreDeTenantAsync` now
+  state the two real cases. The "never fabricate `Plataforma`" rule is unchanged.
 
 ---
 

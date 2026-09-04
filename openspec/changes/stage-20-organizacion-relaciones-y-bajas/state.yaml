@@ -414,7 +414,38 @@ phases:
       instead of loading the entity and validate scope on the projected IdTenant,
       preserving BuscarX's 404-then-ADR-8 order); the four write paths cost one
       extra read. The single-round-trip budget of TO-R1/UT-R1 is about the
-      LISTINGS, which are the ones that scale with row count. Slices 2-5 pending.
+      LISTINGS, which are the ones that scale with row count. JUDGMENT-DAY ROUND
+      1 (task 1.15) CORRECTED SIX CONFIRMED FINDINGS, three of them with new
+      mutation evidence (M7-M9 in tasks.md): (1) IgnoreQueryFilters is applied at
+      QUERY level, so incluirEliminados=true also stripped the soft-delete filter
+      from the correlated tenant-name subquery and the same account showed a
+      soft-deleted tenant's name there while returning null on the other two
+      paths — the subquery now carries an explicit t.DeletedAt == null and the
+      ADR-6 IgnoreQueryFilters call is untouched; (2) every non-listing response
+      path shipped untested (return null; in NombreDeTenantAsync left the whole
+      suite green), closed with three readback tests over
+      Obtener/Actualizar/Suspender/Reactivar of tenant, Obtener/Actualizar of
+      empresa and punto de venta, and the POST 201 / GET {id} / PUT bodies of
+      usuario, with pairwise-distinct values per rule 12b; (3) the three
+      re-projections after SaveChangesAsync used FirstAsync (500) where the
+      sibling read paths return a domain 404 — all three now use
+      FirstOrDefaultAsync + ErrorDominio.NoEncontrado, which is what slice 4's
+      concurrent deleters need; (4) V9 IS NOT LITERALLY SATISFIED FOR USUARIOS
+      and is recorded as Reconciliación 8 in tasks.md instead of being patched
+      away: the criterion means "the projection adds no round trip", the usuarios
+      listing costs 2 because it is the only PAGINATED listing, and that second
+      CountAsync predates this change; the pagination was NOT touched and
+      specs/usuarios-tenant-scoping/spec.md:14-15 and :29-32 are left
+      byte-identical and marked superseded, exactly as Reconciliación 1 handles
+      OD6; (5) RazonSocialEmpresa's e.Id == p.IdEmpresa correlation had no
+      deterministic kill because every fixture tenant owned exactly one empresa —
+      task 1.8 now seeds a second empresa OF THE SAME TENANT with its own punto
+      de venta (rule 12c); (6) the NombreTenant doc-comments published a false
+      contract (null iff IdTenant is null) that the D13 orphan violates — both
+      Contratos.cs and NombreDeTenantAsync now state the two real cases, and the
+      never-fabricate-"Plataforma" rule is unchanged. ZERO SCHEMA HELD ACROSS THE
+      CORRECTION: no migration, no DDL, InicializadorDeBaseDeDatos.cs /
+      Politicas.cs / ManejadorDeErrores.cs still untouched. Slices 2-5 pending.
   verify:
     status: pending
     artifact: verify-report.md
