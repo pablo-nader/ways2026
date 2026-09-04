@@ -535,21 +535,21 @@ notes:
   deferred_with_reopen_conditions:
     - Force/override delete for a used entity — suspension is the existing
       lever; an override needs an audit ceremony this stage would design
-      blind. REOPEN: the first real support case that needs it.
+      blind. REOPEN — the first real support case that needs it.
     - Undelete/restore endpoint — rows are recoverable by hand and
       EstadoTenant.Baja is deliberately unreachable from suspend/reactivate.
-      REOPEN: its own change, with its own guard question.
+      REOPEN — its own change, with its own guard question.
     - Retro-guarding the other unguarded soft deletes (ServicioDeCatalogo<T>,
       Clientes, Proveedores, Articulos, Ofertas). InspectorDeUso is designed
-      entity-agnostic so adoption is a one-line change. REOPEN: a later stage.
-    - Estado/suspension for empresa and punto de venta. REOPEN: explicit owner
+      entity-agnostic so adoption is a one-line change. REOPEN — a later stage.
+    - Estado/suspension for empresa and punto de venta. REOPEN — explicit owner
       request.
-    - Server-side pagination/filtering for the four root lists (decision 7:
+    - Server-side pagination/filtering for the four root lists (decision 7 —
       when the client-side filter stops being viable, the unbounded list is
-      what broke, and all four screens move together). REOPEN: list size.
+      what broke, and all four screens move together). REOPEN — list size.
     - A minimum-administrators-per-tenant invariant
       (ultimo_admin_del_tenant) — flagged in the proposal question round
-      rather than invented autonomously. REOPEN: owner answer.
+      rather than invented autonomously. REOPEN — owner answer.
   known_trap_from_explore: >-
     The structured 'phases:' block of this file must be kept ACCURATE by every
     later phase — stage-18's state.yaml left it stale while the real progress
