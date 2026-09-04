@@ -547,6 +547,32 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
     public async Task CadaCampoPosicionalDeLosCuatroListadosSeLeeDeVueltaConValoresDistintos()
     {
         var sufijo = Guid.NewGuid().ToString("N")[..8];
+
+        // Relleno DESBALANCEADO antes del tenant que se lee: cada tenant de relleno se lleva una
+        // cantidad distinta de empresas, puntos de venta y usuarios, así las cuatro secuencias de
+        // identidad se desincronizan entre sí. Sin esto, id, idTenant e idEmpresa avanzarían en
+        // lockstep y podrían COINCIDIR, que es exactamente el caso en el que un intercambio de
+        // argumentos posicionales sobrevive (mutation-proof-tests regla 12b). Además empuja el id
+        // del tenant bajo prueba por encima de los tres contadores, de forma determinística y sin
+        // depender del orden en que xUnit haya corrido el resto de la clase.
+        for (var i = 0; i < 3; i++)
+        {
+            var relleno = await SembrarTenantAsync($"Readback-relleno-{i}-{sufijo}");
+
+            for (var j = 0; j < 2; j++)
+            {
+                var empresaRelleno = await SembrarEmpresaAsync(
+                    relleno.Tenant.Id, $"Relleno {i}-{j} {sufijo} SRL");
+                await SembrarPuntoVentaAsync(
+                    relleno.Tenant.Id, empresaRelleno.Id, $"Relleno local {i}-{j} {sufijo}");
+                await SembrarUsuarioAsync(
+                    relleno.Tenant.Id, $"relleno-{i}-{j}-{sufijo}", RolConocido.Vendedor);
+            }
+
+            await SembrarPuntoVentaAsync(
+                relleno.Tenant.Id, relleno.Empresa.Id, $"Relleno local extra {i} {sufijo}");
+        }
+
         var a = await SembrarTenantAsync(
             $"Readback-A-{sufijo}",
             razonSocialEmpresa: $"Readback empresa uno {sufijo} SRL",
@@ -618,6 +644,9 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         Assert.Equal(a.PuntoVenta.Id, punto.Id);
         Assert.Equal(a.Tenant.Id, punto.IdTenant);
         Assert.Equal(a.Empresa.Id, punto.IdEmpresa);
+        Assert.NotEqual(punto.Id, punto.IdTenant);
+        Assert.NotEqual(punto.Id, punto.IdEmpresa);
+        Assert.NotEqual(punto.IdTenant, punto.IdEmpresa);
         Assert.Equal($"Readback local uno {sufijo}", punto.Nombre);
         Assert.Equal($"Domicilio {sufijo}", punto.Domicilio);
         Assert.Equal($"Horario {sufijo}", punto.Horario);
@@ -634,6 +663,8 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         Assert.NotNull(pagina);
         var usuario = Assert.Single(pagina!.Items, u => u.Id == a.Admin.Id);
         Assert.Equal(a.Admin.Id, usuario.Id);
+        Assert.NotEqual(usuario.Id, usuario.IdTenant);
+        Assert.NotEqual(usuario.Id, usuario.RolId);
         Assert.Equal($"readback-admin-{sufijo}", usuario.Usuario);
         Assert.Equal(a.Admin.Mail, usuario.Mail);
         Assert.Equal((int)RolConocido.Admin, usuario.RolId);
