@@ -116,7 +116,10 @@ public class ServicioDeUsuarios(
     /// consulta puntual y solo cuando la cuenta pertenece a un tenant.</summary>
     private async Task<string?> NombreDeTenantAsync(int? idTenant, CancellationToken ct) =>
         idTenant is int id
-            ? await db.Tenants.Where(t => t.Id == id).Select(t => t.Nombre).FirstOrDefaultAsync(ct)
+            ? await db.Tenants
+                .Where(t => t.Id == id && t.DeletedAt == null)
+                .Select(t => t.Nombre)
+                .FirstOrDefaultAsync(ct)
             : null;
 
     public async Task<UsuarioListado> CrearAsync(CrearUsuario datos, CancellationToken ct = default)

@@ -47,6 +47,12 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
             .Select(ProyeccionDeTenant)
             .ToListAsync(ct);
 
+    /// <summary>Es también la relectura que usan las escrituras: los contadores no viven en la
+    /// entidad, así que el único lugar donde están es la consulta. Es una ida extra sobre una
+    /// acción de plataforma puntual — el presupuesto de "una sola consulta" es el de los LISTADOS,
+    /// que son los que escalan con la cantidad de filas. Si la fila quedó invisible entre la
+    /// escritura y esta relectura, corresponde el mismo 404 de dominio que dan las lecturas, no un
+    /// 500.</summary>
     public async Task<TenantListado> ObtenerTenantAsync(int id, CancellationToken ct = default) =>
         await db.Tenants.Where(t => t.Id == id).Select(ProyeccionDeTenant).FirstOrDefaultAsync(ct)
             ?? throw ErrorDominio.NoEncontrado($"No existe el tenant {id}.");
@@ -60,7 +66,7 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
         tenant.UpdatedAt = reloj.Ahora;
 
         await db.SaveChangesAsync(ct);
-        return await ProyectarTenantAsync(tenant.Id, ct);
+        return await ObtenerTenantAsync(tenant.Id, ct);
     }
 
     public Task<TenantListado> SuspenderTenantAsync(int id, CancellationToken ct = default) =>
@@ -92,17 +98,8 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
             await db.SaveChangesAsync(ct);
         }
 
-        return await ProyectarTenantAsync(tenant.Id, ct);
+        return await ObtenerTenantAsync(tenant.Id, ct);
     }
-
-    /// <summary>Reproyecta después de escribir: los contadores no viven en la entidad, así que el
-    /// único lugar donde están es la consulta. Es una ida extra sobre una acción de plataforma
-    /// puntual — el presupuesto de "una sola consulta" es el de los LISTADOS, que son los que
-    /// escalan con la cantidad de filas. Si entre la escritura y esta relectura la fila quedó
-    /// invisible, corresponde el mismo 404 de dominio que dan las lecturas, no un 500.</summary>
-    private async Task<TenantListado> ProyectarTenantAsync(int id, CancellationToken ct) =>
-        await db.Tenants.Where(t => t.Id == id).Select(ProyeccionDeTenant).FirstOrDefaultAsync(ct)
-            ?? throw ErrorDominio.NoEncontrado($"No existe el tenant {id}.");
 
     private async Task<Tenant> BuscarTenantAsync(int id, CancellationToken ct) =>
         await db.Tenants.FirstOrDefaultAsync(t => t.Id == id, ct)
@@ -114,14 +111,23 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
     /// <see cref="Empresa"/> no tiene propiedad de navegación al tenant (design D13, hecho 1): no
     /// hay nada a lo que hacerle punto. De paso evita el INNER JOIN que borraría la fila cuando el
     /// tenant está dado de baja — ahí el nombre queda en <c>null</c> y la empresa se sigue
-    /// listando como anomalía en vez de desaparecer.</summary>
+    /// listando como anomalía en vez de desaparecer.
+    ///
+    /// El <c>t.DeletedAt == null</c> va explícito y no se apoya en el filtro ambiente
+    /// <c>"BajaLogica"</c>: EF aplica <c>IgnoreQueryFilters</c> a nivel CONSULTA, así que la
+    /// consulta externa que lo pidiera se lo sacaría también a esta subconsulta correlacionada y
+    /// el huérfano pasaría a mostrar el nombre de un dueño dado de baja. Vale igual para las dos
+    /// subconsultas de <see cref="ProyeccionDePuntoVenta"/>.</summary>
     private Expression<Func<Empresa, EmpresaListado>> ProyeccionDeEmpresa => e => new EmpresaListado(
         e.Id,
         e.IdTenant,
         e.RazonSocial,
         e.NombreFantasia,
         e.Cuit,
-        db.Tenants.Where(t => t.Id == e.IdTenant).Select(t => t.Nombre).FirstOrDefault());
+        db.Tenants
+            .Where(t => t.Id == e.IdTenant && t.DeletedAt == null)
+            .Select(t => t.Nombre)
+            .FirstOrDefault());
 
     public async Task<IReadOnlyList<EmpresaListado>> ListarEmpresasAsync(CancellationToken ct = default) =>
         await db.Empresas
@@ -192,8 +198,14 @@ public class ServicioDeOrganizacion(IWaysDbContext db, IRelojDelSistema reloj, I
         p.Instagram,
         p.Facebook,
         p.Web,
-        db.Tenants.Where(t => t.Id == p.IdTenant).Select(t => t.Nombre).FirstOrDefault(),
-        db.Empresas.Where(e => e.Id == p.IdEmpresa).Select(e => e.RazonSocial).FirstOrDefault());
+        db.Tenants
+            .Where(t => t.Id == p.IdTenant && t.DeletedAt == null)
+            .Select(t => t.Nombre)
+            .FirstOrDefault(),
+        db.Empresas
+            .Where(e => e.Id == p.IdEmpresa && e.DeletedAt == null)
+            .Select(e => e.RazonSocial)
+            .FirstOrDefault());
 
     public async Task<IReadOnlyList<PuntoVentaListado>> ListarPuntosVentaAsync(CancellationToken ct = default) =>
         await db.PuntosVenta

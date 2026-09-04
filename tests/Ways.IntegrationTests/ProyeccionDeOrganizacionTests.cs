@@ -35,6 +35,23 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
 
+    /// <summary>Los tres contadores que siembran las dos pruebas de readback sobre el tenant que
+    /// leen: 2 empresas, 3 puntos de venta y 4 usuarios. Distintos entre sí para que un
+    /// intercambio posicional entre ellos muera (<c>mutation-proof-tests</c> regla 12b).</summary>
+    private const int EmpresasDelTenantLeido = 2;
+    private const int PuntosVentaDelTenantLeido = 3;
+    private const int UsuariosDelTenantLeido = 4;
+
+    /// <summary>Tenants de relleno que se siembran ANTES del tenant que se lee. Es
+    /// <c>UsuariosDelTenantLeido</c> a propósito: como la secuencia de identidad es monótona, el
+    /// tenant bajo prueba queda con un id estrictamente mayor que el más grande de los tres
+    /// contadores, por construcción y sin depender de ninguna fila que la prueba no siembre.
+    /// Eso es lo que hace que un intercambio posicional entre el id y un contador muera.</summary>
+    private const int TenantsDeRelleno = UsuariosDelTenantLeido;
+
+    private static readonly int[] ContadoresSembrados =
+        [EmpresasDelTenantLeido, PuntosVentaDelTenantLeido, UsuariosDelTenantLeido];
+
     /// <summary>El servidor serializa enums como texto (<c>JsonStringEnumConverter</c>) y el
     /// <c>HttpClient</c> de prueba no hereda esa configuración — mismo criterio, y misma
     /// trampa de <c>PropertyNameCaseInsensitive</c>, que <c>OrganizacionTests.OpcionesJson</c>
@@ -371,8 +388,11 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
     /// una sola empresa por tenant, un mutante que correlacionara por <c>e.IdTenant == p.IdTenant</c>
     /// devolvería la misma razón social y sobreviviría. Por eso el tenant A lleva una SEGUNDA
     /// empresa con su propio punto de venta. MUTACIÓN registrada: correlacionar por
-    /// <c>e.IdTenant == p.IdTenant</c> hace que los dos puntos de venta de A reporten la misma
-    /// razón social y una de las dos aserciones se cae, cualquiera sea la fila que elija la base.
+    /// <c>e.IdTenant == p.IdTenant</c> hace que los dos puntos de venta de A reporten una razón
+    /// social que no es la suya y la prueba se cae — observado ROJO al correrla. La muerte no se
+    /// afirma como universal: un <c>FirstOrDefault</c> sin <c>OrderBy</c> no le debe a nadie
+    /// devolver la MISMA fila en cada evaluación correlacionada, así que en teoría el mutante
+    /// podría acertarle a las dos empresas a la vez.
     /// </summary>
     [Fact]
     public async Task LosListadosDeEmpresasYPuntosDeVentaLlevanLosNombresDeSusDuenios()
@@ -559,8 +579,11 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
     /// Task 1.11 (<c>mutation-proof-tests</c> regla 12b) — cada campo POSICIONAL de los cuatro
     /// DTOs de listado se lee de vuelta con valores distintos entre sí, para que un argumento
     /// intercambiado en el constructor posicional muera acá en vez de sobrevivir sobre valores
-    /// iguales. Los tres contadores del tenant valen 2, 3 y 4, y el <c>Id</c> se afirma
-    /// explícitamente mayor que 4 para que un swap contra un contador tampoco pueda pasar.
+    /// iguales. Los tres contadores del tenant son <see cref="EmpresasDelTenantLeido"/>,
+    /// <see cref="PuntosVentaDelTenantLeido"/> y <see cref="UsuariosDelTenantLeido"/>, y se afirma
+    /// que el <c>Id</c> no coincide con ninguno de los tres para que un swap contra un contador
+    /// tampoco pueda pasar. La cota la garantiza el relleno que siembra la propia prueba
+    /// (<see cref="TenantsDeRelleno"/>), no ninguna fila del seed de producción.
     /// </summary>
     [Fact]
     public async Task CadaCampoPosicionalDeLosCuatroListadosSeLeeDeVueltaConValoresDistintos()
@@ -574,7 +597,7 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         // argumentos posicionales sobrevive (mutation-proof-tests regla 12b). Además empuja el id
         // del tenant bajo prueba por encima de los tres contadores, de forma determinística y sin
         // depender del orden en que xUnit haya corrido el resto de la clase.
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < TenantsDeRelleno; i++)
         {
             var relleno = await SembrarTenantAsync($"Readback-relleno-{i}-{sufijo}");
 
@@ -632,7 +655,7 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         // --- TenantListado: 7 campos ---
         var tenant = await LeerTenantAsync(cliente, a.Tenant.Id);
         Assert.Equal(a.Tenant.Id, tenant.Id);
-        Assert.True(tenant.Id > 4, "el id tiene que ser distinguible de los tres contadores");
+        Assert.DoesNotContain(tenant.Id, ContadoresSembrados);
         Assert.Equal($"Readback-A-{sufijo}", tenant.Nombre);
         Assert.Equal(EstadoTenant.Activo, tenant.Estado);
         // timestamptz redondea a microsegundos, así que la igualdad exacta contra el valor en
@@ -640,9 +663,9 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         Assert.True(
             (tenant.CreatedAt - a.Tenant.CreatedAt).Duration() < TimeSpan.FromSeconds(1),
             "createdAt tiene que ser el del tenant sembrado");
-        Assert.Equal(2, tenant.CantidadEmpresas);
-        Assert.Equal(3, tenant.CantidadPuntosVenta);
-        Assert.Equal(4, tenant.CantidadUsuarios);
+        Assert.Equal(EmpresasDelTenantLeido, tenant.CantidadEmpresas);
+        Assert.Equal(PuntosVentaDelTenantLeido, tenant.CantidadPuntosVenta);
+        Assert.Equal(UsuariosDelTenantLeido, tenant.CantidadUsuarios);
 
         // --- EmpresaListado: 6 campos ---
         var empresas = await cliente.GetFromJsonAsync<List<EmpresaListado>>("/api/empresas", OpcionesJson);
@@ -838,14 +861,107 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         }
     }
 
+    // ---- ronda 2 de judgment-day: el huérfano en TODOS los caminos de organización ------------
+
+    /// <summary>
+    /// Espejo del lado de organización de
+    /// <see cref="UnaCuentaCuyoTenantFueDadoDeBajaNoTraeNombreDeTenantEnNingunoDeLosTresCaminos"/>:
+    /// las cláusulas bajo prueba son los <c>DeletedAt == null</c> EXPLÍCITOS de las tres
+    /// subconsultas de dueño (tenant de empresa, tenant de punto de venta, empresa de punto de
+    /// venta). Se afirma que el huérfano se rinde igual por el LISTADO y por el DETALLE —la fila
+    /// se sigue viendo con el nombre del dueño en <c>null</c>, design D13— y que el hermano vivo
+    /// trae su nombre en el mismo request: un predicado que apagara la proyección entera también
+    /// pasaría la aserción de nulidad, así que sola no discrimina.
+    ///
+    /// SIN evidencia de mutación, y se dice en vez de fingirla. Las tres mutaciones se CORRIERON,
+    /// no se razonaron: borrando un predicado por vez y corriendo la clase entera, las tres
+    /// SOBREVIVIERON (12/12 en verde cada una). Es el resultado esperado: hoy ningún camino de
+    /// <c>ServicioDeOrganizacion</c> apaga el filtro ambiente <c>"BajaLogica"</c> —no hay
+    /// <c>incluirEliminados</c> ni <c>IgnoreQueryFilters</c> en el servicio—, así que el filtro
+    /// produce el mismo resultado y la cláusula todavía no tiene nada propio que probar. Los
+    /// predicados son defensa en profundidad para el slice 4, que agrega los escritores de baja
+    /// sobre estas mismas entidades; lo que esta prueba fija hoy es el COMPORTAMIENTO esperado,
+    /// para que ese slice tenga contra qué mutar.
+    /// </summary>
+    [Fact]
+    public async Task LosHuerfanosDeOrganizacionSeRindenIgualPorElListadoYPorElDetalle()
+    {
+        var sufijo = Guid.NewGuid().ToString("N")[..8];
+
+        var huerfana = await SembrarTenantAsync($"Org-huerfano-A-{sufijo}");
+        var viva = await SembrarTenantAsync($"Org-huerfano-B-{sufijo}");
+
+        // Empresa dada de baja con su punto de venta vivo: es el único huérfano que prueba la
+        // tercera subconsulta (empresa de punto de venta), que no depende de la baja del tenant.
+        var empresaSinDuenio = await SembrarEmpresaAsync(viva.Tenant.Id, $"Org anexo {sufijo} SRL");
+        var puntoSinEmpresa = await SembrarPuntoVentaAsync(
+            viva.Tenant.Id, empresaSinDuenio.Id, $"Org local sin empresa {sufijo}");
+
+        await DarDeBajaAlTenantAsync(huerfana.Tenant.Id);
+        await DarDeBajaALaEmpresaAsync(empresaSinDuenio.Id);
+
+        using var cliente = await ClienteComoRootAsync();
+
+        var empresas = await cliente.GetFromJsonAsync<List<EmpresaListado>>("/api/empresas", OpcionesJson);
+        Assert.NotNull(empresas);
+        AfirmarEmpresaHuerfana(Assert.Single(empresas!, e => e.Id == huerfana.Empresa.Id));
+        Assert.Equal(
+            viva.Tenant.Nombre,
+            Assert.Single(empresas!, e => e.Id == viva.Empresa.Id).NombreTenant);
+
+        AfirmarEmpresaHuerfana(await LeerCuerpoAsync<EmpresaListado>(
+            await cliente.GetAsync($"/api/empresas/{huerfana.Empresa.Id}")));
+
+        var puntos = await cliente.GetFromJsonAsync<List<PuntoVentaListado>>("/api/puntos-venta", OpcionesJson);
+        Assert.NotNull(puntos);
+        AfirmarPuntoSinTenant(Assert.Single(puntos!, p => p.Id == huerfana.PuntoVenta.Id));
+        AfirmarPuntoSinEmpresa(Assert.Single(puntos!, p => p.Id == puntoSinEmpresa.Id));
+        Assert.Equal(
+            viva.Tenant.Nombre,
+            Assert.Single(puntos!, p => p.Id == viva.PuntoVenta.Id).NombreTenant);
+
+        AfirmarPuntoSinTenant(await LeerCuerpoAsync<PuntoVentaListado>(
+            await cliente.GetAsync($"/api/puntos-venta/{huerfana.PuntoVenta.Id}")));
+        AfirmarPuntoSinEmpresa(await LeerCuerpoAsync<PuntoVentaListado>(
+            await cliente.GetAsync($"/api/puntos-venta/{puntoSinEmpresa.Id}")));
+
+        void AfirmarEmpresaHuerfana(EmpresaListado empresa)
+        {
+            Assert.Equal(huerfana.Tenant.Id, empresa.IdTenant);
+            Assert.Null(empresa.NombreTenant);
+            Assert.Equal(huerfana.Empresa.RazonSocial, empresa.RazonSocial);
+        }
+
+        void AfirmarPuntoSinTenant(PuntoVentaListado punto)
+        {
+            Assert.Equal(huerfana.Tenant.Id, punto.IdTenant);
+            Assert.Null(punto.NombreTenant);
+            // La empresa sigue viva: el nombre que falta es solo el del tenant.
+            Assert.Equal(huerfana.Empresa.RazonSocial, punto.RazonSocialEmpresa);
+        }
+
+        void AfirmarPuntoSinEmpresa(PuntoVentaListado punto)
+        {
+            Assert.Equal(empresaSinDuenio.Id, punto.IdEmpresa);
+            Assert.Null(punto.RazonSocialEmpresa);
+            // El tenant sigue vivo: el nombre que falta es solo el de la empresa.
+            Assert.Equal(viva.Tenant.Nombre, punto.NombreTenant);
+        }
+    }
+
     // ---- ronda 1 de judgment-day: readback de los caminos que NO son el listado ---------------
 
     /// <summary>
-    /// <c>mutation-proof-tests</c> regla 12b sobre los caminos de respuesta que el slice dejaba sin
-    /// leer: detalle, edición, suspensión y reactivación devuelven el MISMO record que el listado,
-    /// y ningún test leía de vuelta los campos nuevos por esos caminos (reemplazar el cuerpo de la
-    /// proyección por constantes sobrevivía a la suite entera). Los tres contadores valen 2, 3 y 4
-    /// —distintos entre sí y distintos del id— para que un intercambio posicional muera acá.
+    /// Lo que agrega esta prueba es el CABLEADO DE LOS ENDPOINTS que no son el listado. El cuerpo
+    /// de <c>ProyeccionDeTenant</c> ya lo lee de vuelta campo a campo la task 1.11 a través de
+    /// <c>GET /api/plataforma/tenants</c>, así que vaciarlo NO sobrevive a la suite. Lo que ningún
+    /// test cubría es que <c>GET {id}</c>, <c>PUT</c>, <c>suspender</c> y <c>reactivar</c> devuelvan
+    /// ESE record proyectado y no uno armado aparte —con los contadores en cero, el nombre viejo o
+    /// el estado anterior—: acá se afirman los siete campos por los cuatro caminos.
+    ///
+    /// SIN evidencia de mutación, y se dice en vez de fingirla: la tabla M no le adjudica ninguna.
+    /// Los tres contadores valen 2, 3 y 4 —distintos entre sí y distintos del id— para que un
+    /// intercambio posicional (<c>mutation-proof-tests</c> regla 12b) muera acá igual.
     /// </summary>
     [Fact]
     public async Task ElDetalleYLasEscriturasDeTenantDevuelvenLosSieteCamposProyectados()
@@ -893,15 +1009,15 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         void AfirmarTenant(TenantListado tenant, string nombreEsperado, EstadoTenant estadoEsperado)
         {
             Assert.Equal(a.Tenant.Id, tenant.Id);
-            Assert.True(tenant.Id > 4, "el id tiene que ser distinguible de los tres contadores");
+            Assert.DoesNotContain(tenant.Id, ContadoresSembrados);
             Assert.Equal(nombreEsperado, tenant.Nombre);
             Assert.Equal(estadoEsperado, tenant.Estado);
             Assert.True(
                 (tenant.CreatedAt - a.Tenant.CreatedAt).Duration() < TimeSpan.FromSeconds(1),
                 "createdAt tiene que ser el del tenant sembrado");
-            Assert.Equal(2, tenant.CantidadEmpresas);
-            Assert.Equal(3, tenant.CantidadPuntosVenta);
-            Assert.Equal(4, tenant.CantidadUsuarios);
+            Assert.Equal(EmpresasDelTenantLeido, tenant.CantidadEmpresas);
+            Assert.Equal(PuntosVentaDelTenantLeido, tenant.CantidadPuntosVenta);
+            Assert.Equal(UsuariosDelTenantLeido, tenant.CantidadUsuarios);
         }
     }
 
@@ -1041,10 +1157,12 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
     /// <summary>Relleno DESBALANCEADO, mismo criterio que la task 1.11: cada tenant de relleno se
     /// lleva una cantidad distinta de empresas, puntos de venta y usuarios, así las cuatro
     /// secuencias de identidad se desincronizan y <c>id</c>, <c>idTenant</c> e <c>idEmpresa</c>
-    /// quedan distintos POR CONSTRUCCIÓN, no por el orden en que xUnit corrió la clase.</summary>
+    /// quedan distintos POR CONSTRUCCIÓN, no por el orden en que xUnit corrió la clase. Son
+    /// <see cref="TenantsDeRelleno"/> tenants para que además el id del tenant que se lee quede
+    /// por encima del mayor de los tres contadores.</summary>
     private async Task SembrarRellenoDesbalanceadoAsync(string sufijo)
     {
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < TenantsDeRelleno; i++)
         {
             var relleno = await SembrarTenantAsync($"Relleno-{i}-{sufijo}");
 
