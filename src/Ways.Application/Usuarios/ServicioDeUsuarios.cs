@@ -75,7 +75,9 @@ public class ServicioDeUsuarios(
             .Take(tamanio)
             .Select(u => new UsuarioListado(
                 u.Id, u.NombreUsuario, u.Mail, u.RolId,
-                u.Rol!.Nombre, u.Estado, u.UltimaConexion, u.CreatedAt))
+                u.Rol!.Nombre, u.Estado, u.UltimaConexion, u.CreatedAt,
+                u.IdTenant,
+                db.Tenants.Where(t => t.Id == u.IdTenant).Select(t => t.Nombre).FirstOrDefault()))
             .ToListAsync(ct);
 
         return new PaginaDe<UsuarioListado>(items, total, pagina, tamanio);
@@ -89,8 +91,21 @@ public class ServicioDeUsuarios(
 
         return new UsuarioListado(
             usuario.Id, usuario.NombreUsuario, usuario.Mail, usuario.RolId,
-            usuario.Rol!.Nombre, usuario.Estado, usuario.UltimaConexion, usuario.CreatedAt);
+            usuario.Rol!.Nombre, usuario.Estado, usuario.UltimaConexion, usuario.CreatedAt,
+            usuario.IdTenant, await NombreDeTenantAsync(usuario.IdTenant, ct));
     }
+
+    /// <summary>El nombre del tenant de una cuenta, o <c>null</c> si la cuenta es de plataforma
+    /// (design D14, S1): <c>NombreTenant</c> es <c>null</c> si y solo si <c>IdTenant</c> lo es.
+    /// La etiqueta <c>"Plataforma"</c> NO se fabrica acá — es copia de pantalla, la pone la web:
+    /// el nombre de un tenant es texto libre y un tenant que se llamara justo "Plataforma" sería
+    /// indistinguible de una cuenta de plataforma. En el listado esto viaja como subconsulta
+    /// escalar correlacionada dentro del mismo <c>Select</c>; acá, sobre una sola fila, es una
+    /// consulta puntual y solo cuando la cuenta pertenece a un tenant.</summary>
+    private async Task<string?> NombreDeTenantAsync(int? idTenant, CancellationToken ct) =>
+        idTenant is int id
+            ? await db.Tenants.Where(t => t.Id == id).Select(t => t.Nombre).FirstOrDefaultAsync(ct)
+            : null;
 
     public async Task<UsuarioListado> CrearAsync(CrearUsuario datos, CancellationToken ct = default)
     {

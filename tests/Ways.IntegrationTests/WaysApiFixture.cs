@@ -235,7 +235,12 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
     /// setear y hasta un contexto en modo plataforma se topa con <c>WITH CHECK</c> — este
     /// helper es el único lugar donde ese cableado se arma a mano, así que es el único
     /// lugar donde se puede (y se pudo) olvidar.</summary>
-    public WaysDbContext CrearContextoDeAplicacion(ITenantActual tenantActual)
+    /// <param name="interceptoresExtra">Interceptores adicionales, además del de contexto de
+    /// tenant — el caso de uso es un contador de comandos (<c>DbCommandInterceptor</c>) cuando la
+    /// prueba mide idas a la base de una llamada de servicio puntual, sin el ruido de las
+    /// consultas de autenticación que dispara el pipeline HTTP.</param>
+    public WaysDbContext CrearContextoDeAplicacion(
+        ITenantActual tenantActual, params IInterceptor[] interceptoresExtra)
     {
         var opciones = new DbContextOptionsBuilder<WaysDbContext>()
             .UseNpgsql(AppConnectionString, npgsql =>
@@ -262,7 +267,7 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
                 npgsql.MapEnum<ResultadoFiscal>("resultado_fiscal");
                 npgsql.MapEnum<AmbienteFiscal>("ambiente_fiscal");
             })
-            .AddInterceptors(new InterceptorDeContextoDeTenant(tenantActual))
+            .AddInterceptors([new InterceptorDeContextoDeTenant(tenantActual), .. interceptoresExtra])
             .Options;
 
         return new WaysDbContext(opciones, tenantActual);
