@@ -102,6 +102,24 @@ carry the entire safety argument.**
    (`tasks.md`, `design.md:469`) through it: the property the criterion protects (no N+1, no second
    query per row, no extra round trip **caused by the projection**) is preserved and proven; only
    the absolute number for the one paginated listing differs.
+9. **S1's `iff` holds for the platform-vs-tenant distinction and is FALSE for the D13 orphan.**
+   The sentence *"`NombreTenant` MUST be `null` if and only if `IdTenant` is `null`"*
+   (`specs/usuarios-tenant-scoping/spec.md:8-9`) reads as a biconditional over every row. The
+   forward direction is what the API actually owes and is implemented and asserted: an account with
+   no tenant (`IdTenant is null`) never carries a name, and the literal `"Plataforma"` is never
+   fabricated server-side. The converse is **deliberately not true**: when the owning tenant is
+   soft-deleted, `IdTenant` is **non-null** and `NombreTenant` is **null**, because D13 chooses to
+   render the orphan as a visible anomaly instead of hiding the row — that is exactly what makes
+   slice 1 correct without slice 4's cascade and therefore independently mergeable. A consumer may
+   **not** read a null name as "this is platform staff"; `IdTenant` is the discriminator, which is
+   why the web's `"Plataforma"` copy (task 2.7) keys off `IdTenant`, never off the name. The spec
+   sentence and the *"Platform staff render as Plataforma"* scenario are left **byte-identical** —
+   deltas of this change are not edited mid-flight — and are **superseded by this reconciliation**,
+   the same handling Reconciliación 1 gives OD6 and Reconciliación 8 gives V9. Recorded in the code
+   at the two places that state the contract (`Usuarios/Contratos.cs`,
+   `ServicioDeUsuarios.NombreDeTenantAsync`), both of which name the two null cases instead of the
+   `iff`, and asserted by `ElListadoDeUsuariosLlevaElTenantDeCadaCuentaYNuncaFabricaLaEtiquetaPlataforma`
+   plus `UnaCuentaCuyoTenantFueDadoDeBajaNoTraeNombreDeTenantEnNingunoDeLosTresCaminos`.
 
 ## Binding Verify Criteria (all slices)
 
@@ -238,9 +256,11 @@ decouples slice 1 from slice 4's cascade and keeps Part A independently mergeabl
   stop being rendered and become the **filter keys**, named here so a reviewer does not read them as
   newly dead. *(TO-R1, TO-R2; design D13, Interfaces table)*
 - [x] 1.2 Modify `src/Ways.Application/Usuarios/Contratos.cs` — `UsuarioListado` gains
-  `int? IdTenant` and `string? NombreTenant`. **S1 is binding**: `NombreTenant` is `null` **iff**
-  `IdTenant` is `null`; the API **MUST NOT** fabricate the literal `"Plataforma"` — that copy is the
-  web's job (slice 2, task 2.7). *(UT-R1; design D14)*
+  `int? IdTenant` and `string? NombreTenant`. **S1 is binding as read through Reconciliación 9**,
+  not as a literal `iff`: what the API owes is the forward direction (`IdTenant is null` ⇒
+  `NombreTenant is null`, and the literal `"Plataforma"` **MUST NOT** be fabricated server-side —
+  that copy is the web's job, slice 2 task 2.7). The converse does **not** hold: the D13 orphan has
+  a non-null `IdTenant` and a null `NombreTenant`. *(UT-R1; design D14; Reconciliación 9)*
 - [x] 1.3 Modify `ServicioDeOrganizacion.ListarTenantsAsync` — three correlated `Count()` subqueries
   in the same `Select`. The `"BajaLogica"` filter applies inside the LINQ tree, so deleted children
   are excluded **for free** (assert it, do not assume it, task 1.9). `CantidadUsuarios` counts only
@@ -329,19 +349,36 @@ excludes ("if you cannot name a clause this change introduces, it is ordinary co
 
 ### Slice 1 delivery notes
 
-- **BUDGET OVERFLOW, REPORTED RATHER THAN ABSORBED.** Slice 1 landed at **947 authored changed
-  lines of code** (914 additions + 33 deletions over `src/` and `tests/`; the `openspec/` artifacts
-  are excluded from the threshold), against the estimate of **~390** and the operative budget of
-  **800** (OD1). **The estimate was wrong, not the implementation.** 766 of those lines are one
-  net-new file, `tests/Ways.IntegrationTests/ProyeccionDeOrganizacionTests.cs`, with **zero
-  deletions**: 517 lines of code, 106 of doc-comment and 36 of inline comment. The task list asks
-  for seven integration tests, one of which (1.11) must read back **35 positional fields** across
+- **BUDGET OVERFLOW, REPORTED RATHER THAN ABSORBED — AND THE OWNER RULED IT SHIPS AS ONE PR.**
+  The figures below are measured with `git diff main --stat -- src tests`; the `openspec/` artifacts
+  are excluded from the threshold. The estimate was **~390** and the operative budget **800** (OD1).
+  **The estimate was wrong, not the implementation.**
+
+  **Orchestrator decision, recorded verbatim:** *slice 1 ships as ONE PR at 1285 changed lines
+  against the 800-line budget (OD1), because production is only ~176 lines and the ~1085 test lines
+  are the evidence round 1's review demanded for exactly those 176 — splitting would separate the
+  proof from the claim and buy two more review cycles for no gain in review quality. The owner was
+  told the corrected number and offered the split.*
+
+  Measurement history, so no number in this file is stale:
+  - **After round 1** (the figures the decision above was taken on): **1285 changed lines**
+    (1252 insertions + 33 deletions), `ProyeccionDeOrganizacionTests.cs` at **1076 lines** with
+    **11 `[Fact]` methods**.
+  - **After round 2** (final): **1420 changed lines** (1386 insertions + 34 deletions), of which
+    production is **217** (185 + 32) across four files and tests are **1203**;
+    `ProyeccionDeOrganizacionTests.cs` is **1194 lines** with **12 `[Fact]` methods**, zero
+    deletions. The delta is round 2's own corrections: the fourth explicit `DeletedAt == null`
+    predicate set, the organization orphan readback test, and the reconciliation/doc-comment
+    honesty fixes. The decision does not change — the ratio it rests on (small production surface,
+    large demanded evidence) only got more pronounced.
+
+  The task list asks for tests one of which (1.11) must read back **35 positional fields** across
   four DTOs, and each of which must carry its named clause and its mutation rationale in the file.
-  The production change is only **172 changed lines** across four files. **No split point was
-  pre-authorized for slice 1**, so this is an orchestrator decision, not an apply-phase one: the
-  natural cut, if one is wanted, is production + `ServicioDeOrganizacion` tests (1.7-1.10) in PR 1a
-  and the `UsuarioListado` projection + tests (1.11-1.13) in PR 1b. Trimming the doc-comments to
-  fit was rejected: they are exactly the content a reviewer needs to check the mutation argument.
+  **No split point was pre-authorized for slice 1**, so this was an orchestrator decision, not an
+  apply-phase one: the natural cut, had one been wanted, was production + `ServicioDeOrganizacion`
+  tests (1.7-1.10) in PR 1a and the `UsuarioListado` projection + tests (1.11-1.13) in PR 1b.
+  Trimming the doc-comments to fit was rejected: they are exactly the content a reviewer needs to
+  check the mutation argument.
 
 - **Detail/edit endpoints re-project after writing.** `Obtener*`/`Actualizar*`/`Suspender`/
   `Reactivar` return the same listing records, and the counters and owner names do not live on the
@@ -377,6 +414,61 @@ excludes ("if you cannot name a clause this change introduces, it is ordinary co
   punto de venta. Killed by M9. (6) The `NombreTenant` doc-comments claimed null **iff** `IdTenant`
   is null, which is false for the D13 orphan; both `Contratos.cs` and `NombreDeTenantAsync` now
   state the two real cases. The "never fabricate `Plataforma`" rule is unchanged.
+
+- **Judgment-day, ronda 2 (task 1.15, FINAL round): seven items, seven fixes, four mutations RUN
+  and all four SURVIVED — recorded as survivors, not dressed up as kills.** (R2-1) The false `iff`
+  was still binding in the artifacts even though round 1 fixed the
+  two code doc-comments: registered as **Reconciliación 9** and task 1.2's wording now points at it;
+  `specs/usuarios-tenant-scoping/spec.md` is left **byte-identical**, the same handling
+  Reconciliación 1 and 8 give their superseded sentences. (R2-2) Round 1's `t.DeletedAt == null`
+  hardening was applied only to `ServicioDeUsuarios.ListarAsync`; the three owner-name subqueries of
+  `ServicioDeOrganizacion` and `ServicioDeUsuarios.NombreDeTenantAsync` still leaned on the ambient
+  filter. All four now carry the explicit predicate, with the rationale written once at
+  `ProyeccionDeEmpresa`. **NO mutation evidence is claimed for any of the four predicates, and the
+  new test says so in its own doc-comment.** The four mutations were nevertheless RUN
+  rather than reasoned about, per `mutation-proof-tests` rule 2 — each predicate deleted in turn,
+  rebuilt, `ProyeccionDeOrganizacionTests` run alone, **12/12 green every time**, then reverted:
+  `t.Id == e.IdTenant && t.DeletedAt == null` → `t.Id == e.IdTenant` **SURVIVED**;
+  `t.Id == p.IdTenant && t.DeletedAt == null` → `t.Id == p.IdTenant` **SURVIVED**;
+  `e.Id == p.IdEmpresa && e.DeletedAt == null` → `e.Id == p.IdEmpresa` **SURVIVED**; and in
+  `NombreDeTenantAsync`, `t.Id == id && t.DeletedAt == null` → `t.Id == id` **SURVIVED** (the
+  `GET /api/usuarios/{id}` arm of
+  `UnaCuentaCuyoTenantFueDadoDeBajaNoTraeNombreDeTenantEnNingunoDeLosTresCaminos` is the path that
+  clause serves, and it stayed green). That is the
+  expected outcome and the reason the finding was defence-in-depth, not a live defect: no
+  organization path strips `"BajaLogica"` today, so the ambient filter produces the identical
+  result and the clause has nothing of its own to prove yet. They are defence-in-depth for slice 4's
+  deletion writers, and the new
+  `LosHuerfanosDeOrganizacionSeRindenIgualPorElListadoYPorElDetalle` pins the expected D13 behaviour
+  (orphan visible with a null owner name, by listing AND by detail, for all three subqueries) so
+  slice 4 has something to mutate against. (R2-3) `ProyectarTenantAsync` had become byte-identical to
+  the public `ObtenerTenantAsync` after the C3 fix; the helper is deleted and the two write paths
+  call the public method, behaviour identical. (R2-4) The stale line counts in `state.yaml` and in
+  the budget note are replaced by measured figures and the orchestrator's verbatim one-PR decision.
+  (R2-5) `Assert.True(tenant.Id > 4)` passed by a margin of one that came from the production seed
+  the test never establishes: both occurrences now assert `Assert.DoesNotContain(tenant.Id,
+  ContadoresSembrados)`, and the bound is guaranteed by the test's own seeding — `TenantsDeRelleno`
+  is defined as the largest seeded counter, so the tenant under test lands strictly above all three
+  by monotonicity of the identity sequence. (R2-6) The organization readback test's doc-comment
+  claimed a mutation ("replacing the projection body with constants survived the whole suite") that
+  is false — `ProyeccionDeTenant` is the same expression object task 1.11 already reads back through
+  the listing. Corrected to its real added value: **endpoint wiring**, proving the four non-listing
+  routes return that projected record and not one built differently. No mutation is claimed and the
+  M table still lists none for it. (R2-7) M9's "cualquiera sea la fila que elija la base" was
+  stronger than SQL semantics guarantee for an unordered `FirstOrDefault`; softened to what was
+  actually observed (RED on this engine), with the theoretical gap named.
+
+- **CARRIED FORWARD TO SLICE 4, deliberately not patched in round 2.** Round 1's fix (3) made the
+  re-projection after `SaveChangesAsync` return a domain **404** instead of a 500 when the row went
+  invisible between write and re-read (`ServicioDeOrganizacion.ObtenerTenantAsync` as called by
+  `ActualizarTenantAsync`/`CambiarEstadoTenantAsync`, and the empresa/PV equivalents). That means a
+  caller can receive `404` for a write that **did** persist. It is **unreachable today** — no
+  soft-delete writer exists for tenants, empresas or puntos de venta — and the correct fix is a
+  **transaction boundary around write + re-projection**, not a patch to the re-read. **Slice 4 owns
+  it**: its design must decide whether the write and its re-projection share one transaction (so the
+  response can never contradict what was committed) or whether the write paths return the entity
+  they already hold instead of re-reading. Task 4.x must close this explicitly and say which of the
+  two it chose; leaving it as-is is not a valid outcome once the deleters exist.
 
 ---
 
@@ -576,6 +668,21 @@ confound). Do **not** add creation endpoints. This latency is reported to the ow
 
 **BINDING — OD6.** A cascade-deleted admin gets **401 `credenciales_invalidas`**, not 403. The
 `tenant-organization` scenario claiming 403 is superseded (Reconciliación 1).
+
+**BINDING — INPUT CARRIED FROM SLICE 1 (judgment-day ronda 2).** Slice 1's write paths
+(`ActualizarTenantAsync`, `CambiarEstadoTenantAsync`, `ActualizarEmpresaAsync`,
+`ActualizarPuntoVentaAsync`) **re-project after `SaveChangesAsync`** and return a domain `404` when
+the row went invisible between the write and the re-read — so a caller can get `404` for a write that
+persisted. That is unreachable until **this slice** adds the deleters, which is why it was not
+patched in slice 1's round 2. **This slice must close it deliberately** and record which of the two
+options it took: (a) put the write and its re-projection inside **one transaction**, or (b) have the
+write paths return the record they already hold instead of re-reading. Also add the **four**
+explicit `DeletedAt == null` predicates slice 1 shipped as defence-in-depth
+(`ServicioDeOrganizacion.ProyeccionDeEmpresa` ×1 and `ProyeccionDePuntoVenta` ×2,
+`ServicioDeUsuarios.NombreDeTenantAsync` ×1) to the U-row conjunct enumeration: each one **survived
+its mutation in round 2** because nothing strips `"BajaLogica"` on those paths today, and a
+deletion writer is exactly what makes them reachable — each one then needs its own kill. Leaving
+either item as-is is not a valid outcome for this slice.
 
 **BINDING — OD4.** A soft-deleted dependent still blocks (task 4.11).
 

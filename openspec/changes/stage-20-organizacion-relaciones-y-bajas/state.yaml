@@ -376,12 +376,25 @@ phases:
     notes: >-
       SLICE 1 IMPLEMENTED (tasks 1.1-1.14 checked; 1.15 judgment-day and 1.16 PR
       belong to the orchestrator). Branch feat/stage20-slice1-proyeccion-api off
-      main, 2 commits, ~470 changed lines (additions + deletions) against the
-      800-line budget. Six files: Organizacion/Contratos.cs,
+      main, measured with 'git diff main --stat -- src tests' and NOT estimated.
+      After judgment-day round 1, 1285 changed lines (1252 insertions plus 33
+      deletions) against the 800-line budget, with
+      tests/Ways.IntegrationTests/ProyeccionDeOrganizacionTests.cs at 1076 lines
+      and 11 [Fact] methods. After judgment-day round 2 (final), 1420 changed
+      lines (1386 insertions plus 34 deletions), of which production is 217 (185
+      plus 32) across four files and tests are 1203, with that same test file at
+      1194 lines and 12 [Fact] methods. ORCHESTRATOR DECISION, recorded verbatim
+      at the round-1 figures it was taken on - slice 1 ships as ONE PR at 1285
+      changed lines against the 800-line budget (OD1), because production is only
+      ~176 lines and the ~1085 test lines are the evidence round 1's review
+      demanded for exactly those 176; splitting would separate the proof from the
+      claim and buy two more review cycles for no gain in review quality. The
+      owner was told the corrected number and offered the split. Six files:
+      Organizacion/Contratos.cs,
       Organizacion/ServicioDeOrganizacion.cs, Usuarios/Contratos.cs,
       Usuarios/ServicioDeUsuarios.cs, WaysApiFixture.cs (one optional params
       IInterceptor[] parameter, zero call sites changed) and the new
-      tests/Ways.IntegrationTests/ProyeccionDeOrganizacionTests.cs (7 tests).
+      tests/Ways.IntegrationTests/ProyeccionDeOrganizacionTests.cs.
       ZERO-SCHEMA HELD AND VERIFIED, not assumed: zero files under Migraciones/
       in the diff, the last migration is still 20260822002214_FiscalArcaEtapa19a,
       'dotnet ef migrations has-pending-model-changes' reports "No changes have
