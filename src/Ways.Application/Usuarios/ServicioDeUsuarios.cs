@@ -75,7 +75,18 @@ public class ServicioDeUsuarios(
             .Take(tamanio)
             .Select(u => new UsuarioListado(
                 u.Id, u.NombreUsuario, u.Mail, u.RolId,
-                u.Rol!.Nombre, u.Estado, u.UltimaConexion, u.CreatedAt))
+                u.Rol!.Nombre, u.Estado, u.UltimaConexion, u.CreatedAt,
+                u.IdTenant,
+                // El `DeletedAt == null` va explícito y no se apoya en el filtro ambiente:
+                // `IgnoreQueryFilters` se aplica a nivel CONSULTA, así que con
+                // `incluirEliminados` la subconsulta también perdería el filtro y devolvería el
+                // nombre de un tenant dado de baja, discrepando del listado por defecto y de
+                // ObtenerAsync. Con el predicado propio, los tres caminos coinciden (design D13:
+                // el huérfano se muestra con nombre nulo).
+                db.Tenants
+                    .Where(t => t.Id == u.IdTenant && t.DeletedAt == null)
+                    .Select(t => t.Nombre)
+                    .FirstOrDefault()))
             .ToListAsync(ct);
 
         return new PaginaDe<UsuarioListado>(items, total, pagina, tamanio);
@@ -89,8 +100,27 @@ public class ServicioDeUsuarios(
 
         return new UsuarioListado(
             usuario.Id, usuario.NombreUsuario, usuario.Mail, usuario.RolId,
-            usuario.Rol!.Nombre, usuario.Estado, usuario.UltimaConexion, usuario.CreatedAt);
+            usuario.Rol!.Nombre, usuario.Estado, usuario.UltimaConexion, usuario.CreatedAt,
+            usuario.IdTenant, await NombreDeTenantAsync(usuario.IdTenant, ct));
     }
+
+    /// <summary>El nombre del tenant de una cuenta (design D14, S1). Viene <c>null</c> en dos
+    /// casos, no en uno: cuando la cuenta es de plataforma (<c>IdTenant</c> nulo) y cuando el
+    /// tenant dueño está dado de baja lógicamente — ahí <c>IdTenant</c> NO es nulo y el nombre
+    /// igual falta, porque D13 elige mostrar al huérfano como anomalía en vez de esconderlo. Un
+    /// consumidor no puede leer el nombre nulo como "es personal de plataforma": para eso está
+    /// <c>IdTenant</c>. La etiqueta <c>"Plataforma"</c> NO se fabrica acá — es copia de pantalla, la pone la web:
+    /// el nombre de un tenant es texto libre y un tenant que se llamara justo "Plataforma" sería
+    /// indistinguible de una cuenta de plataforma. En el listado esto viaja como subconsulta
+    /// escalar correlacionada dentro del mismo <c>Select</c>; acá, sobre una sola fila, es una
+    /// consulta puntual y solo cuando la cuenta pertenece a un tenant.</summary>
+    private async Task<string?> NombreDeTenantAsync(int? idTenant, CancellationToken ct) =>
+        idTenant is int id
+            ? await db.Tenants
+                .Where(t => t.Id == id && t.DeletedAt == null)
+                .Select(t => t.Nombre)
+                .FirstOrDefaultAsync(ct)
+            : null;
 
     public async Task<UsuarioListado> CrearAsync(CrearUsuario datos, CancellationToken ct = default)
     {

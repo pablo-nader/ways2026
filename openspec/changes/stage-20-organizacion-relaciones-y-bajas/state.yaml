@@ -1,0 +1,571 @@
+change: stage-20-organizacion-relaciones-y-bajas
+phase: propose
+status: done
+artifact_store: hybrid
+execution_mode: auto
+delivery_strategy: auto-chain
+chain_strategy: stacked-to-main
+review_budget_lines: 800
+db_gate: ZERO-SCHEMA-RATIFIED
+db_gate_approval: >-
+  RATIFIED 2026-09-04 by the orchestrator under the owner's explicit autonomous
+  mandate ("hace todo en modo autonomo"). RATIFICATION BASIS: CLAUDE.md's
+  mandatory DB gate governs "creating or modifying ANY database schema". This
+  stage creates and modifies NONE, so the gate is NOT TRIGGERED — there is no
+  model summary to present and nothing for the owner to approve. The four
+  binding verify criteria below are what keep that true; if ANY later phase
+  proposes DDL, a migration, a data statement or a seed change, the gate
+  REOPENS immediately and work STOPS for owner approval before that change is
+  written. The orchestrator independently verified the three load-bearing
+  claims in the tree before ratifying: EstadoTenant.Baja exists in
+  src/Ways.Domain/Organizacion/EstadoTenant.cs with the doc comment "Dado de
+  baja. No se elimina fisicamente: los datos quedan para exportacion";
+  20260801011312_Organizacion.cs:18 declares the enum as
+  'activo,baja,suspendido'; and IWaysDbContext.cs:153 exposes DatabaseFacade
+  but not IModel.
+  ---
+  PROPOSED 2026-09-04 by sdd-propose under the delegated autonomous mandate:
+  ZERO SCHEMA CHANGES for the whole stage — zero migrations, zero tables,
+  zero columns, zero enum values, zero ALTER, zero indexes, zero data
+  statements, zero seed changes. AWAITING OWNER RATIFICATION before slice 1.
+  BASIS (each item verified in the tree, not assumed): (1) deleted_at already
+  exists on tenants, empresas, puntos_venta and usuarios via EntidadBase, and
+  is configured per entity (TenantConfiguration.cs:33); (2) the "BajaLogica"
+  query filter is already installed on every EntidadBase descendant
+  (WaysDbContext.AplicarFiltroDeBajaLogica, :426-447); (3) the native
+  PostgreSQL enum estado_tenant was created with ALL THREE values
+  'activo,baja,suspendido' in the FIRST migration
+  (20260801011312_Organizacion.cs:18) — 'baja' is already in the database and
+  only its WRITER was missing, so decision 1 adds a writer, not a value;
+  (4) owner names and child counts are read-only projections over existing
+  FKs, and a projection is not a schema change. The section
+  'Modelo de datos propuesto — CERO CAMBIOS DE SCHEMA' of proposal.md IS THE
+  CONTRACT: any DDL or data statement proposed by a later phase is a scope
+  violation that REOPENS the gate and stops work for owner approval.
+  BINDING VERIFY CRITERIA: (a) no new file under
+  src/Ways.Infrastructure/Persistencia/Migraciones/ — the last migration of
+  the tree at propose time must STILL be the last one at verify;
+  (b) 'dotnet ef migrations has-pending-model-changes' clean;
+  (c) InicializadorDeBaseDeDatos.cs untouched; (d) zero physical deletes in
+  the diff (repository scan for ExecuteDelete, Remove(, RemoveRange( and
+  'DELETE FROM' over the four tables) — binding owner decision B1.
+  AUTHORIZATION SURFACE: Politicas.cs UNTOUCHED — all four DELETE routes
+  reuse the policy of the group they already belong to (SoloPlataforma,
+  GestionDeOrganizacion, and the existing usuarios policy). Zero new
+  policies. Precedent for a zero-DDL stage: stages 10, 11, 13 and 18.
+orchestrator_decisions:
+  OD1: >-
+    SESSION PREFLIGHT (decided before propose, not reopened by any phase):
+    execution_mode=auto, artifact_store=hybrid (openspec files AND Engram via
+    mem_save with capture_prompt:false), delivery_strategy=auto-chain,
+    chain_strategy=stacked-to-main, review_budget_lines=800. The 800-line
+    budget replaces the 400-line default of sdd-phase-common section E for
+    this change only; the five forecast slices all sit at roughly half of it,
+    so the budget risk is LOW and three split points are pre-authorized.
+  OD2: >-
+    LANGUAGE CONTRACT: every SDD artifact of this change is written in
+    ENGLISH (proposal.md, state.yaml, specs, design, tasks, reports).
+    C#/TS identifiers are English; database objects follow the Spanish
+    snake_case convention of docs/10-modelo-de-datos.md; user-facing API
+    messages and web copy stay in Spanish, following the target context
+    (the six new 409 messages are Spanish strings, their CODES are Spanish
+    snake_case per the existing ErrorDominio idiom).
+  OD3: >-
+    SCOPE SHAPE: the stage is TWO coherent parts under one change — Part A
+    (project the organization hierarchy in the root UI: owner names instead
+    of raw ids, a tenant column on usuarios, tenant/empresa filters, child
+    counts on tenants) and Part B (usage-guarded logical deletion for tenant,
+    empresa, punto de venta, plus alignment of the existing but unguarded
+    Usuario deletion). Slices 1-2 deliver Part A and 3-5 deliver Part B, and
+    they are INDEPENDENT ON PURPOSE: Part A ships standalone value if Part B
+    stalls, and slice 3 (the guard) is deliberately INERT — it has no caller
+    until slice 4 — so the guard can be reviewed on its own merits before
+    anything can invoke it.
+  OD4: >-
+    T3 ARBITRATED — A SOFT-DELETED DEPENDENT STILL BLOCKS. The sdd-design
+    launch prompt written by the orchestrator contained the line "a logically
+    deleted child must NOT block deletion", which CONTRADICTS what proposal.md
+    and the spec had already settled. The contradiction was the orchestrator's
+    own drafting error, not an open product question, and it is resolved in
+    favour of the proposal: a dependent the customer created and later deleted
+    STILL blocks. RATIONALE: the owner's binding words were "lo que sea que el
+    usuario ya haya operado" — the customer operated; deleting the row
+    afterwards does not rewind that history. It is also the fail-safe
+    direction (it over-blocks), and the permissive reading would let anyone
+    mass-delete their data and then delete the entity that held it. This is a
+    ONE-LINE REVERSIBLE KNOB, recorded as such: reversing it means adding
+    "AND d.deleted_at IS NULL" per branch, flipping one test, and regenerating
+    the N3 inventory golden. Note this rule is NOT in tension with S2 — the
+    usage guard counts history (deleted dependents count) while the structural
+    minimum counts live siblings (deleted siblings do not). Two different
+    questions, both failing safe.
+  OD5: >-
+    T1 ACCEPTED AS A KNOWN LATENCY, SCOPE NOT EXPANDED. Design established
+    that Ways has NO endpoint creating a second empresa or punto de venta —
+    OrganizacionEndpoints.cs exposes only GET and PUT for both, and
+    ServicioDeAprovisionamiento creates exactly one of each. Consequence: the
+    structural minimum fires on EVERY empresa/PV delete attempt through the
+    API, so empresa_en_uso and punto_venta_en_uso are reachable only below the
+    API layer, and empresa/PV deletion ships LATENT — correct, tested, and
+    unreachable until creation endpoints exist. This is the same shape as
+    EstadoTenant.Baja, which shipped in stage 1 and waited until now for its
+    writer. The orchestrator did NOT add creation endpoints: the owner asked
+    to be able to DELETE things created by mistake, not to create more, and
+    silently widening scope is the owner's call to make, not the
+    orchestrator's. sdd-tasks MUST NOT write API-level tests for those two
+    codes, and the latency MUST be reported to the owner at delivery.
+  OD6: >-
+    T2 ACCEPTED — design's correction stands over the proposal. A
+    cascade-deleted admin receives 401 credenciales_invalidas, NOT 403
+    tenant_suspendido: the login lookup runs under the "BajaLogica" query
+    filter with no IgnoreQueryFilters, so the user is simply not found.
+    Orchestrator verified ServicioDeAutenticacion.cs:74-75 declares
+    credenciales_invalidas with status 401. The proposal's Success Criterion
+    is wrong and design's version is the one tasks must implement.
+phases:
+  explore:
+    status: done
+    date: 2026-09-04
+    artifact: explore.md
+    depends_on: []
+    notes: >-
+      Triggered by the owner testing the running application: the root admin
+      surface shows tenants, empresas, puntos de venta and usuarios as four
+      unrelated flat lists, and nothing can be deleted except suspending a
+      tenant. VERIFIED, not assumed: the relationships are in the DTOs but
+      rendered as raw integers (Empresas.tsx:156, PuntosVenta.tsx:216-217);
+      UsuarioListado carries NO tenant field at all (Contratos.cs:19-27);
+      there is NO DELETE for tenant/empresa/punto de venta anywhere in the
+      API surface — OrganizacionEndpoints.cs:12-13 defers alta/baja to
+      ServicioDeAprovisionamiento (ADR-16) but AprovisionamientoEndpoints.cs
+      exposes ONLY POST /api/plataforma/tenants, so the delete path that
+      comment defers to was never implemented. CORRECTED THE OWNER'S REPORT
+      on one point: Usuario DOES already delete logically
+      (UsuariosEndpoints.cs:57, wired at Usuarios.tsx:120-122) — its gap is
+      the absence of any dependent guard, not the absence of the endpoint.
+      CENTRAL FINDING: every delete in this codebase is logical, so
+      DeleteBehavior.Restrict contributes ZERO protection and any
+      "blocked when in use" rule must be an explicit application check.
+      Three guard options compared; EF metadata via
+      IEntityType.GetReferencingForeignKeys() selected because a hand list
+      FAILS UNSAFE while metadata FAILS SAFE. Left three open questions
+      (cascade, structural minimums, Usuario guard), all recommended yes.
+  propose:
+    status: done
+    date: 2026-09-04
+    artifact: proposal.md
+    depends_on: [explore]
+    notes: >-
+      Nine numbered decisions: the explore's three open questions resolved
+      (cascade YES with a boundary, structural minimums YES with an ordering
+      rule, Usuario guard YES positioned after PoliticaDeRoles) plus six the
+      proposal had to take. NEW MATERIAL THE EXPLORE DID NOT FIND, in order
+      of impact: (a) EstadoTenant.Baja is a LATENT VALUE WITH ZERO WRITERS —
+      the enum declares it (EstadoTenant.cs:16), Tenant.PuedeOperar reads it,
+      login rejects it (ServicioDeAutenticacion.cs:141),
+      CambiarEstadoTenantAsync refuses to touch it
+      (ServicioDeOrganizacion.cs:67) and Tenants.tsx:12 documents its
+      absence, but 'Estado = EstadoTenant.' resolves ONLY to Activo, twice —
+      this is stage 17's "PRE latente" pattern already in the tree, and
+      tenant deletion is its natural writer (decision 1); (b) the B3
+      discriminator IS NOT UNIFORMLY APPLICABLE — 15 domain types do not
+      inherit EntidadBase and have NO created_at column at all (Stock,
+      StockLote, MovimientoStock, MovimientoCaja, MovimientoTesoreria,
+      ArqueoTurno, MovimientoCuentaCorriente,
+      MovimientoCuentaCorrienteProveedor, Auditoria, ArticuloEmpresa,
+      OfertaLista and the four Numeracion*), verified by reading Stock.cs and
+      ArticuloEmpresa.cs which carry no timestamp property whatsoever — hence
+      decision 4's THREE BUCKETS (timestamped / untimestamped / carve-out)
+      and the COMPLETENESS TEST that converts the "fails safe" argument into
+      a guarantee by failing the build on any unclassified dependent type;
+      (c) soft-deleting a tenant already degrades login correctly to 403
+      through the EXISTING 'tenant is null' branch, so decision 1 needs no
+      auth change; (d) raw parameterised SQL gives the DESIRED filter-bypass
+      semantics for free (a soft-deleted dependent still blocks, which is the
+      strictest reading of B2) while RLS still applies at the connection
+      level, so the guard cannot under-count for a tenant admin; (e)
+      IWaysDbContext exposes DatabaseFacade but NOT IModel
+      (IWaysDbContext.cs:153) — the interface's own doc-comment (:150-152)
+      supplies the exact argument for adding IModel, flagged for sdd-design
+      to confirm or replace with a dedicated port; (f) nullable IdEmpresa
+      shared-catalogue rows need no special case because fk = @id does not
+      match NULL; (g) NO Vitest file exists for ANY of the four screens, so
+      Part A CREATES coverage rather than extending it; (h) db-error-backstops
+      is STRUCTURALLY INAPPLICABLE (no physical DELETE means no SQLSTATE
+      23503 can ever fire), which promotes the guard's tests from good
+      practice to SOLE DEFENCE and is recorded as the stage's top risk.
+      Six new 409 codes proposed: tenant_en_uso, empresa_en_uso,
+      punto_venta_en_uso, usuario_en_uso, ultima_empresa_del_tenant,
+      ultimo_punto_venta_de_la_empresa. Plan: 5 slices stacked-to-main
+      (~2080 lines), budget risk LOW against 800, three split points
+      pre-authorized, four items never degradable.
+  spec:
+    status: done
+    date: 2026-09-04
+    artifact: specs/
+    depends_on: [propose]
+    notes: >-
+      Three capability specs written under specs/: bajas-de-organizacion (NEW,
+      full spec — 12 requirements, 41 scenarios), tenant-organization (DELTA,
+      5 ADDED requirements, 21 scenarios) and usuarios-tenant-scoping (DELTA,
+      2 ADDED requirements, 11 scenarios). Total 19 requirements / 73
+      scenarios. NOTHING WAS REMOVED, MODIFIED OR RENAMED in either delta —
+      every existing requirement of both capabilities stays byte-identical, so
+      archive replaces nothing. THE COMPLETENESS RULE IS SPECIFIED AS A
+      REQUIREMENT, NOT A CLAIM ("Every Referencing Type Is Classified Into
+      Exactly One Bucket Or The Build Fails"): a type in NO bucket fails the
+      test naming it, a type in MORE THAN ONE bucket also fails, and skipping
+      or defaulting an unclassified type is a spec violation — that is what
+      converts B4's "fails safe" into a guarantee given that
+      db-error-backstops is structurally N/A. SPEC-LEVEL DECISIONS taken where
+      the proposal was silent, each cheap to reverse: (S1) NombreTenant on
+      UsuarioListado is NULL exactly when IdTenant is NULL and the literal
+      "Plataforma" is rendered by the WEB, not fabricated by the API
+      (dto-contract-honesty: the DTO carries the truth, the screen carries the
+      copy); (S2) the structural-minimum COUNT excludes logically deleted
+      siblings, so a tenant whose second empresa was already deleted still
+      gets ultima_empresa_del_tenant on the survivor; (S3) the cascade MUST
+      NOT re-stamp a child that was already logically deleted — it keeps its
+      ORIGINAL deleted_at, otherwise the shared-instant restore rule of
+      decision 2 would be destroyed for the earlier deletion; (S4) reactivate
+      on a deleted tenant is a 404 (BajaLogica hides the row from
+      BuscarTenantAsync) and the pre-existing 409 tenant_dado_de_baja stays as
+      an unreachable backstop — verified in ServicioDeOrganizacion.cs:62-72;
+      (S5) filter option sets are derived from the rows the actor can already
+      see, so a filter can never disclose an out-of-scope tenant name;
+      (S6) when a structural minimum AND usage both apply, the structural code
+      wins (decision 3's ordering, made observable). ANTI-ORACLE encoded twice
+      (bajas-de-organizacion and usuarios-tenant-scoping): an out-of-scope
+      DELETE is 404, never 403 and never a 409 that discloses usage. ZERO
+      SCHEMA is preserved — no requirement asks for a column, a table, an
+      index or a migration.
+  design:
+    status: done
+    date: 2026-09-04
+    artifact: design.md
+    depends_on: [propose]
+    notes: >-
+      Fifteen decisions (D1-D15) plus the seven arbitrations the prompt named
+      (A untimestamped types, B the completeness test, C IModel access, D query
+      cost, E query filters, F cascade atomicity, G concurrency). NINE
+      STRUCTURAL FACTS VERIFIED IN THE TREE, three of which CORRECT the
+      proposal: (1) Empresa/PuntoVenta carry NO navigation properties
+      (Empresa.cs:9-26), so owner names can only be correlated scalar
+      subqueries — which also removes the INNER-JOIN-drops-the-row trap;
+      (2) NO ENDPOINT CREATES A SECOND EMPRESA OR PUNTO DE VENTA
+      (AprovisionamientoEndpoints exposes only POST /api/plataforma/tenants and
+      OrganizacionEndpoints has no POST), so decision 3's structural minimums
+      fire on EVERY empresa/PV delete attempt and empresa_en_uso /
+      punto_venta_en_uso are UNREACHABLE THROUGH THE API today — their tests
+      must be below-the-confound service-level tests (T1, mutation-proof rule
+      3); (3) a cascade-deleted admin gets 401 credenciales_invalidas, NOT the
+      403 tenant_suspendido the proposal's Success Criteria claims — the login
+      lookup runs under "BajaLogica" (ServicioDeAutenticacion.cs:85-87, no
+      IgnoreQueryFilters) so the user is not found and dies at :104; the 403
+      branch stays reachable only for a SUSPENDED tenant (T2). C RESOLVED:
+      expose IModel on IWaysDbContext — blast radius VERIFIED as ONE LINE
+      (rg ": IWaysDbContext" over src/ and tests/ returns ZERO matches; no
+      hand-written implementation, no fake, no mock exists), and DbContext.Model
+      already satisfies it implicitly; a dedicated port was rejected because its
+      only implementation would be "=> contexto.Model". B RESOLVED HONESTLY:
+      the classifier is TOTAL by construction (carve-out -> timestamped ->
+      untimestamped), so the proposal's literal "fails the build on an
+      unclassified type" would be a TAUTOLOGY forbidden by mutation-proof rule
+      1 — replaced by FOUR NAMED NETS: N1 totality (Construir throws NAMING the
+      type on the three mechanical impossibilities), N2 the bucket is read off
+      the TABLE (created_at column) not restated from the code, N3 a CHECKED-IN
+      SORTED GOLDEN INVENTORY of every (anchor, table, columns, bucket) that
+      goes red with a diff naming any FK a future stage adds/removes/reclassifies
+      — this is the executable form of the proposal's intent — and N4 the
+      pristine regression. N1-N3 need NO container: they build the real Npgsql
+      model over an unopened connection, the existing
+      tests/Ways.Application.Tests/Persistencia/Modelo*Tests.cs pattern.
+      D RESOLVED: one UNION ALL statement with an outer LIMIT 1 (the Append node
+      stops at the first blocking branch); ~40 sequential AnyAsync rejected on
+      round trips; accepted honestly for an admin-only action, with a read-only
+      pg_indexes coverage check that REPORTS an uncovered branch but cannot fix
+      it (ZERO-SCHEMA). F RESOLVED: one ExecutionStrategy transaction, one
+      advisory lock, ONE evaluation of the guard (no pre-check — mutation-proof
+      rule 3 names the pre-check/guard duality as this repo's most common
+      confound), one reloj.Ahora shared by parent and every child on DeletedAt
+      AND UpdatedAt, Estado = Baja in the same SaveChangesAsync; write ORDER is
+      deliberately NOT claimed (EF owns it inside one SaveChanges) — atomicity
+      is the property. G RESOLVED: pg_advisory_xact_lock(idTenant, -20) keyed on
+      the TENANT, not the entity, with a NEGATIVE constant because the two-int
+      advisory keyspace is already shared with ServicioDeOfertas (idTenant,
+      idOferta) and ServicioDePrecios (idTenant, par), both positive; the POS
+      takes no lock of this family, so the lock sets are DISJOINT from the total
+      order (numeraciones_fiscales -> turnos_caja -> ... -> ledger) and no
+      deadlock is expressible. RESIDUAL RACE R1 STATED AND ACCEPTED: a sale
+      committed between the guard's read and the deletion's commit yields a
+      soft-deleted tenant owning a post-anchor comprobante — closing it would
+      put a platform-admin lock into the POS hot path (the stage-19a D1 lesson),
+      and B1 makes recovery a one-line UPDATE. Usuario deletion takes NO
+      transaction and NO lock (D12): no cascade, and the lock closes no race it
+      faces. BUDGETED COST NAMED, NOT DISCOVERED: the guard's raw SQL cannot run
+      on the InMemory provider, so the EliminarAsync cases of
+      ServicioDeOrganizacionTests and ServicioDeUsuariosTests RELOCATE to the
+      integration suite — the exact ServicioDeOfertas.ActualizarAsync precedent
+      (ServicioDeOfertas.cs:43-46). TENSION T3 REQUIRING AN OWNER RULING BEFORE
+      SLICE 3: the launch prompt says "a logically deleted child must NOT block
+      deletion" while the proposal settled the OPPOSITE (decision 6 side effect
+      A, question round item 2) and requires a test proving it (proposal.md:506).
+      The design IMPLEMENTS THE PROPOSAL per the binding-contract rule and
+      records the exact reversal (add AND d.deleted_at IS NULL to every branch,
+      flip one test). db-error-backstops declared STRUCTURALLY N/A with
+      ManejadorDeErrores.cs untouched as verify criterion V6. Threat matrix N/A;
+      the one new boundary (generated SQL) is closed by metadata-only
+      pattern-validated identifiers, bound parameters and a read-only statement.
+      Twelve binding verify criteria; U1-U8 guarded-write conjuncts enumerated
+      up front; five slices unchanged from the proposal with every design
+      element assigned a Slice column, budget risk LOW against 800.
+  tasks:
+    status: done
+    date: 2026-09-04
+    artifact: tasks.md
+    depends_on: [spec, design]
+    notes: >-
+      Binding breakdown: 5 slices, 103 tasks (16/16/20/39/12), stacked-to-main, merge order
+      1 -> 2 -> 3 -> 4 -> 5. Per-slice estimates: 1 ~390, 2 ~430, 3 ~470,
+      4 ~530, 5 ~340 (total ~2160). Budget risk LOW against 800; every slice
+      sits at roughly half the cap and the three design split points are
+      carried as pre-approved degradation. Decision needed before apply: NO
+      (the db_gate is ZERO-SCHEMA-RATIFIED). THE THREE ORCHESTRATOR
+      ARBITRATIONS ARE TRANSCRIBED AS BINDING NOTES AT THE TOP AND IN THE
+      SLICE THAT OWNS THEM: OD4 (a soft-deleted dependent STILL blocks — no
+      'AND d.deleted_at IS NULL' branch anywhere; asserted at rendering level
+      in task 3.14 and behaviourally in task 4.15; recorded as a one-line
+      reversible knob in InspectorDeUso's doc-comment), OD5 (NO API-level test
+      for empresa_en_uso / punto_venta_en_uso — they are proven below the API
+      with a hand-seeded second empresa/PV in tasks 4.12/4.21/4.26; no creation
+      endpoint is added; the latency is reported to the owner at delivery in
+      task 5.12) and OD6 (a cascade-deleted admin gets 401
+      credenciales_invalidas, task 4.31, with the 403 tenant_suspendido branch
+      re-asserted as a regression for a SUSPENDED tenant). SIX RECONCILIACIONES
+      REGISTERED, the load-bearing one being that the tenant-organization
+      scenario 'a deleted tenant's user ... gets a clean 403' is SUPERSEDED by
+      OD6 — the spec text is left byte-identical and verify must read it through
+      Reconciliación 1 rather than as a failed criterion. Design's T3 is closed
+      by OD4, T1 by OD5, T4 adopted as the four nets N1-N4 (N3's checked-in
+      sorted golden inventory is the actual trip-wire, and the proposal's
+      literal 'fails the build on an unclassified type' is delivered by it
+      rather than by a tautological bucket-membership assertion). N1-N4, the two
+      carve-out tests, the 'one article blocks' test and the zero-physical-delete
+      scan are carried as NEVER-DEGRADABLE tasks. U1-U8 transcribed verbatim
+      into slice 4's header before any test is written (mutation-proof rule 3),
+      each paired with its own task-level kill. The EliminarAsync test
+      relocation to the integration suite is BUDGETED in slice 4's ~530 (design
+      said ~490) and owned by task 4.10, which also requires the PR body to
+      state that every moved case is behaviour-identical. 13 binding verify
+      criteria carried to every slice, including the ZERO-SCHEMA set (last
+      migration stays 20260822002214_FiscalArcaEtapa19a.cs,
+      has-pending-model-changes clean, InicializadorDeBaseDeDatos.cs /
+      Politicas.cs / ManejadorDeErrores.cs untouched, zero physical deletes).
+      db-error-backstops declared STRUCTURALLY N/A in the header and per slice.
+      The per-slice delivery ritual is stated explicitly so apply follows it:
+      implement -> all relevant test commands green -> judgment-day dual blind
+      review to a clean round -> PR (branch-pr, conventional commits, no AI
+      attribution) -> merge -> next slice. Integration-suite discipline
+      restated as binding: Docker required, NEVER two integration suites
+      concurrently against the same daemon.
+  apply:
+    status: in_progress
+    date: 2026-09-04
+    artifact: tasks.md + PRs
+    depends_on: [tasks]
+    notes: >-
+      SLICE 1 IMPLEMENTED (tasks 1.1-1.14 checked; 1.15 judgment-day and 1.16 PR
+      belong to the orchestrator). Branch feat/stage20-slice1-proyeccion-api off
+      main, measured with 'git diff main --stat -- src tests' and NOT estimated.
+      After judgment-day round 1, 1285 changed lines (1252 insertions plus 33
+      deletions) against the 800-line budget, with
+      tests/Ways.IntegrationTests/ProyeccionDeOrganizacionTests.cs at 1076 lines
+      and 11 [Fact] methods. After judgment-day round 2 (final), 1420 changed
+      lines (1386 insertions plus 34 deletions), of which production is 217 (185
+      plus 32) across four files and tests are 1203, with that same test file at
+      1194 lines and 12 [Fact] methods. ORCHESTRATOR DECISION, recorded verbatim
+      at the round-1 figures it was taken on - slice 1 ships as ONE PR at 1285
+      changed lines against the 800-line budget (OD1), because production is only
+      ~176 lines and the ~1085 test lines are the evidence round 1's review
+      demanded for exactly those 176; splitting would separate the proof from the
+      claim and buy two more review cycles for no gain in review quality. The
+      owner was told the corrected number and offered the split. Six files:
+      Organizacion/Contratos.cs,
+      Organizacion/ServicioDeOrganizacion.cs, Usuarios/Contratos.cs,
+      Usuarios/ServicioDeUsuarios.cs, WaysApiFixture.cs (one optional params
+      IInterceptor[] parameter, zero call sites changed) and the new
+      tests/Ways.IntegrationTests/ProyeccionDeOrganizacionTests.cs.
+      ZERO-SCHEMA HELD AND VERIFIED, not assumed: zero files under Migraciones/
+      in the diff, the last migration is still 20260822002214_FiscalArcaEtapa19a,
+      'dotnet ef migrations has-pending-model-changes' reports "No changes have
+      been made to the model since the last migration",
+      InicializadorDeBaseDeDatos.cs / Politicas.cs / ManejadorDeErrores.cs
+      untouched (git diff main --name-only returns them nowhere), zero
+      ExecuteDelete/Remove(/RemoveRange(/DELETE FROM added, zero DDL. SUITES:
+      dotnet build Ways.slnx clean (2 pre-existing NU1903 warnings on SSH.NET),
+      Domain 545/545, Application 373/373, Integration 1732/1732 in 18m08s, run
+      once and alone against the Docker daemon per the binding discipline (trx at
+      tests/Ways.IntegrationTests/TestResults/slice1.trx). SIX MUTATIONS RUN FOR
+      REAL (M1-M6, table in tasks.md): each applied, the named test observed RED
+      with its exact failure message, reverted, observed GREEN. Task 1.13 ships
+      WITHOUT mutation evidence ON PURPOSE and says so: it is a regression over
+      the pre-existing "Tenant" query filter plus RLS, not over a clause this
+      slice introduces. TWO DEFECTS IN THE TESTS THEMSELVES were found by running
+      the mutations rather than reasoning about them, and both were fixed: (a)
+      task 1.11's pairwise-distinctness rested on an order-dependent id > 4
+      assertion — now guaranteed by construction with three deliberately
+      unbalanced filler tenants that desynchronise the four identity sequences;
+      (b) task 1.12's first draft asserted S1's iff over every row and went red
+      against the orphan seeded by task 1.10 — the iff holds for the
+      platform/tenant distinction but NOT for the D13 orphan, so the assertion
+      now states the direction the API actually owes. JUDGMENT CALL RECORDED, NOT
+      SILENT: the four listing records are also returned by the detail/edit
+      endpoints, and neither the spec nor the design says what those must carry.
+      Filling them with 0/null would be exactly the accepted-and-dropped shape
+      dto-contract-honesty forbids, so Obtener*/Actualizar*/Suspender/Reactivar
+      re-project. The three Obtener* still cost ONE round trip (they project
+      instead of loading the entity and validate scope on the projected IdTenant,
+      preserving BuscarX's 404-then-ADR-8 order); the four write paths cost one
+      extra read. The single-round-trip budget of TO-R1/UT-R1 is about the
+      LISTINGS, which are the ones that scale with row count. JUDGMENT-DAY ROUND
+      1 (task 1.15) CORRECTED SIX CONFIRMED FINDINGS, three of them with new
+      mutation evidence (M7-M9 in tasks.md): (1) IgnoreQueryFilters is applied at
+      QUERY level, so incluirEliminados=true also stripped the soft-delete filter
+      from the correlated tenant-name subquery and the same account showed a
+      soft-deleted tenant's name there while returning null on the other two
+      paths — the subquery now carries an explicit t.DeletedAt == null and the
+      ADR-6 IgnoreQueryFilters call is untouched; (2) every non-listing response
+      path shipped untested (return null; in NombreDeTenantAsync left the whole
+      suite green), closed with three readback tests over
+      Obtener/Actualizar/Suspender/Reactivar of tenant, Obtener/Actualizar of
+      empresa and punto de venta, and the POST 201 / GET {id} / PUT bodies of
+      usuario, with pairwise-distinct values per rule 12b; (3) the three
+      re-projections after SaveChangesAsync used FirstAsync (500) where the
+      sibling read paths return a domain 404 — all three now use
+      FirstOrDefaultAsync + ErrorDominio.NoEncontrado, which is what slice 4's
+      concurrent deleters need; (4) V9 IS NOT LITERALLY SATISFIED FOR USUARIOS
+      and is recorded as Reconciliación 8 in tasks.md instead of being patched
+      away: the criterion means "the projection adds no round trip", the usuarios
+      listing costs 2 because it is the only PAGINATED listing, and that second
+      CountAsync predates this change; the pagination was NOT touched and
+      specs/usuarios-tenant-scoping/spec.md:14-15 and :29-32 are left
+      byte-identical and marked superseded, exactly as Reconciliación 1 handles
+      OD6; (5) RazonSocialEmpresa's e.Id == p.IdEmpresa correlation had no
+      deterministic kill because every fixture tenant owned exactly one empresa —
+      task 1.8 now seeds a second empresa OF THE SAME TENANT with its own punto
+      de venta (rule 12c); (6) the NombreTenant doc-comments published a false
+      contract (null iff IdTenant is null) that the D13 orphan violates — both
+      Contratos.cs and NombreDeTenantAsync now state the two real cases, and the
+      never-fabricate-"Plataforma" rule is unchanged. ZERO SCHEMA HELD ACROSS THE
+      CORRECTION: no migration, no DDL, InicializadorDeBaseDeDatos.cs /
+      Politicas.cs / ManejadorDeErrores.cs still untouched. Slices 2-5 pending.
+  verify:
+    status: pending
+    artifact: verify-report.md
+    depends_on: [apply]
+  archive:
+    status: pending
+    artifact: archive-report.md
+    depends_on: [verify]
+dependencies:
+  stages:
+    - stage-1-organization-and-catalogs (archived) — the organization hierarchy,
+      EntidadBase/DeletedAt, the "BajaLogica" query filter, the estado_tenant enum
+      already carrying 'baja', and RLS.
+  code:
+    - ServicioDeAprovisionamiento (ADR-16) — the SINGLE clock reading at :46 that
+      stamps one identical instant on every provisioned row including the tenant
+      itself; the entire pristine/used discriminator rests on this property.
+    - PoliticaDeRoles — consumed UNCHANGED by decision 5 (the usage guard is
+      inserted after ValidarPuedeIntervenirSobre, never instead of it).
+    - WaysDbContext.AplicarFiltroDeBajaLogica / AplicarFiltroDeTenantEnTenant —
+      the existing metadata-walk idiom the guard follows.
+    - IRelojDelSistema / RelojFijo — the shared deletion instant and its tests.
+  platform:
+    - EF Core IEntityType.GetReferencingForeignKeys() (.NET 10) — no new package.
+    - NO new NuGet package, NO new web dependency, NO migration, NO external service.
+  skills:
+    - mutation-proof-tests, dto-contract-honesty, web-descriptor-tests,
+      work-unit-commits, judgment-day (before every PR).
+    - db-error-backstops is EXPLICITLY N/A for this change — see the note below.
+  blocked_on: >-
+    Nothing external. The only gate is the owner's ratification of the
+    ZERO-SCHEMA db_gate before slice 1.
+notes:
+  binding_owner_decisions:
+    B1: >-
+      PHYSICAL DELETION IS NEVER PERMITTED. All deletion stays logical
+      (DeletedAt), consistent with the EntidadBase convention. Enforced as a
+      verify criterion: a repository scan for ExecuteDelete, Remove(,
+      RemoveRange( and 'DELETE FROM' over tenants, empresas, puntos_venta and
+      usuarios. Direct dividend: NOTHING in this stage is unrecoverable, so
+      rollback is git revert plus at most a one-line UPDATE.
+    B2: >-
+      "IN USE" MEANS THE CUSTOMER LOADED OR OPERATED ANYTHING BEYOND THE
+      PROVISIONING BASELINE — articles, clients, suppliers, a second punto de
+      venta, not only transactional records. Only what
+      ServicioDeAprovisionamiento created counts as pristine. A tenant with
+      3000 articles and zero sales is NOT deletable. This replaced an earlier,
+      narrower reading during explore.
+    B3: >-
+      THE DISCRIMINATOR IS dependent.CreatedAt > entity.CreatedAt, valid
+      because ServicioDeAprovisionamiento.cs:46 reads the clock ONCE
+      ('var ahora = reloj.Ahora;') and stamps that identical instant on every
+      provisioned row including the Tenant itself (:53-54, 69-70, 79-80,
+      89-90, 104-105, 121-122, 142-143, 158-160). Template-version
+      independent. GUARDED FROM A DISTANCE by a regression test asserting a
+      freshly provisioned tenant is pristine — it fails the moment a refactor
+      breaks the single-reading property.
+    B4: >-
+      THE DEPENDENT SET IS DISCOVERED FROM EF METADATA
+      (IEntityType.GetReferencingForeignKeys()), NEVER a hand-maintained table
+      list. A hand list fails UNSAFE (one forgotten table silently makes a
+      used entity deletable); metadata fails SAFE. Decision 4 makes the
+      fail-safe claim VERIFIABLE via the completeness test, because a
+      fail-safe property that is never detected is only a hope.
+    B5: >-
+      AUDIT ROWS DO NOT BLOCK DELETION. Auditoria.IdActor and
+      Auditoria.IdPuntoVenta are a trail ABOUT the entity, not data the
+      customer operated, and because deletion is logical the referenced row
+      survives so the trail keeps rendering. Implemented as ONE of exactly
+      TWO named carve-outs (the other is NumeracionCliente, the provisioning
+      counter row), each with a written reason in code and its own test.
+  db_error_backstops_not_applicable: >-
+    The db-error-backstops skill's SQLSTATE backstop DOES NOT APPLY to this
+    change. Every FK in WaysDbContext is DeleteBehavior.Restrict, but B1 means
+    no physical DELETE ever runs, so no Postgres constraint can EVER fire
+    against an UPDATE ... SET deleted_at. The application guard is the SOLE
+    line of defence and its tests carry the entire burden. Recorded as the
+    stage's top risk; it is why decision 4's completeness test is listed among
+    the four items that may never be degraded.
+  never_degrade:
+    - The completeness test (every referencing FK classified into exactly one
+      of the three buckets; an unclassified type is a RED TEST naming it).
+    - The two carve-out tests (auditoria-only and numeraciones_clientes-only
+      entities remain deletable).
+    - The "one article blocks" test — B2 proven end to end, not asserted.
+    - The zero-physical-delete repository scan.
+  deferred_with_reopen_conditions:
+    - Force/override delete for a used entity — suspension is the existing
+      lever; an override needs an audit ceremony this stage would design
+      blind. REOPEN — the first real support case that needs it.
+    - Undelete/restore endpoint — rows are recoverable by hand and
+      EstadoTenant.Baja is deliberately unreachable from suspend/reactivate.
+      REOPEN — its own change, with its own guard question.
+    - Retro-guarding the other unguarded soft deletes (ServicioDeCatalogo<T>,
+      Clientes, Proveedores, Articulos, Ofertas). InspectorDeUso is designed
+      entity-agnostic so adoption is a one-line change. REOPEN — a later stage.
+    - Estado/suspension for empresa and punto de venta. REOPEN — explicit owner
+      request.
+    - Server-side pagination/filtering for the four root lists (decision 7 —
+      when the client-side filter stops being viable, the unbounded list is
+      what broke, and all four screens move together). REOPEN — list size.
+    - A minimum-administrators-per-tenant invariant
+      (ultimo_admin_del_tenant) — flagged in the proposal question round
+      rather than invented autonomously. REOPEN — owner answer.
+  known_trap_from_explore: >-
+    The structured 'phases:' block of this file must be kept ACCURATE by every
+    later phase — stage-18's state.yaml left it stale while the real progress
+    lived in a trailing comment block. Each phase updates its own entry
+    (status, date, artifact, notes) as part of its work, and the trailing
+    free-text log is NOT an acceptable substitute.

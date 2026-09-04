@@ -16,6 +16,15 @@ public record UsuarioAutenticado(
     DateTimeOffset? UltimaConexion,
     int? IdTenant);
 
+/// <summary><paramref name="NombreTenant"/> viene en <c>null</c> en dos casos: cuando la cuenta
+/// es de plataforma (<paramref name="IdTenant"/> nulo) y cuando el tenant dueño está dado de baja
+/// lógicamente (<paramref name="IdTenant"/> no nulo, nombre igual ausente — el huérfano de design
+/// D13). No es un "si y solo si": un nombre nulo NO implica personal de plataforma, esa distinción
+/// la da <paramref name="IdTenant"/>. La API tampoco fabrica la etiqueta <c>"Plataforma"</c> —
+/// esa copia la pone la web (design D14). El nombre de un tenant es texto libre, así que un tenant
+/// llamado "Plataforma" sería indistinguible de una cuenta de plataforma si el servidor la
+/// inventara, y el filtro, que se apoya en <paramref name="IdTenant"/>, discreparía de la columna
+/// que tiene arriba.</summary>
 public record UsuarioListado(
     int Id,
     string Usuario,
@@ -24,7 +33,9 @@ public record UsuarioListado(
     string Rol,
     EstadoUsuario Estado,
     DateTimeOffset? UltimaConexion,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    int? IdTenant,
+    string? NombreTenant);
 
 /// <summary><paramref name="IdTenant"/> solo lo usa un actor de plataforma para elegir a
 /// qué tenant pertenece la cuenta creada; un actor de tenant siempre crea dentro del suyo
