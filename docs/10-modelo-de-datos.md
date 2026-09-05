@@ -1250,3 +1250,34 @@ etapa; los datos del legacy entran en la etapa 5 (ventas históricas → `items_
 > con la misma forma que el de clientes. El backfill de la migración de Etapa 15 reproduce esta
 > fórmula exacta como el saldo inicial de cada proveedor, así que la lectura no cambia en el
 > momento de la migración — solo su mecanismo, de una agregación en caliente a un libro auditable.
+
+> **Etapa 20 (stage-20-organizacion-relaciones-y-bajas) — baja lógica guardada por uso, CERO
+> DDL.** Esta etapa **no agrega, altera ni borra ninguna tabla ni columna**: la última migración
+> sigue siendo la de la etapa 19a. Usa lo que ya estaba — `deleted_at` en todas las entidades y
+> `estado` en `tenants` — para habilitar la baja de tenant, empresa, punto de venta y usuario:
+>
+> - **Nunca hay borrado físico.** Toda FK del modelo es `Restrict` y la baja es un `UPDATE` de
+>   `deleted_at`; no existe un `DELETE FROM` sobre `tenants`, `empresas`, `puntos_venta` ni
+>   `usuarios`. Deshacer una baja hecha por error es un `UPDATE` de una columna.
+> - **"En uso" = lo que el cliente creó después de la línea base de aprovisionamiento**, medido
+>   con una comparación estricta contra el `created_at` de la propia entidad. Un dependiente ya
+>   dado de baja **sigue bloqueando**: la baja de la fila no borra que hubo operación.
+> - **El conjunto de dependientes sale de la metadata de EF, no de una lista a mano.** Cada tipo
+>   que referencia a la entidad se clasifica en directo / puenteado / ignorado, hay un
+>   inventario ordenado versionado como golden, y una tabla nueva sin clasificar rompe un test
+>   antes de llegar a producción. Toda tabla que este documento agregue en adelante entra por
+>   ese inventario.
+> - **Una fila de catálogo compartido (`id_empresa`/dueño `NULL`) no bloquea**, en coherencia con
+>   la regla de catálogo compartido de §1 y del doc 09.
+> - **La cascada está acotada a la organización y comparte un instante**: tenant → sus empresas,
+>   sus puntos de venta y sus usuarios; empresa → sus puntos de venta. Los datos operativos
+>   (ventas, compras, stock, caja, cuenta corriente) **no se cascadean**: son los que bloquean.
+> - **Mínimos estructurales antes del guard de uso**: un tenant conserva al menos una empresa
+>   viva (`ultima_empresa_del_tenant`) y una empresa al menos un punto de venta vivo
+>   (`ultimo_punto_venta_de_la_empresa`). Los hermanos ya dados de baja no cuentan como vivos.
+> - **Seis códigos `409` en total**: `tenant_en_uso`, `empresa_en_uso`, `punto_venta_en_uso`,
+>   `usuario_en_uso` y los dos mínimos de arriba. Fuera de alcance de tenant la respuesta es
+>   `404`, nunca un `409` que delate el estado de la fila.
+>
+> La baja de **empresa** y de **punto de venta** queda **latente** hasta que exista un alta que
+> cree un segundo hermano: hoy el mínimo estructural dispara primero en todo intento vía API.
