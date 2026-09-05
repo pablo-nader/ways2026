@@ -3,41 +3,20 @@ import { Link } from 'react-router'
 import { aSolicitudDeMovimiento, clienteDeCaja, importeValidoParaTipo, motivoValido } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
-import { clienteDeOrganizacion } from '../api/organizacion'
 import {
   CATEGORIAS_GASTO,
   TIPOS_MOVIMIENTO_CAJA,
   type CategoriaGasto,
   type MedioPagoAlta,
   type MedioPagoListado,
-  type PuntoVentaListado,
   type ResumenDeTurno,
   type TipoMovimientoCaja,
   type TurnoResumen,
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
-
-const CLAVE_PUNTO_VENTA = 'ways.caja.idPuntoVenta'
+import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
-
-function leerPuntoVentaGuardado(): number | null {
-  try {
-    const crudo = localStorage.getItem(CLAVE_PUNTO_VENTA)
-    return crudo ? Number(crudo) : null
-  } catch {
-    return null
-  }
-}
-
-function guardarPuntoVentaSeleccionado(id: number) {
-  try {
-    localStorage.setItem(CLAVE_PUNTO_VENTA, String(id))
-  } catch {
-    // localStorage puede no estar disponible (modo privado del navegador) — la selección
-    // simplemente no persiste entre sesiones, el resto de la pantalla sigue funcionando.
-  }
-}
 
 function formatearMoneda(valor: number): string {
   const signo = valor < 0 ? '-' : ''
@@ -55,13 +34,12 @@ function etiquetaCategoriaGasto(categoria: CategoriaGasto): string {
 type PropsFormularioApertura = {
   idPuntoVenta: number
   onAbierto: (turno: TurnoResumen) => void
-  onEscribiendoCambio: (valor: boolean) => void
 }
 
 /** Apertura de turno (spec: turnos-de-caja / Apertura Creates An Open Turno With Its Fondo):
- * fondo inicial + observaciones opcionales, `idPuntoVenta` siempre lo trae la selección de
- * arriba, nunca un campo editable acá. */
-function FormularioApertura({ idPuntoVenta, onAbierto, onEscribiendoCambio }: PropsFormularioApertura) {
+ * fondo inicial + observaciones opcionales, `idPuntoVenta` siempre es el punto de venta de la
+ * sesión, nunca un campo editable acá. */
+function FormularioApertura({ idPuntoVenta, onAbierto }: PropsFormularioApertura) {
   const [fondoInicial, setFondoInicial] = useState('')
   const [observaciones, setObservaciones] = useState('')
   const [abriendo, setAbriendo] = useState(false)
@@ -81,7 +59,6 @@ function FormularioApertura({ idPuntoVenta, onAbierto, onEscribiendoCambio }: Pr
 
     abriendoRef.current = true
     setAbriendo(true)
-    onEscribiendoCambio(true)
     setError('')
 
     try {
@@ -113,7 +90,6 @@ function FormularioApertura({ idPuntoVenta, onAbierto, onEscribiendoCambio }: Pr
     } finally {
       abriendoRef.current = false
       setAbriendo(false)
-      onEscribiendoCambio(false)
     }
   }
 
@@ -167,14 +143,13 @@ type PropsPanelTurnoAbierto = {
   turno: TurnoResumen
   medios: MedioPagoListado[] | null
   errorMedios: string
-  onEscribiendoCambio: (valor: boolean) => void
 }
 
 /** Turno abierto: movimientos (retiro/refuerzo/apertura de cajón) + resumen parcial — misma
  * derivación que el cierre (spec: arqueo-de-cierre / Resumen Parcial Uses The Same Derivation As
  * Cierre). El componente entero se remonta por `key={turno.id}` en el padre (regla 8): ningún
  * estado de acá (formulario de movimiento, resumen, generación) sobrevive a un cambio de turno. */
-function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: PropsPanelTurnoAbierto) {
+function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbierto) {
   const [resumen, setResumen] = useState<ResumenDeTurno | null>(null)
   const [cargandoResumen, setCargandoResumen] = useState(false)
   const [errorResumen, setErrorResumen] = useState('')
@@ -245,7 +220,6 @@ function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: 
 
     registrandoRef.current = true
     setRegistrando(true)
-    onEscribiendoCambio(true)
     setErrorMovimiento('')
 
     // regla 3: bumpear la generación del resumen ANTES de la escritura — cualquier resumen en
@@ -265,7 +239,6 @@ function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: 
     } finally {
       registrandoRef.current = false
       setRegistrando(false)
-      onEscribiendoCambio(false)
     }
 
     // regla 6: el refetch del resumen queda aislado del try/catch de la escritura — corre tanto en
@@ -548,17 +521,17 @@ function PanelTurnoAbierto({ turno, medios, errorMedios, onEscribiendoCambio }: 
 
 /**
  * Pantalla de caja (stage-6-turnos-caja, Slice 6, design: Web Composition): estado del turno del
- * punto de venta seleccionado, apertura cuando no hay uno abierto, movimientos físicos fuera de
+ * punto de venta de la sesión, apertura cuando no hay uno abierto, movimientos físicos fuera de
  * la venta y el resumen parcial en vivo — misma derivación que el cierre (Slice 7). Precedente de
  * forma: `Pos.tsx`. El resumen (`ServicioDeResumenDeTurno`) también expone el contenido D6
  * (cantidad de tickets, primer/último ticket, ingresos por área y egresos por categoría/área +
  * retiros; follow-up "Resumen parcial D6-content enrichment") — ver el doc-comment de
- * `ResumenDeTurno` en `api/tipos.ts`.
+ * `ResumenDeTurno` en `api/tipos.ts`. Remontada íntegra por `key` desde `Caja()` cuando cambia el
+ * punto de venta (regla 8): el punto de venta es fijo durante toda la vida de una instancia.
  */
-export function Caja() {
-  const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
-  const [idPuntoVenta, setIdPuntoVenta] = useState<number | ''>('')
-  const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
+function PantallaCaja() {
+  const { puntoVenta } = usePuntoVenta()
+  const idPuntoVenta = puntoVenta?.id ?? ''
 
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
   const [errorMedios, setErrorMedios] = useState('')
@@ -568,33 +541,9 @@ export function Caja() {
   const [errorTurno, setErrorTurno] = useState('')
   const generacionTurnoRef = useRef(0)
 
-  // regla 9: mientras la apertura o un movimiento tienen una escritura en vuelo, el selector de
-  // punto de venta —el único recurso que ambos formularios podrían superponer, porque cambiarlo
-  // reemplaza el turno entero de abajo— queda inerte. Cada formulario sigue dueño de su propio
-  // flag de "en curso" (regla 5); esto es solo la señal combinada para ese selector puntual.
-  const [escribiendo, setEscribiendo] = useState(false)
-
-  // Carga inicial: puntos de venta (selector explícito, mismo criterio que Pos.tsx) y medios de
-  // pago (para etiquetar el resumen parcial) — cada uno con su propio try/catch.
+  // Carga inicial: medios de pago, para etiquetar el resumen parcial.
   useEffect(() => {
     let vigente = true
-
-    clienteDeOrganizacion
-      .listarPuntosVenta()
-      .then((lista) => {
-        if (!vigente) return
-        setPuntosVenta(lista)
-        const guardado = leerPuntoVentaGuardado()
-        const porDefecto = lista.find((p) => p.id === guardado) ?? lista[0] ?? null
-        setIdPuntoVenta(porDefecto ? porDefecto.id : '')
-      })
-      .catch((e) => {
-        if (!vigente) return
-        setPuntosVenta([])
-        setErrorPuntosVenta(
-          e instanceof ErrorApi ? e.message : 'No se pudieron cargar los puntos de venta. Seleccioná uno para operar.',
-        )
-      })
 
     clienteMediosPago
       .listar(false)
@@ -613,9 +562,10 @@ export function Caja() {
     }
   }, [])
 
-  // regla 2: cada cambio de punto de venta dispara una nueva consulta del turno abierto — una
-  // respuesta desactualizada (de un punto de venta que el cajero ya dejó de mirar) nunca puede
-  // pisar la más reciente.
+  // regla 2: la consulta del turno abierto va gateada por generación — `turnoAbierto` la bumpea
+  // para que un GET …/abierto en vuelo desde antes de la apertura nunca pise el turno recién
+  // confirmado. El punto de venta no cambia dentro de una instancia (`Caja()` la remonta por
+  // `key`), así que este efecto corre una sola vez por montaje.
   useEffect(() => {
     if (idPuntoVenta === '') {
       setTurno(null)
@@ -651,12 +601,6 @@ export function Caja() {
     }
   }, [idPuntoVenta])
 
-  function cambiarPuntoVenta(id: number) {
-    if (escribiendo) return
-    setIdPuntoVenta(id)
-    guardarPuntoVentaSeleccionado(id)
-  }
-
   function turnoAbierto(nuevoTurno: TurnoResumen) {
     // La apertura recién confirmada es la fuente más autoritativa posible: bumpear la
     // generación invalida cualquier GET …/abierto que siguiera en vuelo desde antes.
@@ -670,29 +614,14 @@ export function Caja() {
       <div className="row g-3">
         <div className="col-12">
           <Box titulo="Caja">
-            {errorPuntosVenta && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorPuntosVenta}</div>}
-
-            <div className="mb-3" style={{ maxWidth: 320 }}>
-              <label className="form-label" htmlFor="caja-punto-venta">
-                Punto de venta
-              </label>
-              <select
-                id="caja-punto-venta"
-                className="form-select rounded-0"
-                value={idPuntoVenta}
-                disabled={puntosVenta === null || escribiendo}
-                onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
-              >
-                {puntosVenta === null && <option value="">Cargando…</option>}
-                {puntosVenta !== null && puntosVenta.length === 0 && (
-                  <option value="">Sin puntos de venta disponibles</option>
-                )}
-                {puntosVenta?.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nombre}
-                  </option>
-                ))}
-              </select>
+            <div className="mb-3">
+              {puntoVenta ? (
+                <>
+                  <span className="text-muted small">Punto de venta:</span> <strong>{puntoVenta.nombre}</strong>
+                </>
+              ) : (
+                <div className="alert alert-warning rounded-0 py-1 px-2 small">Sin puntos de venta disponibles</div>
+              )}
             </div>
 
             {errorTurno && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorTurno}</div>}
@@ -704,21 +633,10 @@ export function Caja() {
               <div key={turno?.id ?? 'sin-turno'}>
                 {cargandoTurno && <p className="text-muted">Consultando el turno…</p>}
 
-                {!cargandoTurno && turno === null && (
-                  <FormularioApertura
-                    idPuntoVenta={idPuntoVenta}
-                    onAbierto={turnoAbierto}
-                    onEscribiendoCambio={setEscribiendo}
-                  />
-                )}
+                {!cargandoTurno && turno === null && <FormularioApertura idPuntoVenta={idPuntoVenta} onAbierto={turnoAbierto} />}
 
                 {!cargandoTurno && turno !== null && (
-                  <PanelTurnoAbierto
-                    turno={turno}
-                    medios={medios}
-                    errorMedios={errorMedios}
-                    onEscribiendoCambio={setEscribiendo}
-                  />
+                  <PanelTurnoAbierto turno={turno} medios={medios} errorMedios={errorMedios} />
                 )}
               </div>
             )}
@@ -727,4 +645,15 @@ export function Caja() {
       </div>
     </div>
   )
+}
+
+/**
+ * `/caja`: remonta `PantallaCaja` entera por `key` cuando cambia el punto de venta de la sesión
+ * (react-async-state regla 8, mismo mecanismo que `Pos()`) — ningún turno, formulario ni resumen
+ * de un punto de venta sobrevive al cambio a otro.
+ */
+export function Caja() {
+  const { puntoVenta } = usePuntoVenta()
+
+  return <PantallaCaja key={puntoVenta?.id ?? 'sin-pv'} />
 }
