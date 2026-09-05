@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Ways.Api.Seguridad;
@@ -28,6 +29,10 @@ public class ManejadorDeErroresResultadoInciertoTests
 {
     private const string CopiaEsperada =
         "No se pudo confirmar el resultado de la operación: verificá el listado antes de reintentar.";
+
+    /// <summary>La copia del mismo fallo sobre un método SEGURO: neutra, sin residual que
+    /// verificar.</summary>
+    private const string CopiaDeConsulta = "No se pudo completar la consulta: reintentá en unos segundos.";
 
     private sealed class ServicioDeProblemDetailsFalso : IProblemDetailsService
     {
@@ -67,11 +72,17 @@ public class ManejadorDeErroresResultadoInciertoTests
             line: null,
             routine: null);
 
-    private static async Task<(int Estado, string? Codigo, string? Titulo)> ManejarAsync(Exception excepcion)
+    /// <summary><paramref name="metodo"/> por default <c>POST</c>: todas las pruebas de esta
+    /// clase salvo la del reparto son sobre ESCRITURAS, y el código del commit ambiguo es el de
+    /// los métodos no seguros. Un <c>DefaultHttpContext</c> recién construido trae el método
+    /// VACÍO, que clasificaría como no seguro por accidente en vez de por intención.</summary>
+    private static async Task<(int Estado, string? Codigo, string? Titulo)> ManejarAsync(
+        Exception excepcion, string metodo = "POST")
     {
         var servicioDeProblemDetails = new ServicioDeProblemDetailsFalso();
         var manejador = new ManejadorDeErrores(servicioDeProblemDetails, NullLogger<ManejadorDeErrores>.Instance);
         var contexto = new DefaultHttpContext();
+        contexto.Request.Method = metodo;
 
         var manejado = await manejador.TryHandleAsync(contexto, excepcion, CancellationToken.None);
 
@@ -146,8 +157,9 @@ public class ManejadorDeErroresResultadoInciertoTests
     }
 
     /// <summary>
-    /// El brazo nuevo es el ÚLTIMO del clasificador a propósito. Esta es la prueba de que no
-    /// eclipsa nada: un <c>23505</c> con constraint mapeada sigue dando su 409 de dominio, y un
+    /// Los brazos transitorios van DESPUÉS de los dos que llaman a
+    /// <c>ClasificarPostgresException</c>, a propósito. Esta es la prueba de que no eclipsan
+    /// nada: un <c>23505</c> con constraint mapeada sigue dando su 409 de dominio, y un
     /// error determinístico SIN mapeo sigue cayendo al 500 genérico (el brazo transitorio no es un
     /// catch-all disfrazado).
     /// </summary>
@@ -161,5 +173,77 @@ public class ManejadorDeErroresResultadoInciertoTests
 
         Assert.Equal(estadoEsperado, estado);
         Assert.Equal(codigoEsperado, codigo);
+    }
+
+    /// <summary>
+    /// LA CLÁUSULA: el brazo <c>RetryLimitExceededException</c>.
+    ///
+    /// <para>Es el agujero que dejaban los otros dos brazos. Sobre un sitio que SÍ conserva el
+    /// reintento, EF no propaga el fallo transitorio cuando agota los cinco intentos: lo envuelve
+    /// en <see cref="RetryLimitExceededException"/>, que no es <c>DbUpdateException</c> ni
+    /// <c>NpgsqlException</c> y caía derecho al <c>500 error_interno</c>. Es justo el caso peor
+    /// —cinco commits potencialmente ambiguos, no uno— y era el único que no llevaba la copia.</para>
+    ///
+    /// <para>Las dos formas del <c>InnerException</c>: la excepción pelada (camino raw-ADO) y la
+    /// <c>DbUpdateException</c> que a su vez la envuelve (camino <c>SaveChangesAsync</c>). El
+    /// desenvuelto recorre la cadena entera, así que las dos llegan al mismo lugar. Mutante:
+    /// borrar el brazo devuelve 500 y las tres afirmaciones se ponen en rojo.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ElLimiteDeReintentosAgotadoTambienEsResultadoIncierto(bool caminoEf)
+    {
+        var pg = CrearExcepcion("40001");
+        Exception causa = caminoEf ? new DbUpdateException("fallo de escritura", pg) : pg;
+
+        var (estado, codigo, titulo) = await ManejarAsync(
+            new RetryLimitExceededException("se agotaron los reintentos", causa));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, estado);
+        Assert.Equal("resultado_incierto", codigo);
+        Assert.Equal(CopiaEsperada, titulo);
+    }
+
+    /// <summary>Un <see cref="RetryLimitExceededException"/> cuya causa NO es transitoria no se
+    /// hace pasar por commit ambiguo: el brazo mira la cadena, no el tipo de la envoltura.</summary>
+    [Fact]
+    public async Task UnLimiteDeReintentosConCausaNoTransitoriaSigueCayendoAl500()
+    {
+        var (estado, codigo, _) = await ManejarAsync(
+            new RetryLimitExceededException("se agotaron los reintentos", new InvalidOperationException("nada de base")));
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, estado);
+        Assert.Equal("error_interno", codigo);
+    }
+
+    /// <summary>
+    /// LA CLÁUSULA: el reparto por método HTTP de <c>RespuestaDeFalloTransitorio</c>.
+    ///
+    /// <para>El predicado transitorio incluye <c>IsTransient</c>, que una conexión cortada dispara
+    /// igual en una LECTURA. Sin el reparto, un <c>GET</c> que pierde la conexión respondía
+    /// <c>resultado_incierto</c> con la copia de una escritura ("verificá el listado antes de
+    /// reintentar"): no hubo escritura, así que no hay nada que verificar y la copia miente.</para>
+    ///
+    /// <para>Los cuatro casos son la tabla entera del reparto —los tres métodos seguros de un lado,
+    /// el escritor del otro— sobre EL MISMO fallo, así que lo único que puede explicar la
+    /// diferencia es el método (<c>mutation-proof-tests</c> regla 4). Borrar el reparto pone en
+    /// rojo las tres primeras filas; invertirlo, la cuarta.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("GET", "servicio_no_disponible", CopiaDeConsulta)]
+    [InlineData("HEAD", "servicio_no_disponible", CopiaDeConsulta)]
+    [InlineData("OPTIONS", "servicio_no_disponible", CopiaDeConsulta)]
+    [InlineData("POST", "resultado_incierto", CopiaEsperada)]
+    [InlineData("PUT", "resultado_incierto", CopiaEsperada)]
+    [InlineData("DELETE", "resultado_incierto", CopiaEsperada)]
+    public async Task ElMismoFalloTransitorioSeParteEnDosCopiasSegunElMetodo(
+        string metodo, string codigoEsperado, string copiaEsperada)
+    {
+        var (estado, codigo, titulo) = await ManejarAsync(CrearExcepcion("40001"), metodo);
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, estado);
+        Assert.Equal(codigoEsperado, codigo);
+        Assert.Equal(copiaEsperada, titulo);
     }
 }
