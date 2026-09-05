@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -846,6 +846,170 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         Assert.Equal(1, await ContarItemsDeComprobanteAsync(emitido.Id));
         Assert.Equal(1, await ContarPagosDeComprobanteAsync(emitido.Id));
         Assert.Equal(1, await ContarMovimientosDeStockAsync(emitido.Id));
+    }
+
+    // ---- 13. ventas: la rama de RECUPERACIÓN de la guarda de idempotencia ---------------------
+
+    /// <summary>
+    /// LA CLÁUSULA: la guarda <c>BuscarPorNumeroComprometidoAsync</c> de
+    /// <c>ServicioDeVentas.EmitirAsync</c>, en su rama de RECUPERACIÓN — la que devuelve el
+    /// comprobante ya comiteado en vez de reinsertarlo.
+    ///
+    /// <para>El confound que esta prueba mata (<c>mutation-proof-tests</c> regla 3):
+    /// <see cref="LaEmisionDeVentaReintentaConElTrackerLimpioYEscribeExactamenteUnaVenta"/> rompe en
+    /// <c>*Executing</c>, así que el intento 1 NUNCA comitea y la guarda del intento 2 siempre
+    /// encuentra <c>null</c>. Bajo ese interceptor, BORRAR la guarda entera —dejar
+    /// <c>return await EjecutarTransaccionAsync(plan, numero, ct);</c> pelado— no rompe ninguna
+    /// prueba: el mutante sobrevive por construcción. Acá el intento 1 SÍ comitea y recién después
+    /// recibe el <c>40001</c> (<see cref="InterceptorQueRompeElCommitAmbiguo"/> engancha
+    /// <c>TransactionCommittedAsync</c>): es el ACK perdido literal, la única forma en la que esa
+    /// rama llega a ejecutarse.</para>
+    ///
+    /// <para>Valores discriminantes: <c>Intentos == 2</c> (el lambda se re-entró de verdad),
+    /// <c>Inserciones == 1</c> y los cuatro conteos en 1 (el intento 2 recuperó en vez de
+    /// reinsertar), y el <c>numero</c> devuelto igual al de la ÚNICA fila comiteada — o sea que lo
+    /// que se le devolvió al cajero es exactamente la venta que quedó en la base, no una segunda.
+    /// Sin la guarda, el intento 2 reinserta bajo el mismo número y choca contra
+    /// <c>ux_comprobantes_venta_numero</c>: la llamada tira y la prueba se pone en rojo.</para>
+    /// </summary>
+    [Fact]
+    public async Task LaEmisionDeVentaRecuperaUnCommitAmbiguoPorElNumeroComprometido()
+    {
+        var s = await AprovisionarAsync("commit-ambiguo-ventas");
+        var idArticulo = await SembrarArticuloAsync(s, "Artículo vendible");
+        await SembrarPrecioAsync(s, idArticulo, 100m);
+        await AbrirTurnoAsync(s);
+
+        var idMedioEfectivo = await IdDeMedioEfectivoAsync(s);
+        var idClienteCf = await IdDelConsumidorFinalAsync(s);
+
+        var solicitud = new SolicitudDeVenta(
+            s.IdPuntoVenta, idClienteCf, "TX", null,
+            [new LineaDeVenta(idArticulo, 1m, null)],
+            [new PagoDeVenta(idMedioEfectivo, 100m, null, 0m)],
+            null, null);
+
+        // Vigila comprobantes_venta: el commit del paso de numeración ocurre ANTES del INSERT del
+        // comprobante, así que el quiebre todavía no está armado y esa transacción comitea limpia.
+        var quiebre = new InterceptorQueRompeElCommitAmbiguo("comprobantes_venta", SqlStateTransitorio);
+
+        ComprobanteEmitido emitido;
+        await using (var db = ContextoConReintentos(s, quiebre.Interceptores))
+        {
+            emitido = await ServicioDeVentasSobre(db, s).EmitirAsync(solicitud);
+        }
+
+        Assert.Equal(1, quiebre.CommitsRotos);
+        Assert.Equal(2, quiebre.Intentos);
+        Assert.Equal(1, quiebre.Inserciones);
+
+        Assert.Equal(1, await ContarComprobantesAsync(s.IdPuntoVenta));
+        Assert.Equal(1, await ContarItemsDeComprobanteAsync(emitido.Id));
+        Assert.Equal(1, await ContarPagosDeComprobanteAsync(emitido.Id));
+        Assert.Equal(1, await ContarMovimientosDeStockAsync(emitido.Id));
+
+        // El comprobante devuelto es EL comiteado, no uno nuevo: mismo id y mismo número.
+        var (idComiteado, numeroComiteado) = await UnicoComprobanteAsync(s.IdPuntoVenta);
+        Assert.Equal(idComiteado, emitido.Id);
+        Assert.Equal(numeroComiteado, emitido.Numero);
+    }
+
+    private async Task<(int Id, long Numero)> UnicoComprobanteAsync(int idPuntoVenta)
+    {
+        await using var db = ContextoDePlataforma();
+        var comprobante = await db.ComprobantesVenta.IgnoreQueryFilters()
+            .Where(c => c.IdPuntoVenta == idPuntoVenta)
+            .Select(c => new { c.Id, c.Numero })
+            .SingleAsync();
+
+        return (comprobante.Id, comprobante.Numero);
+    }
+
+    // ---- 14. lecturas: el mismo fallo transitorio NO lleva la copia de una escritura -----------
+
+    /// <summary>
+    /// LA CLÁUSULA: el reparto por método HTTP de
+    /// <c>ManejadorDeErrores.RespuestaDeFalloTransitorio</c>.
+    ///
+    /// <para><c>EsTransitorio</c> incluye <c>IsTransient</c>, que una conexión cortada dispara igual
+    /// en un <c>GET</c>. Sin el reparto, quien pidió un listado recibía <c>resultado_incierto</c>
+    /// con la copia del commit ambiguo ("verificá el listado antes de reintentar"), que sobre una
+    /// lectura miente: no hubo escritura y no hay nada que verificar. El mutante es exactamente
+    /// ese —borrar el reparto y dejar <c>resultado_incierto</c> para todos—, y las dos afirmaciones
+    /// de abajo (código y copia) lo ponen en rojo.</para>
+    ///
+    /// <para>Tiene que ser por HTTP: el método vive en <c>HttpContext.Request</c>, así que un
+    /// <c>DbContext</c> armado a mano nunca lo ve.</para>
+    /// </summary>
+    [Fact]
+    public async Task UnFalloTransitorioEnUnGetLlegaComo503ServicioNoDisponible()
+    {
+        var s = await AprovisionarAsync("servicio-no-disponible-clientes");
+
+        using var admin = fixture.CreateClient();
+        var login = await admin.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(s.MailAdmin, s.PasswordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        HttpResponseMessage respuesta;
+        using (fixture.ConInterceptorEnElHost(
+            new InterceptorQueRompeLaPrimeraEscritura("clientes", SqlStateTransitorio, ClaseDeSentencia.Select)))
+        {
+            respuesta = await admin.GetAsync("/api/clientes");
+        }
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, respuesta.StatusCode);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("servicio_no_disponible", problema.GetProperty("codigo").GetString());
+        Assert.Equal(
+            "No se pudo completar la consulta: reintentá en unos segundos.",
+            problema.GetProperty("title").GetString());
+    }
+
+    // ---- 15. aprovisionamiento: el residual PROPIO, que la copia central no cubre --------------
+
+    /// <summary>
+    /// LA CLÁUSULA: el <c>catch (Exception error) when
+    /// (FallosTransitorios.EsTransitorioEnLaCadena(error))</c> de
+    /// <c>ServicioDeAprovisionamiento.CrearTenantAsync</c>.
+    ///
+    /// <para>El aprovisionamiento corre sin reintento, así que hereda el residual de la forma (b) —
+    /// pero su recuperación NO es "verificá el listado". Si el intento comiteó y el ACK se perdió,
+    /// el tenant existe y el <c>passwordTemporal</c>, que se devuelve una sola vez y no se guarda en
+    /// ningún lado, se fue con la respuesta que nunca llegó: el reintento muere contra
+    /// <c>ux_usuarios_mail</c> como un <c>409 mail_duplicado</c> que no dice nada de eso.</para>
+    ///
+    /// <para>Valor discriminante: la frase que SOLO esta copia tiene ("restablecé la contraseña del
+    /// admin"). Borrar el <c>catch</c> devuelve la copia central, que no la contiene, y la prueba se
+    /// pone en rojo sin depender del estado ni del código, que las dos comparten.</para>
+    /// </summary>
+    [Fact]
+    public async Task UnFalloTransitorioEnElAprovisionamientoPideRestablecerLaContrasenaDelAdmin()
+    {
+        using var root = fixture.CreateClient();
+        var login = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var unico = $"residual-aprov-{Guid.NewGuid().ToString("N")[..8]}";
+        var solicitud = new SolicitudDeAprovisionamiento(
+            unico, $"{unico} SRL", $"{unico} - Local 1", $"{unico}@ways.test");
+
+        HttpResponseMessage respuesta;
+        using (fixture.ConInterceptorEnElHost(
+            new InterceptorQueRompeLaPrimeraEscritura("tenants", SqlStateTransitorio)))
+        {
+            respuesta = await root.PostAsJsonAsync("/api/plataforma/tenants", solicitud);
+        }
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, respuesta.StatusCode);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("resultado_incierto", problema.GetProperty("codigo").GetString());
+        Assert.Equal(
+            "No se pudo confirmar el alta del tenant: verificá el listado; si ya existe, "
+                + "restablecé la contraseña del admin antes de reintentar.",
+            problema.GetProperty("title").GetString());
     }
 
     private static ServicioDeVentas ServicioDeVentasSobre(WaysDbContext db, Sembrado s)

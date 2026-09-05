@@ -8,11 +8,19 @@ namespace Ways.IntegrationTests;
 /// <summary>Qué sentencia vigila <see cref="InterceptorQueRompeLaPrimeraEscritura"/>. Una baja
 /// lógica no inserta nada: escribe <c>deleted_at</c> con un UPDATE, así que sin este eje el
 /// interceptor no dispara nunca y la prueba de <c>ServicioDeOfertas.EliminarAsync</c> pasaría por
-/// el motivo equivocado (judgment-day fix/retry-double-add, item C4).</summary>
+/// el motivo equivocado (judgment-day fix/retry-double-add, item C4). <see cref="Select"/> extiende
+/// el mismo eje a las LECTURAS: el nombre de la clase quedó de su primer uso, pero lo que hace es
+/// romper la primera SENTENCIA de la clase pedida.</summary>
 internal enum ClaseDeSentencia
 {
     Insert,
-    Update
+    Update,
+
+    /// <summary>Una LECTURA. La usa el caso del método seguro: <c>ManejadorDeErrores</c> parte la
+    /// copia del fallo transitorio por método HTTP, y probar el lado <c>GET</c> exige romper un
+    /// <c>SELECT</c> — ni el interceptor de INSERT ni el de UPDATE disparan nunca en esa
+    /// request.</summary>
+    Select
 }
 
 /// <summary>
@@ -51,8 +59,13 @@ internal sealed class InterceptorQueRompeLaPrimeraEscritura : DbCommandIntercept
     {
         this.sqlState = sqlState;
 
-        var verbo = clase == ClaseDeSentencia.Update ? "UPDATE" : "INSERT INTO";
-        descripcion = $"{verbo} {tabla}";
+        var verbo = clase switch
+        {
+            ClaseDeSentencia.Update => "UPDATE",
+            ClaseDeSentencia.Select => "FROM",
+            _ => "INSERT INTO"
+        };
+        descripcion = clase == ClaseDeSentencia.Select ? $"SELECT ... FROM {tabla}" : $"{verbo} {tabla}";
 
         // (?:"tabla"|tabla) admite la forma entrecomillada por si el identificador alguna vez la
         // necesita; el (?![\w$]) es el ancla: exige que el nombre TERMINE ahí. Sin él,
