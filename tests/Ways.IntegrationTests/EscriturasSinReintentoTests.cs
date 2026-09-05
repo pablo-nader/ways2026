@@ -489,11 +489,22 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
                 .CrearAsync(AltaDeOferta(nombre, idArticulo, s.IdListaDefault))).Id;
         }
 
+        // El targeting tiene que MOVERSE a otra lista: si la edicion repite la misma lista, EF
+        // fusiona el RemoveRange y el Add de la misma clave en un UPDATE y nunca hay INSERT que
+        // romper — el interceptor no dispara y la prueba no prueba nada.
+        int idOtraLista;
+        await using (var db = ContextoConReintentos(s))
+        {
+            idOtraLista = (await new ServicioDeListasPrecio(db, Reloj()).CrearAsync(new ListaPrecioAlta(
+                Nombre: $"Lista secundaria {Guid.NewGuid().ToString("N")[..8]}", IdEmpresa: null,
+                EsDefault: false, Modo: ModoLista.Fija, IdListaBase: null, Porcentaje: null))).Id;
+        }
+
         var edicion = new EdicionOferta(
             Nombre: $"{nombre} editada", IdEmpresa: null, IdArticulo: idArticulo, IdGrupo: null,
             IdCategoria: null, FechaDesde: null, FechaHasta: null, HoraDesde: null, HoraHasta: null,
             DiasSemana: null, CantidadMinima: null, PrecioUnitario: null, Porcentaje: 20m,
-            ImporteFijo: null, Prioridad: 0, Acumulable: false, IdsListas: [s.IdListaDefault],
+            ImporteFijo: null, Prioridad: 0, Acumulable: false, IdsListas: [idOtraLista],
             Activo: true);
 
         var interceptor = new InterceptorQueRompeElPrimerInsert("ofertas_listas", SqlStateTransitorio);
@@ -505,9 +516,10 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             AfirmarFallaSinReintento(error, interceptor);
         }
 
-        // El PUT revirtió entero: sigue el nombre viejo y su única fila de targeting.
+        // El PUT revirtió entero: sigue el nombre viejo y su única fila de targeting apunta a la
+        // lista ORIGINAL, no a la nueva.
         Assert.Equal(1, await ContarOfertasAsync(s.IdTenant, nombre));
-        Assert.Equal(1, await ContarFilasDeListasAsync(idOferta));
+        Assert.Equal([s.IdListaDefault], await IdsListasDeOfertaAsync(idOferta));
 
         await using (var db = ContextoConReintentos(s))
         {
@@ -515,7 +527,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         }
 
         Assert.Equal(1, await ContarOfertasAsync(s.IdTenant, $"{nombre} editada"));
-        Assert.Equal(1, await ContarFilasDeListasAsync(idOferta));
+        Assert.Equal([idOtraLista], await IdsListasDeOfertaAsync(idOferta));
     }
 
     private static AltaOferta AltaDeOferta(string nombre, int idArticulo, int idLista) => new(
@@ -538,6 +550,13 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
     {
         await using var db = ContextoDePlataforma();
         return await db.OfertasListas.IgnoreQueryFilters().CountAsync(f => f.IdOferta == idOferta);
+    }
+
+    private async Task<int[]> IdsListasDeOfertaAsync(int idOferta)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        return await db.OfertasListas.IgnoreQueryFilters()
+            .Where(ol => ol.IdOferta == idOferta).Select(ol => ol.IdListaPrecio).OrderBy(x => x).ToArrayAsync();
     }
 
     // ---- 8. certificados fiscales: rotación atómica con backstop de índice único --------------
