@@ -1,24 +1,41 @@
-import { NavLink, Outlet, useNavigate } from 'react-router'
+import { useEffect, useId, useRef, useState } from 'react'
+import { Link, Outlet, useLocation, useNavigate } from 'react-router'
 import { useAuth } from '../auth/useAuth'
-import { DESCRIPTORES_DE_CATALOGO } from '../api/catalogos'
-import {
-  ROL,
-  puedeAprovisionarTenants,
-  puedeGestionarCatalogos,
-  puedeGestionarUsuarios,
-  puedeOperarPos,
-  puedeVerAuditoria,
-  puedeVerReportes,
-} from '../api/tipos'
+import { MenuDesplegable } from './MenuDesplegable'
+import { construirMenu, esRutaActiva } from './menu'
+
+function claseDeEnlace(principal: boolean | undefined, activo: boolean) {
+  const base = principal ? 'btn btn-success rounded-0 fw-bold me-2' : 'nav-link'
+  return activo ? `${base} active` : base
+}
 
 export function Layout() {
   const { usuario, cerrarSesion } = useAuth()
   const navegar = useNavigate()
+  const { pathname } = useLocation()
+  const idColapso = useId()
+  const [colapsoAbierto, setColapsoAbierto] = useState(false)
+  const [grupoAbierto, setGrupoAbierto] = useState<string | null>(null)
+  const saliendoRef = useRef(false)
+
+  // Cualquier navegación deja la barra en reposo: sin grupo desplegado ni menú móvil abierto.
+  useEffect(() => {
+    setGrupoAbierto(null)
+    setColapsoAbierto(false)
+  }, [pathname])
 
   async function salir() {
-    await cerrarSesion()
-    navegar('/login', { replace: true })
+    if (saliendoRef.current) return
+    saliendoRef.current = true
+    try {
+      await cerrarSesion()
+      navegar('/login', { replace: true })
+    } finally {
+      saliendoRef.current = false
+    }
   }
+
+  const menu = usuario ? construirMenu(usuario) : []
 
   return (
     <div id="wrap" className="bg-dark dk">
@@ -29,234 +46,56 @@ export function Layout() {
 
         <nav className="navbar navbar-dark navbar-expand-lg bg-dark border-top-0">
           <div className="container">
-            <NavLink className="navbar-brand ways-brand" to="/">
+            <Link className="navbar-brand ways-brand" to="/" aria-label="Ways, ir al inicio">
               Ways
-            </NavLink>
+            </Link>
 
-            <div className="collapse navbar-collapse show">
+            <button
+              type="button"
+              className="navbar-toggler"
+              aria-expanded={colapsoAbierto}
+              aria-controls={idColapso}
+              aria-label="Abrir menú"
+              onClick={() => setColapsoAbierto((previo) => !previo)}
+            >
+              <span className="navbar-toggler-icon" />
+            </button>
+
+            <div
+              id={idColapso}
+              className={colapsoAbierto ? 'collapse navbar-collapse show' : 'collapse navbar-collapse'}
+            >
               <ul className="navbar-nav">
-                <li className="nav-item">
-                  <NavLink className="nav-link" to="/">
-                    Inicio
-                  </NavLink>
-                </li>
-                {usuario && puedeOperarPos(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/pos">
-                      POS
-                    </NavLink>
-                  </li>
-                )}
-                {usuario && puedeOperarPos(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/caja">
-                      Caja
-                    </NavLink>
-                  </li>
-                )}
-                {/* stage-8-compras-transferencias-inventario (Slice 5, design: Web Composition,
-                    decisión 11): la lectura sigue Politicas.OperacionDePos, igual que la ruta —
-                    nav y ruta comparten la misma política de lectura; la escritura queda oculta
-                    dentro de la pantalla vía `puedeEscribir` (Admin-only, cosmético). */}
-                {usuario && puedeOperarPos(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/compras">
-                      Compras
-                    </NavLink>
-                  </li>
-                )}
-                {/* stage-17-presupuestos-y-remitos (Slice 7, design: Web composition): mismo gate
-                    que /pos/-compras (Politicas.OperacionDePos) — nav y ruta comparten política. */}
-                {usuario && puedeOperarPos(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/presupuestos">
-                      Presupuestos
-                    </NavLink>
-                  </li>
-                )}
-                {/* stage-17-presupuestos-y-remitos (Slice 8, design: Web composition): mismo gate
-                    que /presupuestos (Politicas.OperacionDePos) — nav y ruta comparten política. */}
-                {usuario && puedeOperarPos(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/remitos">
-                      Remitos
-                    </NavLink>
-                  </li>
-                )}
-                {/* stage-18-etiquetas-y-consulta (Slice 4, design decisión 11): mismo gate que
-                    /pos (Politicas.OperacionDePos) — pantalla de salón, sin claim de rol propio. */}
-                {usuario && puedeOperarPos(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/consulta-precios">
-                      Consulta de precios
-                    </NavLink>
-                  </li>
-                )}
-                {/* stage-10-agregacion-dashboard (Slice 7, design: Web Composition): nav y ruta
-                    comparten Politicas.LecturaDeReportes — Supervisor + Admin, ni Vendedor ni
-                    Root. */}
-                {usuario && puedeVerReportes(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/tablero">
-                      Tablero
-                    </NavLink>
-                  </li>
-                )}
-                {/* stage-11-exportacion-reportes (Slices 6a/7, design: "nav entries + routes
-                    gated like /tablero (puedeVerReportes) for cajas/tesorería"): mismo gate que
-                    Tablero — nunca el cajero (/caja), esta es la vista de gestión. */}
-                {usuario && puedeVerReportes(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/caja/historico">
-                      Histórico de cajas
-                    </NavLink>
-                  </li>
-                )}
-                {usuario && puedeVerReportes(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/caja/tesoreria">
-                      Tesorería
-                    </NavLink>
-                  </li>
-                )}
-                {/* stage-11-exportacion-reportes (Slice 9, droppable a Etapa 13): mismo gate que
-                    Tablero/Histórico de cajas/Tesorería. */}
-                {usuario && puedeVerReportes(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/reportes/existencias">
-                      Existencias
-                    </NavLink>
-                  </li>
-                )}
-                {/* stage-12-lotes-vencimientos (Slice 15): mismo gate que Existencias
-                    (puedeVerReportes). */}
-                {usuario && puedeVerReportes(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/reportes/stock/vencimientos">
-                      Vencimientos
-                    </NavLink>
-                  </li>
-                )}
-                {/* stage-13-stock-inteligente (Slice 6): mismo gate que Vencimientos
-                    (puedeVerReportes). */}
-                {usuario && puedeVerReportes(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/reportes/stock/reposicion">
-                      Reposición
-                    </NavLink>
-                  </li>
-                )}
-                {/* stage-14-auditoria-trazabilidad (Slice 7, design decisión 17): Admin-only —
-                    nav y ruta comparten Politicas.LecturaDeAuditoria (puedeVerAuditoria), NUNCA
-                    apilada sobre puedeVerReportes (Supervisor queda afuera acá, a diferencia de
-                    Tablero/Histórico de cajas/etc.). */}
-                {usuario && puedeVerAuditoria(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/auditoria">
-                      Auditoría
-                    </NavLink>
-                  </li>
-                )}
-                {usuario && puedeGestionarUsuarios(usuario.rolId) && (
-                  <li className="nav-item">
-                    <NavLink className="nav-link" to="/usuarios">
-                      Usuarios
-                    </NavLink>
-                  </li>
-                )}
-                {usuario && puedeGestionarCatalogos(usuario.rolId) && (
-                  <>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/clientes">
-                        Clientes
-                      </NavLink>
+                {menu.map((entrada) => {
+                  const activo = esRutaActiva(pathname, entrada)
+
+                  if (entrada.tipo === 'grupo') {
+                    return (
+                      <MenuDesplegable
+                        key={entrada.etiqueta}
+                        grupo={entrada}
+                        abierto={grupoAbierto === entrada.etiqueta}
+                        activo={activo}
+                        alAlternar={() =>
+                          setGrupoAbierto((previo) => (previo === entrada.etiqueta ? null : entrada.etiqueta))
+                        }
+                        alCerrar={() => setGrupoAbierto((previo) => (previo === entrada.etiqueta ? null : previo))}
+                      />
+                    )
+                  }
+
+                  return (
+                    <li className="nav-item" key={entrada.a}>
+                      <Link
+                        to={entrada.a}
+                        className={claseDeEnlace(entrada.principal, activo)}
+                        aria-current={activo ? 'page' : undefined}
+                      >
+                        {entrada.etiqueta}
+                      </Link>
                     </li>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/proveedores">
-                        Proveedores
-                      </NavLink>
-                    </li>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/articulos">
-                        Artículos
-                      </NavLink>
-                    </li>
-                    {/* stage-8-compras-transferencias-inventario (Slice 6, design: Web
-                        Composition, decisión 11): pantallas de escritura pura, sin contraparte
-                        de lectura — nav y ruta Admin-only end a end, mismo criterio que
-                        /proveedores/-articulos. */}
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/stock/transferencias">
-                        Transferencias
-                      </NavLink>
-                    </li>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/stock/conteo">
-                        Conteo de inventario
-                      </NavLink>
-                    </li>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/listas-precio">
-                        Listas de precio
-                      </NavLink>
-                    </li>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/ofertas">
-                        Ofertas
-                      </NavLink>
-                    </li>
-                    {Object.values(DESCRIPTORES_DE_CATALOGO).map((d) => (
-                      <li className="nav-item" key={d.recurso}>
-                        <NavLink className="nav-link" to={`/catalogos/${d.recurso}`}>
-                          {d.titulo}
-                        </NavLink>
-                      </li>
-                    ))}
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/catalogos/categorias">
-                        Categorías
-                      </NavLink>
-                    </li>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/parametros">
-                        Parámetros
-                      </NavLink>
-                    </li>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/catalogos-fiscales">
-                        Catálogos fiscales
-                      </NavLink>
-                    </li>
-                  </>
-                )}
-                {usuario && (usuario.rolId === ROL.Root || usuario.rolId === ROL.Admin) && (
-                  <>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/organizacion/empresas">
-                        Empresas
-                      </NavLink>
-                    </li>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/organizacion/puntos-venta">
-                        Puntos de venta
-                      </NavLink>
-                    </li>
-                  </>
-                )}
-                {usuario && puedeAprovisionarTenants(usuario.rolId) && (
-                  <>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/organizacion/tenants">
-                        Tenants
-                      </NavLink>
-                    </li>
-                    <li className="nav-item">
-                      <NavLink className="nav-link" to="/organizacion/nuevo-tenant">
-                        Nuevo tenant
-                      </NavLink>
-                    </li>
-                  </>
-                )}
+                  )
+                })}
               </ul>
             </div>
 
