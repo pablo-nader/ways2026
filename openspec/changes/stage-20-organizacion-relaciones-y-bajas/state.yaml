@@ -1163,9 +1163,25 @@ phases:
       SIX other screens keep theirs and are RECORDED as out of scope (Articulos,
       Clientes, Categorias, Ofertas, PaginaCatalogo, Proveedores). ACCESSIBILITY of
       the modal claim: aria-modal, focus to Cancelar on open, focus restored to the
-      trigger on close, Escape = Cancelar and inert while the write is outstanding;
-      no focus trap is needed BECAUSE of C1, since a disabled control is not
-      tabbable. TWENTY MUTATIONS RUN FOR REAL in this round (table in tasks.md):
+      trigger on close, Escape = Cancelar and inert while the write is outstanding.
+      CORRECTED IN ROUND 2 - this paragraph originally claimed that no focus trap
+      was needed BECAUSE of C1, since every other control is disabled and a disabled
+      control is not tabbable. That was FALSE on Usuarios, whose five form fields
+      (f-usuario, f-mail, f-rol, f-estado, f-password) carried no disabled at all,
+      not even during guardando, while bloqueado was applied to the tenant select
+      and to both buttons of the same form; the three sibling screens disabled every
+      field, so it was a rule-10 parity break with five live counterexamples. The
+      claim is TRUE ONLY AFTER R2-1, which adds disabled={bloqueado} to the five.
+      The focus-restore half was true only in jsdom: round 1 captured the trigger
+      with document.activeElement inside a passive useEffect, which runs AFTER the
+      commit that disabled it, so a real browser had already applied the focus-fixup
+      rule and moved focus to body - the ref captured body and restoring it was a
+      no-op. R2-2 captures the trigger SYNCHRONOUSLY in the click handler
+      (event.currentTarget, before any setState) and passes it as the disparador
+      prop, which is why focus restore now works in browsers, with a landmark
+      fallback (Box heading, else the table) when the row is gone. The SIX
+      out-of-scope confirm() screens listed above are unchanged. TWENTY MUTATIONS
+      RUN FOR REAL in round 1 (table in tasks.md):
       EIGHTEEN KILLED with their exact failing test names, TWO HONEST SURVIVORS
       (MS1' and MS3') that now survive for a TRUE construction reason - nothing can
       bump the generation between a write's own mint and its refresh, because the
@@ -1174,6 +1190,63 @@ phases:
       65 files / 1097 tests green in one run, npm run build clean, npm run lint exit
       0 with the same five pre-existing react-refresh warnings. git diff main
       --name-only outside src/Ways.Web/, docs/ and openspec/ is EMPTY.
+      JUDGMENT-DAY ROUND 2 APPLIED (task 5.11, FINAL correction round, no third
+      round, branch feat/stage20-slice5-bajas-web, web only). NO CRITICAL. Five
+      confirmed findings plus one records entry, all fixed. R2-1 WARNING (both) -
+      Usuarios' five form fields escaped the modal gate: f-usuario, f-mail, f-rol,
+      f-estado and f-password carried no disabled, not even during guardando, while
+      bloqueado governed the tenant select and both buttons of the same form. The
+      three sibling screens disable every field, so this was a react-async-state
+      rule-10 parity break and it falsified round 1's 'every other control is
+      disabled' claim. Fixed with disabled={bloqueado} on all five; the gate test
+      asserts the five by label with a message naming the offending field. R2-2
+      WARNING (both, inferential) - focus restore was a no-op in real browsers:
+      ConfirmacionDeBaja captured document.activeElement in a passive useEffect,
+      which runs after the commit that disabled the trigger, and a browser has
+      already applied the focus-fixup rule by then, so the ref captured body. jsdom
+      does not implement the fixup, so the round-1 test passed falsely. The trigger
+      is now captured SYNCHRONOUSLY in the click handler (event.currentTarget,
+      before any setState) on all four screens, held in disparadorDeLaPuerta and
+      passed as the disparador prop; on close the panel restores focus to that
+      element when it is still connected and operable, and otherwise falls back to a
+      stable landmark (the Box heading, else the table) with a one-time tabindex
+      -1. R2-3 SUGGESTION (both) - errorAlta was cleared by pedirBaja and
+      cancelarBaja, contradicting its own documented contract as a LIVE precondition
+      of the open form that unrelated actions must not clear (which is why buscar()
+      already respected it); both setErrorAlta('') calls removed, the asymmetry
+      documented at both call sites. R2-4 SUGGESTION (A) - the Nuevo tenant Link was
+      neutralized by CSS only: Bootstrap's disabled class kills pointer-events and
+      tabIndex -1 removes it from the tab order, but neither cancels an activation
+      that bypasses hit-testing, so the gate could be abandoned by navigating away
+      with the DELETE undecided; an onClick guard now calls preventDefault while
+      bloqueado, and the test measures the NAVIGATION through a route probe inside
+      the MemoryRouter, not the attribute. R2-5 SUGGESTION (A), pre-existing - the
+      edit form survived the deletion of the entity being edited, offering a PUT
+      against a deleted id; after a 204 all four screens now clear it with
+      setEdicion/setFormulario((prev) => (prev?.id === fila.id ? null : prev)), built
+      from prev and id-compared so deleting another row does not close an edit in
+      progress. R2-6 records (both) - the false accessibility paragraph in
+      tasks.md:1901,1910-1913 and in this file at 1164-1168 is rewritten in place:
+      it now says the claim became true BECAUSE of R2-1, names R2-2 as the reason
+      focus restore works in browsers, and records the jsdom caveat; the six
+      out-of-scope confirm() screens stay listed. SEVEN MUTATIONS RUN FOR REAL in
+      this round (table in tasks.md): SEVEN KILLED, ZERO SURVIVORS, zero discarded
+      mutants - MR2-1 (drop disabled on f-mail), MR2-2 (capture in the passive
+      effect again), MR2-2b (drop the landmark fallback), MR2-3a and MR2-3b (put
+      setErrorAlta back in cancelarBaja and in pedirBaja, mutated separately), MR2-4
+      (drop the Link preventDefault) and MR2-5 (drop the edit-form clear), each with
+      its exact failing test and message. ENVIRONMENT FACT RECORDED RATHER THAN
+      HIDDEN - jsdom cannot reproduce the focus-fixup rule natively: once a button
+      is disabled, jsdom treats element.blur() and document.body.focus() as no-ops
+      on a non-focusable area, so document.activeElement stays pinned to the trigger,
+      which is exactly why the round-1 defect shipped green. The R2-2 test therefore
+      brings the blur one tick forward, into the onClick while the button is still
+      enabled; the mechanism differs from a browser's, the observable state the test
+      depends on is identical (focus on body when the gate's mount effect runs), and
+      MR2-2 proves the test discriminates. SUITES AFTER THE ROUND - npm --prefix
+      src/Ways.Web run test 65 files / 1102 tests green, run build clean, run lint
+      exit 0 with the same five pre-existing react-refresh warnings and no new ones.
+      git diff main --name-only outside src/Ways.Web/, docs/ and openspec/ is EMPTY.
   verify:
     status: pending
     artifact: verify-report.md
