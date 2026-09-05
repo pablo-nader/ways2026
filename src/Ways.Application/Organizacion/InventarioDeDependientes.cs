@@ -30,26 +30,55 @@ public enum ClasificacionDeDependiente
 }
 
 /// <summary>
+/// La tabla ESTRUCTURAL por la que una rama llega al ancla cuando la tabla hoja no la referencia
+/// directamente (stage-20 design D3). El uso sube por la jerarquía: una venta se cuelga del punto
+/// de venta, y el punto de venta se cuelga de la empresa, así que la empresa está EN USO.
+/// </summary>
+/// <param name="Esquema">Esquema de la tabla puente. Sale de la metadata de EF.</param>
+/// <param name="Tabla">Nombre pelado de la tabla puente (hoy, <c>puntos_venta</c>).</param>
+/// <param name="ColumnasDeUnion">Columnas del PUENTE contra las que se unen las de la hoja,
+/// zipeadas 1 a 1 con <see cref="RamaDeUso.Columnas"/>.</param>
+/// <param name="ColumnasHaciaElAncla">Columnas del PUENTE que apuntan al ancla, zipeadas 1 a 1
+/// con <see cref="RamaDeUso.PropiedadesDelPrincipal"/>. Son las que llevan los parámetros
+/// posicionales.</param>
+public sealed record PuenteDeUso(
+    string Esquema,
+    string Tabla,
+    IReadOnlyList<string> ColumnasDeUnion,
+    IReadOnlyList<string> ColumnasHaciaElAncla);
+
+/// <summary>
 /// Una rama del inspector: la tabla dependiente, las columnas de su FK zipeadas con las
 /// propiedades del principal que las alimentan, y el balde que decide su predicado.
 /// </summary>
 /// <param name="Esquema">Esquema de la tabla dependiente. Sale de la metadata de EF; el
 /// renderizador lo necesita porque el walk es puro (D2) y no le pasa el <see cref="IModel"/>.</param>
 /// <param name="Tabla">Nombre pelado de la tabla. Es también la etiqueta que
-/// <c>InspectorDeUso</c> devuelve al llamador.</param>
+/// <c>InspectorDeUso</c> devuelve al llamador: siempre la tabla HOJA, la que el operador necesita
+/// ver, incluso cuando se llega a ella por un puente.</param>
 /// <param name="Columnas">Columnas dependientes de la FK, en el orden de
-/// <c>fk.Properties</c>.</param>
+/// <c>fk.Properties</c>. Con puente son las columnas de la hoja hacia el PUENTE.</param>
 /// <param name="PropiedadesDelPrincipal">Propiedades del principal, zipeadas 1 a 1 con
 /// <paramref name="Columnas"/>. Una FK compuesta <c>(id, id_tenant)</c> o de clave alternativa
-/// sale de acá sin ningún caso especial.</param>
+/// sale de acá sin ningún caso especial. Con puente son las propiedades del ANCLA, zipeadas con
+/// <see cref="PuenteDeUso.ColumnasHaciaElAncla"/>.</param>
+/// <param name="Puente">Tabla estructural intermedia, o <c>null</c> si la hoja referencia al ancla
+/// directamente.</param>
 public sealed record RamaDeUso(
     string Esquema,
     string Tabla,
     IReadOnlyList<string> Columnas,
     IReadOnlyList<string> PropiedadesDelPrincipal,
-    ClasificacionDeDependiente Clasificacion)
+    ClasificacionDeDependiente Clasificacion,
+    PuenteDeUso? Puente = null)
 {
     public bool UsaAncla => Clasificacion is ClasificacionDeDependiente.Marcado;
+
+    /// <summary>
+    /// Etiqueta estable de la rama para el golden N3 y para los mensajes de error: la hoja, y el
+    /// puente explícito cuando lo hay. Nunca es lo que se emite al statement.
+    /// </summary>
+    public string Etiqueta => Puente is null ? Tabla : $"{Tabla} via {Puente.Tabla}";
 }
 
 /// <summary>
@@ -62,12 +91,24 @@ public sealed record RamaDeUso(
 /// real construido sobre una conexión que nunca se abre
 /// (<c>tests/Ways.Application.Tests/Persistencia/Modelo*Tests.cs</c>).
 ///
-/// El conjunto de dependientes es la UNIÓN de dos recorridos, los dos derivados del modelo y
-/// ninguno escrito a mano: <see cref="IEntityType.GetReferencingForeignKeys"/> y —solo para el
-/// ancla <see cref="Ways.Domain.Organizacion.Tenant"/>— toda entidad que hereda de
-/// <see cref="EntidadTenant"/> y está mapeada a la columna de alcance <c>id_tenant</c>, el mismo
+/// El conjunto de dependientes es la UNIÓN de tres recorridos, los tres derivados del modelo y
+/// ninguno escrito a mano:
+///
+/// <list type="number">
+/// <item><see cref="IEntityType.GetReferencingForeignKeys"/> — lo que apunta al ancla
+/// directamente.</item>
+/// <item>Solo para el ancla <see cref="Ways.Domain.Organizacion.Tenant"/>: toda entidad que hereda
+/// de <see cref="EntidadTenant"/> y está mapeada a la columna de alcance <c>id_tenant</c>, el mismo
 /// idioma por reflexión que ya usa <c>WaysDbContext.AplicarFiltroDeTenant</c> para el query
-/// filter. Una tabla que una etapa futura agregue entra sola por cualquiera de los dos caminos.
+/// filter.</item>
+/// <item>Solo para el ancla <see cref="Ways.Domain.Organizacion.Empresa"/>: el inventario
+/// ejecutable del ancla <see cref="Ways.Domain.Organizacion.PuntoVenta"/>, PUENTEADO por
+/// <c>puntos_venta</c>. El uso sube por la jerarquía estructural, y ninguna tabla operativa lleva
+/// <c>id_empresa</c>: ventas, pagos, stock, caja y tesorería se cuelgan todas del punto de
+/// venta.</item>
+/// </list>
+///
+/// Una tabla que una etapa futura agregue entra sola por cualquiera de los tres caminos.
 /// La clasificación es TOTAL por construcción — ningún <c>else</c> puede tirar en runtime — y las
 /// imposibilidades MECÁNICAS que sí tiran (<see cref="InvalidOperationException"/> nombrando el
 /// tipo CLR y el origen de la rama) son fallas de build-time que ejecuta N1 en CI, nunca un 500
@@ -83,13 +124,14 @@ public static class InventarioDeDependientes
     public const string ColumnaDeMarcaTemporal = "created_at";
 
     /// <summary>
-    /// Columna de alcance de tenant. El recorrido de FKs NO alcanza para el ancla
-    /// <see cref="Ways.Domain.Organizacion.Tenant"/>: una tabla scopeada por tenant puede no
-    /// declarar ninguna FK contra <c>tenants</c> porque su FK compuesta apunta al padre intermedio
-    /// y arrastra el <c>id_tenant</c> ahí — <c>puntos_venta</c> declara
-    /// <c>(id_empresa, id_tenant) → empresas</c> y nada más. Sin esta segunda fuente esa tabla
-    /// quedaba FUERA del inventario y un tenant cuyo cliente agregó un segundo punto de venta leía
-    /// PRÍSTINO: falla ABIERTA, la única dirección que esta etapa no acepta.
+    /// Columna de alcance de tenant, y la razón por la que el ancla
+    /// <see cref="Ways.Domain.Organizacion.Tenant"/> necesita una SEGUNDA fuente además del
+    /// recorrido de FKs: una tabla scopeada por tenant puede no declarar ninguna FK contra
+    /// <c>tenants</c> porque su FK compuesta apunta al padre intermedio y arrastra el
+    /// <c>id_tenant</c> ahí — <c>puntos_venta</c> declara <c>(id_empresa, id_tenant) → empresas</c>
+    /// y nada más. El alcance por columna es lo que mantiene esa tabla DENTRO del inventario, para
+    /// que un tenant cuyo cliente agregó un segundo punto de venta no lea PRÍSTINO: la falla
+    /// ABIERTA es la única dirección que esta etapa no acepta.
     /// </summary>
     public const string ColumnaDeAlcanceDeTenant = "id_tenant";
 
@@ -147,13 +189,23 @@ public static class InventarioDeDependientes
             .ToList();
 
         AgregarRamasDeAlcanceDeTenant(ancla, tipoAncla, ramas);
+        AgregarRamasPuenteadasPorPuntoDeVenta(ancla, tipoAncla, ramas);
 
         ramas.Sort(static (a, b) =>
         {
             var porTabla = string.CompareOrdinal(a.Tabla, b.Tabla);
-            return porTabla != 0
-                ? porTabla
-                : string.CompareOrdinal(string.Join(',', a.Columnas), string.Join(',', b.Columnas));
+
+            if (porTabla != 0)
+            {
+                return porTabla;
+            }
+
+            var porColumnas = string.CompareOrdinal(
+                string.Join(',', a.Columnas), string.Join(',', b.Columnas));
+
+            return porColumnas != 0
+                ? porColumnas
+                : string.CompareOrdinal(a.Puente?.Tabla ?? string.Empty, b.Puente?.Tabla ?? string.Empty);
         });
 
         return ramas;
@@ -194,6 +246,20 @@ public static class InventarioDeDependientes
             ?? throw new InvalidOperationException(
                 $"El tipo ancla {tipoAncla.FullName} no tiene clave primaria: el inventario no " +
                 "puede sintetizar sus ramas de alcance de tenant.");
+
+        // La rama sintetizada zipea UNA columna (id_tenant) contra la clave principal del ancla.
+        // Con una clave compuesta el zip trunca en silencio y la rama quedaría ligando solo la
+        // primera propiedad: sub-bloqueo silencioso. Es una imposibilidad mecánica, así que se
+        // tira nombrando la clave en vez de emitir una rama incompleta.
+        if (clavePrincipal.Properties.Count != 1)
+        {
+            throw new InvalidOperationException(
+                $"El ancla {tipoAncla.FullName} tiene una clave primaria de " +
+                $"{clavePrincipal.Properties.Count} propiedades " +
+                $"({string.Join(", ", clavePrincipal.Properties.Select(p => p.Name))}) y la rama de " +
+                $"alcance de tenant solo puede zipear la columna {ColumnaDeAlcanceDeTenant}: el " +
+                "inventario necesita una columna de alcance por propiedad de la clave.");
+        }
 
         var yaCubiertas = ramas.Select(ClaveDeRama).ToHashSet(StringComparer.Ordinal);
 
@@ -237,8 +303,113 @@ public static class InventarioDeDependientes
         }
     }
 
+    /// <summary>
+    /// La TERCERA fuente del conjunto de dependientes, y también cierra una CLASE: el uso propaga
+    /// HACIA ARRIBA por la jerarquía estructural. Ninguna tabla operativa lleva <c>id_empresa</c>
+    /// —comprobantes, items, pagos, movimientos de stock/caja/tesorería/cuenta corriente, turnos,
+    /// presupuestos, remitos, órdenes de compra y gastos se clavan todos en <c>id_punto_venta</c>—,
+    /// así que los referenciantes DIRECTOS de una empresa son solo estructura y catálogo. Sin este
+    /// recorrido, una empresa con historia operativa completa lee PRÍSTINA: falla ABIERTA, la
+    /// dirección de pérdida de datos.
+    ///
+    /// Cada rama ejecutable del ancla <see cref="Ways.Domain.Organizacion.PuntoVenta"/> se reemite
+    /// puenteada por <c>puntos_venta</c>: la hoja se une al puente por las mismas columnas con las
+    /// que ya lo referenciaba, y el puente lleva los parámetros del ancla. UNA sola consulta, no N
+    /// por punto de venta. La etiqueta devuelta al operador sigue siendo la tabla HOJA.
+    ///
+    /// El ancla <see cref="Ways.Domain.Organizacion.Tenant"/> NO lo necesita: toda tabla del
+    /// modelo lleva <c>id_tenant</c>, y la segunda fuente ya la trae. <c>PuntoVenta</c> y
+    /// <c>Usuario</c> son hojas de la jerarquía: no tienen hijos estructurales.
+    /// </summary>
+    private static void AgregarRamasPuenteadasPorPuntoDeVenta(
+        IEntityType ancla, Type tipoAncla, List<RamaDeUso> ramas)
+    {
+        if (tipoAncla != typeof(Ways.Domain.Organizacion.Empresa))
+        {
+            return;
+        }
+
+        var puente = ancla.Model.FindEntityType(typeof(Ways.Domain.Organizacion.PuntoVenta))
+            ?? throw new InvalidOperationException(
+                $"El ancla {tipoAncla.FullName} necesita el puente " +
+                $"{typeof(Ways.Domain.Organizacion.PuntoVenta).FullName}, que no está mapeado en " +
+                "el modelo.");
+
+        var tablaDelPuente = puente.GetTableName()
+            ?? throw new InvalidOperationException(
+                $"El puente {puente.ClrType.FullName} del ancla {tipoAncla.Name} no tiene tabla " +
+                "mapeada: el inventario no puede propagar el uso por la jerarquía.");
+
+        var objetoDelPuente = StoreObjectIdentifier.Create(puente, StoreObjectType.Table)
+            ?? throw new InvalidOperationException(
+                $"El puente {puente.ClrType.FullName} del ancla {tipoAncla.Name} no resuelve a un " +
+                "objeto de almacenamiento de tipo tabla.");
+
+        var fksHaciaElAncla = ancla.GetReferencingForeignKeys()
+            .Where(fk => fk.DeclaringEntityType == puente)
+            .ToList();
+
+        // Imposibilidad mecánica: con cero FKs no hay por dónde puentear y con dos no hay forma de
+        // elegir sin adivinar. Las dos direcciones son inaceptables, así que se tira en CI (N1).
+        if (fksHaciaElAncla.Count != 1)
+        {
+            throw new InvalidOperationException(
+                $"{tablaDelPuente} declara {fksHaciaElAncla.Count} FKs hacia {tipoAncla.Name} y el " +
+                "inventario necesita exactamente una para armar el puente de uso.");
+        }
+
+        var fkDelPuente = fksHaciaElAncla[0];
+        var origen = DescribirFk(fkDelPuente);
+
+        var columnasHaciaElAncla = fkDelPuente.Properties
+            .Select(p => p.GetColumnName(objetoDelPuente)
+                ?? throw new InvalidOperationException(
+                    $"La FK ({origen}) del puente {puente.ClrType.FullName} hacia " +
+                    $"{tipoAncla.Name} tiene la propiedad {p.Name} sin columna en {tablaDelPuente}."))
+            .ToList();
+
+        var propiedadesDelAncla = fkDelPuente.PrincipalKey.Properties
+            .Select(p => LeerPropiedadDelPrincipal(p, origen, puente.ClrType, tipoAncla))
+            .ToList();
+
+        var columnaPorPropiedadDelPuente = puente.GetProperties()
+            .Where(p => p.GetColumnName(objetoDelPuente) is not null)
+            .ToDictionary(p => p.Name, p => p.GetColumnName(objetoDelPuente)!, StringComparer.Ordinal);
+
+        var esquemaDelPuente = puente.GetSchema() ?? EsquemaPorDefecto(ancla.Model);
+        var yaCubiertas = ramas.Select(ClaveDeRama).ToHashSet(StringComparer.Ordinal);
+
+        foreach (var hoja in InventarioCompleto(ancla.Model, puente.ClrType)
+            .Where(rama => rama.Clasificacion is not ClasificacionDeDependiente.Excluido
+                && rama.Puente is null))
+        {
+            var columnasDeUnion = hoja.PropiedadesDelPrincipal
+                .Select(propiedad => columnaPorPropiedadDelPuente.TryGetValue(propiedad, out var columna)
+                    ? columna
+                    : throw new InvalidOperationException(
+                        $"La rama {hoja.Tabla} ({string.Join(',', hoja.Columnas)}) del ancla " +
+                        $"{puente.ClrType.Name} se apoya en la propiedad {propiedad}, que no " +
+                        $"resuelve columna en {tablaDelPuente}: el puente de uso de " +
+                        $"{tipoAncla.Name} no se puede armar."))
+                .ToList();
+
+            var rama = new RamaDeUso(
+                hoja.Esquema,
+                hoja.Tabla,
+                hoja.Columnas,
+                propiedadesDelAncla,
+                hoja.Clasificacion,
+                new PuenteDeUso(esquemaDelPuente, tablaDelPuente, columnasDeUnion, columnasHaciaElAncla));
+
+            if (yaCubiertas.Add(ClaveDeRama(rama)))
+            {
+                ramas.Add(rama);
+            }
+        }
+    }
+
     private static string ClaveDeRama(RamaDeUso rama) =>
-        $"{rama.Tabla}|{string.Join(',', rama.Columnas)}";
+        $"{rama.Tabla}|{string.Join(',', rama.Columnas)}|{rama.Puente?.Tabla}";
 
     private static RamaDeUso ConstruirRama(IForeignKey fk, Type tipoAncla)
     {

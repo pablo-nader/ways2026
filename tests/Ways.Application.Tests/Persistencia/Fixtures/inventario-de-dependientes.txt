@@ -3,14 +3,31 @@ Empresa | articulos_empresas | id_empresa,id_tenant | sinmarca
 Empresa | categorias | id_empresa,id_tenant | marcado
 Empresa | certificados_fiscales | id_empresa,id_tenant | marcado
 Empresa | clientes | id_empresa,id_tenant | marcado
+Empresa | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | gastos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | grupos | id_empresa,id_tenant | marcado
 Empresa | listas_precio | id_empresa,id_tenant | marcado
 Empresa | marcas | id_empresa,id_tenant | marcado
 Empresa | medios_pago | id_empresa,id_tenant | marcado
+Empresa | movimientos_cuenta_corriente via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Empresa | movimientos_cuenta_corriente_proveedor via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Empresa | movimientos_stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Empresa | movimientos_stock via puntos_venta | id_punto_venta_destino,id_tenant | sinmarca
+Empresa | movimientos_tesoreria via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Empresa | numeraciones_comprobante via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Empresa | numeraciones_fiscales via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | ofertas | id_empresa,id_tenant | marcado
+Empresa | ordenes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | parametros via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | parametros | id_empresa,id_tenant | marcado
+Empresa | presupuestos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | proveedores | id_empresa,id_tenant | marcado
 Empresa | puntos_venta | id_empresa,id_tenant | marcado
+Empresa | remitos via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Empresa | stock_lotes via puntos_venta | id_punto_venta,id_tenant | sinmarca
+Empresa | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
 PuntoVenta | auditoria | id_punto_venta,id_tenant | excluido
 PuntoVenta | comprobantes_compra | id_punto_venta,id_tenant | marcado
 PuntoVenta | comprobantes_venta | id_punto_venta,id_tenant | marcado

@@ -207,11 +207,17 @@ public class InventarioDeDependientesTests
         Assert.Equal(esperado, actual);
     }
 
+    /// <summary>
+    /// Cuatro campos separados por <c>" | "</c>: ancla, etiqueta de tabla, columnas, balde. La
+    /// etiqueta hace EXPLÍCITO el puente cuando lo hay (<c>comprobantes_venta via puntos_venta</c>),
+    /// así que una rama que se emita directa cuando debía ir puenteada —o al revés— cambia la línea
+    /// y N3 la nombra.
+    /// </summary>
     private static IReadOnlyList<string> RenderizarInventario(IModel modelo) =>
         [.. Anclas
             .SelectMany(ancla => InventarioDeDependientes.InventarioCompleto(modelo, ancla)
                 .Select(rama =>
-                    $"{ancla.Name} | {rama.Tabla} | {string.Join(',', rama.Columnas)} | " +
+                    $"{ancla.Name} | {rama.Etiqueta} | {string.Join(',', rama.Columnas)} | " +
                     $"{rama.Clasificacion.ToString().ToLowerInvariant()}"))
             .Order(StringComparer.Ordinal)];
 
@@ -221,14 +227,32 @@ public class InventarioDeDependientesTests
     private static string RutaDeEsteArchivo([CallerFilePath] string ruta = "") => ruta;
 
     // ---------------------------------------------------------------------------------------
-    // N5 — COMPLETITUD DEL CONJUNTO DE DEPENDIENTES DEL TENANT. Nunca degradable.
+    // N5 — COMPLETITUD DEL CONJUNTO DE DEPENDIENTES, PARA LAS CUATRO ANCLAS. Nunca degradable.
     // ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// N5: la auditoría manual de judgment-day (slice 3, ronda 1) escrita como código. Para el
-    /// ancla <see cref="Tenant"/>, TODA tabla del modelo con una columna <c>id_tenant</c> tiene
-    /// que aparecer en su inventario — las líneas <c>excluido</c> cuentan como presentes, porque
-    /// el carve-out es una decisión escrita, no una omisión.
+    /// Columnas de alcance de cada ancla: toda tabla que mapee alguna de ellas está scopeada por
+    /// esa ancla, tenga o no una FK declarada. Es la fuente INDEPENDIENTE de N5 — el mapeo de
+    /// columnas del modelo, no el recorrido que produce el inventario.
+    /// </summary>
+    public static TheoryData<Type, string[]> ColumnasDeAlcance() => new()
+    {
+        { typeof(Tenant), ["id_tenant"] },
+        { typeof(Empresa), ["id_empresa"] },
+        { typeof(PuntoVenta), ["id_punto_venta", "id_punto_venta_destino"] },
+        {
+            typeof(Usuario),
+            ["id_empleado", "id_empleado_apertura", "id_empleado_cierre", "id_actor"]
+        },
+    };
+
+    /// <summary>
+    /// N5: la auditoría manual de judgment-day (slice 3, ronda 1) escrita como código, y GENÉRICA
+    /// sobre las cuatro anclas — no solo <see cref="Tenant"/>. Para cada ancla, el universo es toda
+    /// tabla del modelo que mapea alguna de sus columnas de alcance (menos la tabla del ancla), y
+    /// cada par <c>(tabla, columna)</c> de ese universo tiene que aparecer en su inventario. Las
+    /// líneas <c>excluido</c> cuentan como presentes, porque el carve-out es una decisión escrita,
+    /// no una omisión.
     ///
     /// Es la red que N1 NO puede ser: N1 compara el inventario contra el mismo recorrido de FKs
     /// que lo produce, así que un dependiente que ese recorrido no ve es invisible para los dos
@@ -240,36 +264,41 @@ public class InventarioDeDependientesTests
     /// <c>GetReferencingForeignKeys()</c> nunca lo devolvía para el ancla <c>Tenant</c> y un
     /// tenant cuyo cliente agregó un segundo punto de venta leía PRÍSTINO — falla ABIERTA.
     /// </summary>
-    [Fact]
-    public void N5_TodaTablaConIdTenantAparecenEnElInventarioDelAncla()
+    [Theory]
+    [MemberData(nameof(ColumnasDeAlcance))]
+    public void N5_TodaTablaDeAlcanceDelAnclaApareceEnSuInventario(Type ancla, string[] columnas)
     {
         using var db = CrearContexto();
 
-        var enElInventario = InventarioDeDependientes.InventarioCompleto(db.Model, typeof(Tenant))
-            .Select(rama => rama.Tabla)
+        var enElInventario = InventarioDeDependientes.InventarioCompleto(db.Model, ancla)
+            .SelectMany(rama => rama.Columnas.Select(columna => $"{rama.Tabla}|{columna}"))
             .ToHashSet(StringComparer.Ordinal);
 
-        var tablaDelAncla = db.Model.FindEntityType(typeof(Tenant))!.GetTableName();
+        var tablaDelAncla = db.Model.FindEntityType(ancla)!.GetTableName();
 
         var faltantes = db.Model.GetEntityTypes()
             .Where(tipo => tipo.GetTableName() is { } tabla && tabla != tablaDelAncla)
-            .Where(TieneColumnaDeAlcanceDeTenant)
-            .Select(tipo => tipo.GetTableName()!)
+            .SelectMany(tipo => ColumnasMapeadas(tipo, columnas)
+                .Select(columna => $"{tipo.GetTableName()}|{columna}"))
             .Distinct(StringComparer.Ordinal)
-            .Where(tabla => !enElInventario.Contains(tabla))
+            .Where(par => !enElInventario.Contains(par))
             .Order(StringComparer.Ordinal)
             .ToList();
 
         Assert.True(
             faltantes.Count == 0,
-            "Estas tablas llevan id_tenant y NO están en el inventario del ancla Tenant, así que " +
-            "un tenant que las usó lee PRÍSTINO (falla abierta): " + string.Join(", ", faltantes));
+            $"Estos pares (tabla, columna) están scopeados por el ancla {ancla.Name} y NO están en " +
+            "su inventario, así que una entidad que los usó lee PRÍSTINA (falla abierta): " +
+            string.Join(", ", faltantes));
     }
 
-    private static bool TieneColumnaDeAlcanceDeTenant(IEntityType tipo) =>
+    private static IEnumerable<string> ColumnasMapeadas(IEntityType tipo, string[] columnas) =>
         StoreObjectIdentifier.Create(tipo, StoreObjectType.Table) is { } objeto
-        && tipo.GetProperties().Any(propiedad =>
-            propiedad.GetColumnName(objeto) == InventarioDeDependientes.ColumnaDeAlcanceDeTenant);
+            ? tipo.GetProperties()
+                .Select(propiedad => propiedad.GetColumnName(objeto))
+                .Where(columna => columna is not null && columnas.Contains(columna, StringComparer.Ordinal))
+                .Select(columna => columna!)
+            : [];
 
     // ---------------------------------------------------------------------------------------
     // Carve-outs (tarea 3.12)

@@ -19,6 +19,10 @@ namespace Ways.Application.Organizacion;
 /// se rechazó por round trips; el costo de planificar ~40 ramas se paga una vez por intento de
 /// baja, sobre una acción de plataforma que se hace un puñado de veces al año.
 ///
+/// Una rama con PUENTE (<see cref="PuenteDeUso"/>) agrega un <c>JOIN</c> contra la tabla
+/// estructural intermedia y pone los parámetros del ancla sobre ella: es cómo el uso sube por la
+/// jerarquía sin abrir N consultas, una por hijo. Sigue siendo el mismo statement único.
+///
 /// ADO crudo sobre la conexión/transacción del llamador, nunca <c>Database.SqlQuery&lt;T&gt;</c>
 /// ni <c>FromSqlRaw</c>: confirmado en stage-1 slice 2 que esos dos revientan con
 /// <c>IndexOutOfRangeException</c> contra este modelo. La conexión se abre con
@@ -59,13 +63,18 @@ public sealed class InspectorDeUso(IWaysDbContext db)
 {
     /// <summary>
     /// <c>\A</c>/<c>\z</c> y NUNCA <c>^</c>/<c>$</c>: en .NET <c>$</c> matchea también ANTES de un
-    /// <c>\n</c> final, así que <c>"stock\n"</c> pasaba la validación y se concatenaba al
-    /// statement. <c>\z</c> es el fin de cadena absoluto.
+    /// <c>\n</c> final, así que <c>^...$</c> acepta <c>"stock\n"</c> y todo lo que venga después
+    /// del salto de línea entra al statement. <c>\z</c> es el fin de cadena absoluto, y es lo que
+    /// cierra esa superficie.
     /// </summary>
     private const string PatronDeIdentificador = @"\A[a-z_][a-z0-9_]*\z";
 
     private static readonly Regex IdentificadorValido =
         new(PatronDeIdentificador, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+
+    /// <summary>Alias de la tabla puente en las ramas que llegan al ancla por la jerarquía
+    /// estructural. Es una constante del renderizador, nunca un identificador de la metadata.</summary>
+    private const string AliasDelPuente = "pv";
 
     /// <summary>
     /// <paramref name="valoresDeClave"/> es posicional contra
@@ -183,20 +192,47 @@ public sealed class InspectorDeUso(IWaysDbContext db)
         var esquema = Identificador(rama.Esquema);
         var tabla = Identificador(rama.Tabla);
 
-        var conjuntos = rama.Columnas
-            .Zip(rama.PropiedadesDelPrincipal, (columna, propiedad) =>
-                $"d.\"{Identificador(columna)}\" = ${IndiceDeParametro(propiedad, propiedadesDeAncla)}")
-            .ToList();
+        var origen = $"\"{esquema}\".\"{tabla}\" d";
+        List<string> conjuntos;
+
+        if (rama.Puente is { } puente)
+        {
+            // El uso sube por la jerarquía: la hoja se une al puente por las mismas columnas con
+            // las que ya lo referenciaba, y los parámetros del ancla van sobre el PUENTE. Una sola
+            // consulta cubre todos los puntos de venta de la empresa; el conjunto de tenant sobre
+            // el puente es lo que impide que el id de otro tenant bloquee.
+            var union = rama.Columnas
+                .Zip(puente.ColumnasDeUnion, (columna, columnaDelPuente) =>
+                    $"d.\"{Identificador(columna)}\" = " +
+                    $"{AliasDelPuente}.\"{Identificador(columnaDelPuente)}\"");
+
+            origen += $" JOIN \"{Identificador(puente.Esquema)}\".\"{Identificador(puente.Tabla)}\" " +
+                $"{AliasDelPuente} ON {string.Join(" AND ", union)}";
+
+            conjuntos = puente.ColumnasHaciaElAncla
+                .Zip(rama.PropiedadesDelPrincipal, (columna, propiedad) =>
+                    $"{AliasDelPuente}.\"{Identificador(columna)}\" = " +
+                    $"${IndiceDeParametro(propiedad, propiedadesDeAncla)}")
+                .ToList();
+        }
+        else
+        {
+            conjuntos = rama.Columnas
+                .Zip(rama.PropiedadesDelPrincipal, (columna, propiedad) =>
+                    $"d.\"{Identificador(columna)}\" = ${IndiceDeParametro(propiedad, propiedadesDeAncla)}")
+                .ToList();
+        }
 
         if (rama.UsaAncla)
         {
             // ">" ESTRICTO: lo que creó el aprovisionamiento comparte el instante del ancla
-            // (ServicioDeAprovisionamiento lee el reloj una sola vez) y no debe bloquear.
+            // (ServicioDeAprovisionamiento lee el reloj una sola vez) y no debe bloquear. Va
+            // siempre sobre la HOJA, incluso con puente: es la fila que el cliente cargó.
             conjuntos.Add(
                 $"d.\"{InventarioDeDependientes.ColumnaDeMarcaTemporal}\" > ${indiceDelAncla}");
         }
 
-        return $"SELECT '{tabla}' AS tabla WHERE EXISTS (SELECT 1 FROM \"{esquema}\".\"{tabla}\" d " +
+        return $"SELECT '{tabla}' AS tabla WHERE EXISTS (SELECT 1 FROM {origen} " +
             $"WHERE {string.Join(" AND ", conjuntos)})";
     }
 

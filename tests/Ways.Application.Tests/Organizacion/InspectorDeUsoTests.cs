@@ -151,7 +151,24 @@ public class InspectorDeUsoTests
 
         foreach (var rama in ramas)
         {
-            Assert.Contains($"FROM \"public\".\"{rama.Tabla}\" d WHERE ", sql);
+            Assert.Contains($"FROM \"public\".\"{rama.Tabla}\" d", sql);
+
+            if (rama.Puente is { } puente)
+            {
+                Assert.Contains($"JOIN \"public\".\"{puente.Tabla}\" pv ON ", sql);
+
+                foreach (var columna in rama.Columnas)
+                {
+                    Assert.Contains($"d.\"{columna}\" = pv.\"", sql);
+                }
+
+                foreach (var columna in puente.ColumnasHaciaElAncla)
+                {
+                    Assert.Contains($"pv.\"{columna}\" = $", sql);
+                }
+
+                continue;
+            }
 
             foreach (var columna in rama.Columnas)
             {
@@ -229,10 +246,29 @@ public class InspectorDeUsoTests
 
         foreach (var rama in ramas)
         {
-            var conjuntos = rama.Columnas
-                .Zip(rama.PropiedadesDelPrincipal, (columna, propiedad) =>
-                    $"d.\"{columna}\" = ${propiedades.ToList().IndexOf(propiedad) + 1}")
-                .ToList();
+            var origen = $"\"{rama.Esquema}\".\"{rama.Tabla}\" d";
+            List<string> conjuntos;
+
+            if (rama.Puente is { } puente)
+            {
+                origen += $" JOIN \"{puente.Esquema}\".\"{puente.Tabla}\" pv ON " + string.Join(
+                    " AND ",
+                    rama.Columnas.Zip(
+                        puente.ColumnasDeUnion,
+                        (columna, columnaDelPuente) => $"d.\"{columna}\" = pv.\"{columnaDelPuente}\""));
+
+                conjuntos = puente.ColumnasHaciaElAncla
+                    .Zip(rama.PropiedadesDelPrincipal, (columna, propiedad) =>
+                        $"pv.\"{columna}\" = ${propiedades.ToList().IndexOf(propiedad) + 1}")
+                    .ToList();
+            }
+            else
+            {
+                conjuntos = rama.Columnas
+                    .Zip(rama.PropiedadesDelPrincipal, (columna, propiedad) =>
+                        $"d.\"{columna}\" = ${propiedades.ToList().IndexOf(propiedad) + 1}")
+                    .ToList();
+            }
 
             if (rama.UsaAncla)
             {
@@ -240,9 +276,81 @@ public class InspectorDeUsoTests
             }
 
             Assert.Contains(
-                $"SELECT '{rama.Tabla}' AS tabla WHERE EXISTS (SELECT 1 FROM " +
-                $"\"{rama.Esquema}\".\"{rama.Tabla}\" d WHERE {string.Join(" AND ", conjuntos)})",
+                $"SELECT '{rama.Tabla}' AS tabla WHERE EXISTS (SELECT 1 FROM {origen} " +
+                $"WHERE {string.Join(" AND ", conjuntos)})",
                 sql);
+        }
+    }
+
+    /// <summary>
+    /// Cláusula: la rama PUENTEADA del ancla <see cref="Empresa"/>. Ninguna tabla operativa lleva
+    /// <c>id_empresa</c> — las ventas se clavan en <c>id_punto_venta</c> —, así que sin este
+    /// <c>JOIN</c> contra <c>puntos_venta</c> una empresa con historia operativa completa lee
+    /// PRÍSTINA. La prueba fija el TEXTO exacto de las tres partes que la hacen correcta: la unión
+    /// hoja↔puente por la clave alternativa <c>(id, id_tenant)</c>, los parámetros del ancla sobre
+    /// el PUENTE (<c>pv."id_empresa" = $1 AND pv."id_tenant" = $2</c>, y ese segundo conjunto es lo
+    /// que impide que el id de otro tenant bloquee) y el conjunto del instante sobre la HOJA.
+    /// La etiqueta devuelta sigue siendo la tabla hoja, que es lo que el operador necesita ver.
+    /// </summary>
+    [Fact]
+    public void UnaRamaPuenteadaUneLaHojaConPuntosVentaYLigaElAnclaSobreElPuente()
+    {
+        using var db = CrearContexto();
+
+        var sql = Renderizar(db, typeof(Empresa));
+
+        Assert.Contains(
+            "SELECT 'comprobantes_venta' AS tabla WHERE EXISTS (SELECT 1 FROM " +
+            "\"public\".\"comprobantes_venta\" d JOIN \"public\".\"puntos_venta\" pv ON " +
+            "d.\"id_punto_venta\" = pv.\"id_punto_venta\" AND " +
+            "d.\"id_tenant\" = pv.\"id_tenant\" " +
+            "WHERE pv.\"id_empresa\" = $1 AND pv.\"id_tenant\" = $2 AND d.\"created_at\" > $3)",
+            sql);
+
+        Assert.Contains(
+            "SELECT 'stock' AS tabla WHERE EXISTS (SELECT 1 FROM \"public\".\"stock\" d " +
+            "JOIN \"public\".\"puntos_venta\" pv ON d.\"id_punto_venta\" = " +
+            "pv.\"id_punto_venta\" AND d.\"id_tenant\" = pv.\"id_tenant\" " +
+            "WHERE pv.\"id_empresa\" = $1 AND " +
+            "pv.\"id_tenant\" = $2)",
+            sql);
+    }
+
+    /// <summary>
+    /// Cláusula: el conjunto PUENTEADO es exactamente el inventario EJECUTABLE del ancla
+    /// <see cref="PuntoVenta"/> — ni una rama de menos (falla abierta) ni el carve-out
+    /// <c>auditoria</c> de más. Y las otras tres anclas NO puentean: <c>Tenant</c> no lo necesita
+    /// (toda tabla lleva <c>id_tenant</c> y la segunda fuente ya la trae) y <c>PuntoVenta</c> y
+    /// <c>Usuario</c> son hojas de la jerarquía.
+    /// </summary>
+    [Fact]
+    public void ElConjuntoPuenteadoDeEmpresaEsElInventarioEjecutableDePuntoVenta()
+    {
+        using var db = CrearContexto();
+
+        var esperado = InventarioDeDependientes.Construir(db.Model, typeof(PuntoVenta))
+            .Select(rama => $"{rama.Tabla}|{string.Join(',', rama.Columnas)}")
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        var puenteadas = InventarioDeDependientes.Construir(db.Model, typeof(Empresa))
+            .Where(rama => rama.Puente is not null)
+            .ToList();
+
+        Assert.Equal(
+            esperado,
+            puenteadas
+                .Select(rama => $"{rama.Tabla}|{string.Join(',', rama.Columnas)}")
+                .Order(StringComparer.Ordinal));
+
+        Assert.All(puenteadas, rama => Assert.Equal("puntos_venta", rama.Puente!.Tabla));
+        Assert.DoesNotContain(puenteadas, rama => rama.Tabla == "auditoria");
+
+        foreach (var ancla in new[] { typeof(Tenant), typeof(PuntoVenta), typeof(Usuario) })
+        {
+            Assert.DoesNotContain(
+                InventarioDeDependientes.InventarioCompleto(db.Model, ancla),
+                rama => rama.Puente is not null);
         }
     }
 

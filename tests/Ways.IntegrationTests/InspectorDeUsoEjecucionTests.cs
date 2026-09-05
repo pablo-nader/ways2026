@@ -28,6 +28,11 @@ namespace Ways.IntegrationTests;
 /// <c>mutation-proof-tests</c> regla 12c: cada fixture siembra un SEGUNDO hermano del mismo
 /// tenant y un SEGUNDO tenant, así que un predicado que ignore una de las dos posiciones de la
 /// clave compuesta muere acá.
+///
+/// Ronda 2 (R2-1) agregó la mitad que faltaba del ancla <see cref="Empresa"/>: sus ramas
+/// PUENTEADAS por <c>puntos_venta</c>. El uso de una empresa vive en los hijos estructurales de
+/// sus puntos de venta, así que sin ellas una empresa con historia operativa completa leía
+/// PRÍSTINA.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class InspectorDeUsoEjecucionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -142,6 +147,107 @@ public class InspectorDeUsoEjecucionTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal(
             "puntos_venta",
             await PreguntarAsync(db, typeof(Tenant), sembrado.Tenant.CreatedAt, sembrado.Tenant.Id));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // R2-1 — el uso sube por la jerarquía: las ramas de Empresa PUENTEADAS por puntos_venta.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Cláusula: la familia de ramas <c>Empresa | &lt;hoja&gt; via puntos_venta</c>, o sea el
+    /// <c>JOIN "puntos_venta" pv ON d."id_punto_venta" = pv."id_punto_venta" AND d."id_tenant" =
+    /// pv."id_tenant"</c> con <c>pv."id_empresa" = $1 AND pv."id_tenant" = $2</c>.
+    ///
+    /// NINGUNA tabla operativa lleva <c>id_empresa</c> — comprobantes, items, pagos, movimientos de
+    /// stock/caja/tesorería/cuenta corriente, turnos, presupuestos, remitos, órdenes y gastos se
+    /// clavan todos en <c>id_punto_venta</c> —, así que los referenciantes DIRECTOS de una empresa
+    /// son solo estructura y catálogo. Sin esta familia, una empresa con historia operativa
+    /// completa lee PRÍSTINA: la plataforma la da de baja junto con su punto de venta. Falla
+    /// ABIERTA, la dirección de pérdida de datos, y de la misma clase que C1 (la ronda 0) por otro
+    /// mecanismo.
+    ///
+    /// La línea base va PRIMERO: la empresa recién aprovisionada lee <c>null</c>, así que lo que
+    /// cambia el resultado es la fila del cliente y no la familia de ramas por sí sola.
+    /// </summary>
+    [Fact]
+    public async Task UnTurnoDeCajaEnSuPuntoDeVentaBloqueaLaBajaDeLaEmpresa()
+    {
+        var sembrado = await AprovisionarAsync(nameof(UnTurnoDeCajaEnSuPuntoDeVentaBloqueaLaBajaDeLaEmpresa));
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        Assert.Null(await PreguntarAsync(
+            db, typeof(Empresa), sembrado.Empresa.CreatedAt, sembrado.Empresa.Id, sembrado.Tenant.Id));
+
+        var despues = sembrado.PuntoVenta.CreatedAt.AddMinutes(1);
+
+        db.TurnosCaja.Add(new Ways.Domain.Caja.TurnoCaja
+        {
+            IdTenant = sembrado.Tenant.Id,
+            IdPuntoVenta = sembrado.PuntoVenta.Id,
+            IdEmpleadoApertura = sembrado.IdUsuarioAdmin,
+            FechaApertura = despues,
+            FondoInicial = 0m,
+            Estado = Ways.Domain.Caja.EstadoTurno.Abierto,
+            CreatedAt = despues,
+            UpdatedAt = despues
+        });
+        await db.SaveChangesAsync();
+
+        // La etiqueta es la tabla HOJA, no el puente: es lo que el operador necesita ver.
+        Assert.Equal(
+            "turnos_caja",
+            await PreguntarAsync(
+                db, typeof(Empresa), sembrado.Empresa.CreatedAt,
+                sembrado.Empresa.Id, sembrado.Tenant.Id));
+    }
+
+    /// <summary>
+    /// Cláusula: el conjunto <c>pv."id_tenant" = $2</c> de la rama puenteada, aislado. Se pregunta
+    /// por el id de ESTA empresa contra el tenant de OTRO: mismo statement, mismos tres parámetros,
+    /// solo cambia el segundo. Sin ese conjunto, <c>pv."id_empresa" = $1</c> matchea igual y el
+    /// turno de un tenant bloquearía la baja de otro — filtración de uso a través del puente.
+    ///
+    /// El aprovisionamiento de plataforma numera las empresas globalmente, así que el aislamiento
+    /// se prueba donde de verdad decide: en el conjunto, no en la aritmética de los ids.
+    /// </summary>
+    [Fact]
+    public async Task ElTurnoDeOtroTenantNoBloqueaLaBajaDeLaEmpresaPorElPuente()
+    {
+        var sembrado = await AprovisionarAsync(nameof(ElTurnoDeOtroTenantNoBloqueaLaBajaDeLaEmpresaPorElPuente));
+        var otro = await AprovisionarAsync($"{nameof(ElTurnoDeOtroTenantNoBloqueaLaBajaDeLaEmpresaPorElPuente)}-otro");
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        var despues = sembrado.PuntoVenta.CreatedAt.AddMinutes(1);
+
+        db.TurnosCaja.Add(new Ways.Domain.Caja.TurnoCaja
+        {
+            IdTenant = sembrado.Tenant.Id,
+            IdPuntoVenta = sembrado.PuntoVenta.Id,
+            IdEmpleadoApertura = sembrado.IdUsuarioAdmin,
+            FechaApertura = despues,
+            FondoInicial = 0m,
+            Estado = Ways.Domain.Caja.EstadoTurno.Abierto,
+            CreatedAt = despues,
+            UpdatedAt = despues
+        });
+        await db.SaveChangesAsync();
+
+        Assert.Equal(
+            "turnos_caja",
+            await PreguntarAsync(
+                db, typeof(Empresa), sembrado.Empresa.CreatedAt,
+                sembrado.Empresa.Id, sembrado.Tenant.Id));
+
+        Assert.Null(await PreguntarAsync(
+            db, typeof(Empresa), sembrado.Empresa.CreatedAt,
+            sembrado.Empresa.Id, otro.Tenant.Id));
+
+        // Y la empresa del otro tenant, que solo tiene lo que creó el aprovisionamiento, sigue
+        // PRÍSTINA: la familia puenteada no sobre-bloquea a quien no operó.
+        Assert.Null(await PreguntarAsync(
+            db, typeof(Empresa), otro.Empresa.CreatedAt, otro.Empresa.Id, otro.Tenant.Id));
     }
 
     // ---------------------------------------------------------------------------------------
