@@ -1878,8 +1878,8 @@ above must not be read as claiming that:
    PaginaCatalogo, Proveedores) — out of stage scope, listed for the rule-10 sweep that adopts the
    shared gate.
 
-- [ ] 5.11 `judgment-day` round to a clean round.
-- [ ] 5.12 Open PR 5 `feat/stage20-slice5-bajas-web`, merge to `main` after the clean round. **Then
+- [x] 5.11 `judgment-day` round to a clean round.
+- [x] 5.12 Open PR 5 `feat/stage20-slice5-bajas-web`, merge to `main` after the clean round. **Then
   report to the owner, at delivery (OD5): empresa and punto de venta deletion ships LATENT** —
   correct and tested below the API, but unreachable through the API until an endpoint that creates a
   second empresa or punto de venta exists, because the structural minimum fires first on every

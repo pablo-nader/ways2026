@@ -1,5 +1,5 @@
 change: stage-20-organizacion-relaciones-y-bajas
-phase: propose
+phase: archive
 status: done
 artifact_store: hybrid
 execution_mode: auto
@@ -369,7 +369,7 @@ phases:
       restated as binding: Docker required, NEVER two integration suites
       concurrently against the same daemon.
   apply:
-    status: in_progress
+    status: done
     date: 2026-09-04
     artifact: tasks.md + PRs
     depends_on: [tasks]
@@ -1248,13 +1248,113 @@ phases:
       exit 0 with the same five pre-existing react-refresh warnings and no new ones.
       git diff main --name-only outside src/Ways.Web/, docs/ and openspec/ is EMPTY.
   verify:
-    status: pending
+    status: done
+    date: 2026-09-05
     artifact: verify-report.md
     depends_on: [apply]
+    notes: >-
+      VERDICT PASS WITH WARNINGS at HEAD 858e9589ed657ce2a7e533bb00d6db75e99552db
+      (main): 0 CRITICAL, 3 WARNING, 9 SUGGESTION. Report admitted by
+      'gentle-ai sdd-verify-validate --requirements 19 --scenarios 73' as
+      gentle-ai.verify-result/v1, verdict pass_with_warnings, evidence_revision
+      sha256:dd355fd0...5c9fd2. EVERY SUITE WAS RE-RUN FOR THIS PHASE AGAINST THIS
+      EXACT TREE AND NOT COPIED FROM THE APPLY NOTES, and every figure matched what
+      apply had recorded: dotnet build Ways.slnx exit 0 (the 2 pre-existing NU1903
+      SSH.NET advisories only), Ways.Domain.Tests 545/545, Ways.Application.Tests
+      434/434, Ways.IntegrationTests 1780/1780 in 12 m 55 s run ONCE and ALONE
+      against the Docker daemon (server 29.6.2) with ZERO transport-abort flakes and
+      zero re-runs, so no per-class isolation re-run was needed (trx at
+      tests/Ways.IntegrationTests/TestResults/verify-stage20.trx); web
+      65 files / 1102 tests, run build exit 0, run lint exit 0 with the same five
+      pre-existing react-refresh warnings and no new one.
+      THE FOUR BINDING ZERO-SCHEMA CRITERIA ALL HOLD, each re-proved rather than
+      trusted: (a) zero files under Migraciones/ in the whole stage diff and the last
+      migration is still 20260822002214_FiscalArcaEtapa19a.cs; (b)
+      has-pending-model-changes reports "No changes have been made to the model since
+      the last migration." — NOTE the working invocation is
+      '--project src/Ways.Infrastructure --startup-project src/Ways.Infrastructure',
+      because Ways.Api does not reference Microsoft.EntityFrameworkCore.Design (that
+      package and WaysDbContextFactory both live in Ways.Infrastructure), a flag set
+      tasks.md never wrote down; (c) InicializadorDeBaseDeDatos.cs, Politicas.cs and
+      ManejadorDeErrores.cs appear nowhere in 'git diff 22af91a..858e958 --name-only'
+      (66 non-openspec files, 13721 insertions, 495 deletions); (d) zero physical
+      deletes, proved twice — an independent repository scan (ExecuteDelete 0,
+      '.Remove(' 0, 'DELETE FROM' outside Migraciones/ 0, RemoveRange exactly the six
+      pre-existing detail-set receivers, none of them an organization table) and
+      BajasEstructuralesTests, which asserts the same property as code and passed.
+      SPECS: 19/19 requirements and 73/73 scenarios PASS, each with a named passing
+      test or a file:line. SIX scenarios pass THROUGH a recorded Reconciliación and
+      none is scored as a miss — Reconciliación 1 (OD6, the 403 that is a 401),
+      4 twice (the completeness requirement delivered as N1/N2/N3/N5 instead of a
+      tautological bucket assertion), 8 (V9 and the paginated usuarios CountAsync),
+      9 (S1's iff and the D13 orphan), 10 (the orphan option's id suffix) and 11 (one
+      article blocks the tenant and the empresa but not the punto de venta, which
+      blocks on one stock row). DESIGN AMENDMENTS ALL PRESENT AND TESTED: the three
+      sources of the dependent set, the puntos_venta bridge, RamaDeUso.Esquema/Puente,
+      InventarioCompleto/PropiedadesDeAncla and FabricaDeEstrategiaSinReintento on all
+      four bajas.
+      THE THREE WARNINGS ARE BOOKKEEPING, NOT BEHAVIOUR. W1 — tasks.md still shows
+      5.11 and 5.12 as unticked although judgment-day rounds 1 and 2 are recorded in
+      tasks.md and PR #173 is merged as the verified HEAD; the same class, this file's
+      phases.apply.status is still in_progress with every slice merged. Both should be
+      corrected in the verify+archive commit. W2 — production doc-comments carry
+      judgment-day round/finding ids against the CLAUDE.md no-changelog rule
+      (ServicioDeOrganizacion.cs, ServicioDeUsuarios.cs, InspectorDeUso.cs,
+      InventarioDeDependientes.cs, EtiquetasDeTablas.cs, PayloadDeAuditoria.cs); the
+      change recorded it itself as slice-5 carried input 6 and never closed it. W3 —
+      the working tree carries uncommitted .claude/skills/ changes (M
+      react-async-state/SKILL.md, ?? ef-retry-safe-writes/) that are NOT in the stage
+      diff and post-date the session snapshot; the archive commit must decide about
+      them explicitly instead of sweeping them in.
+      NINE SUGGESTIONS ARE CARRY-FORWARDS FOR ARCHIVE TO REGISTER: the Remove(-scan
+      receiver widening, the plan-dependent LIMIT 1 label attribution, the
+      estadoAnterior identity-map staleness, the sequential R2-2 race rendezvous, the
+      platform-readable audit surface, the six confirm() screens, the slice-5 coverage
+      gaps, the pre-existing retry double-Add in ServicioDePrecios/CrearAsync (chip
+      task_29095520) and SSH.NET NU1903 (chip task_869978db).
+      SIX DELIVERED KNOWN LIMITATIONS ARE STATED AS ACCEPTED AND NOT AS FAILURES: the
+      OD5 latency (empresa/PV deletion unreachable through the API because no endpoint
+      creates a second one, so the structural minimum always fires first), R1 (a sale
+      between the guard and the commit), T6 (index coverage reported, not guaranteed),
+      the ambiguous commit under no-retry (a committed deletion whose ACK is lost
+      surfaces as a 500, mitigated by the "verificá el listado antes de reintentar"
+      copy), the slice-5 modality scope (screen-inert, NOT document-modal: the navbar
+      escape, the 409 banner outside the aria-modal dialog, focus lost during the
+      write) and the stage-2 backfill over-block on pre-existing tenants.
+      NOTHING REOPENS THE DB GATE and no CRITICAL blocks archive. Verify wrote no
+      source file and made no commit.
   archive:
-    status: pending
+    status: done
+    date: 2026-09-05
     artifact: archive-report.md
+    target: openspec/changes/archive/2026-09-05-stage-20-organizacion-relaciones-y-bajas
     depends_on: [verify]
+    notes: >-
+      W1 confirmed resolved by direct inspection before archiving: tasks.md shows 116/116 `[x]`
+      (grep for unchecked boxes returns zero), and this file's own phases.apply.status already
+      reads 'done' rather than the 'in_progress' verify observed. W2 (judgment-day ids in
+      production doc-comments) carried forward as a documentation-only follow-up, no code change.
+      W3 resolved: the .claude/skills/ changes verify saw uncommitted were committed separately by
+      the orchestrator as 8ed8042, one commit AFTER the verified HEAD 858e958 — that commit is
+      explicitly NOT part of this change's diff and NOT covered by this archive. Three delta specs
+      merged to openspec/specs/: bajas-de-organizacion created as a NEW full spec (mechanical `cp`,
+      diff -r empty, then three `> Superseded by Reconciliación 4/11` annotations added as a
+      deliberate post-copy edit); tenant-organization and usuarios-tenant-scoping both ADDED-only
+      deltas appended after their pre-existing byte-identical content (git diff --unified=0 shows
+      one clean append hunk each, zero removed lines), with two `> Superseded by Reconciliación`
+      annotations embedded in each newly-appended block (1/10 for tenant-organization, 8/9 for
+      usuarios-tenant-scoping). apply-progress.md written summarizing the five slices (branches,
+      PR numbers 165/167/169/171/173, merge commits 5f0018f/d616362/c3f62d7/99b5abe/858e958,
+      suites, mutation totals, judgment-day rounds) from this file's own apply notes, since no such
+      file existed during apply. Four follow-up items named for their own future SDD change: a
+      platform-readable audit surface (S5/R2-7), document-level modality for the deletion gate
+      (navbar inert, 409 banner outside the aria-modal dialog, focus during the write) plus the six
+      remaining native confirm() screens, creation endpoints for a second empresa/PV (the OD5
+      latency's root cause — adding them un-latches empresa_en_uso/punto_venta_en_uso for real
+      operator use), and widening the Remove(/DELETE FROM physical-delete scan's anchors (S1). Two
+      chips carried forward, not fixed here: task_869978db (SSH.NET NU1903) and task_29095520 (the
+      pre-existing retry double-Add in ServicioDePrecios/ServicioDeUsuarios). Zero schema held
+      across the entire archive phase — no file in this phase touched src/ or tests/.
 dependencies:
   stages:
     - stage-1-organization-and-catalogs (archived) — the organization hierarchy,
