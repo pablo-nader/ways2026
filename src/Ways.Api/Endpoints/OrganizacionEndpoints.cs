@@ -8,9 +8,14 @@ namespace Ways.Api.Endpoints;
 /// que <see cref="AprovisionamientoEndpoints"/> pero mapeado desde acá — ASP.NET Core admite
 /// varios <c>MapGroup</c> sobre el mismo prefijo), empresas y puntos de venta (plataforma
 /// ve/edita cualquiera, un admin de tenant ve/edita solo los propios —
-/// <see cref="Politicas.GestionDeOrganizacion"/>). Alta y baja siguen siendo plataforma-only
-/// vía <see cref="ServicioDeAprovisionamiento"/> (ADR-16) — acá no hay <c>POST</c> ni
-/// <c>DELETE</c> a propósito.
+/// <see cref="Politicas.GestionDeOrganizacion"/>). El ALTA sigue siendo plataforma-only vía
+/// <see cref="ServicioDeAprovisionamiento"/> (ADR-16) — acá no hay <c>POST</c> a propósito.
+///
+/// La BAJA (etapa 20, slice 4) sí vive acá, y es LÓGICA: los tres <c>MapDelete</c> reusan la
+/// policy del grupo al que ya pertenecen, sin agregar ni una policy nueva. La asimetría del
+/// grupo de puntos de venta es deliberada y viene de antes: LEER sigue siendo
+/// <see cref="Politicas.LecturaDePuntosVenta"/> porque el selector del POS lo necesita, pero
+/// ELIMINAR es <see cref="Politicas.GestionDeOrganizacion"/> como el resto del ABM.
 /// </summary>
 public static class OrganizacionEndpoints
 {
@@ -41,6 +46,13 @@ public static class OrganizacionEndpoints
             servicio.ReactivarTenantAsync(id, ct))
         .WithSummary("Reactiva un tenant suspendido.");
 
+        tenants.MapDelete("/{id:int}", async (ServicioDeOrganizacion servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.EliminarTenantAsync(id, ct);
+            return Results.NoContent();
+        })
+        .WithSummary("Baja lógica del tenant, con su empresa, sus puntos de venta y sus usuarios.");
+
         var empresas = app.MapGroup("/api/empresas")
             .WithTags("Organización")
             .RequireAuthorization(Politicas.GestionDeOrganizacion);
@@ -57,6 +69,13 @@ public static class OrganizacionEndpoints
             ServicioDeOrganizacion servicio, int id, EmpresaEdicion datos, CancellationToken ct) =>
             servicio.ActualizarEmpresaAsync(id, datos, ct))
         .WithSummary("Actualiza los datos descriptivos de una empresa.");
+
+        empresas.MapDelete("/{id:int}", async (ServicioDeOrganizacion servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.EliminarEmpresaAsync(id, ct);
+            return Results.NoContent();
+        })
+        .WithSummary("Baja lógica de la empresa, con sus puntos de venta.");
 
         var puntosVenta = app.MapGroup("/api/puntos-venta")
             .WithTags("Organización");
@@ -79,6 +98,14 @@ public static class OrganizacionEndpoints
             servicio.ActualizarPuntoVentaAsync(id, datos, ct))
         .RequireAuthorization(Politicas.GestionDeOrganizacion)
         .WithSummary("Actualiza los datos descriptivos de un punto de venta.");
+
+        puntosVenta.MapDelete("/{id:int}", async (ServicioDeOrganizacion servicio, int id, CancellationToken ct) =>
+        {
+            await servicio.EliminarPuntoVentaAsync(id, ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization(Politicas.GestionDeOrganizacion)
+        .WithSummary("Baja lógica del punto de venta.");
 
         return app;
     }
