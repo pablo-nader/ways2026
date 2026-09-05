@@ -2,9 +2,8 @@
  * Cliente de organización (etapa 4B): tenants (plataforma-only), empresas y puntos de venta
  * (plataforma ve/edita cualquiera, un admin de tenant ve/edita solo los propios — lo
  * garantiza `OrganizacionEndpoints`/`ServicioDeOrganizacion` del lado del servidor, acá no
- * hay lógica de alcance). Alta y baja siguen siendo plataforma-only vía aprovisionamiento
- * (`NuevoTenant.tsx`) — este cliente solo lista/edita datos descriptivos y
- * suspende/reactiva un tenant.
+ * hay lógica de alcance). El alta sigue siendo plataforma-only vía aprovisionamiento
+ * (`NuevoTenant.tsx`); la BAJA (etapa 20) es lógica y vive en los tres `eliminar*` de abajo.
  */
 import { api } from './cliente'
 import type {
@@ -23,13 +22,18 @@ export const clienteDeOrganizacion = {
     api.put<TenantListado>(`/plataforma/tenants/${id}`, datos),
   suspenderTenant: (id: number) => api.post<TenantListado>(`/plataforma/tenants/${id}/suspender`),
   reactivarTenant: (id: number) => api.post<TenantListado>(`/plataforma/tenants/${id}/reactivar`),
+  // Las tres bajas contestan 204 sin cuerpo: `api.delete<void>` y nada que espejar (el DTO de
+  // respuesta no existe, así que no hay contrato que copiar mal).
+  eliminarTenant: (id: number) => api.delete<void>(`/plataforma/tenants/${id}`),
 
   listarEmpresas: () => api.get<EmpresaListado[]>('/empresas'),
   editarEmpresa: (id: number, datos: EmpresaEdicion) => api.put<EmpresaListado>(`/empresas/${id}`, datos),
+  eliminarEmpresa: (id: number) => api.delete<void>(`/empresas/${id}`),
 
   listarPuntosVenta: () => api.get<PuntoVentaListado[]>('/puntos-venta'),
   editarPuntoVenta: (id: number, datos: PuntoVentaEdicion) =>
     api.put<PuntoVentaListado>(`/puntos-venta/${id}`, datos),
+  eliminarPuntoVenta: (id: number) => api.delete<void>(`/puntos-venta/${id}`),
 }
 
 // --- Filtros por dueño y etiquetas (stage-20, slice 2 · design D14, D15) ---
@@ -107,15 +111,24 @@ function ordenarPorEtiqueta(opciones: OpcionDeFiltro[]): OpcionDeFiltro[] {
  * La opción de plataforma entra al mapa como una más: `ETIQUETA_OPCION_PLATAFORMA` es texto fijo y
  * un tenant puede llamarse literalmente así, con lo que las dos etiquetas colisionarían. Su clave
  * (`VALOR_SIN_TENANT`) no se toca — el sufijo es la clave, no un id fabricado.
+ *
+ * `valorSinSufijo` CUENTA para la colisión pero nunca recibe sufijo. Es la opción de plataforma:
+ * su clave es un centinela interno (`sin-tenant`), no un id, y anexárselo rendía la copia
+ * "Plataforma (sin tenant) (tenant sin-tenant)" en cuanto un tenant se llamaba literalmente como
+ * la etiqueta fija. El desempate lo sigue haciendo el otro lado de la colisión, que sí tiene id.
  */
-function desempatarHomonimos(opciones: OpcionDeFiltro[], sustantivo: string): OpcionDeFiltro[] {
+function desempatarHomonimos(
+  opciones: OpcionDeFiltro[],
+  sustantivo: string,
+  valorSinSufijo?: string,
+): OpcionDeFiltro[] {
   const repeticiones = new Map<string, number>()
   for (const opcion of opciones) {
     repeticiones.set(opcion.etiqueta, (repeticiones.get(opcion.etiqueta) ?? 0) + 1)
   }
 
   return opciones.map((opcion) =>
-    (repeticiones.get(opcion.etiqueta) ?? 0) > 1
+    opcion.valor !== valorSinSufijo && (repeticiones.get(opcion.etiqueta) ?? 0) > 1
       ? { ...opcion, etiqueta: `${opcion.etiqueta} (${sustantivo} ${opcion.valor})` }
       : opcion,
   )
@@ -146,8 +159,9 @@ export function opcionesDeTenant(filas: readonly FilaConTenant[]): OpcionDeFiltr
 
   // El desempate corre sobre el conjunto COMPLETO, plataforma incluida: recién después se aparta
   // esa opción para dejarla primera. Excluirla del mapa dejaba dos etiquetas idénticas cuando un
-  // tenant se llama literalmente "Plataforma (sin tenant)".
-  const desempatadas = desempatarHomonimos([...porClave.values()], 'tenant')
+  // tenant se llama literalmente "Plataforma (sin tenant)". Lo que SÍ se excluye es el SUFIJO de
+  // esa opción: su clave es un centinela, no un id, y no puede filtrarse a la copia.
+  const desempatadas = desempatarHomonimos([...porClave.values()], 'tenant', VALOR_SIN_TENANT)
   const plataforma = desempatadas.find((o) => o.valor === VALOR_SIN_TENANT)
   const tenants = ordenarPorEtiqueta(desempatadas.filter((o) => o.valor !== VALOR_SIN_TENANT))
 
