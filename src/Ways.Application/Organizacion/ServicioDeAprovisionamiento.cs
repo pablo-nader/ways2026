@@ -63,7 +63,8 @@ public class ServicioDeAprovisionamiento(
                 "resultado_incierto",
                 "No se pudo confirmar el alta del tenant: verificá el listado; si ya existe, "
                     + "restablecé la contraseña del admin antes de reintentar.",
-                503);
+                503,
+                error);
         }
     }
 

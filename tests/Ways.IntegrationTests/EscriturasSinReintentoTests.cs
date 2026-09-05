@@ -953,7 +953,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
 
         HttpResponseMessage respuesta;
         using (fixture.ConInterceptorEnElHost(
-            new InterceptorQueRompeLaPrimeraEscritura("clientes", SqlStateTransitorio, ClaseDeSentencia.Select)))
+            new InterceptorQueRompeLaPrimeraEscritura(
+                "clientes", SqlStateTransitorio, ClaseDeSentencia.Select, veces: int.MaxValue)))
         {
             respuesta = await admin.GetAsync("/api/clientes");
         }

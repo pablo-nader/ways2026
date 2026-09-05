@@ -54,10 +54,16 @@ internal sealed class InterceptorQueRompeLaPrimeraEscritura : DbCommandIntercept
     private readonly string sqlState;
     private int intentos;
 
+    /// <summary>Cuantas coincidencias se rompen. Por defecto una: el reintento tiene que poder
+    /// comitear. Con <see cref="int.MaxValue"/> el fallo persiste todos los intentos, que es lo que
+    /// hace falta para que una LECTURA (reintentada por la estrategia global) agote el limite.</summary>
+    private readonly int veces;
+
     public InterceptorQueRompeLaPrimeraEscritura(
-        string tabla, string sqlState, ClaseDeSentencia clase = ClaseDeSentencia.Insert)
+        string tabla, string sqlState, ClaseDeSentencia clase = ClaseDeSentencia.Insert, int veces = 1)
     {
         this.sqlState = sqlState;
+        this.veces = veces;
 
         var verbo = clase switch
         {
@@ -113,7 +119,7 @@ internal sealed class InterceptorQueRompeLaPrimeraEscritura : DbCommandIntercept
 
         // Solo el PRIMER intento falla: si hubiera reintento, el segundo tiene que poder comitear
         // — es la única forma de que las filas duplicadas lleguen a la base y se puedan contar.
-        if (Interlocked.Increment(ref intentos) > 1)
+        if (Interlocked.Increment(ref intentos) > veces)
         {
             return;
         }
