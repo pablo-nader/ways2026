@@ -1503,8 +1503,8 @@ written)** — transcribed from `design.md:383-398`:
 - [x] 4.37 GATE GUARD + non-regression — re-assert V1-V6 and V13; Domain + Application + Integration
   suites green (**never** run integration suites concurrently against the same Docker daemon);
   `dotnet build Ways.slnx` clean.
-- [ ] 4.38 `judgment-day` round to a clean round.
-- [ ] 4.39 Open PR 4 `feat/stage20-slice4-bajas-api`, record mutation evidence for **every** U-row
+- [x] 4.38 `judgment-day` round to a clean round.
+- [x] 4.39 Open PR 4 `feat/stage20-slice4-bajas-api`, record mutation evidence for **every** U-row
   (U1-U8) plus N4 in the PR body, with the `[S]` rows recording their file/state/definition assertion
   **and saying so** (V11), merge to `main` after the clean round.
 
@@ -1814,33 +1814,33 @@ buttons; the API still works but nobody can press it. **Skills**: `react-async-s
 and **rule 10: the pattern is replicated across all four screens in the same PR**),
 `web-descriptor-tests`, `dto-contract-honesty`, `work-unit-commits`.
 
-- [ ] 5.1 Modify `src/Ways.Web/src/api/organizacion.ts` — `eliminarTenant`, `eliminarEmpresa`,
+- [x] 5.1 Modify `src/Ways.Web/src/api/organizacion.ts` — `eliminarTenant`, `eliminarEmpresa`,
   `eliminarPuntoVenta`. `src/Ways.Web/src/api/usuarios.ts`'s `eliminar` already exists and keeps its
   signature. *(TO-R4, UT-R2)*
-- [ ] 5.2 Create the `codigo` → copy mapping (a pure module beside the helpers), covering all six
+- [x] 5.2 Create the `codigo` → copy mapping (a pure module beside the helpers), covering all six
   codes plus the 404 and the generic fallback. The web keys its copy off **`codigo`**, never off
   `mensaje`: changing `mensaje` must not change which copy is selected. *(BO-R11)*
-- [ ] 5.3 Modify `Tenants.tsx` — delete button + confirmation gate + the full `react-async-state`
+- [x] 5.3 Modify `Tenants.tsx` — delete button + confirmation gate + the full `react-async-state`
   write discipline: full-window disabled state per entity while the write is outstanding, supersede
   blocked while a write is outstanding, re-entrancy guard, and a post-write refresh failure reporting
   *"se eliminó, pero no se pudo actualizar la vista"*. *(TO-R4)*
-- [ ] 5.4 Modify `Empresas.tsx` — the same pattern, verbatim (rule 10). *(TO-R4)*
-- [ ] 5.5 Modify `PuntosVenta.tsx` — the same pattern, verbatim. *(TO-R4)*
-- [ ] 5.6 Modify `Usuarios.tsx` — the same pattern applied to the **existing** "Baja" button
+- [x] 5.4 Modify `Empresas.tsx` — the same pattern, verbatim (rule 10). *(TO-R4)*
+- [x] 5.5 Modify `PuntosVenta.tsx` — the same pattern, verbatim. *(TO-R4)*
+- [x] 5.6 Modify `Usuarios.tsx` — the same pattern applied to the **existing** "Baja" button
   (`:120-122`), which now has to render `usuario_en_uso` and the pre-existing `PoliticaDeRoles`
   refusals. *(UT-R2)*
-- [ ] 5.7 [P] Extend the four `*.test.tsx` files created in slice 2: the confirmation gate blocks the
+- [x] 5.7 [P] Extend the four `*.test.tsx` files created in slice 2: the confirmation gate blocks the
   call until confirmed; the full-window disabled state appears per entity; a second click while a
   write is outstanding is dropped; the post-write refresh failure renders its own copy; **each 409
   `codigo` maps to its own copy** and a changed `mensaje` does not change the selection. *(BO-R11,
   TO-R4, UT-R2; `react-async-state` rules 2-6, 9, 10)*
-- [ ] 5.8 [P] Test: a `404` on delete (already-deleted row, or out-of-scope target) renders the
+- [x] 5.8 [P] Test: a `404` on delete (already-deleted row, or out-of-scope target) renders the
   neutral not-found copy — **never** a usage disclosure, preserving the anti-oracle at the UI layer
   too. *(BO-R12)*
-- [ ] 5.9 Modify `docs/09-multi-tenancy.md` and `docs/10-modelo-de-datos.md` — an **"Etapa 20"** note
+- [x] 5.9 Modify `docs/09-multi-tenancy.md` and `docs/10-modelo-de-datos.md` — an **"Etapa 20"** note
   covering the deletion semantics, the pristine discriminator, the three buckets and two carve-outs,
   the cascade boundary and the six codes. **No schema table changes** — the stage ships zero DDL.
-- [ ] 5.10 GATE GUARD + non-regression — `npm --prefix src/Ways.Web run test`, `run build`
+- [x] 5.10 GATE GUARD + non-regression — `npm --prefix src/Ways.Web run test`, `run build`
   (typecheck) and `run lint` clean; re-assert V1-V6 on the full stage diff (this is the last slice:
   the last migration must **still** be `20260822002214_FiscalArcaEtapa19a.cs`,
   `has-pending-model-changes` clean, `InicializadorDeBaseDeDatos.cs` / `Politicas.cs` /
@@ -1854,6 +1854,34 @@ and **rule 10: the pattern is replicated across all four screens in the same PR*
   between the guard's read and the deletion's commit — accepted, recovery is a one-line `UPDATE`
   because nothing is destroyed) and **T6** (FK index coverage is *reported*, not guaranteed, since
   adding an index would be DDL).
+
+
+### Slice 5 — mutation evidence (V11), run for real
+
+Every row below was applied to the working tree, run, and reverted. Command:
+`npx vitest run --run <files>` from `src/Ways.Web`.
+
+| # | Mutation | Verdict | Evidence |
+|---|---|---|---|
+| MS1 | `Empresas.confirmarBaja`: delete the post-write generation check (`if (generacion.current !== token) return`) | **SURVIVES** | 15/15 green. Honest survivor, same class and same reason as slice 2's M10: `react-async-state` rule 9 disables **every** action that could bump the generation while `ocupado` is set, so the mismatch cannot occur. The guard stays as defence-in-depth |
+| MS2 | `Tenants.confirmarBaja`: re-entrancy guard back to reading state (`ocupado !== null` instead of `ocupadoRef.current`) | **KILLED** | *"un segundo click sobre la confirmación en vuelo se descarta — expected 1 times, but got 2 times"*. **This mutation was originally a real defect**: the guard was written reading state, the test found it, and the fix (a synchronous ref mirror) was replicated to all four screens. Slice 2's M35/M21b survivor now has a real kill |
+| MS3 | `Tenants.confirmarBaja`: gate the `finally` on the generation (`if (generacion.current === token)`) | **SURVIVES** | 12/12 green. Honest survivor: the latch the slice-2 carry-forward describes needs a generation bump *during* an outstanding write, and rule 9 still forbids one — the delete gate is disabled while `ocupado` is set. The ungated `finally` is defence-in-depth with no reachable path today, and it is recorded as such rather than dressed up |
+| MS4 | `bajas.ts`: select the copy off `error.message` instead of `error.codigo` | **KILLED** | 3 tests in `bajas.test.ts` (*"los seis códigos rinden seis copias distintas"*, *"cambiar el mensaje no cambia la copia"*, *"rinde el mensaje del servidor"*) plus the four screen suites |
+| MS5 | `bajas.ts`: remove the `estado === 404` branch | **KILLED** | *"un 404 rinde la copia neutra de inexistencia y no filtra el mensaje del servidor"* + the anti-oracle test of `Tenants` and `PuntosVenta` |
+| MS6 | `bajas.ts`: remove the `estado >= 500` branch | **KILLED** | *"un 500 avisa que el resultado es incierto y manda a verificar el listado"* |
+| MS7 | `PuntosVenta`: replace `pedirBaja(p)` with an inline `setBaja(...)` + `confirmarBaja()` | **inconclusive, discarded** | The mutant is a no-op: `confirmarBaja` reads `baja` from the render closure, which is still `null` in that tick. Not recorded as a survivor — it never expressed "no gate". Replaced by MS7b |
+| MS7b | `PuntosVenta`: the Baja button calls `eliminarPuntoVenta(p.id)` directly (no gate at all) | **KILLED** | 3 tests: *"el botón de baja no llama a la API hasta que se confirma"*, *"cancelar cierra la puerta y no llama nunca a la API"*, *"durante el DELETE y su refresco no queda ninguna acción alcanzable"* |
+| MS8 | `organizacion.ts`: drop the `opcion.valor !== valorSinSufijo` conjunct of `desempatarHomonimos` | **KILLED** | *"la opción de plataforma nunca filtra su clave centinela a la etiqueta"* |
+| MS9 | `Empresas.refrescarTrasEscribir`: the refresh `catch` sets the plain `mensajeOk` instead of appending the refresh-failure notice | **KILLED** | *"un refresco fallido después de la baja no la reporta como fallida"* |
+| MS10 | `Usuarios.guardar`: `setErrorAlta(ERROR_ALTA_SIN_TENANTS)` back to the shared `setError(...)` slot | **KILLED** | *"el rechazo del alta sin universo de tenants sobrevive a una carga posterior"* |
+| MS11 | `bajas.arrastreDeTenant`: drop the `cantidadEmpresas` line from the returned list | **KILLED** | 3 tests in `bajas.test.ts` + the `Tenants` gate test that asserts the three cascade lines in order |
+| MS12 | `bajas.frase`: boundary `cantidad <= 0` → `cantidad < 0` | **KILLED** | *"no lista las familias vacías"* |
+
+**Three survivors, recorded as survivors and not dressed up**: MS1 and MS3 (both the "unreachable
+while rule 9 holds" class carried from slice 2 — the delete buttons did **not** make them reachable,
+because the gate is itself disabled during an outstanding write, and that is the honest result of
+running them rather than the assumed one), and MS7 which was discarded as a badly-formed mutant and
+replaced by MS7b, which kills.
 
 ---
 

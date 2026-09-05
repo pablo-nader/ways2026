@@ -1060,7 +1060,74 @@ phases:
       1780/1780 en 12m49s corrida UNA sola vez y SOLA contra el daemon de Docker,
       cero flakes y cero re-runs; web 63 archivos / 1022 tests, build y lint limpios
       (5 warnings preexistentes de react-refresh); has-pending-model-changes limpio.
-      Slice 5 pending.
+      Slice 5 implemented; judgment-day and PR pending.
+      SLICE 5 IMPLEMENTED (tasks 5.1-5.10 checked, plus 4.38/4.39 closed by PR 171
+      / commit 99b5abe; 5.11 judgment-day and 5.12 PR belong to the orchestrator).
+      Branch feat/stage20-slice5-bajas-web off main, web only. MEASURED with 'git
+      diff main --numstat' and NOT estimated - 13 files, 2035 insertions and 192
+      deletions, of which production is 901 (722 insertions, 179 deletions) and 745
+      ignoring pure re-indentation, tests are 1240 and docs are 86. THE ESTIMATE OF
+      ~340 IS OVERRUN BY ROUGHLY 6x AND THAT IS REPORTED, NOT HIDDEN - three causes,
+      all of them structural rather than scope creep: (a) mutation-proof-tests and
+      web-descriptor-tests demand a test per branch, and rule 10 replicates every
+      pattern across FOUR sibling screens, so 1240 test lines land against a forecast
+      that budgeted for one screen's worth (slice 2 hit the same shape: 1078 test
+      lines against ~430); (b) the four carry-forward items of slice 2 required
+      restructuring EVERY write path of the four screens onto a single ungated
+      finally, which is a whole-file re-indentation on top of the semantic change;
+      (c) a real defect was found while running the mutations and its fix is a fifth
+      cross-cutting change (below). THE NATURAL SPLIT, if the orchestrator wants one,
+      is already cut into the eight commits: 5a = organizacion.ts + bajas.ts +
+      ConfirmacionDeBaja + Tenants + Empresas, 5b = PuntosVenta + Usuarios + docs.
+      A REAL DEFECT FOUND BY A TEST, NOT REASONED ABOUT - the re-entrancy guard of
+      react-async-state rule 9 was written as 'if (ocupado) return' reading STATE,
+      and two clicks of the SAME tick read the same render, so both passed and two
+      DELETEs went out. The slice-5 re-entrancy test failed on the first run and the
+      fix is a synchronous ref mirror (ocupadoRef), replicated to all four screens in
+      the same PR. This is exactly the M35/M21b survivor slice 2 recorded as
+      unreachable: the delete buttons made it reachable and it now has a real kill.
+      THIRTEEN MUTATIONS RUN FOR REAL (MS1-MS12 plus MS7b, table in tasks.md): ten
+      killed with their exact failing test names, TWO HONEST SURVIVORS recorded as
+      survivors and not dressed up (MS1 the post-write generation check and MS3 the
+      ungated finally - both the 'unreachable while rule 9 holds' class carried from
+      slice 2, and the honest result of RUNNING them is that the delete buttons did
+      NOT make them reachable, because the gate is itself disabled during an
+      outstanding write), and ONE DISCARDED as a badly-formed mutant (MS7 was a
+      no-op: confirmarBaja reads baja from the render closure; replaced by MS7b,
+      which kills). THE FOUR CARRY-FORWARD ITEMS OF SLICE 2 ARE CLOSED - (1) the
+      generation-mismatch returns inside the write paths no longer latch ocupado:
+      every write of the four screens now has ONE ungated finally covering all its
+      exits, and refrescarTrasEscribir stopped owning the flag; (2)
+      ERROR_ALTA_SIN_TENANTS has its own slot, and buscar() deliberately does NOT
+      clear it because it reports a LIVE precondition of the open form, while
+      errorPassword is cleared on Cancelar and Buscar because it reports a finished
+      write; (3) the platform option still counts for the collision but never
+      receives the suffix, so the sin-tenant sentinel cannot reach the copy; (4) the
+      tenant-universe banner is gated on esPlataforma and the tenanteReconciliado
+      typo is fixed. ANTI-ORACLE AT THE UI LAYER - a 404 renders a neutral
+      'ya no existe o no esta a tu alcance' with the server message deliberately NOT
+      appended, so a future server text cannot leak through; asserted per screen.
+      THE 500 COPY carries 'verifica el listado antes de reintentar' per the slice-4
+      carry-forward, because the bajas run without automatic retry and a lost ACK
+      means the deletion may have committed. V1-V6 RE-ASSERTED ON THE WHOLE STAGE
+      DIFF (22af91a..HEAD): zero migration files touched by the entire stage, the
+      last migration is still 20260822002214_FiscalArcaEtapa19a.cs,
+      InicializadorDeBaseDeDatos.cs / Politicas.cs / ManejadorDeErrores.cs untouched,
+      zero physical deletes over the four organization tables (the only RemoveRange
+      hit is the pre-existing articulos_empresas replace-set, another table and a
+      known carryover), zero ': IWaysDbContext' implementers. SUITES - npm run test
+      64 files / 1071 tests green, npm run build (tsc -b plus vite) clean, npm run
+      lint exit 0 with the same five pre-existing react-refresh warnings, dotnet
+      build Ways.slnx clean with the 2 pre-existing NU1903 advisories. FLAKE NOTE,
+      recorded rather than swallowed - the first full-suite run reported Remito and
+      one Usuarios selectOptions as failures; both pass in isolation and the very
+      next full run was 1071/1071 green. Same non-reproducible parallel-load class
+      already recorded for this repo; nothing in this slice touches Remito. TWO
+      FILES OUTSIDE src/Ways.Web ARE TOUCHED ON PURPOSE - docs/09-multi-tenancy.md
+      and docs/10-modelo-de-datos.md, which task 5.9 requires. Zero backend and zero
+      schema, as the constraint intends. DELIVERY REPORT OWED TO THE OWNER (OD5,
+      task 5.12) is in the apply return envelope: empresa and punto de venta
+      deletion ships LATENT, plus the two deferred items R1 and T6.
   verify:
     status: pending
     artifact: verify-report.md
