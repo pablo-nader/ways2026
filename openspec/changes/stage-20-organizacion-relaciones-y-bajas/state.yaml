@@ -574,7 +574,41 @@ phases:
       option set is untouched, still opcionesDeTenant(filas) with zero second
       fetch (D15). SUITES after the gap closure - npm run test 63 files / 999
       tests green, npm run build clean, npm run lint exit 0 with the same
-      five pre-existing warnings. Slices 3-5 pending.
+      five pre-existing warnings. JUDGMENT-DAY SLICE 2 ROUND 1 CORRECTED, web
+      only, no backend and no schema. Confirmed items fixed - C1 the tenant
+      universe no longer catches to an empty list in silence (visible error plus
+      a retry hung off opening "Nuevo"), C2 Guardar is inert for a platform
+      actor while that universe is loading or failed (a disabled select is
+      exempt from HTML constraint validation, so required alone let a POST with
+      idTenant null through), C3 the tenant FILTER of Empresas and PuntosVenta
+      is gated on esPlataforma exactly like the tenant COLUMN already was, C4
+      tenants that are not Activo are still offered but their option label now
+      carries the estado (the server never inspects the destination tenant's
+      estado, so a user created inside a suspended tenant silently could not log
+      in), S1 the unreachable non-platform arm of tenantsAsignables deleted,
+      S2 the filter reconciliation written back to state instead of only derived
+      at render, S3 the post-write refresh reloads with the APPLIED search term
+      rather than the input draft, S4 the password POST split off the profile
+      PUT so a committed write is never reported as a failure, S5 homonym owners
+      disambiguated by id in the pure option helpers, S6 the rol-root branch
+      downgraded to defence-in-depth (GET /roles cannot return Root for any
+      actor) with the misleading comments rewritten, S7 ocupado cleared in a
+      finally regardless of generation, S8 the repeated page-size rationale
+      reduced to one, the Tenants invalidation doc-comment made truthful and the
+      cuentaDePlataforma fixture given rol Root. TWO ITEMS DEFERRED BY THE
+      ORCHESTRATOR AND RECORDED, NOT FIXED - the unpaginated 25-row window the
+      usuarios filter operates on (named in task 2.12, code untouched, server
+      pagination already deferred here) and the orphan option's id suffix
+      (Reconciliacion 10, label deliberately unchanged). Eleven mutations run
+      for real and KILLED (M20, M20b, M21, M22, M23, M24, M25, M26, M26b, M27,
+      M28, M29); THREE HONEST SURVIVORS recorded as survivors, not dressed up -
+      M21b the same-tick re-entrancy guard, M30 and M30b the ungated finally,
+      all three unreachable today and kept as the trap slice 5's delete buttons
+      will need. M17 is SUPERSEDED, not re-targeted - its clause was the dead
+      arm S1 removed. SUITES after the correction - npm run test 63 files /
+      1015 tests green, npm run build (tsc -b plus vite) clean, npm run lint
+      exit 0 with the same five pre-existing warnings, measured against the
+      pre-change baseline. Slices 3-5 pending.
   verify:
     status: pending
     artifact: verify-report.md

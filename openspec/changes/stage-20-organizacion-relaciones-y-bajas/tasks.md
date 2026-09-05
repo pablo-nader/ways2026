@@ -120,6 +120,22 @@ carry the entire safety argument.**
    `ServicioDeUsuarios.NombreDeTenantAsync`), both of which name the two null cases instead of the
    `iff`, and asserted by `ElListadoDeUsuariosLlevaElTenantDeCadaCuentaYNuncaFabricaLaEtiquetaPlataforma`
    plus `UnaCuentaCuyoTenantFueDadoDeBajaNoTraeNombreDeTenantEnNingunoDeLosTresCaminos`.
+10. **The orphan option's id suffix (`— (tenant 7)`) is NOT a violation of the "no raw owner id"
+    sentence, and the label is deliberately left alone.** `tenant-organization`'s
+    *"owner ids MUST NOT be displayed as the identity of the owner"* targets rows that HAVE an
+    owner: the requirement is that a real owner is presented by its name, never by its number, and
+    that is what every non-orphan row and every non-orphan option does. An orphan is the D13
+    anomaly — the owning tenant is soft-deleted, so there is **no name to display** — and its
+    filter option still needs a key the operator can tell apart from another orphan's. The id
+    suffix is that handle, and it is the *anomaly's* rendering, not an owner identity: presenting
+    it as an owner would require claiming the number identifies something the row can name, which
+    is exactly what it cannot do. Replacing it with a bare `—` would collapse two distinct orphan
+    tenants into one indistinguishable option (the case `desempata los huérfanos con su id para que
+    no compartan etiqueta` pins). The spec sentence is left **byte-identical** — deltas of this
+    change are not edited mid-flight — and is read through this reconciliation, the same handling
+    Reconciliación 1 gives OD6 and Reconciliación 9 gives S1. Task 2.13's assertion still holds
+    unchanged: no **cell** presents an id as the owner's identity. *(judgment-day round 1, judge A
+    SUGGESTION; deferred by the orchestrator with no code change.)*
 
 ## Binding Verify Criteria (all slices)
 
@@ -523,7 +539,13 @@ impossible by construction, and satisfies S5 (a filter can never disclose an out
   it; the empresa filter narrows the rows. *(TO-R1, TO-R3)*
 - [x] 2.12 [P] Create `src/Ways.Web/src/paginas/Usuarios.test.tsx` — `"Plataforma"` renders for
   `idTenant === null` and the tenant name renders otherwise; the tenant filter narrows the rows; a
-  single-tenant dataset offers exactly one tenant option (S5). *(UT-R1, TO-R3)*
+  single-tenant dataset offers exactly one tenant option (S5). **The usuarios filter operates on an
+  unpaginated 25-row window** (`GET /api/usuarios` default `tamanio` 25, no pager rendered,
+  `pagina.total` unused): it filters what is on screen, not the tenant's users, so a tenant with
+  users past row 25 shows fewer rows than it has. Pre-existing truncation, made more visible by the
+  filter, **left in the code deliberately** — server-side pagination is already deferred with a
+  reopen condition in `state.yaml` — and named here rather than hidden (judgment-day round 1,
+  judge A WARNING, deferred by the orchestrator). *(UT-R1, TO-R3)*
 - [x] 2.13 [P] Assertion across the four screen tests: **no cell presents `idTenant` or `idEmpresa`
   as the owner's identity** — the raw ids survive only as `<select value>` filter keys.
   *(TO-R1; Success Criterion "no raw owner id is displayed")*
@@ -589,11 +611,27 @@ planning name `feat/stage20-slice2-proyeccion-web` — same slice, different bra
 | M12 | 2.5 | Rule 9: an in-flight write blocks every action that could supersede it, not just Submit | `disabled={ocupado !== null}` removed from the row's "Editar" | **KILLED** — `Received element is not disabled` |
 | M13 | 2.5 | Rule 6: the post-write refresh sits OUTSIDE the write's try/catch, so a committed write is never reported as a failure | the success aviso moved back inside the write path | **KILLED** — `Unable to find an element with the text: Se actualizó "Sur SRL".` |
 | M14 | 2.17 | `idTenant: datos.idTenant` in the create payload builder — the exact field whose absence produced the owner's 400 `tenant_requerido` | the line deleted from the `CrearUsuario` literal (`as CrearUsuario` to keep it compiling) | **KILLED, 3 tests** — `expected { usuario: 'nuevo.admin', …(4) } to match object { usuario: 'nuevo.admin', …(3) }`, plus `… to match object { rolId: 1, idTenant: null }` and `… to match object { rolId: 4, idTenant: null }` |
-| M15 | 2.17 | The rol `onChange` clears `idTenant` **in state**, not only in the rendering | `onCambio({ ...valor, rolId })` — the `rolId === ROL.Root ? null : …` clear dropped | **KILLED** — `el rol Root deshabilita el selector y limpia el tenant ya elegido`: `expect(element).toHaveValue()` / `Expected the element to have value: ` / `Received: 2` |
+| M15 | 2.17 | The rol `onChange` clears `idTenant` **in state**, not only in the rendering | `onCambio({ ...valor, rolId })` — the `rolId === ROL.Root ? null : …` clear dropped | **KILLED** — `el rol Root deshabilita el selector y limpia el tenant ya elegido`: `expect(element).toHaveValue()` / `Expected the element to have value: ` / `Received: 2`. **DOWNGRADED in round 1 to "defence-in-depth, unreachable through `/roles`"** — see the note below the table; the kill is real but it kills a branch a real actor cannot enter |
 | M16 | 2.17 | `ofreceTenant` gates the selector — S5 anti-oracle: a tenant admin never enumerates tenants | `{esNuevo && (` — the `ofreceTenant` conjunct dropped | **KILLED, 2 tests** — `expected document not to contain element, found <select`, and `expected "vi.fn()" to be called at least once` (the now-visible `required` select blocks submission, so the POST never fires — incidental proof that the `required` copy matches real enforcement, `react-async-state` rule 7) |
-| M17 | 2.17 | The create selector offers only ASSIGNABLE tenants — the platform token is not an id and the server rejects it for every non-root rol | `const tenantsAsignables = opcionesTenant` — the `VALOR_SIN_TENANT` filter dropped | **KILLED** — `expected [ 'Elegí un tenant', …(3) ] to deeply equal [ 'Elegí un tenant', …(2) ]` |
+| M17 | 2.17 | ~~The create selector offers only ASSIGNABLE tenants — the platform token is not an id~~ | ~~`const tenantsAsignables = opcionesTenant` — the `VALOR_SIN_TENANT` filter dropped~~ | **SUPERSEDED in round 1 — the clause no longer exists.** The `VALOR_SIN_TENANT` filter lived on the `!esPlataforma` arm of `tenantsAsignables`, which round 1 proved unreachable (the selector renders only under `ofreceTenant={esPlataforma}`) and removed as dead code. The kill recorded here was real when it ran, against code that is gone; it is **not** re-targeted to a different clause and **not** left standing as if it still guarded something. The surviving property of that selector — its option set — is now guarded by M22 and M26b |
 | M18 | 2.17 | `react-async-state` rule 5: the selector is part of the full-window disabled state while the list (its own option source) is still loading | `disabled={guardando \|\| esRolDePlataforma}` — `tenantsCargando` dropped | **KILLED** — `el selector queda inerte mientras la lista está cargando`: `expect(element).toBeDisabled()` / `Received element is not disabled` |
 | M19 | 2.17 (page-size gap closure) | S5 anti-oracle: a tenant admin must never call `listarTenants()`, not even in the background | `if (!esPlataforma) return` deleted from the tenant-universe fetch effect | **KILLED** — `un admin de tenant nunca pide el universo de tenants (listarTenants)`: `expected "vi.fn()" to not be called with arguments: [ '/plataforma/tenants' ]`, received 3 calls including it |
+
+| M20 | R1-C1 | `react-async-state` rule 7: the tenant-universe `.catch` SURFACES the failure instead of silently setting `[]` | `setError(ERROR_TENANTS)` deleted from the catch | **KILLED, 2 tests** — `un fallo del universo de tenants se rinde en pantalla y abrir "Nuevo" lo reintenta` and `Guardar queda inerte cuando el universo de tenants falló`: `Unable to find an element with the text: /No se pudo cargar la lista de tenants/` |
+| M20b | R1-C1 | The retry hangs off opening "Nuevo" — the effect's `[esPlataforma]` deps never re-fire on their own | `if (esPlataforma && tenantsDePlataformaFallo) cargarTenantsDePlataforma()` deleted from the "Nuevo" handler | **KILLED** — `expected 1 to be 2` (the second `GET /plataforma/tenants` never happens) |
+| M21 | R1-C2 | `disabled={guardando \|\| sinTenantAsignable}` on Guardar — a `disabled` `<select>` is EXEMPT from HTML constraint validation, so `required` does not block the POST during the load/failure window | `disabled={guardando}` | **KILLED, 2 tests** — `expect(element).toBeDisabled()` / `Received element is not disabled`, on both the loading and the failed window |
+| M21b | R1-C2 | The same guard re-checked inside `guardar()` (rule 9: a same-tick double click beats the `disabled` attribute) | `if (formulario.id === null && universoDeTenantsIndisponible) return` deleted | **SURVIVED, 24/24 green — recorded as a survivor.** `userEvent.click` honours the `disabled` attribute, so the handler is never entered; the guard exists for the same-tick race the DOM cannot be made to produce here. Same class as the re-entrancy guards already on this screen |
+| M22 | R1-C4 | The assignable-tenant label MARKS a non-`Activo` estado — the server never inspects the destination tenant's estado, so a user created inside a suspended tenant silently cannot log in | `return nombre` — the `estado === 'Activo' ? … : \`${nombre} (${estado.toLowerCase()})\`` marker dropped | **KILLED, 2 tests across 2 files** — `expected [ 'Elegí un tenant', …(3) ] to deeply equal [ 'Elegí un tenant', …(3) ]` (the helper unit test and the screen test) |
+| M23 | R1-S2 | The filter reconciliation is WRITTEN to state in `cargar`, not only derived at render | `setFiltroTenant((prev) => seleccionVigente(…))` deleted | **KILLED** — `un filtro invalidado por una búsqueda no resucita cuando las filas vuelven`: `Expected the element to have value: ` / `Received: 3`. The derived fallback is the confound and it is named in the test: while the option is missing it blanks the `<select>` on its own, so the discriminating observation is that the filter must NOT reapply itself when the rows come back |
+| M24 | R1-S3 | The post-write refresh reloads with the APPLIED search term, not the input draft | `await cargar(token, busqueda, true)` | **KILLED** — `expected '/usuarios?busqueda=juan' to be '/usuarios'` (text typed and never searched narrowed the table after a Baja) |
+| M25 | R1-S4 | The password POST has its own `try`: a committed PUT is never reported as a failure (rule 6) | the POST moved back inside the PUT's `try` | **KILLED** — `Unable to find an element with the text: /no se pudo cambiar la contraseña/` (the screen said "No se pudo guardar." for a profile that had already committed) |
+| M26 | R1-S5 | `desempatarHomonimos` in `opcionesDeTenant` — two DISTINCT tenants sharing a free-text name render byte-identical options | the `desempatarHomonimos(…, 'tenant')` call dropped | **KILLED** — `desempata con el id a dos tenants distintos que comparten nombre` |
+| M26b | R1-S5 | The same disambiguation on the create selector (`opcionesDeTenantAsignable`) — same class, and the surface where picking the wrong twin assigns the user to the wrong tenant | the `desempatarHomonimos(opciones, 'tenant')` call dropped | **KILLED** — `expected [ 'Comercio Sur', 'Comercio Sur' ] to deeply equal [ 'Comercio Sur (tenant 2)', …(1) ]` |
+| M27 | R1-S5 | The same disambiguation on `opcionesDeEmpresa`, over the equally free-text razón social | the `desempatarHomonimos(…, 'empresa')` call dropped | **KILLED** — `desempata con el id a dos empresas distintas que comparten razón social` |
+| M28 | R1-C3 | `esPlataforma &&` gates the tenant FILTER of `Empresas` with the same criterion that already gated the tenant COLUMN | `{true && (` | **KILLED** — `un admin de tenant no ve el filtro por tenant, igual que no ve la columna`: `expect(element).not.toBeInTheDocument()` |
+| M29 | R1-C3 | The same gate on `PuntosVenta` — and only on the TENANT filter; the empresa filter stays for every actor | `{true && (` | **KILLED** — `un admin de tenant no ve el filtro por tenant, pero sí el de empresa`: `expect(element).not.toBeInTheDocument()` |
+| M30 | R1-S7 | `refrescarTrasEscribir` clears `ocupado` in a `finally` REGARDLESS of the generation — a token mismatch used to `return` with the flag still on, freezing every action | the `if (generacion.current === token)` gate put back on the `finally` (`Tenants.tsx`) | **SURVIVED, 4/4 green — recorded as a survivor.** Stated by the finding itself: unreachable today, because rule 9 disables every action that could bump the generation while `ocupado` is set. Fixed as a trap for slice 5's delete buttons, which add exactly such actions |
+| M30b | R1-S7 | The same, on `Usuarios.tsx` | the `if (generacion.current === token)` gate put back on the `finally` | **SURVIVED, 24/24 green — same reason as M30, recorded not dressed up** |
 
 **No survivors among M14-M18.** One inaccuracy in a test's own doc-comment was found by running M15 and
 corrected rather than left standing: the first draft claimed the M4 confound applied (a derived
@@ -610,6 +648,39 @@ changes nothing observable and the suite stays green. They are kept as defence-i
 which adds delete buttons to exactly these screens. `Usuarios.tsx` is different — its search box is
 reachable while a load is in flight, which is a genuine two-reads-in-flight window — and that is
 where M11 kills.
+
+**Round 1 — M15 is DOWNGRADED to defence-in-depth, and the comment that oversold it is rewritten.**
+Judge B asked whether the create selector's Root branch guards anything reachable. It does not:
+`PoliticaDeRoles.RolesAsignablesPor` (`PoliticaDeRoles.cs:30-35`) returns
+`[Admin, Supervisor, Vendedor]` for a Root actor and `[Supervisor, Vendedor]` for an Admin —
+**Root is in no actor's list**, so `GET /roles` (`ServicioDeUsuarios.RolesAsignablesAsync`, which
+projects exactly that list) can never put a Root `<option>` in the rol `<select>`. The rol-root
+branch is therefore unreachable from this screen, and M15 kills a branch a real actor cannot enter.
+The code is KEPT as defence-in-depth against a future change to the rol catalogue, but its record is
+corrected on both counts: the table row now says so, and the doc-comment of `FormularioUsuario`
+plus the inline comment on the rol `onChange` no longer claim the clear prevents a live 403 — the
+live clause there is the tenant `required` for every other rol, whose absence is the real
+400 `tenant_requerido`. The test fixture keeps its Root rol row on purpose: it is what makes the
+defence-in-depth branch exercisable at all, and the doc-comment now says that is what it is.
+
+**Round 1 — three honest survivors, stated rather than papered over.** M21b (the `guardar()`
+re-entrancy guard), M30 and M30b (the ungated `finally` that clears `ocupado`) all survived their
+mutations with the suite fully green, and are recorded as survivors in the table. M21b guards a
+same-tick double click that `userEvent` cannot produce, because it honours the `disabled`
+attribute. M30/M30b guard a token mismatch that rule 9 makes unreachable **today** — the finding
+that produced them said exactly that ("unreachable today, a trap for slice 5's delete buttons"),
+and the fix is taken for that reason, not because a test proves it. Same handling M10 already got.
+
+**Round 1 — the filter write-back is REPLICATED to `Empresas`/`PuntosVenta` without a reachable
+repro, and that is stated.** The state write-back that M23 kills on `Usuarios.tsx` is applied to the
+other two screens under `react-async-state` rule 10 (any correctness pattern established on one
+surface is replicated across every sibling with the same interaction). Those two screens have **no
+search box**: their only row-set change is the post-write refresh, which reloads the full list, so
+the resurrection sequence judge A demonstrated (narrow → the option disappears → widen → the option
+returns) has no reachable trigger there. Mutating their write-back therefore SURVIVES by
+construction and no test is invented to pretend otherwise; the shared pure helper
+`seleccionVigente` carries its own unit tests, and slice 5 — which adds deletions to those screens
+— is where the trigger becomes reachable.
 
 **One test defect was found by running M4 and was fixed, not rationalised.** The first draft of the
 empresa-clearing test asserted only `toHaveValue('')` after switching tenants, which the derived
