@@ -981,6 +981,105 @@ Baseline before and after every mutation: **417/417 green**.
 | S5 | 3.18 | V4 — zero physical deletes | a scan for `ExecuteDelete`, `RemoveRange(`, `.Remove(` and `DELETE FROM` over both new files returns zero matches |
 | S6 | 3.18 | V13 — the only SQL in the diff is the guard's generated statement, and it is read-only | the diff's sole SQL producer is `InspectorDeUso.Renderizar`, which emits `SELECT`/`EXISTS`/`UNION ALL`/`LIMIT` and nothing else; the rendering suite asserts the full text of every branch of all four anchors |
 
+### Judgment-day slice 3, round 1 — confirmed items corrected
+
+Six confirmed items fixed and two recorded with no code change. **ZERO schema, zero physical
+deletes, the guard stays INERT** (`rg -n "PrimeraDependenciaEnUsoAsync" src/` still returns only
+its own declaration): no configuration, no migration and no `Politicas.cs` /
+`InicializadorDeBaseDeDatos.cs` / `ManejadorDeErrores.cs` line was touched.
+
+- [x] 3.21 **C1 (CRITICAL, both judges) — `puntos_venta` was missing from the `Tenant` dependent
+  set, and the fix closes the CLASS, not the instance.** `PuntoVentaConfiguration.cs:64-69`
+  declares only `HasOne<Empresa>().HasForeignKey(p => new { p.IdEmpresa, p.IdTenant })` and **no**
+  `HasOne<Tenant>()`, so `Tenant.GetReferencingForeignKeys()` never yielded `puntos_venta`: a
+  tenant whose customer opened a second local read **PRISTINE** — fail-OPEN, in the data-loss
+  direction, the one this stage refuses. `InventarioDeDependientes.InventarioCompleto` now builds
+  the `Tenant` dependent set as the **UNION** of (a) the FK walk and (b) every entity type
+  assignable to `EntidadTenant` mapped to the `id_tenant` scope column — the same reflection idiom
+  `WaysDbContext.AplicarFiltroDeTenant` already uses for the query filter — deduplicated by
+  `(tabla, columnas)` and classified by the **same** bucket rule. Adding the FK to the model was
+  rejected on sight: that is a schema change and reopens the gate. The N3 golden gained
+  `Tenant | puntos_venta | id_tenant | marcado` **and only that line** (`git diff --stat` on the
+  fixture = `1 insertion(+)`). *(design D2, A; BO-R5)*
+- [x] 3.22 **N5 — the dependent-SET completeness net**, judge B's manual audit written as code
+  (`InventarioDeDependientesTests.N5_TodaTablaConIdTenantAparecenEnElInventarioDelAncla`,
+  container-free against the real Npgsql model): for the `Tenant` anchor, **every** entity type in
+  the model mapped to an `id_tenant` column must appear in its inventory (`excluido` lines count as
+  present, because a carve-out is a written decision and not an omission), and the assertion NAMES
+  the missing tables. **N1's count assertion is a tautology and is now recorded as one**: it
+  compared `InventarioCompleto().Count` against the very walk that produces it, so a dependent that
+  walk cannot see is invisible on both sides of the equality — that is exactly why C1 survived N1,
+  N2 and N3. N1's second half was rewritten to what it can honestly assert (no FK is silently
+  dropped: every FK's `(tabla, columnas)` is present; and no carve-out reaches the executable set),
+  and **N5 is the set-level trip-wire N1 cannot be**, because its universe comes from an
+  INDEPENDENT source — the model's column mapping. *(design B; never degradable)*
+- [x] 3.23 **C2 (judge A) — the raw-ADO execution half had ZERO tests.**
+  `rg PrimeraDependenciaEnUsoAsync tests/` returned nothing: every existing test went through the
+  static `Renderizar`, so the bind ORDER (`valoresDeClave` first, the anchor instant last), the
+  `ramas.Any(rama => rama.UsaAncla)` gate, the caller-transaction attachment and the
+  `ExecuteScalarAsync as string` had no net at all — deleting the gate leaves the SQL referencing
+  `$n` with `n-1` parameters bound, which is a Postgres bind error, which is a 500, and the whole
+  suite stayed green. New `tests/Ways.IntegrationTests/InspectorDeUsoEjecucionTests.cs` (Docker,
+  real Postgres) drives `PrimeraDependenciaEnUsoAsync` for **all four** anchors, including the two
+  composite-key anchors (`Empresa` and `PuntoVenta`, `Id` + `IdTenant` + the instant = **three**
+  parameters, which is what makes the order observable). Sibling seeds per `mutation-proof-tests`
+  rule 12c: a second empresa of the same tenant, a second punto de venta and a second tenant, so a
+  predicate that ignores either position of the composite key dies. *(BO-R4, BO-R7; design D5, D6)*
+- [x] 3.24 **C3 (judge A) — the `Marcado` predicate deviated from design section A, undeclared, in
+  the under-blocking direction.** `Clasificar` decided the bucket from the presence of a
+  `created_at` COLUMN alone; the design's membership test is
+  `typeof(EntidadBase).IsAssignableFrom(t.ClrType)` **and** the column. Both conditions are now
+  required, so a future type carrying `created_at` without inheriting `EntidadBase` — which does
+  not share the project's stamping convention, so its mark is not comparable against the anchor
+  instant — falls to `SinMarca` (existence only), which OVER-blocks: the safe side. N2 recomputes
+  with the SAME two-condition rule. **The golden did not change**, verified and not assumed: all 13
+  `sinmarca` lines lack the column and every `marcado` line inherits `EntidadBase`. See M17/M18
+  below for the honest consequence — on today's model the deviation is unobservable.
+- [x] 3.25 **C4 (judge B) — an empty executable set returned `null` (fail-OPEN) while `Renderizar`
+  threw for the same state.** `PrimeraDependenciaEnUsoAsync` now THROWS
+  `InvalidOperationException`, matching `Renderizar`: an empty branch set means the inventory knows
+  nothing about that anchor, not that the entity is pristine, and returning `null` asserted the
+  second without having asked anything. Unit test
+  `UnAnclaSinRamasEjecutablesTiraEnVezDeDevolverNull`.
+- [x] 3.26 **C5 (both judges) — the `$` anchor accepted a trailing newline.** In .NET `$` also
+  matches BEFORE a final `\n`, so `"stock\n"` passed `^[a-z_][a-z0-9_]*$` and everything after the
+  line break would have been concatenated into the statement. The pattern is now
+  `\A[a-z_][a-z0-9_]*\z` (absolute end of string) and the `"stock\n"` rejection case was added to
+  the theory.
+- [x] 3.27 **C6 (judge A, small).** (a) A `null` element of `valoresDeClave` reached
+  `ParametrosDeComando.Agregar` unnormalized and produced an opaque Npgsql failure; it is now an
+  `ArgumentException` NAMING the index and the property, the same shape as the count mismatch
+  beside it. (b) `ElRenderizadorNuncaEmiteUnaTablaExcluida` asserted `numeraciones_clientes` for
+  `PuntoVenta`/`Usuario`, where **no such FK exists** — a vacuous assertion — and omitted `Empresa`
+  entirely. Each row now declares the carve-outs that ACTUALLY reference that anchor, the test pins
+  that set before asserting the absence, and `Empresa` is in the theory with an EMPTY set, which is
+  the row that states "no carve-out references an empresa today" and goes red the day one does.
+
+**Recorded, no code change (by decision).**
+
+| # | Finding | Record |
+|---|---|---|
+| R1 | Judge A — `InicializadorDeBaseDeDatos.cs:584` (`var ahora = reloj.Ahora`) stamps the stage-2 backfill's `listas_precio`/`clientes` rows for PRE-EXISTING tenants with a LATER startup instant than those tenants' own `created_at` | **Known OVER-BLOCK, fail-SAFE, discriminator deliberately unchanged.** Operator-facing consequence: such a tenant is permanently blocked by `clientes` even with zero customer data, and no retry or waiting clears it. Carried as a **slice-4 input**: the 409 names the blocking table, so the operator sees `clientes` and can tell this apart from real customer data. Fixing it means re-stamping backfilled rows to each tenant's own instant — a data change behind the ZERO-SCHEMA gate, out of scope here |
+| R2 | Judge A — `ObtenerConexionAbiertaAsync` opens the connection and never closes it | **Replicated PRE-EXISTING pattern, not a new defect.** Byte-identical to the idiom already in `AsignadorDeNumeroCliente`, `ServicioDeVentas`, `ServicioDeStock` and `ServicioDeLotes`: the connection belongs to the caller's `DbContext` and its lifetime is the scope's, so closing it here would break the caller. Changing it is a five-call-site sweep of untouched code, not a slice-3 correction |
+
+### Mutation evidence — slice 3, judgment-day round 1 (run, not reasoned)
+
+Application suite baseline before and after every mutation: **422/422 green** (417 before this
+round; +5 from N5, the two new `InspectorDeUso` unit tests, the `"stock\n"` theory case and the
+`Empresa` theory row). New integration class baseline: **4/4 green**.
+
+| # | Item | Clause under test | Mutation applied | Observed result |
+|---|---|---|---|---|
+| M15 | 3.21, 3.22 | The `Tenant` dependent set is the UNION, not the FK walk alone | `AgregarRamasDeAlcanceDeTenant(ancla, tipoAncla, ramas);` deleted from `InventarioCompleto` | **KILLED, 2 tests.** N5 named the exact table — *"Estas tablas llevan id_tenant y NO están en el inventario del ancla Tenant, así que un tenant que las usó lee PRÍSTINO (falla abierta): puntos_venta"* — and N3 printed `QUITADAS: Tenant \| puntos_venta \| id_tenant \| marcado` |
+| M16 | 3.21, 3.23 | The same union, observed through EXECUTION against real Postgres | idem | **KILLED, 1 test** — `UnSegundoPuntoDeVentaBloqueaLaBajaDelTenant`: `Expected: "puntos_venta" / Actual: null`. The failure IS the fail-open: the guard reported a tenant with two puntos de venta as pristine |
+| M17 | 3.24 | *(honesty row)* the `created_at`-column half of the two-condition `Marcado` rule | `llevaMarca && heredaDeEntidadBase` -> `llevaMarca` (the pre-fix predicate) | **SURVIVED, 422/422 green.** Recorded as a survivor, not dressed up |
+| M18 | 3.24 | *(honesty row)* the `EntidadBase` half of the same rule | `llevaMarca && heredaDeEntidadBase` -> `heredaDeEntidadBase` | **SURVIVED, 422/422 green.** The two survivors together say the honest thing: on TODAY'S model the three formulations are the same function, because the mechanical-impossibility throw already guarantees `heredaDeEntidadBase => llevaMarca` and no type carries `created_at` without inheriting `EntidadBase`. There is no witness in the model, so no test over this model can see the difference — an equivalent mutant of the M3b class. The fix is design conformance for the day a witness appears, and N3's golden is what will name that day's table |
+| M19 | 3.23 | The `ramas.Any(rama => rama.UsaAncla)` gate — the anchor instant is bound whenever any branch references `$n` | the whole `if (ramas.Any(...)) { Agregar(comando, ancla); }` block deleted | **KILLED, 4/4 integration tests**, with the real Npgsql message: `Npgsql.PostgresException : 08P01: bind message supplies 2 parameters, but prepared statement "" requires 3`. That is the 500 the whole suite used to survive |
+| M20 | 3.23 | The bind ORDER — `valoresDeClave` first, the anchor instant LAST | the two `Agregar` blocks swapped | **KILLED, 4/4 integration tests**: `Npgsql.PostgresException : 42883: operator does not exist: integer = timestamp with time zone` (POSITION 111/112/144) — the `timestamptz` landed in `$1` against `id_empresa`/`id_punto_venta` |
+| M21 | 3.25 | The execution path fails CLOSED on an empty executable set | the `throw` restored to `return null;` | **KILLED, 1 test** — `UnAnclaSinRamasEjecutablesTiraEnVezDeDevolverNull`: *"Assert.Throws() Failure: No exception was thrown"* |
+| M22 | 3.26 | The `\z` ANCHOR specifically, isolated from the message text | only the `Regex` construction reverted to `"^[a-z_][a-z0-9_]*$"`, leaving `PatronDeIdentificador` (which the error message prints) untouched, so the theory's other four cases stay green and only the anchoring is under test | **KILLED, exactly 1 case** — `UnIdentificadorNoConformeSeRechaza(tabla: "stock\n")`: *"Assert.Throws() Failure: No exception was thrown"*. The first attempt reverted the shared constant and killed all five cases on the message assertion instead of the anchor; that run proved nothing about `\z` and was redone |
+| M23 | 3.27 | The positional `null` rejection of `valoresDeClave` | the validation loop deleted | **KILLED, 1 test** — `UnValorDeClaveNuloSeRechazaNombrandoSuIndice` got `InvalidOperationException` / `Npgsql.NpgsqlException : Failed to connect to 127.0.0.1:5432` instead of `ArgumentException`: without the guard the container-free unit test reaches the connection, which is precisely the opaque failure the guard replaces |
+
 ---
 
 ## Slice 4: Deletion API — routes, cascade, minimums and the `Usuario` guard (PR 4)
