@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { ErrorApi } from '../api/cliente'
+import { puedeOperarPos } from '../api/tipos'
 import { Cargando } from '../componentes/Cargando'
 
 type EstadoDeRuta = { desde?: { pathname: string; search: string } }
@@ -18,11 +19,15 @@ export function Login() {
   const [enviando, setEnviando] = useState(false)
 
   const estado = ubicacion.state as EstadoDeRuta | null
+  // Paridad con el legacy (A1): quien opera el POS entra directo a vender.
   const destino = estado?.desde
     ? `${estado.desde.pathname}${estado.desde.search ?? ''}`
-    : '/'
+    : usuario && puedeOperarPos(usuario.rolId)
+      ? '/pos'
+      : '/'
 
-  // Si ya hay sesión activa, /login no tiene sentido: vamos al destino.
+  // Con sesión activa (previa o recién iniciada) /login no tiene sentido: esta es la única
+  // navegación de salida, y recién acá el rol del usuario ya se conoce.
   useEffect(() => {
     if (!cargando && usuario) {
       navegar(destino, { replace: true })
@@ -36,7 +41,6 @@ export function Login() {
 
     try {
       await iniciarSesion(mail, password)
-      navegar(destino, { replace: true })
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo iniciar sesión.')
       setPassword('')
