@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ErrorApi } from '../api/cliente'
+import { etiquetaDeTenant, filtrarPorTenant, opcionesDeTenant, SIN_FILTRO } from '../api/organizacion'
 import { ESTADOS_USUARIO, ROL } from '../api/tipos'
 import type {
   ActualizarUsuario,
@@ -31,6 +32,16 @@ const FORMULARIO_VACIO: Formulario = {
   password: '',
 }
 
+const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+
+/**
+ * ABM de usuarios. La columna "Tenant" rinde el nombre del tenant de la cuenta o el literal
+ * "Plataforma" cuando `idTenant` es null — esa copia la pone la web, nunca el servidor
+ * (design D14), y el discriminador es `idTenant`, no el nombre: un `nombreTenant` nulo con
+ * `idTenant` presente es un huérfano (tenant dado de baja), no personal de plataforma
+ * (Reconciliación 9). El filtro por tenant deriva sus opciones de las filas ya cargadas, así
+ * que un admin de tenant nunca puede enumerar el nombre de otro tenant (spec S5).
+ */
 export function Usuarios() {
   const { usuario: actual } = useAuth()
 
@@ -41,90 +52,137 @@ export function Usuarios() {
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
-  const [guardando, setGuardando] = useState(false)
+  const [ocupado, setOcupado] = useState(false)
+  const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
 
-  const cargar = useCallback(async (termino: string) => {
+  /** Contrato de invalidación: ver `Tenants.tsx` — mismo patrón en las cuatro pantallas raíz. */
+  const generacion = useRef(0)
+
+  const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
     setCargando(true)
-    setError('')
     try {
       const parametros = termino ? `?busqueda=${encodeURIComponent(termino)}` : ''
-      setPagina(await api.get<PaginaDe<UsuarioListado>>(`/usuarios${parametros}`))
+      const respuesta = await api.get<PaginaDe<UsuarioListado>>(`/usuarios${parametros}`)
+      if (generacion.current !== token) return
+      setPagina(respuesta)
+      setError('')
     } catch (e) {
+      if (generacion.current !== token) return
+      if (propagar) throw e
       setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los usuarios.')
     } finally {
-      setCargando(false)
+      if (generacion.current === token) setCargando(false)
     }
   }, [])
 
+  function buscar(termino: string) {
+    if (ocupado) return
+    void cargar(++generacion.current, termino)
+  }
+
   useEffect(() => {
-    void cargar('')
+    void cargar(++generacion.current, '')
     api.get<RolListado[]>('/roles').then(setRoles).catch(() => setRoles([]))
   }, [cargar])
 
   async function guardar() {
-    if (!formulario) return
+    if (!formulario || ocupado) return
 
-    setGuardando(true)
+    const datos = formulario
+    const token = ++generacion.current
+    setOcupado(true)
     setError('')
     setAviso('')
 
+    let mensajeOk: string
     try {
-      if (formulario.id === null) {
-        const datos: CrearUsuario = {
-          usuario: formulario.usuario,
-          mail: formulario.mail,
-          rolId: formulario.rolId,
-          password: formulario.password,
-          estado: formulario.estado,
+      if (datos.id === null) {
+        const alta: CrearUsuario = {
+          usuario: datos.usuario,
+          mail: datos.mail,
+          rolId: datos.rolId,
+          password: datos.password,
+          estado: datos.estado,
         }
-        await api.post('/usuarios', datos)
-        setAviso(`Usuario "${formulario.usuario}" creado.`)
+        await api.post('/usuarios', alta)
+        mensajeOk = `Usuario "${datos.usuario}" creado.`
       } else {
-        const datos: ActualizarUsuario = {
-          usuario: formulario.usuario,
-          mail: formulario.mail,
-          rolId: formulario.rolId,
-          estado: formulario.estado,
+        const edicion: ActualizarUsuario = {
+          usuario: datos.usuario,
+          mail: datos.mail,
+          rolId: datos.rolId,
+          estado: datos.estado,
         }
-        await api.put(`/usuarios/${formulario.id}`, datos)
+        await api.put(`/usuarios/${datos.id}`, edicion)
 
-        if (formulario.password) {
-          await api.post(`/usuarios/${formulario.id}/password`, {
-            passwordNueva: formulario.password,
-          })
+        if (datos.password) {
+          await api.post(`/usuarios/${datos.id}/password`, { passwordNueva: datos.password })
         }
-        setAviso(`Usuario "${formulario.usuario}" actualizado.`)
+        mensajeOk = `Usuario "${datos.usuario}" actualizado.`
       }
-
-      setFormulario(null)
-      await cargar(busqueda)
     } catch (e) {
+      if (generacion.current !== token) return
       setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+      setOcupado(false)
+
+      return
+    }
+
+    if (generacion.current !== token) return
+    setFormulario(null)
+    await refrescarTrasEscribir(token, mensajeOk)
+  }
+
+  /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
+   * commiteó nunca se reporta como fallida (`react-async-state` regla 6). */
+  async function refrescarTrasEscribir(token: number, mensajeOk: string) {
+    if (generacion.current !== token) return
+
+    setAviso(mensajeOk)
+    try {
+      await cargar(token, busqueda, true)
+    } catch {
+      if (generacion.current === token) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
     } finally {
-      setGuardando(false)
+      if (generacion.current === token) setOcupado(false)
     }
   }
 
-  async function accion(promesa: Promise<unknown>, mensajeOk: string) {
+  async function accion(construirPromesa: () => Promise<unknown>, mensajeOk: string) {
+    if (ocupado) return
+
+    const token = ++generacion.current
+    setOcupado(true)
     setError('')
     setAviso('')
     try {
-      await promesa
-      setAviso(mensajeOk)
-      await cargar(busqueda)
+      await construirPromesa()
     } catch (e) {
+      if (generacion.current !== token) return
       setError(e instanceof ErrorApi ? e.message : 'No se pudo completar la acción.')
+      setOcupado(false)
+
+      return
     }
+
+    await refrescarTrasEscribir(token, mensajeOk)
   }
 
   function eliminar(u: UsuarioListado) {
+    if (ocupado) return
     if (!confirm(`¿Dar de baja al usuario "${u.usuario}"?`)) return
-    void accion(api.delete(`/usuarios/${u.id}`), `Usuario "${u.usuario}" dado de baja.`)
+    void accion(() => api.delete(`/usuarios/${u.id}`), `Usuario "${u.usuario}" dado de baja.`)
   }
 
   // El backend valida igual; esto solo evita mostrar botones que van a fallar.
   const puedeEditar = (u: UsuarioListado) =>
     u.rolId !== ROL.Root || actual?.rolId === ROL.Root
+
+  // Derivación pura sobre la página YA CARGADA: sin fetch nuevo y sin parámetro de consulta.
+  const filas = pagina?.items ?? []
+  const opcionesTenant = opcionesDeTenant(filas)
+  const tenantVigente = opcionesTenant.some((o) => o.valor === filtroTenant) ? filtroTenant : SIN_FILTRO
+  const visibles = filtrarPorTenant(filas, tenantVigente)
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
@@ -134,12 +192,14 @@ export function Usuarios() {
         placeholder="Buscar usuario o mail…"
         value={busqueda}
         onChange={(e) => setBusqueda(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && cargar(busqueda)}
+        onKeyDown={(e) => e.key === 'Enter' && buscar(busqueda)}
+        disabled={ocupado}
       />
       <button
         type="button"
         className="btn btn-sm btn-outline-light rounded-0"
-        onClick={() => cargar(busqueda)}
+        onClick={() => buscar(busqueda)}
+        disabled={ocupado}
       >
         Buscar
       </button>
@@ -151,6 +211,7 @@ export function Usuarios() {
           setAviso('')
           setError('')
         }}
+        disabled={ocupado}
       >
         Nuevo
       </button>
@@ -165,9 +226,10 @@ export function Usuarios() {
 
         {formulario && (
           <FormularioUsuario
+            key={formulario.id ?? 'nuevo'}
             valor={formulario}
             roles={roles}
-            guardando={guardando}
+            guardando={ocupado}
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={() => setFormulario(null)}
@@ -177,91 +239,119 @@ export function Usuarios() {
         {cargando ? (
           <Cargando />
         ) : (
-          <div className="table-responsive">
-            <table className="table table-striped table-hover table-bordered align-middle">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Usuario</th>
-                  <th>Mail</th>
-                  <th>Rol</th>
-                  <th>Estado</th>
-                  <th>Última conexión</th>
-                  <th className="text-end">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagina?.items.map((u) => (
-                  <tr key={u.id}>
-                    <td>{String(u.id).padStart(4, '0')}</td>
-                    <td>{u.usuario}</td>
-                    <td>{u.mail}</td>
-                    <td>{u.rol}</td>
-                    <td>
-                      <EtiquetaEstado estado={u.estado} />
-                    </td>
-                    <td>
-                      {u.ultimaConexion
-                        ? new Date(u.ultimaConexion).toLocaleString('es-AR')
-                        : '—'}
-                    </td>
-                    <td className="text-end text-nowrap">
-                      {puedeEditar(u) && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-primary rounded-0 me-1"
-                          onClick={() => {
-                            setFormulario({
-                              id: u.id,
-                              usuario: u.usuario,
-                              mail: u.mail,
-                              rolId: u.rolId,
-                              estado: u.estado,
-                              password: '',
-                            })
-                            setAviso('')
-                            setError('')
-                          }}
-                        >
-                          Editar
-                        </button>
-                      )}
-                      {u.estado === 'Bloqueado' && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-warning rounded-0 me-1"
-                          onClick={() =>
-                            accion(
-                              api.post(`/usuarios/${u.id}/desbloquear`),
-                              `Usuario "${u.usuario}" desbloqueado.`,
-                            )
-                          }
-                        >
-                          Desbloquear
-                        </button>
-                      )}
-                      {puedeEditar(u) && u.rolId !== ROL.Root && u.id !== actual?.id && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-danger rounded-0"
-                          onClick={() => eliminar(u)}
-                        >
-                          Baja
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {pagina?.items.length === 0 && (
+          <>
+            <div className="row g-2 mb-3">
+              <div className="col-md-4">
+                <label className="form-label" htmlFor="u-filtro-tenant">
+                  Tenant
+                </label>
+                <select
+                  id="u-filtro-tenant"
+                  className="form-select rounded-0"
+                  value={tenantVigente}
+                  onChange={(e) => setFiltroTenant(e.target.value)}
+                >
+                  <option value={SIN_FILTRO}>Todos</option>
+                  {opcionesTenant.map((o) => (
+                    <option key={o.valor} value={o.valor}>
+                      {o.etiqueta}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="table-responsive">
+              <table className="table table-striped table-hover table-bordered align-middle">
+                <thead>
                   <tr>
-                    <td colSpan={7} className="text-center text-muted py-4">
-                      No hay usuarios que coincidan con la búsqueda.
-                    </td>
+                    <th>ID</th>
+                    <th>Usuario</th>
+                    <th>Mail</th>
+                    <th>Tenant</th>
+                    <th>Rol</th>
+                    <th>Estado</th>
+                    <th>Última conexión</th>
+                    <th className="text-end">Acciones</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {visibles.map((u) => (
+                    <tr key={u.id}>
+                      <td>{String(u.id).padStart(4, '0')}</td>
+                      <td>{u.usuario}</td>
+                      <td>{u.mail}</td>
+                      <td>{etiquetaDeTenant(u)}</td>
+                      <td>{u.rol}</td>
+                      <td>
+                        <EtiquetaEstado estado={u.estado} />
+                      </td>
+                      <td>
+                        {u.ultimaConexion
+                          ? new Date(u.ultimaConexion).toLocaleString('es-AR')
+                          : '—'}
+                      </td>
+                      <td className="text-end text-nowrap">
+                        {puedeEditar(u) && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-primary rounded-0 me-1"
+                            onClick={() => {
+                              setFormulario({
+                                id: u.id,
+                                usuario: u.usuario,
+                                mail: u.mail,
+                                rolId: u.rolId,
+                                estado: u.estado,
+                                password: '',
+                              })
+                              setAviso('')
+                              setError('')
+                            }}
+                            disabled={ocupado}
+                          >
+                            Editar
+                          </button>
+                        )}
+                        {u.estado === 'Bloqueado' && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-warning rounded-0 me-1"
+                            onClick={() =>
+                              accion(
+                                () => api.post(`/usuarios/${u.id}/desbloquear`),
+                                `Usuario "${u.usuario}" desbloqueado.`,
+                              )
+                            }
+                            disabled={ocupado}
+                          >
+                            Desbloquear
+                          </button>
+                        )}
+                        {puedeEditar(u) && u.rolId !== ROL.Root && u.id !== actual?.id && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-danger rounded-0"
+                            onClick={() => eliminar(u)}
+                            disabled={ocupado}
+                          >
+                            Baja
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {visibles.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="text-center text-muted py-4">
+                        No hay usuarios que coincidan con la búsqueda.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </Box>
     </div>
