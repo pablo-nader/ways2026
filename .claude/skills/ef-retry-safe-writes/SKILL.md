@@ -55,11 +55,12 @@ organización/usuario duplicaban filas de auditoría bajo reintento transitorio.
    o hacer `Add` sobre una instancia capturada por closure desde afuera del lambda.
 
 3. **Probarlo con un reintento real.** Usar
-   `WaysApiFixture.CrearContextoDeAplicacionConReintentos(params IInterceptor[])` más un
+   `WaysApiFixture.CrearContextoDeAplicacionConReintentos(ITenantActual, params IInterceptor[])` más un
    `DbCommandInterceptor` que arroje un error transitorio de Npgsql (SqlState `40001`
    o `57P01`) en el primer INSERT; afirmar exactamente una fila por entidad y el
-   `valorAnterior` verdadero. Referencia: el test de la etapa 20
-   `BajasDeOrganizacionTests` (`InterceptorQueRompeElRastro`) como plantilla. Aplica
+   `valorAnterior` verdadero. Referencia: `EscriturasSinReintentoTests` con
+   `InterceptorQueRompeLaPrimeraEscritura(tabla, sqlState)` como plantilla (el interceptor
+   nació en `BajasDeOrganizacionTests`, etapa 20, clavado en `auditoria`). Aplica
    `mutation-proof-tests`: revertir a la estrategia con reintento debe volver el test
    ROJO con el conteo duplicado — esa es la evidencia de mutación exigida.
 

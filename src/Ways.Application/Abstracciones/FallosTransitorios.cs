@@ -3,7 +3,9 @@ using System.Data.Common;
 namespace Ways.Application.Abstracciones;
 
 /// <summary>
-/// El ÚNICO predicado de "esto es un fallo transitorio" del repo. Nació duplicado: la traducción a
+/// El único predicado de "esto es un fallo transitorio DE LA BASE" del repo (el
+/// <c>EsFallaTransitoria</c> de <c>ClienteWsfe</c> clasifica fallos HTTP contra AFIP: otro
+/// dominio, otra lista, sin nada que sincronizar con esta). Nació duplicado: la traducción a
 /// <c>503 resultado_incierto</c> de <c>Ways.Api.Seguridad.ManejadorDeErrores</c> tenía su propia
 /// copia y <c>ServicioDeAprovisionamiento</c> necesitaba la misma clasificación para su residual
 /// propio; dos listas de SQLSTATE que se pueden desincronizar son dos clasificaciones distintas

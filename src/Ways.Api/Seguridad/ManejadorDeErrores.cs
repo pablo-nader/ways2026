@@ -53,12 +53,15 @@ public class ManejadorDeErrores(
             // Estos tres brazos son la ÚNICA clasificación de lo transitorio. Viven acá y no
             // dentro de ClasificarPostgresException —donde el primero de ellos nació— porque la
             // copia depende del MÉTODO HTTP (RespuestaDeFalloTransitorio, más abajo) y ese helper
-            // es estático y ciego al contexto. La POSICIÓN conserva exactamente el orden de
-            // resolución anterior: DESPUÉS de los dos brazos de ClasificarPostgresException (toda
-            // clasificación determinística —23505/23514/23503/22003— sigue ganando, que es lo que
-            // el brazo desplazado ya garantizaba al ser el último de ese helper) y ANTES de
-            // DbUpdateConcurrencyException, que deriva de DbUpdateException y por lo tanto se
-            // resolvía después de ellos.
+            // es estático y ciego al contexto. La POSICIÓN es la misma que tenía el brazo
+            // desplazado: DESPUÉS de los dos brazos de ClasificarPostgresException (toda
+            // clasificación determinística —23505/23514/23503/22003— sigue ganando) y ANTES de
+            // DbUpdateConcurrencyException. Lo que SÍ cambió es el tipo: el brazo original
+            // pescaba PostgresException y este pesca NpgsqlException (su base), para cubrir la
+            // conexión cortada sin SqlState. El único caso que resolvería distinto sería una
+            // DbUpdateConcurrencyException envolviendo una NpgsqlException transitoria pelada, y EF
+            // no construye esa combinación: la de concurrencia nace de un conteo de filas, sin
+            // excepción de proveedor adentro.
             //
             // Cubren los tres shapes con los que el fallo llega: envuelto por SaveChangesAsync,
             // pelado desde un statement raw-ADO (una conexión cortada tira NpgsqlException PELADA,

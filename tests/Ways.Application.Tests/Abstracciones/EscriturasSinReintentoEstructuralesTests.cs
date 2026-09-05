@@ -31,7 +31,9 @@ public class EscriturasSinReintentoEstructuralesTests
 {
     /// <summary>Ruta, método y firma exacta de cada escritura sin reintento. La lista está
     /// congelada a propósito: revertir cualquiera de los once sitios a la estrategia reintentable
-    /// pone esta prueba en rojo NOMBRANDO el método.</summary>
+    /// pone esta prueba en rojo NOMBRANDO el método. El aprovisionamiento está partido en dos
+    /// métodos y esta lista cubre solo la mitad que crea la estrategia; la mitad que la EJECUTA
+    /// tiene su propia prueba más abajo.</summary>
     public static TheoryData<string, string> SitiosSinReintento() => new()
     {
         { "Ways.Application/Clientes/ServicioDeClientes.cs", "CrearAsync" },
@@ -157,6 +159,33 @@ public class EscriturasSinReintentoEstructuralesTests
             cuerpo);
     }
 
+    /// <summary>
+    /// La segunda mitad del sitio del aprovisionamiento. <c>CrearTenantAsync</c> crea la estrategia
+    /// sin reintento pero quien la EJECUTA es <c>EjecutarAprovisionamientoAsync</c>, que la recibe
+    /// por parámetro (judgment-day fix/retry-double-add, ronda final): un mutante que ignore ese
+    /// parámetro y llame a <c>db.Database.CreateExecutionStrategy()</c> deja intacta la primera
+    /// mitad y pasa las dos pruebas de la lista congelada. Se lee el método ENTERO, no solo el
+    /// cuerpo del lambda, porque el mutante vive en la cabecera de la expresión, antes de la
+    /// primera llave.
+    /// </summary>
+    [Fact]
+    public void ElAprovisionamientoEjecutaLaEstrategiaSinReintentoQueRecibe()
+    {
+        var fuente = LeerFuente("Ways.Application/Organizacion/ServicioDeAprovisionamiento.cs");
+        var ejecutor = MetodoCompleto(fuente, "EjecutarAprovisionamientoAsync");
+        var creador = CuerpoDelMetodo(fuente, "CrearTenantAsync");
+
+        Assert.DoesNotContain("CreateExecutionStrategy(", ejecutor, StringComparison.Ordinal);
+        Assert.Contains("IExecutionStrategy estrategia,", ejecutor, StringComparison.Ordinal);
+        Assert.Contains("await estrategia.ExecuteAsync(", ejecutor, StringComparison.Ordinal);
+        Assert.Matches(
+            new Regex(
+                @"EjecutarAprovisionamientoAsync\(\s*estrategia,",
+                RegexOptions.None,
+                TimeSpan.FromSeconds(5)),
+            creador);
+    }
+
     private static string LeerFuente(string rutaRelativa) =>
         File.ReadAllText(Path.Combine(
             RaizDelRepositorio.Resolver(), "src", Path.Combine(rutaRelativa.Split('/'))));
@@ -168,12 +197,18 @@ public class EscriturasSinReintentoEstructuralesTests
         return indice;
     }
 
-    /// <summary>Extrae el cuerpo de un método por conteo de llaves desde su firma — mismo criterio
-    /// que <c>BajasEstructuralesTests</c>, pero admitiendo <c>override</c>, un tipo de retorno
-    /// genérico (<c>Task&lt;T&gt;</c>) y cualquier modificador de acceso: el sitio del backfill de
-    /// <c>InicializadorDeBaseDeDatos</c> es <c>private</c>, no <c>public</c> como los diez
-    /// servicios.</summary>
-    private static string CuerpoDelMetodo(string fuente, string nombre)
+    /// <summary>Desde la firma hasta la llave que cierra el primer bloque: para un método de
+    /// expresión (<c>=&gt; await estrategia.ExecuteAsync(async () =&gt; { ... })</c>) incluye la
+    /// cabecera, que <see cref="CuerpoDelMetodo"/> saltea.</summary>
+    private static string MetodoCompleto(string fuente, string nombre)
+    {
+        var firma = Firma(fuente, nombre);
+        var apertura = fuente.IndexOf('{', firma.Index);
+
+        return fuente[firma.Index..(apertura + CuerpoDelMetodo(fuente, nombre).Length)];
+    }
+
+    private static Match Firma(string fuente, string nombre)
     {
         var firma = Regex.Match(
             fuente,
@@ -182,7 +217,17 @@ public class EscriturasSinReintentoEstructuralesTests
             TimeSpan.FromSeconds(5));
 
         Assert.True(firma.Success, $"No se encontró el método {nombre}.");
+        return firma;
+    }
 
+    /// <summary>Extrae el cuerpo de un método por conteo de llaves desde su firma — mismo criterio
+    /// que <c>BajasEstructuralesTests</c>, pero admitiendo <c>override</c>, un tipo de retorno
+    /// genérico (<c>Task&lt;T&gt;</c>) y cualquier modificador de acceso: el sitio del backfill de
+    /// <c>InicializadorDeBaseDeDatos</c> es <c>private</c>, no <c>public</c> como los diez
+    /// servicios.</summary>
+    private static string CuerpoDelMetodo(string fuente, string nombre)
+    {
+        var firma = Firma(fuente, nombre);
         var apertura = fuente.IndexOf('{', firma.Index);
         var profundidad = 0;
 
