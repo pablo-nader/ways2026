@@ -120,7 +120,10 @@ public class ServicioDePrecios(
 
         var idTenant = ExigirTenantDeLaSesion();
 
-        var estrategia = db.Database.CreateExecutionStrategy();
+        // Sin reintento: ni la fila de precio ni la de auditoría son idempotentes y no hay clave
+        // de idempotencia — ambas se construyen de cero dentro del lambda, así que un reintento
+        // duplicaría el rastro (y chocaría contra ux_precios_vigente con un 409 falso).
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         return await estrategia.ExecuteAsync(async () =>
         {

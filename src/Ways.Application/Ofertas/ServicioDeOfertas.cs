@@ -130,7 +130,10 @@ public class ServicioDeOfertas(
         oferta.CreatedAt = ahora;
         oferta.UpdatedAt = ahora;
 
-        var estrategia = db.Database.CreateExecutionStrategy();
+        // Sin reintento: `AgregarFilasDeListas` construye una OfertaLista NUEVA en cada intento y
+        // no hay clave de idempotencia — un reintento duplicaría las filas de targeting (la PK
+        // las convierte en un 409 falso sobre un alta que quizás ya persistió).
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         return await estrategia.ExecuteAsync(async () =>
         {
@@ -196,7 +199,9 @@ public class ServicioDeOfertas(
 
         var idTenant = ExigirTenantDeLaSesion();
 
-        var estrategia = db.Database.CreateExecutionStrategy();
+        // Sin reintento: `AgregarFilasDeListas` construye una OfertaLista NUEVA en cada intento y
+        // no hay clave de idempotencia — un reintento duplicaría las filas de targeting.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         return await estrategia.ExecuteAsync(async () =>
         {

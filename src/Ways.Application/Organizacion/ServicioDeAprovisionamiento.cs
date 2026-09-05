@@ -37,7 +37,12 @@ public class ServicioDeAprovisionamiento(
         // estrategia de reintento, EF tira si se abre una transacción por fuera de
         // ExecuteAsync — esta trampa está documentada desde design.md y es la razón de todo
         // este wrapper.
-        var estrategia = db.Database.CreateExecutionStrategy();
+        //
+        // Sin reintento: TODAS las entidades del aprovisionamiento se construyen de cero en cada
+        // intento y ninguna tiene clave de idempotencia — un reintento las duplicaría. Que hoy
+        // ux_usuarios_mail (el INSERT final del admin) aborte la transacción entera es un
+        // accidente del orden de inserción, no una garantía.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         return await estrategia.ExecuteAsync(async () =>
         {

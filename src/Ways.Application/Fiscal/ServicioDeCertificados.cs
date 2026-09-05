@@ -59,7 +59,10 @@ public class ServicioDeCertificados(IWaysDbContext db, IRelojDelSistema reloj, I
             // EnableRetryOnFailure exige que BeginTransactionAsync viva DENTRO de la lambda del
             // execution strategy (mismo criterio que ServicioDePrecios.EstablecerPrecioAsync) —
             // sin esto, EF tira InvalidOperationException al primer BeginTransactionAsync manual.
-            var estrategia = db.Database.CreateExecutionStrategy();
+            // Sin reintento: el CertificadoFiscal se construye de cero en cada intento y no hay
+            // clave de idempotencia — un reintento duplicaría la fila y chocaría contra
+            // ux_certificados_fiscales_activo con un 409 falso.
+            var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
             var nuevo = await estrategia.ExecuteAsync(async () =>
             {

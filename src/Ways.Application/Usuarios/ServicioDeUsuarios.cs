@@ -192,13 +192,16 @@ public class ServicioDeUsuarios(
 
         // Design decisión 11 / task 2.3 — el ÚNICO call site que cambia la estructura
         // transaccional de su llamador: `id_entidad` es polimórfico y sin FK, así que el id de
-        // `usuario` no existe hasta el PRIMER flush. Transacción explícita (mismo patrón
-        // CreateExecutionStrategy + BeginTransactionAsync que ServicioDePrecios) con DOS
-        // SaveChangesAsync: alta → flush → auditoría con el id ya generado → flush → commit. Si
-        // el segundo flush (el INSERT de auditoría) falla, la transacción entera revierte y el
-        // alta queda sin efecto (fail-closed, task 2.13) — con dos SaveChangesAsync SUELTOS
-        // (mutation target 2.12) el primero ya habría comiteado solo.
-        var estrategia = db.Database.CreateExecutionStrategy();
+        // `usuario` no existe hasta el PRIMER flush. Transacción explícita (misma forma que
+        // ServicioDePrecios) con DOS SaveChangesAsync: alta → flush → auditoría con el id ya
+        // generado → flush → commit. Si el segundo flush (el INSERT de auditoría) falla, la
+        // transacción entera revierte y el alta queda sin efecto (fail-closed, task 2.13) — con
+        // dos SaveChangesAsync SUELTOS (mutation target 2.12) el primero ya habría comiteado solo.
+        //
+        // Sin reintento: `auditoria.Registrar` hace Add de una instancia NUEVA en cada intento
+        // (el hoisting de arriba solo protege a `usuario`), así que un reintento duplicaría la
+        // fila de auditoría del alta.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         var usuarioCreado = await estrategia.ExecuteAsync(async () =>
         {

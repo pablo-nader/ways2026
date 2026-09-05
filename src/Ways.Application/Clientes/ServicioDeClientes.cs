@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Usuarios;
 using Ways.Domain.Clientes;
@@ -80,7 +80,7 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
     /// misma transacción que el INSERT: si el alta falla después de tomar el número (p.ej. una
     /// FK que se termina violando), el rollback también deshace el avance del contador — el
     /// mismo "gaps solo en rollback" que documenta <c>AsignadorDeNumeroCliente</c>, no un hueco
-    /// garantizado en cada error. Mismo wrapper de <c>CreateExecutionStrategy</c> que
+    /// garantizado en cada error. Mismo wrapper que
     /// <see cref="Organizacion.ServicioDeAprovisionamiento.CrearTenantAsync"/> — EnableRetryOnFailure
     /// exige que la transacción se abra adentro de <c>ExecuteAsync</c>.</summary>
     public async Task<ClienteListado> CrearAsync(AltaCliente datos, CancellationToken ct = default)
@@ -104,7 +104,10 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
 
         var idTenant = ExigirTenantDeLaSesion();
 
-        var estrategia = db.Database.CreateExecutionStrategy();
+        // Sin reintento: el INSERT no es idempotente y no hay clave de idempotencia — el número
+        // se asigna DENTRO de la transacción, así que un reintento tomaría uno nuevo y daría de
+        // alta un segundo cliente.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         return await estrategia.ExecuteAsync(async () =>
         {

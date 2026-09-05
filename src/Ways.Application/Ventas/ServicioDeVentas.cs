@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -354,15 +354,18 @@ public class ServicioDeVentas(
         // dentro de ExecuteAsync. El plan de arriba es el ÚNICO dato de negocio que cruza hacia
         // la lambda: cada entidad de EF se construye de cero en cada intento (retry contract).
         //
-        // El número YA está comprometido cuando esta lambda arranca — un commit ambiguo acá (el
-        // servidor comitea pero la conexión se corta antes del ACK al cliente) hace que
-        // CreateExecutionStrategy reintente la lambda completa; sin la guarda de abajo, ese
-        // reintento volvería a INSERTAR el mismo comprobante bajo el mismo número, violando
-        // ux_comprobantes_venta_numero (o, peor, duplicando la venta si esa unicidad no
-        // existiera). BuscarPorNumeroComprometidoAsync corre PRIMERO en cada intento: si el
-        // commit anterior sí llegó a puerto, el comprobante ya existe y se devuelve tal cual en
-        // vez de reinsertarse.
-        var estrategia = db.Database.CreateExecutionStrategy();
+        // El número YA está comprometido cuando esta lambda arranca, y su transacción propia ya
+        // comiteó. Sin reintento: las tres escrituras de EjecutarTransaccionAsync (comprobante,
+        // ítems, pagos) construyen entidades NUEVAS en cada intento, así que un reintento
+        // automático las duplicaría en el ChangeTracker — la unicidad las convierte en un 409
+        // falso sobre una venta que quizás ya se emitió. Una falla transitoria sale tal cual al
+        // cliente, que reenvía con el MISMO número.
+        //
+        // Por eso la guarda de abajo NO se toca: BuscarPorNumeroComprometidoAsync corre PRIMERO,
+        // y si el commit anterior sí llegó a puerto (commit ambiguo: el servidor comiteó pero el
+        // ACK se perdió) devuelve el comprobante ya emitido en vez de reinsertarlo bajo el mismo
+        // número, violando ux_comprobantes_venta_numero.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         return await estrategia.ExecuteAsync(async () =>
             await BuscarPorNumeroComprometidoAsync(plan.IdPuntoVenta, plan.IdTipoComprobante, numero, ct)
