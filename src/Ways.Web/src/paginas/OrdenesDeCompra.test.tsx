@@ -80,6 +80,8 @@ function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): Punto
     instagram: null,
     facebook: null,
     web: null,
+    nombreTenant: 'Tenant Demo',
+    razonSocialEmpresa: 'Empresa Demo',
     ...sobrescribir,
   }
 }

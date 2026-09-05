@@ -23,6 +23,7 @@ const empresaUno: EmpresaListado = {
   razonSocial: 'Empresa Uno SA',
   nombreFantasia: null,
   cuit: null,
+  nombreTenant: 'Tenant Demo',
 }
 
 const puntoVentaUno: PuntoVentaListado = {
@@ -36,6 +37,8 @@ const puntoVentaUno: PuntoVentaListado = {
   instagram: null,
   facebook: null,
   web: null,
+  nombreTenant: 'Tenant Demo',
+  razonSocialEmpresa: 'Empresa Demo',
 }
 
 function mockearRutasBase(items: ParametroListado[] = []) {

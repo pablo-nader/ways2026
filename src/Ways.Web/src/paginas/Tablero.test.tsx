@@ -88,7 +88,14 @@ vi.mock('../auth/useAuth', () => ({
   useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
 }))
 
-const empresaUno: EmpresaListado = { id: 1, idTenant: 1, razonSocial: 'Empresa Uno SA', nombreFantasia: null, cuit: null }
+const empresaUno: EmpresaListado = {
+  id: 1,
+  idTenant: 1,
+  razonSocial: 'Empresa Uno SA',
+  nombreFantasia: null,
+  cuit: null,
+  nombreTenant: 'Tenant Demo',
+}
 
 function ventasFixture(sobrescribir: Partial<ResumenDeVentas> = {}): ResumenDeVentas {
   return {
@@ -130,6 +137,8 @@ const puntoVentaCentro: PuntoVentaListado = {
   instagram: null,
   facebook: null,
   web: null,
+  nombreTenant: 'Tenant Demo',
+  razonSocialEmpresa: 'Empresa Demo',
 }
 
 const medioEfectivo: MedioPagoListado = {
