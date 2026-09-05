@@ -122,6 +122,21 @@ describe('copiaDeFalloDeBaja — la copia se elige por código', () => {
 
     expect(copia).toBe('Algo nuevo bloquea la baja.')
   })
+
+  /**
+   * Cláusula bajo prueba: que el mapa sea un `Map` y no un objeto literal (judgment-day ronda 1,
+   * C6). El `codigo` viene del SERVIDOR: sobre un objeto, `GUIA['constructor']` resuelve contra el
+   * prototipo y devuelve una función, así que `guia ? … : …` daba verdadero y la copia terminaba
+   * concatenando el `[Function]` — o algo peor con `toString`. Con `Map.get` solo existen las
+   * claves propias y estos tres caen por el fallback como cualquier código desconocido.
+   */
+  it('una clave del prototipo no se hace pasar por guía', () => {
+    for (const codigo of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(copiaDeFalloDeBaja(new ErrorApi(409, codigo, 'Algo bloquea la baja.'), 'el tenant')).toBe(
+        'Algo bloquea la baja.',
+      )
+    }
+  })
 })
 
 describe('arrastreDeTenant', () => {

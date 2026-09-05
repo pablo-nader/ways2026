@@ -28,15 +28,20 @@ export type SujetoDeBaja = 'el tenant' | 'la empresa' | 'el punto de venta' | 'e
  *
  * Congelado a propósito y sin `Record<CodigoConocido, …>`: si el servidor sumara un séptimo código,
  * cae por el fallback genérico —que igual rinde el mensaje— en vez de romper el build.
+ *
+ * Es un `Map` y no un objeto literal porque el `codigo` viene del SERVIDOR: sobre un objeto,
+ * `GUIA['constructor']` o `GUIA['toString']` resuelven contra el prototipo y devuelven algo que no
+ * es una guía, así que un código exótico dejaba de caer por el fallback. `Map.get` solo ve las
+ * claves propias.
  */
-const GUIA_POR_CODIGO: Readonly<Record<string, string>> = {
-  tenant_en_uso: 'Dá de baja o reasigná esos datos antes de eliminar el tenant.',
-  empresa_en_uso: 'Dá de baja o reasigná esos datos antes de eliminar la empresa.',
-  punto_venta_en_uso: 'Dá de baja o reasigná esos datos antes de eliminar el punto de venta.',
-  usuario_en_uso: 'Reasigná o dá de baja esas operaciones antes de eliminar la cuenta.',
-  ultima_empresa_del_tenant: 'La baja del tenant se hace desde la pantalla de Tenants.',
-  ultimo_punto_venta_de_la_empresa: 'La baja de la empresa se hace desde la pantalla de Empresas.',
-}
+const GUIA_POR_CODIGO: ReadonlyMap<string, string> = new Map([
+  ['tenant_en_uso', 'Dá de baja o reasigná esos datos antes de eliminar el tenant.'],
+  ['empresa_en_uso', 'Dá de baja o reasigná esos datos antes de eliminar la empresa.'],
+  ['punto_venta_en_uso', 'Dá de baja o reasigná esos datos antes de eliminar el punto de venta.'],
+  ['usuario_en_uso', 'Reasigná o dá de baja esas operaciones antes de eliminar la cuenta.'],
+  ['ultima_empresa_del_tenant', 'La baja del tenant se hace desde la pantalla de Tenants.'],
+  ['ultimo_punto_venta_de_la_empresa', 'La baja de la empresa se hace desde la pantalla de Empresas.'],
+])
 
 /**
  * Copia del 404. Es deliberadamente NEUTRA y NO anexa el mensaje del servidor: un admin de tenant
@@ -73,7 +78,7 @@ export function copiaDeFalloDeBaja(error: unknown, sujeto: SujetoDeBaja): string
   // El mensaje del servidor va primero porque es el que nombra el bloqueo; el encabezado solo lo
   // reemplaza cuando vino vacío, para que nunca quede un alert sin texto.
   const detalle = error.message.trim() || encabezado
-  const guia = GUIA_POR_CODIGO[error.codigo]
+  const guia = GUIA_POR_CODIGO.get(error.codigo)
 
   return guia ? `${detalle} ${guia}` : detalle
 }
