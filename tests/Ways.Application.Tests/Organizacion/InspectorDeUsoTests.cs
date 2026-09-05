@@ -276,7 +276,7 @@ public class InspectorDeUsoTests
             }
 
             Assert.Contains(
-                $"SELECT '{rama.Tabla}' AS tabla WHERE EXISTS (SELECT 1 FROM {origen} " +
+                $"SELECT '{rama.Etiqueta}' AS tabla WHERE EXISTS (SELECT 1 FROM {origen} " +
                 $"WHERE {string.Join(" AND ", conjuntos)})",
                 sql);
         }
@@ -290,7 +290,12 @@ public class InspectorDeUsoTests
     /// hoja↔puente por la clave alternativa <c>(id, id_tenant)</c>, los parámetros del ancla sobre
     /// el PUENTE (<c>pv."id_empresa" = $1 AND pv."id_tenant" = $2</c>, y ese segundo conjunto es lo
     /// que impide que el id de otro tenant bloquee) y el conjunto del instante sobre la HOJA.
-    /// La etiqueta devuelta sigue siendo la tabla hoja, que es lo que el operador necesita ver.
+    ///
+    /// La etiqueta PROYECTADA es la de la RAMA —<c>&lt;hoja&gt; via puntos_venta</c>— desde
+    /// judgment-day ronda 2 (hallazgo R2-6): con la hoja pelada, una tabla que llega al ancla por
+    /// dos caminos dejaba al llamador sin saber cuál disparó, y la copia del 409 mandaba a buscar
+    /// una fila de nivel empresa en los puntos de venta. Se compone de los identificadores ya
+    /// validados, así que la superficie de inyección no se abre.
     /// </summary>
     [Fact]
     public void UnaRamaPuenteadaUneLaHojaConPuntosVentaYLigaElAnclaSobreElPuente()
@@ -300,7 +305,7 @@ public class InspectorDeUsoTests
         var sql = Renderizar(db, typeof(Empresa));
 
         Assert.Contains(
-            "SELECT 'comprobantes_venta' AS tabla WHERE EXISTS (SELECT 1 FROM " +
+            "SELECT 'comprobantes_venta via puntos_venta' AS tabla WHERE EXISTS (SELECT 1 FROM " +
             "\"public\".\"comprobantes_venta\" d JOIN \"public\".\"puntos_venta\" pv ON " +
             "d.\"id_punto_venta\" = pv.\"id_punto_venta\" AND " +
             "d.\"id_tenant\" = pv.\"id_tenant\" " +
@@ -308,7 +313,8 @@ public class InspectorDeUsoTests
             sql);
 
         Assert.Contains(
-            "SELECT 'stock' AS tabla WHERE EXISTS (SELECT 1 FROM \"public\".\"stock\" d " +
+            "SELECT 'stock via puntos_venta' AS tabla WHERE EXISTS (SELECT 1 FROM " +
+            "\"public\".\"stock\" d " +
             "JOIN \"public\".\"puntos_venta\" pv ON d.\"id_punto_venta\" = " +
             "pv.\"id_punto_venta\" AND d.\"id_tenant\" = pv.\"id_tenant\" " +
             "WHERE pv.\"id_empresa\" = $1 AND " +

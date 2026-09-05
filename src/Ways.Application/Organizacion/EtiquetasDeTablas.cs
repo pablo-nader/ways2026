@@ -3,10 +3,10 @@ using System.Collections.Frozen;
 namespace Ways.Application.Organizacion;
 
 /// <summary>
-/// Cómo se NOMBRA, en castellano y para el operador, la tabla que bloqueó una baja
-/// (stage-20 decisión 9). <c>InspectorDeUso</c> devuelve el nombre físico de la tabla —
-/// <c>comprobantes_venta</c>— y esto lo convierte en la palabra que el operador entiende
-/// —"ventas"—.
+/// Cómo se NOMBRA, en castellano y para el operador, lo que bloqueó una baja (stage-20 decisión
+/// 9). <c>InspectorDeUso</c> devuelve la etiqueta de la RAMA que disparó —<c>comprobantes_venta</c>,
+/// o <c>comprobantes_venta via puntos_venta</c> cuando llegó por el puente— y esto la convierte en
+/// la frase que el operador entiende —"ventas", "ventas en sus puntos de venta"—.
 ///
 /// NO ES LA LISTA A MANO QUE B4 PROHÍBE, y la diferencia es sustancial: acá no se decide NADA
 /// sobre el veredicto. El veredicto ya lo tomó <c>InventarioDeDependientes</c> recorriendo la
@@ -80,32 +80,36 @@ public static class EtiquetasDeTablas
     /// La descripción del bloqueo, que NO siempre es la etiqueta pelada de la hoja.
     ///
     /// Una rama PUENTEADA (design amendment de la slice 3: el uso sube por la jerarquía
-    /// estructural) llega a la hoja a través de una tabla intermedia, y el inspector devuelve
-    /// siempre la HOJA. Sin esto, una empresa bloqueada por un turno de caja de su punto de venta
-    /// le diría al operador "tiene turnos de caja" sin ninguna pista de que la fila vive en un
-    /// punto de venta: el operador buscaría el turno en la empresa y no lo encontraría. Con el
-    /// puente nombrado, la frase queda "turnos de caja en sus puntos de venta".
+    /// estructural) llega a la hoja a través de una tabla intermedia. Sin nombrar el puente, una
+    /// empresa bloqueada por un turno de caja de su punto de venta le diría al operador "tiene
+    /// turnos de caja" sin ninguna pista de que la fila vive en un punto de venta: el operador
+    /// buscaría el turno en la empresa y no lo encontraría. Con el puente nombrado, la frase queda
+    /// "turnos de caja en sus puntos de venta".
     ///
-    /// Alcanza con que ALGUNA rama de esa hoja sea puenteada (judgment-day ronda 1, hallazgo C3).
-    /// La regla anterior —afirmar el puente solo cuando TODAS lo eran— degradaba a la etiqueta
-    /// pelada justo cuando la hoja tenía además una rama directa (hoy: <c>parametros</c>), que es
-    /// el caso donde la pista importa más, y violaba la entrada arrastrada de la slice 3 ("nunca
-    /// una etiqueta pelada para un hit puenteado"). Nombrar el puente no puede desorientar al
-    /// operador aunque el hit real haya venido por la rama directa: esa fila la habría reportado la
-    /// etiqueta de la rama directa igual, con la misma palabra de hoja. Quedarse callado sobre el
-    /// puente, en cambio, manda a buscar en el lugar equivocado.
+    /// El insumo es la <see cref="RamaDeUso.Etiqueta"/> de la rama que DISPARÓ, no el nombre pelado
+    /// de la hoja (judgment-day ronda 2, hallazgo R2-6): el inspector la proyecta y acá se parte
+    /// por <see cref="RamaDeUso.SeparadorDePuente"/>. Las dos redacciones anteriores adivinaban a
+    /// partir del conjunto de ramas del ancla —"todas puenteadas" en la ronda 0, "alguna
+    /// puenteada" en la ronda 1— y las dos se equivocaban sobre la MISMA hoja mixta: <c>parametros</c>
+    /// llega a la empresa por una rama directa Y por el puente de sus puntos de venta, así que
+    /// afirmar el puente mandaba a buscar a los puntos de venta una fila de nivel empresa, y
+    /// callarlo mandaba a buscar en la empresa una fila de nivel punto de venta. Con la rama
+    /// identificada no se adivina nada: cada hit se atribuye exactamente donde vive.
     /// </summary>
-    public static string DescribirBloqueo(string tabla, IReadOnlyList<RamaDeUso> ramasDelAncla)
+    public static string DescribirBloqueo(string etiquetaDeRama)
     {
-        ArgumentNullException.ThrowIfNull(ramasDelAncla);
+        ArgumentNullException.ThrowIfNull(etiquetaDeRama);
 
-        var etiqueta = Describir(tabla);
+        var separador = etiquetaDeRama.IndexOf(RamaDeUso.SeparadorDePuente, StringComparison.Ordinal);
 
-        var puenteada = ramasDelAncla
-            .FirstOrDefault(rama => rama.Tabla == tabla && rama.Puente is not null);
+        if (separador < 0)
+        {
+            return Describir(etiquetaDeRama);
+        }
 
-        return puenteada is null
-            ? etiqueta
-            : $"{etiqueta} en sus {Describir(puenteada.Puente!.Tabla)}";
+        var hoja = etiquetaDeRama[..separador];
+        var puente = etiquetaDeRama[(separador + RamaDeUso.SeparadorDePuente.Length)..];
+
+        return $"{Describir(hoja)} en sus {Describir(puente)}";
     }
 }

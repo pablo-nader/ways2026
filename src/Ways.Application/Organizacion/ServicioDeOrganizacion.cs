@@ -199,7 +199,7 @@ public class ServicioDeOrganizacion(
         // 404 antes de abrir nada: el caso normal de "ese id no existe" no paga transacción.
         await BuscarTenantAsync(id, ct);
 
-        await EnUnaTransaccionAsync(async () =>
+        await EnUnaTransaccionDeBajaAsync(async () =>
         {
             await TomarLockDeBajaAsync(id, ct);
 
@@ -243,10 +243,11 @@ public class ServicioDeOrganizacion(
             tenant.Estado = EstadoTenant.Baja;
 
             // C1 — el rastro cubre la cascada ENTERA y no solo el ancla: una fila por cada entidad
-            // que esta transacción estampó, con el mismo `momento`. La `usuario.baja` de cada
-            // cuenta arrastrada es la MISMA que escribe el camino directo de
-            // `ServicioDeUsuarios.EliminarAsync` — una cuenta que desaparece por cascada no puede
-            // dejar menos rastro que una que el admin da de baja a mano.
+            // que esta transacción estampó, con el mismo `momento`. Cada cuenta arrastrada escribe
+            // la misma ACCIÓN que el camino directo de `ServicioDeUsuarios.EliminarAsync`
+            // (`usuario.baja`) con el payload marcado `por_cascada: true` (R2-8) — una cuenta que
+            // desaparece por cascada no puede dejar menos rastro que una que el admin da de baja a
+            // mano, y el rastro tiene que decir cuál de las dos cosas pasó.
             RegistrarBajaDeTenant(tenant, estadoAnterior, momento);
 
             foreach (var empresa in empresas)
@@ -364,7 +365,7 @@ public class ServicioDeOrganizacion(
     {
         var empresa = await BuscarEmpresaAsync(id, ct);
 
-        await EnUnaTransaccionAsync(async () =>
+        await EnUnaTransaccionDeBajaAsync(async () =>
         {
             await TomarLockDeBajaAsync(empresa.IdTenant, ct);
 
@@ -517,7 +518,7 @@ public class ServicioDeOrganizacion(
     {
         var puntoVenta = await BuscarPuntoVentaAsync(id, ct);
 
-        await EnUnaTransaccionAsync(async () =>
+        await EnUnaTransaccionDeBajaAsync(async () =>
         {
             await TomarLockDeBajaAsync(puntoVenta.IdTenant, ct);
 
@@ -584,8 +585,43 @@ public class ServicioDeOrganizacion(
     /// los contadores y los nombres de dueño NO viven en la entidad: (b) habría necesitado una
     /// consulta igual.
     /// </summary>
-    private async Task<T> EnUnaTransaccionAsync<T>(Func<Task<T>> cuerpo, CancellationToken ct) =>
-        await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+    private Task<T> EnUnaTransaccionAsync<T>(Func<Task<T>> cuerpo, CancellationToken ct) =>
+        EjecutarEnTransaccionAsync(db.Database.CreateExecutionStrategy(), cuerpo, ct);
+
+    /// <summary>
+    /// La transacción de las TRES BAJAS: misma forma, pero SIN reintento automático
+    /// (judgment-day ronda 2, hallazgo R2-1). <c>EnableRetryOnFailure(5)</c> es global, y estas
+    /// unidades no son reintentables:
+    ///
+    /// <list type="bullet">
+    /// <item><c>ServicioDeAuditoria.Registrar</c> hace <c>Add</c> de una instancia NUEVA cada vez
+    /// que se lo llama, y un intento fallido deja las del intento anterior en <c>Added</c> dentro
+    /// del <c>ChangeTracker</c>: el reintento no reemplaza el rastro, lo DUPLICA, y el
+    /// <c>SaveChangesAsync</c> final inserta 2N filas por una sola baja;</item>
+    /// <item>peor todavía, el reintento del tenant releería <c>estadoAnterior</c> de la MISMA
+    /// instancia que el intento anterior ya mutó a <c>EstadoTenant.Baja</c> (la relectura resuelve
+    /// contra el identity map), así que la fila duplicada de <c>tenant.baja</c> AFIRMARÍA que el
+    /// estado previo ya era <c>baja</c>: un rastro que miente sobre lo que había antes.</item>
+    /// </list>
+    ///
+    /// Se eligió el mecanismo YA ESTABLECIDO del repo —<see cref="FabricaDeEstrategiaSinReintento"/>,
+    /// el mismo que usan <c>ServicioDeVentas.AnularAsync</c> y <c>ServicioDeStock.AjustarAsync</c>—
+    /// y no un <c>ChangeTracker.Clear()</c> al tope de cada lambda, por tres motivos: una baja es
+    /// exactamente el perfil que ese doc-comment describe (rara, humana, manual y sin ninguna clave
+    /// de idempotencia natural); <c>Clear()</c> no tiene ningún precedente en este repositorio y
+    /// dejaría un invariante nuevo ("ninguna entidad se captura de afuera") que cualquier edición
+    /// futura rompe en silencio; y sobre todo <c>Clear()</c> arregla la duplicación pero NO el
+    /// commit ambiguo —el servidor comitea y el ACK se pierde—, donde el reintento releería la fila
+    /// ya dada de baja y devolvería un 404 (o un 409 de mínimo estructural) sobre una baja que en
+    /// verdad tuvo éxito. Sin reintento, la falla transitoria llega tal cual al operador y el
+    /// reintento manual —que es el correcto acá— lo hace un humano que ve el resultado.
+    /// </summary>
+    private Task<T> EnUnaTransaccionDeBajaAsync<T>(Func<Task<T>> cuerpo, CancellationToken ct) =>
+        EjecutarEnTransaccionAsync(FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db), cuerpo, ct);
+
+    private async Task<T> EjecutarEnTransaccionAsync<T>(
+        IExecutionStrategy estrategia, Func<Task<T>> cuerpo, CancellationToken ct) =>
+        await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -630,9 +666,10 @@ public class ServicioDeOrganizacion(
     }
 
     /// <summary>
-    /// El guard de uso, evaluado UNA sola vez sobre el ancla ya releída bajo el lock. Traduce el
-    /// nombre de tabla que devuelve <see cref="InspectorDeUso"/> a la frase que ve el operador
-    /// (<see cref="EtiquetasDeTablas"/>) y lo levanta como <c>409</c> con el código exacto.
+    /// El guard de uso, evaluado UNA sola vez sobre el ancla ya releída bajo el lock. Traduce la
+    /// etiqueta de RAMA que devuelve <see cref="InspectorDeUso"/> a la frase que ve el operador
+    /// (<see cref="EtiquetasDeTablas.DescribirBloqueo"/>, que nombra el puente solo cuando el hit
+    /// vino por el puente) y la levanta como <c>409</c> con el código exacto.
     ///
     /// <paramref name="valoresPorPropiedad"/> es por NOMBRE y no posicional a propósito: el orden
     /// real lo define <c>InventarioDeDependientes.PropiedadesDeAncla</c> (ordinal), y hacer que el
@@ -658,15 +695,14 @@ public class ServicioDeOrganizacion(
                     $"{propiedad}, que alguna rama del inspector necesita."))
             .ToList();
 
-        var tabla = await inspector.PrimeraDependenciaEnUsoAsync(tipoAncla, valoresDeClave, ancla, ct);
+        var ramaEnUso = await inspector.PrimeraDependenciaEnUsoAsync(tipoAncla, valoresDeClave, ancla, ct);
 
-        if (tabla is null)
+        if (ramaEnUso is null)
         {
             return;
         }
 
-        var descripcion = EtiquetasDeTablas.DescribirBloqueo(
-            tabla, InventarioDeDependientes.Construir(db.Model, tipoAncla));
+        var descripcion = EtiquetasDeTablas.DescribirBloqueo(ramaEnUso);
 
         throw ErrorDominio.Conflicto(codigo, $"No se puede dar de baja {sujeto} porque tiene {descripcion}.");
     }
@@ -680,8 +716,17 @@ public class ServicioDeOrganizacion(
     /// El <c>id_tenant</c> de la fila es el del SUJETO, nunca el de la sesión: es la misma regla
     /// que <c>ServicioDeUsuarios</c> aplica desde la slice 2 de la etapa 14, y es lo que hace que
     /// plataforma (<c>IdTenant</c> en <c>null</c>) pueda dar de baja el tenant X y dejar el rastro
-    /// EN el tenant X, donde su admin lo puede leer. El <c>id_actor</c> lo estampa el writer desde
-    /// el contexto, así que una cuenta de plataforma como ACTOR es perfectamente válida.
+    /// EN el tenant X. El <c>id_actor</c> lo estampa el writer desde el contexto, así que una
+    /// cuenta de plataforma como ACTOR es perfectamente válida.
+    ///
+    /// DÓNDE SE PUEDE LEER ESE RASTRO, dicho con precisión (judgment-day ronda 2, hallazgo R2-7):
+    /// la fila persiste en el tenant X para forense y export, y es legible EN LA BASE y por
+    /// cualquier superficie de auditoría de plataforma que se agregue más adelante. NO es legible
+    /// hoy por <c>GET /api/auditoria</c>: <c>Politicas.LecturaDeAuditoria</c> admite solo Admin, y
+    /// la cascada de <c>tenant.baja</c> acaba de dar de baja a todos los admins de ese tenant, así
+    /// que no queda nadie que pueda consultarlo por la API. Es un item diferido y registrado en
+    /// <c>tasks.md</c> ("superficie de auditoría legible por plataforma"), no un descuido —
+    /// <c>Politicas.cs</c> no se toca en esta etapa.
     /// </summary>
     private void RegistrarBajaDeTenant(Tenant tenant, EstadoTenant estadoAnterior, DateTimeOffset momento)
     {
@@ -714,11 +759,18 @@ public class ServicioDeOrganizacion(
             valorAnterior, valorNuevo));
     }
 
-    /// <summary>La MISMA fila que escribe <c>ServicioDeUsuarios.EliminarAsync</c>, con el mismo
-    /// guard de sujeto sin tenant (<c>auditoria.id_tenant</c> es NOT NULL). Acá el guard es
-    /// estructuralmente inalcanzable —la cascada selecciona por <c>IdTenant == id</c>, así que
-    /// ninguna cuenta de plataforma entra— y se escribe igual para que las dos fuentes de
-    /// <c>usuario.baja</c> sean literalmente el mismo par de payloads.</summary>
+    /// <summary>La MISMA acción que escribe <c>ServicioDeUsuarios.EliminarAsync</c>
+    /// (<c>usuario.baja</c>), con el mismo guard de sujeto sin tenant (<c>auditoria.id_tenant</c> es
+    /// NOT NULL). Acá el guard es estructuralmente inalcanzable —la cascada selecciona por
+    /// <c>IdTenant == id</c>, así que ninguna cuenta de plataforma entra— y se escribe igual.
+    ///
+    /// El payload es <see cref="PayloadDeAuditoria.BajaDeUsuarioPorCascada"/> y no
+    /// <c>BajaDeUsuario</c> (judgment-day ronda 2, hallazgo R2-8): la fila lleva
+    /// <c>por_cascada: true</c>, igual que las de empresa y punto de venta de esta misma
+    /// transacción. Sin ese campo, la cuenta arrastrada era la única de las cuatro filas de la
+    /// cascada que no podía decir por qué cayó, y quien leyera el rastro no podía distinguirla de
+    /// una baja que un admin pidió a mano. El camino DIRECTO conserva <c>BajaDeUsuario</c>: la
+    /// diferencia entre los dos payloads ES la información.</summary>
     private void RegistrarBajaDeUsuario(Usuario usuario, DateTimeOffset momento)
     {
         if (usuario.IdTenant is not int idTenantSujeto)
@@ -726,7 +778,7 @@ public class ServicioDeOrganizacion(
             return;
         }
 
-        var (valorAnterior, valorNuevo) = PayloadDeAuditoria.BajaDeUsuario(usuario.Estado, momento);
+        var (valorAnterior, valorNuevo) = PayloadDeAuditoria.BajaDeUsuarioPorCascada(usuario.Estado, momento);
 
         auditoria.Registrar(new RegistroDeAuditoria(
             idTenantSujeto, idPuntoVenta: null, AccionAuditada.UsuarioBaja, usuario.Id,

@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using System.Data.Common;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -10,8 +10,11 @@ namespace Ways.Application.Organizacion;
 
 /// <summary>
 /// Contesta una sola pregunta: ¿el cliente ya operó sobre esta entidad de organización?
-/// Devuelve el NOMBRE de la primera tabla que bloquea, o <c>null</c> si la entidad está
-/// prístina (stage-20 design D5, D6).
+/// Devuelve la ETIQUETA de la primera RAMA que bloquea —la tabla hoja, y el puente detrás de
+/// <c>" via "</c> cuando la rama es puenteada (<see cref="RamaDeUso.Etiqueta"/>)—, o <c>null</c>
+/// si la entidad está prístina (stage-20 design D5, D6). Devolver la rama y no la hoja pelada es
+/// judgment-day ronda 2, hallazgo R2-6: una hoja a la que se llega por dos caminos dejaba al
+/// llamador redactando el bloqueo a ciegas.
 ///
 /// UNA sola ida y vuelta: un <c>UNION ALL</c> de ramas <c>SELECT '&lt;tabla&gt;' WHERE
 /// EXISTS (...)</c> con un <c>LIMIT 1</c> afuera, así el nodo <c>Append</c> de Postgres corta
@@ -53,8 +56,8 @@ namespace Ways.Application.Organizacion;
 /// inspector agregue por su cuenta. Lo que NO se agrega es un conjunto EXTRA, y el motivo es
 /// direccional: un conjunto de más solo puede ANGOSTAR el resultado, y un bug que angosta
 /// sub-bloquea — la única dirección que esta etapa no acepta. La salida entera del inspector es
-/// un nombre de tabla (o <c>null</c>) — sin filas, sin ids, sin conteos — así que tampoco hay
-/// canal por donde se filtre dato de otro tenant.
+/// una etiqueta de rama (o <c>null</c>): nombres de tabla del propio esquema, sin filas, sin ids
+/// y sin conteos, así que tampoco hay canal por donde se filtre dato de otro tenant.
 ///
 /// <c>db-error-backstops</c>: ESTRUCTURALMENTE N/A. Toda FK del modelo es
 /// <c>DeleteBehavior.Restrict</c>, pero acá no hay borrado físico en ningún camino: la baja es
@@ -90,6 +93,10 @@ public sealed class InspectorDeUso(IWaysDbContext db)
     /// valor de la propiedad <c>i</c> de esa lista, y termina en el parámetro <c>$(i+1)</c>.
     /// <paramref name="ancla"/> es el <c>CreatedAt</c> de la entidad ancla y va al último
     /// parámetro, solo si alguna rama lo usa.
+    ///
+    /// Lo que devuelve es la <see cref="RamaDeUso.Etiqueta"/> de la rama que disparó, no el nombre
+    /// pelado de la tabla: <c>EtiquetasDeTablas.DescribirBloqueo</c> la parsea para nombrar el
+    /// puente solo cuando el hit VINO por el puente.
     /// </summary>
     public async Task<string?> PrimeraDependenciaEnUsoAsync(
         Type tipoAncla,
@@ -240,7 +247,17 @@ public sealed class InspectorDeUso(IWaysDbContext db)
                 $"d.\"{InventarioDeDependientes.ColumnaDeMarcaTemporal}\" > ${indiceDelAncla}");
         }
 
-        return $"SELECT '{tabla}' AS tabla WHERE EXISTS (SELECT 1 FROM {origen} " +
+        // La proyección es la ETIQUETA DE LA RAMA, no la tabla hoja pelada (judgment-day ronda 2,
+        // hallazgo R2-6): con la hoja sola, una tabla que llega al ancla por DOS caminos —hoy
+        // `parametros`, directa desde la empresa y puenteada desde sus puntos de venta— dejaba al
+        // llamador sin saber cuál de los dos disparó, y la copia del 409 afirmaba "en sus puntos de
+        // venta" incluso sobre una fila de nivel empresa. Se compone de los identificadores YA
+        // VALIDADOS, nunca de `rama.Etiqueta` en crudo: la superficie de inyección sigue cerrada.
+        var etiqueta = rama.Puente is null
+            ? tabla
+            : $"{tabla}{RamaDeUso.SeparadorDePuente}{Identificador(rama.Puente.Tabla)}";
+
+        return $"SELECT '{etiqueta}' AS tabla WHERE EXISTS (SELECT 1 FROM {origen} " +
             $"WHERE {string.Join(" AND ", conjuntos)})";
     }
 

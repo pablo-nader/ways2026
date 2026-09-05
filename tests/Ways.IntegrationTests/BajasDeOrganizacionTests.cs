@@ -1,8 +1,11 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
 using Ways.Application.Organizacion;
@@ -608,6 +611,16 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
         var delUsuario = Assert.Single(rastro, f => f.Accion == "usuario.baja");
         Assert.Equal("usuario", delUsuario.Entidad);
         Assert.Equal(sembrado.IdAdmin, delUsuario.IdEntidad);
+
+        // R2-8 (judgment-day ronda 2, juez A): la cuenta arrastrada era la ÚNICA de las cuatro
+        // filas de la cascada que no decía por qué cayó. Ahora lleva el mismo `por_cascada` que sus
+        // hermanas, y el camino DIRECTO no lo lleva — la diferencia entre los dos payloads es la
+        // información, así que se afirma en los dos lados: acá arriba `true`, y en
+        // `PreciosYUsuariosAuditoriaTests` la baja a mano sigue sin el campo.
+        Assert.True(PorCascadaDe(delUsuario.ValorNuevo));
+        Assert.Equal(
+            "activo",
+            JsonDocument.Parse(delUsuario.ValorNuevo).RootElement.GetProperty("estado").GetString());
     }
 
     /// <summary>
@@ -711,6 +724,28 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
 
         Assert.Equal("tenant_en_uso", codigo);
         Assert.Empty(await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant));
+
+        // R2-9 (judgment-day ronda 2, juez B): el guard de uso es la dirección que NO puede fallar
+        // —tira antes de encolar ninguna fila—, así que probarlo solo a él dejaba sin cubrir a los
+        // dos códigos que sí se evalúan sobre el mismo camino. Los mínimos ESTRUCTURALES corren en
+        // otro punto del método y tienen su propio 409: se afirman los dos, cada uno en su
+        // condición exacta.
+        var (codigoDeLaEmpresa, _) = await LeerConflictoAsync(
+            await root.DeleteAsync($"/api/empresas/{sembrado.IdEmpresa}"));
+
+        Assert.Equal("ultima_empresa_del_tenant", codigoDeLaEmpresa);
+        Assert.Empty(await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant));
+
+        var (codigoDelPunto, _) = await LeerConflictoAsync(
+            await root.DeleteAsync($"/api/puntos-venta/{sembrado.IdPuntoVenta}"));
+
+        Assert.Equal("ultimo_punto_venta_de_la_empresa", codigoDelPunto);
+        Assert.Empty(await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant));
+
+        // Y nada quedó estampado por ninguno de los tres rechazos.
+        Assert.Null((await LeerTenantAsync(sembrado.IdTenant)).DeletedAt);
+        Assert.Null((await LeerEmpresaAsync(sembrado.IdEmpresa)).DeletedAt);
+        Assert.Null((await LeerPuntoVentaAsync(sembrado.IdPuntoVenta)).DeletedAt);
     }
 
     // =========================================================================================
@@ -1766,5 +1801,372 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
         }
 
         Assert.Equal(hallazgosEsperados, ordenados);
+    }
+
+    // =========================================================================================
+    // judgment-day ronda 2 — reintentos, carreras y atribución del bloqueo
+    // =========================================================================================
+
+    /// <summary>
+    /// Rompe el <c>INSERT</c> de <c>auditoria</c> del PRIMER intento con un error de Postgres del
+    /// SQLSTATE que se le pida, y deja pasar todo lo demás. Es lo único que puede convertir
+    /// "¿esta unidad es reintentable?" en una pregunta observable: sin él, el reintento de
+    /// <c>EnableRetryOnFailure</c> no se dispara nunca en una prueba y el mutante sobrevive por
+    /// construcción.
+    ///
+    /// Cuenta los intentos: bajo la estrategia SIN reintento el <c>INSERT</c> del rastro se ve UNA
+    /// sola vez, y bajo la reintentable se vería dos (con el doble de filas encoladas en el
+    /// segundo). El conteo es el valor discriminante, no la mera presencia del error
+    /// (<c>mutation-proof-tests</c> regla 4).
+    /// </summary>
+    private sealed class InterceptorQueRompeElRastro(string sqlState) : DbCommandInterceptor
+    {
+        private int intentos;
+
+        /// <summary>Cuántas veces se intentó ejecutar el lote que contiene el INSERT del rastro.</summary>
+        public int Intentos => Volatile.Read(ref intentos);
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            RomperSiEsElRastro(command);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            RomperSiEsElRastro(command);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
+            CancellationToken cancellationToken = default)
+        {
+            RomperSiEsElRastro(command);
+            return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void RomperSiEsElRastro(DbCommand comando)
+        {
+            if (!comando.CommandText.Contains("INSERT INTO auditoria", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            // Solo el PRIMER intento falla: si hubiera reintento, el segundo tiene que poder
+            // comitear — es la única forma de que las filas duplicadas lleguen a la base y se
+            // puedan contar.
+            if (Interlocked.Increment(ref intentos) > 1)
+            {
+                return;
+            }
+
+            throw new PostgresException(
+                "falla inyectada por la prueba sobre el INSERT de auditoria", "ERROR", "ERROR", sqlState);
+        }
+    }
+
+    /// <summary>
+    /// Da de baja el tenant entero —por el camino REAL, desde otro contexto y otra transacción— en
+    /// el instante en que la transacción de la prueba se abre: o sea DESPUÉS de la lectura previa
+    /// del sujeto y ANTES de que se tome el lock. Es el rendezvous exacto de la carrera de R2-2.
+    ///
+    /// El punto de enganche es <c>TransactionStarted</c> y no un comando, a propósito: el
+    /// <c>pg_advisory_xact_lock</c> se emite por ADO crudo y NO pasa por
+    /// <see cref="DbCommandInterceptor"/> (<c>mutation-proof-tests</c> regla 13), y engancharse a
+    /// la relectura misma haría que el mutante —que borra la relectura— no dispare la carrera y la
+    /// prueba se ponga roja por el motivo equivocado. La apertura de la transacción existe en las
+    /// dos versiones.
+    /// </summary>
+    private sealed class InterceptorQueDaDeBajaElTenantAlAbrir(Func<Task> cascada) : DbTransactionInterceptor
+    {
+        private int disparos;
+
+        public override async ValueTask<DbTransaction> TransactionStartedAsync(
+            DbConnection connection, TransactionEndEventData eventData, DbTransaction result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref disparos) == 1)
+            {
+                await cascada();
+            }
+
+            return await base.TransactionStartedAsync(connection, eventData, result, cancellationToken);
+        }
+    }
+
+    private static ServicioDeOrganizacion ServicioDeOrganizacionSobre(
+        WaysDbContext db, DateTimeOffset momento, int idActor)
+    {
+        var contexto = new ContextoFijo(RolConocido.Root, idActor, idTenant: null);
+        var reloj = new RelojFijo(momento);
+
+        return new ServicioDeOrganizacion(
+            db, reloj, contexto, new InspectorDeUso(db), new ServicioDeAuditoria(db, reloj, contexto));
+    }
+
+    /// <summary>
+    /// R2-1 (judgment-day ronda 2, jueces A y B) — LA CLÁUSULA: las bajas corren bajo
+    /// <c>FabricaDeEstrategiaSinReintento</c> y no bajo <c>CreateExecutionStrategy</c>.
+    ///
+    /// <c>EnableRetryOnFailure(5)</c> es global. <c>ServicioDeAuditoria.Registrar</c> hace
+    /// <c>Add</c> de una instancia NUEVA cada vez que se lo llama, y un
+    /// <c>SaveChangesAsync</c> fallido deja las del intento anterior en <c>Added</c>: un reintento
+    /// no rehace el rastro, lo DUPLICA, y el segundo intento inserta 2N filas por una sola baja.
+    /// Peor: la relectura del tenant resuelve contra el identity map, así que el intento 2 lee
+    /// <c>estadoAnterior</c> de la instancia que el intento 1 ya mutó y la fila duplicada de
+    /// <c>tenant.baja</c> afirma que el estado previo ya era <c>baja</c> — un rastro que miente.
+    ///
+    /// El contexto tiene los reintentos ACTIVOS (<c>CrearContextoDeAplicacionConReintentos</c>):
+    /// la estrategia reintentable existe y la única razón por la que no reintenta es la que elige
+    /// el código de producción. Se afirman tres valores discriminantes: el error transitorio llega
+    /// TAL CUAL al llamador, el <c>INSERT</c> del rastro se intentó UNA sola vez, y la base quedó
+    /// intacta. Después, sin interceptor, la MISMA baja escribe sus cuatro filas exactas con
+    /// <c>estado: "activo"</c> del lado anterior — el valor que el reintento falsificaba.
+    /// </summary>
+    [Fact]
+    public async Task UnaFallaTransitoriaSobreElRastroNoSeReintentaYNoDuplicaNiFalsificaNada()
+    {
+        var sembrado = await AprovisionarAsync("reintento-rastro");
+        var idRoot = await IdDelRootAsync();
+        var ultimoId = await UltimoIdDeAuditoriaAsync();
+        var momento = sembrado.Ancla.AddHours(1);
+
+        // 40001 (serialization_failure) es transitorio para NpgsqlRetryingExecutionStrategy: es
+        // exactamente la clase de falla por la que EnableRetryOnFailure existe.
+        var interceptor = new InterceptorQueRompeElRastro("40001");
+
+        await using (var db = fixture.CrearContextoDeAplicacionConReintentos(
+            TenantActualFijo.Plataforma, interceptor))
+        {
+            var servicio = ServicioDeOrganizacionSobre(db, momento, idRoot);
+
+            var error = await Assert.ThrowsAnyAsync<Exception>(
+                () => servicio.EliminarTenantAsync(sembrado.IdTenant));
+
+            var postgres = ErrorDePostgres(error);
+            Assert.Equal("40001", postgres.SqlState);
+        }
+
+        // UNA sola vez: la unidad no se reintentó. Con la estrategia reintentable serían dos, y el
+        // segundo intento comitearía 8 filas de rastro en vez de 4.
+        Assert.Equal(1, interceptor.Intentos);
+
+        Assert.Empty(await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant));
+        Assert.Null((await LeerTenantAsync(sembrado.IdTenant)).DeletedAt);
+        Assert.Equal(EstadoTenant.Activo, (await LeerTenantAsync(sembrado.IdTenant)).Estado);
+        Assert.Null((await LeerEmpresaAsync(sembrado.IdEmpresa)).DeletedAt);
+        Assert.Null((await LeerPuntoVentaAsync(sembrado.IdPuntoVenta)).DeletedAt);
+        Assert.Null((await LeerUsuarioAsync(sembrado.IdAdmin)).DeletedAt);
+
+        // Y la misma baja, sin la falla inyectada, escribe EXACTAMENTE su rastro: cuatro filas, una
+        // sola `tenant.baja`, y su estado anterior es el real.
+        await using (var db = fixture.CrearContextoDeAplicacionConReintentos(TenantActualFijo.Plataforma))
+        {
+            await ServicioDeOrganizacionSobre(db, momento, idRoot).EliminarTenantAsync(sembrado.IdTenant);
+        }
+
+        var rastro = await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant);
+
+        Assert.Equal(4, rastro.Count);
+        Assert.Equal(
+            ["empresa.baja", "pv.baja", "tenant.baja", "usuario.baja"],
+            rastro.Select(f => f.Accion).Order(StringComparer.Ordinal));
+
+        var delTenant = Assert.Single(rastro, f => f.Accion == "tenant.baja");
+        Assert.Equal(
+            "activo",
+            JsonDocument.Parse(delTenant.ValorAnterior!).RootElement.GetProperty("estado").GetString());
+        Assert.Equal(
+            "baja",
+            JsonDocument.Parse(delTenant.ValorNuevo).RootElement.GetProperty("estado").GetString());
+    }
+
+    /// <summary>
+    /// R2-9 (judgment-day ronda 2, juez B), la mitad que faltaba del lado negativo: una falla NO
+    /// transitoria DESPUÉS de que las filas de rastro ya están encoladas no persiste ni una.
+    ///
+    /// La prueba de rechazo por guard cubre solo la dirección que no puede fallar (el guard tira
+    /// ANTES de encolar nada). Acá las cuatro filas ya están en el <c>ChangeTracker</c> y los
+    /// cuatro <c>UPDATE</c> ya están en el mismo lote: lo que sostiene la atomicidad es la
+    /// transacción, y esto es lo que la ejerce. <c>23505</c> no es transitorio, así que tampoco hay
+    /// reintento del que sospechar.
+    /// </summary>
+    [Fact]
+    public async Task UnaFallaNoTransitoriaConElRastroYaEncoladoNoPersisteNadaDeLaCascada()
+    {
+        var sembrado = await AprovisionarAsync("rastro-atomico");
+        var idRoot = await IdDelRootAsync();
+        var ultimoId = await UltimoIdDeAuditoriaAsync();
+
+        var interceptor = new InterceptorQueRompeElRastro("23505");
+
+        await using (var db = fixture.CrearContextoDeAplicacionConReintentos(
+            TenantActualFijo.Plataforma, interceptor))
+        {
+            var servicio = ServicioDeOrganizacionSobre(db, sembrado.Ancla.AddHours(1), idRoot);
+
+            var error = await Assert.ThrowsAnyAsync<Exception>(
+                () => servicio.EliminarTenantAsync(sembrado.IdTenant));
+
+            Assert.Equal("23505", ErrorDePostgres(error).SqlState);
+        }
+
+        Assert.Equal(1, interceptor.Intentos);
+        Assert.Empty(await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant));
+
+        // La cascada entera revirtió: ninguna de las cuatro entidades quedó estampada.
+        Assert.Null((await LeerTenantAsync(sembrado.IdTenant)).DeletedAt);
+        Assert.Equal(EstadoTenant.Activo, (await LeerTenantAsync(sembrado.IdTenant)).Estado);
+        Assert.Null((await LeerEmpresaAsync(sembrado.IdEmpresa)).DeletedAt);
+        Assert.Null((await LeerPuntoVentaAsync(sembrado.IdPuntoVenta)).DeletedAt);
+        Assert.Null((await LeerUsuarioAsync(sembrado.IdAdmin)).DeletedAt);
+    }
+
+    private static PostgresException ErrorDePostgres(Exception error)
+    {
+        for (Exception? actual = error; actual is not null; actual = actual.InnerException)
+        {
+            if (actual is PostgresException postgres)
+            {
+                return postgres;
+            }
+        }
+
+        throw new InvalidOperationException($"La excepción no envuelve ninguna PostgresException: {error}");
+    }
+
+    /// <summary>
+    /// R2-2 (judgment-day ronda 2, jueces A y B) — LA CLÁUSULA: la relectura del sujeto BAJO el
+    /// lock en <c>ServicioDeUsuarios.EliminarAsync</c>.
+    ///
+    /// La carrera es real y esta prueba la fuerza: la cascada del tenant corre entre la lectura
+    /// previa (que ve la cuenta viva) y el lock, y gana. Sin la relectura, el perdedor estampa un
+    /// <c>deleted_at</c> NUEVO sobre una fila ya dada de baja y escribe un SEGUNDO
+    /// <c>usuario.baja</c>: el instante compartido que hace exacto al restore de la cascada
+    /// (<c>UPDATE ... SET deleted_at = NULL WHERE deleted_at = '&lt;instante&gt;'</c>) queda roto
+    /// justo en la cuenta re-estampada, y el rastro dice que la cuenta se dio de baja dos veces.
+    ///
+    /// Va por DEBAJO del pre-chequeo, que es el confound de manual (<c>mutation-proof-tests</c>
+    /// regla 3): un test secuencial —dar de baja el tenant y después pedir la baja del usuario—
+    /// muere en la lectura previa, así que el mutante que borra la relectura sobreviviría. El
+    /// rendezvous se engancha en la APERTURA de la transacción, que existe con relectura y sin
+    /// ella.
+    ///
+    /// Valores discriminantes: el 404, el <c>deleted_at</c> EXACTO de la cascada (no uno nuevo) y
+    /// UNA sola fila <c>usuario.baja</c>, la de la cascada, marcada <c>por_cascada</c>.
+    /// </summary>
+    [Fact]
+    public async Task LaBajaDeUsuarioQuePierdeLaCarreraContraLaCascadaEs404YNoRePisaElInstante()
+    {
+        var sembrado = await AprovisionarAsync("carrera-usuario");
+        var idRoot = await IdDelRootAsync();
+        var ultimoId = await UltimoIdDeAuditoriaAsync();
+        var momentoDeLaCascada = sembrado.Ancla.AddHours(1);
+        var momentoDeLaBaja = sembrado.Ancla.AddHours(2);
+
+        var interceptor = new InterceptorQueDaDeBajaElTenantAlAbrir(async () =>
+        {
+            await using var otro = ContextoDePlataforma();
+            await ServicioDeOrganizacionSobre(otro, momentoDeLaCascada, idRoot)
+                .EliminarTenantAsync(sembrado.IdTenant);
+        });
+
+        await using (var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma, interceptor))
+        await using (var dbPlataforma = ContextoDePlataforma())
+        {
+            var contexto = new ContextoFijo(RolConocido.Root, idRoot, idTenant: null);
+            var reloj = new RelojFijo(momentoDeLaBaja);
+
+            var servicio = new ServicioDeUsuarios(
+                db, dbPlataforma, new Ways.Infrastructure.Seguridad.HasheadorPbkdf2(), reloj, contexto,
+                new ServicioDeAuditoria(db, reloj, contexto), new InspectorDeUso(db));
+
+            var error = await ErrorDeAsync(() => servicio.EliminarAsync(sembrado.IdAdmin));
+
+            Assert.Equal(404, error.EstadoHttp);
+            Assert.Equal("no_encontrado", error.Codigo);
+        }
+
+        // El instante es el de la CASCADA, no el de la baja perdedora: nadie re-estampó.
+        var usuario = await LeerUsuarioAsync(sembrado.IdAdmin);
+        Assert.Equal(AMicrosegundos(momentoDeLaCascada), AMicrosegundos(usuario.DeletedAt!.Value));
+        Assert.NotEqual(AMicrosegundos(momentoDeLaBaja), AMicrosegundos(usuario.DeletedAt!.Value));
+
+        var rastro = await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant);
+        var bajasDeLaCuenta = rastro.Where(f => f.Accion == "usuario.baja" && f.IdEntidad == sembrado.IdAdmin).ToList();
+
+        var fila = Assert.Single(bajasDeLaCuenta);
+        Assert.True(PorCascadaDe(fila.ValorNuevo));
+        Assert.Equal(AMicrosegundos(momentoDeLaCascada), DeletedAtDe(fila.ValorNuevo));
+    }
+
+    /// <summary>
+    /// R2-6 (judgment-day ronda 2, juez A) — LA CLÁUSULA: el inspector proyecta la ETIQUETA DE LA
+    /// RAMA, así que la copia del 409 atribuye el bloqueo donde la fila realmente vive.
+    ///
+    /// <c>parametros</c> es la hoja MIXTA: llega a una empresa por una rama directa
+    /// (<c>id_empresa</c>, la fila de nivel empresa) y por el puente de sus puntos de venta
+    /// (<c>id_punto_venta</c>). Con la hoja pelada, la redacción tenía que adivinar, y las dos
+    /// reglas anteriores adivinaban mal en direcciones opuestas: la ronda 1 afirmaba "en sus
+    /// puntos de venta" incluso sobre una fila de nivel EMPRESA, que es lo que se prueba acá.
+    ///
+    /// Las dos direcciones en el mismo test, sobre el mismo tenant: la fila de nivel empresa se
+    /// nombra pelada, y una hoja a la que SOLO se llega por el puente (<c>turnos_caja</c>) sigue
+    /// nombrando el puente. Una sola de las dos mitades la pasaría cualquier implementación que
+    /// devolviera siempre lo mismo.
+    /// </summary>
+    [Fact]
+    public async Task LaCopiaDelBloqueoAtribuyeLaFilaDeEmpresaYLaDeSuPuntoDeVentaPorSeparado()
+    {
+        var sembrado = await AprovisionarAsync("atribucion-mixta");
+        var despues = sembrado.Ancla.AddMinutes(1);
+
+        var conParametro = await SembrarEmpresaAsync(sembrado.IdTenant, "Con parámetro SRL", despues);
+        await SembrarPuntoVentaAsync(sembrado.IdTenant, conParametro.Id, "Local del parámetro", despues);
+
+        var conTurno = await SembrarEmpresaAsync(sembrado.IdTenant, "Con turno SRL", despues);
+        var puntoDelTurno = await SembrarPuntoVentaAsync(
+            sembrado.IdTenant, conTurno.Id, "Local del turno", despues);
+
+        // Estrictamente posterior al ancla de SU empresa, si no la rama Marcado no bloquea.
+        var propio = despues.AddMinutes(1);
+
+        await using (var db = ContextoDePlataforma())
+        {
+            db.Parametros.Add(new Parametro
+            {
+                IdTenant = sembrado.IdTenant,
+                IdEmpresa = conParametro.Id,
+                IdPuntoVenta = null,
+                Clave = "clave.de.la.prueba",
+                Valor = "\"x\"",
+                CreatedAt = propio,
+                UpdatedAt = propio
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await SembrarTurnoAsync(sembrado.IdTenant, puntoDelTurno.Id, sembrado.IdAdmin, propio);
+
+        await ConServicioAsync(null, async servicio =>
+        {
+            // Nivel EMPRESA: la fila NO vive en ningún punto de venta y la copia no lo puede decir.
+            var porParametro = await ErrorDeAsync(() => servicio.EliminarEmpresaAsync(conParametro.Id));
+
+            Assert.Equal("empresa_en_uso", porParametro.Codigo);
+            Assert.Contains("parámetros", porParametro.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("en sus", porParametro.Message, StringComparison.Ordinal);
+
+            // Nivel PUNTO DE VENTA, hoja a la que solo se llega por el puente: se sigue nombrando.
+            var porTurno = await ErrorDeAsync(() => servicio.EliminarEmpresaAsync(conTurno.Id));
+
+            Assert.Equal("empresa_en_uso", porTurno.Codigo);
+            Assert.Contains("turnos de caja en sus puntos de venta", porTurno.Message, StringComparison.Ordinal);
+        });
     }
 }

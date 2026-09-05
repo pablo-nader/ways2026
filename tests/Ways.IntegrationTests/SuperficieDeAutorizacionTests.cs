@@ -209,10 +209,20 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
     /// caer al fallback autenticado-only —cualquier Vendedor logueado dando de baja un punto de
     /// venta— con los otros tres walkers verdes: el primero lo saltea por el allowlist y los dos
     /// de GET no lo miran porque no es GET. Este afirma la policy exacta, por ruta.
+    ///
+    /// Cubre las DOS rutas de escritura de ese grupo (judgment-day ronda 2, hallazgo R2-4): el
+    /// <c>PUT</c> tiene el mismo punto ciego que el <c>DELETE</c>, y proteger uno solo dejaba a la
+    /// edición del punto de venta al alcance de cualquier Vendedor logueado con la suite verde.
     /// </summary>
     private static readonly (string Metodo, string Ruta, string PolicyExigida)[] RutasSinPolicyDeGrupo =
     [
-        ("DELETE", "/api/puntos-venta/{id:int}", Politicas.GestionDeOrganizacion)
+        ("DELETE", "/api/puntos-venta/{id:int}", Politicas.GestionDeOrganizacion),
+        // judgment-day ronda 2 (R2-4, jueces A y B): el PUT del mismo grupo comparte el punto
+        // ciego exacto del DELETE — está en el allowlist de arriba, no es GET, y su grupo no tiene
+        // policy—, así que sacarle su `.RequireAuthorization` también lo dejaba caer al fallback
+        // autenticado-only con los tres walkers verdes. Cubrir uno de los dos y no el otro dejaba
+        // media puerta abierta.
+        ("PUT", "/api/puntos-venta/{id:int}", Politicas.GestionDeOrganizacion)
     ];
 
     [Fact]

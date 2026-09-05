@@ -194,9 +194,11 @@ public class InspectorDeUsoEjecucionTests(WaysApiFixture fixture) : IClassFixtur
         });
         await db.SaveChangesAsync();
 
-        // La etiqueta es la tabla HOJA, no el puente: es lo que el operador necesita ver.
+        // La etiqueta identifica la RAMA, no solo la hoja (judgment-day ronda 2, hallazgo R2-6):
+        // el hit vino por el puente y la etiqueta lo dice, así que `DescribirBloqueo` puede
+        // redactar "turnos de caja en sus puntos de venta" sin adivinar.
         Assert.Equal(
-            "turnos_caja",
+            "turnos_caja via puntos_venta",
             await PreguntarAsync(
                 db, typeof(Empresa), sembrado.Empresa.CreatedAt,
                 sembrado.Empresa.Id, sembrado.Tenant.Id));
@@ -235,7 +237,7 @@ public class InspectorDeUsoEjecucionTests(WaysApiFixture fixture) : IClassFixtur
         await db.SaveChangesAsync();
 
         Assert.Equal(
-            "turnos_caja",
+            "turnos_caja via puntos_venta",
             await PreguntarAsync(
                 db, typeof(Empresa), sembrado.Empresa.CreatedAt,
                 sembrado.Empresa.Id, sembrado.Tenant.Id));

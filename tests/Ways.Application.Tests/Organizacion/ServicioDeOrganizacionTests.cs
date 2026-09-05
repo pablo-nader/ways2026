@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
 using Ways.Application.Organizacion;

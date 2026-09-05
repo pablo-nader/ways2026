@@ -366,6 +366,13 @@ public class ServicioDeUsuarios(
     /// que toman las bajas de organización — así la baja de un usuario y la del tenant que lo
     /// contiene se serializan entre sí en vez de pisarse.
     ///
+    /// Y RELEE AL SUJETO BAJO EL LOCK desde judgment-day ronda 2 (hallazgo R2-2), igual que las
+    /// tres bajas de organización: la lectura de arriba es de ANTES del lock, así que el perdedor
+    /// de una baja concurrente —la cascada del tenant, típicamente— re-estampaba un
+    /// <c>deleted_at</c> nuevo sobre una fila ya dada de baja y escribía un segundo
+    /// <c>usuario.baja</c>. Con la relectura eso es un 404, y el instante compartido de la cascada
+    /// queda intacto.
+    ///
     /// <see cref="PoliticaDeRoles.ValidarPuedeIntervenirSobre"/> queda AFUERA de la transacción a
     /// propósito: es una decisión de dominio que no depende de los datos, no necesita el lock, y
     /// dejarla afuera mantiene el orden observable que UT-R2 afirma (un objetivo Root rinde el
@@ -384,22 +391,37 @@ public class ServicioDeUsuarios(
         PoliticaDeRoles.ValidarPuedeIntervenirSobre(
             contexto.Rol, contexto.UsuarioId, (RolConocido)usuario.RolId, usuario.Id, esBaja: true);
 
-        // Misma forma que ServicioDeOrganizacion.EnUnaTransaccionAsync: la transacción vive ADENTRO
-        // de la estrategia de ejecución, nunca al revés — con EnableRetryOnFailure, EF exige que un
-        // reintento pueda rehacer la unidad completa (ADR-16).
-        await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        // La transacción vive ADENTRO de la estrategia de ejecución, nunca al revés (ADR-16), y la
+        // estrategia es la SIN REINTENTO (judgment-day ronda 2, hallazgo R2-1): mismo motivo exacto
+        // que documenta ServicioDeOrganizacion.EnUnaTransaccionDeBajaAsync — `auditoria.Registrar`
+        // hace `Add` de una instancia nueva por llamada y un intento fallido deja la del intento
+        // anterior en `Added`, así que un reintento de EnableRetryOnFailure DUPLICA la fila de
+        // `usuario.baja` en vez de rehacerla.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+
+        await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
             await TomarLockDeBajaAsync(usuario.IdTenant ?? TenantSentinelaDePlataforma, ct);
 
+            // RELECTURA BAJO EL LOCK (judgment-day ronda 2, hallazgo R2-2), la misma que hacen las
+            // tres bajas de ServicioDeOrganizacion. La pre-lectura de arriba es de ANTES del lock:
+            // si una baja concurrente —la cascada de su tenant, típicamente— ganó mientras esta
+            // esperaba, la fila ya no es visible bajo "BajaLogica" y esto es un 404 limpio. Sin
+            // ella, el perdedor de la carrera re-estampa un `deleted_at` NUEVO sobre una fila ya
+            // dada de baja y escribe un SEGUNDO `usuario.baja`: el instante compartido que hace
+            // exacto al restore de la cascada (`WHERE deleted_at = '<instante>'`) se rompe justo
+            // en la cuenta que se re-estampó. `BuscarAsync` revalida además el alcance de tenant,
+            // que es barato porque ya está en la misma consulta.
+            var sujeto = await BuscarAsync(id, ct);
+
             var tablaEnUso = await inspector.PrimeraDependenciaEnUsoAsync(
-                typeof(Usuario), ValoresDeAnclaDeUsuario(usuario), usuario.CreatedAt, ct);
+                typeof(Usuario), ValoresDeAnclaDeUsuario(sujeto), sujeto.CreatedAt, ct);
 
             if (tablaEnUso is not null)
             {
-                var descripcion = EtiquetasDeTablas.DescribirBloqueo(
-                    tablaEnUso, InventarioDeDependientes.Construir(db.Model, typeof(Usuario)));
+                var descripcion = EtiquetasDeTablas.DescribirBloqueo(tablaEnUso);
 
                 throw ErrorDominio.Conflicto(
                     "usuario_en_uso",
@@ -411,15 +433,15 @@ public class ServicioDeUsuarios(
             // `{estado:"eliminado"}` (no es un valor de EstadoUsuario).
             var momento = reloj.Ahora;
 
-            usuario.DeletedAt = momento;
-            usuario.UpdatedAt = momento;
+            sujeto.DeletedAt = momento;
+            sujeto.UpdatedAt = momento;
 
-            if (usuario.IdTenant is int idTenantSujeto)
+            if (sujeto.IdTenant is int idTenantSujeto)
             {
-                var (valorAnterior, valorNuevo) = PayloadDeAuditoria.BajaDeUsuario(usuario.Estado, momento);
+                var (valorAnterior, valorNuevo) = PayloadDeAuditoria.BajaDeUsuario(sujeto.Estado, momento);
 
                 auditoria.Registrar(new RegistroDeAuditoria(
-                    idTenantSujeto, idPuntoVenta: null, AccionAuditada.UsuarioBaja, usuario.Id,
+                    idTenantSujeto, idPuntoVenta: null, AccionAuditada.UsuarioBaja, sujeto.Id,
                     valorAnterior, valorNuevo));
             }
 

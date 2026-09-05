@@ -204,4 +204,21 @@ public static class PayloadDeAuditoria
         BajaDeOrganizacion(DateTimeOffset momento, bool porCascada) => (
             new Dictionary<string, object?> { ["deleted_at"] = null },
             new Dictionary<string, object?> { ["deleted_at"] = momento, ["por_cascada"] = porCascada });
+
+    /// <summary><c>usuario.baja</c> escrita por la CASCADA del tenant (etapa 20 slice 4,
+    /// judgment-day ronda 2, hallazgo R2-8). Es <see cref="BajaDeUsuario"/> más el
+    /// <c>por_cascada</c> que ya llevan <c>empresa.baja</c> y <c>pv.baja</c>: sin ese campo, la
+    /// única de las cuatro filas de la cascada que no podía decir por qué cayó era justamente la
+    /// de la cuenta de una persona. Constante <c>true</c> y no parámetro a propósito — el camino
+    /// DIRECTO (<c>ServicioDeUsuarios.EliminarAsync</c>) sigue usando <see cref="BajaDeUsuario"/>,
+    /// así que esta fábrica tiene un solo llamador y no admite mentir sobre su origen.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        BajaDeUsuarioPorCascada(EstadoUsuario estado, DateTimeOffset momento) => (
+            new Dictionary<string, object?> { ["deleted_at"] = null, ["estado"] = estado },
+            new Dictionary<string, object?>
+            {
+                ["deleted_at"] = momento,
+                ["estado"] = estado,
+                ["por_cascada"] = true
+            });
 }

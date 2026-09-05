@@ -1,4 +1,4 @@
-﻿using System.Collections.Frozen;
+using System.Collections.Frozen;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Ways.Domain.Clientes;
@@ -85,11 +85,21 @@ public sealed record RamaDeUso(
 {
     public bool UsaAncla => Clasificacion is ClasificacionDeDependiente.Marcado;
 
+    /// <summary>Lo que separa la hoja del puente dentro de <see cref="Etiqueta"/>. Es UNA sola
+    /// constante porque desde judgment-day ronda 2 (hallazgo R2-6) la etiqueta es también lo que
+    /// el inspector PROYECTA y lo que <c>EtiquetasDeTablas.DescribirBloqueo</c> parsea: tres
+    /// copias del literal se separarían en silencio.</summary>
+    public const string SeparadorDePuente = " via ";
+
     /// <summary>
-    /// Etiqueta estable de la rama para el golden N3 y para los mensajes de error: la hoja, y el
-    /// puente explícito cuando lo hay. Nunca es lo que se emite al statement.
+    /// Etiqueta estable de la rama para el golden N3, para los mensajes de error y —desde
+    /// judgment-day ronda 2, hallazgo R2-6— para la PROYECCIÓN del statement: es lo que
+    /// <c>InspectorDeUso</c> devuelve, así que el llamador sabe qué RAMA disparó y no solo qué
+    /// hoja. Sin eso, una hoja con rama directa Y puenteada —hoy <c>parametros</c>— obligaba a
+    /// redactar el bloqueo adivinando: la copia decía "en sus puntos de venta" incluso cuando la
+    /// fila que bloqueaba era de nivel empresa.
     /// </summary>
-    public string Etiqueta => Puente is null ? Tabla : $"{Tabla} via {Puente.Tabla}";
+    public string Etiqueta => Puente is null ? Tabla : $"{Tabla}{SeparadorDePuente}{Puente.Tabla}";
 }
 
 /// <summary>
