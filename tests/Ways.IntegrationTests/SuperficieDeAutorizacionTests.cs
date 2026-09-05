@@ -120,11 +120,21 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("PUT", "/api/plataforma/tenants/{id:int}"),
         ("POST", "/api/plataforma/tenants/{id:int}/suspender"),
         ("POST", "/api/plataforma/tenants/{id:int}/reactivar"),
+        // stage-20 slice 4 (task 4.9): la baja lógica del tenant, en el MISMO grupo
+        // SoloPlataforma que las cuatro de arriba — cero policies nuevas (criterio V5).
+        ("DELETE", "/api/plataforma/tenants/{id:int}"),
 
         // Organización (empresas/puntos de venta) — GestionDeOrganizacion (Root + Admin, sin
         // Vendedor).
         ("PUT", "/api/empresas/{id:int}"),
         ("PUT", "/api/puntos-venta/{id:int}"),
+        // stage-20 slice 4 (task 4.9): las dos bajas lógicas, bajo la MISMA
+        // GestionDeOrganizacion que sus PUT. La del punto de venta la declara la ruta y no el
+        // grupo, por la asimetría deliberada del grupo (leer sigue siendo
+        // LecturaDePuntosVenta para el selector del POS) — y por eso NO alcanza con declararla
+        // acá: ver RutasSinPolicyDeGrupo más abajo (judgment-day ronda 1, hallazgo C4).
+        ("DELETE", "/api/empresas/{id:int}"),
+        ("DELETE", "/api/puntos-venta/{id:int}"),
 
         // ABM de usuarios — GestionDeUsuarios (Root + Admin, sin Vendedor).
         ("POST", "/api/usuarios/"),
@@ -186,6 +196,63 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         Assert.True(
             faltantes.Count == 0,
             $"Endpoint(s) de escritura sin GestionDeCatalogo y fuera del allowlist: {string.Join(", ", faltantes)}");
+    }
+
+    /// <summary>
+    /// CUARTO guard (judgment-day stage-20 slice 4, ronda 1, juez A — SUGGESTION): estar en el
+    /// allowlist de arriba solo dice "este endpoint no necesita apilar GestionDeCatalogo", NO dice
+    /// qué policy lleva. Para un endpoint de escritura cuyo grupo SÍ tiene
+    /// <c>RequireAuthorization</c> eso alcanza (borrar la policy del grupo rompe a todos sus
+    /// hermanos), pero <c>/api/puntos-venta</c> NO tiene policy de grupo —la asimetría deliberada
+    /// del selector del POS, ver <c>OrganizacionEndpoints</c>— y ahí cada ruta declara la suya.
+    /// Sacarle el <c>.RequireAuthorization(GestionDeOrganizacion)</c> al <c>DELETE</c> lo dejaría
+    /// caer al fallback autenticado-only —cualquier Vendedor logueado dando de baja un punto de
+    /// venta— con los otros tres walkers verdes: el primero lo saltea por el allowlist y los dos
+    /// de GET no lo miran porque no es GET. Este afirma la policy exacta, por ruta.
+    ///
+    /// Cubre las DOS rutas de escritura de ese grupo (judgment-day ronda 2, hallazgo R2-4): el
+    /// <c>PUT</c> tiene el mismo punto ciego que el <c>DELETE</c>, y proteger uno solo dejaba a la
+    /// edición del punto de venta al alcance de cualquier Vendedor logueado con la suite verde.
+    /// </summary>
+    private static readonly (string Metodo, string Ruta, string PolicyExigida)[] RutasSinPolicyDeGrupo =
+    [
+        ("DELETE", "/api/puntos-venta/{id:int}", Politicas.GestionDeOrganizacion),
+        // judgment-day ronda 2 (R2-4, jueces A y B): el PUT del mismo grupo comparte el punto
+        // ciego exacto del DELETE — está en el allowlist de arriba, no es GET, y su grupo no tiene
+        // policy—, así que sacarle su `.RequireAuthorization` también lo dejaba caer al fallback
+        // autenticado-only con los tres walkers verdes. Cubrir uno de los dos y no el otro dejaba
+        // media puerta abierta.
+        ("PUT", "/api/puntos-venta/{id:int}", Politicas.GestionDeOrganizacion)
+    ];
+
+    [Fact]
+    public void CadaRutaSinPolicyDeGrupoApilaSuPolicyExigida()
+    {
+        var fuente = fixture.Services.GetRequiredService<EndpointDataSource>();
+
+        foreach (var (metodo, ruta, policyExigida) in RutasSinPolicyDeGrupo)
+        {
+            var endpoint = fuente.Endpoints
+                .OfType<RouteEndpoint>()
+                .SingleOrDefault(e =>
+                    string.Equals(e.RoutePattern.RawText, ruta, StringComparison.Ordinal)
+                    && e.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods.Contains(metodo) == true);
+
+            Assert.True(endpoint is not null, $"No existe el endpoint {metodo} {ruta}.");
+
+            Assert.True(
+                endpoint!.Metadata.GetMetadata<IAllowAnonymous>() is null,
+                $"{metodo} {ruta} lleva AllowAnonymous.");
+
+            var policies = endpoint.Metadata
+                .GetOrderedMetadata<IAuthorizeData>()
+                .Select(dato => dato.Policy)
+                .ToList();
+
+            Assert.True(
+                policies.Contains(policyExigida, StringComparer.Ordinal),
+                $"{metodo} {ruta} no apila {policyExigida}; apila [{string.Join(", ", policies)}].");
+        }
     }
 
     /// <summary>

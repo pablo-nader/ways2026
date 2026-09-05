@@ -31,8 +31,19 @@ public enum ClasificacionDeDependiente
 
 /// <summary>
 /// La tabla ESTRUCTURAL por la que una rama llega al ancla cuando la tabla hoja no la referencia
-/// directamente (stage-20 design D3). El uso sube por la jerarquía: una venta se cuelga del punto
-/// de venta, y el punto de venta se cuelga de la empresa, así que la empresa está EN USO.
+/// directamente. El uso sube por la jerarquía: una venta se cuelga del punto de venta, y el punto
+/// de venta se cuelga de la empresa, así que la empresa está EN USO.
+///
+/// NO sale del design D3, y decirlo importa: el design describe UNA sola fuente (el recorrido de
+/// FKs). El puente es la TERCERA, y se declaró en la ronda 2 de judgment-day de la slice 3
+/// (hallazgo R2-1), después de que la ronda 1 declarara la segunda (el alcance por
+/// <c>id_tenant</c>, hallazgo C1). <c>design.md</c> está congelado; la enmienda vive en el bloque
+/// "BINDING — INPUTS CARRIED FROM SLICE 3" de <c>tasks.md</c> y en este comentario.
+///
+/// ALCANCE, dicho con honestidad: la jerarquía es completa para lo que una entidad POSEE. Un
+/// catálogo de alcance tenant (artículos con <c>DisponibleParaTodas</c>, precios de la lista por
+/// defecto, filas con <c>id_empresa</c> NULL) marca en uso al TENANT y no a la empresa — dar de
+/// baja esa empresa no tocaría el catálogo.
 /// </summary>
 /// <param name="Esquema">Esquema de la tabla puente. Sale de la metadata de EF.</param>
 /// <param name="Tabla">Nombre pelado de la tabla puente (hoy, <c>puntos_venta</c>).</param>
@@ -74,16 +85,27 @@ public sealed record RamaDeUso(
 {
     public bool UsaAncla => Clasificacion is ClasificacionDeDependiente.Marcado;
 
+    /// <summary>Lo que separa la hoja del puente dentro de <see cref="Etiqueta"/>. Es UNA sola
+    /// constante porque desde judgment-day ronda 2 (hallazgo R2-6) la etiqueta es también lo que
+    /// el inspector PROYECTA y lo que <c>EtiquetasDeTablas.DescribirBloqueo</c> parsea: tres
+    /// copias del literal se separarían en silencio.</summary>
+    public const string SeparadorDePuente = " via ";
+
     /// <summary>
-    /// Etiqueta estable de la rama para el golden N3 y para los mensajes de error: la hoja, y el
-    /// puente explícito cuando lo hay. Nunca es lo que se emite al statement.
+    /// Etiqueta estable de la rama para el golden N3, para los mensajes de error y —desde
+    /// judgment-day ronda 2, hallazgo R2-6— para la PROYECCIÓN del statement: es lo que
+    /// <c>InspectorDeUso</c> devuelve, así que el llamador sabe qué RAMA disparó y no solo qué
+    /// hoja. Sin eso, una hoja con rama directa Y puenteada —hoy <c>parametros</c>— obligaba a
+    /// redactar el bloqueo adivinando: la copia decía "en sus puntos de venta" incluso cuando la
+    /// fila que bloqueaba era de nivel empresa.
     /// </summary>
-    public string Etiqueta => Puente is null ? Tabla : $"{Tabla} via {Puente.Tabla}";
+    public string Etiqueta => Puente is null ? Tabla : $"{Tabla}{SeparadorDePuente}{Puente.Tabla}";
 }
 
 /// <summary>
 /// Recorre la metadata de EF y arma el inventario de todo lo que apunta a una entidad de
-/// organización (stage-20 design D2, D3).
+/// organización (stage-20 design D2, D3, MÁS la enmienda de las fuentes 2 y 3 — ver
+/// <see cref="PuenteDeUso"/>: el design describe una sola fuente y acá hay tres).
 ///
 /// PURO a propósito: sin base, sin reloj, sin DI. Es lo que hace posible la red N3 (el golden
 /// del inventario) — un golden sobre una función que necesita una base viva es un golden que
@@ -304,8 +326,9 @@ public static class InventarioDeDependientes
     }
 
     /// <summary>
-    /// La TERCERA fuente del conjunto de dependientes, y también cierra una CLASE: el uso propaga
-    /// HACIA ARRIBA por la jerarquía estructural. Ninguna tabla operativa lleva <c>id_empresa</c>
+    /// La TERCERA fuente del conjunto de dependientes (enmienda R2-1, no design D3, ver
+    /// <see cref="PuenteDeUso"/>), y también cierra una CLASE: el uso propaga HACIA ARRIBA por la
+    /// jerarquía estructural. Ninguna tabla operativa lleva <c>id_empresa</c>
     /// —comprobantes, items, pagos, movimientos de stock/caja/tesorería/cuenta corriente, turnos,
     /// presupuestos, remitos, órdenes de compra y gastos se clavan todos en <c>id_punto_venta</c>—,
     /// así que los referenciantes DIRECTOS de una empresa son solo estructura y catálogo. Sin este

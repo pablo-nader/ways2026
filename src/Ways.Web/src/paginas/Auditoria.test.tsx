@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Auditoria, etiquetaDeAccion } from './Auditoria'
+import { CATALOGO_DE_ACCIONES_AUDITADAS } from '../api/tipos'
 import type { FilaDeAuditoria, PaginaDeAuditoria, PuntoVentaListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -87,6 +88,38 @@ beforeEach(() => {
 describe('etiquetaDeAccion', () => {
   it('una acción del catálogo devuelve su etiqueta en español', () => {
     expect(etiquetaDeAccion('precio.cambio')).toBe('Cambio de precio')
+  })
+
+  // judgment-day ronda 2 (etapa 20 slice 4, R2-3): el catálogo del front había quedado en 12
+  // mientras el del back tenía 15 — la pantalla renderizaba `tenant.baja` en crudo y el `<select>`
+  // no podía filtrar por ninguna de las tres bajas de organización. El conteo es el ESPEJO de
+  // `tests/Ways.Domain.Tests/Auditoria/AccionAuditadaTests.cs:21`
+  // (`TieneQuinceEntradas`): los dos catálogos se mueven juntos o esta prueba se pone en rojo.
+  // Mutation target: sacar cualquiera de las 15 entradas.
+  it('el catálogo del front espeja las 15 acciones del back, las tres bajas incluidas', () => {
+    expect(CATALOGO_DE_ACCIONES_AUDITADAS).toHaveLength(15)
+
+    expect(CATALOGO_DE_ACCIONES_AUDITADAS.map((a) => a.valor)).toEqual([
+      'precio.cambio',
+      'venta.anulacion',
+      'compra.anulacion',
+      'stock.ajuste',
+      'stock.decomiso',
+      'stock.conteo',
+      'cc.reliquidacion',
+      'usuario.alta',
+      'usuario.actualizacion',
+      'usuario.baja',
+      'usuario.desbloqueo',
+      'usuario.password',
+      'tenant.baja',
+      'empresa.baja',
+      'pv.baja',
+    ])
+
+    expect(etiquetaDeAccion('tenant.baja')).toBe('Baja de tenant')
+    expect(etiquetaDeAccion('empresa.baja')).toBe('Baja de empresa')
+    expect(etiquetaDeAccion('pv.baja')).toBe('Baja de punto de venta')
   })
 
   // judgment-day ronda 2, juez A: el fallback `?? accion` (design decisión 15 — "una acción

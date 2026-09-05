@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
+using Ways.Application.Organizacion;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Common;
 using Ways.Domain.Usuarios;
@@ -29,9 +31,20 @@ public class ServicioDeUsuarios(
     IHasheadorDeContrasenas hasheador,
     IRelojDelSistema reloj,
     IContextoDeUsuario contexto,
-    ServicioDeAuditoria auditoria)
+    ServicioDeAuditoria auditoria,
+    InspectorDeUso inspector)
 {
     private const int LargoMinimoPassword = 8;
+
+    /// <summary>
+    /// Primera clave del <c>pg_advisory_xact_lock</c> cuando el SUJETO es una cuenta de plataforma
+    /// (<c>IdTenant</c> en <c>null</c>): <c>pg_advisory_xact_lock</c> no admite <c>NULL</c>, así que
+    /// esas cuentas se serializan todas entre sí sobre este centinela. CERO a propósito — los ids
+    /// de tenant salen de una identidad que arranca en 1, así que el centinela no puede colisionar
+    /// con ningún tenant real y una baja de cuenta de plataforma nunca queda esperando la baja de
+    /// un tenant ajeno.
+    /// </summary>
+    private const int TenantSentinelaDePlataforma = 0;
 
     /// <summary>Identidad tenant-aware del actor en curso, para <see cref="PoliticaDeRoles"/>
     /// (doc 09, ADR-8).</summary>
@@ -113,11 +126,24 @@ public class ServicioDeUsuarios(
     /// el nombre de un tenant es texto libre y un tenant que se llamara justo "Plataforma" sería
     /// indistinguible de una cuenta de plataforma. En el listado esto viaja como subconsulta
     /// escalar correlacionada dentro del mismo <c>Select</c>; acá, sobre una sola fila, es una
-    /// consulta puntual y solo cuando la cuenta pertenece a un tenant.</summary>
+    /// consulta puntual y solo cuando la cuenta pertenece a un tenant.
+    ///
+    /// Etapa 20 slice 4 — acá NO va un <c>DeletedAt == null</c> explícito, y es la misma regla
+    /// única que documenta <c>ServicioDeOrganizacion.ProyeccionDeTenant</c> leída del otro lado:
+    /// el predicado propio hace falta donde la consulta puede PERDER el filtro ambiente, o sea
+    /// donde la expresión es componible por un llamador (las tres proyecciones de organización) o
+    /// donde el método mismo apaga el filtro (<see cref="ListarAsync"/> con
+    /// <c>incluirEliminados</c>, y por eso su subconsulta sí lo lleva). Esta consulta se arma y se
+    /// ejecuta entera acá adentro y nadie puede componerle un <c>IgnoreQueryFilters</c>: el
+    /// predicado explícito que traía era literalmente irrefutable —su mutación sobrevivió en la
+    /// ronda 2 de la slice 1 y sigue sin tener forma de morir— y se saca en vez de arrastrarlo
+    /// como deuda una tercera vuelta. El comportamiento no cambia en ningún camino: el filtro
+    /// ambiente ya deja afuera al tenant dado de baja, que es lo que afirma
+    /// <c>UnaCuentaCuyoTenantFueDadoDeBajaNoTraeNombreDeTenantEnNingunoDeLosTresCaminos</c>.</summary>
     private async Task<string?> NombreDeTenantAsync(int? idTenant, CancellationToken ct) =>
         idTenant is int id
             ? await db.Tenants
-                .Where(t => t.Id == id && t.DeletedAt == null)
+                .Where(t => t.Id == id)
                 .Select(t => t.Nombre)
                 .FirstOrDefaultAsync(ct)
             : null;
@@ -318,7 +344,46 @@ public class ServicioDeUsuarios(
         await db.SaveChangesAsync(ct);
     }
 
-    /// <summary>Baja lógica: escribe deleted_at, no borra la fila.</summary>
+    /// <summary>
+    /// Baja lógica: escribe deleted_at, no borra la fila.
+    ///
+    /// Etapa 20 slice 4 (UT-R2) — el guard de uso entra acá DESPUÉS de
+    /// <see cref="PoliticaDeRoles.ValidarPuedeIntervenirSobre"/> y NUNCA en su lugar: quién puede
+    /// intervenir sobre quién es una decisión de dominio que no depende de los datos, y el guard
+    /// es una pregunta a la base. Invertir el orden le contestaría a un actor sin permiso si la
+    /// cuenta objetivo tiene movimientos, que es justo el oráculo que ADR-8 evita. Todo lo que ya
+    /// regía queda igual: un objetivo Root sigue siendo indeleteable con el error de
+    /// <c>PoliticaDeRoles</c> (no con <c>usuario_en_uso</c>), la autobaja sigue prohibida, el 404
+    /// deliberado de <c>ValidarAlcanceDeTenant</c> sigue tapando la existencia de otro tenant y la
+    /// fila de auditoría se sigue escribiendo.
+    ///
+    /// CON transacción y CON lock desde judgment-day ronda 1 (hallazgo C2). La versión anterior
+    /// corría el guard como un SELECT suelto y estampaba <c>deleted_at</c> en otro statement, con
+    /// una ventana entre los dos: una venta o un turno abiertos por el MISMO empleado en el medio
+    /// eran invisibles para el guard, y la cuenta quedaba dada de baja estando en uso. Ahora el
+    /// guard, el estampado y la fila de auditoría viven en UNA transacción, bajo el MISMO
+    /// <c>pg_advisory_xact_lock(idTenant, <see cref="ServicioDeOrganizacion.ClaveDeLockDeBaja"/>)</c>
+    /// que toman las bajas de organización — así la baja de un usuario y la del tenant que lo
+    /// contiene se serializan entre sí en vez de pisarse.
+    ///
+    /// Y RELEE AL SUJETO BAJO EL LOCK desde judgment-day ronda 2 (hallazgo R2-2), igual que las
+    /// tres bajas de organización: la lectura de arriba es de ANTES del lock, así que el perdedor
+    /// de una baja concurrente —la cascada del tenant, típicamente— re-estampaba un
+    /// <c>deleted_at</c> nuevo sobre una fila ya dada de baja y escribía un segundo
+    /// <c>usuario.baja</c>. Con la relectura eso es un 404, y el instante compartido de la cascada
+    /// queda intacto.
+    ///
+    /// <see cref="PoliticaDeRoles.ValidarPuedeIntervenirSobre"/> queda AFUERA de la transacción a
+    /// propósito: es una decisión de dominio que no depende de los datos, no necesita el lock, y
+    /// dejarla afuera mantiene el orden observable que UT-R2 afirma (un objetivo Root rinde el
+    /// error de <c>PoliticaDeRoles</c>, nunca <c>usuario_en_uso</c>). Lo que SÍ tiene que estar
+    /// bajo el lock es el guard, que es la pregunta a la base.
+    ///
+    /// Residual honesto, el mismo que la tabla G del design registra como R1 para las bajas de
+    /// organización: bajo READ COMMITTED una venta puede confirmarse entre el <c>EXISTS</c> del
+    /// guard y el commit de la baja. El lock serializa baja-contra-baja, no baja-contra-venta;
+    /// cerrar eso pondría un lock de administración sobre el camino caliente del POS.
+    /// </summary>
     public async Task EliminarAsync(int id, CancellationToken ct = default)
     {
         var usuario = await BuscarAsync(id, ct);
@@ -326,24 +391,118 @@ public class ServicioDeUsuarios(
         PoliticaDeRoles.ValidarPuedeIntervenirSobre(
             contexto.Rol, contexto.UsuarioId, (RolConocido)usuario.RolId, usuario.Id, esBaja: true);
 
-        // Task 2.5 — un único `momento` para la entidad Y el payload (Orchestrator Decision #2):
-        // `{deleted_at: null, estado}` → `{deleted_at: momento, estado}`, nunca
-        // `{estado:"eliminado"}` (no es un valor de EstadoUsuario).
-        var momento = reloj.Ahora;
+        // La transacción vive ADENTRO de la estrategia de ejecución, nunca al revés (ADR-16), y la
+        // estrategia es la SIN REINTENTO (judgment-day ronda 2, hallazgo R2-1): mismo motivo exacto
+        // que documenta ServicioDeOrganizacion.EnUnaTransaccionDeBajaAsync — `auditoria.Registrar`
+        // hace `Add` de una instancia nueva por llamada y un intento fallido deja la del intento
+        // anterior en `Added`, así que un reintento de EnableRetryOnFailure DUPLICA la fila de
+        // `usuario.baja` en vez de rehacerla.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
-        usuario.DeletedAt = momento;
-        usuario.UpdatedAt = momento;
-
-        if (usuario.IdTenant is int idTenantSujeto)
+        await estrategia.ExecuteAsync(async () =>
         {
-            var (valorAnterior, valorNuevo) = PayloadDeAuditoria.BajaDeUsuario(usuario.Estado, momento);
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-            auditoria.Registrar(new RegistroDeAuditoria(
-                idTenantSujeto, idPuntoVenta: null, AccionAuditada.UsuarioBaja, usuario.Id,
-                valorAnterior, valorNuevo));
+            await TomarLockDeBajaAsync(usuario.IdTenant ?? TenantSentinelaDePlataforma, ct);
+
+            // RELECTURA BAJO EL LOCK (judgment-day ronda 2, hallazgo R2-2), la misma que hacen las
+            // tres bajas de ServicioDeOrganizacion. La pre-lectura de arriba es de ANTES del lock:
+            // si una baja concurrente —la cascada de su tenant, típicamente— ganó mientras esta
+            // esperaba, la fila ya no es visible bajo "BajaLogica" y esto es un 404 limpio. Sin
+            // ella, el perdedor de la carrera re-estampa un `deleted_at` NUEVO sobre una fila ya
+            // dada de baja y escribe un SEGUNDO `usuario.baja`: el instante compartido que hace
+            // exacto al restore de la cascada (`WHERE deleted_at = '<instante>'`) se rompe justo
+            // en la cuenta que se re-estampó. `BuscarAsync` revalida además el alcance de tenant,
+            // que es barato porque ya está en la misma consulta.
+            var sujeto = await BuscarAsync(id, ct);
+
+            var tablaEnUso = await inspector.PrimeraDependenciaEnUsoAsync(
+                typeof(Usuario), ValoresDeAnclaDeUsuario(sujeto), sujeto.CreatedAt, ct);
+
+            if (tablaEnUso is not null)
+            {
+                var descripcion = EtiquetasDeTablas.DescribirBloqueo(tablaEnUso);
+
+                throw ErrorDominio.Conflicto(
+                    "usuario_en_uso",
+                    $"No se puede dar de baja el usuario porque hay {descripcion} a su nombre.");
+            }
+
+            // Task 2.5 — un único `momento` para la entidad Y el payload (Orchestrator Decision #2):
+            // `{deleted_at: null, estado}` → `{deleted_at: momento, estado}`, nunca
+            // `{estado:"eliminado"}` (no es un valor de EstadoUsuario).
+            var momento = reloj.Ahora;
+
+            sujeto.DeletedAt = momento;
+            sujeto.UpdatedAt = momento;
+
+            if (sujeto.IdTenant is int idTenantSujeto)
+            {
+                var (valorAnterior, valorNuevo) = PayloadDeAuditoria.BajaDeUsuario(sujeto.Estado, momento);
+
+                auditoria.Registrar(new RegistroDeAuditoria(
+                    idTenantSujeto, idPuntoVenta: null, AccionAuditada.UsuarioBaja, sujeto.Id,
+                    valorAnterior, valorNuevo));
+            }
+
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+
+            return true;
+        });
+    }
+
+    /// <summary>
+    /// Los valores de clave del ancla resueltos POR NOMBRE contra
+    /// <see cref="InventarioDeDependientes.PropiedadesDeAncla"/>, nunca posicionalmente
+    /// (judgment-day ronda 1, hallazgo C5). El orden posicional lo define el inventario, no el
+    /// llamador: un <c>[usuario.Id]</c> escrito a mano se rompe en silencio —ligando el id al
+    /// parámetro equivocado— el día que <c>Usuario</c> gane una clave compuesta. Mismo idioma
+    /// exacto que <c>ServicioDeOrganizacion.ExigirSinUsoAsync</c>, y una propiedad que falte es
+    /// una imposibilidad mecánica que se tira nombrándola.
+    /// </summary>
+    private IReadOnlyList<object> ValoresDeAnclaDeUsuario(Usuario usuario)
+    {
+        var valoresPorPropiedad = new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            [nameof(Usuario.Id)] = usuario.Id
+        };
+
+        return
+        [
+            .. InventarioDeDependientes.PropiedadesDeAncla(db.Model, typeof(Usuario))
+                .Select(propiedad => valoresPorPropiedad.TryGetValue(propiedad, out var valor)
+                    ? valor
+                    : throw new InvalidOperationException(
+                        $"La baja de {nameof(Usuario)} no tiene valor para la propiedad de ancla " +
+                        $"{propiedad}, que alguna rama del inspector necesita."))
+        ];
+    }
+
+    /// <summary>
+    /// El MISMO <c>pg_advisory_xact_lock</c> de <c>ServicioDeOrganizacion.TomarLockDeBajaAsync</c>,
+    /// con la misma clave y el mismo idioma de ADO crudo: la conexión se abre por
+    /// <c>Database.OpenConnectionAsync</c> y nunca por <c>conexion.OpenAsync()</c>, porque ese
+    /// segundo camino no dispara <c>InterceptorDeContextoDeTenant</c> y la conexión quedaría sin
+    /// los GUC de RLS.
+    /// </summary>
+    private async Task TomarLockDeBajaAsync(int idTenant, CancellationToken ct)
+    {
+        var conexion = db.Database.GetDbConnection();
+
+        if (conexion.State != System.Data.ConnectionState.Open)
+        {
+            await db.Database.OpenConnectionAsync(ct);
         }
 
-        await db.SaveChangesAsync(ct);
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText = "SELECT pg_advisory_xact_lock($1, $2)";
+
+        ParametrosDeComando.Agregar(comando, idTenant);
+        ParametrosDeComando.Agregar(comando, ServicioDeOrganizacion.ClaveDeLockDeBaja);
+
+        await comando.ExecuteNonQueryAsync(ct);
     }
 
     /// <summary>Roles que el usuario autenticado puede asignar. Alimenta el combo del ABM.</summary>

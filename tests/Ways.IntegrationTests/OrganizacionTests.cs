@@ -130,6 +130,36 @@ public class OrganizacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         var actualizada = await respuesta.Content.ReadFromJsonAsync<EmpresaListado>();
         Assert.NotNull(actualizada);
         Assert.Equal("Razón social nueva SRL", actualizada!.RazonSocial);
+
+        // Etapa 20 slice 4 (task 4.10): las dos aserciones de campo que traía el caso InMemory
+        // reubicado (UnAdminEditaSuPropiaEmpresa). La reubicación no debilita nada.
+        Assert.Equal("Fantasía", actualizada.NombreFantasia);
+        Assert.Equal("20-11111111-1", actualizada.Cuit);
+    }
+
+    /// <summary>
+    /// Etapa 20 slice 4 (task 4.10) — reubicado desde
+    /// <c>ServicioDeOrganizacionTests.UnAdminEditaSuPropioPuntoDeVenta</c>: el proveedor InMemory
+    /// no soporta la transacción que ahora envuelve la escritura y su relectura. Afirma
+    /// exactamente los mismos tres campos que afirmaba allá, ahora sobre Postgres real y por HTTP.
+    /// </summary>
+    [Fact]
+    public async Task UnAdminEditaSuPropioPuntoDeVentaOk()
+    {
+        var (_, _, puntoVenta, mailAdmin) = await SembrarTenantAsync(nameof(UnAdminEditaSuPropioPuntoDeVentaOk));
+        using var cliente = await ClienteComoAdminAsync(mailAdmin);
+
+        var respuesta = await cliente.PutAsJsonAsync(
+            $"/api/puntos-venta/{puntoVenta.Id}",
+            new PuntoVentaEdicion(
+                "Local renovado", "Av. Siempre Viva 742", "9 a 20", "+54 11 5555-5555", null, null, null));
+
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+        var actualizado = await respuesta.Content.ReadFromJsonAsync<PuntoVentaListado>();
+        Assert.NotNull(actualizado);
+        Assert.Equal("Local renovado", actualizado!.Nombre);
+        Assert.Equal("Av. Siempre Viva 742", actualizado.Domicilio);
+        Assert.Equal("+54 11 5555-5555", actualizado.Whatsapp);
     }
 
     [Fact]
@@ -204,6 +234,12 @@ public class OrganizacionTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         var respuestaEmpresa = await cliente.PutAsJsonAsync(
             $"/api/empresas/{empresa.Id}", new EmpresaEdicion("Editada por plataforma SRL", null, null));
         Assert.Equal(HttpStatusCode.OK, respuestaEmpresa.StatusCode);
+
+        // Etapa 20 slice 4 (task 4.10): la aserción de campo del caso InMemory reubicado
+        // (UnaPlataformaVeYEditaCualquierEmpresa), que acá solo se miraba por status.
+        var empresaActualizada = await respuestaEmpresa.Content.ReadFromJsonAsync<EmpresaListado>();
+        Assert.NotNull(empresaActualizada);
+        Assert.Equal("Editada por plataforma SRL", empresaActualizada!.RazonSocial);
 
         var respuestaPv = await cliente.PutAsJsonAsync(
             $"/api/puntos-venta/{puntoVenta.Id}",

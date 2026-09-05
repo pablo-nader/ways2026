@@ -225,6 +225,29 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
             })
             .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
 
+    /// <summary>
+    /// Un <see cref="WaysDbContext"/> contra <c>ways_app</c> configurado EXACTAMENTE como el de la
+    /// API —incluido <c>EnableRetryOnFailure(5)</c>, que <see cref="CrearContextoDeAplicacion"/> NO
+    /// activa—, más los interceptores que pida la prueba.
+    ///
+    /// Existe por judgment-day ronda 2 (hallazgo R2-1): la propiedad bajo prueba es qué hace una
+    /// baja cuando el <c>SaveChangesAsync</c> falla con un error TRANSITORIO, y esa pregunta no
+    /// tiene sentido sobre un contexto sin reintentos — el mutante (volver a la estrategia
+    /// reintentable) sobreviviría por construcción, que es exactamente el confound que
+    /// <c>mutation-proof-tests</c> regla 3 prohíbe. Acá la estrategia reintentable existe y la
+    /// única razón por la que no reintenta es la que el código de producción elige.
+    /// </summary>
+    public WaysDbContext CrearContextoDeAplicacionConReintentos(
+        ITenantActual tenantActual, params IInterceptor[] interceptoresExtra)
+    {
+        var opciones = new DbContextOptionsBuilder<WaysDbContext>();
+
+        ConfigurarNpgsqlDePrueba(opciones, AppConnectionString);
+        opciones.AddInterceptors([new InterceptorDeContextoDeTenant(tenantActual), .. interceptoresExtra]);
+
+        return new WaysDbContext(opciones.Options, tenantActual);
+    }
+
     /// <summary>Un <see cref="WaysDbContext"/> nuevo contra <c>ways_app</c>, con el
     /// <see cref="ITenantActual"/> que pida la prueba — para ejercer la capa 1 (filtro de
     /// EF) igual que lo hace la API, sin pasar por HTTP.

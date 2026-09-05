@@ -837,6 +837,230 @@ phases:
       (1741 before; +2 from the two new bridge execution tests), and 'dotnet ef
       migrations has-pending-model-changes' reports "No changes have been made to
       the model since the last migration." Slices 4-5 pending.
+
+      SLICE 4 IMPLEMENTED (tasks 4.1-4.37 checked; 4.38 judgment-day and 4.39 PR
+      belong to the orchestrator; 3.19 and 3.20 also checked now that PR #169
+      merged in c3f62d7). Branch feat/stage20-slice4-bajas-api off main, measured
+      with 'git diff main --stat -- src tests' and NOT estimated - 14 files, 2682
+      insertions and 219 deletions, of which production is 681 insertions and 122
+      deletions across 6 files (Organizacion/ServicioDeOrganizacion.cs 566 changed,
+      Organizacion/EtiquetasDeTablas.cs 100 new, Usuarios/ServicioDeUsuarios.cs 54,
+      Api/Endpoints/OrganizacionEndpoints.cs 33, plus the two comment amendments in
+      InspectorDeUso.cs and InventarioDeDependientes.cs) and the rest is tests
+      (BajasDeOrganizacionTests.cs 1552 new, BajasEstructuralesTests.cs 253 new,
+      ProyeccionDeOrganizacionTests.cs 144, OrganizacionTests.cs 38,
+      SuperficieDeAutorizacionTests.cs 9, and the constructor fixes of the three
+      suites that build the two services by hand - 2001 insertions and 97 deletions
+      in tests).
+      THE SLICE OVERFLOWS THE 800-LINE BUDGET AND IT IS REPORTED, NOT HIDDEN -
+      roughly 2150 authored lines against a forecast of 530, because the forecast
+      predated three slice-1 judgment-day inputs that all landed here - the
+      one-transaction re-projection of the four write paths, the six projection
+      mutation kills, and the relocation's replacement assertions. The
+      pre-authorized 4a/4b split is NOT clean as written (the relocation it puts in
+      4b is forced by the transaction refactor it puts in 4a), a workable variant is
+      recorded in tasks.md, and the decision is left to the orchestrator rather than
+      taken unilaterally.
+
+      ZERO SCHEMA HELD AND VERIFIED - zero files under Migraciones/, the last
+      migration is still 20260822002214_FiscalArcaEtapa19a, 'dotnet ef migrations
+      has-pending-model-changes' reports "No changes have been made to the model
+      since the last migration.", and git status lists no file under
+      src/Ways.Infrastructure/, no Politicas.cs and no ManejadorDeErrores.cs. The
+      three DELETE routes reuse the policy of the group they already belong to.
+      db-error-backstops STRUCTURALLY N/A - the deletion is an UPDATE ... SET
+      deleted_at and DeleteBehavior.Restrict contributes exactly zero against it, so
+      no SQLSTATE can fire and there is no branch to classify.
+
+      ZERO PHYSICAL DELETES, ASSERTED AS CODE AND NOT AS A CLAIM -
+      BajasEstructuralesTests scans every .cs under src/ - ExecuteDelete,
+      ExecuteDeleteAsync, .Remove( and DELETE FROM are absent from the whole
+      repository, and the six RemoveRange receivers are frozen by name, none of them
+      an organization table. The trip-wire was proven by mutation (inserting
+      db.Tenants.RemoveRange into EliminarTenantAsync turns it red).
+
+      SIXTEEN MUTATIONS RUN FOR REAL AND ALL KILLED, NEVER REASONED - U1/U2/U3 the
+      three cascade scopes, U4 the empresa cascade scope, U5/U6 the two minimum
+      counts, U7a the FK conjunct (mutated to "(col = $n OR true)" so the parameter
+      count is preserved and the failure is semantic, not a bind error), U7b the
+      strict > against >=, U8 the SinMarca branch forced to carry the anchor
+      conjunct (Postgres 42703, stock has no created_at), N4 provisioning reading
+      the clock twice, and P1-P6 the six projection predicates that slice 1 shipped
+      as SURVIVING mutants. Every one was applied alone and reverted byte for byte,
+      with the harness asserting the file is identical afterwards. ONE MUTATION
+      RECORDED AS NOT RUN INSTEAD OF DRESSED UP - the first U8 attempt (UsaAncla =>
+      true) does not compile under CA1822 and was replaced by an equivalent one.
+
+      THE FOUR SURVIVING MUTANTS OF SLICE 1 ARE DEAD, BY A DIFFERENT ROUTE THAN THE
+      INPUT PREDICTED. The premise "the deletion writers are the reachable path" is
+      false - the cascade takes a soft-deleted owner and its live children in the
+      same instant, so no deletion writer can ever produce a live orphan. They are
+      closed instead by re-routing below the confound, which is mutation-proof-tests'
+      own instruction - the three projections are now public static and the tests
+      compose the SAME production expression with IgnoreQueryFilters(["BajaLogica"]),
+      which is exactly what no production caller does. The two contradictory
+      doc-comments are reconciled into ONE rule stated at ProyeccionDeTenant (inside
+      a projection every correlated subquery declares its own DeletedAt == null,
+      because the expression is composable), the three counters were hardened
+      accordingly, and the one predicate that could never be refuted -
+      ServicioDeUsuarios.NombreDeTenantAsync, a query built and executed entirely
+      inside its own method, where no caller can strip the filter - was REMOVED
+      rather than carried a third round. Behaviour is unchanged on every path.
+
+      THE FIRST-ARTICLE SCENARIO IS TRUE FOR TWO OF ITS THREE ENTITIES AND THE THIRD
+      IS RECORDED, NOT PAPERED OVER (Reconciliacion 11 in tasks.md). No
+      article-shaped row hangs off a punto de venta - articulos is tenant-wide and
+      the per-empresa availability exception lives in articulos_empresas - so one
+      article blocks the tenant and the empresa, and the punto de venta blocks on
+      its own smallest customer datum, one stock row. It is the slice-3 design
+      amendment in its own words, usage propagates UP the hierarchy and never down,
+      and the spec text is left byte-identical, the same handling Reconciliacion 1
+      gives OD6.
+
+      TASK 4.10 RELOCATED SOMETHING ELSE THAN THE TASK PREDICTED. There were ZERO
+      EliminarAsync cases to move - the organization service had no deletion at all
+      and the usuario deletion was already covered by PreciosYUsuariosAuditoriaTests
+      in the integration suite. What had to move is the consequence of the slice-1
+      input - one transaction around each write and its re-projection makes the four
+      write paths unrunnable on InMemory (TransactionIgnoredWarning). Five
+      round-trip cases moved against their existing equivalents in OrganizacionTests
+      and every one asserts what it asserted before; where the equivalent lacked a
+      field assertion it was ADDED, and the one case with no equivalent
+      (UnAdminEditaSuPropioPuntoDeVentaOk) was written. Nothing was weakened.
+
+      OD5 HONOURED - no API-level test exists for empresa_en_uso or
+      punto_venta_en_uso, both are proven below the API with a hand-seeded second
+      empresa/punto de venta, and no creation endpoint was added. OD6 HONOURED - the
+      cascade-deleted admin gets 401 credenciales_invalidas and the suspended
+      tenant's user still gets 403 tenant_suspendido, two tests, two codes. OD4
+      HONOURED - a soft-deleted article still blocks. THE BRIDGED 409 NO LONGER
+      SHIPS A BARE LEAF LABEL, and it is resolved at the copy layer so
+      InspectorDeUso's contract and its two test suites stay untouched -
+      EtiquetasDeTablas.DescribirBloqueo names the bridge when every branch for that
+      leaf is bridged and falls back to the bare label when the leaf also has a
+      direct branch, because there the inspector cannot say which one matched. Task
+      4.36's index check covers BOTH relations for a bridged branch and reports zero
+      uncovered branches on this tree, frozen as an empty expected set so it is a
+      trip-wire and not a report nobody reads. R1 (the InicializadorDeBaseDeDatos
+      backfill over-block) was left exactly as it is, as instructed.
+
+      SUITES OF SLICE 4, run against real output and never inferred - 'dotnet build
+      Ways.slnx' clean (0 errors, the two pre-existing NU1903 SSH.NET warnings),
+      Ways.Domain.Tests 545/545 green, Ways.Application.Tests 432/432 green (427
+      before this slice - minus the five relocated round-trip cases, plus the ten of
+      the new BajasEstructuralesTests), and Ways.IntegrationTests 1771/1771 green
+      run ONCE and ALONE against a single Docker daemon in 12 m 48 s, with zero
+      transport-abort flakes and zero re-runs, and confirmed by a SECOND full run of
+      the same tree (1743 before - plus 26 of BajasDeOrganizacionTests,
+      plus the projection-predicate kill and the relocated
+      UnAdminEditaSuPropioPuntoDeVentaOk). THE FIRST FULL RUN WAS 1770/1771 AND THE
+      FAILURE IS REPORTED, NOT SWALLOWED - SuperficieDeAutorizacionTests, the
+      omission guard that walks the real EndpointDataSource, went red on the three
+      new DELETE routes exactly as designed; the allowlist declares them with their
+      reason (family (b) - an administrative surface stricter than
+      GestionDeCatalogo, which never admits Vendedor) and the suite was re-run whole
+      and green.
+
+      JUDGMENT-DAY SLICE 4, RONDA 1 - SIETE HALLAZGOS CONFIRMADOS, LOS SIETE
+      CORREGIDOS, CERO ESQUEMA. Lo primero fue VERIFICAR que auditoria.accion es una
+      columna text libre cuyo unico CHECK es length(btrim(accion)) > 0
+      (AuditoriaConfiguration.cs:22,36): agregar valores de accion es codigo y no
+      esquema. Si hubiera estado restringida, C1 se habria DETENIDO y reportado en
+      vez de tocarse. Politicas.cs, InicializadorDeBaseDeDatos.cs y
+      ManejadorDeErrores.cs siguen sin aparecer en el diff, no hay migracion, DDL,
+      sentencia de datos ni cambio de semilla, y no hay ningun borrado fisico nuevo.
+      C1 (juez B, WARNING) - las tres bajas de organizacion no escribian NINGUNA fila
+      de auditoria y la cascada del tenant daba de baja usuarios sin la usuario.baja
+      que el camino directo siempre escribe: la accion mas destructiva del sistema no
+      dejaba rastro en GET /api/auditoria. Se agregaron tres acciones al catalogo
+      (tenant.baja/tenant, empresa.baja/empresa, pv.baja/punto_venta - pv abrevia el
+      dominio igual que cc.reliquidacion, porque el formato congelado
+      ^[a-z]+\.[a-z]+$ no admite guion bajo), dos fabricas de payload y cuatro call
+      sites DENTRO de la misma transaccion; la cascada escribe una fila por entidad
+      estampada y reusa PayloadDeAuditoria.BajaDeUsuario tal cual. El id_tenant es el
+      del SUJETO, asi que plataforma dando de baja el tenant X deja el rastro EN el
+      tenant X, donde su admin lo lee.
+      C2 (juez A, WARNING) - ServicioDeUsuarios.EliminarAsync corria el guard como un
+      SELECT suelto fuera de toda transaccion y estampaba deleted_at despues: una
+      venta o un turno del MISMO empleado en el medio eran invisibles. Guard +
+      estampado + auditoria quedaron en UNA transaccion dentro de
+      CreateExecutionStrategy().ExecuteAsync, bajo el MISMO
+      pg_advisory_xact_lock(idTenant, -20) de las bajas de organizacion; el sujeto de
+      plataforma (IdTenant null) bloquea sobre el centinela 0, documentado.
+      PoliticaDeRoles queda afuera a proposito.
+      C3 (juez B, WARNING) - DescribirBloqueo degradaba a la etiqueta pelada cuando la
+      hoja tenia ademas una rama directa; ahora alcanza con que ALGUNA rama sea
+      puenteada. C4 (juez A) - cuarto walker de autorizacion que afirma la policy
+      exacta de DELETE /api/puntos-venta/{id:int}, cuyo grupo NO tiene policy propia.
+      C5 (juez A) - el ancla del guard de usuarios se resuelve POR NOMBRE contra
+      InventarioDeDependientes.PropiedadesDeAncla. C6 (ambos jueces) - el trip-wire de
+      borrado fisico se anclo (db.<Set>.Remove( con receptor congelado, DELETE FROM
+      acotado a lo que no es migracion) para que no se ponga rojo por un List.Remove
+      de la BCL. C7 (juez B) - arqueos_turno etiquetado "arqueos de caja", el termino
+      que ya usan CierreDeCaja/CajaZ.
+      SEIS MUTACIONES CORRIDAS DE VERDAD Y TODAS MATADAS, MAS UNA REGISTRADA COMO SIN
+      KILL - C1 (sacar RegistrarBajaDeTenant), C2 (mover el guard afuera de la
+      estrategia, ESTRUCTURAL y dicho como estructural), C3 (restaurar TrueForAll), C4
+      (sacar el RequireAuthorization del DELETE, y solo el walker nuevo se puso rojo,
+      confirmando que los otros tres eran ciegos), C6 en sus DOS brazos
+      (db.Tenants.Remove y un DELETE FROM en archivo de produccion) y C7 (sacar la
+      entrada del diccionario). C5 se registra HONESTAMENTE como sin kill
+      independiente: el conjunto de anclas de Usuario es ["Id"] hoy, asi que la
+      resolucion por nombre y la posicional son observacionalmente identicas hasta el
+      dia en que Usuario tenga clave compuesta - que es exactamente el dia en que el
+      hardcode se habria roto en silencio.
+      DOS PRUEBAS PREEXISTENTES SE ROMPIERON POR EL FIX Y SE ARREGLARON SIN
+      DEBILITARLAS - SoloFilasDeAuditoriaNoBloqueanLaBajaYElRastroSigueResolviendo
+      pasaba a ver dos filas sobre el mismo id_entidad (la sembrada mas la usuario.baja
+      de la cascada) y ahora nombra su accion; y el nuevo assert de instante comparaba
+      el payload en memoria (100 ns) contra la columna timestamptz (microsegundos), asi
+      que se trunca a microsegundos - una diferencia de representacion, no de instante.
+      TRES ITEMS REGISTRADOS SIN CODIGO - R1 sigue ACEPTADO y ahora cubre tambien la
+      baja de usuario (el lock serializa baja contra baja, no baja contra venta; el
+      modo de falla es un punto de venta o un usuario dado de baja con una operacion
+      posterior, recuperable a mano porque B1 deja todas las filas); la cascada solo es
+      alcanzable sobre hijos creados en el instante del ancla, por diseno; y la
+      Reconciliacion 11 quedo registrada y sana.
+      JUDGMENT-DAY SLICE 4 RONDA 2 (FINAL, sin tercera) CORRIGIO DIEZ ITEMS CONFIRMADOS.
+      Cero schema otra vez: ni migracion, ni DDL, ni seed; Politicas.cs,
+      InicializadorDeBaseDeDatos.cs y ManejadorDeErrores.cs no aparecen en el diff.
+      R2-1 (CRITICAL del juez B) se corrigio con la OPCION (b) y esta dicho por que:
+      las cuatro bajas corren bajo FabricaDeEstrategiaSinReintento -el mecanismo que
+      el repo ya tiene para operaciones raras, humanas y sin clave de idempotencia,
+      el mismo de AnularAsync y AjustarAsync- en vez de un ChangeTracker.Clear() que
+      no tiene ningun precedente aca, que instalaria un invariante nuevo que cualquier
+      edicion futura rompe en silencio, y que ademas no arregla el commit ambiguo (el
+      reintento releeria la fila ya dada de baja y contestaria 404 a una baja que si
+      tuvo exito). El costo se dice: una falla transitoria sobre una baja ahora llega
+      al operador en vez de absorberse. La mutacion reprodujo el hallazgo entero:
+      intentos=2, filas=8, y la segunda tenant.baja afirmando anterior estado "baja".
+      R2-2 agrego la relectura del sujeto bajo el lock en ServicioDeUsuarios, matada
+      POR DEBAJO del pre-chequeo con un DbTransactionInterceptor que corre la cascada
+      del tenant al abrirse la transaccion (el lock es ADO crudo y no lo ve ningun
+      DbCommandInterceptor). R2-6 se arreglo EN LA RAIZ: el inspector proyecta la
+      etiqueta de la RAMA (hoja via puente) compuesta de identificadores ya validados,
+      y DescribirBloqueo la parsea en vez de adivinar del conjunto de ramas; las dos
+      redacciones anteriores se equivocaban sobre la misma hoja mixta (parametros).
+      R2-5 ensancho el barrido de borrado fisico a tres anclajes con receptor
+      congelado y volvio a incluir migraciones en DELETE FROM; correrlo DESCUBRIO UN
+      MUTANTE SOBREVIVIENTE (Set<T>().Remove sin receptor escapaba a \.Set<...>) que
+      se cerro ensanchando el ancla a \bSet<...>. R2-3 subio el catalogo del front a
+      15 con su test de congelamiento; R2-4 sumo el PUT de puntos-venta al walker de
+      policy por ruta; R2-7 corrigio un comentario falso (el rastro del tenant NO es
+      legible por GET /api/auditoria hoy) y quedo como item diferido con su condicion
+      de reapertura; R2-8 agrego por_cascada a la usuario.baja de la cascada; R2-9
+      sumo los dos 409 estructurales y una falla NO transitoria con el rastro ya
+      encolado. R2-10: la clase era mas ancha que los dos archivos nombrados - SEIS
+      archivos de esta rama tenian BOM introducido aca (git show main:<path> lo
+      prueba) y se sacaron los seis. DOCE MUTACIONES CORRIDAS DE VERDAD, cada una con
+      su mensaje real, once matadas y una registrada como sin kill independiente (la
+      atomicidad de la transaccion no es expresable como mutacion de una clausula
+      porque el lock la exige estructuralmente). SUITES: dotnet build limpio (2
+      NU1903 preexistentes), Domain 545/545, Application 434/434, Integration
+      1780/1780 en 12m49s corrida UNA sola vez y SOLA contra el daemon de Docker,
+      cero flakes y cero re-runs; web 63 archivos / 1022 tests, build y lint limpios
+      (5 warnings preexistentes de react-refresh); has-pending-model-changes limpio.
+      Slice 5 pending.
   verify:
     status: pending
     artifact: verify-report.md
@@ -941,6 +1165,14 @@ notes:
     - A minimum-administrators-per-tenant invariant
       (ultimo_admin_del_tenant) — flagged in the proposal question round
       rather than invented autonomously. REOPEN — owner answer.
+    - A platform-readable audit surface. The tenant.baja row persists in
+      tenant X for forensics and export and is readable at the database, but
+      GET /api/auditoria is Admin-only (Politicas.LecturaDeAuditoria) and the
+      cascade has just deleted every admin of that tenant, so nobody reads it
+      through the API today. Politicas.cs stays untouched by decision
+      (criterion V5). REOPEN — the first time platform needs a deleted
+      tenant's trail without going to the database (judgment-day slice 4,
+      ronda 2, R2-7).
   known_trap_from_explore: >-
     The structured 'phases:' block of this file must be kept ACCURATE by every
     later phase — stage-18's state.yaml left it stale while the real progress

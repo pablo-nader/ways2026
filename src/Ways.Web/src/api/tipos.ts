@@ -1774,8 +1774,11 @@ export type FilaDeAuditoria = {
 /** Página de `GET /api/auditoria` — espejo de `PaginaDeAuditoria` (Slice 5). */
 export type PaginaDeAuditoria = { items: FilaDeAuditoria[]; total: number; pagina: number; tamanio: number }
 
-/** Espejo del catálogo de 12 pares `(accion, entidad)` de `AccionAuditada`
- * (`Ways.Domain.Auditoria`, Slice 1) — alimenta el `<select>` de acción de `Auditoria.tsx`.
+/** Espejo del catálogo de 15 pares `(accion, entidad)` de `AccionAuditada`
+ * (`Ways.Domain.Auditoria`, Slice 1 + las tres bajas de organización de la etapa 20 slice 4) —
+ * alimenta el `<select>` de acción de `Auditoria.tsx`. El conteo lo congela
+ * `Auditoria.test.tsx`, espejo de `AccionAuditadaTests.cs:21`: sin las tres últimas, la pantalla
+ * renderizaba el código crudo (`tenant.baja`) y el filtro no las podía seleccionar.
  * Etiquetas en español; el VALOR que viaja al backend es siempre el `accion` crudo
  * (`precio.cambio`, ...) — la base no valida `accion` contra este catálogo (design decisión 15),
  * así que una fila con una acción retirada de acá sigue siendo consultable filtrando por su texto
@@ -1794,6 +1797,9 @@ export const CATALOGO_DE_ACCIONES_AUDITADAS: { valor: string; etiqueta: string }
   { valor: 'usuario.baja', etiqueta: 'Baja de usuario' },
   { valor: 'usuario.desbloqueo', etiqueta: 'Desbloqueo de usuario' },
   { valor: 'usuario.password', etiqueta: 'Cambio de contraseña' },
+  { valor: 'tenant.baja', etiqueta: 'Baja de tenant' },
+  { valor: 'empresa.baja', etiqueta: 'Baja de empresa' },
+  { valor: 'pv.baja', etiqueta: 'Baja de punto de venta' },
 ]
 
 // --- Órdenes de compra (stage-16-ordenes-de-compra, Slice 6) --------------------------------
