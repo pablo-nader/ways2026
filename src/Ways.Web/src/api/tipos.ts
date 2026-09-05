@@ -20,6 +20,14 @@ export type UsuarioAutenticado = {
   idTenant: number | null
 }
 
+/**
+ * Espejo de `Ways.Application.Usuarios.UsuarioListado`. `nombreTenant` llega en `null` en DOS
+ * casos distintos y la pantalla los tiene que distinguir (design D13/D14, Reconciliación 9):
+ * cuenta de plataforma (`idTenant === null`) y huérfano (tenant dueño dado de baja lógicamente,
+ * `idTenant` no nulo). NO es un "si y solo si": un nombre nulo no implica plataforma. El
+ * discriminador es `idTenant`, y la etiqueta "Plataforma" la pone la web —
+ * `etiquetaDeTenant` en `organizacion.ts` — nunca el servidor.
+ */
 export type UsuarioListado = {
   id: number
   usuario: string
@@ -29,6 +37,8 @@ export type UsuarioListado = {
   estado: EstadoUsuario
   ultimaConexion: string | null
   createdAt: string
+  idTenant: number | null
+  nombreTenant: string | null
 }
 
 export type RolListado = {
@@ -298,25 +308,37 @@ export const ZONAS_HORARIAS_OFRECIDAS: { id: string; etiqueta: string }[] = [
 
 export type EstadoTenant = 'Activo' | 'Suspendido' | 'Baja'
 
+/** Los tres contadores son hijos VIVOS del tenant (el servidor los proyecta con el filtro de
+ * baja lógica adentro) y `cantidadUsuarios` no cuenta al personal de plataforma. */
 export type TenantListado = {
   id: number
   nombre: string
   estado: EstadoTenant
   createdAt: string
+  cantidadEmpresas: number
+  cantidadPuntosVenta: number
+  cantidadUsuarios: number
 }
 
 export type TenantEdicion = { nombre: string }
 
+/** `nombreTenant` es nullable a propósito (design D13): si el tenant dueño quedó dado de baja, la
+ * empresa se sigue listando con el nombre en `null` y se muestra como anomalía en vez de
+ * desaparecer. `idTenant` deja de renderizarse y pasa a ser la clave del filtro por tenant. */
 export type EmpresaListado = {
   id: number
   idTenant: number
   razonSocial: string
   nombreFantasia: string | null
   cuit: string | null
+  nombreTenant: string | null
 }
 
 export type EmpresaEdicion = { razonSocial: string; nombreFantasia: string | null; cuit: string | null }
 
+/** Los dos nombres de dueño son nullable por el mismo criterio que `EmpresaListado.nombreTenant`
+ * (design D13); `idTenant` e `idEmpresa` dejan de renderizarse y quedan como claves de los dos
+ * filtros. */
 export type PuntoVentaListado = {
   id: number
   idTenant: number
@@ -328,6 +350,8 @@ export type PuntoVentaListado = {
   instagram: string | null
   facebook: string | null
   web: string | null
+  nombreTenant: string | null
+  razonSocialEmpresa: string | null
 }
 
 /** `idEmpresa` no es editable acá: es estructural, no descriptivo (misma razón que en el

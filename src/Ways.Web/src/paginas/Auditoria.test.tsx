@@ -38,6 +38,8 @@ const puntoVentaCentro: PuntoVentaListado = {
   instagram: null,
   facebook: null,
   web: null,
+  nombreTenant: 'Tenant Demo',
+  razonSocialEmpresa: 'Empresa Demo',
 }
 
 function filaFixture(sobrescribir: Partial<FilaDeAuditoria> = {}): FilaDeAuditoria {
