@@ -63,11 +63,14 @@ organización/usuario duplicaban filas de auditoría bajo reintento transitorio.
    `mutation-proof-tests`: revertir a la estrategia con reintento debe volver el test
    ROJO con el conteo duplicado — esa es la evidencia de mutación exigida.
 
-4. **Declarar el residual con honestidad.** Bajo la forma (b), un fallo transitorio se
-   expone al operador como un 500 aunque la escritura pueda haberse confirmado
-   igualmente (el commit ocurrió justo antes de que la conexión se cortara). El texto
-   de la UI para ese caso debe indicar verificar el listado antes de reintentar la
-   acción, no reintentar a ciegas.
+4. **Declarar el residual con honestidad, y hacerlo CENTRALMENTE.** Bajo la forma (b), un fallo
+   transitorio se expone al operador aunque la escritura pueda haberse confirmado igualmente (el
+   commit ocurrió justo antes de que la conexión se cortara). Eso ya NO se resuelve pantalla por
+   pantalla: `ManejadorDeErrores` traduce los SQLSTATE transitorios (`40001`, `40P01`, `57P01`, la
+   clase `08` entera) y `NpgsqlException.IsTransient` a un **`503` con código
+   `resultado_incierto`** cuyo mensaje ya dice "verificá el listado antes de reintentar". Toda
+   pantalla rinde `ErrorApi.mensaje` para un código que no conoce, así que la copia llega sola.
+   Un sitio (b) nuevo no necesita copia propia; escribir una a mano es duplicarla.
 
 ## Decision Gates
 
@@ -75,35 +78,67 @@ organización/usuario duplicaban filas de auditoría bajo reintento transitorio.
 |---|---|
 | Nuevo `ExecuteAsync` con reintento que agrega entidades | `ChangeTracker.Clear()` primero + toda carga/construcción dentro del lambda |
 | Escritura no idempotente sin clave de idempotencia | `FabricaDeEstrategiaSinReintento` |
+| Escritura no idempotente CON clave de idempotencia precomiteada (ej. `numero`) | Forma (a): el reintento es el único consumidor de esa clave — quitarlo la deja muerta |
 | Fila de auditoría dentro de la transacción | Construida dentro del lambda, nunca capturada de afuera |
 | Reintento puede enmascarar un commit ambiguo (ej. baja + relectura 404) | Preferir (b) sobre (a) |
 | Test de la escritura | Interceptor transitorio real (`40001`/`57P01`) + conteo exacto + `valorAnterior` |
+| Test de una escritura que NO inserta (baja lógica: `UPDATE deleted_at`) | `InterceptorQueRompeLaPrimeraEscritura(..., ClaseDeSentencia.Update)` — el interceptor de INSERT no dispara nunca |
+| Barrido de sitios | Todos los proyectos (`Ways.Infrastructure` incluido), y re-verificar las exenciones heredadas contra este gate |
 
 ## Known Open Sites
 
 Ninguno. Los dos que esta skill dejó abiertos en la etapa 20
 (`ServicioDePrecios.AbrirNuevoPrecioAsync`, `ServicioDeUsuarios.CrearAsync`) se cerraron junto
-con los otros ocho que el barrido completo encontró: `ServicioDeClientes.CrearAsync`,
-`ServicioDeArticulos.CrearAsync`, `ServicioDeVentas.EmitirAsync` (solo el paso de ESCRITURA),
+con los otros nueve: `ServicioDeClientes.CrearAsync`, `ServicioDeArticulos.CrearAsync`,
 `ServicioDeCertificados.RegistrarAsync`, `ServicioDeListasPrecio.CrearAsync`,
-`ServicioDeOfertas.CrearAsync`/`ActualizarAsync` y
-`ServicioDeAprovisionamiento.CrearTenantAsync`.
+`ServicioDeOfertas.CrearAsync`/`ActualizarAsync`/`EliminarAsync`,
+`ServicioDeAprovisionamiento.CrearTenantAsync` y
+`InicializadorDeBaseDeDatos.BackfillDeClientesYListasPrecioAsync`.
 
-Dos lecciones del barrido, para el próximo sitio:
+`ServicioDeVentas.EmitirAsync` NO está en esa lista y NO usa la fábrica: es el único sitio del
+audit que se corrigió con la forma (a) — ver la lección 3 de abajo.
+
+Las dos correcciones del judgment-day `fix/retry-double-add`, que son las que hay que leer antes
+de declarar un barrido completo:
+
+- **El barrido de la etapa 20 se declaró completo y no lo era.** Solo miró `Ways.Application`.
+  `InicializadorDeBaseDeDatos.BackfillDeClientesYListasPrecioAsync` vive en `Ways.Infrastructure`
+  y hacía `Add` de una `ListaPrecio` y un `Cliente` dentro de un lambda reintentable, con el
+  número de Consumidor Final re-sorteado por intento: duplicado SILENCIOSO en el arranque, sin
+  ningún índice único que lo frenara. **Barrer TODOS los proyectos, no solo el de aplicación.**
+- **Un sitio de la lista "reintentable a propósito" fallaba el propio decision gate de esta
+  skill.** `ServicioDeOfertas.EliminarAsync` es una baja lógica: el gate "reintento puede
+  enmascarar un commit ambiguo (baja + relectura 404)" la nombra literalmente, y sin embargo
+  estaba clasificada como intocable. **Una lista de exenciones se re-verifica contra el gate, no
+  se hereda.**
+
+Tres lecciones del barrido, para el próximo sitio:
 
 1. **Un índice único NO es una mitigación, es un disfraz.** Donde el duplicado choca contra una
    unicidad, el reintento no duplica: devuelve un 409 sobre una operación que quizás sí
    persistió. Sigue siendo el mismo defecto y se corrige igual.
 2. **Un paso de numeración por ADO crudo SÍ puede quedarse con la estrategia reintentable**, y
    conviene que se quede: reservar de nuevo solo avanza el contador ("gaps are accepted"), nunca
-   duplica una fila. Separar numeración (reintentable) de escritura (sin reintento) es la forma
-   correcta cuando el número ya está comiteado y existe una guarda de commit ambiguo que lo
-   relee — `ServicioDeVentas.EmitirAsync` es el precedente.
+   duplica una fila.
+
+3. **Quitar el reintento no es gratis: hay que preguntarse quién CONSUMÍA la clave de
+   idempotencia.** `ServicioDeVentas.EmitirAsync` se convirtió a la forma (b) y eso rompió el
+   checkout: su guarda `BuscarPorNumeroComprometidoAsync` solo dispara cuando el REINTENTO
+   re-entra al lambda con el mismo `numero` ya comiteado. Sin reintento, la guarda queda muerta —
+   `SolicitudDeVenta` no lleva número, así que el reenvío del cajero sortea uno NUEVO y emite un
+   SEGUNDO comprobante, con su segundo descuento de stock y sus segundos movimientos de caja y
+   cuenta corriente. La forma correcta ahí es la (a): `db.ChangeTracker.Clear()` como PRIMERA
+   sentencia del lambda (mata la duplicación del tracker) + la guarda inmediatamente después
+   (mata el commit ambiguo). Numeración reintentable en su propia transacción + escritura
+   reintentable con tracker limpio y guarda es el precedente, no "numeración reintentable +
+   escritura sin reintento".
 
 Sitios que quedan reintentables A PROPÓSITO (no tocar sin releer esto): los pasos de numeración
-cruda de Ventas/Remitos/Presupuestos/FacturacionDeRemitos/CuentaCorriente,
-`ServicioDeLotes`, `ServicioDeOfertas.EliminarAsync`, `ServicioDeListasPrecio.ActualizarAsync`
-y los lambdas de solo-UPDATE de `ServicioDeOrganizacion.EnUnaTransaccionAsync`.
+cruda de Ventas/Remitos/Presupuestos/FacturacionDeRemitos/CuentaCorriente/`ServicioDeOrdenesDeCompra.EnviarAsync`,
+el paso de ESCRITURA de `ServicioDeVentas.EmitirAsync` (forma (a), lección 3), `ServicioDeLotes`,
+`ServicioDeListasPrecio.ActualizarAsync` y los lambdas de solo-UPDATE de
+`ServicioDeOrganizacion.EnUnaTransaccionAsync`. Son diez, no nueve: el paso de numeración de
+`EnviarAsync` faltaba en esta lista y es exactamente igual que los otros cinco.
 
 La prueba estructural que congela la lista es
 `Ways.Application.Tests.Abstracciones.EscriturasSinReintentoEstructuralesTests` (sin contenedor);
@@ -113,5 +148,7 @@ la conductual, `Ways.IntegrationTests.EscriturasSinReintentoTests`.
 
 Antes de commitear: identificar si el lambda es (a) o (b) y documentarlo en el nombre
 del método o un comentario breve; correr el test con interceptor transitorio y
-confirmar fila única; si es (b), confirmar que la copia de error de la UI menciona
-verificar el listado.
+confirmar fila única; agregar el sitio a la lista congelada de
+`EscriturasSinReintentoEstructuralesTests` (o justificar por qué queda reintentable).
+Si es (b), no hace falta copia de UI nueva: `ManejadorDeErrores` ya devuelve
+`503 resultado_incierto` con el texto correcto (regla 4).
