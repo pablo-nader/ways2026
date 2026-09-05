@@ -531,6 +531,24 @@ impossible by construction, and satisfies S5 (a filter can never disclose an out
   `npm --prefix src/Ways.Web run build` (typecheck) and `npm --prefix src/Ways.Web run lint` all
   clean; re-assert V1-V6 on this slice's diff (a web-only slice must still touch zero migrations and
   zero backend guard files).
+- [x] 2.17 **Tenant selector on user creation — owner-reported mid-slice, bounded addition.** The
+  owner hit a real defect while testing: as a platform actor, creating a user with rol Admin from
+  `Usuarios.tsx` always failed with the backend 400 `tenant_requerido` because the create form had
+  no way to choose a tenant. The server already supported it (`CrearUsuario` accepts
+  `int? IdTenant`, `Contratos.cs:43-49`) and the web mirror had dropped the field — a
+  **`dto-contract-honesty`** violation on the web side. Delivered: (a) `tipos.ts` mirrors
+  `idTenant: number | null` on `CrearUsuario`; `ActualizarUsuario` is left alone because the server
+  record does **not** accept a tenant (`Contratos.cs:51-55`) and inventing one would be the same
+  violation in reverse; (b) a tenant `<select>` in the create form, rendered **only** for a platform
+  actor (`esNuevo && ofreceTenant`) — a tenant admin never sees a tenant list (S5) and sends
+  `idTenant: null`, which `ServicioDeUsuarios.CrearAsync` ignores in favour of `Actor.IdTenant`;
+  (c) options derived from the **already-loaded rows** via the existing `opcionesDeTenant(filas)`,
+  minus the platform token, so **no second fetch** was added and D15 still holds; (d) a client-side
+  mirror of `PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance` for guidance only — rol Root disables
+  the selector and clears `idTenant` **in state**, any other rol makes it `required`; the server
+  stays the authority and its 400 still surfaces through the existing error path, untouched;
+  (e) **`react-async-state`** rule 5 — the selector is inert while the list is loading and while a
+  save is in flight. Five mutations run for real (M14-M18 below). *(UT-R1; design D15, spec S5)*
 - [ ] 2.15 `judgment-day` round to a clean round.
 - [ ] 2.16 Open PR 2 `feat/stage20-slice2-proyeccion-web`, merge to `main` after the clean round.
 
@@ -557,6 +575,17 @@ planning name `feat/stage20-slice2-proyeccion-web` — same slice, different bra
 | M11 | 2.7 | The generation guard of `Usuarios.cargar` — the ONE reachable stale-read window in this slice | `if (generacion.current !== token) return` deleted before `setPagina` | **KILLED** — `una respuesta de búsqueda vieja que aterriza tarde no pisa a la nueva`: `expected [ 'vendedor.sur', 'vendedor.este' ] to deeply equal [ 'staff' ]` |
 | M12 | 2.5 | Rule 9: an in-flight write blocks every action that could supersede it, not just Submit | `disabled={ocupado !== null}` removed from the row's "Editar" | **KILLED** — `Received element is not disabled` |
 | M13 | 2.5 | Rule 6: the post-write refresh sits OUTSIDE the write's try/catch, so a committed write is never reported as a failure | the success aviso moved back inside the write path | **KILLED** — `Unable to find an element with the text: Se actualizó "Sur SRL".` |
+| M14 | 2.17 | `idTenant: datos.idTenant` in the create payload builder — the exact field whose absence produced the owner's 400 `tenant_requerido` | the line deleted from the `CrearUsuario` literal (`as CrearUsuario` to keep it compiling) | **KILLED, 3 tests** — `expected { usuario: 'nuevo.admin', …(4) } to match object { usuario: 'nuevo.admin', …(3) }`, plus `… to match object { rolId: 1, idTenant: null }` and `… to match object { rolId: 4, idTenant: null }` |
+| M15 | 2.17 | The rol `onChange` clears `idTenant` **in state**, not only in the rendering | `onCambio({ ...valor, rolId })` — the `rolId === ROL.Root ? null : …` clear dropped | **KILLED** — `el rol Root deshabilita el selector y limpia el tenant ya elegido`: `expect(element).toHaveValue()` / `Expected the element to have value: ` / `Received: 2` |
+| M16 | 2.17 | `ofreceTenant` gates the selector — S5 anti-oracle: a tenant admin never enumerates tenants | `{esNuevo && (` — the `ofreceTenant` conjunct dropped | **KILLED, 2 tests** — `expected document not to contain element, found <select`, and `expected "vi.fn()" to be called at least once` (the now-visible `required` select blocks submission, so the POST never fires — incidental proof that the `required` copy matches real enforcement, `react-async-state` rule 7) |
+| M17 | 2.17 | The create selector offers only ASSIGNABLE tenants — the platform token is not an id and the server rejects it for every non-root rol | `const tenantsAsignables = opcionesTenant` — the `VALOR_SIN_TENANT` filter dropped | **KILLED** — `expected [ 'Elegí un tenant', …(3) ] to deeply equal [ 'Elegí un tenant', …(2) ]` |
+| M18 | 2.17 | `react-async-state` rule 5: the selector is part of the full-window disabled state while the list (its own option source) is still loading | `disabled={guardando \|\| esRolDePlataforma}` — `tenantsCargando` dropped | **KILLED** — `el selector queda inerte mientras la lista está cargando`: `expect(element).toBeDisabled()` / `Received element is not disabled` |
+
+**No survivors among M14-M18.** One inaccuracy in a test's own doc-comment was found by running M15 and
+corrected rather than left standing: the first draft claimed the M4 confound applied (a derived
+fallback masking a missing state clear), but here the `<select>`'s `value` is derived from the SAME
+`valor.idTenant` that travels in the POST, so there is no independent fallback and both observations
+discriminate. M15 in fact dies on the rendered value, and the comment now says so.
 
 **M10 is the honest survivor of this slice, and it is stated rather than papered over.** The
 generation gate on `Tenants.tsx`, `Empresas.tsx` and `PuntosVenta.tsx` guards a window that
@@ -638,6 +667,28 @@ that, because a stale `'30'` would become a valid option again and silently reap
   stashed**. Alone, the file passes 12/12. The file's only change in this slice is two fixture
   fields. Not fixed here — it is outside slice 2's scope — but recorded so nobody reads a red
   suite as slice 2's doing.
+
+- **Task 2.17's launch brief carried two factual premises that did NOT hold, and the corrections are
+  recorded rather than silently absorbed.** (1) It said slice 2 already had "a tenant fetch for its
+  filter" to reuse. There is no tenant fetch anywhere in slice 2 and there must not be: **D15**
+  forbids it, and `tasks.md`'s own binding note under slice 2 says so. The state actually reused is
+  the derived `opcionesDeTenant(filas)`, which is what the brief's real instruction ("do not add a
+  second fetch") demanded. (2) It said `Usuarios.tsx` already had the `esPlataforma` notion — it did
+  not; `Empresas.tsx:30` and `PuntosVenta.tsx:41` do, and `Usuarios.tsx` only had the inline
+  `actual?.rolId === ROL.Root` inside `puedeEditar`. `esPlataforma` was introduced here with the
+  identical `rolId === ROL.Root` definition its two sibling screens use (`react-async-state` rule 10).
+
+- **KNOWN GAP OF THE DERIVED OPTION SET, STATED NOT HIDDEN.** Because the create selector derives
+  its options from the loaded rows (D15, no second fetch), a platform actor can only assign a tenant
+  that has at least one user **on the current page**. `GET /api/usuarios` is the one paginated
+  listing and its default `tamanio` is 25 (`UsuariosEndpoints.cs:21`), and the screen never sends a
+  page parameter. In practice every tenant is provisioned WITH its admin user
+  (`ServicioDeAprovisionamiento`), so a tenant with zero users does not normally exist; the reachable
+  case is the 26th-and-beyond tenant. Closing it needs either the platform-only
+  `listarTenants()` fetch (which D15 rules out for the shared screens, though `Usuarios.tsx`'s
+  selector is platform-only and would not 403) or the server-side pagination already deferred with a
+  reopen condition in `state.yaml`. **Not decided here** — this was a bounded bug fix, and widening
+  it to a fetch/pagination decision is the orchestrator's call.
 
 - **Verify criteria re-asserted on this slice's diff (V1-V6, V13).** Zero files under
   `Migraciones/`; `dotnet ef migrations has-pending-model-changes` → *"No changes have been made to

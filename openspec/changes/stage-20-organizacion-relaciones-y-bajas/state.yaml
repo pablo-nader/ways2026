@@ -518,7 +518,54 @@ phases:
       NOT INTRODUCED HERE: Reposicion.test.tsx's first-punto-de-venta test fails
       intermittently under the full-suite run (1 of 3 runs on this branch, 1 of 4
       runs on main with the branch stashed; 12/12 when the file runs alone).
-      Slices 3-5 pending.
+      TASK 2.17 ADDED MID-SLICE ON AN OWNER-REPORTED BUG, on the same branch
+      feat/stage20-slice2-web-relaciones and web-only. As a platform actor,
+      creating a user with rol Admin always failed with the backend 400
+      tenant_requerido because the create form offered no tenant. The server
+      already supported it (CrearUsuario accepts int? IdTenant,
+      Contratos.cs:43-49) and the web mirror had dropped the field, which is a
+      dto-contract-honesty violation on the web side. Delivered - tipos.ts
+      mirrors idTenant on CrearUsuario and ActualizarUsuario is deliberately
+      left alone because the server record does NOT accept a tenant
+      (Contratos.cs:51-55); a tenant select in the create form rendered ONLY
+      for a platform actor, so a tenant admin never enumerates tenants (S5) and
+      sends idTenant null, which ServicioDeUsuarios.CrearAsync ignores in
+      favour of Actor.IdTenant; the options derive from the ALREADY-LOADED rows
+      via the existing opcionesDeTenant(filas) minus the platform token, so NO
+      second fetch was added and D15 still holds; a client-side mirror of
+      PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance for guidance only (rol
+      Root disables the selector and clears idTenant IN STATE, any other rol
+      makes it required) with the server left untouched as the authority and
+      its 400 still surfacing through the existing error path; and
+      react-async-state rule 5 applied so the selector is inert while the list
+      loads and while a save is in flight. FIVE MUTATIONS RUN FOR REAL
+      (M14-M18, table in tasks.md), ALL KILLED, no survivors - dropping
+      idTenant from the payload builder killed 3 tests, dropping the state
+      clear killed the Root test on the rendered value, dropping the
+      ofreceTenant gate killed 2, dropping the assignable-tenants filter killed
+      the option-set test and dropping tenantsCargando killed the inert-while-
+      loading test. ONE INACCURACY IN A TEST DOC-COMMENT was found by running
+      M15 and corrected rather than left standing - the draft claimed the M4
+      confound applied, but the select's value derives from the SAME state that
+      travels in the POST so there is no independent fallback. TWO PREMISES OF
+      THE LAUNCH BRIEF DID NOT HOLD AND ARE RECORDED, NOT ABSORBED - there is
+      no tenant fetch in slice 2 to reuse (D15 forbids one) so the reused state
+      is the derived opcionesDeTenant(filas), and Usuarios.tsx had no
+      esPlataforma notion (Empresas.tsx:30 and PuntosVenta.tsx:41 do), which
+      was introduced here with the identical rolId === ROL.Root definition.
+      KNOWN GAP STATED - deriving from loaded rows means a platform actor can
+      only assign a tenant present on the current page, and GET /api/usuarios
+      defaults to tamanio 25; every tenant is provisioned with its admin user
+      so a zero-user tenant does not normally exist, and the reachable case is
+      the 26th tenant onward. Closing it needs either the platform-only
+      listarTenants() fetch or the server-side pagination already deferred with
+      a reopen condition, and that is an orchestrator decision, not an
+      apply-phase one. SUITES after 2.17 - npm run test 63 files / 997 tests
+      green, npm run build (tsc -b plus vite) clean, npm run lint exit 0 with
+      the same five pre-existing warnings. Diff of the addition measured with
+      'git diff --stat -- src' against the slice-2 tip - 3 files, 270
+      insertions plus 4 deletions, of which Usuarios.test.tsx is 182. ZERO
+      BACKEND FILE, zero schema, zero migration. Slices 3-5 pending.
   verify:
     status: pending
     artifact: verify-report.md
