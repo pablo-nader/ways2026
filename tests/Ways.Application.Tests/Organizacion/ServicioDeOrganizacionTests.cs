@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Organizacion;
 using Ways.Domain.Common;
@@ -16,6 +16,37 @@ namespace Ways.Application.Tests.Organizacion;
 /// policy de la API (<c>Politicas.SoloPlataforma</c>) para la autorización — igual que
 /// <c>ServicioDeAprovisionamiento</c> — así que un "admin de tenant no puede suspender" se
 /// prueba a nivel HTTP (<c>OrganizacionTests</c>, `Ways.IntegrationTests`), no acá.
+///
+/// Etapa 20 slice 4 — REUBICACIÓN PRESUPUESTADA (task 4.10, Reconciliación 5), con el mismo
+/// "transaction-blocked-provider caveat" que documenta <c>ServicioDeOfertasTests</c>: las cuatro
+/// escrituras (<c>ActualizarTenantAsync</c>, <c>CambiarEstadoTenantAsync</c>,
+/// <c>ActualizarEmpresaAsync</c>, <c>ActualizarPuntoVentaAsync</c>) ahora envuelven la escritura y
+/// su relectura en <c>Database.BeginTransactionAsync</c>, y el proveedor InMemory NO soporta
+/// transacciones. Las TRES bajas (<c>EliminarTenantAsync</c>/<c>EliminarEmpresaAsync</c>/
+/// <c>EliminarPuntoVentaAsync</c>) suman además el SQL crudo del guard de uso, que tampoco corre
+/// sobre InMemory.
+///
+/// Los cinco casos de round-trip que vivían acá se retiran, cada uno contra su equivalente ya
+/// existente en <c>OrganizacionTests</c> (Ways.IntegrationTests, Postgres real), y CADA UNO
+/// AFIRMA LO MISMO QUE AFIRMABA ACÁ — donde al equivalente le faltaba una aserción de campo, se
+/// le agregó, no se debilitó nada:
+///
+/// <list type="bullet">
+/// <item><c>UnAdminEditaSuPropiaEmpresa</c> → <c>UnAdminEditaSuPropiaEmpresaOk</c> (razón social,
+/// nombre de fantasía y CUIT).</item>
+/// <item><c>UnaPlataformaVeYEditaCualquierEmpresa</c> →
+/// <c>PlataformaListaYEditaCualquierEmpresaYPuntoDeVenta</c> (razón social editada).</item>
+/// <item><c>UnAdminEditaSuPropioPuntoDeVenta</c> → <c>UnAdminEditaSuPropioPuntoDeVentaOk</c>
+/// (nombre, domicilio y WhatsApp), agregado en esta slice porque no tenía equivalente.</item>
+/// <item><c>ActualizarElNombreDeUnTenant</c> → <c>PlataformaEditaElNombreDeUnTenant</c>.</item>
+/// <item><c>SuspenderYReactivarUnTenantAlternaElEstado</c> →
+/// <c>PlataformaSuspendeUnTenantYSuUsuarioPierdeLaSesionEnLaProximaRequest</c> +
+/// <c>ReactivarUnTenantSuspendidoPermiteVolverAIniciarSesion</c>.</item>
+/// </list>
+///
+/// Lo que NO se movió y sigue alcanzable acá: todo lo que decide ANTES de abrir la transacción —
+/// los 404 de alcance de tenant, el rechazo de razón social vacía, el <c>tenant_dado_de_baja</c> y
+/// la idempotencia de suspender lo ya suspendido (que ni siquiera escribe).
 /// </summary>
 public class ServicioDeOrganizacionTests
 {
@@ -40,7 +71,10 @@ public class ServicioDeOrganizacionTests
 
     private static ServicioDeOrganizacion CrearServicio(
         string nombreDeBase, ITenantActual tenantActual, IContextoDeUsuario contexto) =>
-        new(CrearContexto(nombreDeBase, tenantActual), new RelojFijo(Ahora), contexto);
+        CrearServicio(CrearContexto(nombreDeBase, tenantActual), contexto);
+
+    private static ServicioDeOrganizacion CrearServicio(WaysDbContext db, IContextoDeUsuario contexto) =>
+        new(db, new RelojFijo(Ahora), contexto, new InspectorDeUso(db));
 
     private static async Task<(Tenant Tenant, Empresa Empresa, PuntoVenta PuntoVenta)> SembrarAsync(
         string nombreDeBase, string nombreTenant, EstadoTenant estado = EstadoTenant.Activo)
@@ -78,23 +112,6 @@ public class ServicioDeOrganizacionTests
     // --- Empresas: alcance de tenant ---
 
     [Fact]
-    public async Task UnAdminEditaSuPropiaEmpresa()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (tenant, empresa, _) = await SembrarAsync(nombreDeBase, nameof(UnAdminEditaSuPropiaEmpresa));
-
-        var contexto = new ContextoFijo(RolConocido.Admin, usuarioId: 1, idTenant: tenant.Id);
-        var servicio = CrearServicio(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, tenant.Id), contexto);
-
-        var datos = new EmpresaEdicion("Nueva razón social SRL", "Nombre fantasía", "20-12345678-9");
-        var actualizada = await servicio.ActualizarEmpresaAsync(empresa.Id, datos);
-
-        Assert.Equal("Nueva razón social SRL", actualizada.RazonSocial);
-        Assert.Equal("Nombre fantasía", actualizada.NombreFantasia);
-        Assert.Equal("20-12345678-9", actualizada.Cuit);
-    }
-
-    [Fact]
     public async Task UnAdminNoVeUnaEmpresaDeOtroTenant()
     {
         var nombreDeBase = Guid.NewGuid().ToString();
@@ -126,21 +143,6 @@ public class ServicioDeOrganizacionTests
 
         Assert.Equal("no_encontrado", error.Codigo);
         Assert.Equal(404, error.EstadoHttp);
-    }
-
-    [Fact]
-    public async Task UnaPlataformaVeYEditaCualquierEmpresa()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (_, empresa, _) = await SembrarAsync(nombreDeBase, nameof(UnaPlataformaVeYEditaCualquierEmpresa));
-
-        var contexto = new ContextoFijo(RolConocido.Root, usuarioId: 1, idTenant: null);
-        var servicio = CrearServicio(nombreDeBase, TenantActualFijo.Plataforma, contexto);
-
-        var datos = new EmpresaEdicion("Editada por plataforma SRL", null, null);
-        var actualizada = await servicio.ActualizarEmpresaAsync(empresa.Id, datos);
-
-        Assert.Equal("Editada por plataforma SRL", actualizada.RazonSocial);
     }
 
     [Fact]
@@ -196,55 +198,7 @@ public class ServicioDeOrganizacionTests
         Assert.Equal(404, error.EstadoHttp);
     }
 
-    [Fact]
-    public async Task UnAdminEditaSuPropioPuntoDeVenta()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (tenant, _, puntoVenta) = await SembrarAsync(nombreDeBase, nameof(UnAdminEditaSuPropioPuntoDeVenta));
-
-        var contexto = new ContextoFijo(RolConocido.Admin, usuarioId: 1, idTenant: tenant.Id);
-        var servicio = CrearServicio(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, tenant.Id), contexto);
-
-        var datos = new PuntoVentaEdicion(
-            "Local renovado", "Av. Siempre Viva 742", "9 a 20", "+54 11 5555-5555", null, null, null);
-        var actualizado = await servicio.ActualizarPuntoVentaAsync(puntoVenta.Id, datos);
-
-        Assert.Equal("Local renovado", actualizado.Nombre);
-        Assert.Equal("Av. Siempre Viva 742", actualizado.Domicilio);
-        Assert.Equal("+54 11 5555-5555", actualizado.Whatsapp);
-    }
-
     // --- Tenants: edición y transiciones de estado ---
-
-    [Fact]
-    public async Task ActualizarElNombreDeUnTenant()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (tenant, _, _) = await SembrarAsync(nombreDeBase, nameof(ActualizarElNombreDeUnTenant));
-
-        var contexto = new ContextoFijo(RolConocido.Root, usuarioId: 1, idTenant: null);
-        var servicio = CrearServicio(nombreDeBase, TenantActualFijo.Plataforma, contexto);
-
-        var actualizado = await servicio.ActualizarTenantAsync(tenant.Id, new TenantEdicion("Nuevo nombre"));
-
-        Assert.Equal("Nuevo nombre", actualizado.Nombre);
-    }
-
-    [Fact]
-    public async Task SuspenderYReactivarUnTenantAlternaElEstado()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (tenant, _, _) = await SembrarAsync(nombreDeBase, nameof(SuspenderYReactivarUnTenantAlternaElEstado));
-
-        var contexto = new ContextoFijo(RolConocido.Root, usuarioId: 1, idTenant: null);
-        var servicio = CrearServicio(nombreDeBase, TenantActualFijo.Plataforma, contexto);
-
-        var suspendido = await servicio.SuspenderTenantAsync(tenant.Id);
-        Assert.Equal(EstadoTenant.Suspendido, suspendido.Estado);
-
-        var reactivado = await servicio.ReactivarTenantAsync(tenant.Id);
-        Assert.Equal(EstadoTenant.Activo, reactivado.Estado);
-    }
 
     [Fact]
     public async Task SuspenderUnTenantYaSuspendidoEsIdempotente()

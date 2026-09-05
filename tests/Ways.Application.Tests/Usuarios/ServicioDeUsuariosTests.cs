@@ -1,6 +1,7 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
+using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Common;
 using Ways.Domain.Usuarios;
@@ -67,7 +68,8 @@ public class ServicioDeUsuariosTests
             new HasheadorPbkdf2(),
             reloj,
             contexto,
-            new ServicioDeAuditoria(db, reloj, contexto));
+            new ServicioDeAuditoria(db, reloj, contexto),
+            new InspectorDeUso(db));
     }
 
     private static async Task SembrarRolesAsync(string nombreDeBase)

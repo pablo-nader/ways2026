@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -170,7 +170,8 @@ public class PreciosYUsuariosAuditoriaTests(WaysApiFixture fixture) : IClassFixt
         var contexto = new ContextoFijo(idTenant, idActor, rolActor);
         var auditoria = new ServicioDeAuditoria(db, reloj, contexto);
 
-        return (db, new ServicioDeUsuarios(db, dbPlataforma, new HasheadorPbkdf2(), reloj, contexto, auditoria));
+        return (db, new ServicioDeUsuarios(
+            db, dbPlataforma, new HasheadorPbkdf2(), reloj, contexto, auditoria, new InspectorDeUso(db)));
     }
 
     // ---- helpers de lectura --------------------------------------------------------------------

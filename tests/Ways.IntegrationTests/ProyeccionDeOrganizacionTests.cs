@@ -1,4 +1,4 @@
-using System.Data.Common;
+﻿using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -42,15 +42,21 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
     private const int PuntosVentaDelTenantLeido = 3;
     private const int UsuariosDelTenantLeido = 4;
 
-    /// <summary>Tenants de relleno que se siembran ANTES del tenant que se lee. Es
-    /// <c>UsuariosDelTenantLeido</c> a propósito: como la secuencia de identidad es monótona, el
-    /// tenant bajo prueba queda con un id estrictamente mayor que el más grande de los tres
-    /// contadores, por construcción y sin depender de ninguna fila que la prueba no siembre.
-    /// Eso es lo que hace que un intercambio posicional entre el id y un contador muera.</summary>
-    private const int TenantsDeRelleno = UsuariosDelTenantLeido;
-
     private static readonly int[] ContadoresSembrados =
         [EmpresasDelTenantLeido, PuntosVentaDelTenantLeido, UsuariosDelTenantLeido];
+
+    /// <summary>Tenants de relleno que se siembran ANTES del tenant que se lee: como la secuencia
+    /// de identidad es monótona, el tenant bajo prueba queda con un id estrictamente mayor que el
+    /// más grande de los tres contadores, por construcción y sin depender de ninguna fila que la
+    /// prueba no siembre. Eso es lo que hace que un intercambio posicional entre el id y un
+    /// contador muera.
+    ///
+    /// Etapa 20 slice 4 (entrada de judgment-day de la slice 1, item 3): se DERIVA del máximo real
+    /// en vez de estar escrito como <c>UsuariosDelTenantLeido</c>. Esa igualdad era una
+    /// coincidencia sin quien la sostuviera —valía solo porque 4 era el máximo de {2, 3, 4}—, así
+    /// que bajar ese contador o subir un hermano rompía la cota en silencio, sin error de
+    /// compilación ni prueba en rojo.</summary>
+    private static readonly int TenantsDeRelleno = ContadoresSembrados.Max();
 
     /// <summary>El servidor serializa enums como texto (<c>JsonStringEnumConverter</c>) y el
     /// <c>HttpClient</c> de prueba no hereda esa configuración — mismo criterio, y misma
@@ -354,7 +360,8 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         {
             var servicio = new ServicioDeUsuarios(
                 db, dbPlataforma, new HasheadorPbkdf2(), reloj, contextoRoot,
-                new ServicioDeAuditoria(db, reloj, contextoRoot));
+                new ServicioDeAuditoria(db, reloj, contextoRoot),
+                new InspectorDeUso(db));
 
             var pagina = await servicio.ListarAsync(tamanio: 200);
             Assert.Contains(pagina.Items, u => u.Id == a.Admin.Id);
@@ -366,7 +373,7 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         {
             var contador = new ContadorDeComandos();
             await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma, contador);
-            await accion(new ServicioDeOrganizacion(db, reloj, contextoRoot));
+            await accion(new ServicioDeOrganizacion(db, reloj, contextoRoot, new InspectorDeUso(db)));
             return contador.Consultas;
         }
     }
