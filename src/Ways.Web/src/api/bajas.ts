@@ -14,7 +14,9 @@
  *    hacer al respecto. Tragarlo en un error genérico dejaba al operador sin la única información
  *    accionable de la respuesta.
  *
- * Las dos excepciones a (2) son el 404 y el 5xx, y las dos están justificadas abajo.
+ * Las dos excepciones a (2) son el 404 y el 5xx SIN `resultado_incierto`, y las dos están
+ * justificadas abajo. Un 5xx CON ese código no es excepción: rinde el mensaje del servidor como
+ * cualquier otro, porque ahí el mensaje es lo único que dice qué hacer.
  */
 import { ErrorApi } from './cliente'
 
@@ -53,14 +55,24 @@ const GUIA_POR_CODIGO: ReadonlyMap<string, string> = new Map([
 const COPIA_NO_ENCONTRADO = 'Ya no existe o no está a tu alcance. Actualizá el listado.'
 
 /**
- * Copia del 5xx, y tampoco anexa el mensaje: un 500 no trae detalle útil, trae `error_interno`.
- * Lo que sí importa es que la baja NO es reintentable automáticamente — las tres bajas corren con
- * `FabricaDeEstrategiaSinReintento`, así que un commit cuyo ACK se perdió llega como 500 y la baja
- * PUEDE haber quedado hecha. Decir "reintentá" a secas invitaba a un segundo intento sobre algo ya
- * borrado; por eso la copia manda a verificar primero.
+ * Copia LOCAL del 5xx desconocido: un `error_interno` no trae detalle útil, así que el mensaje del
+ * servidor ("Ocurrió un error inesperado") no agrega nada y no se anexa. Lo que sí importa es que
+ * la baja NO es reintentable automáticamente — las tres bajas corren con
+ * `FabricaDeEstrategiaSinReintento`, así que un commit cuyo ACK se perdió deja la baja PUEDE-hecha.
+ * Decir "reintentá" a secas invitaba a un segundo intento sobre algo ya borrado; por eso manda a
+ * verificar primero.
+ *
+ * NO es la copia del commit ambiguo: ésa ahora nace en el servidor. `ManejadorDeErrores` traduce
+ * todo fallo transitorio a un `503 resultado_incierto` cuyo `mensaje` ya dice qué verificar, y hay
+ * sitios que agregan un paso propio que esta copia local no puede conocer (el alta de tenant manda
+ * a restablecer la contraseña del admin). Por eso un 5xx CON `resultado_incierto` rinde el texto
+ * del servidor y este fallback queda solo para el 5xx que de verdad no dice nada.
  */
 const COPIA_RESULTADO_INCIERTO =
   'No se pudo confirmar el resultado: verificá el listado antes de reintentar.'
+
+/** El código con el que el servidor marca un commit ambiguo (`ManejadorDeErrores`). */
+const CODIGO_RESULTADO_INCIERTO = 'resultado_incierto'
 
 /**
  * Texto a rendir ante un fallo de baja: `{mensaje del servidor} {guía elegida por el código}`.
@@ -73,7 +85,13 @@ export function copiaDeFalloDeBaja(error: unknown, sujeto: SujetoDeBaja): string
 
   if (!(error instanceof ErrorApi)) return `${encabezado} ${COPIA_RESULTADO_INCIERTO}`
   if (error.estado === 404) return `${encabezado} ${COPIA_NO_ENCONTRADO}`
-  if (error.estado >= 500) return `${encabezado} ${COPIA_RESULTADO_INCIERTO}`
+
+  if (error.estado >= 500) {
+    const delServidor = error.message.trim()
+    const esCommitAmbiguo = error.codigo === CODIGO_RESULTADO_INCIERTO && delServidor.length > 0
+
+    return `${encabezado} ${esCommitAmbiguo ? delServidor : COPIA_RESULTADO_INCIERTO}`
+  }
 
   // El mensaje del servidor va primero porque es el que nombra el bloqueo; el encabezado solo lo
   // reemplaza cuando vino vacío, para que nunca quede un alert sin texto.

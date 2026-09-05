@@ -92,19 +92,57 @@ describe('copiaDeFalloDeBaja — la copia se elige por código', () => {
   })
 
   /**
-   * Cláusula bajo prueba: la rama `error.estado >= 500`. Las tres bajas corren SIN reintento
-   * automático, así que un commit cuyo ACK se perdió llega como 500 sobre una baja que sí quedó
-   * hecha: la copia manda a verificar el listado antes de reintentar, nunca a reintentar a ciegas.
-   * (Entrada arrastrada de la slice 4, punto 5.)
+   * Cláusula bajo prueba: la rama `error.estado >= 500` SIN `resultado_incierto`. Un
+   * `error_interno` no trae detalle útil, así que rinde el fallback local: verificar el listado
+   * antes de reintentar, nunca reintentar a ciegas. (Entrada arrastrada de la slice 4, punto 5.)
    */
-  it('un 500 avisa que el resultado es incierto y manda a verificar el listado', () => {
+  it('un 500 sin resultado_incierto rinde el fallback local', () => {
     const copia = copiaDeFalloDeBaja(
       new ErrorApi(500, 'error_interno', 'Ocurrió un error inesperado.'),
       'el punto de venta',
     )
 
-    expect(copia).toContain('verificá el listado antes de reintentar')
+    expect(copia).toBe(
+      'No se pudo dar de baja el punto de venta. No se pudo confirmar el resultado: verificá el listado antes de reintentar.',
+    )
+    expect(copia).not.toContain('Ocurrió un error inesperado')
     expect(copia).not.toMatch(/reintentá ahora|volvé a intentar/i)
+  })
+
+  /**
+   * Cláusula bajo prueba: el `error.codigo === 'resultado_incierto'` dentro de la rama de 5xx.
+   * Antes, `estado >= 500` cortocircuitaba y el `mensaje` del servidor se perdía SIEMPRE. Ahora el
+   * servidor es el que clasifica el commit ambiguo (`ManejadorDeErrores` → `503
+   * resultado_incierto`) y hay sitios cuya copia agrega un paso que la web no puede conocer: el
+   * alta de tenant manda a restablecer la contraseña del admin, porque el `passwordTemporal` se
+   * devuelve una sola vez y se fue con la respuesta que nunca llegó.
+   *
+   * El valor discriminante es esa frase: el fallback local NO la contiene, así que si el
+   * cortocircuito volviera, esta prueba se pone roja (`mutation-proof-tests` regla 4).
+   */
+  it('un 503 resultado_incierto rinde la copia del servidor y no el fallback local', () => {
+    const copia = copiaDeFalloDeBaja(
+      new ErrorApi(
+        503,
+        'resultado_incierto',
+        'No se pudo confirmar el alta del tenant: verificá el listado; si ya existe, restablecé la contraseña del admin antes de reintentar.',
+      ),
+      'el tenant',
+    )
+
+    expect(copia).toBe(
+      'No se pudo dar de baja el tenant. No se pudo confirmar el alta del tenant: verificá el listado; si ya existe, restablecé la contraseña del admin antes de reintentar.',
+    )
+    expect(copia).toContain('restablecé la contraseña del admin')
+  })
+
+  /** Un `resultado_incierto` con el mensaje vacío no puede dejar un alert sin guía: cae al fallback. */
+  it('un 503 resultado_incierto sin mensaje cae al fallback local', () => {
+    const copia = copiaDeFalloDeBaja(new ErrorApi(503, 'resultado_incierto', '   '), 'la empresa')
+
+    expect(copia).toBe(
+      'No se pudo dar de baja la empresa. No se pudo confirmar el resultado: verificá el listado antes de reintentar.',
+    )
   })
 
   it('un error que no es de la API comparte la copia del resultado incierto', () => {
