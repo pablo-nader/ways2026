@@ -1,7 +1,8 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Usuarios } from './Usuarios'
+import { ErrorApi } from '../api/cliente'
 import { ETIQUETA_OPCION_PLATAFORMA, ETIQUETA_PLATAFORMA, ETIQUETA_SIN_DUENIO } from '../api/organizacion'
 import { ROL } from '../api/tipos'
 import type { PaginaDe, RolListado, TenantListado, UsuarioAutenticado, UsuarioListado } from '../api/tipos'
@@ -10,13 +11,15 @@ import type { PaginaDe, RolListado, TenantListado, UsuarioAutenticado, UsuarioLi
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const apiPutMock = vi.fn()
+const apiDeleteMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
-    put: vi.fn(),
-    delete: vi.fn(),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
+    delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
@@ -78,10 +81,15 @@ const cuentaDeOtroTenant = usuarioFixture({
   idTenant: 3,
   nombreTenant: 'Almacén Este',
 })
+/** `idTenant: null` obliga a `rolId: Root`: `PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance`
+ * rechaza cualquier otro rol sin tenant, así que un fixture con Vendedor y sin tenant sería una
+ * entidad que el servidor no puede haber emitido. */
 const cuentaDePlataforma = usuarioFixture({
   id: 52,
   usuario: 'staff',
   mail: 'staff@ways.test',
+  rolId: ROL.Root,
+  rol: 'Root',
   idTenant: null,
   nombreTenant: null,
 })
@@ -557,5 +565,244 @@ describe('Usuarios (stage-20, tarea 2.17 — selector de tenant en el alta)', ()
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
     expect(apiGetMock).not.toHaveBeenCalledWith('/plataforma/tenants')
+  })
+})
+
+// stage-20-organizacion-relaciones-y-bajas, slice 2 — correcciones de la ronda 1 de judgment-day.
+
+describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escrituras)', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiPostMock.mockResolvedValue(undefined)
+    apiPutMock.mockResolvedValue(undefined)
+    apiDeleteMock.mockResolvedValue(undefined)
+    usuarioActual = autenticadoFixture()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function paginaDe(items: UsuarioListado[]): PaginaDe<UsuarioListado> {
+    return { items, total: items.length, pagina: 1, tamanio: 20 }
+  }
+
+  function rutasDeUsuarios() {
+    return apiGetMock.mock.calls.map(([ruta]) => ruta as string).filter((r) => r.startsWith('/usuarios'))
+  }
+
+  /**
+   * Cláusula bajo prueba: el `setError(ERROR_TENANTS)` del `.catch` del universo de tenants
+   * (`react-async-state` regla 7). Sin él, un actor de plataforma se quedaba con un `<select>`
+   * `required` habilitado y VACÍO: la validación HTML se negaba a mandar el formulario sin decir
+   * por qué, y las dependencias del efecto (`[esPlataforma]`) no lo reintentaban nunca. El
+   * reintento se cuelga de abrir "Nuevo", que es el único momento en que el universo hace falta.
+   */
+  it('un fallo del universo de tenants se rinde en pantalla y abrir "Nuevo" lo reintenta', async () => {
+    const usuario = userEvent.setup()
+    let intentos = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta === '/plataforma/tenants') {
+        intentos += 1
+
+        return intentos === 1
+          ? Promise.reject(new ErrorApi(503, 'no_disponible', 'Se cayó el servicio.'))
+          : Promise.resolve([tenantFixture(2, 'Comercio Sur')])
+      }
+      if (ruta.startsWith('/usuarios')) return Promise.resolve(paginaDe([cuentaDeTenant]))
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument())
+    expect(intentos).toBe(1)
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+
+    await waitFor(() => expect(intentos).toBe(2))
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText(SELECTOR_DE_ALTA)).getByRole('option', { name: 'Comercio Sur' }),
+      ).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/No se pudo cargar la lista de tenants/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: `disabled={guardando || sinTenantAsignable}` en Guardar. Un control
+   * `disabled` queda EXENTO de la validación de restricciones de HTML, así que el `required` del
+   * `<select>` de tenant no frena nada mientras el universo carga o falló: el POST saldría con
+   * `idTenant: null` y un rol que no es root, y el servidor contestaría 400 `tenant_requerido`.
+   */
+  it('Guardar queda inerte para un actor de plataforma mientras el universo de tenants no está', async () => {
+    const usuario = userEvent.setup()
+    let resolverTenants!: (tenants: TenantListado[]) => void
+    const pendientes = new Promise<TenantListado[]>((resolver) => {
+      resolverTenants = resolver
+    })
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta === '/plataforma/tenants') return pendientes
+      if (ruta.startsWith('/usuarios')) return Promise.resolve(paginaDe([cuentaDeTenant]))
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+
+    await act(async () => {
+      resolverTenants([tenantFixture(2, 'Comercio Sur')])
+      await pendientes
+    })
+
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeEnabled()
+  })
+
+  /** La otra mitad de la misma cláusula: si el universo FALLÓ, Guardar sigue inerte — no hay
+   * tenant que mandar y el 400 del servidor sería la única señal. */
+  it('Guardar queda inerte cuando el universo de tenants falló', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta === '/plataforma/tenants') {
+        return Promise.reject(new ErrorApi(503, 'no_disponible', 'Se cayó el servicio.'))
+      }
+      if (ruta.startsWith('/usuarios')) return Promise.resolve(paginaDe([cuentaDeTenant]))
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument())
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled())
+  })
+
+  /**
+   * Cláusula bajo prueba: la marca de estado de `opcionesDeTenantAsignable`, vista desde la
+   * pantalla. El servidor no mira el estado del tenant destino al crear, así que un tenant
+   * suspendido se sigue ofreciendo — pero un usuario creado adentro no va a poder entrar, y sin la
+   * marca eso no se ve en ningún lado.
+   */
+  it('el selector del alta marca a los tenants que no están activos y no los esconde', async () => {
+    const usuario = userEvent.setup()
+    montar(
+      [cuentaDeTenant],
+      [
+        tenantFixture(2, 'Comercio Sur'),
+        { ...tenantFixture(3, 'Almacén Este'), estado: 'Suspendido' },
+        { ...tenantFixture(4, 'Kiosco Viejo'), estado: 'Baja' },
+      ],
+    )
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+
+    const etiquetas = within(screen.getByLabelText(SELECTOR_DE_ALTA))
+      .getAllByRole('option')
+      .map((o) => o.textContent)
+
+    expect(etiquetas).toEqual([
+      'Elegí un tenant',
+      'Almacén Este (suspendido)',
+      'Comercio Sur',
+      'Kiosco Viejo (baja)',
+    ])
+  })
+
+  /**
+   * Cláusula bajo prueba: el `setFiltroTenant((prev) => seleccionVigente(...))` de `cargar` — la
+   * reconciliación ESCRITA en el estado. Derivarla solo al pintar (`tenantVigente`) no alcanza: la
+   * selección inválida sigue viva en `filtroTenant` y se reaplica sola en cuanto la opción
+   * reaparece. El confundidor es justamente ese fallback derivado, así que la observación
+   * discriminante no es "el filtro se ve en Todos mientras la opción no está" sino "las filas
+   * vuelven ENTERAS cuando la opción reaparece".
+   */
+  it('un filtro invalidado por una búsqueda no resucita cuando las filas vuelven', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta === '/plataforma/tenants') return Promise.resolve(tenantsDesdeFilas([cuentaDeTenant]))
+      if (ruta.startsWith('/usuarios?')) return Promise.resolve(paginaDe([cuentaDeTenant]))
+      if (ruta.startsWith('/usuarios')) {
+        return Promise.resolve(paginaDe([cuentaDeTenant, cuentaDeOtroTenant, cuentaDePlataforma]))
+      }
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText('vendedor.este')).toBeInTheDocument())
+
+    await usuario.selectOptions(screen.getByLabelText('Tenant'), '3')
+    expect(usuariosVisibles()).toEqual(['vendedor.este'])
+
+    await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'sur')
+    await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
+    await waitFor(() => expect(usuariosVisibles()).toEqual(['vendedor.sur']))
+
+    await usuario.clear(screen.getByPlaceholderText('Buscar usuario o mail…'))
+    await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
+
+    await waitFor(() => expect(screen.getByText('vendedor.este')).toBeInTheDocument())
+    expect(screen.getByLabelText('Tenant')).toHaveValue('')
+    expect(usuariosVisibles()).toEqual(['vendedor.sur', 'vendedor.este', 'staff'])
+  })
+
+  /**
+   * Cláusula bajo prueba: `cargar(token, busquedaAplicada, true)` en `refrescarTrasEscribir` — el
+   * término REALMENTE aplicado, no el borrador del input. Con `busqueda` el refresco post-baja
+   * angostaba la tabla con un texto que el operador tipeó y nunca buscó.
+   */
+  it('el refresco post-escritura usa el término buscado, no el borrador tipeado', async () => {
+    const usuario = userEvent.setup()
+    vi.stubGlobal('confirm', () => true)
+    montar()
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.type(screen.getByPlaceholderText('Buscar usuario o mail…'), 'juan')
+    await usuario.click(
+      within(screen.getByRole('row', { name: /vendedor\.sur/ })).getByRole('button', { name: 'Baja' }),
+    )
+
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/usuarios/50'))
+    await waitFor(() => expect(screen.getByText(/dado de baja/)).toBeInTheDocument())
+
+    expect(rutasDeUsuarios().at(-1)).toBe('/usuarios')
+    expect(usuariosVisibles()).toEqual(['vendedor.sur', 'vendedor.este', 'staff'])
+  })
+
+  /**
+   * Cláusula bajo prueba: el `try` propio del POST de contraseña. Compartir el `try` con el PUT
+   * hacía que un fallo del cambio de contraseña reportara "No se pudo guardar." aunque el perfil
+   * YA estaba commiteado — `react-async-state` regla 6, una escritura commiteada nunca se reporta
+   * como fallida.
+   */
+  it('un fallo del cambio de contraseña no reporta el PUT ya commiteado como fallido', async () => {
+    const usuario = userEvent.setup()
+    montar([cuentaDeTenant])
+    apiPostMock.mockRejectedValue(new ErrorApi(400, 'password_debil', 'La contraseña es muy corta.'))
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    const llamadasAlCargar = rutasDeUsuarios().length
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.type(screen.getByLabelText('Contraseña'), 'corta')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.getByText(/no se pudo cambiar la contraseña/)).toBeInTheDocument())
+    expect(apiPutMock).toHaveBeenCalledWith('/usuarios/50', expect.anything())
+    expect(screen.getByText(/actualizado/)).toBeInTheDocument()
+    expect(screen.queryByText('No se pudo guardar.')).not.toBeInTheDocument()
+    expect(rutasDeUsuarios().length).toBeGreaterThan(llamadasAlCargar)
   })
 })

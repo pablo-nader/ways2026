@@ -5,8 +5,9 @@ import {
   etiquetaDeTenant,
   filtrarPorTenant,
   opcionesDeTenant,
+  opcionesDeTenantAsignable,
+  seleccionVigente,
   SIN_FILTRO,
-  VALOR_SIN_TENANT,
 } from '../api/organizacion'
 import type { OpcionDeFiltro } from '../api/organizacion'
 import { ESTADOS_USUARIO, ROL } from '../api/tipos'
@@ -47,16 +48,16 @@ const FORMULARIO_VACIO: Formulario = {
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
+const ERROR_TENANTS =
+  'No se pudo cargar la lista de tenants: no se pueden crear usuarios hasta que llegue. Abrí "Nuevo" para reintentar.'
+
 /**
  * ABM de usuarios. La columna "Tenant" rinde el nombre del tenant de la cuenta o el literal
  * "Plataforma" cuando `idTenant` es null — esa copia la pone la web, nunca el servidor
  * (design D14), y el discriminador es `idTenant`, no el nombre: un `nombreTenant` nulo con
  * `idTenant` presente es un huérfano (tenant dado de baja), no personal de plataforma
  * (Reconciliación 9). El filtro por tenant deriva sus opciones de las filas ya cargadas, así
- * que un admin de tenant nunca puede enumerar el nombre de otro tenant (spec S5). El selector de
- * tenant del ALTA es la excepción: para un actor de plataforma pide el universo completo vía
- * `clienteDeOrganizacion.listarTenants()`, así puede asignar un tenant sin usuarios en la página
- * actual (gap de tamaño de página cerrado a continuación de la tarea 2.17).
+ * que un admin de tenant nunca puede enumerar el nombre de otro tenant (spec S5).
  */
 export function Usuarios() {
   const { usuario: actual } = useAuth()
@@ -64,6 +65,9 @@ export function Usuarios() {
   const [pagina, setPagina] = useState<PaginaDe<UsuarioListado> | null>(null)
   const [roles, setRoles] = useState<RolListado[]>([])
   const [busqueda, setBusqueda] = useState('')
+  /** Término REALMENTE aplicado a la tabla: lo escribe `buscar()`, nunca el tipeo. El refresco
+   * post-escritura usa este y no el borrador del input, que puede tener texto sin buscar. */
+  const [busquedaAplicada, setBusquedaAplicada] = useState('')
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
@@ -72,6 +76,7 @@ export function Usuarios() {
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
   const [tenantsDePlataforma, setTenantsDePlataforma] = useState<TenantListado[]>([])
   const [tenantsDePlataformaCargando, setTenantsDePlataformaCargando] = useState(false)
+  const [tenantsDePlataformaFallo, setTenantsDePlataformaFallo] = useState(false)
 
   /** Contrato de invalidación: ver `Tenants.tsx` — mismo patrón en las cuatro pantallas raíz. */
   const generacion = useRef(0)
@@ -86,6 +91,7 @@ export function Usuarios() {
       const respuesta = await api.get<PaginaDe<UsuarioListado>>(`/usuarios${parametros}`)
       if (generacion.current !== token) return
       setPagina(respuesta)
+      setFiltroTenant((prev) => seleccionVigente(opcionesDeTenant(respuesta.items), prev))
       setError('')
     } catch (e) {
       if (generacion.current !== token) return
@@ -98,6 +104,7 @@ export function Usuarios() {
 
   function buscar(termino: string) {
     if (ocupado) return
+    setBusquedaAplicada(termino)
     void cargar(++generacion.current, termino)
   }
 
@@ -113,10 +120,12 @@ export function Usuarios() {
    * (`tamanio` 25), así que un tenant sin usuario ahí quedaba imposible de asignar. Se pide
    * SOLO para un actor de plataforma — `GET /plataforma/tenants` es `SoloPlataforma` y jamás
    * 403 para este actor, pero un admin de tenant no debe enumerar tenants (spec S5) — y el
-   * filtro de la tabla sigue sin tocar (design D15, sin segunda consulta ahí). */
-  useEffect(() => {
-    if (!esPlataforma) return
-
+   * filtro de la tabla sigue sin tocar (design D15, sin segunda consulta ahí).
+   *
+   * El fallo NO se traga (`react-async-state` regla 7): sin universo el `<select>` requerido
+   * quedaría vacío y el alta sería imposible sin decir por qué. Se rinde el error y abrir "Nuevo"
+   * reintenta, que es el único momento en que el universo hace falta. */
+  const cargarTenantsDePlataforma = useCallback(() => {
     const token = ++generacionTenants.current
     setTenantsDePlataformaCargando(true)
     clienteDeOrganizacion
@@ -124,18 +133,36 @@ export function Usuarios() {
       .then((lista) => {
         if (generacionTenants.current !== token) return
         setTenantsDePlataforma(lista)
+        setTenantsDePlataformaFallo(false)
       })
       .catch(() => {
         if (generacionTenants.current !== token) return
         setTenantsDePlataforma([])
+        setTenantsDePlataformaFallo(true)
+        setError(ERROR_TENANTS)
       })
       .finally(() => {
         if (generacionTenants.current === token) setTenantsDePlataformaCargando(false)
       })
-  }, [esPlataforma])
+  }, [])
+
+  useEffect(() => {
+    if (!esPlataforma) return
+
+    cargarTenantsDePlataforma()
+  }, [esPlataforma, cargarTenantsDePlataforma])
+
+  /** El alta de un actor de plataforma NO puede mandarse sin universo de tenants: el `<select>` es
+   * `required` pero mientras está `disabled` la validación HTML del formulario no lo mira, así que
+   * el POST saldría con `idTenant: null` y el servidor lo rechazaría con 400 `tenant_requerido`.
+   * Guardar queda inerte en esa ventana (`react-async-state` regla 5) y `guardar()` lo re-chequea,
+   * porque un doble click en el mismo tick le gana al atributo `disabled` (regla 9). */
+  const universoDeTenantsIndisponible =
+    esPlataforma && (tenantsDePlataformaCargando || tenantsDePlataformaFallo)
 
   async function guardar() {
     if (!formulario || ocupado) return
+    if (formulario.id === null && universoDeTenantsIndisponible) return
 
     const datos = formulario
     const token = ++generacion.current
@@ -164,10 +191,6 @@ export function Usuarios() {
           estado: datos.estado,
         }
         await api.put(`/usuarios/${datos.id}`, edicion)
-
-        if (datos.password) {
-          await api.post(`/usuarios/${datos.id}/password`, { passwordNueva: datos.password })
-        }
         mensajeOk = `Usuario "${datos.usuario}" actualizado.`
       }
     } catch (e) {
@@ -179,22 +202,43 @@ export function Usuarios() {
     }
 
     if (generacion.current !== token) return
+
+    // El cambio de contraseña es una SEGUNDA escritura y lleva su propio try: el PUT de arriba ya
+    // commiteó, así que un fallo acá no puede reportarse como "no se pudo guardar"
+    // (`react-async-state` regla 6). Se avisa exactamente qué quedó hecho y qué no.
+    if (datos.id !== null && datos.password) {
+      try {
+        await api.post(`/usuarios/${datos.id}/password`, { passwordNueva: datos.password })
+      } catch (e) {
+        if (generacion.current !== token) return
+        const detalle = e instanceof ErrorApi ? e.message : 'Reintentá el cambio de contraseña.'
+        mensajeOk = `Usuario "${datos.usuario}" actualizado, pero no se pudo cambiar la contraseña. ${detalle}`
+      }
+    }
+
     setFormulario(null)
     await refrescarTrasEscribir(token, mensajeOk)
   }
 
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
-   * commiteó nunca se reporta como fallida (`react-async-state` regla 6). */
+   * commiteó nunca se reporta como fallida (`react-async-state` regla 6). Refresca con el término
+   * REALMENTE aplicado, no con el borrador del input: tipear sin buscar y dar de baja una fila no
+   * puede angostar la tabla por un texto que el operador nunca aplicó.
+   *
+   * `ocupado` se apaga en el `finally` SIN mirar la generación, a diferencia del resto de las
+   * aplicaciones de estado: mientras hay una escritura en vuelo la pantalla bloquea todo lo que
+   * podría supersederla (regla 9), así que la bandera nunca puede ser la de una operación más
+   * nueva — y salir por el chequeo de generación la dejaría prendida para siempre. */
   async function refrescarTrasEscribir(token: number, mensajeOk: string) {
-    if (generacion.current !== token) return
-
-    setAviso(mensajeOk)
     try {
-      await cargar(token, busqueda, true)
+      if (generacion.current !== token) return
+
+      setAviso(mensajeOk)
+      await cargar(token, busquedaAplicada, true)
     } catch {
       if (generacion.current === token) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
     } finally {
-      if (generacion.current === token) setOcupado(false)
+      setOcupado(false)
     }
   }
 
@@ -232,18 +276,12 @@ export function Usuarios() {
   // sigue rigiendo el FILTRO de la tabla (design D15) — solo el selector del ALTA cambia de fuente.
   const filas = pagina?.items ?? []
   const opcionesTenant = opcionesDeTenant(filas)
-  const tenantVigente = opcionesTenant.some((o) => o.valor === filtroTenant) ? filtroTenant : SIN_FILTRO
+  const tenantVigente = seleccionVigente(opcionesTenant, filtroTenant)
   const visibles = filtrarPorTenant(filas, tenantVigente)
 
-  // El alta necesita un tenant REAL: la opción de personal de plataforma no es un id y el
-  // servidor la rechazaría para cualquier rol que no sea root. Para un actor de plataforma sale
-  // del universo completo pedido arriba (tarea 2.17, gap de tamaño de página); un admin de
-  // tenant nunca ve el selector, así que su rama solo necesita ser un valor válido, no el mejor.
-  const tenantsAsignables = esPlataforma
-    ? [...tenantsDePlataforma]
-        .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
-        .map((t) => ({ valor: String(t.id), etiqueta: t.nombre }))
-    : opcionesTenant.filter((o) => o.valor !== VALOR_SIN_TENANT)
+  // El selector del alta solo se rinde para un actor de plataforma (`ofreceTenant`), así que su
+  // única fuente es el universo pedido arriba.
+  const tenantsAsignables = opcionesDeTenantAsignable(tenantsDePlataforma)
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
@@ -271,6 +309,8 @@ export function Usuarios() {
           setFormulario({ ...FORMULARIO_VACIO })
           setAviso('')
           setError('')
+          // Reintento del universo de tenants: abrir el alta es el único momento en que hace falta.
+          if (esPlataforma && tenantsDePlataformaFallo) cargarTenantsDePlataforma()
         }}
         disabled={ocupado}
       >
@@ -293,6 +333,7 @@ export function Usuarios() {
             tenants={tenantsAsignables}
             ofreceTenant={esPlataforma}
             tenantsCargando={esPlataforma ? tenantsDePlataformaCargando : cargando}
+            tenantIndisponible={universoDeTenantsIndisponible}
             guardando={ocupado}
             onCambio={setFormulario}
             onGuardar={guardar}
@@ -437,15 +478,16 @@ function EtiquetaEstado({ estado }: { estado: EstadoUsuario }) {
 /**
  * `tenants` es el conjunto de tenants ASIGNABLES, y solo se ofrece a un actor de plataforma
  * (`ofreceTenant`): un admin de tenant no enumera tenants — crea siempre dentro del suyo y el
- * servidor se lo impone (spec S5). Para un actor de plataforma sale del universo completo pedido
- * vía `clienteDeOrganizacion.listarTenants()` (tarea 2.17, gap de tamaño de página): las filas ya
- * cargadas de `Usuarios` solo cubren la página actual, así que un tenant sin usuario ahí quedaba
- * imposible de asignar.
+ * servidor se lo impone (spec S5).
  *
  * El selector espeja `PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance`, que sigue siendo la
  * autoridad: root SIEMPRE es de plataforma (tenant nulo) y cualquier otro rol SIEMPRE necesita
- * uno. Acá eso es guía — evita mandar una combinación que el servidor ya rechaza con 403 o con
- * 400 `tenant_requerido`, y si igual se manda, el 400 se rinde por el camino de error de siempre.
+ * uno. La rama de rol root es DEFENSA EN PROFUNDIDAD, no un camino vivo: `GET /roles`
+ * (`PoliticaDeRoles.RolesAsignablesPor`) no devuelve Root para NINGÚN actor, ni siquiera para un
+ * root, así que la opción no llega al `<select>` de rol y la combinación rol-root-con-tenant no es
+ * alcanzable desde esta pantalla. La rama existe por si el catálogo de roles cambiara. Lo que sí
+ * es camino vivo es el `required` del tenant para cualquier otro rol: sin él el servidor contesta
+ * 400 `tenant_requerido`, y ese error se rinde por el camino de siempre.
  */
 function FormularioUsuario({
   valor,
@@ -453,6 +495,7 @@ function FormularioUsuario({
   tenants,
   ofreceTenant,
   tenantsCargando,
+  tenantIndisponible,
   guardando,
   onCambio,
   onGuardar,
@@ -463,6 +506,7 @@ function FormularioUsuario({
   tenants: OpcionDeFiltro[]
   ofreceTenant: boolean
   tenantsCargando: boolean
+  tenantIndisponible: boolean
   guardando: boolean
   onCambio: (f: Formulario) => void
   onGuardar: () => void
@@ -470,6 +514,7 @@ function FormularioUsuario({
 }) {
   const esNuevo = valor.id === null
   const esRolDePlataforma = valor.rolId === ROL.Root
+  const sinTenantAsignable = esNuevo && ofreceTenant && tenantIndisponible
 
   return (
     <form
@@ -523,8 +568,7 @@ function FormularioUsuario({
           value={valor.rolId}
           onChange={(e) => {
             // El tenant se limpia en el ESTADO, no solo al pintarlo: el alta manda `idTenant` tal
-            // cual, así que un valor que quedara acá viajaría con un rol root y el servidor lo
-            // rechazaría con 403.
+            // cual. Defensa en profundidad — ver el doc-comment: `GET /roles` no ofrece Root.
             const rolId = Number(e.target.value)
             onCambio({ ...valor, rolId, idTenant: rolId === ROL.Root ? null : valor.idTenant })
           }}
@@ -549,7 +593,7 @@ function FormularioUsuario({
             onChange={(e) =>
               onCambio({ ...valor, idTenant: e.target.value === '' ? null : Number(e.target.value) })
             }
-            disabled={guardando || tenantsCargando || esRolDePlataforma}
+            disabled={guardando || tenantsCargando || esRolDePlataforma || sinTenantAsignable}
             required
           >
             <option value="">
@@ -557,7 +601,9 @@ function FormularioUsuario({
                 ? 'Sin tenant (plataforma)'
                 : tenantsCargando
                   ? 'Cargando…'
-                  : 'Elegí un tenant'}
+                  : sinTenantAsignable
+                    ? 'No se pudo cargar la lista'
+                    : 'Elegí un tenant'}
             </option>
             {tenants.map((t) => (
               <option key={t.valor} value={t.valor}>
@@ -602,7 +648,11 @@ function FormularioUsuario({
       </div>
 
       <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success rounded-0" disabled={guardando}>
+        <button
+          type="submit"
+          className="btn btn-success rounded-0"
+          disabled={guardando || sinTenantAsignable}
+        >
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
         <button
