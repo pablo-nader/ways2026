@@ -1363,3 +1363,166 @@ describe('Usuarios (slice 5 — cierre de las entradas arrastradas de la slice 2
     expect(screen.queryByText(/No se pudo cargar la lista de tenants/)).not.toBeInTheDocument()
   })
 })
+
+// stage-20-organizacion-relaciones-y-bajas, slice 5, judgment-day ronda 1 (C1, C2 y C4).
+
+/** Un `keydown` despachado DIRECTAMENTE sobre el buscador, que con la puerta abierta está
+ * deshabilitado. Ningún operador puede llegar acá —un input inerte no recibe teclas del navegador—
+ * y por eso mismo es la palanca POR DEBAJO del confound (`mutation-proof-tests` regla 3): es la
+ * única forma de acuñar una generación en la ventana en que la puerta está abierta y ver qué hace
+ * el token de la escritura. Con el bloqueo revertido, esta MISMA tecla es alcanzable a mano. */
+function enterEnElBuscador() {
+  fireEvent.keyDown(screen.getByPlaceholderText('Buscar usuario o mail…'), { key: 'Enter' })
+}
+
+describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña al confirmar)', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiPostMock.mockResolvedValue(undefined)
+    apiPutMock.mockResolvedValue(undefined)
+    apiDeleteMock.mockResolvedValue(undefined)
+    usuarioActual = autenticadoFixture()
+  })
+
+  /**
+   * Cláusula bajo prueba: `bloqueado = ocupado || baja !== null` en TODOS los `disabled` de la
+   * pantalla. Con `ocupado` solo, la puerta abierta dejaba vivos Guardar, Buscar, el buscador,
+   * Nuevo, Editar y Baja: cualquiera de ellos acuñaba una generación nueva y el DELETE que salía
+   * después ya no aplicaba nada (`react-async-state` regla 9 — bloquear la ventana, no reconciliar
+   * tokens).
+   */
+  it('con la puerta abierta no queda ninguna otra acción alcanzable', async () => {
+    const usuario = userEvent.setup()
+    montar([cuentaDeTenant])
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+
+    const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
+    expect(screen.getByPlaceholderText('Buscar usuario o mail…')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Nuevo' })).toBeDisabled()
+    expect(screen.getByLabelText('Tenant')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Editar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Baja' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    // El botón del formulario dice "Guardar", no "Guardando…": no hay ninguna escritura en vuelo,
+    // solo una puerta abierta.
+    expect(screen.queryByRole('button', { name: 'Guardando…' })).not.toBeInTheDocument()
+    expect(within(puerta).getByRole('button', { name: 'Confirmar baja' })).toBeEnabled()
+    expect(within(puerta).getByRole('button', { name: 'Cancelar' })).toBeEnabled()
+
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(apiDeleteMock).toHaveBeenCalledWith('/usuarios/50')
+  })
+
+  /**
+   * Cláusula bajo prueba: `const token = ++generacion.current` como PRIMERA sentencia síncrona de
+   * `confirmarBaja`, y la ausencia del chequeo de generación posterior a la red. Con el token
+   * acuñado al ABRIR la puerta, una búsqueda en el medio lo dejaba viejo: el DELETE salía igual, el
+   * 204 volvía y el `if (generacion.current !== token) return` se lo tragaba — la fila seguía
+   * listada, la puerta seguía abierta y cada click repetía un DELETE silencioso.
+   */
+  it('una generación acuñada entre abrir y confirmar no se traga el 204', async () => {
+    const usuario = userEvent.setup()
+    montar([cuentaDeTenant])
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+
+    await act(async () => {
+      enterEnElBuscador()
+    })
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('Usuario "vendedor.sur" dado de baja.')).toBeInTheDocument(),
+    )
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * Cláusula bajo prueba: que `cancelarBaja` NO haga `++generacion.current`. Cancelar no supersede
+   * nada —solo cierra la puerta—, y el incremento descartaba una lectura en vuelo dejando sin
+   * ejecutar el `finally` gateado de `cargar`: la pantalla se quedaba en "Cargando…" para siempre,
+   * sin tabla, sin error y sin nada que apretar.
+   */
+  it('cancelar no clava la pantalla cuando hay una búsqueda en vuelo', async () => {
+    const usuario = userEvent.setup()
+    let resolverBusqueda!: (pagina: PaginaDe<UsuarioListado>) => void
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta === '/plataforma/tenants') return Promise.resolve(tenantsDesdeFilas([cuentaDeTenant]))
+      if (!ruta.startsWith('/usuarios')) return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+
+      cargas += 1
+      if (cargas === 1) {
+        return Promise.resolve<PaginaDe<UsuarioListado>>({
+          items: [cuentaDeTenant],
+          total: 1,
+          pagina: 1,
+          tamanio: 20,
+        })
+      }
+
+      return new Promise<PaginaDe<UsuarioListado>>((resolver) => {
+        resolverBusqueda = resolver
+      })
+    })
+
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    await act(async () => {
+      enterEnElBuscador()
+    })
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolverBusqueda({ items: [cuentaDeTenant], total: 1, pagina: 1, tamanio: 20 })
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.queryByText('Cargando…')).not.toBeInTheDocument())
+    expect(screen.getByText('vendedor.sur')).toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `setError('')` de `cancelarBaja`. Tras un 409 la puerta queda abierta
+   * con el motivo en rojo al lado; cancelarla sin limpiarlo dejaba el banner huérfano, hablando de
+   * una baja que ya nadie está por hacer.
+   */
+  it('cancelar después de un rechazo se lleva el motivo con la puerta', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(409, 'usuario_en_uso', 'No se puede dar de baja el usuario porque hay 7 ventas a su nombre.'),
+    )
+    montar([cuentaDeTenant])
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+    await waitFor(() => expect(screen.getByText(/7 ventas a su nombre/)).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText(/7 ventas a su nombre/)).not.toBeInTheDocument()
+  })
+})

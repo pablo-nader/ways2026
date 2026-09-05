@@ -89,8 +89,10 @@ export function Usuarios() {
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [ocupado, setOcupado] = useState(false)
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
-  /** Baja pendiente de confirmación, con su token capturado al abrir la puerta: ver `Tenants.tsx`. */
-  const [baja, setBaja] = useState<{ fila: UsuarioListado; token: number } | null>(null)
+  /** Baja pendiente de confirmación: ver `Tenants.tsx`. La puerta es MODAL —`bloqueado` deja
+   * inerte el resto de la pantalla mientras está abierta— y NO acuña token: eso lo hace la
+   * escritura, al confirmar. */
+  const [baja, setBaja] = useState<UsuarioListado | null>(null)
   const [tenantsDePlataforma, setTenantsDePlataforma] = useState<TenantListado[]>([])
   const [tenantsDePlataformaCargando, setTenantsDePlataformaCargando] = useState(false)
   const [tenantsDePlataformaFallo, setTenantsDePlataformaFallo] = useState(false)
@@ -312,28 +314,39 @@ export function Usuarios() {
 
   /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia.
    * Reemplaza al `confirm()` nativo: la puerta tiene que quedar inerte mientras el DELETE está en
-   * vuelo, y un diálogo del navegador no puede. */
+   * vuelo, y un diálogo del navegador no puede. Abrir NO acuña generación: no hay escritura
+   * todavía. */
   function pedirBaja(u: UsuarioListado) {
     if (ocupadoRef.current) return
 
-    setBaja({ fila: u, token: ++generacion.current })
+    setBaja(u)
     setError('')
     setErrorPassword('')
     setErrorAlta('')
     setAviso('')
   }
 
+  /** Cancelar no supersede nada: solo cierra la puerta. Acá el `++generacion.current` era además el
+   * único camino ALCANZABLE que clavaba la pantalla: con una búsqueda en vuelo, descartarla dejaba
+   * sin ejecutar el `finally` gateado de `cargar` y "Cargando…" quedaba para siempre. Limpia los
+   * avisos en simetría con la apertura, para no dejar un 409 en rojo sin puerta al lado. */
   function cancelarBaja() {
     if (ocupadoRef.current) return
 
-    ++generacion.current
     setBaja(null)
+    setError('')
+    setErrorPassword('')
+    setErrorAlta('')
+    setAviso('')
   }
 
   async function confirmarBaja() {
     if (!baja || ocupadoRef.current) return
 
-    const { fila, token } = baja
+    // El token se acuña ACÁ, primera sentencia síncrona de la escritura (`react-async-state`
+    // regla 2): ver `Tenants.tsx`.
+    const fila = baja
+    const token = ++generacion.current
     ocupadoRef.current = true
     setOcupado(true)
     setError('')
@@ -344,16 +357,16 @@ export function Usuarios() {
       try {
         await api.delete(`/usuarios/${fila.id}`)
       } catch (e) {
-        // La copia la elige el `codigo` (`usuario_en_uso` y los rechazos preexistentes de
-        // `PoliticaDeRoles`), nunca el `mensaje` — que igual se rinde porque es lo único que
-        // nombra QUÉ hay a nombre de la cuenta.
-        if (generacion.current === token) setError(copiaDeFalloDeBaja(e, 'el usuario'))
+        // Un rechazo SIEMPRE se rinde, con la puerta abierta al lado del motivo. La copia la elige
+        // el `codigo` (`usuario_en_uso` y los rechazos preexistentes de `PoliticaDeRoles`), nunca
+        // el `mensaje` — que igual se rinde porque es lo único que nombra QUÉ hay a nombre de la
+        // cuenta.
+        setError(copiaDeFalloDeBaja(e, 'el usuario'))
 
         return
       }
 
-      if (generacion.current !== token) return
-
+      // Un 204 SIEMPRE cierra la puerta y refresca; la generación solo gobierna el REFRESCO.
       setBaja(null)
       await refrescarTrasEscribir(
         token,
@@ -365,6 +378,11 @@ export function Usuarios() {
       setOcupado(false)
     }
   }
+
+  /** La puerta abierta bloquea la pantalla entera, no solo la escritura en vuelo: ver `Tenants.tsx`.
+   * Es lo que hace que la búsqueda —el único bumper de generación que quedaba alcanzable con la
+   * puerta abierta— no pueda dispararse mientras el operador decide. */
+  const bloqueado = ocupado || baja !== null
 
   // El backend valida igual; esto solo evita mostrar botones que van a fallar.
   const puedeEditar = (u: UsuarioListado) =>
@@ -390,13 +408,13 @@ export function Usuarios() {
         value={busqueda}
         onChange={(e) => setBusqueda(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && buscar(busqueda)}
-        disabled={ocupado}
+        disabled={bloqueado}
       />
       <button
         type="button"
         className="btn btn-sm btn-outline-light rounded-0"
         onClick={() => buscar(busqueda)}
-        disabled={ocupado}
+        disabled={bloqueado}
       >
         Buscar
       </button>
@@ -416,7 +434,7 @@ export function Usuarios() {
             cargarTenantsDePlataforma()
           }
         }}
-        disabled={ocupado}
+        disabled={bloqueado}
       >
         Nuevo
       </button>
@@ -439,7 +457,7 @@ export function Usuarios() {
 
         {baja && (
           <ConfirmacionDeBaja
-            titulo={`al usuario "${baja.fila.usuario}"`}
+            titulo={`al usuario "${baja.usuario}"`}
             ocupado={ocupado}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
@@ -456,6 +474,7 @@ export function Usuarios() {
             tenantsCargando={esPlataforma ? tenantsDePlataformaCargando : cargando}
             tenantIndisponible={universoDeTenantsIndisponible}
             guardando={ocupado}
+            bloqueado={bloqueado}
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={() => {
@@ -485,6 +504,7 @@ export function Usuarios() {
                     className="form-select rounded-0"
                     value={tenantVigente}
                     onChange={(e) => setFiltroTenant(e.target.value)}
+                    disabled={bloqueado}
                   >
                     <option value={SIN_FILTRO}>Todos</option>
                     {opcionesTenant.map((o) => (
@@ -547,7 +567,7 @@ export function Usuarios() {
                               setErrorPassword('')
                               setErrorAlta('')
                             }}
-                            disabled={ocupado}
+                            disabled={bloqueado}
                           >
                             Editar
                           </button>
@@ -562,7 +582,7 @@ export function Usuarios() {
                                 `Usuario "${u.usuario}" desbloqueado.`,
                               )
                             }
-                            disabled={ocupado}
+                            disabled={bloqueado}
                           >
                             Desbloquear
                           </button>
@@ -572,7 +592,7 @@ export function Usuarios() {
                             type="button"
                             className="btn btn-sm btn-outline-danger rounded-0"
                             onClick={() => pedirBaja(u)}
-                            disabled={ocupado}
+                            disabled={bloqueado}
                           >
                             Baja
                           </button>
@@ -630,6 +650,7 @@ function FormularioUsuario({
   tenantsCargando,
   tenantIndisponible,
   guardando,
+  bloqueado,
   onCambio,
   onGuardar,
   onCancelar,
@@ -640,7 +661,11 @@ function FormularioUsuario({
   ofreceTenant: boolean
   tenantsCargando: boolean
   tenantIndisponible: boolean
+  /** Solo gobierna la ETIQUETA del botón: "Guardando…" es cierto de una escritura en vuelo, no de
+   * una puerta de confirmación abierta. */
   guardando: boolean
+  /** Escritura en vuelo O puerta de confirmación abierta: gobierna todo `disabled`. */
+  bloqueado: boolean
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
@@ -726,7 +751,7 @@ function FormularioUsuario({
             onChange={(e) =>
               onCambio({ ...valor, idTenant: e.target.value === '' ? null : Number(e.target.value) })
             }
-            disabled={guardando || tenantsCargando || esRolDePlataforma || sinTenantAsignable}
+            disabled={bloqueado || tenantsCargando || esRolDePlataforma || sinTenantAsignable}
             required
           >
             <option value="">
@@ -784,7 +809,7 @@ function FormularioUsuario({
         <button
           type="submit"
           className="btn btn-success rounded-0"
-          disabled={guardando || sinTenantAsignable}
+          disabled={bloqueado || sinTenantAsignable}
         >
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
@@ -792,7 +817,7 @@ function FormularioUsuario({
           type="button"
           className="btn btn-outline-secondary rounded-0"
           onClick={onCancelar}
-          disabled={guardando}
+          disabled={bloqueado}
         >
           Cancelar
         </button>

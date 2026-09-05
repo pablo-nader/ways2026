@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Empresas } from './Empresas'
@@ -440,5 +440,129 @@ describe('Empresas (stage-20, slice 5 — baja lógica)', () => {
     await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
 
     expect(botonDeBajaDe('Sur SRL')).toBeEnabled()
+  })
+})
+
+// stage-20-organizacion-relaciones-y-bajas, slice 5, judgment-day ronda 1 (C1, C4 y C5). Mismo
+// patrón que `Tenants.test.tsx`, replicado en la misma PR (`react-async-state` regla 10).
+
+describe('Empresas (slice 5, ronda 1 — la puerta es modal y el token se acuña al confirmar)', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiPutMock.mockResolvedValue(undefined)
+    apiDeleteMock.mockResolvedValue(undefined)
+    usuarioActual = usuarioFixture()
+  })
+
+  /** Cláusula bajo prueba: `bloqueado = ocupado !== null || baja !== null` en todos los `disabled`
+   * — ver el test gemelo de `Tenants.test.tsx`. */
+  it('con la puerta abierta no queda ninguna otra acción alcanzable', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
+
+    await usuario.click(
+      within(screen.getByRole('row', { name: /Sur SRL/ })).getAllByRole('button', { name: 'Editar' })[0],
+    )
+    await usuario.click(botonDeBajaDe('Este SRL'))
+
+    const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
+    for (const boton of [
+      ...screen.getAllByRole('button', { name: 'Editar' }),
+      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Guardar' }),
+    ]) {
+      expect(boton).toBeDisabled()
+    }
+    expect(screen.getByLabelText('Razón social')).toBeDisabled()
+    expect(screen.getByLabelText('Tenant')).toBeDisabled()
+    expect(within(puerta).getByRole('button', { name: 'Confirmar baja' })).toBeEnabled()
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas') return Promise.resolve([empresaSur, empresaAnexo])
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(apiDeleteMock).toHaveBeenCalledWith('/empresas/12')
+    expect(screen.queryByText('Este SRL')).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: el token acuñado al CONFIRMAR — ver el test gemelo de `Tenants.test.tsx`,
+   * incluido el porqué de bajar hasta el `<form>` para acuñar una generación en esa ventana. */
+  it('una generación acuñada entre abrir y confirmar no se traga el 204', async () => {
+    const usuario = userEvent.setup()
+    const { container } = montar()
+    await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
+
+    await usuario.click(
+      within(screen.getByRole('row', { name: /Sur SRL/ })).getAllByRole('button', { name: 'Editar' })[0],
+    )
+    await usuario.click(botonDeBajaDe('Este SRL'))
+
+    const form = container.querySelector('form')
+    if (!form) throw new Error('no hay formulario de edición abierto')
+    await act(async () => {
+      fireEvent.submit(form)
+    })
+    await waitFor(() => expect(screen.getByText('Se actualizó "Sur SRL".')).toBeInTheDocument())
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/empresas') return Promise.resolve([empresaSur, empresaAnexo])
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(screen.getByText('Se dio de baja la empresa "Este SRL".')).toBeInTheDocument())
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText('Este SRL')).not.toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  /** Cláusula bajo prueba: el `setError('')` de `cancelarBaja` — ver `Tenants.test.tsx`. */
+  it('cancelar después de un rechazo se lleva el motivo con la puerta', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(409, 'empresa_en_uso', 'No se puede dar de baja la empresa porque tiene 4 ventas.'),
+    )
+    montar()
+    await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('Sur SRL'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+    await waitFor(() => expect(screen.getByText(/porque tiene 4 ventas/)).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText(/porque tiene 4 ventas/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: `ARRASTRE_DE_EMPRESA`. `EmpresaListado` NO trae un contador de puntos de
+   * venta —a diferencia de `TenantListado`, que trae los tres—, así que la puerta no puede decir
+   * cuántos son y no inventa un número: nombra la familia y aclara "activos", que es lo que la
+   * cascada efectivamente se lleva.
+   */
+  it('la puerta nombra el arrastre sin inventar una cantidad que la fila no trae', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('Sur SRL'))
+
+    const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
+    expect(within(puerta).getAllByRole('listitem').map((i) => i.textContent)).toEqual([
+      'Sus puntos de venta activos',
+    ])
+    expect(puerta).toHaveTextContent('También se dan de baja:')
+    expect(puerta).not.toHaveTextContent(/junto con él/)
   })
 })

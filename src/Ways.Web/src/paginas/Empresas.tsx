@@ -22,6 +22,11 @@ const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista.
 const AVISO_REFRESCO_FALLIDO_BAJA =
   'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
+/** `EmpresaListado` no trae un contador de puntos de venta, así que la puerta no puede decir
+ * cuántos son. Se nombra la familia sin cantidad —y "activos", que es lo que efectivamente cae en
+ * la cascada— en vez de inventar un número que la fila no tiene. */
+const ARRASTRE_DE_EMPRESA = ['Sus puntos de venta activos'] as const
+
 /**
  * Lectura/edición/baja de empresas — el alta sigue siendo plataforma-only vía aprovisionamiento
  * (`NuevoTenant.tsx`); la baja (etapa 20) la puede ejecutar también un admin de tenant sobre las
@@ -44,8 +49,10 @@ export function Empresas() {
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [ocupado, setOcupado] = useState<number | null>(null)
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
-  /** Baja pendiente de confirmación, con su token capturado al abrir la puerta: ver `Tenants.tsx`. */
-  const [baja, setBaja] = useState<{ fila: EmpresaListado; token: number } | null>(null)
+  /** Baja pendiente de confirmación: ver `Tenants.tsx`. La puerta es MODAL —`bloqueado` deja
+   * inerte el resto de la pantalla mientras está abierta— y NO acuña token: eso lo hace la
+   * escritura, al confirmar. */
+  const [baja, setBaja] = useState<EmpresaListado | null>(null)
 
   /** Contrato de invalidación: ver `Tenants.tsx` — mismo patrón en las cuatro pantallas raíz. */
   const generacion = useRef(0)
@@ -122,26 +129,34 @@ export function Empresas() {
     }
   }
 
-  /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia. */
+  /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia.
+   * Abrir NO acuña generación: no hay escritura todavía. */
   function pedirBaja(empresa: EmpresaListado) {
     if (ocupadoRef.current) return
 
-    setBaja({ fila: empresa, token: ++generacion.current })
+    setBaja(empresa)
     setError('')
     setAviso('')
   }
 
+  /** Cancelar no supersede nada: solo cierra la puerta. Por eso no acuña generación —hacerlo
+   * descartaba una lectura en vuelo y clavaba la pantalla en "Cargando…"— y limpia los dos avisos,
+   * en simetría con la apertura. */
   function cancelarBaja() {
     if (ocupadoRef.current) return
 
-    ++generacion.current
     setBaja(null)
+    setError('')
+    setAviso('')
   }
 
   async function confirmarBaja() {
     if (!baja || ocupadoRef.current) return
 
-    const { fila, token } = baja
+    // El token se acuña ACÁ, primera sentencia síncrona de la escritura (`react-async-state`
+    // regla 2): ver `Tenants.tsx`.
+    const fila = baja
+    const token = ++generacion.current
     ocupadoRef.current = true
     setOcupado(fila.id)
     setError('')
@@ -150,13 +165,13 @@ export function Empresas() {
       try {
         await clienteDeOrganizacion.eliminarEmpresa(fila.id)
       } catch (e) {
-        if (generacion.current === token) setError(copiaDeFalloDeBaja(e, 'la empresa'))
+        // Un rechazo SIEMPRE se rinde, con la puerta abierta al lado del motivo.
+        setError(copiaDeFalloDeBaja(e, 'la empresa'))
 
         return
       }
 
-      if (generacion.current !== token) return
-
+      // Un 204 SIEMPRE cierra la puerta y refresca; la generación solo gobierna el REFRESCO.
       setBaja(null)
       await refrescarTrasEscribir(
         token,
@@ -168,6 +183,9 @@ export function Empresas() {
       setOcupado(null)
     }
   }
+
+  /** La puerta abierta bloquea la pantalla entera, no solo la escritura en vuelo: ver `Tenants.tsx`. */
+  const bloqueado = ocupado !== null || baja !== null
 
   // Las opciones se derivan de las filas cargadas; si la selección vigente desaparece de la lista
   // (un refresco trajo otras filas), el filtro cae a "todos". Además de derivarlo acá, `cargar`
@@ -185,8 +203,8 @@ export function Empresas() {
 
         {baja && (
           <ConfirmacionDeBaja
-            titulo={`la empresa "${baja.fila.razonSocial}"`}
-            arrastra={['Sus puntos de venta']}
+            titulo={`la empresa "${baja.razonSocial}"`}
+            arrastra={ARRASTRE_DE_EMPRESA}
             ocupado={ocupado !== null}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
@@ -214,7 +232,7 @@ export function Empresas() {
                 maxLength={150}
                 value={formulario.razonSocial}
                 onChange={(e) => setFormulario({ ...formulario, razonSocial: e.target.value })}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
                 required
               />
             </div>
@@ -228,7 +246,7 @@ export function Empresas() {
                 maxLength={150}
                 value={formulario.nombreFantasia}
                 onChange={(e) => setFormulario({ ...formulario, nombreFantasia: e.target.value })}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
               />
             </div>
             <div className="col-md-3">
@@ -241,18 +259,18 @@ export function Empresas() {
                 maxLength={13}
                 value={formulario.cuit}
                 onChange={(e) => setFormulario({ ...formulario, cuit: e.target.value })}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
               />
             </div>
             <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success rounded-0" disabled={ocupado !== null}>
+              <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
                 {ocupado !== null ? 'Guardando…' : 'Guardar'}
               </button>
               <button
                 type="button"
                 className="btn btn-outline-secondary rounded-0"
                 onClick={() => setFormulario(null)}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
               >
                 Cancelar
               </button>
@@ -278,6 +296,7 @@ export function Empresas() {
                     className="form-select rounded-0"
                     value={tenantVigente}
                     onChange={(e) => setFiltroTenant(e.target.value)}
+                    disabled={bloqueado}
                   >
                     <option value={SIN_FILTRO}>Todos</option>
                     {opcionesTenant.map((o) => (
@@ -322,7 +341,7 @@ export function Empresas() {
                               cuit: e.cuit ?? '',
                             })
                           }
-                          disabled={ocupado !== null}
+                          disabled={bloqueado}
                         >
                           Editar
                         </button>
@@ -330,7 +349,7 @@ export function Empresas() {
                           type="button"
                           className="btn btn-sm btn-outline-danger rounded-0"
                           onClick={() => pedirBaja(e)}
-                          disabled={ocupado !== null}
+                          disabled={bloqueado}
                         >
                           Baja
                         </button>

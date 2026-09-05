@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PuntosVenta } from './PuntosVenta'
@@ -10,13 +10,14 @@ import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 // stage-20-organizacion-relaciones-y-bajas, slice 2 (tareas 2.11 y 2.13) y slice 5 (5.5, 5.7, 5.8).
 
 const apiGetMock = vi.fn()
+const apiPutMock = vi.fn()
 const apiDeleteMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: vi.fn(),
-    put: vi.fn(),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
     delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {
@@ -511,5 +512,97 @@ describe('PuntosVenta (stage-20, slice 5 — baja lógica)', () => {
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
     expect(botonDeBajaDe('PV Centro')).toBeEnabled()
+  })
+})
+
+// stage-20-organizacion-relaciones-y-bajas, slice 5, judgment-day ronda 1 (C1 y C4). Mismo patrón
+// que `Tenants.test.tsx`, replicado en la misma PR (`react-async-state` regla 10).
+
+describe('PuntosVenta (slice 5, ronda 1 — la puerta es modal y el token se acuña al confirmar)', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiPutMock.mockResolvedValue(undefined)
+    apiDeleteMock.mockResolvedValue(undefined)
+    usuarioActual = usuarioFixture()
+  })
+
+  /** Cláusula bajo prueba: `bloqueado = ocupado !== null || baja !== null` en todos los `disabled`
+   * — ver el test gemelo de `Tenants.test.tsx`. */
+  it('con la puerta abierta no queda ninguna otra acción alcanzable', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(
+      within(screen.getByRole('row', { name: /PV Centro/ })).getAllByRole('button', { name: 'Editar' })[0],
+    )
+    await usuario.click(botonDeBajaDe('PV Este'))
+
+    const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
+    for (const boton of [
+      ...screen.getAllByRole('button', { name: 'Editar' }),
+      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Guardar' }),
+    ]) {
+      expect(boton).toBeDisabled()
+    }
+    expect(screen.getByLabelText('Domicilio')).toBeDisabled()
+    expect(screen.getByLabelText('Empresa')).toBeDisabled()
+    expect(within(puerta).getByRole('button', { name: 'Confirmar baja' })).toBeEnabled()
+
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  /** Cláusula bajo prueba: el token acuñado al CONFIRMAR — ver el test gemelo de `Tenants.test.tsx`,
+   * incluido el porqué de bajar hasta el `<form>` para acuñar una generación en esa ventana. */
+  it('una generación acuñada entre abrir y confirmar no se traga el 204', async () => {
+    const usuario = userEvent.setup()
+    const { container } = montar()
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(
+      within(screen.getByRole('row', { name: /PV Centro/ })).getAllByRole('button', { name: 'Editar' })[0],
+    )
+    await usuario.click(botonDeBajaDe('PV Este'))
+
+    const form = container.querySelector('form')
+    if (!form) throw new Error('no hay formulario de edición abierto')
+    await act(async () => {
+      fireEvent.submit(form)
+    })
+    await waitFor(() => expect(screen.getByText('Se actualizó "PV Centro".')).toBeInTheDocument())
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('Se dio de baja el punto de venta "PV Este".')).toBeInTheDocument(),
+    )
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  /** Cláusula bajo prueba: el `setError('')` de `cancelarBaja` — ver `Tenants.test.tsx`. */
+  it('cancelar después de un rechazo se lleva el motivo con la puerta', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(409, 'punto_venta_en_uso', 'No se puede dar de baja el punto de venta porque tiene 5 ventas.'),
+    )
+    montar()
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('PV Centro'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+    await waitFor(() => expect(screen.getByText(/porque tiene 5 ventas/)).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText(/porque tiene 5 ventas/)).not.toBeInTheDocument()
   })
 })
