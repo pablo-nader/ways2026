@@ -1629,8 +1629,10 @@ the integration suite.
    instructed: it is a known fail-safe, the 409 names the table so the operator reads `clientes`,
    and the discriminator was not touched. `InicializadorDeBaseDeDatos.cs` does not appear in this
    diff.
-9. **Slice size, reported and not hidden.** The slice overflows the 800-line budget: production is
-   ~640 changed lines and the tests are ~1 500, for roughly **2 150** against a forecast of ~530.
+9. **Slice size, reported and not hidden.** The slice overflows the 800-line budget. Measured with
+   `git diff main --stat -- src tests`, not estimated: **2 682 insertions and 219 deletions across
+   14 files**, of which production is 681 insertions / 122 deletions and tests are 2 001 / 97 —
+   against a forecast of ~530.
    The forecast counted neither the transaction refactor of the four write paths, nor the six
    projection kills, nor the relocation's replacement assertions — all three arrived as slice-1
    judgment-day inputs after the estimate was written. The pre-authorized 4a/4b split was evaluated
