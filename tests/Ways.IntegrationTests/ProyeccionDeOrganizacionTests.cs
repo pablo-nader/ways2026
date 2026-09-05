@@ -215,6 +215,9 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
     private async Task DarDeBajaAlUsuarioAsync(int id) =>
         await DarDeBajaAsync(db => db.Usuarios.FirstAsync(u => u.Id == id));
 
+    private async Task DarDeBajaAlPuntoDeVentaAsync(int id) =>
+        await DarDeBajaAsync(db => db.PuntosVenta.FirstAsync(p => p.Id == id));
+
     private async Task DarDeBajaAsync<T>(Func<WaysDbContext, Task<T>> buscar)
         where T : Ways.Domain.Common.EntidadBase
     {
@@ -1197,5 +1200,119 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         Assert.NotNull(cuerpo);
 
         return cuerpo!;
+    }
+
+    // ---- etapa 20 slice 4: los siete predicados, MUERTOS por debajo del confound ---------------
+
+    /// <summary>
+    /// LA REGLA ÚNICA de <c>ServicioDeOrganizacion</c>, probada donde de verdad decide: dentro de
+    /// una proyección, toda subconsulta correlacionada declara su propio <c>DeletedAt == null</c>,
+    /// porque <c>IgnoreQueryFilters</c> se aplica a nivel CONSULTA y una proyección es una
+    /// expresión COMPONIBLE.
+    ///
+    /// Por qué esta prueba existe (entrada de judgment-day de la slice 1, items 1 y 2): en la
+    /// ronda 2 los tres predicados de nombre de dueño se agregaron y sus tres mutaciones
+    /// SOBREVIVIERON — no porque estuvieran mal, sino porque ningún llamador de producción apagaba
+    /// el filtro ambiente, así que el rojo no era alcanzable. La respuesta de
+    /// <c>mutation-proof-tests</c> a un mutante sobreviviente es RE-RUTEAR POR DEBAJO DEL
+    /// CONFOUND, no declararlo cerrado: el confound es el filtro ambiente, y se lo saca componiendo
+    /// la MISMA expresión de producción con <c>IgnoreQueryFilters(["BajaLogica"])</c>. Esa es la
+    /// razón por la que las tres proyecciones son <c>public static</c> (mismo criterio que
+    /// <c>InspectorDeUso.Renderizar</c>; el repo no usa <c>InternalsVisibleTo</c>).
+    ///
+    /// Las SEIS cláusulas mueren acá, cada una por su lado:
+    /// <list type="bullet">
+    /// <item>los tres <c>Count</c> de <c>ProyeccionDeTenant</c> — sin su predicado contarían
+    /// también al hijo dado de baja y el listado de tenants mentiría;</item>
+    /// <item>el nombre de tenant de <c>ProyeccionDeEmpresa</c> y los dos de
+    /// <c>ProyeccionDePuntoVenta</c> — sin su predicado mostrarían el nombre de un dueño dado de
+    /// baja, en vez del <c>null</c> que D13 pide para la anomalía.</item>
+    /// </list>
+    /// </summary>
+    [Fact]
+    public async Task LosPredicadosDeLasProyeccionesMuerenConElFiltroAmbienteApagado()
+    {
+        var sufijo = Guid.NewGuid().ToString("N")[..8];
+
+        var vivo = await SembrarTenantAsync($"Predicados-vivo-{sufijo}", nombreUsuarioAdmin: $"pred-a-{sufijo}");
+        var huerfano = await SembrarTenantAsync($"Predicados-baja-{sufijo}", nombreUsuarioAdmin: $"pred-b-{sufijo}");
+
+        // Hijos del tenant vivo que se dan de baja: son los que los tres contadores NO tienen que
+        // contar aunque la consulta externa apague el filtro.
+        var empresaDeBaja = await SembrarEmpresaAsync(vivo.Tenant.Id, $"Predicados anexo {sufijo} SRL");
+        var puntoDeBaja = await SembrarPuntoVentaAsync(
+            vivo.Tenant.Id, vivo.Empresa.Id, $"Predicados local {sufijo}");
+        var usuarioDeBaja = await SembrarUsuarioAsync(
+            vivo.Tenant.Id, $"pred-baja-{sufijo}", RolConocido.Vendedor);
+
+        await DarDeBajaALaEmpresaAsync(empresaDeBaja.Id);
+        await DarDeBajaAlUsuarioAsync(usuarioDeBaja.Id);
+        await DarDeBajaAlPuntoDeVentaAsync(puntoDeBaja.Id);
+
+        // El dueño dado de baja: su empresa y su punto de venta siguen vivos, así que son los
+        // huérfanos que D13 pide rendir con el nombre en null.
+        await DarDeBajaAlTenantAsync(huerfano.Tenant.Id);
+
+        // Y una empresa dada de baja con su punto de venta VIVO: es el único huérfano que prueba la
+        // tercera subconsulta (razón social de la empresa del punto de venta).
+        var puntoSinEmpresa = await SembrarPuntoVentaAsync(
+            vivo.Tenant.Id, empresaDeBaja.Id, $"Predicados sin empresa {sufijo}");
+
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        var tenantProyectado = await db.Tenants
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(t => t.Id == vivo.Tenant.Id)
+            .Select(ServicioDeOrganizacion.ProyeccionDeTenant(db))
+            .SingleAsync();
+
+        // Una empresa viva y una dada de baja; un punto de venta vivo, uno dado de baja y el que
+        // cuelga de la empresa dada de baja (que sigue vivo y sí cuenta); dos usuarios, uno de baja.
+        Assert.Equal(1, tenantProyectado.CantidadEmpresas);
+        Assert.Equal(2, tenantProyectado.CantidadPuntosVenta);
+        Assert.Equal(1, tenantProyectado.CantidadUsuarios);
+
+        var empresaHuerfana = await db.Empresas
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(e => e.Id == huerfano.Empresa.Id)
+            .Select(ServicioDeOrganizacion.ProyeccionDeEmpresa(db))
+            .SingleAsync();
+
+        Assert.Null(empresaHuerfana.NombreTenant);
+
+        var puntoHuerfano = await db.PuntosVenta
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(p => p.Id == huerfano.PuntoVenta.Id)
+            .Select(ServicioDeOrganizacion.ProyeccionDePuntoVenta(db))
+            .SingleAsync();
+
+        Assert.Null(puntoHuerfano.NombreTenant);
+
+        var puntoConEmpresaDeBaja = await db.PuntosVenta
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(p => p.Id == puntoSinEmpresa.Id)
+            .Select(ServicioDeOrganizacion.ProyeccionDePuntoVenta(db))
+            .SingleAsync();
+
+        Assert.Null(puntoConEmpresaDeBaja.RazonSocialEmpresa);
+
+        // Control: con dueños VIVOS las mismas expresiones sí traen el nombre. Sin esto, un
+        // predicado que apagara la proyección entera pasaría las cuatro aserciones de nulidad.
+        var empresaViva = await db.Empresas
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(e => e.Id == vivo.Empresa.Id)
+            .Select(ServicioDeOrganizacion.ProyeccionDeEmpresa(db))
+            .SingleAsync();
+
+        Assert.Equal(vivo.Tenant.Nombre, empresaViva.NombreTenant);
+
+        var puntoVivo = await db.PuntosVenta
+            .IgnoreQueryFilters(["BajaLogica"])
+            .Where(p => p.Id == vivo.PuntoVenta.Id)
+            .Select(ServicioDeOrganizacion.ProyeccionDePuntoVenta(db))
+            .SingleAsync();
+
+        Assert.Equal(vivo.Tenant.Nombre, puntoVivo.NombreTenant);
+        Assert.Equal(vivo.Empresa.RazonSocial, puntoVivo.RazonSocialEmpresa);
     }
 }
