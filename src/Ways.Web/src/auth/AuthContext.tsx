@@ -2,6 +2,7 @@ import { createContext, useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, alPerderLaSesion, ErrorApi } from '../api/cliente'
 import type { UsuarioAutenticado } from '../api/tipos'
+import { olvidarPuntoVentaDeSesion } from '../puntoVenta/almacenDePuntoVenta'
 
 type EstadoAuth = {
   usuario: UsuarioAutenticado | null
@@ -40,6 +41,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mail,
       password,
     })
+    // Cada inicio de sesión vuelve a elegir el punto de venta: se olvida antes de publicar el
+    // usuario para que nada alcance a leer la elección de la sesión anterior.
+    olvidarPuntoVentaDeSesion()
     setUsuario(autenticado)
   }, [])
 
@@ -50,6 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Si ya estaba vencida no importa: igual limpiamos del lado del cliente.
       if (!(error instanceof ErrorApi && error.esNoAutenticado)) throw error
     } finally {
+      olvidarPuntoVentaDeSesion()
       setUsuario(null)
     }
   }, [])
