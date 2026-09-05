@@ -590,8 +590,8 @@ impossible by construction, and satisfies S5 (a filter can never disclose an out
   One mutation run for real, M19 below (dropping the `esPlataforma` guard on the new fetch),
   observed RED on the tenant-admin test, then reverted and observed GREEN again; M14-M18 stay
   valid unmodified. *(UT-R1; design D15, spec S5)*
-- [ ] 2.15 `judgment-day` round to a clean round.
-- [ ] 2.16 Open PR 2 `feat/stage20-slice2-proyeccion-web`, merge to `main` after the clean round.
+- [x] 2.15 `judgment-day` round to a clean round.
+- [x] 2.16 Open PR 2 `feat/stage20-slice2-proyeccion-web`, merge to `main` after the clean round.
 
 ### Mutation evidence — slice 2 (`mutation-proof-tests` rule 2, produced, not reasoned)
 
@@ -853,12 +853,12 @@ merits before anything can invoke it. Verify criterion V10 asserts the zero-call
 one-line knob in `InspectorDeUso`'s doc-comment (add the conjunct per branch, flip task 4.11's test,
 regenerate N3's golden) — record it, do not implement it.
 
-- [ ] 3.1 Modify `src/Ways.Application/Abstracciones/IWaysDbContext.cs` — add **exactly one** member,
+- [x] 3.1 Modify `src/Ways.Application/Abstracciones/IWaysDbContext.cs` — add **exactly one** member,
   `IModel Model { get; }`, with the doc-comment argument the interface itself supplies (`:150-152`:
   `DatabaseFacade` is the same EF Core abstraction any `DbContext` already exposes). **Zero
   implementation lines change** — `DbContext.Model` satisfies it implicitly and `rg ": IWaysDbContext"`
   over `src/` and `tests/` returns zero matches. *(design D1, C; verify criterion V7)*
-- [ ] 3.2 Create `src/Ways.Application/Organizacion/InventarioDeDependientes.cs` — **pure**: no
+- [x] 3.2 Create `src/Ways.Application/Organizacion/InventarioDeDependientes.cs` — **pure**: no
   database, no clock, no DI (D2), so N3's golden can be regenerated without a container.
   `ClasificacionDeDependiente { Excluido, Marcado, SinMarca }`, `RamaDeUso(Tabla, Columnas,
   PropiedadesDelPrincipal, Clasificacion)` with `UsaAncla => Clasificacion is Marcado`, and
@@ -867,18 +867,18 @@ regenerate N3's golden) — record it, do not implement it.
   `else` can throw). Branch predicates are built by zipping `fk.Properties` with
   `fk.PrincipalKey.Properties`, so composite `(id, id_tenant)` and alternate-key FKs need no special
   case, and `MovimientoStock` contributes **two** independent branches. *(BO-R4, BO-R5; design D3, A)*
-- [ ] 3.3 Same file — `Excluidos` as a `FrozenSet<Type>` with **exactly two** members,
+- [x] 3.3 Same file — `Excluidos` as a `FrozenSet<Type>` with **exactly two** members,
   `Ways.Domain.Auditoria.Auditoria` and `NumeracionCliente`, **each carrying its written reason in
   code** (B5: the audit trail is a record *about* the entity and the referenced row survives logical
   deletion; the provisioning counter is inserted by raw SQL in
   `AsignadorDeNumeroCliente.AsegurarContadorAsync`, is not an `EntidadBase`, and is not customer
   data). A carve-out emits **no branch at all**. *(BO-R6)*
-- [ ] 3.4 Same file — `Construir` throws `InvalidOperationException` **naming the CLR type and the
+- [x] 3.4 Same file — `Construir` throws `InvalidOperationException` **naming the CLR type and the
   FK** for the three *mechanical* impossibilities: an entity type with no mapped table, a `Marcado`
   type whose `created_at` column cannot be resolved, and an FK whose principal properties are not all
   readable from the anchor. These are build-time failures via N1, **never** production 500s.
   *(BO-R5; design A)*
-- [ ] 3.5 Create `src/Ways.Application/Organizacion/InspectorDeUso.cs` —
+- [x] 3.5 Create `src/Ways.Application/Organizacion/InspectorDeUso.cs` —
   `PrimeraDependenciaEnUsoAsync(Type tipoAncla, IReadOnlyList<object> valoresDeClave,
   DateTimeOffset ancla, CancellationToken)` returning the **name of the first blocking table** or
   `null`. One statement: `UNION ALL` of `SELECT '<tabla>' AS tabla WHERE EXISTS (SELECT 1 FROM
@@ -886,63 +886,100 @@ regenerate N3's golden) — record it, do not implement it.
   **caller's** connection/transaction, opened through `Database.OpenConnectionAsync` so
   `InterceptorDeContextoDeTenant` sets the RLS GUCs — **never** `Database.SqlQuery<T>` /
   `FromSqlRaw` against this model (the stage-1 slice-2 trap). *(BO-R4, BO-R7; design D5, D6, D)*
-- [ ] 3.6 Same file — **injection surface closed**: identifiers come from `IEntityType`/`IProperty`
+- [x] 3.6 Same file — **injection surface closed**: identifiers come from `IEntityType`/`IProperty`
   metadata only, are schema-qualified and double-quoted, and are **rejected by the generator** unless
   they match `^[a-z_][a-z0-9_]*$`; every anchor key value and the anchor's `CreatedAt` is a bound
   **parameter** (`ParametrosDeComando.Agregar`, the `AsignadorDeNumeroCliente` idiom). No
   user-supplied string ever reaches the statement. *(design D, Threat Matrix)*
-- [ ] 3.7 Same file — doc-comment records **OD4 as a one-line reversible knob**: no
+- [x] 3.7 Same file — doc-comment records **OD4 as a one-line reversible knob**: no
   `AND d.deleted_at IS NULL` conjunct is emitted, a soft-deleted dependent still blocks, and
   reversing it means adding that conjunct per branch, flipping task 4.11's test and regenerating
   N3's golden. Also record **side effect B**: RLS lives on the connection, so it still applies, and
   **no `id_tenant` conjunct is added** — an extra conjunct can only ever *narrow* the result, and a
   narrowing bug under-blocks, the one direction this stage refuses. *(BO-R7; design D6, E, OD4)*
-- [ ] 3.8 Modify the DI module (`src/Ways.Api/Programa.cs` or its registration file) — register
+- [x] 3.8 Modify the DI module (`src/Ways.Api/Programa.cs` or its registration file) — register
   `InspectorDeUso` **scoped**. **No caller until slice 4.** *(design File Changes)*
-- [ ] 3.9 **N1 — totality.** Create
+- [x] 3.9 **N1 — totality.** Create
   `tests/Ways.Application.Tests/Persistencia/InventarioDeDependientesTests.cs`: `Construir(db.Model,
   T)` succeeds for **all four** anchors (`Tenant`, `Empresa`, `PuntoVenta`, `Usuario`), and the
   emitted branch count equals `GetReferencingForeignKeys().Count()` **minus** the carved-out FKs — no
   FK is silently dropped. Built over the real Npgsql model on an **unopened** connection, the
   existing `ModeloDeOrganizacionTests.cs:17-30` pattern: **no container**. *(BO-R5; never degradable)*
-- [ ] 3.10 **N2 — the rule is read off the TABLE, not restated from the code.** Same file: for every
+- [x] 3.10 **N2 — the rule is read off the TABLE, not restated from the code.** Same file: for every
   branch, `rama.UsaAncla == entityType.GetProperties().Any(p => p.GetColumnName() == "created_at")`,
   computed **independently in the test**. **Mutation**: change the classifier to key on
   `EntidadTenant`, or invert it, or hardcode a type list — the test must go red each time. *(BO-R5;
   never degradable)*
-- [ ] 3.11 **N3 — the inventory golden (THE TRIP-WIRE).** Same file plus
+- [x] 3.11 **N3 — the inventory golden (THE TRIP-WIRE).** Same file plus
   `tests/Ways.Application.Tests/Persistencia/Fixtures/inventario-de-dependientes.txt`: a **sorted,
   checked-in** line per branch, `<ancla> | <tabla> | <columnas> | <bucket>`, including one `excluido`
   line per carve-out so the file also pins the two-member carve-out set. Any FK a future stage adds,
   removes, retargets or reclassifies produces a **diff naming the exact table and column**.
   Regeneration is a deliberate edit that must be justified line by line in the PR body (V8). *(BO-R5,
   BO-R6; never degradable — this is the executable form of the spec's completeness requirement)*
-- [ ] 3.12 [P] Assert the carve-out list contains **exactly** `Auditoria` and `NumeracionCliente` and
+- [x] 3.12 [P] Assert the carve-out list contains **exactly** `Auditoria` and `NumeracionCliente` and
   nothing else, and that neither contributes a branch for any of the four anchors. *(BO-R6)*
-- [ ] 3.13 [P] Create `tests/Ways.Application.Tests/Organizacion/InspectorDeUsoTests.cs` — statement
+- [x] 3.13 [P] Create `tests/Ways.Application.Tests/Organizacion/InspectorDeUsoTests.cs` — statement
   **rendering** (pure string assertions over `Construir` + the renderer): a `Marcado` branch carries
   the `created_at > @ancla` conjunct with a **strict** `>`; a `SinMarca` branch carries **only**
   `<fk> = @id`; a composite FK renders **two conjuncts**; an alternate-key principal reads its values
   off the anchor; identifiers are quoted and schema-qualified; a non-conforming identifier is
   **rejected**; the parameter count and binding order match the branch order; the outer `LIMIT 1` is
   present. *(BO-R2, BO-R4, BO-R5)*
-- [ ] 3.14 [P] **OD4 rendering assertion**: no rendered branch contains `deleted_at`. This is the
+- [x] 3.14 [P] **OD4 rendering assertion**: no rendered branch contains `deleted_at`. This is the
   cheap half of OD4 (the behavioural half is task 4.11). *(BO-R7; OD4)*
-- [ ] 3.15 [P] Rendering assertion for **BO-R8**: a nullable FK renders the plain `<fk> = @id`
+- [x] 3.15 [P] Rendering assertion for **BO-R8**: a nullable FK renders the plain `<fk> = @id`
   predicate with no `IS NULL` special case — `fk = @id` simply does not match `NULL`, so a shared
   catalogue row (`id_empresa IS NULL` on `Cliente`/`Proveedor`/`Oferta`/`ConfiguracionDeCatalogo<T>`)
   cannot block an empresa. The behavioural proof is task 4.21. *(BO-R8)*
-- [ ] 3.16 **[S]** Structural: `rg` over `src/` proves `InspectorDeUso` has **zero callers** in this
+- [x] 3.16 **[S]** Structural: `rg` over `src/` proves `InspectorDeUso` has **zero callers** in this
   slice's tree. Recorded as a file/state assertion, **not** a runtime kill. *(verify criterion V10)*
-- [ ] 3.17 **[S]** Structural: `IWaysDbContext.cs` gained **exactly one** member and
+- [x] 3.17 **[S]** Structural: `IWaysDbContext.cs` gained **exactly one** member and
   `rg ": IWaysDbContext"` over `src/` and `tests/` still returns zero hand-written implementations.
   *(verify criterion V7)*
-- [ ] 3.18 GATE GUARD + non-regression — re-assert V1-V6 and V13 (the guard's generated statement is
+- [x] 3.18 GATE GUARD + non-regression — re-assert V1-V6 and V13 (the guard's generated statement is
   the **only** SQL in the diff and it is read-only `SELECT`/`EXISTS`); Domain + Application suites
   green; `dotnet build Ways.slnx` clean.
 - [ ] 3.19 `judgment-day` round to a clean round.
 - [ ] 3.20 Open PR 3 `feat/stage20-slice3-inspector-de-uso`, record N1/N2/N3 mutation evidence in the
   PR body (V11), merge to `main` after the clean round.
+
+### Mutation evidence — slice 3 (`mutation-proof-tests` rule 2, produced, not reasoned)
+
+Every mutation below was applied to the working tree, the named suite was run, the result was
+observed, and the mutation was then reverted and the suite observed GREEN again. Command:
+`dotnet test tests/Ways.Application.Tests/Ways.Application.Tests.csproj --filter <suite>`.
+Baseline before and after every mutation: **417/417 green**.
+
+| # | Task | Clause under test | Mutation applied | Observed result |
+|---|---|---|---|---|
+| M1 | 3.2, 3.10 | The bucket is keyed on the dependent TABLE (the `created_at` column), never on a CLR base class | `llevaMarca` replaced by `typeof(EntidadTenant).IsAssignableFrom(dependiente.ClrType)` | **KILLED, 5 tests** — `N1_ConstruirNoTiraParaNingunaDeLasCuatroAnclas(Tenant)` (the mechanical-impossibility throw fired, naming `Usuario`: an `EntidadBase` with no resolvable `created_at`), `N1_LaCuentaDeRamasEsLaDeLasFksMenosLosCarveOuts(Tenant)`, `N2_UsaAnclaEquivaleATenerColumnaCreatedAt(Tenant)`, `N3`, `NingunCarveOutAportaRamaParaNingunaAncla` |
+| M2 | 3.2, 3.10 | The classifier is not inverted | `llevaMarca ? Marcado : SinMarca` -> `llevaMarca ? SinMarca : Marcado` | **KILLED, 5 tests** — `N2` on **all four** anchors + `N3` |
+| M3 | 3.2, 3.10, 3.11 | The bucket is derived from metadata, never a hand-written table list | classifier body replaced by a hardcoded `is not "arqueos_turno" and not ...` list that **omits `lotes`** | **KILLED, 5 tests** — `N1` x2 (the throw named `Ways.Domain.Stock.Lote`), `N2(Tenant)`, `N3`, `NingunCarveOutAportaRamaParaNingunaAncla` |
+| M3b | 3.10, 3.11 | *(honesty row)* the same hardcode, **exactly correct for today's model** | classifier body replaced by the complete, correct hardcoded list | **SURVIVED, 44/44 green.** Recorded as a survivor, not dressed up: a hardcode that agrees with the model on every current row is an **equivalent mutant**, and no test over this model can see it. It is precisely what **N3 exists to catch tomorrow** — the day a stage adds a table, the derived classifier follows the model and the hardcode does not, and N3 goes red naming it |
+| M4 | 3.9, 3.11 | `GetReferencingForeignKeys()` is the only source — no FK is silently dropped | `.Where(fk => fk.DeclaringEntityType.GetTableName() != "stock")` inserted into the walk | **KILLED, 3 tests** — `N1_LaCuentaDeRamasEsLaDeLasFksMenosLosCarveOuts(Tenant)` and `(PuntoVenta)`, `N3` |
+| M5 | 3.3, 3.12 | The carve-out set has exactly two members | `typeof(NumeracionCliente)` removed from `Excluidos` | **KILLED, 3 tests** — `LosCarveOutsSonExactamenteAuditoriaYNumeracionCliente`, `NingunCarveOutAportaRamaParaNingunaAncla`, `N3` |
+| M6 | 3.5, 3.13 | The `>` of the anchor conjunct is **strict** (a `>=` makes every freshly provisioned tenant undeletable) | `d."created_at" > $n` -> `>= $n` | **KILLED, 7 tests** — `UnaRamaMarcadaLlevaElConjuntoDeAnclaConMayorEstricto`, `LaCuentaYElOrdenDeParametros...` x4, `UnaFkCompuestaDeClaveAlternativa...`, `UnaFkNullableRindeElPredicadoLlano...` |
+| M7 | 3.5, 3.13 | A `Marcado` branch actually carries the anchor conjunct | `if (rama.UsaAncla)` -> `if (false)` | **KILLED, 7 tests** — same set as M6 |
+| M8 | 3.7, 3.14 | **OD4** — no branch emits `deleted_at`, so a soft-deleted dependent still blocks | `AND d."deleted_at" IS NULL` appended to every branch | **KILLED, 13 tests** — `NingunaRamaMencionaDeletedAt` on **all four** anchors, plus 9 rendering equalities |
+| M9 | 3.5, 3.13 | The **outer** `LIMIT 1` — what makes the `Append` node stop at the first blocking branch | `") AS ramas LIMIT 1"` -> `") AS ramas"` | **KILLED, 4 tests** — `ElStatementAbreConLaProyeccionYCierraConElLimitExterno` on all four anchors |
+| M10 | 3.6, 3.13 | The `^[a-z_][a-z0-9_]*$` rejection — the closure of the injection surface | `IdentificadorValido.IsMatch(valor)` -> `true` | **KILLED, 5 tests** — `UnIdentificadorNoConformeSeRechaza` x4 (including the `comprobantes_venta"; DROP TABLE usuarios; --` case) and `UnaColumnaOUnEsquemaNoConformeTambienSeRechazan` |
+| M11 | 3.2, 3.13 | The zip of `fk.Properties` with `fk.PrincipalKey.Properties` (composite and alternate-key FKs) | every conjunct bound to `$1` instead of the zipped index | **KILLED, 7 tests** — `UnaFkCompuestaDeClaveAlternativaRindeDosConjuntosLeidosDelAncla`, `UnTipoConDosFksAlAnclaAportaDosRamasIndependientes`, `UnaRamaSinMarcaLlevaSoloElPredicadoDeLaFk`, `LaCuentaYElOrden...` x2, +2 |
+| M12 | 3.6, 3.13 | Identifiers are schema-qualified and double-quoted | `FROM "{esquema}"."{tabla}" d` -> `FROM {tabla} d` | **KILLED, 13 tests** — `TodaTablaSeEmiteCalificadaPorEsquemaYEntreComillas` on all four anchors + 9 rendering equalities |
+| M13 | 3.3, 3.12 | The renderer filters carve-outs even when handed the complete inventory | the `Where(... is not Excluido)` of `Renderizar` dropped | **KILLED, 3 tests** — `ElRenderizadorNuncaEmiteUnaTablaExcluida` on `Tenant`, `PuntoVenta` and `Usuario` |
+| M14 | 3.11 | **N3 is a real trip-wire and its diff NAMES the exact table and column** | the golden edited the way a future stage would break it: one line deleted (`PuntoVenta / movimientos_stock / id_punto_venta_destino,id_tenant`) and one reclassified (`Tenant / stock / id_tenant`, `sinmarca` -> `marcado`) | **KILLED, 1 test**, and the message printed the exact lines — `AGREGADAS: PuntoVenta / movimientos_stock / id_punto_venta_destino,id_tenant / sinmarca` and `Tenant / stock / id_tenant / sinmarca`; `QUITADAS: Tenant / stock / id_tenant / marcado`. The first run used a plain `Assert.Equal` over the two collections, whose diff truncates each line at ~50 characters and cut `id_punto_venta_destino` down to `id_punto_venta_de`; the explicit added/removed message was written **because of** that observation, not before it |
+
+**Structural rows, stated as structural and never dressed up as runtime kills**
+(`mutation-proof-tests` rule 13):
+
+| # | Task | Assertion | Evidence |
+|---|---|---|---|
+| S1 | 3.16 | `InspectorDeUso` has **zero callers** in `src/` (V10) | `rg -n "PrimeraDependenciaEnUsoAsync" src/` returns exactly **one** line — its own declaration at `InspectorDeUso.cs:72`. `rg -n "InspectorDeUso" src/` returns 5 lines: the class declaration, two doc-comment mentions, one `<see cref>` in `IWaysDbContext.cs` and the `AddScoped<InspectorDeUso>()` registration. A DI registration is not a call site |
+| S2 | 3.17 | `IWaysDbContext.cs` gained **exactly one** member and zero implementations changed (V7) | `git diff --stat` on that file = `11 insertions(+)`: 2 `using`, 8 doc-comment lines and 1 member (`IModel Model { get; }`). `rg ": IWaysDbContext" src/ tests/` -> **zero** matches, unchanged |
+| S3 | 3.18 | V1 — zero new migrations | `Migraciones/` still ends at `20260822002214_FiscalArcaEtapa19a.cs`; `dotnet ef migrations has-pending-model-changes` -> *"No changes have been made to the model since the last migration."* |
+| S4 | 3.18 | V2/V3/V5/V6 — `InicializadorDeBaseDeDatos.cs`, `src/Ways.Infrastructure/Persistencia/**`, `Politicas.cs` and `ManejadorDeErrores.cs` untouched | `git status --short` lists only two modified files, both under `src/Ways.Application/` |
+| S5 | 3.18 | V4 — zero physical deletes | a scan for `ExecuteDelete`, `RemoveRange(`, `.Remove(` and `DELETE FROM` over both new files returns zero matches |
+| S6 | 3.18 | V13 — the only SQL in the diff is the guard's generated statement, and it is read-only | the diff's sole SQL producer is `InspectorDeUso.Renderizar`, which emits `SELECT`/`EXISTS`/`UNION ALL`/`LIMIT` and nothing else; the rendering suite asserts the full text of every branch of all four anchors |
 
 ---
 
