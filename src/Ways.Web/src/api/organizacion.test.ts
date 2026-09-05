@@ -8,11 +8,14 @@ import {
   filtrarPorTenant,
   opcionesDeEmpresa,
   opcionesDeTenant,
+  opcionesDeTenantAsignable,
+  seleccionVigente,
   SIN_FILTRO,
   VALOR_SIN_TENANT,
   type FilaConEmpresa,
   type FilaConTenant,
 } from './organizacion'
+import type { EstadoTenant, TenantListado } from './tipos'
 
 // stage-20-organizacion-relaciones-y-bajas, slice 2 (tarea 2.8) — `web-descriptor-tests`: los
 // cinco helpers puros de `organizacion.ts` con un caso por rama, no un happy path.
@@ -119,8 +122,97 @@ describe('opcionesDeTenant', () => {
     ])
   })
 
+  /**
+   * Cláusula bajo prueba: `desempatarHomonimos` dentro de `opcionesDeTenant`. `nombre` es texto
+   * libre, así que dos tenants DISTINTOS pueden compartirlo: sin desempate las dos opciones son
+   * byte a byte idénticas y el operador elige a ciegas. El desempate del huérfano no cubre este
+   * caso — acá los dos nombres existen — así que es una cláusula propia.
+   */
+  it('desempata con el id a dos tenants distintos que comparten nombre', () => {
+    const opciones = opcionesDeTenant([fila(2, 'Comercio Sur'), fila(3, 'Comercio Sur')])
+
+    expect(opciones).toEqual([
+      { valor: '2', etiqueta: 'Comercio Sur (tenant 2)' },
+      { valor: '3', etiqueta: 'Comercio Sur (tenant 3)' },
+    ])
+    expect(new Set(opciones.map((o) => o.etiqueta)).size).toBe(2)
+  })
+
+  /** El desempate toca SOLO a las que colisionan: un nombre único no se ensucia con su id. */
+  it('no le agrega el id a un tenant cuyo nombre no se repite', () => {
+    const opciones = opcionesDeTenant([fila(2, 'Comercio Sur'), fila(3, 'Comercio Sur'), fila(4, 'Único')])
+
+    expect(opciones.find((o) => o.valor === '4')).toEqual({ valor: '4', etiqueta: 'Único' })
+  })
+
   it('sobre una lista vacía no ofrece ninguna opción', () => {
     expect(opcionesDeTenant([])).toEqual([])
+  })
+})
+
+describe('opcionesDeTenantAsignable', () => {
+  function tenant(id: number, nombre: string, estado: EstadoTenant = 'Activo'): TenantListado {
+    return {
+      id,
+      nombre,
+      estado,
+      createdAt: '2026-01-01T10:00:00-03:00',
+      cantidadEmpresas: 0,
+      cantidadPuntosVenta: 0,
+      cantidadUsuarios: 0,
+    }
+  }
+
+  it('ordena por etiqueta y no toca el nombre de un tenant activo', () => {
+    expect(opcionesDeTenantAsignable([tenant(3, 'Zapatería Norte'), tenant(2, 'Comercio Sur')])).toEqual([
+      { valor: '2', etiqueta: 'Comercio Sur' },
+      { valor: '3', etiqueta: 'Zapatería Norte' },
+    ])
+  })
+
+  /**
+   * Cláusula bajo prueba: la marca de estado. El servidor es la autoridad y `CrearAsync` NO mira
+   * el estado del tenant destino, así que un tenant suspendido o dado de baja se sigue ofreciendo
+   * —el operador puede pre-crear ahí a propósito— pero sin la marca el usuario creado adentro
+   * simplemente no podría iniciar sesión y nada en la pantalla lo diría.
+   */
+  it('marca en la etiqueta a los tenants que no están activos, sin sacarlos de la lista', () => {
+    const opciones = opcionesDeTenantAsignable([
+      tenant(2, 'Comercio Sur'),
+      tenant(3, 'Almacén Este', 'Suspendido'),
+      tenant(4, 'Kiosco Viejo', 'Baja'),
+    ])
+
+    expect(opciones).toEqual([
+      { valor: '3', etiqueta: 'Almacén Este (suspendido)' },
+      { valor: '2', etiqueta: 'Comercio Sur' },
+      { valor: '4', etiqueta: 'Kiosco Viejo (baja)' },
+    ])
+  })
+
+  it('desempata con el id a dos tenants asignables que comparten nombre', () => {
+    const opciones = opcionesDeTenantAsignable([tenant(2, 'Comercio Sur'), tenant(3, 'Comercio Sur')])
+
+    expect(opciones.map((o) => o.etiqueta)).toEqual(['Comercio Sur (tenant 2)', 'Comercio Sur (tenant 3)'])
+  })
+})
+
+describe('seleccionVigente', () => {
+  const opciones = [
+    { valor: '2', etiqueta: 'Comercio Sur' },
+    { valor: '3', etiqueta: 'Almacén Este' },
+  ]
+
+  it('respeta una selección que sigue estando entre las opciones', () => {
+    expect(seleccionVigente(opciones, '3')).toBe('3')
+  })
+
+  it('apaga una selección que ya no está entre las opciones', () => {
+    expect(seleccionVigente(opciones, '9')).toBe(SIN_FILTRO)
+  })
+
+  it('deja pasar el "sin filtro" sin buscarlo entre las opciones', () => {
+    expect(seleccionVigente([], SIN_FILTRO)).toBe(SIN_FILTRO)
   })
 })
 
@@ -152,6 +244,20 @@ describe('opcionesDeEmpresa', () => {
 
     expect(opciones.map((o) => o.valor).sort()).toEqual(['30', '31'])
     expect(new Set(opciones.map((o) => o.etiqueta)).size).toBe(2)
+  })
+
+  /** Cláusula bajo prueba: `desempatarHomonimos` en `opcionesDeEmpresa` — la misma de
+   * `opcionesDeTenant`, sobre la razón social, que también es texto libre. */
+  it('desempata con el id a dos empresas distintas que comparten razón social', () => {
+    const opciones = opcionesDeEmpresa([
+      filaPv(1, 'Tenant Uno', 30, 'Sur SRL'),
+      filaPv(1, 'Tenant Uno', 31, 'Sur SRL'),
+    ])
+
+    expect(opciones).toEqual([
+      { valor: '30', etiqueta: 'Sur SRL (empresa 30)' },
+      { valor: '31', etiqueta: 'Sur SRL (empresa 31)' },
+    ])
   })
 })
 

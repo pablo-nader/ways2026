@@ -10,6 +10,7 @@ import { api } from './cliente'
 import type {
   EmpresaEdicion,
   EmpresaListado,
+  EstadoTenant,
   PuntoVentaEdicion,
   PuntoVentaListado,
   TenantEdicion,
@@ -98,6 +99,35 @@ function ordenarPorEtiqueta(opciones: OpcionDeFiltro[]): OpcionDeFiltro[] {
 }
 
 /**
+ * Desempata etiquetas repetidas con el id de cada opción. `nombre`/`razon_social` son texto libre:
+ * dos dueños DISTINTOS pueden compartirlo y las opciones quedarían byte a byte idénticas, así que
+ * el operador elegiría a ciegas. Solo se toca a las que colisionan — es el mismo desempate que ya
+ * llevan los huérfanos, aplicado ahora también a los homónimos con nombre.
+ */
+function desempatarHomonimos(opciones: OpcionDeFiltro[], sustantivo: string): OpcionDeFiltro[] {
+  const repeticiones = new Map<string, number>()
+  for (const opcion of opciones) {
+    repeticiones.set(opcion.etiqueta, (repeticiones.get(opcion.etiqueta) ?? 0) + 1)
+  }
+
+  return opciones.map((opcion) =>
+    (repeticiones.get(opcion.etiqueta) ?? 0) > 1
+      ? { ...opcion, etiqueta: `${opcion.etiqueta} (${sustantivo} ${opcion.valor})` }
+      : opcion,
+  )
+}
+
+/**
+ * Reconcilia una selección de filtro contra las opciones vigentes: si la opción elegida ya no
+ * existe, la selección vuelve a "sin filtro". Se usa para DERIVAR lo que se pinta y para escribir
+ * de vuelta el estado después de cada carga — derivarlo solo al pintar dejaba viva una selección
+ * inválida, que se reaplicaba sola en cuanto la opción reaparecía.
+ */
+export function seleccionVigente(opciones: readonly OpcionDeFiltro[], seleccion: string): string {
+  return seleccion === SIN_FILTRO || opciones.some((o) => o.valor === seleccion) ? seleccion : SIN_FILTRO
+}
+
+/**
  * Opciones del filtro por tenant, deduplicadas por `idTenant` y ordenadas por etiqueta. La opción
  * de plataforma va primero (no es un tenant, es la ausencia de uno) y solo aparece si alguna fila
  * cargada la tiene: un dataset de un solo tenant ofrece exactamente una opción (S5).
@@ -111,9 +141,31 @@ export function opcionesDeTenant(filas: readonly FilaConTenant[]): OpcionDeFiltr
   }
 
   const plataforma = porClave.get(VALOR_SIN_TENANT)
-  const tenants = ordenarPorEtiqueta([...porClave.values()].filter((o) => o.valor !== VALOR_SIN_TENANT))
+  const tenants = ordenarPorEtiqueta(
+    desempatarHomonimos([...porClave.values()].filter((o) => o.valor !== VALOR_SIN_TENANT), 'tenant'),
+  )
 
   return plataforma ? [plataforma, ...tenants] : tenants
+}
+
+/**
+ * Opciones del selector de tenant del ALTA de usuarios: el universo COMPLETO que devuelve
+ * `listarTenants()`, no las filas cargadas. Un tenant que no está Activo se ofrece IGUAL — el
+ * servidor es la autoridad y `ServicioDeUsuarios.CrearAsync` no mira el estado del tenant destino,
+ * así que el operador puede pre-crear dentro de uno suspendido — pero la etiqueta lo marca: un
+ * usuario creado ahí no va a poder iniciar sesión, y sin la marca eso sería invisible.
+ */
+export function opcionesDeTenantAsignable(tenants: readonly TenantListado[]): OpcionDeFiltro[] {
+  const opciones = tenants.map((t) => ({
+    valor: String(t.id),
+    etiqueta: etiquetaDeTenantAsignable(t.nombre, t.estado),
+  }))
+
+  return ordenarPorEtiqueta(desempatarHomonimos(opciones, 'tenant'))
+}
+
+function etiquetaDeTenantAsignable(nombre: string, estado: EstadoTenant): string {
+  return estado === 'Activo' ? nombre : `${nombre} (${estado.toLowerCase()})`
 }
 
 /**
@@ -137,7 +189,7 @@ export function opcionesDeEmpresa(
     })
   }
 
-  return ordenarPorEtiqueta([...porClave.values()])
+  return ordenarPorEtiqueta(desempatarHomonimos([...porClave.values()], 'empresa'))
 }
 
 /** Filtra sobre la lista YA CARGADA. `SIN_FILTRO` es la identidad: devuelve la lista entera. */
