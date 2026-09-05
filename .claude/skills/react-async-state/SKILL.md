@@ -1,6 +1,6 @@
 ---
 name: react-async-state
-description: "Trigger: React screen with async fetches/saves, form editing, useState + await, ABM screens in Ways.Web, stale response, double submit, loading flags. Every async response that mutates screen state ships with token/generation gating and a full-window disabled state."
+description: "Trigger: React screen with async fetches/saves, form editing, useState + await, ABM screens in Ways.Web, stale response, double submit, loading flags, confirmation gate, delete button, modal, focus restore, double click, re-entrancy. Every async response that mutates screen state ships with token/generation gating and a full-window disabled state."
 license: Apache-2.0
 metadata:
   author: gentleman-programming
@@ -84,6 +84,71 @@ where five judgment-day rounds each found a new variant of the same defect class
     twice. Before committing a screen with a multi-line editor, a filtered request, or
     an error-recovery catch: grep the marker (error code, filter predicate name,
     counter copy) across `src/paginas` — every sibling must carry the same semantics.
+
+11. **La guarda de reentrancia es un `ref`, no estado.**
+    `if (ocupado) return` lee el snapshot del render; dos clics en el mismo tick pasan
+    ambos porque el estado que gatea la guarda no se actualiza hasta el próximo render,
+    y ambos disparan su propia escritura. Usar un `useRef<boolean>` sincrónico como
+    espejo, seteado ANTES del primer `await` y liberado en el `finally` sin gate (nunca
+    condicionado al token — la reentrancia se destraba siempre); el estado sigue
+    existiendo aparte, solo para renderizar el disabled.
+    ```
+    const bloqueadoRef = useRef(false);
+    async function onGuardar() {
+      if (bloqueadoRef.current) return;
+      bloqueadoRef.current = true;
+      setOcupado(true);
+      try {
+        await guardar();
+      } finally {
+        bloqueadoRef.current = false; // sin gate de token: siempre libera
+        setOcupado(false);
+      }
+    }
+    ```
+    Prueba que lo demuestra: dos `element.click()` sincrónicos dentro de un mismo `act`,
+    afirmar exactamente una request emitida. (Observado dos veces: el sobreviviente M35
+    de la ronda de judgment-day del slice 2 de la etapa 20 reapareció como un DELETE
+    doble real en el slice 5.)
+
+12. **Capturar el destino de restauración de foco en el handler del evento, nunca en
+    un efecto.** Un `useEffect` pasivo corre DESPUÉS del commit que deshabilitó el
+    disparador; el navegador ya aplicó la regla de "focus fixup" y movió el foco a
+    `<body>`, así que `document.activeElement` leído en el efecto captura `body`, no el
+    elemento a restaurar. Capturar `evento.currentTarget` de forma sincrónica dentro del
+    `onClick` y pasarlo como dato al flujo de confirmación/cierre.
+    ```
+    function onClick(evento: React.MouseEvent<HTMLButtonElement>) {
+      const disparador = evento.currentTarget;
+      abrirConfirmacion({ alCerrar: () => disparador.focus() });
+    }
+    ```
+    En lugar de leer `document.activeElement` dentro de un `useEffect` posterior al
+    deshabilitado del control.
+    Advertencia: **jsdom no implementa la regla de focus-fixup**, así que un test de
+    restauración de foco verde en jsdom no es evidencia de comportamiento real de
+    navegador — el test debe simular el blur explícitamente dentro del mismo `act` y
+    dejarlo escrito en un comentario doc que aclare esa limitación.
+
+13. **Una compuerta de confirmación debe declarar el nivel en el que es inerte.**
+    "Modal" solo es cierto si TODO control activable de ese nivel queda bloqueado
+    (`bloqueado = ocupado || puertaAbierta` en cada `disabled`, los links reciben
+    `preventDefault` explícito — `aria-disabled` y `pointer-events` en CSS son solo
+    indicativos, no bloquean teclado ni activación por tecnología asistiva). El token
+    de escritura se acuña en CONFIRMAR (primera sentencia sincrónica después de la
+    guarda de ref de la regla 11), nunca al abrir la compuerta; un cancelar no debe
+    suceder a nada ni incrementar la generación; una respuesta 2xx siempre cierra y
+    refresca, una 4xx siempre renderiza el error. Si la barra de navegación de la
+    aplicación sigue viva mientras la compuerta está abierta, llamarla "pantalla
+    inerte", no "modal", y no poner `aria-modal` salvo que exista una trampa de foco
+    real (un banner de error fuera de un diálogo `aria-modal` es inalcanzable para
+    tecnología asistiva).
+
+14. **Un slot de estado tiene un solo dueño.** Dos generaciones independientes
+    escribiendo el mismo slot `error` se pisan entre sí (un fallo rápido seguido de un
+    éxito lento borra el fallo previo). Cada fuente asíncrona que reporta un error
+    obtiene su propio estado renderizado; un mensaje que reporta una precondición
+    vigente no debe ser limpiado por una acción no relacionada.
 
 ## Decision Gates
 
