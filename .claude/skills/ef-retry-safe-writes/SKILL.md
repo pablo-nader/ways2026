@@ -67,10 +67,29 @@ organización/usuario duplicaban filas de auditoría bajo reintento transitorio.
    transitorio se expone al operador aunque la escritura pueda haberse confirmado igualmente (el
    commit ocurrió justo antes de que la conexión se cortara). Eso ya NO se resuelve pantalla por
    pantalla: `ManejadorDeErrores` traduce los SQLSTATE transitorios (`40001`, `40P01`, `57P01`, la
-   clase `08` entera) y `NpgsqlException.IsTransient` a un **`503` con código
-   `resultado_incierto`** cuyo mensaje ya dice "verificá el listado antes de reintentar". Toda
-   pantalla rinde `ErrorApi.mensaje` para un código que no conoce, así que la copia llega sola.
-   Un sitio (b) nuevo no necesita copia propia; escribir una a mano es duplicarla.
+   clase `08` entera) y `DbException.IsTransient` a un **`503` con código `resultado_incierto`**
+   cuyo mensaje ya dice "verificá el listado antes de reintentar". El predicado vive UNA sola vez,
+   en `Ways.Application.Abstracciones.FallosTransitorios`. Toda pantalla rinde `ErrorApi.mensaje`
+   para un código que no conoce, así que la copia llega sola. Un sitio (b) nuevo no necesita copia
+   propia; escribir una a mano es duplicarla.
+
+   **Tres carve-outs, y son los únicos:**
+   - **El residual central NO cubre el ARRANQUE.** `InicializadorDeBaseDeDatos` corre fuera de
+     todo pipeline HTTP: no hay request, no hay `ManejadorDeErrores` y no hay operador del otro
+     lado. Sacarle el reintento tiene un precio explícito — un blip transitorio **aborta el host**
+     en vez de reintentar cinco veces — y se paga a cambio de no duplicar en silencio: el arranque
+     siguiente vuelve a correr el backfill y es idempotente porque recalcula su conjunto pendiente
+     desde la base. Un sitio de arranque documenta ESTO en su comentario, nunca "ya lo cubre el
+     central".
+   - **Un sitio con residual PROPIO sí escribe copia propia.** Si recuperarse del commit ambiguo
+     necesita un paso que "verificá el listado" no nombra, la copia central miente por omisión:
+     `ServicioDeAprovisionamiento.CrearTenantAsync` atrapa el fallo transitorio y tira un
+     `ErrorDominio("resultado_incierto", …, 503)` que manda a restablecer la contraseña del admin,
+     porque el `passwordTemporal` se devuelve UNA vez y se fue con la respuesta que nunca llegó.
+     El código se conserva; lo que cambia es el mensaje.
+   - **La copia del commit ambiguo es de las ESCRITURAS.** Sobre un método seguro
+     (GET/HEAD/OPTIONS) el mismo fallo transitorio sale como `503 servicio_no_disponible` con copia
+     neutra: una lectura no deja residual y no hay nada que verificar antes de reintentar.
 
 ## Decision Gates
 
@@ -87,7 +106,24 @@ organización/usuario duplicaban filas de auditoría bajo reintento transitorio.
 
 ## Known Open Sites
 
-Ninguno. Los dos que esta skill dejó abiertos en la etapa 20
+**Alcance del barrido — leer esto antes de creerle a la lista de abajo.** El barrido de
+`fix/retry-double-add` cubrió UNA sola clase de sitio: los que abren un lambda EXPLÍCITO
+(`CreateExecutionStrategy().ExecuteAsync(...)`) y agregan o mutan entidades adentro. Nada más.
+
+**OPEN — `SaveChangesAsync` IMPLÍCITO bajo el retry global.** `EnableRetryOnFailure` es global, así
+que un `db.X.Add(...); await db.SaveChangesAsync();` SIN ningún lambda a la vista **también** se
+reintenta: `SaveChangesAsync` resuelve su propia estrategia desde la configuración del `DbContext`
+y reejecuta el guardado. Ante un commit ambiguo, la entidad sigue `Added` en el `ChangeTracker` —
+el `SaveChanges` no llegó a aceptar los cambios— y el reintento la **re-INSERTA**. Es exactamente
+el mismo defecto que la regla 1, sin el lambda que lo hacía visible. Ejemplo conocido:
+`ServicioDeLotes.CrearAsync` (`src/Ways.Application/Stock/ServicioDeLotes.cs:483-484`).
+**Esta clase NO se corrigió en este PR y queda fuera de su alcance a propósito**: es un
+barrido nuevo (todo `SaveChangesAsync` de escritura del repo, en todos los proyectos) con su propia
+tanda de pruebas, no un arrastre de éste. Al abrirlo, aplicar las mismas reglas 1–4 y actualizar
+esta sección.
+
+Sobre la clase que SÍ se barrió (lambdas explícitos) no queda ninguno abierto. Los dos que esta
+skill dejó abiertos en la etapa 20
 (`ServicioDePrecios.AbrirNuevoPrecioAsync`, `ServicioDeUsuarios.CrearAsync`) se cerraron junto
 con los otros nueve: `ServicioDeClientes.CrearAsync`, `ServicioDeArticulos.CrearAsync`,
 `ServicioDeCertificados.RegistrarAsync`, `ServicioDeListasPrecio.CrearAsync`,
@@ -135,7 +171,9 @@ Tres lecciones del barrido, para el próximo sitio:
 
 Sitios que quedan reintentables A PROPÓSITO (no tocar sin releer esto): los pasos de numeración
 cruda de Ventas/Remitos/Presupuestos/FacturacionDeRemitos/CuentaCorriente/`ServicioDeOrdenesDeCompra.EnviarAsync`,
-el paso de ESCRITURA de `ServicioDeVentas.EmitirAsync` (forma (a), lección 3), `ServicioDeLotes`,
+el paso de ESCRITURA de `ServicioDeVentas.EmitirAsync` (forma (a), lección 3), el lambda de
+reconciliación de `ServicioDeLotes` (`ServicioDeLotes.cs:219` — NO `CrearAsync`, que es de la clase
+OPEN de arriba),
 `ServicioDeListasPrecio.ActualizarAsync` y los lambdas de solo-UPDATE de
 `ServicioDeOrganizacion.EnUnaTransaccionAsync`. Son diez, no nueve: el paso de numeración de
 `EnviarAsync` faltaba en esta lista y es exactamente igual que los otros cinco.

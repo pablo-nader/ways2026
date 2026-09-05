@@ -608,9 +608,10 @@ public class ServicioDeOrganizacion(
     /// el mismo que usan <c>ServicioDeVentas.AnularAsync</c> y <c>ServicioDeStock.AjustarAsync</c>—
     /// y no un <c>ChangeTracker.Clear()</c> al tope de cada lambda, por tres motivos: una baja es
     /// exactamente el perfil que ese doc-comment describe (rara, humana, manual y sin ninguna clave
-    /// de idempotencia natural); <c>Clear()</c> no tiene ningún precedente en este repositorio y
-    /// dejaría un invariante nuevo ("ninguna entidad se captura de afuera") que cualquier edición
-    /// futura rompe en silencio; y sobre todo <c>Clear()</c> arregla la duplicación pero NO el
+    /// de idempotencia natural); <c>Clear()</c> sí tiene precedente —<c>ServicioDeVentas.EmitirAsync</c>
+    /// lo usa, forma (a) del skill <c>ef-retry-safe-writes</c>— pero ese precedente viene con la
+    /// pieza que acá falta: una clave de idempotencia ya comiteada (el <c>numero</c>) que la guarda
+    /// del reintento consume; y sobre todo <c>Clear()</c> arregla la duplicación pero NO el
     /// commit ambiguo —el servidor comitea y el ACK se pierde—, donde el reintento releería la fila
     /// ya dada de baja y devolvería un 404 (o un 409 de mínimo estructural) sobre una baja que en
     /// verdad tuvo éxito. Sin reintento, la falla transitoria llega tal cual al operador y el
