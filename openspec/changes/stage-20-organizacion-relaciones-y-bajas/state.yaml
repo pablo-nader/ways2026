@@ -959,7 +959,68 @@ phases:
       new DELETE routes exactly as designed; the allowlist declares them with their
       reason (family (b) - an administrative surface stricter than
       GestionDeCatalogo, which never admits Vendedor) and the suite was re-run whole
-      and green. Slice 5 pending.
+      and green.
+
+      JUDGMENT-DAY SLICE 4, RONDA 1 - SIETE HALLAZGOS CONFIRMADOS, LOS SIETE
+      CORREGIDOS, CERO ESQUEMA. Lo primero fue VERIFICAR que auditoria.accion es una
+      columna text libre cuyo unico CHECK es length(btrim(accion)) > 0
+      (AuditoriaConfiguration.cs:22,36): agregar valores de accion es codigo y no
+      esquema. Si hubiera estado restringida, C1 se habria DETENIDO y reportado en
+      vez de tocarse. Politicas.cs, InicializadorDeBaseDeDatos.cs y
+      ManejadorDeErrores.cs siguen sin aparecer en el diff, no hay migracion, DDL,
+      sentencia de datos ni cambio de semilla, y no hay ningun borrado fisico nuevo.
+      C1 (juez B, WARNING) - las tres bajas de organizacion no escribian NINGUNA fila
+      de auditoria y la cascada del tenant daba de baja usuarios sin la usuario.baja
+      que el camino directo siempre escribe: la accion mas destructiva del sistema no
+      dejaba rastro en GET /api/auditoria. Se agregaron tres acciones al catalogo
+      (tenant.baja/tenant, empresa.baja/empresa, pv.baja/punto_venta - pv abrevia el
+      dominio igual que cc.reliquidacion, porque el formato congelado
+      ^[a-z]+\.[a-z]+$ no admite guion bajo), dos fabricas de payload y cuatro call
+      sites DENTRO de la misma transaccion; la cascada escribe una fila por entidad
+      estampada y reusa PayloadDeAuditoria.BajaDeUsuario tal cual. El id_tenant es el
+      del SUJETO, asi que plataforma dando de baja el tenant X deja el rastro EN el
+      tenant X, donde su admin lo lee.
+      C2 (juez A, WARNING) - ServicioDeUsuarios.EliminarAsync corria el guard como un
+      SELECT suelto fuera de toda transaccion y estampaba deleted_at despues: una
+      venta o un turno del MISMO empleado en el medio eran invisibles. Guard +
+      estampado + auditoria quedaron en UNA transaccion dentro de
+      CreateExecutionStrategy().ExecuteAsync, bajo el MISMO
+      pg_advisory_xact_lock(idTenant, -20) de las bajas de organizacion; el sujeto de
+      plataforma (IdTenant null) bloquea sobre el centinela 0, documentado.
+      PoliticaDeRoles queda afuera a proposito.
+      C3 (juez B, WARNING) - DescribirBloqueo degradaba a la etiqueta pelada cuando la
+      hoja tenia ademas una rama directa; ahora alcanza con que ALGUNA rama sea
+      puenteada. C4 (juez A) - cuarto walker de autorizacion que afirma la policy
+      exacta de DELETE /api/puntos-venta/{id:int}, cuyo grupo NO tiene policy propia.
+      C5 (juez A) - el ancla del guard de usuarios se resuelve POR NOMBRE contra
+      InventarioDeDependientes.PropiedadesDeAncla. C6 (ambos jueces) - el trip-wire de
+      borrado fisico se anclo (db.<Set>.Remove( con receptor congelado, DELETE FROM
+      acotado a lo que no es migracion) para que no se ponga rojo por un List.Remove
+      de la BCL. C7 (juez B) - arqueos_turno etiquetado "arqueos de caja", el termino
+      que ya usan CierreDeCaja/CajaZ.
+      SEIS MUTACIONES CORRIDAS DE VERDAD Y TODAS MATADAS, MAS UNA REGISTRADA COMO SIN
+      KILL - C1 (sacar RegistrarBajaDeTenant), C2 (mover el guard afuera de la
+      estrategia, ESTRUCTURAL y dicho como estructural), C3 (restaurar TrueForAll), C4
+      (sacar el RequireAuthorization del DELETE, y solo el walker nuevo se puso rojo,
+      confirmando que los otros tres eran ciegos), C6 en sus DOS brazos
+      (db.Tenants.Remove y un DELETE FROM en archivo de produccion) y C7 (sacar la
+      entrada del diccionario). C5 se registra HONESTAMENTE como sin kill
+      independiente: el conjunto de anclas de Usuario es ["Id"] hoy, asi que la
+      resolucion por nombre y la posicional son observacionalmente identicas hasta el
+      dia en que Usuario tenga clave compuesta - que es exactamente el dia en que el
+      hardcode se habria roto en silencio.
+      DOS PRUEBAS PREEXISTENTES SE ROMPIERON POR EL FIX Y SE ARREGLARON SIN
+      DEBILITARLAS - SoloFilasDeAuditoriaNoBloqueanLaBajaYElRastroSigueResolviendo
+      pasaba a ver dos filas sobre el mismo id_entidad (la sembrada mas la usuario.baja
+      de la cascada) y ahora nombra su accion; y el nuevo assert de instante comparaba
+      el payload en memoria (100 ns) contra la columna timestamptz (microsegundos), asi
+      que se trunca a microsegundos - una diferencia de representacion, no de instante.
+      TRES ITEMS REGISTRADOS SIN CODIGO - R1 sigue ACEPTADO y ahora cubre tambien la
+      baja de usuario (el lock serializa baja contra baja, no baja contra venta; el
+      modo de falla es un punto de venta o un usuario dado de baja con una operacion
+      posterior, recuperable a mano porque B1 deja todas las filas); la cascada solo es
+      alcanzable sobre hijos creados en el instante del ancla, por diseno; y la
+      Reconciliacion 11 quedo registrada y sana. Slice 5 pending.
   verify:
     status: pending
     artifact: verify-report.md

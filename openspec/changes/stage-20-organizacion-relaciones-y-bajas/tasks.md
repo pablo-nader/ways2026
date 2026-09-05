@@ -1426,6 +1426,13 @@ written)** — transcribed from `design.md:383-398`:
 - [x] 4.20 [P] **U1-U3 sibling kills**: a **sibling tenant** with its own empresa, punto de venta and
   admin — every one of its rows stays live after the first tenant's deletion, asserted by identity
   **and** by exact count (rule 12c). *(BO-R9; kills U1, U2, U3)*
+  **Scope of the cascade, recorded (judgment-day round 1, judge A, SUGGESTION — record only, by
+  design):** both cascades (empresa→PV and tenant→everything) are only ever reachable over children
+  created **at the anchor's instant**, i.e. the provisioned ones. A child created LATER is a
+  `Marcado` dependent, so the guard sees it and the request dies with `409 …_en_uso` before any
+  cascade runs. That is the intended shape — the cascade exists to take a **pristine** organization
+  down whole, not to bulldoze live data — and it is why 4.19/4.21 have to hand-seed their siblings
+  below the API (OD5).
 - [x] 4.21 [P] **U5-U6 minimum kills**, below the API (OD5): a sibling tenant's empresa must not be
   counted towards `ultima_empresa_del_tenant`, and a sibling empresa's PV must not be counted towards
   `ultimo_punto_venta_de_la_empresa` — otherwise the minimum never fires. *(BO-R10)*
@@ -1630,7 +1637,8 @@ the integration suite.
    and the discriminator was not touched. `InicializadorDeBaseDeDatos.cs` does not appear in this
    diff.
 9. **Slice size, reported and not hidden.** The slice overflows the 800-line budget. Measured with
-   `git diff main --stat -- src tests`, not estimated: **2 682 insertions and 219 deletions across
+   `git diff main --stat -- src tests`, not estimated (measured BEFORE judgment-day round 1, which
+   adds roughly 700 more lines): **2 682 insertions and 219 deletions across
    14 files**, of which production is 681 insertions / 122 deletions and tests are 2 001 / 97 —
    against a forecast of ~530.
    The forecast counted neither the transaction refactor of the four write paths, nor the six
@@ -1642,6 +1650,55 @@ the integration suite.
    (U1-U6, P1-P6)** and **4b = punto de venta + the `Usuario` guard (U7-U8)**, and it would need
    `ServicioDeOrganizacion.cs` split across two commits. Flagged for the orchestrator's decision
    rather than taken unilaterally: the work is delivered whole, green and on one branch.
+
+### judgment-day — slice 4, ronda 1 (seven confirmed findings, all fixed)
+
+ZERO SCHEMA held through the whole round: no migration, no DDL, no data statement, no seed change.
+`auditoria.accion` was **verified first** to be a free `text` column whose only CHECK is
+`length(btrim(accion)) > 0` (`AuditoriaConfiguration.cs:22,36`), so adding action values is a code
+change and not a schema change — had it been constrained, C1 would have been STOPPED and reported
+instead. `Politicas.cs`, `InicializadorDeBaseDeDatos.cs` and `ManejadorDeErrores.cs` are untouched.
+
+| # | Judge / severity | Finding | Fix | Mutation evidence |
+|---|---|---|---|---|
+| C1 | B, WARNING | The three organization deletions wrote **no** `auditoria` row, and the tenant cascade soft-deleted usuarios without the `usuario.baja` the direct path always writes — the most destructive action in the system left no trail in `GET /api/auditoria` | Three catalogue actions (`tenant.baja`/`tenant`, `empresa.baja`/`empresa`, `pv.baja`/`punto_venta` — `pv` abbreviates the domain exactly as `cc.reliquidacion` does, because the frozen format `^[a-z]+\.[a-z]+$` admits no underscore), two `PayloadDeAuditoria` factories, and four `RegistrarBaja*` call sites inside the SAME transaction. The cascade writes one row per stamped entity, reusing `PayloadDeAuditoria.BajaDeUsuario` verbatim for each usuario. `id_tenant` is the SUBJECT's, so a platform actor deleting tenant X leaves the trail IN tenant X | **KILLED** — dropping `RegistrarBajaDeTenant` from `EliminarTenantAsync` turns `LaBajaDelTenantDejaRastroDeLaCascadaEntera` RED |
+| C2 | A, WARNING | `ServicioDeUsuarios.EliminarAsync` ran its usage guard as a standalone SELECT and stamped `deleted_at` in a later statement — a sale or shift by the same employee in between was invisible, and the account was soft-deleted while in use | Guard + stamp + audit now live in ONE transaction inside `CreateExecutionStrategy().ExecuteAsync`, under `pg_advisory_xact_lock(idTenant, ServicioDeOrganizacion.ClaveDeLockDeBaja)` — the same key the organization deletions take, so a usuario baja and its tenant's baja serialize against each other. `PoliticaDeRoles.ValidarPuedeIntervenirSobre` stays OUTSIDE (pure domain, and UT-R2's observable ordering depends on it). A platform-account subject (`IdTenant` null) locks on sentinel `0`, documented — tenant ids start at 1 | **KILLED, structurally, and it is recorded as structural** (rule 13 — a single-threaded test cannot see where the line is): moving the guard back outside the strategy lambda turns `LaBajaDeUsuarioCorreSuGuardBajoElLockYDentroDeLaTransaccion` RED. It asserts the order of six marks inside the method body, the same file-level idiom `BajasEstructuralesTests` already uses for tables |
+| C3 | B, WARNING | `EtiquetasDeTablas.DescribirBloqueo` degraded a bridged hit to the bare leaf label whenever the leaf ALSO had a direct branch (today: `parametros`) — violating the carried slice-3 input *"never ship a bare leaf label for a bridged hit"*, precisely where the hint matters most | `TrueForAll` → **any** matching branch bridged names the bridge. Naming the bridge cannot mislead: a direct-branch hit would have rendered the same leaf word anyway. `UnaRamaPuenteadaNombraElPuenteInclusoCuandoLaHojaTambienLlegaDirecto` replaces the test that pinned the old behaviour as deliberate, and also asserts branch-order independence | **KILLED** — restoring `TrueForAll` turns that test RED |
+| C4 | A, SUGGESTION | `SuperficieDeAutorizacionTests` allowlisted `DELETE /api/puntos-venta/{id:int}` without asserting its policy; that group has **no** group-level `RequireAuthorization`, so dropping the per-route policy would fall to authenticated-only with both walkers green | Fourth walker, `CadaRutaSinPolicyDeGrupoApilaSuPolicyExigida`, asserting the route exists, is not `AllowAnonymous`, and stacks `Politicas.GestionDeOrganizacion` — read from real `EndpointDataSource` metadata | **KILLED** — removing `.RequireAuthorization(Politicas.GestionDeOrganizacion)` from the DELETE turns it RED |
+| C5 | A, SUGGESTION | `ServicioDeUsuarios` hardcoded `[usuario.Id]` as the positional anchor key, while `ServicioDeOrganizacion.ExigirSinUsoAsync` resolves BY NAME from `InventarioDeDependientes.PropiedadesDeAncla` precisely to avoid that coupling | `ValoresDeAnclaDeUsuario` resolves by name with the same idiom and the same "mechanical impossibility, thrown naming the property" | Structural/behavioural: the anchor set for `Usuario` is `["Id"]` today, so the resolution is observably identical — covered by the whole `usuario_en_uso` matrix (4.28) staying green. Recorded honestly as **no independent kill available** until `Usuario` gains a composite key, which is exactly the day the hardcode would have broken silently |
+| C6 | A+B, SUGGESTION | The zero-physical-delete trip-wire banned the bare substrings `.Remove(` and `DELETE FROM` across all of `src/` — any BCL `List.Remove`/`string.Remove` or any historical migration would go red for a reason that is not its own, and a trip-wire that cries wolf gets disabled | Anchored like the `RemoveRange` check: `db\.(\w+)\.Remove\(` with the receiver frozen (empty set), and `DELETE FROM` scoped to non-migration files | **KILLED ×2** — inserting `db.Tenants.Remove(tenant)` into `EliminarTenantAsync` turns it RED; a `// DELETE FROM tenants` line in the same (non-migration) file turns it RED |
+| C7 | B, SUGGESTION | `arqueos_turno` was unlabelled, so a tenant blocked only by a cash count read *"porque tiene datos cargados"* | Labelled **"arqueos de caja"** — the term the screens already use (`CierreDeCaja.tsx`, `CajaZ.tsx`, `api/arqueo.ts`); it is an operation the cashier performs and sees, not a mechanical counter. The pinned `InlineData` moved from `Generica` to the label, and the bridged-unlabelled-leaf case re-pinned on `numeraciones_articulos` | **KILLED** — removing the dictionary entry turns `CadaTablaMapeadaRindeSuPalabraYLaNoMapeadaDegradaALaGenerica(tabla: "arqueos_turno")` RED |
+
+**Two pre-existing tests broke on the fix and were repaired without weakening them.**
+`SoloFilasDeAuditoriaNoBloqueanLaBajaYElRastroSigueResolviendo` started seeing TWO rows on the same
+`id_entidad` (its own seeded `usuario.actualizacion` plus the cascade's new `usuario.baja`), so it now
+names the action it seeded — it asserts exactly what it asserted before. And the new instant assert
+compared the in-memory payload (100 ns resolution) against the `timestamptz` column (microseconds),
+so it truncates to microseconds: a difference of representation, not of instant.
+
+**Suites, run against real output.** `dotnet build Ways.slnx` clean (0 errors, the two pre-existing
+NU1903 SSH.NET warnings). Domain **545/545**. Application **433/433** (432 + the new C2 structural
+test). Integration **1776/1776** green, run ONCE and ALONE against a single Docker daemon in
+**12 m 50 s**, zero flakes and zero re-runs (1771 before + 4 audit-trail tests + the C4 walker).
+`dotnet ef migrations has-pending-model-changes` → *"No changes have been made to the model since the
+last migration."* Physical-delete scan over `src/` (migrations excluded): zero `ExecuteDelete`, zero
+`.Remove(`, zero `DELETE FROM`, and the same six frozen `RemoveRange` receivers. `state.yaml` parses.
+
+**Recorded, no code — round 1.**
+
+1. **Judge A, WARNING — R1 is unchanged and ACCEPTED, in both services.** The advisory lock
+   serializes **deletion against deletion**, not deletion against sale: under READ COMMITTED a sale,
+   a shift or a comprobante can still commit between the guard's `EXISTS` and the deletion's commit.
+   Judge B confirmed the analysis and neither judge asked for a fix. Closing it would put an
+   administration lock on the POS hot path, which this stage refuses. **Failure mode, stated:** a
+   soft-deleted punto de venta (or usuario) with a later operation hanging off it — recoverable by
+   hand, because B1 means every row survives and the repair is `UPDATE … SET deleted_at = NULL`.
+   This is design §G's residual R1, now also covering `ServicioDeUsuarios.EliminarAsync`.
+2. **Judge A, SUGGESTION — cascade reachability**, recorded next to task 4.20: both cascades are only
+   reachable over children created at the anchor's instant; later children are `Marcado` and produce
+   a 409 first. By design.
+3. **Judge B, SUGGESTION — Reconciliación 11** (one article does NOT make the punto de venta
+   undeletable) is registered above and sound. Nothing to do.
 
 ---
 

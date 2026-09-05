@@ -16,9 +16,12 @@ namespace Ways.Application.Organizacion;
 /// bloqueantes escrita a mano volvería borrable a una entidad en uso apenas alguien olvidara una
 /// tabla.
 ///
-/// Lo que queda deliberadamente SIN etiqueta es lo mecánico —contadores de numeración, arqueos,
-/// la tabla puente de ofertas—: son filas que el cliente nunca "cargó" con ese nombre, así que
-/// nombrarlas confundiría más que la frase genérica.
+/// Lo que queda deliberadamente SIN etiqueta es lo mecánico —contadores de numeración, la tabla
+/// puente de ofertas—: son filas que el cliente nunca "cargó" con ese nombre, así que nombrarlas
+/// confundiría más que la frase genérica. <c>arqueos_turno</c> SALIÓ de esa lista en judgment-day
+/// ronda 1 (hallazgo C7): el arqueo de cierre es una operación que el cajero hace y ve con ese
+/// nombre en pantalla (<c>CierreDeCaja.tsx</c>/<c>CajaZ.tsx</c>), no un contador mecánico, y decirle
+/// "porque tiene datos cargados" a un tenant bloqueado por un arqueo lo manda a buscar a ciegas.
 /// </summary>
 public static class EtiquetasDeTablas
 {
@@ -29,6 +32,7 @@ public static class EtiquetasDeTablas
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["areas"] = "áreas",
+            ["arqueos_turno"] = "arqueos de caja",
             ["articulos"] = "artículos",
             ["articulos_empresas"] = "artículos habilitados",
             ["categorias"] = "categorías",
@@ -82,9 +86,14 @@ public static class EtiquetasDeTablas
     /// punto de venta: el operador buscaría el turno en la empresa y no lo encontraría. Con el
     /// puente nombrado, la frase queda "turnos de caja en sus puntos de venta".
     ///
-    /// Solo se afirma el puente cuando TODAS las ramas de esa hoja son puenteadas. Si la misma
-    /// tabla llega también por una FK directa, el inspector no dice cuál de las dos matcheó, así
-    /// que se cae a la etiqueta pelada en vez de afirmar un origen que no se puede probar.
+    /// Alcanza con que ALGUNA rama de esa hoja sea puenteada (judgment-day ronda 1, hallazgo C3).
+    /// La regla anterior —afirmar el puente solo cuando TODAS lo eran— degradaba a la etiqueta
+    /// pelada justo cuando la hoja tenía además una rama directa (hoy: <c>parametros</c>), que es
+    /// el caso donde la pista importa más, y violaba la entrada arrastrada de la slice 3 ("nunca
+    /// una etiqueta pelada para un hit puenteado"). Nombrar el puente no puede desorientar al
+    /// operador aunque el hit real haya venido por la rama directa: esa fila la habría reportado la
+    /// etiqueta de la rama directa igual, con la misma palabra de hoja. Quedarse callado sobre el
+    /// puente, en cambio, manda a buscar en el lugar equivocado.
     /// </summary>
     public static string DescribirBloqueo(string tabla, IReadOnlyList<RamaDeUso> ramasDelAncla)
     {
@@ -92,10 +101,11 @@ public static class EtiquetasDeTablas
 
         var etiqueta = Describir(tabla);
 
-        var coincidencias = ramasDelAncla.Where(rama => rama.Tabla == tabla).ToList();
+        var puenteada = ramasDelAncla
+            .FirstOrDefault(rama => rama.Tabla == tabla && rama.Puente is not null);
 
-        return coincidencias.Count > 0 && coincidencias.TrueForAll(rama => rama.Puente is not null)
-            ? $"{etiqueta} en sus {Describir(coincidencias[0].Puente!.Tabla)}"
-            : etiqueta;
+        return puenteada is null
+            ? etiqueta
+            : $"{etiqueta} en sus {Describir(puenteada.Puente!.Tabla)}";
     }
 }

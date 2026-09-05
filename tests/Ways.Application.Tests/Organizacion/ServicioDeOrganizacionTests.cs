@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Organizacion;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
@@ -73,8 +74,12 @@ public class ServicioDeOrganizacionTests
         string nombreDeBase, ITenantActual tenantActual, IContextoDeUsuario contexto) =>
         CrearServicio(CrearContexto(nombreDeBase, tenantActual), contexto);
 
-    private static ServicioDeOrganizacion CrearServicio(WaysDbContext db, IContextoDeUsuario contexto) =>
-        new(db, new RelojFijo(Ahora), contexto, new InspectorDeUso(db));
+    private static ServicioDeOrganizacion CrearServicio(WaysDbContext db, IContextoDeUsuario contexto)
+    {
+        var reloj = new RelojFijo(Ahora);
+        return new ServicioDeOrganizacion(
+            db, reloj, contexto, new InspectorDeUso(db), new ServicioDeAuditoria(db, reloj, contexto));
+    }
 
     private static async Task<(Tenant Tenant, Empresa Empresa, PuntoVenta PuntoVenta)> SembrarAsync(
         string nombreDeBase, string nombreTenant, EstadoTenant estado = EstadoTenant.Activo)

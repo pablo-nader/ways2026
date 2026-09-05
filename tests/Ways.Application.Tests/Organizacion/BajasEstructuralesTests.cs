@@ -60,9 +60,15 @@ public class BajasEstructuralesTests
     /// <c>UPDATE ... SET deleted_at</c> y nada más.
     ///
     /// El barrido es del repositorio entero y no solo del diff de esta slice: lo que hay que
-    /// sostener es la propiedad, no el cambio. <c>ExecuteDelete</c>, <c>ExecuteDeleteAsync</c>,
-    /// <c>.Remove(</c> y <c>DELETE FROM</c> tienen que estar ausentes por completo; los
-    /// <c>RemoveRange</c> se comparan contra la lista congelada de receptores permitidos.
+    /// sostener es la propiedad, no el cambio. <c>ExecuteDelete</c>/<c>ExecuteDeleteAsync</c> son
+    /// nombres propios de EF y se buscan como substring; <c>Remove(</c> y <c>DELETE FROM</c> van
+    /// ANCLADOS (judgment-day ronda 1, hallazgo C6), porque el substring pelado convertía en
+    /// borrado físico a cualquier <c>List.Remove</c>/<c>string.Remove</c> de la BCL y a cualquier
+    /// <c>DELETE FROM</c> de una migración histórica — un trip-wire que se pone rojo por motivos
+    /// que no son el suyo se desactiva solo. <c>Remove(</c> se ancla con el receptor congelado,
+    /// igual que <c>RemoveRange</c> (<c>db.&lt;Set&gt;.Remove(</c>, cero receptores permitidos), y
+    /// <c>DELETE FROM</c> se limita a lo que NO es una migración: una migración vieja es historia
+    /// ya aplicada, no un camino de producción que alguien pueda ejecutar hoy.
     /// </summary>
     [Fact]
     public void NingunCaminoDeProduccionBorraFisicamenteFilasDeOrganizacion()
@@ -71,7 +77,7 @@ public class BajasEstructuralesTests
 
         Assert.NotEmpty(fuentes);
 
-        foreach (var patron in new[] { "ExecuteDelete", "ExecuteDeleteAsync", ".Remove(" })
+        foreach (var patron in new[] { "ExecuteDelete", "ExecuteDeleteAsync" })
         {
             var encontrados = fuentes
                 .Where(fuente => fuente.Contenido.Contains(patron, StringComparison.Ordinal))
@@ -81,7 +87,12 @@ public class BajasEstructuralesTests
             Assert.Empty(encontrados);
         }
 
+        var receptoresDeRemove = ReceptoresDe(fuentes, @"db\.(\w+)\.Remove\(");
+
+        Assert.Empty(receptoresDeRemove);
+
         var conDeleteFrom = fuentes
+            .Where(fuente => !EsMigracion(fuente.Archivo))
             .Where(fuente => Regex.IsMatch(
                 fuente.Contenido, @"DELETE\s+FROM", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5)))
             .Select(fuente => fuente.Archivo)
@@ -89,17 +100,26 @@ public class BajasEstructuralesTests
 
         Assert.Empty(conDeleteFrom);
 
-        var receptores = fuentes
-            .SelectMany(fuente => Regex
-                .Matches(fuente.Contenido, @"db\.(\w+)\.RemoveRange\(", RegexOptions.None, TimeSpan.FromSeconds(5))
-                .Select(coincidencia => coincidencia.Groups[1].Value))
-            .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
-            .ToList();
+        var receptores = ReceptoresDe(fuentes, @"db\.(\w+)\.RemoveRange\(");
 
         Assert.Equal(RemoveRangePermitidos, receptores);
         Assert.Empty(receptores.Intersect(TablasDeOrganizacion, StringComparer.Ordinal));
     }
+
+    private static List<string> ReceptoresDe(
+        IReadOnlyList<(string Archivo, string Contenido)> fuentes, string patron) =>
+        [.. fuentes
+            .SelectMany(fuente => Regex
+                .Matches(fuente.Contenido, patron, RegexOptions.None, TimeSpan.FromSeconds(5))
+                .Select(coincidencia => coincidencia.Groups[1].Value))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)];
+
+    private static bool EsMigracion(string archivoRelativo) =>
+        archivoRelativo.Contains($"{Path.DirectorySeparatorChar}Migraciones{Path.DirectorySeparatorChar}",
+            StringComparison.Ordinal)
+        || archivoRelativo.Contains($"{Path.DirectorySeparatorChar}Migrations{Path.DirectorySeparatorChar}",
+            StringComparison.Ordinal);
 
     /// <summary>
     /// Cláusula (design G): los conjuntos de locks de las bajas y del camino operativo son
@@ -113,6 +133,14 @@ public class BajasEstructuralesTests
     /// mencionan tiene que ser de organización. Si mañana una baja tocara <c>db.TurnosCaja</c>
     /// —el mecanismo por el que la propiedad se rompería— esta prueba se pone en rojo antes de
     /// que exista el deadlock.
+    ///
+    /// LA CUARTA TABLA QUE LAS BAJAS TOCAN ES <c>auditoria</c>, y se declara acá para que el
+    /// enunciado de arriba siga siendo verdadero (judgment-day ronda 1, hallazgo C1). No entra por
+    /// <c>db.&lt;Set&gt;</c> —la escribe <c>ServicioDeAuditoria.Registrar</c>, encolada en el mismo
+    /// <c>SaveChangesAsync</c>— y no rompe la disyunción: es un INSERT sobre una tabla que no
+    /// aparece en el orden total del programa, y sus FKs <c>Restrict</c> toman <c>FOR KEY SHARE</c>
+    /// sobre filas de organización que ESTA MISMA transacción ya tiene tomadas. Se afirma su
+    /// presencia, no solo su inocuidad: los tres métodos tienen que registrar auditoría.
     /// </summary>
     [Fact]
     public void LasBajasDeOrganizacionSoloTocanTablasDeOrganizacion()
@@ -136,7 +164,57 @@ public class BajasEstructuralesTests
 
             Assert.NotEmpty(conjuntos);
             Assert.Empty(conjuntos.Except(TablasDeOrganizacion, StringComparer.Ordinal));
+
+            // Las fábricas del rastro viven FUERA de los tres cuerpos, así que el enunciado "las
+            // bajas escriben auditoría" se afirma en dos mitades: el cuerpo llama a una
+            // `RegistrarBaja*` y el archivo declara al menos una que arma un RegistroDeAuditoria.
+            Assert.Contains("RegistrarBaja", cuerpo, StringComparison.Ordinal);
+            Assert.Contains("Registrar(new RegistroDeAuditoria(", servicio, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>
+    /// Cláusula (judgment-day ronda 1, hallazgo C2): en <c>ServicioDeUsuarios.EliminarAsync</c> el
+    /// guard de uso corre BAJO el lock y DENTRO de la transacción, nunca como un SELECT suelto
+    /// antes de abrirla. Es estructural y se dice que lo es (<c>mutation-proof-tests</c> regla 13):
+    /// la carrera que cierra es que una venta o un turno del MISMO empleado se confirmen entre el
+    /// guard y el estampado, y una prueba de un solo hilo no puede observar dónde está la línea.
+    ///
+    /// Se afirma el ORDEN de cuatro marcas dentro del método:
+    /// <c>ValidarPuedeIntervenirSobre</c> (afuera, es dominio puro) →
+    /// <c>CreateExecutionStrategy</c> → <c>TomarLockDeBajaAsync</c> →
+    /// <c>PrimeraDependenciaEnUsoAsync</c> → <c>SaveChangesAsync</c>. Mover el guard afuera de la
+    /// estrategia pone esto en rojo.
+    /// </summary>
+    [Fact]
+    public void LaBajaDeUsuarioCorreSuGuardBajoElLockYDentroDeLaTransaccion()
+    {
+        var servicio = File.ReadAllText(Path.Combine(
+            RaizDelRepositorio.Resolver(), "src", "Ways.Application", "Usuarios", "ServicioDeUsuarios.cs"));
+
+        var cuerpo = CuerpoDelMetodo(servicio, "EliminarAsync");
+
+        var politica = Posicion(cuerpo, "PoliticaDeRoles.ValidarPuedeIntervenirSobre(");
+        var estrategia = Posicion(cuerpo, "CreateExecutionStrategy().ExecuteAsync(");
+        var transaccion = Posicion(cuerpo, "BeginTransactionAsync(");
+        var lock_ = Posicion(cuerpo, "TomarLockDeBajaAsync(");
+        var guard = Posicion(cuerpo, "inspector.PrimeraDependenciaEnUsoAsync(");
+        var estampado = Posicion(cuerpo, "usuario.DeletedAt = momento;");
+        var guardado = Posicion(cuerpo, "db.SaveChangesAsync(ct)");
+
+        Assert.True(politica < estrategia, "PoliticaDeRoles tiene que decidir antes de abrir nada.");
+        Assert.True(estrategia < transaccion, "La transacción vive DENTRO de la estrategia de ejecución.");
+        Assert.True(transaccion < lock_, "El lock se toma con la transacción ya abierta (xact scope).");
+        Assert.True(lock_ < guard, "El guard de uso corre BAJO el lock, nunca antes.");
+        Assert.True(guard < estampado, "El estampado va después del guard.");
+        Assert.True(estampado < guardado, "El SaveChanges cierra la unidad completa.");
+    }
+
+    private static int Posicion(string cuerpo, string marca)
+    {
+        var indice = cuerpo.IndexOf(marca, StringComparison.Ordinal);
+        Assert.True(indice >= 0, $"No se encontró '{marca}' en el cuerpo del método.");
+        return indice;
     }
 
     /// <summary>Extrae el cuerpo de un método por conteo de llaves desde su firma. Alcanza y sobra
@@ -172,7 +250,7 @@ public class BajasEstructuralesTests
     [InlineData("articulos", "artículos")]
     [InlineData("turnos_caja", "turnos de caja")]
     [InlineData("puntos_venta", "puntos de venta")]
-    [InlineData("arqueos_turno", EtiquetasDeTablas.Generica)]
+    [InlineData("arqueos_turno", "arqueos de caja")]
     [InlineData("numeraciones_articulos", EtiquetasDeTablas.Generica)]
     [InlineData("una_tabla_que_no_existe", EtiquetasDeTablas.Generica)]
     public void CadaTablaMapeadaRindeSuPalabraYLaNoMapeadaDegradaALaGenerica(string tabla, string esperado) =>
@@ -185,11 +263,15 @@ public class BajasEstructuralesTests
     /// operador "turnos de caja" y lo mandaría a buscarlos en la empresa, donde no están.
     ///
     /// Las tres asignaciones posibles se prueban por separado: todas puenteadas ⇒ se nombra el
-    /// puente; ninguna ⇒ etiqueta pelada; MIXTA ⇒ etiqueta pelada, porque el inspector no dice
-    /// cuál de las dos ramas matcheó y afirmar el puente sería inventar un origen.
+    /// puente; ninguna ⇒ etiqueta pelada; MIXTA ⇒ TAMBIÉN se nombra el puente (judgment-day ronda
+    /// 1, hallazgo C3). La regla anterior degradaba la mixta a la etiqueta pelada y esta prueba la
+    /// congelaba como deliberada, cuando era justamente el caso que la entrada de la slice 3
+    /// prohíbe: una hoja con rama directa Y puenteada —hoy <c>parametros</c>— perdía la única
+    /// pista sobre dónde buscar. Nombrar el puente en la mixta no puede desorientar: la fila
+    /// directa habría rendido la MISMA palabra de hoja por su propia rama.
     /// </summary>
     [Fact]
-    public void UnaRamaPuenteadaNombraElPuenteYUnaMixtaNoLoAfirma()
+    public void UnaRamaPuenteadaNombraElPuenteInclusoCuandoLaHojaTambienLlegaDirecto()
     {
         var puente = new PuenteDeUso("public", "puntos_venta", ["id_punto_venta"], ["id_empresa"]);
 
@@ -210,17 +292,23 @@ public class BajasEstructuralesTests
         Assert.Equal("marcas", EtiquetasDeTablas.DescribirBloqueo("marcas", [puenteada, directa]));
 
         Assert.Equal(
-            "turnos de caja",
+            "turnos de caja en sus puntos de venta",
             EtiquetasDeTablas.DescribirBloqueo("turnos_caja", [puenteada, directaDeLaMismaHoja]));
+
+        // Y también con la rama directa PRIMERO: la elección no puede depender del orden en que el
+        // inventario devolvió las ramas.
+        Assert.Equal(
+            "turnos de caja en sus puntos de venta",
+            EtiquetasDeTablas.DescribirBloqueo("turnos_caja", [directaDeLaMismaHoja, puenteada]));
 
         // Una hoja puenteada SIN etiqueta propia degrada la palabra pero conserva el puente: el
         // operador sigue sabiendo dónde buscar.
         var sinEtiqueta = new RamaDeUso(
-            "public", "arqueos_turno", ["id_punto_venta"], ["Id"],
+            "public", "numeraciones_articulos", ["id_punto_venta"], ["Id"],
             ClasificacionDeDependiente.SinMarca, puente);
 
         Assert.Equal(
             $"{EtiquetasDeTablas.Generica} en sus puntos de venta",
-            EtiquetasDeTablas.DescribirBloqueo("arqueos_turno", [sinEtiqueta]));
+            EtiquetasDeTablas.DescribirBloqueo("numeraciones_articulos", [sinEtiqueta]));
     }
 }

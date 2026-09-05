@@ -4,6 +4,8 @@ using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
+using Ways.Domain.Auditoria;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
@@ -23,9 +25,20 @@ namespace Ways.Application.Organizacion;
 /// <see cref="InspectorDeUso"/> —que es la única línea de defensa, porque ninguna constraint de
 /// Postgres puede dispararse contra un <c>UPDATE ... SET deleted_at</c>— y arrastra en cascada
 /// la proyección de organización compartiendo UN solo instante.
+///
+/// Y DEJA RASTRO: las tres bajas escriben su fila de <c>auditoria</c> DENTRO de la misma
+/// transacción (judgment-day ronda 1, hallazgo C1) — la acción más destructiva del sistema no
+/// puede ser la única que no aparece en <c>GET /api/auditoria</c>. El idioma es el de
+/// <c>ServicioDeUsuarios.EliminarAsync</c>: <see cref="ServicioDeAuditoria.Registrar"/> encola la
+/// fila en el MISMO <c>SaveChangesAsync</c>, así que o se persisten la baja y su rastro, o ninguno
+/// de los dos.
 /// </summary>
 public class ServicioDeOrganizacion(
-    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, InspectorDeUso inspector)
+    IWaysDbContext db,
+    IRelojDelSistema reloj,
+    IContextoDeUsuario contexto,
+    InspectorDeUso inspector,
+    ServicioDeAuditoria auditoria)
 {
     /// <summary>
     /// Segunda clave del <c>pg_advisory_xact_lock</c> de las bajas de organización (design D11).
@@ -36,8 +49,13 @@ public class ServicioDeOrganizacion(
     /// tenant por accidente de clave. La primera clave es siempre el TENANT dueño: dar de baja un
     /// tenant y dar de baja una de sus empresas toman el MISMO lock, que es justo lo que cierra la
     /// carrera de la tabla G del design.
+    ///
+    /// <c>internal</c> y no <c>private</c> desde judgment-day ronda 1 (hallazgo C2):
+    /// <c>ServicioDeUsuarios.EliminarAsync</c> toma el MISMO lock sobre el tenant del sujeto, así
+    /// que la constante tiene que ser UNA sola — dos copias que se separen volverían a abrir la
+    /// carrera entre la baja de un tenant y la de uno de sus usuarios.
     /// </summary>
-    private const int ClaveDeLockDeBaja = -20;
+    internal const int ClaveDeLockDeBaja = -20;
 
     private ActorDeGestion Actor => new(contexto.Rol, contexto.UsuarioId, contexto.IdTenant);
 
@@ -167,6 +185,9 @@ public class ServicioDeOrganizacion(
     /// <item>UNA sola lectura del reloj para el padre y todos los hijos, y UN solo
     /// <c>SaveChangesAsync</c> — el orden de los statements lo elige EF y este diseño no pretende
     /// lo contrario (D9): la propiedad es la atomicidad, y la da la transacción.</item>
+    /// <item>el RASTRO de la cascada entera, encolado en ese mismo <c>SaveChangesAsync</c>
+    /// (judgment-day ronda 1, hallazgo C1): <c>tenant.baja</c> más una fila por cada empresa,
+    /// punto de venta y usuario que la cascada estampó.</item>
     /// </list>
     ///
     /// <c>db-error-backstops</c> es N/A: la baja es un <c>UPDATE ... SET deleted_at</c> y ninguna
@@ -205,15 +226,43 @@ public class ServicioDeOrganizacion(
             // que el filtro ambiente "BajaLogica" es garantía y no supuesto. Un hijo ya dado de
             // baja conserva su instante ORIGINAL, que es lo que mantiene exacto el restore
             // `UPDATE ... SET deleted_at = NULL WHERE deleted_at = '<instante>'`.
-            Marcar(await db.Usuarios.Where(u => u.IdTenant == id).ToListAsync(ct), momento);
-            Marcar(await db.PuntosVenta.Where(p => p.IdTenant == id).ToListAsync(ct), momento);
-            Marcar(await db.Empresas.Where(e => e.IdTenant == id).ToListAsync(ct), momento);
+            var usuarios = await db.Usuarios.Where(u => u.IdTenant == id).ToListAsync(ct);
+            var puntosVenta = await db.PuntosVenta.Where(p => p.IdTenant == id).ToListAsync(ct);
+            var empresas = await db.Empresas.Where(e => e.IdTenant == id).ToListAsync(ct);
+
+            Marcar(usuarios, momento);
+            Marcar(puntosVenta, momento);
+            Marcar(empresas, momento);
 
             // D10 — el ÚNICO escritor de EstadoTenant.Baja, y va en el MISMO SaveChanges que el
             // deleted_at: en dos statements existiría un intervalo donde la fila está dada de baja
             // y sigue diciendo "activo".
+            var estadoAnterior = tenant.Estado;
+
             Marcar(tenant, momento);
             tenant.Estado = EstadoTenant.Baja;
+
+            // C1 — el rastro cubre la cascada ENTERA y no solo el ancla: una fila por cada entidad
+            // que esta transacción estampó, con el mismo `momento`. La `usuario.baja` de cada
+            // cuenta arrastrada es la MISMA que escribe el camino directo de
+            // `ServicioDeUsuarios.EliminarAsync` — una cuenta que desaparece por cascada no puede
+            // dejar menos rastro que una que el admin da de baja a mano.
+            RegistrarBajaDeTenant(tenant, estadoAnterior, momento);
+
+            foreach (var empresa in empresas)
+            {
+                RegistrarBajaDeEmpresa(empresa, momento, porCascada: true);
+            }
+
+            foreach (var puntoVenta in puntosVenta)
+            {
+                RegistrarBajaDePuntoVenta(puntoVenta, momento, porCascada: true);
+            }
+
+            foreach (var usuario in usuarios)
+            {
+                RegistrarBajaDeUsuario(usuario, momento);
+            }
 
             await db.SaveChangesAsync(ct);
             return true;
@@ -349,8 +398,17 @@ public class ServicioDeOrganizacion(
 
             var momento = reloj.Ahora;
 
-            Marcar(await db.PuntosVenta.Where(p => p.IdEmpresa == id).ToListAsync(ct), momento);
+            var puntosVenta = await db.PuntosVenta.Where(p => p.IdEmpresa == id).ToListAsync(ct);
+
+            Marcar(puntosVenta, momento);
             Marcar(bajo, momento);
+
+            RegistrarBajaDeEmpresa(bajo, momento, porCascada: false);
+
+            foreach (var puntoVenta in puntosVenta)
+            {
+                RegistrarBajaDePuntoVenta(puntoVenta, momento, porCascada: true);
+            }
 
             await db.SaveChangesAsync(ct);
             return true;
@@ -488,7 +546,10 @@ public class ServicioDeOrganizacion(
                 "el punto de venta",
                 ct);
 
-            Marcar(bajo, reloj.Ahora);
+            var momento = reloj.Ahora;
+
+            Marcar(bajo, momento);
+            RegistrarBajaDePuntoVenta(bajo, momento, porCascada: false);
 
             await db.SaveChangesAsync(ct);
             return true;
@@ -608,6 +669,68 @@ public class ServicioDeOrganizacion(
             tabla, InventarioDeDependientes.Construir(db.Model, tipoAncla));
 
         throw ErrorDominio.Conflicto(codigo, $"No se puede dar de baja {sujeto} porque tiene {descripcion}.");
+    }
+
+    /// <summary>
+    /// Las cuatro fábricas del rastro (judgment-day ronda 1, hallazgo C1). Ninguna hace I/O:
+    /// <see cref="ServicioDeAuditoria.Registrar"/> encola la fila en el <c>SaveChangesAsync</c>
+    /// del llamador, así que el rastro es ATÓMICO con la baja que describe — nunca puede quedar
+    /// una fila estampada sin su registro ni un registro sin su baja.
+    ///
+    /// El <c>id_tenant</c> de la fila es el del SUJETO, nunca el de la sesión: es la misma regla
+    /// que <c>ServicioDeUsuarios</c> aplica desde la slice 2 de la etapa 14, y es lo que hace que
+    /// plataforma (<c>IdTenant</c> en <c>null</c>) pueda dar de baja el tenant X y dejar el rastro
+    /// EN el tenant X, donde su admin lo puede leer. El <c>id_actor</c> lo estampa el writer desde
+    /// el contexto, así que una cuenta de plataforma como ACTOR es perfectamente válida.
+    /// </summary>
+    private void RegistrarBajaDeTenant(Tenant tenant, EstadoTenant estadoAnterior, DateTimeOffset momento)
+    {
+        var (valorAnterior, valorNuevo) = PayloadDeAuditoria.BajaDeTenant(
+            estadoAnterior, tenant.Estado, momento);
+
+        auditoria.Registrar(new RegistroDeAuditoria(
+            tenant.Id, idPuntoVenta: null, AccionAuditada.TenantBaja, tenant.Id,
+            valorAnterior, valorNuevo));
+    }
+
+    private void RegistrarBajaDeEmpresa(Empresa empresa, DateTimeOffset momento, bool porCascada)
+    {
+        var (valorAnterior, valorNuevo) = PayloadDeAuditoria.BajaDeOrganizacion(momento, porCascada);
+
+        auditoria.Registrar(new RegistroDeAuditoria(
+            empresa.IdTenant, idPuntoVenta: null, AccionAuditada.EmpresaBaja, empresa.Id,
+            valorAnterior, valorNuevo));
+    }
+
+    /// <summary><c>id_punto_venta</c> se llena con el propio punto de venta dado de baja: es la
+    /// única de las tres bajas que puede alimentar honestamente esa columna, y hace que el filtro
+    /// <c>idPuntoVenta</c> de <c>GET /api/auditoria</c> encuentre su propia baja.</summary>
+    private void RegistrarBajaDePuntoVenta(PuntoVenta puntoVenta, DateTimeOffset momento, bool porCascada)
+    {
+        var (valorAnterior, valorNuevo) = PayloadDeAuditoria.BajaDeOrganizacion(momento, porCascada);
+
+        auditoria.Registrar(new RegistroDeAuditoria(
+            puntoVenta.IdTenant, puntoVenta.Id, AccionAuditada.PuntoVentaBaja, puntoVenta.Id,
+            valorAnterior, valorNuevo));
+    }
+
+    /// <summary>La MISMA fila que escribe <c>ServicioDeUsuarios.EliminarAsync</c>, con el mismo
+    /// guard de sujeto sin tenant (<c>auditoria.id_tenant</c> es NOT NULL). Acá el guard es
+    /// estructuralmente inalcanzable —la cascada selecciona por <c>IdTenant == id</c>, así que
+    /// ninguna cuenta de plataforma entra— y se escribe igual para que las dos fuentes de
+    /// <c>usuario.baja</c> sean literalmente el mismo par de payloads.</summary>
+    private void RegistrarBajaDeUsuario(Usuario usuario, DateTimeOffset momento)
+    {
+        if (usuario.IdTenant is not int idTenantSujeto)
+        {
+            return;
+        }
+
+        var (valorAnterior, valorNuevo) = PayloadDeAuditoria.BajaDeUsuario(usuario.Estado, momento);
+
+        auditoria.Registrar(new RegistroDeAuditoria(
+            idTenantSujeto, idPuntoVenta: null, AccionAuditada.UsuarioBaja, usuario.Id,
+            valorAnterior, valorNuevo));
     }
 
     /// <summary>Estampa la baja lógica: <c>deleted_at</c> Y <c>updated_at</c> con el MISMO

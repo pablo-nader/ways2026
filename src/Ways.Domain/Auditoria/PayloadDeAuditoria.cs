@@ -1,4 +1,5 @@
 using Ways.Domain.Compras;
+using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 
@@ -17,6 +18,11 @@ namespace Ways.Domain.Auditoria;
 /// <c>id_movimiento_stock</c> singular, y <see cref="BajaDeUsuario"/> usa
 /// <c>{deleted_at, estado}</c> en vez de <c>{estado:"eliminado"}</c> (que no es un valor de
 /// <c>EstadoUsuario</c>).
+///
+/// <see cref="BajaDeTenant"/> y <see cref="BajaDeOrganizacion"/> NO salen de esa tabla: las agregó
+/// la etapa 20 slice 4 (judgment-day ronda 1, hallazgo C1 — la acción más destructiva del sistema
+/// no dejaba ninguna fila en <c>GET /api/auditoria</c>), y siguen la forma de
+/// <see cref="BajaDeUsuario"/> porque son la misma operación sobre otro nivel de la jerarquía.
 /// </summary>
 public static class PayloadDeAuditoria
 {
@@ -177,4 +183,25 @@ public static class PayloadDeAuditoria
                 ["consumos_actualizados"] = consumosActualizados,
                 ["diferencia"] = diferencia
             });
+
+    /// <summary><c>tenant.baja</c> — call site 13 (etapa 20 slice 4). Misma forma que
+    /// <see cref="BajaDeUsuario"/>: <c>{deleted_at, estado}</c> en los dos lados. El tenant es el
+    /// único de las tres bajas de organización que además cambia de estado, y el estado nuevo
+    /// viaja como valor y no como literal — el call site es el único escritor de
+    /// <c>EstadoTenant.Baja</c> y lo pasa desde la misma entidad que acaba de estampar.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        BajaDeTenant(EstadoTenant estadoAnterior, EstadoTenant estadoNuevo, DateTimeOffset momento) => (
+            new Dictionary<string, object?> { ["deleted_at"] = null, ["estado"] = estadoAnterior },
+            new Dictionary<string, object?> { ["deleted_at"] = momento, ["estado"] = estadoNuevo });
+
+    /// <summary><c>empresa.baja</c> y <c>pv.baja</c> — call sites 14 y 15 (etapa 20 slice 4). Ni
+    /// <c>empresas</c> ni <c>puntos_venta</c> tienen columna de estado, así que la baja es
+    /// exactamente <c>deleted_at</c>. <paramref name="porCascada"/> es lo que distingue la baja
+    /// que pidió el operador de la que arrastró la baja de su padre: sin ese campo el rastro no
+    /// puede decir por qué cayó la fila, y las dos comparten instante justamente porque son la
+    /// misma transacción.</summary>
+    public static (IReadOnlyDictionary<string, object?>? Anterior, IReadOnlyDictionary<string, object?> Nuevo)
+        BajaDeOrganizacion(DateTimeOffset momento, bool porCascada) => (
+            new Dictionary<string, object?> { ["deleted_at"] = null },
+            new Dictionary<string, object?> { ["deleted_at"] = momento, ["por_cascada"] = porCascada });
 }

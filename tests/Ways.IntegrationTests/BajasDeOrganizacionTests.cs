@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Auditoria;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
@@ -128,7 +129,10 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
     /// <summary>Ejecuta una acción del servicio POR DEBAJO de la API (OD5). El reloj se puede fijar
     /// para afirmar el instante exacto de la cascada; si no se fija, se usa el real.</summary>
     private async Task ConServicioAsync(
-        int? idTenant, Func<ServicioDeOrganizacion, Task> accion, DateTimeOffset? instanteDeBaja = null)
+        int? idTenant,
+        Func<ServicioDeOrganizacion, Task> accion,
+        DateTimeOffset? instanteDeBaja = null,
+        int idActor = 1)
     {
         var tenantActual = idTenant is int id
             ? new TenantActualFijo(ModoDeAcceso.Tenant, id)
@@ -137,12 +141,13 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
         await using var db = fixture.CrearContextoDeAplicacion(tenantActual);
 
         var contexto = idTenant is int t
-            ? new ContextoFijo(RolConocido.Admin, usuarioId: 1, idTenant: t)
-            : new ContextoFijo(RolConocido.Root, usuarioId: 1, idTenant: null);
+            ? new ContextoFijo(RolConocido.Admin, idActor, idTenant: t)
+            : new ContextoFijo(RolConocido.Root, idActor, idTenant: null);
 
         var reloj = new RelojFijo(instanteDeBaja ?? DateTimeOffset.UtcNow);
 
-        await accion(new ServicioDeOrganizacion(db, reloj, contexto, new InspectorDeUso(db)));
+        await accion(new ServicioDeOrganizacion(
+            db, reloj, contexto, new InspectorDeUso(db), new ServicioDeAuditoria(db, reloj, contexto)));
     }
 
     private static async Task<ErrorDominio> ErrorDeAsync(Func<Task> accion) =>
@@ -501,6 +506,214 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
     }
 
     // =========================================================================================
+    // El rastro de auditoría de las tres bajas (judgment-day ronda 1, hallazgo C1)
+    // =========================================================================================
+
+    private async Task<long> UltimoIdDeAuditoriaAsync()
+    {
+        await using var db = ContextoDePlataforma();
+        return await db.Auditoria.IgnoreQueryFilters().MaxAsync(a => (long?)a.Id) ?? 0;
+    }
+
+    /// <summary>Las filas que la baja ESCRIBIÓ, aisladas por id: aprovisionar no escribe auditoría
+    /// hoy, pero afirmar un conteo absoluto ataría esta prueba a esa propiedad ajena.</summary>
+    private async Task<List<Ways.Domain.Auditoria.Auditoria>> RastroPosteriorAAsync(long ultimoId, int idTenant)
+    {
+        await using var db = ContextoDePlataforma();
+        return await db.Auditoria.IgnoreQueryFilters()
+            .Where(a => a.Id > ultimoId && a.IdTenant == idTenant)
+            .OrderBy(a => a.Id)
+            .ToListAsync();
+    }
+
+    /// <summary>El <c>deleted_at</c> del payload, truncado a MICROSEGUNDOS. El payload se serializa
+    /// desde el <c>DateTimeOffset</c> en memoria (100 ns de resolución) y la columna
+    /// <c>timestamptz</c> guarda microsegundos, así que comparar el JSON crudo contra la fila leída
+    /// fallaría por los últimos 7 ticks — una diferencia de representación, no de instante.</summary>
+    private static DateTimeOffset DeletedAtDe(string? json) =>
+        AMicrosegundos(JsonDocument.Parse(json!).RootElement.GetProperty("deleted_at").GetDateTimeOffset());
+
+    private static DateTimeOffset AMicrosegundos(DateTimeOffset instante) =>
+        new(instante.Ticks - (instante.Ticks % (TimeSpan.TicksPerMillisecond / 1000)), instante.Offset);
+
+    private static bool PorCascadaDe(string? json) =>
+        JsonDocument.Parse(json!).RootElement.GetProperty("por_cascada").GetBoolean();
+
+    private static void AssertDeletedAtAnteriorEsNulo(string? json) =>
+        Assert.Equal(
+            JsonValueKind.Null,
+            JsonDocument.Parse(json!).RootElement.GetProperty("deleted_at").ValueKind);
+
+    private async Task<int> IdDelRootAsync()
+    {
+        await using var db = ContextoDePlataforma();
+        return await db.Usuarios.IgnoreQueryFilters().Where(u => u.Mail == MailRoot).Select(u => u.Id).SingleAsync();
+    }
+
+    /// <summary>
+    /// C1 (judgment-day ronda 1, juez B): la acción MÁS destructiva del sistema no puede ser la
+    /// única que no deja rastro. La baja del tenant escribe CUATRO filas —una por cada entidad que
+    /// la cascada estampó— dentro de la misma transacción, y la del usuario arrastrado es la MISMA
+    /// <c>usuario.baja</c> que escribe el camino directo: desaparecer por cascada no puede dejar
+    /// menos rastro que ser dado de baja a mano.
+    ///
+    /// Se afirma la fila entera y no solo su presencia (<c>mutation-proof-tests</c> regla 12b): el
+    /// par (acción, entidad), el <c>id_entidad</c>, el <c>id_tenant</c> del SUJETO, el
+    /// <c>id_actor</c> —que acá es una cuenta de PLATAFORMA escribiendo bajo el tenant X, que es
+    /// justamente el caso que había que resolver—, el <c>deleted_at</c> del payload contra el
+    /// instante realmente estampado en la fila, y el <c>por_cascada</c> de cada hijo.
+    /// </summary>
+    [Fact]
+    public async Task LaBajaDelTenantDejaRastroDeLaCascadaEntera()
+    {
+        var sembrado = await AprovisionarAsync("rastro-tenant");
+        var idRoot = await IdDelRootAsync();
+        var ultimoId = await UltimoIdDeAuditoriaAsync();
+
+        using var root = await ClienteComoRootAsync();
+        Assert.Equal(
+            HttpStatusCode.NoContent,
+            (await root.DeleteAsync($"/api/plataforma/tenants/{sembrado.IdTenant}")).StatusCode);
+
+        var momento = (await LeerTenantAsync(sembrado.IdTenant)).DeletedAt!.Value;
+        var rastro = await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant);
+
+        Assert.Equal(4, rastro.Count);
+        Assert.All(rastro, fila => Assert.Equal(idRoot, fila.IdActor));
+        Assert.All(rastro, fila => Assert.Equal(AMicrosegundos(momento), DeletedAtDe(fila.ValorNuevo)));
+        Assert.All(rastro, fila => AssertDeletedAtAnteriorEsNulo(fila.ValorAnterior));
+
+        var delTenant = Assert.Single(rastro, f => f.Accion == "tenant.baja");
+        Assert.Equal("tenant", delTenant.Entidad);
+        Assert.Equal(sembrado.IdTenant, delTenant.IdEntidad);
+        Assert.Null(delTenant.IdPuntoVenta);
+        Assert.Equal(
+            "baja",
+            JsonDocument.Parse(delTenant.ValorNuevo).RootElement.GetProperty("estado").GetString());
+        Assert.Equal(
+            "activo",
+            JsonDocument.Parse(delTenant.ValorAnterior!).RootElement.GetProperty("estado").GetString());
+
+        var deLaEmpresa = Assert.Single(rastro, f => f.Accion == "empresa.baja");
+        Assert.Equal("empresa", deLaEmpresa.Entidad);
+        Assert.Equal(sembrado.IdEmpresa, deLaEmpresa.IdEntidad);
+        Assert.True(PorCascadaDe(deLaEmpresa.ValorNuevo));
+
+        var delPunto = Assert.Single(rastro, f => f.Accion == "pv.baja");
+        Assert.Equal("punto_venta", delPunto.Entidad);
+        Assert.Equal(sembrado.IdPuntoVenta, delPunto.IdEntidad);
+        Assert.Equal(sembrado.IdPuntoVenta, delPunto.IdPuntoVenta);
+        Assert.True(PorCascadaDe(delPunto.ValorNuevo));
+
+        var delUsuario = Assert.Single(rastro, f => f.Accion == "usuario.baja");
+        Assert.Equal("usuario", delUsuario.Entidad);
+        Assert.Equal(sembrado.IdAdmin, delUsuario.IdEntidad);
+    }
+
+    /// <summary>
+    /// C1, segundo camino: la baja de una empresa deja SU fila y una por cada punto de venta que
+    /// arrastró, ninguna <c>usuario.baja</c> (la cascada de empresa no toca cuentas), y el admin
+    /// del tenant las LEE por <c>GET /api/auditoria</c> — que es donde el hallazgo decía que no
+    /// había nada. Se afirma el conteo por acción, no solo la presencia: una fila de más
+    /// (<c>tenant.baja</c> escapándose de la cascada equivocada) también rompe.
+    /// </summary>
+    [Fact]
+    public async Task LaBajaDeUnaEmpresaDejaSuRastroYElAdminLoLeePorLaApi()
+    {
+        var sembrado = await AprovisionarAsync("rastro-empresa");
+        var despues = sembrado.Ancla.AddMinutes(1);
+        var momento = despues.AddHours(1);
+
+        var segunda = await SembrarEmpresaAsync(sembrado.IdTenant, "Segunda SRL", despues);
+        var puntoDeLaSegunda = await SembrarPuntoVentaAsync(
+            sembrado.IdTenant, segunda.Id, "Local de la segunda", despues);
+
+        var ultimoId = await UltimoIdDeAuditoriaAsync();
+
+        await ConServicioAsync(
+            sembrado.IdTenant, s => s.EliminarEmpresaAsync(segunda.Id), momento, idActor: sembrado.IdAdmin);
+
+        var rastro = await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant);
+
+        Assert.Equal(2, rastro.Count);
+        Assert.All(rastro, fila => Assert.Equal(sembrado.IdAdmin, fila.IdActor));
+        Assert.All(rastro, fila => Assert.Equal(AMicrosegundos(momento), DeletedAtDe(fila.ValorNuevo)));
+
+        var deLaEmpresa = Assert.Single(rastro, f => f.Accion == "empresa.baja");
+        Assert.Equal(segunda.Id, deLaEmpresa.IdEntidad);
+        Assert.False(PorCascadaDe(deLaEmpresa.ValorNuevo));
+
+        var delPunto = Assert.Single(rastro, f => f.Accion == "pv.baja");
+        Assert.Equal(puntoDeLaSegunda.Id, delPunto.IdEntidad);
+        Assert.True(PorCascadaDe(delPunto.ValorNuevo));
+
+        using var admin = await ClienteComoAsync(sembrado.MailAdmin, sembrado.PasswordAdmin);
+        var pagina = await admin.GetFromJsonAsync<JsonElement>("/api/auditoria?tamanio=200");
+
+        var acciones = pagina.GetProperty("items").EnumerateArray()
+            .Select(item => (
+                Accion: item.GetProperty("accion").GetString(),
+                IdEntidad: item.GetProperty("idEntidad").GetInt32()))
+            .ToList();
+
+        Assert.Contains(("empresa.baja", segunda.Id), acciones);
+        Assert.Contains(("pv.baja", puntoDeLaSegunda.Id), acciones);
+    }
+
+    /// <summary>
+    /// C1, tercer camino: la baja de un punto de venta deja UNA sola fila, marcada como NO
+    /// cascada, con su propio id en <c>id_punto_venta</c> — la única de las tres que puede llenar
+    /// esa columna honestamente, y lo que hace que el filtro <c>idPuntoVenta</c> del log encuentre
+    /// la baja del propio punto de venta.
+    /// </summary>
+    [Fact]
+    public async Task LaBajaDeUnPuntoDeVentaDejaUnaSolaFilaYNoLaMarcaComoCascada()
+    {
+        var sembrado = await AprovisionarAsync("rastro-pv");
+        var despues = sembrado.Ancla.AddMinutes(1);
+        var momento = despues.AddHours(1);
+
+        var segundo = await SembrarPuntoVentaAsync(
+            sembrado.IdTenant, sembrado.IdEmpresa, "Local 2", despues);
+
+        var ultimoId = await UltimoIdDeAuditoriaAsync();
+
+        await ConServicioAsync(null, s => s.EliminarPuntoVentaAsync(segundo.Id), momento);
+
+        var fila = Assert.Single(await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant));
+
+        Assert.Equal("pv.baja", fila.Accion);
+        Assert.Equal("punto_venta", fila.Entidad);
+        Assert.Equal(segundo.Id, fila.IdEntidad);
+        Assert.Equal(segundo.Id, fila.IdPuntoVenta);
+        Assert.Equal(AMicrosegundos(momento), DeletedAtDe(fila.ValorNuevo));
+        Assert.False(PorCascadaDe(fila.ValorNuevo));
+    }
+
+    /// <summary>
+    /// C1, el lado negativo: una baja RECHAZADA no deja rastro. La fila de auditoría se encola en
+    /// el mismo <c>SaveChangesAsync</c> de la transacción, así que el 409 del guard la lleva
+    /// consigo — sin esto, el log terminaría afirmando bajas que nunca ocurrieron.
+    /// </summary>
+    [Fact]
+    public async Task UnaBajaRechazadaPorElGuardNoDejaNingunRastro()
+    {
+        var sembrado = await AprovisionarAsync("rastro-rechazo");
+        var despues = sembrado.Ancla.AddMinutes(1);
+
+        await SembrarArticuloAsync(sembrado.IdTenant, despues);
+
+        var ultimoId = await UltimoIdDeAuditoriaAsync();
+
+        using var root = await ClienteComoRootAsync();
+        var (codigo, _) = await LeerConflictoAsync(
+            await root.DeleteAsync($"/api/plataforma/tenants/{sembrado.IdTenant}"));
+
+        Assert.Equal("tenant_en_uso", codigo);
+        Assert.Empty(await RastroPosteriorAAsync(ultimoId, sembrado.IdTenant));
+    }
+
+    // =========================================================================================
     // "Un artículo bloquea" y los baldes
     // =========================================================================================
 
@@ -663,8 +876,13 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
 
         await using (var db = ContextoDePlataforma())
         {
+            // La acción se nombra a propósito: desde judgment-day ronda 1 la cascada escribe
+            // además su propia `usuario.baja` sobre el MISMO id de entidad, así que sin
+            // desambiguar esto ya no identifica la fila sembrada por la prueba.
             var fila = await db.Auditoria.IgnoreQueryFilters()
-                .SingleAsync(a => a.IdTenant == sembrado.IdTenant && a.IdEntidad == sembrado.IdAdmin);
+                .SingleAsync(a => a.IdTenant == sembrado.IdTenant
+                    && a.IdEntidad == sembrado.IdAdmin
+                    && a.Accion == "usuario.actualizacion");
 
             // La fila referenciada sigue existiendo (baja lógica), así que el rastro resuelve.
             Assert.True(await db.Usuarios.IgnoreQueryFilters().AnyAsync(u => u.Id == fila.IdEntidad));

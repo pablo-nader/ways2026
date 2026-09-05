@@ -376,7 +376,9 @@ public class ProyeccionDeOrganizacionTests(WaysApiFixture fixture) : IClassFixtu
         {
             var contador = new ContadorDeComandos();
             await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma, contador);
-            await accion(new ServicioDeOrganizacion(db, reloj, contextoRoot, new InspectorDeUso(db)));
+            await accion(new ServicioDeOrganizacion(
+                db, reloj, contextoRoot, new InspectorDeUso(db),
+                new ServicioDeAuditoria(db, reloj, contextoRoot)));
             return contador.Consultas;
         }
     }

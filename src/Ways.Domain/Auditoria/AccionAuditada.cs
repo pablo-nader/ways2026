@@ -9,12 +9,12 @@ namespace Ways.Domain.Auditoria;
 ///
 /// <c>dto-contract-honesty</c>: cada constante documenta el par exacto que su call site (design,
 /// tabla "Call sites") tiene permitido escribir — la convención del repo es usar siempre una de
-/// estas 12 instancias; un call site nuevo que necesite una acción no listada tiene que agregarla
+/// estas 15 instancias; un call site nuevo que necesite una acción no listada tiene que agregarla
 /// acá primero, nunca improvisar un <c>new AccionAuditada(...)</c> inline. El <c>record</c>
 /// posicional público SÍ genera un constructor público (<c>new AccionAuditada("x", "y")</c>
 /// compila): nada en el tipo lo impide, y la membresía al catálogo no se valida en runtime
 /// (design decisión 15 — una acción retirada deja filas consultables cuyo <c>accion</c> ya no
-/// tiene entrada acá, y eso es intencional). La garantía de "solo estas 12" es de convención +
+/// tiene entrada acá, y eso es intencional). La garantía de "solo estas 15" es de convención +
 /// test (<see cref="Ways.Domain.Tests.Auditoria.AccionAuditadaTests"/> congela el catálogo
 /// exacto), no del tipo.
 /// </summary>
@@ -60,9 +60,29 @@ public sealed record AccionAuditada(string Accion, string Entidad)
     /// contraseña.</summary>
     public static readonly AccionAuditada UsuarioPassword = new("usuario.password", "usuario");
 
-    /// <summary>Las 12 acciones de la primera pasada (proposal decisión 5) — usada por el
-    /// catálogo genérico de tests (naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, sin
-    /// duplicados) y por cualquier consumidor que necesite iterarlas todas.</summary>
+    /// <summary>Etapa 20 slice 4 — <c>Organizacion/ServicioDeOrganizacion.cs</c>,
+    /// <c>EliminarTenantAsync</c>. Baja lógica: <c>{deleted_at, estado}</c> en los dos lados, misma
+    /// forma que <see cref="UsuarioBaja"/> — el tenant es el único de los tres que además cambia de
+    /// estado (<c>EstadoTenant.Baja</c>).</summary>
+    public static readonly AccionAuditada TenantBaja = new("tenant.baja", "tenant");
+
+    /// <summary>Etapa 20 slice 4 — <c>Organizacion/ServicioDeOrganizacion.cs</c>,
+    /// <c>EliminarEmpresaAsync</c> y la cascada de <c>EliminarTenantAsync</c>.</summary>
+    public static readonly AccionAuditada EmpresaBaja = new("empresa.baja", "empresa");
+
+    /// <summary>Etapa 20 slice 4 — <c>Organizacion/ServicioDeOrganizacion.cs</c>,
+    /// <c>EliminarPuntoVentaAsync</c> y las cascadas de empresa y de tenant. El dominio se abrevia
+    /// <c>pv</c> por la MISMA razón que <see cref="CcReliquidacion"/> abrevia cuenta corriente: el
+    /// formato congelado del catálogo es <c>&lt;dominio&gt;.&lt;operacion&gt;</c> sin guiones bajos
+    /// (<c>AccionAuditadaTests.CadaAccionRespetaElFormatoDominioPuntoOperacion</c>). La
+    /// <c>Entidad</c> sí lleva el nombre completo en snake_case, como
+    /// <c>comprobante_venta</c>.</summary>
+    public static readonly AccionAuditada PuntoVentaBaja = new("pv.baja", "punto_venta");
+
+    /// <summary>Las 15 acciones del catálogo (12 de la primera pasada, proposal decisión 5, más
+    /// las tres bajas de organización de la etapa 20 slice 4) — usada por el catálogo genérico de
+    /// tests (naming <c>&lt;dominio&gt;.&lt;operacion&gt;</c>, sin duplicados) y por cualquier
+    /// consumidor que necesite iterarlas todas.</summary>
     public static readonly IReadOnlyList<AccionAuditada> Todas =
     [
         PrecioCambio,
@@ -76,6 +96,9 @@ public sealed record AccionAuditada(string Accion, string Entidad)
         UsuarioActualizacion,
         UsuarioBaja,
         UsuarioDesbloqueo,
-        UsuarioPassword
+        UsuarioPassword,
+        TenantBaja,
+        EmpresaBaja,
+        PuntoVentaBaja
     ];
 }
