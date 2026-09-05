@@ -300,11 +300,11 @@ decouples slice 1 from slice 4's cascade and keeps Part A independently mergeabl
   file, `has-pending-model-changes` clean, `InicializadorDeBaseDeDatos.cs` / `Politicas.cs` /
   `ManejadorDeErrores.cs` untouched, zero physical deletes, zero DDL). Full Domain + Application +
   Integration suites green; `dotnet build Ways.slnx` clean.
-- [ ] 1.15 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a clean
+- [x] 1.15 `judgment-day` round: two blind review agents, fix confirmed findings, re-judge to a clean
   round.
-- [ ] 1.16 Open PR 1 `feat/stage20-slice1-proyeccion-api` (`branch-pr`, conventional commits, no AI
+- [x] 1.16 Open PR 1 `feat/stage20-slice1-proyeccion-api` (`branch-pr`, conventional commits, no AI
   attribution), record the mutation evidence for tasks 1.7-1.12 in the PR body (V11), merge to `main`
-  after the clean round.
+  after the clean round. **PR #165 merged to `main` as commit `5f0018f`.**
 
 
 ### Mutation evidence — slice 1 (`mutation-proof-tests` rule 2, produced, not reasoned)
@@ -488,51 +488,164 @@ second fetch: `GET /api/plataforma/tenants` is `Politicas.SoloPlataforma` while 
 for exactly the users the screen was built for. Deriving from the rows also makes an empty option set
 impossible by construction, and satisfies S5 (a filter can never disclose an out-of-scope tenant).
 
-- [ ] 2.1 Modify `src/Ways.Web/src/api/tipos.ts` — mirror the four DTO shapes from slice 1, with
+- [x] 2.1 Modify `src/Ways.Web/src/api/tipos.ts` — mirror the four DTO shapes from slice 1, with
   `nombreTenant`/`razonSocialEmpresa`/`idTenant` nullable exactly as the server declares them.
   *(TO-R1, TO-R2, UT-R1)*
-- [ ] 2.2 Modify `src/Ways.Web/src/api/organizacion.ts` — five **pure** helpers, no React, no fetch:
+- [x] 2.2 Modify `src/Ways.Web/src/api/organizacion.ts` — five **pure** helpers, no React, no fetch:
   `opcionesDeTenant`, `opcionesDeEmpresa` (narrowed by the selected tenant), `filtrarPorTenant`,
   `filtrarPorEmpresa`, `etiquetaDeTenant` (`null` → the literal `"Plataforma"`). *(TO-R3, UT-R1;
   design D14, D15)*
-- [ ] 2.3 Modify `src/Ways.Web/src/api/usuarios.ts` — mirror `UsuarioListado`'s two new fields. The
+- [x] 2.3 Modify `src/Ways.Web/src/api/usuarios.ts` — mirror `UsuarioListado`'s two new fields. The
   `eliminar` call already exists and is **not** touched in this slice. *(UT-R1)*
-- [ ] 2.4 Modify `src/Ways.Web/src/paginas/Tenants.tsx` — three count columns (empresas, puntos de
+- [x] 2.4 Modify `src/Ways.Web/src/paginas/Tenants.tsx` — three count columns (empresas, puntos de
   venta, usuarios). *(TO-R2)*
-- [ ] 2.5 Modify `src/Ways.Web/src/paginas/Empresas.tsx` — tenant **name** column replacing the raw
+- [x] 2.5 Modify `src/Ways.Web/src/paginas/Empresas.tsx` — tenant **name** column replacing the raw
   integer at `:156`; tenant filter over the loaded list. *(TO-R1, TO-R3)*
-- [ ] 2.6 Modify `src/Ways.Web/src/paginas/PuntosVenta.tsx` — tenant name and empresa razón social
+- [x] 2.6 Modify `src/Ways.Web/src/paginas/PuntosVenta.tsx` — tenant name and empresa razón social
   columns replacing the two integers at `:216-217`; tenant filter **and** empresa filter, where
   selecting a tenant **narrows** the empresa options and **clears** an empresa selection that no
   longer belongs to it. *(TO-R1, TO-R3; design D15)*
-- [ ] 2.7 Modify `src/Ways.Web/src/paginas/Usuarios.tsx` — tenant column rendering the tenant name,
+- [x] 2.7 Modify `src/Ways.Web/src/paginas/Usuarios.tsx` — tenant column rendering the tenant name,
   or the literal **"Plataforma"** when `idTenant === null` (never an empty cell); tenant filter.
   *(UT-R1, TO-R3; design D14)*
-- [ ] 2.8 [P] Create `src/Ways.Web/src/api/organizacion.test.ts` — **`web-descriptor-tests`**: one
+- [x] 2.8 [P] Create `src/Ways.Web/src/api/organizacion.test.ts` — **`web-descriptor-tests`**: one
   case per helper branch — `opcionesDeTenant` dedup + ordering + the `null` option,
   `opcionesDeEmpresa` narrowing to the selected tenant, `filtrarPorTenant`/`filtrarPorEmpresa`
   including the "no selection" identity case, `etiquetaDeTenant`'s null branch. *(TO-R3, UT-R1)*
-- [ ] 2.9 [P] Create `src/Ways.Web/src/paginas/Tenants.test.tsx` — the three counts render from the
+- [x] 2.9 [P] Create `src/Ways.Web/src/paginas/Tenants.test.tsx` — the three counts render from the
   DTO, with pairwise-distinct values so a column swap is killed. *(TO-R2)*
-- [ ] 2.10 [P] Create `src/Ways.Web/src/paginas/Empresas.test.tsx` — the tenant **name** renders (not
+- [x] 2.10 [P] Create `src/Ways.Web/src/paginas/Empresas.test.tsx` — the tenant **name** renders (not
   the id); selecting a tenant narrows the rendered rows **with no additional network request**
   (assert the mocked client's call count); clearing the filter restores the full loaded list.
   *(TO-R1, TO-R3)*
-- [ ] 2.11 [P] Create `src/Ways.Web/src/paginas/PuntosVenta.test.tsx` — both owner names render;
+- [x] 2.11 [P] Create `src/Ways.Web/src/paginas/PuntosVenta.test.tsx` — both owner names render;
   selecting a tenant narrows the empresa select **and** clears an empresa that no longer belongs to
   it; the empresa filter narrows the rows. *(TO-R1, TO-R3)*
-- [ ] 2.12 [P] Create `src/Ways.Web/src/paginas/Usuarios.test.tsx` — `"Plataforma"` renders for
+- [x] 2.12 [P] Create `src/Ways.Web/src/paginas/Usuarios.test.tsx` — `"Plataforma"` renders for
   `idTenant === null` and the tenant name renders otherwise; the tenant filter narrows the rows; a
   single-tenant dataset offers exactly one tenant option (S5). *(UT-R1, TO-R3)*
-- [ ] 2.13 [P] Assertion across the four screen tests: **no cell presents `idTenant` or `idEmpresa`
+- [x] 2.13 [P] Assertion across the four screen tests: **no cell presents `idTenant` or `idEmpresa`
   as the owner's identity** — the raw ids survive only as `<select value>` filter keys.
   *(TO-R1; Success Criterion "no raw owner id is displayed")*
-- [ ] 2.14 GATE GUARD + non-regression — `npm --prefix src/Ways.Web run test`,
+- [x] 2.14 GATE GUARD + non-regression — `npm --prefix src/Ways.Web run test`,
   `npm --prefix src/Ways.Web run build` (typecheck) and `npm --prefix src/Ways.Web run lint` all
   clean; re-assert V1-V6 on this slice's diff (a web-only slice must still touch zero migrations and
   zero backend guard files).
 - [ ] 2.15 `judgment-day` round to a clean round.
 - [ ] 2.16 Open PR 2 `feat/stage20-slice2-proyeccion-web`, merge to `main` after the clean round.
+
+### Mutation evidence — slice 2 (`mutation-proof-tests` rule 2, produced, not reasoned)
+
+Every mutation below was applied to the working tree, the named suite was run, the result was
+observed, and the mutation was then reverted and the suite observed GREEN again. Command:
+`npx vitest run <file>` from `src/Ways.Web`. **Branch as delivered**:
+`feat/stage20-slice2-web-relaciones` (the launch prompt's name; `tasks.md` above still records the
+planning name `feat/stage20-slice2-proyeccion-web` — same slice, different branch label).
+
+| # | Task | Clause under test | Mutation applied | Observed result |
+|---|---|---|---|---|
+| M1 | 2.2, 2.5, 2.6, 2.7 | `etiquetaDeTenant` discriminates on `idTenant`, never on the name (Reconciliación 9) | body replaced by `return fila.nombreTenant ?? ETIQUETA_PLATAFORMA` | **KILLED, 4 tests across 4 files** — `un huérfano … NO se rinde como plataforma`: `expected 'Plataforma' to be '—'`; plus the orphan test of `Empresas`, `PuntosVenta` and `Usuarios` |
+| M2 | 2.2, 2.7 | `claveDeTenant` gives platform staff a token no `String(idTenant)` can produce | `return String(idTenant)` | **KILLED, 4 tests** — `expected [ '9', 'null' ] to deeply equal [ 'sin-tenant', '9' ]`, and the "Plataforma" homonym filter test returned the tenant row instead of the staff row |
+| M3 | 2.2, 2.6 | `opcionesDeEmpresa` narrows to the selected tenant (D15) | `for (const fila of filas)` — the `filtrarPorTenant` call dropped | **KILLED, 3 tests** — `expected [ '11', '10', '20' ] to deeply equal [ '11', '10' ]` |
+| M4 | 2.6 | `cambiarFiltroDeTenant` CLEARS the empresa state, not just its rendering | body replaced by `setFiltroEmpresa((prev) => prev)` | **SURVIVED at first**, then KILLED after the test was re-routed below the confound. The confound is real and named in the test: the derived `empresaVigente` fallback already blanks the `<select>`, so asserting the blank proves nothing. The discriminating observation is that returning the tenant filter to "Todos" must NOT resurrect the foreign empresa — `expected [ 'PV Este' ] to deeply equal [ 'PV Centro', 'PV Anexo', 'PV Este' ]` |
+| M5 | 2.4, 2.9 | The three count columns are not interchangeable | `cantidadEmpresas` and `cantidadPuntosVenta` swapped in the `<td>`s | **KILLED** — `rinde los tres contadores de cada tenant en su propia columna` |
+| M6 | 2.5 | `Empresas` actually applies the tenant filter | `const visibles = items` | **KILLED, 2 tests** — `expected [ 'Sur SRL', 'Sur Anexo SA', …(1) ] to deeply equal [ 'Este SRL' ]` |
+| M7 | 2.5, 2.13 | The empresas tenant column renders the NAME, not the id | `<td>{e.idTenant}</td>` | **KILLED, 3 tests** including the task-2.13 no-raw-id assertion |
+| M8 | 2.7 | `Usuarios` actually applies the tenant filter | `const visibles = filas` | **KILLED, 3 tests** — `expected [ 'vendedor.sur', …(2) ] to deeply equal [ 'vendedor.este' ]` |
+| M9 | 2.6 | The empresa column marks a missing razón social as an anomaly, not as an id | `?? String(p.idEmpresa)` | **KILLED** — the orphan PV test |
+| M10 | — | ALL generation guards of `Empresas.tsx` deleted at once | every `generacion.current` check removed (0 left) | **SURVIVED, 6/6 green — recorded as a survivor, not dressed up as a kill.** See the note below: on the three organization screens the stale-read window is closed by `react-async-state` rule 9 (nothing can supersede an in-flight operation), so the gate is defence-in-depth there and has nothing of its own to prove |
+| M11 | 2.7 | The generation guard of `Usuarios.cargar` — the ONE reachable stale-read window in this slice | `if (generacion.current !== token) return` deleted before `setPagina` | **KILLED** — `una respuesta de búsqueda vieja que aterriza tarde no pisa a la nueva`: `expected [ 'vendedor.sur', 'vendedor.este' ] to deeply equal [ 'staff' ]` |
+| M12 | 2.5 | Rule 9: an in-flight write blocks every action that could supersede it, not just Submit | `disabled={ocupado !== null}` removed from the row's "Editar" | **KILLED** — `Received element is not disabled` |
+| M13 | 2.5 | Rule 6: the post-write refresh sits OUTSIDE the write's try/catch, so a committed write is never reported as a failure | the success aviso moved back inside the write path | **KILLED** — `Unable to find an element with the text: Se actualizó "Sur SRL".` |
+
+**M10 is the honest survivor of this slice, and it is stated rather than papered over.** The
+generation gate on `Tenants.tsx`, `Empresas.tsx` and `PuntosVenta.tsx` guards a window that
+`react-async-state` rule 9 already closes: while a write is outstanding every action that could
+supersede it is disabled, and while a read is outstanding the table is replaced by the loading
+indicator, so no second operation can start. Deleting all four guards from `Empresas.tsx` therefore
+changes nothing observable and the suite stays green. They are kept as defence-in-depth for slice 5,
+which adds delete buttons to exactly these screens. `Usuarios.tsx` is different — its search box is
+reachable while a load is in flight, which is a genuine two-reads-in-flight window — and that is
+where M11 kills.
+
+**One test defect was found by running M4 and was fixed, not rationalised.** The first draft of the
+empresa-clearing test asserted only `toHaveValue('')` after switching tenants, which the derived
+`empresaVigente` fallback satisfies on its own. The assertion now returns the tenant filter to
+"Todos" and requires the full list back: only a genuine `setFiltroEmpresa(SIN_FILTRO)` produces
+that, because a stale `'30'` would become a valid option again and silently reapply itself.
+
+### Slice 2 delivery notes
+
+- **BUDGET OVERFLOW, MEASURED AND REPORTED, NOT ABSORBED — AND NOT SPLIT UNILATERALLY.**
+  `git diff main --stat -- src`: **34 files, 1 909 insertions + 289 deletions = 2 198 changed
+  lines** against an estimate of ~430 and an operative budget of 800 (OD1). Ignoring
+  pure re-indentation (`git diff -w`): **1 741 + 121 = 1 862**. The split is production **~1 054**
+  / tests **~1 144**, and the production figure is itself inflated: the four screens account for
+  443 insertions and 120 deletions with `-w`, the rest is the mechanical `tipos.ts` mirror plus
+  58 lines of fixture fields across 23 pre-existing test files.
+
+  The shape is the same one the orchestrator already ruled on for slice 1: a small production
+  surface carrying a large body of demanded evidence. The five new test files are 1 078 lines,
+  required by `web-descriptor-tests` (a colocated test per helper branch, smoke-only is not done)
+  and `mutation-proof-tests` (a named clause plus recorded evidence per test).
+
+  **The pre-approved degradation for this slice (`2a` names and counts / `2b` filters) is no
+  longer a clean cut** and this is stated rather than forced: the filter derivation, the column
+  rendering and the `react-async-state` retrofit live in the same four screen bodies, so cutting
+  along names-vs-filters would split single functions across two PRs. The cut that IS clean is
+  per screen, and the six commits are already shaped for it:
+  `tipos.ts` mirror → helpers + their tests → Tenants → Empresas → PuntosVenta → Usuarios.
+  **This is an orchestrator decision, not an apply-phase one**, and no PR was opened.
+
+- **Task 2.3 has no file to modify: `src/Ways.Web/src/api/usuarios.ts` does not exist.**
+  `UsuarioListado` is declared in `tipos.ts` and `Usuarios.tsx` calls `api.get` directly — there is
+  no usuarios client module, and the `eliminar` call the task mentions is an inline
+  `api.delete` in the screen. The task's substance (mirror the two new fields) is delivered by
+  task 2.1. **No module was created just to satisfy the task's wording**: an empty indirection
+  layer would be dead code. Marked done on that basis, recorded here rather than silently.
+
+- **`react-async-state` was applied to all four screens, which is most of the production delta
+  beyond the columns and filters.** The screens combine React state with async fetch/save, so the
+  skill's activation contract fires. What landed, per screen: a generation ref with its
+  invalidation contract documented on the ref; a token check before every state application after
+  every await, including the `finally` that clears the flags and the opt-in rethrow of the loader;
+  a per-operation `ocupado` flag that disables the form AND every row action for the whole window
+  from click until the post-write refresh lands (rule 9, not token reconciliation); and the
+  post-write refresh isolated from the write's try/catch with a distinguishable message
+  (rule 6). `Usuarios.tsx` also gained `key={formulario.id ?? 'nuevo'}` on the form subtree
+  (rule 8) and a re-entrancy guard on every handler. M10-M13 are the evidence, including the
+  survivor.
+
+- **The filter selection is DERIVED, not synchronised by an effect.** `tenantVigente` /
+  `empresaVigente` fall back to "no filter" when the stored selection is not among the options
+  derived from the currently loaded rows, so a refresh that removes a row can never leave a
+  `<select>` pointing at an option that no longer exists — without a `useEffect` that would fire a
+  second render pass. The one place state IS mutated is `cambiarFiltroDeTenant`, and it uses a
+  functional updater built from `prev` (rule 1), never from closure state.
+
+- **A tenant literally named "Plataforma" stays distinguishable in the filter.** The column renders
+  the literal `"Plataforma"` for `idTenant === null` (D14), so a homonym tenant renders the same
+  text — `nombre` is free text and that is unavoidable. The filter is where it must not collapse:
+  the platform option's key is the token `sin-tenant` (never any `String(idTenant)`) and its label
+  carries the suffix `(sin tenant)`, so the two options are distinct by key AND by label. M2 kills
+  the key collapse; the `Usuarios` homonym test kills the label collapse.
+
+- **Pre-existing flake observed, NOT introduced by this slice.**
+  `Reposicion.test.tsx > arranca con el primer punto de venta cargado, sin ?dias= en la consulta`
+  fails intermittently under the full-suite run (`TypeError: Cannot read properties of undefined
+  (reading '0')` at line 152 — `apiGetMock.mock.calls.find(...)` returns `undefined`). Measured:
+  **1 failure in 3 full runs on this branch, and 1 failure in 4 full runs on `main` with the branch
+  stashed**. Alone, the file passes 12/12. The file's only change in this slice is two fixture
+  fields. Not fixed here — it is outside slice 2's scope — but recorded so nobody reads a red
+  suite as slice 2's doing.
+
+- **Verify criteria re-asserted on this slice's diff (V1-V6, V13).** Zero files under
+  `Migraciones/`; `dotnet ef migrations has-pending-model-changes` → *"No changes have been made to
+  the model since the last migration"*; `InicializadorDeBaseDeDatos.cs`, `Politicas.cs` and
+  `ManejadorDeErrores.cs` all pass `git diff main --exit-code`; zero `ExecuteDelete`/`RemoveRange`/
+  `DELETE FROM` additions; zero DDL. `git diff main --name-only` outside `src/Ways.Web/` is
+  **empty** — this slice touches no backend file at all, which is why the three dotnet test suites
+  were not run (`dotnet build Ways.slnx` was, and is clean).
 
 ---
 

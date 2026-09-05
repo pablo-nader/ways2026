@@ -458,7 +458,67 @@ phases:
       Contratos.cs and NombreDeTenantAsync now state the two real cases, and the
       never-fabricate-"Plataforma" rule is unchanged. ZERO SCHEMA HELD ACROSS THE
       CORRECTION: no migration, no DDL, InicializadorDeBaseDeDatos.cs /
-      Politicas.cs / ManejadorDeErrores.cs still untouched. Slices 2-5 pending.
+      Politicas.cs / ManejadorDeErrores.cs still untouched. PR #165 merged to
+      main as commit 5f0018f, so tasks 1.15 and 1.16 are now checked. SLICE 2
+      IMPLEMENTED (tasks 2.1-2.14 checked; 2.15 judgment-day and 2.16 PR belong
+      to the orchestrator). Branch feat/stage20-slice2-web-relaciones off main -
+      the launch prompt's branch name, not the planning name
+      feat/stage20-slice2-proyeccion-web that tasks.md still records; same slice,
+      different label. Six work-unit commits, web-only: tipos.ts mirror plus 23
+      pre-existing fixture files, the five pure helpers plus organizacion.test.ts,
+      then one commit per screen (Tenants, Empresas, PuntosVenta, Usuarios).
+      BUDGET OVERFLOW MEASURED AND REPORTED, NOT ABSORBED and NOT split
+      unilaterally - 'git diff main --stat -- src' gives 34 files, 1909
+      insertions plus 289 deletions = 2198 changed lines against an estimate of
+      ~430 and the 800-line budget (OD1); ignoring pure re-indentation
+      ('git diff -w') it is 1741 plus 121 = 1862; production is ~1054 and tests
+      are ~1144, and the four screens alone are 443 insertions plus 120 deletions
+      with -w. Same shape the orchestrator already ruled on for slice 1: a small
+      production surface carrying the evidence web-descriptor-tests and
+      mutation-proof-tests demand (the five new test files are 1078 lines). THE
+      PRE-APPROVED 2a/2b DEGRADATION IS NO LONGER A CLEAN CUT and this is stated
+      rather than forced: names, filters and the react-async-state retrofit live
+      in the same four screen bodies, so a names-vs-filters cut would split single
+      functions across two PRs; the clean cut is per screen and the six commits
+      are already shaped for it. THIRTEEN MUTATIONS RUN FOR REAL (M1-M13, table
+      in tasks.md): twelve killed with their exact failure messages recorded, and
+      M10 SURVIVED and is recorded as a survivor rather than dressed up as a kill
+      - deleting every generation guard from Empresas.tsx left 6/6 green, because
+      react-async-state rule 9 (block every action that could supersede an
+      in-flight operation) already closes that window on the three organization
+      screens; the guards stay as defence-in-depth for slice 5's delete buttons.
+      Usuarios.tsx is the exception and M11 kills there: its search box is
+      reachable while a load is in flight, a genuine two-reads-in-flight window,
+      and it has its own stale-response test written per mutation-proof rule 7
+      (the stale promise is resolved inside act and the assertion is synchronous
+      after the flush, so a retrying matcher cannot pass on its first tick). ONE
+      TEST DEFECT was found by running M4 and fixed rather than rationalised: the
+      empresa-clearing test asserted only toHaveValue('') after switching tenants,
+      which the derived empresaVigente fallback satisfies on its own - it now
+      returns the tenant filter to "Todos" and requires the full list back, which
+      only a genuine setFiltroEmpresa(SIN_FILTRO) produces. RECONCILIACION 9
+      HONOURED IN THE WEB: etiquetaDeTenant discriminates on idTenant and never on
+      the name, so a null name with a present idTenant renders as the D13 orphan
+      marker and never as "Plataforma"; M1 kills that on all four surfaces. The
+      "Plataforma" literal is supplied by the web (D14) and a tenant literally
+      named "Plataforma" stays distinguishable in the filter by key (the
+      sin-tenant token, which no String(idTenant) can produce) and by label (the
+      "(sin tenant)" suffix); M2 kills the key collapse. TASK 2.3 HAD NO FILE TO
+      MODIFY - src/Ways.Web/src/api/usuarios.ts does not exist, UsuarioListado
+      lives in tipos.ts and Usuarios.tsx calls api.get directly; its substance is
+      delivered by task 2.1 and no empty indirection module was created just to
+      match the wording. SUITES: npm run test 63 files / 991 tests green, npm run
+      build (tsc -b plus vite) clean, npm run lint exit 0 with the same five
+      pre-existing warnings as main, dotnet build Ways.slnx clean. The three
+      dotnet test suites were NOT run because this slice touches zero backend
+      files ('git diff main --name-only' outside src/Ways.Web/ is empty). ZERO
+      SCHEMA HELD: no migration file, has-pending-model-changes clean,
+      InicializadorDeBaseDeDatos.cs / Politicas.cs / ManejadorDeErrores.cs
+      untouched, zero physical deletes, zero DDL. PRE-EXISTING FLAKE OBSERVED AND
+      NOT INTRODUCED HERE: Reposicion.test.tsx's first-punto-de-venta test fails
+      intermittently under the full-suite run (1 of 3 runs on this branch, 1 of 4
+      runs on main with the branch stashed; 12/12 when the file runs alone).
+      Slices 3-5 pending.
   verify:
     status: pending
     artifact: verify-report.md
