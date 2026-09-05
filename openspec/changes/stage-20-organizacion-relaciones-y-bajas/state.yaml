@@ -599,7 +599,7 @@ phases:
       ORCHESTRATOR AND RECORDED, NOT FIXED - the unpaginated 25-row window the
       usuarios filter operates on (named in task 2.12, code untouched, server
       pagination already deferred here) and the orphan option's id suffix
-      (Reconciliacion 10, label deliberately unchanged). Eleven mutations run
+      (Reconciliacion 10, label deliberately unchanged). Twelve mutations run
       for real and KILLED (M20, M20b, M21, M22, M23, M24, M25, M26, M26b, M27,
       M28, M29); THREE HONEST SURVIVORS recorded as survivors, not dressed up -
       M21b the same-tick re-entrancy guard, M30 and M30b the ungated finally,
@@ -608,7 +608,34 @@ phases:
       arm S1 removed. SUITES after the correction - npm run test 63 files /
       1015 tests green, npm run build (tsc -b plus vite) clean, npm run lint
       exit 0 with the same five pre-existing warnings, measured against the
-      pre-change baseline. Slices 3-5 pending.
+      pre-change baseline. JUDGMENT-DAY SLICE 2 ROUND 2 CORRECTED (FINAL
+      round), web only, no backend and no schema. Confirmed by BOTH judges and
+      fixed - R2-1 the tenant-universe failure now has its OWN rendered banner
+      derived from tenantsDePlataformaFallo instead of sharing the error slot,
+      which clobbered in both directions; R2-2 the password-POST failure moved
+      to the red slot while the committed PUT keeps its green confirmation,
+      both visible and the form still closes; R2-3 the S7 ungated finally
+      replicated to Empresas and PuntosVenta, the last two of the four screens.
+      Single-judge items fixed - R2-4 the "Nuevo" retry guarded on
+      tenantsDePlataformaCargando, R2-5 the guardar() re-check announces itself
+      instead of exiting silently, R2-6 the platform option included in
+      desempatarHomonimos's collision map (keys untouched), R2-7 the usuarios
+      tenant FILTER and COLUMN gated on esPlataforma for parity with C3, R2-8
+      the PuntosVenta empresa write-back reconciled against the tenant-narrowed
+      option set, R2-9 the Tenants invalidation rationale corrected (form and
+      table are independent state), R2-10 the records - this Eleven-to-Twelve
+      count, the blank line that severed M20-M30b from their table header, the
+      stale supporting clause of Reconciliacion 10, and the note that the
+      (baja) arm of etiquetaDeTenantAsignable is unreachable through the API
+      today. ONE ITEM RECORDED WITH NO CODE CHANGE, BY DECISION - crafted
+      tenant names that pre-embed a generated suffix are misleading copy only,
+      the keys stay true and the text is platform-authored. Round 2 mutations -
+      SEVEN KILLED (M31, M32, M33, M34, M34b, M36, M37) and THREE HONEST
+      SURVIVORS recorded as survivors, not dressed up (M35 the M21b class, M38
+      and M38b the M30/M30b class, all unreachable today). SUITES after the
+      round-2 correction - npm run test 63 files / 1021 tests green, npm run
+      build (tsc -b plus vite) clean, npm run lint exit 0 with the same five
+      pre-existing warnings. Slices 3-5 pending.
   verify:
     status: pending
     artifact: verify-report.md

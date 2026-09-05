@@ -129,9 +129,15 @@ carry the entire safety argument.**
     filter option still needs a key the operator can tell apart from another orphan's. The id
     suffix is that handle, and it is the *anomaly's* rendering, not an owner identity: presenting
     it as an owner would require claiming the number identifies something the row can name, which
-    is exactly what it cannot do. Replacing it with a bare `—` would collapse two distinct orphan
-    tenants into one indistinguishable option (the case `desempata los huérfanos con su id para que
-    no compartan etiqueta` pins). The spec sentence is left **byte-identical** — deltas of this
+    is exactly what it cannot do. **The supporting argument is corrected in round 2**: the original
+    wording said a bare `—` "would collapse two distinct orphan tenants into one indistinguishable
+    option", and that is no longer true — `desempatarHomonimos` now resolves exactly that collision
+    on its own, so a bare `—` would come out as `— (tenant 7)` / `— (tenant 8)` anyway. The reason
+    the suffix is built into `etiquetaDeOpcionDeTenant` instead of being left to the generic
+    tie-break is that the anomaly must be legible **even when there is only one orphan**: with a
+    single orphan there is no collision to break, and a bare `—` would render an option the
+    operator cannot tell from the empty/placeholder state. The conclusion is unchanged: the label
+    stays as it is. The spec sentence is left **byte-identical** — deltas of this
     change are not edited mid-flight — and is read through this reconciliation, the same handling
     Reconciliación 1 gives OD6 and Reconciliación 9 gives S1. Task 2.13's assertion still holds
     unchanged: no **cell** presents an id as the owner's identity. *(judgment-day round 1, judge A
@@ -616,12 +622,11 @@ planning name `feat/stage20-slice2-proyeccion-web` — same slice, different bra
 | M17 | 2.17 | ~~The create selector offers only ASSIGNABLE tenants — the platform token is not an id~~ | ~~`const tenantsAsignables = opcionesTenant` — the `VALOR_SIN_TENANT` filter dropped~~ | **SUPERSEDED in round 1 — the clause no longer exists.** The `VALOR_SIN_TENANT` filter lived on the `!esPlataforma` arm of `tenantsAsignables`, which round 1 proved unreachable (the selector renders only under `ofreceTenant={esPlataforma}`) and removed as dead code. The kill recorded here was real when it ran, against code that is gone; it is **not** re-targeted to a different clause and **not** left standing as if it still guarded something. The surviving property of that selector — its option set — is now guarded by M22 and M26b |
 | M18 | 2.17 | `react-async-state` rule 5: the selector is part of the full-window disabled state while the list (its own option source) is still loading | `disabled={guardando \|\| esRolDePlataforma}` — `tenantsCargando` dropped | **KILLED** — `el selector queda inerte mientras la lista está cargando`: `expect(element).toBeDisabled()` / `Received element is not disabled` |
 | M19 | 2.17 (page-size gap closure) | S5 anti-oracle: a tenant admin must never call `listarTenants()`, not even in the background | `if (!esPlataforma) return` deleted from the tenant-universe fetch effect | **KILLED** — `un admin de tenant nunca pide el universo de tenants (listarTenants)`: `expected "vi.fn()" to not be called with arguments: [ '/plataforma/tenants' ]`, received 3 calls including it |
-
 | M20 | R1-C1 | `react-async-state` rule 7: the tenant-universe `.catch` SURFACES the failure instead of silently setting `[]` | `setError(ERROR_TENANTS)` deleted from the catch | **KILLED, 2 tests** — `un fallo del universo de tenants se rinde en pantalla y abrir "Nuevo" lo reintenta` and `Guardar queda inerte cuando el universo de tenants falló`: `Unable to find an element with the text: /No se pudo cargar la lista de tenants/` |
 | M20b | R1-C1 | The retry hangs off opening "Nuevo" — the effect's `[esPlataforma]` deps never re-fire on their own | `if (esPlataforma && tenantsDePlataformaFallo) cargarTenantsDePlataforma()` deleted from the "Nuevo" handler | **KILLED** — `expected 1 to be 2` (the second `GET /plataforma/tenants` never happens) |
 | M21 | R1-C2 | `disabled={guardando \|\| sinTenantAsignable}` on Guardar — a `disabled` `<select>` is EXEMPT from HTML constraint validation, so `required` does not block the POST during the load/failure window | `disabled={guardando}` | **KILLED, 2 tests** — `expect(element).toBeDisabled()` / `Received element is not disabled`, on both the loading and the failed window |
 | M21b | R1-C2 | The same guard re-checked inside `guardar()` (rule 9: a same-tick double click beats the `disabled` attribute) | `if (formulario.id === null && universoDeTenantsIndisponible) return` deleted | **SURVIVED, 24/24 green — recorded as a survivor.** `userEvent.click` honours the `disabled` attribute, so the handler is never entered; the guard exists for the same-tick race the DOM cannot be made to produce here. Same class as the re-entrancy guards already on this screen |
-| M22 | R1-C4 | The assignable-tenant label MARKS a non-`Activo` estado — the server never inspects the destination tenant's estado, so a user created inside a suspended tenant silently cannot log in | `return nombre` — the `estado === 'Activo' ? … : \`${nombre} (${estado.toLowerCase()})\`` marker dropped | **KILLED, 2 tests across 2 files** — `expected [ 'Elegí un tenant', …(3) ] to deeply equal [ 'Elegí un tenant', …(3) ]` (the helper unit test and the screen test) |
+| M22 | R1-C4 | The assignable-tenant label MARKS a non-`Activo` estado — the server never inspects the destination tenant's estado, so a user created inside a suspended tenant silently cannot log in | `return nombre` — the `estado === 'Activo' ? … : \`${nombre} (${estado.toLowerCase()})\`` marker dropped | **KILLED, 2 tests across 2 files** — `expected [ 'Elegí un tenant', …(3) ] to deeply equal [ 'Elegí un tenant', …(3) ]` (the helper unit test and the screen test). **Scope corrected in round 2**: only the `(suspendido)` half of this clause is a live path. A tenant in `Baja` is soft-deleted and `GET /plataforma/tenants` does not list it, so the `(baja)` arm is defence-in-depth, not a real listing row — the `Baja` fixture exists to exercise the branch and the doc-comments of `etiquetaDeTenantAsignable` and of both tests now say so instead of presenting it as something an operator can see. The code is kept in case the listing stops filtering them |
 | M23 | R1-S2 | The filter reconciliation is WRITTEN to state in `cargar`, not only derived at render | `setFiltroTenant((prev) => seleccionVigente(…))` deleted | **KILLED** — `un filtro invalidado por una búsqueda no resucita cuando las filas vuelven`: `Expected the element to have value: ` / `Received: 3`. The derived fallback is the confound and it is named in the test: while the option is missing it blanks the `<select>` on its own, so the discriminating observation is that the filter must NOT reapply itself when the rows come back |
 | M24 | R1-S3 | The post-write refresh reloads with the APPLIED search term, not the input draft | `await cargar(token, busqueda, true)` | **KILLED** — `expected '/usuarios?busqueda=juan' to be '/usuarios'` (text typed and never searched narrowed the table after a Baja) |
 | M25 | R1-S4 | The password POST has its own `try`: a committed PUT is never reported as a failure (rule 6) | the POST moved back inside the PUT's `try` | **KILLED** — `Unable to find an element with the text: /no se pudo cambiar la contraseña/` (the screen said "No se pudo guardar." for a profile that had already committed) |
@@ -687,6 +692,43 @@ empresa-clearing test asserted only `toHaveValue('')` after switching tenants, w
 `empresaVigente` fallback satisfies on its own. The assertion now returns the tenant filter to
 "Todos" and requires the full list back: only a genuine `setFiltroEmpresa(SIN_FILTRO)` produces
 that, because a stale `'30'` would become a valid option again and silently reapply itself.
+
+### Mutation evidence — slice 2, judgment-day round 2 (FINAL round)
+
+Same protocol as above: every mutation was applied to the working tree, `npx vitest run <file>` was
+run from `src/Ways.Web`, the result was OBSERVED, then reverted and observed GREEN again.
+
+| # | Finding | Clause under test | Mutation applied | Observed result |
+|---|---|---|---|---|
+| M31 | R2-1 | The tenant-universe failure has its OWN rendered banner, derived from `tenantsDePlataformaFallo`, and never travels through the shared `error` slot | `setError(ERROR_TENANTS)` put back in the `.catch` and the dedicated banner removed | **KILLED, 2 tests** — `el fallo del universo de tenants sobrevive a una carga de usuarios que resuelve después`: `Unable to find an element with the text: /No se pudo cargar la lista de tenants/`; and the reverse direction, `el fallo del universo y el del listado de usuarios se rinden los dos`: `Unable to find an element with the text: Se cayó el listado de usuarios.` — the shared slot clobbers in BOTH directions and each test pins one |
+| M32 | R2-2 | The password-POST failure goes to the RED slot while the committed PUT's confirmation stays in the green one | the `setErrorPassword(…)` call replaced by an assignment to `mensajeOk` ("Usuario … actualizado, pero no se pudo cambiar la contraseña. …"), routing the failure back into `aviso` | **KILLED** — `el fallo de la contraseña va en rojo y la confirmación del perfil se queda en verde`: `expect(element).toHaveClass("alert-danger")`. The assertion is on the alert VARIANT, not the text: the text alone cannot tell a failure announced in `alert-success` from one announced in `alert-danger` |
+| M33 | R2-4 | `!tenantsDePlataformaCargando` guards the "Nuevo" retry against a duplicate in-flight `GET /plataforma/tenants` | the conjunct dropped | **KILLED** — `dos clicks seguidos en "Nuevo" disparan un solo reintento`: `expected 3 to be 2` |
+| M34 | R2-7 | `esPlataforma &&` gates the tenant FILTER of `Usuarios`, parity with C3 on the sibling screens | `{true && (` on the filter, and both tenant-cell gates dropped | **KILLED** — `un admin de tenant no ve el filtro ni la columna de tenant`: `expected document not to contain element, found <select` |
+| M34b | R2-7 | The same gate on the tenant COLUMN, mutated ALONE so the column assertion is not overdetermined by the filter one | only `{esPlataforma && <th>Tenant</th>}` and `{esPlataforma && <td>…</td>}` dropped | **KILLED** — same test, `expected document not to contain element, found <th>`. Run separately on purpose: killing the pair together would not have proven the column half |
+| M35 | R2-5 | The `guardar()` re-check announces itself instead of exiting silently | `setError(ERROR_ALTA_SIN_TENANTS)` removed, back to the bare `return` | **SURVIVED, 28/28 green — recorded as a survivor, not dressed up.** Exactly the M21b class and the finding said so: `userEvent.click` honours the `disabled` attribute, so the handler is never entered and the DOM cannot produce the same-tick double click the guard exists for. The silent exit is removed because a guard that can fire must be able to say why, not because a test proves it |
+| M36 | R2-6 | The platform option enters `desempatarHomonimos`'s collision map — a tenant named literally `Plataforma (sin tenant)` produced two byte-identical labels | the pre-round-2 shape restored: `porClave.get(VALOR_SIN_TENANT)` taken out before the tie-break, which is then run over the filtered rest | **KILLED** — `un tenant llamado exactamente como la opción de plataforma no queda con etiqueta idéntica`: `expected 1 to be 2` (the two labels collapse into one). The pre-existing `"Plataforma"`-alone case does NOT cover this: there the fixed `(sin tenant)` suffix already separated them |
+| M37 | R2-8 | The empresa write-back reconciles against the tenant-NARROWED option set, the same one the render uses | `seleccionVigente(opcionesDeEmpresa(filas), prev)` — the `tenanteReconciliado` argument dropped | **KILLED** — `la empresa elegida no resucita cuando un refresco la saca del tenant vigente`: `expected [ 'PV Anexo' ] to deeply equal [ 'PV Centro', 'PV Anexo', 'PV Este' ]`. Same confound and same discriminating observation as M4/M23: while the tenant filter is still on, both versions paint identically |
+| M38 | R2-3 | `Empresas.tsx` clears `ocupado` in an UNGATED `finally`, and its token check moved inside the try so the mismatch path also reaches it | the `if (generacion.current === token)` gate put back on the `finally` | **SURVIVED, 15/15 green — recorded as a survivor.** Identical to M30/M30b and for the identical reason: rule 9 disables every action that could bump the generation while `ocupado` is set, so the frozen-flag window is unreachable today. Taken as the trap slice 5's delete buttons will need |
+| M38b | R2-3 | The same, on `PuntosVenta.tsx` | the same gate put back | **SURVIVED, 15/15 green — same reason, recorded not dressed up** |
+
+**Round 2 — R2-1 needed its confound named before it could be killed.** The obvious test (mount,
+let `/plataforma/tenants` fail, assert the banner) passes with the failure routed through `error`
+too, because on the default mock ordering the users list resolves FIRST and its `setError('')` has
+already run. The kill only happens once the ordering is inverted by hand — tenants rejects, the
+banner is asserted, and only THEN the users promise resolves — which is why both promises are
+controlled explicitly in that test. Its sibling pins the opposite direction: `ERROR_TENANTS` must
+not bury a genuine users-list failure.
+
+**Round 2 — two honest survivors, M35 and M38/M38b.** Neither is presented as a kill. M35 is the
+M21b class (the DOM cannot produce the race the guard covers); M38/M38b are the M30/M30b class
+(rule 9 closes the window today). All three fixes are taken for replication and honesty reasons
+stated by the findings themselves, and slice 5 is where they become reachable.
+
+**Round 2 — one item recorded with NO code change, by decision.** Crafted tenant names that
+pre-embed a generated suffix (`"Foo (suspendido)"`, `"Bar (tenant 3)"`) can make a label read as if
+the web had marked it. This is misleading COPY only: the option keys stay true, the filtering and
+the create payload are driven by those keys, and the text is authored by a platform actor about
+their own tenants. No defence is added and none is planned.
 
 ### Slice 2 delivery notes
 
