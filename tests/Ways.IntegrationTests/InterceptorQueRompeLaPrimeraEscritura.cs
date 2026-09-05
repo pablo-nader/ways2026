@@ -1,12 +1,23 @@
 using System.Data.Common;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Npgsql;
 
 namespace Ways.IntegrationTests;
 
+/// <summary>Qué sentencia vigila <see cref="InterceptorQueRompeLaPrimeraEscritura"/>. Una baja
+/// lógica no inserta nada: escribe <c>deleted_at</c> con un UPDATE, así que sin este eje el
+/// interceptor no dispara nunca y la prueba de <c>ServicioDeOfertas.EliminarAsync</c> pasaría por
+/// el motivo equivocado (judgment-day fix/retry-double-add, item C4).</summary>
+internal enum ClaseDeSentencia
+{
+    Insert,
+    Update
+}
+
 /// <summary>
-/// Rompe el PRIMER lote que contenga un <c>INSERT INTO &lt;tabla&gt;</c> con un error de Postgres
-/// del SQLSTATE que se le pida, y deja pasar todo lo demás — incluido el segundo intento, si lo
+/// Rompe el PRIMER lote que contenga una escritura sobre <c>tabla</c> con un error de Postgres del
+/// SQLSTATE que se le pida, y deja pasar todo lo demás — incluido el segundo intento, si lo
 /// hubiera. Es lo único que convierte "¿esta unidad es reintentable?" en una pregunta observable:
 /// sin él, el reintento de <c>EnableRetryOnFailure</c> no se dispara nunca en una prueba y el
 /// mutante sobrevive por construcción.
@@ -16,18 +27,44 @@ namespace Ways.IntegrationTests;
 /// archivo porque lo consumen todas las escrituras de
 /// <see cref="EscriturasSinReintentoTests"/>, cada una sobre su propia tabla.
 ///
+/// <para>La marca está ANCLADA al FINAL del nombre de la tabla y NO es un prefijo suelto
+/// (judgment-day fix/retry-double-add, item C6): <c>"INSERT INTO articulos"</c> por
+/// <c>Contains</c> también matchea <c>INSERT INTO articulos_empresas</c>, así que el interceptor
+/// rompía la tabla equivocada y contaba intentos que no eran suyos. Con el ancla,
+/// <see cref="Intentos"/> cuenta SOLO los de <c>tabla</c>.</para>
+///
 /// <see cref="Intentos"/> es el valor DISCRIMINANTE (<c>mutation-proof-tests</c> regla 4): bajo la
-/// estrategia sin reintento el INSERT se ve UNA sola vez; bajo la reintentable se ve dos, y el
+/// estrategia sin reintento la escritura se ve UNA sola vez; bajo la reintentable se ve dos, y el
 /// segundo intento comitea el doble de filas. Afirmar solamente que el error llegó al llamador NO
 /// distingue las dos estrategias — la reintentable también termina propagando si agota los cinco
 /// intentos.
 /// </summary>
-internal sealed class InterceptorQueRompeElPrimerInsert(string tabla, string sqlState) : DbCommandInterceptor
+internal sealed class InterceptorQueRompeLaPrimeraEscritura : DbCommandInterceptor
 {
-    private readonly string marca = $"INSERT INTO {tabla}";
+    private readonly Regex marca;
+    private readonly string descripcion;
+    private readonly string sqlState;
     private int intentos;
 
-    /// <summary>Cuántas veces se intentó ejecutar el lote que contiene el INSERT vigilado.</summary>
+    public InterceptorQueRompeLaPrimeraEscritura(
+        string tabla, string sqlState, ClaseDeSentencia clase = ClaseDeSentencia.Insert)
+    {
+        this.sqlState = sqlState;
+
+        var verbo = clase == ClaseDeSentencia.Update ? "UPDATE" : "INSERT INTO";
+        descripcion = $"{verbo} {tabla}";
+
+        // (?:"tabla"|tabla) admite la forma entrecomillada por si el identificador alguna vez la
+        // necesita; el (?![\w$]) es el ancla: exige que el nombre TERMINE ahí. Sin él,
+        // "articulos" matchea dentro de "articulos_empresas" — `_` es \w, así que el lookahead lo
+        // rechaza.
+        marca = new Regex(
+            $@"{verbo} (?:""{Regex.Escape(tabla)}""|{Regex.Escape(tabla)})(?![\w$])",
+            RegexOptions.None,
+            TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>Cuántas veces se intentó ejecutar el lote que contiene la escritura vigilada.</summary>
     public int Intentos => Volatile.Read(ref intentos);
 
     public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
@@ -56,7 +93,7 @@ internal sealed class InterceptorQueRompeElPrimerInsert(string tabla, string sql
 
     private void RomperSiCorresponde(DbCommand comando)
     {
-        if (!comando.CommandText.Contains(marca, StringComparison.Ordinal))
+        if (!marca.IsMatch(comando.CommandText))
         {
             return;
         }
@@ -69,6 +106,6 @@ internal sealed class InterceptorQueRompeElPrimerInsert(string tabla, string sql
         }
 
         throw new PostgresException(
-            $"falla inyectada por la prueba sobre el {marca}", "ERROR", "ERROR", sqlState);
+            $"falla inyectada por la prueba sobre el {descripcion}", "ERROR", "ERROR", sqlState);
     }
 }

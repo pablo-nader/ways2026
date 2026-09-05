@@ -276,7 +276,7 @@ public class ServicioDeOfertas(
     /// <see cref="Articulos.ServicioDeArticulos.EliminarAsync"/> con
     /// <see cref="Domain.Articulos.ArticuloEmpresa"/>.
     ///
-    /// (judgment-day ronda 2, item 1 — CRITICAL) Mismo <c>CreateExecutionStrategy</c> + transacción
+    /// (judgment-day ronda 2, item 1 — CRITICAL) Misma estrategia sin reintento + transacción
     /// explícita que <see cref="ActualizarAsync"/>/<see cref="CrearAsync"/>, con el
     /// <c>pg_advisory_xact_lock</c> de <see cref="TomarLockDeOfertaAsync"/> tomado ANTES de leer
     /// la fila: antes de este fix, el DELETE no abría transacción propia ni tomaba ningún lock, así
@@ -290,7 +290,10 @@ public class ServicioDeOfertas(
     {
         var idTenant = ExigirTenantDeLaSesion();
 
-        var estrategia = db.Database.CreateExecutionStrategy();
+        // Sin reintento (ef-retry-safe-writes, forma (b)): tras un commit ambiguo el reintento
+        // vuelve a leer la fila por BuscarAsync, que filtra BajaLogica, y responde 404 a una baja
+        // que en verdad tuvo éxito.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         await estrategia.ExecuteAsync(async () =>
         {

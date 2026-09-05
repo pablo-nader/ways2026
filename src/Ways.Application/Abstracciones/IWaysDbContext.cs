@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Ways.Application.Organizacion;
@@ -162,6 +163,16 @@ public interface IWaysDbContext
     /// de Infrastructure, y <c>DbContext.Model</c> la satisface implícitamente — la interfaz gana
     /// una línea y ninguna implementación cambia.</summary>
     IModel Model { get; }
+
+    /// <summary>Rastreador de cambios (<c>ef-retry-safe-writes</c>, forma (a)): la única pieza
+    /// que hace retry-safe a un lambda de <c>ExecuteAsync</c> que agrega entidades — un
+    /// <c>Clear()</c> como primera sentencia descarta las entidades <c>Added</c> del intento
+    /// fallido antes de que el intento siguiente las reconstruya, así el
+    /// <c>SaveChangesAsync</c> final inserta un solo set y no dos. Mismo criterio que
+    /// <c>Database</c>/<c>Model</c> arriba: <c>ChangeTracker</c> es la misma abstracción de EF
+    /// Core que ya expone la superficie pública de cualquier <c>DbContext</c>, no un tipo de
+    /// Infrastructure. Único consumidor hoy: <c>ServicioDeVentas.EmitirAsync</c>.</summary>
+    ChangeTracker ChangeTracker { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

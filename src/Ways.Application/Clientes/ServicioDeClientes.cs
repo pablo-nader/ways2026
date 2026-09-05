@@ -80,9 +80,10 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
     /// misma transacción que el INSERT: si el alta falla después de tomar el número (p.ej. una
     /// FK que se termina violando), el rollback también deshace el avance del contador — el
     /// mismo "gaps solo en rollback" que documenta <c>AsignadorDeNumeroCliente</c>, no un hueco
-    /// garantizado en cada error. Mismo wrapper que
-    /// <see cref="Organizacion.ServicioDeAprovisionamiento.CrearTenantAsync"/> — EnableRetryOnFailure
-    /// exige que la transacción se abra adentro de <c>ExecuteAsync</c>.</summary>
+    /// garantizado en cada error. La transacción se abre DENTRO del <c>ExecuteAsync</c> (mismo
+    /// trámite que <see cref="Organizacion.ServicioDeAprovisionamiento.CrearTenantAsync"/>): la
+    /// estrategia sin reintento es igual una <c>ExecutionStrategy</c>, y abrirla afuera rompería
+    /// el ambient tracking que EF Core exige.</summary>
     public async Task<ClienteListado> CrearAsync(AltaCliente datos, CancellationToken ct = default)
     {
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);

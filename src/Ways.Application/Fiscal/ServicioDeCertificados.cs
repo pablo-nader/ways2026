@@ -56,9 +56,10 @@ public class ServicioDeCertificados(IWaysDbContext db, IRelojDelSistema reloj, I
 
             clavePrivada = rsa.ExportPkcs8PrivateKey();
 
-            // EnableRetryOnFailure exige que BeginTransactionAsync viva DENTRO de la lambda del
-            // execution strategy (mismo criterio que ServicioDePrecios.EstablecerPrecioAsync) —
-            // sin esto, EF tira InvalidOperationException al primer BeginTransactionAsync manual.
+            // BeginTransactionAsync vive DENTRO de la lambda (mismo criterio que
+            // ServicioDePrecios.EstablecerPrecioAsync): la estrategia sin reintento es igual una
+            // ExecutionStrategy, y abrir la transacción afuera rompería el ambient tracking que EF
+            // Core exige (InvalidOperationException al primer BeginTransactionAsync manual).
             // Sin reintento: el CertificadoFiscal se construye de cero en cada intento y no hay
             // clave de idempotencia — un reintento duplicaría la fila y chocaría contra
             // ux_certificados_fiscales_activo con un 409 falso.

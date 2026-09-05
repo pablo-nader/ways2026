@@ -1,7 +1,8 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
@@ -58,8 +59,16 @@ namespace Ways.IntegrationTests;
 ///
 /// El contexto se crea siempre con <c>CrearContextoDeAplicacionConReintentos</c>: la estrategia
 /// reintentable EXISTE y la única razón por la que no reintenta es la que elige el código de
-/// producción. La mitad estructural —los diez sitios a la vez, sin contenedor— vive en
+/// producción. La mitad estructural —los once sitios a la vez, sin contenedor— vive en
 /// <c>Ways.Application.Tests.Abstracciones.EscriturasSinReintentoEstructuralesTests</c>.
+///
+/// <para>judgment-day fix/retry-double-add: dos pruebas de esta clase NO pertenecen a ese molde y
+/// están documentadas en su propio lugar. <c>LaEmisionDeVentaReintentaConElTrackerLimpio…</c> es el
+/// espejo exacto — el único sitio del audit que SÍ reintenta, y la prueba de que su
+/// <c>ChangeTracker.Clear()</c> + guarda de commit ambiguo hacen que eso sea seguro (item C1);
+/// <c>UnFalloTransitorioEnUnAltaSinReintentoLlegaComo503ResultadoIncierto</c> prueba el RESIDUAL
+/// declarado de la forma (b) llegando al operador como <c>503 resultado_incierto</c> (item
+/// C2).</para>
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -83,7 +92,9 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         int IdArea,
         int IdAlicuotaIva,
         int IdListaDefault,
-        int IdCondicionFiscal);
+        int IdCondicionFiscal,
+        string MailAdmin,
+        string PasswordAdmin);
 
     private sealed class RelojFijo(DateTimeOffset ahora) : IRelojDelSistema
     {
@@ -107,6 +118,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
     private async Task<Sembrado> AprovisionarAsync(string nombre)
     {
         var unico = $"{nombre}-{Guid.NewGuid().ToString("N")[..8]}";
+        var mailAdmin = $"{unico}@ways.test";
 
         using var root = fixture.CreateClient();
         var login = await root.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(MailRoot, PasswordRoot));
@@ -114,7 +126,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
 
         var respuesta = await root.PostAsJsonAsync(
             "/api/plataforma/tenants",
-            new SolicitudDeAprovisionamiento(unico, $"{unico} SRL", $"{unico} - Local 1", $"{unico}@ways.test"));
+            new SolicitudDeAprovisionamiento(unico, $"{unico} SRL", $"{unico} - Local 1", mailAdmin));
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
 
         var resultado = await respuesta.Content.ReadFromJsonAsync<ResultadoAprovisionamiento>();
@@ -137,7 +149,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
 
         return new Sembrado(
             resultado.IdTenant, resultado.IdEmpresa, resultado.IdPuntoVenta, resultado.IdUsuarioAdmin,
-            area.Id, idAlicuota, idListaDefault, idCondicionFiscal);
+            area.Id, idAlicuota, idListaDefault, idCondicionFiscal, mailAdmin, resultado.PasswordTemporal);
     }
 
     private async Task<int> SembrarArticuloAsync(Sembrado s, string nombre)
@@ -184,7 +196,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
 
     /// <summary>Las dos afirmaciones del lado (a) que valen para TODOS los sitios: el error
     /// transitorio llegó tal cual, y el INSERT se intentó UNA sola vez.</summary>
-    private static void AfirmarFallaSinReintento(Exception error, InterceptorQueRompeElPrimerInsert interceptor)
+    private static void AfirmarFallaSinReintento(Exception error, InterceptorQueRompeLaPrimeraEscritura interceptor)
     {
         Assert.Equal(SqlStateTransitorio, ErrorDePostgres(error).SqlState);
         Assert.Equal(1, interceptor.Intentos);
@@ -203,7 +215,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             IdCondicionFiscal: s.IdCondicionFiscal, Nacimiento: null, Domicilio: null, Telefono: null,
             Celular: null, Email: null, Observaciones: null, IdListaPrecio: s.IdListaDefault);
 
-        var interceptor = new InterceptorQueRompeElPrimerInsert("clientes", SqlStateTransitorio);
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("clientes", SqlStateTransitorio);
 
         await using (var db = ContextoConReintentos(s, interceptor))
         {
@@ -248,7 +260,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             UnidadVenta: UnidadVenta.Unidad, UnidadesPorBulto: null, EsProducto: true, CostoLista: null,
             DescuentoProveedor: null, CostoNominal: null);
 
-        var interceptor = new InterceptorQueRompeElPrimerInsert("articulos", SqlStateTransitorio);
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("articulos", SqlStateTransitorio);
 
         await using (var db = ContextoConReintentos(s, interceptor))
         {
@@ -295,7 +307,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             (int)RolConocido.Vendedor, "una-contraseña-larga");
 
         var ultimoId = await UltimoIdDeAuditoriaAsync();
-        var interceptor = new InterceptorQueRompeElPrimerInsert("auditoria", SqlStateTransitorio);
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("auditoria", SqlStateTransitorio);
 
         await using (var db = ContextoConReintentos(s, interceptor))
         await using (var dbPlataforma = ContextoDePlataforma())
@@ -357,7 +369,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         var idArticulo = await SembrarArticuloAsync(s, "Artículo con precio");
 
         var ultimoId = await UltimoIdDeAuditoriaAsync();
-        var interceptor = new InterceptorQueRompeElPrimerInsert("precios", SqlStateTransitorio);
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("precios", SqlStateTransitorio);
 
         await using (var db = ContextoConReintentos(s, interceptor))
         {
@@ -408,7 +420,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             Nombre: nombre, IdEmpresa: null, EsDefault: true, Modo: ModoLista.Fija,
             IdListaBase: null, Porcentaje: null);
 
-        var interceptor = new InterceptorQueRompeElPrimerInsert("listas_precio", SqlStateTransitorio);
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("listas_precio", SqlStateTransitorio);
 
         await using (var db = ContextoConReintentos(s, interceptor))
         {
@@ -454,7 +466,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         var nombre = $"Oferta {Guid.NewGuid().ToString("N")[..10]}";
         var datos = AltaDeOferta(nombre, idArticulo, s.IdListaDefault);
 
-        var interceptor = new InterceptorQueRompeElPrimerInsert("ofertas_listas", SqlStateTransitorio);
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("ofertas_listas", SqlStateTransitorio);
 
         await using (var db = ContextoConReintentos(s, interceptor))
         {
@@ -507,7 +519,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             ImporteFijo: null, Prioridad: 0, Acumulable: false, IdsListas: [idOtraLista],
             Activo: true);
 
-        var interceptor = new InterceptorQueRompeElPrimerInsert("ofertas_listas", SqlStateTransitorio);
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("ofertas_listas", SqlStateTransitorio);
 
         await using (var db = ContextoConReintentos(s, interceptor))
         {
@@ -571,7 +583,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         var datos = new RegistroDeCertificadoFiscal(
             s.IdEmpresa, AmbienteFiscal.Homologacion, "Homo sin reintento", "20111111112", pfx, password);
 
-        var interceptor = new InterceptorQueRompeElPrimerInsert("certificados_fiscales", SqlStateTransitorio);
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("certificados_fiscales", SqlStateTransitorio);
 
         await using (var db = fixture.CrearContextoDeAplicacionConReintentos(
             TenantActualFijo.Plataforma, interceptor))
@@ -641,7 +653,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         var solicitud = new SolicitudDeAprovisionamiento(
             nombre, $"{nombre} SRL", $"{nombre} - Local 1", $"{nombre}@ways.test");
 
-        var interceptor = new InterceptorQueRompeElPrimerInsert("usuarios", SqlStateTransitorio);
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("usuarios", SqlStateTransitorio);
 
         var tenantActual = new TenantActualDeSesion();
         tenantActual.Establecer(ModoDeAcceso.Plataforma, null);
@@ -680,22 +692,130 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         return await db.Empresas.IgnoreQueryFilters().CountAsync(e => e.RazonSocial == $"{nombre} SRL");
     }
 
-    // ---- 10. ventas: el camino caliente del POS ------------------------------------------------
+    // ---- 10. ofertas (baja lógica): el reintento devolvía 404 sobre una baja que sí ocurrió -----
 
     /// <summary>
-    /// El paso de ESCRITURA de <c>EmitirAsync</c> (comprobante + ítems + pagos). El de NUMERACIÓN
-    /// conserva la estrategia reintentable a propósito y NO se toca — por eso el interceptor mira
-    /// <c>comprobantes_venta</c> y no <c>numeraciones_fiscales</c>.
+    /// judgment-day fix/retry-double-add (item C4). El interceptor mira el <c>UPDATE</c> —una baja
+    /// lógica no inserta nada, escribe <c>deleted_at</c>— y por eso <see cref="ClaseDeSentencia"/>
+    /// existe.
     ///
-    /// El residual declarado: sin reintento, una falla transitoria sale al cajero. El reenvío llega
-    /// con el MISMO número ya comprometido y <c>BuscarPorNumeroComprometidoAsync</c> devuelve el
-    /// comprobante ya emitido en vez de reinsertarlo — esa guarda es la que hace aceptable el
-    /// no-reintento, y su propia cobertura vive en <c>VentasAtomicidadYConcurrenciaTests</c>.
+    /// El daño del mutante NO es una fila duplicada: es un 404 sobre una baja EXITOSA. Con la
+    /// estrategia reintentable, el intento 2 vuelve a llamar a <c>BuscarAsync</c>, que filtra
+    /// <c>BajaLogica</c> — si el intento 1 comiteó y perdió el ACK, la oferta ya está borrada y el
+    /// operador recibe "No existe la oferta" sobre algo que sí se dio de baja.
     /// </summary>
     [Fact]
-    public async Task LaEmisionDeVentaNoSeReintentaYEscribeExactamenteUnComprobante()
+    public async Task LaBajaDeOfertaNoSeReintentaYDejaLaOfertaIntacta()
     {
-        var s = await AprovisionarAsync("sin-reintento-ventas");
+        var s = await AprovisionarAsync("sin-reintento-ofertas-baja");
+        var idArticulo = await SembrarArticuloAsync(s, "Artículo con oferta a dar de baja");
+        var nombre = $"Oferta {Guid.NewGuid().ToString("N")[..10]}";
+
+        int idOferta;
+        await using (var db = ContextoConReintentos(s))
+        {
+            idOferta = (await ServicioDeOfertasSobre(db, s)
+                .CrearAsync(AltaDeOferta(nombre, idArticulo, s.IdListaDefault))).Id;
+        }
+
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura(
+            "ofertas", SqlStateTransitorio, ClaseDeSentencia.Update);
+
+        await using (var db = ContextoConReintentos(s, interceptor))
+        {
+            var error = await Assert.ThrowsAnyAsync<Exception>(
+                () => ServicioDeOfertasSobre(db, s).EliminarAsync(idOferta));
+            AfirmarFallaSinReintento(error, interceptor);
+        }
+
+        // El rollback dejó la oferta viva: sigue contando como no borrada.
+        Assert.Equal(1, await ContarOfertasAsync(s.IdTenant, nombre));
+
+        await using (var db = ContextoConReintentos(s))
+        {
+            await ServicioDeOfertasSobre(db, s).EliminarAsync(idOferta);
+        }
+
+        Assert.Equal(0, await ContarOfertasAsync(s.IdTenant, nombre));
+    }
+
+    // ---- 11. clientes por HTTP: la copia del commit ambiguo llega al operador ------------------
+
+    /// <summary>
+    /// judgment-day fix/retry-double-add (item C2). El residual declarado de la forma (b) del skill
+    /// <c>ef-retry-safe-writes</c> (regla 4) tiene que llegar al operador como tal: el fallo
+    /// transitorio que escapa de una escritura sin reintento es un COMMIT AMBIGUO, no un error
+    /// interno. Como <c>500 error_interno</c> la pantalla decía "error inesperado" y el operador
+    /// reintentaba a ciegas sobre algo que quizás ya se escribió.
+    ///
+    /// <para>Tiene que ser por HTTP: <c>ManejadorDeErrores</c> solo corre en el pipeline, así que
+    /// un <c>DbContext</c> armado a mano (el de todas las pruebas de arriba) nunca lo atraviesa —
+    /// de ahí <see cref="WaysApiFixture.ConInterceptorEnElHost"/>. El interceptor se arma DESPUÉS
+    /// del aprovisionamiento a propósito: ese flujo también inserta un <c>clientes</c> (el
+    /// Consumidor Final) y se llevaría la falla inyectada.</para>
+    ///
+    /// <para>El mutante: borrar el brazo transitorio de <c>ManejadorDeErrores</c> devuelve
+    /// <c>500 error_interno</c> y esta prueba se pone en rojo por las tres afirmaciones (estado,
+    /// código y copia), no por una sola.</para>
+    /// </summary>
+    [Fact]
+    public async Task UnFalloTransitorioEnUnAltaSinReintentoLlegaComo503ResultadoIncierto()
+    {
+        var s = await AprovisionarAsync("resultado-incierto-clientes");
+
+        using var admin = fixture.CreateClient();
+        var login = await admin.PostAsJsonAsync(
+            "/api/auth/login", new SolicitudDeLogin(s.MailAdmin, s.PasswordAdmin));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var alta = new AltaCliente(
+            Nombre: $"Cliente {Guid.NewGuid().ToString("N")[..10]}", Apellido: null, RazonSocial: null,
+            TipoDocumento: null, NumeroDocumento: null, IdCondicionFiscal: s.IdCondicionFiscal,
+            Nacimiento: null, Domicilio: null, Telefono: null, Celular: null, Email: null,
+            Observaciones: null, IdListaPrecio: s.IdListaDefault);
+
+        HttpResponseMessage respuesta;
+        using (fixture.ConInterceptorEnElHost(
+            new InterceptorQueRompeLaPrimeraEscritura("clientes", SqlStateTransitorio)))
+        {
+            respuesta = await admin.PostAsJsonAsync("/api/clientes", alta);
+        }
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, respuesta.StatusCode);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("resultado_incierto", problema.GetProperty("codigo").GetString());
+        Assert.Equal(
+            "No se pudo confirmar el resultado de la operación: verificá el listado antes de reintentar.",
+            problema.GetProperty("title").GetString());
+    }
+
+    // ---- 12. ventas: el ÚNICO sitio del audit que SÍ reintenta ---------------------------------
+
+    /// <summary>
+    /// judgment-day fix/retry-double-add (item C1). <c>EmitirAsync</c> es la excepción declarada:
+    /// conserva la estrategia REINTENTABLE en sus dos pasos, y esta prueba es el kill de las dos
+    /// piezas que lo vuelven seguro.
+    ///
+    /// <list type="bullet">
+    /// <item><c>Intentos == 2</c> prueba que el <c>40001</c> del primer INSERT NO salió al cajero:
+    /// la estrategia re-entró en el lambda y la venta se emitió igual. Sin el reintento, un commit
+    /// ambiguo sale como 500 con el carrito intacto, el cajero vuelve a apretar Cobrar y —como
+    /// <c>SolicitudDeVenta</c> no lleva número— se sortea uno NUEVO: segundo comprobante, segundo
+    /// descuento de stock, segundos movimientos de caja y cuenta corriente. Esa es la razón por la
+    /// que la guarda <c>BuscarPorNumeroComprometidoAsync</c> necesita al reintento: es su ÚNICO
+    /// consumidor.</item>
+    /// <item>Los cuatro conteos en 1 son el kill del <c>db.ChangeTracker.Clear()</c>: sin él, el
+    /// intento 2 arrastra el comprobante, los ítems y los pagos que el intento 1 dejó en
+    /// <c>Added</c> y agrega un segundo set — el <c>SaveChangesAsync</c> final inserta los dos (o
+    /// choca contra <c>ux_comprobantes_venta_numero</c>, que es el mismo defecto disfrazado).
+    /// Se cuenta cada tabla por separado porque el duplicado puede aparecer en una sola.</item>
+    /// </list>
+    /// </summary>
+    [Fact]
+    public async Task LaEmisionDeVentaReintentaConElTrackerLimpioYEscribeExactamenteUnaVenta()
+    {
+        var s = await AprovisionarAsync("con-reintento-ventas");
         var idArticulo = await SembrarArticuloAsync(s, "Artículo vendible");
         await SembrarPrecioAsync(s, idArticulo, 100m);
         await AbrirTurnoAsync(s);
@@ -709,23 +829,23 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
             [new PagoDeVenta(idMedioEfectivo, 100m, null, 0m)],
             null, null);
 
-        var interceptor = new InterceptorQueRompeElPrimerInsert("comprobantes_venta", SqlStateTransitorio);
+        // El interceptor mira comprobantes_venta y no numeraciones_comprobante: el paso de
+        // numeración corre en su propia transacción, ya comiteada cuando el lambda de escritura
+        // arranca, y es el que hace que el reintento vea el MISMO número.
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("comprobantes_venta", SqlStateTransitorio);
 
+        ComprobanteEmitido emitido;
         await using (var db = ContextoConReintentos(s, interceptor))
         {
-            var error = await Assert.ThrowsAnyAsync<Exception>(
-                () => ServicioDeVentasSobre(db, s).EmitirAsync(solicitud));
-            AfirmarFallaSinReintento(error, interceptor);
+            emitido = await ServicioDeVentasSobre(db, s).EmitirAsync(solicitud);
         }
 
-        Assert.Equal(0, await ContarComprobantesAsync(s.IdPuntoVenta));
-
-        await using (var db = ContextoConReintentos(s))
-        {
-            await ServicioDeVentasSobre(db, s).EmitirAsync(solicitud);
-        }
+        Assert.Equal(2, interceptor.Intentos);
 
         Assert.Equal(1, await ContarComprobantesAsync(s.IdPuntoVenta));
+        Assert.Equal(1, await ContarItemsDeComprobanteAsync(emitido.Id));
+        Assert.Equal(1, await ContarPagosDeComprobanteAsync(emitido.Id));
+        Assert.Equal(1, await ContarMovimientosDeStockAsync(emitido.Id));
     }
 
     private static ServicioDeVentas ServicioDeVentasSobre(WaysDbContext db, Sembrado s)
@@ -789,5 +909,26 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
     {
         await using var db = ContextoDePlataforma();
         return await db.ComprobantesVenta.IgnoreQueryFilters().CountAsync(c => c.IdPuntoVenta == idPuntoVenta);
+    }
+
+    private async Task<int> ContarItemsDeComprobanteAsync(int idComprobante)
+    {
+        await using var db = ContextoDePlataforma();
+        return await db.ItemsComprobanteVenta.IgnoreQueryFilters()
+            .CountAsync(i => i.IdComprobanteVenta == idComprobante);
+    }
+
+    private async Task<int> ContarPagosDeComprobanteAsync(int idComprobante)
+    {
+        await using var db = ContextoDePlataforma();
+        return await db.PagosComprobante.IgnoreQueryFilters()
+            .CountAsync(p => p.IdComprobanteVenta == idComprobante);
+    }
+
+    private async Task<int> ContarMovimientosDeStockAsync(int idComprobante)
+    {
+        await using var db = ContextoDePlataforma();
+        return await db.MovimientosStock.IgnoreQueryFilters()
+            .CountAsync(m => m.IdComprobanteVenta == idComprobante);
     }
 }

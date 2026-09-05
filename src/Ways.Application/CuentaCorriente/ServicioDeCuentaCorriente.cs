@@ -93,9 +93,13 @@ public class ServicioDeCuentaCorriente(
             await AsignadorDeNumeroComprobante.AsignarComprometidoAsync(db, idTenant, puntoVenta.Id, tipo.Codigo, ct));
 
         // Sin reintento automático (mismo criterio que ServicioDeVentas.AnularAsync): un pago a
-        // cuenta es manual, sin clave de idempotencia propia — a diferencia de EmitirAsync, no
-        // hay ningún BuscarPorNumeroComprometidoAsync que detecte un commit ambiguo previo antes
-        // de reinsertar.
+        // cuenta es manual, sin clave de idempotencia propia. EmitirAsync sí conserva el reintento
+        // porque tiene una: su lambda hace ChangeTracker.Clear() y después
+        // BuscarPorNumeroComprometidoAsync, que ante un commit ambiguo devuelve el comprobante ya
+        // emitido en vez de reinsertarlo. Acá no hay guarda equivalente — nada relee el número
+        // comprometido antes de escribir el RC, sus pagos y su movimiento de cuenta corriente, así
+        // que un reintento los duplicaría. El residual (una falla transitoria sale como 503
+        // resultado_incierto, ManejadorDeErrores) es el costo declarado de no tener esa guarda.
         var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         return await estrategia.ExecuteAsync(async () =>
             await EjecutarTransaccionAsync(
