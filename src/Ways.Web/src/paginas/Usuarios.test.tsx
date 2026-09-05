@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Usuarios } from './Usuarios'
 import { ETIQUETA_OPCION_PLATAFORMA, ETIQUETA_PLATAFORMA, ETIQUETA_SIN_DUENIO } from '../api/organizacion'
 import { ROL } from '../api/tipos'
-import type { PaginaDe, RolListado, UsuarioAutenticado, UsuarioListado } from '../api/tipos'
+import type { PaginaDe, RolListado, TenantListado, UsuarioAutenticado, UsuarioListado } from '../api/tipos'
 
 // stage-20-organizacion-relaciones-y-bajas, slice 2 (tareas 2.12 y 2.13).
 
@@ -86,9 +86,42 @@ const cuentaDePlataforma = usuarioFixture({
   nombreTenant: null,
 })
 
-function montar(items: UsuarioListado[] = [cuentaDeTenant, cuentaDeOtroTenant, cuentaDePlataforma]) {
+/**
+ * Fixture del universo de tenants pedido a `GET /plataforma/tenants` (tarea 2.17, gap de tamaño
+ * de página). Por defecto se deriva de las filas montadas — igual que el viejo
+ * `opcionesDeTenant(filas)` — así los tests que no ejercitan el gap no se enteran del cambio de
+ * fuente; los que sí lo ejercitan pasan una lista explícita con un tenant AUSENTE de las filas.
+ */
+function tenantFixture(id: number, nombre: string): TenantListado {
+  return {
+    id,
+    nombre,
+    estado: 'Activo',
+    createdAt: '2026-01-01T10:00:00-03:00',
+    cantidadEmpresas: 0,
+    cantidadPuntosVenta: 0,
+    cantidadUsuarios: 0,
+  }
+}
+
+function tenantsDesdeFilas(items: UsuarioListado[]): TenantListado[] {
+  const porId = new Map<number, string>()
+  for (const item of items) {
+    if (item.idTenant !== null && !porId.has(item.idTenant)) {
+      porId.set(item.idTenant, item.nombreTenant ?? `Tenant ${item.idTenant}`)
+    }
+  }
+
+  return [...porId.entries()].map(([id, nombre]) => tenantFixture(id, nombre))
+}
+
+function montar(
+  items: UsuarioListado[] = [cuentaDeTenant, cuentaDeOtroTenant, cuentaDePlataforma],
+  tenantsDePlataforma: TenantListado[] = tenantsDesdeFilas(items),
+) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/roles') return Promise.resolve(ROLES)
+    if (ruta === '/plataforma/tenants') return Promise.resolve(tenantsDePlataforma)
     if (ruta.startsWith('/usuarios')) {
       return Promise.resolve<PaginaDe<UsuarioListado>>({
         items,
@@ -444,33 +477,85 @@ describe('Usuarios (stage-20, tarea 2.17 — selector de tenant en el alta)', ()
 
   /**
    * Cláusula bajo prueba: `disabled={guardando || tenantsCargando || esRolDePlataforma}` —
-   * `react-async-state` regla 5. El selector se sirve de las filas ya cargadas, así que mientras
-   * la carga está en vuelo la lista todavía no es la definitiva y no se puede elegir de ella.
+   * `react-async-state` regla 5. Para un actor de plataforma `tenantsCargando` es
+   * `tenantsDePlataformaCargando` — el propio `GET /plataforma/tenants` en vuelo, no la carga de
+   * la página de usuarios — así que el `<select>` queda inerte hasta que SU fuente de opciones
+   * llega, no la de la tabla.
    */
-  it('el selector queda inerte mientras la lista está cargando', async () => {
+  it('el selector queda inerte mientras la lista de tenants está cargando', async () => {
     const usuario = userEvent.setup()
-    let resolverCarga!: (pagina: PaginaDe<UsuarioListado>) => void
-    const cargaPendiente = new Promise<PaginaDe<UsuarioListado>>((resolver) => {
-      resolverCarga = resolver
+    let resolverTenants!: (tenants: TenantListado[]) => void
+    const tenantsPendientes = new Promise<TenantListado[]>((resolver) => {
+      resolverTenants = resolver
     })
 
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/roles') return Promise.resolve(ROLES)
-      if (ruta.startsWith('/usuarios')) return cargaPendiente
+      if (ruta === '/plataforma/tenants') return tenantsPendientes
+      if (ruta.startsWith('/usuarios')) {
+        return Promise.resolve<PaginaDe<UsuarioListado>>({
+          items: [cuentaDeTenant],
+          total: 1,
+          pagina: 1,
+          tamanio: 20,
+        })
+      }
 
       return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
     })
 
     render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
     await abrirAlta(usuario)
 
     expect(screen.getByLabelText(SELECTOR_DE_ALTA)).toBeDisabled()
 
     await act(async () => {
-      resolverCarga({ items: [cuentaDeTenant], total: 1, pagina: 1, tamanio: 20 })
-      await cargaPendiente
+      resolverTenants([tenantFixture(2, 'Comercio Sur')])
+      await tenantsPendientes
     })
 
     expect(screen.getByLabelText(SELECTOR_DE_ALTA)).toBeEnabled()
+  })
+
+  /**
+   * Cláusula bajo prueba (gap de tamaño de página, cerrado a continuación de la tarea 2.17): el
+   * selector del alta pide el universo COMPLETO de tenants vía `listarTenants()`, no
+   * `opcionesDeTenant(filas)`. Antes de este cierre un tenant sin ningún usuario en la página
+   * cargada (tamaño 25) era imposible de asignar; acá el tenant fixture "Tenant Fantasma" no
+   * tiene NINGUNA fila entre los usuarios montados y aun así debe aparecer, ordenado junto a los
+   * demás.
+   */
+  it('el universo de tenants del selector incluye uno sin usuarios en la página actual', async () => {
+    const usuario = userEvent.setup()
+    montar(
+      [cuentaDeTenant, cuentaDeOtroTenant, cuentaDePlataforma],
+      [tenantFixture(2, 'Comercio Sur'), tenantFixture(3, 'Almacén Este'), tenantFixture(99, 'Tenant Fantasma')],
+    )
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+    await abrirAlta(usuario)
+
+    const selector = screen.getByLabelText(SELECTOR_DE_ALTA)
+    const etiquetas = within(selector)
+      .getAllByRole('option')
+      .map((o) => o.textContent)
+
+    expect(etiquetas).toEqual(['Elegí un tenant', 'Almacén Este', 'Comercio Sur', 'Tenant Fantasma'])
+    expect(apiGetMock).toHaveBeenCalledWith('/plataforma/tenants')
+  })
+
+  /**
+   * Cláusula bajo prueba, anti-oráculo de la anterior (spec S5): un admin de tenant JAMÁS pide el
+   * universo de tenants, ni siquiera de fondo — `GET /plataforma/tenants` es `SoloPlataforma` y
+   * un admin de tenant no debe poder enumerar tenants ajenos. Verificado corriendo la mutación
+   * (M19): sacar la guarda `esPlataforma` del efecto de fetch hace que este test falle porque el
+   * mock SÍ ve la llamada.
+   */
+  it('un admin de tenant nunca pide el universo de tenants (listarTenants)', async () => {
+    usuarioActual = autenticadoFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([cuentaDeTenant])
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    expect(apiGetMock).not.toHaveBeenCalledWith('/plataforma/tenants')
   })
 })

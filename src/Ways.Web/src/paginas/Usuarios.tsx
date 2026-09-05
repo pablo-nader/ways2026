@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ErrorApi } from '../api/cliente'
 import {
+  clienteDeOrganizacion,
   etiquetaDeTenant,
   filtrarPorTenant,
   opcionesDeTenant,
@@ -15,6 +16,7 @@ import type {
   EstadoUsuario,
   PaginaDe,
   RolListado,
+  TenantListado,
   UsuarioListado,
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
@@ -51,7 +53,10 @@ const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista.
  * (design D14), y el discriminador es `idTenant`, no el nombre: un `nombreTenant` nulo con
  * `idTenant` presente es un huérfano (tenant dado de baja), no personal de plataforma
  * (Reconciliación 9). El filtro por tenant deriva sus opciones de las filas ya cargadas, así
- * que un admin de tenant nunca puede enumerar el nombre de otro tenant (spec S5).
+ * que un admin de tenant nunca puede enumerar el nombre de otro tenant (spec S5). El selector de
+ * tenant del ALTA es la excepción: para un actor de plataforma pide el universo completo vía
+ * `clienteDeOrganizacion.listarTenants()`, así puede asignar un tenant sin usuarios en la página
+ * actual (gap de tamaño de página cerrado a continuación de la tarea 2.17).
  */
 export function Usuarios() {
   const { usuario: actual } = useAuth()
@@ -65,9 +70,14 @@ export function Usuarios() {
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [ocupado, setOcupado] = useState(false)
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
+  const [tenantsDePlataforma, setTenantsDePlataforma] = useState<TenantListado[]>([])
+  const [tenantsDePlataformaCargando, setTenantsDePlataformaCargando] = useState(false)
 
   /** Contrato de invalidación: ver `Tenants.tsx` — mismo patrón en las cuatro pantallas raíz. */
   const generacion = useRef(0)
+  /** Generación propia: el universo de tenants no depende del ciclo búsqueda/escritura de
+   * `generacion` y no debe descartarse por una acción no relacionada (ej. un alta en curso). */
+  const generacionTenants = useRef(0)
 
   const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
     setCargando(true)
@@ -95,6 +105,34 @@ export function Usuarios() {
     void cargar(++generacion.current, '')
     api.get<RolListado[]>('/roles').then(setRoles).catch(() => setRoles([]))
   }, [cargar])
+
+  const esPlataforma = actual?.rolId === ROL.Root
+
+  /** Universo COMPLETO de tenants para el selector del ALTA (tarea 2.17, gap del tamaño de
+   * página): `opcionesDeTenant(filas)` solo ve tenants con un usuario en la página actual
+   * (`tamanio` 25), así que un tenant sin usuario ahí quedaba imposible de asignar. Se pide
+   * SOLO para un actor de plataforma — `GET /plataforma/tenants` es `SoloPlataforma` y jamás
+   * 403 para este actor, pero un admin de tenant no debe enumerar tenants (spec S5) — y el
+   * filtro de la tabla sigue sin tocar (design D15, sin segunda consulta ahí). */
+  useEffect(() => {
+    if (!esPlataforma) return
+
+    const token = ++generacionTenants.current
+    setTenantsDePlataformaCargando(true)
+    clienteDeOrganizacion
+      .listarTenants()
+      .then((lista) => {
+        if (generacionTenants.current !== token) return
+        setTenantsDePlataforma(lista)
+      })
+      .catch(() => {
+        if (generacionTenants.current !== token) return
+        setTenantsDePlataforma([])
+      })
+      .finally(() => {
+        if (generacionTenants.current === token) setTenantsDePlataformaCargando(false)
+      })
+  }, [esPlataforma])
 
   async function guardar() {
     if (!formulario || ocupado) return
@@ -186,22 +224,26 @@ export function Usuarios() {
     void accion(() => api.delete(`/usuarios/${u.id}`), `Usuario "${u.usuario}" dado de baja.`)
   }
 
-  const esPlataforma = actual?.rolId === ROL.Root
-
   // El backend valida igual; esto solo evita mostrar botones que van a fallar.
   const puedeEditar = (u: UsuarioListado) =>
     u.rolId !== ROL.Root || actual?.rolId === ROL.Root
 
-  // Derivación pura sobre la página YA CARGADA: sin fetch nuevo y sin parámetro de consulta.
+  // Derivación pura sobre la página YA CARGADA: sin fetch nuevo y sin parámetro de consulta. Esto
+  // sigue rigiendo el FILTRO de la tabla (design D15) — solo el selector del ALTA cambia de fuente.
   const filas = pagina?.items ?? []
   const opcionesTenant = opcionesDeTenant(filas)
   const tenantVigente = opcionesTenant.some((o) => o.valor === filtroTenant) ? filtroTenant : SIN_FILTRO
   const visibles = filtrarPorTenant(filas, tenantVigente)
 
   // El alta necesita un tenant REAL: la opción de personal de plataforma no es un id y el
-  // servidor la rechazaría para cualquier rol que no sea root. Sale de las mismas filas ya
-  // cargadas que alimentan el filtro — sin una segunda consulta (design D15).
-  const tenantsAsignables = opcionesTenant.filter((o) => o.valor !== VALOR_SIN_TENANT)
+  // servidor la rechazaría para cualquier rol que no sea root. Para un actor de plataforma sale
+  // del universo completo pedido arriba (tarea 2.17, gap de tamaño de página); un admin de
+  // tenant nunca ve el selector, así que su rama solo necesita ser un valor válido, no el mejor.
+  const tenantsAsignables = esPlataforma
+    ? [...tenantsDePlataforma]
+        .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+        .map((t) => ({ valor: String(t.id), etiqueta: t.nombre }))
+    : opcionesTenant.filter((o) => o.valor !== VALOR_SIN_TENANT)
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
@@ -250,7 +292,7 @@ export function Usuarios() {
             roles={roles}
             tenants={tenantsAsignables}
             ofreceTenant={esPlataforma}
-            tenantsCargando={cargando}
+            tenantsCargando={esPlataforma ? tenantsDePlataformaCargando : cargando}
             guardando={ocupado}
             onCambio={setFormulario}
             onGuardar={guardar}
@@ -393,9 +435,12 @@ function EtiquetaEstado({ estado }: { estado: EstadoUsuario }) {
 }
 
 /**
- * `tenants` es el conjunto de tenants ASIGNABLES derivado de las filas ya cargadas, y solo se
- * ofrece a un actor de plataforma (`ofreceTenant`): un admin de tenant no enumera tenants —
- * crea siempre dentro del suyo y el servidor se lo impone (spec S5).
+ * `tenants` es el conjunto de tenants ASIGNABLES, y solo se ofrece a un actor de plataforma
+ * (`ofreceTenant`): un admin de tenant no enumera tenants — crea siempre dentro del suyo y el
+ * servidor se lo impone (spec S5). Para un actor de plataforma sale del universo completo pedido
+ * vía `clienteDeOrganizacion.listarTenants()` (tarea 2.17, gap de tamaño de página): las filas ya
+ * cargadas de `Usuarios` solo cubren la página actual, así que un tenant sin usuario ahí quedaba
+ * imposible de asignar.
  *
  * El selector espeja `PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance`, que sigue siendo la
  * autoridad: root SIEMPRE es de plataforma (tenant nulo) y cualquier otro rol SIEMPRE necesita
