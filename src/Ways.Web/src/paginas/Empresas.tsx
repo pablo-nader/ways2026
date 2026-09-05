@@ -84,19 +84,24 @@ export function Empresas() {
       return
     }
 
-    if (generacion.current !== token) return
-
     // El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
     // commiteó nunca se reporta como fallida (`react-async-state` regla 6).
+    //
+    // `ocupado` se apaga en el `finally` SIN mirar la generación, igual que en `Tenants.tsx` y
+    // `Usuarios.tsx`: mientras hay una escritura en vuelo la pantalla bloquea todo lo que podría
+    // supersederla (regla 9), así que la bandera nunca puede ser la de una operación más nueva —
+    // y salir por el chequeo de generación la dejaría prendida para siempre.
     const mensajeOk = `Se actualizó "${datos.razonSocial}".`
-    setFormulario(null)
-    setAviso(mensajeOk)
     try {
+      if (generacion.current !== token) return
+
+      setFormulario(null)
+      setAviso(mensajeOk)
       await cargar(token, true)
     } catch {
       if (generacion.current === token) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
     } finally {
-      if (generacion.current === token) setOcupado(null)
+      setOcupado(null)
     }
   }
 

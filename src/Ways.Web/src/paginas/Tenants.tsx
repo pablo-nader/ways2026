@@ -28,10 +28,10 @@ export function Tenants() {
    * estado, y toda aplicación de estado posterior a un `await` la vuelve a chequear.
    *
    * Abrir el formulario de edición y cancelarlo NO la incrementan, a diferencia de lo que pide la
-   * regla 3 en el caso general: acá el formulario no supersede a la tabla —son dos porciones de
-   * estado independientes, y una carga en vuelo no pisa nada de lo que el formulario muestra—
-   * mientras que incrementarla ahí descartaría esa carga y, como el `finally` de `cargar` está
-   * gateado por generación, dejaría la pantalla clavada en "Cargando…" para siempre.
+   * regla 3 en el caso general: formulario y tabla son porciones de estado INDEPENDIENTES, así que
+   * ninguna lectura en vuelo queda superseded por abrirlo o cerrarlo. Incrementarla ahí
+   * descartaría esa carga y, como el `finally` de `cargar` está gateado por generación, dejaría la
+   * pantalla clavada en "Cargando…" para siempre.
    *
    * Mientras hay una escritura en vuelo (`ocupado`) la pantalla bloquea todas las acciones que
    * podrían supersederla (regla 9). Por eso el `finally` de `refrescarTrasEscribir` apaga

@@ -51,13 +51,16 @@ const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista.
 const ERROR_TENANTS =
   'No se pudo cargar la lista de tenants: no se pueden crear usuarios hasta que llegue. Abrí "Nuevo" para reintentar.'
 
+const ERROR_ALTA_SIN_TENANTS = 'No se puede crear el usuario: todavía falta la lista de tenants.'
+
 /**
  * ABM de usuarios. La columna "Tenant" rinde el nombre del tenant de la cuenta o el literal
  * "Plataforma" cuando `idTenant` es null — esa copia la pone la web, nunca el servidor
  * (design D14), y el discriminador es `idTenant`, no el nombre: un `nombreTenant` nulo con
  * `idTenant` presente es un huérfano (tenant dado de baja), no personal de plataforma
- * (Reconciliación 9). El filtro por tenant deriva sus opciones de las filas ya cargadas, así
- * que un admin de tenant nunca puede enumerar el nombre de otro tenant (spec S5).
+ * (Reconciliación 9). La columna y el filtro por tenant se rinden con el MISMO criterio que en
+ * `Empresas`/`PuntosVenta`: solo para un actor de plataforma. Un admin de tenant ve una sola
+ * opción —la suya— y filtrar por ella no angosta nada (spec S5).
  */
 export function Usuarios() {
   const { usuario: actual } = useAuth()
@@ -70,6 +73,10 @@ export function Usuarios() {
   const [busquedaAplicada, setBusquedaAplicada] = useState('')
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
+  /** Slot PROPIO del fallo de la segunda escritura del alta/edición (el POST de contraseña). No
+   * puede viajar en `aviso` —el PUT sí commiteó, pero esto es un fallo y va en rojo— ni en `error`
+   * —el refresco post-escritura lo limpia al terminar bien. */
+  const [errorPassword, setErrorPassword] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [ocupado, setOcupado] = useState(false)
@@ -124,7 +131,12 @@ export function Usuarios() {
    *
    * El fallo NO se traga (`react-async-state` regla 7): sin universo el `<select>` requerido
    * quedaría vacío y el alta sería imposible sin decir por qué. Se rinde el error y abrir "Nuevo"
-   * reintenta, que es el único momento en que el universo hace falta. */
+   * reintenta, que es el único momento en que el universo hace falta.
+   *
+   * Ese fallo tiene BANNER PROPIO, derivado de `tenantsDePlataformaFallo`, y no pasa por `error`:
+   * son dos fuentes independientes y el slot compartido las pisaba en los dos sentidos — un
+   * `setError('')` de la tabla borraba este aviso con el universo todavía caído, y este aviso
+   * tapaba un fallo real del listado de usuarios. Un reintento exitoso lo apaga. */
   const cargarTenantsDePlataforma = useCallback(() => {
     const token = ++generacionTenants.current
     setTenantsDePlataformaCargando(true)
@@ -139,7 +151,6 @@ export function Usuarios() {
         if (generacionTenants.current !== token) return
         setTenantsDePlataforma([])
         setTenantsDePlataformaFallo(true)
-        setError(ERROR_TENANTS)
       })
       .finally(() => {
         if (generacionTenants.current === token) setTenantsDePlataformaCargando(false)
@@ -162,12 +173,17 @@ export function Usuarios() {
 
   async function guardar() {
     if (!formulario || ocupado) return
-    if (formulario.id === null && universoDeTenantsIndisponible) return
+    if (formulario.id === null && universoDeTenantsIndisponible) {
+      setError(ERROR_ALTA_SIN_TENANTS)
+
+      return
+    }
 
     const datos = formulario
     const token = ++generacion.current
     setOcupado(true)
     setError('')
+    setErrorPassword('')
     setAviso('')
 
     let mensajeOk: string
@@ -205,14 +221,16 @@ export function Usuarios() {
 
     // El cambio de contraseña es una SEGUNDA escritura y lleva su propio try: el PUT de arriba ya
     // commiteó, así que un fallo acá no puede reportarse como "no se pudo guardar"
-    // (`react-async-state` regla 6). Se avisa exactamente qué quedó hecho y qué no.
+    // (`react-async-state` regla 6). Las dos mitades se rinden POR SEPARADO y a la vez: la
+    // confirmación del PUT commiteado en el aviso verde, el fallo de la contraseña en rojo. Meter
+    // el fallo en el aviso verde lo anunciaba como parte de un éxito.
     if (datos.id !== null && datos.password) {
       try {
         await api.post(`/usuarios/${datos.id}/password`, { passwordNueva: datos.password })
       } catch (e) {
         if (generacion.current !== token) return
         const detalle = e instanceof ErrorApi ? e.message : 'Reintentá el cambio de contraseña.'
-        mensajeOk = `Usuario "${datos.usuario}" actualizado, pero no se pudo cambiar la contraseña. ${detalle}`
+        setErrorPassword(`Se guardó el perfil, pero no se pudo cambiar la contraseña. ${detalle}`)
       }
     }
 
@@ -248,6 +266,7 @@ export function Usuarios() {
     const token = ++generacion.current
     setOcupado(true)
     setError('')
+    setErrorPassword('')
     setAviso('')
     try {
       await construirPromesa()
@@ -309,8 +328,13 @@ export function Usuarios() {
           setFormulario({ ...FORMULARIO_VACIO })
           setAviso('')
           setError('')
+          setErrorPassword('')
           // Reintento del universo de tenants: abrir el alta es el único momento en que hace falta.
-          if (esPlataforma && tenantsDePlataformaFallo) cargarTenantsDePlataforma()
+          // `!tenantsDePlataformaCargando` evita que reabrir "Nuevo" con el reintento EN VUELO
+          // dispare un segundo `GET /plataforma/tenants` por click.
+          if (esPlataforma && tenantsDePlataformaFallo && !tenantsDePlataformaCargando) {
+            cargarTenantsDePlataforma()
+          }
         }}
         disabled={ocupado}
       >
@@ -323,6 +347,10 @@ export function Usuarios() {
     <div className="container-fluid py-4">
       <Box titulo="Usuarios" variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger rounded-0">{error}</div>}
+        {tenantsDePlataformaFallo && (
+          <div className="alert alert-danger rounded-0">{ERROR_TENANTS}</div>
+        )}
+        {errorPassword && <div className="alert alert-danger rounded-0">{errorPassword}</div>}
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
 
         {formulario && (
@@ -345,26 +373,32 @@ export function Usuarios() {
           <Cargando />
         ) : (
           <>
-            <div className="row g-2 mb-3">
-              <div className="col-md-4">
-                <label className="form-label" htmlFor="u-filtro-tenant">
-                  Tenant
-                </label>
-                <select
-                  id="u-filtro-tenant"
-                  className="form-select rounded-0"
-                  value={tenantVigente}
-                  onChange={(e) => setFiltroTenant(e.target.value)}
-                >
-                  <option value={SIN_FILTRO}>Todos</option>
-                  {opcionesTenant.map((o) => (
-                    <option key={o.valor} value={o.valor}>
-                      {o.etiqueta}
-                    </option>
-                  ))}
-                </select>
+            {/* El filtro por tenant se rinde con el mismo criterio que la COLUMNA de tenant: solo
+                para un actor de plataforma. Para un admin de tenant TODAS las filas son de su
+                propio tenant, así que la columna repite el mismo nombre y el filtro no angosta
+                nada — misma paridad que `Empresas.tsx` y `PuntosVenta.tsx`. */}
+            {esPlataforma && (
+              <div className="row g-2 mb-3">
+                <div className="col-md-4">
+                  <label className="form-label" htmlFor="u-filtro-tenant">
+                    Tenant
+                  </label>
+                  <select
+                    id="u-filtro-tenant"
+                    className="form-select rounded-0"
+                    value={tenantVigente}
+                    onChange={(e) => setFiltroTenant(e.target.value)}
+                  >
+                    <option value={SIN_FILTRO}>Todos</option>
+                    {opcionesTenant.map((o) => (
+                      <option key={o.valor} value={o.valor}>
+                        {o.etiqueta}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="table-responsive">
               <table className="table table-striped table-hover table-bordered align-middle">
@@ -373,7 +407,7 @@ export function Usuarios() {
                     <th>ID</th>
                     <th>Usuario</th>
                     <th>Mail</th>
-                    <th>Tenant</th>
+                    {esPlataforma && <th>Tenant</th>}
                     <th>Rol</th>
                     <th>Estado</th>
                     <th>Última conexión</th>
@@ -386,7 +420,7 @@ export function Usuarios() {
                       <td>{String(u.id).padStart(4, '0')}</td>
                       <td>{u.usuario}</td>
                       <td>{u.mail}</td>
-                      <td>{etiquetaDeTenant(u)}</td>
+                      {esPlataforma && <td>{etiquetaDeTenant(u)}</td>}
                       <td>{u.rol}</td>
                       <td>
                         <EtiquetaEstado estado={u.estado} />
@@ -413,6 +447,7 @@ export function Usuarios() {
                               })
                               setAviso('')
                               setError('')
+                              setErrorPassword('')
                             }}
                             disabled={ocupado}
                           >
@@ -449,7 +484,7 @@ export function Usuarios() {
                   ))}
                   {visibles.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="text-center text-muted py-4">
+                      <td colSpan={esPlataforma ? 8 : 7} className="text-center text-muted py-4">
                         No hay usuarios que coincidan con la búsqueda.
                       </td>
                     </tr>

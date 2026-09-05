@@ -52,6 +52,10 @@ export function PuntosVenta() {
 
   /** Contrato de invalidación: ver `Tenants.tsx` — mismo patrón en las cuatro pantallas raíz. */
   const generacion = useRef(0)
+  /** Espejo SIEMPRE al día de `filtroTenant`. `cargar` es un `useCallback` sin dependencias, así
+   * que no puede leer el estado por closure sin quedarse con una foto vieja; y la reconciliación
+   * de la empresa necesita el tenant YA reconciliado, no el `prev` de su propio updater. */
+  const filtroTenantVigente = useRef(SIN_FILTRO)
 
   const cargar = useCallback(async (token: number, propagar = false) => {
     setCargando(true)
@@ -61,9 +65,13 @@ export function PuntosVenta() {
       setItems(filas)
       // Reconciliación ESCRITA en el estado, no solo derivada al pintar: una selección que las
       // filas nuevas ya no sostienen se apaga, en vez de quedar viva y reaplicarse sola cuando la
-      // opción reaparece. Los dos updaters se arman desde `prev` (`react-async-state` regla 1).
-      setFiltroTenant((prev) => seleccionVigente(opcionesDeTenant(filas), prev))
-      setFiltroEmpresa((prev) => seleccionVigente(opcionesDeEmpresa(filas), prev))
+      // opción reaparece. La empresa se reconcilia contra el MISMO conjunto ANGOSTADO que rinde la
+      // pantalla (`opcionesDeEmpresa(filas, tenant)`, design D15): contra el conjunto sin angostar
+      // sobrevivía una empresa de otro tenant que el `<select>` ya no ofrece.
+      const tenanteReconciliado = seleccionVigente(opcionesDeTenant(filas), filtroTenantVigente.current)
+      filtroTenantVigente.current = tenanteReconciliado
+      setFiltroTenant(tenanteReconciliado)
+      setFiltroEmpresa((prev) => seleccionVigente(opcionesDeEmpresa(filas, tenanteReconciliado), prev))
       setError('')
     } catch (e) {
       if (generacion.current !== token) return
@@ -104,19 +112,24 @@ export function PuntosVenta() {
       return
     }
 
-    if (generacion.current !== token) return
-
     // El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
     // commiteó nunca se reporta como fallida (`react-async-state` regla 6).
+    //
+    // `ocupado` se apaga en el `finally` SIN mirar la generación, igual que en `Tenants.tsx` y
+    // `Usuarios.tsx`: mientras hay una escritura en vuelo la pantalla bloquea todo lo que podría
+    // supersederla (regla 9), así que la bandera nunca puede ser la de una operación más nueva —
+    // y salir por el chequeo de generación la dejaría prendida para siempre.
     const mensajeOk = `Se actualizó "${datos.nombre}".`
-    setFormulario(null)
-    setAviso(mensajeOk)
     try {
+      if (generacion.current !== token) return
+
+      setFormulario(null)
+      setAviso(mensajeOk)
       await cargar(token, true)
     } catch {
       if (generacion.current === token) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
     } finally {
-      if (generacion.current === token) setOcupado(null)
+      setOcupado(null)
     }
   }
 
@@ -133,6 +146,7 @@ export function PuntosVenta() {
    * (design D15) — si le sigue perteneciendo, la selección se respeta. El updater se arma desde
    * `prev`, nunca leyendo el estado por closure (`react-async-state` regla 1). */
   function cambiarFiltroDeTenant(valor: string) {
+    filtroTenantVigente.current = valor
     setFiltroTenant(valor)
     setFiltroEmpresa((prev) =>
       prev === SIN_FILTRO || opcionesDeEmpresa(items, valor).some((o) => o.valor === prev)

@@ -145,6 +145,26 @@ describe('opcionesDeTenant', () => {
     expect(opciones.find((o) => o.valor === '4')).toEqual({ valor: '4', etiqueta: 'Único' })
   })
 
+  /**
+   * Cláusula bajo prueba (ronda 2, R2-6): la opción de plataforma entra al mapa de colisiones de
+   * `desempatarHomonimos`. `ETIQUETA_OPCION_PLATAFORMA` es texto fijo y `nombre` es texto libre, así
+   * que un tenant llamado LITERALMENTE "Plataforma (sin tenant)" produce la MISMA etiqueta. El caso
+   * de arriba ("Plataforma" a secas) no lo cubre: ahí las dos etiquetas ya diferían por el sufijo.
+   * Las claves quedan intactas — la del personal de plataforma sigue sin ser ningún `String(id)`.
+   */
+  it('un tenant llamado exactamente como la opción de plataforma no queda con etiqueta idéntica', () => {
+    const opciones = opcionesDeTenant([fila(9, ETIQUETA_OPCION_PLATAFORMA), fila(null, null)])
+
+    expect(opciones.map((o) => o.valor)).toEqual([VALOR_SIN_TENANT, '9'])
+    expect(new Set(opciones.map((o) => o.etiqueta)).size).toBe(2)
+    expect(opciones.find((o) => o.valor === '9')?.etiqueta).toBe(
+      `${ETIQUETA_OPCION_PLATAFORMA} (tenant 9)`,
+    )
+    expect(opciones.find((o) => o.valor === VALOR_SIN_TENANT)?.etiqueta).toBe(
+      `${ETIQUETA_OPCION_PLATAFORMA} (tenant ${VALOR_SIN_TENANT})`,
+    )
+  })
+
   it('sobre una lista vacía no ofrece ninguna opción', () => {
     expect(opcionesDeTenant([])).toEqual([])
   })
@@ -172,9 +192,13 @@ describe('opcionesDeTenantAsignable', () => {
 
   /**
    * Cláusula bajo prueba: la marca de estado. El servidor es la autoridad y `CrearAsync` NO mira
-   * el estado del tenant destino, así que un tenant suspendido o dado de baja se sigue ofreciendo
-   * —el operador puede pre-crear ahí a propósito— pero sin la marca el usuario creado adentro
-   * simplemente no podría iniciar sesión y nada en la pantalla lo diría.
+   * el estado del tenant destino, así que un tenant suspendido se sigue ofreciendo —el operador
+   * puede pre-crear ahí a propósito— pero sin la marca el usuario creado adentro simplemente no
+   * podría iniciar sesión y nada en la pantalla lo diría. Esa es la mitad VIVA de la cláusula.
+   *
+   * La fila `Baja` NO es una fila real del listado: un tenant en `Baja` está borrado lógicamente y
+   * `GET /plataforma/tenants` no lo devuelve, así que esa rama es defensa en profundidad y el
+   * fixture existe solo para ejercitarla. Se mantiene por si el listado dejara de filtrarlos.
    */
   it('marca en la etiqueta a los tenants que no están activos, sin sacarlos de la lista', () => {
     const opciones = opcionesDeTenantAsignable([

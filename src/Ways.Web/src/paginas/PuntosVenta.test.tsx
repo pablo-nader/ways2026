@@ -225,4 +225,56 @@ describe('PuntosVenta (stage-20, slice 2 — nombres de dueño y dos filtros)', 
     expect(screen.queryByText('Almacén Este')).not.toBeInTheDocument()
     expect(screen.queryByText('Este SRL')).not.toBeInTheDocument()
   })
+
+  /**
+   * Cláusula bajo prueba (ronda 2, R2-8): la reconciliación ESCRITA de `filtroEmpresa` en `cargar`
+   * corre contra el conjunto ANGOSTADO por el tenant vigente —`opcionesDeEmpresa(filas, tenant)`—,
+   * el mismo que rinde la pantalla, y no contra `opcionesDeEmpresa(filas)` sin angostar.
+   *
+   * El confundidor es el fallback derivado de siempre (`empresaVigente`): mientras el filtro de
+   * tenant sigue puesto, las dos versiones pintan lo mismo, porque la opción inválida no está en el
+   * `<select>` igual. La observación discriminante es la de M4/M23: volver el tenant a "Todos" no
+   * puede RESUCITAR una empresa que ya no le pertenece al tenant que estaba elegido.
+   */
+  it('la empresa elegida no resucita cuando un refresco la saca del tenant vigente', async () => {
+    const usuario = userEvent.setup()
+    const pvAnexoMudado = pvFixture({
+      id: 101,
+      idTenant: 3,
+      nombreTenant: 'Almacén Este',
+      idEmpresa: 21,
+      nombre: 'PV Anexo',
+      razonSocialEmpresa: 'Sur Anexo SA',
+    })
+
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/puntos-venta') {
+        cargas += 1
+
+        return Promise.resolve(
+          cargas === 1 ? [pvSurCentro, pvSurAnexo, pvEste] : [pvSurCentro, pvAnexoMudado, pvEste],
+        )
+      }
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    render(<PuntosVenta />)
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.selectOptions(screen.getByLabelText('Tenant'), '2')
+    await usuario.selectOptions(screen.getByLabelText('Empresa'), '21')
+    expect(nombresVisibles()).toEqual(['PV Anexo'])
+
+    // Única vía de recarga de esta pantalla: el refresco post-escritura.
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(cargas).toBe(2))
+
+    await usuario.selectOptions(screen.getByLabelText('Tenant'), '')
+
+    expect(nombresVisibles()).toEqual(['PV Centro', 'PV Anexo', 'PV Este'])
+    expect(screen.getByLabelText('Empresa')).toHaveValue('')
+  })
 })

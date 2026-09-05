@@ -99,10 +99,14 @@ function ordenarPorEtiqueta(opciones: OpcionDeFiltro[]): OpcionDeFiltro[] {
 }
 
 /**
- * Desempata etiquetas repetidas con el id de cada opción. `nombre`/`razon_social` son texto libre:
- * dos dueños DISTINTOS pueden compartirlo y las opciones quedarían byte a byte idénticas, así que
- * el operador elegiría a ciegas. Solo se toca a las que colisionan — es el mismo desempate que ya
- * llevan los huérfanos, aplicado ahora también a los homónimos con nombre.
+ * Desempata etiquetas repetidas con la CLAVE de cada opción. `nombre`/`razon_social` son texto
+ * libre: dos dueños DISTINTOS pueden compartirlo y las opciones quedarían byte a byte idénticas,
+ * así que el operador elegiría a ciegas. Solo se toca a las que colisionan — es el mismo desempate
+ * que ya llevan los huérfanos, aplicado ahora también a los homónimos con nombre.
+ *
+ * La opción de plataforma entra al mapa como una más: `ETIQUETA_OPCION_PLATAFORMA` es texto fijo y
+ * un tenant puede llamarse literalmente así, con lo que las dos etiquetas colisionarían. Su clave
+ * (`VALOR_SIN_TENANT`) no se toca — el sufijo es la clave, no un id fabricado.
  */
 function desempatarHomonimos(opciones: OpcionDeFiltro[], sustantivo: string): OpcionDeFiltro[] {
   const repeticiones = new Map<string, number>()
@@ -140,10 +144,12 @@ export function opcionesDeTenant(filas: readonly FilaConTenant[]): OpcionDeFiltr
     if (!porClave.has(valor)) porClave.set(valor, { valor, etiqueta: etiquetaDeOpcionDeTenant(fila) })
   }
 
-  const plataforma = porClave.get(VALOR_SIN_TENANT)
-  const tenants = ordenarPorEtiqueta(
-    desempatarHomonimos([...porClave.values()].filter((o) => o.valor !== VALOR_SIN_TENANT), 'tenant'),
-  )
+  // El desempate corre sobre el conjunto COMPLETO, plataforma incluida: recién después se aparta
+  // esa opción para dejarla primera. Excluirla del mapa dejaba dos etiquetas idénticas cuando un
+  // tenant se llama literalmente "Plataforma (sin tenant)".
+  const desempatadas = desempatarHomonimos([...porClave.values()], 'tenant')
+  const plataforma = desempatadas.find((o) => o.valor === VALOR_SIN_TENANT)
+  const tenants = ordenarPorEtiqueta(desempatadas.filter((o) => o.valor !== VALOR_SIN_TENANT))
 
   return plataforma ? [plataforma, ...tenants] : tenants
 }
@@ -164,6 +170,9 @@ export function opcionesDeTenantAsignable(tenants: readonly TenantListado[]): Op
   return ordenarPorEtiqueta(desempatarHomonimos(opciones, 'tenant'))
 }
 
+/** La marca que llega por la API hoy es `(suspendido)`: un tenant en `Baja` está borrado
+ * lógicamente y `GET /plataforma/tenants` no lo lista, así que la rama `(baja)` es defensa en
+ * profundidad, no un camino vivo. Se conserva por si el listado dejara de filtrarlos. */
 function etiquetaDeTenantAsignable(nombre: string, estado: EstadoTenant): string {
   return estado === 'Activo' ? nombre : `${nombre} (${estado.toLowerCase()})`
 }
