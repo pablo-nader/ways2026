@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import type { EstadoTenant, TenantListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+
+const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
 /**
  * ABM (parcial) de tenants — plataforma-only. El alta completa (tenant + empresa + punto de
@@ -18,55 +20,100 @@ export function Tenants() {
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [edicion, setEdicion] = useState<{ id: number; nombre: string } | null>(null)
-  const [guardando, setGuardando] = useState(false)
+  const [ocupado, setOcupado] = useState<number | null>(null)
 
-  const cargar = useCallback(async () => {
+  /**
+   * Contrato de invalidación (`react-async-state` reglas 2-4): TODA operación que supersede lo
+   * que hay en pantalla incrementa la generación ANTES de tocar el estado, y toda aplicación de
+   * estado posterior a un `await` — incluido el `finally` que apaga las banderas y el rethrow del
+   * refresco — la vuelve a chequear. Mientras hay una escritura en vuelo (`ocupado`), la pantalla
+   * bloquea todas las acciones que podrían supersederla (regla 9), así que la generación queda
+   * para el desfasaje de LECTURAS.
+   */
+  const generacion = useRef(0)
+
+  const cargar = useCallback(async (token: number, propagar = false) => {
     setCargando(true)
-    setError('')
     try {
-      setItems(await clienteDeOrganizacion.listarTenants())
+      const filas = await clienteDeOrganizacion.listarTenants()
+      if (generacion.current !== token) return
+      setItems(filas)
+      setError('')
     } catch (e) {
+      if (generacion.current !== token) return
+      if (propagar) throw e
       setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los tenants.')
     } finally {
-      setCargando(false)
+      if (generacion.current === token) setCargando(false)
     }
   }, [])
 
   useEffect(() => {
-    void cargar()
+    void cargar(++generacion.current)
   }, [cargar])
 
-  async function guardarNombre() {
-    if (!edicion) return
+  /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
+   * commiteó nunca se reporta como fallida (`react-async-state` regla 6). */
+  async function refrescarTrasEscribir(token: number, mensajeOk: string) {
+    if (generacion.current !== token) return
 
-    setGuardando(true)
-    setError('')
-    setAviso('')
+    setAviso(mensajeOk)
     try {
-      await clienteDeOrganizacion.editarTenant(edicion.id, { nombre: edicion.nombre })
-      setAviso(`Se actualizó el tenant "${edicion.nombre}".`)
-      setEdicion(null)
-      await cargar()
-    } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+      await cargar(token, true)
+    } catch {
+      if (generacion.current === token) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
     } finally {
-      setGuardando(false)
+      if (generacion.current === token) setOcupado(null)
     }
   }
 
+  async function guardarNombre() {
+    if (!edicion || ocupado !== null) return
+
+    const { id, nombre } = edicion
+    const token = ++generacion.current
+    setOcupado(id)
+    setError('')
+    setAviso('')
+    try {
+      await clienteDeOrganizacion.editarTenant(id, { nombre })
+    } catch (e) {
+      if (generacion.current !== token) return
+      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+      setOcupado(null)
+
+      return
+    }
+
+    if (generacion.current !== token) return
+    setEdicion(null)
+    await refrescarTrasEscribir(token, `Se actualizó el tenant "${nombre}".`)
+  }
+
   async function cambiarEstado(tenant: TenantListado, accion: 'suspenderTenant' | 'reactivarTenant') {
+    if (ocupado !== null) return
+
     const verbo = accion === 'suspenderTenant' ? 'suspender' : 'reactivar'
     if (!confirm(`¿${verbo === 'suspender' ? 'Suspender' : 'Reactivar'} el tenant "${tenant.nombre}"?`)) return
 
+    const token = ++generacion.current
+    setOcupado(tenant.id)
     setError('')
     setAviso('')
     try {
       await clienteDeOrganizacion[accion](tenant.id)
-      setAviso(`Tenant "${tenant.nombre}" ${verbo === 'suspender' ? 'suspendido' : 'reactivado'}.`)
-      await cargar()
     } catch (e) {
+      if (generacion.current !== token) return
       setError(e instanceof ErrorApi ? e.message : 'No se pudo completar la acción.')
+      setOcupado(null)
+
+      return
     }
+
+    await refrescarTrasEscribir(
+      token,
+      `Tenant "${tenant.nombre}" ${verbo === 'suspender' ? 'suspendido' : 'reactivado'}.`,
+    )
   }
 
   const herramientas = (
@@ -104,18 +151,19 @@ export function Tenants() {
                 maxLength={150}
                 value={edicion.nombre}
                 onChange={(e) => setEdicion({ ...edicion, nombre: e.target.value })}
+                disabled={ocupado !== null}
                 required
               />
             </div>
             <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success rounded-0" disabled={guardando}>
-                {guardando ? 'Guardando…' : 'Guardar'}
+              <button type="submit" className="btn btn-success rounded-0" disabled={ocupado !== null}>
+                {ocupado !== null ? 'Guardando…' : 'Guardar'}
               </button>
               <button
                 type="button"
                 className="btn btn-outline-secondary rounded-0"
                 onClick={() => setEdicion(null)}
-                disabled={guardando}
+                disabled={ocupado !== null}
               >
                 Cancelar
               </button>
@@ -133,6 +181,9 @@ export function Tenants() {
                   <th>ID</th>
                   <th>Nombre</th>
                   <th>Estado</th>
+                  <th className="text-end">Empresas</th>
+                  <th className="text-end">Puntos de venta</th>
+                  <th className="text-end">Usuarios</th>
                   <th>Creado</th>
                   <th className="text-end">Acciones</th>
                 </tr>
@@ -145,12 +196,16 @@ export function Tenants() {
                     <td>
                       <EtiquetaEstado estado={t.estado} />
                     </td>
+                    <td className="text-end">{t.cantidadEmpresas}</td>
+                    <td className="text-end">{t.cantidadPuntosVenta}</td>
+                    <td className="text-end">{t.cantidadUsuarios}</td>
                     <td>{new Date(t.createdAt).toLocaleDateString('es-AR')}</td>
                     <td className="text-end text-nowrap">
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-primary rounded-0 me-1"
                         onClick={() => setEdicion({ id: t.id, nombre: t.nombre })}
+                        disabled={ocupado !== null}
                       >
                         Editar
                       </button>
@@ -159,6 +214,7 @@ export function Tenants() {
                           type="button"
                           className="btn btn-sm btn-outline-warning rounded-0"
                           onClick={() => cambiarEstado(t, 'suspenderTenant')}
+                          disabled={ocupado !== null}
                         >
                           Suspender
                         </button>
@@ -168,6 +224,7 @@ export function Tenants() {
                           type="button"
                           className="btn btn-sm btn-outline-success rounded-0"
                           onClick={() => cambiarEstado(t, 'reactivarTenant')}
+                          disabled={ocupado !== null}
                         >
                           Reactivar
                         </button>
@@ -177,7 +234,7 @@ export function Tenants() {
                 ))}
                 {items.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="text-center text-muted py-4">
+                    <td colSpan={8} className="text-center text-muted py-4">
                       No hay tenants cargados.
                     </td>
                   </tr>
