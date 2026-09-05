@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Usuarios } from './Usuarios'
@@ -783,7 +783,6 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
    */
   it('el refresco post-escritura usa el término buscado, no el borrador tipeado', async () => {
     const usuario = userEvent.setup()
-    vi.stubGlobal('confirm', () => true)
     montar()
     await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
 
@@ -791,6 +790,7 @@ describe('Usuarios (slice 2, ronda 1 — universo de tenants, filtro y escritura
     await usuario.click(
       within(screen.getByRole('row', { name: /vendedor\.sur/ })).getByRole('button', { name: 'Baja' }),
     )
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
     await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/usuarios/50'))
     await waitFor(() => expect(screen.getByText(/dado de baja/)).toBeInTheDocument())
@@ -982,5 +982,384 @@ describe('Usuarios (slice 2, ronda 2 — slots de aviso separados y reintento de
 
     expect(screen.queryByText(/No se pudo cargar la lista de tenants/)).not.toBeInTheDocument()
     expect(intentos).toBe(2)
+  })
+})
+
+// stage-20-organizacion-relaciones-y-bajas, slice 5 (tareas 5.6, 5.7 y 5.8), más las entradas
+// arrastradas de la slice 2 (puntos 2 y 4). El patrón de baja es el MISMO que el de `Tenants.tsx`
+// y se replica en la misma PR (`react-async-state` regla 10).
+
+function botonDeBajaDe(nombreDeUsuario: string) {
+  return within(screen.getByRole('row', { name: new RegExp(nombreDeUsuario) })).getByRole('button', {
+    name: 'Baja',
+  })
+}
+
+describe('Usuarios (stage-20, slice 5 — baja lógica tras la puerta de confirmación)', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiPostMock.mockResolvedValue(undefined)
+    apiPutMock.mockResolvedValue(undefined)
+    apiDeleteMock.mockResolvedValue(undefined)
+    usuarioActual = autenticadoFixture()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `{baja && <ConfirmacionDeBaja …>}` que reemplazó al `confirm()`
+   * nativo. El diálogo del navegador no se podía dejar inerte mientras el DELETE estaba en vuelo,
+   * y era la única de las cuatro pantallas que no compartía la puerta (regla 10).
+   */
+  it('el botón de baja no llama a la API hasta que se confirma', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toHaveTextContent(
+      '¿Dar de baja al usuario "vendedor.sur"?',
+    )
+
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith('/usuarios/50'))
+    await waitFor(() => expect(screen.getByText('Usuario "vendedor.sur" dado de baja.')).toBeInTheDocument())
+  })
+
+  it('cancelar cierra la puerta y no llama nunca a la API', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+  })
+
+  /** Cláusula bajo prueba: la ventana inerte completa — ver el test gemelo de `Tenants.test.tsx`. */
+  it('durante el DELETE y su refresco no queda ninguna acción alcanzable', async () => {
+    const usuario = userEvent.setup()
+    let resolverDelete!: () => void
+    let resolverRefresco!: (pagina: PaginaDe<UsuarioListado>) => void
+
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta === '/plataforma/tenants') return Promise.resolve(tenantsDesdeFilas([cuentaDeTenant]))
+      if (!ruta.startsWith('/usuarios')) return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+
+      cargas += 1
+      if (cargas === 1) {
+        return Promise.resolve<PaginaDe<UsuarioListado>>({
+          items: [cuentaDeTenant],
+          total: 1,
+          pagina: 1,
+          tamanio: 20,
+        })
+      }
+
+      return new Promise<PaginaDe<UsuarioListado>>((resolver) => {
+        resolverRefresco = resolver
+      })
+    })
+    apiDeleteMock.mockImplementation(
+      () =>
+        new Promise<void>((resolver) => {
+          resolverDelete = resolver
+        }),
+    )
+
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    expect(screen.getByRole('button', { name: 'Dando de baja…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Nuevo' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
+    expect(screen.getByPlaceholderText('Buscar usuario o mail…')).toBeDisabled()
+    for (const boton of [
+      ...screen.getAllByRole('button', { name: 'Editar' }),
+      ...screen.getAllByRole('button', { name: 'Baja' }),
+    ]) {
+      expect(boton).toBeDisabled()
+    }
+
+    await act(async () => {
+      resolverDelete()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByText('Usuario "vendedor.sur" dado de baja.')).toBeInTheDocument())
+
+    await act(async () => {
+      resolverRefresco({ items: [], total: 0, pagina: 1, tamanio: 20 })
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Nuevo' })).toBeEnabled())
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  /** Cláusula bajo prueba: `ocupadoRef`, la guarda de re-entrancia del mismo tick (regla 9). */
+  it('un segundo click sobre la confirmación en vuelo se descarta', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockImplementation(() => new Promise<void>(() => {}))
+    montar([cuentaDeTenant])
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    const confirmar = screen.getByRole('button', { name: 'Confirmar baja' })
+    await act(async () => {
+      confirmar.click()
+      confirmar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('un refresco fallido después de la baja no la reporta como fallida', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta === '/plataforma/tenants') return Promise.resolve(tenantsDesdeFilas([cuentaDeTenant]))
+      if (!ruta.startsWith('/usuarios')) return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+
+      cargas += 1
+      if (cargas === 1) {
+        return Promise.resolve<PaginaDe<UsuarioListado>>({
+          items: [cuentaDeTenant],
+          total: 1,
+          pagina: 1,
+          tamanio: 20,
+        })
+      }
+
+      return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+    })
+
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'Usuario "vendedor.sur" dado de baja. Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
+        ),
+      ).toBeInTheDocument(),
+    )
+  })
+
+  /**
+   * Cláusula bajo prueba: `copiaDeFalloDeBaja(e, 'el usuario')` en vez del `e.message` pelado que
+   * usaba el viejo `accion()`. `usuario_en_uso` es el cuarto código del set y tiene su propia guía.
+   */
+  it('un 409 usuario_en_uso rinde su guía propia sin tragarse el mensaje del servidor', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(409, 'usuario_en_uso', 'No se puede dar de baja el usuario porque hay 7 ventas a su nombre.'),
+    )
+    montar([cuentaDeTenant])
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(screen.getByText(/7 ventas a su nombre/)).toBeInTheDocument())
+    expect(
+      screen.getByText(/Reasigná o dá de baja esas operaciones antes de eliminar la cuenta\./),
+    ).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: que los rechazos PREEXISTENTES de `PoliticaDeRoles` sigan llegando con
+   * su mensaje. No están en el mapa de códigos, así que caen por el fallback — que rinde el
+   * mensaje del servidor y no inventa ninguna guía.
+   */
+  it('un rechazo de PoliticaDeRoles se rinde con su propio mensaje, sin guía inventada', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(403, 'operacion_no_permitida', 'No podés dar de baja tu propia cuenta.'),
+    )
+    montar([cuentaDeTenant])
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('No podés dar de baja tu propia cuenta.')).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/Reasigná o dá de baja esas operaciones/)).not.toBeInTheDocument()
+  })
+
+  /** Anti-oráculo (BO-R12) en la capa de UI: un 404 nunca insinúa uso ni alcance. */
+  it('un 404 rinde la copia neutra de inexistencia, nunca una pista de uso', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(new ErrorApi(404, 'no_encontrado', 'No existe el usuario 50.'))
+    montar([cuentaDeTenant])
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('No se pudo dar de baja el usuario. Ya no existe o no está a tu alcance. Actualizá el listado.'),
+      ).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/en uso|a su nombre/)).not.toBeInTheDocument()
+  })
+})
+
+// Entradas arrastradas de la slice 2 que esta slice cierra (puntos 2 y 4 del bloque BINDING).
+
+describe('Usuarios (slice 5 — cierre de las entradas arrastradas de la slice 2)', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiPostMock.mockResolvedValue(undefined)
+    apiPutMock.mockResolvedValue(undefined)
+    apiDeleteMock.mockResolvedValue(undefined)
+    usuarioActual = autenticadoFixture()
+  })
+
+  /**
+   * Cláusula bajo prueba (entrada 2): el slot PROPIO de `ERROR_ALTA_SIN_TENANTS`. En el slot
+   * compartido `error` lo borraba el `setError('')` de la siguiente carga con el universo todavía
+   * caído — el rechazo desaparecía y el alta seguía siendo imposible sin decir por qué.
+   *
+   * El disparo va por `fireEvent.submit` y NO por un click, y eso se dice en vez de disfrazarse:
+   * el botón "Guardar" está `disabled` en esta ventana (`sinTenantAsignable`), así que por click
+   * la rama es inalcanzable — es el superviviente M35 que la slice 2 registró como tal. El evento
+   * de submit es exactamente lo que produciría la carrera del mismo tick contra la que existe el
+   * re-chequeo, y lo que este test prueba es el SLOT: que una carga posterior de la tabla no se
+   * lo lleve puesto.
+   */
+  it('el rechazo del alta sin universo de tenants sobrevive a una carga posterior', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta === '/plataforma/tenants') return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+      if (ruta.startsWith('/usuarios')) {
+        return Promise.resolve<PaginaDe<UsuarioListado>>({
+          items: [cuentaDeTenant],
+          total: 1,
+          pagina: 1,
+          tamanio: 20,
+        })
+      }
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+    expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+
+    await act(async () => {
+      fireEvent.submit(screen.getByLabelText('Usuario').closest('form') as HTMLFormElement)
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(screen.getByText('No se puede crear el usuario: todavía falta la lista de tenants.')).toBeInTheDocument(),
+    )
+    expect(apiPostMock).not.toHaveBeenCalled()
+
+    // Una carga posterior de la TABLA no puede llevárselo puesto: son dos slots con dueños
+    // distintos, y `cargar` termina con un `setError('')` que en el slot compartido lo borraba.
+    await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('No se puede crear el usuario: todavía falta la lista de tenants.')).toBeInTheDocument(),
+    )
+  })
+
+  /**
+   * Cláusula bajo prueba (entrada 4): los `setErrorPassword('')` de Cancelar y de Buscar. El fallo
+   * del cambio de contraseña quedaba prendido sobre una pantalla que el operador ya cerró o
+   * reemplazó por otra búsqueda.
+   */
+  it('el fallo del cambio de contraseña se apaga al cancelar el formulario', async () => {
+    const usuario = userEvent.setup()
+    montar([cuentaDeTenant])
+    apiPostMock.mockRejectedValue(new ErrorApi(400, 'password_debil', 'La contraseña es muy corta.'))
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.type(screen.getByLabelText('Contraseña'), 'corta')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(screen.getByText(/no se pudo cambiar la contraseña/)).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByText(/no se pudo cambiar la contraseña/)).not.toBeInTheDocument()
+  })
+
+  it('el fallo del cambio de contraseña se apaga al buscar de nuevo', async () => {
+    const usuario = userEvent.setup()
+    montar([cuentaDeTenant])
+    apiPostMock.mockRejectedValue(new ErrorApi(400, 'password_debil', 'La contraseña es muy corta.'))
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.type(screen.getByLabelText('Contraseña'), 'corta')
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+    await waitFor(() => expect(screen.getByText(/no se pudo cambiar la contraseña/)).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Buscar' }))
+
+    await waitFor(() => expect(screen.queryByText(/no se pudo cambiar la contraseña/)).not.toBeInTheDocument())
+  })
+
+  /**
+   * Cláusula bajo prueba (entrada 4): el `esPlataforma &&` que gatea el banner del universo de
+   * tenants, en paridad con TODOS sus elementos hermanos. Para un admin de tenant ese `GET` ni se
+   * dispara, así que la bandera no puede prender: el gate es paridad estructural, y el test
+   * asserta la otra mitad —que para un actor de plataforma sí se rinde— para que borrar el gate no
+   * sea gratis.
+   */
+  it('el banner del universo de tenants es de plataforma, como todo lo que depende de él', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta === '/plataforma/tenants') return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+      if (ruta.startsWith('/usuarios')) {
+        return Promise.resolve<PaginaDe<UsuarioListado>>({
+          items: [cuentaDeTenant],
+          total: 1,
+          pagina: 1,
+          tamanio: 20,
+        })
+      }
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText(/No se pudo cargar la lista de tenants/)).toBeInTheDocument())
+
+    cleanup()
+    usuarioActual = autenticadoFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    expect(screen.queryByText(/No se pudo cargar la lista de tenants/)).not.toBeInTheDocument()
   })
 })
