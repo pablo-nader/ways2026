@@ -28,7 +28,7 @@ namespace Ways.Application.Organizacion;
 /// <see cref="Ways.Application.Clientes.AsignadorDeNumeroCliente"/>.
 ///
 /// SUPERFICIE DE INYECCIÓN CERRADA: los identificadores salen únicamente de la metadata de EF
-/// (<c>IEntityType</c>/<c>IProperty</c>), se validan contra <c>^[a-z_][a-z0-9_]*$</c> y se emiten
+/// (<c>IEntityType</c>/<c>IProperty</c>), se validan contra <c>\A[a-z_][a-z0-9_]*\z</c> y se emiten
 /// calificados por esquema y entre comillas dobles; cada valor de clave del ancla y el instante
 /// del ancla viajan como parámetro ligado. Ninguna cadena de origen externo llega al statement,
 /// y el statement es de solo lectura (<c>SELECT</c>/<c>EXISTS</c>).
@@ -57,7 +57,12 @@ namespace Ways.Application.Organizacion;
 /// </summary>
 public sealed class InspectorDeUso(IWaysDbContext db)
 {
-    private const string PatronDeIdentificador = "^[a-z_][a-z0-9_]*$";
+    /// <summary>
+    /// <c>\A</c>/<c>\z</c> y NUNCA <c>^</c>/<c>$</c>: en .NET <c>$</c> matchea también ANTES de un
+    /// <c>\n</c> final, así que <c>"stock\n"</c> pasaba la validación y se concatenaba al
+    /// statement. <c>\z</c> es el fin de cadena absoluto.
+    /// </summary>
+    private const string PatronDeIdentificador = @"\A[a-z_][a-z0-9_]*\z";
 
     private static readonly Regex IdentificadorValido =
         new(PatronDeIdentificador, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
@@ -81,9 +86,15 @@ public sealed class InspectorDeUso(IWaysDbContext db)
         var ramas = InventarioDeDependientes.Construir(db.Model, tipoAncla);
         var propiedades = InventarioDeDependientes.PropiedadesDeAncla(db.Model, tipoAncla);
 
+        // FALLA CERRADO, igual que Renderizar: un conjunto ejecutable vacío significa que el
+        // inventario no sabe nada de esta ancla, no que la entidad esté prístina. Devolver null
+        // acá sería afirmar lo segundo sin haber preguntado nada — la dirección que esta etapa
+        // no acepta.
         if (ramas.Count == 0)
         {
-            return null;
+            throw new InvalidOperationException(
+                $"El ancla {tipoAncla.Name} no tiene ninguna rama ejecutable, así que el " +
+                "inspector no puede afirmar que la entidad esté sin uso.");
         }
 
         if (valoresDeClave.Count != propiedades.Count)
@@ -92,6 +103,20 @@ public sealed class InspectorDeUso(IWaysDbContext db)
                 $"El ancla {tipoAncla.Name} necesita {propiedades.Count} valor(es) de clave " +
                 $"({string.Join(", ", propiedades)}) y se recibieron {valoresDeClave.Count}.",
                 nameof(valoresDeClave));
+        }
+
+        // Un null posicional no se puede ligar: llegaría a ParametrosDeComando.Agregar sin
+        // normalizar y reventaría con un error opaco de Npgsql. Se nombra el índice y la
+        // propiedad, igual que el desajuste de cuenta de arriba.
+        for (var i = 0; i < valoresDeClave.Count; i++)
+        {
+            if (valoresDeClave[i] is null)
+            {
+                throw new ArgumentException(
+                    $"El valor de clave en la posición {i} ({propiedades[i]}) del ancla " +
+                    $"{tipoAncla.Name} es null: el inspector no liga parámetros nulos.",
+                    nameof(valoresDeClave));
+            }
         }
 
         var conexion = await ObtenerConexionAbiertaAsync(ct);

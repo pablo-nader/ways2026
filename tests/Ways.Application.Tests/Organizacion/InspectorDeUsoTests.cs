@@ -161,15 +161,20 @@ public class InspectorDeUsoTests
     }
 
     /// <summary>
-    /// Cláusula: la validación <c>^[a-z_][a-z0-9_]*$</c> del generador. Los identificadores solo
+    /// Cláusula: la validación <c>\A[a-z_][a-z0-9_]*\z</c> del generador. Los identificadores solo
     /// pueden venir de la metadata de EF, y este es el cierre de esa superficie: cualquier cosa
     /// que no matchee se RECHAZA en vez de concatenarse.
+    ///
+    /// El caso <c>"stock\n"</c> es el que fija el ANCLAJE: en .NET <c>$</c> matchea también antes
+    /// de un <c>\n</c> final, así que con <c>^...$</c> ese identificador pasaba y arrastraba todo
+    /// lo que viniera después del salto de línea al statement.
     /// </summary>
     [Theory]
     [InlineData("comprobantes_venta\"; DROP TABLE usuarios; --")]
     [InlineData("ComprobantesVenta")]
     [InlineData("1_tabla")]
     [InlineData("")]
+    [InlineData("stock\n")]
     public void UnIdentificadorNoConformeSeRechaza(string tabla)
     {
         var rama = new RamaDeUso(
@@ -178,7 +183,7 @@ public class InspectorDeUsoTests
         var error = Assert.Throws<InvalidOperationException>(
             () => InspectorDeUso.Renderizar([rama], ["Id"]));
 
-        Assert.Contains("^[a-z_][a-z0-9_]*$", error.Message);
+        Assert.Contains(@"\A[a-z_][a-z0-9_]*\z", error.Message);
     }
 
     /// <summary>
@@ -307,20 +312,76 @@ public class InspectorDeUsoTests
     /// <summary>
     /// Cláusula: <c>Renderizar</c> filtra los carve-outs. Aunque le pasen el inventario COMPLETO,
     /// ninguna tabla excluida llega al statement.
+    ///
+    /// Cada fila declara los carve-outs que REALMENTE referencian a esa ancla y la prueba fija ese
+    /// conjunto antes de aserverar la ausencia: aserverar que no se emite <c>numeraciones_clientes</c>
+    /// para <c>PuntoVenta</c> era vacuo (no existe esa FK), y una fila con conjunto VACÍO
+    /// —<c>Empresa</c>— es la que declara que ningún carve-out la referencia hoy. Si mañana
+    /// aparece uno nuevo, la igualdad del conjunto se rompe y nombra la tabla.
     /// </summary>
     [Theory]
-    [InlineData(typeof(Tenant))]
-    [InlineData(typeof(PuntoVenta))]
-    [InlineData(typeof(Usuario))]
-    public void ElRenderizadorNuncaEmiteUnaTablaExcluida(Type ancla)
+    [InlineData(typeof(Tenant), new[] { "auditoria", "numeraciones_clientes" })]
+    [InlineData(typeof(Empresa), new string[0])]
+    [InlineData(typeof(PuntoVenta), new[] { "auditoria" })]
+    [InlineData(typeof(Usuario), new[] { "auditoria" })]
+    public void ElRenderizadorNuncaEmiteUnaTablaExcluida(Type ancla, string[] excluidasQueLaReferencian)
     {
         using var db = CrearContexto();
 
-        var sql = InspectorDeUso.Renderizar(
-            InventarioDeDependientes.InventarioCompleto(db.Model, ancla),
-            InventarioDeDependientes.PropiedadesDeAncla(db.Model, ancla));
+        var completo = InventarioDeDependientes.InventarioCompleto(db.Model, ancla);
 
-        Assert.DoesNotContain("auditoria", sql);
-        Assert.DoesNotContain("numeraciones_clientes", sql);
+        Assert.Equal(
+            excluidasQueLaReferencian,
+            completo
+                .Where(rama => rama.Clasificacion is ClasificacionDeDependiente.Excluido)
+                .Select(rama => rama.Tabla)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal));
+
+        var sql = InspectorDeUso.Renderizar(
+            completo, InventarioDeDependientes.PropiedadesDeAncla(db.Model, ancla));
+
+        foreach (var tabla in excluidasQueLaReferencian)
+        {
+            Assert.DoesNotContain(tabla, sql);
+        }
+    }
+
+    /// <summary>
+    /// Cláusula: el camino de EJECUCIÓN falla CERRADO cuando no hay ninguna rama ejecutable, igual
+    /// que <see cref="InspectorDeUso.Renderizar"/>. Devolver <c>null</c> ahí era afirmar "esta
+    /// entidad está prístina" sin haber preguntado nada — falla ABIERTA, y en la dirección de
+    /// pérdida de datos.
+    /// </summary>
+    [Fact]
+    public async Task UnAnclaSinRamasEjecutablesTiraEnVezDeDevolverNull()
+    {
+        using var db = CrearContexto();
+
+        var ancla = typeof(Ways.Domain.Auditoria.Auditoria);
+        Assert.Empty(InventarioDeDependientes.Construir(db.Model, ancla));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new InspectorDeUso(db).PrimeraDependenciaEnUsoAsync(ancla, [], DateTimeOffset.UnixEpoch));
+
+        Assert.Contains("ninguna rama ejecutable", error.Message);
+    }
+
+    /// <summary>
+    /// Cláusula: la validación posicional de <c>valoresDeClave</c>. Un <c>null</c> llegaba sin
+    /// normalizar a <c>ParametrosDeComando.Agregar</c> y reventaba con un error opaco de Npgsql;
+    /// ahora se rechaza NOMBRANDO el índice y la propiedad, igual que el desajuste de cuenta.
+    /// </summary>
+    [Fact]
+    public async Task UnValorDeClaveNuloSeRechazaNombrandoSuIndice()
+    {
+        using var db = CrearContexto();
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(
+            () => new InspectorDeUso(db).PrimeraDependenciaEnUsoAsync(
+                typeof(Tenant), [null!], DateTimeOffset.UnixEpoch));
+
+        Assert.Contains("posición 0", error.Message);
+        Assert.Contains("Id", error.Message);
     }
 }
