@@ -321,8 +321,11 @@ public class ServicioDeOrganizacion(
 
             var bajo = await BuscarEmpresaAsync(id, ct);
 
-            // S2 — el mínimo cuenta HERMANAS VIVAS. Una hermana ya dada de baja no es una
-            // sobreviviente, así que la última empresa viva sigue siendo la última.
+            // S2 — el mínimo cuenta HERMANAS VIVAS, y el mecanismo es el filtro ambiente
+            // "BajaLogica": esta consulta se arma y se ejecuta entera acá adentro, así que nadie
+            // puede componerle un `IgnoreQueryFilters` y el filtro es garantía (misma regla única
+            // que documenta ProyeccionDeTenant, leída del otro lado). Una hermana ya dada de baja
+            // no es una sobreviviente, así que la última empresa viva sigue siendo la última.
             var vivas = await db.Empresas.CountAsync(e => e.IdTenant == bajo.IdTenant, ct);
 
             if (vivas <= 1)
@@ -462,6 +465,8 @@ public class ServicioDeOrganizacion(
 
             var bajo = await BuscarPuntoVentaAsync(id, ct);
 
+            // Mismo S2 y mismo mecanismo que en EliminarEmpresaAsync: hermanos VIVOS, por el
+            // filtro ambiente, sobre una consulta que nadie puede componer.
             var vivos = await db.PuntosVenta.CountAsync(p => p.IdEmpresa == bajo.IdEmpresa, ct);
 
             if (vivos <= 1)
