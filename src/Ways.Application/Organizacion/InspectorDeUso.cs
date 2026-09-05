@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using System.Data.Common;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -44,11 +44,17 @@ namespace Ways.Application.Organizacion;
 /// seguro. REVERTIRLO cuesta: agregar ese conjunto por rama, dar vuelta el test de la tarea
 /// 4.11 y regenerar el golden N3. Registrado, no implementado.
 ///
-/// EFECTO LATERAL B — RLS sigue aplicando porque vive en la conexión, y NO se agrega ningún
-/// conjunto <c>id_tenant</c> a las ramas. Un conjunto extra solo puede ANGOSTAR el resultado, y
-/// un bug que angosta sub-bloquea: la única dirección que esta etapa no acepta. La salida
-/// entera del inspector es un nombre de tabla (o <c>null</c>) — sin filas, sin ids, sin
-/// conteos — así que no hay canal por donde se filtre dato de otro tenant.
+/// EFECTO LATERAL B — RLS sigue aplicando porque vive en la conexión, así que NINGUNA rama
+/// agrega un conjunto de tenant POR ENCIMA de lo que ya declara su FK. La redacción anterior
+/// ("no se agrega ningún conjunto <c>id_tenant</c>") se leía como que el statement no menciona
+/// <c>id_tenant</c>, y eso es falso a simple vista: la mayoría de las FKs de este modelo son
+/// compuestas <c>(id_x, id_tenant)</c>, así que el SQL emitido muestra conjuntos de
+/// <c>id_tenant</c> por todos lados — salen de la metadata de la FK, no de una defensa que el
+/// inspector agregue por su cuenta. Lo que NO se agrega es un conjunto EXTRA, y el motivo es
+/// direccional: un conjunto de más solo puede ANGOSTAR el resultado, y un bug que angosta
+/// sub-bloquea — la única dirección que esta etapa no acepta. La salida entera del inspector es
+/// un nombre de tabla (o <c>null</c>) — sin filas, sin ids, sin conteos — así que tampoco hay
+/// canal por donde se filtre dato de otro tenant.
 ///
 /// <c>db-error-backstops</c>: ESTRUCTURALMENTE N/A. Toda FK del modelo es
 /// <c>DeleteBehavior.Restrict</c>, pero acá no hay borrado físico en ningún camino: la baja es
@@ -56,8 +62,10 @@ namespace Ways.Application.Organizacion;
 /// nada. Ninguna constraint de Postgres puede dispararse detrás de este guard, no hay SQLSTATE
 /// que clasificar y <c>ManejadorDeErrores.cs</c> queda intacto. La consecuencia hay que decirla
 /// en voz alta: ESTE GUARD DE APLICACIÓN ES LA ÚNICA LÍNEA DE DEFENSA, sin red de base atrás.
-/// Por eso se entrega INERTE — sin ningún llamador en <c>src/</c> hasta la slice 4 — para que
-/// pueda revisarse por sus propios méritos antes de que algo pueda invocarlo.
+/// Por eso se entregó INERTE en la slice 3 — sin ningún llamador en <c>src/</c> — para que
+/// pudiera revisarse por sus propios méritos antes de que algo pudiera invocarlo. Desde la slice
+/// 4 tiene exactamente cuatro llamadores: las tres bajas de
+/// <c>ServicioDeOrganizacion</c> y la de <c>ServicioDeUsuarios</c>.
 /// </summary>
 public sealed class InspectorDeUso(IWaysDbContext db)
 {
