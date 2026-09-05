@@ -1199,6 +1199,30 @@ written)** — transcribed from `design.md:383-398`:
 
 ## Slice 5: Deletion web — buttons, confirmation and code→copy (PR 5)
 
+**BINDING — INPUTS CARRIED FROM SLICE 2 (judgment-day FINAL re-judgment, round budget exhausted).**
+None has user impact today; every one becomes reachable exactly when this slice adds delete buttons
+to the four screens, so this slice closes them deliberately.
+
+1. **`ocupado` latches on generation mismatch inside the WRITE paths.** R2-3 replicated the ungated
+   `finally` only to the post-write refresh. The mismatch `return`s inside the writes themselves —
+   `Usuarios.tsx:213/:220/:231`, `Tenants.tsx:88/:95`, `Empresas.tsx:79-84`,
+   `PuntosVenta.tsx:107-113` — still exit with `ocupado` set and would freeze the screen. Unreachable
+   today (rule 9 disables every generation bumper while `ocupado` is set). **Delete buttons are the
+   first second bumper; close this before adding them.**
+2. **`ERROR_ALTA_SIN_TENANTS` lives in the shared `error` slot** (`Usuarios.tsx:177`) that R2-1
+   proved unsafe for that class — a later successful load erases it. Unreachable (M35 survivor). Give
+   it its own slot or fold it into the tenant-universe banner when touching that form.
+3. **Sentinel leaks into copy on a crafted name.** With a tenant literally named
+   `"Plataforma (sin tenant)"`, `desempatarHomonimos` suffixes the platform option as
+   `(tenant sin-tenant)` (`organizacion.ts:147-154`). Keys untouched, platform-authored, copy only.
+   Exclude the platform option from the SUFFIX (keep it in the collision count) so the sentinel never
+   renders.
+4. Cosmetics: `errorPassword` not cleared on Cancelar/Buscar; the tenant-failure banner at
+   `Usuarios.tsx:350` is not gated on `esPlataforma` (cannot fire for an admin, but every sibling
+   element is gated — add the gate for parity); identifier typo `tenanteReconciliado`
+   (`PuntosVenta.tsx:71`).
+
+
 **Branch**: `feat/stage20-slice5-bajas-web`. **Start**: PRs 2 and 4 merged. **Finish**: the four root
 screens can delete, behind a confirmation gate and the full `react-async-state` write discipline, and
 every 409 `codigo` maps to its own copy; docs 09/10 carry the Etapa 20 note. **Depends on**: slice 2

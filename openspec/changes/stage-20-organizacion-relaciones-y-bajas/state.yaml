@@ -615,7 +615,7 @@ phases:
       which clobbered in both directions; R2-2 the password-POST failure moved
       to the red slot while the committed PUT keeps its green confirmation,
       both visible and the form still closes; R2-3 the S7 ungated finally
-      replicated to Empresas and PuntosVenta, the last two of the four screens.
+      replicated to Empresas and PuntosVenta for the POST-WRITE REFRESH only. NOT four-screen parity — the final re-judgment found the generation-mismatch returns inside the WRITE paths themselves (Usuarios.tsx:213/:220/:231, Tenants.tsx:88/:95, Empresas.tsx:79-84, PuntosVenta.tsx:107-113) still exit with ocupado latched; unreachable today by rule 9, carried to slice 5 as a binding input.
       Single-judge items fixed - R2-4 the "Nuevo" retry guarded on
       tenantsDePlataformaCargando, R2-5 the guardar() re-check announces itself
       instead of exiting silently, R2-6 the platform option included in
