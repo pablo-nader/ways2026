@@ -841,15 +841,17 @@ phases:
       SLICE 4 IMPLEMENTED (tasks 4.1-4.37 checked; 4.38 judgment-day and 4.39 PR
       belong to the orchestrator; 3.19 and 3.20 also checked now that PR #169
       merged in c3f62d7). Branch feat/stage20-slice4-bajas-api off main, measured
-      with 'git diff main --stat -- src tests' and NOT estimated - 13 files, 2668
-      insertions and 219 deletions, of which production is 676 insertions and 122
-      deletions across 6 files (Organizacion/ServicioDeOrganizacion.cs 561 changed,
+      with 'git diff main --stat -- src tests' and NOT estimated - 14 files, 2682
+      insertions and 219 deletions, of which production is 681 insertions and 122
+      deletions across 6 files (Organizacion/ServicioDeOrganizacion.cs 566 changed,
       Organizacion/EtiquetasDeTablas.cs 100 new, Usuarios/ServicioDeUsuarios.cs 54,
       Api/Endpoints/OrganizacionEndpoints.cs 33, plus the two comment amendments in
       InspectorDeUso.cs and InventarioDeDependientes.cs) and the rest is tests
       (BajasDeOrganizacionTests.cs 1552 new, BajasEstructuralesTests.cs 253 new,
-      ProyeccionDeOrganizacionTests.cs 144, OrganizacionTests.cs 38, and the
-      constructor fixes of the three suites that build the two services by hand).
+      ProyeccionDeOrganizacionTests.cs 144, OrganizacionTests.cs 38,
+      SuperficieDeAutorizacionTests.cs 9, and the constructor fixes of the three
+      suites that build the two services by hand - 2001 insertions and 97 deletions
+      in tests).
       THE SLICE OVERFLOWS THE 800-LINE BUDGET AND IT IS REPORTED, NOT HIDDEN -
       roughly 2150 authored lines against a forecast of 530, because the forecast
       predated three slice-1 judgment-day inputs that all landed here - the
@@ -947,8 +949,9 @@ phases:
       Ways.Domain.Tests 545/545 green, Ways.Application.Tests 432/432 green (427
       before this slice - minus the five relocated round-trip cases, plus the ten of
       the new BajasEstructuralesTests), and Ways.IntegrationTests 1771/1771 green
-      run ONCE and ALONE against a single Docker daemon, with zero transport-abort
-      flakes and zero re-runs (1743 before - plus 26 of BajasDeOrganizacionTests,
+      run ONCE and ALONE against a single Docker daemon in 12 m 48 s, with zero
+      transport-abort flakes and zero re-runs, and confirmed by a SECOND full run of
+      the same tree (1743 before - plus 26 of BajasDeOrganizacionTests,
       plus the projection-predicate kill and the relocated
       UnAdminEditaSuPropioPuntoDeVentaOk). THE FIRST FULL RUN WAS 1770/1771 AND THE
       FAILURE IS REPORTED, NOT SWALLOWED - SuperficieDeAutorizacionTests, the
