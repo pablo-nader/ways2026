@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,13 +9,15 @@ import type { TenantListado } from '../api/tipos'
 // stage-20-organizacion-relaciones-y-bajas, slice 2 (tareas 2.9 y 2.13) y slice 5 (5.3, 5.7, 5.8).
 
 const apiGetMock = vi.fn()
+const apiPostMock = vi.fn()
+const apiPutMock = vi.fn()
 const apiDeleteMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
-    post: vi.fn(),
-    put: vi.fn(),
+    post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
     delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {
@@ -77,7 +79,11 @@ function celdas(nombre: string) {
 describe('Tenants (stage-20, slice 2 — contadores de hijos)', () => {
   beforeEach(() => {
     apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
     apiDeleteMock.mockReset()
+    apiPostMock.mockResolvedValue(undefined)
+    apiPutMock.mockResolvedValue(undefined)
     apiDeleteMock.mockResolvedValue(undefined)
   })
 
@@ -149,7 +155,11 @@ function botonDeBaja(nombre: string) {
 describe('Tenants (stage-20, slice 5 — baja lógica)', () => {
   beforeEach(() => {
     apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
     apiDeleteMock.mockReset()
+    apiPostMock.mockResolvedValue(undefined)
+    apiPutMock.mockResolvedValue(undefined)
     apiDeleteMock.mockResolvedValue(undefined)
   })
 
@@ -266,8 +276,8 @@ describe('Tenants (stage-20, slice 5 — baja lógica)', () => {
   })
 
   /**
-   * Cláusula bajo prueba: el `if (!baja || ocupado !== null) return` de `confirmarBaja`, la guarda
-   * de re-entrancia de la regla 9. Un doble click en el MISMO tick le gana al atributo `disabled`,
+   * Cláusula bajo prueba: el `if (ocupadoRef.current) return` de `darDeBaja`, la guarda de
+   * re-entrancia de la regla 9. Un doble click en el MISMO tick le gana al atributo `disabled`,
    * que solo existe después del re-render, y mandaría dos DELETE sobre la misma fila.
    */
   it('un segundo click sobre la confirmación en vuelo se descarta', async () => {
@@ -362,5 +372,225 @@ describe('Tenants (stage-20, slice 5 — baja lógica)', () => {
       ).toBeInTheDocument(),
     )
     expect(screen.queryByText(/en uso|tiene \d+/)).not.toBeInTheDocument()
+  })
+})
+
+// stage-20-organizacion-relaciones-y-bajas, slice 5, judgment-day ronda 1 (C1, C2, C4 y C8).
+
+/** El `<form>` de edición, que es el único disparador de escritura que sigue existiendo en el DOM
+ * con la puerta abierta (sus controles están inertes, pero el elemento sigue ahí). Sirve de
+ * palanca POR DEBAJO del confound (`mutation-proof-tests` regla 3): ningún operador puede llegar
+ * acá con la puerta abierta —no hay campo ni botón habilitado que dispare el submit implícito—,
+ * y por eso mismo es la única forma de acuñar una generación en esa ventana y ver qué hace el
+ * token de la escritura. */
+function formularioDeEdicion(contenedor: HTMLElement) {
+  const form = contenedor.querySelector('form')
+  if (!form) throw new Error('no hay formulario de edición abierto')
+
+  return form
+}
+
+describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña al confirmar)', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiPostMock.mockResolvedValue(undefined)
+    apiPutMock.mockResolvedValue(undefined)
+    apiDeleteMock.mockResolvedValue(undefined)
+  })
+
+  /**
+   * Cláusula bajo prueba: `bloqueado = ocupado !== null || confirmacion !== null` en TODOS los
+   * `disabled` de la pantalla. Con `ocupado` solo, la puerta abierta dejaba vivos Guardar,
+   * Suspender, Editar y Baja: cualquiera de ellos acuñaba una generación nueva y el DELETE que
+   * salía después de la puerta ya no aplicaba nada (`react-async-state` regla 9 — bloquear la
+   * ventana, no reconciliar tokens).
+   */
+  it('con la puerta abierta no queda ninguna otra acción alcanzable', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    await usuario.click(
+      within(screen.getByRole('row', { name: /Comercio Sur/ })).getByRole('button', { name: 'Editar' }),
+    )
+    await usuario.click(botonDeBaja('Almacén Este'))
+
+    const puerta = screen.getByRole('alertdialog', { name: 'Confirmar baja' })
+    for (const boton of [
+      ...screen.getAllByRole('button', { name: 'Editar' }),
+      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Suspender' }),
+      ...screen.getAllByRole('button', { name: 'Reactivar' }),
+      ...screen.getAllByRole('button', { name: 'Guardar' }),
+    ]) {
+      expect(boton).toBeDisabled()
+    }
+    expect(screen.getByLabelText('Nombre')).toBeDisabled()
+    expect(screen.getByRole('link', { name: 'Nuevo tenant' })).toHaveAttribute('aria-disabled', 'true')
+
+    // La puerta misma sigue viva: es lo único que el operador puede tocar.
+    expect(within(puerta).getByRole('button', { name: 'Confirmar baja' })).toBeEnabled()
+    expect(within(puerta).getByRole('button', { name: 'Cancelar' })).toBeEnabled()
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/plataforma/tenants') return Promise.resolve([tenantUno])
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(apiDeleteMock).toHaveBeenCalledWith('/plataforma/tenants/2')
+    expect(screen.queryByText('Almacén Este')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: `const token = ++generacion.current` como PRIMERA sentencia síncrona de
+   * `darDeBaja`, y la ausencia del chequeo de generación posterior a la red. Con el token acuñado
+   * al ABRIR la puerta, una generación acuñada en el medio lo dejaba viejo: el DELETE salía igual,
+   * el 204 volvía, y el `if (generacion.current !== token) return` se lo tragaba — la fila seguía
+   * listada, la puerta seguía abierta y cada click repetía un DELETE silencioso.
+   *
+   * El submit se dispara sobre el `<form>` mismo, POR DEBAJO del confound: hoy `bloqueado` deja el
+   * formulario inerte, así que este camino no es alcanzable a mano — y esa es exactamente la razón
+   * por la que el test tiene que bajar hasta acá para ver el token.
+   */
+  it('una generación acuñada entre abrir y confirmar no se traga el 204', async () => {
+    const usuario = userEvent.setup()
+    const { container } = montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    await usuario.click(
+      within(screen.getByRole('row', { name: /Comercio Sur/ })).getByRole('button', { name: 'Editar' }),
+    )
+    await usuario.click(botonDeBaja('Almacén Este'))
+
+    await act(async () => {
+      fireEvent.submit(formularioDeEdicion(container))
+    })
+    await waitFor(() => expect(screen.getByText('Se actualizó el tenant "Comercio Sur".')).toBeInTheDocument())
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/plataforma/tenants') return Promise.resolve([tenantUno])
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('Se dio de baja el tenant "Almacén Este".')).toBeInTheDocument(),
+    )
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText('Almacén Este')).not.toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * Cláusula bajo prueba: el `setError('')` de `cancelarConfirmacion`. Tras un 409 la puerta queda
+   * abierta con el motivo en rojo al lado; cancelarla sin limpiarlo dejaba el banner huérfano,
+   * hablando de una baja que ya nadie está por hacer.
+   */
+  it('cancelar después de un rechazo se lleva el motivo con la puerta', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(409, 'tenant_en_uso', 'No se puede dar de baja el tenant porque tiene 3 ventas.'),
+    )
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBaja('Comercio Sur'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+    await waitFor(() => expect(screen.getByText(/porque tiene 3 ventas/)).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText(/porque tiene 3 ventas/)).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: el listener de `Escape`, cableado de punta a punta desde la pantalla. */
+  it('Escape cierra la puerta sin llamar a la API', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBaja('Comercio Sur'))
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Cláusula bajo prueba: que Suspender y Reactivar pasen por `pedirConfirmacion` y no por el
+   * `confirm()` nativo que tenían en ESTE MISMO archivo (`react-async-state` regla 10 puertas
+   * adentro). El diálogo del navegador no se puede dejar inerte mientras el POST está en vuelo, y
+   * convivía con una puerta en app a tres líneas de distancia.
+   */
+  it('suspender pasa por la misma puerta y no llama a la API hasta confirmar', async () => {
+    const usuario = userEvent.setup()
+    montar([tenantUno])
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Suspender' }))
+    expect(apiPostMock).not.toHaveBeenCalled()
+
+    const puerta = screen.getByRole('alertdialog', { name: 'Confirmar suspensión' })
+    expect(puerta).toHaveTextContent('¿Suspender el tenant "Comercio Sur"?')
+    // Suspender no borra nada: la nota de la baja lógica no puede colarse.
+    expect(puerta).not.toHaveTextContent(/baja es lógica/)
+    expect(screen.getByRole('button', { name: 'Editar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Baja' })).toBeDisabled()
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/plataforma/tenants') return Promise.resolve([{ ...tenantUno, estado: 'Suspendido' }])
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar suspensión' }))
+
+    await waitFor(() => expect(screen.getByText('Tenant "Comercio Sur" suspendido.')).toBeInTheDocument())
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+    expect(apiPostMock).toHaveBeenCalledWith('/plataforma/tenants/1/suspender')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('cancelar la suspensión no llama nunca a la API', async () => {
+    const usuario = userEvent.setup()
+    montar([tenantUno])
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Suspender' }))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiPostMock).not.toHaveBeenCalled()
+  })
+
+  /** Rama gemela: reactivar comparte la puerta con su propia copia, no la de la baja. */
+  it('reactivar pasa por la misma puerta, con su propia copia', async () => {
+    const usuario = userEvent.setup()
+    montar([tenantDos])
+    await waitFor(() => expect(screen.getByText('Almacén Este')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Reactivar' }))
+
+    const puerta = screen.getByRole('alertdialog', { name: 'Confirmar reactivación' })
+    expect(puerta).toHaveTextContent('¿Reactivar el tenant "Almacén Este"?')
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/plataforma/tenants') return Promise.resolve([{ ...tenantDos, estado: 'Activo' }])
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    await usuario.click(within(puerta).getByRole('button', { name: 'Confirmar reactivación' }))
+
+    await waitFor(() => expect(screen.getByText('Tenant "Almacén Este" reactivado.')).toBeInTheDocument())
+    expect(apiPostMock).toHaveBeenCalledWith('/plataforma/tenants/2/reactivar')
   })
 })
