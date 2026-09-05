@@ -120,11 +120,20 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         ("PUT", "/api/plataforma/tenants/{id:int}"),
         ("POST", "/api/plataforma/tenants/{id:int}/suspender"),
         ("POST", "/api/plataforma/tenants/{id:int}/reactivar"),
+        // stage-20 slice 4 (task 4.9): la baja lógica del tenant, en el MISMO grupo
+        // SoloPlataforma que las cuatro de arriba — cero policies nuevas (criterio V5).
+        ("DELETE", "/api/plataforma/tenants/{id:int}"),
 
         // Organización (empresas/puntos de venta) — GestionDeOrganizacion (Root + Admin, sin
         // Vendedor).
         ("PUT", "/api/empresas/{id:int}"),
         ("PUT", "/api/puntos-venta/{id:int}"),
+        // stage-20 slice 4 (task 4.9): las dos bajas lógicas, bajo la MISMA
+        // GestionDeOrganizacion que sus PUT. La del punto de venta la declara la ruta y no el
+        // grupo, por la asimetría deliberada del grupo (leer sigue siendo
+        // LecturaDePuntosVenta para el selector del POS).
+        ("DELETE", "/api/empresas/{id:int}"),
+        ("DELETE", "/api/puntos-venta/{id:int}"),
 
         // ABM de usuarios — GestionDeUsuarios (Root + Admin, sin Vendedor).
         ("POST", "/api/usuarios/"),
