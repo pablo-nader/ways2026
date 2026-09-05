@@ -48,7 +48,7 @@ organización/usuario duplicaban filas de auditoría bajo reintento transitorio.
    });
 
    // (b) sin reintento
-   var estrategia = FabricaDeEstrategiaSinReintento.Crear(db);
+   var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
    await estrategia.ExecuteAsync(async () => { /* misma escritura, un solo intento */ });
    ```
    DON'T: cargar la entidad o construir la fila de auditoría ANTES del `ExecuteAsync`,
@@ -81,9 +81,33 @@ organización/usuario duplicaban filas de auditoría bajo reintento transitorio.
 
 ## Known Open Sites
 
-No corregidos al momento de escribir esta skill (etapa 20):
-- `ServicioDePrecios.AbrirNuevoPrecioAsync`
-- `ServicioDeUsuarios.CrearAsync`
+Ninguno. Los dos que esta skill dejó abiertos en la etapa 20
+(`ServicioDePrecios.AbrirNuevoPrecioAsync`, `ServicioDeUsuarios.CrearAsync`) se cerraron junto
+con los otros ocho que el barrido completo encontró: `ServicioDeClientes.CrearAsync`,
+`ServicioDeArticulos.CrearAsync`, `ServicioDeVentas.EmitirAsync` (solo el paso de ESCRITURA),
+`ServicioDeCertificados.RegistrarAsync`, `ServicioDeListasPrecio.CrearAsync`,
+`ServicioDeOfertas.CrearAsync`/`ActualizarAsync` y
+`ServicioDeAprovisionamiento.CrearTenantAsync`.
+
+Dos lecciones del barrido, para el próximo sitio:
+
+1. **Un índice único NO es una mitigación, es un disfraz.** Donde el duplicado choca contra una
+   unicidad, el reintento no duplica: devuelve un 409 sobre una operación que quizás sí
+   persistió. Sigue siendo el mismo defecto y se corrige igual.
+2. **Un paso de numeración por ADO crudo SÍ puede quedarse con la estrategia reintentable**, y
+   conviene que se quede: reservar de nuevo solo avanza el contador ("gaps are accepted"), nunca
+   duplica una fila. Separar numeración (reintentable) de escritura (sin reintento) es la forma
+   correcta cuando el número ya está comiteado y existe una guarda de commit ambiguo que lo
+   relee — `ServicioDeVentas.EmitirAsync` es el precedente.
+
+Sitios que quedan reintentables A PROPÓSITO (no tocar sin releer esto): los pasos de numeración
+cruda de Ventas/Remitos/Presupuestos/FacturacionDeRemitos/CuentaCorriente,
+`ServicioDeLotes`, `ServicioDeOfertas.EliminarAsync`, `ServicioDeListasPrecio.ActualizarAsync`
+y los lambdas de solo-UPDATE de `ServicioDeOrganizacion.EnUnaTransaccionAsync`.
+
+La prueba estructural que congela la lista es
+`Ways.Application.Tests.Abstracciones.EscriturasSinReintentoEstructuralesTests` (sin contenedor);
+la conductual, `Ways.IntegrationTests.EscriturasSinReintentoTests`.
 
 ## Verification
 
