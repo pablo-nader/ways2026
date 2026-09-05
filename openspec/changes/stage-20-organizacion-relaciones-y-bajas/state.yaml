@@ -1020,7 +1020,47 @@ phases:
       modo de falla es un punto de venta o un usuario dado de baja con una operacion
       posterior, recuperable a mano porque B1 deja todas las filas); la cascada solo es
       alcanzable sobre hijos creados en el instante del ancla, por diseno; y la
-      Reconciliacion 11 quedo registrada y sana. Slice 5 pending.
+      Reconciliacion 11 quedo registrada y sana.
+      JUDGMENT-DAY SLICE 4 RONDA 2 (FINAL, sin tercera) CORRIGIO DIEZ ITEMS CONFIRMADOS.
+      Cero schema otra vez: ni migracion, ni DDL, ni seed; Politicas.cs,
+      InicializadorDeBaseDeDatos.cs y ManejadorDeErrores.cs no aparecen en el diff.
+      R2-1 (CRITICAL del juez B) se corrigio con la OPCION (b) y esta dicho por que:
+      las cuatro bajas corren bajo FabricaDeEstrategiaSinReintento -el mecanismo que
+      el repo ya tiene para operaciones raras, humanas y sin clave de idempotencia,
+      el mismo de AnularAsync y AjustarAsync- en vez de un ChangeTracker.Clear() que
+      no tiene ningun precedente aca, que instalaria un invariante nuevo que cualquier
+      edicion futura rompe en silencio, y que ademas no arregla el commit ambiguo (el
+      reintento releeria la fila ya dada de baja y contestaria 404 a una baja que si
+      tuvo exito). El costo se dice: una falla transitoria sobre una baja ahora llega
+      al operador en vez de absorberse. La mutacion reprodujo el hallazgo entero:
+      intentos=2, filas=8, y la segunda tenant.baja afirmando anterior estado "baja".
+      R2-2 agrego la relectura del sujeto bajo el lock en ServicioDeUsuarios, matada
+      POR DEBAJO del pre-chequeo con un DbTransactionInterceptor que corre la cascada
+      del tenant al abrirse la transaccion (el lock es ADO crudo y no lo ve ningun
+      DbCommandInterceptor). R2-6 se arreglo EN LA RAIZ: el inspector proyecta la
+      etiqueta de la RAMA (hoja via puente) compuesta de identificadores ya validados,
+      y DescribirBloqueo la parsea en vez de adivinar del conjunto de ramas; las dos
+      redacciones anteriores se equivocaban sobre la misma hoja mixta (parametros).
+      R2-5 ensancho el barrido de borrado fisico a tres anclajes con receptor
+      congelado y volvio a incluir migraciones en DELETE FROM; correrlo DESCUBRIO UN
+      MUTANTE SOBREVIVIENTE (Set<T>().Remove sin receptor escapaba a \.Set<...>) que
+      se cerro ensanchando el ancla a \bSet<...>. R2-3 subio el catalogo del front a
+      15 con su test de congelamiento; R2-4 sumo el PUT de puntos-venta al walker de
+      policy por ruta; R2-7 corrigio un comentario falso (el rastro del tenant NO es
+      legible por GET /api/auditoria hoy) y quedo como item diferido con su condicion
+      de reapertura; R2-8 agrego por_cascada a la usuario.baja de la cascada; R2-9
+      sumo los dos 409 estructurales y una falla NO transitoria con el rastro ya
+      encolado. R2-10: la clase era mas ancha que los dos archivos nombrados - SEIS
+      archivos de esta rama tenian BOM introducido aca (git show main:<path> lo
+      prueba) y se sacaron los seis. DOCE MUTACIONES CORRIDAS DE VERDAD, cada una con
+      su mensaje real, once matadas y una registrada como sin kill independiente (la
+      atomicidad de la transaccion no es expresable como mutacion de una clausula
+      porque el lock la exige estructuralmente). SUITES: dotnet build limpio (2
+      NU1903 preexistentes), Domain 545/545, Application 434/434, Integration
+      1780/1780 en 12m49s corrida UNA sola vez y SOLA contra el daemon de Docker,
+      cero flakes y cero re-runs; web 63 archivos / 1022 tests, build y lint limpios
+      (5 warnings preexistentes de react-refresh); has-pending-model-changes limpio.
+      Slice 5 pending.
   verify:
     status: pending
     artifact: verify-report.md
@@ -1125,6 +1165,14 @@ notes:
     - A minimum-administrators-per-tenant invariant
       (ultimo_admin_del_tenant) — flagged in the proposal question round
       rather than invented autonomously. REOPEN — owner answer.
+    - A platform-readable audit surface. The tenant.baja row persists in
+      tenant X for forensics and export and is readable at the database, but
+      GET /api/auditoria is Admin-only (Politicas.LecturaDeAuditoria) and the
+      cascade has just deleted every admin of that tenant, so nobody reads it
+      through the API today. Politicas.cs stays untouched by decision
+      (criterion V5). REOPEN — the first time platform needs a deleted
+      tenant's trail without going to the database (judgment-day slice 4,
+      ronda 2, R2-7).
   known_trap_from_explore: >-
     The structured 'phases:' block of this file must be kept ACCURATE by every
     later phase — stage-18's state.yaml left it stale while the real progress
