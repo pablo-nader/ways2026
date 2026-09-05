@@ -32,8 +32,28 @@ type Props = {
   etiquetaEnCurso?: string
   /** `true` mientras la escritura (y su refresco) están en vuelo: la puerta entera queda inerte. */
   ocupado: boolean
+  /**
+   * Control que abrió la puerta, capturado SÍNCRONAMENTE en su `onClick` (antes de cualquier
+   * `setState`). No se puede leer acá con `document.activeElement`: para cuando el efecto de
+   * montaje corre, el commit que abrió la puerta ya dejó ese control `disabled` y el navegador
+   * aplicó la *focus fixup rule* —el foco ya está en el `<body>`—, así que la captura tardía
+   * devolvía el foco a la nada. jsdom no reproduce esa corrección, por eso el defecto pasaba los
+   * tests: el del componente lo fuerza a mano.
+   */
+  disparador?: HTMLElement | null
   onConfirmar: () => void
   onCancelar: () => void
+}
+
+/** Un disparador sirve para devolverle el foco solo si sigue en el documento y sigue siendo
+ * operable: la fila puede haber desaparecido (la baja salió bien) o quedar inerte. */
+function esAlcanzable(elemento: HTMLElement | null): elemento is HTMLElement {
+  return (
+    elemento !== null &&
+    elemento.isConnected &&
+    !elemento.matches(':disabled') &&
+    elemento.getAttribute('aria-disabled') !== 'true'
+  )
 }
 
 const NOTA_DE_BAJA_LOGICA = 'La baja es lógica: los datos dejan de verse, pero no se borran de la base.'
@@ -46,20 +66,38 @@ export function ConfirmacionDeBaja({
   etiquetaConfirmar = 'Confirmar baja',
   etiquetaEnCurso = 'Dando de baja…',
   ocupado,
+  disparador = null,
   onConfirmar,
   onCancelar,
 }: Props) {
   const cancelarRef = useRef<HTMLButtonElement>(null)
-  /** Quién tenía el foco cuando la puerta se abrió, para devolvérselo al cerrarla. Si esa fila ya
-   * no existe (la baja salió bien), enfocar un nodo desprendido es un no-op inofensivo. */
-  const disparadorRef = useRef<HTMLElement | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  /** Adónde va el foco cuando el disparador ya no sirve (la fila que lo contenía se fue con la
+   * baja): un punto de referencia estable de la pantalla —el título de la `Box` o, si no hay, la
+   * tabla— en vez del `<body>`, que deja a quien navega por teclado al principio de todo. */
+  const regresoRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
-    disparadorRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    regresoRef.current =
+      panelRef.current?.closest('.box')?.querySelector<HTMLElement>('header h5, table') ?? null
     cancelarRef.current?.focus()
 
-    return () => disparadorRef.current?.focus()
-  }, [])
+    return () => {
+      if (esAlcanzable(disparador)) {
+        disparador.focus()
+
+        return
+      }
+
+      const regreso = regresoRef.current
+      if (!regreso) return
+
+      // Un encabezado o una tabla no son tabulables: para poder recibir el foco necesitan un
+      // `tabindex` que React no rinde (no es un nodo suyo) y que se pone una sola vez.
+      if (!regreso.hasAttribute('tabindex')) regreso.setAttribute('tabindex', '-1')
+      regreso.focus()
+    }
+  }, [disparador])
 
   /** Escape = Cancelar, y se escucha en `document` y no en el panel a propósito: el foco puede
    * haberse ido a la nada si la fila que lo tenía desapareció. Mientras la escritura está en vuelo
@@ -79,6 +117,7 @@ export function ConfirmacionDeBaja({
 
   return (
     <div
+      ref={panelRef}
       className="alert alert-warning rounded-0"
       role="alertdialog"
       aria-modal="true"

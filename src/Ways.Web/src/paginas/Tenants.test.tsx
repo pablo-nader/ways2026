@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tenants } from './Tenants'
 import { ErrorApi } from '../api/cliente'
@@ -56,6 +56,14 @@ const tenantDos: TenantListado = {
   cantidadUsuarios: 7,
 }
 
+/** Sonda de la ruta actual: es la única forma de ver si el `<Link>` "Nuevo tenant" navegó, que es
+ * lo que la clase `disabled` de Bootstrap NO impide (solo apaga el hit-testing del puntero). */
+function SondaDeRuta() {
+  const { pathname } = useLocation()
+
+  return <span data-testid="ruta">{pathname}</span>
+}
+
 function montar(items: TenantListado[] = [tenantUno, tenantDos]) {
   apiGetMock.mockImplementation((ruta: string) => {
     if (ruta === '/plataforma/tenants') return Promise.resolve(items)
@@ -66,6 +74,7 @@ function montar(items: TenantListado[] = [tenantUno, tenantDos]) {
   return render(
     <MemoryRouter>
       <Tenants />
+      <SondaDeRuta />
     </MemoryRouter>,
   )
 }
@@ -446,6 +455,63 @@ describe('Tenants (slice 5, ronda 1 — la puerta es modal y el token se acuña 
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
     expect(apiDeleteMock).toHaveBeenCalledWith('/plataforma/tenants/2')
     expect(screen.queryByText('Almacén Este')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba (ronda 2, R2-4): el `if (bloqueado) evento.preventDefault()` del `<Link>`
+   * "Nuevo tenant". Un `<a>` no admite `disabled`: la clase `disabled` de Bootstrap solo apaga
+   * `pointer-events` —hit-testing del puntero, puro CSS— y `tabIndex={-1}` solo lo saca del
+   * recorrido de tabulación. Ninguna de las dos cancela una activación que no pase por ahí (Enter
+   * sobre un `<a>` enfocado por programa, un click sintético, una extensión), así que la puerta
+   * modal se podía abandonar navegando a otra pantalla con el DELETE todavía sin decidir.
+   *
+   * El test mide la NAVEGACIÓN, no el atributo: `aria-disabled` ya se afirma en el test de arriba
+   * y no impide nada por sí solo.
+   */
+  it('con la puerta abierta, activar "Nuevo tenant" no navega', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    await usuario.click(botonDeBaja('Almacén Este'))
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('link', { name: 'Nuevo tenant' }))
+
+    expect(screen.getByTestId('ruta').textContent).toBe('/')
+    // Y la puerta sigue ahí: no se abandonó la decisión a medio tomar.
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba (ronda 2, R2-5): el `setEdicion((prev) => (prev?.id === fila.id ? null :
+   * prev))` posterior al 204. El formulario de edición sobrevivía a la baja de la fila que estaba
+   * editando: quedaba abierto, con los datos de una entidad que ya no existe, y "Guardar" mandaba
+   * un PUT contra un id dado de baja. El updater se arma desde `prev` y compara el id, así que la
+   * baja de OTRA fila no se lleva puesta una edición en curso.
+   */
+  it('la baja de la fila que se está editando cierra su formulario', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('Comercio Sur')).toBeInTheDocument())
+
+    await usuario.click(
+      within(screen.getByRole('row', { name: /Comercio Sur/ })).getByRole('button', { name: 'Editar' }),
+    )
+    expect(screen.getByText('Editando tenant 1')).toBeInTheDocument()
+
+    await usuario.click(botonDeBaja('Comercio Sur'))
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/plataforma/tenants') return Promise.resolve([tenantDos])
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(screen.queryByText('Comercio Sur')).not.toBeInTheDocument())
+    expect(apiDeleteMock).toHaveBeenCalledWith('/plataforma/tenants/1')
+    expect(screen.queryByText('Editando tenant 1')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Nombre')).not.toBeInTheDocument()
   })
 
   /**

@@ -1292,6 +1292,52 @@ describe('Usuarios (slice 5 — cierre de las entradas arrastradas de la slice 2
   })
 
   /**
+   * Cláusula bajo prueba (ronda 2, R2-3): la AUSENCIA de `setErrorAlta('')` en `pedirBaja` y en
+   * `cancelarBaja`. El slot está documentado como precondición VIVA del formulario abierto —falta
+   * el universo de tenants, el alta sigue siendo imposible— y por eso `buscar()` ya lo respetaba;
+   * abrir y cancelar la puerta de baja de OTRA fila lo apagaba igual, escondiendo algo que seguía
+   * siendo cierto y dejando el botón "Guardar" inerte sin ningún cartel que lo explicara.
+   */
+  it('el rechazo del alta sobrevive a abrir y cancelar la puerta de baja', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta === '/plataforma/tenants') return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+      if (ruta.startsWith('/usuarios')) {
+        return Promise.resolve<PaginaDe<UsuarioListado>>({
+          items: [cuentaDeTenant],
+          total: 1,
+          pagina: 1,
+          tamanio: 20,
+        })
+      }
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    render(<Usuarios />)
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await act(async () => {
+      fireEvent.submit(screen.getByLabelText('Usuario').closest('form') as HTMLFormElement)
+      await Promise.resolve()
+    })
+    await waitFor(() =>
+      expect(screen.getByText('No se puede crear el usuario: todavía falta la lista de tenants.')).toBeInTheDocument(),
+    )
+
+    await usuario.click(botonDeBajaDe('vendedor\\.sur'))
+    expect(screen.getByText('No se puede crear el usuario: todavía falta la lista de tenants.')).toBeInTheDocument()
+
+    await usuario.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByText('No se puede crear el usuario: todavía falta la lista de tenants.')).toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+  })
+
+  /**
    * Cláusula bajo prueba (entrada 4): los `setErrorPassword('')` de Cancelar y de Buscar. El fallo
    * del cambio de contraseña quedaba prendido sobre una pantalla que el operador ya cerró o
    * reemplazó por otra búsqueda.
@@ -1410,6 +1456,13 @@ describe('Usuarios (slice 5, ronda 1 — la puerta es modal y el token se acuña
     expect(screen.getByRole('button', { name: 'Editar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Baja' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Guardar' })).toBeDisabled()
+    // Ronda 2 (R2-1): los CINCO campos del formulario, no solo sus botones. Eran los únicos
+    // controles de las cuatro pantallas raíz que se escapaban de la puerta modal — el resto de las
+    // pantallas ya deshabilitaba cada input—, así que el formulario seguía editable por debajo de
+    // un diálogo que reclama la pantalla entera (`react-async-state` regla 10).
+    for (const etiqueta of ['Usuario', 'Mail', 'Rol', 'Estado', 'Contraseña']) {
+      expect(screen.getByLabelText(etiqueta), `el campo "${etiqueta}" quedó alcanzable`).toBeDisabled()
+    }
     // El botón del formulario dice "Guardar", no "Guardando…": no hay ninguna escritura en vuelo,
     // solo una puerta abierta.
     expect(screen.queryByRole('button', { name: 'Guardando…' })).not.toBeInTheDocument()

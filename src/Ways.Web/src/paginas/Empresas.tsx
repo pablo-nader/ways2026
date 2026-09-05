@@ -53,6 +53,10 @@ export function Empresas() {
    * inerte el resto de la pantalla mientras está abierta— y NO acuña token: eso lo hace la
    * escritura, al confirmar. */
   const [baja, setBaja] = useState<EmpresaListado | null>(null)
+  /** Control que abrió la puerta, capturado en el `onClick` y no dentro de la puerta: ver
+   * `ConfirmacionDeBaja.tsx`. Para cuando el efecto de montaje corre, el control ya quedó
+   * `disabled` y el navegador se llevó el foco al `<body>`. */
+  const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
 
   /** Contrato de invalidación: ver `Tenants.tsx` — mismo patrón en las cuatro pantallas raíz. */
   const generacion = useRef(0)
@@ -131,9 +135,10 @@ export function Empresas() {
 
   /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia.
    * Abrir NO acuña generación: no hay escritura todavía. */
-  function pedirBaja(empresa: EmpresaListado) {
+  function pedirBaja(empresa: EmpresaListado, disparador: HTMLElement | null) {
     if (ocupadoRef.current) return
 
+    setDisparadorDeLaPuerta(disparador)
     setBaja(empresa)
     setError('')
     setAviso('')
@@ -145,6 +150,7 @@ export function Empresas() {
   function cancelarBaja() {
     if (ocupadoRef.current) return
 
+    setDisparadorDeLaPuerta(null)
     setBaja(null)
     setError('')
     setAviso('')
@@ -173,6 +179,9 @@ export function Empresas() {
 
       // Un 204 SIEMPRE cierra la puerta y refresca; la generación solo gobierna el REFRESCO.
       setBaja(null)
+      // La baja de la fila que se está editando se lleva también su formulario: dejarlo abierto
+      // ofrecía guardar sobre una entidad que ya no existe, y el PUT moría en 404.
+      setFormulario((prev) => (prev?.id === fila.id ? null : prev))
       await refrescarTrasEscribir(
         token,
         `Se dio de baja la empresa "${fila.razonSocial}".`,
@@ -206,6 +215,7 @@ export function Empresas() {
             titulo={`la empresa "${baja.razonSocial}"`}
             arrastra={ARRASTRE_DE_EMPRESA}
             ocupado={ocupado !== null}
+            disparador={disparadorDeLaPuerta}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />
@@ -348,7 +358,7 @@ export function Empresas() {
                         <button
                           type="button"
                           className="btn btn-sm btn-outline-danger rounded-0"
-                          onClick={() => pedirBaja(e)}
+                          onClick={(evento) => pedirBaja(e, evento.currentTarget)}
                           disabled={bloqueado}
                         >
                           Baja

@@ -61,6 +61,10 @@ export function Tenants() {
    * escritura está en vuelo.
    */
   const [confirmacion, setConfirmacion] = useState<Confirmacion | null>(null)
+  /** Control que abrió la puerta, capturado en el `onClick` y no dentro de la puerta: ver
+   * `ConfirmacionDeBaja.tsx`. Para cuando el efecto de montaje corre, el control ya quedó
+   * `disabled` y el navegador se llevó el foco al `<body>`. */
+  const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
 
   /**
    * Contrato de invalidación (`react-async-state` reglas 2-4): toda operación que puede pisar una
@@ -182,9 +186,10 @@ export function Tenants() {
   /** Abre la puerta de confirmación. NO acuña generación —no hay escritura todavía— y re-chequea
    * `ocupadoRef` además del `disabled` del botón: un doble click en el mismo tick le gana al
    * re-render (`react-async-state` regla 9). */
-  function pedirConfirmacion(pendiente: Confirmacion) {
+  function pedirConfirmacion(pendiente: Confirmacion, disparador: HTMLElement | null) {
     if (ocupadoRef.current) return
 
+    setDisparadorDeLaPuerta(disparador)
     setConfirmacion(pendiente)
     setError('')
     setAviso('')
@@ -197,6 +202,7 @@ export function Tenants() {
   function cancelarConfirmacion() {
     if (ocupadoRef.current) return
 
+    setDisparadorDeLaPuerta(null)
     setConfirmacion(null)
     setError('')
     setAviso('')
@@ -241,6 +247,9 @@ export function Tenants() {
       // Un 204 SIEMPRE cierra la puerta y refresca. La generación solo gobierna el REFRESCO, que es
       // una lectura: nunca el desenlace de la escritura que acaba de commitear.
       setConfirmacion(null)
+      // La baja de la fila que se está editando se lleva también su formulario: dejarlo abierto
+      // ofrecía guardar sobre una entidad que ya no existe, y el PUT moría en 404.
+      setEdicion((prev) => (prev?.id === fila.id ? null : prev))
       await refrescarTrasEscribir(
         token,
         `Se dio de baja el tenant "${fila.nombre}".`,
@@ -257,8 +266,10 @@ export function Tenants() {
   const bloqueado = ocupado !== null || confirmacion !== null
 
   // Un `<Link>` no admite `disabled`: la clase `disabled` de Bootstrap le apaga los eventos de
-  // puntero y `tabIndex={-1}` lo saca del recorrido de tabulación, que es lo que la puerta modal
-  // necesita — nada alcanzable afuera mientras está abierta.
+  // puntero y `tabIndex={-1}` lo saca del recorrido de tabulación. Pero las dos cosas son
+  // presentación: `pointer-events: none` solo bloquea el hit-testing del mouse, y ni el Enter
+  // sobre un `<a>` enfocado por programa ni un click sintético pasan por ahí. El `preventDefault`
+  // es el que efectivamente cancela la navegación mientras la puerta está abierta.
   const herramientas = (
     <nav className="p-2">
       <Link
@@ -266,6 +277,9 @@ export function Tenants() {
         className={`btn btn-sm btn-success rounded-0 text-nowrap${bloqueado ? ' disabled' : ''}`}
         aria-disabled={bloqueado}
         tabIndex={bloqueado ? -1 : undefined}
+        onClick={(evento) => {
+          if (bloqueado) evento.preventDefault()
+        }}
       >
         Nuevo tenant
       </Link>
@@ -293,6 +307,7 @@ export function Tenants() {
               confirmacion.tipo === 'baja' ? undefined : COPIA_DE_ESTADO[confirmacion.accion].enCurso
             }
             ocupado={ocupado !== null}
+            disparador={disparadorDeLaPuerta}
             onConfirmar={confirmar}
             onCancelar={cancelarConfirmacion}
           />
@@ -381,7 +396,7 @@ export function Tenants() {
                         <button
                           type="button"
                           className="btn btn-sm btn-outline-warning rounded-0 me-1"
-                          onClick={() => pedirConfirmacion({ tipo: 'estado', fila: t, accion: 'suspenderTenant' })}
+                          onClick={(evento) => pedirConfirmacion({ tipo: 'estado', fila: t, accion: 'suspenderTenant' }, evento.currentTarget)}
                           disabled={bloqueado}
                         >
                           Suspender
@@ -391,7 +406,7 @@ export function Tenants() {
                         <button
                           type="button"
                           className="btn btn-sm btn-outline-success rounded-0 me-1"
-                          onClick={() => pedirConfirmacion({ tipo: 'estado', fila: t, accion: 'reactivarTenant' })}
+                          onClick={(evento) => pedirConfirmacion({ tipo: 'estado', fila: t, accion: 'reactivarTenant' }, evento.currentTarget)}
                           disabled={bloqueado}
                         >
                           Reactivar
@@ -400,7 +415,7 @@ export function Tenants() {
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-danger rounded-0"
-                        onClick={() => pedirConfirmacion({ tipo: 'baja', fila: t })}
+                        onClick={(evento) => pedirConfirmacion({ tipo: 'baja', fila: t }, evento.currentTarget)}
                         disabled={bloqueado}
                       >
                         Baja

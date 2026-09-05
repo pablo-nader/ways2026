@@ -9,13 +9,41 @@ import { ConfirmacionDeBaja } from './ConfirmacionDeBaja'
 // vale para las cuatro (`react-async-state` regla 10 por construcción).
 
 /** Anfitrión mínimo: la puerta se monta y se desmonta como en las pantallas —`{abierta && …}`— y el
- * botón "Baja" es el disparador cuyo foco hay que devolver al cerrarla. */
-function Anfitrion({ ocupado = false, alConfirmar = () => {} }: { ocupado?: boolean; alConfirmar?: () => void }) {
+ * botón "Baja" es el disparador cuyo foco hay que devolver al cerrarla. El disparador se captura
+ * SÍNCRONAMENTE en el `onClick`, antes de cualquier `setState`, igual que en las cuatro pantallas
+ * raíz: cuando la puerta se monta, ese botón ya está `disabled`.
+ *
+ * `conFixup` reproduce la *focus fixup rule* del navegador: deshabilitar el elemento enfocado le
+ * saca el foco y lo manda al `<body>`. jsdom NO la aplica, y tampoco se la puede forzar en su
+ * momento real —una vez que el botón quedó `disabled`, jsdom trata `blur()` y `document.body.
+ * focus()` como no-ops sobre un área no focusable, así que `document.activeElement` se queda
+ * pegado al botón—. Por eso el blur se ADELANTA un tick, al `onClick`, cuando el botón todavía
+ * está habilitado: el mecanismo difiere, pero el estado observable es exactamente el que importa
+ * —el foco ya está en el `<body>` cuando corre el efecto de montaje de la puerta—, que es donde
+ * la captura tardía leía `document.activeElement`. */
+function Anfitrion({
+  ocupado = false,
+  alConfirmar = () => {},
+  conFixup = false,
+}: {
+  ocupado?: boolean
+  alConfirmar?: () => void
+  conFixup?: boolean
+}) {
   const [abierta, setAbierta] = useState(false)
+  const [disparador, setDisparador] = useState<HTMLElement | null>(null)
 
   return (
     <>
-      <button type="button" onClick={() => setAbierta(true)} disabled={abierta}>
+      <button
+        type="button"
+        onClick={(evento) => {
+          setDisparador(evento.currentTarget)
+          if (conFixup) evento.currentTarget.blur()
+          setAbierta(true)
+        }}
+        disabled={abierta}
+      >
         Baja
       </button>
       <input aria-label="otro control" disabled={abierta} />
@@ -23,11 +51,54 @@ function Anfitrion({ ocupado = false, alConfirmar = () => {} }: { ocupado?: bool
         <ConfirmacionDeBaja
           titulo={'el tenant "Comercio Sur"'}
           ocupado={ocupado}
+          disparador={disparador}
           onConfirmar={alConfirmar}
           onCancelar={() => setAbierta(false)}
         />
       )}
     </>
+  )
+}
+
+/** Anfitrión con la forma real de una pantalla (`Box`: `div.box > header > h5`) y una fila que
+ * DESAPARECE al confirmar, que es lo que pasa cuando la baja sale bien. */
+function AnfitrionQuePierdeLaFila() {
+  const [fila, setFila] = useState(true)
+  const [abierta, setAbierta] = useState(false)
+  const [disparador, setDisparador] = useState<HTMLElement | null>(null)
+
+  return (
+    <div className="box">
+      <header>
+        <h5>Tenants</h5>
+      </header>
+      <div className="body p-3">
+        {fila && (
+          <button
+            type="button"
+            onClick={(evento) => {
+              setDisparador(evento.currentTarget)
+              setAbierta(true)
+            }}
+            disabled={abierta}
+          >
+            Baja
+          </button>
+        )}
+        {abierta && (
+          <ConfirmacionDeBaja
+            titulo={'el tenant "Comercio Sur"'}
+            ocupado={false}
+            disparador={disparador}
+            onConfirmar={() => {
+              setFila(false)
+              setAbierta(false)
+            }}
+            onCancelar={() => setAbierta(false)}
+          />
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -65,8 +136,8 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
   })
 
   /**
-   * Cláusula bajo prueba: el `return () => disparadorRef.current?.focus()` de ese mismo efecto.
-   * Cerrar sin devolver el foco lo manda al `body` y pierde el lugar de la tabla.
+   * Cláusula bajo prueba: el `return` del efecto de apertura, que devuelve el foco al disparador
+   * recibido por prop. Cerrar sin devolverlo lo manda al `body` y pierde el lugar de la tabla.
    */
   it('al cerrarse devuelve el foco al disparador', async () => {
     const usuario = userEvent.setup()
@@ -77,6 +148,55 @@ describe('ConfirmacionDeBaja (slice 5, ronda 1 — disciplina modal)', () => {
     await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(disparador).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba (ronda 2, R2-2): que el disparador llegue por PROP —capturado en el
+   * `onClick`, antes de cualquier `setState`— y no de un `document.activeElement` leído dentro del
+   * efecto de montaje. Ese efecto pasivo corre DESPUÉS del commit que dejó el disparador
+   * `disabled`, y un navegador real ya aplicó ahí la *focus fixup rule*: el foco está en el
+   * `<body>`, así que la captura tardía se quedaba con el `<body>` y "devolver el foco" era un
+   * no-op.
+   *
+   * Honestidad sobre el entorno: jsdom NO implementa esa corrección de foco, y por eso el defecto
+   * pasaba verde. Tampoco se la puede reproducir en su instante real —sobre un botón ya `disabled`,
+   * `blur()` y `document.body.focus()` son no-ops en jsdom—, así que el anfitrión (`conFixup`)
+   * adelanta el blur al `onClick`. Lo que el test observa es idéntico: cuando la puerta monta, el
+   * foco está en el `<body>` y no en el disparador.
+   */
+  it('captura el disparador antes del render que lo deshabilita, no después', async () => {
+    const usuario = userEvent.setup()
+    render(<Anfitrion conFixup />)
+
+    const disparador = screen.getByRole('button', { name: 'Baja' })
+    await usuario.click(disparador)
+
+    // El navegador ya se llevó el foco al `<body>`: lo único que sabe quién abrió la puerta es la
+    // prop capturada en el `onClick`.
+    expect(disparador).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toHaveFocus()
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(disparador).toHaveFocus()
+    expect(document.body).not.toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba (ronda 2, R2-2): la rama de respaldo del cierre —`esAlcanzable` en `false`
+   * → `regresoRef`—. Cuando la baja sale bien, la fila que tenía el disparador ya no existe:
+   * enfocar un nodo desprendido no hace nada y el foco se queda en el `<body>`, o sea al principio
+   * de todo el documento. El respaldo es un punto de referencia estable de la pantalla.
+   */
+  it('si la fila del disparador desapareció, el foco cae en el título de la pantalla', async () => {
+    const usuario = userEvent.setup()
+    render(<AnfitrionQuePierdeLaFila />)
+
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    expect(screen.queryByRole('button', { name: 'Baja' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Tenants' })).toHaveFocus()
   })
 
   /**

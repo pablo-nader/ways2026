@@ -93,6 +93,10 @@ export function Usuarios() {
    * inerte el resto de la pantalla mientras está abierta— y NO acuña token: eso lo hace la
    * escritura, al confirmar. */
   const [baja, setBaja] = useState<UsuarioListado | null>(null)
+  /** Control que abrió la puerta, capturado en el `onClick` y no dentro de la puerta: ver
+   * `ConfirmacionDeBaja.tsx`. Para cuando el efecto de montaje corre, el control ya quedó
+   * `disabled` y el navegador se llevó el foco al `<body>`. */
+  const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
   const [tenantsDePlataforma, setTenantsDePlataforma] = useState<TenantListado[]>([])
   const [tenantsDePlataformaCargando, setTenantsDePlataformaCargando] = useState(false)
   const [tenantsDePlataformaFallo, setTenantsDePlataformaFallo] = useState(false)
@@ -315,28 +319,34 @@ export function Usuarios() {
   /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia.
    * Reemplaza al `confirm()` nativo: la puerta tiene que quedar inerte mientras el DELETE está en
    * vuelo, y un diálogo del navegador no puede. Abrir NO acuña generación: no hay escritura
-   * todavía. */
-  function pedirBaja(u: UsuarioListado) {
+   * todavía.
+   *
+   * `errorAlta` NO se apaga acá, igual que en `buscar()`: reporta una precondición VIVA del
+   * formulario abierto —falta el universo de tenants—, y abrir la puerta de baja de OTRA fila no
+   * la cambia. Apagarlo escondía algo que seguía siendo cierto. */
+  function pedirBaja(u: UsuarioListado, disparador: HTMLElement | null) {
     if (ocupadoRef.current) return
 
+    setDisparadorDeLaPuerta(disparador)
     setBaja(u)
     setError('')
     setErrorPassword('')
-    setErrorAlta('')
     setAviso('')
   }
 
   /** Cancelar no supersede nada: solo cierra la puerta. Acá el `++generacion.current` era además el
    * único camino ALCANZABLE que clavaba la pantalla: con una búsqueda en vuelo, descartarla dejaba
    * sin ejecutar el `finally` gateado de `cargar` y "Cargando…" quedaba para siempre. Limpia los
-   * avisos en simetría con la apertura, para no dejar un 409 en rojo sin puerta al lado. */
+   * avisos en simetría con la apertura, para no dejar un 409 en rojo sin puerta al lado. `errorAlta`
+   * queda fuera de esa simetría por la misma razón que en `pedirBaja`: es del formulario, no de la
+   * puerta, y sigue siendo cierto después de cancelarla. */
   function cancelarBaja() {
     if (ocupadoRef.current) return
 
+    setDisparadorDeLaPuerta(null)
     setBaja(null)
     setError('')
     setErrorPassword('')
-    setErrorAlta('')
     setAviso('')
   }
 
@@ -368,6 +378,9 @@ export function Usuarios() {
 
       // Un 204 SIEMPRE cierra la puerta y refresca; la generación solo gobierna el REFRESCO.
       setBaja(null)
+      // La baja de la fila que se está editando se lleva también su formulario: dejarlo abierto
+      // ofrecía guardar sobre una entidad que ya no existe, y el PUT moría en 404.
+      setFormulario((prev) => (prev?.id === fila.id ? null : prev))
       await refrescarTrasEscribir(
         token,
         `Usuario "${fila.usuario}" dado de baja.`,
@@ -459,6 +472,7 @@ export function Usuarios() {
           <ConfirmacionDeBaja
             titulo={`al usuario "${baja.usuario}"`}
             ocupado={ocupado}
+            disparador={disparadorDeLaPuerta}
             onConfirmar={confirmarBaja}
             onCancelar={cancelarBaja}
           />
@@ -591,7 +605,7 @@ export function Usuarios() {
                           <button
                             type="button"
                             className="btn btn-sm btn-outline-danger rounded-0"
-                            onClick={() => pedirBaja(u)}
+                            onClick={(evento) => pedirBaja(u, evento.currentTarget)}
                             disabled={bloqueado}
                           >
                             Baja
@@ -697,6 +711,7 @@ function FormularioUsuario({
           maxLength={40}
           value={valor.usuario}
           onChange={(e) => onCambio({ ...valor, usuario: e.target.value })}
+          disabled={bloqueado}
           required
         />
       </div>
@@ -712,6 +727,7 @@ function FormularioUsuario({
           maxLength={255}
           value={valor.mail}
           onChange={(e) => onCambio({ ...valor, mail: e.target.value })}
+          disabled={bloqueado}
           required
         />
       </div>
@@ -730,6 +746,7 @@ function FormularioUsuario({
             const rolId = Number(e.target.value)
             onCambio({ ...valor, rolId, idTenant: rolId === ROL.Root ? null : valor.idTenant })
           }}
+          disabled={bloqueado}
         >
           {roles.map((r) => (
             <option key={r.id} value={r.id}>
@@ -781,6 +798,7 @@ function FormularioUsuario({
           className="form-select rounded-0"
           value={valor.estado}
           onChange={(e) => onCambio({ ...valor, estado: e.target.value as EstadoUsuario })}
+          disabled={bloqueado}
         >
           {ESTADOS_USUARIO.map((e) => (
             <option key={e} value={e}>
@@ -801,6 +819,7 @@ function FormularioUsuario({
           placeholder={esNuevo ? 'Mínimo 8 caracteres' : 'Dejar vacío para no cambiar'}
           value={valor.password}
           onChange={(e) => onCambio({ ...valor, password: e.target.value })}
+          disabled={bloqueado}
           required={esNuevo}
         />
       </div>
