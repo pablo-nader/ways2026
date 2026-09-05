@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Auditoria;
+using Ways.Application.Organizacion;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Common;
 using Ways.Domain.Usuarios;
@@ -29,7 +30,8 @@ public class ServicioDeUsuarios(
     IHasheadorDeContrasenas hasheador,
     IRelojDelSistema reloj,
     IContextoDeUsuario contexto,
-    ServicioDeAuditoria auditoria)
+    ServicioDeAuditoria auditoria,
+    InspectorDeUso inspector)
 {
     private const int LargoMinimoPassword = 8;
 
@@ -113,11 +115,24 @@ public class ServicioDeUsuarios(
     /// el nombre de un tenant es texto libre y un tenant que se llamara justo "Plataforma" sería
     /// indistinguible de una cuenta de plataforma. En el listado esto viaja como subconsulta
     /// escalar correlacionada dentro del mismo <c>Select</c>; acá, sobre una sola fila, es una
-    /// consulta puntual y solo cuando la cuenta pertenece a un tenant.</summary>
+    /// consulta puntual y solo cuando la cuenta pertenece a un tenant.
+    ///
+    /// Etapa 20 slice 4 — acá NO va un <c>DeletedAt == null</c> explícito, y es la misma regla
+    /// única que documenta <c>ServicioDeOrganizacion.ProyeccionDeTenant</c> leída del otro lado:
+    /// el predicado propio hace falta donde la consulta puede PERDER el filtro ambiente, o sea
+    /// donde la expresión es componible por un llamador (las tres proyecciones de organización) o
+    /// donde el método mismo apaga el filtro (<see cref="ListarAsync"/> con
+    /// <c>incluirEliminados</c>, y por eso su subconsulta sí lo lleva). Esta consulta se arma y se
+    /// ejecuta entera acá adentro y nadie puede componerle un <c>IgnoreQueryFilters</c>: el
+    /// predicado explícito que traía era literalmente irrefutable —su mutación sobrevivió en la
+    /// ronda 2 de la slice 1 y sigue sin tener forma de morir— y se saca en vez de arrastrarlo
+    /// como deuda una tercera vuelta. El comportamiento no cambia en ningún camino: el filtro
+    /// ambiente ya deja afuera al tenant dado de baja, que es lo que afirma
+    /// <c>UnaCuentaCuyoTenantFueDadoDeBajaNoTraeNombreDeTenantEnNingunoDeLosTresCaminos</c>.</summary>
     private async Task<string?> NombreDeTenantAsync(int? idTenant, CancellationToken ct) =>
         idTenant is int id
             ? await db.Tenants
-                .Where(t => t.Id == id && t.DeletedAt == null)
+                .Where(t => t.Id == id)
                 .Select(t => t.Nombre)
                 .FirstOrDefaultAsync(ct)
             : null;
@@ -318,13 +333,44 @@ public class ServicioDeUsuarios(
         await db.SaveChangesAsync(ct);
     }
 
-    /// <summary>Baja lógica: escribe deleted_at, no borra la fila.</summary>
+    /// <summary>
+    /// Baja lógica: escribe deleted_at, no borra la fila.
+    ///
+    /// Etapa 20 slice 4 (UT-R2) — el guard de uso entra acá DESPUÉS de
+    /// <see cref="PoliticaDeRoles.ValidarPuedeIntervenirSobre"/> y NUNCA en su lugar: quién puede
+    /// intervenir sobre quién es una decisión de dominio que no depende de los datos, y el guard
+    /// es una pregunta a la base. Invertir el orden le contestaría a un actor sin permiso si la
+    /// cuenta objetivo tiene movimientos, que es justo el oráculo que ADR-8 evita. Todo lo que ya
+    /// regía queda igual: un objetivo Root sigue siendo indeleteable con el error de
+    /// <c>PoliticaDeRoles</c> (no con <c>usuario_en_uso</c>), la autobaja sigue prohibida, el 404
+    /// deliberado de <c>ValidarAlcanceDeTenant</c> sigue tapando la existencia de otro tenant y la
+    /// fila de auditoría se sigue escribiendo.
+    ///
+    /// SIN transacción y SIN lock, a diferencia de las bajas de organización (design D12): acá no
+    /// hay cascada, así que la propiedad de "un solo instante" ya la da un único
+    /// <c>SaveChangesAsync</c>, y el lock no cerraría ninguna carrera que esta baja enfrente — dos
+    /// bajas simultáneas de la MISMA cuenta escriben el mismo <c>deleted_at</c> sobre la misma
+    /// fila y la segunda no rompe nada.
+    /// </summary>
     public async Task EliminarAsync(int id, CancellationToken ct = default)
     {
         var usuario = await BuscarAsync(id, ct);
 
         PoliticaDeRoles.ValidarPuedeIntervenirSobre(
             contexto.Rol, contexto.UsuarioId, (RolConocido)usuario.RolId, usuario.Id, esBaja: true);
+
+        var tablaEnUso = await inspector.PrimeraDependenciaEnUsoAsync(
+            typeof(Usuario), [usuario.Id], usuario.CreatedAt, ct);
+
+        if (tablaEnUso is not null)
+        {
+            var descripcion = EtiquetasDeTablas.DescribirBloqueo(
+                tablaEnUso, InventarioDeDependientes.Construir(db.Model, typeof(Usuario)));
+
+            throw ErrorDominio.Conflicto(
+                "usuario_en_uso",
+                $"No se puede dar de baja el usuario porque hay {descripcion} a su nombre.");
+        }
 
         // Task 2.5 — un único `momento` para la entidad Y el payload (Orchestrator Decision #2):
         // `{deleted_at: null, estado}` → `{deleted_at: momento, estado}`, nunca
