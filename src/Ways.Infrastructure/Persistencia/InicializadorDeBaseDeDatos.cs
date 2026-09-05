@@ -582,7 +582,23 @@ public class InicializadorDeBaseDeDatos(
                 c => c.Codigo == PlantillaDeAprovisionamiento.V1.ClienteConsumidorFinal.CodigoCondicionFiscal, ct);
 
         var ahora = reloj.Ahora;
-        var estrategia = db.Database.CreateExecutionStrategy();
+
+        // Sin reintento (ef-retry-safe-writes, forma (b)): el lambda de abajo hace Add de una
+        // ListaPrecio y de un Cliente, y ninguno de los dos tiene clave de idempotencia — el
+        // filtro de tenantsPendientes se calculó ARRIBA, así que el intento N+1 no lo re-evalúa y
+        // vuelve a construir el par entero mientras el ChangeTracker todavía retiene el del
+        // intento fallido. El Consumidor Final duplica EN SILENCIO (su numero se re-sortea del
+        // contador atómico, así que las dos filas ni se ven chocar); la lista sí choca contra
+        // ux_listas_precio_default_compartido, que es el mismo defecto disfrazado de 23505
+        // (lección 1 del skill: un índice único no es una mitigación).
+        //
+        // RESIDUAL, y acá NO lo cubre el central: este backfill corre en el ARRANQUE, fuera de
+        // todo pipeline HTTP, así que el 503 resultado_incierto de ManejadorDeErrores no tiene a
+        // quién llegarle — no hay operador del otro lado. El precio explícito de sacar el
+        // reintento es que un blip transitorio que antes se reintentaba cinco veces ahora aborta
+        // el host. Se acepta a cambio de no duplicar en silencio: el arranque siguiente vuelve a
+        // correr el backfill y es idempotente, porque recalcula tenantsPendientes desde la base.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
         var listasCreadas = 0;
         var clientesCreados = 0;
 

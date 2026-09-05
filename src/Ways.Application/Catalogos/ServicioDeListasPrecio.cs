@@ -69,7 +69,10 @@ public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj)
         // SaveChangesAsync en el orden correcto (desmarcar la vieja ANTES de guardar la
         // nueva) tienen que ser atómicos entre sí — si el segundo falla (p.ej. nombre
         // duplicado), el tenant no puede quedar sin ninguna lista default.
-        var estrategia = Db.Database.CreateExecutionStrategy();
+        //
+        // Sin reintento: `base.CrearAsync` hace Add de un Conjunto NUEVO en cada intento y no hay
+        // clave de idempotencia — un reintento daría de alta una segunda lista.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(Db);
         return await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await Db.Database.BeginTransactionAsync(ct);

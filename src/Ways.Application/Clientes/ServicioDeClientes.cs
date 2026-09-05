@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Usuarios;
 using Ways.Domain.Clientes;
@@ -80,9 +80,10 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
     /// misma transacción que el INSERT: si el alta falla después de tomar el número (p.ej. una
     /// FK que se termina violando), el rollback también deshace el avance del contador — el
     /// mismo "gaps solo en rollback" que documenta <c>AsignadorDeNumeroCliente</c>, no un hueco
-    /// garantizado en cada error. Mismo wrapper de <c>CreateExecutionStrategy</c> que
-    /// <see cref="Organizacion.ServicioDeAprovisionamiento.CrearTenantAsync"/> — EnableRetryOnFailure
-    /// exige que la transacción se abra adentro de <c>ExecuteAsync</c>.</summary>
+    /// garantizado en cada error. La transacción se abre DENTRO del <c>ExecuteAsync</c> (mismo
+    /// trámite que <see cref="Organizacion.ServicioDeAprovisionamiento.CrearTenantAsync"/>): la
+    /// estrategia sin reintento es igual una <c>ExecutionStrategy</c>, y abrirla afuera rompería
+    /// el ambient tracking que EF Core exige.</summary>
     public async Task<ClienteListado> CrearAsync(AltaCliente datos, CancellationToken ct = default)
     {
         var nombre = NormalizarRequerido(datos.Nombre, "nombre", 150);
@@ -104,7 +105,10 @@ public class ServicioDeClientes(IWaysDbContext db, IRelojDelSistema reloj, ICont
 
         var idTenant = ExigirTenantDeLaSesion();
 
-        var estrategia = db.Database.CreateExecutionStrategy();
+        // Sin reintento: el INSERT no es idempotente y no hay clave de idempotencia — el número
+        // se asigna DENTRO de la transacción, así que un reintento tomaría uno nuevo y daría de
+        // alta un segundo cliente.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         return await estrategia.ExecuteAsync(async () =>
         {

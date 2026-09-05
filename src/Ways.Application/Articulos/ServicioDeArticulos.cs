@@ -198,7 +198,10 @@ public class ServicioDeArticulos(
 
         var idTenant = ExigirTenantDeLaSesion();
 
-        var estrategia = db.Database.CreateExecutionStrategy();
+        // Sin reintento: el INSERT no es idempotente y no hay clave de idempotencia — el
+        // codigo_interno autogenerado se resuelve DENTRO de la transacción, así que un reintento
+        // tomaría uno nuevo y daría de alta un segundo artículo.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
         return await estrategia.ExecuteAsync(async () =>
         {

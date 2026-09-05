@@ -1808,69 +1808,6 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
     // =========================================================================================
 
     /// <summary>
-    /// Rompe el <c>INSERT</c> de <c>auditoria</c> del PRIMER intento con un error de Postgres del
-    /// SQLSTATE que se le pida, y deja pasar todo lo demás. Es lo único que puede convertir
-    /// "¿esta unidad es reintentable?" en una pregunta observable: sin él, el reintento de
-    /// <c>EnableRetryOnFailure</c> no se dispara nunca en una prueba y el mutante sobrevive por
-    /// construcción.
-    ///
-    /// Cuenta los intentos: bajo la estrategia SIN reintento el <c>INSERT</c> del rastro se ve UNA
-    /// sola vez, y bajo la reintentable se vería dos (con el doble de filas encoladas en el
-    /// segundo). El conteo es el valor discriminante, no la mera presencia del error
-    /// (<c>mutation-proof-tests</c> regla 4).
-    /// </summary>
-    private sealed class InterceptorQueRompeElRastro(string sqlState) : DbCommandInterceptor
-    {
-        private int intentos;
-
-        /// <summary>Cuántas veces se intentó ejecutar el lote que contiene el INSERT del rastro.</summary>
-        public int Intentos => Volatile.Read(ref intentos);
-
-        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
-            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
-            CancellationToken cancellationToken = default)
-        {
-            RomperSiEsElRastro(command);
-            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
-        }
-
-        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
-            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
-            CancellationToken cancellationToken = default)
-        {
-            RomperSiEsElRastro(command);
-            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
-        }
-
-        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
-            DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
-            CancellationToken cancellationToken = default)
-        {
-            RomperSiEsElRastro(command);
-            return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
-        }
-
-        private void RomperSiEsElRastro(DbCommand comando)
-        {
-            if (!comando.CommandText.Contains("INSERT INTO auditoria", StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            // Solo el PRIMER intento falla: si hubiera reintento, el segundo tiene que poder
-            // comitear — es la única forma de que las filas duplicadas lleguen a la base y se
-            // puedan contar.
-            if (Interlocked.Increment(ref intentos) > 1)
-            {
-                return;
-            }
-
-            throw new PostgresException(
-                "falla inyectada por la prueba sobre el INSERT de auditoria", "ERROR", "ERROR", sqlState);
-        }
-    }
-
-    /// <summary>
     /// Da de baja el tenant entero —por el camino REAL, desde otro contexto y otra transacción— en
     /// el instante en que la transacción de la prueba se abre: o sea DESPUÉS de la lectura previa
     /// del sujeto y ANTES de que se tome el lock. Es el rendezvous exacto de la carrera de R2-2.
@@ -1938,7 +1875,7 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
 
         // 40001 (serialization_failure) es transitorio para NpgsqlRetryingExecutionStrategy: es
         // exactamente la clase de falla por la que EnableRetryOnFailure existe.
-        var interceptor = new InterceptorQueRompeElRastro("40001");
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("auditoria", "40001");
 
         await using (var db = fixture.CrearContextoDeAplicacionConReintentos(
             TenantActualFijo.Plataforma, interceptor))
@@ -2003,7 +1940,7 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
         var idRoot = await IdDelRootAsync();
         var ultimoId = await UltimoIdDeAuditoriaAsync();
 
-        var interceptor = new InterceptorQueRompeElRastro("23505");
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("auditoria", "23505");
 
         await using (var db = fixture.CrearContextoDeAplicacionConReintentos(
             TenantActualFijo.Plataforma, interceptor))

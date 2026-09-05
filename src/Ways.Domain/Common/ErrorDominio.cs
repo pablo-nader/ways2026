@@ -4,8 +4,10 @@ namespace Ways.Domain.Common;
 /// Regla de negocio violada. La API la traduce a un ProblemDetails con el código incluido.
 /// No se usa para errores técnicos ni para validación de formato.
 /// </summary>
-public class ErrorDominio(string codigo, string mensaje, int estadoHttp = 422)
-    : Exception(mensaje)
+/// <remarks><paramref name="causa"/> conserva la excepcion tecnica de origen cuando la regla
+/// de negocio se dispara a partir de ella: el diagnostico no se pierde detras del codigo.</remarks>
+public class ErrorDominio(string codigo, string mensaje, int estadoHttp = 422, Exception? causa = null)
+    : Exception(mensaje, causa)
 {
     public string Codigo { get; } = codigo;
     public int EstadoHttp { get; } = estadoHttp;

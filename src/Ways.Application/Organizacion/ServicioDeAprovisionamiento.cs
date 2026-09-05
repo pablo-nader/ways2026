@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
 using Ways.Application.Clientes;
 using Ways.Domain.Catalogos;
@@ -37,9 +38,46 @@ public class ServicioDeAprovisionamiento(
         // estrategia de reintento, EF tira si se abre una transacción por fuera de
         // ExecuteAsync — esta trampa está documentada desde design.md y es la razón de todo
         // este wrapper.
-        var estrategia = db.Database.CreateExecutionStrategy();
+        //
+        // Sin reintento: TODAS las entidades del aprovisionamiento se construyen de cero en cada
+        // intento y ninguna tiene clave de idempotencia — un reintento las duplicaría. Que hoy
+        // ux_usuarios_mail (el INSERT final del admin) aborte la transacción entera es un
+        // accidente del orden de inserción, no una garantía.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
-        return await estrategia.ExecuteAsync(async () =>
+        try
+        {
+            return await EjecutarAprovisionamientoAsync(
+                estrategia, nombreTenant, razonSocial, nombrePuntoVenta, mailAdmin, ct);
+        }
+        catch (Exception error) when (FallosTransitorios.EsTransitorioEnLaCadena(error))
+        {
+            // El residual central de ef-retry-safe-writes (regla 4) NO alcanza acá. Su copia
+            // ("verificá el listado antes de reintentar") asume que ver la fila alcanza para
+            // decidir; en el alta de un tenant no alcanza. Si el intento comiteó y el ACK se
+            // perdió, el tenant EXISTE pero el passwordTemporal —que se devuelve una sola vez y no
+            // se guarda en ningún lado— se fue con la respuesta que nunca llegó, y el reintento
+            // muere contra ux_usuarios_mail como un 409 mail_duplicado que no dice nada de eso.
+            // Por eso este sitio sí escribe copia propia: es la única que nombra el paso extra.
+            throw new ErrorDominio(
+                "resultado_incierto",
+                "No se pudo confirmar el alta del tenant: verificá el listado; si ya existe, "
+                    + "restablecé la contraseña del admin antes de reintentar.",
+                503,
+                error);
+        }
+    }
+
+    /// <summary>El cuerpo de <see cref="CrearTenantAsync"/>, extraído tal cual para que el
+    /// <c>catch</c> del residual pueda envolverlo sin re-indentar la transacción entera.</summary>
+    private async Task<ResultadoAprovisionamiento> EjecutarAprovisionamientoAsync(
+        IExecutionStrategy estrategia,
+        string nombreTenant,
+        string razonSocial,
+        string nombrePuntoVenta,
+        string mailAdmin,
+        CancellationToken ct) =>
+        await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
@@ -167,7 +205,6 @@ public class ServicioDeAprovisionamiento(
             return new ResultadoAprovisionamiento(
                 tenant.Id, empresa.Id, puntoVenta.Id, admin.Id, passwordTemporal);
         });
-    }
 
     private static string GenerarPasswordTemporal() =>
         RandomNumberGenerator.GetString(CaracteresPassword, LargoPassword);

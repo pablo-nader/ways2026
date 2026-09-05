@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using System.Data.Common;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -354,19 +354,41 @@ public class ServicioDeVentas(
         // dentro de ExecuteAsync. El plan de arriba es el ÚNICO dato de negocio que cruza hacia
         // la lambda: cada entidad de EF se construye de cero en cada intento (retry contract).
         //
-        // El número YA está comprometido cuando esta lambda arranca — un commit ambiguo acá (el
-        // servidor comitea pero la conexión se corta antes del ACK al cliente) hace que
-        // CreateExecutionStrategy reintente la lambda completa; sin la guarda de abajo, ese
-        // reintento volvería a INSERTAR el mismo comprobante bajo el mismo número, violando
-        // ux_comprobantes_venta_numero (o, peor, duplicando la venta si esa unicidad no
-        // existiera). BuscarPorNumeroComprometidoAsync corre PRIMERO en cada intento: si el
-        // commit anterior sí llegó a puerto, el comprobante ya existe y se devuelve tal cual en
-        // vez de reinsertarse.
+        // FORMA (a) del skill ef-retry-safe-writes — este paso SÍ reintenta, y son DOS piezas las
+        // que lo vuelven seguro:
+        //
+        //  1) db.ChangeTracker.Clear() es la PRIMERA sentencia de la lambda. Sin él, las
+        //     entidades Added del intento N (comprobante, ítems, pagos) sobreviven en el tracker
+        //     y el intento N+1 agrega un SEGUNDO set: el SaveChangesAsync final insertaría los
+        //     dos. Con el Clear, cada intento arranca con el tracker vacío y reconstruye todo.
+        //     Descartarlo no pierde nada pendiente: lo que se cargó ANTES de la lambda (tipo,
+        //     punto de venta, turno, cliente, artículos, medios de pago) se leyó solo para armar
+        //     el PlanDeVenta —un record de primitivos— y NINGUNA de esas entidades se muta acá
+        //     adentro; stock, saldo de cliente y cuenta corriente se escriben por ADO crudo, y el
+        //     re-chequeo del turno bajo FOR SHARE también (ExigirTurnoAbiertoBajoLockAsync).
+        //
+        //  2) BuscarPorNumeroComprometidoAsync corre DESPUÉS del Clear y ANTES de reinsertar. El
+        //     número ya está comprometido y comiteado en su propia transacción: es la clave de
+        //     idempotencia de este paso. Ante un commit ambiguo (el servidor comiteó y el ACK se
+        //     perdió al cortarse la conexión), el reintento re-entra con el MISMO número, la
+        //     guarda encuentra el comprobante ya emitido y lo devuelve en vez de reinsertarlo
+        //     contra ux_comprobantes_venta_numero.
+        //
+        // Por eso este sitio NO usa FabricaDeEstrategiaSinReintento, a diferencia de AnularAsync:
+        // el reintento automático es el ÚNICO consumidor de esa clave de idempotencia. Sin él, un
+        // commit ambiguo saldría como 500 con el carrito intacto y el cajero volvería a apretar
+        // Cobrar; SolicitudDeVenta no lleva número, así que ese reenvío sortearía un número NUEVO
+        // y emitiría un SEGUNDO comprobante, con su segundo descuento de stock, su segundo
+        // movimiento de caja y su segundo movimiento de cuenta corriente.
         var estrategia = db.Database.CreateExecutionStrategy();
 
         return await estrategia.ExecuteAsync(async () =>
-            await BuscarPorNumeroComprometidoAsync(plan.IdPuntoVenta, plan.IdTipoComprobante, numero, ct)
-            ?? await EjecutarTransaccionAsync(plan, numero, ct));
+        {
+            db.ChangeTracker.Clear();
+
+            return await BuscarPorNumeroComprometidoAsync(plan.IdPuntoVenta, plan.IdTipoComprobante, numero, ct)
+                ?? await EjecutarTransaccionAsync(plan, numero, ct);
+        });
     }
 
     /// <summary>Detección de idempotencia (ver el comentario de <see cref="EmitirAsync"/> sobre

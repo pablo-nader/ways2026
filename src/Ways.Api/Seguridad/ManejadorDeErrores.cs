@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
+using Ways.Application.Abstracciones;
 using Ways.Domain.Common;
 
 namespace Ways.Api.Seguridad;
@@ -40,6 +42,48 @@ public class ManejadorDeErrores(
             // brazo de arriba: un solo lugar de verdad para los dos caminos de escritura.
             PostgresException pgCruda when ClasificarPostgresException(pgCruda, log) is { } backstopCrudo =>
                 backstopCrudo,
+
+            // ef-retry-safe-writes regla 4 (el "residual declarado" de la forma (b)): un fallo
+            // TRANSITORIO que escapa de una escritura sin reintento es un COMMIT AMBIGUO — el
+            // servidor pudo haber comiteado y perdido el ACK al cortarse la conexión. Como 500
+            // error_interno la pantalla decía "error inesperado" y el operador reintentaba a
+            // ciegas sobre algo que quizás ya se escribió; como 503 la copia manda a verificar el
+            // listado primero.
+            //
+            // Estos tres brazos son la ÚNICA clasificación de lo transitorio. Viven acá y no
+            // dentro de ClasificarPostgresException —donde el primero de ellos nació— porque la
+            // copia depende del MÉTODO HTTP (RespuestaDeFalloTransitorio, más abajo) y ese helper
+            // es estático y ciego al contexto. La POSICIÓN es la misma que tenía el brazo
+            // desplazado: DESPUÉS de los dos brazos de ClasificarPostgresException (toda
+            // clasificación determinística —23505/23514/23503/22003— sigue ganando) y ANTES de
+            // DbUpdateConcurrencyException. Lo que SÍ cambió es el tipo: el brazo original
+            // pescaba PostgresException y este pesca NpgsqlException (su base), para cubrir la
+            // conexión cortada sin SqlState. El único caso que resolvería distinto sería una
+            // DbUpdateConcurrencyException envolviendo una NpgsqlException transitoria pelada, y EF
+            // no construye esa combinación: la de concurrencia nace de un conteo de filas, sin
+            // excepción de proveedor adentro.
+            //
+            // Cubren los tres shapes con los que el fallo llega: envuelto por SaveChangesAsync,
+            // pelado desde un statement raw-ADO (una conexión cortada tira NpgsqlException PELADA,
+            // sin SqlState ninguno — la forma más común del commit ambiguo), y envuelto por EF
+            // cuando los cinco reintentos se agotan.
+            DbUpdateException { InnerException: NpgsqlException npgsqlEnvuelta }
+                when FallosTransitorios.EsTransitorio(npgsqlEnvuelta) =>
+                RespuestaDeFalloTransitorio(contexto),
+
+            NpgsqlException npgsqlCrudo when FallosTransitorios.EsTransitorio(npgsqlCrudo) =>
+                RespuestaDeFalloTransitorio(contexto),
+
+            // Cuando EnableRetryOnFailure(5) agota sus cinco intentos, EF NO propaga el fallo
+            // transitorio: lo envuelve en RetryLimitExceededException, que no es ni
+            // DbUpdateException ni NpgsqlException y caía derecho al 500 de abajo. Es justo el
+            // caso peor —cinco commits potencialmente ambiguos, no uno—, así que es el que más
+            // necesita la copia. Se desenvuelve la cadena entera (EsTransitorioEnLaCadena) porque
+            // el InnerException puede ser tanto la NpgsqlException pelada como una
+            // DbUpdateException que a su vez la envuelve.
+            RetryLimitExceededException agotada
+                when FallosTransitorios.EsTransitorioEnLaCadena(agotada) =>
+                RespuestaDeFalloTransitorio(contexto),
 
             // Defensa en profundidad genérica (judgment-day, item 2, stage-4-ofertas): EF
             // interpreta un UPDATE/DELETE que afecta 0 filas de las esperadas (en vez de la 1
@@ -478,6 +522,46 @@ public class ManejadorDeErrores(
 
             _ => null
         };
+
+    /// <summary>Código y copia del COMMIT AMBIGUO de una ESCRITURA (<c>ef-retry-safe-writes</c>
+    /// regla 4). La copia espeja la que <c>src/Ways.Web/src/api/bajas.ts</c> rendía a mano para el
+    /// 5xx de las tres bajas: ahora nace en el servidor, así que las once escrituras sin reintento
+    /// la comparten sin tocar una sola pantalla (toda pantalla rinde <c>ErrorApi.mensaje</c>, que
+    /// es el <c>title</c> del ProblemDetails).</summary>
+    internal const string CodigoResultadoIncierto = "resultado_incierto";
+
+    internal const string MensajeResultadoIncierto =
+        "No se pudo confirmar el resultado de la operación: verificá el listado antes de reintentar.";
+
+    /// <summary>Código y copia del mismo fallo transitorio sobre un método SEGURO. Una lectura no
+    /// deja residual: no hay nada que verificar antes de reintentar, y decirle a quien pidió un
+    /// listado que "verifique el listado" es la copia de otra operación.</summary>
+    internal const string CodigoServicioNoDisponible = "servicio_no_disponible";
+
+    internal const string MensajeServicioNoDisponible =
+        "No se pudo completar la consulta: reintentá en unos segundos.";
+
+    /// <summary>503 en vez de 500 porque el resultado es DESCONOCIDO, no fallido. Sigue
+    /// logueándose como error (el <c>if (estado >= 500)</c> de <see cref="TryHandleAsync"/>), así
+    /// que no se pierde observabilidad.
+    ///
+    /// <para>El código y la copia se parten por MÉTODO HTTP: <c>EsTransitorio</c> incluye
+    /// <c>IsTransient</c>, que una conexión cortada dispara igual en un <c>GET</c>, y ahí la copia
+    /// del commit ambiguo miente — no hubo escritura, así que no hay nada que verificar antes de
+    /// reintentar. Los métodos seguros (GET/HEAD/OPTIONS) llevan <c>servicio_no_disponible</c> con
+    /// copia neutra; todo lo demás conserva <c>resultado_incierto</c> tal cual.</para></summary>
+    private static (int EstadoHttp, string Titulo, string Codigo) RespuestaDeFalloTransitorio(
+        HttpContext contexto) =>
+        EsMetodoSeguro(contexto.Request.Method)
+            ? (StatusCodes.Status503ServiceUnavailable, MensajeServicioNoDisponible, CodigoServicioNoDisponible)
+            : (StatusCodes.Status503ServiceUnavailable, MensajeResultadoIncierto, CodigoResultadoIncierto);
+
+    /// <summary>Los métodos que por definición no escriben (RFC 9110 §9.2.1). <c>TRACE</c> queda
+    /// afuera porque la API no lo expone; cualquier método desconocido cae del lado NO seguro, que
+    /// es el fail-closed correcto acá — asumir "no escribió" sobre algo que sí pudo escribir es el
+    /// único de los dos errores que pierde datos.</summary>
+    private static bool EsMetodoSeguro(string metodo) =>
+        HttpMethods.IsGet(metodo) || HttpMethods.IsHead(metodo) || HttpMethods.IsOptions(metodo);
 
     /// <summary>Agrupa los índices únicos nuevos por familia a partir del sufijo de su
     /// nombre — evita repetir un caso por índice para <c>ux_areas_nombre_*</c>,

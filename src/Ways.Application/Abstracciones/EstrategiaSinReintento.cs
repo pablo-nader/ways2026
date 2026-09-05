@@ -5,14 +5,24 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Ways.Application.Abstracciones;
 
 /// <summary>
-/// <c>AjustarAsync</c> (<c>ServicioDeStock</c>) / <c>AnularAsync</c> (<c>ServicioDeVentas</c>) —
-/// operaciones raras, humanas y manuales, sin ninguna clave de idempotencia natural (a diferencia
-/// de <c>ServicioDeVentas.EmitirAsync</c>, que reintenta con seguridad porque
-/// <c>BuscarPorNumeroComprometidoAsync</c> detecta un commit ambiguo previo antes de reinsertar).
-/// Sobre esas dos operaciones, <c>EnableRetryOnFailure</c> (global, <c>DependencyInjection</c>)
-/// reintentaría la transacción entera tras un commit ambiguo — el servidor comitea pero el ACK no
-/// llega antes de que se corte la conexión — y silenciosamente duplicaría un ajuste de stock, o
-/// mostraría un 409 falso sobre una anulación que en verdad tuvo éxito.
+/// La estrategia de toda escritura NO IDEMPOTENTE que no tiene ninguna clave de idempotencia
+/// natural que un reintento pueda usar para no duplicar: las altas de
+/// clientes/artículos/usuarios/precios/listas de precio/ofertas/certificados fiscales, el
+/// aprovisionamiento de un tenant, el backfill de <c>InicializadorDeBaseDeDatos</c>, las bajas de
+/// organización/usuario/oferta y las operaciones manuales <c>ServicioDeStock.AjustarAsync</c> /
+/// <c>ServicioDeVentas.AnularAsync</c>. Sobre todas ellas, <c>EnableRetryOnFailure</c> (global,
+/// <c>DependencyInjection</c>) reintentaría la transacción entera tras un commit ambiguo — el
+/// servidor comitea pero el ACK no llega antes de que se corte la conexión — y duplicaría filas en
+/// silencio, o mostraría un 409/404 falso sobre una operación que en verdad tuvo éxito. La lista
+/// congelada vive en <c>EscriturasSinReintentoEstructuralesTests</c>.
+///
+/// <para><c>ServicioDeVentas.EmitirAsync</c> es la excepción y SÍ conserva el reintento: su paso de
+/// numeración comitea el <c>numero</c> en su propia transacción ANTES de la escritura, y ese número
+/// es una clave de idempotencia real — el lambda de escritura hace <c>ChangeTracker.Clear()</c> y
+/// después <c>BuscarPorNumeroComprometidoAsync</c>, así que un reintento sobre un commit ambiguo
+/// devuelve el comprobante ya emitido en vez de reinsertarlo. El reintento automático es el ÚNICO
+/// consumidor de esa clave: un reenvío del cajero traería una <c>SolicitudDeVenta</c> sin número y
+/// emitiría un segundo comprobante.</para>
 ///
 /// <para><see cref="Microsoft.EntityFrameworkCore.Storage.NonRetryingExecutionStrategy"/> NO sirve
 /// acá: no hereda de <see cref="ExecutionStrategy"/> y por eso no marca el ambient
