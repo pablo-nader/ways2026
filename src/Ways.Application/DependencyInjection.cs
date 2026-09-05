@@ -88,6 +88,13 @@ public static class DependencyInjection
         services.AddScoped<ServicioDeAprovisionamiento>();
         services.AddScoped<ServicioDeOrganizacion>();
 
+        // stage-20-organizacion-relaciones-y-bajas, Slice 3: el guard de uso se registra completo
+        // desde esta slice y SIN NINGÚN LLAMADOR a propósito (design OD3) — no hay red de base
+        // atrás suyo (db-error-backstops es estructuralmente N/A), así que se entrega inerte para
+        // poder revisarlo por sus propios méritos antes de que algo pueda invocarlo. La slice 4 lo
+        // cablea. InventarioDeDependientes es estático y puro: no tiene ciclo de vida que registrar.
+        services.AddScoped<InspectorDeUso>();
+
         // stage-8-compras-transferencias-inventario, Slice 2: el ciclo de vida entero de la
         // compra — reusa ServicioDePrecios (AplicarPrecioSugeridoAsync), nunca
         // ServicioDeStock/ServicioDeVentas (Slice 2 non-negotiable).

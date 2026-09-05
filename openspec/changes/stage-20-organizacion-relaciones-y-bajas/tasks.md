@@ -590,8 +590,8 @@ impossible by construction, and satisfies S5 (a filter can never disclose an out
   One mutation run for real, M19 below (dropping the `esPlataforma` guard on the new fetch),
   observed RED on the tenant-admin test, then reverted and observed GREEN again; M14-M18 stay
   valid unmodified. *(UT-R1; design D15, spec S5)*
-- [ ] 2.15 `judgment-day` round to a clean round.
-- [ ] 2.16 Open PR 2 `feat/stage20-slice2-proyeccion-web`, merge to `main` after the clean round.
+- [x] 2.15 `judgment-day` round to a clean round.
+- [x] 2.16 Open PR 2 `feat/stage20-slice2-proyeccion-web`, merge to `main` after the clean round.
 
 ### Mutation evidence — slice 2 (`mutation-proof-tests` rule 2, produced, not reasoned)
 
@@ -853,12 +853,12 @@ merits before anything can invoke it. Verify criterion V10 asserts the zero-call
 one-line knob in `InspectorDeUso`'s doc-comment (add the conjunct per branch, flip task 4.11's test,
 regenerate N3's golden) — record it, do not implement it.
 
-- [ ] 3.1 Modify `src/Ways.Application/Abstracciones/IWaysDbContext.cs` — add **exactly one** member,
+- [x] 3.1 Modify `src/Ways.Application/Abstracciones/IWaysDbContext.cs` — add **exactly one** member,
   `IModel Model { get; }`, with the doc-comment argument the interface itself supplies (`:150-152`:
   `DatabaseFacade` is the same EF Core abstraction any `DbContext` already exposes). **Zero
   implementation lines change** — `DbContext.Model` satisfies it implicitly and `rg ": IWaysDbContext"`
   over `src/` and `tests/` returns zero matches. *(design D1, C; verify criterion V7)*
-- [ ] 3.2 Create `src/Ways.Application/Organizacion/InventarioDeDependientes.cs` — **pure**: no
+- [x] 3.2 Create `src/Ways.Application/Organizacion/InventarioDeDependientes.cs` — **pure**: no
   database, no clock, no DI (D2), so N3's golden can be regenerated without a container.
   `ClasificacionDeDependiente { Excluido, Marcado, SinMarca }`, `RamaDeUso(Tabla, Columnas,
   PropiedadesDelPrincipal, Clasificacion)` with `UsaAncla => Clasificacion is Marcado`, and
@@ -867,18 +867,18 @@ regenerate N3's golden) — record it, do not implement it.
   `else` can throw). Branch predicates are built by zipping `fk.Properties` with
   `fk.PrincipalKey.Properties`, so composite `(id, id_tenant)` and alternate-key FKs need no special
   case, and `MovimientoStock` contributes **two** independent branches. *(BO-R4, BO-R5; design D3, A)*
-- [ ] 3.3 Same file — `Excluidos` as a `FrozenSet<Type>` with **exactly two** members,
+- [x] 3.3 Same file — `Excluidos` as a `FrozenSet<Type>` with **exactly two** members,
   `Ways.Domain.Auditoria.Auditoria` and `NumeracionCliente`, **each carrying its written reason in
   code** (B5: the audit trail is a record *about* the entity and the referenced row survives logical
   deletion; the provisioning counter is inserted by raw SQL in
   `AsignadorDeNumeroCliente.AsegurarContadorAsync`, is not an `EntidadBase`, and is not customer
   data). A carve-out emits **no branch at all**. *(BO-R6)*
-- [ ] 3.4 Same file — `Construir` throws `InvalidOperationException` **naming the CLR type and the
+- [x] 3.4 Same file — `Construir` throws `InvalidOperationException` **naming the CLR type and the
   FK** for the three *mechanical* impossibilities: an entity type with no mapped table, a `Marcado`
   type whose `created_at` column cannot be resolved, and an FK whose principal properties are not all
   readable from the anchor. These are build-time failures via N1, **never** production 500s.
   *(BO-R5; design A)*
-- [ ] 3.5 Create `src/Ways.Application/Organizacion/InspectorDeUso.cs` —
+- [x] 3.5 Create `src/Ways.Application/Organizacion/InspectorDeUso.cs` —
   `PrimeraDependenciaEnUsoAsync(Type tipoAncla, IReadOnlyList<object> valoresDeClave,
   DateTimeOffset ancla, CancellationToken)` returning the **name of the first blocking table** or
   `null`. One statement: `UNION ALL` of `SELECT '<tabla>' AS tabla WHERE EXISTS (SELECT 1 FROM
@@ -886,63 +886,330 @@ regenerate N3's golden) — record it, do not implement it.
   **caller's** connection/transaction, opened through `Database.OpenConnectionAsync` so
   `InterceptorDeContextoDeTenant` sets the RLS GUCs — **never** `Database.SqlQuery<T>` /
   `FromSqlRaw` against this model (the stage-1 slice-2 trap). *(BO-R4, BO-R7; design D5, D6, D)*
-- [ ] 3.6 Same file — **injection surface closed**: identifiers come from `IEntityType`/`IProperty`
+- [x] 3.6 Same file — **injection surface closed**: identifiers come from `IEntityType`/`IProperty`
   metadata only, are schema-qualified and double-quoted, and are **rejected by the generator** unless
   they match `^[a-z_][a-z0-9_]*$`; every anchor key value and the anchor's `CreatedAt` is a bound
   **parameter** (`ParametrosDeComando.Agregar`, the `AsignadorDeNumeroCliente` idiom). No
   user-supplied string ever reaches the statement. *(design D, Threat Matrix)*
-- [ ] 3.7 Same file — doc-comment records **OD4 as a one-line reversible knob**: no
+- [x] 3.7 Same file — doc-comment records **OD4 as a one-line reversible knob**: no
   `AND d.deleted_at IS NULL` conjunct is emitted, a soft-deleted dependent still blocks, and
   reversing it means adding that conjunct per branch, flipping task 4.11's test and regenerating
   N3's golden. Also record **side effect B**: RLS lives on the connection, so it still applies, and
   **no `id_tenant` conjunct is added** — an extra conjunct can only ever *narrow* the result, and a
   narrowing bug under-blocks, the one direction this stage refuses. *(BO-R7; design D6, E, OD4)*
-- [ ] 3.8 Modify the DI module (`src/Ways.Api/Programa.cs` or its registration file) — register
+- [x] 3.8 Modify the DI module (`src/Ways.Api/Programa.cs` or its registration file) — register
   `InspectorDeUso` **scoped**. **No caller until slice 4.** *(design File Changes)*
-- [ ] 3.9 **N1 — totality.** Create
+- [x] 3.9 **N1 — totality.** Create
   `tests/Ways.Application.Tests/Persistencia/InventarioDeDependientesTests.cs`: `Construir(db.Model,
   T)` succeeds for **all four** anchors (`Tenant`, `Empresa`, `PuntoVenta`, `Usuario`), and the
   emitted branch count equals `GetReferencingForeignKeys().Count()` **minus** the carved-out FKs — no
   FK is silently dropped. Built over the real Npgsql model on an **unopened** connection, the
   existing `ModeloDeOrganizacionTests.cs:17-30` pattern: **no container**. *(BO-R5; never degradable)*
-- [ ] 3.10 **N2 — the rule is read off the TABLE, not restated from the code.** Same file: for every
+- [x] 3.10 **N2 — the rule is read off the TABLE, not restated from the code.** Same file: for every
   branch, `rama.UsaAncla == entityType.GetProperties().Any(p => p.GetColumnName() == "created_at")`,
   computed **independently in the test**. **Mutation**: change the classifier to key on
   `EntidadTenant`, or invert it, or hardcode a type list — the test must go red each time. *(BO-R5;
   never degradable)*
-- [ ] 3.11 **N3 — the inventory golden (THE TRIP-WIRE).** Same file plus
+- [x] 3.11 **N3 — the inventory golden (THE TRIP-WIRE).** Same file plus
   `tests/Ways.Application.Tests/Persistencia/Fixtures/inventario-de-dependientes.txt`: a **sorted,
   checked-in** line per branch, `<ancla> | <tabla> | <columnas> | <bucket>`, including one `excluido`
   line per carve-out so the file also pins the two-member carve-out set. Any FK a future stage adds,
   removes, retargets or reclassifies produces a **diff naming the exact table and column**.
   Regeneration is a deliberate edit that must be justified line by line in the PR body (V8). *(BO-R5,
   BO-R6; never degradable — this is the executable form of the spec's completeness requirement)*
-- [ ] 3.12 [P] Assert the carve-out list contains **exactly** `Auditoria` and `NumeracionCliente` and
+- [x] 3.12 [P] Assert the carve-out list contains **exactly** `Auditoria` and `NumeracionCliente` and
   nothing else, and that neither contributes a branch for any of the four anchors. *(BO-R6)*
-- [ ] 3.13 [P] Create `tests/Ways.Application.Tests/Organizacion/InspectorDeUsoTests.cs` — statement
+- [x] 3.13 [P] Create `tests/Ways.Application.Tests/Organizacion/InspectorDeUsoTests.cs` — statement
   **rendering** (pure string assertions over `Construir` + the renderer): a `Marcado` branch carries
   the `created_at > @ancla` conjunct with a **strict** `>`; a `SinMarca` branch carries **only**
   `<fk> = @id`; a composite FK renders **two conjuncts**; an alternate-key principal reads its values
   off the anchor; identifiers are quoted and schema-qualified; a non-conforming identifier is
   **rejected**; the parameter count and binding order match the branch order; the outer `LIMIT 1` is
   present. *(BO-R2, BO-R4, BO-R5)*
-- [ ] 3.14 [P] **OD4 rendering assertion**: no rendered branch contains `deleted_at`. This is the
+- [x] 3.14 [P] **OD4 rendering assertion**: no rendered branch contains `deleted_at`. This is the
   cheap half of OD4 (the behavioural half is task 4.11). *(BO-R7; OD4)*
-- [ ] 3.15 [P] Rendering assertion for **BO-R8**: a nullable FK renders the plain `<fk> = @id`
+- [x] 3.15 [P] Rendering assertion for **BO-R8**: a nullable FK renders the plain `<fk> = @id`
   predicate with no `IS NULL` special case — `fk = @id` simply does not match `NULL`, so a shared
   catalogue row (`id_empresa IS NULL` on `Cliente`/`Proveedor`/`Oferta`/`ConfiguracionDeCatalogo<T>`)
   cannot block an empresa. The behavioural proof is task 4.21. *(BO-R8)*
-- [ ] 3.16 **[S]** Structural: `rg` over `src/` proves `InspectorDeUso` has **zero callers** in this
+- [x] 3.16 **[S]** Structural: `rg` over `src/` proves `InspectorDeUso` has **zero callers** in this
   slice's tree. Recorded as a file/state assertion, **not** a runtime kill. *(verify criterion V10)*
-- [ ] 3.17 **[S]** Structural: `IWaysDbContext.cs` gained **exactly one** member and
+- [x] 3.17 **[S]** Structural: `IWaysDbContext.cs` gained **exactly one** member and
   `rg ": IWaysDbContext"` over `src/` and `tests/` still returns zero hand-written implementations.
   *(verify criterion V7)*
-- [ ] 3.18 GATE GUARD + non-regression — re-assert V1-V6 and V13 (the guard's generated statement is
+- [x] 3.18 GATE GUARD + non-regression — re-assert V1-V6 and V13 (the guard's generated statement is
   the **only** SQL in the diff and it is read-only `SELECT`/`EXISTS`); Domain + Application suites
   green; `dotnet build Ways.slnx` clean.
 - [ ] 3.19 `judgment-day` round to a clean round.
 - [ ] 3.20 Open PR 3 `feat/stage20-slice3-inspector-de-uso`, record N1/N2/N3 mutation evidence in the
   PR body (V11), merge to `main` after the clean round.
+
+### Mutation evidence — slice 3 (`mutation-proof-tests` rule 2, produced, not reasoned)
+
+Every mutation below was applied to the working tree, the named suite was run, the result was
+observed, and the mutation was then reverted and the suite observed GREEN again. Command:
+`dotnet test tests/Ways.Application.Tests/Ways.Application.Tests.csproj --filter <suite>`.
+Baseline before and after every mutation: **417/417 green**.
+
+| # | Task | Clause under test | Mutation applied | Observed result |
+|---|---|---|---|---|
+| M1 | 3.2, 3.10 | The bucket is keyed on the dependent TABLE (the `created_at` column), never on a CLR base class | `llevaMarca` replaced by `typeof(EntidadTenant).IsAssignableFrom(dependiente.ClrType)` | **KILLED, 5 tests** — `N1_ConstruirNoTiraParaNingunaDeLasCuatroAnclas(Tenant)` (the mechanical-impossibility throw fired, naming `Usuario`: an `EntidadBase` with no resolvable `created_at`), `N1_LaCuentaDeRamasEsLaDeLasFksMenosLosCarveOuts(Tenant)`, `N2_UsaAnclaEquivaleATenerColumnaCreatedAt(Tenant)`, `N3`, `NingunCarveOutAportaRamaParaNingunaAncla` |
+| M2 | 3.2, 3.10 | The classifier is not inverted | `llevaMarca ? Marcado : SinMarca` -> `llevaMarca ? SinMarca : Marcado` | **KILLED, 5 tests** — `N2` on **all four** anchors + `N3` |
+| M3 | 3.2, 3.10, 3.11 | The bucket is derived from metadata, never a hand-written table list | classifier body replaced by a hardcoded `is not "arqueos_turno" and not ...` list that **omits `lotes`** | **KILLED, 5 tests** — `N1` x2 (the throw named `Ways.Domain.Stock.Lote`), `N2(Tenant)`, `N3`, `NingunCarveOutAportaRamaParaNingunaAncla` |
+| M3b | 3.10, 3.11 | *(honesty row)* the same hardcode, **exactly correct for today's model** | classifier body replaced by the complete, correct hardcoded list | **SURVIVED, 44/44 green.** Recorded as a survivor, not dressed up: a hardcode that agrees with the model on every current row is an **equivalent mutant**, and no test over this model can see it. It is precisely what **N3 exists to catch tomorrow** — the day a stage adds a table, the derived classifier follows the model and the hardcode does not, and N3 goes red naming it |
+| M4 | 3.9, 3.11 | `GetReferencingForeignKeys()` is the only source — no FK is silently dropped | `.Where(fk => fk.DeclaringEntityType.GetTableName() != "stock")` inserted into the walk | **SUPERSEDED RECORD, RE-RUN IN ROUND 2 (R2-3).** The original row named `N1_LaCuentaDeRamasEsLaDeLasFksMenosLosCarveOuts`, which round 1 DELETED as a tautology (item 3.22) — the row cited a test that no longer exists. The same mutation was re-applied on the round-2 tree and observed: **KILLED, 7 tests** — `N1_NingunaFkSeCaeEnSilencioYLosCarveOutsNoEjecutan` on `Tenant` (*"Estas FKs hacia Tenant no aportaron ninguna rama al inventario: stock\|id_tenant"*) and on `PuntoVenta` (*"...: stock\|id_punto_venta,id_tenant"*), `N5` on `Tenant` (*"...: stock\|id_tenant"*) and on `PuntoVenta` (*"...: stock\|id_punto_venta"*), `N3` (QUITADAS: `Empresa \| stock via puntos_venta \| id_punto_venta,id_tenant \| sinmarca`, `PuntoVenta \| stock \| id_punto_venta,id_tenant \| sinmarca`, `Tenant \| stock \| id_tenant \| sinmarca`), `UnaRamaSinMarcaLlevaSoloElPredicadoDeLaFk` and `UnaRamaPuenteadaUneLaHojaConPuntosVentaYLigaElAnclaSobreElPuente` |
+| M5 | 3.3, 3.12 | The carve-out set has exactly two members | `typeof(NumeracionCliente)` removed from `Excluidos` | **KILLED, 3 tests** — `LosCarveOutsSonExactamenteAuditoriaYNumeracionCliente`, `NingunCarveOutAportaRamaParaNingunaAncla`, `N3` |
+| M6 | 3.5, 3.13 | The `>` of the anchor conjunct is **strict** (a `>=` makes every freshly provisioned tenant undeletable) | `d."created_at" > $n` -> `>= $n` | **KILLED, 7 tests** — `UnaRamaMarcadaLlevaElConjuntoDeAnclaConMayorEstricto`, `LaCuentaYElOrdenDeParametros...` x4, `UnaFkCompuestaDeClaveAlternativa...`, `UnaFkNullableRindeElPredicadoLlano...` |
+| M7 | 3.5, 3.13 | A `Marcado` branch actually carries the anchor conjunct | `if (rama.UsaAncla)` -> `if (false)` | **KILLED, 7 tests** — same set as M6 |
+| M8 | 3.7, 3.14 | **OD4** — no branch emits `deleted_at`, so a soft-deleted dependent still blocks | `AND d."deleted_at" IS NULL` appended to every branch | **KILLED, 13 tests** — `NingunaRamaMencionaDeletedAt` on **all four** anchors, plus 9 rendering equalities |
+| M9 | 3.5, 3.13 | The **outer** `LIMIT 1` — what makes the `Append` node stop at the first blocking branch | `") AS ramas LIMIT 1"` -> `") AS ramas"` | **KILLED, 4 tests** — `ElStatementAbreConLaProyeccionYCierraConElLimitExterno` on all four anchors |
+| M10 | 3.6, 3.13 | The identifier rejection — the closure of the injection surface. **The pattern recorded here, `^[a-z_][a-z0-9_]*$`, is the PRE-C5 one**: round 1 item 3.26 replaced it with `\A[a-z_][a-z0-9_]*\z`, because in .NET `$` also matches before a trailing line break. The mutation and its kills are unaffected (it neuters the whole check, not its anchoring); the anchor itself is what M22 isolates | `IdentificadorValido.IsMatch(valor)` -> `true` | **KILLED, 5 tests** — `UnIdentificadorNoConformeSeRechaza` x4 (including the `comprobantes_venta"; DROP TABLE usuarios; --` case) and `UnaColumnaOUnEsquemaNoConformeTambienSeRechazan` |
+| M11 | 3.2, 3.13 | The zip of `fk.Properties` with `fk.PrincipalKey.Properties` (composite and alternate-key FKs) | every conjunct bound to `$1` instead of the zipped index | **KILLED, 7 tests** — `UnaFkCompuestaDeClaveAlternativaRindeDosConjuntosLeidosDelAncla`, `UnTipoConDosFksAlAnclaAportaDosRamasIndependientes`, `UnaRamaSinMarcaLlevaSoloElPredicadoDeLaFk`, `LaCuentaYElOrden...` x2, +2 |
+| M12 | 3.6, 3.13 | Identifiers are schema-qualified and double-quoted | `FROM "{esquema}"."{tabla}" d` -> `FROM {tabla} d` | **KILLED, 13 tests** — `TodaTablaSeEmiteCalificadaPorEsquemaYEntreComillas` on all four anchors + 9 rendering equalities |
+| M13 | 3.3, 3.12 | The renderer filters carve-outs even when handed the complete inventory | the `Where(... is not Excluido)` of `Renderizar` dropped | **KILLED, 3 tests** — `ElRenderizadorNuncaEmiteUnaTablaExcluida` on `Tenant`, `PuntoVenta` and `Usuario` |
+| M14 | 3.11 | **N3 is a real trip-wire and its diff NAMES the exact table and column** | the golden edited the way a future stage would break it: one line deleted (`PuntoVenta / movimientos_stock / id_punto_venta_destino,id_tenant`) and one reclassified (`Tenant / stock / id_tenant`, `sinmarca` -> `marcado`) | **KILLED, 1 test**, and the message printed the exact lines — `AGREGADAS: PuntoVenta / movimientos_stock / id_punto_venta_destino,id_tenant / sinmarca` and `Tenant / stock / id_tenant / sinmarca`; `QUITADAS: Tenant / stock / id_tenant / marcado`. The first run used a plain `Assert.Equal` over the two collections, whose diff truncates each line at ~50 characters and cut `id_punto_venta_destino` down to `id_punto_venta_de`; the explicit added/removed message was written **because of** that observation, not before it |
+
+**Structural rows, stated as structural and never dressed up as runtime kills**
+(`mutation-proof-tests` rule 13):
+
+| # | Task | Assertion | Evidence |
+|---|---|---|---|
+| S1 | 3.16 | `InspectorDeUso` has **zero callers** in `src/` (V10) | `rg -n "PrimeraDependenciaEnUsoAsync" src/` returns exactly **one** line — its own declaration. The line number DRIFTS with every doc-comment edit, so it is re-observed each round instead of copied: `:72` when this row was first written, `:77` at the round-1 commit `55fe4ac` (the row was stale, R2-3), `:86` after round 2. `rg -n "InspectorDeUso" src/` returns 5 lines: the class declaration, two doc-comment mentions, one `<see cref>` in `IWaysDbContext.cs` and the `AddScoped<InspectorDeUso>()` registration. A DI registration is not a call site |
+| S2 | 3.17 | `IWaysDbContext.cs` gained **exactly one** member and zero implementations changed (V7) | `git diff --stat` on that file = `11 insertions(+)`: 2 `using`, 8 doc-comment lines and 1 member (`IModel Model { get; }`). `rg ": IWaysDbContext" src/ tests/` -> **zero** matches, unchanged |
+| S3 | 3.18 | V1 — zero new migrations | `Migraciones/` still ends at `20260822002214_FiscalArcaEtapa19a.cs`; `dotnet ef migrations has-pending-model-changes` -> *"No changes have been made to the model since the last migration."* |
+| S4 | 3.18 | V2/V3/V5/V6 — `InicializadorDeBaseDeDatos.cs`, `src/Ways.Infrastructure/Persistencia/**`, `Politicas.cs` and `ManejadorDeErrores.cs` untouched | `git status --short` lists only two modified files, both under `src/Ways.Application/` |
+| S5 | 3.18 | V4 — zero physical deletes | a scan for `ExecuteDelete`, `RemoveRange(`, `.Remove(` and `DELETE FROM` over both new files returns zero matches |
+| S6 | 3.18 | V13 — the only SQL in the diff is the guard's generated statement, and it is read-only | the diff's sole SQL producer is `InspectorDeUso.Renderizar`, which emits `SELECT`/`EXISTS`/`UNION ALL`/`LIMIT` and nothing else; the rendering suite asserts the full text of every branch of all four anchors |
+
+### Judgment-day slice 3, round 1 — confirmed items corrected
+
+Six confirmed items fixed and two recorded with no code change. **ZERO schema, zero physical
+deletes, the guard stays INERT** (`rg -n "PrimeraDependenciaEnUsoAsync" src/` still returns only
+its own declaration): no configuration, no migration and no `Politicas.cs` /
+`InicializadorDeBaseDeDatos.cs` / `ManejadorDeErrores.cs` line was touched.
+
+- [x] 3.21 **C1 (CRITICAL, both judges) — `puntos_venta` was missing from the `Tenant` dependent
+  set.** *(Round 2, R2-2: this row originally claimed the fix "closes the CLASS, not the
+  instance". That overstates it and is corrected here. The union closes the class **for
+  `EntidadTenant` subclasses** — every one of them is reached by the scope-column source
+  whether or not it declares an FK against `tenants`. A tenant-scoped table that is NOT an
+  `EntidadTenant` subclass is covered today only by its declared FKs, and by **N5 as the CI
+  trip-wire** that names it the day one appears without one.)* `PuntoVentaConfiguration.cs:64-69`
+  declares only `HasOne<Empresa>().HasForeignKey(p => new { p.IdEmpresa, p.IdTenant })` and **no**
+  `HasOne<Tenant>()`, so `Tenant.GetReferencingForeignKeys()` never yielded `puntos_venta`: a
+  tenant whose customer opened a second local read **PRISTINE** — fail-OPEN, in the data-loss
+  direction, the one this stage refuses. `InventarioDeDependientes.InventarioCompleto` now builds
+  the `Tenant` dependent set as the **UNION** of (a) the FK walk and (b) every entity type
+  assignable to `EntidadTenant` mapped to the `id_tenant` scope column — the same reflection idiom
+  `WaysDbContext.AplicarFiltroDeTenant` already uses for the query filter — deduplicated by
+  `(tabla, columnas)` and classified by the **same** bucket rule. Adding the FK to the model was
+  rejected on sight: that is a schema change and reopens the gate. The N3 golden gained
+  `Tenant | puntos_venta | id_tenant | marcado` **and only that line** (`git diff --stat` on the
+  fixture = `1 insertion(+)`). *(design D2, A; BO-R5)*
+- [x] 3.22 **N5 — the dependent-SET completeness net**, judge B's manual audit written as code
+  (`InventarioDeDependientesTests.N5_TodaTablaDeAlcanceDelAnclaApareceEnSuInventario (renamed by R2-2 into the four-anchor theory)`,
+  container-free against the real Npgsql model): for the `Tenant` anchor, **every** entity type in
+  the model mapped to an `id_tenant` column must appear in its inventory (`excluido` lines count as
+  present, because a carve-out is a written decision and not an omission), and the assertion NAMES
+  the missing tables. **N1's count assertion is a tautology and is now recorded as one**: it
+  compared `InventarioCompleto().Count` against the very walk that produces it, so a dependent that
+  walk cannot see is invisible on both sides of the equality — that is exactly why C1 survived N1,
+  N2 and N3. N1's second half was rewritten to what it can honestly assert (no FK is silently
+  dropped: every FK's `(tabla, columnas)` is present; and no carve-out reaches the executable set),
+  and **N5 is the set-level trip-wire N1 cannot be**, because its universe comes from an
+  INDEPENDENT source — the model's column mapping. *(design B; never degradable)*
+- [x] 3.23 **C2 (judge A) — the raw-ADO execution half had ZERO tests.**
+  `rg PrimeraDependenciaEnUsoAsync tests/` returned nothing: every existing test went through the
+  static `Renderizar`, so the bind ORDER (`valoresDeClave` first, the anchor instant last), the
+  `ramas.Any(rama => rama.UsaAncla)` gate, the caller-transaction attachment and the
+  `ExecuteScalarAsync as string` had no net at all — deleting the gate leaves the SQL referencing
+  `$n` with `n-1` parameters bound, which is a Postgres bind error, which is a 500, and the whole
+  suite stayed green. New `tests/Ways.IntegrationTests/InspectorDeUsoEjecucionTests.cs` (Docker,
+  real Postgres) drives `PrimeraDependenciaEnUsoAsync` for **all four** anchors, including the two
+  composite-key anchors (`Empresa` and `PuntoVenta`, `Id` + `IdTenant` + the instant = **three**
+  parameters, which is what makes the order observable). Sibling seeds per `mutation-proof-tests`
+  rule 12c: a second empresa of the same tenant, a second punto de venta and a second tenant, so a
+  predicate that ignores either position of the composite key dies. *(BO-R4, BO-R7; design D5, D6)*
+- [x] 3.24 **C3 (judge A) — the `Marcado` predicate deviated from design section A, undeclared, in
+  the under-blocking direction.** `Clasificar` decided the bucket from the presence of a
+  `created_at` COLUMN alone; the design's membership test is
+  `typeof(EntidadBase).IsAssignableFrom(t.ClrType)` **and** the column. Both conditions are now
+  required, so a future type carrying `created_at` without inheriting `EntidadBase` — which does
+  not share the project's stamping convention, so its mark is not comparable against the anchor
+  instant — falls to `SinMarca` (existence only), which OVER-blocks: the safe side. N2 recomputes
+  with the SAME two-condition rule. **The golden did not change**, verified and not assumed: all 13
+  `sinmarca` lines lack the column and every `marcado` line inherits `EntidadBase`. See M17/M18
+  below for the honest consequence — on today's model the deviation is unobservable.
+- [x] 3.25 **C4 (judge B) — an empty executable set returned `null` (fail-OPEN) while `Renderizar`
+  threw for the same state.** `PrimeraDependenciaEnUsoAsync` now THROWS
+  `InvalidOperationException`, matching `Renderizar`: an empty branch set means the inventory knows
+  nothing about that anchor, not that the entity is pristine, and returning `null` asserted the
+  second without having asked anything. Unit test
+  `UnAnclaSinRamasEjecutablesTiraEnVezDeDevolverNull`.
+- [x] 3.26 **C5 (both judges) — the `$` anchor accepted a trailing newline.** In .NET `$` also
+  matches BEFORE a final `\n`, so `"stock\n"` passed `^[a-z_][a-z0-9_]*$` and everything after the
+  line break would have been concatenated into the statement. The pattern is now
+  `\A[a-z_][a-z0-9_]*\z` (absolute end of string) and the `"stock\n"` rejection case was added to
+  the theory.
+- [x] 3.27 **C6 (judge A, small).** (a) A `null` element of `valoresDeClave` reached
+  `ParametrosDeComando.Agregar` unnormalized and produced an opaque Npgsql failure; it is now an
+  `ArgumentException` NAMING the index and the property, the same shape as the count mismatch
+  beside it. (b) `ElRenderizadorNuncaEmiteUnaTablaExcluida` asserted `numeraciones_clientes` for
+  `PuntoVenta`/`Usuario`, where **no such FK exists** — a vacuous assertion — and omitted `Empresa`
+  entirely. Each row now declares the carve-outs that ACTUALLY reference that anchor, the test pins
+  that set before asserting the absence, and `Empresa` is in the theory with an EMPTY set, which is
+  the row that states "no carve-out references an empresa today" and goes red the day one does.
+
+**Recorded, no code change (by decision).**
+
+| # | Finding | Record |
+|---|---|---|
+| R1 | Judge A — `InicializadorDeBaseDeDatos.cs:584` (`var ahora = reloj.Ahora`) stamps the stage-2 backfill's `listas_precio`/`clientes` rows for PRE-EXISTING tenants with a LATER startup instant than those tenants' own `created_at` | **Known OVER-BLOCK, fail-SAFE, discriminator deliberately unchanged.** Operator-facing consequence: such a tenant is permanently blocked by `clientes` even with zero customer data, and no retry or waiting clears it. Carried as a **slice-4 input**: the 409 names the blocking table, so the operator sees `clientes` and can tell this apart from real customer data. Fixing it means re-stamping backfilled rows to each tenant's own instant — a data change behind the ZERO-SCHEMA gate, out of scope here |
+| R2 | Judge A — `ObtenerConexionAbiertaAsync` opens the connection and never closes it | **Replicated PRE-EXISTING pattern, not a new defect.** Byte-identical to the idiom already in `AsignadorDeNumeroCliente`, `ServicioDeVentas`, `ServicioDeStock` and `ServicioDeLotes`: the connection belongs to the caller's `DbContext` and its lifetime is the scope's, so closing it here would break the caller. Changing it is a five-call-site sweep of untouched code, not a slice-3 correction |
+
+### Mutation evidence — slice 3, judgment-day round 1 (run, not reasoned)
+
+Application suite baseline before and after every mutation: **422/422 green** (417 before this
+round; +5 from N5, the two new `InspectorDeUso` unit tests, the `"stock\n"` theory case and the
+`Empresa` theory row). New integration class baseline: **4/4 green**.
+
+| # | Item | Clause under test | Mutation applied | Observed result |
+|---|---|---|---|---|
+| M15 | 3.21, 3.22 | The `Tenant` dependent set is the UNION, not the FK walk alone | `AgregarRamasDeAlcanceDeTenant(ancla, tipoAncla, ramas);` deleted from `InventarioCompleto` | **KILLED, 2 tests.** N5 named the exact table — *"Estas tablas llevan id_tenant y NO están en el inventario del ancla Tenant, así que un tenant que las usó lee PRÍSTINO (falla abierta): puntos_venta"* — and N3 printed `QUITADAS: Tenant \| puntos_venta \| id_tenant \| marcado` |
+| M16 | 3.21, 3.23 | The same union, observed through EXECUTION against real Postgres | idem | **KILLED, 1 test** — `UnSegundoPuntoDeVentaBloqueaLaBajaDelTenant`: `Expected: "puntos_venta" / Actual: null`. The failure IS the fail-open: the guard reported a tenant with two puntos de venta as pristine |
+| M17 | 3.24 | *(honesty row)* the `created_at`-column half of the two-condition `Marcado` rule | `llevaMarca && heredaDeEntidadBase` -> `llevaMarca` (the pre-fix predicate) | **SURVIVED, 422/422 green.** Recorded as a survivor, not dressed up |
+| M18 | 3.24 | *(honesty row)* the `EntidadBase` half of the same rule | `llevaMarca && heredaDeEntidadBase` -> `heredaDeEntidadBase` | **SURVIVED, 422/422 green.** The two survivors together say the honest thing: on TODAY'S model the three formulations are the same function, because the mechanical-impossibility throw already guarantees `heredaDeEntidadBase => llevaMarca` and no type carries `created_at` without inheriting `EntidadBase`. There is no witness in the model, so no test over this model can see the difference — an equivalent mutant of the M3b class. The fix is design conformance for the day a witness appears, and N3's golden is what will name that day's table |
+| M19 | 3.23 | The `ramas.Any(rama => rama.UsaAncla)` gate — the anchor instant is bound whenever any branch references `$n` | the whole `if (ramas.Any(...)) { Agregar(comando, ancla); }` block deleted | **KILLED, 4/4 integration tests**, with the real Npgsql message: `Npgsql.PostgresException : 08P01: bind message supplies 2 parameters, but prepared statement "" requires 3`. That is the 500 the whole suite used to survive |
+| M20 | 3.23 | The bind ORDER — `valoresDeClave` first, the anchor instant LAST | the two `Agregar` blocks swapped | **KILLED, 4/4 integration tests**: `Npgsql.PostgresException : 42883: operator does not exist: integer = timestamp with time zone` (POSITION 111/112/144) — the `timestamptz` landed in `$1` against `id_empresa`/`id_punto_venta` |
+| M21 | 3.25 | The execution path fails CLOSED on an empty executable set | the `throw` restored to `return null;` | **KILLED, 1 test** — `UnAnclaSinRamasEjecutablesTiraEnVezDeDevolverNull`: *"Assert.Throws() Failure: No exception was thrown"* |
+| M22 | 3.26 | The `\z` ANCHOR specifically, isolated from the message text | only the `Regex` construction reverted to `"^[a-z_][a-z0-9_]*$"`, leaving `PatronDeIdentificador` (which the error message prints) untouched, so the theory's other four cases stay green and only the anchoring is under test | **KILLED, exactly 1 case** — `UnIdentificadorNoConformeSeRechaza(tabla: "stock\n")`: *"Assert.Throws() Failure: No exception was thrown"*. The first attempt reverted the shared constant and killed all five cases on the message assertion instead of the anchor; that run proved nothing about `\z` and was redone |
+| M23 | 3.27 | The positional `null` rejection of `valoresDeClave` | the validation loop deleted | **KILLED, 1 test** — `UnValorDeClaveNuloSeRechazaNombrandoSuIndice` got `InvalidOperationException` / `Npgsql.NpgsqlException : Failed to connect to 127.0.0.1:5432` instead of `ArgumentException`: without the guard the container-free unit test reaches the connection, which is precisely the opaque failure the guard replaces |
+
+
+### Judgment-day slice 3, round 2 — confirmed items corrected (FINAL round, no third)
+
+Five confirmed items fixed. **ZERO schema, zero physical deletes, the guard stays INERT**
+(`rg -n "PrimeraDependenciaEnUsoAsync" src/` still returns only its own declaration, now at
+`InspectorDeUso.cs:86`): no configuration, no migration and no line under
+`src/Ways.Infrastructure/` was touched. `dotnet ef migrations has-pending-model-changes` →
+*"No changes have been made to the model since the last migration."*
+
+- [x] 3.28 **R2-1 (CRITICAL, orchestrator-verified) — the `Empresa` anchor read PRISTINE with a
+  full operating history: fail-OPEN, same class as round 0's C1 by a different mechanism.**
+  NO operational table carries `id_empresa`: `comprobantes_venta`, `comprobantes_compra`, their
+  items, `pagos_comprobante`, `movimientos_stock`, `stock`, `stock_lotes`, `turnos_caja`,
+  `movimientos_caja`, `movimientos_tesoreria`, `movimientos_cuenta_corriente`, `presupuestos`,
+  `remitos`, `ordenes_compra` and `gastos` all key on `id_punto_venta`. An empresa's DIRECT
+  referencers are structure and catalogue only — the 13 lines the golden already had. The scenario:
+  provision, load tenant-wide articles (`id_empresa` NULL, so no `articulos_empresas` row), sell at
+  the provisioned punto de venta. All 13 branches fail — the 11 `marcado` ones need
+  `created_at > T0` and the provisioned rows are exactly `T0`, the 2 `sinmarca` ones have no row —
+  so the guard reports the empresa as PRISTINE while slice 4 soft-deletes it and its punto de
+  venta.
+  **The fix makes usage propagate UP the structural hierarchy**: a punto de venta in use means its
+  empresa is in use. `InventarioDeDependientes` gained a THIRD source
+  (`AgregarRamasPuenteadasPorPuntoDeVenta`): for the `Empresa` anchor, every branch of the
+  `PuntoVenta` anchor's EXECUTABLE inventory is re-emitted BRIDGED by `puntos_venta` — same buckets,
+  same carve-outs, nothing hand-written. The new `PuenteDeUso` record carries the bridge table and
+  its two column vectors, and the renderer emits
+  `... FROM "public"."<hoja>" d JOIN "public"."puntos_venta" pv ON d."<fk>" = pv."id_punto_venta"
+  AND d."id_tenant" = pv."id_tenant" WHERE pv."id_empresa" = $1 AND pv."id_tenant" = $2
+  [AND d."created_at" > $3]`. ONE statement, not N queries per punto de venta; identifiers still
+  come only from EF metadata and still go through the `\A[a-z_][a-z0-9_]*\z` validation; parameters
+  stay positional and in the existing bind order (`PropiedadesDeAncla(Empresa)` is still
+  `Id, IdTenant`, so the anchor instant is still `$3`). The label returned to the operator is the
+  **leaf** table (`turnos_caja`, `comprobantes_venta`, …), which is what the 409 has to name.
+  **`Tenant` does NOT need this** — every table carries `id_tenant` and the scope-column source
+  already brings it, verified by N5 on the `Tenant` anchor — and `PuntoVenta` and `Usuario` are
+  leaves of the hierarchy. `ElConjuntoPuenteadoDeEmpresaEsElInventarioEjecutableDePuntoVenta`
+  asserts exactly that: the bridged set equals `Construir(PuntoVenta)`, and the other three anchors
+  emit zero bridged branches. *(design D2, D3, A; BO-R5)*
+- [x] 3.29 **R2-2 — N5 is now GENERIC over the four anchors; "closes the CLASS" was an
+  overstatement and is corrected in item 3.21.**
+  `N5_TodaTablaDeAlcanceDelAnclaApareceEnSuInventario` is a theory over
+  `(ancla, columnas de alcance)`: `id_tenant`; `id_empresa`;
+  `id_punto_venta` + `id_punto_venta_destino`; `id_empleado` + `id_empleado_apertura` +
+  `id_empleado_cierre` + `id_actor`. For each anchor the universe is every entity type in the model
+  mapping one of those columns, minus the anchor's own table, and every `(tabla, columna)` PAIR of
+  that universe must appear in that anchor's inventory (`excluido` lines count as present). The
+  assertion NAMES the missing pair. Pair granularity, not table granularity, is what makes the net
+  see a second FK from a table that already contributes one — `movimientos_stock` reaches
+  `PuntoVenta` twice, and `ordenes_compra`/`turnos_caja` reach `Usuario` twice.
+- [x] 3.30 **R2-3 — three stale records corrected in place** (judge A). (a) M4 cited
+  `N1_LaCuentaDeRamasEsLaDeLasFksMenosLosCarveOuts`, which round 1 deleted as a tautology; the
+  mutation was RE-RUN on this tree and the row now carries the observed result and messages.
+  (b) M10 recorded the pre-C5 `^…$` pattern; the row now says so and points at M22 as the
+  isolation of the anchor. (c) S1's `InspectorDeUso.cs:72` is now re-observed per round
+  (`:72` → `:77` at `55fe4ac` → `:86` here) instead of copied forward.
+- [x] 3.31 **R2-4 — production doc-comments state present INTENT, not review history** (judge B).
+  `InventarioDeDependientes.ColumnaDeAlcanceDeTenant` no longer narrates what "quedaba FUERA" of
+  the inventory; it says WHY the `Tenant` anchor needs a second source. `InspectorDeUso`'s pattern
+  comment no longer narrates what "pasaba la validación"; it says why `\A`/`\z` and never `^`/`$`.
+  Test-file comments keep their narrative — a test's reason to exist IS the defect it kills.
+- [x] 3.32 **R2-5 — arity guard on the synthesized tenant-scope branch** (judge B, suggestion).
+  `AgregarRamasDeAlcanceDeTenant` zips ONE hardcoded column (`id_tenant`) against
+  `clavePrincipal.Properties`. A composite `Tenant` PK would make `Zip` truncate in silence and the
+  branch would bind only the first property: silent UNDER-blocking. It now throws
+  `InvalidOperationException` naming the key, the same shape as the other mechanical
+  impossibilities, executed by N1 in CI. No witness exists on today's model (see M26 for the honest
+  consequence).
+
+**Golden N3 — every added line justified (V8).** `git diff --stat` on
+`tests/Ways.Application.Tests/Persistencia/Fixtures/inventario-de-dependientes.txt` =
+**17 insertions(+), 0 deletions(−)**. The rendering gained a `via` segment in the table field
+(`Empresa | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado`), still four
+`" | "`-separated fields, so N3's comparison is unchanged. The 17 lines are exactly the 17
+EXECUTABLE branches of the `PuntoVenta` anchor (its golden lines minus the `auditoria` carve-out),
+each re-emitted for `Empresa` through `puntos_venta` with its bucket unchanged:
+
+| Added line | Why it must be there |
+|---|---|
+| `comprobantes_venta via puntos_venta` (marcado) | a SALE is the canonical proof that a customer operated on this empresa |
+| `comprobantes_compra via puntos_venta` (marcado) | purchases key on the PV, same argument |
+| `gastos via puntos_venta` (marcado) | expenses key on the PV |
+| `ordenes_compra via puntos_venta` (marcado) | purchase orders key on the PV |
+| `presupuestos via puntos_venta` (marcado) | quotes key on the PV |
+| `remitos via puntos_venta` (marcado) | delivery notes key on the PV |
+| `turnos_caja via puntos_venta` (marcado) | a cash shift opened is operating history |
+| `parametros via puntos_venta` (marcado) | PV-scoped parameters the customer edited; the empresa-scoped `parametros` row is a SEPARATE line and stays |
+| `movimientos_stock via puntos_venta` ×2 (sinmarca) | outgoing AND incoming transfers — two FKs, two branches, per M11's rule |
+| `movimientos_tesoreria via puntos_venta` (sinmarca) | treasury movements key on the PV |
+| `movimientos_cuenta_corriente via puntos_venta` (sinmarca) | customer account ledger keys on the PV |
+| `movimientos_cuenta_corriente_proveedor via puntos_venta` (sinmarca) | supplier account ledger keys on the PV |
+| `stock via puntos_venta` (sinmarca) | a stock row exists only where the customer loaded stock |
+| `stock_lotes via puntos_venta` (sinmarca) | lot-level stock, same argument |
+| `numeraciones_comprobante via puntos_venta` (sinmarca) | a numbering counter for the PV means comprobantes were issued or configured there |
+| `numeraciones_fiscales via puntos_venta` (sinmarca) | idem for the fiscal series |
+| `movimientos_caja` — **absent on purpose** | it keys on `id_turno`/`id_empleado`, never on `id_punto_venta`, so it is not in the `PuntoVenta` inventory and is not bridged; `turnos_caja` covers the same history |
+| `auditoria` — **absent on purpose** | it is a carve-out, so it is not in the EXECUTABLE inventory of `PuntoVenta` and is never bridged; `ElConjuntoPuenteadoDeEmpresaEsElInventarioEjecutableDePuntoVenta` asserts that |
+
+The two `sinmarca` families deserve the honest note: `numeraciones_*` and `stock` block on
+EXISTENCE, so the day a provisioning path seeds them for a new punto de venta, the empresa becomes
+permanently undeletable. That is the OVER-block direction (fail-safe), it is what
+`UnTenantReciennAprovisionadoEstaPristinoEnLasCuatroAnclas` and the round-2 baseline assertion
+watch, and it is the direction this stage accepts.
+
+### Mutation evidence — slice 3, judgment-day round 2 (run, not reasoned)
+
+Application suite baseline before and after every mutation: **427/427 green** (422 before this
+round; +3 from N5 becoming a four-case theory, +2 from the two new bridge rendering tests).
+Domain: **545/545**. Inspector integration class baseline: **6/6** (4 before, +2 from the bridge).
+
+| # | Item | Clause under test | Mutation applied | Observed result |
+|---|---|---|---|---|
+| M24a | 3.28 | The `Empresa` dependent set includes the family BRIDGED by `puntos_venta` | `AgregarRamasPuenteadasPorPuntoDeVenta(ancla, tipoAncla, ramas);` deleted from `InventarioCompleto` | **KILLED, 3 Application tests** — `N3` printed all 17 `QUITADAS` lines, starting at `Empresa \| comprobantes_compra via puntos_venta \| id_punto_venta,id_tenant \| marcado`, plus `UnaRamaPuenteadaUneLaHojaConPuntosVentaYLigaElAnclaSobreElPuente` and `ElConjuntoPuenteadoDeEmpresaEsElInventarioEjecutableDePuntoVenta` |
+| M24b | 3.28 | The same family, observed through EXECUTION against real Postgres | idem | **KILLED, 2/6 integration tests** — `UnTurnoDeCajaEnSuPuntoDeVentaBloqueaLaBajaDeLaEmpresa`: *"Assert.Equal() Failure: Strings differ / Expected: \"turnos_caja\" / Actual: null"*, and `ElTurnoDeOtroTenantNoBloqueaLaBajaDeLaEmpresaPorElPuente` with the same message. The failure IS the fail-open: the guard reported an empresa with an open cash shift as pristine |
+| M25 | 3.29 | N5 is generic and its universe is INDEPENDENT of the walk that produces the inventory | `.Where(fk => !(tipoAncla == typeof(Usuario) && fk.DeclaringEntityType.GetTableName() == "turnos_caja"))` inserted into the FK walk | **KILLED, 3 tests.** `N5(Usuario)` NAMED the exact pairs — *"Estos pares (tabla, columna) están scopeados por el ancla Usuario y NO están en su inventario, así que una entidad que los usó lee PRÍSTINA (falla abierta): turnos_caja\|id_empleado_apertura, turnos_caja\|id_empleado_cierre"*. Said honestly: `N1(Usuario)` and `N3` also went red, because for the `Usuario` anchor EVERY branch comes from the FK walk, so no mutation of that walk can be invisible to N1. N5's independence is what covers the anchors whose set is NOT only the walk |
+| M26 | 3.32 | *(reachability row)* the arity guard of the synthesized tenant-scope branch | `clavePrincipal.Properties.Count != 1` → `!= 2`, so today's single-property key trips it | **KILLED, 6 tests**, with the message the guard exists to print: *"El ancla Ways.Domain.Organizacion.Tenant tiene una clave primaria de 1 propiedades (Id) y la rama de alcance de tenant solo puede zipear la columna id_tenant: el inventario necesita una columna de alcance por propiedad de la clave."* What it proves and what it does NOT: it proves the guard is REACHED on every `Construir(Tenant)` and that its message names the key. It does NOT prove a composite `Tenant` PK would be caught — no such witness exists in this model, and none was fabricated. Same honesty class as M3b/M17/M18 |
+| M4 (re-run) | 3.9, 3.11, 3.30 | `GetReferencingForeignKeys()` is the only source of the DIRECT set | see the M4 row above, re-applied on this tree | **KILLED, 7 tests** — the full message set is recorded in the M4 row |
+
+**Structural rows for round 2**
+
+| # | Item | Assertion | Evidence |
+|---|---|---|---|
+| S7 | 3.28 | The guard is still INERT (V10) | `rg -n "PrimeraDependenciaEnUsoAsync" src/` → exactly **one** line, its own declaration at `InspectorDeUso.cs:86`. `rg -n "InspectorDeUso" src/` → 5 lines, unchanged |
+| S8 | 3.28 | ZERO schema (V1) and zero Infrastructure files touched (V2/V3/V5/V6) | `git diff --stat` touches 6 files: 2 under `src/Ways.Application/Organizacion/`, 3 test files and the golden fixture. `dotnet ef migrations has-pending-model-changes` → *"No changes have been made to the model since the last migration."* |
+| S9 | 3.28 | ZERO physical deletes (V4), and the only SQL is still read-only (V13) | the diff adds one `JOIN` inside the existing `SELECT … WHERE EXISTS` and nothing else; a scan for `ExecuteDelete`, `RemoveRange(`, `.Remove(` and `DELETE FROM` over the changed production files returns zero matches |
 
 ---
 
@@ -967,6 +1234,45 @@ confound). Do **not** add creation endpoints. This latency is reported to the ow
 
 **BINDING — OD6.** A cascade-deleted admin gets **401 `credenciales_invalidas`**, not 403. The
 `tenant-organization` scenario claiming 403 is superseded (Reconciliación 1).
+
+**BINDING — INPUTS CARRIED FROM SLICE 3 (judgment-day FINAL re-judgment, round budget exhausted).**
+The guard is approved and inert. These four are what slice 4 must honour when it wires the callers.
+
+1. **Design amendment, now declared.** The guard has THREE sources, not the design's one: the FK walk
+   (D3), the `id_tenant` scope source for `EntidadTenant` subclasses (round 1, C1), and the
+   `puntos_venta` bridge that propagates a punto de venta's use up to its empresa (round 2, R2-1).
+   Principle: **usage propagates up the structural hierarchy** — PV used ⇒ Empresa used ⇒ Tenant used.
+   Scope statement, stated honestly: the hierarchy is complete for data an entity OWNS. A tenant-wide
+   catalogue (articles with `DisponibleParaTodas`, prices on the default list, `id_empresa` NULL rows)
+   marks the TENANT as used, not the empresa — deleting that empresa would not touch the catalogue.
+   `InventarioDeDependientes.cs` still cites "design D2/D3" for the bridge; amend that comment to name
+   this amendment. `design.md` is frozen; this paragraph is the amendment record.
+2. **The bridged 409 must name the punto de venta.** A bridged branch projects the LEAF table only
+   (`InspectorDeUso.cs:235` emits `'turnos_caja'`, never `RamaDeUso.Etiqueta`). So `empresa_en_uso`
+   would tell the operator "turnos_caja" for an empresa with no hint that the row lives on a punto de
+   venta, nor which one. When you write the 409 copy (task 4.x code→copy), either surface the bridge
+   (`turnos_caja via puntos_venta`) or resolve the PV name. Do not ship a bare leaf label for a
+   bridged hit.
+3. **Task 4.36 (`pg_indexes` coverage) assumes one table per branch.** A bridged branch needs
+   coverage on TWO relations: the leaf join column (e.g. `movimientos_stock.id_punto_venta_destino`)
+   AND the bridge anchor columns (`puntos_venta.id_empresa, id_tenant`). A single-table check would
+   report the 17 bridged Empresa branches as covered while the `pv`-side predicate is unindexed.
+   Extend the check to both relations for bridged branches.
+4. **Over-block watch.** The bridged `sinmarca` families (`numeraciones_comprobante`,
+   `numeraciones_fiscales`, `stock`) block on EXISTENCE. Provisioning seeds none of them today (verified
+   by both judges), so the baseline is sound — but if a future provisioning path seeds them per punto
+   de venta, that empresa becomes permanently undeletable. The pristine baseline integration test is
+   the watch; do not weaken it. Also latent: `RamaDeUso`/`PuenteDeUso` are records over
+   `IReadOnlyList<string>`, so compiler equality is by reference — never put them in a `HashSet` or
+   `Assert.Equal` them; use `ClaveDeRama`.
+
+Records precision, both judges: the R2-1 entry says "slice 4 soft-deletes it and its punto de venta"
+without noting that OD5's structural minimum fires FIRST on every API-reachable empresa today (no
+creation endpoint exists), so the CRITICAL framing overstates present reachability. The fix was
+correct for the below-API service path and for the day a creation endpoint ships. And the
+`EFECTO LATERAL B` doc-comment in `InspectorDeUso.cs` ("NO se agrega ningún conjunto `id_tenant`")
+is true only in the narrow sense "no conjunct beyond the declared FK" — the emitted SQL visibly
+carries `id_tenant` conjuncts. Reword it when slice 4 next touches that file.
 
 **BINDING — INPUTS CARRIED FROM SLICE 1 (judgment-day FINAL re-judgment).** Three items were
 confirmed by both judges after the two permitted correction rounds were spent. None has user impact

@@ -635,7 +635,208 @@ phases:
       and M38b the M30/M30b class, all unreachable today). SUITES after the
       round-2 correction - npm run test 63 files / 1021 tests green, npm run
       build (tsc -b plus vite) clean, npm run lint exit 0 with the same five
-      pre-existing warnings. Slices 3-5 pending.
+      pre-existing warnings.
+
+      SLICE 3 IMPLEMENTED (tasks 3.1-3.18 and the round-1 corrections 3.21-3.27
+      checked; 3.19 judgment-day and 3.20 PR belong to the orchestrator). Branch
+      feat/stage20-slice3-inspector-de-uso off main, measured with 'git diff main
+      --stat -- src tests' and NOT estimated - 8 files, 1658 insertions and zero
+      deletions, of which production is 585 across four files
+      (Organizacion/InventarioDeDependientes.cs 335, Organizacion/InspectorDeUso.cs
+      232, Abstracciones/IWaysDbContext.cs 11, DependencyInjection.cs 7) and tests
+      are 1073 (Organizacion/InspectorDeUsoTests.cs 387,
+      Persistencia/InventarioDeDependientesTests.cs 324, the new
+      Ways.IntegrationTests/InspectorDeUsoEjecucionTests.cs 270 and the N3 golden
+      Persistencia/Fixtures/inventario-de-dependientes.txt 92). THE GUARD SHIPS
+      INERT AND THAT IS VERIFIED, NOT ASSUMED - 'rg -n
+      "PrimeraDependenciaEnUsoAsync" src/' returns exactly one line, its own
+      declaration; the only other src/ mention is the AddScoped registration, and a
+      DI registration is not a call site. ZERO-SCHEMA HELD AND VERIFIED - zero files
+      under Migraciones/, the last migration is still
+      20260822002214_FiscalArcaEtapa19a, and 'dotnet ef migrations
+      has-pending-model-changes' reports "No changes have been made to the model
+      since the last migration."
+
+      JUDGMENT-DAY SLICE 3 ROUND 1 CORRECTED. Round diff measured against the
+      pre-round HEAD 31b9148 with 'git diff 31b9148 --stat -- src tests openspec' -
+      7 files, 686 insertions and 49 deletions, of which production is 166 (31 in
+      InspectorDeUso.cs, 135 in InventarioDeDependientes.cs). Six confirmed items
+      fixed. C1 CRITICAL and confirmed by BOTH judges - puntos_venta was missing
+      from the Tenant dependent set, because PuntoVentaConfiguration declares only
+      HasOne<Empresa>() with the composite key (IdEmpresa, IdTenant) and no
+      HasOne<Tenant>(), so Tenant.GetReferencingForeignKeys() never yielded it and a
+      tenant whose customer opened a second local read PRISTINE - fail-OPEN, in the
+      data-loss direction. Fixed by making the Tenant dependent set the UNION of the
+      FK walk and every entity type assignable to EntidadTenant mapped to the
+      id_tenant scope column, the same reflection idiom
+      WaysDbContext.AplicarFiltroDeTenant already uses, deduplicated by (tabla,
+      columnas) and classified by the same bucket rule; the fix closes the CLASS,
+      not the instance. Adding the FK to the model was refused on sight - that is a
+      schema change and reopens the gate. The N3 golden gained exactly one line,
+      Tenant | puntos_venta | id_tenant | marcado, and nothing else, verified with
+      'git diff --stat' on the fixture = 1 insertion. C2 - the raw-ADO execution
+      half had ZERO tests ('rg PrimeraDependenciaEnUsoAsync tests/' returned
+      nothing), so the bind order, the ramas.Any(UsaAncla) gate, the caller
+      transaction and the ExecuteScalarAsync had no net; closed with the new
+      Docker-backed InspectorDeUsoEjecucionTests over all four anchors including the
+      two composite-key ones. C3 - the Marcado predicate deviated from design
+      section A (column only, instead of EntidadBase AND the column), undeclared and
+      in the under-blocking direction; both conditions are now required and N2
+      recomputes with the same rule. C4 - the empty executable set returned null
+      (fail-open) while Renderizar threw for the same state; PrimeraDependenciaEnUsoAsync
+      now throws. C5 - the identifier pattern used ^...$, and in .NET $ also matches
+      before a final newline, so "stock\n" passed; it is \A...\z now. C6 - a null
+      element of valoresDeClave now raises an ArgumentException naming the index,
+      and the carve-out rendering theory no longer asserts vacuous rows (Empresa
+      added with an empty carve-out set).
+
+      TWO DESIGN DEVIATIONS DECLARED, NOT SMUGGLED. The first is C3 itself - the
+      implemented Marcado predicate was weaker than the design's, and it is now the
+      design's. The second is N1 - the proposal asked for a completeness test and
+      design section B answered with N1's branch-count equality, which is a
+      TAUTOLOGY: it compared InventarioCompleto().Count against the very walk that
+      produces it, so a dependent the walk cannot see is invisible on both sides. It
+      is recorded as a tautology in tasks.md, N1's second half was rewritten to what
+      it can honestly assert, and the new N5 is the set-level trip-wire N1 cannot
+      be, because its universe comes from an independent source, the model's column
+      mapping.
+
+      TWO ITEMS RECORDED WITH NO CODE CHANGE, BY DECISION. R1 -
+      InicializadorDeBaseDeDatos.cs:584 stamps the stage-2 backfill's
+      listas_precio/clientes rows for PRE-EXISTING tenants with a later startup
+      instant than those tenants' own created_at, so such a tenant is permanently
+      blocked by clientes even with zero customer data; it is fail-SAFE
+      (over-block), the discriminator is deliberately unchanged, and it is carried
+      as a slice-4 input because the 409 names the blocking table so the operator
+      sees clientes. R2 - ObtenerConexionAbiertaAsync opens without closing, which
+      is byte-identical to the pre-existing idiom in AsignadorDeNumeroCliente,
+      ServicioDeVentas, ServicioDeStock and ServicioDeLotes; recorded as a
+      replicated pre-existing pattern, not a new defect.
+
+      ROUND-1 MUTATIONS RUN FOR REAL, NEVER REASONED - SEVEN KILLED (M15 and M16 the
+      union, killed by N5 naming puntos_venta and by the integration test getting
+      null where it demanded "puntos_venta"; M19 the UsaAncla gate, killed 4/4 with
+      Npgsql 08P01 "bind message supplies 2 parameters, but prepared statement ""
+      requires 3"; M20 the bind order, killed 4/4 with Npgsql 42883 "operator does
+      not exist: integer = timestamp with time zone"; M21 the fail-closed empty set;
+      M22 the \z anchor, isolated from the message text so exactly the "stock\n"
+      case died; M23 the positional null rejection) and TWO HONEST SURVIVORS
+      recorded as survivors, not dressed up - M17 and M18, the two halves of the C3
+      predicate, both SURVIVED 422/422 because on today's model the
+      mechanical-impossibility throw already guarantees EntidadBase implies
+      created_at and no type carries created_at without EntidadBase, so the three
+      formulations are the same function and no test over this model can see the
+      difference. They are equivalent mutants of the M3b class; the C3 fix is design
+      conformance for the day a witness type appears, and N3's golden is what will
+      name that day's table. M3b from the pre-round evidence is unchanged and still
+      a survivor for the same reason.
+
+      SUITES after the round-1 correction, run against real output and never
+      inferred - 'dotnet build Ways.slnx' clean (0 errors, the two pre-existing
+      NU1903 SSH.NET warnings), Ways.Domain.Tests 545/545 green, Ways.Application.Tests
+      422/422 green (417 before this round; the five new are N5, the two new
+      InspectorDeUso unit tests, the "stock\n" theory case and the Empresa theory
+      row), Ways.IntegrationTests 1741/1741 green in 12 m 54 s run ONCE and ALONE
+      against a single Docker daemon with zero transport-abort flakes and zero
+      re-runs, and 'dotnet ef migrations has-pending-model-changes' clean.
+
+      JUDGMENT-DAY SLICE 3 ROUND 2 CORRECTED (FINAL - no third round). Round diff
+      measured against the pre-round HEAD 55fe4ac with 'git diff 55fe4ac --stat --
+      src tests' and NOT estimated - 6 files, 521 insertions and 54 deletions, of
+      which production is 263 (235 insertions plus 28 deletions) across the same
+      two Application files (InventarioDeDependientes.cs 191/20, InspectorDeUso.cs
+      44/8) and tests are 312. FIVE confirmed items fixed, ZERO schema, zero
+      physical deletes, and the guard is still INERT.
+
+      R2-1 CRITICAL, single judge but ORCHESTRATOR-VERIFIED - the Empresa anchor
+      read PRISTINE with a full operating history, fail-OPEN, the same class as
+      round 0's C1 by a different mechanism. NO operational table carries
+      id_empresa - comprobantes_venta, comprobantes_compra, their items,
+      pagos_comprobante, movimientos_stock, stock, stock_lotes, turnos_caja,
+      movimientos_caja, movimientos_tesoreria, movimientos_cuenta_corriente,
+      presupuestos, remitos, ordenes_compra and gastos all key on id_punto_venta -
+      so an empresa's direct referencers were structure and catalogue only, the 13
+      golden lines it already had. Provision, load tenant-wide articles (id_empresa
+      NULL, so no articulos_empresas row), sell at the provisioned punto de venta,
+      and all 13 branches fail: the 11 marcado ones need created_at > T0 and the
+      provisioned rows are exactly T0, the 2 sinmarca ones have no row. Slice 4
+      would have soft-deleted that empresa and its punto de venta. FIXED by making
+      usage propagate UP the structural hierarchy - a punto de venta in use means
+      its empresa is in use. InventarioDeDependientes gained a third source,
+      AgregarRamasPuenteadasPorPuntoDeVenta: for the Empresa anchor every branch of
+      the PuntoVenta anchor's EXECUTABLE inventory is re-emitted BRIDGED by
+      puntos_venta, same buckets, same carve-outs, nothing hand-written. The new
+      PuenteDeUso record carries the bridge table and its two column vectors, and
+      the renderer emits FROM "public"."<hoja>" d JOIN "public"."puntos_venta" pv
+      ON d."<fk>" = pv."id_punto_venta" AND d."id_tenant" = pv."id_tenant" WHERE
+      pv."id_empresa" = $1 AND pv."id_tenant" = $2 [AND d."created_at" > $3]. ONE
+      statement, not N queries per punto de venta; identifiers still come only from
+      EF metadata and still pass the \A[a-z_][a-z0-9_]*\z validation; parameters
+      stay positional and the bind order is unchanged, because
+      PropiedadesDeAncla(Empresa) is still Id, IdTenant so the anchor instant is
+      still $3. The label returned to the operator is the LEAF table, which is what
+      the 409 has to name. Tenant does NOT need this - every table carries
+      id_tenant and the scope-column source already brings it, verified by N5 on
+      the Tenant anchor - and PuntoVenta and Usuario are leaves of the hierarchy.
+      THE GOLDEN CHANGED BY EXACTLY 17 LINES AND NOTHING ELSE ('git diff --stat' on
+      the fixture = 17 insertions, 0 deletions): the 17 executable branches of the
+      PuntoVenta anchor, each justified table by table in tasks.md, rendered as
+      'Empresa | <hoja> via puntos_venta | <columnas> | <balde>' - still four " | "
+      separated fields, so N3's comparison needed no parser change, only the new
+      via segment in the table field.
+
+      R2-2 - N5 is now GENERIC over the four anchors instead of Tenant-only, and
+      the round-1 claim that the union "closes the CLASS" was an overstatement, now
+      corrected in tasks.md item 3.21: the union closes the class for EntidadTenant
+      subclasses, while a tenant-scoped table that is NOT an EntidadTenant subclass
+      is covered today by its declared FKs and by N5 as the CI trip-wire.
+      N5_TodaTablaDeAlcanceDelAnclaApareceEnSuInventario is a theory over (ancla,
+      columnas de alcance) - id_tenant; id_empresa; id_punto_venta +
+      id_punto_venta_destino; id_empleado + id_empleado_apertura +
+      id_empleado_cierre + id_actor - and every (tabla, columna) PAIR of each
+      anchor's universe must appear in that anchor's inventory, with excluido lines
+      counting as present and the failure NAMING the missing pair.
+
+      R2-3 - three stale records corrected in place. M4 cited
+      N1_LaCuentaDeRamasEsLaDeLasFksMenosLosCarveOuts, which round 1 deleted as a
+      tautology, so the mutation was RE-RUN on this tree and the row now carries
+      the observed messages. M10 recorded the pre-C5 ^...$ pattern and now says so.
+      S1's InspectorDeUso.cs:72 is now re-observed per round (:72 originally, :77
+      at 55fe4ac, :86 here) instead of copied forward. R2-4 - the two production
+      doc-comments that narrated the fixed bug in past tense now state present
+      intent; test-file comments keep their narrative. R2-5 - the synthesized
+      tenant-scope branch zips one hardcoded column against the anchor's primary
+      key, so a composite key would make Zip truncate in silence and bind only the
+      first property; it now throws naming the key.
+
+      ROUND-2 MUTATIONS RUN FOR REAL, NEVER REASONED - FOUR KILLED plus one re-run.
+      M24a, the bridged family deleted from InventarioCompleto, killed 3
+      Application tests with N3 printing all 17 QUITADAS lines. M24b, the same
+      mutation observed through EXECUTION against real Postgres, killed 2/6
+      integration tests with 'Assert.Equal() Failure: Strings differ / Expected:
+      "turnos_caja" / Actual: null' - that failure IS the fail-open, the guard
+      reporting an empresa with an open cash shift as pristine. M25, one FK-walk
+      branch dropped for the Usuario anchor, killed N5(Usuario) which NAMED the
+      exact pairs turnos_caja|id_empleado_apertura and turnos_caja|id_empleado_cierre;
+      said honestly, N1(Usuario) and N3 also went red, because for the Usuario
+      anchor every branch comes from the FK walk so no mutation of that walk can be
+      invisible to N1 - N5's independence is what covers the anchors whose set is
+      not only the walk. M26, a reachability row for the new arity guard, killed 6
+      tests with the guard's own message; it proves the guard is reached and names
+      the key, and it does NOT prove a composite Tenant PK would be caught, because
+      no such witness exists in this model and none was fabricated - the same
+      honesty class as M3b/M17/M18. M4 re-run killed 7 tests.
+
+      SUITES after the round-2 correction, run against real output and never
+      inferred - 'dotnet build Ways.slnx' clean (0 errors, the two pre-existing
+      NU1903 SSH.NET warnings), Ways.Domain.Tests 545/545 green,
+      Ways.Application.Tests 427/427 green (422 before this round; +3 from N5
+      becoming a four-case theory and +2 from the two new bridge rendering tests),
+      Ways.IntegrationTests 1743/1743 green in 12 m 37 s run ONCE and ALONE against
+      a single Docker daemon with zero transport-abort flakes and zero re-runs
+      (1741 before; +2 from the two new bridge execution tests), and 'dotnet ef
+      migrations has-pending-model-changes' reports "No changes have been made to
+      the model since the last migration." Slices 4-5 pending.
   verify:
     status: pending
     artifact: verify-report.md
