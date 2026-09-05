@@ -1087,14 +1087,18 @@ phases:
       the same PR. This is exactly the M35/M21b survivor slice 2 recorded as
       unreachable: the delete buttons made it reachable and it now has a real kill.
       THIRTEEN MUTATIONS RUN FOR REAL (MS1-MS12 plus MS7b, table in tasks.md): ten
-      killed with their exact failing test names, TWO HONEST SURVIVORS recorded as
-      survivors and not dressed up (MS1 the post-write generation check and MS3 the
-      ungated finally - both the 'unreachable while rule 9 holds' class carried from
-      slice 2, and the honest result of RUNNING them is that the delete buttons did
-      NOT make them reachable, because the gate is itself disabled during an
-      outstanding write), and ONE DISCARDED as a badly-formed mutant (MS7 was a
-      no-op: confirmarBaja reads baja from the render closure; replaced by MS7b,
-      which kills). THE FOUR CARRY-FORWARD ITEMS OF SLICE 2 ARE CLOSED - (1) the
+      killed with their exact failing test names, TWO SURVIVORS (MS1 and MS3) AND
+      ONE DISCARDED badly-formed mutant (MS7, a no-op: confirmarBaja reads baja from
+      the render closure; replaced by MS7b, which kills). CORRECTION FROM
+      JUDGMENT-DAY ROUND 1 - the MS1 and MS3 survivor RECORDS WERE FALSE. They
+      claimed the mutants were unreachable 'because the gate is itself disabled
+      during an outstanding write'. The gate was never disabled by anything:
+      ConfirmacionDeBaja rendered outside every disabled, so the reachable window was
+      the gate being OPEN, not a write being in flight, and in that window Guardar,
+      Suspender, Reactivar, Buscar and Editar were all live generation bumpers. MS1's
+      clause was the defect rather than a guard, and under MS3's mutant a superseded
+      gate latched ocupadoRef forever. Both rows are corrected in tasks.md and both
+      mutations were re-run after the round-1 fix. THE FOUR CARRY-FORWARD ITEMS OF SLICE 2 ARE CLOSED - (1) the
       generation-mismatch returns inside the write paths no longer latch ocupado:
       every write of the four screens now has ONE ungated finally covering all its
       exits, and refrescarTrasEscribir stopped owning the flag; (2)
@@ -1128,6 +1132,48 @@ phases:
       schema, as the constraint intends. DELIVERY REPORT OWED TO THE OWNER (OD5,
       task 5.12) is in the apply return envelope: empresa and punto de venta
       deletion ships LATENT, plus the two deferred items R1 and T6.
+      JUDGMENT-DAY ROUND 1 APPLIED (task 5.11, first correction round, branch
+      feat/stage20-slice5-bajas-web, web only). ROOT CAUSE CONFIRMED BY BOTH JUDGES
+      AND FIXED: the confirmation gate was not modal and the write token was minted
+      at gate-OPEN. Eight confirmed findings, all eight fixed. C1 CRITICAL - a
+      superseded gate still fired the DELETE and then discarded BOTH outcomes: with
+      the gate open on row B, any still-enabled bumper turned ocupado back to null,
+      the gate re-enabled with a stale token, Confirm sent the DELETE unconditionally
+      and the post-network generation check swallowed the 204 AND the 409, leaving
+      the row listed, the gate open, and every further click repeating a silent
+      DELETE. Fixed on all four screens with one derived bloqueado = ocupado || gate
+      open driving EVERY disabled (table actions, edit form, search, filters, Nuevo;
+      the Nuevo tenant Link gets aria-disabled + tabIndex -1), and with the token
+      minted at CONFIRM as the first synchronous statement after the ocupadoRef
+      guard - a 204 ALWAYS closes and refreshes, a 4xx ALWAYS renders, and the
+      generation now governs only the REFRESH. C2 CRITICAL - Usuarios.cancelarBaja
+      bumped the generation and stranded an in-flight cargar on 'Cargando...'
+      forever; cancelling supersedes nothing, so it no longer bumps on any of the
+      four screens, and the false Tenants comment is corrected. C3 - the MS1/MS3
+      records rewritten and both re-run. C4 - cancel now clears error/aviso on all
+      four screens. C5 - the arrastre preamble is subject-neutral and Empresas
+      phrases its uncounted line honestly ('Sus puntos de venta activos'), because
+      EmpresaListado carries no PV count. C6 - GUIA_POR_CODIGO is a Map, so a
+      server-sent codigo of constructor/toString/__proto__ can no longer resolve
+      against the prototype. C7 - task 5.1's reference to a non-existent
+      src/Ways.Web/src/api/usuarios.ts and a stale test doc-comment corrected. C8 -
+      Tenants' Suspender/Reactivar routed through the same gate (the panel was
+      generalized with pregunta/nota/etiqueta props, defaults unchanged), which
+      removes the native confirm() from the very file that introduced the gate; the
+      SIX other screens keep theirs and are RECORDED as out of scope (Articulos,
+      Clientes, Categorias, Ofertas, PaginaCatalogo, Proveedores). ACCESSIBILITY of
+      the modal claim: aria-modal, focus to Cancelar on open, focus restored to the
+      trigger on close, Escape = Cancelar and inert while the write is outstanding;
+      no focus trap is needed BECAUSE of C1, since a disabled control is not
+      tabbable. TWENTY MUTATIONS RUN FOR REAL in this round (table in tasks.md):
+      EIGHTEEN KILLED with their exact failing test names, TWO HONEST SURVIVORS
+      (MS1' and MS3') that now survive for a TRUE construction reason - nothing can
+      bump the generation between a write's own mint and its refresh, because the
+      full-window block covers every button and every remaining bumper is also
+      guarded by the synchronous ocupadoRef. SUITES AFTER THE ROUND - npm run test
+      65 files / 1097 tests green in one run, npm run build clean, npm run lint exit
+      0 with the same five pre-existing react-refresh warnings. git diff main
+      --name-only outside src/Ways.Web/, docs/ and openspec/ is EMPTY.
   verify:
     status: pending
     artifact: verify-report.md
