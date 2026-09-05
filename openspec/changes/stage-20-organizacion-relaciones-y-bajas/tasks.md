@@ -1007,7 +1007,7 @@ its own declaration): no configuration, no migration and no `Politicas.cs` /
   `Tenant | puntos_venta | id_tenant | marcado` **and only that line** (`git diff --stat` on the
   fixture = `1 insertion(+)`). *(design D2, A; BO-R5)*
 - [x] 3.22 **N5 — the dependent-SET completeness net**, judge B's manual audit written as code
-  (`InventarioDeDependientesTests.N5_TodaTablaConIdTenantAparecenEnElInventarioDelAncla`,
+  (`InventarioDeDependientesTests.N5_TodaTablaDeAlcanceDelAnclaApareceEnSuInventario (renamed by R2-2 into the four-anchor theory)`,
   container-free against the real Npgsql model): for the `Tenant` anchor, **every** entity type in
   the model mapped to an `id_tenant` column must appear in its inventory (`excluido` lines count as
   present, because a carve-out is a written decision and not an omission), and the assertion NAMES
@@ -1234,6 +1234,45 @@ confound). Do **not** add creation endpoints. This latency is reported to the ow
 
 **BINDING — OD6.** A cascade-deleted admin gets **401 `credenciales_invalidas`**, not 403. The
 `tenant-organization` scenario claiming 403 is superseded (Reconciliación 1).
+
+**BINDING — INPUTS CARRIED FROM SLICE 3 (judgment-day FINAL re-judgment, round budget exhausted).**
+The guard is approved and inert. These four are what slice 4 must honour when it wires the callers.
+
+1. **Design amendment, now declared.** The guard has THREE sources, not the design's one: the FK walk
+   (D3), the `id_tenant` scope source for `EntidadTenant` subclasses (round 1, C1), and the
+   `puntos_venta` bridge that propagates a punto de venta's use up to its empresa (round 2, R2-1).
+   Principle: **usage propagates up the structural hierarchy** — PV used ⇒ Empresa used ⇒ Tenant used.
+   Scope statement, stated honestly: the hierarchy is complete for data an entity OWNS. A tenant-wide
+   catalogue (articles with `DisponibleParaTodas`, prices on the default list, `id_empresa` NULL rows)
+   marks the TENANT as used, not the empresa — deleting that empresa would not touch the catalogue.
+   `InventarioDeDependientes.cs` still cites "design D2/D3" for the bridge; amend that comment to name
+   this amendment. `design.md` is frozen; this paragraph is the amendment record.
+2. **The bridged 409 must name the punto de venta.** A bridged branch projects the LEAF table only
+   (`InspectorDeUso.cs:235` emits `'turnos_caja'`, never `RamaDeUso.Etiqueta`). So `empresa_en_uso`
+   would tell the operator "turnos_caja" for an empresa with no hint that the row lives on a punto de
+   venta, nor which one. When you write the 409 copy (task 4.x code→copy), either surface the bridge
+   (`turnos_caja via puntos_venta`) or resolve the PV name. Do not ship a bare leaf label for a
+   bridged hit.
+3. **Task 4.36 (`pg_indexes` coverage) assumes one table per branch.** A bridged branch needs
+   coverage on TWO relations: the leaf join column (e.g. `movimientos_stock.id_punto_venta_destino`)
+   AND the bridge anchor columns (`puntos_venta.id_empresa, id_tenant`). A single-table check would
+   report the 17 bridged Empresa branches as covered while the `pv`-side predicate is unindexed.
+   Extend the check to both relations for bridged branches.
+4. **Over-block watch.** The bridged `sinmarca` families (`numeraciones_comprobante`,
+   `numeraciones_fiscales`, `stock`) block on EXISTENCE. Provisioning seeds none of them today (verified
+   by both judges), so the baseline is sound — but if a future provisioning path seeds them per punto
+   de venta, that empresa becomes permanently undeletable. The pristine baseline integration test is
+   the watch; do not weaken it. Also latent: `RamaDeUso`/`PuenteDeUso` are records over
+   `IReadOnlyList<string>`, so compiler equality is by reference — never put them in a `HashSet` or
+   `Assert.Equal` them; use `ClaveDeRama`.
+
+Records precision, both judges: the R2-1 entry says "slice 4 soft-deletes it and its punto de venta"
+without noting that OD5's structural minimum fires FIRST on every API-reachable empresa today (no
+creation endpoint exists), so the CRITICAL framing overstates present reachability. The fix was
+correct for the below-API service path and for the day a creation endpoint ships. And the
+`EFECTO LATERAL B` doc-comment in `InspectorDeUso.cs` ("NO se agrega ningún conjunto `id_tenant`")
+is true only in the narrow sense "no conjunct beyond the declared FK" — the emitted SQL visibly
+carries `id_tenant` conjuncts. Reword it when slice 4 next touches that file.
 
 **BINDING — INPUTS CARRIED FROM SLICE 1 (judgment-day FINAL re-judgment).** Three items were
 confirmed by both judges after the two permitted correction rounds were spent. None has user impact
