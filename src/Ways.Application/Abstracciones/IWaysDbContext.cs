@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Ways.Application.Organizacion;
 using Ways.Domain.Articulos;
 using Ways.Domain.Auditoria;
 using Ways.Domain.Caja;
@@ -151,6 +153,15 @@ public interface IWaysDbContext
     /// <c>DatabaseFacade</c> es la misma abstracción de EF Core que ya expone la superficie
     /// pública de cualquier <c>DbContext</c>, no un tipo de Infrastructure.</summary>
     DatabaseFacade Database { get; }
+
+    /// <summary>Metadata del modelo (stage-20 slice 3, D1): <see cref="InspectorDeUso"/> arma
+    /// su statement recorriendo <c>GetReferencingForeignKeys()</c>, que es la única fuente
+    /// posible del conjunto de dependientes — cualquier lista escrita a mano se desactualiza en
+    /// silencio. Mismo criterio que <c>Database</c> arriba: <c>IModel</c> es la misma abstracción
+    /// de EF Core que ya expone la superficie pública de cualquier <c>DbContext</c>, no un tipo
+    /// de Infrastructure, y <c>DbContext.Model</c> la satisface implícitamente — la interfaz gana
+    /// una línea y ninguna implementación cambia.</summary>
+    IModel Model { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
