@@ -23,12 +23,19 @@ export function Tenants() {
   const [ocupado, setOcupado] = useState<number | null>(null)
 
   /**
-   * Contrato de invalidación (`react-async-state` reglas 2-4): TODA operación que supersede lo
-   * que hay en pantalla incrementa la generación ANTES de tocar el estado, y toda aplicación de
-   * estado posterior a un `await` — incluido el `finally` que apaga las banderas y el rethrow del
-   * refresco — la vuelve a chequear. Mientras hay una escritura en vuelo (`ocupado`), la pantalla
-   * bloquea todas las acciones que podrían supersederla (regla 9), así que la generación queda
-   * para el desfasaje de LECTURAS.
+   * Contrato de invalidación (`react-async-state` reglas 2-4): toda operación que puede pisar una
+   * LECTURA en vuelo —el montaje y cada escritura— incrementa la generación ANTES de tocar el
+   * estado, y toda aplicación de estado posterior a un `await` la vuelve a chequear.
+   *
+   * Abrir el formulario de edición y cancelarlo NO la incrementan, a diferencia de lo que pide la
+   * regla 3 en el caso general: acá el formulario no supersede a la tabla —son dos porciones de
+   * estado independientes, y una carga en vuelo no pisa nada de lo que el formulario muestra—
+   * mientras que incrementarla ahí descartaría esa carga y, como el `finally` de `cargar` está
+   * gateado por generación, dejaría la pantalla clavada en "Cargando…" para siempre.
+   *
+   * Mientras hay una escritura en vuelo (`ocupado`) la pantalla bloquea todas las acciones que
+   * podrían supersederla (regla 9). Por eso el `finally` de `refrescarTrasEscribir` apaga
+   * `ocupado` SIN mirar la generación: la bandera no puede ser la de una operación más nueva.
    */
   const generacion = useRef(0)
 
@@ -55,15 +62,15 @@ export function Tenants() {
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
    * commiteó nunca se reporta como fallida (`react-async-state` regla 6). */
   async function refrescarTrasEscribir(token: number, mensajeOk: string) {
-    if (generacion.current !== token) return
-
-    setAviso(mensajeOk)
     try {
+      if (generacion.current !== token) return
+
+      setAviso(mensajeOk)
       await cargar(token, true)
     } catch {
       if (generacion.current === token) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
     } finally {
-      if (generacion.current === token) setOcupado(null)
+      setOcupado(null)
     }
   }
 

@@ -5,6 +5,7 @@ import {
   etiquetaDeTenant,
   filtrarPorTenant,
   opcionesDeTenant,
+  seleccionVigente,
   SIN_FILTRO,
 } from '../api/organizacion'
 import type { EmpresaListado } from '../api/tipos'
@@ -46,6 +47,7 @@ export function Empresas() {
       const filas = await clienteDeOrganizacion.listarEmpresas()
       if (generacion.current !== token) return
       setItems(filas)
+      setFiltroTenant((prev) => seleccionVigente(opcionesDeTenant(filas), prev))
       setError('')
     } catch (e) {
       if (generacion.current !== token) return
@@ -99,10 +101,11 @@ export function Empresas() {
   }
 
   // Las opciones se derivan de las filas cargadas; si la selección vigente desaparece de la lista
-  // (un refresco trajo otras filas), el filtro cae solo a "todos" en vez de dejar un `<select>`
-  // apuntando a una opción inexistente.
+  // (un refresco trajo otras filas), el filtro cae a "todos". Además de derivarlo acá, `cargar`
+  // escribe la reconciliación en el ESTADO: si solo se derivara, la selección inválida seguiría
+  // viva y se reaplicaría sola en cuanto la opción reapareciera.
   const opcionesTenant = opcionesDeTenant(items)
-  const tenantVigente = opcionesTenant.some((o) => o.valor === filtroTenant) ? filtroTenant : SIN_FILTRO
+  const tenantVigente = seleccionVigente(opcionesTenant, filtroTenant)
   const visibles = filtrarPorTenant(items, tenantVigente)
 
   return (
@@ -182,26 +185,31 @@ export function Empresas() {
           <Cargando />
         ) : (
           <>
-            <div className="row g-2 mb-3">
-              <div className="col-md-4">
-                <label className="form-label" htmlFor="e-filtro-tenant">
-                  Tenant
-                </label>
-                <select
-                  id="e-filtro-tenant"
-                  className="form-select rounded-0"
-                  value={tenantVigente}
-                  onChange={(e) => setFiltroTenant(e.target.value)}
-                >
-                  <option value={SIN_FILTRO}>Todos</option>
-                  {opcionesTenant.map((o) => (
-                    <option key={o.valor} value={o.valor}>
-                      {o.etiqueta}
-                    </option>
-                  ))}
-                </select>
+            {/* El filtro por tenant se rinde con el mismo criterio que la COLUMNA de tenant: solo
+                para un actor de plataforma. Un admin de tenant ve una sola opción —la suya— y
+                filtrar por ella no angosta nada. */}
+            {esPlataforma && (
+              <div className="row g-2 mb-3">
+                <div className="col-md-4">
+                  <label className="form-label" htmlFor="e-filtro-tenant">
+                    Tenant
+                  </label>
+                  <select
+                    id="e-filtro-tenant"
+                    className="form-select rounded-0"
+                    value={tenantVigente}
+                    onChange={(e) => setFiltroTenant(e.target.value)}
+                  >
+                    <option value={SIN_FILTRO}>Todos</option>
+                    {opcionesTenant.map((o) => (
+                      <option key={o.valor} value={o.valor}>
+                        {o.etiqueta}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="table-responsive">
               <table className="table table-striped table-hover table-bordered align-middle">

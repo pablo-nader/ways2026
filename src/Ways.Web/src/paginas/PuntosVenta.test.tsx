@@ -208,12 +208,20 @@ describe('PuntosVenta (stage-20, slice 2 — nombres de dueño y dos filtros)', 
     expect(nombresVisibles()).toEqual(['PV Centro', 'PV Anexo', 'PV Este'])
   })
 
-  it('las opciones del filtro se deducen de las filas cargadas: un tenant, una opción (S5)', async () => {
+  /**
+   * Cláusula bajo prueba: el `esPlataforma &&` que gatea el filtro por TENANT, con el MISMO
+   * criterio que ya gateaba la columna. Un admin de tenant solo puede recibir filas de su propio
+   * tenant (S5), así que ese filtro le ofrecía una única opción y no angostaba nada. El filtro por
+   * EMPRESA sí le sirve —tiene varias— y por eso se queda: el test asserta las dos mitades.
+   */
+  it('un admin de tenant no ve el filtro por tenant, pero sí el de empresa', async () => {
     usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
     montar([pvSurCentro, pvSurAnexo])
     await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
 
-    expect(opcionesDe('Tenant')).toEqual(['Todos', 'Comercio Sur'])
+    expect(screen.queryByLabelText('Tenant')).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: 'Tenant' })).not.toBeInTheDocument()
+    expect(opcionesDe('Empresa')).toEqual(['Todas', 'Sur Anexo SA', 'Sur SRL'])
     expect(screen.queryByText('Almacén Este')).not.toBeInTheDocument()
     expect(screen.queryByText('Este SRL')).not.toBeInTheDocument()
   })

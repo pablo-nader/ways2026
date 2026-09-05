@@ -8,6 +8,7 @@ import {
   filtrarPorTenant,
   opcionesDeEmpresa,
   opcionesDeTenant,
+  seleccionVigente,
   SIN_FILTRO,
 } from '../api/organizacion'
 import type { PuntoVentaListado } from '../api/tipos'
@@ -58,6 +59,11 @@ export function PuntosVenta() {
       const filas = await clienteDeOrganizacion.listarPuntosVenta()
       if (generacion.current !== token) return
       setItems(filas)
+      // Reconciliación ESCRITA en el estado, no solo derivada al pintar: una selección que las
+      // filas nuevas ya no sostienen se apaga, en vez de quedar viva y reaplicarse sola cuando la
+      // opción reaparece. Los dos updaters se arman desde `prev` (`react-async-state` regla 1).
+      setFiltroTenant((prev) => seleccionVigente(opcionesDeTenant(filas), prev))
+      setFiltroEmpresa((prev) => seleccionVigente(opcionesDeEmpresa(filas), prev))
       setError('')
     } catch (e) {
       if (generacion.current !== token) return
@@ -118,9 +124,9 @@ export function PuntosVenta() {
   // El fallback a "todas" cubre además el caso en que un refresco se llevó puesta la fila que
   // sostenía la opción elegida, sin dejar el `<select>` apuntando a una opción inexistente.
   const opcionesTenant = opcionesDeTenant(items)
-  const tenantVigente = opcionesTenant.some((o) => o.valor === filtroTenant) ? filtroTenant : SIN_FILTRO
+  const tenantVigente = seleccionVigente(opcionesTenant, filtroTenant)
   const opcionesEmpresa = opcionesDeEmpresa(items, tenantVigente)
-  const empresaVigente = opcionesEmpresa.some((o) => o.valor === filtroEmpresa) ? filtroEmpresa : SIN_FILTRO
+  const empresaVigente = seleccionVigente(opcionesEmpresa, filtroEmpresa)
   const visibles = filtrarPorEmpresa(filtrarPorTenant(items, tenantVigente), empresaVigente)
 
   /** Elegir un tenant LIMPIA la empresa seleccionada cuando esa empresa ya no le pertenece
@@ -265,24 +271,29 @@ export function PuntosVenta() {
         ) : (
           <>
             <div className="row g-2 mb-3">
-              <div className="col-md-4">
-                <label className="form-label" htmlFor="pv-filtro-tenant">
-                  Tenant
-                </label>
-                <select
-                  id="pv-filtro-tenant"
-                  className="form-select rounded-0"
-                  value={tenantVigente}
-                  onChange={(e) => cambiarFiltroDeTenant(e.target.value)}
-                >
-                  <option value={SIN_FILTRO}>Todos</option>
-                  {opcionesTenant.map((o) => (
-                    <option key={o.valor} value={o.valor}>
-                      {o.etiqueta}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* El filtro por tenant se rinde con el mismo criterio que la COLUMNA de tenant: solo
+                  para un actor de plataforma. Un admin de tenant ve una sola opción —la suya— y
+                  filtrar por ella no angosta nada. El de empresa sí le sirve y queda para todos. */}
+              {esPlataforma && (
+                <div className="col-md-4">
+                  <label className="form-label" htmlFor="pv-filtro-tenant">
+                    Tenant
+                  </label>
+                  <select
+                    id="pv-filtro-tenant"
+                    className="form-select rounded-0"
+                    value={tenantVigente}
+                    onChange={(e) => cambiarFiltroDeTenant(e.target.value)}
+                  >
+                    <option value={SIN_FILTRO}>Todos</option>
+                    {opcionesTenant.map((o) => (
+                      <option key={o.valor} value={o.valor}>
+                        {o.etiqueta}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="col-md-4">
                 <label className="form-label" htmlFor="pv-filtro-empresa">
                   Empresa

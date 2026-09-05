@@ -221,13 +221,19 @@ describe('Empresas (stage-20, slice 2 — nombre de tenant y filtro)', () => {
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Editar' })[0]).toBeEnabled())
   })
 
-  it('las opciones del filtro se deducen de las filas cargadas: un tenant, una opción (S5)', async () => {
+  /**
+   * Cláusula bajo prueba: el `esPlataforma &&` que gatea el filtro por tenant, con el MISMO
+   * criterio que ya gateaba la columna. Un admin de tenant solo puede recibir filas de su propio
+   * tenant (S5), así que el filtro le ofrecía una única opción y no angostaba nada: un control
+   * muerto. La otra mitad —que un actor de plataforma SÍ lo ve— la cubre el test del filtro.
+   */
+  it('un admin de tenant no ve el filtro por tenant, igual que no ve la columna', async () => {
     usuarioActual = usuarioFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
     montar([empresaSur, empresaAnexo])
     await waitFor(() => expect(screen.getByText('Sur SRL')).toBeInTheDocument())
 
-    const opciones = within(screen.getByLabelText('Tenant')).getAllByRole('option')
-    expect(opciones.map((o) => o.textContent)).toEqual(['Todos', 'Comercio Sur'])
+    expect(screen.queryByLabelText('Tenant')).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: 'Tenant' })).not.toBeInTheDocument()
     expect(screen.queryByText('Almacén Este')).not.toBeInTheDocument()
   })
 })
