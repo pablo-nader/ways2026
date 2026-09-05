@@ -61,6 +61,26 @@ public class ManejadorDeErrores(
             DbUpdateConcurrencyException =>
                 (StatusCodes.Status409Conflict, "El registro fue modificado por otra operación concurrente; reintentá la operación.", "edicion_concurrente"),
 
+            // judgment-day fix/retry-double-add (item C2, ef-retry-safe-writes regla 4 — el
+            // "residual declarado" de la forma (b)): un fallo TRANSITORIO que escapa de una
+            // escritura sin reintento es un COMMIT AMBIGUO — el servidor pudo haber comiteado y
+            // perdido el ACK al cortarse la conexión. Como 500 error_interno la pantalla decía
+            // "error inesperado" y el operador reintentaba a ciegas sobre algo que quizás ya se
+            // escribió; como 503 resultado_incierto la copia manda a verificar el listado primero.
+            //
+            // Estos dos brazos cubren el caso que NO llega como PostgresException: una conexión
+            // cortada tira NpgsqlException PELADA (o envuelta en DbUpdateException si el corte
+            // pasó durante un SaveChangesAsync), sin SqlState ninguno — justo la forma más común
+            // del commit ambiguo. Los que sí traen SqlState ya se resolvieron arriba, en
+            // ClasificarPostgresException. Van DESPUÉS de DbUpdateConcurrencyException a
+            // propósito: cero cambio de comportamiento para todo lo que ya estaba clasificado.
+            DbUpdateException { InnerException: NpgsqlException npgsqlEnvuelta }
+                when ClasificarFalloTransitorio(npgsqlEnvuelta) is { } inciertoEf =>
+                inciertoEf,
+
+            NpgsqlException npgsqlCrudo when ClasificarFalloTransitorio(npgsqlCrudo) is { } inciertoCrudo =>
+                inciertoCrudo,
+
             _ => (StatusCodes.Status500InternalServerError,
                   "Ocurrió un error inesperado.",
                   "error_interno")
@@ -476,8 +496,53 @@ public class ManejadorDeErrores(
                 when ClasificarCheckDeFiscal(ckFiscal) is { } checkFiscal =>
                 (checkFiscal.EstadoHttp, checkFiscal.Titulo, checkFiscal.Codigo),
 
+            // judgment-day fix/retry-double-add (item C2): ÚLTIMO brazo a propósito — cada
+            // clasificación determinística de arriba (23505/23514/23503/22003) gana, así que este
+            // agregado no cambia el comportamiento de ninguna. Los SQLSTATE transitorios son
+            // disjuntos de esos, pero el orden lo deja PROBADO en vez de argumentado.
+            PostgresException transitoria when ClasificarFalloTransitorio(transitoria) is { } incierto =>
+                incierto,
+
             _ => null
         };
+
+    /// <summary>Código y copia únicos del COMMIT AMBIGUO (<c>ef-retry-safe-writes</c> regla 4).
+    /// La copia espeja la que <c>src/Ways.Web/src/api/bajas.ts</c> ya rendía a mano para el 5xx de
+    /// las tres bajas: ahora nace en el servidor, así que las once escrituras sin reintento la
+    /// comparten sin tocar una sola pantalla (toda pantalla rinde <c>ErrorApi.mensaje</c>, que es
+    /// el <c>title</c> del ProblemDetails).</summary>
+    internal const string CodigoResultadoIncierto = "resultado_incierto";
+
+    internal const string MensajeResultadoIncierto =
+        "No se pudo confirmar el resultado de la operación: verificá el listado antes de reintentar.";
+
+    /// <summary>503 en vez de 500 porque el resultado es DESCONOCIDO, no fallido: la escritura
+    /// pudo haber comiteado. Sigue logueándose como error (el <c>if (estado >= 500)</c> de
+    /// <see cref="TryHandleAsync"/>), así que no se pierde observabilidad.</summary>
+    private static (int EstadoHttp, string Titulo, string Codigo)? ClasificarFalloTransitorio(
+        NpgsqlException npgsql) =>
+        EsTransitorio(npgsql)
+            ? (StatusCodes.Status503ServiceUnavailable, MensajeResultadoIncierto, CodigoResultadoIncierto)
+            : null;
+
+    /// <summary>Los SQLSTATE por los que <c>EnableRetryOnFailure</c> existe, más el juicio propio
+    /// de Npgsql (<see cref="NpgsqlException.IsTransient"/>, que también cubre la conexión cortada
+    /// sin SQLSTATE ninguno):
+    /// <list type="bullet">
+    /// <item><c>40001</c> serialization_failure y <c>40P01</c> deadlock_detected — la transacción
+    /// murió y el resultado del commit es indeterminado desde el lado del cliente;</item>
+    /// <item><c>57P01</c> admin_shutdown — el servidor terminó la conexión;</item>
+    /// <item>toda la clase <c>08</c> (connection_exception: <c>08000</c>, <c>08001</c>,
+    /// <c>08003</c>, <c>08004</c>, <c>08006</c>, <c>08007</c>, <c>08P01</c>) — se cortó el canal,
+    /// que es LA forma del commit ambiguo.</item>
+    /// </list>
+    /// Match por prefijo para la clase 08 y no por lista cerrada: la clase entera significa
+    /// exactamente lo mismo y un código nuevo no puede querer decir otra cosa.</summary>
+    private static bool EsTransitorio(NpgsqlException npgsql) =>
+        ((npgsql as PostgresException)?.SqlState is { } sqlState
+            && (sqlState is "40001" or "40P01" or "57P01"
+                || sqlState.StartsWith("08", StringComparison.Ordinal)))
+        || npgsql.IsTransient;
 
     /// <summary>Agrupa los índices únicos nuevos por familia a partir del sufijo de su
     /// nombre — evita repetir un caso por índice para <c>ux_areas_nombre_*</c>,
