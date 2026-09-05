@@ -4,7 +4,8 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Layout } from './Layout'
 import { ROL } from '../api/tipos'
-import type { UsuarioAutenticado } from '../api/tipos'
+import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
+import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): UsuarioAutenticado {
   return {
@@ -19,16 +20,56 @@ function usuarioFixture(sobrescribir: Partial<UsuarioAutenticado> = {}): Usuario
   }
 }
 
+function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): PuntoVentaListado {
+  return {
+    id: 100,
+    idTenant: 1,
+    idEmpresa: 10,
+    nombre: 'Centro',
+    domicilio: null,
+    horario: null,
+    whatsapp: null,
+    instagram: null,
+    facebook: null,
+    web: null,
+    nombreTenant: null,
+    razonSocialEmpresa: null,
+    ...sobrescribir,
+  }
+}
+
+const centro = puntoVentaFixture()
+const norte = puntoVentaFixture({ id: 101, nombre: 'Norte' })
+
+function estadoConPuntosVenta(
+  puntosVenta: PuntoVentaListado[],
+  puntoVenta: PuntoVentaListado | null,
+): EstadoDePuntoVenta {
+  return { puntosVenta, puntoVenta, elegir: vi.fn(), recargar: vi.fn(() => Promise.resolve()) }
+}
+
 let usuarioActual: UsuarioAutenticado | null = usuarioFixture()
+let estadoDePuntoVenta = estadoConPuntosVenta([centro, norte], centro)
 const cerrarSesionMock = vi.fn(async () => {})
 
 vi.mock('../auth/useAuth', () => ({
   useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: cerrarSesionMock }),
 }))
 
+vi.mock('../puntoVenta/usePuntoVenta', () => ({ usePuntoVenta: () => estadoDePuntoVenta }))
+
+type EstadoDeRuta = { desde?: { pathname: string; search: string } }
+
 function Contenido() {
-  const { pathname } = useLocation()
-  return <main>Contenido de {pathname}</main>
+  const { pathname, state } = useLocation()
+  const desde = (state as EstadoDeRuta | null)?.desde
+
+  return (
+    <main>
+      Contenido de {pathname}
+      {desde && ` desde ${desde.pathname}${desde.search}`}
+    </main>
+  )
 }
 
 function renderLayout(ruta = '/') {
@@ -52,6 +93,13 @@ function barra() {
   return within(colapso)
 }
 
+/** La franja de color que antecede a la barra. */
+function franja() {
+  const elemento = document.querySelector('nav.ways-nav')
+  if (!elemento) throw new Error('no hay franja de color')
+  return elemento
+}
+
 const nombres = (elementos: HTMLElement[]) => elementos.map((elemento) => elemento.textContent)
 
 /** Entradas de primer nivel alcanzables (los ítems de un grupo cerrado quedan afuera por `hidden`)
@@ -65,6 +113,7 @@ function entradasActivas() {
 
 beforeEach(() => {
   usuarioActual = usuarioFixture()
+  estadoDePuntoVenta = estadoConPuntosVenta([centro, norte], centro)
   cerrarSesionMock.mockClear()
 })
 
@@ -122,6 +171,22 @@ describe('Layout — barra de navegación agrupada', () => {
     const [activa] = entradasActivas()
     expect(activa).toBe(screen.getByRole('button', { name: 'Reportes' }))
     expect(screen.queryByRole('link', { name: 'Caja' })).not.toHaveAttribute('aria-current')
+  })
+
+  it('Vender anuncia la ruta actual con aria-current, nunca con la clase active del botón', () => {
+    renderLayout('/pos')
+
+    const vender = barra().getByRole('link', { name: 'Vender' })
+    expect(vender).toHaveAttribute('aria-current', 'page')
+    expect(vender).not.toHaveClass('active')
+  })
+
+  it('Caja anuncia la ruta actual con aria-current y con la clase active del nav-link', () => {
+    renderLayout('/caja')
+
+    const caja = barra().getByRole('link', { name: 'Caja' })
+    expect(caja).toHaveAttribute('aria-current', 'page')
+    expect(caja).toHaveClass('nav-link', 'active')
   })
 
   it('abrir Administración muestra las secciones del Admin con sus encabezados', async () => {
@@ -197,6 +262,23 @@ describe('Layout — barra de navegación agrupada', () => {
     expect(screen.getByRole('button', { name: 'Abrir menú' })).toHaveAttribute('aria-expanded', 'false')
   })
 
+  // Cláusula bajo prueba: el `onClick` de los links de primer nivel. Acá `pathname` no cambia,
+  // así que el efecto que cierra la barra al navegar no corre.
+  // Evidencia de mutación: sin el `onClick` el alternador queda con aria-expanded="true".
+  it('tocar el link de la ruta ya activa cierra el menú móvil abierto', async () => {
+    const usuario = userEvent.setup()
+    renderLayout('/caja')
+    const alternador = screen.getByRole('button', { name: 'Abrir menú' })
+
+    await usuario.click(alternador)
+    expect(alternador).toHaveAttribute('aria-expanded', 'true')
+
+    await usuario.click(screen.getByRole('link', { name: 'Caja' }))
+
+    expect(screen.getByText('Contenido de /caja')).toBeInTheDocument()
+    expect(alternador).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('Salir cierra la sesión y lleva a /login', async () => {
     const usuario = userEvent.setup()
     renderLayout('/pos')
@@ -220,5 +302,64 @@ describe('Layout — barra de navegación agrupada', () => {
 
     expect(cerrarSesionMock).toHaveBeenCalledTimes(1)
     expect(screen.getByText('Pantalla de login')).toBeInTheDocument()
+  })
+})
+
+describe('Layout — punto de venta en la cabecera', () => {
+  it('con más de un punto de venta el nombre es un link a /punto-de-venta que lleva la ubicación actual', async () => {
+    const usuario = userEvent.setup()
+    renderLayout('/caja?turno=3')
+
+    const insignia = screen.getByRole('link', { name: 'Punto de venta Centro, cambiar' })
+    expect(insignia).toHaveAttribute('href', '/punto-de-venta')
+    expect(insignia).toHaveTextContent('Centro')
+
+    await usuario.click(insignia)
+
+    expect(screen.getByText('Contenido de /punto-de-venta desde /caja?turno=3')).toBeInTheDocument()
+  })
+
+  it('en /punto-de-venta el nombre deja de ser link y marca la página actual', () => {
+    renderLayout('/punto-de-venta')
+
+    expect(screen.queryByRole('link', { name: /Punto de venta/ })).not.toBeInTheDocument()
+    expect(screen.getByText('Punto de venta: Centro')).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('con un solo punto de venta muestra el nombre como texto, sin link para cambiarlo', () => {
+    estadoDePuntoVenta = estadoConPuntosVenta([centro], centro)
+    renderLayout()
+
+    expect(screen.queryByRole('link', { name: /Punto de venta/ })).not.toBeInTheDocument()
+    expect(screen.getByText('Punto de venta: Centro')).not.toHaveAttribute('aria-current')
+  })
+
+  it('sin punto de venta activo avisa a quien opera el POS', () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Vendedor, rol: 'Vendedor' })
+    estadoDePuntoVenta = estadoConPuntosVenta([], null)
+    renderLayout()
+
+    expect(screen.getByText('Sin punto de venta')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Punto de venta/ })).not.toBeInTheDocument()
+  })
+
+  it('Root no ve nada del punto de venta', () => {
+    usuarioActual = usuarioFixture({ rolId: ROL.Root, rol: 'Root', idTenant: null })
+    estadoDePuntoVenta = estadoConPuntosVenta([], null)
+    renderLayout()
+
+    expect(screen.queryByText('Sin punto de venta')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Punto de venta/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Punto de venta/ })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    { puntoVenta: centro, color: 'color_1' },
+    { puntoVenta: norte, color: 'color_2' },
+  ])('con $puntoVenta.nombre activo la franja lleva la clase $color', ({ puntoVenta, color }) => {
+    estadoDePuntoVenta = estadoConPuntosVenta([centro, norte], puntoVenta)
+    renderLayout()
+
+    expect(franja().className).toBe(`ways-nav ${color}`)
   })
 })

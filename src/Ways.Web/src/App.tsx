@@ -6,6 +6,7 @@ import { Articulos } from './paginas/Articulos'
 import { Auditoria } from './paginas/Auditoria'
 import { Caja } from './paginas/Caja'
 import { CajaZ } from './paginas/CajaZ'
+import { CambiarPuntoDeVenta } from './paginas/CambiarPuntoDeVenta'
 import { CierreDeCaja } from './paginas/CierreDeCaja'
 import { Categorias } from './paginas/Categorias'
 import { CatalogosFiscales } from './paginas/CatalogosFiscales'
@@ -87,6 +88,17 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
                   <Pos />
+                </RutaProtegida>
+              }
+            />
+            {/* nav-y-pv (Slice 5, design B: cabecera): cambio del punto de venta de sesión,
+                se entra desde la insignia de la barra y se vuelve a la pantalla de origen.
+                Misma política que /pos (Politicas.OperacionDePos): Root no opera ninguno. */}
+            <Route
+              path="/punto-de-venta"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Vendedor, ROL.Supervisor, ROL.Admin]}>
+                  <CambiarPuntoDeVenta />
                 </RutaProtegida>
               }
             />
