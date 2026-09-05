@@ -9,11 +9,12 @@ import type { PaginaDe, RolListado, UsuarioAutenticado, UsuarioListado } from '.
 // stage-20-organizacion-relaciones-y-bajas, slice 2 (tareas 2.12 y 2.13).
 
 const apiGetMock = vi.fn()
+const apiPostMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
-    post: vi.fn(),
+    post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
     put: vi.fn(),
     delete: vi.fn(),
   },
@@ -47,7 +48,11 @@ vi.mock('../auth/useAuth', () => ({
   useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
 }))
 
-const ROLES: RolListado[] = [{ id: ROL.Vendedor, nombre: 'Vendedor', descripcion: null }]
+const ROLES: RolListado[] = [
+  { id: ROL.Vendedor, nombre: 'Vendedor', descripcion: null },
+  { id: ROL.Admin, nombre: 'Admin', descripcion: null },
+  { id: ROL.Root, nombre: 'Root', descripcion: null },
+]
 
 function usuarioFixture(sobrescribir: Partial<UsuarioListado> = {}): UsuarioListado {
   return {
@@ -294,5 +299,178 @@ describe('Usuarios (stage-20, slice 2 — columna de tenant y filtro)', () => {
     }
 
     expect(within(screen.getByLabelText('Tenant')).getByRole('option', { name: 'Comercio Sur' })).toHaveValue('2')
+  })
+})
+
+// stage-20-organizacion-relaciones-y-bajas, tarea 2.17 (bug reportado por el dueño a mitad del
+// slice): un actor de plataforma no podía crear un Admin porque el alta no ofrecía tenant y el
+// servidor la rechazaba con 400 `tenant_requerido`.
+
+const SELECTOR_DE_ALTA = 'Tenant de la cuenta'
+
+describe('Usuarios (stage-20, tarea 2.17 — selector de tenant en el alta)', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPostMock.mockReset()
+    apiPostMock.mockResolvedValue(undefined)
+    usuarioActual = autenticadoFixture()
+  })
+
+  async function abrirAlta(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.click(screen.getByRole('button', { name: 'Nuevo' }))
+  }
+
+  async function completarDatosBasicos(usuario: ReturnType<typeof userEvent.setup>) {
+    await usuario.type(screen.getByLabelText('Usuario'), 'nuevo.admin')
+    await usuario.type(screen.getByLabelText('Mail'), 'nuevo.admin@ways.test')
+    await usuario.type(screen.getByLabelText('Contraseña'), 'unaClaveLarga')
+  }
+
+  function cuerpoDelAlta() {
+    const llamada = apiPostMock.mock.calls.find(([ruta]) => ruta === '/usuarios')
+    expect(llamada, 'no se emitió el POST /usuarios').toBeDefined()
+
+    return llamada![1] as Record<string, unknown>
+  }
+
+  /**
+   * Cláusula bajo prueba: `esNuevo && ofreceTenant` en `FormularioUsuario` — el selector existe
+   * para un actor de plataforma, y sus opciones salen de `tenantsAsignables`, que es
+   * `opcionesDeTenant(filas)` MENOS el token de plataforma (que no es un id y ningún rol que no
+   * sea root puede llevar).
+   */
+  it('ofrece el selector de tenant a un actor de plataforma, sin la opción de plataforma', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+    await abrirAlta(usuario)
+
+    const selector = screen.getByLabelText(SELECTOR_DE_ALTA)
+    const etiquetas = within(selector)
+      .getAllByRole('option')
+      .map((o) => o.textContent)
+
+    expect(etiquetas).toEqual(['Elegí un tenant', 'Almacén Este', 'Comercio Sur'])
+    expect(etiquetas).not.toContain(ETIQUETA_OPCION_PLATAFORMA)
+  })
+
+  /**
+   * Cláusula bajo prueba: la MISMA, por su lado adverso (spec S5, anti-oráculo). Un admin de
+   * tenant no enumera tenants: crea dentro del suyo y el servidor se lo impone
+   * (`ServicioDeUsuarios.CrearAsync`: `Actor.EsDePlataforma ? datos.IdTenant : Actor.IdTenant`).
+   */
+  it('un admin de tenant no ve el selector de tenant en el alta', async () => {
+    const usuario = userEvent.setup()
+    usuarioActual = autenticadoFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([cuentaDeTenant])
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+    await abrirAlta(usuario)
+
+    expect(screen.getByLabelText('Usuario')).toBeInTheDocument()
+    expect(screen.queryByLabelText(SELECTOR_DE_ALTA)).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `onChange` del rol LIMPIA `idTenant` en el estado.
+   *
+   * A diferencia de M4, acá NO hay un fallback derivado que enmascare la falta de limpieza: el
+   * `value` del `<select>` se deriva del MISMO `valor.idTenant` que viaja en el POST, así que un
+   * estado sucio se ve en las dos observaciones. Verificado corriendo la mutación (M15): quitar la
+   * limpieza deja el `<select>` en `2` estando deshabilitado. El cuerpo del POST se asserta igual
+   * porque es lo único que el servidor ve — con rol root y tenant, contesta 403.
+   */
+  it('el rol Root deshabilita el selector y limpia el tenant ya elegido', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+    await abrirAlta(usuario)
+
+    await usuario.selectOptions(screen.getByLabelText(SELECTOR_DE_ALTA), '2')
+    expect(screen.getByLabelText(SELECTOR_DE_ALTA)).toHaveValue('2')
+
+    await usuario.selectOptions(screen.getByLabelText('Rol'), String(ROL.Root))
+
+    expect(screen.getByLabelText(SELECTOR_DE_ALTA)).toBeDisabled()
+    expect(screen.getByLabelText(SELECTOR_DE_ALTA)).toHaveValue('')
+
+    await completarDatosBasicos(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalled())
+    expect(cuerpoDelAlta()).toMatchObject({ rolId: ROL.Root, idTenant: null })
+  })
+
+  /**
+   * Cláusula bajo prueba: `idTenant: datos.idTenant` en el constructor del payload de alta — el
+   * campo que faltaba y que producía el 400 `tenant_requerido` que reportó el dueño.
+   */
+  it('el alta de un rol de tenant manda el idTenant elegido', async () => {
+    const usuario = userEvent.setup()
+    montar()
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+    await abrirAlta(usuario)
+
+    await usuario.selectOptions(screen.getByLabelText('Rol'), String(ROL.Admin))
+    await usuario.selectOptions(screen.getByLabelText(SELECTOR_DE_ALTA), '3')
+    await completarDatosBasicos(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalled())
+    expect(cuerpoDelAlta()).toMatchObject({
+      usuario: 'nuevo.admin',
+      mail: 'nuevo.admin@ways.test',
+      rolId: ROL.Admin,
+      idTenant: 3,
+    })
+  })
+
+  /**
+   * Cláusula bajo prueba: un admin de tenant manda `idTenant: null` — el `FORMULARIO_VACIO` no
+   * arrastra tenant y no hay selector que lo llene. El servidor le impone el suyo.
+   */
+  it('el alta de un admin de tenant manda idTenant null', async () => {
+    const usuario = userEvent.setup()
+    usuarioActual = autenticadoFixture({ id: 4, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin', idTenant: 2 })
+    montar([cuentaDeTenant])
+    await waitFor(() => expect(screen.getByText('vendedor.sur')).toBeInTheDocument())
+    await abrirAlta(usuario)
+
+    await completarDatosBasicos(usuario)
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalled())
+    expect(cuerpoDelAlta()).toMatchObject({ rolId: ROL.Vendedor, idTenant: null })
+  })
+
+  /**
+   * Cláusula bajo prueba: `disabled={guardando || tenantsCargando || esRolDePlataforma}` —
+   * `react-async-state` regla 5. El selector se sirve de las filas ya cargadas, así que mientras
+   * la carga está en vuelo la lista todavía no es la definitiva y no se puede elegir de ella.
+   */
+  it('el selector queda inerte mientras la lista está cargando', async () => {
+    const usuario = userEvent.setup()
+    let resolverCarga!: (pagina: PaginaDe<UsuarioListado>) => void
+    const cargaPendiente = new Promise<PaginaDe<UsuarioListado>>((resolver) => {
+      resolverCarga = resolver
+    })
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/roles') return Promise.resolve(ROLES)
+      if (ruta.startsWith('/usuarios')) return cargaPendiente
+
+      return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+    })
+
+    render(<Usuarios />)
+    await abrirAlta(usuario)
+
+    expect(screen.getByLabelText(SELECTOR_DE_ALTA)).toBeDisabled()
+
+    await act(async () => {
+      resolverCarga({ items: [cuentaDeTenant], total: 1, pagina: 1, tamanio: 20 })
+      await cargaPendiente
+    })
+
+    expect(screen.getByLabelText(SELECTOR_DE_ALTA)).toBeEnabled()
   })
 })

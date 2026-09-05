@@ -54,14 +54,24 @@ export type PaginaDe<T> = {
   tamanio: number
 }
 
+/**
+ * Espejo de `Ways.Application.Usuarios.CrearUsuario`. `idTenant` solo lo aprovecha un actor de
+ * plataforma para elegir a qué tenant pertenece la cuenta creada; para un actor de tenant el
+ * servidor lo IGNORA y usa el suyo (`ServicioDeUsuarios.CrearAsync`), así que la web manda `null`.
+ * El rol root exige `null` y cualquier otro rol exige un valor
+ * (`PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance` — 400 `tenant_requerido`).
+ */
 export type CrearUsuario = {
   usuario: string
   mail: string
   rolId: number
   password: string
   estado: EstadoUsuario
+  idTenant: number | null
 }
 
+/** Espejo de `Ways.Application.Usuarios.ActualizarUsuario`, que NO acepta `idTenant`: el tenant de
+ * una cuenta no se reasigna por edición, el servidor valida el rol contra `usuario.IdTenant`. */
 export type ActualizarUsuario = {
   usuario: string
   mail: string

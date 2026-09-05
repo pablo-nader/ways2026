@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ErrorApi } from '../api/cliente'
-import { etiquetaDeTenant, filtrarPorTenant, opcionesDeTenant, SIN_FILTRO } from '../api/organizacion'
+import {
+  etiquetaDeTenant,
+  filtrarPorTenant,
+  opcionesDeTenant,
+  SIN_FILTRO,
+  VALOR_SIN_TENANT,
+} from '../api/organizacion'
+import type { OpcionDeFiltro } from '../api/organizacion'
 import { ESTADOS_USUARIO, ROL } from '../api/tipos'
 import type {
   ActualizarUsuario,
@@ -21,6 +28,9 @@ type Formulario = {
   rolId: number
   estado: EstadoUsuario
   password: string
+  /** Solo se manda en el alta: `ActualizarUsuario` no acepta tenant. `null` es a la vez el valor
+   * del rol root y el que manda un admin de tenant, a quien el servidor le impone el suyo. */
+  idTenant: number | null
 }
 
 const FORMULARIO_VACIO: Formulario = {
@@ -30,6 +40,7 @@ const FORMULARIO_VACIO: Formulario = {
   rolId: ROL.Vendedor,
   estado: 'Activo',
   password: '',
+  idTenant: null,
 }
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
@@ -103,6 +114,7 @@ export function Usuarios() {
           rolId: datos.rolId,
           password: datos.password,
           estado: datos.estado,
+          idTenant: datos.idTenant,
         }
         await api.post('/usuarios', alta)
         mensajeOk = `Usuario "${datos.usuario}" creado.`
@@ -174,6 +186,8 @@ export function Usuarios() {
     void accion(() => api.delete(`/usuarios/${u.id}`), `Usuario "${u.usuario}" dado de baja.`)
   }
 
+  const esPlataforma = actual?.rolId === ROL.Root
+
   // El backend valida igual; esto solo evita mostrar botones que van a fallar.
   const puedeEditar = (u: UsuarioListado) =>
     u.rolId !== ROL.Root || actual?.rolId === ROL.Root
@@ -183,6 +197,11 @@ export function Usuarios() {
   const opcionesTenant = opcionesDeTenant(filas)
   const tenantVigente = opcionesTenant.some((o) => o.valor === filtroTenant) ? filtroTenant : SIN_FILTRO
   const visibles = filtrarPorTenant(filas, tenantVigente)
+
+  // El alta necesita un tenant REAL: la opción de personal de plataforma no es un id y el
+  // servidor la rechazaría para cualquier rol que no sea root. Sale de las mismas filas ya
+  // cargadas que alimentan el filtro — sin una segunda consulta (design D15).
+  const tenantsAsignables = opcionesTenant.filter((o) => o.valor !== VALOR_SIN_TENANT)
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
@@ -229,6 +248,9 @@ export function Usuarios() {
             key={formulario.id ?? 'nuevo'}
             valor={formulario}
             roles={roles}
+            tenants={tenantsAsignables}
+            ofreceTenant={esPlataforma}
+            tenantsCargando={cargando}
             guardando={ocupado}
             onCambio={setFormulario}
             onGuardar={guardar}
@@ -304,6 +326,7 @@ export function Usuarios() {
                                 rolId: u.rolId,
                                 estado: u.estado,
                                 password: '',
+                                idTenant: u.idTenant,
                               })
                               setAviso('')
                               setError('')
@@ -369,9 +392,22 @@ function EtiquetaEstado({ estado }: { estado: EstadoUsuario }) {
   return <span className={`badge rounded-0 ${clase}`}>{estado}</span>
 }
 
+/**
+ * `tenants` es el conjunto de tenants ASIGNABLES derivado de las filas ya cargadas, y solo se
+ * ofrece a un actor de plataforma (`ofreceTenant`): un admin de tenant no enumera tenants —
+ * crea siempre dentro del suyo y el servidor se lo impone (spec S5).
+ *
+ * El selector espeja `PoliticaDeRoles.ValidarConsistenciaDeRolYAlcance`, que sigue siendo la
+ * autoridad: root SIEMPRE es de plataforma (tenant nulo) y cualquier otro rol SIEMPRE necesita
+ * uno. Acá eso es guía — evita mandar una combinación que el servidor ya rechaza con 403 o con
+ * 400 `tenant_requerido`, y si igual se manda, el 400 se rinde por el camino de error de siempre.
+ */
 function FormularioUsuario({
   valor,
   roles,
+  tenants,
+  ofreceTenant,
+  tenantsCargando,
   guardando,
   onCambio,
   onGuardar,
@@ -379,12 +415,16 @@ function FormularioUsuario({
 }: {
   valor: Formulario
   roles: RolListado[]
+  tenants: OpcionDeFiltro[]
+  ofreceTenant: boolean
+  tenantsCargando: boolean
   guardando: boolean
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
 }) {
   const esNuevo = valor.id === null
+  const esRolDePlataforma = valor.rolId === ROL.Root
 
   return (
     <form
@@ -436,7 +476,13 @@ function FormularioUsuario({
           id="f-rol"
           className="form-select rounded-0"
           value={valor.rolId}
-          onChange={(e) => onCambio({ ...valor, rolId: Number(e.target.value) })}
+          onChange={(e) => {
+            // El tenant se limpia en el ESTADO, no solo al pintarlo: el alta manda `idTenant` tal
+            // cual, así que un valor que quedara acá viajaría con un rol root y el servidor lo
+            // rechazaría con 403.
+            const rolId = Number(e.target.value)
+            onCambio({ ...valor, rolId, idTenant: rolId === ROL.Root ? null : valor.idTenant })
+          }}
         >
           {roles.map((r) => (
             <option key={r.id} value={r.id}>
@@ -445,6 +491,37 @@ function FormularioUsuario({
           ))}
         </select>
       </div>
+
+      {esNuevo && ofreceTenant && (
+        <div className="col-md-3">
+          <label className="form-label" htmlFor="f-tenant">
+            Tenant de la cuenta
+          </label>
+          <select
+            id="f-tenant"
+            className="form-select rounded-0"
+            value={valor.idTenant === null ? '' : String(valor.idTenant)}
+            onChange={(e) =>
+              onCambio({ ...valor, idTenant: e.target.value === '' ? null : Number(e.target.value) })
+            }
+            disabled={guardando || tenantsCargando || esRolDePlataforma}
+            required
+          >
+            <option value="">
+              {esRolDePlataforma
+                ? 'Sin tenant (plataforma)'
+                : tenantsCargando
+                  ? 'Cargando…'
+                  : 'Elegí un tenant'}
+            </option>
+            {tenants.map((t) => (
+              <option key={t.valor} value={t.valor}>
+                {t.etiqueta}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="col-md-2">
         <label className="form-label" htmlFor="f-estado">
