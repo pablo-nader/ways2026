@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ErrorApi } from '../api/cliente'
+import { copiaDeFalloDeBaja } from '../api/bajas'
 import {
   clienteDeOrganizacion,
   etiquetaDeTenant,
@@ -22,6 +23,7 @@ import type {
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
 
 type Formulario = {
@@ -47,6 +49,8 @@ const FORMULARIO_VACIO: Formulario = {
 }
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+const AVISO_REFRESCO_FALLIDO_BAJA =
+  'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
 const ERROR_TENANTS =
   'No se pudo cargar la lista de tenants: no se pueden crear usuarios hasta que llegue. Abrí "Nuevo" para reintentar.'
@@ -77,10 +81,22 @@ export function Usuarios() {
    * puede viajar en `aviso` —el PUT sí commiteó, pero esto es un fallo y va en rojo— ni en `error`
    * —el refresco post-escritura lo limpia al terminar bien. */
   const [errorPassword, setErrorPassword] = useState('')
+  /** Slot PROPIO del rechazo LOCAL del alta sin universo de tenants. En el slot compartido `error`
+   * lo borraba el `setError('')` de cualquier carga posterior (misma clase que R2-1): es un aviso
+   * del FORMULARIO, no de la tabla, y comparte dueño con él — un slot, un dueño. */
+  const [errorAlta, setErrorAlta] = useState('')
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [ocupado, setOcupado] = useState(false)
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
+  /** Baja pendiente de confirmación: ver `Tenants.tsx`. La puerta es MODAL —`bloqueado` deja
+   * inerte el resto de la pantalla mientras está abierta— y NO acuña token: eso lo hace la
+   * escritura, al confirmar. */
+  const [baja, setBaja] = useState<UsuarioListado | null>(null)
+  /** Control que abrió la puerta, capturado en el `onClick` y no dentro de la puerta: ver
+   * `ConfirmacionDeBaja.tsx`. Para cuando el efecto de montaje corre, el control ya quedó
+   * `disabled` y el navegador se llevó el foco al `<body>`. */
+  const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
   const [tenantsDePlataforma, setTenantsDePlataforma] = useState<TenantListado[]>([])
   const [tenantsDePlataformaCargando, setTenantsDePlataformaCargando] = useState(false)
   const [tenantsDePlataformaFallo, setTenantsDePlataformaFallo] = useState(false)
@@ -90,6 +106,11 @@ export function Usuarios() {
   /** Generación propia: el universo de tenants no depende del ciclo búsqueda/escritura de
    * `generacion` y no debe descartarse por una acción no relacionada (ej. un alta en curso). */
   const generacionTenants = useRef(0)
+  /**
+   * Espejo SÍNCRONO de `ocupado`, y la ÚNICA guarda de re-entrancia válida: ver `Tenants.tsx`.
+   * Dos clicks del MISMO tick leen el mismo render, así que el estado los deja pasar a los dos.
+   */
+  const ocupadoRef = useRef(false)
 
   const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
     setCargando(true)
@@ -110,7 +131,12 @@ export function Usuarios() {
   }, [])
 
   function buscar(termino: string) {
-    if (ocupado) return
+    if (ocupadoRef.current) return
+    // `errorPassword` reporta el fallo parcial de una escritura YA TERMINADA: una búsqueda nueva
+    // es una tabla nueva y arrastrarlo era ruido de la pantalla anterior. `errorAlta` NO se apaga
+    // acá a propósito — reporta una precondición VIVA del formulario abierto (falta el universo de
+    // tenants), que la búsqueda no cambia; apagarlo escondería algo que sigue siendo cierto.
+    setErrorPassword('')
     setBusquedaAplicada(termino)
     void cargar(++generacion.current, termino)
   }
@@ -172,70 +198,75 @@ export function Usuarios() {
     esPlataforma && (tenantsDePlataformaCargando || tenantsDePlataformaFallo)
 
   async function guardar() {
-    if (!formulario || ocupado) return
+    if (!formulario || ocupadoRef.current) return
     if (formulario.id === null && universoDeTenantsIndisponible) {
-      setError(ERROR_ALTA_SIN_TENANTS)
+      setErrorAlta(ERROR_ALTA_SIN_TENANTS)
 
       return
     }
 
     const datos = formulario
     const token = ++generacion.current
+    ocupadoRef.current = true
     setOcupado(true)
     setError('')
     setErrorPassword('')
+    setErrorAlta('')
     setAviso('')
 
-    let mensajeOk: string
     try {
-      if (datos.id === null) {
-        const alta: CrearUsuario = {
-          usuario: datos.usuario,
-          mail: datos.mail,
-          rolId: datos.rolId,
-          password: datos.password,
-          estado: datos.estado,
-          idTenant: datos.idTenant,
-        }
-        await api.post('/usuarios', alta)
-        mensajeOk = `Usuario "${datos.usuario}" creado.`
-      } else {
-        const edicion: ActualizarUsuario = {
-          usuario: datos.usuario,
-          mail: datos.mail,
-          rolId: datos.rolId,
-          estado: datos.estado,
-        }
-        await api.put(`/usuarios/${datos.id}`, edicion)
-        mensajeOk = `Usuario "${datos.usuario}" actualizado.`
-      }
-    } catch (e) {
-      if (generacion.current !== token) return
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
-      setOcupado(false)
-
-      return
-    }
-
-    if (generacion.current !== token) return
-
-    // El cambio de contraseña es una SEGUNDA escritura y lleva su propio try: el PUT de arriba ya
-    // commiteó, así que un fallo acá no puede reportarse como "no se pudo guardar"
-    // (`react-async-state` regla 6). Las dos mitades se rinden POR SEPARADO y a la vez: la
-    // confirmación del PUT commiteado en el aviso verde, el fallo de la contraseña en rojo. Meter
-    // el fallo en el aviso verde lo anunciaba como parte de un éxito.
-    if (datos.id !== null && datos.password) {
+      let mensajeOk: string
       try {
-        await api.post(`/usuarios/${datos.id}/password`, { passwordNueva: datos.password })
+        if (datos.id === null) {
+          const alta: CrearUsuario = {
+            usuario: datos.usuario,
+            mail: datos.mail,
+            rolId: datos.rolId,
+            password: datos.password,
+            estado: datos.estado,
+            idTenant: datos.idTenant,
+          }
+          await api.post('/usuarios', alta)
+          mensajeOk = `Usuario "${datos.usuario}" creado.`
+        } else {
+          const edicion: ActualizarUsuario = {
+            usuario: datos.usuario,
+            mail: datos.mail,
+            rolId: datos.rolId,
+            estado: datos.estado,
+          }
+          await api.put(`/usuarios/${datos.id}`, edicion)
+          mensajeOk = `Usuario "${datos.usuario}" actualizado.`
+        }
       } catch (e) {
-        if (generacion.current !== token) return
-        const detalle = e instanceof ErrorApi ? e.message : 'Reintentá el cambio de contraseña.'
-        setErrorPassword(`Se guardó el perfil, pero no se pudo cambiar la contraseña. ${detalle}`)
-      }
-    }
+        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
-    setFormulario(null)
-    await refrescarTrasEscribir(token, mensajeOk)
+        return
+      }
+
+      if (generacion.current !== token) return
+
+      // El cambio de contraseña es una SEGUNDA escritura y lleva su propio try: el PUT de arriba ya
+      // commiteó, así que un fallo acá no puede reportarse como "no se pudo guardar"
+      // (`react-async-state` regla 6). Las dos mitades se rinden POR SEPARADO y a la vez: la
+      // confirmación del PUT commiteado en el aviso verde, el fallo de la contraseña en rojo. Meter
+      // el fallo en el aviso verde lo anunciaba como parte de un éxito.
+      if (datos.id !== null && datos.password) {
+        try {
+          await api.post(`/usuarios/${datos.id}/password`, { passwordNueva: datos.password })
+        } catch (e) {
+          if (generacion.current !== token) return
+          const detalle = e instanceof ErrorApi ? e.message : 'Reintentá el cambio de contraseña.'
+          setErrorPassword(`Se guardó el perfil, pero no se pudo cambiar la contraseña. ${detalle}`)
+        }
+      }
+
+      setFormulario(null)
+      await refrescarTrasEscribir(token, mensajeOk, AVISO_REFRESCO_FALLIDO)
+    } finally {
+      ocupadoRef.current = false
+      setOcupado(false)
+    }
   }
 
   /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
@@ -243,49 +274,128 @@ export function Usuarios() {
    * REALMENTE aplicado, no con el borrador del input: tipear sin buscar y dar de baja una fila no
    * puede angostar la tabla por un texto que el operador nunca aplicó.
    *
-   * `ocupado` se apaga en el `finally` SIN mirar la generación, a diferencia del resto de las
-   * aplicaciones de estado: mientras hay una escritura en vuelo la pantalla bloquea todo lo que
-   * podría supersederla (regla 9), así que la bandera nunca puede ser la de una operación más
-   * nueva — y salir por el chequeo de generación la dejaría prendida para siempre. */
-  async function refrescarTrasEscribir(token: number, mensajeOk: string) {
-    try {
-      if (generacion.current !== token) return
+   * NO apaga `ocupado`: de eso se ocupa el `finally` ungated de cada escritura — ver `Tenants.tsx`. */
+  async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
+    if (generacion.current !== token) return
 
-      setAviso(mensajeOk)
+    setAviso(mensajeOk)
+    try {
       await cargar(token, busquedaAplicada, true)
     } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
-    } finally {
-      setOcupado(false)
+      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
     }
   }
 
+  /** Acciones sin puerta de confirmación (hoy solo "Desbloquear"): la baja tiene la suya y su
+   * propia copia por `codigo`, así que no pasa por acá. */
   async function accion(construirPromesa: () => Promise<unknown>, mensajeOk: string) {
-    if (ocupado) return
+    if (ocupadoRef.current) return
 
     const token = ++generacion.current
+    ocupadoRef.current = true
     setOcupado(true)
     setError('')
     setErrorPassword('')
+    setErrorAlta('')
     setAviso('')
     try {
-      await construirPromesa()
-    } catch (e) {
-      if (generacion.current !== token) return
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo completar la acción.')
+      try {
+        await construirPromesa()
+      } catch (e) {
+        if (generacion.current === token) {
+          setError(e instanceof ErrorApi ? e.message : 'No se pudo completar la acción.')
+        }
+
+        return
+      }
+
+      await refrescarTrasEscribir(token, mensajeOk, AVISO_REFRESCO_FALLIDO)
+    } finally {
+      ocupadoRef.current = false
       setOcupado(false)
-
-      return
     }
-
-    await refrescarTrasEscribir(token, mensajeOk)
   }
 
-  function eliminar(u: UsuarioListado) {
-    if (ocupado) return
-    if (!confirm(`¿Dar de baja al usuario "${u.usuario}"?`)) return
-    void accion(() => api.delete(`/usuarios/${u.id}`), `Usuario "${u.usuario}" dado de baja.`)
+  /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia.
+   * Reemplaza al `confirm()` nativo: la puerta tiene que quedar inerte mientras el DELETE está en
+   * vuelo, y un diálogo del navegador no puede. Abrir NO acuña generación: no hay escritura
+   * todavía.
+   *
+   * `errorAlta` NO se apaga acá, igual que en `buscar()`: reporta una precondición VIVA del
+   * formulario abierto —falta el universo de tenants—, y abrir la puerta de baja de OTRA fila no
+   * la cambia. Apagarlo escondía algo que seguía siendo cierto. */
+  function pedirBaja(u: UsuarioListado, disparador: HTMLElement | null) {
+    if (ocupadoRef.current) return
+
+    setDisparadorDeLaPuerta(disparador)
+    setBaja(u)
+    setError('')
+    setErrorPassword('')
+    setAviso('')
   }
+
+  /** Cancelar no supersede nada: solo cierra la puerta. Acá el `++generacion.current` era además el
+   * único camino ALCANZABLE que clavaba la pantalla: con una búsqueda en vuelo, descartarla dejaba
+   * sin ejecutar el `finally` gateado de `cargar` y "Cargando…" quedaba para siempre. Limpia los
+   * avisos en simetría con la apertura, para no dejar un 409 en rojo sin puerta al lado. `errorAlta`
+   * queda fuera de esa simetría por la misma razón que en `pedirBaja`: es del formulario, no de la
+   * puerta, y sigue siendo cierto después de cancelarla. */
+  function cancelarBaja() {
+    if (ocupadoRef.current) return
+
+    setDisparadorDeLaPuerta(null)
+    setBaja(null)
+    setError('')
+    setErrorPassword('')
+    setAviso('')
+  }
+
+  async function confirmarBaja() {
+    if (!baja || ocupadoRef.current) return
+
+    // El token se acuña ACÁ, primera sentencia síncrona de la escritura (`react-async-state`
+    // regla 2): ver `Tenants.tsx`.
+    const fila = baja
+    const token = ++generacion.current
+    ocupadoRef.current = true
+    setOcupado(true)
+    setError('')
+    setErrorPassword('')
+    setErrorAlta('')
+    setAviso('')
+    try {
+      try {
+        await api.delete(`/usuarios/${fila.id}`)
+      } catch (e) {
+        // Un rechazo SIEMPRE se rinde, con la puerta abierta al lado del motivo. La copia la elige
+        // el `codigo` (`usuario_en_uso` y los rechazos preexistentes de `PoliticaDeRoles`), nunca
+        // el `mensaje` — que igual se rinde porque es lo único que nombra QUÉ hay a nombre de la
+        // cuenta.
+        setError(copiaDeFalloDeBaja(e, 'el usuario'))
+
+        return
+      }
+
+      // Un 204 SIEMPRE cierra la puerta y refresca; la generación solo gobierna el REFRESCO.
+      setBaja(null)
+      // La baja de la fila que se está editando se lleva también su formulario: dejarlo abierto
+      // ofrecía guardar sobre una entidad que ya no existe, y el PUT moría en 404.
+      setFormulario((prev) => (prev?.id === fila.id ? null : prev))
+      await refrescarTrasEscribir(
+        token,
+        `Usuario "${fila.usuario}" dado de baja.`,
+        AVISO_REFRESCO_FALLIDO_BAJA,
+      )
+    } finally {
+      ocupadoRef.current = false
+      setOcupado(false)
+    }
+  }
+
+  /** La puerta abierta bloquea la pantalla entera, no solo la escritura en vuelo: ver `Tenants.tsx`.
+   * Es lo que hace que la búsqueda —el único bumper de generación que quedaba alcanzable con la
+   * puerta abierta— no pueda dispararse mientras el operador decide. */
+  const bloqueado = ocupado || baja !== null
 
   // El backend valida igual; esto solo evita mostrar botones que van a fallar.
   const puedeEditar = (u: UsuarioListado) =>
@@ -311,13 +421,13 @@ export function Usuarios() {
         value={busqueda}
         onChange={(e) => setBusqueda(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && buscar(busqueda)}
-        disabled={ocupado}
+        disabled={bloqueado}
       />
       <button
         type="button"
         className="btn btn-sm btn-outline-light rounded-0"
         onClick={() => buscar(busqueda)}
-        disabled={ocupado}
+        disabled={bloqueado}
       >
         Buscar
       </button>
@@ -329,6 +439,7 @@ export function Usuarios() {
           setAviso('')
           setError('')
           setErrorPassword('')
+          setErrorAlta('')
           // Reintento del universo de tenants: abrir el alta es el único momento en que hace falta.
           // `!tenantsDePlataformaCargando` evita que reabrir "Nuevo" con el reintento EN VUELO
           // dispare un segundo `GET /plataforma/tenants` por click.
@@ -336,7 +447,7 @@ export function Usuarios() {
             cargarTenantsDePlataforma()
           }
         }}
-        disabled={ocupado}
+        disabled={bloqueado}
       >
         Nuevo
       </button>
@@ -347,11 +458,25 @@ export function Usuarios() {
     <div className="container-fluid py-4">
       <Box titulo="Usuarios" variante="inverse" herramientas={herramientas}>
         {error && <div className="alert alert-danger rounded-0">{error}</div>}
-        {tenantsDePlataformaFallo && (
+        {/* Gateado en `esPlataforma` como todo lo demás que depende del universo de tenants: para
+            un admin de tenant ese `GET` ni se dispara, así que la bandera no puede prender — el
+            gate es paridad con sus elementos hermanos, no una rama viva. */}
+        {esPlataforma && tenantsDePlataformaFallo && (
           <div className="alert alert-danger rounded-0">{ERROR_TENANTS}</div>
         )}
+        {errorAlta && <div className="alert alert-danger rounded-0">{errorAlta}</div>}
         {errorPassword && <div className="alert alert-danger rounded-0">{errorPassword}</div>}
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+
+        {baja && (
+          <ConfirmacionDeBaja
+            titulo={`al usuario "${baja.usuario}"`}
+            ocupado={ocupado}
+            disparador={disparadorDeLaPuerta}
+            onConfirmar={confirmarBaja}
+            onCancelar={cancelarBaja}
+          />
+        )}
 
         {formulario && (
           <FormularioUsuario
@@ -363,9 +488,14 @@ export function Usuarios() {
             tenantsCargando={esPlataforma ? tenantsDePlataformaCargando : cargando}
             tenantIndisponible={universoDeTenantsIndisponible}
             guardando={ocupado}
+            bloqueado={bloqueado}
             onCambio={setFormulario}
             onGuardar={guardar}
-            onCancelar={() => setFormulario(null)}
+            onCancelar={() => {
+              setFormulario(null)
+              setErrorPassword('')
+              setErrorAlta('')
+            }}
           />
         )}
 
@@ -388,6 +518,7 @@ export function Usuarios() {
                     className="form-select rounded-0"
                     value={tenantVigente}
                     onChange={(e) => setFiltroTenant(e.target.value)}
+                    disabled={bloqueado}
                   >
                     <option value={SIN_FILTRO}>Todos</option>
                     {opcionesTenant.map((o) => (
@@ -448,8 +579,9 @@ export function Usuarios() {
                               setAviso('')
                               setError('')
                               setErrorPassword('')
+                              setErrorAlta('')
                             }}
-                            disabled={ocupado}
+                            disabled={bloqueado}
                           >
                             Editar
                           </button>
@@ -464,7 +596,7 @@ export function Usuarios() {
                                 `Usuario "${u.usuario}" desbloqueado.`,
                               )
                             }
-                            disabled={ocupado}
+                            disabled={bloqueado}
                           >
                             Desbloquear
                           </button>
@@ -473,8 +605,8 @@ export function Usuarios() {
                           <button
                             type="button"
                             className="btn btn-sm btn-outline-danger rounded-0"
-                            onClick={() => eliminar(u)}
-                            disabled={ocupado}
+                            onClick={(evento) => pedirBaja(u, evento.currentTarget)}
+                            disabled={bloqueado}
                           >
                             Baja
                           </button>
@@ -532,6 +664,7 @@ function FormularioUsuario({
   tenantsCargando,
   tenantIndisponible,
   guardando,
+  bloqueado,
   onCambio,
   onGuardar,
   onCancelar,
@@ -542,7 +675,11 @@ function FormularioUsuario({
   ofreceTenant: boolean
   tenantsCargando: boolean
   tenantIndisponible: boolean
+  /** Solo gobierna la ETIQUETA del botón: "Guardando…" es cierto de una escritura en vuelo, no de
+   * una puerta de confirmación abierta. */
   guardando: boolean
+  /** Escritura en vuelo O puerta de confirmación abierta: gobierna todo `disabled`. */
+  bloqueado: boolean
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
@@ -574,6 +711,7 @@ function FormularioUsuario({
           maxLength={40}
           value={valor.usuario}
           onChange={(e) => onCambio({ ...valor, usuario: e.target.value })}
+          disabled={bloqueado}
           required
         />
       </div>
@@ -589,6 +727,7 @@ function FormularioUsuario({
           maxLength={255}
           value={valor.mail}
           onChange={(e) => onCambio({ ...valor, mail: e.target.value })}
+          disabled={bloqueado}
           required
         />
       </div>
@@ -607,6 +746,7 @@ function FormularioUsuario({
             const rolId = Number(e.target.value)
             onCambio({ ...valor, rolId, idTenant: rolId === ROL.Root ? null : valor.idTenant })
           }}
+          disabled={bloqueado}
         >
           {roles.map((r) => (
             <option key={r.id} value={r.id}>
@@ -628,7 +768,7 @@ function FormularioUsuario({
             onChange={(e) =>
               onCambio({ ...valor, idTenant: e.target.value === '' ? null : Number(e.target.value) })
             }
-            disabled={guardando || tenantsCargando || esRolDePlataforma || sinTenantAsignable}
+            disabled={bloqueado || tenantsCargando || esRolDePlataforma || sinTenantAsignable}
             required
           >
             <option value="">
@@ -658,6 +798,7 @@ function FormularioUsuario({
           className="form-select rounded-0"
           value={valor.estado}
           onChange={(e) => onCambio({ ...valor, estado: e.target.value as EstadoUsuario })}
+          disabled={bloqueado}
         >
           {ESTADOS_USUARIO.map((e) => (
             <option key={e} value={e}>
@@ -678,6 +819,7 @@ function FormularioUsuario({
           placeholder={esNuevo ? 'Mínimo 8 caracteres' : 'Dejar vacío para no cambiar'}
           value={valor.password}
           onChange={(e) => onCambio({ ...valor, password: e.target.value })}
+          disabled={bloqueado}
           required={esNuevo}
         />
       </div>
@@ -686,7 +828,7 @@ function FormularioUsuario({
         <button
           type="submit"
           className="btn btn-success rounded-0"
-          disabled={guardando || sinTenantAsignable}
+          disabled={bloqueado || sinTenantAsignable}
         >
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
@@ -694,7 +836,7 @@ function FormularioUsuario({
           type="button"
           className="btn btn-outline-secondary rounded-0"
           onClick={onCancelar}
-          disabled={guardando}
+          disabled={bloqueado}
         >
           Cancelar
         </button>

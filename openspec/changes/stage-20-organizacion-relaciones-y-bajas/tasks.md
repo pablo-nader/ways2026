@@ -1503,8 +1503,8 @@ written)** — transcribed from `design.md:383-398`:
 - [x] 4.37 GATE GUARD + non-regression — re-assert V1-V6 and V13; Domain + Application + Integration
   suites green (**never** run integration suites concurrently against the same Docker daemon);
   `dotnet build Ways.slnx` clean.
-- [ ] 4.38 `judgment-day` round to a clean round.
-- [ ] 4.39 Open PR 4 `feat/stage20-slice4-bajas-api`, record mutation evidence for **every** U-row
+- [x] 4.38 `judgment-day` round to a clean round.
+- [x] 4.39 Open PR 4 `feat/stage20-slice4-bajas-api`, record mutation evidence for **every** U-row
   (U1-U8) plus N4 in the PR body, with the `[S]` rows recording their file/state/definition assertion
   **and saying so** (V11), merge to `main` after the clean round.
 
@@ -1814,37 +1814,70 @@ buttons; the API still works but nobody can press it. **Skills**: `react-async-s
 and **rule 10: the pattern is replicated across all four screens in the same PR**),
 `web-descriptor-tests`, `dto-contract-honesty`, `work-unit-commits`.
 
-- [ ] 5.1 Modify `src/Ways.Web/src/api/organizacion.ts` — `eliminarTenant`, `eliminarEmpresa`,
-  `eliminarPuntoVenta`. `src/Ways.Web/src/api/usuarios.ts`'s `eliminar` already exists and keeps its
-  signature. *(TO-R4, UT-R2)*
-- [ ] 5.2 Create the `codigo` → copy mapping (a pure module beside the helpers), covering all six
+- [x] 5.1 Modify `src/Ways.Web/src/api/organizacion.ts` — `eliminarTenant`, `eliminarEmpresa`,
+  `eliminarPuntoVenta`. **Correction (judgment-day round 1, C7): there is no
+  `src/Ways.Web/src/api/usuarios.ts`** and there never was — `Usuarios.tsx` issues `api.delete` inline
+  against `/usuarios/{id}`, which is what shipped. The original wording described a file that does not
+  exist. *(TO-R4, UT-R2)*
+- [x] 5.2 Create the `codigo` → copy mapping (a pure module beside the helpers), covering all six
   codes plus the 404 and the generic fallback. The web keys its copy off **`codigo`**, never off
   `mensaje`: changing `mensaje` must not change which copy is selected. *(BO-R11)*
-- [ ] 5.3 Modify `Tenants.tsx` — delete button + confirmation gate + the full `react-async-state`
+- [x] 5.3 Modify `Tenants.tsx` — delete button + confirmation gate + the full `react-async-state`
   write discipline: full-window disabled state per entity while the write is outstanding, supersede
   blocked while a write is outstanding, re-entrancy guard, and a post-write refresh failure reporting
   *"se eliminó, pero no se pudo actualizar la vista"*. *(TO-R4)*
-- [ ] 5.4 Modify `Empresas.tsx` — the same pattern, verbatim (rule 10). *(TO-R4)*
-- [ ] 5.5 Modify `PuntosVenta.tsx` — the same pattern, verbatim. *(TO-R4)*
-- [ ] 5.6 Modify `Usuarios.tsx` — the same pattern applied to the **existing** "Baja" button
+- [x] 5.4 Modify `Empresas.tsx` — the same pattern, verbatim (rule 10). *(TO-R4)*
+- [x] 5.5 Modify `PuntosVenta.tsx` — the same pattern, verbatim. *(TO-R4)*
+- [x] 5.6 Modify `Usuarios.tsx` — the same pattern applied to the **existing** "Baja" button
   (`:120-122`), which now has to render `usuario_en_uso` and the pre-existing `PoliticaDeRoles`
   refusals. *(UT-R2)*
-- [ ] 5.7 [P] Extend the four `*.test.tsx` files created in slice 2: the confirmation gate blocks the
+- [x] 5.7 [P] Extend the four `*.test.tsx` files created in slice 2: the confirmation gate blocks the
   call until confirmed; the full-window disabled state appears per entity; a second click while a
   write is outstanding is dropped; the post-write refresh failure renders its own copy; **each 409
   `codigo` maps to its own copy** and a changed `mensaje` does not change the selection. *(BO-R11,
   TO-R4, UT-R2; `react-async-state` rules 2-6, 9, 10)*
-- [ ] 5.8 [P] Test: a `404` on delete (already-deleted row, or out-of-scope target) renders the
+- [x] 5.8 [P] Test: a `404` on delete (already-deleted row, or out-of-scope target) renders the
   neutral not-found copy — **never** a usage disclosure, preserving the anti-oracle at the UI layer
   too. *(BO-R12)*
-- [ ] 5.9 Modify `docs/09-multi-tenancy.md` and `docs/10-modelo-de-datos.md` — an **"Etapa 20"** note
+- [x] 5.9 Modify `docs/09-multi-tenancy.md` and `docs/10-modelo-de-datos.md` — an **"Etapa 20"** note
   covering the deletion semantics, the pristine discriminator, the three buckets and two carve-outs,
   the cascade boundary and the six codes. **No schema table changes** — the stage ships zero DDL.
-- [ ] 5.10 GATE GUARD + non-regression — `npm --prefix src/Ways.Web run test`, `run build`
+- [x] 5.10 GATE GUARD + non-regression — `npm --prefix src/Ways.Web run test`, `run build`
   (typecheck) and `run lint` clean; re-assert V1-V6 on the full stage diff (this is the last slice:
   the last migration must **still** be `20260822002214_FiscalArcaEtapa19a.cs`,
   `has-pending-model-changes` clean, `InicializadorDeBaseDeDatos.cs` / `Politicas.cs` /
   `ManejadorDeErrores.cs` untouched, zero physical deletes across the whole stage).
+**RESIDUALS AFTER THE FINAL RE-JUDGMENT OF SLICE 5 (round budget exhausted; both judges closed
+every item; no BLOCKER/CRITICAL). Recorded as the TRUE scope of the "modal" claim and as follow-ups.**
+
+The gate makes each SCREEN inert — every control inside the four root screens is behind `bloqueado`
+(verified control-by-control by both judges). It is NOT modal at DOCUMENT level, and the records
+above must not be read as claiming that:
+
+1. **Navbar escape.** `Layout.tsx` renders ~25 `NavLink`s and the "Salir" button outside any screen's
+   `bloqueado`; with the gate open the operator can navigate away or log out with the DELETE
+   undecided (pre-existing: the navbar was never gated by screen state). Real escape, not advisory.
+   Closing it means a document-level inert (`inert` attribute on the navbar while a gate is open, or
+   a portal-based dialog with a focus trap) — a cross-cutting change outside this stage.
+2. **The 409 banner is outside the `aria-modal` dialog.** On a rejection the gate stays open and the
+   reason renders as a sibling `alert alert-danger` with no `role="alert"`/`aria-live`; `aria-modal`
+   tells ATs to hide everything outside the dialog, so the copy is neither announced nor navigable
+   for exactly the users `aria-modal` was added for. Fix: render the rejection INSIDE the panel, or
+   give the banner `role="alert"` and drop `aria-modal` until a real trap exists.
+3. **Focus is lost during the write and not restored on rejection.** Confirming by keyboard leaves
+   focus on the button the next commit disables; a real browser moves it to `<body>`; on a 409 the
+   gate re-enables but the mount effect (deps `[disparador]`) does not re-run. jsdom cannot see it.
+   Fix: re-focus Cancelar when `ocupado` flips false while mounted.
+4. **Coverage gaps, not defects**: the per-screen `disparador` capture and the R2-5 form-close are
+   mutated/asserted only on the shared component and on Tenants; Empresas/PuntosVenta/Usuarios wiring
+   has no own kill. `tabindex=-1` written on the Box heading is never removed. `disparadorDeLaPuerta`
+   nulled on cancel but not on success. `errorAlta` is browser-unreachable (the guard's predicate is
+   the submit button's own `disabled`), and `confirmarBaja`/`accion` still clear it while
+   `pedirBaja`/`cancelarBaja` preserve it.
+5. **Six other screens keep native `confirm()`** (Articulos, Clientes, Categorias, Ofertas,
+   PaginaCatalogo, Proveedores) — out of stage scope, listed for the rule-10 sweep that adopts the
+   shared gate.
+
 - [ ] 5.11 `judgment-day` round to a clean round.
 - [ ] 5.12 Open PR 5 `feat/stage20-slice5-bajas-web`, merge to `main` after the clean round. **Then
   report to the owner, at delivery (OD5): empresa and punto de venta deletion ships LATENT** —
@@ -1854,6 +1887,155 @@ and **rule 10: the pattern is replicated across all four screens in the same PR*
   between the guard's read and the deletion's commit — accepted, recovery is a one-line `UPDATE`
   because nothing is destroyed) and **T6** (FK index coverage is *reported*, not guaranteed, since
   adding an index would be DDL).
+
+
+### Slice 5 — mutation evidence (V11), run for real
+
+Every row below was applied to the working tree, run, and reverted. Command:
+`npx vitest run --run <files>` from `src/Ways.Web`.
+
+| # | Mutation | Verdict | Evidence |
+|---|---|---|---|
+| MS1 | `Empresas.confirmarBaja`: delete the post-write generation check (`if (generacion.current !== token) return`) | **RECORD WITHDRAWN — the verdict was right, the reason was false** | See *Slice 5 — judgment-day round 1* below. The clause survived, but **not** for the reason recorded: the reachable window was the gate being OPEN, not a write being in flight, and rule 9 did not cover it. Deleting the clause was in fact the FIX; re-run as MR1b-empresas with the true window, it is now **KILLED** |
+| MS2 | `Tenants.confirmarBaja`: re-entrancy guard back to reading state (`ocupado !== null` instead of `ocupadoRef.current`) | **KILLED** | *"un segundo click sobre la confirmación en vuelo se descarta — expected 1 times, but got 2 times"*. **This mutation was originally a real defect**: the guard was written reading state, the test found it, and the fix (a synchronous ref mirror) was replicated to all four screens. Slice 2's M35/M21b survivor now has a real kill |
+| MS3 | `Tenants.confirmarBaja`: gate the `finally` on the generation (`if (generacion.current === token)`) | **RECORD CORRECTED — survivor, but NOT for the recorded reason** | See *Slice 5 — judgment-day round 1* below. The claim *"the delete gate is disabled while `ocupado` is set"* was false: the gate rendered outside every `disabled`, so under this mutant a superseded gate latched `ocupadoRef` **forever** — the screen froze. Re-run as MS3' after the round-1 fix, it survives for a reason that is now true: nothing can bump the generation while the gate is open |
+| MS4 | `bajas.ts`: select the copy off `error.message` instead of `error.codigo` | **KILLED** | 3 tests in `bajas.test.ts` (*"los seis códigos rinden seis copias distintas"*, *"cambiar el mensaje no cambia la copia"*, *"rinde el mensaje del servidor"*) plus the four screen suites |
+| MS5 | `bajas.ts`: remove the `estado === 404` branch | **KILLED** | *"un 404 rinde la copia neutra de inexistencia y no filtra el mensaje del servidor"* + the anti-oracle test of `Tenants` and `PuntosVenta` |
+| MS6 | `bajas.ts`: remove the `estado >= 500` branch | **KILLED** | *"un 500 avisa que el resultado es incierto y manda a verificar el listado"* |
+| MS7 | `PuntosVenta`: replace `pedirBaja(p)` with an inline `setBaja(...)` + `confirmarBaja()` | **inconclusive, discarded** | The mutant is a no-op: `confirmarBaja` reads `baja` from the render closure, which is still `null` in that tick. Not recorded as a survivor — it never expressed "no gate". Replaced by MS7b |
+| MS7b | `PuntosVenta`: the Baja button calls `eliminarPuntoVenta(p.id)` directly (no gate at all) | **KILLED** | 3 tests: *"el botón de baja no llama a la API hasta que se confirma"*, *"cancelar cierra la puerta y no llama nunca a la API"*, *"durante el DELETE y su refresco no queda ninguna acción alcanzable"* |
+| MS8 | `organizacion.ts`: drop the `opcion.valor !== valorSinSufijo` conjunct of `desempatarHomonimos` | **KILLED** | *"la opción de plataforma nunca filtra su clave centinela a la etiqueta"* |
+| MS9 | `Empresas.refrescarTrasEscribir`: the refresh `catch` sets the plain `mensajeOk` instead of appending the refresh-failure notice | **KILLED** | *"un refresco fallido después de la baja no la reporta como fallida"* |
+| MS10 | `Usuarios.guardar`: `setErrorAlta(ERROR_ALTA_SIN_TENANTS)` back to the shared `setError(...)` slot | **KILLED** | *"el rechazo del alta sin universo de tenants sobrevive a una carga posterior"* |
+| MS11 | `bajas.arrastreDeTenant`: drop the `cantidadEmpresas` line from the returned list | **KILLED** | 3 tests in `bajas.test.ts` + the `Tenants` gate test that asserts the three cascade lines in order |
+| MS12 | `bajas.frase`: boundary `cantidad <= 0` → `cantidad < 0` | **KILLED** | *"no lista las familias vacías"* |
+
+**Two of the three survivor records were WRONG and judgment-day round 1 found them.** MS1 and MS3
+were recorded as *"unreachable while rule 9 holds, because the gate is itself disabled during an
+outstanding write"*. **The gate was never disabled by anything**: `ConfirmacionDeBaja` rendered
+outside the `disabled` of every other control, so the reachable window was not "during a write" but
+"while the gate is OPEN" — and in that window Guardar, Suspender, Reactivar, Buscar and Editar were
+all live and all bumped the generation. MS1's clause was the defect, not a guard; MS3's mutant froze
+the screen. Both records are corrected in place above and re-run below. MS7 stands: it was discarded
+as a badly-formed mutant and replaced by MS7b, which kills.
+
+
+### Slice 5 — judgment-day round 1 (branch `feat/stage20-slice5-bajas-web`)
+
+Two blind judges, both root-causing the same thing: **the confirmation gate was not modal, and the
+write token was minted at gate-OPEN.** `ConfirmacionDeBaja` rendered inline with `role="alertdialog"`
+but no `aria-modal`, no focus move, no Escape, and — the load-bearing part — the page behind it stayed
+fully interactive. Eight findings confirmed; all eight fixed in this round.
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| C1 | CRITICAL (both) | A superseded gate still fired the DELETE and then discarded BOTH outcomes. Open Baja on row B, then use any still-enabled generation bumper (Tenants: Suspender/Guardar; Empresas/PuntosVenta: Guardar; Usuarios: Guardar, `accion`, or Enter in the search): `ocupado` returned to `null`, the gate re-enabled with a stale token, Confirm sent the DELETE unconditionally, and the post-network `if (generacion.current !== token) return` swallowed the 204 **and** the 409 — no close, no aviso, no refresh, no error. Row still listed, gate still open, every further click another silent DELETE | Two changes, on all four screens. (a) **The gate is truly modal**: one derived `bloqueado = ocupado !== null \|\| baja !== null` now drives EVERY `disabled` on the screen — table actions, edit form, search input and button, filters, Nuevo (`Tenants`' `Nuevo tenant` is a `<Link>`: `aria-disabled` + `tabIndex={-1}` + Bootstrap's `disabled`). Rule 9 by construction: nothing can bump the generation while the gate is open. (b) **The token is minted at CONFIRM**, as the first synchronous statement after the `ocupadoRef` re-entrancy guard; `pedirBaja` mints nothing. A 204 ALWAYS closes the gate and refreshes; a 4xx ALWAYS renders. The generation now governs only the REFRESH, which is a read |
+| C2 | CRITICAL (both) | `Usuarios.cancelarBaja` did `++generacion.current`; an in-flight `cargar` then never ran its gated `finally` → "Cargando…" forever, with no table, no error and nothing to press | `cancelarBaja` no longer bumps the generation on any of the four screens: cancelling supersedes nothing, it only closes the gate. C1's block closes the reachable path as well, but the mechanism is fixed too. The false comment at `Tenants.tsx` (*"mientras hay una lectura en vuelo no hay ningún botón que apretar"* — the gate rendered outside the `cargando` branch) is corrected |
+| C3 | WARNING (both) | The MS1/MS3 records were false; MS3 was not a survivor in the sense recorded | The two rows above are rewritten, the survivor paragraph is rewritten, and both mutations were re-run for real (table below) |
+| C4 | WARNING (B) | `cancelarBaja` never cleared `error`: after a 409 the red banner outlived the gate | `error`/`aviso` (and `errorPassword`/`errorAlta` on `Usuarios`) are cleared on cancel, symmetric with `pedirBaja`, on all four screens |
+| C5 | SUGGESTION (both) | *"Se dan de baja junto con él:"* is masculine and lies on `Empresas`; `Empresas` hardcoded an uncounted `arrastra={['Sus puntos de venta']}` | Preamble is now subject-neutral: *"También se dan de baja:"*. `EmpresaListado` carries **no** PV count (`docs/10`, `api/tipos.ts`), so the line is phrased honestly as *"Sus puntos de venta activos"* instead of inventing a number the row does not have |
+| C6 | SUGGESTION (B) | `GUIA_POR_CODIGO` was a plain object, so a server-sent `codigo` of `constructor`/`toString`/`__proto__` resolved against the prototype | It is a `Map`; `Map.get` only sees own keys. Unit test over the four prototype keys |
+| C7 | records (B) | Task 5.1 named `src/Ways.Web/src/api/usuarios.ts`, which does not exist; `Tenants.test.tsx`'s doc-comment named the pre-fix `if (!baja \|\| ocupado !== null)` clause | Both corrected in place |
+| C8 | SUGGESTION (B) | `Tenants.tsx` still used native `confirm()` for Suspender/Reactivar — in the SAME file that introduced the gate (rule 10 inside one file) | Both routed through `ConfirmacionDeBaja`, which was generalized (`pregunta`, `nota`, `etiquetaConfirmar`, `etiquetaEnCurso`; its defaults are still the baja) and now carries the modal discipline. **The six OTHER screens keep their `confirm()` and are out of scope**: `Articulos`, `Clientes`, `Categorias`, `Ofertas`, `PaginaCatalogo`, `Proveedores` — recorded here, not fixed |
+
+Accessibility of the modal claim, all in the shared panel: `aria-modal="true"`, focus moved to
+Cancelar on open, focus restored to the trigger on close, Escape = Cancelar (and inert while the write
+is outstanding).
+
+**Round-2 correction of this paragraph — it was written as true and was not.** Round 1 claimed *"no
+focus trap is needed because of C1: every other control is `disabled`"*. That was **false on
+`Usuarios`**: the five fields of its form (`f-usuario`, `f-mail`, `f-rol`, `f-estado`, `f-password`)
+carried no `disabled` at all — not even during `guardando` — while `bloqueado` was applied to the
+tenant select and to both buttons of the same form. The three sibling screens disabled every field,
+so this was a rule-10 parity break, and the "nothing is tabbable behind the gate" argument had five
+live counterexamples. **After R2-1 the claim is true WITHIN each screen; it is NOT true at document level — see the residuals block before task 5.11 (navbar, banner outside the dialog, focus during the write)**, and it is only true because of that fix.
+
+The **focus restore** was also true only in jsdom. Round 1 captured the trigger with
+`document.activeElement` inside a passive `useEffect`, which runs *after* the commit that disabled
+the trigger; a real browser has already applied the focus-fixup rule by then and moved focus to
+`<body>`, so the ref captured `<body>` and "restoring" it was a no-op. jsdom does not implement that
+fixup, which is exactly why the test passed. **After R2-2 the trigger is captured synchronously in
+the click handler** (`event.currentTarget`, before any `setState`) and handed to the panel as the
+`disparador` prop, so focus restore now works in browsers too; when the trigger is gone or inert
+after close (the row was deleted), the panel falls back to a stable landmark — the screen's `Box`
+heading, or the table.
+
+#### Round-1 mutation evidence (V11), run for real
+
+Command: `npx vitest run <file>` from `src/Ways.Web`. Every row was applied to the working tree, run,
+and reverted.
+
+| # | Mutation | Verdict | Evidence |
+|---|---|---|---|
+| MR1a-tenants | `Tenants`: `bloqueado` back to `ocupado !== null` | **KILLED** | *"con la puerta abierta no queda ninguna otra acción alcanzable"* + *"suspender pasa por la misma puerta y no llama a la API hasta confirmar"* — 2 failed / 17 passed |
+| MR1a-empresas | `Empresas`: same | **KILLED** | *"con la puerta abierta no queda ninguna otra acción alcanzable"* — 1 failed / 18 passed |
+| MR1a-pv | `PuntosVenta`: same | **KILLED** | *"con la puerta abierta no queda ninguna otra acción alcanzable"* — 1 failed / 19 passed |
+| MR1a-usuarios | `Usuarios`: `bloqueado` back to `ocupado` | **KILLED** | *"con la puerta abierta no queda ninguna otra acción alcanzable"* — 1 failed / 43 passed |
+| MR1b-tenants | `Tenants`: token minted at gate-open + the post-network generation check restored (the exact pre-fix shape) | **KILLED** | *"una generación acuñada entre abrir y confirmar no se traga el 204"* — `TestingLibraryElementError: Unable to find an element with the text: Se dio de baja el tenant "Almacén Este".` |
+| MR1b-empresas | `Empresas`: same | **KILLED** | same test — `Unable to find an element with the text: Se dio de baja la empresa "Este SRL".` |
+| MR1b-pv | `PuntosVenta`: same | **KILLED** | same test — `Unable to find an element with the text: Se dio de baja el punto de venta "PV Este".` |
+| MR1b-usuarios | `Usuarios`: same | **KILLED** | same test — `Unable to find an element with the text: Usuario "vendedor.sur" dado de baja.` |
+| MR2-usuarios | `Usuarios.cancelarBaja`: restore `++generacion.current` | **KILLED** | *"cancelar no clava la pantalla cuando hay una búsqueda en vuelo"* — `expected document not to contain element, found <span` (the "Cargando…" that never clears) |
+| MR4-tenants / -empresas / -pv / -usuarios | `cancelarBaja`/`cancelarConfirmacion`: drop the `setError('')`/`setAviso('')` | **KILLED ×4** | *"cancelar después de un rechazo se lleva el motivo con la puerta"* — `expected document not to contain element, found <div` on each of the four screens |
+| MR5-preambulo | `ConfirmacionDeBaja`: preamble back to *"Se dan de baja junto con él:"* | **KILLED** | *"el preámbulo del arrastre no le pone género al sujeto"* + *"la puerta nombra el arrastre sin inventar una cantidad que la fila no trae"* |
+| MR5-arrastre | `Empresas`: `ARRASTRE_DE_EMPRESA` back to `['Sus puntos de venta']` | **KILLED** | `AssertionError: expected [ 'Sus puntos de venta' ] to deeply equal [ 'Sus puntos de venta activos' ]` |
+| MR6-mapa | `bajas.ts`: the `Map` back to a plain-object lookup | **KILLED** | *"una clave del prototipo no se hace pasar por guía"* — `expected 'Algo bloquea la baja. function Object…' to be 'Algo bloquea la baja.'` |
+| MR8-suspender | `Tenants`: the Suspender button calls `cambiarEstado` directly, with no gate | **KILLED** | *"suspender pasa por la misma puerta…"* (`expected "vi.fn()" to not be called at all, but actually been called 1 times`) + *"cancelar la suspensión no llama nunca a la API"* |
+| MA1-foco | `ConfirmacionDeBaja`: drop `cancelarRef.current?.focus()` | **KILLED** | *"al abrirse se lleva el foco a Cancelar"* |
+| MA2-foco-vuelta | `ConfirmacionDeBaja`: drop the cleanup that restores the trigger's focus | **KILLED** | *"al cerrarse devuelve el foco al disparador"* |
+| MA3-escape | `ConfirmacionDeBaja`: drop the `\|\| ocupado` from the Escape listener | **KILLED** | *"con la escritura en vuelo, Escape no cierra nada"* — `Unable to find an accessible element with the role "alertdialog"` |
+| MA4-aria-modal | `ConfirmacionDeBaja`: remove `aria-modal="true"` | **KILLED** | *"se anuncia como modal, no como un aviso al costado"* |
+| MS1' | `Empresas`: delete the leading generation check of `refrescarTrasEscribir` — the only generation check left on the delete path after C1, since deleting the *post-network* one WAS the fix | **SURVIVES**, and now for a TRUE reason | 19/19 green. Nothing can bump the generation between the DELETE's own mint and its refresh: the full-window `bloqueado` covers every button, and every remaining bumper (`guardar`, `accion`, `buscar`, `confirmarBaja`) is additionally guarded by the synchronous `ocupadoRef`. Unreachable **by construction**, not by the false claim the old MS1 row made |
+| MS3' | `Tenants.darDeBaja`: gate the `finally` on the generation | **SURVIVES**, and now for a TRUE reason | 19/19 green. Same construction argument. Before C1 this mutant froze the screen through a superseded gate; that path no longer exists, and the ungated `finally` stays as defence-in-depth with an argument that is now actually true |
+
+**Two honest survivors (MS1', MS3'), eighteen kills, zero discarded mutants.** Gate: web
+`npm --prefix src/Ways.Web run test` **65 files / 1097 tests green**, `run build` clean, `run lint`
+clean (the same 5 pre-existing `react-refresh` warnings). `git diff main --name-only` outside
+`src/Ways.Web/`, `docs/` and `openspec/` is **empty**.
+
+
+### Slice 5 — judgment-day round 2 (branch `feat/stage20-slice5-bajas-web`) — FINAL round
+
+Two blind judges again. **No CRITICAL.** Five confirmed findings plus one records entry; all fixed in
+this single correction round.
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| R2-1 | WARNING (both) | **`Usuarios`' form fields escaped the modal gate.** `f-usuario`, `f-mail`, `f-rol`, `f-estado` and `f-password` carried NO `disabled` — not even during `guardando` — while `bloqueado` was applied to the tenant select and to both buttons of the *same* form. `Tenants`/`Empresas`/`PuntosVenta` disable every field, so this was a `react-async-state` rule-10 parity break, and it made round 1's "every other control is disabled" claim false | `disabled={bloqueado}` on all five. The `Usuarios` gate test now asserts the five by label, with a message that names the offending field |
+| R2-2 | WARNING (both, inferential) | **Focus restore was a no-op in real browsers.** `ConfirmacionDeBaja` captured `document.activeElement` in a passive `useEffect`, i.e. AFTER the commit that disabled the trigger. A browser applies the focus-fixup rule at that commit and moves focus to `<body>`, so the ref captured `<body>`. jsdom does not implement the fixup, so the round-1 test passed falsely | The trigger is captured **synchronously in the click handler** (`event.currentTarget`, before any `setState`) on all four screens, held in `disparadorDeLaPuerta` and passed to the panel as the `disparador` prop. On close the panel restores focus to THAT element when it is still connected and operable; otherwise (row deleted, control inert) it falls back to a stable landmark — the `Box` heading, else the table — giving it a one-time `tabindex="-1"` so it can receive focus |
+| R2-3 | SUGGESTION (both) | **`errorAlta` cleared on gate open/cancel contradicted its own contract.** `Usuarios.tsx` documents it as a LIVE precondition of the open form (the tenant universe is missing, so the alta is impossible) that unrelated actions must not clear — which is why `buscar()` already respected it — yet `pedirBaja`/`cancelarBaja` cleared it, hiding something still true and leaving "Guardar" inert with no banner to explain why | `setErrorAlta('')` removed from both. `error`/`aviso`/`errorPassword` keep their symmetry; the asymmetry is documented at both call sites |
+| R2-4 | SUGGESTION (A) | **`Nuevo tenant` was neutralized by CSS only.** A `<Link>` takes no `disabled`; Bootstrap's `disabled` class only kills `pointer-events` (mouse hit-testing) and `tabIndex={-1}` only removes it from the tab order. Neither cancels an activation that does not go through hit-testing, so the modal gate could be abandoned by navigating away with the DELETE still undecided | `onClick={(evento) => { if (bloqueado) evento.preventDefault() }}`. The test measures the **navigation** (a route probe inside the `MemoryRouter`), not the attribute |
+| R2-5 | SUGGESTION (A), pre-existing | **The edit form survived the deletion of the entity being edited.** After a 204 the form stayed open with the data of a row that no longer exists, and "Guardar" would PUT against a deleted id | After a 204, `setEdicion`/`setFormulario((prev) => (prev?.id === fila.id ? null : prev))` on all four screens — built from `prev` (`react-async-state` rule 1), and id-compared so deleting ANOTHER row does not close an edit in progress |
+| R2-6 | records (both) | `tasks.md:1901,1910-1913` and `state.yaml:1164-1168` asserted *"every other control is disabled … no focus trap needed"* — false on `Usuarios` until R2-1, and the focus-restore half was true only in jsdom | Both records rewritten in place: the claim now says it became true *because of* R2-1, names R2-2 as the reason focus restore works in browsers, and records the jsdom caveat. The six out-of-scope `confirm()` screens stay listed |
+
+#### Round-2 mutation evidence (V11), run for real
+
+Command: `npx vitest run <file>` from `src/Ways.Web`. Every row was applied to the working tree, run,
+and reverted.
+
+| # | Mutation | Verdict | Evidence |
+|---|---|---|---|
+| MR2-1 | `Usuarios`: drop `disabled={bloqueado}` from `f-mail` | **KILLED** | *"con la puerta abierta no queda ninguna otra accion alcanzable"* — `Error: el campo "Mail" quedo alcanzable: expect(element).toBeDisabled()`, `Received element is not disabled: <input id="f-mail" ...>` — 1 failed / 44 skipped |
+| MR2-2 | `ConfirmacionDeBaja`: capture the trigger in the passive effect again (`document.activeElement`) instead of taking the `disparador` prop | **KILLED** | *"captura el disparador antes del render que lo deshabilita, no despues"* — `expect(element).toHaveFocus()`; *Expected* `<button>Baja</button>`, *Received* `<body>` — 1 failed / 8 passed |
+| MR2-2b | `ConfirmacionDeBaja`: drop the landmark fallback branch of the cleanup | **KILLED** | *"si la fila del disparador desaparecio, el foco cae en el titulo de la pantalla"* — *Expected* `<h5>Tenants</h5>`, *Received* `<body>` |
+| MR2-3a | `Usuarios.cancelarBaja`: put `setErrorAlta('')` back | **KILLED** | *"el rechazo del alta sobrevive a abrir y cancelar la puerta de baja"* — `Unable to find an element with the text: No se puede crear el usuario: todavia falta la lista de tenants.` |
+| MR2-3b | `Usuarios.pedirBaja`: put `setErrorAlta('')` back (the other half — the two were mutated separately) | **KILLED** | same test, same message |
+| MR2-4 | `Tenants`: drop the `if (bloqueado) evento.preventDefault()` of the `Nuevo tenant` `<Link>` | **KILLED** | *"con la puerta abierta, activar Nuevo tenant no navega"* — `expected '/organizacion/nuevo-tenant' to be '/'` |
+| MR2-5 | `Tenants.darDeBaja`: drop the `setEdicion((prev) => ...)` that closes the form of the deleted row | **KILLED** | *"la baja de la fila que se esta editando cierra su formulario"* — `expected document not to contain element, found <strong>Editando tenant 1</strong> instead` |
+
+**Seven mutations, seven kills, zero survivors, zero discarded mutants.**
+
+One environment fact recorded rather than hidden: **jsdom cannot reproduce the focus-fixup rule
+natively.** Once a button is `disabled`, jsdom treats both `element.blur()` and
+`document.body.focus()` as no-ops on a non-focusable area, so `document.activeElement` stays pinned
+to the trigger — which is precisely why the round-1 defect shipped green. The R2-2 test therefore
+brings the blur **one tick forward**, into the `onClick` while the button is still enabled. The
+mechanism differs from a browser's; the observable state the test depends on is identical (focus is
+on `<body>` when the gate's mount effect runs), and MR2-2 proves the test discriminates.
+
+Gate: web `npm --prefix src/Ways.Web run test` **65 files / 1102 tests green**, `run build` clean,
+`run lint` exit 0 with the same **5** pre-existing `react-refresh` warnings (no new ones).
+`git diff main --name-only` outside `src/Ways.Web/`, `docs/` and `openspec/` is **empty**.
 
 ---
 

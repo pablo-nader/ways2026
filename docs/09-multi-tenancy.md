@@ -212,3 +212,58 @@ Impacto sobre el doc 08 (ya implementado):
 
 Todo el schema posterior (doc 03) nace con su categoría de scoping ya decidida según la
 tabla de este documento.
+
+## Baja lógica de la organización (Etapa 20 — stage-20-organizacion-relaciones-y-bajas)
+
+La jerarquía tenant → empresa → punto de venta ya se podía crear (aprovisionamiento, ADR-16)
+y editar; desde esta etapa también se puede **dar de baja**, con una única semántica:
+
+- **La baja es SIEMPRE lógica, nunca física.** Se sella `deleted_at` (y, para un tenant,
+  además `EstadoTenant.Baja`); ninguna fila se borra de la base. Todas las FK del modelo son
+  `DeleteBehavior.Restrict`, así que no hay ni un `DELETE FROM` sobre `tenants`, `empresas`,
+  `puntos_venta` ni `usuarios`. Recuperar una baja hecha por error es un `UPDATE` de una
+  columna.
+- **El discriminador "prístino" es una comparación estricta contra el `CreatedAt` de la propia
+  entidad.** Lo que el aprovisionamiento sembró en el mismo instante que la entidad no cuenta
+  como uso; cuenta lo que el cliente creó DESPUÉS de esa marca. Un dependiente que el cliente
+  creó y después dio de baja **sigue bloqueando**: la baja de una fila no borra que hubo
+  operación.
+- **El conjunto de dependientes se descubre de la metadata de EF, nunca de una lista a mano.**
+  Cada tipo que referencia a la entidad cae en exactamente uno de tres buckets (directo,
+  puenteado, ignorado) o el build falla, y hay un inventario ordenado versionado como golden:
+  una tabla nueva que nadie clasifique rompe un test, no la producción. Hay exactamente **dos
+  carve-outs**, cada uno con su motivo escrito y su propio test.
+- **Una fila de catálogo compartido (dueño `NULL`) no bloquea**, en coherencia con la regla de
+  `id_empresa NULL` de este documento.
+- **La cascada está acotada a la proyección de organización y comparte un solo instante.** Dar
+  de baja un tenant da de baja, con el mismo timestamp y dentro de la misma transacción, sus
+  empresas, sus puntos de venta y sus usuarios; dar de baja una empresa arrastra sus puntos de
+  venta. La cascada no toca datos operativos (ventas, stock, caja): esos son justamente los que
+  BLOQUEAN la baja.
+- **Los mínimos estructurales se chequean ANTES del guard de uso**, con códigos propios: un
+  tenant no puede quedarse sin ninguna empresa viva, y una empresa no puede quedarse sin
+  ningún punto de venta vivo. Los hermanos ya dados de baja no cuentan como vivos.
+- **El set completo de rechazos es de seis códigos**: `tenant_en_uso`, `empresa_en_uso`,
+  `punto_venta_en_uso`, `usuario_en_uso`, `ultima_empresa_del_tenant` y
+  `ultimo_punto_venta_de_la_empresa`. Los seis viajan como `409` con su `codigo` exacto; la web
+  elige su copia por el **código**, nunca por el mensaje.
+- **La baja nunca se convierte en un oráculo de existencia entre tenants.** Un admin que apunta
+  a una entidad de otro tenant recibe `404`, idéntico al de un id inexistente — nunca `403` ni
+  un `409` que delate el estado de la fila. Es la misma conducta deliberada de
+  `PoliticaDeRoles.ValidarAlcanceDeTenant` (ADR-8), y la web la respeta en su copia.
+- **Autorización sin policies nuevas**: cada `DELETE` reusa la policy del grupo de rutas al que
+  ya pertenece — `SoloPlataforma` para tenants, `GestionDeOrganizacion` para empresas y puntos
+  de venta. `Politicas.cs` no se tocó.
+- Un admin de un tenant dado de baja **no puede iniciar sesión**: la búsqueda del login corre
+  bajo el query filter de baja lógica, así que la cuenta simplemente no existe y la respuesta es
+  `401 credenciales_invalidas` (no `403 tenant_suspendido`, que sigue siendo la respuesta del
+  tenant **suspendido**).
+
+**Latencia registrada.** Ways no expone hoy ninguna ruta que cree una *segunda* empresa o un
+*segundo* punto de venta, así que a través de la API el mínimo estructural dispara siempre y
+`empresa_en_uso` / `punto_venta_en_uso` solo son alcanzables por debajo de la capa HTTP. La baja
+de empresa y de punto de venta ships **latente**: correcta y probada, y utilizable en cuanto
+exista un alta que permita un segundo hermano.
+
+**Cero DDL.** Esta etapa no crea, altera ni borra ninguna tabla ni columna: `deleted_at` y
+`estado` ya existían desde la etapa 1.

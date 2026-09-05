@@ -160,9 +160,21 @@ describe('opcionesDeTenant', () => {
     expect(opciones.find((o) => o.valor === '9')?.etiqueta).toBe(
       `${ETIQUETA_OPCION_PLATAFORMA} (tenant 9)`,
     )
-    expect(opciones.find((o) => o.valor === VALOR_SIN_TENANT)?.etiqueta).toBe(
-      `${ETIQUETA_OPCION_PLATAFORMA} (tenant ${VALOR_SIN_TENANT})`,
-    )
+  })
+
+  /**
+   * Cláusula bajo prueba (slice 5, entrada arrastrada de la slice 2, punto 3): el
+   * `opcion.valor !== valorSinSufijo` de `desempatarHomonimos`. La opción de plataforma CUENTA
+   * para la colisión —por eso el tenant homónimo sí recibe su sufijo, arriba— pero nunca la
+   * recibe ella: su clave es el centinela interno `sin-tenant`, no un id, y anexarlo rendía
+   * "Plataforma (sin tenant) (tenant sin-tenant)" en la copia que ve el operador.
+   */
+  it('la opción de plataforma nunca filtra su clave centinela a la etiqueta', () => {
+    const opciones = opcionesDeTenant([fila(9, ETIQUETA_OPCION_PLATAFORMA), fila(null, null)])
+    const plataforma = opciones.find((o) => o.valor === VALOR_SIN_TENANT)
+
+    expect(plataforma).toEqual({ valor: VALOR_SIN_TENANT, etiqueta: ETIQUETA_OPCION_PLATAFORMA })
+    expect(plataforma?.etiqueta).not.toContain(VALOR_SIN_TENANT)
   })
 
   it('sobre una lista vacía no ofrece ninguna opción', () => {

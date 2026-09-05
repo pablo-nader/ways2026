@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ErrorApi } from '../api/cliente'
+import { copiaDeFalloDeBaja } from '../api/bajas'
 import {
   clienteDeOrganizacion,
   ETIQUETA_SIN_DUENIO,
@@ -14,6 +15,7 @@ import {
 import type { PuntoVentaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
 import { ROL } from '../api/tipos'
 
@@ -29,10 +31,14 @@ type Formulario = {
 }
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+const AVISO_REFRESCO_FALLIDO_BAJA =
+  'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
 /**
- * Lectura/edición de puntos de venta — mismo patrón que <c>Empresas.tsx</c>: sin alta ni baja
- * (plataforma-only vía aprovisionamiento), el backend ya filtra por alcance.
+ * Lectura/edición/baja de puntos de venta — mismo patrón que <c>Empresas.tsx</c>: el alta sigue
+ * siendo plataforma-only vía aprovisionamiento y el backend ya filtra por alcance. La baja
+ * (etapa 20) es <c>Politicas.GestionDeOrganizacion</c>, no <c>LecturaDePuntosVenta</c>: el
+ * selector de PV del POS lee este listado, pero un vendedor no llega a esta pantalla.
  * <c>idEmpresa</c> no se edita acá: es estructural (a qué empresa pertenece), no descriptivo.
  * Los dos filtros (tenant y empresa) operan sobre la lista YA CARGADA y sus opciones salen de
  * esas mismas filas (design D15).
@@ -49,9 +55,22 @@ export function PuntosVenta() {
   const [ocupado, setOcupado] = useState<number | null>(null)
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
   const [filtroEmpresa, setFiltroEmpresa] = useState(SIN_FILTRO)
+  /** Baja pendiente de confirmación: ver `Tenants.tsx`. La puerta es MODAL —`bloqueado` deja
+   * inerte el resto de la pantalla mientras está abierta— y NO acuña token: eso lo hace la
+   * escritura, al confirmar. */
+  const [baja, setBaja] = useState<PuntoVentaListado | null>(null)
+  /** Control que abrió la puerta, capturado en el `onClick` y no dentro de la puerta: ver
+   * `ConfirmacionDeBaja.tsx`. Para cuando el efecto de montaje corre, el control ya quedó
+   * `disabled` y el navegador se llevó el foco al `<body>`. */
+  const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
 
   /** Contrato de invalidación: ver `Tenants.tsx` — mismo patrón en las cuatro pantallas raíz. */
   const generacion = useRef(0)
+  /**
+   * Espejo SÍNCRONO de `ocupado`, y la ÚNICA guarda de re-entrancia válida: ver `Tenants.tsx`.
+   * Dos clicks del MISMO tick leen el mismo render, así que el estado los deja pasar a los dos.
+   */
+  const ocupadoRef = useRef(false)
   /** Espejo SIEMPRE al día de `filtroTenant`. `cargar` es un `useCallback` sin dependencias, así
    * que no puede leer el estado por closure sin quedarse con una foto vieja; y la reconciliación
    * de la empresa necesita el tenant YA reconciliado, no el `prev` de su propio updater. */
@@ -68,10 +87,10 @@ export function PuntosVenta() {
       // opción reaparece. La empresa se reconcilia contra el MISMO conjunto ANGOSTADO que rinde la
       // pantalla (`opcionesDeEmpresa(filas, tenant)`, design D15): contra el conjunto sin angostar
       // sobrevivía una empresa de otro tenant que el `<select>` ya no ofrece.
-      const tenanteReconciliado = seleccionVigente(opcionesDeTenant(filas), filtroTenantVigente.current)
-      filtroTenantVigente.current = tenanteReconciliado
-      setFiltroTenant(tenanteReconciliado)
-      setFiltroEmpresa((prev) => seleccionVigente(opcionesDeEmpresa(filas, tenanteReconciliado), prev))
+      const tenantReconciliado = seleccionVigente(opcionesDeTenant(filas), filtroTenantVigente.current)
+      filtroTenantVigente.current = tenantReconciliado
+      setFiltroTenant(tenantReconciliado)
+      setFiltroEmpresa((prev) => seleccionVigente(opcionesDeEmpresa(filas, tenantReconciliado), prev))
       setError('')
     } catch (e) {
       if (generacion.current !== token) return
@@ -86,52 +105,118 @@ export function PuntosVenta() {
     void cargar(++generacion.current)
   }, [cargar])
 
+  /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
+   * commiteó nunca se reporta como fallida (`react-async-state` regla 6). NO apaga `ocupado`: de
+   * eso se ocupa el `finally` ungated de cada escritura — ver `Tenants.tsx`. */
+  async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
+    if (generacion.current !== token) return
+
+    setAviso(mensajeOk)
+    try {
+      await cargar(token, true)
+    } catch {
+      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+    }
+  }
+
   async function guardar() {
-    if (!formulario || ocupado !== null) return
+    if (!formulario || ocupadoRef.current) return
 
     const datos = formulario
     const token = ++generacion.current
+    ocupadoRef.current = true
     setOcupado(datos.id)
     setError('')
     setAviso('')
     try {
-      await clienteDeOrganizacion.editarPuntoVenta(datos.id, {
-        nombre: datos.nombre,
-        domicilio: datos.domicilio || null,
-        horario: datos.horario || null,
-        whatsapp: datos.whatsapp || null,
-        instagram: datos.instagram || null,
-        facebook: datos.facebook || null,
-        web: datos.web || null,
-      })
-    } catch (e) {
-      if (generacion.current !== token) return
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
-      setOcupado(null)
+      try {
+        await clienteDeOrganizacion.editarPuntoVenta(datos.id, {
+          nombre: datos.nombre,
+          domicilio: datos.domicilio || null,
+          horario: datos.horario || null,
+          whatsapp: datos.whatsapp || null,
+          instagram: datos.instagram || null,
+          facebook: datos.facebook || null,
+          web: datos.web || null,
+        })
+      } catch (e) {
+        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
-      return
-    }
+        return
+      }
 
-    // El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
-    // commiteó nunca se reporta como fallida (`react-async-state` regla 6).
-    //
-    // `ocupado` se apaga en el `finally` SIN mirar la generación, igual que en `Tenants.tsx` y
-    // `Usuarios.tsx`: mientras hay una escritura en vuelo la pantalla bloquea todo lo que podría
-    // supersederla (regla 9), así que la bandera nunca puede ser la de una operación más nueva —
-    // y salir por el chequeo de generación la dejaría prendida para siempre.
-    const mensajeOk = `Se actualizó "${datos.nombre}".`
-    try {
       if (generacion.current !== token) return
 
       setFormulario(null)
-      setAviso(mensajeOk)
-      await cargar(token, true)
-    } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
+      await refrescarTrasEscribir(token, `Se actualizó "${datos.nombre}".`, AVISO_REFRESCO_FALLIDO)
     } finally {
+      ocupadoRef.current = false
       setOcupado(null)
     }
   }
+
+  /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia.
+   * Abrir NO acuña generación: no hay escritura todavía. */
+  function pedirBaja(puntoVenta: PuntoVentaListado, disparador: HTMLElement | null) {
+    if (ocupadoRef.current) return
+
+    setDisparadorDeLaPuerta(disparador)
+    setBaja(puntoVenta)
+    setError('')
+    setAviso('')
+  }
+
+  /** Cancelar no supersede nada: solo cierra la puerta. Por eso no acuña generación —hacerlo
+   * descartaba una lectura en vuelo y clavaba la pantalla en "Cargando…"— y limpia los dos avisos,
+   * en simetría con la apertura. */
+  function cancelarBaja() {
+    if (ocupadoRef.current) return
+
+    setDisparadorDeLaPuerta(null)
+    setBaja(null)
+    setError('')
+    setAviso('')
+  }
+
+  async function confirmarBaja() {
+    if (!baja || ocupadoRef.current) return
+
+    // El token se acuña ACÁ, primera sentencia síncrona de la escritura (`react-async-state`
+    // regla 2): ver `Tenants.tsx`.
+    const fila = baja
+    const token = ++generacion.current
+    ocupadoRef.current = true
+    setOcupado(fila.id)
+    setError('')
+    setAviso('')
+    try {
+      try {
+        await clienteDeOrganizacion.eliminarPuntoVenta(fila.id)
+      } catch (e) {
+        // Un rechazo SIEMPRE se rinde, con la puerta abierta al lado del motivo.
+        setError(copiaDeFalloDeBaja(e, 'el punto de venta'))
+
+        return
+      }
+
+      // Un 204 SIEMPRE cierra la puerta y refresca; la generación solo gobierna el REFRESCO.
+      setBaja(null)
+      // La baja de la fila que se está editando se lleva también su formulario: dejarlo abierto
+      // ofrecía guardar sobre una entidad que ya no existe, y el PUT moría en 404.
+      setFormulario((prev) => (prev?.id === fila.id ? null : prev))
+      await refrescarTrasEscribir(
+        token,
+        `Se dio de baja el punto de venta "${fila.nombre}".`,
+        AVISO_REFRESCO_FALLIDO_BAJA,
+      )
+    } finally {
+      ocupadoRef.current = false
+      setOcupado(null)
+    }
+  }
+
+  /** La puerta abierta bloquea la pantalla entera, no solo la escritura en vuelo: ver `Tenants.tsx`. */
+  const bloqueado = ocupado !== null || baja !== null
 
   // Derivación pura, sin efectos: elegir un tenant ANGOSTA las opciones de empresa (design D15).
   // El fallback a "todas" cubre además el caso en que un refresco se llevó puesta la fila que
@@ -161,6 +246,16 @@ export function PuntosVenta() {
         {error && <div className="alert alert-danger rounded-0">{error}</div>}
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
 
+        {baja && (
+          <ConfirmacionDeBaja
+            titulo={`el punto de venta "${baja.nombre}"`}
+            ocupado={ocupado !== null}
+            disparador={disparadorDeLaPuerta}
+            onConfirmar={confirmarBaja}
+            onCancelar={cancelarBaja}
+          />
+        )}
+
         {formulario && (
           <form
             className="row g-3 border p-3 mb-4 bg-white"
@@ -182,7 +277,7 @@ export function PuntosVenta() {
                 maxLength={150}
                 value={formulario.nombre}
                 onChange={(e) => setFormulario({ ...formulario, nombre: e.target.value })}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
                 required
               />
             </div>
@@ -196,7 +291,7 @@ export function PuntosVenta() {
                 maxLength={255}
                 value={formulario.domicilio}
                 onChange={(e) => setFormulario({ ...formulario, domicilio: e.target.value })}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
               />
             </div>
             <div className="col-md-3">
@@ -209,7 +304,7 @@ export function PuntosVenta() {
                 maxLength={255}
                 value={formulario.horario}
                 onChange={(e) => setFormulario({ ...formulario, horario: e.target.value })}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
               />
             </div>
             <div className="col-md-2">
@@ -222,7 +317,7 @@ export function PuntosVenta() {
                 maxLength={30}
                 value={formulario.whatsapp}
                 onChange={(e) => setFormulario({ ...formulario, whatsapp: e.target.value })}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
               />
             </div>
             <div className="col-md-3">
@@ -235,7 +330,7 @@ export function PuntosVenta() {
                 maxLength={150}
                 value={formulario.instagram}
                 onChange={(e) => setFormulario({ ...formulario, instagram: e.target.value })}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
               />
             </div>
             <div className="col-md-3">
@@ -248,7 +343,7 @@ export function PuntosVenta() {
                 maxLength={150}
                 value={formulario.facebook}
                 onChange={(e) => setFormulario({ ...formulario, facebook: e.target.value })}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
               />
             </div>
             <div className="col-md-3">
@@ -261,18 +356,18 @@ export function PuntosVenta() {
                 maxLength={255}
                 value={formulario.web}
                 onChange={(e) => setFormulario({ ...formulario, web: e.target.value })}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
               />
             </div>
             <div className="col-12 d-flex gap-2">
-              <button type="submit" className="btn btn-success rounded-0" disabled={ocupado !== null}>
+              <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
                 {ocupado !== null ? 'Guardando…' : 'Guardar'}
               </button>
               <button
                 type="button"
                 className="btn btn-outline-secondary rounded-0"
                 onClick={() => setFormulario(null)}
-                disabled={ocupado !== null}
+                disabled={bloqueado}
               >
                 Cancelar
               </button>
@@ -298,6 +393,7 @@ export function PuntosVenta() {
                     className="form-select rounded-0"
                     value={tenantVigente}
                     onChange={(e) => cambiarFiltroDeTenant(e.target.value)}
+                    disabled={bloqueado}
                   >
                     <option value={SIN_FILTRO}>Todos</option>
                     {opcionesTenant.map((o) => (
@@ -317,6 +413,7 @@ export function PuntosVenta() {
                   className="form-select rounded-0"
                   value={empresaVigente}
                   onChange={(e) => setFiltroEmpresa(e.target.value)}
+                  disabled={bloqueado}
                 >
                   <option value={SIN_FILTRO}>Todas</option>
                   {opcionesEmpresa.map((o) => (
@@ -348,10 +445,10 @@ export function PuntosVenta() {
                       <td>{p.razonSocialEmpresa ?? ETIQUETA_SIN_DUENIO}</td>
                       <td>{p.nombre}</td>
                       <td>{p.domicilio ?? '—'}</td>
-                      <td className="text-end">
+                      <td className="text-end text-nowrap">
                         <button
                           type="button"
-                          className="btn btn-sm btn-outline-primary rounded-0"
+                          className="btn btn-sm btn-outline-primary rounded-0 me-1"
                           onClick={() =>
                             setFormulario({
                               id: p.id,
@@ -364,9 +461,17 @@ export function PuntosVenta() {
                               web: p.web ?? '',
                             })
                           }
-                          disabled={ocupado !== null}
+                          disabled={bloqueado}
                         >
                           Editar
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-danger rounded-0"
+                          onClick={(evento) => pedirBaja(p, evento.currentTarget)}
+                          disabled={bloqueado}
+                        >
+                          Baja
                         </button>
                       </td>
                     </tr>
