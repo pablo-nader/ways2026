@@ -1847,6 +1847,37 @@ and **rule 10: the pattern is replicated across all four screens in the same PR*
   the last migration must **still** be `20260822002214_FiscalArcaEtapa19a.cs`,
   `has-pending-model-changes` clean, `InicializadorDeBaseDeDatos.cs` / `Politicas.cs` /
   `ManejadorDeErrores.cs` untouched, zero physical deletes across the whole stage).
+**RESIDUALS AFTER THE FINAL RE-JUDGMENT OF SLICE 5 (round budget exhausted; both judges closed
+every item; no BLOCKER/CRITICAL). Recorded as the TRUE scope of the "modal" claim and as follow-ups.**
+
+The gate makes each SCREEN inert — every control inside the four root screens is behind `bloqueado`
+(verified control-by-control by both judges). It is NOT modal at DOCUMENT level, and the records
+above must not be read as claiming that:
+
+1. **Navbar escape.** `Layout.tsx` renders ~25 `NavLink`s and the "Salir" button outside any screen's
+   `bloqueado`; with the gate open the operator can navigate away or log out with the DELETE
+   undecided (pre-existing: the navbar was never gated by screen state). Real escape, not advisory.
+   Closing it means a document-level inert (`inert` attribute on the navbar while a gate is open, or
+   a portal-based dialog with a focus trap) — a cross-cutting change outside this stage.
+2. **The 409 banner is outside the `aria-modal` dialog.** On a rejection the gate stays open and the
+   reason renders as a sibling `alert alert-danger` with no `role="alert"`/`aria-live`; `aria-modal`
+   tells ATs to hide everything outside the dialog, so the copy is neither announced nor navigable
+   for exactly the users `aria-modal` was added for. Fix: render the rejection INSIDE the panel, or
+   give the banner `role="alert"` and drop `aria-modal` until a real trap exists.
+3. **Focus is lost during the write and not restored on rejection.** Confirming by keyboard leaves
+   focus on the button the next commit disables; a real browser moves it to `<body>`; on a 409 the
+   gate re-enables but the mount effect (deps `[disparador]`) does not re-run. jsdom cannot see it.
+   Fix: re-focus Cancelar when `ocupado` flips false while mounted.
+4. **Coverage gaps, not defects**: the per-screen `disparador` capture and the R2-5 form-close are
+   mutated/asserted only on the shared component and on Tenants; Empresas/PuntosVenta/Usuarios wiring
+   has no own kill. `tabindex=-1` written on the Box heading is never removed. `disparadorDeLaPuerta`
+   nulled on cancel but not on success. `errorAlta` is browser-unreachable (the guard's predicate is
+   the submit button's own `disabled`), and `confirmarBaja`/`accion` still clear it while
+   `pedirBaja`/`cancelarBaja` preserve it.
+5. **Six other screens keep native `confirm()`** (Articulos, Clientes, Categorias, Ofertas,
+   PaginaCatalogo, Proveedores) — out of stage scope, listed for the rule-10 sweep that adopts the
+   shared gate.
+
 - [ ] 5.11 `judgment-day` round to a clean round.
 - [ ] 5.12 Open PR 5 `feat/stage20-slice5-bajas-web`, merge to `main` after the clean round. **Then
   report to the owner, at delivery (OD5): empresa and punto de venta deletion ships LATENT** —
@@ -1917,7 +1948,7 @@ focus trap is needed because of C1: every other control is `disabled`"*. That wa
 carried no `disabled` at all — not even during `guardando` — while `bloqueado` was applied to the
 tenant select and to both buttons of the same form. The three sibling screens disabled every field,
 so this was a rule-10 parity break, and the "nothing is tabbable behind the gate" argument had five
-live counterexamples. **After R2-1 the claim is true**, and it is only true because of that fix.
+live counterexamples. **After R2-1 the claim is true WITHIN each screen; it is NOT true at document level — see the residuals block before task 5.11 (navbar, banner outside the dialog, focus during the write)**, and it is only true because of that fix.
 
 The **focus restore** was also true only in jsdom. Round 1 captured the trigger with
 `document.activeElement` inside a passive `useEffect`, which runs *after* the commit that disabled

@@ -1171,7 +1171,7 @@ phases:
       not even during guardando, while bloqueado was applied to the tenant select
       and to both buttons of the same form; the three sibling screens disabled every
       field, so it was a rule-10 parity break with five live counterexamples. The
-      claim is TRUE ONLY AFTER R2-1, which adds disabled={bloqueado} to the five.
+      claim is TRUE ONLY AFTER R2-1 AND ONLY WITHIN EACH SCREEN — the final re-judgment found the Layout navbar (~25 NavLinks + Salir) ungated, the 409 banner rendered outside the aria-modal dialog, and focus lost during the write; recorded in tasks.md as residuals, not closed, which adds disabled={bloqueado} to the five.
       The focus-restore half was true only in jsdom: round 1 captured the trigger
       with document.activeElement inside a passive useEffect, which runs AFTER the
       commit that disabled it, so a real browser had already applied the focus-fixup
