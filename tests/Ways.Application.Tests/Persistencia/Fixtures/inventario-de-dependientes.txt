@@ -69,6 +69,7 @@ Tenant | parametros | id_tenant | marcado
 Tenant | precios | id_tenant | marcado
 Tenant | presupuestos | id_tenant | marcado
 Tenant | proveedores | id_tenant | marcado
+Tenant | puntos_venta | id_tenant | marcado
 Tenant | remitos | id_tenant | marcado
 Tenant | stock | id_tenant | sinmarca
 Tenant | stock_lotes | id_tenant | sinmarca

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Ways.Application.Organizacion;
 using Ways.Domain.Clientes;
+using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
@@ -67,25 +68,56 @@ public class InventarioDeDependientesTests
     }
 
     /// <summary>
-    /// N1, segunda mitad: NINGUNA FK SE CAE EN SILENCIO. La cuenta de ramas emitidas es
-    /// exactamente <c>GetReferencingForeignKeys().Count()</c> menos las FK de tipos excluidos,
-    /// contadas acá de forma independiente contra el modelo.
+    /// N1, segunda mitad: NINGUNA FK SE CAE EN SILENCIO. Toda FK que referencia al ancla aporta su
+    /// rama <c>(tabla, columnas)</c> al inventario, y ningún carve-out llega a las ramas
+    /// ejecutables.
+    ///
+    /// Honestidad sobre el alcance (judgment-day slice 3, ronda 1): la CUENTA de ramas no es una
+    /// red. Comparar <c>InventarioCompleto().Count</c> contra la cuenta de su propia fuente es una
+    /// tautología — la cuenta se deriva del mismo recorrido que se está probando, así que un
+    /// dependiente que el recorrido no ve tampoco aparece del lado esperado. La red de nivel
+    /// CONJUNTO es N5.
     /// </summary>
     [Theory]
     [InlineData(typeof(Tenant))]
     [InlineData(typeof(Empresa))]
     [InlineData(typeof(PuntoVenta))]
     [InlineData(typeof(Usuario))]
-    public void N1_LaCuentaDeRamasEsLaDeLasFksMenosLosCarveOuts(Type ancla)
+    public void N1_NingunaFkSeCaeEnSilencioYLosCarveOutsNoEjecutan(Type ancla)
     {
         using var db = CrearContexto();
 
-        var fks = db.Model.FindEntityType(ancla)!.GetReferencingForeignKeys().ToList();
-        var excluidas = fks.Count(fk =>
-            InventarioDeDependientes.Excluidos.Contains(fk.DeclaringEntityType.ClrType));
+        var completo = InventarioDeDependientes.InventarioCompleto(db.Model, ancla);
+        var claves = completo
+            .Select(rama => $"{rama.Tabla}|{string.Join(',', rama.Columnas)}")
+            .ToHashSet(StringComparer.Ordinal);
 
-        Assert.Equal(fks.Count, InventarioDeDependientes.InventarioCompleto(db.Model, ancla).Count);
-        Assert.Equal(fks.Count - excluidas, InventarioDeDependientes.Construir(db.Model, ancla).Count);
+        var faltantes = db.Model.FindEntityType(ancla)!.GetReferencingForeignKeys()
+            .Select(ClaveDeFk)
+            .Where(clave => !claves.Contains(clave))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.True(
+            faltantes.Count == 0,
+            $"Estas FKs hacia {ancla.Name} no aportaron ninguna rama al inventario: " +
+            string.Join(", ", faltantes));
+
+        var excluidas = completo.Count(
+            rama => rama.Clasificacion is ClasificacionDeDependiente.Excluido);
+
+        Assert.Equal(
+            completo.Count - excluidas,
+            InventarioDeDependientes.Construir(db.Model, ancla).Count);
+    }
+
+    private static string ClaveDeFk(IForeignKey fk)
+    {
+        var dependiente = fk.DeclaringEntityType;
+        var objeto = StoreObjectIdentifier.Create(dependiente, StoreObjectType.Table)!.Value;
+
+        return $"{dependiente.GetTableName()}|" +
+            string.Join(',', fk.Properties.Select(p => p.GetColumnName(objeto)));
     }
 
     // ---------------------------------------------------------------------------------------
@@ -93,19 +125,21 @@ public class InventarioDeDependientesTests
     // ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// N2: para CADA rama, <c>UsaAncla</c> equivale a que la tabla dependiente tenga una columna
-    /// <c>created_at</c> — recalculado acá contra el modelo, sin mirar el clasificador.
+    /// N2: para CADA rama, <c>UsaAncla</c> equivale a las DOS condiciones del balde
+    /// <c>Marcado</c> (design sección A): el tipo dependiente hereda de <c>EntidadBase</c> Y la
+    /// tabla tiene una columna <c>created_at</c> — recalculado acá contra el modelo, sin mirar el
+    /// clasificador.
     ///
     /// Mata: cambiar el clasificador a <c>EntidadTenant</c> (usuarios/tenants heredan de
-    /// <c>EntidadBase</c> y caerían a <c>SinMarca</c>), invertirlo, o quedarse corto con una
-    /// lista de tipos escrita a mano.
+    /// <c>EntidadBase</c> y caerían a <c>SinMarca</c>), invertirlo, quedarse corto con una lista
+    /// de tipos escrita a mano, o quedarse con una sola de las dos condiciones.
     /// </summary>
     [Theory]
     [InlineData(typeof(Tenant))]
     [InlineData(typeof(Empresa))]
     [InlineData(typeof(PuntoVenta))]
     [InlineData(typeof(Usuario))]
-    public void N2_UsaAnclaEquivaleATenerColumnaCreatedAt(Type ancla)
+    public void N2_UsaAnclaEquivaleAEntidadBaseConColumnaCreatedAt(Type ancla)
     {
         using var db = CrearContexto();
 
@@ -114,8 +148,9 @@ public class InventarioDeDependientesTests
             .GroupBy(tipo => tipo.GetTableName()!, StringComparer.Ordinal)
             .ToDictionary(
                 grupo => grupo.Key,
-                grupo => grupo.Any(tipo => tipo.GetProperties()
-                    .Any(propiedad => propiedad.GetColumnName() == "created_at")),
+                grupo => grupo.Any(tipo =>
+                    typeof(EntidadBase).IsAssignableFrom(tipo.ClrType)
+                    && tipo.GetProperties().Any(propiedad => propiedad.GetColumnName() == "created_at")),
                 StringComparer.Ordinal);
 
         var ramas = InventarioDeDependientes.Construir(db.Model, ancla);
@@ -184,6 +219,57 @@ public class InventarioDeDependientesTests
         Path.GetDirectoryName(RutaDeEsteArchivo())!, "Fixtures", "inventario-de-dependientes.txt");
 
     private static string RutaDeEsteArchivo([CallerFilePath] string ruta = "") => ruta;
+
+    // ---------------------------------------------------------------------------------------
+    // N5 — COMPLETITUD DEL CONJUNTO DE DEPENDIENTES DEL TENANT. Nunca degradable.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// N5: la auditoría manual de judgment-day (slice 3, ronda 1) escrita como código. Para el
+    /// ancla <see cref="Tenant"/>, TODA tabla del modelo con una columna <c>id_tenant</c> tiene
+    /// que aparecer en su inventario — las líneas <c>excluido</c> cuentan como presentes, porque
+    /// el carve-out es una decisión escrita, no una omisión.
+    ///
+    /// Es la red que N1 NO puede ser: N1 compara el inventario contra el mismo recorrido de FKs
+    /// que lo produce, así que un dependiente que ese recorrido no ve es invisible para los dos
+    /// lados de la igualdad. Este conjunto se calcula desde una fuente INDEPENDIENTE (el mapeo de
+    /// columnas del modelo), y esa independencia es toda la red.
+    ///
+    /// El agujero real que encontró: <c>puntos_venta</c> declara su FK compuesta contra
+    /// <c>empresas</c> y NINGUNA contra <c>tenants</c>, así que
+    /// <c>GetReferencingForeignKeys()</c> nunca lo devolvía para el ancla <c>Tenant</c> y un
+    /// tenant cuyo cliente agregó un segundo punto de venta leía PRÍSTINO — falla ABIERTA.
+    /// </summary>
+    [Fact]
+    public void N5_TodaTablaConIdTenantAparecenEnElInventarioDelAncla()
+    {
+        using var db = CrearContexto();
+
+        var enElInventario = InventarioDeDependientes.InventarioCompleto(db.Model, typeof(Tenant))
+            .Select(rama => rama.Tabla)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var tablaDelAncla = db.Model.FindEntityType(typeof(Tenant))!.GetTableName();
+
+        var faltantes = db.Model.GetEntityTypes()
+            .Where(tipo => tipo.GetTableName() is { } tabla && tabla != tablaDelAncla)
+            .Where(TieneColumnaDeAlcanceDeTenant)
+            .Select(tipo => tipo.GetTableName()!)
+            .Distinct(StringComparer.Ordinal)
+            .Where(tabla => !enElInventario.Contains(tabla))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.True(
+            faltantes.Count == 0,
+            "Estas tablas llevan id_tenant y NO están en el inventario del ancla Tenant, así que " +
+            "un tenant que las usó lee PRÍSTINO (falla abierta): " + string.Join(", ", faltantes));
+    }
+
+    private static bool TieneColumnaDeAlcanceDeTenant(IEntityType tipo) =>
+        StoreObjectIdentifier.Create(tipo, StoreObjectType.Table) is { } objeto
+        && tipo.GetProperties().Any(propiedad =>
+            propiedad.GetColumnName(objeto) == InventarioDeDependientes.ColumnaDeAlcanceDeTenant);
 
     // ---------------------------------------------------------------------------------------
     // Carve-outs (tarea 3.12)

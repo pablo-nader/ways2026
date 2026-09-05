@@ -62,12 +62,16 @@ public sealed record RamaDeUso(
 /// real construido sobre una conexión que nunca se abre
 /// (<c>tests/Ways.Application.Tests/Persistencia/Modelo*Tests.cs</c>).
 ///
-/// <see cref="IEntityType.GetReferencingForeignKeys"/> es la ÚNICA fuente del conjunto de
-/// dependientes: no hay lista escrita a mano de tablas que revisar, así que una tabla que una
-/// etapa futura agregue entra sola. La clasificación es TOTAL por construcción — ningún
-/// <c>else</c> puede tirar en runtime — y las tres imposibilidades MECÁNICAS que sí tiran
-/// (<see cref="InvalidOperationException"/> nombrando el tipo CLR y la FK) son fallas de
-/// build-time que ejecuta N1 en CI, nunca un 500 en producción sobre un intento de baja.
+/// El conjunto de dependientes es la UNIÓN de dos recorridos, los dos derivados del modelo y
+/// ninguno escrito a mano: <see cref="IEntityType.GetReferencingForeignKeys"/> y —solo para el
+/// ancla <see cref="Ways.Domain.Organizacion.Tenant"/>— toda entidad que hereda de
+/// <see cref="EntidadTenant"/> y está mapeada a la columna de alcance <c>id_tenant</c>, el mismo
+/// idioma por reflexión que ya usa <c>WaysDbContext.AplicarFiltroDeTenant</c> para el query
+/// filter. Una tabla que una etapa futura agregue entra sola por cualquiera de los dos caminos.
+/// La clasificación es TOTAL por construcción — ningún <c>else</c> puede tirar en runtime — y las
+/// imposibilidades MECÁNICAS que sí tiran (<see cref="InvalidOperationException"/> nombrando el
+/// tipo CLR y el origen de la rama) son fallas de build-time que ejecuta N1 en CI, nunca un 500
+/// en producción sobre un intento de baja.
 /// </summary>
 public static class InventarioDeDependientes
 {
@@ -77,6 +81,17 @@ public static class InventarioDeDependientes
     /// porque N2 la vuelve a resolver por su cuenta desde el modelo.
     /// </summary>
     public const string ColumnaDeMarcaTemporal = "created_at";
+
+    /// <summary>
+    /// Columna de alcance de tenant. El recorrido de FKs NO alcanza para el ancla
+    /// <see cref="Ways.Domain.Organizacion.Tenant"/>: una tabla scopeada por tenant puede no
+    /// declarar ninguna FK contra <c>tenants</c> porque su FK compuesta apunta al padre intermedio
+    /// y arrastra el <c>id_tenant</c> ahí — <c>puntos_venta</c> declara
+    /// <c>(id_empresa, id_tenant) → empresas</c> y nada más. Sin esta segunda fuente esa tabla
+    /// quedaba FUERA del inventario y un tenant cuyo cliente agregó un segundo punto de venta leía
+    /// PRÍSTINO: falla ABIERTA, la única dirección que esta etapa no acepta.
+    /// </summary>
+    public const string ColumnaDeAlcanceDeTenant = "id_tenant";
 
     /// <summary>
     /// Carve-outs. EXACTAMENTE dos, cada uno con su razón escrita (design sección A, balde 1):
@@ -113,9 +128,10 @@ public static class InventarioDeDependientes
             .Where(rama => rama.Clasificacion is not ClasificacionDeDependiente.Excluido)];
 
     /// <summary>
-    /// TODA FK que referencia al ancla, carve-outs incluidos, en orden determinístico
-    /// (tabla, luego columnas). Es la fuente del golden N3: un carve-out que se agregue o se
-    /// saque cambia una línea del archivo en vez de desaparecer sin dejar rastro.
+    /// TODO dependiente del ancla, carve-outs incluidos, en orden determinístico
+    /// (tabla, luego columnas). Es la UNIÓN del recorrido de FKs con las ramas de alcance de
+    /// tenant, deduplicada por (tabla, columnas). Es la fuente del golden N3: un carve-out que se
+    /// agregue o se saque cambia una línea del archivo en vez de desaparecer sin dejar rastro.
     /// </summary>
     public static IReadOnlyList<RamaDeUso> InventarioCompleto(IModel modelo, Type tipoAncla)
     {
@@ -129,6 +145,8 @@ public static class InventarioDeDependientes
         var ramas = ancla.GetReferencingForeignKeys()
             .Select(fk => ConstruirRama(fk, tipoAncla))
             .ToList();
+
+        AgregarRamasDeAlcanceDeTenant(ancla, tipoAncla, ramas);
 
         ramas.Sort(static (a, b) =>
         {
@@ -155,31 +173,99 @@ public static class InventarioDeDependientes
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)];
 
+    /// <summary>
+    /// La segunda fuente del conjunto de dependientes, y CIERRA UNA CLASE, no un caso: toda
+    /// entidad que hereda de <see cref="EntidadTenant"/> está scopeada por tenant por declaración
+    /// (es de lo que se cuelgan el query filter, el estampado de <c>SaveChanges</c> y RLS), tenga
+    /// o no una FK declarada contra <c>tenants</c>. Se recorre por reflexión sobre el modelo —el
+    /// mismo idioma de <c>WaysDbContext.AplicarFiltroDeTenant</c>— y se deduplica contra lo que ya
+    /// aportó el recorrido de FKs, así que una tabla cubierta por ambos caminos emite UNA rama.
+    /// La clasificación usa exactamente la misma regla de baldes.
+    /// </summary>
+    private static void AgregarRamasDeAlcanceDeTenant(
+        IEntityType ancla, Type tipoAncla, List<RamaDeUso> ramas)
+    {
+        if (tipoAncla != typeof(Ways.Domain.Organizacion.Tenant))
+        {
+            return;
+        }
+
+        var clavePrincipal = ancla.FindPrimaryKey()
+            ?? throw new InvalidOperationException(
+                $"El tipo ancla {tipoAncla.FullName} no tiene clave primaria: el inventario no " +
+                "puede sintetizar sus ramas de alcance de tenant.");
+
+        var yaCubiertas = ramas.Select(ClaveDeRama).ToHashSet(StringComparer.Ordinal);
+
+        foreach (var dependiente in ancla.Model.GetEntityTypes()
+            .Where(tipo => typeof(EntidadTenant).IsAssignableFrom(tipo.ClrType)))
+        {
+            var origen = $"{dependiente.ClrType.Name}.{nameof(EntidadTenant.IdTenant)}";
+
+            var tabla = dependiente.GetTableName()
+                ?? throw new InvalidOperationException(
+                    $"El tipo dependiente {dependiente.ClrType.FullName} hereda de " +
+                    $"{nameof(EntidadTenant)} pero no tiene tabla mapeada: el inspector de uso no " +
+                    "puede interrogarlo.");
+
+            var objeto = StoreObjectIdentifier.Create(dependiente, StoreObjectType.Table)
+                ?? throw new InvalidOperationException(
+                    $"El tipo dependiente {dependiente.ClrType.FullName} hereda de " +
+                    $"{nameof(EntidadTenant)} pero no resuelve a un objeto de almacenamiento de " +
+                    "tipo tabla.");
+
+            if (!dependiente.GetProperties().Any(p => p.GetColumnName(objeto) == ColumnaDeAlcanceDeTenant))
+            {
+                throw new InvalidOperationException(
+                    $"El tipo dependiente {dependiente.ClrType.FullName} hereda de " +
+                    $"{nameof(EntidadTenant)} y no resuelve la columna {ColumnaDeAlcanceDeTenant} " +
+                    $"en {tabla}.");
+            }
+
+            var rama = new RamaDeUso(
+                dependiente.GetSchema() ?? EsquemaPorDefecto(dependiente.Model),
+                tabla,
+                [ColumnaDeAlcanceDeTenant],
+                [.. clavePrincipal.Properties.Select(p =>
+                    LeerPropiedadDelPrincipal(p, origen, dependiente.ClrType, tipoAncla))],
+                Clasificar(dependiente, objeto, origen, tipoAncla));
+
+            if (yaCubiertas.Add(ClaveDeRama(rama)))
+            {
+                ramas.Add(rama);
+            }
+        }
+    }
+
+    private static string ClaveDeRama(RamaDeUso rama) =>
+        $"{rama.Tabla}|{string.Join(',', rama.Columnas)}";
+
     private static RamaDeUso ConstruirRama(IForeignKey fk, Type tipoAncla)
     {
         var dependiente = fk.DeclaringEntityType;
+        var origen = DescribirFk(fk);
 
         var tabla = dependiente.GetTableName()
             ?? throw new InvalidOperationException(
                 $"El tipo dependiente {dependiente.ClrType.FullName} referencia a " +
-                $"{tipoAncla.Name} por ({DescribirFk(fk)}) pero no tiene tabla mapeada: " +
+                $"{tipoAncla.Name} por ({origen}) pero no tiene tabla mapeada: " +
                 "el inspector de uso no puede interrogarlo.");
 
         var objeto = StoreObjectIdentifier.Create(dependiente, StoreObjectType.Table)
             ?? throw new InvalidOperationException(
                 $"El tipo dependiente {dependiente.ClrType.FullName} referencia a " +
-                $"{tipoAncla.Name} por ({DescribirFk(fk)}) pero no resuelve a un objeto de " +
+                $"{tipoAncla.Name} por ({origen}) pero no resuelve a un objeto de " +
                 "almacenamiento de tipo tabla.");
 
         var columnas = fk.Properties
             .Select(p => p.GetColumnName(objeto)
                 ?? throw new InvalidOperationException(
-                    $"La FK ({DescribirFk(fk)}) de {dependiente.ClrType.FullName} hacia " +
+                    $"La FK ({origen}) de {dependiente.ClrType.FullName} hacia " +
                     $"{tipoAncla.Name} tiene la propiedad {p.Name} sin columna en {tabla}."))
             .ToList();
 
         var propiedadesDelPrincipal = fk.PrincipalKey.Properties
-            .Select(p => LeerPropiedadDelPrincipal(p, fk, tipoAncla))
+            .Select(p => LeerPropiedadDelPrincipal(p, origen, dependiente.ClrType, tipoAncla))
             .ToList();
 
         return new RamaDeUso(
@@ -187,17 +273,19 @@ public static class InventarioDeDependientes
             tabla,
             columnas,
             propiedadesDelPrincipal,
-            Clasificar(dependiente, objeto, fk, tipoAncla));
+            Clasificar(dependiente, objeto, origen, tipoAncla));
     }
 
     private static ClasificacionDeDependiente Clasificar(
-        IEntityType dependiente, StoreObjectIdentifier objeto, IForeignKey fk, Type tipoAncla)
+        IEntityType dependiente, StoreObjectIdentifier objeto, string origen, Type tipoAncla)
     {
         // Orden fijo: carve-out -> marcado -> sin marca. Total por construcción.
         if (Excluidos.Contains(dependiente.ClrType))
         {
             return ClasificacionDeDependiente.Excluido;
         }
+
+        var heredaDeEntidadBase = typeof(EntidadBase).IsAssignableFrom(dependiente.ClrType);
 
         var llevaMarca = dependiente.GetProperties()
             .Any(p => p.GetColumnName(objeto) == ColumnaDeMarcaTemporal);
@@ -206,19 +294,26 @@ public static class InventarioDeDependientes
         // TODA tabla lleva created_at) y sin embargo la columna no se resuelve. Silenciarlo lo
         // degradaría a SinMarca, que sobre-bloquearía a todo tenant recién aprovisionado sin
         // que nadie se enterara. Lo tira N1 en CI, nunca un request.
-        if (!llevaMarca && typeof(EntidadBase).IsAssignableFrom(dependiente.ClrType))
+        if (!llevaMarca && heredaDeEntidadBase)
         {
             throw new InvalidOperationException(
                 $"El tipo dependiente {dependiente.ClrType.FullName} referencia a " +
-                $"{tipoAncla.Name} por ({DescribirFk(fk)}), hereda de {nameof(EntidadBase)} y " +
+                $"{tipoAncla.Name} por ({origen}), hereda de {nameof(EntidadBase)} y " +
                 $"no resuelve la columna {ColumnaDeMarcaTemporal} en " +
                 $"{dependiente.GetTableName()}.");
         }
 
-        return llevaMarca ? ClasificacionDeDependiente.Marcado : ClasificacionDeDependiente.SinMarca;
+        // Design sección A, balde 2: AMBAS condiciones. Una tabla con created_at que NO hereda de
+        // EntidadBase no comparte la convención de estampado del proyecto, así que su marca no es
+        // comparable contra el instante del ancla: cae a SinMarca (existencia), que SOBRE-bloquea
+        // — el lado seguro.
+        return llevaMarca && heredaDeEntidadBase
+            ? ClasificacionDeDependiente.Marcado
+            : ClasificacionDeDependiente.SinMarca;
     }
 
-    private static string LeerPropiedadDelPrincipal(IProperty propiedad, IForeignKey fk, Type tipoAncla)
+    private static string LeerPropiedadDelPrincipal(
+        IProperty propiedad, string origen, Type tipoDependiente, Type tipoAncla)
     {
         // Imposibilidad mecánica: el ancla llega al inspector como una instancia ya cargada, así
         // que una propiedad shadow o ajena al tipo ancla no se puede leer de ella.
@@ -228,7 +323,7 @@ public static class InventarioDeDependientes
         return accesible
             ? propiedad.Name
             : throw new InvalidOperationException(
-                $"La FK ({DescribirFk(fk)}) de {fk.DeclaringEntityType.ClrType.FullName} hacia " +
+                $"La rama ({origen}) de {tipoDependiente.FullName} hacia " +
                 $"{tipoAncla.Name} depende de la propiedad principal {propiedad.Name}, que no " +
                 $"es legible desde {tipoAncla.FullName}.");
     }
