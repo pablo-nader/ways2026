@@ -249,6 +249,42 @@ describe('ConsultaPrecios — punto de venta de sesión', () => {
     expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Consultar' })).toBeDisabled()
   })
+
+  /**
+   * Cláusula bajo prueba: el `:${puntoVenta?.id}` del `key={puntoVenta?.id ?? 'sin-pv'}` de
+   * `ConsultaPrecios()` (mismo mecanismo de `Pos()`/`Caja()`, react-async-state regla 8). Sin esa
+   * mitad del key, un cambio de punto de venta de sesión NO remonta `PantallaConsultaPrecios` y el
+   * resultado escaneado (más cualquier texto sin confirmar en el input) sobrevive al cambio.
+   * Evidencia de mutación (mutation-proof-tests regla 2): con el key reemplazado por la constante
+   * `"fijo"` en `ConsultaPrecios.tsx:302`, este test falla ("Coca Cola 1L" sigue en pantalla y el
+   * input conserva "999"); revertido byte a byte, vuelve a verde.
+   */
+  it('un cambio del punto de venta de sesión remonta la pantalla y descarta el resultado anterior', async () => {
+    const puntoVentaNorte = puntoVentaFixture({ id: 8, nombre: 'Sucursal Norte' })
+    estadoDePuntoVenta.puntosVenta = [puntoVentaCentro, puntoVentaNorte]
+
+    const { rerender } = await renderYEsperarSelectores()
+    await escanear('7790001234567')
+    await screen.findByTestId('resultado-resuelto')
+    expect(screen.getByTestId('resultado-resuelto')).toHaveTextContent('Coca Cola 1L')
+
+    // Texto sin confirmar en el input: si el remount fuera parcial (por ejemplo, solo el
+    // `resultado` limpiado a mano), este texto sobreviviría igual — es el discriminante contra
+    // un remount incompleto.
+    const entrada = screen.getByLabelText('Código escaneado') as HTMLInputElement
+    fireEvent.change(entrada, { target: { value: '999' } })
+    expect(entrada.value).toBe('999')
+
+    estadoDePuntoVenta.puntoVenta = puntoVentaNorte
+    rerender(<ConsultaPrecios />)
+
+    await screen.findByRole('option', { name: 'Lista Mostrador' })
+    expect(screen.getByText('Sucursal Norte')).toBeInTheDocument()
+    expect(screen.queryByText('Local Centro')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('resultado-resuelto')).not.toBeInTheDocument()
+    expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument()
+    expect((screen.getByLabelText('Código escaneado') as HTMLInputElement).value).toBe('')
+  })
 })
 
 describe('aResultadoDeConsulta — mapper puro (web-descriptor-tests)', () => {
