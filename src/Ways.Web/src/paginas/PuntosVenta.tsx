@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ErrorApi } from '../api/cliente'
+import { copiaDeFalloDeBaja } from '../api/bajas'
 import {
   clienteDeOrganizacion,
   ETIQUETA_SIN_DUENIO,
@@ -14,6 +15,7 @@ import {
 import type { PuntoVentaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
 import { ROL } from '../api/tipos'
 
@@ -29,10 +31,14 @@ type Formulario = {
 }
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+const AVISO_REFRESCO_FALLIDO_BAJA =
+  'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
 /**
- * Lectura/edición de puntos de venta — mismo patrón que <c>Empresas.tsx</c>: sin alta ni baja
- * (plataforma-only vía aprovisionamiento), el backend ya filtra por alcance.
+ * Lectura/edición/baja de puntos de venta — mismo patrón que <c>Empresas.tsx</c>: el alta sigue
+ * siendo plataforma-only vía aprovisionamiento y el backend ya filtra por alcance. La baja
+ * (etapa 20) es <c>Politicas.GestionDeOrganizacion</c>, no <c>LecturaDePuntosVenta</c>: el
+ * selector de PV del POS lee este listado, pero un vendedor no llega a esta pantalla.
  * <c>idEmpresa</c> no se edita acá: es estructural (a qué empresa pertenece), no descriptivo.
  * Los dos filtros (tenant y empresa) operan sobre la lista YA CARGADA y sus opciones salen de
  * esas mismas filas (design D15).
@@ -49,9 +55,16 @@ export function PuntosVenta() {
   const [ocupado, setOcupado] = useState<number | null>(null)
   const [filtroTenant, setFiltroTenant] = useState(SIN_FILTRO)
   const [filtroEmpresa, setFiltroEmpresa] = useState(SIN_FILTRO)
+  /** Baja pendiente de confirmación, con su token capturado al abrir la puerta: ver `Tenants.tsx`. */
+  const [baja, setBaja] = useState<{ fila: PuntoVentaListado; token: number } | null>(null)
 
   /** Contrato de invalidación: ver `Tenants.tsx` — mismo patrón en las cuatro pantallas raíz. */
   const generacion = useRef(0)
+  /**
+   * Espejo SÍNCRONO de `ocupado`, y la ÚNICA guarda de re-entrancia válida: ver `Tenants.tsx`.
+   * Dos clicks del MISMO tick leen el mismo render, así que el estado los deja pasar a los dos.
+   */
+  const ocupadoRef = useRef(false)
   /** Espejo SIEMPRE al día de `filtroTenant`. `cargar` es un `useCallback` sin dependencias, así
    * que no puede leer el estado por closure sin quedarse con una foto vieja; y la reconciliación
    * de la empresa necesita el tenant YA reconciliado, no el `prev` de su propio updater. */
@@ -68,10 +81,10 @@ export function PuntosVenta() {
       // opción reaparece. La empresa se reconcilia contra el MISMO conjunto ANGOSTADO que rinde la
       // pantalla (`opcionesDeEmpresa(filas, tenant)`, design D15): contra el conjunto sin angostar
       // sobrevivía una empresa de otro tenant que el `<select>` ya no ofrece.
-      const tenanteReconciliado = seleccionVigente(opcionesDeTenant(filas), filtroTenantVigente.current)
-      filtroTenantVigente.current = tenanteReconciliado
-      setFiltroTenant(tenanteReconciliado)
-      setFiltroEmpresa((prev) => seleccionVigente(opcionesDeEmpresa(filas, tenanteReconciliado), prev))
+      const tenantReconciliado = seleccionVigente(opcionesDeTenant(filas), filtroTenantVigente.current)
+      filtroTenantVigente.current = tenantReconciliado
+      setFiltroTenant(tenantReconciliado)
+      setFiltroEmpresa((prev) => seleccionVigente(opcionesDeEmpresa(filas, tenantReconciliado), prev))
       setError('')
     } catch (e) {
       if (generacion.current !== token) return
@@ -86,49 +99,99 @@ export function PuntosVenta() {
     void cargar(++generacion.current)
   }, [cargar])
 
+  /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
+   * commiteó nunca se reporta como fallida (`react-async-state` regla 6). NO apaga `ocupado`: de
+   * eso se ocupa el `finally` ungated de cada escritura — ver `Tenants.tsx`. */
+  async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
+    if (generacion.current !== token) return
+
+    setAviso(mensajeOk)
+    try {
+      await cargar(token, true)
+    } catch {
+      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+    }
+  }
+
   async function guardar() {
-    if (!formulario || ocupado !== null) return
+    if (!formulario || ocupadoRef.current) return
 
     const datos = formulario
     const token = ++generacion.current
+    ocupadoRef.current = true
     setOcupado(datos.id)
     setError('')
     setAviso('')
     try {
-      await clienteDeOrganizacion.editarPuntoVenta(datos.id, {
-        nombre: datos.nombre,
-        domicilio: datos.domicilio || null,
-        horario: datos.horario || null,
-        whatsapp: datos.whatsapp || null,
-        instagram: datos.instagram || null,
-        facebook: datos.facebook || null,
-        web: datos.web || null,
-      })
-    } catch (e) {
-      if (generacion.current !== token) return
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
-      setOcupado(null)
+      try {
+        await clienteDeOrganizacion.editarPuntoVenta(datos.id, {
+          nombre: datos.nombre,
+          domicilio: datos.domicilio || null,
+          horario: datos.horario || null,
+          whatsapp: datos.whatsapp || null,
+          instagram: datos.instagram || null,
+          facebook: datos.facebook || null,
+          web: datos.web || null,
+        })
+      } catch (e) {
+        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
-      return
-    }
+        return
+      }
 
-    // El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
-    // commiteó nunca se reporta como fallida (`react-async-state` regla 6).
-    //
-    // `ocupado` se apaga en el `finally` SIN mirar la generación, igual que en `Tenants.tsx` y
-    // `Usuarios.tsx`: mientras hay una escritura en vuelo la pantalla bloquea todo lo que podría
-    // supersederla (regla 9), así que la bandera nunca puede ser la de una operación más nueva —
-    // y salir por el chequeo de generación la dejaría prendida para siempre.
-    const mensajeOk = `Se actualizó "${datos.nombre}".`
-    try {
       if (generacion.current !== token) return
 
       setFormulario(null)
-      setAviso(mensajeOk)
-      await cargar(token, true)
-    } catch {
-      if (generacion.current === token) setAviso(`${mensajeOk} ${AVISO_REFRESCO_FALLIDO}`)
+      await refrescarTrasEscribir(token, `Se actualizó "${datos.nombre}".`, AVISO_REFRESCO_FALLIDO)
     } finally {
+      ocupadoRef.current = false
+      setOcupado(null)
+    }
+  }
+
+  /** Ver `Tenants.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma re-entrancia. */
+  function pedirBaja(puntoVenta: PuntoVentaListado) {
+    if (ocupadoRef.current) return
+
+    setBaja({ fila: puntoVenta, token: ++generacion.current })
+    setError('')
+    setAviso('')
+  }
+
+  function cancelarBaja() {
+    if (ocupadoRef.current) return
+
+    ++generacion.current
+    setBaja(null)
+  }
+
+  async function confirmarBaja() {
+    if (!baja || ocupadoRef.current) return
+
+    const { fila, token } = baja
+    ocupadoRef.current = true
+    setOcupado(fila.id)
+    setError('')
+    setAviso('')
+    try {
+      try {
+        await clienteDeOrganizacion.eliminarPuntoVenta(fila.id)
+      } catch (e) {
+        if (generacion.current === token) setError(copiaDeFalloDeBaja(e, 'el punto de venta'))
+
+        return
+      }
+
+      if (generacion.current !== token) return
+
+      setBaja(null)
+      await refrescarTrasEscribir(
+        token,
+        `Se dio de baja el punto de venta "${fila.nombre}".`,
+        AVISO_REFRESCO_FALLIDO_BAJA,
+      )
+    } finally {
+      ocupadoRef.current = false
       setOcupado(null)
     }
   }
@@ -160,6 +223,15 @@ export function PuntosVenta() {
       <Box titulo="Puntos de venta" variante="inverse">
         {error && <div className="alert alert-danger rounded-0">{error}</div>}
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
+
+        {baja && (
+          <ConfirmacionDeBaja
+            titulo={`el punto de venta "${baja.fila.nombre}"`}
+            ocupado={ocupado !== null}
+            onConfirmar={confirmarBaja}
+            onCancelar={cancelarBaja}
+          />
+        )}
 
         {formulario && (
           <form
@@ -348,10 +420,10 @@ export function PuntosVenta() {
                       <td>{p.razonSocialEmpresa ?? ETIQUETA_SIN_DUENIO}</td>
                       <td>{p.nombre}</td>
                       <td>{p.domicilio ?? '—'}</td>
-                      <td className="text-end">
+                      <td className="text-end text-nowrap">
                         <button
                           type="button"
-                          className="btn btn-sm btn-outline-primary rounded-0"
+                          className="btn btn-sm btn-outline-primary rounded-0 me-1"
                           onClick={() =>
                             setFormulario({
                               id: p.id,
@@ -367,6 +439,14 @@ export function PuntosVenta() {
                           disabled={ocupado !== null}
                         >
                           Editar
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-danger rounded-0"
+                          onClick={() => pedirBaja(p)}
+                          disabled={ocupado !== null}
+                        >
+                          Baja
                         </button>
                       </td>
                     </tr>
