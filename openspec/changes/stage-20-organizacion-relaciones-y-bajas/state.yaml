@@ -837,6 +837,126 @@ phases:
       (1741 before; +2 from the two new bridge execution tests), and 'dotnet ef
       migrations has-pending-model-changes' reports "No changes have been made to
       the model since the last migration." Slices 4-5 pending.
+
+      SLICE 4 IMPLEMENTED (tasks 4.1-4.37 checked; 4.38 judgment-day and 4.39 PR
+      belong to the orchestrator; 3.19 and 3.20 also checked now that PR #169
+      merged in c3f62d7). Branch feat/stage20-slice4-bajas-api off main, measured
+      with 'git diff main --stat -- src tests' and NOT estimated - 13 files, 2668
+      insertions and 219 deletions, of which production is 676 insertions and 122
+      deletions across 6 files (Organizacion/ServicioDeOrganizacion.cs 561 changed,
+      Organizacion/EtiquetasDeTablas.cs 100 new, Usuarios/ServicioDeUsuarios.cs 54,
+      Api/Endpoints/OrganizacionEndpoints.cs 33, plus the two comment amendments in
+      InspectorDeUso.cs and InventarioDeDependientes.cs) and the rest is tests
+      (BajasDeOrganizacionTests.cs 1552 new, BajasEstructuralesTests.cs 253 new,
+      ProyeccionDeOrganizacionTests.cs 144, OrganizacionTests.cs 38, and the
+      constructor fixes of the three suites that build the two services by hand).
+      THE SLICE OVERFLOWS THE 800-LINE BUDGET AND IT IS REPORTED, NOT HIDDEN -
+      roughly 2150 authored lines against a forecast of 530, because the forecast
+      predated three slice-1 judgment-day inputs that all landed here - the
+      one-transaction re-projection of the four write paths, the six projection
+      mutation kills, and the relocation's replacement assertions. The
+      pre-authorized 4a/4b split is NOT clean as written (the relocation it puts in
+      4b is forced by the transaction refactor it puts in 4a), a workable variant is
+      recorded in tasks.md, and the decision is left to the orchestrator rather than
+      taken unilaterally.
+
+      ZERO SCHEMA HELD AND VERIFIED - zero files under Migraciones/, the last
+      migration is still 20260822002214_FiscalArcaEtapa19a, 'dotnet ef migrations
+      has-pending-model-changes' reports "No changes have been made to the model
+      since the last migration.", and git status lists no file under
+      src/Ways.Infrastructure/, no Politicas.cs and no ManejadorDeErrores.cs. The
+      three DELETE routes reuse the policy of the group they already belong to.
+      db-error-backstops STRUCTURALLY N/A - the deletion is an UPDATE ... SET
+      deleted_at and DeleteBehavior.Restrict contributes exactly zero against it, so
+      no SQLSTATE can fire and there is no branch to classify.
+
+      ZERO PHYSICAL DELETES, ASSERTED AS CODE AND NOT AS A CLAIM -
+      BajasEstructuralesTests scans every .cs under src/ - ExecuteDelete,
+      ExecuteDeleteAsync, .Remove( and DELETE FROM are absent from the whole
+      repository, and the six RemoveRange receivers are frozen by name, none of them
+      an organization table. The trip-wire was proven by mutation (inserting
+      db.Tenants.RemoveRange into EliminarTenantAsync turns it red).
+
+      SIXTEEN MUTATIONS RUN FOR REAL AND ALL KILLED, NEVER REASONED - U1/U2/U3 the
+      three cascade scopes, U4 the empresa cascade scope, U5/U6 the two minimum
+      counts, U7a the FK conjunct (mutated to "(col = $n OR true)" so the parameter
+      count is preserved and the failure is semantic, not a bind error), U7b the
+      strict > against >=, U8 the SinMarca branch forced to carry the anchor
+      conjunct (Postgres 42703, stock has no created_at), N4 provisioning reading
+      the clock twice, and P1-P6 the six projection predicates that slice 1 shipped
+      as SURVIVING mutants. Every one was applied alone and reverted byte for byte,
+      with the harness asserting the file is identical afterwards. ONE MUTATION
+      RECORDED AS NOT RUN INSTEAD OF DRESSED UP - the first U8 attempt (UsaAncla =>
+      true) does not compile under CA1822 and was replaced by an equivalent one.
+
+      THE FOUR SURVIVING MUTANTS OF SLICE 1 ARE DEAD, BY A DIFFERENT ROUTE THAN THE
+      INPUT PREDICTED. The premise "the deletion writers are the reachable path" is
+      false - the cascade takes a soft-deleted owner and its live children in the
+      same instant, so no deletion writer can ever produce a live orphan. They are
+      closed instead by re-routing below the confound, which is mutation-proof-tests'
+      own instruction - the three projections are now public static and the tests
+      compose the SAME production expression with IgnoreQueryFilters(["BajaLogica"]),
+      which is exactly what no production caller does. The two contradictory
+      doc-comments are reconciled into ONE rule stated at ProyeccionDeTenant (inside
+      a projection every correlated subquery declares its own DeletedAt == null,
+      because the expression is composable), the three counters were hardened
+      accordingly, and the one predicate that could never be refuted -
+      ServicioDeUsuarios.NombreDeTenantAsync, a query built and executed entirely
+      inside its own method, where no caller can strip the filter - was REMOVED
+      rather than carried a third round. Behaviour is unchanged on every path.
+
+      THE FIRST-ARTICLE SCENARIO IS TRUE FOR TWO OF ITS THREE ENTITIES AND THE THIRD
+      IS RECORDED, NOT PAPERED OVER (Reconciliacion 11 in tasks.md). No
+      article-shaped row hangs off a punto de venta - articulos is tenant-wide and
+      the per-empresa availability exception lives in articulos_empresas - so one
+      article blocks the tenant and the empresa, and the punto de venta blocks on
+      its own smallest customer datum, one stock row. It is the slice-3 design
+      amendment in its own words, usage propagates UP the hierarchy and never down,
+      and the spec text is left byte-identical, the same handling Reconciliacion 1
+      gives OD6.
+
+      TASK 4.10 RELOCATED SOMETHING ELSE THAN THE TASK PREDICTED. There were ZERO
+      EliminarAsync cases to move - the organization service had no deletion at all
+      and the usuario deletion was already covered by PreciosYUsuariosAuditoriaTests
+      in the integration suite. What had to move is the consequence of the slice-1
+      input - one transaction around each write and its re-projection makes the four
+      write paths unrunnable on InMemory (TransactionIgnoredWarning). Five
+      round-trip cases moved against their existing equivalents in OrganizacionTests
+      and every one asserts what it asserted before; where the equivalent lacked a
+      field assertion it was ADDED, and the one case with no equivalent
+      (UnAdminEditaSuPropioPuntoDeVentaOk) was written. Nothing was weakened.
+
+      OD5 HONOURED - no API-level test exists for empresa_en_uso or
+      punto_venta_en_uso, both are proven below the API with a hand-seeded second
+      empresa/punto de venta, and no creation endpoint was added. OD6 HONOURED - the
+      cascade-deleted admin gets 401 credenciales_invalidas and the suspended
+      tenant's user still gets 403 tenant_suspendido, two tests, two codes. OD4
+      HONOURED - a soft-deleted article still blocks. THE BRIDGED 409 NO LONGER
+      SHIPS A BARE LEAF LABEL, and it is resolved at the copy layer so
+      InspectorDeUso's contract and its two test suites stay untouched -
+      EtiquetasDeTablas.DescribirBloqueo names the bridge when every branch for that
+      leaf is bridged and falls back to the bare label when the leaf also has a
+      direct branch, because there the inspector cannot say which one matched. Task
+      4.36's index check covers BOTH relations for a bridged branch and reports zero
+      uncovered branches on this tree, frozen as an empty expected set so it is a
+      trip-wire and not a report nobody reads. R1 (the InicializadorDeBaseDeDatos
+      backfill over-block) was left exactly as it is, as instructed.
+
+      SUITES OF SLICE 4, run against real output and never inferred - 'dotnet build
+      Ways.slnx' clean (0 errors, the two pre-existing NU1903 SSH.NET warnings),
+      Ways.Domain.Tests 545/545 green, Ways.Application.Tests 432/432 green (427
+      before this slice - minus the five relocated round-trip cases, plus the ten of
+      the new BajasEstructuralesTests), and Ways.IntegrationTests 1771/1771 green
+      run ONCE and ALONE against a single Docker daemon, with zero transport-abort
+      flakes and zero re-runs (1743 before - plus 26 of BajasDeOrganizacionTests,
+      plus the projection-predicate kill and the relocated
+      UnAdminEditaSuPropioPuntoDeVentaOk). THE FIRST FULL RUN WAS 1770/1771 AND THE
+      FAILURE IS REPORTED, NOT SWALLOWED - SuperficieDeAutorizacionTests, the
+      omission guard that walks the real EndpointDataSource, went red on the three
+      new DELETE routes exactly as designed; the allowlist declares them with their
+      reason (family (b) - an administrative surface stricter than
+      GestionDeCatalogo, which never admits Vendedor) and the suite was re-run whole
+      and green. Slice 5 pending.
   verify:
     status: pending
     artifact: verify-report.md
