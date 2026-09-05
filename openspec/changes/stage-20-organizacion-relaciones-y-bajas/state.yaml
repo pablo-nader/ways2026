@@ -565,7 +565,16 @@ phases:
       the same five pre-existing warnings. Diff of the addition measured with
       'git diff --stat -- src' against the slice-2 tip - 3 files, 270
       insertions plus 4 deletions, of which Usuarios.test.tsx is 182. ZERO
-      BACKEND FILE, zero schema, zero migration. Slices 3-5 pending.
+      BACKEND FILE, zero schema, zero migration. PAGE-SIZE GAP CLOSED, narrow
+      web-only follow-up on the same branch - the create selector now sources
+      its options from clienteDeOrganizacion.listarTenants() (GET
+      /plataforma/tenants, SoloPlataforma) gated strictly on esPlataforma, so
+      a platform actor can assign any tenant regardless of the loaded users'
+      page and a tenant admin never calls it (S5, M19 killed); the FILTER
+      option set is untouched, still opcionesDeTenant(filas) with zero second
+      fetch (D15). SUITES after the gap closure - npm run test 63 files / 999
+      tests green, npm run build clean, npm run lint exit 0 with the same
+      five pre-existing warnings. Slices 3-5 pending.
   verify:
     status: pending
     artifact: verify-report.md

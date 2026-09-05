@@ -549,6 +549,19 @@ impossible by construction, and satisfies S5 (a filter can never disclose an out
   stays the authority and its 400 still surfaces through the existing error path, untouched;
   (e) **`react-async-state`** rule 5 — the selector is inert while the list is loading and while a
   save is in flight. Five mutations run for real (M14-M18 below). *(UT-R1; design D15, spec S5)*
+  **Page-size gap closed as a narrow web-only follow-up on the same branch.** (c) above left a known
+  gap, stated in tasks.md and state.yaml: deriving the create selector's options from the
+  already-loaded rows meant a platform actor could only assign a tenant with a user on the current
+  page (`tamanio` 25). Closed by fetching the full tenant universe via
+  `clienteDeOrganizacion.listarTenants()` (`GET /plataforma/tenants`, `Politicas.SoloPlataforma`) —
+  gated **strictly** on `esPlataforma`, so a tenant admin never calls it (S5) — while the **filter**
+  option set (D15) is left untouched, still derived from the loaded rows with zero second fetch.
+  No estado filtering is applied to the fetched list — the server is the authority on business
+  rules — and results are sorted by name. `react-async-state` rule 5 still gates the selector, now
+  on the tenant fetch's own loading flag (`tenantsDePlataformaCargando`), not the row list's.
+  One mutation run for real, M19 below (dropping the `esPlataforma` guard on the new fetch),
+  observed RED on the tenant-admin test, then reverted and observed GREEN again; M14-M18 stay
+  valid unmodified. *(UT-R1; design D15, spec S5)*
 - [ ] 2.15 `judgment-day` round to a clean round.
 - [ ] 2.16 Open PR 2 `feat/stage20-slice2-proyeccion-web`, merge to `main` after the clean round.
 
@@ -580,6 +593,7 @@ planning name `feat/stage20-slice2-proyeccion-web` — same slice, different bra
 | M16 | 2.17 | `ofreceTenant` gates the selector — S5 anti-oracle: a tenant admin never enumerates tenants | `{esNuevo && (` — the `ofreceTenant` conjunct dropped | **KILLED, 2 tests** — `expected document not to contain element, found <select`, and `expected "vi.fn()" to be called at least once` (the now-visible `required` select blocks submission, so the POST never fires — incidental proof that the `required` copy matches real enforcement, `react-async-state` rule 7) |
 | M17 | 2.17 | The create selector offers only ASSIGNABLE tenants — the platform token is not an id and the server rejects it for every non-root rol | `const tenantsAsignables = opcionesTenant` — the `VALOR_SIN_TENANT` filter dropped | **KILLED** — `expected [ 'Elegí un tenant', …(3) ] to deeply equal [ 'Elegí un tenant', …(2) ]` |
 | M18 | 2.17 | `react-async-state` rule 5: the selector is part of the full-window disabled state while the list (its own option source) is still loading | `disabled={guardando \|\| esRolDePlataforma}` — `tenantsCargando` dropped | **KILLED** — `el selector queda inerte mientras la lista está cargando`: `expect(element).toBeDisabled()` / `Received element is not disabled` |
+| M19 | 2.17 (page-size gap closure) | S5 anti-oracle: a tenant admin must never call `listarTenants()`, not even in the background | `if (!esPlataforma) return` deleted from the tenant-universe fetch effect | **KILLED** — `un admin de tenant nunca pide el universo de tenants (listarTenants)`: `expected "vi.fn()" to not be called with arguments: [ '/plataforma/tenants' ]`, received 3 calls including it |
 
 **No survivors among M14-M18.** One inaccuracy in a test's own doc-comment was found by running M15 and
 corrected rather than left standing: the first draft claimed the M4 confound applied (a derived
@@ -689,6 +703,14 @@ that, because a stale `'30'` would become a valid option again and silently reap
   selector is platform-only and would not 403) or the server-side pagination already deferred with a
   reopen condition in `state.yaml`. **Not decided here** — this was a bounded bug fix, and widening
   it to a fetch/pagination decision is the orchestrator's call.
+
+  **CLOSED as a narrow web-only follow-up (still on `feat/stage20-slice2-web-relaciones`).** The
+  orchestrator chose the platform-only `listarTenants()` fetch over the pagination alternative:
+  `Usuarios.tsx`'s create selector is reachable **only** by a platform actor, and
+  `GET /plataforma/tenants` is `Politicas.SoloPlataforma`, so it never 403s for that actor and adds
+  no scope creep. The **filter** option set is untouched — still `opcionesDeTenant(filas)`, D15
+  still holds there, zero second fetch on that path. The 26th-tenant-onward case is now reachable
+  regardless of which page the loaded users happen to fall on.
 
 - **Verify criteria re-asserted on this slice's diff (V1-V6, V13).** Zero files under
   `Migraciones/`; `dotnet ef migrations has-pending-model-changes` → *"No changes have been made to
