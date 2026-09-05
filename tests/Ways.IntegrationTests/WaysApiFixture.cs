@@ -123,6 +123,32 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
         return builder.ConnectionString;
     }
 
+    /// <summary>Interceptor OPCIONAL que el <see cref="WaysDbContext"/> del HOST de la API suma a
+    /// los suyos. <c>null</c> por default: mientras nadie lo setea, el host se arma exactamente
+    /// como antes (cero cambio de comportamiento para el resto de la suite).
+    ///
+    /// <para>La clasificación de un fallo TRANSITORIO a <c>503</c> vive en
+    /// <c>ManejadorDeErrores</c>, que solo corre en el pipeline HTTP — un <c>DbContext</c> armado a
+    /// mano (<see cref="CrearContextoDeAplicacionConReintentos"/>) nunca lo atraviesa. Este es el
+    /// único asiento posible para inyectar la falla en el contexto que la request de verdad usa. Se
+    /// setea con <see cref="ConInterceptorEnElHost"/>, que garantiza el reset: la colección
+    /// <c>"Ways.IntegrationTests secuencial"</c> serializa las clases, pero un slot global que se
+    /// olvida de limpiarse contamina todo lo que venga después.</para></summary>
+    public IInterceptor? InterceptorDelHost { get; private set; }
+
+    /// <summary>Setea <see cref="InterceptorDelHost"/> para el bloque <c>using</c> que la envuelve
+    /// y lo limpia al salir, incluso si la prueba falla.</summary>
+    public IDisposable ConInterceptorEnElHost(IInterceptor interceptor)
+    {
+        InterceptorDelHost = interceptor;
+        return new ResetDelInterceptorDelHost(this);
+    }
+
+    private sealed class ResetDelInterceptorDelHost(WaysApiFixture fixture) : IDisposable
+    {
+        public void Dispose() => fixture.InterceptorDelHost = null;
+    }
+
     /// <summary>La API bajo prueba corre con <c>ways_app</c>, no con el dueño de las
     /// tablas — igual que en producción, donde un rol sin <c>BYPASSRLS</c> es la única
     /// conexión que la aplicación usa.
@@ -139,31 +165,6 @@ public sealed class WaysApiFixture : WebApplicationFactory<Program>, IAsyncLifet
     /// (al primer <c>CreateClient()</c>/acceso a <c>Server</c>), momento en el que la
     /// variable ya está seteada en el proceso. Se deja este override igual, como red
     /// adicional sin costo — no hace daño, y documenta la intención.</summary>
-    /// <summary>Interceptor OPCIONAL que el <see cref="WaysDbContext"/> del HOST de la API suma a
-    /// los suyos. <c>null</c> por default: mientras nadie lo setea, el host se arma exactamente
-    /// como antes (cero cambio de comportamiento para el resto de la suite).
-    ///
-    /// <para>Existe por judgment-day fix/retry-double-add (item C2): la clasificación de un fallo
-    /// TRANSITORIO a <c>503 resultado_incierto</c> vive en <c>ManejadorDeErrores</c>, que solo
-    /// corre en el pipeline HTTP — un <c>DbContext</c> armado a mano
-    /// (<see cref="CrearContextoDeAplicacionConReintentos"/>) nunca lo atraviesa. Este es el único
-    /// asiento posible para inyectar la falla en el contexto que la request de verdad usa. Se
-    /// setea con <see cref="ConInterceptorEnElHost"/>, que garantiza el reset: la colección
-    /// <c>"Ways.IntegrationTests secuencial"</c> serializa las clases, pero un slot global que se
-    /// olvida de limpiarse contamina todo lo que venga después.</para></summary>
-    public IInterceptor? InterceptorDelHost { get; private set; }
-
-    public IDisposable ConInterceptorEnElHost(IInterceptor interceptor)
-    {
-        InterceptorDelHost = interceptor;
-        return new ResetDelInterceptorDelHost(this);
-    }
-
-    private sealed class ResetDelInterceptorDelHost(WaysApiFixture fixture) : IDisposable
-    {
-        public void Dispose() => fixture.InterceptorDelHost = null;
-    }
-
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.ConfigureAppConfiguration((_, config) =>
