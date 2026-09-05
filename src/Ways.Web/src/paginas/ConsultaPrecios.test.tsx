@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { aResultadoDeConsulta, ConsultaPrecios } from './ConsultaPrecios'
 import { ErrorApi } from '../api/cliente'
 import type { ArticuloEscaneado, ListaPrecioAsignable, PuntoVentaListado, ResultadoDeResolucion } from '../api/tipos'
+import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -67,9 +68,25 @@ function resolucionFixture(sobrescribir: Partial<ResultadoDeResolucion> = {}): R
 const puntoVentaCentro = puntoVentaFixture()
 const listaMostrador = listaFixture()
 
+/** El punto de venta viene de la sesión (`PuertaDePuntoVenta`), no de un fetch de esta pantalla:
+ * el hook se mockea con un estado mutable que cada test puede reemplazar antes de montar. */
+function estadoDePuntoVentaPorDefecto(): EstadoDePuntoVenta {
+  return {
+    puntosVenta: [puntoVentaCentro],
+    puntoVenta: puntoVentaCentro,
+    elegir: vi.fn(),
+    recargar: vi.fn(() => Promise.resolve()),
+  }
+}
+
+let estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
+
+vi.mock('../puntoVenta/usePuntoVenta', () => ({
+  usePuntoVenta: () => estadoDePuntoVenta,
+}))
+
 function mockPorDefecto() {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
     if (ruta === '/listas-precio') return Promise.resolve<ListaPrecioAsignable[]>([listaMostrador])
     if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -84,13 +101,16 @@ beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
   localStorage.clear()
+  estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
   mockPorDefecto()
 })
 
+/** Espera la lista de precio (el único selector que queda) y verifica que el punto de venta de la
+ * sesión se rinde como texto. */
 async function renderYEsperarSelectores() {
   const resultado = render(<ConsultaPrecios />)
-  await screen.findByRole('option', { name: 'Local Centro' })
   await screen.findByRole('option', { name: 'Lista Mostrador' })
+  expect(screen.getByText('Local Centro')).toBeInTheDocument()
   return resultado
 }
 
@@ -149,7 +169,6 @@ describe('ConsultaPrecios — exactamente dos llamados por escaneo (mutation tar
 describe('ConsultaPrecios — las cuatro ramas de despliegue (guard enumeration)', () => {
   it('código desconocido (404) muestra "no encontrado" y NO dispara ninguna resolución de precio', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
       if (ruta === '/listas-precio') return Promise.resolve<ListaPrecioAsignable[]>([listaMostrador])
       if (ruta.startsWith('/articulos/escaneo?entrada=')) {
         return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No se encontró un artículo activo para el código 999.'))
@@ -214,6 +233,57 @@ describe('ConsultaPrecios — las cuatro ramas de despliegue (guard enumeration)
     await screen.findByTestId('resultado-resuelto')
     expect(screen.queryByTestId('precio-original-tachado')).not.toBeInTheDocument()
     expect(screen.getByTestId('precio-final')).toHaveTextContent('$100,00')
+  })
+})
+
+describe('ConsultaPrecios — punto de venta de sesión', () => {
+  it('sin punto de venta en la sesión muestra el aviso y la consulta queda deshabilitada', async () => {
+    estadoDePuntoVenta.puntosVenta = []
+    estadoDePuntoVenta.puntoVenta = null
+
+    render(<ConsultaPrecios />)
+    await screen.findByRole('option', { name: 'Lista Mostrador' })
+
+    expect(screen.getByText('Sin puntos de venta disponibles')).toBeInTheDocument()
+    expect(screen.queryByText('Local Centro')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Consultar' })).toBeDisabled()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `:${puntoVenta?.id}` del `key={puntoVenta?.id ?? 'sin-pv'}` de
+   * `ConsultaPrecios()` (mismo mecanismo de `Pos()`/`Caja()`, react-async-state regla 8). Sin esa
+   * mitad del key, un cambio de punto de venta de sesión NO remonta `PantallaConsultaPrecios` y el
+   * resultado escaneado (más cualquier texto sin confirmar en el input) sobrevive al cambio.
+   * Evidencia de mutación (mutation-proof-tests regla 2): con el key reemplazado por la constante
+   * `"fijo"` en `ConsultaPrecios.tsx:302`, este test falla ("Coca Cola 1L" sigue en pantalla y el
+   * input conserva "999"); revertido byte a byte, vuelve a verde.
+   */
+  it('un cambio del punto de venta de sesión remonta la pantalla y descarta el resultado anterior', async () => {
+    const puntoVentaNorte = puntoVentaFixture({ id: 8, nombre: 'Sucursal Norte' })
+    estadoDePuntoVenta.puntosVenta = [puntoVentaCentro, puntoVentaNorte]
+
+    const { rerender } = await renderYEsperarSelectores()
+    await escanear('7790001234567')
+    await screen.findByTestId('resultado-resuelto')
+    expect(screen.getByTestId('resultado-resuelto')).toHaveTextContent('Coca Cola 1L')
+
+    // Texto sin confirmar en el input: si el remount fuera parcial (por ejemplo, solo el
+    // `resultado` limpiado a mano), este texto sobreviviría igual — es el discriminante contra
+    // un remount incompleto.
+    const entrada = screen.getByLabelText('Código escaneado') as HTMLInputElement
+    fireEvent.change(entrada, { target: { value: '999' } })
+    expect(entrada.value).toBe('999')
+
+    estadoDePuntoVenta.puntoVenta = puntoVentaNorte
+    rerender(<ConsultaPrecios />)
+
+    await screen.findByRole('option', { name: 'Lista Mostrador' })
+    expect(screen.getByText('Sucursal Norte')).toBeInTheDocument()
+    expect(screen.queryByText('Local Centro')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('resultado-resuelto')).not.toBeInTheDocument()
+    expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument()
+    expect((screen.getByLabelText('Código escaneado') as HTMLInputElement).value).toBe('')
   })
 })
 
@@ -521,7 +591,6 @@ describe('ConsultaPrecios — reentrancia de consultar() (guard `buscando`, judg
 describe('ConsultaPrecios — ninguna superficie sin sesión (OD2, consulta-de-precios/spec.md:108-112)', () => {
   it('un 401 en el escaneo (sesión inexistente) se muestra como error, sin reintento ni llamado alternativo, y JAMÁS dispara la resolución', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
       if (ruta === '/listas-precio') return Promise.resolve<ListaPrecioAsignable[]>([listaMostrador])
       if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.reject(new ErrorApi(401, 'no_autenticado', 'Tu sesión expiró.'))
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))

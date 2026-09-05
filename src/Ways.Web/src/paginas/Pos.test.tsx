@@ -16,20 +16,26 @@ import type {
   PuntoVentaListado,
   ResultadoDeResolucion,
 } from '../api/tipos'
+import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 /** `Pos()` (stage-17-presupuestos-y-remitos, Slice 7) lee `useSearchParams` — necesita un Router
  * para montar, mismo criterio que `OrdenDeCompra.test.tsx`/`CompraEditor.test.tsx`. `ruta` por
  * defecto es la libre (`/pos`, sin `?idPresupuesto=`) para que los tests preexistentes no
- * cambien de comportamiento. */
-function renderPos(ruta = '/pos') {
-  return render(
+ * cambien de comportamiento. El árbol se expone aparte para poder `rerender` el mismo árbol
+ * después de mutar el punto de venta de la sesión. */
+function arbolDePos(ruta = '/pos') {
+  return (
     <MemoryRouter initialEntries={[ruta]}>
       <Routes>
         <Route path="/pos" element={<Pos />} />
         <Route path="/presupuestos" element={<div>Presupuestos</div>} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   )
+}
+
+function renderPos(ruta = '/pos') {
+  return render(arbolDePos(ruta))
 }
 
 const apiGetMock = vi.fn()
@@ -180,11 +186,28 @@ const consumidorFinal = clienteFixture()
 const otroCliente = clienteFixture({ id: 2, numero: 2, nombre: 'Juan', apellido: 'Pérez', esConsumidorFinal: false })
 const puntoVentaCentro = puntoVentaFixture()
 
+/** El punto de venta viene de la sesión (`PuertaDePuntoVenta`), no de un fetch de esta pantalla:
+ * el hook se mockea con un estado mutable que cada test puede reemplazar antes de montar (o
+ * mutar y `rerender` para simular un cambio de punto de venta). */
+function estadoDePuntoVentaPorDefecto(): EstadoDePuntoVenta {
+  return {
+    puntosVenta: [puntoVentaCentro],
+    puntoVenta: puntoVentaCentro,
+    elegir: vi.fn(),
+    recargar: vi.fn(() => Promise.resolve()),
+  }
+}
+
+let estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
+
+vi.mock('../puntoVenta/usePuntoVenta', () => ({
+  usePuntoVenta: () => estadoDePuntoVenta,
+}))
+
 /** Rutas GET comunes a casi todos los tests — devuelve `undefined` (no `Promise`) para una ruta
  * que no reconoce, así un test puede extender la tabla sin duplicarla entera (mismo criterio que
  * `mockearReferencia` en CompraEditor.test.tsx). */
-function rutaBaseDePos(ruta: string, puntosVenta: PuntoVentaListado[] = [puntoVentaCentro]): Promise<unknown> | undefined {
-  if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>(puntosVenta)
+function rutaBaseDePos(ruta: string): Promise<unknown> | undefined {
   if (ruta === '/clientes') {
     const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 }
     return Promise.resolve(pagina)
@@ -222,6 +245,7 @@ function mockearApiGet(sobrescribir?: (ruta: string) => Promise<unknown> | undef
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
   mockearApiGet()
   apiPostMock.mockImplementation((ruta: string) => {
     if (ruta === '/ofertas/resolver') {
@@ -255,6 +279,17 @@ async function armarVentaLista() {
   await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
 }
 
+/** Deja el carrito con una sola línea de Coca Cola, sin pasar por el panel de pagos — punto de
+ * partida de los tests del picker de lote y del remount por punto de venta. */
+async function armarCarritoConUnaLinea() {
+  const resultado = renderPos()
+  await screen.findByRole('option', { name: /Consumidor Final/ })
+  await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+  await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+  await screen.findByText('Coca Cola 1L')
+  return resultado
+}
+
 describe('Pos — formato de moneda negativa (regresión, INFO recurrente desde slice 6)', () => {
   it('un total negativo en el ticket antepone el signo al símbolo ($): "-$50,00", nunca "$-50,00"', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
@@ -280,12 +315,61 @@ describe('Pos — formato de moneda negativa (regresión, INFO recurrente desde 
 })
 
 describe('Pos — carga inicial', () => {
-  it('selecciona el Consumidor Final por defecto y el único punto de venta disponible', async () => {
+  it('selecciona el Consumidor Final por defecto y muestra el punto de venta de la sesión', async () => {
     renderPos()
 
     expect(await screen.findByRole('option', { name: /Consumidor Final/ })).toBeInTheDocument()
     expect(screen.getByLabelText('Cliente')).toHaveValue(String(consumidorFinal.id))
-    await waitFor(() => expect(screen.getByLabelText('Punto de venta')).toHaveValue(String(puntoVentaCentro.id)))
+    expect(screen.getByText('Local Centro')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Punto de venta')).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — punto de venta de sesión (react-async-state regla 8)', () => {
+  /**
+   * Cláusula bajo prueba: la mitad `:${puntoVenta?.id}` del `key` de `PantallaPos` en `Pos()`.
+   * El nombre nuevo se pintaría igual sin ella (la pantalla lee el contexto directo), así que la
+   * aserción discriminante es el carrito vacío. Evidencia de mutación (mutation-proof-tests regla
+   * 2): con el `key` reducido a `idPresupuesto ?? 'libre'`, este test falla ("Coca Cola 1L" sigue
+   * en el carrito); restaurado, vuelve a verde.
+   */
+  it('un cambio del punto de venta de sesión remonta la pantalla: el carrito se vacía y se muestra el nombre nuevo', async () => {
+    const puntoVentaNorte = puntoVentaFixture({ id: 8, nombre: 'Sucursal Norte' })
+    estadoDePuntoVenta.puntosVenta = [puntoVentaCentro, puntoVentaNorte]
+    const { rerender } = await armarCarritoConUnaLinea()
+    expect(screen.getByText('Local Centro')).toBeInTheDocument()
+
+    estadoDePuntoVenta.puntoVenta = puntoVentaNorte
+    rerender(arbolDePos())
+
+    expect(screen.getByText('Sucursal Norte')).toBeInTheDocument()
+    expect(screen.queryByText('Local Centro')).not.toBeInTheDocument()
+    expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument()
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+
+    // La instancia nueva vuelve a cargar clientes y parámetros contra el punto de venta 8.
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await waitFor(() =>
+      expect(apiGetMock).toHaveBeenCalledWith('/parametros/tolerancia_pago?idEmpresa=1&idPuntoVenta=8'),
+    )
+  })
+
+  it('sin punto de venta en la sesión muestra el aviso y Cobrar queda deshabilitado', async () => {
+    estadoDePuntoVenta.puntosVenta = []
+    estadoDePuntoVenta.puntoVenta = null
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    expect(screen.getByText('Sin puntos de venta disponibles')).toBeInTheDocument()
+    expect(screen.queryByText('Local Centro')).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Elegir lote' })).not.toBeInTheDocument()
+    expect(apiGetMock).not.toHaveBeenCalledWith(expect.stringContaining('/parametros/'))
   })
 })
 
@@ -333,7 +417,6 @@ describe('Pos — escaneo', () => {
 
   it('un código no encontrado muestra un error y no agrega ninguna línea', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
       if (ruta === '/clientes') {
         const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 }
         return Promise.resolve(pagina)
@@ -378,7 +461,6 @@ describe('Pos — regresión: carga inicial de clientes vs. selección del usuar
     })
 
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
       if (ruta === '/clientes') return montajePendiente
       if (ruta.startsWith('/clientes?busqueda=')) {
         const pagina: PaginaDe<ClienteListado> = { items: [otroCliente], total: 1, pagina: 1, tamanio: 25 }
@@ -618,7 +700,6 @@ describe('Pos — panel de pagos: precondiciones', () => {
 
   it('medios de pago o parámetros que fallan al cargar dejan Cobrar deshabilitado con un aviso legible', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
       if (ruta === '/clientes') {
         const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 }
         return Promise.resolve(pagina)
@@ -779,7 +860,6 @@ describe('Pos — checkout', () => {
 
   it('nuevaVenta limpia el error de escaneo que haya quedado de antes de cobrar', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
       if (ruta === '/clientes') {
         const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 }
         return Promise.resolve(pagina)
@@ -1197,7 +1277,6 @@ describe('Pos — debounce de la resolución de precios', () => {
     })
 
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
       if (ruta === '/clientes') return clientesPendientes
       if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture())
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -1316,16 +1395,6 @@ describe('Pos — picker de lote (stage-12-lotes-vencimientos, Slice 14, design 
     }
   }
 
-  /** Deja el carrito con una sola línea de Coca Cola, sin pasar por el panel de pagos — punto de
-   * partida de los tests del picker. */
-  async function armarCarritoConUnaLinea() {
-    renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
-    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
-    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
-    await screen.findByText('Coca Cola 1L')
-  }
-
   it('el camino feliz nunca pide los lotes — el botón "Elegir lote" no dispara ningún fetch solo por aparecer', async () => {
     await armarCarritoConUnaLinea()
 
@@ -1384,38 +1453,6 @@ describe('Pos — picker de lote (stage-12-lotes-vencimientos, Slice 14, design 
 
     const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/stock/lotes?'))
     expect(llamadas).toHaveLength(1)
-  })
-
-  it('una respuesta stale que llega DESPUÉS de cambiar de punto de venta no pinta el picker (mutation-proof-tests regla 7)', async () => {
-    const puntoVentaSucursal = puntoVentaFixture({ id: 8, nombre: 'Sucursal Norte' })
-    let resolverLotesPv1: (valor: LoteListado[]) => void = () => {}
-    let promesaLotesPv1: Promise<LoteListado[]> = Promise.resolve([])
-    mockearApiGet((ruta) => {
-      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro, puntoVentaSucursal])
-      if (ruta.startsWith('/stock/lotes?') && ruta.includes(`idPuntoVenta=${puntoVentaCentro.id}`)) {
-        promesaLotesPv1 = new Promise((resolve) => (resolverLotesPv1 = resolve))
-        return promesaLotesPv1
-      }
-      if (ruta.startsWith('/stock/lotes?')) return Promise.resolve<LoteListado[]>([])
-      return undefined
-    })
-    await armarCarritoConUnaLinea()
-    await waitFor(() => expect(screen.getByLabelText('Punto de venta')).toHaveValue(String(puntoVentaCentro.id)))
-
-    await userEvent.click(screen.getByRole('button', { name: 'Elegir lote' }))
-    // el fetch de PV1 queda en vuelo — `resolverLotesPv1` todavía no se llamó.
-
-    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), String(puntoVentaSucursal.id))
-
-    // regla 7: el flush del microtask va DENTRO de `act` — un `waitFor` pasaría en su primer
-    // tick, antes de que el `.then` stale aterrice, y saldría verde sin probar nada.
-    await act(async () => {
-      resolverLotesPv1([loteFixture({ idLote: 99, codigo: 'STALE' })])
-      await promesaLotesPv1
-    })
-
-    expect(screen.getByRole('button', { name: 'Elegir lote' })).toBeInTheDocument()
-    expect(screen.queryByLabelText('Lote de Coca Cola 1L')).not.toBeInTheDocument()
   })
 
   it('un fetch de lotes rechazado muestra "No se pudieron cargar los lotes."', async () => {
@@ -1520,11 +1557,21 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     }
   }
 
+  const puntoVentaDelPresupuesto = puntoVentaFixture({ id: 7 })
+  const puntoVentaDeLaSesion = puntoVentaFixture({ id: 8, nombre: 'Sucursal Norte' })
+
+  /** El presupuesto fija el punto de venta 7; la sesión está parada en otro (8) a propósito, así
+   * que "Local Centro" en pantalla solo puede salir del presupuesto, nunca de la sesión. */
+  beforeEach(() => {
+    estadoDePuntoVenta.puntosVenta = [puntoVentaDelPresupuesto, puntoVentaDeLaSesion]
+    estadoDePuntoVenta.puntoVenta = puntoVentaDeLaSesion
+  })
+
   function mockearApiGetPresupuesto(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/presupuestos/1/para-venta') return Promise.resolve(presupuestoParaVentaFixture())
       if (ruta === '/clientes/2') return Promise.resolve(otroCliente)
-      const propia = sobrescribir?.(ruta) ?? rutaBaseDePos(ruta, [puntoVentaFixture({ id: 7 })])
+      const propia = sobrescribir?.(ruta) ?? rutaBaseDePos(ruta)
       if (propia) return propia
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
@@ -1544,9 +1591,10 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     expect(screen.queryByRole('button', { name: 'Quitar' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Vaciar carrito' })).not.toBeInTheDocument()
 
-    // Punto de venta y cliente quedan fijados por el presupuesto, ambos deshabilitados.
-    await waitFor(() => expect(screen.getByLabelText('Punto de venta')).toHaveValue(String(7)))
-    expect(screen.getByLabelText('Punto de venta')).toBeDisabled()
+    // El punto de venta lo fija el presupuesto (texto de solo lectura, nunca el de la sesión) y
+    // el cliente queda deshabilitado.
+    expect(await screen.findByText('Local Centro')).toBeInTheDocument()
+    expect(screen.queryByText('Sucursal Norte')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id)))
     expect(screen.getByLabelText('Cliente')).toBeDisabled()
 
@@ -1643,7 +1691,7 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/presupuestos/1/para-venta') return pendiente
       if (ruta === '/clientes/2') return Promise.resolve(otroCliente)
-      return rutaBaseDePos(ruta, [puntoVentaFixture({ id: 7 })]) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
     const { unmount } = renderPos('/pos?idPresupuesto=1')

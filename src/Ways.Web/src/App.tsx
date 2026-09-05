@@ -43,6 +43,7 @@ import { Tesoreria } from './paginas/Tesoreria'
 import { Transferencias } from './paginas/Transferencias'
 import { Usuarios } from './paginas/Usuarios'
 import { Vencimientos } from './paginas/Vencimientos'
+import { PuertaDePuntoVenta } from './puntoVenta/PuertaDePuntoVenta'
 import { descriptorListasPrecio } from './api/catalogos'
 import { ROL } from './api/tipos'
 
@@ -57,7 +58,9 @@ export function App() {
           <Route
             element={
               <RutaProtegida>
-                <Layout />
+                <PuertaDePuntoVenta>
+                  <Layout />
+                </PuertaDePuntoVenta>
               </RutaProtegida>
             }
           >

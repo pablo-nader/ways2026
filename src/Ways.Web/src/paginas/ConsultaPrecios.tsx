@@ -3,10 +3,9 @@ import { clienteDeArticulos } from '../api/articulos'
 import { ErrorApi } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
 import { clienteDeOfertas } from '../api/ofertas'
-import { clienteDeOrganizacion } from '../api/organizacion'
-import type { ArticuloEscaneado, ListaPrecioAsignable, PuntoVentaListado, ResultadoDeResolucion } from '../api/tipos'
+import type { ArticuloEscaneado, ListaPrecioAsignable, ResultadoDeResolucion } from '../api/tipos'
+import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 
-const CLAVE_PUNTO_VENTA = 'ways.consultaPrecios.idPuntoVenta'
 const CLAVE_LISTA_PRECIO = 'ways.consultaPrecios.idListaPrecio'
 
 /**
@@ -75,14 +74,14 @@ export function aResultadoDeConsulta(articulo: ArticuloEscaneado, resolucion: Re
  * Consulta de precios del salón (stage-18-etiquetas-y-consulta, Slice 4, design decisión 11):
  * `autoFocus` + `Enter` (`Pos.tsx:1068-1078`), exactamente DOS llamadas por escaneo
  * (`GET /api/articulos/escaneo` → identidad, `POST /api/ofertas/resolver` @ `cantidad = 1` →
- * precio), CERO escrituras, CERO estado persistido más allá de los selectores de PV/lista (mismo
- * criterio que `Pos.tsx`). La pantalla no lee ningún claim de rol ni muestra identidad de usuario
- * (OD2) — el gate de acceso vive enteramente en la ruta (`App.tsx`).
+ * precio), CERO escrituras, CERO estado persistido más allá del selector de lista (el punto de
+ * venta es el de la sesión, mismo criterio que `Pos.tsx`). La pantalla no lee ningún claim de rol
+ * ni muestra identidad de usuario (OD2) — el gate de acceso vive enteramente en la ruta
+ * (`App.tsx`). Remontada íntegra por `key` desde `ConsultaPrecios()` cuando cambia el punto de
+ * venta (react-async-state regla 8): ningún resultado ni resolución en vuelo sobrevive al cambio.
  */
-export function ConsultaPrecios() {
-  const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
-  const [idPuntoVenta, setIdPuntoVenta] = useState<number | ''>('')
-  const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
+function PantallaConsultaPrecios() {
+  const { puntoVenta: puntoVentaSeleccionado } = usePuntoVenta()
 
   const [listas, setListas] = useState<ListaPrecioAsignable[] | null>(null)
   const [idListaPrecio, setIdListaPrecio] = useState<number | ''>('')
@@ -101,21 +100,6 @@ export function ConsultaPrecios() {
 
   useEffect(() => {
     let vigente = true
-
-    clienteDeOrganizacion
-      .listarPuntosVenta()
-      .then((lista) => {
-        if (!vigente) return
-        setPuntosVenta(lista)
-        const guardado = leerNumeroGuardado(CLAVE_PUNTO_VENTA)
-        const porDefecto = lista.find((p) => p.id === guardado) ?? lista[0] ?? null
-        setIdPuntoVenta(porDefecto ? porDefecto.id : '')
-      })
-      .catch(() => {
-        if (!vigente) return
-        setPuntosVenta([])
-        setErrorPuntosVenta('No se pudieron cargar los puntos de venta.')
-      })
 
     clienteDeClientes
       .listasDePrecioAsignables()
@@ -157,17 +141,11 @@ export function ConsultaPrecios() {
     return () => clearTimeout(temporizador)
   }, [resultado])
 
-  function cambiarPuntoVenta(id: number) {
-    setIdPuntoVenta(id)
-    guardarNumeroSeleccionado(CLAVE_PUNTO_VENTA, id)
-  }
-
   function cambiarListaPrecio(id: number) {
     setIdListaPrecio(id)
     guardarNumeroSeleccionado(CLAVE_LISTA_PRECIO, id)
   }
 
-  const puntoVentaSeleccionado = puntosVenta?.find((p) => p.id === idPuntoVenta) ?? null
   const selectoresListos = puntoVentaSeleccionado !== null && idListaPrecio !== ''
 
   async function consultar() {
@@ -226,25 +204,13 @@ export function ConsultaPrecios() {
 
       <div className="row g-3 mb-4">
         <div className="col-12 col-md-6">
-          <label className="form-label" htmlFor="consulta-precios-punto-venta">
-            Punto de venta
-          </label>
-          <select
-            id="consulta-precios-punto-venta"
-            className="form-select rounded-0"
-            value={idPuntoVenta}
-            disabled={puntosVenta === null}
-            onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
-          >
-            {puntosVenta === null && <option value="">Cargando…</option>}
-            {puntosVenta !== null && puntosVenta.length === 0 && <option value="">Sin puntos de venta disponibles</option>}
-            {puntosVenta?.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.nombre}
-              </option>
-            ))}
-          </select>
-          {errorPuntosVenta && <div className="form-text text-danger">{errorPuntosVenta}</div>}
+          {puntoVentaSeleccionado ? (
+            <>
+              <span className="text-muted small">Punto de venta:</span> <strong>{puntoVentaSeleccionado.nombre}</strong>
+            </>
+          ) : (
+            <div className="alert alert-warning rounded-0 py-1 px-2 small">Sin puntos de venta disponibles</div>
+          )}
         </div>
 
         <div className="col-12 col-md-6">
@@ -324,4 +290,14 @@ export function ConsultaPrecios() {
       )}
     </div>
   )
+}
+
+/**
+ * `/consulta-precios`: remonta `PantallaConsultaPrecios` entera por `key` cuando cambia el punto
+ * de venta de la sesión (react-async-state regla 8, mismo mecanismo que `Pos()` y `Caja()`).
+ */
+export function ConsultaPrecios() {
+  const { puntoVenta } = usePuntoVenta()
+
+  return <PantallaConsultaPrecios key={puntoVenta?.id ?? 'sin-pv'} />
 }

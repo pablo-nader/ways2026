@@ -6,6 +6,7 @@ import { ErrorApi } from '../api/cliente'
 import { ETIQUETA_SIN_DUENIO } from '../api/organizacion'
 import { ROL } from '../api/tipos'
 import type { PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
+import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 // stage-20-organizacion-relaciones-y-bajas, slice 2 (tareas 2.11 y 2.13) y slice 5 (5.5, 5.7, 5.8).
 
@@ -79,6 +80,27 @@ const pvEste = pvFixture({
   nombre: 'PV Este',
   nombreTenant: 'Almacén Este',
   razonSocialEmpresa: 'Este SRL',
+})
+
+/** La pantalla vive bajo `PuertaDePuntoVenta` y le pide `recargar` a la sesión tras cada escritura
+ * exitosa: el hook se mockea con un estado mutable que se reinicia antes de cada test. */
+function estadoDePuntoVentaPorDefecto(): EstadoDePuntoVenta {
+  return {
+    puntosVenta: [pvSurCentro],
+    puntoVenta: pvSurCentro,
+    elegir: vi.fn(),
+    recargar: vi.fn(() => Promise.resolve()),
+  }
+}
+
+let estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
+
+vi.mock('../puntoVenta/usePuntoVenta', () => ({
+  usePuntoVenta: () => estadoDePuntoVenta,
+}))
+
+beforeEach(() => {
+  estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
 })
 
 function montar(items: PuntoVentaListado[] = [pvSurCentro, pvSurAnexo, pvEste]) {
@@ -430,6 +452,8 @@ describe('PuntosVenta (stage-20, slice 5 — baja lógica)', () => {
         ),
       ).toBeInTheDocument(),
     )
+    // La sesión se recarga recién DESPUÉS de un refresco exitoso: con el refresco caído, nada.
+    expect(estadoDePuntoVenta.recargar).not.toHaveBeenCalled()
   })
 
   /**
@@ -604,5 +628,100 @@ describe('PuntosVenta (slice 5, ronda 1 — la puerta es modal y el token se acu
 
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByText(/porque tiene 5 ventas/)).not.toBeInTheDocument()
+  })
+})
+
+// Punto de venta de sesión (slice 4): la sesión mira el mismo listado que esta pantalla edita, así
+// que un rename o una baja se propagan con `recargar` — una sola vez, y solo después de que el
+// refresco propio de la pantalla resolvió bien (`react-async-state` regla 6: fuera del try/catch
+// de la escritura, sin reportar nunca una escritura confirmada como fallida).
+
+describe('PuntosVenta — propagación al punto de venta de sesión', () => {
+  beforeEach(() => {
+    apiGetMock.mockReset()
+    apiPutMock.mockReset()
+    apiDeleteMock.mockReset()
+    apiPutMock.mockResolvedValue(undefined)
+    apiDeleteMock.mockResolvedValue(undefined)
+    usuarioActual = usuarioFixture()
+  })
+
+  /** Cláusula bajo prueba: la posición de `recargar` DESPUÉS del `await cargar(token, true)`. Con
+   * el refresco todavía en vuelo no se llamó; recién al resolver, exactamente una vez. */
+  it('una edición exitosa recarga la sesión exactamente una vez, y recién después del refresco', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    let resolverRefresco!: (items: PuntoVentaListado[]) => void
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta !== '/puntos-venta') return Promise.reject(new Error(`ruta inesperada: ${ruta}`))
+      cargas += 1
+      if (cargas === 1) return Promise.resolve([pvSurCentro])
+
+      return new Promise<PuntoVentaListado[]>((resolver) => {
+        resolverRefresco = resolver
+      })
+    })
+
+    render(<PuntosVenta />)
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(cargas).toBe(2))
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    expect(estadoDePuntoVenta.recargar).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolverRefresco([pvFixture({ nombre: 'PV Centro renombrado' })])
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByText('PV Centro renombrado')).toBeInTheDocument())
+    expect(estadoDePuntoVenta.recargar).toHaveBeenCalledTimes(1)
+  })
+
+  it('una baja exitosa recarga la sesión exactamente una vez', async () => {
+    const usuario = userEvent.setup()
+    montar([pvSurCentro, pvEste])
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('PV Centro'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('Se dio de baja el punto de venta "PV Centro".')).toBeInTheDocument(),
+    )
+    await waitFor(() => expect(estadoDePuntoVenta.recargar).toHaveBeenCalledTimes(1))
+  })
+
+  it('una edición rechazada no recarga la sesión', async () => {
+    const usuario = userEvent.setup()
+    apiPutMock.mockRejectedValue(new ErrorApi(400, 'validacion', 'El nombre no puede quedar vacío.'))
+    montar([pvSurCentro])
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    await usuario.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(screen.getByText('El nombre no puede quedar vacío.')).toBeInTheDocument())
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
+    expect(estadoDePuntoVenta.recargar).not.toHaveBeenCalled()
+  })
+
+  it('una baja rechazada no recarga la sesión', async () => {
+    const usuario = userEvent.setup()
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(409, 'punto_venta_en_uso', 'No se puede dar de baja el punto de venta porque tiene 5 ventas.'),
+    )
+    montar([pvSurCentro])
+    await waitFor(() => expect(screen.getByText('PV Centro')).toBeInTheDocument())
+
+    await usuario.click(botonDeBajaDe('PV Centro'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await waitFor(() => expect(screen.getByText(/porque tiene 5 ventas/)).toBeInTheDocument())
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(estadoDePuntoVenta.recargar).not.toHaveBeenCalled()
   })
 })

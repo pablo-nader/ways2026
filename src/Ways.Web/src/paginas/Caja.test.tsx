@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Caja } from './Caja'
 import { ErrorApi } from '../api/cliente'
 import type { MedioPagoListado, MovimientoRegistrado, PuntoVentaListado, ResumenDeTurno, TurnoResumen } from '../api/tipos'
+import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
@@ -105,11 +106,28 @@ function movimientoFixture(sobrescribir: Partial<MovimientoRegistrado> = {}): Mo
 const medioEfectivo = medioFixture()
 const puntoVentaCentro = puntoVentaFixture()
 
-/** Rutas comunes a toda la pantalla (puntos de venta + medios de pago) — cada test suma encima
- * las rutas de caja que le hacen falta (`/caja/turnos/...`). */
+/** El punto de venta viene de la sesión (`PuertaDePuntoVenta`), no de un fetch de esta pantalla:
+ * el hook se mockea con un estado mutable que cada test puede reemplazar antes de montar (o
+ * mutar y `rerender` para simular un cambio de punto de venta). */
+function estadoDePuntoVentaPorDefecto(): EstadoDePuntoVenta {
+  return {
+    puntosVenta: [puntoVentaCentro],
+    puntoVenta: puntoVentaCentro,
+    elegir: vi.fn(),
+    recargar: vi.fn(() => Promise.resolve()),
+  }
+}
+
+let estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
+
+vi.mock('../puntoVenta/usePuntoVenta', () => ({
+  usePuntoVenta: () => estadoDePuntoVenta,
+}))
+
+/** Rutas comunes a toda la pantalla (medios de pago) — cada test suma encima las rutas de caja
+ * que le hacen falta (`/caja/turnos/...`). */
 function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
     if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
     const propia = sobrescribirGet?.(ruta)
     if (propia) return propia
@@ -120,6 +138,7 @@ function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> |
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  estadoDePuntoVenta = estadoDePuntoVentaPorDefecto()
 })
 
 describe('Caja — apertura', () => {
@@ -415,74 +434,41 @@ describe('Caja — movimientos', () => {
   })
 })
 
-describe('Caja — selector de punto de venta bloqueado durante una escritura en vuelo (react-async-state regla 9)', () => {
-  it('queda deshabilitado mientras la apertura del turno está en vuelo', async () => {
+describe('Caja — punto de venta de sesión', () => {
+  it('muestra el nombre del punto de venta de la sesión como texto, sin selector', async () => {
     mockearRutasBase((ruta) => {
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(null)
       return undefined
     })
 
-    let resolverApertura: (t: TurnoResumen) => void = () => {}
-    const aperturaPendiente = new Promise<TurnoResumen>((resolve) => {
-      resolverApertura = resolve
-    })
-    apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/caja/turnos') return aperturaPendiente
-      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
-    })
-
     render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('No hay un turno abierto en este punto de venta.')
 
-    await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
-    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
-
-    expect(screen.getByLabelText('Punto de venta')).toBeDisabled()
-
-    await act(async () => {
-      resolverApertura(turnoFixture())
-      await Promise.resolve()
-    })
+    expect(screen.getByText('Local Centro')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Punto de venta')).not.toBeInTheDocument()
   })
 
-  it('queda deshabilitado mientras un movimiento de caja está en vuelo', async () => {
-    mockearRutasBase((ruta) => {
-      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(turnoFixture())
-      if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture())
-      return undefined
-    })
-
-    let resolverMovimiento: (m: MovimientoRegistrado) => void = () => {}
-    const movimientoPendiente = new Promise<MovimientoRegistrado>((resolve) => {
-      resolverMovimiento = resolve
-    })
-    apiPostMock.mockImplementation((ruta: string) => {
-      if (ruta === '/caja/turnos/501/movimientos') return movimientoPendiente
-      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
-    })
+  it('sin punto de venta en la sesión muestra el aviso y no consulta ningún turno', async () => {
+    estadoDePuntoVenta.puntosVenta = []
+    estadoDePuntoVenta.puntoVenta = null
+    mockearRutasBase()
 
     render(<Caja />, { wrapper: MemoryRouter })
-    await screen.findByText('Turno abierto')
-    await userEvent.type(screen.getByLabelText('Importe'), '100')
-    await userEvent.type(screen.getByLabelText('Motivo'), 'retiro de prueba')
-    await userEvent.click(screen.getByRole('button', { name: 'Registrar movimiento' }))
+    await screen.findByText('Sin puntos de venta disponibles')
 
-    expect(screen.getByLabelText('Punto de venta')).toBeDisabled()
-
-    await act(async () => {
-      resolverMovimiento(movimientoFixture())
-      await Promise.resolve()
-    })
+    expect(screen.queryByText('Consultando el turno…')).not.toBeInTheDocument()
+    expect(screen.queryByText('No hay un turno abierto en este punto de venta.')).not.toBeInTheDocument()
+    expect(apiGetMock).not.toHaveBeenCalledWith(expect.stringContaining('/caja/turnos/abierto'))
   })
 })
 
 describe('Caja — turno nuevo no hereda el estado del anterior (react-async-state regla 8)', () => {
-  it('cambiar de punto de venta a uno con otro turno abierto resetea el formulario de movimiento y el resumen mostrado', async () => {
+  it('cambiar el punto de venta de sesión a uno con otro turno abierto remonta la pantalla: resetea el formulario de movimiento y el resumen mostrado', async () => {
     const puntoVentaNorte = puntoVentaFixture({ id: 8, nombre: 'Local Norte' })
     const turnoNorte = turnoFixture({ id: 900, idPuntoVenta: 8, fondoInicial: 1000 })
+    estadoDePuntoVenta.puntosVenta = [puntoVentaCentro, puntoVentaNorte]
 
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro, puntoVentaNorte])
       if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(turnoFixture())
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=8') return Promise.resolve<TurnoResumen | null>(turnoNorte)
@@ -495,14 +481,18 @@ describe('Caja — turno nuevo no hereda el estado del anterior (react-async-sta
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    render(<Caja />, { wrapper: MemoryRouter })
+    const { rerender } = render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
     await waitFor(() => expect(screen.getByText('$640,00')).toBeInTheDocument())
+    expect(screen.getByText('Local Centro')).toBeInTheDocument()
 
     await userEvent.type(screen.getByLabelText('Motivo'), 'algo que no debería sobrevivir al cambio de turno')
 
-    await userEvent.selectOptions(screen.getByLabelText('Punto de venta'), 'Local Norte')
+    estadoDePuntoVenta.puntoVenta = puntoVentaNorte
+    rerender(<Caja />)
 
+    expect(screen.getByText('Local Norte')).toBeInTheDocument()
+    expect(screen.queryByText('Local Centro')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('$999,00')).toBeInTheDocument())
     expect(screen.queryByText('$640,00')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Motivo')).toHaveValue('')
@@ -512,7 +502,6 @@ describe('Caja — turno nuevo no hereda el estado del anterior (react-async-sta
 describe('Caja — errores', () => {
   it('un turno abierto que falla al consultarse muestra el mensaje del servidor', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
       if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') {
         return Promise.reject(new ErrorApi(500, 'error', 'No se pudo consultar el turno.'))

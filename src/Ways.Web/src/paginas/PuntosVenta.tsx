@@ -17,6 +17,7 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { useAuth } from '../auth/useAuth'
+import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { ROL } from '../api/tipos'
 
 type Formulario = {
@@ -45,6 +46,7 @@ const AVISO_REFRESCO_FALLIDO_BAJA =
  */
 export function PuntosVenta() {
   const { usuario } = useAuth()
+  const { recargar } = usePuntoVenta()
   const esPlataforma = usuario?.rolId === ROL.Root
 
   const [items, setItems] = useState<PuntoVentaListado[]>([])
@@ -116,7 +118,14 @@ export function PuntosVenta() {
       await cargar(token, true)
     } catch {
       if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+
+      return
     }
+
+    // La sesión mira el mismo listado: un rename o una baja se propagan al punto de venta activo
+    // sin esperar un refresco de página. Sin `await` y con el rechazo tragado: esta pantalla no
+    // depende de ese resultado y un fallo ahí no cambia lo que ya se rindió.
+    void recargar().catch(() => {})
   }
 
   async function guardar() {

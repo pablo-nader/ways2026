@@ -7,7 +7,6 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
 import { clienteDeOfertas } from '../api/ofertas'
-import { clienteDeOrganizacion } from '../api/organizacion'
 import {
   aPagosDeVenta,
   calcularExcedente,
@@ -28,7 +27,6 @@ import type {
   MedioPagoListado,
   ParametroResuelto,
   PresupuestoParaVenta,
-  PuntoVentaListado,
   ResultadoDeResolucion,
 } from '../api/tipos'
 import {
@@ -44,8 +42,7 @@ import {
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { SelectorDeLote } from '../componentes/SelectorDeLote'
-
-const CLAVE_PUNTO_VENTA = 'ways.pos.idPuntoVenta'
+import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 
 /** Piso de cantidad por línea, compartido entre el guard de edición y los atributos
  * `min`/`step` del input — evita que ambos se desincronicen (ej. el guard aceptando
@@ -53,24 +50,6 @@ const CLAVE_PUNTO_VENTA = 'ways.pos.idPuntoVenta'
 const CANTIDAD_MINIMA = 0.001
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
-
-function leerPuntoVentaGuardado(): number | null {
-  try {
-    const crudo = localStorage.getItem(CLAVE_PUNTO_VENTA)
-    return crudo ? Number(crudo) : null
-  } catch {
-    return null
-  }
-}
-
-function guardarPuntoVentaSeleccionado(id: number) {
-  try {
-    localStorage.setItem(CLAVE_PUNTO_VENTA, String(id))
-  } catch {
-    // localStorage puede no estar disponible (modo privado del navegador) — la selección
-    // simplemente no persiste entre sesiones, el resto de la pantalla sigue funcionando.
-  }
-}
 
 function fusionarOpcionesCliente(opciones: ClienteListado[], seleccionado: ClienteListado | null): ClienteListado[] {
   if (!seleccionado) return opciones
@@ -225,15 +204,12 @@ type PropsPantallaPos = { idPresupuesto: number | null }
  * pantalla entera opera en modo conversión — carrito congelado de solo lectura, sin resolución de
  * precio, `POST /api/ventas` con `idPresupuestoOrigen`. Remontada íntegra por `key` desde `Pos()`
  * (react-async-state regla 8) — ningún estado de una venta libre o de otro presupuesto sobrevive
- * al cambio de `?idPresupuesto=`.
+ * al cambio de `?idPresupuesto=`, ni al cambio del punto de venta de la sesión.
  */
 function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
   const modoPresupuesto = idPresupuesto !== null
   const navigate = useNavigate()
-
-  const [puntosVenta, setPuntosVenta] = useState<PuntoVentaListado[] | null>(null)
-  const [idPuntoVenta, setIdPuntoVenta] = useState<number | ''>('')
-  const [errorPuntosVenta, setErrorPuntosVenta] = useState('')
+  const { puntoVenta: puntoVentaDeSesion, puntosVenta } = usePuntoVenta()
 
   const [opcionesClientes, setOpcionesClientes] = useState<ClienteListado[]>([])
   const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteListado | null>(null)
@@ -253,8 +229,8 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
 
   // stage-12-lotes-vencimientos (Slice 14): elección explícita de lote por línea, indexada por
   // `idArticulo` — una línea ausente acá viaja con `idLote: null` (design decisión 19, camino
-  // feliz de cero tecleo). Los saldos de lote son por punto de venta: cambiar de PV invalida
-  // cualquier elección hecha (`cambiarPuntoVenta` la resetea entera).
+  // feliz de cero tecleo). Los saldos de lote son por punto de venta: un cambio de PV remonta la
+  // pantalla entera por `key` desde `Pos()`, así que ninguna elección sobrevive al PV anterior.
   const [lotesSeleccionados, setLotesSeleccionados] = useState<LotesSeleccionados>({})
 
   const [entradaEscaneo, setEntradaEscaneo] = useState('')
@@ -273,7 +249,7 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
   const [filasPago, setFilasPago] = useState<FilaPago[]>(() => [filaPagoVacia(proximaFilaPagoIdRef.current++)])
 
   // react-async-state regla 9: mientras el checkout está en vuelo, TODO lo que podría
-  // superponerse (escaneo, edición de carrito, cliente/punto de venta, filas de pago) queda
+  // superponerse (escaneo, edición de carrito, cliente, filas de pago) queda
   // inerte — `cobrandoRef` es el guard de reentrancia de primera línea (un doble click en el
   // mismo tick le gana al re-render que deshabilita el botón), `cobrando` es lo que deshabilita
   // los controles en pantalla.
@@ -325,14 +301,6 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
     }
   }, [modoPresupuesto, idPresupuesto])
 
-  // El punto de venta lo fija el presupuesto — nunca lo elige el cajero bajo este modo (el
-  // servidor recibe `idPuntoVenta` del body igual que siempre, pero acá viaja el del presupuesto,
-  // nunca uno distinto que el operador pudiera tipear).
-  useEffect(() => {
-    if (!presupuesto) return
-    setIdPuntoVenta(presupuesto.idPuntoVenta)
-  }, [presupuesto])
-
   // El cliente lo trae el presupuesto por id — se hidrata el registro completo (no solo el id)
   // porque el panel de pagos necesita `esConsumidorFinal`/`saldo`/`limiteCredito`/`creditoIlimitado`
   // para su validación local, los mismos campos que la selección manual ya provee.
@@ -358,7 +326,12 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
     }
   }, [presupuesto])
 
-  const puntoVentaSeleccionada = puntosVenta?.find((p) => p.id === idPuntoVenta) ?? null
+  // Bajo `?idPresupuesto=` el punto de venta lo fija el propio presupuesto, nunca la sesión (el
+  // servidor recibe `idPuntoVenta` del body igual que siempre, pero acá viaja el del presupuesto).
+  const idPuntoVentaDelPresupuesto = presupuesto?.idPuntoVenta ?? null
+  const puntoVentaSeleccionada = modoPresupuesto
+    ? (puntosVenta.find((p) => p.id === idPuntoVentaDelPresupuesto) ?? null)
+    : puntoVentaDeSesion
 
   const medioPorId = useMemo(() => {
     const indice: Record<number, MedioPagoListado> = {}
@@ -366,36 +339,11 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
     return indice
   }, [medios])
 
-  // Carga inicial: puntos de venta (para el selector explícito de la operación, proposal
-  // decisión 3 — sin sesión de "punto de venta actual" en el servidor), clientes (para
-  // encontrar el Consumidor Final por defecto, spec: "Omitted idCliente defaults to Consumidor
-  // Final") y medios de pago (panel de pagos, Slice 7). Cada uno con su propio try/catch: que
-  // uno falle no bloquea a los otros.
+  // Carga inicial: clientes (para encontrar el Consumidor Final por defecto, spec: "Omitted
+  // idCliente defaults to Consumidor Final") y medios de pago (panel de pagos, Slice 7). Cada uno
+  // con su propio try/catch: que uno falle no bloquea al otro.
   useEffect(() => {
     let vigente = true
-
-    clienteDeOrganizacion
-      .listarPuntosVenta()
-      .then((lista) => {
-        if (!vigente) return
-        setPuntosVenta(lista)
-        // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el punto de venta lo
-        // fija el propio presupuesto (efecto dedicado más abajo) — este default NUNCA escribe
-        // acá, o ganaría una carrera contra esa asignación según cuál de las dos respuestas
-        // llegue primero.
-        if (!modoPresupuesto) {
-          const guardado = leerPuntoVentaGuardado()
-          const porDefecto = lista.find((p) => p.id === guardado) ?? lista[0] ?? null
-          setIdPuntoVenta(porDefecto ? porDefecto.id : '')
-        }
-      })
-      .catch((e) => {
-        if (!vigente) return
-        setPuntosVenta([])
-        setErrorPuntosVenta(
-          e instanceof ErrorApi ? e.message : 'No se pudieron cargar los puntos de venta. Seleccioná uno para operar.',
-        )
-      })
 
     const generacionClientes = (generacionClientesRef.current += 1)
 
@@ -407,7 +355,7 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
         // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el cliente lo trae el
         // presupuesto (efecto dedicado más abajo, hidrata el registro completo por id) — el
         // default de Consumidor Final NUNCA escribe acá bajo este modo, mismo criterio que el
-        // punto de venta.
+        // punto de venta (que bajo este modo sale del presupuesto y no de la sesión).
         if (!modoPresupuesto) {
           const consumidorFinal = pagina.items.find((c) => c.esConsumidorFinal) ?? null
           setClienteSeleccionado(consumidorFinal)
@@ -690,16 +638,6 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
     } finally {
       if (generacionClientesRef.current === generacion) setBuscandoClientes(false)
     }
-  }
-
-  function cambiarPuntoVenta(id: number) {
-    if (cobrandoRef.current) return
-    setIdPuntoVenta(id)
-    guardarPuntoVentaSeleccionado(id)
-    // Los saldos de lote son por punto de venta (stage-12-lotes-vencimientos, Slice 14): una
-    // elección hecha contra el PV anterior no tiene sentido en el nuevo — cada `SelectorDeLote`
-    // ya se resetea solo por su propio efecto, esto limpia el lado del carrito.
-    setLotesSeleccionados({})
   }
 
   /** Elección explícita de un lote en la línea de `idArticulo`, o `null` para volver al camino
@@ -1210,27 +1148,14 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
 
         <div className="col-lg-4">
           <Box titulo="Datos de la venta">
-            {errorPuntosVenta && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorPuntosVenta}</div>}
-
             <div className="mb-3">
-              <label className="form-label" htmlFor="pos-punto-venta">
-                Punto de venta
-              </label>
-              <select
-                id="pos-punto-venta"
-                className="form-select rounded-0"
-                value={idPuntoVenta}
-                disabled={puntosVenta === null || cobrando || modoPresupuesto}
-                onChange={(e) => cambiarPuntoVenta(Number(e.target.value))}
-              >
-                {puntosVenta === null && <option value="">Cargando…</option>}
-                {puntosVenta !== null && puntosVenta.length === 0 && <option value="">Sin puntos de venta disponibles</option>}
-                {puntosVenta?.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nombre}
-                  </option>
-                ))}
-              </select>
+              {puntoVentaSeleccionada ? (
+                <>
+                  <span className="text-muted small">Punto de venta:</span> <strong>{puntoVentaSeleccionada.nombre}</strong>
+                </>
+              ) : (
+                <div className="alert alert-warning rounded-0 py-1 px-2 small">Sin puntos de venta disponibles</div>
+              )}
             </div>
 
             {errorClientes && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorClientes}</div>}
@@ -1406,14 +1331,18 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
 
 /**
  * `/pos` (stage-17-presupuestos-y-remitos, Slice 7, design: Web composition — `react-async-state`
- * regla 8): lee `?idPresupuesto=` de la URL y remonta `PantallaPos` entera por `key` cuando
- * cambia — un `idPresupuesto` inválido o ausente se trata como el camino libre, nunca un error
- * bloqueante (la ruta sin query sigue siendo el POS de siempre).
+ * regla 8): lee `?idPresupuesto=` de la URL y el punto de venta de la sesión, y remonta
+ * `PantallaPos` entera por `key` cuando cualquiera de los dos cambia — un `idPresupuesto` inválido
+ * o ausente se trata como el camino libre, nunca un error bloqueante (la ruta sin query sigue
+ * siendo el POS de siempre).
  */
 export function Pos() {
   const [searchParams] = useSearchParams()
+  const { puntoVenta } = usePuntoVenta()
   const crudo = searchParams.get('idPresupuesto')
   const idPresupuesto = crudo !== null && Number.isFinite(Number(crudo)) ? Number(crudo) : null
 
-  return <PantallaPos key={idPresupuesto ?? 'libre'} idPresupuesto={idPresupuesto} />
+  return (
+    <PantallaPos key={`${idPresupuesto ?? 'libre'}:${puntoVenta?.id ?? 'sin-pv'}`} idPresupuesto={idPresupuesto} />
+  )
 }
