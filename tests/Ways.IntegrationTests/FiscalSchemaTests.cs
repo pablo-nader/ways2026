@@ -1249,29 +1249,30 @@ public class FiscalSchemaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
     // cero ALTER TYPE ADD VALUE, índices = 8, CHECKs = 8 — todo por definición
     // =========================================================================================
 
+    /// <summary>
+    /// Nombre y alcance ajustados por stage-desktop-pos: la migración <c>DispositivosPos</c> es
+    /// hoy la última del repo, así que la mitad "Y ES LA ÚLTIMA" del nombre y del assert (única
+    /// en toda la historia del archivo — <c>git log -S EsLaUltima</c> no encuentra un ajuste
+    /// previo, esta es la primera vez que una etapa posterior supera a esta) ya no es cierta y se
+    /// retira; lo que este gate SIGUE protegiendo — "esta etapa agrega EXACTAMENTE una migración
+    /// con este nombre, ni cero ni dos" — sigue vigente sin cambios y se conserva tal cual.
+    /// </summary>
     [Fact]
-    public void ExisteExactamenteUnaMigracionDeEstaEtapaYEsLaUltima()
+    public void ExisteExactamenteUnaMigracionDeEstaEtapa()
     {
         var directorioMigraciones = Path.Combine(
             Path.GetDirectoryName(RutaDeEsteArchivo())!,
             "..", "..", "src", "Ways.Infrastructure", "Persistencia", "Migraciones");
 
-        // Filtro por prefijo de timestamp (14 dígitos + '_'): excluye WaysDbContextModelSnapshot.cs
-        // (único archivo no-migración del directorio), que además ordenaría alfabéticamente
-        // DESPUÉS de toda migración ('W' > cualquier dígito en ASCII) y rompería la aserción de
-        // "última migración" si no se excluyera.
         var archivos = Directory.GetFiles(directorioMigraciones, "*.cs")
             .Select(Path.GetFileName)
             .Where(n => n is not null && !n.EndsWith(".Designer.cs", StringComparison.Ordinal)
                 && System.Text.RegularExpressions.Regex.IsMatch(n, @"^\d{14}_"))
             .Select(n => n!)
-            .OrderBy(n => n)
             .ToList();
 
         var fiscales = archivos.Where(n => n.Contains("FiscalArcaEtapa19a")).ToList();
         Assert.Single(fiscales);
-
-        Assert.Equal(fiscales[0], archivos[^1]); // la última migración del repo, por orden de timestamp
     }
 
     [Fact]

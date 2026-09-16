@@ -12,6 +12,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Compras;
+using Ways.Domain.Dispositivos;
 using Ways.Domain.Fiscal;
 using Ways.Domain.Gastos;
 using Ways.Domain.Ofertas;
@@ -33,6 +34,10 @@ public class WaysDbContext(DbContextOptions<WaysDbContext> options, ITenantActua
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Empresa> Empresas => Set<Empresa>();
     public DbSet<PuntoVenta> PuntosVenta => Set<PuntoVenta>();
+
+    // stage-desktop-pos: dispositivo de escritorio vinculado a un punto de venta.
+    // ServicioDeDispositivos es el primer (y único) consumidor de Application.
+    public DbSet<Dispositivo> Dispositivos => Set<Dispositivo>();
 
     // Catálogos de tenant (ADR-11) y globales (ADR-11, gate #4) — sin DbSet en
     // IWaysDbContext todavía: Application los consume recién en la capa de servicios

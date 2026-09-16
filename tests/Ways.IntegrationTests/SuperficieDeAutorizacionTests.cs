@@ -34,6 +34,10 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // Los cuatro que el design nombra explícitamente.
         ("POST", "/api/auth/login"),
         ("POST", "/api/auth/logout"),
+        // stage-desktop-pos: login de cajero contra un dispositivo ya vinculado — anónimo, mismo
+        // criterio EXACTO que "/api/auth/login" de arriba (ninguno de los dos puede exigir una
+        // policy de rol: son los dos únicos puntos de entrada SIN sesión previa del sistema).
+        ("POST", "/api/auth/login-dispositivo"),
         ("POST", "/api/ofertas/resolver"),
         // Slice 4 (task 4.6): MapGroup("/api/ventas").MapPost("/", ...) — el RoutePattern.RawText
         // real lleva la barra final (mismo shape que "/api/plataforma/tenants/"/"/api/usuarios/"

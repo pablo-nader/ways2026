@@ -108,6 +108,38 @@ builder.Services
                 ctx.RejectPrincipal();
                 await ctx.HttpContext.SignOutAsync(
                     CookieAuthenticationDefaults.AuthenticationScheme);
+                return;
+            }
+
+            // stage-desktop-pos: una sesión iniciada por /auth/login-dispositivo lleva la claim
+            // ways:id_dispositivo. Revocar el dispositivo o dar de baja su punto de venta tiene
+            // que cortar la sesión en la request siguiente, igual que bloquear al usuario o
+            // suspender el tenant — sin esto, un dispositivo revocado seguiría autenticando
+            // hasta que la cookie de 365 días venciera sola. Una sesión web normal (login por
+            // mail) no lleva esta claim y no pasa por acá. El tenant de la fila ya quedó
+            // garantizado arriba (ResolverModoDeLaSesionAsync puso el contexto en el tenant del
+            // claim): si el dispositivo fuera de otro tenant, el filtro de EF + RLS ya lo
+            // esconderían, así que "no aparece" cubre revocado, PV de baja Y tenant distinto sin
+            // tres chequeos separados.
+            //
+            // Mutation-proof: mutado a mano a `if (false)` (nunca rechaza) y corridos
+            // DispositivosTests.RevocarElDispositivoCortaUnaSesionDeCajeroYaAbierta y
+            // .DarDeBajaElPuntoDeVentaCortaUnaSesionDeCajeroYaAbierta — los dos pasaron de VERDE
+            // a ROJO (`Expected: Unauthorized, Actual: OK`); revertido, los dos vuelven a VERDE.
+            if (int.TryParse(ctx.Principal?.FindFirstValue(ClaimsWays.IdDispositivo), out var idDispositivo))
+            {
+                var dispositivoVigente = await db.Dispositivos
+                    .AsNoTracking()
+                    .Where(d => d.Id == idDispositivo)
+                    .Join(db.PuntosVenta, d => d.IdPuntoVenta, p => p.Id, (d, _) => d.Id)
+                    .AnyAsync();
+
+                if (!dispositivoVigente)
+                {
+                    ctx.RejectPrincipal();
+                    await ctx.HttpContext.SignOutAsync(
+                        CookieAuthenticationDefaults.AuthenticationScheme);
+                }
             }
         };
     });
@@ -164,6 +196,8 @@ app.MapearCatalogos();
 app.MapearParametros();
 app.MapearAprovisionamiento();
 app.MapearOrganizacion();
+// stage-desktop-pos: vinculación de dispositivos de escritorio + su login por usuario.
+app.MapearDispositivos();
 app.MapearClientes();
 app.MapearProveedores();
 app.MapearArticulos();

@@ -1281,3 +1281,45 @@ etapa; los datos del legacy entran en la etapa 5 (ventas históricas → `items_
 >
 > La baja de **empresa** y de **punto de venta** queda **latente** hasta que exista un alta que
 > cree un segundo hermano: hoy el mínimo estructural dispara primero en todo intento vía API.
+
+## 9. Dispositivos de escritorio (stage-desktop-pos)
+
+Un dispositivo Tauri (`{server}/pos.html`) se vincula UNA VEZ, por un Admin, a un punto de venta
+del tenant; después cualquier cajero autorizado inicia sesión contra ESE dispositivo con
+usuario + contraseña (doc 08 "En el front", desviación: acá SÍ hay una superficie sin sesión
+previa —`pos.html`— porque el dispositivo mismo es la unidad de confianza, no el navegador).
+
+```sql
+dispositivos (                -- [operativa] id_tenant + id_punto_venta, doc 09
+    id_dispositivo,
+    id_punto_venta   integer NOT NULL,        -- FK compuesta (id_punto_venta, id_tenant)
+    nombre           varchar(100) NOT NULL,   -- etiqueta humana ("Caja 1", "Mostrador")
+    token_hash       char(64) NOT NULL,       -- SHA-256 hex del secreto — el secreto en sí
+                                              -- NUNCA se persiste, solo viaja en la cookie
+                                              -- HttpOnly ways.dispositivo
+    id_usuario_alta  integer NOT NULL,        -- FK simple a usuarios: quién lo vinculó
+    ultimo_uso_at    timestamptz NULL,        -- se actualiza en cada login-dispositivo exitoso
+    created_at, updated_at, deleted_at        -- baja = revocación, siempre lógica
+);
+-- UNIQUE (token_hash)                              -- ux_dispositivos_token_hash
+-- INDEX  (id_tenant, id_punto_venta)                -- ix_dispositivos_tenant_punto_venta
+```
+
+**RLS con la misma excepción de login que `usuarios` (doc 09/doc 08).** El dispositivo se tiene
+que poder resolver por `token_hash` ANTES de que exista sesión alguna, así que además de la
+policy estándar `dispositivos_tenant` lleva una policy de **SOLO LECTURA** en modo `login`
+(`dispositivos_login_lectura`, mismo patrón que `usuarios_login_lectura`) — a diferencia de
+`usuarios`, acá no hace falta una policy de *escritura* en modo login: `ServicioDeDispositivos`
+resuelve el dispositivo (modo `Login`), pasa el contexto a modo `Tenant` en cuanto conoce el
+tenant del dispositivo, y recién ahí actualiza `ultimo_uso_at` bajo la policy estándar.
+
+**Estado (stage-desktop-pos): implementada.** Creada por la migración `DispositivosPos`.
+`GET /api/dispositivos/actual` (anónimo) resuelve el dispositivo de la cookie; `POST /api/dispositivos`
+(Admin) vincula uno nuevo y setea la cookie; `GET`/`DELETE /api/dispositivos` (Admin) listan y
+revocan (baja lógica). `POST /api/auth/login-dispositivo` reusa el núcleo de
+`ServicioDeAutenticacion` (timing-safe, lockout, rehash) con la lista de roles del POS
+(Vendedor/Supervisor/Admin) y emite la misma cookie `ways.sesion` con una claim extra
+(`ways:id_dispositivo`) y un `ExpiresUtc` propio de 365 días — `Program.cs`,
+`OnValidatePrincipal`, revalida en cada request que ese dispositivo siga vigente (no revocado,
+su punto de venta no dado de baja), igual que ya revalida el usuario y el tenant. Detalle
+completo del flujo en doc 08 §"Login de dispositivo".

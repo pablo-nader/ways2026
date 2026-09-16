@@ -319,6 +319,15 @@ public class ManejadorDeErrores(
                 when string.Equals(uxCertificadoActivo, "ux_certificados_fiscales_activo", StringComparison.OrdinalIgnoreCase) =>
                 (StatusCodes.Status409Conflict, "Ya existe un certificado fiscal activo para esta empresa y ambiente.", "certificado_fiscal_activo_duplicado"),
 
+            // stage-desktop-pos (db-error-backstops): ux_dispositivos_token_hash — el secreto
+            // sale de RandomNumberGenerator sobre 32 bytes (2^256 valores), así que una colisión
+            // real es prácticamente irrepresentable; el backstop se ships igual, per skill, para
+            // que un choque teórico (o un bug futuro en TokenDeDispositivo) rinda un 409 traducido
+            // en vez de un 500 crudo.
+            { SqlState: "23505", ConstraintName: string uxDispositivoToken }
+                when string.Equals(uxDispositivoToken, "ux_dispositivos_token_hash", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status409Conflict, "Colisión al generar el secreto del dispositivo, reintentá la vinculación.", "dispositivo_token_duplicado"),
+
             // Backstop genérico (judgment-day, slice 3 ronda 1) para las ~10 unicidades nuevas
             // de catálogos/parámetros/catálogos fiscales: mismo mecanismo de carrera que los
             // dos casos de arriba, pero agrupado por familia (a partir del nombre del índice,

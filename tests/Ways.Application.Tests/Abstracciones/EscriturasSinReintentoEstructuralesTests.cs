@@ -52,6 +52,11 @@ public class EscriturasSinReintentoEstructuralesTests
 
         { "Ways.Application/Organizacion/ServicioDeAprovisionamiento.cs", "CrearTenantAsync" },
 
+        // stage-desktop-pos: alta de dispositivo — TokenDeDispositivo.GenerarNuevo() no tiene
+        // clave de idempotencia (un reintento generaría un secreto/hash NUEVO y duplicaría la
+        // fila), mismo criterio que ServicioDeUsuarios.CrearAsync.
+        { "Ways.Application/Dispositivos/ServicioDeDispositivos.cs", "CrearAsync" },
+
         // judgment-day fix/retry-double-add (item C3): el barrido del skill se había declarado
         // completo sobre Ways.Application y este sitio vive en Ways.Infrastructure — Adds de
         // ListaPrecio y Cliente dentro de un lambda reintentable, con el número de Consumidor
