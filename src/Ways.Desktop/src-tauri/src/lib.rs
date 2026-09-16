@@ -8,6 +8,12 @@ use tauri::Manager;
 const ETIQUETA_VENTANA_PRINCIPAL: &str = "main";
 const IDENTIFICADOR_CAPACIDAD_REMOTA: &str = "pos-remoto";
 
+/// URL local original de la ventana principal (la pagina de configuracion
+/// embebida en el bundle), capturada antes de navegar al servidor remoto
+/// configurado. Se usa para poder volver a la configuracion sin depender de
+/// una ruta relativa, que se resolveria contra el origen remoto actual.
+struct UrlLocalConfiguracion(tauri::Url);
+
 /// Permisos del subconjunto de comandos que la pagina remota (`/pos.html`)
 /// puede invocar. Se agregan en runtime, restringidos al origen exacto que
 /// el usuario configuro (ver `registrar_capacidad_remota`).
@@ -48,6 +54,13 @@ pub fn ejecutar() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+
+            let ventana = handle
+                .get_webview_window(ETIQUETA_VENTANA_PRINCIPAL)
+                .expect("la ventana principal 'main' deberia existir");
+            let url_local = ventana.url()?;
+            handle.manage(UrlLocalConfiguracion(url_local));
+
             if let Some(configuracion) = config::leer(&handle) {
                 registrar_capacidad_remota(&handle, &configuracion.url_servidor)?;
                 navegar_a_pos(&handle, &configuracion.url_servidor)?;
@@ -98,12 +111,19 @@ fn navegar_a_pos(app: &tauri::AppHandle, url_servidor: &str) -> tauri::Result<()
 }
 
 /// Vuelve a mostrar la pagina local de configuracion (bundle `ui/index.html`)
-/// en la ventana principal.
+/// en la ventana principal. Navega a la URL local capturada al arrancar
+/// (`UrlLocalConfiguracion`) en vez de una ruta relativa, que se resolveria
+/// contra el origen remoto si la ventana ya esta mostrando el POS.
 fn abrir_pagina_configuracion(app: &tauri::AppHandle) -> Result<(), String> {
     let ventana = app
         .get_webview_window(ETIQUETA_VENTANA_PRINCIPAL)
         .ok_or_else(|| "No se encontro la ventana principal.".to_string())?;
+    let url_local = app
+        .try_state::<UrlLocalConfiguracion>()
+        .ok_or_else(|| "No se pudo determinar la URL local de configuracion.".to_string())?
+        .0
+        .clone();
     ventana
-        .eval("window.location.replace('index.html');")
+        .navigate(url_local)
         .map_err(|error| format!("No se pudo abrir la configuracion: {error}"))
 }

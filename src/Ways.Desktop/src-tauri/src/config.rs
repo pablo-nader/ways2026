@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
+use url::Url;
 
 const NOMBRE_ARCHIVO_CONFIG: &str = "config.json";
 
@@ -21,8 +22,11 @@ pub struct Configuracion {
 
 /// Valida y normaliza la URL del servidor ingresada por el usuario.
 ///
-/// Reglas: debe comenzar con `https://`, o con `http://localhost` /
-/// `http://127.0.0.1` (para desarrollo). Se recorta la barra final.
+/// Reglas: esquema `https` con un dominio valido, o esquema `http` con host
+/// exactamente `localhost` o `127.0.0.1` (para desarrollo). No se permiten
+/// credenciales (`usuario@`), query string, fragmento ni ruta (solo el
+/// origen). El host solo puede contener `[A-Za-z0-9.-]`. El resultado se
+/// normaliza a `esquema://host[:puerto]` en minusculas y sin barra final.
 pub fn normalizar_url_servidor(entrada: &str) -> Result<String, String> {
     let recortada = entrada.trim();
 
@@ -30,9 +34,28 @@ pub fn normalizar_url_servidor(entrada: &str) -> Result<String, String> {
         return Err("La URL del servidor no puede estar vacia.".to_string());
     }
 
-    let es_https = recortada.starts_with("https://");
-    let es_localhost_dev =
-        recortada.starts_with("http://localhost") || recortada.starts_with("http://127.0.0.1");
+    let url = Url::parse(recortada).map_err(|_| "La URL del servidor no es valida.".to_string())?;
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| "La URL del servidor no es valida: falta el dominio.".to_string())?;
+    let host_normalizado = host.to_lowercase();
+
+    let host_valido = !host_normalizado.is_empty()
+        && host_normalizado
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    if !host_valido {
+        return Err(
+            "La URL del servidor no es valida: el dominio contiene caracteres no permitidos."
+                .to_string(),
+        );
+    }
+
+    let esquema = url.scheme();
+    let es_https = esquema == "https";
+    let es_localhost_dev = esquema == "http"
+        && (host_normalizado == "localhost" || host_normalizado == "127.0.0.1");
 
     if !es_https && !es_localhost_dev {
         return Err(
@@ -41,14 +64,25 @@ pub fn normalizar_url_servidor(entrada: &str) -> Result<String, String> {
         );
     }
 
-    let sin_barra_final = recortada.trim_end_matches('/');
-
-    let prefijo_len = if es_https { "https://".len() } else { "http://".len() };
-    if sin_barra_final.len() <= prefijo_len {
-        return Err("La URL del servidor no es valida: falta el dominio.".to_string());
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("La URL del servidor no puede incluir credenciales.".to_string());
     }
 
-    Ok(sin_barra_final.to_string())
+    if url.query().is_some() {
+        return Err("La URL del servidor no puede incluir parametros de consulta.".to_string());
+    }
+
+    if url.fragment().is_some() {
+        return Err("La URL del servidor no puede incluir un fragmento.".to_string());
+    }
+
+    let ruta = url.path();
+    if !ruta.is_empty() && ruta != "/" {
+        return Err("La URL del servidor no puede incluir una ruta.".to_string());
+    }
+
+    let puerto = url.port().map(|p| format!(":{p}")).unwrap_or_default();
+    Ok(format!("{esquema}://{host_normalizado}{puerto}"))
 }
 
 /// Arma la URL completa de la pagina POS a partir del servidor configurado.
@@ -63,10 +97,22 @@ fn ruta_archivo_configuracion(app: &AppHandle) -> Result<PathBuf, String> {
         .map(|dir| dir.join(NOMBRE_ARCHIVO_CONFIG))
 }
 
+/// Lee la configuracion persistida y revalida la URL del servidor.
+///
+/// Si el archivo esta ausente, corrupto, o contiene una URL que ya no pasa
+/// las reglas de `normalizar_url_servidor` (por ejemplo, editado a mano o
+/// persistido por una version anterior menos estricta), se devuelve `None`
+/// para que la app muestre la pagina local de configuracion en vez de usar
+/// un valor invalido.
 pub fn leer(app: &AppHandle) -> Option<Configuracion> {
     let ruta = ruta_archivo_configuracion(app).ok()?;
     let contenido = fs::read_to_string(ruta).ok()?;
-    serde_json::from_str(&contenido).ok()
+    let config: Configuracion = serde_json::from_str(&contenido).ok()?;
+    let url_servidor = normalizar_url_servidor(&config.url_servidor).ok()?;
+    Some(Configuracion {
+        url_servidor,
+        impresora: config.impresora,
+    })
 }
 
 pub fn guardar(app: &AppHandle, config: &Configuracion) -> Result<(), String> {
@@ -137,6 +183,53 @@ mod tests {
     #[test]
     fn rechaza_https_sin_dominio() {
         assert!(normalizar_url_servidor("https://").is_err());
+    }
+
+    #[test]
+    fn rechaza_localhost_con_sufijo_de_dominio() {
+        assert!(normalizar_url_servidor("http://localhost.evil.com").is_err());
+    }
+
+    #[test]
+    fn rechaza_localhost_con_userinfo_apuntando_a_otro_host() {
+        assert!(normalizar_url_servidor("http://localhost@evil.com").is_err());
+    }
+
+    #[test]
+    fn rechaza_127_0_0_1_con_sufijo_de_dominio() {
+        assert!(normalizar_url_servidor("http://127.0.0.1.evil.com").is_err());
+    }
+
+    #[test]
+    fn rechaza_host_comodin() {
+        assert!(normalizar_url_servidor("https://*").is_err());
+        assert!(normalizar_url_servidor("https://*.evil.com").is_err());
+    }
+
+    #[test]
+    fn rechaza_credenciales_en_https() {
+        assert!(normalizar_url_servidor("https://usuario:clave@empresa.aipos.site").is_err());
+    }
+
+    #[test]
+    fn rechaza_query_string() {
+        assert!(normalizar_url_servidor("https://empresa.aipos.site/?redir=evil.com").is_err());
+    }
+
+    #[test]
+    fn rechaza_fragmento() {
+        assert!(normalizar_url_servidor("https://empresa.aipos.site/#evil").is_err());
+    }
+
+    #[test]
+    fn rechaza_ruta_no_vacia() {
+        assert!(normalizar_url_servidor("https://empresa.aipos.site/algo").is_err());
+    }
+
+    #[test]
+    fn normaliza_host_a_minusculas() {
+        let resultado = normalizar_url_servidor("https://EMPRESA.AIPOS.SITE").unwrap();
+        assert_eq!(resultado, "https://empresa.aipos.site");
     }
 
     #[test]

@@ -7,8 +7,8 @@ use serde::Serialize;
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{HANDLE, GENERIC_WRITE};
 use windows::Win32::Graphics::Printing::{
-    ClosePrinter, EndDocPrinter, EndPagePrinter, EnumPrintersW, GetDefaultPrinterW, GetPrinterW,
-    OpenPrinterW, StartDocPrinterW, StartPagePrinter, WritePrinter, DOC_INFO_1W,
+    AbortPrinter, ClosePrinter, EndDocPrinter, EndPagePrinter, EnumPrintersW, GetDefaultPrinterW,
+    GetPrinterW, OpenPrinterW, StartDocPrinterW, StartPagePrinter, WritePrinter, DOC_INFO_1W,
     PRINTER_ACCESS_RIGHTS, PRINTER_DEFAULTSW, PRINTER_ENUM_CONNECTIONS, PRINTER_ENUM_LOCAL,
     PRINTER_INFO_2W, PRINTER_INFO_4W,
 };
@@ -439,19 +439,43 @@ unsafe fn imprimir_raw_con_handle(handle: HANDLE, datos: &[u8]) -> Result<(), St
         return Err("No se pudo iniciar la pagina de impresion.".to_string());
     }
 
-    let mut escritos: u32 = 0;
-    let escribio = WritePrinter(
-        handle,
-        datos.as_ptr() as *const c_void,
-        datos.len() as u32,
-        &mut escritos,
-    );
+    match escribir_todos_los_bytes(handle, datos) {
+        Ok(()) => {
+            let _ = EndPagePrinter(handle);
+            let _ = EndDocPrinter(handle);
+            Ok(())
+        }
+        Err(mensaje) => {
+            // Un ticket parcialmente escrito no debe llegar al papel: se
+            // aborta el trabajo en vez de cerrarlo con EndPage/EndDoc.
+            let _ = AbortPrinter(handle);
+            Err(mensaje)
+        }
+    }
+}
 
-    let _ = EndPagePrinter(handle);
-    let _ = EndDocPrinter(handle);
+/// Escribe todos los bytes en la impresora, reintentando ante escrituras
+/// parciales. Si `WritePrinter` falla o deja de avanzar (0 bytes escritos
+/// sin error), se corta para evitar un bucle infinito.
+unsafe fn escribir_todos_los_bytes(handle: HANDLE, datos: &[u8]) -> Result<(), String> {
+    let mut enviados: usize = 0;
 
-    if escribio.0 == 0 || escritos as usize != datos.len() {
-        return Err("No se pudieron escribir todos los datos en la impresora.".to_string());
+    while enviados < datos.len() {
+        let restante = &datos[enviados..];
+        let mut escritos: u32 = 0;
+
+        let escribio = WritePrinter(
+            handle,
+            restante.as_ptr() as *const c_void,
+            restante.len() as u32,
+            &mut escritos,
+        );
+
+        if escribio.0 == 0 || escritos == 0 {
+            return Err("No se pudieron escribir todos los datos en la impresora.".to_string());
+        }
+
+        enviados += escritos as usize;
     }
 
     Ok(())
