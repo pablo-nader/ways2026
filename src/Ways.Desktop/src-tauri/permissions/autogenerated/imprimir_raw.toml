@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-imprimir-raw"
+description = "Enables the imprimir_raw command without any pre-configured scope."
+commands.allow = ["imprimir_raw"]
+
+[[permission]]
+identifier = "deny-imprimir-raw"
+description = "Denies the imprimir_raw command without any pre-configured scope."
+commands.deny = ["imprimir_raw"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-guardar-configuracion"
+description = "Enables the guardar_configuracion command without any pre-configured scope."
+commands.allow = ["guardar_configuracion"]
+
+[[permission]]
+identifier = "deny-guardar-configuracion"
+description = "Denies the guardar_configuracion command without any pre-configured scope."
+commands.deny = ["guardar_configuracion"]
