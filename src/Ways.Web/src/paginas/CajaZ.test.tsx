@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CajaZ } from './CajaZ'
 import { RutaProtegida } from '../auth/RutaProtegida'
+import { reporteZ } from '../impresion/plantillas'
 import { ROL } from '../api/tipos'
 import type { DetalleDeTurno, ResumenDeTurno, UsuarioAutenticado } from '../api/tipos'
 
@@ -46,6 +47,16 @@ let usuarioActual: UsuarioAutenticado | null = usuarioFixture()
 
 vi.mock('../auth/useAuth', () => ({
   useAuth: () => ({ usuario: usuarioActual, cargando: false, iniciarSesion: vi.fn(), cerrarSesion: vi.fn() }),
+}))
+
+// stage-desktop-pos: mismo mock que CierreDeCaja.test.tsx — controla `enEscritorio()` y observa
+// los bytes que recibe `imprimir`.
+const imprimirMock = vi.fn()
+let escritorioMock = false
+
+vi.mock('../impresion/impresora', () => ({
+  enEscritorio: () => escritorioMock,
+  imprimir: (...args: unknown[]) => imprimirMock(...args),
 }))
 
 function resumenFixture(sobrescribir: Partial<ResumenDeTurno> = {}): ResumenDeTurno {
@@ -117,6 +128,9 @@ beforeEach(() => {
   apiDescargarMock.mockReset()
   apiDescargarMock.mockResolvedValue(undefined)
   usuarioActual = usuarioFixture()
+  imprimirMock.mockReset()
+  imprimirMock.mockResolvedValue({ ok: true })
+  escritorioMock = false
 })
 
 describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)', () => {
@@ -321,5 +335,77 @@ describe('CajaZ — vista de impresión (Slice 8)', () => {
     expect(imprimirSpy).toHaveBeenCalledTimes(1)
 
     expect(screen.getByRole('button', { name: 'Descargar' })).toHaveClass('d-print-none')
+  })
+})
+
+/** stage-desktop-pos: seam `contextoDeImpresion` — `undefined` en la app web normal (todos los
+ * tests de arriba lo prueban implícitamente al no pasarlo), habilita "Reimprimir ticket" solo
+ * dentro de Tauri. */
+describe('CajaZ — seam de reimpresión ESC/POS del POS de escritorio (stage-desktop-pos)', () => {
+  const CONTEXTO_DE_IMPRESION = { empresa: 'Almacén Demo', puntoVenta: 'Local Centro', cajero: 'jperez' }
+
+  // Sin default: un parámetro default en JS se aplica también cuando se pasa `undefined`
+  // explícito, lo que taparía justo el caso "sin contextoDeImpresion" que este test necesita
+  // ejercitar de verdad.
+  function renderCajaZDeEscritorio(contextoDeImpresion: typeof CONTEXTO_DE_IMPRESION | undefined) {
+    return render(<CajaZ contextoDeImpresion={contextoDeImpresion} />, {
+      wrapper: ({ children }) => (
+        <MemoryRouter initialEntries={['/caja/turnos/412/z']}>
+          <Routes>
+            <Route path="/caja/turnos/:id/z" element={children} />
+          </Routes>
+        </MemoryRouter>
+      ),
+    })
+  }
+
+  it('sin contextoDeImpresion no aparece "Reimprimir ticket" ni se llama a imprimir', async () => {
+    escritorioMock = true
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/412/detalle' ? Promise.resolve(detalleFixture()) : Promise.reject(new Error(ruta)),
+    )
+    renderCajaZDeEscritorio(undefined)
+
+    await screen.findByText('Caja Z — turno #412')
+    expect(screen.queryByRole('button', { name: 'Reimprimir ticket' })).not.toBeInTheDocument()
+    expect(imprimirMock).not.toHaveBeenCalled()
+  })
+
+  it('con contextoDeImpresion pero fuera de Tauri no aparece "Reimprimir ticket"', async () => {
+    escritorioMock = false
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/412/detalle' ? Promise.resolve(detalleFixture()) : Promise.reject(new Error(ruta)),
+    )
+    renderCajaZDeEscritorio(CONTEXTO_DE_IMPRESION)
+
+    await screen.findByText('Caja Z — turno #412')
+    expect(screen.queryByRole('button', { name: 'Reimprimir ticket' })).not.toBeInTheDocument()
+  })
+
+  it('con contextoDeImpresion y Tauri, "Reimprimir ticket" manda los bytes de reporteZ(detalle, contexto)', async () => {
+    escritorioMock = true
+    const detalle = detalleFixture()
+    apiGetMock.mockImplementation((ruta: string) => (ruta === '/caja/turnos/412/detalle' ? Promise.resolve(detalle) : Promise.reject(new Error(ruta))))
+    renderCajaZDeEscritorio(CONTEXTO_DE_IMPRESION)
+
+    await screen.findByText('Caja Z — turno #412')
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir ticket' }))
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(reporteZ(detalle, CONTEXTO_DE_IMPRESION))
+  })
+
+  it('si falla la impresión, muestra el aviso "No se pudo imprimir" no bloqueante', async () => {
+    escritorioMock = true
+    imprimirMock.mockResolvedValue({ ok: false, motivo: 'error', mensaje: 'sin papel' })
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/412/detalle' ? Promise.resolve(detalleFixture()) : Promise.reject(new Error(ruta)),
+    )
+    renderCajaZDeEscritorio(CONTEXTO_DE_IMPRESION)
+
+    await screen.findByText('Caja Z — turno #412')
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir ticket' }))
+
+    expect(await screen.findByText('No se pudo imprimir: sin papel')).toBeInTheDocument()
   })
 })

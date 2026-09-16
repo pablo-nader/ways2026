@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CierreDeCaja } from './CierreDeCaja'
 import { ErrorApi } from '../api/cliente'
+import { reporteZ } from '../impresion/plantillas'
 import type { MedioPagoListado, ResumenDeTurno, TurnoConArqueos } from '../api/tipos'
 
 const apiGetMock = vi.fn()
@@ -25,6 +26,16 @@ vi.mock('../api/cliente', () => ({
       this.codigo = codigo
     }
   },
+}))
+
+// stage-desktop-pos: `impresora.ts` habla con `window.__TAURI__`, que no existe en jsdom — se
+// mockea para poder controlar `enEscritorio()` y observar los bytes que le llegan a `imprimir`.
+const imprimirMock = vi.fn()
+let escritorioMock = false
+
+vi.mock('../impresion/impresora', () => ({
+  enEscritorio: () => escritorioMock,
+  imprimir: (...args: unknown[]) => imprimirMock(...args),
 }))
 
 function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
@@ -94,7 +105,27 @@ function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> |
 beforeEach(() => {
   apiGetMock.mockReset()
   apiPostMock.mockReset()
+  imprimirMock.mockReset()
+  imprimirMock.mockResolvedValue({ ok: true })
+  escritorioMock = false
 })
+
+const CONTEXTO_DE_IMPRESION = { empresa: 'Almacén Demo', puntoVenta: 'Local Centro', cajero: 'jperez' }
+
+function renderCierreConSeams(props: { rutaVolver?: string; contextoDeImpresion?: typeof CONTEXTO_DE_IMPRESION } = {}) {
+  return render(<CierreDeCaja {...props} />, {
+    wrapper: ({ children }) => <MemoryRouter initialEntries={['/caja/cierre?idTurno=501']}>{children}</MemoryRouter>,
+  })
+}
+
+async function cerrarElTurno() {
+  await screen.findByText('Efectivo')
+  await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '635')
+  await userEvent.click(screen.getByRole('checkbox'))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+  await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+  await screen.findByText('Turno #501 cerrado')
+}
 
 describe('CierreDeCaja — turno inválido', () => {
   it('sin idTurno en la URL muestra un aviso y no dispara ningún fetch', async () => {
@@ -316,5 +347,97 @@ describe('CierreDeCaja — falla de carga (react-async-state regla 7)', () => {
     await userEvent.type(await screen.findByLabelText('Declarado de Medio #1'), '640')
     await userEvent.click(screen.getByRole('checkbox'))
     expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeDisabled()
+  })
+})
+
+describe('CierreDeCaja — seams del POS de escritorio (stage-desktop-pos)', () => {
+  it('sin rutaVolver, "Volver a caja" y "Cancelar" apuntan a /caja (default, comportamiento intacto)', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/501/cierre' ? Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture()) : Promise.reject(new Error(ruta)),
+    )
+    renderCierreConSeams()
+    await cerrarElTurno()
+
+    expect(screen.getByRole('link', { name: 'Volver a caja' })).toHaveAttribute('href', '/caja')
+  })
+
+  it('con rutaVolver, "Volver a caja" y "Cancelar" apuntan a la ruta indicada', async () => {
+    mockearRutasBase()
+    renderCierreConSeams({ rutaVolver: '/vender' })
+    await screen.findByText('Efectivo')
+
+    expect(screen.getByRole('link', { name: 'Cancelar' })).toHaveAttribute('href', '/vender')
+  })
+
+  it('sin contextoDeImpresion (app web normal) nunca llama a imprimir ni muestra "Reimprimir"', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/501/cierre' ? Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture()) : Promise.reject(new Error(ruta)),
+    )
+    escritorioMock = true
+    renderCierreConSeams()
+    await cerrarElTurno()
+
+    expect(imprimirMock).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
+  })
+
+  it('con contextoDeImpresion, fuera de Tauri (enEscritorio false) no muestra "Reimprimir" aunque haya auto-impreso', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/501/cierre' ? Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture()) : Promise.reject(new Error(ruta)),
+    )
+    escritorioMock = false
+    renderCierreConSeams({ contextoDeImpresion: CONTEXTO_DE_IMPRESION })
+    await cerrarElTurno()
+
+    expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
+  })
+
+  it('con contextoDeImpresion y Tauri, auto-imprime el reporte Z al confirmar el cierre con los bytes de reporteZ', async () => {
+    mockearRutasBase()
+    const turno = turnoConArqueosFixture()
+    apiPostMock.mockImplementation((ruta: string) => (ruta === '/caja/turnos/501/cierre' ? Promise.resolve<TurnoConArqueos>(turno) : Promise.reject(new Error(ruta))))
+    escritorioMock = true
+
+    renderCierreConSeams({ contextoDeImpresion: CONTEXTO_DE_IMPRESION })
+    await cerrarElTurno()
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock.mock.calls[0][0]).toEqual(reporteZ(turno, CONTEXTO_DE_IMPRESION))
+    expect(screen.getByRole('button', { name: 'Reimprimir' })).toBeInTheDocument()
+  })
+
+  it('si la impresión falla, muestra el aviso sin poner en duda el cierre ya confirmado', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/501/cierre' ? Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture()) : Promise.reject(new Error(ruta)),
+    )
+    escritorioMock = true
+    imprimirMock.mockResolvedValue({ ok: false, motivo: 'error', mensaje: 'impresora desconectada' })
+
+    renderCierreConSeams({ contextoDeImpresion: CONTEXTO_DE_IMPRESION })
+    await cerrarElTurno()
+
+    expect(await screen.findByText('No se pudo imprimir: impresora desconectada')).toBeInTheDocument()
+    expect(screen.getByText('Turno #501 cerrado')).toBeInTheDocument()
+  })
+
+  it('"Reimprimir" con reentrancia: dos clicks en el mismo tick disparan un único imprimir adicional', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/501/cierre' ? Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture()) : Promise.reject(new Error(ruta)),
+    )
+    escritorioMock = true
+
+    renderCierreConSeams({ contextoDeImpresion: CONTEXTO_DE_IMPRESION })
+    await cerrarElTurno()
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1)) // la auto-impresión
+
+    const boton = screen.getByRole('button', { name: 'Reimprimir' })
+    fireEvent.click(boton)
+    fireEvent.click(boton)
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(2))
   })
 })

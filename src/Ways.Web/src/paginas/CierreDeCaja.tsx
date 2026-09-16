@@ -6,6 +6,9 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import type { MedioPagoAlta, MedioPagoListado, ResumenDeTurno, TurnoConArqueos } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { enEscritorio, imprimir } from '../impresion/impresora'
+import { reporteZ } from '../impresion/plantillas'
+import type { ContextoDeImpresion } from '../impresion/plantillas'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -27,8 +30,25 @@ function formatearFechaHora(iso: string): string {
  *
  * Es la pantalla con más obligaciones de `react-async-state` de toda la etapa (reglas 1, 4, 5, 6,
  * 7, 9): un cierre es irreversible, así que un doble submit es el peor defecto que puede tener.
+ *
+ * stage-desktop-pos: tres seams opcionales para el shell del POS de escritorio, ninguno cambia el
+ * comportamiento de la app web (quedan `undefined`/el default). `rutaVolver` reemplaza el destino
+ * fijo `/caja` — el shell de escritorio no tiene esa ruta, la suya es `/vender`. `contextoDeImpresion`
+ * habilita la impresión ESC/POS del reporte Z (auto-impresión al cerrar + botón "Reimprimir",
+ * ambos solo dentro de Tauri, `enEscritorio()`) — esta pantalla no sabe nada de impresoras más
+ * allá de eso, mismo criterio que el seam `alEmitir` de `Pos.tsx`. `alCerrarExitosamente` avisa al
+ * llamador el `TurnoConArqueos` recién cerrado — el shell de escritorio lo usa para navegar a la
+ * Caja Z (`CajaZ.tsx`, la vista completa con tickets/gastos) en vez de dejar al cajero en el
+ * resumen mínimo de acá; la app web normal no lo pasa y esta pantalla sigue mostrando su propio
+ * resumen con los links "Volver a caja"/"Ver Caja Z" de siempre.
  */
-export function CierreDeCaja() {
+type PropsCierreDeCaja = {
+  rutaVolver?: string
+  contextoDeImpresion?: ContextoDeImpresion
+  alCerrarExitosamente?: (turno: TurnoConArqueos) => void
+}
+
+export function CierreDeCaja({ rutaVolver = '/caja', contextoDeImpresion, alCerrarExitosamente }: PropsCierreDeCaja = {}) {
   const [searchParams] = useSearchParams()
   const crudo = searchParams.get('idTurno')
   const idTurno = crudo !== null && crudo.trim() !== '' ? Number(crudo) : Number.NaN
@@ -58,6 +78,25 @@ export function CierreDeCaja() {
   // dependiera de un fetch posterior para mostrar sus propios datos podría reportarse sin datos
   // por una falla ajena al cierre en sí).
   const [zReporte, setZReporte] = useState<TurnoConArqueos | null>(null)
+
+  // stage-desktop-pos: impresión del reporte Z — propia guarda de reentrancia (regla 11) porque
+  // es una acción secundaria del todo independiente del ciclo de vida del cierre (`cerrando`).
+  const [imprimiendo, setImprimiendo] = useState(false)
+  const imprimiendoRef = useRef(false)
+  const [errorImpresion, setErrorImpresion] = useState('')
+
+  async function imprimirReporteZ(turno: TurnoConArqueos) {
+    if (!contextoDeImpresion || imprimiendoRef.current) return
+    imprimiendoRef.current = true
+    setImprimiendo(true)
+    try {
+      const resultado = await imprimir(reporteZ(turno, contextoDeImpresion))
+      setErrorImpresion(resultado.ok ? '' : resultado.mensaje)
+    } finally {
+      imprimiendoRef.current = false
+      setImprimiendo(false)
+    }
+  }
 
   const medioPorId = useMemo(() => {
     const indice: Record<number, MedioPagoListado> = {}
@@ -135,6 +174,10 @@ export function CierreDeCaja() {
       setZReporte(conArqueos)
       cerrandoRef.current = false
       setCerrando(false)
+      // stage-desktop-pos: auto-impresión — nunca bloquea la confirmación del cierre, que ya se
+      // completó en el servidor; una falla de impresión queda como aviso + "Reimprimir" abajo.
+      if (contextoDeImpresion) void imprimirReporteZ(conArqueos)
+      alCerrarExitosamente?.(conArqueos)
     } catch (e) {
       if (generacionCierreRef.current !== miGeneracion) return
 
@@ -177,7 +220,7 @@ export function CierreDeCaja() {
           <div className="col-12">
             <Box titulo="Cierre de turno" variante="warning">
               <p className="text-muted">No se especificó el turno a cerrar.</p>
-              <Link className="btn btn-outline-secondary rounded-0" to="/caja">
+              <Link className="btn btn-outline-secondary rounded-0" to={rutaVolver}>
                 Volver a caja
               </Link>
             </Box>
@@ -238,16 +281,34 @@ export function CierreDeCaja() {
                 </table>
               </div>
 
+              {/* stage-desktop-pos: aviso + "Reimprimir" no bloqueante — el cierre ya está
+                  confirmado en el servidor, una falla de impresión nunca lo pone en duda. */}
+              {errorImpresion && (
+                <div className="alert alert-warning rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
+                  <span>No se pudo imprimir: {errorImpresion}</span>
+                </div>
+              )}
+
               {/* stage-11-exportacion-reportes (Slice 6b, design: Web Composition, "link from
                   the just-closed turno to its Caja Z screen"): mismo gate OperacionDePos que
                   /caja/turnos/:id/z, el cajero recién cerró este turno. */}
               <div className="d-flex gap-2">
-                <Link className="btn btn-outline-secondary rounded-0" to="/caja">
+                <Link className="btn btn-outline-secondary rounded-0" to={rutaVolver}>
                   Volver a caja
                 </Link>
                 <Link className="btn btn-primary rounded-0" to={`/caja/turnos/${idTurno}/z`}>
                   Ver Caja Z
                 </Link>
+                {contextoDeImpresion && enEscritorio() && (
+                  <button
+                    type="button"
+                    className="btn btn-outline-dark rounded-0"
+                    disabled={imprimiendo}
+                    onClick={() => void imprimirReporteZ(zReporte)}
+                  >
+                    {imprimiendo ? 'Imprimiendo…' : 'Reimprimir'}
+                  </button>
+                )}
               </div>
             </Box>
           </div>
@@ -366,7 +427,7 @@ export function CierreDeCaja() {
                     {cerrando ? 'Cerrando…' : 'Finalizar cierre'}
                   </button>
                   {!cerrando && (
-                    <Link className="btn btn-outline-secondary rounded-0" to="/caja">
+                    <Link className="btn btn-outline-secondary rounded-0" to={rutaVolver}>
                       Cancelar
                     </Link>
                   )}

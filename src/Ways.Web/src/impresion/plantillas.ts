@@ -1,0 +1,157 @@
+/**
+ * Plantillas de ticket ESC/POS (stage-desktop-pos) sobre `ConstructorDeTicket` — puras, sin I/O:
+ * reciben los datos ya resueltos por la pantalla y devuelven los bytes listos para `impresora.imprimir`.
+ */
+import { ConstructorDeTicket } from './escpos'
+import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, TurnoConArqueos } from '../api/tipos'
+
+/** Mismos datos que ya conoce el shell del POS de escritorio al momento de imprimir — nunca se
+ * vuelven a pedir acá. */
+export type ContextoDeImpresion = { empresa: string; puntoVenta: string; cajero: string }
+
+/** Mismo formato que el resto de las pantallas (`Pos.tsx`, `CierreDeCaja.tsx`, `CajaZ.tsx`):
+ * signo antes del símbolo, nunca `$-`. */
+function formatearMoneda(valor: number): string {
+  const signo = valor < 0 ? '-' : ''
+  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+/** Mismo formato que el resto de las pantallas — sin forzar timezone, la máquina del escritorio
+ * ya corre en la zona horaria del comercio. */
+function formatearFechaHora(iso: string): string {
+  return new Date(iso).toLocaleString('es-AR')
+}
+
+function encabezado(ticket: ConstructorDeTicket, contexto: ContextoDeImpresion): void {
+  ticket
+    .inicializar()
+    .codificarPagina()
+    .alinear('centro')
+    .negrita(true)
+    .linea(contexto.empresa)
+    .negrita(false)
+    .linea(contexto.puntoVenta)
+    .lineaDeGuiones()
+}
+
+/**
+ * Ticket de venta (`POST /api/ventas`) — NO es un comprobante fiscal: el flujo actual solo emite
+ * tipo `TX`, así que el ticket lo dice explícitamente en vez de parecer una factura. `medios`
+ * resuelve el `comportamiento` de cada pago (para el rótulo, no para el cajón — eso lo decide
+ * `algunPagoEnEfectivo` aparte).
+ */
+export function ticketDeVenta(comprobante: ComprobanteEmitido, contexto: ContextoDeImpresion, medios: MedioPagoListado[]): Uint8Array {
+  const medioPorId = new Map(medios.map((m) => [m.id, m]))
+  const ticket = new ConstructorDeTicket()
+
+  encabezado(ticket, contexto)
+
+  ticket
+    .alinear('centro')
+    .negrita(true)
+    .linea('COMPROBANTE NO VALIDO COMO FACTURA')
+    .negrita(false)
+    .alinear('izquierda')
+    .linea(`Comprobante: ${comprobante.numeroVisible}`)
+    .linea(`Fecha: ${formatearFechaHora(comprobante.fecha)}`)
+    .linea(`Cajero: ${contexto.cajero}`)
+    .lineaDeGuiones()
+
+  for (const item of comprobante.items) {
+    ticket.lineaDeColumnas(`${item.cantidad} x ${item.descripcion}`, formatearMoneda(item.total))
+    if (item.descuento > 0) {
+      ticket.lineaDeColumnas('  Descuento', `-${formatearMoneda(item.descuento)}`)
+    }
+  }
+
+  ticket.lineaDeGuiones()
+  ticket.lineaDeColumnas('Subtotal', formatearMoneda(comprobante.subtotal))
+  if (comprobante.descuentoTotal > 0) {
+    ticket.lineaDeColumnas('Descuento', `-${formatearMoneda(comprobante.descuentoTotal)}`)
+  }
+  ticket.tamanioDoble(true).negrita(true)
+  ticket.lineaDeColumnas('TOTAL', formatearMoneda(comprobante.total))
+  ticket.tamanioDoble(false).negrita(false)
+
+  ticket.lineaDeGuiones()
+  ticket.linea('Pagos:')
+  for (const pago of comprobante.pagos) {
+    const nombreMedio = medioPorId.get(pago.idMedioPago)?.nombre ?? `Medio #${pago.idMedioPago}`
+    ticket.lineaDeColumnas(nombreMedio, formatearMoneda(pago.importe))
+    if (pago.vuelto > 0) {
+      ticket.lineaDeColumnas('  Vuelto', formatearMoneda(pago.vuelto))
+    }
+  }
+
+  ticket.alinear('centro').avanzar(1).linea('¡Gracias por su compra!')
+
+  // Pulso del cajón en el MISMO trabajo de impresión (nunca un segundo `imprimir` aparte): si
+  // algún pago es en efectivo se abre antes del corte, para que el cajero lo encuentre abierto
+  // apenas termina de imprimirse el ticket.
+  if (algunPagoEnEfectivo(comprobante, medios)) {
+    ticket.abrirCajon()
+  }
+
+  ticket.avanzar(2).cortar()
+
+  return ticket.bytes()
+}
+
+/** `true` si algún pago del comprobante usa un medio `Efectivo` (`comportamiento`) — dispara el
+ * pulso del cajón. Sin el medio en la lista (debería ser imposible: el comprobante solo puede
+ * referenciar medios del propio tenant) se trata como "no es efectivo", nunca se asume lo
+ * contrario — abrir el cajón de más es peor que no abrirlo. */
+export function algunPagoEnEfectivo(comprobante: ComprobanteEmitido, medios: MedioPagoListado[]): boolean {
+  const medioPorId = new Map(medios.map((m) => [m.id, m]))
+  return comprobante.pagos.some((pago) => medioPorId.get(pago.idMedioPago)?.comportamiento === 'Efectivo')
+}
+
+/**
+ * Reporte Z — acepta tanto la respuesta directa del cierre (`TurnoConArqueos`, con el arqueo
+ * declarado/esperado/diferencia por medio) como el detalle leído después (`DetalleDeTurno`, solo
+ * con el esperado del resumen) — ambos vienen de la MISMA derivación server-side, la plantilla
+ * solo elige qué columnas tiene disponibles.
+ */
+export function reporteZ(datos: TurnoConArqueos | DetalleDeTurno, contexto: ContextoDeImpresion): Uint8Array {
+  const turno = 'resumen' in datos ? null : datos
+  const resumen = 'resumen' in datos ? datos.resumen : null
+
+  const ticket = new ConstructorDeTicket()
+  encabezado(ticket, contexto)
+
+  ticket.alinear('centro').negrita(true).linea('REPORTE Z').negrita(false).alinear('izquierda')
+
+  if (turno) {
+    ticket
+      .linea(`Turno #${turno.id}`)
+      .linea(`Apertura: ${formatearFechaHora(turno.fechaApertura)}`)
+      .linea(`Cierre: ${turno.fechaCierre ? formatearFechaHora(turno.fechaCierre) : '—'}`)
+      .linea(`Fondo inicial: ${formatearMoneda(turno.fondoInicial)}`)
+      .lineaDeGuiones()
+
+    for (const arqueo of turno.arqueos) {
+      ticket.lineaDeColumnas(`Medio #${arqueo.idMedioPago} esperado`, formatearMoneda(arqueo.importeEsperado))
+      ticket.lineaDeColumnas(`Medio #${arqueo.idMedioPago} declarado`, formatearMoneda(arqueo.importeDeclarado))
+      ticket.lineaDeColumnas(`Medio #${arqueo.idMedioPago} diferencia`, formatearMoneda(arqueo.diferencia))
+    }
+    if (turno.arqueos.length === 0) {
+      ticket.linea('Sin actividad en el turno.')
+    }
+  }
+
+  if (resumen) {
+    ticket.linea(`Turno #${resumen.idTurnoCaja}`).linea(`Tickets: ${resumen.cantidadTickets}`).lineaDeGuiones()
+
+    for (const medio of resumen.medios) {
+      ticket.lineaDeColumnas(`Medio #${medio.idMedioPago} esperado`, formatearMoneda(medio.importeEsperado))
+    }
+    if (resumen.medios.length === 0) {
+      ticket.linea('Sin actividad en el turno.')
+    }
+  }
+
+  ticket.lineaDeGuiones().linea(`Cajero: ${contexto.cajero}`)
+  ticket.avanzar(2).cortar()
+
+  return ticket.bytes()
+}

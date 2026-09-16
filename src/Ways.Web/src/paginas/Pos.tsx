@@ -191,7 +191,15 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
   )
 }
 
-type PropsPantallaPos = { idPresupuesto: number | null }
+/** stage-desktop-pos: seam opcional para que el shell del POS de escritorio se entere de una
+ * venta recién emitida (ticket ESC/POS + pulso de cajón) sin que esta pantalla sepa nada de
+ * impresoras — `medios` viaja junto porque es lo único que le falta al llamador para resolver el
+ * nombre/comportamiento de cada pago del comprobante (`ComprobanteEmitido.pagos` solo trae
+ * `idMedioPago`). En la app web normal el prop queda `undefined` y no cambia nada. */
+type PropsPantallaPos = {
+  idPresupuesto: number | null
+  alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
+}
 
 /**
  * Pantalla del POS (stage-5-pos-ventas, Slice 7, design: POS Screen Composition) — escaneo +
@@ -206,7 +214,7 @@ type PropsPantallaPos = { idPresupuesto: number | null }
  * (react-async-state regla 8) — ningún estado de una venta libre o de otro presupuesto sobrevive
  * al cambio de `?idPresupuesto=`, ni al cambio del punto de venta de la sesión.
  */
-function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
+function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
   const modoPresupuesto = idPresupuesto !== null
   const navigate = useNavigate()
   const { puntoVenta: puntoVentaDeSesion, puntosVenta } = usePuntoVenta()
@@ -815,6 +823,9 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
       if (generacionCobroRef.current !== miGeneracion) return
 
       setVentaEmitida({ comprobante: emitido, cliente: clienteSeleccionado })
+      // stage-desktop-pos: `puedeCobrar`/`precondicionesListas` ya exigieron `medios !== null`
+      // para llegar hasta acá — el seam nunca dispara con la lista todavía sin cargar.
+      alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
       setLineas([])
       setPrecios({})
       setCantidadesEnEdicion({})
@@ -1336,13 +1347,21 @@ function PantallaPos({ idPresupuesto }: PropsPantallaPos) {
  * o ausente se trata como el camino libre, nunca un error bloqueante (la ruta sin query sigue
  * siendo el POS de siempre).
  */
-export function Pos() {
+type PropsPos = {
+  alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
+}
+
+export function Pos({ alEmitir }: PropsPos = {}) {
   const [searchParams] = useSearchParams()
   const { puntoVenta } = usePuntoVenta()
   const crudo = searchParams.get('idPresupuesto')
   const idPresupuesto = crudo !== null && Number.isFinite(Number(crudo)) ? Number(crudo) : null
 
   return (
-    <PantallaPos key={`${idPresupuesto ?? 'libre'}:${puntoVenta?.id ?? 'sin-pv'}`} idPresupuesto={idPresupuesto} />
+    <PantallaPos
+      key={`${idPresupuesto ?? 'libre'}:${puntoVenta?.id ?? 'sin-pv'}`}
+      idPresupuesto={idPresupuesto}
+      alEmitir={alEmitir}
+    />
   )
 }
