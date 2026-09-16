@@ -41,6 +41,7 @@ public static class EtiquetasDeTablas
             ["codigos_barra"] = "códigos de barra",
             ["comprobantes_compra"] = "compras",
             ["comprobantes_venta"] = "ventas",
+            ["dispositivos"] = "dispositivos vinculados",
             ["empresas"] = "empresas",
             ["gastos"] = "gastos",
             ["grupos"] = "grupos",

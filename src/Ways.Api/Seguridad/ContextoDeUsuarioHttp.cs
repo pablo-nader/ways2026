@@ -13,6 +13,13 @@ public static class ClaimsWays
     /// staff de plataforma. Lo emite <c>POST /api/auth/login</c> (stage 1 slice 2) y lo lee
     /// <c>Program.cs</c>, <c>OnValidatePrincipal</c>.</summary>
     public const string IdTenant = "ways:id_tenant";
+
+    /// <summary>Presente solo en una sesión iniciada por <c>POST /api/auth/login-dispositivo</c>
+    /// (stage-desktop-pos): el <c>id_dispositivo</c> que emitió la sesión, para que
+    /// <c>Program.cs</c>, <c>OnValidatePrincipal</c> pueda revalidar en cada request que el
+    /// dispositivo siga vigente (no revocado, su PV no dada de baja) — una sesión de la web
+    /// normal (login por mail) nunca lleva esta claim.</summary>
+    public const string IdDispositivo = "ways:id_dispositivo";
 }
 
 public class ContextoDeUsuarioHttp(IHttpContextAccessor accessor) : IContextoDeUsuario

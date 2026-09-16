@@ -7,6 +7,7 @@ using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
 using Ways.Application.Compras;
 using Ways.Application.CuentaCorriente;
+using Ways.Application.Dispositivos;
 using Ways.Application.Etiquetas;
 using Ways.Application.Fiscal;
 using Ways.Application.Gastos;
@@ -39,6 +40,9 @@ public static class DependencyInjection
 
         services.AddScoped<ServicioDeAutenticacion>();
         services.AddScoped<ServicioDeUsuarios>();
+
+        // stage-desktop-pos: pairing/resolución de dispositivos de escritorio.
+        services.AddScoped<ServicioDeDispositivos>();
 
         services.AddScoped<ServicioDeAreas>();
         services.AddScoped<ServicioDeMarcas>();

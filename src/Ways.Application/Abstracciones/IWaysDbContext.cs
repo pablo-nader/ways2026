@@ -10,6 +10,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Compras;
 using Ways.Domain.CuentaCorriente;
+using Ways.Domain.Dispositivos;
 using Ways.Domain.Fiscal;
 using Ways.Domain.Gastos;
 using Ways.Domain.Ofertas;
@@ -33,6 +34,10 @@ public interface IWaysDbContext
     DbSet<Tenant> Tenants { get; }
     DbSet<Empresa> Empresas { get; }
     DbSet<PuntoVenta> PuntosVenta { get; }
+
+    // stage-desktop-pos: expuesto desde esta slice — ServicioDeDispositivos es el primer
+    // consumidor de Application.
+    DbSet<Dispositivo> Dispositivos { get; }
 
     DbSet<Area> Areas { get; }
     DbSet<Categoria> Categorias { get; }

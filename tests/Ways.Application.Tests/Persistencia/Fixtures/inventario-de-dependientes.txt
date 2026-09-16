@@ -5,6 +5,7 @@ Empresa | certificados_fiscales | id_empresa,id_tenant | marcado
 Empresa | clientes | id_empresa,id_tenant | marcado
 Empresa | comprobantes_compra via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | comprobantes_venta via puntos_venta | id_punto_venta,id_tenant | marcado
+Empresa | dispositivos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | gastos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | grupos | id_empresa,id_tenant | marcado
 Empresa | listas_precio | id_empresa,id_tenant | marcado
@@ -31,6 +32,7 @@ Empresa | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
 PuntoVenta | auditoria | id_punto_venta,id_tenant | excluido
 PuntoVenta | comprobantes_compra | id_punto_venta,id_tenant | marcado
 PuntoVenta | comprobantes_venta | id_punto_venta,id_tenant | marcado
+PuntoVenta | dispositivos | id_punto_venta,id_tenant | marcado
 PuntoVenta | gastos | id_punto_venta,id_tenant | marcado
 PuntoVenta | movimientos_cuenta_corriente | id_punto_venta,id_tenant | sinmarca
 PuntoVenta | movimientos_cuenta_corriente_proveedor | id_punto_venta,id_tenant | sinmarca
@@ -57,6 +59,7 @@ Tenant | clientes | id_tenant | marcado
 Tenant | codigos_barra | id_tenant | marcado
 Tenant | comprobantes_compra | id_tenant | marcado
 Tenant | comprobantes_venta | id_tenant | marcado
+Tenant | dispositivos | id_tenant | marcado
 Tenant | empresas | id_tenant | marcado
 Tenant | gastos | id_tenant | marcado
 Tenant | grupos | id_tenant | marcado
@@ -95,6 +98,7 @@ Tenant | usuarios | id_tenant | marcado
 Usuario | auditoria | id_actor | excluido
 Usuario | comprobantes_compra | id_empleado | marcado
 Usuario | comprobantes_venta | id_empleado | marcado
+Usuario | dispositivos | id_usuario_alta | marcado
 Usuario | gastos | id_empleado | marcado
 Usuario | movimientos_caja | id_empleado | sinmarca
 Usuario | movimientos_cuenta_corriente | id_empleado | sinmarca

@@ -184,6 +184,52 @@ y las variables de entorno dejan de tener efecto.
 > La contraseña `root` tiene 4 caracteres y el ABM exige 8. Es a propósito: la semilla no
 > pasa por la validación porque es para pruebas. Cambiala antes de usar el sistema en serio.
 
+## Login de dispositivo (stage-desktop-pos)
+
+El POS de escritorio (Tauri, `{server}/pos.html`, mismo origen que la API) no usa el login por
+mail de arriba: un dispositivo se vincula UNA VEZ (un Admin, con su propia sesión normal) y
+después cualquier cajero autorizado entra con **usuario + contraseña** contra ESE dispositivo —
+la sesión resultante dura hasta logout o revocación, no 1 hora de inactividad. El esquema vive en
+doc 10 §9 (`dispositivos`).
+
+- **`GET /api/dispositivos/actual`** — anónimo. Lee la cookie HttpOnly `ways.dispositivo` y
+  resuelve el dispositivo (no revocado, su punto de venta no dado de baja, su tenant activo).
+  `404 dispositivo_no_vinculado` para cookie ausente, desconocida o revocada — siempre el mismo
+  código y mensaje, nunca se distingue cuál, mismo criterio de no-enumeración que el login por
+  mail.
+- **`POST /api/dispositivos`** — Admin. `{ idPuntoVenta, nombre }`; valida que el punto de venta
+  sea del tenant del actor y esté activo. Genera un secreto de 32 bytes (nunca se persiste; solo
+  su hash SHA-256 en `token_hash`) y lo setea en la cookie `ways.dispositivo` (`HttpOnly`,
+  `SameSite=Lax`, `Secure` según el request, 10 años). Devuelve la misma forma que `actual`.
+- **`GET`/`DELETE /api/dispositivos/{id}`** — Admin. Listado de dispositivos activos del tenant y
+  revocación (baja lógica de `deleted_at`, nunca física).
+- **`POST /api/auth/login-dispositivo`** — anónimo, `{ usuario, password }`. Exige la cookie de
+  dispositivo (si falta o es inválida, `404 dispositivo_no_vinculado`, sin llegar a validar
+  credenciales). Busca la cuenta por `(id_tenant del dispositivo, usuario)` — reusa el mismo
+  núcleo de `ServicioDeAutenticacion` que el login por mail (timing-safe, lockout a los 5
+  intentos, rehash transparente, estado de cuenta/tenant), con un chequeo extra: el rol tiene que
+  ser Vendedor, Supervisor o Admin (los mismos que puede operar `/pos` en la web) — otro rol
+  responde `403 rol_no_permitido_en_dispositivo`, recién después de validar la contraseña (mismo
+  criterio que `usuario_bloqueado`/`usuario_inactivo`: no es una vía de enumeración nueva).
+  Actualiza `ultimo_uso_at` del dispositivo al confirmar.
+
+### Sesión de dispositivo
+
+- Misma cookie `ways.sesion`, con una claim extra `ways:id_dispositivo` y
+  `AuthenticationProperties.ExpiresUtc` fijado a **365 días** desde el login (contra 1 hora del
+  login por mail). `IsPersistent = true` igual que el resto.
+- **La expiración deslizante conserva ese span de 365 días indefinidamente**, no lo resetea al
+  `ExpireTimeSpan` global de 1 hora: `CookieAuthenticationHandler` recalcula el nuevo
+  `ExpiresUtc` en cada refresh como `ahora + (ExpiresUtc − IssuedUtc originales del ticket)`, y
+  ese span solo cae al default de 1 hora cuando `ExpiresUtc` llega sin setear al `SignInAsync`
+  (el caso del login por mail). Ningún cambio de código hizo falta para esto — verificado con un
+  reloj de prueba inyectable (`SesionDeDispositivoExpiracionTests`).
+- `OnValidatePrincipal` (`Program.cs`) revalida en cada request, además de lo que ya revalida
+  para cualquier sesión (usuario activo, tenant activo), que el dispositivo siga vigente: no
+  revocado y su punto de venta no dado de baja. Si cualquiera de las dos cambió, la sesión se
+  corta en la request siguiente — igual que bloquear al usuario o suspender el tenant. Una
+  sesión web normal (login por mail) no lleva la claim de dispositivo y no pasa por este chequeo.
+
 ## Lo que todavía no está
 
 - Permisos finos. Hoy el rol es la unidad de autorización; `supervisor` y `vendedor`

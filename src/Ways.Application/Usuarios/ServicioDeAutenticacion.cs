@@ -71,13 +71,10 @@ public class ServicioDeAutenticacion(
         SolicitudDeLogin solicitud,
         CancellationToken ct = default)
     {
-        var credencialesInvalidas = new ErrorDominio(
-            "credenciales_invalidas", "Mail o contraseña incorrectos.", 401);
-
         var mail = solicitud.Mail?.Trim() ?? string.Empty;
         if (mail.Length == 0 || string.IsNullOrEmpty(solicitud.Password))
         {
-            throw credencialesInvalidas;
+            throw CredencialesInvalidas("Mail o contraseña incorrectos.");
         }
 
         // La comparación es case-insensitive por el tipo citext de la columna,
@@ -86,17 +83,85 @@ public class ServicioDeAutenticacion(
             .Include(u => u.Rol)
             .FirstOrDefaultAsync(u => u.Mail == mail, ct);
 
+        var validado = await ValidarYCompletarLoginAsync(
+            usuario, solicitud.Password, "Mail o contraseña incorrectos.", rolesPermitidos: null, ct);
+
+        return Mapear(validado);
+    }
+
+    /// <summary>
+    /// Login de cajero contra un dispositivo YA vinculado (stage-desktop-pos,
+    /// <c>POST /api/auth/login-dispositivo</c>). A diferencia de <see cref="IniciarSesionAsync"/>
+    /// (por <c>mail</c>, sin tenant resuelto: doc 09 flow B), acá el tenant ya se conoce —el del
+    /// dispositivo, resuelto por <c>ServicioDeDispositivos.ResolverIdentidadAsync</c> ANTES de
+    /// esta llamada— así que busca por <c>(id_tenant, usuario)</c> bajo el contexto ya puesto en
+    /// modo <see cref="Abstracciones.ModoDeAcceso.Tenant"/>: no hace falta ninguna policy de
+    /// login para <c>usuarios</c> en este camino, la policy <c>usuarios_tenant</c> estándar ya
+    /// alcanza. Reusa el mismo núcleo de validación (timing-safe, lockout, rehash, estado de
+    /// cuenta/tenant) que el login por mail, con un chequeo de rol extra: el POS de escritorio
+    /// exige el mismo alcance que <c>/pos</c> en la web (Vendedor, Supervisor o Admin).
+    /// </summary>
+    public async Task<UsuarioAutenticado> IniciarSesionDeDispositivoAsync(
+        int idTenantDispositivo,
+        SolicitudDeLoginDeDispositivo solicitud,
+        CancellationToken ct = default)
+    {
+        var nombreUsuario = solicitud.Usuario?.Trim() ?? string.Empty;
+        if (nombreUsuario.Length == 0 || string.IsNullOrEmpty(solicitud.Password))
+        {
+            throw CredencialesInvalidas("Usuario o contraseña incorrectos.");
+        }
+
+        // citext: la comparación ya es case-insensitive en el motor, igual que en el login por
+        // mail. El filtro explícito por IdTenant es redundante con el query filter/RLS de
+        // usuarios bajo modo Tenant, pero documenta la intención sin depender de él.
+        var candidato = await db.Usuarios
+            .Include(u => u.Rol)
+            .FirstOrDefaultAsync(u => u.IdTenant == idTenantDispositivo && u.NombreUsuario == nombreUsuario, ct);
+
+        var validado = await ValidarYCompletarLoginAsync(
+            candidato, solicitud.Password, "Usuario o contraseña incorrectos.", RolesPermitidosEnPos, ct);
+
+        return Mapear(validado);
+    }
+
+    private static readonly IReadOnlyCollection<RolConocido> RolesPermitidosEnPos =
+    [
+        RolConocido.Vendedor, RolConocido.Supervisor, RolConocido.Admin
+    ];
+
+    private static ErrorDominio CredencialesInvalidas(string mensaje) =>
+        new("credenciales_invalidas", mensaje, 401);
+
+    /// <summary>
+    /// Núcleo común a <see cref="IniciarSesionAsync"/> y <see cref="IniciarSesionDeDispositivoAsync"/>:
+    /// timing-safe dummy hash, lockout, estado de cuenta/tenant, rehash transparente y
+    /// <c>RegistrarIngreso</c>. <paramref name="rolesPermitidos"/> es <c>null</c> para el login
+    /// por mail (cualquier rol entra) y la lista de roles del POS para el login de dispositivo —
+    /// se chequea DESPUÉS de validar la contraseña y el estado de la cuenta, mismo criterio que
+    /// <c>usuario_bloqueado</c>/<c>usuario_inactivo</c>: la password ya probó ser la correcta, así
+    /// que informar un rol no permitido no abre ninguna vía de enumeración nueva.
+    /// </summary>
+    private async Task<Usuario> ValidarYCompletarLoginAsync(
+        Usuario? usuario,
+        string password,
+        string mensajeCredencialesInvalidas,
+        IReadOnlyCollection<RolConocido>? rolesPermitidos,
+        CancellationToken ct)
+    {
+        var credencialesInvalidas = CredencialesInvalidas(mensajeCredencialesInvalidas);
+
         if (usuario is null)
         {
             // Se verifica igual contra un hash descartable precalculado (ver
-            // ObtenerHashDescartable) para que el tiempo de respuesta no delate si el mail
+            // ObtenerHashDescartable) para que el tiempo de respuesta no delate si la cuenta
             // existe: acá también hay que pagar exactamente un Verificar, ni uno más.
-            hasheador.Verificar(ObtenerHashDescartable(), solicitud.Password);
+            hasheador.Verificar(ObtenerHashDescartable(), password);
 
-            // Judgment-day (batch 9, ronda 2): el camino "mail conocido, contraseña
+            // Judgment-day (batch 9, ronda 2): el camino "cuenta conocida, contraseña
             // incorrecta" persiste RegistrarIntentoFallido (un round trip extra de UPDATE).
             // Sin un round trip equivalente acá, la ausencia de esa segunda ida a la base
-            // delataría por temporización que el mail no existe, aunque el hasheo ya esté
+            // delataría por temporización que la cuenta no existe, aunque el hasheo ya esté
             // nivelado. Una consulta descartable sobre un id inexistente paga el mismo costo
             // de ida y vuelta sin escribir ni filtrar nada real.
             await db.Usuarios.AsNoTracking().AnyAsync(u => u.Id == -1, ct);
@@ -104,7 +169,7 @@ public class ServicioDeAutenticacion(
             throw credencialesInvalidas;
         }
 
-        var resultado = hasheador.Verificar(usuario.PasswordHash, solicitud.Password);
+        var resultado = hasheador.Verificar(usuario.PasswordHash, password);
 
         if (resultado == ResultadoVerificacion.Invalida)
         {
@@ -130,8 +195,9 @@ public class ServicioDeAutenticacion(
         }
 
         // El tenant se consulta con un contexto de plataforma aparte (no el de la request,
-        // que sigue en modo login sin tenant resuelto): así RLS no necesita una policy de
-        // lectura adicional sobre `tenants` solo para este chequeo (doc 09, ADR-4).
+        // que en el login por mail sigue en modo login sin tenant resuelto): así RLS no
+        // necesita una policy de lectura adicional sobre `tenants` solo para este chequeo
+        // (doc 09, ADR-4).
         if (usuario.IdTenant is not null)
         {
             var tenant = await dbPlataforma.Tenants
@@ -160,16 +226,24 @@ public class ServicioDeAutenticacion(
             throw new ErrorDominio("usuario_inactivo", "La cuenta está inactiva.", 403);
         }
 
+        if (rolesPermitidos is not null && !rolesPermitidos.Contains((RolConocido)usuario.RolId))
+        {
+            throw new ErrorDominio(
+                "rol_no_permitido_en_dispositivo",
+                "Este usuario no puede iniciar sesión en el punto de venta.",
+                403);
+        }
+
         if (resultado == ResultadoVerificacion.ValidaPeroHayQueRehashear)
         {
             usuario.CambiarPassword(
-                hasheador.Hashear(solicitud.Password), hasheador.Algoritmo, reloj.Ahora);
+                hasheador.Hashear(password), hasheador.Algoritmo, reloj.Ahora);
         }
 
         usuario.RegistrarIngreso(reloj.Ahora);
         await db.SaveChangesAsync(ct);
 
-        return Mapear(usuario);
+        return usuario;
     }
 
     public async Task<UsuarioAutenticado?> ObtenerAsync(int usuarioId, CancellationToken ct = default)

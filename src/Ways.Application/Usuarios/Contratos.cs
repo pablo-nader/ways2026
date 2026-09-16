@@ -7,6 +7,11 @@ namespace Ways.Application.Usuarios;
 /// tenant alguno.</summary>
 public record SolicitudDeLogin(string Mail, string Password);
 
+/// <summary>Login de cajero contra un dispositivo ya vinculado (stage-desktop-pos,
+/// <c>POST /api/auth/login-dispositivo</c>): por <c>usuario</c>, no por <c>mail</c> — el
+/// dispositivo ya fija el tenant, así que no hace falta un identificador global.</summary>
+public record SolicitudDeLoginDeDispositivo(string Usuario, string Password);
+
 public record UsuarioAutenticado(
     int Id,
     string Usuario,
