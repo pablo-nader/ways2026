@@ -249,12 +249,21 @@ itemless RC path.)
 ### Requirement: Payment Validation Rejection Order
 
 Checkout payment validation MUST apply the legacy B6 rejection order, reading
-`tolerancia_pago` and `vuelto_maximo` through `ServicioDeParametros` (punto de
-venta > empresa > default) — never hardcoded:
+`tolerancia_pago` through `ServicioDeParametros` (punto de venta > empresa >
+default) — never hardcoded. Rule 3 is a deliberate deviation from legacy B6
+(owner decision, 2026-09-16, docs/01 §B6): the fixed vuelto ceiling is
+replaced by the banknote rule `BilletesArgentinos.EsVueltoJustificado` (the
+pago a cuenta corriente flow applies the same rule). No parametro caps the
+vuelto; the former `vuelto_maximo` key was removed entirely
+(`QuitarVueltoMaximo` migration):
 
 1. All medios sum to 0 and total > 0 → rejected.
 2. `sum(pagos) + tolerancia_pago < total` → rejected.
-3. `vuelto > vuelto_maximo` → rejected.
+3. `vuelto > 0` and the efectivo entregado — Σ `importe` of the pagos whose
+   medio `Comportamiento = Efectivo` (never selected by `AdmiteVuelto`) — is
+   NOT representable with valid Argentine banknotes
+   (10/20/50/100/200/500/1000/2000/10000/20000) all strictly greater than the
+   vuelto → rejected (`vuelto_no_justificado`).
 4. `vuelto > 0` on a pago whose medio has `AdmiteVuelto = false` → rejected.
 5. Cuenta corriente payment beyond `LimiteCredito` (unless `CreditoIlimitado`)
    → rejected.
@@ -273,11 +282,19 @@ venta > empresa > default) — never hardcoded:
 - WHEN checkout validates payment
 - THEN it is rejected before any write (`85 + 10 < 100`)
 
-#### Scenario: Vuelto over the parametrized maximum is rejected
-- GIVEN `vuelto_maximo = 20`, a total of `50.00`, and an efectivo pago of
-  `75.00` (vuelto `25.00`)
+#### Scenario: Large vuelto justified by the banknotes handed over is accepted
+- GIVEN a total of `5500.00` and an efectivo pago of `10000.00` (vuelto
+  `4500.00`)
 - WHEN checkout validates payment
-- THEN it is rejected (`25 > 20`)
+- THEN it is accepted — a single `10000` banknote (`> 4500`) forms the
+  efectivo entregado
+
+#### Scenario: Vuelto not justified by the banknotes handed over is rejected
+- GIVEN a total of `5500.00` and an efectivo pago of `5520.00` (vuelto
+  `20.00`)
+- WHEN checkout validates payment
+- THEN it is rejected with `vuelto_no_justificado` — no combination of
+  banknotes strictly greater than `20` forms exactly `5520`
 
 #### Scenario: Vuelto rejected on a medio without AdmiteVuelto
 - GIVEN a tarjeta medio (`AdmiteVuelto = false`) paid `120.00` against a
@@ -291,11 +308,20 @@ venta > empresa > default) — never hardcoded:
 - WHEN checkout validates payment
 - THEN it is rejected before any write
 
-#### Scenario: Tolerancia and vuelto_maximo resolve per punto de venta
-- GIVEN punto de venta A overrides `vuelto_maximo = 30` while the empresa
-  default is `20`
-- WHEN a sale at punto de venta A pays a vuelto of `25.00`
+#### Scenario: Only Efectivo pagos count as banknotes
+- GIVEN a transferencia medio misconfigured with `AdmiteVuelto = true` and
+  `RequiereReferencia = false`, paid `10000.00` against a `5500.00` total
+  with a vuelto of `4500.00`
+- WHEN checkout validates payment
+- THEN it is rejected with `vuelto_no_justificado` — the efectivo entregado
+  is `0`, because a non-Efectivo importe never counts as banknotes
+
+#### Scenario: Tolerancia resolves per punto de venta
+- GIVEN punto de venta A overrides `tolerancia_pago = 20` while the empresa
+  default is `10`
+- WHEN a sale at punto de venta A totaling `100.00` pays `85.00` in efectivo
 - THEN it is accepted, because the punto-de-venta override wins
+  (`85 + 20 >= 100`)
 
 ### Requirement: Cuenta Corriente Payment Gating
 

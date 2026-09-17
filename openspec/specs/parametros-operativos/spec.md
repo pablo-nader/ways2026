@@ -22,10 +22,10 @@ MUST represent a punto_venta-specific override.
 
 #### Scenario: Fallback to empresa default
 
-- GIVEN only an `id_punto_venta NULL` row exists for `vuelto_maximo` with
-  value `20`
-- WHEN punto_venta 2 (no override) resolves `vuelto_maximo`
-- THEN it receives `20`
+- GIVEN only an `id_punto_venta NULL` row exists for
+  `importe_adicional_recarga` with value `8`
+- WHEN punto_venta 2 (no override) resolves `importe_adicional_recarga`
+- THEN it receives `8`
 
 #### Scenario: No value and no default
 
@@ -35,18 +35,36 @@ MUST represent a punto_venta-specific override.
 - THEN the system returns a documented application default or an explicit
   "not configured" result, never a silent exception
 
-### Requirement: tolerancia_pago and vuelto_maximo Are Server-Authoritative At Checkout
+### Requirement: tolerancia_pago Is Server-Authoritative At Checkout
 
-`tolerancia_pago` and `vuelto_maximo` MUST be resolved server-side through
-`ServicioDeParametros` (punto de venta > empresa > default) at checkout time
-— they MUST NOT be hardcoded anywhere in the payment-validation path, and a
-client-supplied tolerancia/vuelto value MUST NOT override the resolved one.
+`tolerancia_pago` MUST be resolved server-side through `ServicioDeParametros`
+(punto de venta > empresa > default) at checkout time — it MUST NOT be
+hardcoded anywhere in the payment-validation path, and a client-supplied
+tolerancia value MUST NOT override the resolved one. Vuelto is NOT governed
+by a parameter: both venta checkout (`ValidadorDePagos`) and pago a cuenta
+corriente (`ValidadorDePagoACuenta`) apply the banknote rule
+`BilletesArgentinos.EsVueltoJustificado` (owner decision, 2026-09-16,
+docs/01 §B6). The former `vuelto_maximo` key was removed from
+`ParametroConocido` and from `parametros` (`QuitarVueltoMaximo` migration).
 
-#### Scenario: No hardcoded tolerancia or vuelto value exists
+#### Scenario: No hardcoded tolerancia value exists
 - GIVEN the payment-validation Domain class
 - WHEN its source is inspected
-- THEN both values are read from `ServicioDeParametros`, never literal `10`
-  or `20`
+- THEN `tolerancia_pago` arrives as a server-resolved parameter, never a
+  literal `10`
+
+#### Scenario: Vuelto is not capped by a parameter
+- GIVEN a checkout that pays `10000.00` in efectivo against a `5500.00`
+  total (vuelto `4500.00`)
+- WHEN checkout validates payment
+- THEN it is accepted by the banknote rule, with no parametro resolved for
+  the vuelto
+
+#### Scenario: The removed vuelto_maximo key behaves as unknown
+- GIVEN the `QuitarVueltoMaximo` migration has run
+- WHEN a client calls `GET` or `PUT /api/parametros/vuelto_maximo`
+- THEN it is rejected with `400 parametro_desconocido`, like any key never
+  registered
 
 #### Scenario: Client-supplied override is ignored
 - GIVEN a checkout request that includes a `toleranciaPago` field in its
@@ -57,8 +75,8 @@ client-supplied tolerancia/vuelto value MUST NOT override the resolved one.
 ### Requirement: Read Access Under OperacionDePos For UI Preview
 
 `parametros` read endpoints MUST be reachable under `Politicas.OperacionDePos`
-(Vendedor + Admin) so the POS can preview `tolerancia_pago` and
-`vuelto_maximo` before checkout. Write endpoints stay on `GestionDeCatalogo`.
+(Vendedor + Admin) so the POS can preview `tolerancia_pago` before checkout.
+Write endpoints stay on `GestionDeCatalogo`.
 
 #### Scenario: Vendedor reads parametros for the payment panel
 - GIVEN a user with role Vendedor
@@ -149,25 +167,27 @@ exact pattern stage 10 used for `zona_horaria`/`comision_porcentaje`.
 ### Requirement: ServicioDeVentas Batches Its Parametro Reads Into One Query
 
 `ServicioDeVentas`'s private parametro resolution MUST issue a single
-`WHERE clave IN (...)` query resolving `tolerancia_pago`, `vuelto_maximo`,
-and `lotes_habilitado` together, rather than one query per key. This is a
-strict improvement over the pre-stage-12 baseline of two separate queries
-for `tolerancia_pago`/`vuelto_maximo` — adding the third key does not add a
-third round-trip; it replaces two round-trips with one.
+`WHERE clave IN (...)` query resolving `tolerancia_pago` and
+`lotes_habilitado` together, rather than one query per key. The former
+`vuelto_maximo` key is NOT part of this set: venta checkout stopped consuming
+it and it was later removed entirely (owner decision, 2026-09-16, docs/01
+§B6). This is a strict improvement over the
+pre-stage-12 baseline of two separate parametro queries — adding
+`lotes_habilitado` does not add a round-trip.
 
-#### Scenario: A single batched query resolves all three keys
-- GIVEN a checkout resolves `tolerancia_pago`, `vuelto_maximo`, and
-  `lotes_habilitado` for the same punto de venta
+#### Scenario: A single batched query resolves both keys
+- GIVEN a checkout resolves `tolerancia_pago` and `lotes_habilitado` for the
+  same punto de venta
 - WHEN the resolution runs
 - THEN exactly one `parametros` query executes, filtering
-  `clave IN ('tolerancia_pago', 'vuelto_maximo', 'lotes_habilitado')`
+  `clave IN ('tolerancia_pago', 'lotes_habilitado')`
 
 #### Scenario: The batched query still resolves punto de venta overrides correctly
-- GIVEN punto de venta 3 overrides `vuelto_maximo = 30` while
-  `tolerancia_pago` and `lotes_habilitado` fall back to empresa defaults
-- WHEN the batched query resolves all three for punto de venta 3
-- THEN `vuelto_maximo` resolves to `30` and the other two resolve to their
-  empresa/default values, all from the same single query
+- GIVEN punto de venta 3 overrides `tolerancia_pago = 30` while
+  `lotes_habilitado` falls back to its empresa default
+- WHEN the batched query resolves both for punto de venta 3
+- THEN `tolerancia_pago` resolves to `30` and `lotes_habilitado` resolves to
+  its empresa/default value, both from the same single query
 
 ### Requirement: dias_rotacion And dias_cobertura_objetivo Are Known Parametro Keys
 
