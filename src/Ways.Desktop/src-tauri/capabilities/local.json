@@ -14,6 +14,7 @@
     "allow-impresora-predeterminada-detallada",
     "allow-imprimir-raw",
     "allow-abrir-configuracion",
+    "allow-volver-a-pos",
     "allow-info-app"
   ]
 }

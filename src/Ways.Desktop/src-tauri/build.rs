@@ -9,6 +9,7 @@ fn main() {
         "guardar_configuracion",
         "leer_configuracion",
         "abrir_configuracion",
+        "volver_a_pos",
         "info_app",
     ]);
 
