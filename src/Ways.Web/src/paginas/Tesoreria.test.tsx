@@ -178,11 +178,11 @@ describe('Tesoreria — libro (stage-11-exportacion-reportes, Slice 7 — web)',
     await screen.findByText('Apertura')
     const filas = screen.getAllByRole('row').slice(1) // sin la fila de encabezado
     expect(within(filas[0]).getByText('Apertura')).toBeInTheDocument()
-    expect(within(filas[0]).getByText('$60,00')).toBeInTheDocument()
+    expect(within(filas[0]).getByText('$ 60,00')).toBeInTheDocument()
     expect(within(filas[1]).getByText('Depósito')).toBeInTheDocument()
-    expect(within(filas[1]).getByText('$100,00')).toBeInTheDocument()
+    expect(within(filas[1]).getByText('$ 100,00')).toBeInTheDocument()
     expect(within(filas[2]).getByText('Retiro')).toBeInTheDocument()
-    expect(within(filas[2]).getByText('$55,00')).toBeInTheDocument()
+    expect(within(filas[2]).getByText('$ 55,00')).toBeInTheDocument()
   })
 
   it('cambiar el punto de venta dispara una nueva consulta con el idPuntoVenta elegido', async () => {

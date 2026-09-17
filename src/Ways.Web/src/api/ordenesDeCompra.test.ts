@@ -105,11 +105,11 @@ describe('formatearMonedaNullable', () => {
   })
 
   it('negativo antepone el signo antes del $', () => {
-    expect(formatearMonedaNullable(-200)).toBe('-$200,00')
+    expect(formatearMonedaNullable(-200)).toBe('-$ 200,00')
   })
 
   it('positivo formatea con dos decimales', () => {
-    expect(formatearMonedaNullable(199.5)).toBe('$199,50')
+    expect(formatearMonedaNullable(199.5)).toBe('$ 199,50')
   })
 })
 

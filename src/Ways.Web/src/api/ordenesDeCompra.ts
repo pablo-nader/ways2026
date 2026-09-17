@@ -5,6 +5,7 @@
  * (`design.md`: "client + pure mappers; `tipos.ts` mirrors the read/write DTOs").
  */
 import { api } from './cliente'
+import { formatearImporte } from '../formato/importes'
 import type {
   EstadoOrdenCompra,
   ItemDeOrden,
@@ -119,9 +120,7 @@ export function formatearDesvio(valorPorcentaje: number | null): string {
 }
 
 export function formatearMonedaNullable(valor: number | null): string {
-  if (valor === null) return '—'
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 // ---- Formulario del editor de borrador: una línea por fila de la grilla (mismo shape que

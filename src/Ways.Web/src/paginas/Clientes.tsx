@@ -13,6 +13,7 @@ import type {
   TipoDocumento,
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 
 type Formulario = {
@@ -30,7 +31,7 @@ type Formulario = {
   email: string
   observaciones: string
   idListaPrecio: number | ''
-  limiteCredito: string
+  limiteCredito: number | null
   creditoIlimitado: boolean
   activo: boolean
 }
@@ -51,7 +52,7 @@ function formularioVacio(idListaPrecioPorDefecto: number | ''): Formulario {
     email: '',
     observaciones: '',
     idListaPrecio: idListaPrecioPorDefecto,
-    limiteCredito: '0',
+    limiteCredito: 0,
     creditoIlimitado: false,
     activo: true,
   }
@@ -73,7 +74,7 @@ function aFormulario(c: ClienteListado): Formulario {
     email: c.email ?? '',
     observaciones: c.observaciones ?? '',
     idListaPrecio: c.idListaPrecio,
-    limiteCredito: String(c.limiteCredito),
+    limiteCredito: c.limiteCredito,
     creditoIlimitado: c.creditoIlimitado,
     activo: c.activo,
   }
@@ -99,7 +100,7 @@ function aAlta(f: Formulario): AltaCliente {
     email: aVacioNulo(f.email),
     observaciones: aVacioNulo(f.observaciones),
     idListaPrecio: f.idListaPrecio === '' ? 0 : f.idListaPrecio,
-    limiteCredito: f.limiteCredito === '' ? 0 : Number(f.limiteCredito),
+    limiteCredito: f.limiteCredito ?? 0,
     creditoIlimitado: f.creditoIlimitado,
     idEmpresa: null,
     activo: f.activo,
@@ -559,15 +560,12 @@ function FormularioCliente({
         <label className="form-label" htmlFor="c-limite-credito">
           Límite de crédito
         </label>
-        <input
+        <CampoImporte
           id="c-limite-credito"
-          type="number"
-          step="0.01"
-          min="0"
           className="form-control rounded-0"
-          value={valor.limiteCredito}
+          valor={valor.limiteCredito}
           disabled={valor.creditoIlimitado}
-          onChange={(e) => onCambio({ ...valor, limiteCredito: e.target.value })}
+          onChange={(limiteCredito) => onCambio({ ...valor, limiteCredito })}
         />
       </div>
 

@@ -6,12 +6,12 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import type { MedioPagoAlta, MedioPagoListado, ResumenDeTurno, TurnoConArqueos } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { formatearImporte } from '../formato/importes'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string): string {

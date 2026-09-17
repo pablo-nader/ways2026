@@ -132,7 +132,7 @@ describe('CierreDeCaja — flujo feliz', () => {
     await screen.findByText('Efectivo')
 
     await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '635')
-    expect(screen.getByText('$5,00')).toBeInTheDocument() // vista previa de diferencia (rule: preview, nunca autoritativa)
+    expect(screen.getByText('$ 5,00')).toBeInTheDocument() // vista previa de diferencia (rule: preview, nunca autoritativa)
 
     await userEvent.click(screen.getByRole('checkbox'))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
@@ -140,9 +140,9 @@ describe('CierreDeCaja — flujo feliz', () => {
 
     await screen.findByText('Turno #501 cerrado')
     const fila = screen.getByText('Efectivo').closest('tr') as HTMLElement
-    expect(fila.textContent).toContain('$640,00')
-    expect(fila.textContent).toContain('$635,00')
-    expect(fila.textContent).toContain('$5,00')
+    expect(fila.textContent).toContain('$ 640,00')
+    expect(fila.textContent).toContain('$ 635,00')
+    expect(fila.textContent).toContain('$ 5,00')
 
     const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/caja/turnos/501/cierre')
     expect(llamada?.[1]).toEqual({ conteos: [{ idMedioPago: 1, importeDeclarado: 635 }], observaciones: null })
@@ -216,9 +216,9 @@ describe('CierreDeCaja — un cierre 2xx nunca se reporta como falla, ni se mues
 
     await screen.findByText('Turno #501 cerrado')
     const fila = screen.getByText('Efectivo').closest('tr') as HTMLElement
-    expect(fila.textContent).toContain('$640,00')
-    expect(fila.textContent).toContain('$635,00')
-    expect(fila.textContent).toContain('$5,00')
+    expect(fila.textContent).toContain('$ 640,00')
+    expect(fila.textContent).toContain('$ 635,00')
+    expect(fila.textContent).toContain('$ 5,00')
     expect(screen.queryByText('No se pudo cerrar el turno.')).not.toBeInTheDocument()
 
     // El payload del comprobante Z sale íntegro del POST — no hay ningún GET adicional a

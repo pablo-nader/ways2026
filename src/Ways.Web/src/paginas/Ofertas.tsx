@@ -17,6 +17,7 @@ import { clienteDePrecios } from '../api/precios'
 import { DIAS_SEMANA } from '../api/tipos'
 import type { ArticuloListado, CategoriaListado, EmpresaListado, GrupoListado, ListaPrecioListado, OfertaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 
 const clienteGrupos = { listar: () => api.get<GrupoListado[]>('/catalogos/grupos') }
@@ -680,14 +681,11 @@ function FormularioOfertaCampos({
               <label className="form-label" htmlFor="of-importe-fijo">
                 Importe fijo por unidad ($)
               </label>
-              <input
+              <CampoImporte
                 id="of-importe-fijo"
-                type="number"
-                step="0.01"
-                min="0"
                 className="form-control rounded-0"
-                value={valor.importeFijo}
-                onChange={(e) => onCambio({ ...valor, importeFijo: e.target.value })}
+                valor={valor.importeFijo === '' ? null : Number(valor.importeFijo)}
+                onChange={(n) => onCambio({ ...valor, importeFijo: n === null ? '' : String(n) })}
               />
             </div>
           )}
@@ -697,14 +695,11 @@ function FormularioOfertaCampos({
               <label className="form-label" htmlFor="of-precio-unitario">
                 Precio unitario ($)
               </label>
-              <input
+              <CampoImporte
                 id="of-precio-unitario"
-                type="number"
-                step="0.01"
-                min="0"
                 className="form-control rounded-0"
-                value={valor.precioUnitario}
-                onChange={(e) => onCambio({ ...valor, precioUnitario: e.target.value })}
+                valor={valor.precioUnitario === '' ? null : Number(valor.precioUnitario)}
+                onChange={(n) => onCambio({ ...valor, precioUnitario: n === null ? '' : String(n) })}
               />
             </div>
           )}

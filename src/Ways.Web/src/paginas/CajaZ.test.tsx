@@ -145,25 +145,25 @@ describe('CajaZ — detalle del turno (stage-11-exportacion-reportes, Slice 6b)'
     expect(screen.getByText('2')).toBeInTheDocument() // cantidadTickets
     expect(screen.getByText('TX #1')).toBeInTheDocument() // primerTicket
     expect(screen.getByText('TX #2')).toBeInTheDocument() // ultimoTicket
-    expect(screen.getByText('$100,00')).toBeInTheDocument() // retiros
+    expect(screen.getByText('$ 100,00')).toBeInTheDocument() // retiros
 
     // mutation-proof-tests rule 6: dos filas con valores DISTINTOS por columna.
     const filaMedioUno = screen.getByRole('row', { name: /Medio #1/ })
-    expect(within(filaMedioUno).getByText('$1.000,00')).toBeInTheDocument()
+    expect(within(filaMedioUno).getByText('$ 1.000,00')).toBeInTheDocument()
     const filaMedioDos = screen.getByRole('row', { name: /Medio #2/ })
-    expect(within(filaMedioDos).getByText('$500,00')).toBeInTheDocument()
+    expect(within(filaMedioDos).getByText('$ 500,00')).toBeInTheDocument()
 
     const filaTicketUno = screen.getByRole('row', { name: /0003-00000001/ })
     expect(within(filaTicketUno).getByText('Emitido')).toBeInTheDocument()
-    expect(within(filaTicketUno).getByText('$750,00')).toBeInTheDocument()
+    expect(within(filaTicketUno).getByText('$ 750,00')).toBeInTheDocument()
     const filaTicketDos = screen.getByRole('row', { name: /0003-00000002/ })
     expect(within(filaTicketDos).getByText('Anulado')).toBeInTheDocument()
-    expect(within(filaTicketDos).getByText('$250,00')).toBeInTheDocument()
+    expect(within(filaTicketDos).getByText('$ 250,00')).toBeInTheDocument()
 
     const filaGastoUno = screen.getByRole('row', { name: /Sueldos/ })
-    expect(within(filaGastoUno).getByText('$300,00')).toBeInTheDocument()
+    expect(within(filaGastoUno).getByText('$ 300,00')).toBeInTheDocument()
     const filaGastoDos = screen.getByRole('row', { name: /Viaticos/ })
-    expect(within(filaGastoDos).getByText('$120,00')).toBeInTheDocument()
+    expect(within(filaGastoDos).getByText('$ 120,00')).toBeInTheDocument()
   })
 
   it('sin medios/tickets/gastos muestra los estados vacíos de cada sección', async () => {

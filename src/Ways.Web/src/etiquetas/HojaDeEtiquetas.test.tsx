@@ -31,7 +31,7 @@ describe('HojaDeEtiquetas — regla de tachado (mutation target 7)', () => {
     render(<HojaDeEtiquetas descriptor={A4_3X8} celdas={[fila]} nombreDeLista="Lista general" />)
 
     expect(screen.queryByTestId(`precio-original-tachado-${fila.idArticulo}-0`)).not.toBeInTheDocument()
-    expect(screen.getByText('$120,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 120,00')).toBeInTheDocument()
   })
 
   it('precios IGUALES + ofertas NO VACÍAS ⇒ tachado presente (el mutante `precioOriginal !== precioFinal` lo ocultaría)', () => {

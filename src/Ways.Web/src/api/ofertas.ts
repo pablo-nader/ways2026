@@ -8,6 +8,7 @@
  */
 import { api } from './cliente'
 import type { AltaOferta, EdicionOferta, LineaDeResolucion, ListaPrecioListado, OfertaListado, ResultadoDeResolucion } from './tipos'
+import { formatearImporte } from '../formato/importes'
 
 export const clienteDeOfertas = {
   listar: (incluirEliminados: boolean) =>
@@ -177,7 +178,7 @@ export function opcionesDeLista(listas: ListaPrecioListado[]): { valor: string; 
  * nada, solo formatea lo que el servidor ya validó como exclusivo. */
 export function resumenDeBeneficio(o: OfertaListado): string {
   if (o.porcentaje !== null) return `${o.porcentaje}% de descuento`
-  if (o.importeFijo !== null) return `$${o.importeFijo} fijo por unidad`
-  if (o.precioUnitario !== null) return `Precio unitario $${o.precioUnitario}`
+  if (o.importeFijo !== null) return `${formatearImporte(o.importeFijo, { simbolo: true })} fijo por unidad`
+  if (o.precioUnitario !== null) return `Precio unitario ${formatearImporte(o.precioUnitario, { simbolo: true })}`
   return '—'
 }

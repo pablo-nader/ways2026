@@ -2561,7 +2561,7 @@ describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-busc
     expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('/articulos?busqueda=fa'))
     expect(await dialogo.findByText('A0009')).toBeInTheDocument()
     expect(dialogo.getByText('Fanta 1.5L')).toBeInTheDocument()
-    expect(dialogo.getByText('$200,00')).toBeInTheDocument()
+    expect(dialogo.getByText('$ 200,00')).toBeInTheDocument()
   })
 
   it('Enter dispara la búsqueda de inmediato, sin esperar el debounce', async () => {

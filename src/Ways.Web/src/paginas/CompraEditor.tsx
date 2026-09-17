@@ -37,10 +37,10 @@ import type {
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { formatearImporte } from '../formato/importes'
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string | null): string {

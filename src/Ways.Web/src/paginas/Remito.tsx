@@ -20,14 +20,14 @@ import { clienteDeVentas } from '../api/ventas'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { SelectorDeLote } from '../componentes/SelectorDeLote'
+import { formatearImporte } from '../formato/importes'
 
 function formatearFechaHora(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString('es-AR') : '—'
 }
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 function etiquetaDeCliente(c: ClienteListado): string {

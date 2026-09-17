@@ -22,11 +22,12 @@ import type {
 import { puedeSupervisarCuentaDeProveedor } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { formatearImporte } from '../formato/importes'
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string): string {
@@ -66,14 +67,14 @@ type PropsModalAjuste = {
  */
 function ModalAjusteDeProveedor({ idProveedor, puntosVenta, saldoActual, onCerrar, onAntesDeEscribir, onRegistrado }: PropsModalAjuste) {
   const [idPuntoVenta, setIdPuntoVenta] = useState<number>(puntosVenta[0].id)
-  const [importe, setImporte] = useState('')
+  const [importe, setImporte] = useState<number | null>(null)
   const [detalle, setDetalle] = useState('')
 
   const [registrando, setRegistrando] = useState(false)
   const registrandoRef = useRef(false)
   const [error, setError] = useState('')
 
-  const importeNumerico = importe.trim() === '' ? Number.NaN : Number(importe)
+  const importeNumerico = importe ?? Number.NaN
   const saldoResultante = Number.isFinite(importeNumerico) ? saldoResultanteDeAjuste(saldoActual, importeNumerico) : null
 
   async function registrarAjuste() {
@@ -143,14 +144,12 @@ function ModalAjusteDeProveedor({ idProveedor, puntosVenta, saldoActual, onCerra
                 <label className="form-label" htmlFor="ccp-ajuste-importe">
                   Importe
                 </label>
-                <input
+                <CampoImporte
                   id="ccp-ajuste-importe"
-                  type="number"
-                  step="0.01"
                   className="form-control rounded-0"
-                  value={importe}
+                  valor={importe}
                   disabled={registrando}
-                  onChange={(e) => setImporte(e.target.value)}
+                  onChange={setImporte}
                 />
                 <div className="form-text">
                   Positivo aumenta la deuda del proveedor, negativo la reduce. Nunca puede ser cero.

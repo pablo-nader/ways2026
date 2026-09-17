@@ -227,7 +227,7 @@ describe('Compras — listado', () => {
     await screen.findByText('0003-00012345')
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
 
-    expect(await screen.findByText('$500,00')).toBeInTheDocument()
+    expect(await screen.findByText('$ 500,00')).toBeInTheDocument()
     expect(screen.queryByText(/Saldo negativo/)).not.toBeInTheDocument()
   })
 
@@ -248,7 +248,7 @@ describe('Compras — listado', () => {
     await screen.findByText('0003-00012345')
     await usuario.selectOptions(screen.getByLabelText('Proveedor'), '1')
 
-    expect(await screen.findByText('-$500,00')).toBeInTheDocument()
+    expect(await screen.findByText('-$ 500,00')).toBeInTheDocument()
     expect(screen.getByText('Saldo a favor.')).toBeInTheDocument()
   })
 

@@ -14,6 +14,7 @@ import { clienteDeClientes } from '../api/clientes'
 import type { ClienteListado, EstadoPresupuesto, PaginaDePresupuestos, PresupuestoListado, PuntoVentaListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { formatearImporte } from '../formato/importes'
 
 const OPCIONES_ESTADO: { valor: EstadoPresupuesto | ''; etiqueta: string }[] = [
   { valor: '', etiqueta: 'Todos' },
@@ -286,9 +287,7 @@ export function Presupuestos() {
                         )}
                       </td>
                       <td>{formatearFecha(p.fechaEmision)}</td>
-                      <td className="text-end">
-                        ${p.total.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
+                      <td className="text-end">{formatearImporte(p.total, { simbolo: true })}</td>
                     </tr>
                   ))}
                   {pagina.items.length === 0 && (

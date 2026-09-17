@@ -266,10 +266,10 @@ describe('resumenDeBeneficio', () => {
   })
 
   it('formatea el beneficio por importe fijo', () => {
-    expect(resumenDeBeneficio(ofertaFixture({ idArticulo: 1, importeFijo: 15 }))).toBe('$15 fijo por unidad')
+    expect(resumenDeBeneficio(ofertaFixture({ idArticulo: 1, importeFijo: 15 }))).toBe('$ 15,00 fijo por unidad')
   })
 
   it('formatea el beneficio por precio unitario', () => {
-    expect(resumenDeBeneficio(ofertaFixture({ idArticulo: 1, precioUnitario: 500 }))).toBe('Precio unitario $500')
+    expect(resumenDeBeneficio(ofertaFixture({ idArticulo: 1, precioUnitario: 500 }))).toBe('Precio unitario $ 500,00')
   })
 })

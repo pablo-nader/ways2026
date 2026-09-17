@@ -207,10 +207,10 @@ describe('FacturarRemitos — multi-select (task 8.8)', () => {
     await screen.findByText('0007-00000012')
 
     await userEvent.click(screen.getByLabelText('Elegir remito 0007-00000012'))
-    await esperarMonto('$500,00')
+    await esperarMonto('$ 500,00')
 
     await userEvent.click(screen.getByLabelText('Elegir remito 0007-00000013'))
-    await esperarMonto('$800,00')
+    await esperarMonto('$ 800,00')
   })
 
   it('"Elegir todos" selecciona/deselecciona el conjunto completo', async () => {
@@ -225,7 +225,7 @@ describe('FacturarRemitos — multi-select (task 8.8)', () => {
     await screen.findByText('0007-00000012')
 
     await userEvent.click(screen.getByLabelText('Elegir todos'))
-    await esperarMonto('$800,00')
+    await esperarMonto('$ 800,00')
     expect(screen.getByLabelText('Elegir remito 0007-00000012')).toBeChecked()
     expect(screen.getByLabelText('Elegir remito 0007-00000013')).toBeChecked()
 

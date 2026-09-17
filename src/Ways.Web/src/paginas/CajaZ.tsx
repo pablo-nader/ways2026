@@ -10,10 +10,10 @@ import { Cargando } from '../componentes/Cargando'
 import { enEscritorio, imprimir } from '../impresion/impresora'
 import { reporteZ } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
+import { formatearImporte } from '../formato/importes'
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string): string {

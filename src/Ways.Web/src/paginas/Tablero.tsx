@@ -30,6 +30,7 @@ import { Cargando } from '../componentes/Cargando'
 import { GraficoDeBarras } from '../componentes/graficos/GraficoDeBarras'
 import { GraficoDeLineas } from '../componentes/graficos/GraficoDeLineas'
 import { aSerieDeGrafico } from '../componentes/graficos/series'
+import { formatearImporte } from '../formato/importes'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -47,7 +48,7 @@ const GRANULARIDADES: { valor: Granularidad; etiqueta: string }[] = [
 ]
 
 function formatearMoneda(valor: number): string {
-  return `$${valor.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 /**

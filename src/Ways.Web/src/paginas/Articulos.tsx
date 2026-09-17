@@ -27,7 +27,9 @@ import type {
   UnidadVenta,
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { formatearImporte } from '../formato/importes'
 
 type Formulario = {
   id: number | null
@@ -805,14 +807,11 @@ function FormularioArticulo({
             <label className="form-label" htmlFor="art-costo-lista">
               Costo de lista
             </label>
-            <input
+            <CampoImporte
               id="art-costo-lista"
-              type="number"
-              step="0.01"
-              min="0"
               className="form-control rounded-0"
-              value={valor.costoLista}
-              onChange={(e) => onCambio({ ...valor, costoLista: e.target.value })}
+              valor={valor.costoLista === '' ? null : Number(valor.costoLista)}
+              onChange={(n) => onCambio({ ...valor, costoLista: n === null ? '' : String(n) })}
             />
           </div>
 
@@ -835,14 +834,11 @@ function FormularioArticulo({
             <label className="form-label" htmlFor="art-costo-nominal">
               Costo nominal
             </label>
-            <input
+            <CampoImporte
               id="art-costo-nominal"
-              type="number"
-              step="0.01"
-              min="0"
               className="form-control rounded-0"
-              value={valor.costoNominal}
-              onChange={(e) => onCambio({ ...valor, costoNominal: e.target.value })}
+              valor={valor.costoNominal === '' ? null : Number(valor.costoNominal)}
+              onChange={(n) => onCambio({ ...valor, costoNominal: n === null ? '' : String(n) })}
             />
             <div className="form-text">Si se completa, tiene prioridad sobre costo de lista − descuento.</div>
           </div>
@@ -1306,7 +1302,7 @@ function EditorDePrecios({
 
       {sugerencia !== null && (
         <div className="alert alert-info rounded-0 py-2 px-2 small mt-2">
-          Precio sugerido a partir de costo y margen: <strong>${sugerencia.toFixed(2)}</strong>. Usá "Usar sugerencia"
+          Precio sugerido a partir de costo y margen: <strong>{formatearImporte(sugerencia, { simbolo: true })}</strong>. Usá "Usar sugerencia"
           en la lista que corresponda — nunca se aplica sola.
         </div>
       )}
@@ -1350,7 +1346,7 @@ function EditorDePrecios({
                         </div>
                       )}
                     </td>
-                    <td>{vigente?.precio !== null && vigente?.precio !== undefined ? `$${vigente.precio.toFixed(2)}` : '—'}</td>
+                    <td>{vigente?.precio !== null && vigente?.precio !== undefined ? formatearImporte(vigente.precio, { simbolo: true }) : '—'}</td>
                     <td className="text-end">
                       <button
                         type="button"
@@ -1433,7 +1429,7 @@ function PanelDeLista({
     <div className="p-2">
       {pendiente && (
         <div className="alert alert-warning rounded-0 py-1 px-2 small">
-          Precio programado: ${pendiente.precio.toFixed(2)} desde {new Date(pendiente.vigenteDesde).toLocaleString()}
+          Precio programado: {formatearImporte(pendiente.precio, { simbolo: true })} desde {new Date(pendiente.vigenteDesde).toLocaleString()}
         </div>
       )}
 
@@ -1465,15 +1461,12 @@ function PanelDeLista({
       <div className="row g-2 align-items-end">
         <div className="col-auto">
           <label className="form-label mb-0 small">Precio</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
+          <CampoImporte
             className="form-control form-control-sm rounded-0"
             style={{ width: 140 }}
-            value={estado.monto}
+            valor={estado.monto === '' ? null : Number(estado.monto)}
             disabled={bloqueado}
-            onChange={(e) => onCambio({ monto: e.target.value })}
+            onChange={(n) => onCambio({ monto: n === null ? '' : String(n) })}
           />
         </div>
 
@@ -1485,7 +1478,7 @@ function PanelDeLista({
               disabled={bloqueado || cargandoSugerencia}
               onClick={() => onCambio({ monto: String(sugerencia) })}
             >
-              Usar sugerencia (${sugerencia.toFixed(2)})
+              Usar sugerencia ({formatearImporte(sugerencia, { simbolo: true })})
             </button>
           </div>
         )}
@@ -1544,7 +1537,7 @@ function PanelDeLista({
           <tbody>
             {historial.map((h) => (
               <tr key={h.id}>
-                <td>${h.precio.toFixed(2)}</td>
+                <td>{formatearImporte(h.precio, { simbolo: true })}</td>
                 <td>{new Date(h.vigenteDesde).toLocaleString()}</td>
                 <td>{h.vigenteHasta ? new Date(h.vigenteHasta).toLocaleString() : '—'}</td>
               </tr>

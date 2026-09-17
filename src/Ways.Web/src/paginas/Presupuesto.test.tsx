@@ -149,7 +149,7 @@ describe('Presupuesto — detalle (lectura)', () => {
     expect(await screen.findByText('Enviado')).toBeInTheDocument()
     expect(screen.getByText(/Vence/)).toBeInTheDocument()
     expect(screen.getByText('Yerba mate 1kg')).toBeInTheDocument()
-    expect(screen.getAllByText('$200,00').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('$ 200,00').length).toBeGreaterThan(0)
   })
 
   it('un presupuesto vencido muestra el badge "Venció"', async () => {

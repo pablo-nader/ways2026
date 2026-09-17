@@ -4,16 +4,15 @@
  */
 import { ConstructorDeTicket } from './escpos'
 import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, TurnoConArqueos } from '../api/tipos'
+import { formatearImporte } from '../formato/importes'
 
 /** Mismos datos que ya conoce el shell del POS de escritorio al momento de imprimir — nunca se
  * vuelven a pedir acá. */
 export type ContextoDeImpresion = { empresa: string; puntoVenta: string; cajero: string }
 
-/** Mismo formato que el resto de las pantallas (`Pos.tsx`, `CierreDeCaja.tsx`, `CajaZ.tsx`):
- * signo antes del símbolo, nunca `$-`. */
+/** Formateador compartido (`formato/importes.ts`): signo antes del símbolo, nunca `$-`. */
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 /** Mismo formato que el resto de las pantallas — sin forzar timezone, la máquina del escritorio
