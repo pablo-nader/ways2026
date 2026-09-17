@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCaja } from '../api/caja'
@@ -209,6 +209,13 @@ type PropsConfirmacionDeCobro = {
   total: number
   pagado: number
   vuelto: number
+  /** judgment-day ronda 1 (K4): bajo vista previa fallida, `total`/`pagado`/`vuelto` no son
+   * confiables (el total sale de la propia suma de importes, nunca del servidor) — mostrar
+   * "$0,00" ahí sería un número inventado que el cajero podría leer como una confirmación real.
+   * Con esto en `true`, el diálogo NO renderiza montos: solo el aviso, y `onFinalizar` sigue
+   * disparando `cobrar()` de siempre (el servidor es la autoridad final del total, mismo criterio
+   * que el resto de la pantalla bajo vista previa fallida). */
+  previaFallida: boolean
   ocupado: boolean
   onFinalizar: () => void
   onCancelar: () => void
@@ -216,32 +223,65 @@ type PropsConfirmacionDeCobro = {
 
 /**
  * Diálogo de confirmación de F9 (stage-pos-atajos-cobro): a diferencia de `ConfirmacionDeBaja`
- * (que arma su propio listener de teclado), este panel es puramente presentacional — el único
- * listener de teclado del ciclo vive en `PantallaPos` (un segundo listener propio acá respondería
- * al mismo F9/F10/Escape una segunda vez). El foco por defecto al montar va a "Cancelar", mismo
- * criterio conservador que `ConfirmacionDeBaja`. Mientras `ocupado` (el propio `cobrar()` en
- * vuelo), ambos botones quedan inertes — regla 13 de react-async-state: un cancelar no debe
- * suceder a nada mientras la escritura está en curso.
+ * (que arma su propio listener de teclado), este panel NO tiene su propio listener de F9/F10/
+ * Escape — el único vive en `PantallaPos` (un segundo listener propio acá respondería al mismo
+ * evento una segunda vez). El foco por defecto al montar va a "Cancelar", mismo criterio
+ * conservador que `ConfirmacionDeBaja`. Mientras `ocupado` (el propio `cobrar()` en vuelo), ambos
+ * botones quedan inertes — regla 13 de react-async-state: un cancelar no debe suceder a nada
+ * mientras la escritura está en curso.
+ *
+ * judgment-day ronda 1 (K3): SÍ tiene su propia trampa de foco — `role="alertdialog"
+ * aria-modal="true"` sin una trampa real es mentira para tecnología asistiva (Tab podría escapar
+ * a un control de `PantallaPos` que ya debería ser inalcanzable). Con exactamente dos controles
+ * focusables, Tab y Shift+Tab hacen lo mismo: alternar al otro — no hace falta mirar `shiftKey`.
  */
-function ConfirmacionDeCobro({ total, pagado, vuelto, ocupado, onFinalizar, onCancelar }: PropsConfirmacionDeCobro) {
+function ConfirmacionDeCobro({ total, pagado, vuelto, previaFallida, ocupado, onFinalizar, onCancelar }: PropsConfirmacionDeCobro) {
+  const finalizarRef = useRef<HTMLButtonElement>(null)
   const cancelarRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     cancelarRef.current?.focus()
   }, [])
 
+  function atraparTab(evento: React.KeyboardEvent<HTMLDivElement>) {
+    if (evento.key !== 'Tab') return
+    evento.preventDefault()
+    evento.stopPropagation()
+    const siguiente = document.activeElement === finalizarRef.current ? cancelarRef.current : finalizarRef.current
+    siguiente?.focus()
+  }
+
   return (
-    <div className="alert alert-info rounded-0" role="alertdialog" aria-modal="true" aria-label="¿Finalizar venta?">
+    <div
+      className="alert alert-info rounded-0"
+      role="alertdialog"
+      aria-modal="true"
+      aria-label="¿Finalizar venta?"
+      onKeyDown={atraparTab}
+    >
       <p className="mb-2">
         <strong>¿Finalizar venta?</strong>
       </p>
-      <ul className="mb-3 list-unstyled">
-        <li>Total: {formatearMoneda(total)}</li>
-        <li>Pagado: {formatearMoneda(pagado)}</li>
-        <li>Vuelto: {formatearMoneda(vuelto)}</li>
-      </ul>
+      {previaFallida ? (
+        <p className="mb-3">
+          Total no disponible (no se pudo calcular la previa) — se confirma recién al cobrar.
+        </p>
+      ) : (
+        <ul className="mb-3 list-unstyled">
+          <li>Total: {formatearMoneda(total)}</li>
+          <li>Pagado: {formatearMoneda(pagado)}</li>
+          <li>Vuelto: {formatearMoneda(vuelto)}</li>
+        </ul>
+      )}
       <div className="d-flex gap-2">
-        <button type="button" className="btn btn-success rounded-0" disabled={ocupado} onClick={onFinalizar}>
+        <button
+          ref={finalizarRef}
+          type="button"
+          className="btn btn-success rounded-0"
+          disabled={ocupado}
+          aria-keyshortcuts="F9"
+          onClick={onFinalizar}
+        >
           {ocupado ? 'Finalizando…' : 'Finalizar (F9)'}
         </button>
         <button
@@ -249,6 +289,7 @@ function ConfirmacionDeCobro({ total, pagado, vuelto, ocupado, onFinalizar, onCa
           type="button"
           className="btn btn-outline-secondary rounded-0"
           disabled={ocupado}
+          aria-keyshortcuts="F10"
           onClick={onCancelar}
         >
           Cancelar (F10)
@@ -1221,15 +1262,26 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     document.getElementById(`pos-fila-pago-importe-${idFila}`)?.focus()
   }
 
-  /** F9 con el pago ya cubierto, o clic en "Finalizar (F9)" del diálogo: dispara el mismo
-   * `cobrar()` de siempre — SIN repetir acá la guarda de reentrancia (regla 9/11): agregar una
-   * segunda copia del mismo chequeo sería código muerto, imposible de probar por mutación (el
-   * propio `cobrandoRef` de `cobrar()`, mutado de forma síncrona ANTES de su primer `await`, ya
-   * es LA protección real de un doble F9/doble click sobre este mismo diálogo). El diálogo se
-   * cierra recién cuando `cobrar()` termina (éxito o error), nunca antes: mientras tanto sigue
-   * mostrando el mismo total/pagado/vuelto con el que se confirmó. */
+  /**
+   * judgment-day ronda 1 (K2, CRITICAL): `cobrandoRef` de `cobrar()` alcanza para que nunca se
+   * dispare un SEGUNDO POST, pero no alcanza para decidir QUIÉN cierra el diálogo — un F9/click
+   * repetido mientras el `cobrar()` real sigue en vuelo entra igual a esta función, su propio
+   * `await cobrar()` resuelve CASI enseguida (el guard de `cobrar()` lo corta antes de la red) y
+   * ese llamado redundante alcanzaba a correr `setConfirmandoCobro(false)` ANTES de que la venta
+   * real terminara — el diálogo desaparecía de en medio del cobro. `finalizandoDesdeDialogoRef` es
+   * la guarda DEDICADA a esa propiedad distinta: solo la invocación que de verdad es dueña del
+   * `cobrar()` en curso puede cerrar el diálogo: cualquier invocación redundante (incluido un F9
+   * mantenido apretado, `evento.repeat`) no hace nada.
+   */
+  const finalizandoDesdeDialogoRef = useRef(false)
   async function confirmarYcobrar() {
-    await cobrar()
+    if (finalizandoDesdeDialogoRef.current) return
+    finalizandoDesdeDialogoRef.current = true
+    try {
+      await cobrar()
+    } finally {
+      finalizandoDesdeDialogoRef.current = false
+    }
     setConfirmandoCobro(false)
   }
 
@@ -1267,49 +1319,102 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     confirmandoCobroPrevioRef.current = confirmandoCobro
   }, [confirmandoCobro])
 
-  // F9 (spec pos-atajos-cobro): mismo criterio de "pantalla de venta activa" que el listener de
-  // F2 (buscador cerrado, sin gate de turno ni ticket ya emitido reemplazando la pantalla, sin el
-  // propio diálogo de confirmación ya abierto) — nunca bajo `?idPresupuesto=` sin presupuesto
-  // todavía cargado (esas dos pantallas tampoco tienen el botón "Cobrar"). Con el diálogo YA
-  // abierto, este mismo listener atiende F9 (finalizar)/F10/Escape (cancelar) — UN SOLO listener
-  // de `document` para todo el ciclo: un segundo listener propio del diálogo respondería al mismo
-  // evento dos veces.
+  /**
+   * judgment-day ronda 1 (K1, CRITICAL): el listener de F9 vivía en un efecto re-suscripto por
+   * dependencias (`[confirmandoCobro, buscadorAbierto, ..., puedeCobrar]`) que NO incluía
+   * `filasPago` — ni podía, honestamente: `filasPago` es un array que cambia de referencia en
+   * cada tecleo de importe, listarlo ahí haría re-suscribir el listener en cada tecla, y encima
+   * no alcanzaría (`cobrar()`, `pagosConVuelto`, `clienteSeleccionado`, etc. tienen el mismo
+   * problema un nivel más abajo). Mientras el efecto no se re-suscribe, sigue closureando la
+   * versión VIEJA de `enfocarPrimeraFilaDePagoPendiente`/`confirmarYcobrar`/etc. — agregar o
+   * quitar una fila de pago sin que ESO ADEMÁS cambiara `pagosCubrenElTotal`/`puedeCobrar` dejaba
+   * un F9 enfocando una fila que ya no existe, o cobrando con líneas/pagos de un render anterior.
+   *
+   * Arreglo (sin `eslint-disable`, patrón "latest ref"): el propio cuerpo del componente escribe
+   * el snapshot más fresco acá en CADA render (vía el efecto sin dependencias de abajo); el
+   * listener de teclado se suscribe UNA sola vez (`[]`) y lee siempre `f9Ref.current` — nunca
+   * puede quedar viejo porque nunca "cierra" sobre nada reactivo. `useLayoutEffect`, no
+   * `useEffect` (re-judgment, WARNING): corre SÍNCRONO dentro del commit, así que un keydown
+   * nativo nunca puede intercalarse entre el commit y el flush (pasivo) del snapshot.
+   */
+  type SnapshotF9 = {
+    confirmandoCobro: boolean
+    buscadorAbierto: boolean
+    gateTurno: boolean
+    ventaEmitida: boolean
+    modoPresupuesto: boolean
+    presupuestoCargado: boolean
+    precondicionesListas: boolean
+    pagosCubrenElTotal: boolean
+    puedeCobrar: boolean
+    confirmarYcobrar: () => void
+    cancelarConfirmacionDeCobro: () => void
+    enfocarPrimeraFilaDePagoPendiente: () => void
+  }
+  const f9Ref = useRef<SnapshotF9>(null)
+  useLayoutEffect(() => {
+    f9Ref.current = {
+      confirmandoCobro,
+      buscadorAbierto,
+      gateTurno,
+      ventaEmitida: ventaEmitida !== null,
+      modoPresupuesto,
+      presupuestoCargado: presupuesto !== null,
+      precondicionesListas,
+      pagosCubrenElTotal,
+      puedeCobrar,
+      confirmarYcobrar,
+      cancelarConfirmacionDeCobro,
+      enfocarPrimeraFilaDePagoPendiente,
+    }
+  })
+
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
-      if (confirmandoCobro) {
+      const m = f9Ref.current
+      if (!m) return
+
+      if (m.confirmandoCobro) {
         if (evento.key === 'F9') {
+          // K2: un F9 mantenido apretado dispara keydown repetidos (`repeat: true`) — ni siquiera
+          // vale la pena invocar `confirmarYcobrar` (su propia guarda los cortaría igual).
+          if (evento.repeat) {
+            evento.preventDefault()
+            return
+          }
           evento.preventDefault()
-          void confirmarYcobrar()
+          void m.confirmarYcobrar()
         } else if (evento.key === 'F10') {
           // WebView2/algunos navegadores: F10 sin `preventDefault` activa la barra de menú.
           evento.preventDefault()
-          cancelarConfirmacionDeCobro()
+          m.cancelarConfirmacionDeCobro()
         } else if (evento.key === 'Escape') {
           evento.preventDefault()
-          cancelarConfirmacionDeCobro()
+          m.cancelarConfirmacionDeCobro()
         }
         return
       }
 
       if (evento.key !== 'F9') return
-      if (buscadorAbierto || gateTurno || ventaEmitida) return
-      if (modoPresupuesto && presupuesto === null) return
+      if (evento.repeat) return
+      if (m.buscadorAbierto || m.gateTurno || m.ventaEmitida) return
+      if (m.modoPresupuesto && !m.presupuestoCargado) return
       if (cobrandoRef.current) return
       evento.preventDefault()
 
       // "Cobrar disabled por otro motivo" (turno cerrado, carrito vacío, cliente/punto de venta
       // sin elegir, medios/parámetros sin cargar): F9 no hace nada — nunca bypasea validaciones.
-      if (!precondicionesListas) return
+      if (!m.precondicionesListas) return
 
-      if (!pagosCubrenElTotal) {
-        enfocarPrimeraFilaDePagoPendiente()
+      if (!m.pagosCubrenElTotal) {
+        m.enfocarPrimeraFilaDePagoPendiente()
         return
       }
 
       // Cubre el total pero `puedeCobrar` sigue en `false` por otra razón local (ej. falta la
       // referencia de un medio que la requiere, el vuelto no se justifica con billetes): tampoco
       // abre el diálogo — el propio botón "Cobrar" seguiría deshabilitado.
-      if (!puedeCobrar) return
+      if (!m.puedeCobrar) return
 
       disparadorConfirmacionRef.current = document.activeElement as HTMLElement | null
       setConfirmandoCobro(true)
@@ -1317,22 +1422,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
 
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-    // `confirmarYcobrar`/`cancelarConfirmacionDeCobro`/`enfocarPrimeraFilaDePagoPendiente` no son
-    // estables entre renders (cierran sobre estado del componente) — mismo criterio que el resto
-    // de los efectos de esta pantalla que llaman a un helper declarado en el cuerpo del
-    // componente: el efecto solo necesita re-suscribirse cuando cambian sus precondiciones reales.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    confirmandoCobro,
-    buscadorAbierto,
-    gateTurno,
-    ventaEmitida,
-    modoPresupuesto,
-    presupuesto,
-    precondicionesListas,
-    pagosCubrenElTotal,
-    puedeCobrar,
-  ])
+  }, [])
 
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=`, la pantalla entera espera
   // el presupuesto congelado antes de mostrar nada operable — mismo criterio de carga/error
@@ -1703,7 +1793,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                         <button
                           type="button"
                           className="btn btn-outline-danger btn-sm rounded-0"
-                          disabled={verificandoCierre}
+                          disabled={verificandoCierre || pantallaCobroInerte}
                           onClick={() => void irACerrarCaja()}
                         >
                           {verificandoCierre ? 'Verificando…' : 'Cerrar caja'}
@@ -1898,6 +1988,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                   total={totalActual}
                   pagado={sumarImportes(pagosConVuelto)}
                   vuelto={excedente}
+                  previaFallida={previaFallida}
                   ocupado={cobrando}
                   onFinalizar={confirmarYcobrar}
                   onCancelar={cancelarConfirmacionDeCobro}
