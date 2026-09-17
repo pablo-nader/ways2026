@@ -202,7 +202,10 @@ doc 10 §9 (`dispositivos`).
   su hash SHA-256 en `token_hash`) y lo setea en la cookie `ways.dispositivo` (`HttpOnly`,
   `SameSite=Lax`, `Secure` según el request, 10 años). Devuelve la misma forma que `actual`.
 - **`GET`/`DELETE /api/dispositivos/{id}`** — Admin. Listado de dispositivos activos del tenant y
-  revocación (baja lógica de `deleted_at`, nunca física).
+  revocación (baja lógica de `deleted_at`, nunca física). En la web los opera la pantalla
+  Administración → Organización → Equipos POS (`/organizacion/equipos-pos`, solo Admin). Un
+  dispositivo revocado sigue bloqueando la baja de su punto de venta, de su tenant y del usuario
+  que lo vinculó (`id_usuario_alta`): la guarda de uso cuenta historia, no filas vivas.
 - **`POST /api/auth/login-dispositivo`** — anónimo, `{ usuario, password }`. Exige la cookie de
   dispositivo (si falta o es inválida, `404 dispositivo_no_vinculado`, sin llegar a validar
   credenciales). Busca la cuenta por `(id_tenant del dispositivo, usuario)` — reusa el mismo

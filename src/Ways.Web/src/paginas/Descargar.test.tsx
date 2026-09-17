@@ -51,10 +51,12 @@ describe('Descargar', () => {
     }
   })
 
-  it('avisa que revocar un equipo todavía no tiene pantalla propia', () => {
+  it('manda a revocar un equipo desde la pantalla Equipos POS, sin pasar por soporte', () => {
     renderDescargar()
 
-    expect(screen.getByText(/contactá al soporte/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Equipos POS' })).toHaveAttribute('href', '/organizacion/equipos-pos')
+    expect(screen.getByText(/sigue bloqueando la baja de su punto de venta, del tenant y del usuario que lo vinculó/)).toBeInTheDocument()
+    expect(screen.queryByText(/soporte/)).not.toBeInTheDocument()
   })
 
   it('tiene un link de vuelta a /login', () => {

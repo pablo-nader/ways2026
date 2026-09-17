@@ -106,10 +106,20 @@ export function Descargar() {
           </p>
 
           <h2 className="h5 mt-4">Revocar un equipo</h2>
-          <p>
-            Todavía no hay una pantalla en Ways para listar o revocar dispositivos vinculados desde
-            la web. Para revocar un equipo, contactá al soporte.
-          </p>
+          <ul>
+            <li>
+              Un administrador lo revoca desde Ways, en Administración → Organización →{' '}
+              <Link to="/organizacion/equipos-pos">Equipos POS</Link>, con el botón "Revocar".
+            </li>
+            <li>
+              El equipo deja de poder iniciar sesión y las sesiones abiertas en él se cortan en su
+              próxima operación.
+            </li>
+            <li>
+              Un equipo revocado sigue bloqueando la baja de su punto de venta, del tenant y del
+              usuario que lo vinculó.
+            </li>
+          </ul>
 
           <h2 className="h5 mt-4">Problemas frecuentes</h2>
           <dl className="mb-0">
