@@ -196,7 +196,7 @@ describe('Caja — apertura', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
 
-    expect(await screen.findByText('El fondo inicial tiene que ser un número mayor o igual a 0.')).toBeInTheDocument()
+    expect(await screen.findByText('El fondo inicial es obligatorio.')).toBeInTheDocument()
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/caja/turnos')).toHaveLength(0)
   })
 

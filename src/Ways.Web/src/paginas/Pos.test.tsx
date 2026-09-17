@@ -1241,7 +1241,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     fireEvent.change(dialogo.getByLabelText('Buscar artículo por nombre'), { target: { value: 'fa' } })
     fireEvent.keyDown(dialogo.getByLabelText('Buscar artículo por nombre'), { key: 'Enter' })
 
-    expect(await dialogo.findByText('$200,00')).toBeInTheDocument()
+    expect(await dialogo.findByText('$ 200,00')).toBeInTheDocument()
     const botonAgregar = dialogo.getByRole('button', { name: 'Agregar' })
     expect(botonAgregar).toBeDisabled()
 

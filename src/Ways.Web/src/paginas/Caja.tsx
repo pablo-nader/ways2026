@@ -52,8 +52,10 @@ function FormularioApertura({ idPuntoVenta, onAbierto }: PropsFormularioApertura
     // mismo tick le gana al re-render que deshabilita el botón.
     if (abriendoRef.current) return
 
-    if (fondoInicial === null || fondoInicial < 0) {
-      setError('El fondo inicial tiene que ser un número mayor o igual a 0.')
+    // `fondoInicial < 0` es inalcanzable: `CampoImporte` de este campo no tiene
+    // `admiteNegativos`, así que nunca puede emitir un número negativo (judgment-day ronda 2).
+    if (fondoInicial === null) {
+      setError('El fondo inicial es obligatorio.')
       return
     }
 
