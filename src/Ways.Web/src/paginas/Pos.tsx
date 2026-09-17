@@ -205,6 +205,59 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
   )
 }
 
+type PropsConfirmacionDeCobro = {
+  total: number
+  pagado: number
+  vuelto: number
+  ocupado: boolean
+  onFinalizar: () => void
+  onCancelar: () => void
+}
+
+/**
+ * Diálogo de confirmación de F9 (stage-pos-atajos-cobro): a diferencia de `ConfirmacionDeBaja`
+ * (que arma su propio listener de teclado), este panel es puramente presentacional — el único
+ * listener de teclado del ciclo vive en `PantallaPos` (un segundo listener propio acá respondería
+ * al mismo F9/F10/Escape una segunda vez). El foco por defecto al montar va a "Cancelar", mismo
+ * criterio conservador que `ConfirmacionDeBaja`. Mientras `ocupado` (el propio `cobrar()` en
+ * vuelo), ambos botones quedan inertes — regla 13 de react-async-state: un cancelar no debe
+ * suceder a nada mientras la escritura está en curso.
+ */
+function ConfirmacionDeCobro({ total, pagado, vuelto, ocupado, onFinalizar, onCancelar }: PropsConfirmacionDeCobro) {
+  const cancelarRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    cancelarRef.current?.focus()
+  }, [])
+
+  return (
+    <div className="alert alert-info rounded-0" role="alertdialog" aria-modal="true" aria-label="¿Finalizar venta?">
+      <p className="mb-2">
+        <strong>¿Finalizar venta?</strong>
+      </p>
+      <ul className="mb-3 list-unstyled">
+        <li>Total: {formatearMoneda(total)}</li>
+        <li>Pagado: {formatearMoneda(pagado)}</li>
+        <li>Vuelto: {formatearMoneda(vuelto)}</li>
+      </ul>
+      <div className="d-flex gap-2">
+        <button type="button" className="btn btn-success rounded-0" disabled={ocupado} onClick={onFinalizar}>
+          {ocupado ? 'Finalizando…' : 'Finalizar (F9)'}
+        </button>
+        <button
+          ref={cancelarRef}
+          type="button"
+          className="btn btn-outline-secondary rounded-0"
+          disabled={ocupado}
+          onClick={onCancelar}
+        >
+          Cancelar (F10)
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /** stage-desktop-pos: seam opcional para que el shell del POS de escritorio se entere de una
  * venta recién emitida (ticket ESC/POS + pulso de cajón) sin que esta pantalla sepa nada de
  * impresoras — `medios` viaja junto porque es lo único que le falta al llamador para resolver el
@@ -289,6 +342,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   const cobrandoRef = useRef(false)
   const generacionCobroRef = useRef(0)
   const [errorCobro, setErrorCobro] = useState('')
+
+  // stage-pos-atajos-cobro: F9 con el pago ya cubierto abre esta puerta antes de cobrar de
+  // verdad ("¿Finalizar venta?") — clickear "Cobrar" directamente NUNCA pasa por acá (sigue
+  // cobrando de inmediato, comportamiento preexistente). `disparadorConfirmacionRef` captura
+  // SÍNCRONAMENTE (react-async-state regla 12) el control enfocado en el momento del F9 que
+  // abrió la puerta, para poder devolverle el foco si el cajero cancela.
+  const [confirmandoCobro, setConfirmandoCobro] = useState(false)
+  const disparadorConfirmacionRef = useRef<HTMLElement | null>(null)
 
   // stage-6-turnos-caja (Slice 7): gate seam del checkout — un 409 turno_no_abierto reemplaza el
   // panel de cobro por la oferta de abrir turno en vez de un error crudo (design: Web
@@ -944,13 +1005,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'F2') return
-      if (modoPresupuesto || cobrando || buscadorAbierto || gateTurno || ventaEmitida) return
+      if (modoPresupuesto || cobrando || buscadorAbierto || gateTurno || ventaEmitida || confirmandoCobro) return
       evento.preventDefault()
       setBuscadorAbierto(true)
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, cobrando, buscadorAbierto, gateTurno, ventaEmitida])
+  }, [modoPresupuesto, cobrando, buscadorAbierto, gateTurno, ventaEmitida, confirmandoCobro])
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
@@ -967,10 +1028,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   // vuelve a correr cuando `bloqueadoPorTurno` cambia y recién ahí consume el pedido.
   useEffect(() => {
     if (!focoPendienteRef.current) return
-    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno) return
+    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro) return
     focoPendienteRef.current = false
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno])
+  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro])
 
   /**
    * Foco NEUTRAL — mount inicial (reemplaza el `autoFocus` nativo, no confiable en un mount real:
@@ -992,11 +1053,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
    * extendida de "restaurar foco" a "adquirir foco por primera vez").
    */
   useEffect(() => {
-    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno) return
+    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro) return
     const activo = document.activeElement
     if (activo !== document.body && activo !== null && activo !== inputEscaneoRef.current) return
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno])
+  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro])
 
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
@@ -1021,6 +1082,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   const pagosConVuelto = filasAPagosConVuelto(filasPago, medioPorId, totalParaVuelto)
   const faltante = previaFallida ? 0 : calcularFaltante(totalActual, pagosConVuelto)
   const excedente = previaFallida ? 0 : calcularExcedente(totalActual, pagosConVuelto)
+
+  // stage-pos-atajos-cobro: "cubre el total" para F9 espeja EXACTO el rechazo por tolerancia de
+  // `validarPagosLocal` (`sumaImportes + toleranciaPago < total`, acá negado) — nunca un `>=`
+  // crudo sin tolerancia, para no exigirle al cajero un peso más de lo que el propio botón
+  // "Cobrar" ya aceptaría. `faltante` ya vale `0` bajo vista previa fallida (arriba), así que ese
+  // caso queda cubierto solo por ser `<=` cualquier tolerancia no negativa, sin caso especial.
+  const toleranciaPago = parametros?.toleranciaPago ?? 0
+  const pagosCubrenElTotal = faltante <= toleranciaPago
 
   const rechazoLocal =
     (!modoPresupuesto && subtotalPrevia === null) || !clienteSeleccionado || !parametros
@@ -1066,6 +1135,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   const puedeCobrar = modoPresupuesto
     ? precondicionesListas && !cobrando && rechazoLocal === null
     : precondicionesListas && !cobrando && (subtotalPrevia !== null ? rechazoLocal === null : pagosConVuelto.length > 0)
+
+  // El diálogo "¿Finalizar venta?" (F9) es una puerta de confirmación real (react-async-state
+  // regla 13: "una compuerta de confirmación debe declarar el nivel en el que es inerte") —
+  // mientras está abierta, el resto de los controles de venta libre quedan tan inertes como
+  // durante el propio `cobrando`. Sin esto, el cajero podría editar el carrito o los pagos con el
+  // diálogo abierto y terminar cobrando un total/vuelto distinto del que el diálogo mostró.
+  const pantallaCobroInerte = cobrando || confirmandoCobro
 
   async function cobrar() {
     // react-async-state regla 9: guard de reentrancia de primera línea — un doble click en el
@@ -1133,6 +1209,130 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       }
     }
   }
+
+  /** F9 sin cobertura (spec pos-atajos-cobro, F9 rama a): foco a la primera fila de pago vacía, o
+   * a la primera fila si todas tienen importe cargado pero la suma no alcanza — nunca abre el
+   * diálogo. El input se ubica por `id` (armado con el mismo `fila.id` que ya identifica cada
+   * fila unívocamente, ver `etiquetaDeCampoFila`) en vez de mantener un mapa de refs aparte. */
+  function enfocarPrimeraFilaDePagoPendiente() {
+    const filaVacia = filasPago.find((f) => f.importe.trim() === '')
+    const idFila = (filaVacia ?? filasPago[0])?.id
+    if (idFila === undefined) return
+    document.getElementById(`pos-fila-pago-importe-${idFila}`)?.focus()
+  }
+
+  /** F9 con el pago ya cubierto, o clic en "Finalizar (F9)" del diálogo: dispara el mismo
+   * `cobrar()` de siempre — SIN repetir acá la guarda de reentrancia (regla 9/11): agregar una
+   * segunda copia del mismo chequeo sería código muerto, imposible de probar por mutación (el
+   * propio `cobrandoRef` de `cobrar()`, mutado de forma síncrona ANTES de su primer `await`, ya
+   * es LA protección real de un doble F9/doble click sobre este mismo diálogo). El diálogo se
+   * cierra recién cuando `cobrar()` termina (éxito o error), nunca antes: mientras tanto sigue
+   * mostrando el mismo total/pagado/vuelto con el que se confirmó. */
+  async function confirmarYcobrar() {
+    await cobrar()
+    setConfirmandoCobro(false)
+  }
+
+  /** F10, Escape o clic en "Cancelar" del diálogo (spec pos-atajos-cobro, F9 rama b): nunca
+   * cancela nada mientras el cobro sigue en vuelo (regla 13 — "un cancelar no debe suceder a
+   * nada"). El foco se devuelve en el efecto de abajo, NUNCA acá mismo: mientras el diálogo está
+   * abierto, `pantallaCobroInerte` deja el control original (`disparadorConfirmacionRef`)
+   * `disabled` — un `.focus()` síncrono contra un control todavía deshabilitado (React recién va
+   * a aplicar el cierre del diálogo) es un no-op silencioso. */
+  function cancelarConfirmacionDeCobro() {
+    if (cobrandoRef.current) return
+    setConfirmandoCobro(false)
+  }
+
+  /** Devuelve el foco recién cuando el diálogo "¿Finalizar venta?" TERMINA de cerrarse (cancelado,
+   * finalizado con éxito o con error) — nunca antes: en un `useEffect` (no en el propio handler de
+   * cancelar/finalizar) porque necesita que React ya haya confirmado el commit que reactiva el
+   * control original (`pantallaCobroInerte` deja de deshabilitarlo) o desmontado la pantalla
+   * entera (venta emitida). `esAlcanzable` descarta un control que ya no está en el documento o
+   * que sigue deshabilitado (ej. la venta emitida reemplazó toda la pantalla); en ese caso cae al
+   * input de código, que tampoco puede recibir foco si a su vez ya no está montado (`?.focus()`
+   * sobre `null` es un no-op). */
+  const confirmandoCobroPrevioRef = useRef(false)
+  useEffect(() => {
+    if (confirmandoCobroPrevioRef.current && !confirmandoCobro) {
+      const foco = disparadorConfirmacionRef.current
+      disparadorConfirmacionRef.current = null
+      const alcanzable = foco !== null && foco.isConnected && !foco.matches(':disabled') && foco !== document.body
+      if (alcanzable) {
+        foco.focus()
+      } else {
+        inputEscaneoRef.current?.focus()
+      }
+    }
+    confirmandoCobroPrevioRef.current = confirmandoCobro
+  }, [confirmandoCobro])
+
+  // F9 (spec pos-atajos-cobro): mismo criterio de "pantalla de venta activa" que el listener de
+  // F2 (buscador cerrado, sin gate de turno ni ticket ya emitido reemplazando la pantalla, sin el
+  // propio diálogo de confirmación ya abierto) — nunca bajo `?idPresupuesto=` sin presupuesto
+  // todavía cargado (esas dos pantallas tampoco tienen el botón "Cobrar"). Con el diálogo YA
+  // abierto, este mismo listener atiende F9 (finalizar)/F10/Escape (cancelar) — UN SOLO listener
+  // de `document` para todo el ciclo: un segundo listener propio del diálogo respondería al mismo
+  // evento dos veces.
+  useEffect(() => {
+    function alTeclado(evento: KeyboardEvent) {
+      if (confirmandoCobro) {
+        if (evento.key === 'F9') {
+          evento.preventDefault()
+          void confirmarYcobrar()
+        } else if (evento.key === 'F10') {
+          // WebView2/algunos navegadores: F10 sin `preventDefault` activa la barra de menú.
+          evento.preventDefault()
+          cancelarConfirmacionDeCobro()
+        } else if (evento.key === 'Escape') {
+          evento.preventDefault()
+          cancelarConfirmacionDeCobro()
+        }
+        return
+      }
+
+      if (evento.key !== 'F9') return
+      if (buscadorAbierto || gateTurno || ventaEmitida) return
+      if (modoPresupuesto && presupuesto === null) return
+      if (cobrandoRef.current) return
+      evento.preventDefault()
+
+      // "Cobrar disabled por otro motivo" (turno cerrado, carrito vacío, cliente/punto de venta
+      // sin elegir, medios/parámetros sin cargar): F9 no hace nada — nunca bypasea validaciones.
+      if (!precondicionesListas) return
+
+      if (!pagosCubrenElTotal) {
+        enfocarPrimeraFilaDePagoPendiente()
+        return
+      }
+
+      // Cubre el total pero `puedeCobrar` sigue en `false` por otra razón local (ej. falta la
+      // referencia de un medio que la requiere, el vuelto no se justifica con billetes): tampoco
+      // abre el diálogo — el propio botón "Cobrar" seguiría deshabilitado.
+      if (!puedeCobrar) return
+
+      disparadorConfirmacionRef.current = document.activeElement as HTMLElement | null
+      setConfirmandoCobro(true)
+    }
+
+    document.addEventListener('keydown', alTeclado)
+    return () => document.removeEventListener('keydown', alTeclado)
+    // `confirmarYcobrar`/`cancelarConfirmacionDeCobro`/`enfocarPrimeraFilaDePagoPendiente` no son
+    // estables entre renders (cierran sobre estado del componente) — mismo criterio que el resto
+    // de los efectos de esta pantalla que llaman a un helper declarado en el cuerpo del
+    // componente: el efecto solo necesita re-suscribirse cuando cambian sus precondiciones reales.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    confirmandoCobro,
+    buscadorAbierto,
+    gateTurno,
+    ventaEmitida,
+    modoPresupuesto,
+    presupuesto,
+    precondicionesListas,
+    pagosCubrenElTotal,
+    puedeCobrar,
+  ])
 
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=`, la pantalla entera espera
   // el presupuesto congelado antes de mostrar nada operable — mismo criterio de carga/error
@@ -1296,7 +1496,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                 <button
                   type="button"
                   className="btn btn-sm btn-outline-warning rounded-0"
-                  disabled={cobrando || resolviendo}
+                  disabled={pantallaCobroInerte || resolviendo}
                   onClick={reintentarPrecios}
                 >
                   Reintentar
@@ -1313,14 +1513,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                   placeholder="Escanear o tipear un código (ej. 3*7790001234567)"
                   aria-label="Código escaneado"
                   value={entradaEscaneo}
-                  disabled={escaneando || cobrando || bloqueadoPorTurno}
+                  disabled={escaneando || pantallaCobroInerte || bloqueadoPorTurno}
                   onChange={(e) => setEntradaEscaneo(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), escanear())}
                 />
                 <button
                   type="button"
                   className="btn btn-primary rounded-0"
-                  disabled={escaneando || cobrando || bloqueadoPorTurno}
+                  disabled={escaneando || pantallaCobroInerte || bloqueadoPorTurno}
                   onClick={escanear}
                 >
                   {escaneando ? 'Buscando…' : 'Agregar'}
@@ -1328,14 +1528,18 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                 {/* "Buscar artículo" en vez de "Buscar" a secas: ya existe un botón "Buscar" en el
                     panel de cliente de esta misma pantalla (`Buscar cliente`) — un nombre
                     accesible idéntico rompería cualquier `getByRole('button', { name: 'Buscar' })`
-                    (ambos quedarían matcheados a la vez, tests preexistentes incluidos). */}
+                    (ambos quedarían matcheados a la vez, tests preexistentes incluidos). El
+                    `(F2)` es `aria-hidden`: solo decoración visual, el nombre accesible sigue
+                    siendo "Buscar artículo" a secas — `aria-keyshortcuts` es la forma correcta de
+                    exponer el atajo a tecnología asistiva. */}
                 <button
                   type="button"
                   className="btn btn-outline-primary rounded-0"
-                  disabled={escaneando || cobrando}
+                  disabled={escaneando || pantallaCobroInerte}
+                  aria-keyshortcuts="F2"
                   onClick={() => setBuscadorAbierto(true)}
                 >
-                  Buscar artículo
+                  Buscar artículo <sup aria-hidden="true">(F2)</sup>
                 </button>
               </div>
             )}
@@ -1383,7 +1587,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                                 className="form-control form-control-sm rounded-0"
                                 aria-label={`Cantidad de ${l.nombre}`}
                                 value={textoCantidad(l)}
-                                disabled={cobrando || bloqueadoPorTurno}
+                                disabled={pantallaCobroInerte || bloqueadoPorTurno}
                                 onChange={(e) => cambiarCantidad(l.idArticulo, e.target.value)}
                                 onBlur={() => confirmarCantidad(l.idArticulo)}
                               />
@@ -1419,7 +1623,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                               <button
                                 type="button"
                                 className="btn btn-sm btn-outline-danger rounded-0"
-                                disabled={cobrando || bloqueadoPorTurno}
+                                disabled={pantallaCobroInerte || bloqueadoPorTurno}
                                 onClick={() => mutarCarrito({ tipo: 'quitarLinea', idArticulo: l.idArticulo })}
                               >
                                 Quitar
@@ -1443,7 +1647,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
               <button
                 type="button"
                 className="btn btn-outline-secondary btn-sm rounded-0"
-                disabled={cobrando || bloqueadoPorTurno}
+                disabled={pantallaCobroInerte || bloqueadoPorTurno}
                 onClick={() => mutarCarrito({ tipo: 'vaciar' })}
               >
                 Vaciar carrito
@@ -1534,7 +1738,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                 id="pos-cliente"
                 className="form-select rounded-0"
                 value={clienteSeleccionado?.id ?? ''}
-                disabled={cobrando || modoPresupuesto || bloqueadoPorTurno}
+                disabled={pantallaCobroInerte || modoPresupuesto || bloqueadoPorTurno}
                 onChange={(e) => cambiarCliente(Number(e.target.value))}
               >
                 {fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map((c) => (
@@ -1553,14 +1757,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                   placeholder="Buscar otro cliente…"
                   aria-label="Buscar cliente"
                   value={terminoCliente}
-                  disabled={buscandoClientes || cobrando || bloqueadoPorTurno}
+                  disabled={buscandoClientes || pantallaCobroInerte || bloqueadoPorTurno}
                   onChange={(e) => setTerminoCliente(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscarClientes())}
                 />
                 <button
                   type="button"
                   className="btn btn-outline-primary rounded-0"
-                  disabled={buscandoClientes || cobrando || bloqueadoPorTurno}
+                  disabled={buscandoClientes || pantallaCobroInerte || bloqueadoPorTurno}
                   onClick={buscarClientes}
                 >
                   {buscandoClientes ? 'Buscando…' : 'Buscar'}
@@ -1602,7 +1806,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                       className="form-select form-select-sm rounded-0"
                       aria-label="Medio de pago"
                       value={fila.idMedioPago}
-                      disabled={cobrando || medios === null || bloqueadoPorTurno}
+                      disabled={pantallaCobroInerte || medios === null || bloqueadoPorTurno}
                       onChange={(e) => cambiarMedioDeFila(fila.id, e.target.value === '' ? '' : Number(e.target.value))}
                     >
                       <option value="">Elegir medio…</option>
@@ -1620,10 +1824,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                       type="number"
                       step="0.01"
                       min="0"
+                      id={`pos-fila-pago-importe-${fila.id}`}
                       className="form-control form-control-sm rounded-0"
                       aria-label={etiquetaDeCampoFila('Importe', medioDeFila, fila.id)}
                       value={fila.importe}
-                      disabled={cobrando || bloqueadoPorTurno}
+                      disabled={pantallaCobroInerte || bloqueadoPorTurno}
                       onChange={(e) => cambiarImporteDeFila(fila.id, e.target.value)}
                     />
                   </div>
@@ -1634,7 +1839,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                       aria-label={etiquetaDeCampoFila('Referencia', medioDeFila, fila.id)}
                       placeholder={medioDeFila?.requiereReferencia ? 'Referencia (requerida)' : 'Referencia'}
                       value={fila.referencia}
-                      disabled={cobrando || bloqueadoPorTurno || !medioDeFila?.requiereReferencia}
+                      disabled={pantallaCobroInerte || bloqueadoPorTurno || !medioDeFila?.requiereReferencia}
                       onChange={(e) => cambiarReferenciaDeFila(fila.id, e.target.value)}
                     />
                   </div>
@@ -1646,14 +1851,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                       className="form-control form-control-sm rounded-0"
                       aria-label={etiquetaDeCampoFila('Vuelto', medioDeFila, fila.id)}
                       value={vueltoMostrado}
-                      disabled={cobrando || bloqueadoPorTurno || !medioDeFila?.admiteVuelto}
+                      disabled={pantallaCobroInerte || bloqueadoPorTurno || !medioDeFila?.admiteVuelto}
                       onChange={(e) => cambiarVueltoDeFila(fila.id, e.target.value)}
                     />
                     {filasPago.length > 1 && (
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-danger rounded-0"
-                        disabled={cobrando || bloqueadoPorTurno}
+                        disabled={pantallaCobroInerte || bloqueadoPorTurno}
                         aria-label="Quitar medio de pago"
                         onClick={() => quitarFilaPago(fila.id)}
                       >
@@ -1668,7 +1873,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
             <button
               type="button"
               className="btn btn-outline-secondary btn-sm rounded-0 mb-3"
-              disabled={cobrando || bloqueadoPorTurno}
+              disabled={pantallaCobroInerte || bloqueadoPorTurno}
               onClick={agregarFilaPago}
             >
               + Agregar medio de pago
@@ -1685,8 +1890,35 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
 
             {rechazoLocal && <div className="alert alert-warning rounded-0 py-1 px-2 small">{rechazoLocal.mensaje}</div>}
 
-            <button type="button" className="btn btn-success w-100 rounded-0" disabled={!puedeCobrar} onClick={cobrar}>
-              {cobrando ? 'Cobrando…' : 'Cobrar'}
+            {/* stage-pos-atajos-cobro: SOLO F9 pasa por acá — clickear "Cobrar" con el mouse
+                sigue cobrando de inmediato sin pedir confirmación, comportamiento preexistente. */}
+            {confirmandoCobro && (
+              <div className="mb-3">
+                <ConfirmacionDeCobro
+                  total={totalActual}
+                  pagado={sumarImportes(pagosConVuelto)}
+                  vuelto={excedente}
+                  ocupado={cobrando}
+                  onFinalizar={confirmarYcobrar}
+                  onCancelar={cancelarConfirmacionDeCobro}
+                />
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="btn btn-success w-100 rounded-0"
+              disabled={!puedeCobrar || confirmandoCobro}
+              aria-keyshortcuts="F9"
+              onClick={cobrar}
+            >
+              {cobrando ? (
+                'Cobrando…'
+              ) : (
+                <>
+                  Cobrar <sup aria-hidden="true">(F9)</sup>
+                </>
+              )}
             </button>
           </Box>
         </div>

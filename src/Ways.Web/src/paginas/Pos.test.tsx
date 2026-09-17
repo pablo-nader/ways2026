@@ -2693,3 +2693,246 @@ describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-busc
     expect(inputCodigo).toHaveFocus()
   })
 })
+
+describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () => {
+  it('"Cobrar" muestra (F9) como superíndice decorativo y expone el atajo con aria-keyshortcuts, sin tocar el nombre accesible', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const boton = screen.getByRole('button', { name: 'Cobrar' })
+    expect(boton).toHaveAttribute('aria-keyshortcuts', 'F9')
+    expect(boton).toHaveTextContent('(F9)')
+  })
+
+  it('"Buscar artículo" muestra (F2) como superíndice decorativo y expone el atajo con aria-keyshortcuts, sin tocar el nombre accesible', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    const boton = screen.getByRole('button', { name: 'Buscar artículo' })
+    expect(boton).toHaveAttribute('aria-keyshortcuts', 'F2')
+    expect(boton).toHaveTextContent('(F2)')
+  })
+
+  it('F9 sin ningún importe cargado enfoca el importe de la primera fila, sin abrir el diálogo', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+
+    fireEvent.keyDown(document, { key: 'F9' })
+
+    expect(importe).toHaveFocus()
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: `pagosCubrenElTotal` (`faltante <= toleranciaPago`) — con
+   * `tolerancia_pago = 10` (mock base) y un importe de $50 contra un total de $100, falta $50,
+   * muy por encima de la tolerancia. Mutación aplicada manualmente: forzar la rama de "cubre el
+   * total" a tomarse siempre (saltear el chequeo) → este test pasa a rojo (abre el diálogo en vez
+   * de enfocar). Revertido, vuelve a verde — evidencia registrada en el informe de la tarea.
+   */
+  it('F9 con importe insuficiente (por debajo de la tolerancia) enfoca el importe, sin abrir el diálogo', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.type(importe, '50')
+    // Saca el foco del importe ANTES del F9 (mutation-proof-tests regla 3: sin esto, el propio
+    // `userEvent.type` ya lo habría dejado enfocado y la aserción de foco de abajo no probaría
+    // nada — pasaría igual aunque `enfocarPrimeraFilaDePagoPendiente` nunca se llamara).
+    screen.getByLabelText('Código escaneado').focus()
+
+    fireEvent.keyDown(document, { key: 'F9' })
+
+    expect(importe).toHaveFocus()
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+  })
+
+  it('F9 con el pago cubriendo el total abre "¿Finalizar venta?" con total, pagado y vuelto', async () => {
+    await armarVentaLista()
+
+    fireEvent.keyDown(document, { key: 'F9' })
+
+    const dialogo = within(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' }))
+    expect(dialogo.getByText('Total: $100,00')).toBeInTheDocument()
+    expect(dialogo.getByText('Pagado: $100,00')).toBeInTheDocument()
+    expect(dialogo.getByText('Vuelto: $0,00')).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: la guarda de reentrancia de `cobrar()` (`cobrandoRef`), que es la que
+   * hace segura una segunda F9 mientras el diálogo sigue abierto (el propio `confirmarYcobrar`
+   * repite la misma guarda de primera línea, pero la protección real contra un segundo POST real
+   * es esta). Mutación aplicada manualmente: comentar el `if (cobrandoRef.current) return` al
+   * inicio de `cobrar()` → este test pasa a rojo (dos POSTs a `/ventas`). Revertido, vuelve a
+   * verde — evidencia registrada en el informe de la tarea.
+   */
+  it('una segunda F9 con el diálogo ya abierto confirma la venta exactamente una vez', async () => {
+    let resolverCheckout: (comprobante: ComprobanteEmitido) => void = () => {}
+    const checkoutPendiente = new Promise<ComprobanteEmitido>((resolve) => {
+      resolverCheckout = resolve
+    })
+
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') return checkoutPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    fireEvent.keyDown(document, { key: 'F9' })
+    await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
+
+    // react-async-state regla 11 (reentrancia por ref, no por estado): las DOS F9 se disparan
+    // dentro del MISMO `act` síncrono a propósito — envueltas por separado, cada `fireEvent`
+    // fuerza su propio flush y la segunda ya vería `cobrando` actualizado por estado; acá adentro
+    // ninguna de las dos ve un re-render intermedio, así que solo el `ref` (mutado de forma
+    // síncrona, ANTES del primer `await` de `cobrar()`) puede evitar el segundo POST.
+    act(() => {
+      fireEvent.keyDown(document, { key: 'F9' })
+      fireEvent.keyDown(document, { key: 'F9' })
+    })
+
+    expect(apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ventas')).toHaveLength(1)
+
+    await act(async () => {
+      resolverCheckout(comprobanteEmitidoFixture())
+      await Promise.resolve()
+    })
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+  })
+
+  it('clic en "Finalizar (F9)" del diálogo cobra exactamente una vez', async () => {
+    await armarVentaLista()
+
+    fireEvent.keyDown(document, { key: 'F9' })
+    const dialogo = within(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' }))
+
+    await userEvent.click(dialogo.getByRole('button', { name: /Finalizar/ }))
+
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ventas')).toHaveLength(1)
+  })
+
+  it('F10 cierra el diálogo sin cobrar y devuelve el foco al importe', async () => {
+    await armarVentaLista()
+    const importe = screen.getByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    importe.focus()
+
+    fireEvent.keyDown(document, { key: 'F9' })
+    await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
+
+    fireEvent.keyDown(document, { key: 'F10' })
+
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ventas')).toHaveLength(0)
+    expect(importe).toHaveFocus()
+  })
+
+  it('Escape cierra el diálogo sin cobrar y devuelve el foco al importe', async () => {
+    await armarVentaLista()
+    const importe = screen.getByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    importe.focus()
+
+    fireEvent.keyDown(document, { key: 'F9' })
+    await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ventas')).toHaveLength(0)
+    expect(importe).toHaveFocus()
+  })
+
+  it('clic en "Cancelar (F10)" cierra el diálogo sin cobrar y devuelve el foco al importe', async () => {
+    await armarVentaLista()
+    const importe = screen.getByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    importe.focus()
+
+    fireEvent.keyDown(document, { key: 'F9' })
+    const dialogo = within(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' }))
+
+    await userEvent.click(dialogo.getByRole('button', { name: /Cancelar/ }))
+
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ventas')).toHaveLength(0)
+    expect(importe).toHaveFocus()
+  })
+
+  it('clic directo en "Cobrar" cobra de inmediato, sin pasar por el diálogo de confirmación', async () => {
+    await armarVentaLista()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cobrar' }))
+
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ventas')).toHaveLength(1)
+  })
+
+  it('F9 no hace nada con el carrito vacío (Cobrar deshabilitado por otro motivo)', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    fireEvent.keyDown(document, { key: 'F9' })
+
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+  })
+
+  it('F9 no hace nada con el turno cerrado', async () => {
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/caja/turnos/abierto')) return Promise.resolve(null)
+      return undefined
+    })
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByText('Turno cerrado')
+
+    fireEvent.keyDown(document, { key: 'F9' })
+
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+  })
+
+  it('F9 no hace nada mientras el cobro ya está en curso', async () => {
+    let resolverCheckout: (comprobante: ComprobanteEmitido) => void = () => {}
+    const checkoutPendiente = new Promise<ComprobanteEmitido>((resolve) => {
+      resolverCheckout = resolve
+    })
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') return checkoutPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cobrando…' })).toBeInTheDocument())
+
+    fireEvent.keyDown(document, { key: 'F9' })
+
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+    expect(apiPostMock.mock.calls.filter((llamada) => llamada[0] === '/ventas')).toHaveLength(1)
+
+    await act(async () => {
+      resolverCheckout(comprobanteEmitidoFixture())
+      await Promise.resolve()
+    })
+  })
+
+  it('F9 no abre nada mientras el buscador de artículos está abierto', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
+    await screen.findByRole('dialog', { name: 'Buscar artículo' })
+
+    fireEvent.keyDown(document, { key: 'F9' })
+
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Buscar artículo' })).toBeInTheDocument()
+  })
+})
