@@ -137,6 +137,8 @@ function mockearRutasComunes(sobrescribir?: (ruta: string) => Promise<unknown> |
     if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
     if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
     if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaFixture()])
+    // stage-pos-turno-y-foco: turno ABIERTO por defecto — `Pos.tsx` lo consulta apenas monta.
+    if (ruta.startsWith('/caja/turnos/abierto')) return Promise.resolve({ id: 501, estado: 'Abierto' })
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -195,7 +197,7 @@ describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-po
     await userEvent.type(screen.getByPlaceholderText('Contraseña'), 'secreta123')
     await userEvent.click(screen.getByRole('button', { name: 'Ingresar' }))
 
-    expect(await screen.findByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Vender' })).toBeInTheDocument()
     expect(screen.getByText('Almacén Demo')).toBeInTheDocument()
     expect(screen.getByText(/PV 1 — Local Centro · jperez/)).toBeInTheDocument()
     // Prueba que el PV fijo llegó de verdad a `Pos.tsx` vía `usePuntoVenta()`: el encabezado del
@@ -230,7 +232,7 @@ describe('AppPos — la sesión del cajero no vence hasta que cierra sesión (re
     })
     render(<AppPos />)
 
-    expect(await screen.findByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Vender' })).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('Usuario')).not.toBeInTheDocument()
     expect(apiPostMock).not.toHaveBeenCalledWith('/auth/login-dispositivo', expect.anything())
   })
@@ -274,7 +276,7 @@ describe('AppPos — la sesión del cajero no vence hasta que cierra sesión (re
       return undefined
     })
     render(<AppPos />)
-    await screen.findByRole('button', { name: 'Cerrar caja' })
+    await screen.findByRole('link', { name: 'Vender' })
 
     // La sesión se revoca del lado del servidor: la próxima vez que `AppPos` resuelva todo de
     // nuevo, `/auth/me` ya no la reconoce.
@@ -295,7 +297,7 @@ describe('AppPos — la sesión del cajero no vence hasta que cierra sesión (re
       return undefined
     })
     render(<AppPos />)
-    await screen.findByRole('button', { name: 'Cerrar caja' })
+    await screen.findByRole('link', { name: 'Vender' })
 
     apiGetMock.mockImplementation((ruta: string) =>
       ruta === '/dispositivos/actual'

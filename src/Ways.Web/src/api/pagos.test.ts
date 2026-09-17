@@ -8,9 +8,11 @@ import {
   consumoCuentaCorriente,
   efectivoEntregado,
   esVueltoJustificado,
+  filaPagoInicial,
   filaPagoVacia,
   filasAPagosConVuelto,
   filasAPagosParaCalculo,
+  idMedioEfectivo,
   medioDisponibleParaCliente,
   sumarImportes,
   sumarVueltos,
@@ -420,6 +422,39 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
 describe('pagos — filaPagoVacia', () => {
   it('arma una fila sin medio, importe, referencia ni vuelto manual', () => {
     expect(filaPagoVacia(7)).toEqual({ id: 7, idMedioPago: '', importe: '', referencia: '', vueltoManual: '' })
+  })
+})
+
+describe('pagos — idMedioEfectivo', () => {
+  it('devuelve el id del medio con comportamiento Efectivo', () => {
+    const efectivo = medioFixture({ id: 1, comportamiento: 'Efectivo' })
+    const tarjeta = medioFixture({ id: 2, nombre: 'Tarjeta', comportamiento: 'Electronico' })
+    expect(idMedioEfectivo([tarjeta, efectivo])).toBe(1)
+  })
+
+  it('sin medios (todavía no cargó) devuelve \'\'', () => {
+    expect(idMedioEfectivo(null)).toBe('')
+  })
+
+  it('sin ningún medio Efectivo configurado devuelve \'\'', () => {
+    const tarjeta = medioFixture({ id: 2, nombre: 'Tarjeta', comportamiento: 'Electronico' })
+    expect(idMedioEfectivo([tarjeta])).toBe('')
+  })
+})
+
+describe('pagos — filaPagoInicial', () => {
+  it('con un medio Efectivo configurado, preselecciona su id', () => {
+    const efectivo = medioFixture({ id: 3, comportamiento: 'Efectivo' })
+    expect(filaPagoInicial(7, [efectivo])).toEqual({ id: 7, idMedioPago: 3, importe: '', referencia: '', vueltoManual: '' })
+  })
+
+  it('sin medios cargados (null), se comporta igual que filaPagoVacia', () => {
+    expect(filaPagoInicial(7, null)).toEqual(filaPagoVacia(7))
+  })
+
+  it('sin ningún medio Efectivo, se comporta igual que filaPagoVacia', () => {
+    const tarjeta = medioFixture({ id: 2, nombre: 'Tarjeta', comportamiento: 'Electronico' })
+    expect(filaPagoInicial(7, [tarjeta])).toEqual(filaPagoVacia(7))
   })
 })
 

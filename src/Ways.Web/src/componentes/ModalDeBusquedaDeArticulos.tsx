@@ -24,6 +24,12 @@ export type PropsModalDeBusquedaDeArticulos = {
    * un contexto incompleto. */
   idListaPrecio: number | null
   idEmpresa: number | null
+  /** stage-pos-turno-y-foco: `false` mientras el turno del punto de venta está cerrado — el
+   * buscador sigue sirviendo para consultar precio (spec: "solo búsqueda/consulta de precio
+   * mientras el turno está cerrado"), pero "Agregar" queda deshabilitado por fila (nunca oculto:
+   * la columna "Acciones" no debe quedar vacía sin explicación). Por defecto `true` (app web
+   * normal, turno abierto) para no romper ningún llamador existente. */
+  puedeAgregar?: boolean
   onAgregar: (linea: Omit<LineaCarrito, 'cantidad'>, cantidad: number) => void
   onCerrar: () => void
 }
@@ -36,7 +42,13 @@ export type PropsModalDeBusquedaDeArticulos = {
  * se ve acá es solo una vista previa a `cantidad = 1` (`ofertas/resolver`), la línea real la
  * resuelve el efecto de precios de `Pos.tsx` como a cualquier otra.
  */
-export function ModalDeBusquedaDeArticulos({ idListaPrecio, idEmpresa, onAgregar, onCerrar }: PropsModalDeBusquedaDeArticulos) {
+export function ModalDeBusquedaDeArticulos({
+  idListaPrecio,
+  idEmpresa,
+  puedeAgregar = true,
+  onAgregar,
+  onCerrar,
+}: PropsModalDeBusquedaDeArticulos) {
   const [termino, setTermino] = useState('')
   const [buscando, setBuscando] = useState(false)
   const [resultados, setResultados] = useState<ArticuloListado[] | null>(null)
@@ -50,11 +62,24 @@ export function ModalDeBusquedaDeArticulos({ idListaPrecio, idEmpresa, onAgregar
   // regla 9: reentrancia de primera línea — un doble click en la misma fila (o en dos filas
   // distintas) antes de que el cierre del modal se comite no dispara un segundo agregado.
   const agregadoRef = useRef(false)
+  const inputBusquedaRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current)
     }
+  }, [])
+
+  // stage-pos-turno-y-foco (fix real, verificado en navegador real — ver el comentario de
+  // `focoPendienteRef` en Pos.tsx): reemplaza el atributo JSX `autoFocus` que tenía este input —
+  // en Chrome real, con el documento sin foco de ventana en el momento del mount (`document.
+  // hasFocus() === false`, una condición real y no una carrera transitoria), `autoFocus` no hace
+  // nada y el foco se queda en `body`; un `elemento.focus()` imperativo en un efecto sí funciona
+  // igual. jsdom no reproduce esa restricción, así que un test verde ahí nunca probó que
+  // `autoFocus` funcionara en la app real (react-async-state regla 12, extendida de "restaurar
+  // foco" a "adquirir foco por primera vez").
+  useEffect(() => {
+    inputBusquedaRef.current?.focus()
   }, [])
 
   useEffect(() => {
@@ -125,6 +150,7 @@ export function ModalDeBusquedaDeArticulos({ idListaPrecio, idEmpresa, onAgregar
   }
 
   function agregar(articulo: ArticuloListado) {
+    if (!puedeAgregar) return
     if (agregadoRef.current) return
     agregadoRef.current = true
     onAgregar(
@@ -145,6 +171,7 @@ export function ModalDeBusquedaDeArticulos({ idListaPrecio, idEmpresa, onAgregar
             <div className="modal-body">
               <div className="input-group mb-3">
                 <input
+                  ref={inputBusquedaRef}
                   type="search"
                   className="form-control rounded-0"
                   placeholder="Buscar por nombre…"
@@ -152,7 +179,6 @@ export function ModalDeBusquedaDeArticulos({ idListaPrecio, idEmpresa, onAgregar
                   value={termino}
                   onChange={(e) => cambiarTermino(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscarInmediato())}
-                  autoFocus
                 />
                 <button type="button" className="btn btn-primary rounded-0" disabled={buscando} onClick={buscarInmediato}>
                   {buscando ? 'Buscando…' : 'Buscar'}
@@ -196,7 +222,13 @@ export function ModalDeBusquedaDeArticulos({ idListaPrecio, idEmpresa, onAgregar
                             <td>{a.nombre}</td>
                             <td className="text-end">{precioTexto}</td>
                             <td className="text-end">
-                              <button type="button" className="btn btn-sm btn-primary rounded-0" onClick={() => agregar(a)}>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-primary rounded-0"
+                                disabled={!puedeAgregar}
+                                title={puedeAgregar ? undefined : 'Turno cerrado: abrí un turno para vender.'}
+                                onClick={() => agregar(a)}
+                              >
                                 Agregar
                               </button>
                             </td>

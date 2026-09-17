@@ -167,3 +167,55 @@ describe('ModalDeBusquedaDeArticulos — errores y reentrancia', () => {
     expect(onCerrar).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('ModalDeBusquedaDeArticulos — foco al abrir (stage-pos-turno-y-foco)', () => {
+  it('el input de búsqueda queda enfocado al montar', () => {
+    render(<ModalDeBusquedaDeArticulos {...propsDe()} />)
+
+    expect(screen.getByLabelText('Buscar artículo por nombre')).toHaveFocus()
+  })
+})
+
+describe('ModalDeBusquedaDeArticulos — puedeAgregar (stage-pos-turno-y-foco: turno cerrado, solo consulta)', () => {
+  it('con puedeAgregar=false, el precio se muestra pero "Agregar" queda deshabilitado y no dispara onAgregar', async () => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/articulos?busqueda=fa') ? Promise.resolve(paginaDe([articuloListadoFixture()])) : Promise.reject(new Error(ruta)),
+    )
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/resolver'
+        ? Promise.resolve<ResultadoDeResolucion[]>([
+            { idArticulo: 9, idListaPrecio: 1, precioOriginal: 250, precioFinal: 200, descuentoUnitario: 50, aplicadas: [] },
+          ])
+        : Promise.reject(new Error(ruta)),
+    )
+    const onAgregar = vi.fn()
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ onAgregar, puedeAgregar: false })} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fa' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText('$200,00')).toBeInTheDocument()
+    const boton = screen.getByRole('button', { name: 'Agregar' })
+    expect(boton).toBeDisabled()
+
+    fireEvent.click(boton)
+    expect(onAgregar).not.toHaveBeenCalled()
+  })
+
+  it('sin la prop (default), "Agregar" queda habilitado — comportamiento sin cambios para los demás llamadores', async () => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/articulos?busqueda=fa') ? Promise.resolve(paginaDe([articuloListadoFixture()])) : Promise.reject(new Error(ruta)),
+    )
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/resolver' ? Promise.resolve<ResultadoDeResolucion[]>([]) : Promise.reject(new Error(ruta)),
+    )
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe()} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fa' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByRole('button', { name: 'Agregar' })).toBeEnabled()
+  })
+})

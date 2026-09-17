@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pos } from './Pos'
 import { ErrorApi } from '../api/cliente'
@@ -15,6 +15,7 @@ import type {
   PresupuestoParaVenta,
   PuntoVentaListado,
   ResultadoDeResolucion,
+  TurnoResumen,
 } from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
@@ -23,12 +24,21 @@ import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
  * defecto es la libre (`/pos`, sin `?idPresupuesto=`) para que los tests preexistentes no
  * cambien de comportamiento. El árbol se expone aparte para poder `rerender` el mismo árbol
  * después de mutar el punto de venta de la sesión. */
+/** Placeholder de `/caja/cierre` — solo para verificar QUE `Pos.tsx` navegó ahí con el `idTurno`
+ * correcto en el query string (el propio `CierreDeCaja` ya tiene sus tests en
+ * `CierreDeCaja.test.tsx`). */
+function PlaceholderDeCierreDeCaja() {
+  const [searchParams] = useSearchParams()
+  return <div>Cierre de turno {searchParams.get('idTurno')}</div>
+}
+
 function arbolDePos(ruta = '/pos') {
   return (
     <MemoryRouter initialEntries={[ruta]}>
       <Routes>
         <Route path="/pos" element={<Pos />} />
         <Route path="/presupuestos" element={<div>Presupuestos</div>} />
+        <Route path="/caja/cierre" element={<PlaceholderDeCierreDeCaja />} />
       </Routes>
     </MemoryRouter>
   )
@@ -194,6 +204,21 @@ function comprobanteEmitidoFixture(sobrescribir: Partial<ComprobanteEmitido> = {
   }
 }
 
+function turnoAbiertoFixture(sobrescribir: Partial<TurnoResumen> = {}): TurnoResumen {
+  return {
+    id: 900,
+    idPuntoVenta: 7,
+    idEmpleadoApertura: 3,
+    idEmpleadoCierre: null,
+    fechaApertura: '2026-08-04T12:00:00Z',
+    fechaCierre: null,
+    fondoInicial: 500,
+    estado: 'Abierto',
+    observaciones: null,
+    ...sobrescribir,
+  }
+}
+
 /**
  * jsdom sanea el `value` de un `<input type="number">` a `""` apenas se le asigna un número
  * incompleto (ej. "1."), a diferencia de un navegador real que preserva el texto tipeado
@@ -250,6 +275,12 @@ function rutaBaseDePos(ruta: string): Promise<unknown> | undefined {
   }
   if (ruta.startsWith('/parametros/tolerancia_pago')) {
     return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
+  }
+  // stage-pos-turno-y-foco: turno ABIERTO por defecto — así ningún test preexistente (que nunca
+  // pensó en el turno) se ve afectado por el nuevo bloqueo de venta libre; los tests dedicados al
+  // turno cerrado sobrescriben esta ruta explícitamente.
+  if (ruta.startsWith('/caja/turnos/abierto')) {
+    return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
   }
   return undefined
 }
@@ -444,7 +475,7 @@ describe('Pos — escaneo', () => {
       if (ruta.startsWith('/articulos/escaneo?entrada=')) {
         return Promise.reject(new ErrorApi(404, 'no_encontrado', 'No se encontró un artículo activo para el código 999.'))
       }
-      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
     renderPos()
@@ -486,11 +517,14 @@ describe('Pos — regresión: carga inicial de clientes vs. selección del usuar
         const pagina: PaginaDe<ClienteListado> = { items: [otroCliente], total: 1, pagina: 1, tamanio: 25 }
         return Promise.resolve(pagina)
       }
-      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
     renderPos()
 
+    // `/clientes` (montaje) queda pendiente a propósito — se espera al turno (independiente)
+    // en vez de la opción "Consumidor Final" para saber que el input ya está habilitado.
+    await waitFor(() => expect(screen.getByLabelText('Buscar cliente')).toBeEnabled())
     await userEvent.type(screen.getByLabelText('Buscar cliente'), 'perez')
     await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
 
@@ -729,7 +763,7 @@ describe('Pos — panel de pagos: precondiciones', () => {
         return Promise.reject(new ErrorApi(500, 'error', 'No se pudieron cargar los medios de pago.'))
       }
       if (ruta.startsWith('/parametros/')) return Promise.resolve<ParametroResuelto>({ clave: 'x', valor: '10' })
-      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
     renderPos()
@@ -890,7 +924,7 @@ describe('Pos — checkout', () => {
       if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture())
       if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta, medioCuentaCorriente])
       if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
-      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
     renderPos()
@@ -1098,6 +1132,268 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
     expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')).toHaveLength(1)
   })
+
+  it('el 409 también refresca el badge de turno de "Datos de la venta" (deja de mostrar "Turno abierto" y vuelve a mostrarlo tras reabrir)', async () => {
+    await armarVentaLista()
+    expect(screen.getByText('Turno abierto')).toBeInTheDocument()
+
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') {
+        return Promise.reject(new ErrorApi(409, 'turno_no_abierto', 'No hay un turno abierto en este punto de venta.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText('No hay un turno abierto')
+
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos') return Promise.resolve(turnoAbiertoFixture({ id: 999 }))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+
+    await screen.findByRole('button', { name: /Cobrar/ })
+    expect(screen.getByText('Turno abierto')).toBeInTheDocument()
+  })
+})
+
+describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)', () => {
+  function mockearTurnoCerrado(sobrescribir?: (ruta: string) => Promise<unknown> | undefined) {
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/caja/turnos/abierto')) return Promise.resolve(null)
+      return sobrescribir?.(ruta)
+    })
+  }
+
+  it('turno confirmado abierto: badge "Turno abierto" y acción "Cerrar caja"', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    expect(await screen.findByText('Turno abierto')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
+    expect(screen.queryByText('Turno cerrado: abrí un turno para vender.')).not.toBeInTheDocument()
+  })
+
+  it('"Cerrar caja" navega a /caja/cierre con el idTurno real', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByText('Turno abierto')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+    // `Pos()` no expone el router acá: se verifica indirectamente por la ausencia de la pantalla
+    // de venta y la aparición de la ruta declarada en `arbolDePos` para `/caja/cierre`.
+    expect(await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).toBeInTheDocument()
+  })
+
+  it('turno confirmado cerrado: badge "Turno cerrado", aviso claro y solo la búsqueda de artículos queda operable', async () => {
+    mockearTurnoCerrado()
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    expect(await screen.findByText('Turno cerrado')).toBeInTheDocument()
+    expect(screen.getByText('Turno cerrado: abrí un turno para vender.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cerrar caja' })).not.toBeInTheDocument()
+
+    // Escaneo/agregar y edición de carrito: deshabilitados.
+    expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeDisabled()
+    // Búsqueda de artículos: sigue operable (spec: "solo búsqueda/consulta de precio").
+    expect(screen.getByRole('button', { name: 'Buscar artículo' })).toBeEnabled()
+    // Cliente: deshabilitado.
+    expect(screen.getByLabelText('Cliente')).toBeDisabled()
+    expect(screen.getByLabelText('Buscar cliente')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
+    // Pagos: deshabilitados.
+    expect(screen.getByLabelText('Medio de pago')).toBeDisabled()
+    expect(screen.getByRole('button', { name: '+ Agregar medio de pago' })).toBeDisabled()
+    // Cobrar: deshabilitado (ya lo estaría por precondiciones, pero el gate lo hace explícito).
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+  })
+
+  it('con turno cerrado, el buscador de artículos sigue abriendo y mostrando precio, pero "Agregar" queda deshabilitado por fila', async () => {
+    const fanta = articuloListadoFixture()
+    mockearTurnoCerrado((ruta) => {
+      if (ruta.startsWith('/articulos?busqueda=fa')) {
+        const pagina: PaginaDe<ArticuloListado> = { items: [fanta], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      return rutaBaseDePos(ruta)
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 9, idListaPrecio: 1, precioOriginal: 250, precioFinal: 200, descuentoUnitario: 50, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByText('Turno cerrado')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
+    const dialogo = within(await screen.findByRole('dialog', { name: 'Buscar artículo' }))
+    fireEvent.change(dialogo.getByLabelText('Buscar artículo por nombre'), { target: { value: 'fa' } })
+    fireEvent.keyDown(dialogo.getByLabelText('Buscar artículo por nombre'), { key: 'Enter' })
+
+    expect(await dialogo.findByText('$200,00')).toBeInTheDocument()
+    const botonAgregar = dialogo.getByRole('button', { name: 'Agregar' })
+    expect(botonAgregar).toBeDisabled()
+
+    fireEvent.click(botonAgregar)
+    // El click en un botón deshabilitado no dispara el handler: el carrito sigue vacío (el modal
+    // sigue mostrando "Fanta 1.5L" en su propia tabla de resultados, eso es esperado) y el modal
+    // sigue abierto (nunca se cierra como sí pasaría con un "Agregar" real).
+    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Buscar artículo' })).toBeInTheDocument()
+  })
+
+  it('"Abrir turno" (reutiliza PanelGateTurno) abre el turno y habilita todo sin recargar la página, con el input de código enfocado', async () => {
+    mockearTurnoCerrado()
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByText('Turno cerrado')
+    expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
+
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/caja/turnos') return Promise.resolve(turnoAbiertoFixture())
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+    await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+
+    await screen.findByText('Turno abierto')
+    expect(screen.queryByText('Turno cerrado: abrí un turno para vender.')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toBeEnabled())
+    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Agregar' })).toBeEnabled()
+    expect(screen.getByLabelText('Cliente')).toBeEnabled()
+    expect(screen.getByLabelText('Medio de pago')).toBeEnabled()
+  })
+
+  /**
+   * Cláusula bajo prueba: el conjunct `bloqueadoPorTurno` del guard del efecto de foco pendiente
+   * (`if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno) return`). Encontrado
+   * reproduciendo en un navegador real (no en este test): la consulta de turno resuelve casi al
+   * instante tras el mount, así que sin este conjunct el efecto consumía el pedido de foco inicial
+   * (`focoPendienteRef.current = false`) contra un input TODAVÍA deshabilitado (turno recién
+   * arrancando su consulta) — un `.focus()` sobre un elemento deshabilitado es un no-op, y como el
+   * pedido ya se había marcado consumido, nunca se reintentaba cuando el turno terminaba de
+   * resolver. Evidencia de mutación (mutation-proof-tests regla 2): sacando `bloqueadoPorTurno` de
+   * esa condición (y de las dependencias del efecto), este test falla — el input queda habilitado
+   * pero SIN foco; restaurado, vuelve a verde.
+   */
+  it('el turno resuelto en vuelo no deja perdido el pedido de foco inicial: el input de código se enfoca apenas se habilita', async () => {
+    let resolverTurno: (t: TurnoResumen | null) => void = () => {}
+    const turnoPendiente = new Promise<TurnoResumen | null>((resolve) => {
+      resolverTurno = resolve
+    })
+    mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? turnoPendiente : undefined))
+
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
+    expect(screen.getByLabelText('Código escaneado')).not.toHaveFocus()
+
+    await act(async () => {
+      resolverTurno(turnoAbiertoFixture())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByLabelText('Código escaneado')).toBeEnabled()
+    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: el conjunct `bloqueadoPorTurno` del `disabled` del input de código
+   * (spec: "mientras el turno está cerrado, solo búsqueda/consulta de precio"). Evidencia de
+   * mutación (mutation-proof-tests regla 2): sacando `bloqueadoPorTurno` de ese `disabled`, este
+   * test falla (el input queda habilitado con el turno confirmado cerrado); restaurado, vuelve a
+   * verde.
+   */
+  it('con el turno confirmado cerrado, el input de código queda deshabilitado (nunca solo por escaneando/cobrando)', async () => {
+    mockearTurnoCerrado()
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByText('Turno cerrado')
+
+    expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
+  })
+
+  it('una respuesta desactualizada de /caja/turnos/abierto no pisa una más reciente (generación, react-async-state regla 2)', async () => {
+    let resolverPrimera: (t: TurnoResumen | null) => void = () => {}
+    const primeraPendiente = new Promise<TurnoResumen | null>((resolve) => {
+      resolverPrimera = resolve
+    })
+    let cantidadDeConsultas = 0
+    mockearApiGet((ruta) => {
+      if (ruta.startsWith('/caja/turnos/abierto')) {
+        cantidadDeConsultas += 1
+        if (cantidadDeConsultas === 1) return primeraPendiente
+        return Promise.resolve(turnoAbiertoFixture({ id: 777 }))
+      }
+      return undefined
+    })
+
+    const { rerender } = renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await waitFor(() => expect(cantidadDeConsultas).toBe(1))
+
+    // Un `recargar()` de punto de venta produce un objeto NUEVO con el mismo id — el efecto de
+    // turno vuelve a correr (su dependencia es la referencia del punto de venta, no solo el id)
+    // sin que `Pos()` remonte la pantalla (la key sigue siendo la misma, id 7).
+    estadoDePuntoVenta.puntoVenta = puntoVentaFixture()
+    rerender(arbolDePos())
+    await waitFor(() => expect(cantidadDeConsultas).toBe(2))
+    await screen.findByText('Turno abierto')
+
+    await act(async () => {
+      resolverPrimera(null)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // La respuesta vieja ("turno cerrado") no debe pisar el turno ya confirmado por la corrida
+    // más reciente.
+    expect(screen.getByText('Turno abierto')).toBeInTheDocument()
+    expect(screen.queryByText('Turno cerrado: abrí un turno para vender.')).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — medio de pago por defecto: Efectivo (stage-pos-turno-y-foco)', () => {
+  it('la fila inicial de pago preselecciona Efectivo apenas cargan los medios', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await waitFor(() => expect(screen.getByLabelText('Medio de pago')).toHaveValue(String(medioEfectivo.id)))
+  })
+
+  it('tras completar una venta, la fila de pago vuelve a preseleccionar Efectivo', async () => {
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText('Venta 0007-00000001')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+
+    await waitFor(() => expect(screen.getByLabelText('Medio de pago')).toHaveValue(String(medioEfectivo.id)))
+  })
+
+  it('sin ningún medio Efectivo configurado, la fila queda sin preseleccionar (comportamiento sin cambios)', async () => {
+    mockearApiGet((ruta) => (ruta === '/catalogos/medios-pago' ? Promise.resolve([medioTarjeta]) : undefined))
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByRole('option', { name: medioTarjeta.nombre })
+
+    expect(screen.getByLabelText('Medio de pago')).toHaveValue('')
+  })
 })
 
 describe('Pos — checkout: split de pago con el mismo medio', () => {
@@ -1298,12 +1594,16 @@ describe('Pos — debounce de la resolución de precios', () => {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/clientes') return clientesPendientes
       if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture())
-      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
     renderPos()
 
     const entrada = screen.getByLabelText('Código escaneado')
+    // `/clientes` queda pendiente a propósito (nunca resuelve en este test) — no se puede esperar
+    // la opción "Consumidor Final" como en el resto de los tests; se espera en cambio a que el
+    // turno (independiente de clientes) resuelva y habilite el input.
+    await waitFor(() => expect(entrada).toBeEnabled())
     await userEvent.type(entrada, '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
