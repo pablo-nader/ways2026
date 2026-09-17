@@ -1709,3 +1709,70 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     errorSpy.mockRestore()
   })
 })
+
+describe('Pos — seam alEmitir (stage-desktop-pos)', () => {
+  function renderPosConAlEmitir(alEmitir: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void) {
+    return render(
+      <MemoryRouter initialEntries={['/pos']}>
+        <Routes>
+          <Route path="/pos" element={<Pos alEmitir={alEmitir} />} />
+          <Route path="/presupuestos" element={<div>Presupuestos</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  async function completarVentaLista() {
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+  }
+
+  it('una venta exitosa invoca alEmitir con el comprobante, el cliente y la lista de medios de pago', async () => {
+    const alEmitir = vi.fn()
+    renderPosConAlEmitir(alEmitir)
+    await completarVentaLista()
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText('Venta 0007-00000001')
+
+    expect(alEmitir).toHaveBeenCalledTimes(1)
+    expect(alEmitir).toHaveBeenCalledWith(comprobanteEmitidoFixture(), consumidorFinal, [medioEfectivo, medioTarjeta, medioCuentaCorriente])
+  })
+
+  it('sin alEmitir (app web normal) la venta funciona exactamente igual, sin lanzar', async () => {
+    renderPos()
+    await completarVentaLista()
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+  })
+
+  it('un checkout que falla no invoca alEmitir', async () => {
+    mockearApiGet()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/ventas') return Promise.reject(new ErrorApi(400, 'error', 'No se pudo registrar la venta.'))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    const alEmitir = vi.fn()
+    renderPosConAlEmitir(alEmitir)
+    await completarVentaLista()
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText('No se pudo registrar la venta.')
+
+    expect(alEmitir).not.toHaveBeenCalled()
+  })
+})

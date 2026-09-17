@@ -27,8 +27,27 @@ function formatearFechaHora(iso: string): string {
  *
  * Es la pantalla con más obligaciones de `react-async-state` de toda la etapa (reglas 1, 4, 5, 6,
  * 7, 9): un cierre es irreversible, así que un doble submit es el peor defecto que puede tener.
+ *
+ * stage-desktop-pos: dos seams opcionales para el shell del POS de escritorio, ninguno cambia el
+ * comportamiento de la app web (quedan `undefined`/el default). `rutaVolver` reemplaza el destino
+ * fijo `/caja` — el shell de escritorio no tiene esa ruta, la suya es `/vender`. `alCerrarExitosamente`
+ * avisa al llamador el `TurnoConArqueos` recién cerrado — el shell de escritorio lo usa para
+ * navegar a la Caja Z (`CajaZ.tsx`, la vista completa con tickets/gastos) en vez de dejar al
+ * cajero en el resumen mínimo de acá; la app web normal no lo pasa y esta pantalla sigue mostrando
+ * su propio resumen con los links "Volver a caja"/"Ver Caja Z" de siempre.
+ *
+ * Fix judgment-day R2-3: esta pantalla NO imprime — el reporte Z auto-impreso y su "Reimprimir"
+ * viven en `ShellPos.tsx` (el único dueño de la impresión de escritorio, con su cola FIFO y sus
+ * avisos por trabajo). Un seam `contextoDeImpresion` vivió acá hasta la ronda 1, pero quedó
+ * inalcanzable en producción apenas `ShellPos` dejó de pasarlo (evitar la doble impresión) — se
+ * quitó entero en vez de mantener código muerto.
  */
-export function CierreDeCaja() {
+type PropsCierreDeCaja = {
+  rutaVolver?: string
+  alCerrarExitosamente?: (turno: TurnoConArqueos) => void
+}
+
+export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: PropsCierreDeCaja = {}) {
   const [searchParams] = useSearchParams()
   const crudo = searchParams.get('idTurno')
   const idTurno = crudo !== null && crudo.trim() !== '' ? Number(crudo) : Number.NaN
@@ -135,6 +154,7 @@ export function CierreDeCaja() {
       setZReporte(conArqueos)
       cerrandoRef.current = false
       setCerrando(false)
+      alCerrarExitosamente?.(conArqueos)
     } catch (e) {
       if (generacionCierreRef.current !== miGeneracion) return
 
@@ -177,7 +197,7 @@ export function CierreDeCaja() {
           <div className="col-12">
             <Box titulo="Cierre de turno" variante="warning">
               <p className="text-muted">No se especificó el turno a cerrar.</p>
-              <Link className="btn btn-outline-secondary rounded-0" to="/caja">
+              <Link className="btn btn-outline-secondary rounded-0" to={rutaVolver}>
                 Volver a caja
               </Link>
             </Box>
@@ -242,7 +262,7 @@ export function CierreDeCaja() {
                   the just-closed turno to its Caja Z screen"): mismo gate OperacionDePos que
                   /caja/turnos/:id/z, el cajero recién cerró este turno. */}
               <div className="d-flex gap-2">
-                <Link className="btn btn-outline-secondary rounded-0" to="/caja">
+                <Link className="btn btn-outline-secondary rounded-0" to={rutaVolver}>
                   Volver a caja
                 </Link>
                 <Link className="btn btn-primary rounded-0" to={`/caja/turnos/${idTurno}/z`}>
@@ -366,7 +386,7 @@ export function CierreDeCaja() {
                     {cerrando ? 'Cerrando…' : 'Finalizar cierre'}
                   </button>
                   {!cerrando && (
-                    <Link className="btn btn-outline-secondary rounded-0" to="/caja">
+                    <Link className="btn btn-outline-secondary rounded-0" to={rutaVolver}>
                       Cancelar
                     </Link>
                   )}

@@ -7,6 +7,9 @@ import { useAuth } from '../auth/useAuth'
 import { BotonDeDescarga } from '../componentes/BotonDeDescarga'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { enEscritorio, imprimir } from '../impresion/impresora'
+import { reporteZ } from '../impresion/plantillas'
+import type { ContextoDeImpresion } from '../impresion/plantillas'
 
 function formatearMoneda(valor: number): string {
   const signo = valor < 0 ? '-' : ''
@@ -29,8 +32,14 @@ function formatearFechaHora(iso: string): string {
  * de rol solo, sin claim de PV ni de turno): esta pantalla tampoco intenta un bloqueo cross-turno
  * que la API no tiene — cualquier Vendedor/Supervisor/Admin autenticado que conozca el id ve el
  * detalle, igual que del lado del servidor.
+ *
+ * stage-desktop-pos: `contextoDeImpresion` es el mismo seam opcional que `CierreDeCaja.tsx` —
+ * `undefined` en la app web normal (sin cambio de comportamiento), habilita un botón
+ * "Reimprimir" ESC/POS acá solo dentro de Tauri (`enEscritorio()`).
  */
-export function CajaZ() {
+type PropsCajaZ = { contextoDeImpresion?: ContextoDeImpresion }
+
+export function CajaZ({ contextoDeImpresion }: PropsCajaZ = {}) {
   const { id } = useParams<{ id: string }>()
   const idTurno = id !== undefined ? Number(id) : Number.NaN
   const idTurnoValido = Number.isFinite(idTurno)
@@ -42,6 +51,23 @@ export function CajaZ() {
   const [error, setError] = useState('')
   const [errorDescarga, setErrorDescarga] = useState('')
   const generacionRef = useRef(0)
+
+  const [imprimiendo, setImprimiendo] = useState(false)
+  const imprimiendoRef = useRef(false)
+  const [errorImpresion, setErrorImpresion] = useState('')
+
+  async function imprimirDetalle() {
+    if (!detalle || !contextoDeImpresion || imprimiendoRef.current) return
+    imprimiendoRef.current = true
+    setImprimiendo(true)
+    try {
+      const resultado = await imprimir(reporteZ(detalle, contextoDeImpresion))
+      setErrorImpresion(resultado.ok ? '' : resultado.mensaje)
+    } finally {
+      imprimiendoRef.current = false
+      setImprimiendo(false)
+    }
+  }
 
   useEffect(() => {
     if (!idTurnoValido) return
@@ -94,6 +120,16 @@ export function CajaZ() {
               onInicio={() => setErrorDescarga('')}
               className="btn btn-sm btn-outline-secondary rounded-0 d-print-none"
             />
+            {contextoDeImpresion && enEscritorio() && (
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-light rounded-0 d-print-none"
+                disabled={imprimiendo || !detalle}
+                onClick={() => void imprimirDetalle()}
+              >
+                {imprimiendo ? 'Imprimiendo…' : 'Reimprimir ticket'}
+              </button>
+            )}
           </div>
         }
       >
@@ -107,6 +143,9 @@ export function CajaZ() {
         </div>
 
         {errorDescarga && <div className="alert alert-danger rounded-0 py-1 px-2 small mb-2">{errorDescarga}</div>}
+        {errorImpresion && (
+          <div className="alert alert-warning rounded-0 py-1 px-2 small mb-2">No se pudo imprimir: {errorImpresion}</div>
+        )}
         {error && (
           <div className="alert alert-danger rounded-0 d-flex justify-content-between align-items-center gap-2">
             <span>{error}</span>

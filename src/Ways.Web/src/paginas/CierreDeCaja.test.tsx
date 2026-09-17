@@ -96,6 +96,21 @@ beforeEach(() => {
   apiPostMock.mockReset()
 })
 
+function renderCierreConSeams(props: { rutaVolver?: string } = {}) {
+  return render(<CierreDeCaja {...props} />, {
+    wrapper: ({ children }) => <MemoryRouter initialEntries={['/caja/cierre?idTurno=501']}>{children}</MemoryRouter>,
+  })
+}
+
+async function cerrarElTurno() {
+  await screen.findByText('Efectivo')
+  await userEvent.type(screen.getByLabelText('Declarado de Efectivo'), '635')
+  await userEvent.click(screen.getByRole('checkbox'))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeEnabled())
+  await userEvent.click(screen.getByRole('button', { name: 'Finalizar cierre' }))
+  await screen.findByText('Turno #501 cerrado')
+}
+
 describe('CierreDeCaja — turno inválido', () => {
   it('sin idTurno en la URL muestra un aviso y no dispara ningún fetch', async () => {
     renderCierre(null)
@@ -316,5 +331,43 @@ describe('CierreDeCaja — falla de carga (react-async-state regla 7)', () => {
     await userEvent.type(await screen.findByLabelText('Declarado de Medio #1'), '640')
     await userEvent.click(screen.getByRole('checkbox'))
     expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeDisabled()
+  })
+})
+
+describe('CierreDeCaja — seams del POS de escritorio (stage-desktop-pos)', () => {
+  it('sin rutaVolver, "Volver a caja" y "Cancelar" apuntan a /caja (default, comportamiento intacto)', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/501/cierre' ? Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture()) : Promise.reject(new Error(ruta)),
+    )
+    renderCierreConSeams()
+    await cerrarElTurno()
+
+    expect(screen.getByRole('link', { name: 'Volver a caja' })).toHaveAttribute('href', '/caja')
+  })
+
+  it('con rutaVolver, "Volver a caja" y "Cancelar" apuntan a la ruta indicada', async () => {
+    mockearRutasBase()
+    renderCierreConSeams({ rutaVolver: '/vender' })
+    await screen.findByText('Efectivo')
+
+    expect(screen.getByRole('link', { name: 'Cancelar' })).toHaveAttribute('href', '/vender')
+  })
+
+  // Fix judgment-day R2-3: el seam `contextoDeImpresion` (auto-impresión, "Reimprimir",
+  // `errorImpresion`) se quitó de esta pantalla — quedó inalcanzable en producción apenas
+  // `ShellPos.tsx` dejó de pasarlo (ronda 1, evitar la doble impresión del reporte Z). El shell es
+  // ahora el único dueño de la impresión de escritorio (cola FIFO + avisos por trabajo, ver
+  // `ShellPos.test.tsx`); esta pantalla no imprime nada, con o sin `alCerrarExitosamente`.
+  it('un cierre exitoso nunca imprime nada ni muestra "Reimprimir" — esta pantalla no conoce la impresora', async () => {
+    mockearRutasBase()
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/caja/turnos/501/cierre' ? Promise.resolve<TurnoConArqueos>(turnoConArqueosFixture()) : Promise.reject(new Error(ruta)),
+    )
+    renderCierreConSeams()
+    await cerrarElTurno()
+
+    expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/No se pudo imprimir/)).not.toBeInTheDocument()
   })
 })
