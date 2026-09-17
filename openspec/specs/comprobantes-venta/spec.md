@@ -297,10 +297,13 @@ vuelto; the former `vuelto_maximo` key was removed entirely
   banknotes strictly greater than `20` forms exactly `5520`
 
 #### Scenario: Vuelto rejected on a medio without AdmiteVuelto
-- GIVEN a tarjeta medio (`AdmiteVuelto = false`) paid `120.00` against a
-  `100.00` total
+- GIVEN a `300.00` total paid with efectivo `200.00` (no vuelto) plus a
+  tarjeta medio (`AdmiteVuelto = false`) of `120.00` declaring a vuelto of
+  `20.00`
 - WHEN checkout validates payment
-- THEN it is rejected — no vuelto may be returned on that medio
+- THEN rule 3 passes (the `200` efectivo is formable with banknotes greater
+  than `20`) and it is rejected with `medio_no_admite_vuelto` — no vuelto may
+  be returned on that medio
 
 #### Scenario: Referencia required and missing is rejected
 - GIVEN a transferencia medio (`RequiereReferencia = true`) with no
