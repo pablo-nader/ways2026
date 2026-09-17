@@ -177,6 +177,21 @@ describe('copiaDeFalloDeBaja — la copia se elige por código', () => {
   })
 })
 
+describe('copiaDeFalloDeBaja — acción con otro nombre', () => {
+  /** Cláusula bajo prueba: el `accion` del encabezado, que la revocación de equipos reemplaza. */
+  it('un 404 de revocación nombra la acción pedida y conserva la copia neutra', () => {
+    const copia = copiaDeFalloDeBaja(new ErrorApi(404, 'no_encontrado', 'No existe el dispositivo 7.'), 'el equipo', 'revocar')
+
+    expect(copia).toBe('No se pudo revocar el equipo. Ya no existe o no está a tu alcance. Actualizá el listado.')
+  })
+
+  it('sin acción explícita el encabezado sigue siendo el de la baja', () => {
+    expect(copiaDeFalloDeBaja(new Error('red caída'), 'el equipo')).toBe(
+      'No se pudo dar de baja el equipo. No se pudo confirmar el resultado: verificá el listado antes de reintentar.',
+    )
+  })
+})
+
 describe('arrastreDeTenant', () => {
   /** Contadores pairwise-distintos: con valores iguales, intercambiar dos líneas no se vería. */
   it('nombra las tres familias de hijos con su cantidad', () => {

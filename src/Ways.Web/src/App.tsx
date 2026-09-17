@@ -19,6 +19,7 @@ import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { CuentaCorrienteDeProveedor } from './paginas/CuentaCorrienteDeProveedor'
 import { Descargar } from './paginas/Descargar'
 import { Empresas } from './paginas/Empresas'
+import { EquiposPos } from './paginas/EquiposPos'
 import { Existencias } from './paginas/Existencias'
 import { HistoricoDeCajas } from './paginas/HistoricoDeCajas'
 import { Inicio } from './paginas/Inicio'
@@ -503,6 +504,14 @@ export function App() {
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Root, ROL.Admin]}>
                   <PuntosVenta />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/organizacion/equipos-pos"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Admin]}>
+                  <EquiposPos />
                 </RutaProtegida>
               }
             />

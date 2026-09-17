@@ -140,6 +140,7 @@ const ADMINISTRACION_DE_ADMIN: Resumen = {
       enlaces: [
         ['Empresas', '/organizacion/empresas'],
         ['Puntos de venta', '/organizacion/puntos-venta'],
+        ['Equipos POS', '/organizacion/equipos-pos'],
       ],
     },
   ],

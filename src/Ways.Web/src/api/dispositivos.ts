@@ -23,6 +23,15 @@ export type AltaDispositivo = { idPuntoVenta: number; nombre: string }
 
 export type CredencialesDeDispositivo = { usuario: string; password: string }
 
+/** Fila de `GET /api/dispositivos` (Admin): solo los dispositivos activos del tenant. */
+export type DispositivoListado = {
+  id: number
+  nombre: string
+  puntoVenta: { numero: number; nombre: string }
+  createdAt: string
+  ultimoUsoAt: string | null
+}
+
 export const clienteDeDispositivos = {
   obtenerActual: () => api.get<DispositivoActual>('/dispositivos/actual'),
   vincular: (datos: AltaDispositivo) => api.post<DispositivoActual>('/dispositivos', datos),
@@ -30,4 +39,8 @@ export const clienteDeDispositivos = {
    * exige la cookie de dispositivo (nunca funciona en la app web normal). */
   iniciarSesion: (credenciales: CredencialesDeDispositivo) =>
     api.post<UsuarioAutenticado>('/auth/login-dispositivo', credenciales),
+  listar: () => api.get<DispositivoListado[]>('/dispositivos'),
+  /** `DELETE /api/dispositivos/{id}` — baja lógica; las sesiones abiertas en el equipo se cortan en
+   * su próxima request. */
+  revocar: (id: number) => api.delete<void>(`/dispositivos/${id}`),
 }
