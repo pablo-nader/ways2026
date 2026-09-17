@@ -3,6 +3,7 @@
 
 (function () {
   const OPCION_IMPRESORA_PREDETERMINADA = "";
+  const URL_SERVIDOR_POR_DEFECTO = "https://aipos.site";
 
   function invoke(comando, argumentos) {
     return window.__TAURI__.core.invoke(comando, argumentos);
@@ -84,11 +85,12 @@
   async function cargarConfiguracionActual(el) {
     try {
       const configuracion = await invoke("leer_configuracion");
-      if (configuracion) {
-        el.urlServidor.value = configuracion.url_servidor || "";
-      }
+      // Sin configuracion guardada (primer uso), se prellena con el servidor de produccion:
+      // sigue siendo editable para instalaciones que apunten a otro origen.
+      el.urlServidor.value = (configuracion && configuracion.url_servidor) || URL_SERVIDOR_POR_DEFECTO;
       await cargarImpresoras(el, configuracion ? configuracion.impresora : null);
     } catch (error) {
+      el.urlServidor.value = URL_SERVIDOR_POR_DEFECTO;
       await cargarImpresoras(el, null);
     }
   }

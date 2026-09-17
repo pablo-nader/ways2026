@@ -150,6 +150,41 @@ No hace falta aplicarlas a mano: la API las corre al arrancar.
 
 ---
 
+## App de escritorio (Ways POS)
+
+Clientes descargan el instalador de Windows desde `https://aipos.site/descargar` (página pública
+`Descargar.tsx` en `src/Ways.Web`, sin login, servida por el mismo fallback de SPA que el resto de
+la app). El botón apunta al asset publicado en el último GitHub Release del repo público
+`pablo-nader/ways2026` (`VITE_URL_DESCARGA_POS` permite overridearlo).
+
+### Publicar un release
+
+1. Subí la versión en los tres lugares: `src/Ways.Desktop/src-tauri/tauri.conf.json`,
+   `src/Ways.Desktop/src-tauri/Cargo.toml` y `src/Ways.Desktop/package.json`.
+2. Mergeá a `main`.
+3. Taggeá y empujá:
+
+   ```bash
+   git tag pos-vX.Y.Z
+   git push origin pos-vX.Y.Z
+   ```
+
+El workflow `.github/workflows/pos-escritorio-release.yml` compila el instalador NSIS en
+`windows-latest`, verifica que la versión del tag coincida con `tauri.conf.json` (falla si no
+coincide) y publica el GitHub Release con dos assets: `WaysPOS-setup.exe` (nombre estable, es el
+que usa `/descargar`) y `WaysPOS-<version>-setup.exe`. También se puede disparar a mano
+(`workflow_dispatch`) contra un tag ya existente.
+
+Notas:
+
+- El instalador **todavía no está firmado digitalmente**: Windows SmartScreen va a mostrar
+  "Windows protegió su PC" en la primera ejecución. El paso a paso ("Más información" →
+  "Ejecutar de todas formas") está documentado en `/descargar`.
+- Antes de que alguien use la app, hay que tener aplicada la migración de `DispositivosPos`
+  (vinculación de equipos) contra la base de ese tenant.
+
+---
+
 ## Checklist antes de considerarlo productivo
 
 - [ ] Contraseña de root cambiada desde el ABM.
