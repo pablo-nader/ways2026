@@ -16,6 +16,7 @@ import type {
   PagoDeVenta,
   ResultadoDeResolucion,
   SolicitudDeVenta,
+  VentaDeTurnoListado,
 } from './tipos'
 
 export const clienteDeVentas = {
@@ -26,6 +27,12 @@ export const clienteDeVentas = {
    * de un comprobante ya emitido — `Remito.tsx` lo usa para mostrar el link a la factura de un
    * remito `facturado` (un `TXR`, cuyo detalle sale de `items_remito` del lado del servidor). */
   obtener: (id: number) => api.get<ComprobanteEmitido>(`/ventas/${id}`),
+  /** `GET /api/ventas/por-turno/{idTurno}` (stage-desktop-pos, "Ventas del turno"): listado
+   * dedicado con cliente y medios de pago, incluye anuladas. */
+  listarPorTurno: (idTurno: number) => api.get<VentaDeTurnoListado[]>(`/ventas/por-turno/${idTurno}`),
+  /** `POST /api/ventas/{id}/anulacion` (stage-desktop-pos): sin cuerpo — el servidor no acepta
+   * `motivo`, revierte stock y cuenta corriente en la misma transacción. Nunca hay "restaurar". */
+  anular: (id: number) => api.post<ComprobanteEmitido>(`/ventas/${id}/anulacion`),
 }
 
 /** Respuesta de `GET /api/articulos/escaneo` → acción `escanear` de `carrito.ts` (spec:

@@ -629,6 +629,62 @@ public class ServicioDeVentas(
         return query;
     }
 
+    /// <summary>Ventas de UN turno para la pantalla "Ventas del turno" del POS de escritorio —
+    /// <see cref="VentaDeTurnoListado"/>, no <see cref="ComprobanteListado"/>: acá sí hace falta
+    /// cliente/medios de pago, y el conjunto está acotado por turno (nunca sin cota, a diferencia
+    /// de <see cref="ListarAsync"/>), así que dos consultas extra indexadas por los ids ya traídos
+    /// —NUNCA una por fila— no son un N+1. Incluye anulados (orden newest-first) para que el
+    /// cajero vea que la anulación surtió efecto sin salir de la pantalla. Tenant scoping es
+    /// implícito (mismo criterio que <see cref="ListarAsync"/>): <see cref="IWaysDbContext"/> ya
+    /// filtra por tenant, acá no hace falta un <c>idTenant</c> explícito.</summary>
+    public async Task<IReadOnlyList<VentaDeTurnoListado>> ListarPorTurnoAsync(int idTurno, CancellationToken ct = default)
+    {
+        var crudos = await db.ComprobantesVenta
+            .Where(c => c.IdTurnoCaja == idTurno)
+            .OrderByDescending(c => c.Fecha).ThenByDescending(c => c.Id)
+            .Select(c => new { c.Id, c.Numero, c.Estado, c.Fecha, c.IdPuntoVenta, c.IdCliente, c.Total })
+            .ToListAsync(ct);
+
+        if (crudos.Count == 0)
+        {
+            return [];
+        }
+
+        var idsComprobante = crudos.Select(c => c.Id).ToList();
+        var idsCliente = crudos.Select(c => c.IdCliente).Distinct().ToList();
+
+        var nombrePorCliente = await db.Clientes.AsNoTracking()
+            .Where(cl => idsCliente.Contains(cl.Id))
+            .Select(cl => new { cl.Id, cl.Nombre, cl.Apellido, cl.RazonSocial })
+            .ToDictionaryAsync(cl => cl.Id, cl => cl.RazonSocial ?? $"{cl.Nombre} {cl.Apellido}".Trim(), ct);
+
+        var pagos = await db.PagosComprobante.AsNoTracking()
+            .Where(p => idsComprobante.Contains(p.IdComprobanteVenta))
+            .Select(p => new { p.IdComprobanteVenta, p.IdMedioPago })
+            .ToListAsync(ct);
+
+        var idsMedioPago = pagos.Select(p => p.IdMedioPago).Distinct().ToList();
+        var nombrePorMedioPago = await db.MediosPago.AsNoTracking()
+            .Where(m => idsMedioPago.Contains(m.Id))
+            .ToDictionaryAsync(m => m.Id, m => m.Nombre, ct);
+
+        var mediosPorComprobante = pagos
+            .GroupBy(p => p.IdComprobanteVenta)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<string>)g
+                    .Select(p => nombrePorMedioPago.GetValueOrDefault(p.IdMedioPago, "?"))
+                    .Distinct()
+                    .ToList());
+
+        return crudos
+            .Select(c => new VentaDeTurnoListado(
+                c.Id, c.Numero, NumeroDeComprobante.Formatear(c.IdPuntoVenta, c.Numero), c.Estado, c.Fecha,
+                c.IdCliente, nombrePorCliente.GetValueOrDefault(c.IdCliente, "-"), c.Total,
+                mediosPorComprobante.GetValueOrDefault(c.Id, (IReadOnlyList<string>)[])))
+            .ToList();
+    }
+
     // ---- Anulación (Slice 5, design: Protection Rules — "A comprobante is anulado at most
     // once"; spec: comprobantes-venta / Anulación Reverses Stock and CC, Never Restores by
     // Editing) --------------------------------------------------------------------------------

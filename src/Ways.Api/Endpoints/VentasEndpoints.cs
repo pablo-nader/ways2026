@@ -31,6 +31,16 @@ public static class VentasEndpoints
             servicio.ObtenerAsync(id, ct))
         .WithSummary("Reimpresión: lee el snapshot del comprobante, nunca re-joinea el catálogo.");
 
+        // stage-desktop-pos ("Ventas del turno"): listado dedicado, no el paginado genérico de
+        // abajo — filtrado por idTurno (que ese no expone), incluye anuladas, y trae
+        // cliente/medios de pago porque el conjunto de un turno está acotado (ver doc-comment de
+        // ServicioDeVentas.ListarPorTurnoAsync). Literal "por-turno" antes que "{id:int}" en el
+        // orden de declaración no importa para el ruteo (los segmentos literales siempre ganan
+        // sobre un parámetro), pero se declara acá al lado por lectura.
+        grupo.MapGet("/por-turno/{idTurno:int}", (ServicioDeVentas servicio, int idTurno, CancellationToken ct) =>
+            servicio.ListarPorTurnoAsync(idTurno, ct))
+        .WithSummary("Ventas de un turno (incluye anuladas), con cliente y medios de pago — pantalla Ventas del turno.");
+
         // stage-5-pos-ventas (Slice 5, task 5.2, design: API Surface): POST, no DELETE — produce
         // filas (movimientos inversos + contramovimiento CC), no elimina ninguna. Sin
         // GestionDeCatalogo apilado (spec: OperacionDePos Authorization For Emission and
