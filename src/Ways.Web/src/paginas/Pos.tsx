@@ -37,11 +37,10 @@ import {
   clienteDeVentas,
   indexarResolucionPorArticulo,
   previaDeLinea,
-  type LotesSeleccionados,
 } from '../api/ventas'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
-import { SelectorDeLote } from '../componentes/SelectorDeLote'
+import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 
 /** Piso de cantidad por línea, compartido entre el guard de edición y los atributos
@@ -235,16 +234,16 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
   const ultimaAccionEsEdicionRef = useRef(false)
   const [cantidadesEnEdicion, setCantidadesEnEdicion] = useState<Record<number, string>>({})
 
-  // stage-12-lotes-vencimientos (Slice 14): elección explícita de lote por línea, indexada por
-  // `idArticulo` — una línea ausente acá viaja con `idLote: null` (design decisión 19, camino
-  // feliz de cero tecleo). Los saldos de lote son por punto de venta: un cambio de PV remonta la
-  // pantalla entera por `key` desde `Pos()`, así que ninguna elección sobrevive al PV anterior.
-  const [lotesSeleccionados, setLotesSeleccionados] = useState<LotesSeleccionados>({})
-
   const [entradaEscaneo, setEntradaEscaneo] = useState('')
   const [escaneando, setEscaneando] = useState(false)
   const [errorEscaneo, setErrorEscaneo] = useState('')
   const tokenEscaneoRef = useRef(0)
+  const inputEscaneoRef = useRef<HTMLInputElement>(null)
+
+  // stage-pos-buscador-articulos: modal de búsqueda por nombre (F2, botón "Buscar" junto al de
+  // código) — se abre solo con la venta libre operable (nunca bajo `?idPresupuesto=`, ni con el
+  // checkout en vuelo, ni con el gate de turno o el ticket ya emitido en pantalla).
+  const [buscadorAbierto, setBuscadorAbierto] = useState(false)
 
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
   const [errorMedios, setErrorMedios] = useState('')
@@ -546,26 +545,15 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
         return resto
       })
 
-    // El lote elegido es propio de la línea, no de una unidad puntual: re-escanear el mismo
-    // artículo (suma cantidad) no lo invalida — solo desaparece cuando la línea entera se va.
-    const limpiarLoteDeFila = (idArticulo: number) =>
-      setLotesSeleccionados((prev) => {
-        if (!(idArticulo in prev)) return prev
-        const { [idArticulo]: _omitido, ...resto } = prev
-        return resto
-      })
-
     switch (accion.tipo) {
       case 'quitarLinea':
         limpiarFila(accion.idArticulo)
-        limpiarLoteDeFila(accion.idArticulo)
         break
       case 'escanear':
         limpiarFila(accion.linea.idArticulo)
         break
       case 'vaciar':
         setCantidadesEnEdicion({})
-        setLotesSeleccionados({})
         break
       case 'editarCantidad':
         break
@@ -622,6 +610,16 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
       const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(articulo)
       mutarCarrito({ tipo: 'escanear', linea, cantidad })
       setEntradaEscaneo('')
+      // spec pos-buscador-articulos ("focus returns after adding by code"): el input sigue
+      // montado (esta pantalla no se reemplaza al agregar), así que enfocarlo acá mismo alcanza —
+      // no hace falta un efecto pasivo. Pero React todavía no comiteó `escaneando: false` (recién
+      // lo hace el `finally`, más abajo): en el DOM el input sigue `disabled` de este render, y
+      // ni un navegador real ni jsdom enfocan un elemento disabled (a diferencia del "focus
+      // fixup" de DESenfocar uno ya enfocado al deshabilitarlo, que jsdom no implementa — regla
+      // 12). Se despeja la propiedad a mano antes de enfocar: coincide con el valor que React va
+      // a comitear en el próximo render (`escaneando` ya en `false`), así que no hay conflicto.
+      if (inputEscaneoRef.current) inputEscaneoRef.current.disabled = false
+      inputEscaneoRef.current?.focus()
     } catch (e) {
       if (tokenEscaneoRef.current !== token) return
       setErrorEscaneo(e instanceof ErrorApi ? e.message : 'No se pudo resolver el código escaneado.')
@@ -648,18 +646,20 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
     }
   }
 
-  /** Elección explícita de un lote en la línea de `idArticulo`, o `null` para volver al camino
-   * feliz (FEFO server-side, design decisión 19). */
-  function elegirLote(idArticulo: number, idLote: number | null) {
-    if (cobrandoRef.current) return
-    setLotesSeleccionados((prev) => {
-      if (idLote === null) {
-        if (!(idArticulo in prev)) return prev
-        const { [idArticulo]: _omitido, ...resto } = prev
-        return resto
-      }
-      return { ...prev, [idArticulo]: idLote }
-    })
+  /** "Agregar" de una fila del buscador (F2 / botón "Buscar") — mismo camino que un código
+   * escaneado (`AccionCarrito` tipo `escanear`, spec: "adds that article to the sale exactly
+   * like entering its code does"): la resolución de precio/ofertas la sigue haciendo el mismo
+   * efecto de `lineas` de siempre, nunca este handler. Cierra el modal y devuelve el foco al
+   * input de código en el mismo evento síncrono (react-async-state regla 12). */
+  function agregarDesdeBusqueda(linea: Omit<LineaCarrito, 'cantidad'>, cantidad: number) {
+    mutarCarrito({ tipo: 'escanear', linea, cantidad })
+    setBuscadorAbierto(false)
+    inputEscaneoRef.current?.focus()
+  }
+
+  function cerrarBuscador() {
+    setBuscadorAbierto(false)
+    inputEscaneoRef.current?.focus()
   }
 
   function cambiarCliente(id: number) {
@@ -717,6 +717,23 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
     setErrorCobro('')
     setErrorEscaneo('')
   }
+
+  // F2 abre el buscador de artículos (spec pos-buscador-articulos) — solo con la venta libre
+  // operable: nunca bajo `?idPresupuesto=` (carrito congelado, sin escaneo), nunca con el
+  // checkout en vuelo, nunca con el gate de turno o el ticket ya emitido reemplazando la pantalla,
+  // y nunca si el modal ya está abierto (no hay otro modal en esta pantalla que deba cerrarse
+  // antes). Se re-suscribe con las dependencias en vez de leerlas por ref: son booleans que
+  // cambian con poca frecuencia, el costo de resuscribir el listener es despreciable.
+  useEffect(() => {
+    function alTeclado(evento: KeyboardEvent) {
+      if (evento.key !== 'F2') return
+      if (modoPresupuesto || cobrando || buscadorAbierto || gateTurno || ventaEmitida) return
+      evento.preventDefault()
+      setBuscadorAbierto(true)
+    }
+    document.addEventListener('keydown', alTeclado)
+    return () => document.removeEventListener('keydown', alTeclado)
+  }, [modoPresupuesto, cobrando, buscadorAbierto, gateTurno, ventaEmitida])
 
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
@@ -813,7 +830,12 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
               codigoTipoComprobante: 'TX',
               idComprobanteAsociado: null,
               lineas,
-              lotesSeleccionados,
+              // spec pos-buscador-articulos: sin selector de lote inline en el carrito (nunca
+              // requerido para una venta TX, signo +1 — `ServicioDeVentas` solo exige `idLote`
+              // explícito en una línea de devolución NCX, signo -1, que esta pantalla jamás emite).
+              // Toda línea viaja sin lote elegido: el servidor resuelve FEFO solo (camino feliz de
+              // cero tecleo, design decisión 19 de stage-12-lotes-vencimientos).
+              lotesSeleccionados: {},
               pagos: aPagosDeVenta(pagosConVuelto),
               direccionEntrega: null,
               observaciones: null,
@@ -829,7 +851,6 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
       setLineas([])
       setPrecios({})
       setCantidadesEnEdicion({})
-      setLotesSeleccionados({})
       setFilasPago([filaPagoVacia(proximaFilaPagoIdRef.current++)])
       setEntradaEscaneo('')
       setTerminoCliente('')
@@ -1015,6 +1036,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
             {!modoPresupuesto && (
               <div className="input-group mb-3">
                 <input
+                  ref={inputEscaneoRef}
                   type="text"
                   className="form-control rounded-0"
                   placeholder="Escanear o tipear un código (ej. 3*7790001234567)"
@@ -1028,6 +1050,18 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                 <button type="button" className="btn btn-primary rounded-0" disabled={escaneando || cobrando} onClick={escanear}>
                   {escaneando ? 'Buscando…' : 'Agregar'}
                 </button>
+                {/* "Buscar artículo" en vez de "Buscar" a secas: ya existe un botón "Buscar" en el
+                    panel de cliente de esta misma pantalla (`Buscar cliente`) — un nombre
+                    accesible idéntico rompería cualquier `getByRole('button', { name: 'Buscar' })`
+                    (ambos quedarían matcheados a la vez, tests preexistentes incluidos). */}
+                <button
+                  type="button"
+                  className="btn btn-outline-primary rounded-0"
+                  disabled={escaneando || cobrando}
+                  onClick={() => setBuscadorAbierto(true)}
+                >
+                  Buscar artículo
+                </button>
               </div>
             )}
 
@@ -1038,7 +1072,6 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                     <th>Código</th>
                     <th>Artículo</th>
                     <th style={{ width: 110 }}>Cantidad</th>
-                    <th style={{ width: 160 }}>Lote</th>
                     <th className="text-end">Precio unit.</th>
                     <th className="text-end">Total</th>
                     <th className="text-end">Acciones</th>
@@ -1054,7 +1087,6 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                           <td>—</td>
                           <td>{item.descripcion}</td>
                           <td>{item.cantidad}</td>
-                          <td>—</td>
                           <td className="text-end">{formatearMoneda(item.precioUnitario)}</td>
                           <td className="text-end">{formatearMoneda(item.total)}</td>
                           <td className="text-end">—</td>
@@ -1080,18 +1112,6 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                                 onChange={(e) => cambiarCantidad(l.idArticulo, e.target.value)}
                                 onBlur={() => confirmarCantidad(l.idArticulo)}
                               />
-                            </td>
-                            <td>
-                              {puntoVentaSeleccionada && (
-                                <SelectorDeLote
-                                  idPuntoVenta={puntoVentaSeleccionada.id}
-                                  idArticulo={l.idArticulo}
-                                  nombreArticulo={l.nombre}
-                                  idLoteElegido={lotesSeleccionados[l.idArticulo] ?? null}
-                                  disabled={cobrando}
-                                  onElegir={(idLote) => elegirLote(l.idArticulo, idLote)}
-                                />
-                              )}
                             </td>
                             <td className="text-end">
                               {previa.precioUnitario === null ? (
@@ -1135,7 +1155,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                       })}
                   {(modoPresupuesto ? (presupuesto?.items.length ?? 0) === 0 : lineas.length === 0) && (
                     <tr>
-                      <td colSpan={7} className="text-center text-muted py-4">
+                      <td colSpan={6} className="text-center text-muted py-4">
                         {modoPresupuesto ? 'Este presupuesto no tiene items.' : 'Escaneá o tipeá un código para empezar la venta.'}
                       </td>
                     </tr>
@@ -1336,6 +1356,15 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
           </Box>
         </div>
       </div>
+
+      {buscadorAbierto && !modoPresupuesto && (
+        <ModalDeBusquedaDeArticulos
+          idListaPrecio={clienteSeleccionado?.idListaPrecio ?? null}
+          idEmpresa={puntoVentaSeleccionada?.idEmpresa ?? null}
+          onAgregar={agregarDesdeBusqueda}
+          onCerrar={cerrarBuscador}
+        />
+      )}
     </div>
   )
 }
