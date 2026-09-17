@@ -90,6 +90,24 @@ pub fn url_pos(url_servidor: &str) -> String {
     format!("{url_servidor}/pos.html")
 }
 
+/// Arma la URL local de la pagina de configuracion empaquetada (`ui/index.html`).
+///
+/// Replica la resolucion que Tauri hace internamente para `WebviewUrl::App`
+/// cuando, como en este proyecto, no hay `build.devUrl` ni `build.frontendDist`
+/// remoto configurados (ver `tauri.conf.json`): en Windows/Android usa
+/// `http(s)://tauri.localhost/` (segun `useHttpsScheme`), y en el resto de
+/// plataformas usa `tauri://localhost/`. Al ser una funcion pura derivada de
+/// la configuracion, evita depender de una URL capturada en tiempo de
+/// ejecucion (que puede no reflejar aun la navegacion real de la ventana).
+pub fn url_configuracion_local(es_windows_o_android: bool, usa_https: bool) -> String {
+    if es_windows_o_android {
+        let esquema = if usa_https { "https" } else { "http" };
+        format!("{esquema}://tauri.localhost/")
+    } else {
+        "tauri://localhost/".to_string()
+    }
+}
+
 fn ruta_archivo_configuracion(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
@@ -238,5 +256,27 @@ mod tests {
             url_pos("https://empresa.aipos.site"),
             "https://empresa.aipos.site/pos.html"
         );
+    }
+
+    #[test]
+    fn arma_url_local_http_en_windows_por_defecto() {
+        assert_eq!(
+            url_configuracion_local(true, false),
+            "http://tauri.localhost/"
+        );
+    }
+
+    #[test]
+    fn arma_url_local_https_en_windows_si_esta_habilitado() {
+        assert_eq!(
+            url_configuracion_local(true, true),
+            "https://tauri.localhost/"
+        );
+    }
+
+    #[test]
+    fn arma_url_local_con_esquema_tauri_fuera_de_windows_o_android() {
+        assert_eq!(url_configuracion_local(false, false), "tauri://localhost/");
+        assert_eq!(url_configuracion_local(false, true), "tauri://localhost/");
     }
 }

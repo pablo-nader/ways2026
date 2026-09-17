@@ -107,6 +107,18 @@ pub fn abrir_configuracion(app: AppHandle) -> Result<(), String> {
     crate::abrir_pagina_configuracion(&app)
 }
 
+/// Vuelve a mostrar el punto de venta (`{servidor}/pos.html`) usando la
+/// configuracion ya guardada, sin persistir ningun cambio. Se usa desde el
+/// boton "Volver al POS" de la pagina de configuracion, para no dejar al
+/// usuario atrapado ahi cuando solo quiere descartar la edicion en curso.
+#[tauri::command]
+pub fn volver_a_pos(app: AppHandle) -> Result<(), String> {
+    let configuracion = config::leer(&app)
+        .ok_or_else(|| "No hay una configuracion guardada.".to_string())?;
+    crate::navegar_a_pos(&app, &configuracion.url_servidor)
+        .map_err(|error| format!("No se pudo volver al punto de venta: {error}"))
+}
+
 /// Informacion basica de la app para mostrar en la pagina de configuracion
 /// o para diagnostico desde la pagina remota.
 #[tauri::command]

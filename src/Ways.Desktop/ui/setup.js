@@ -16,6 +16,7 @@
       impresora: document.getElementById("impresora"),
       botonGuardar: document.getElementById("boton-guardar"),
       botonImprimirPrueba: document.getElementById("boton-imprimir-prueba"),
+      botonVolverPos: document.getElementById("boton-volver-pos"),
       mensaje: document.getElementById("mensaje"),
       pieVersion: document.getElementById("pie-version"),
     };
@@ -88,9 +89,13 @@
       // Sin configuracion guardada (primer uso), se prellena con el servidor de produccion:
       // sigue siendo editable para instalaciones que apunten a otro origen.
       el.urlServidor.value = (configuracion && configuracion.url_servidor) || URL_SERVIDOR_POR_DEFECTO;
+      // "Volver al POS" solo tiene sentido si ya hay una configuracion guardada
+      // y valida: si no, no hay a donde volver.
+      el.botonVolverPos.hidden = !configuracion;
       await cargarImpresoras(el, configuracion ? configuracion.impresora : null);
     } catch (error) {
       el.urlServidor.value = URL_SERVIDOR_POR_DEFECTO;
+      el.botonVolverPos.hidden = true;
       await cargarImpresoras(el, null);
     }
   }
@@ -136,11 +141,23 @@
     }
   }
 
+  async function manejarVolverPos(el) {
+    el.botonVolverPos.disabled = true;
+    mostrarMensaje(el, "Volviendo al punto de venta...", "");
+    try {
+      await invoke("volver_a_pos");
+    } catch (error) {
+      mostrarMensaje(el, String(error), "error");
+      el.botonVolverPos.disabled = false;
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     const el = elementos();
     cargarConfiguracionActual(el);
     cargarInfoApp(el);
     el.formulario.addEventListener("submit", (evento) => manejarEnvio(evento, el));
     el.botonImprimirPrueba.addEventListener("click", () => manejarImprimirPrueba(el));
+    el.botonVolverPos.addEventListener("click", () => manejarVolverPos(el));
   });
 })();
