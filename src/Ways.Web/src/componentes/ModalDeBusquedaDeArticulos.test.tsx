@@ -176,8 +176,8 @@ describe('ModalDeBusquedaDeArticulos — foco al abrir (stage-pos-turno-y-foco)'
   })
 })
 
-describe('ModalDeBusquedaDeArticulos — puedeAgregar (stage-pos-turno-y-foco: turno cerrado, solo consulta)', () => {
-  it('con puedeAgregar=false, el precio se muestra pero "Agregar" queda deshabilitado y no dispara onAgregar', async () => {
+describe('ModalDeBusquedaDeArticulos — motivoSinAgregar (stage-pos-turno-y-foco: turno cerrado, solo consulta)', () => {
+  it('con motivoSinAgregar definido, el precio se muestra pero "Agregar" queda deshabilitado (con ese motivo como title) y no dispara onAgregar', async () => {
     apiGetMock.mockImplementation((ruta: string) =>
       ruta.startsWith('/articulos?busqueda=fa') ? Promise.resolve(paginaDe([articuloListadoFixture()])) : Promise.reject(new Error(ruta)),
     )
@@ -190,7 +190,7 @@ describe('ModalDeBusquedaDeArticulos — puedeAgregar (stage-pos-turno-y-foco: t
     )
     const onAgregar = vi.fn()
 
-    render(<ModalDeBusquedaDeArticulos {...propsDe({ onAgregar, puedeAgregar: false })} />)
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ onAgregar, motivoSinAgregar: 'Turno cerrado: abrí un turno para vender.' })} />)
     const input = screen.getByLabelText('Buscar artículo por nombre')
     fireEvent.change(input, { target: { value: 'fa' } })
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -198,9 +198,31 @@ describe('ModalDeBusquedaDeArticulos — puedeAgregar (stage-pos-turno-y-foco: t
     expect(await screen.findByText('$200,00')).toBeInTheDocument()
     const boton = screen.getByRole('button', { name: 'Agregar' })
     expect(boton).toBeDisabled()
+    expect(boton).toHaveAttribute('title', 'Turno cerrado: abrí un turno para vender.')
 
     fireEvent.click(boton)
     expect(onAgregar).not.toHaveBeenCalled()
+  })
+
+  /** judgment-day ronda 1, T4: "turno todavía cargando" y "turno confirmado cerrado" son avisos
+   * distintos — el componente solo refleja lo que le pasan (el mensaje en sí lo arma `Pos.tsx`,
+   * cubierto en `Pos.test.tsx`), pero este test prueba que el `title` cambia con el mensaje. */
+  it('con otro motivo (ej. "todavía consultando el turno"), el title del botón refleja ESE mensaje', async () => {
+    apiGetMock.mockImplementation((ruta: string) =>
+      ruta.startsWith('/articulos?busqueda=fa') ? Promise.resolve(paginaDe([articuloListadoFixture()])) : Promise.reject(new Error(ruta)),
+    )
+    apiPostMock.mockImplementation((ruta: string) =>
+      ruta === '/ofertas/resolver' ? Promise.resolve<ResultadoDeResolucion[]>([]) : Promise.reject(new Error(ruta)),
+    )
+
+    render(<ModalDeBusquedaDeArticulos {...propsDe({ motivoSinAgregar: 'Consultando turno…' })} />)
+    const input = screen.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fa' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    const boton = await screen.findByRole('button', { name: 'Agregar' })
+    expect(boton).toBeDisabled()
+    expect(boton).toHaveAttribute('title', 'Consultando turno…')
   })
 
   it('sin la prop (default), "Agregar" queda habilitado — comportamiento sin cambios para los demás llamadores', async () => {

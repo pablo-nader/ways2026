@@ -1328,6 +1328,39 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
   })
 
+  /**
+   * judgment-day ronda 1 — T3 (WARNING). Cláusula bajo prueba: el guard de
+   * `document.activeElement` en el efecto de "foco neutral" — solo enfoca el input de código si
+   * el foco actual es neutral (`body`/`null`) o ya es el propio input, nunca le saca el foco a un
+   * control que el cajero eligió a propósito mientras el turno todavía cargaba. Evidencia de
+   * mutación (mutation-proof-tests regla 2): sacando ese guard (dejando el efecto enfocar
+   * incondicionalmente cuando se desbloquea), este test falla — el foco se mueve al input de
+   * código en vez de quedarse en "Buscar artículo"; restaurado, vuelve a verde.
+   */
+  it('si el cajero ya enfocó otro control (ej. "Buscar artículo") mientras el turno cargaba, el desbloqueo NO le saca el foco', async () => {
+    let resolverTurno: (t: TurnoResumen | null) => void = () => {}
+    const turnoPendiente = new Promise<TurnoResumen | null>((resolve) => {
+      resolverTurno = resolve
+    })
+    mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? turnoPendiente : undefined))
+
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    const botonBuscar = screen.getByRole('button', { name: 'Buscar artículo' })
+    botonBuscar.focus()
+    expect(botonBuscar).toHaveFocus()
+
+    await act(async () => {
+      resolverTurno(turnoAbiertoFixture())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByLabelText('Código escaneado')).toBeEnabled()
+    expect(botonBuscar).toHaveFocus()
+    expect(screen.getByLabelText('Código escaneado')).not.toHaveFocus()
+  })
+
   it('una respuesta desactualizada de /caja/turnos/abierto no pisa una más reciente (generación, react-async-state regla 2)', async () => {
     let resolverPrimera: (t: TurnoResumen | null) => void = () => {}
     const primeraPendiente = new Promise<TurnoResumen | null>((resolve) => {
@@ -1365,6 +1398,283 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     // más reciente.
     expect(screen.getByText('Turno abierto')).toBeInTheDocument()
     expect(screen.queryByText('Turno cerrado: abrí un turno para vender.')).not.toBeInTheDocument()
+  })
+
+  describe('judgment-day ronda 1 — T1 (CRITICAL): "Reintentar" cuando falla la consulta del turno', () => {
+    it('un error al consultar el turno muestra "Reintentar" junto al aviso (nunca deja la venta bloqueada sin salida)', async () => {
+      mockearApiGet((ruta) =>
+        ruta.startsWith('/caja/turnos/abierto') ? Promise.reject(new Error('network error')) : undefined,
+      )
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+
+      expect(await screen.findByText('No se pudo consultar el turno abierto de este punto de venta.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Reintentar' })).toBeInTheDocument()
+      // Sin esto, ni "Abrir turno" ni "Cerrar caja" existen y `bloqueadoPorTurno` queda en `true`
+      // para siempre — el propio ternario del badge solo renderiza el aviso de error.
+      expect(screen.queryByRole('button', { name: 'Abrir turno' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Cerrar caja' })).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
+    })
+
+    it('"Reintentar" con éxito habilita la venta (badge "Turno abierto", input de código habilitado)', async () => {
+      let cantidadDeConsultas = 0
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
+        cantidadDeConsultas += 1
+        if (cantidadDeConsultas === 1) return Promise.reject(new Error('network error'))
+        return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
+      })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByRole('button', { name: 'Reintentar' })
+
+      await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+
+      await screen.findByText('Turno abierto')
+      expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toBeEnabled())
+    })
+
+    /**
+     * Cláusula bajo prueba: la guarda de reentrancia por `ref` de `reintentarTurno`
+     * (`reintentandoTurnoRef`), regla 11 de react-async-state. Evidencia de mutación
+     * (mutation-proof-tests regla 2): reemplazando esa guarda por `if (cargandoTurno) return`
+     * (leer el estado en vez del ref), este test falla — dos clicks sincrónicos en el mismo tick
+     * disparan dos consultas; restaurada la guarda por ref, vuelve a verde.
+     */
+    it('doble click en "Reintentar" en el mismo tick dispara una única consulta nueva', async () => {
+      let cantidadDeConsultas = 0
+      let resolverSegunda: (t: TurnoResumen | null) => void = () => {}
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
+        cantidadDeConsultas += 1
+        if (cantidadDeConsultas === 1) return Promise.reject(new Error('network error'))
+        return new Promise<TurnoResumen | null>((resolve) => {
+          resolverSegunda = resolve
+        })
+      })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      const boton = await screen.findByRole('button', { name: 'Reintentar' })
+
+      // Dos `.click()` sincrónicos dentro de un mismo `act`: React todavía no re-renderizó entre
+      // uno y otro, así que ambas invocaciones del handler leen el MISMO `cargandoTurno` (todavía
+      // `false`) de la clausura vieja — un guard basado en ese estado dejaría pasar los dos
+      // (mutation-proof-tests regla 2: `fireEvent.click` por separado no discrimina esto, cada
+      // llamada flushea su propio `act()` y ya ve el estado actualizado).
+      act(() => {
+        boton.click()
+        boton.click()
+      })
+
+      await waitFor(() => expect(cantidadDeConsultas).toBe(2))
+      await act(async () => {
+        resolverSegunda(turnoAbiertoFixture())
+        await Promise.resolve()
+      })
+      await screen.findByText('Turno abierto')
+      // Un solo reintento nuevo además de la consulta original del mount (que fue la que falló).
+      expect(cantidadDeConsultas).toBe(2)
+    })
+  })
+
+  describe('judgment-day ronda 1 — T2 (WARNING): "Cerrar caja" vuelve a consultar el turno antes de navegar', () => {
+    it('navega con el idTurno FRESCO de la consulta del click, no con el que ya tenía el estado', async () => {
+      let cantidadDeConsultas = 0
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
+        cantidadDeConsultas += 1
+        // El mount trae el turno 900 (fixture default); el click trae uno FRESCO con otro id —
+        // simula que el turno original se cerró y se abrió uno nuevo entre medio.
+        return Promise.resolve<TurnoResumen>(cantidadDeConsultas === 1 ? turnoAbiertoFixture() : turnoAbiertoFixture({ id: 4242 }))
+      })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Turno abierto')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByText('Cierre de turno 4242')).toBeInTheDocument()
+      expect(cantidadDeConsultas).toBe(2)
+    })
+
+    it('el botón queda "Verificando…" y deshabilitado mientras la consulta fresca está en vuelo', async () => {
+      let resolverClick: (t: TurnoResumen | null) => void = () => {}
+      let cantidadDeConsultas = 0
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
+        cantidadDeConsultas += 1
+        if (cantidadDeConsultas === 1) return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
+        return new Promise<TurnoResumen | null>((resolve) => {
+          resolverClick = resolve
+        })
+      })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Turno abierto')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByRole('button', { name: 'Verificando…' })).toBeDisabled()
+
+      await act(async () => {
+        resolverClick(turnoAbiertoFixture())
+        await Promise.resolve()
+      })
+    })
+
+    it('si el turno ya no está abierto (cerrado por otra pestaña/cajero), actualiza el badge a "Turno cerrado" con el aviso y NO navega', async () => {
+      let cantidadDeConsultas = 0
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
+        cantidadDeConsultas += 1
+        return cantidadDeConsultas === 1 ? Promise.resolve<TurnoResumen>(turnoAbiertoFixture()) : Promise.resolve(null)
+      })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Turno abierto')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByText('El turno ya fue cerrado.')).toBeInTheDocument()
+      expect(await screen.findByText('Turno cerrado')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeInTheDocument()
+      expect(screen.queryByText(/Cierre de turno/)).not.toBeInTheDocument()
+    })
+
+    it('si falla la consulta fresca, muestra un aviso propio sin tocar el badge ni navegar', async () => {
+      let cantidadDeConsultas = 0
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
+        cantidadDeConsultas += 1
+        return cantidadDeConsultas === 1
+          ? Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
+          : Promise.reject(new Error('network error'))
+      })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Turno abierto')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      expect(await screen.findByText('No se pudo verificar el turno abierto.')).toBeInTheDocument()
+      // El badge de turno sigue "abierto" (esta consulta es propia del click, no del mount/reintentar).
+      expect(screen.getByText('Turno abierto')).toBeInTheDocument()
+      expect(screen.queryByText(/Cierre de turno/)).not.toBeInTheDocument()
+    })
+
+    it('doble click en "Cerrar caja" en el mismo tick dispara una única consulta fresca', async () => {
+      let cantidadDeConsultas = 0
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
+        cantidadDeConsultas += 1
+        return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
+      })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Turno abierto')
+      const boton = screen.getByRole('button', { name: 'Cerrar caja' })
+
+      fireEvent.click(boton)
+      fireEvent.click(boton)
+
+      await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)
+      // 1 consulta del mount + 1 sola consulta del click (nunca 2, aunque hubo dos clicks).
+      expect(cantidadDeConsultas).toBe(2)
+    })
+  })
+
+  describe('re-judgment ronda 2 — warnings', () => {
+    it('"El turno ya fue cerrado." desaparece apenas se abre un turno de nuevo (Abrir turno)', async () => {
+      mockearApiGet((ruta) => {
+        if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
+        return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
+      })
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Turno abierto')
+
+      // "Cerrar caja" encuentra que ya no hay turno (cerrado por otra pestaña mientras tanto).
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      expect(await screen.findByText('El turno ya fue cerrado.')).toBeInTheDocument()
+      await screen.findByText('Turno cerrado')
+
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === '/caja/turnos') return Promise.resolve(turnoAbiertoFixture({ id: 8080 }))
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+      await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
+      await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+
+      await screen.findByText('Turno abierto')
+      expect(screen.queryByText('El turno ya fue cerrado.')).not.toBeInTheDocument()
+    })
+
+    /**
+     * Mismo aviso, camino distinto: en vez de "Abrir turno" (test de arriba), una consulta
+     * exitosa posterior de MONTAJE (ej. el punto de venta se recarga con el mismo id — mismo
+     * disparador que el test de "generación" más arriba, sin remontar `PantallaPos`) confirma el
+     * turno abierto de nuevo y debe limpiar igual el aviso viejo de "Cerrar caja".
+     */
+    it('"El turno ya fue cerrado." también desaparece con una consulta exitosa posterior del mount', async () => {
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(turnoAbiertoFixture()) : undefined))
+      const { rerender } = renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Turno abierto')
+
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      expect(await screen.findByText('El turno ya fue cerrado.')).toBeInTheDocument()
+
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(turnoAbiertoFixture({ id: 321 })) : undefined))
+      estadoDePuntoVenta.puntoVenta = puntoVentaFixture()
+      rerender(arbolDePos())
+
+      await waitFor(() => expect(screen.queryByText('El turno ya fue cerrado.')).not.toBeInTheDocument())
+      expect(screen.getByText('Turno abierto')).toBeInTheDocument()
+    })
+
+    /**
+     * Cláusula bajo prueba: el guard `montadoRef.current` de `irACerrarCaja`, chequeado
+     * INMEDIATAMENTE después del `await` — antes de tocar el turno/navegar. Sin él, un cajero que
+     * navega fuera de la pantalla de venta mientras la consulta fresca de "Cerrar caja" sigue en
+     * vuelo terminaría navegando IGUAL cuando esa respuesta llegara tarde, contra una pantalla que
+     * ya no está.
+     */
+    it('si la pantalla se desmonta mientras "Cerrar caja" está verificando el turno, no navega al resolver', async () => {
+      let resolverConsulta: (t: TurnoResumen | null) => void = () => {}
+      const consultaPendiente = new Promise<TurnoResumen | null>((resolve) => {
+        resolverConsulta = resolve
+      })
+      const alIrACerrarCaja = vi.fn()
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(turnoAbiertoFixture()) : undefined))
+
+      const { unmount } = render(
+        <MemoryRouter initialEntries={['/pos']}>
+          <Routes>
+            <Route path="/pos" element={<Pos alIrACerrarCaja={alIrACerrarCaja} />} />
+          </Routes>
+        </MemoryRouter>,
+      )
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Turno abierto')
+
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? consultaPendiente : undefined))
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      unmount()
+
+      await act(async () => {
+        resolverConsulta(turnoAbiertoFixture())
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(alIrACerrarCaja).not.toHaveBeenCalled()
+    })
   })
 })
 

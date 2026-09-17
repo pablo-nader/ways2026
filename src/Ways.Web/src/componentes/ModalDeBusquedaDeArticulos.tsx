@@ -24,12 +24,13 @@ export type PropsModalDeBusquedaDeArticulos = {
    * un contexto incompleto. */
   idListaPrecio: number | null
   idEmpresa: number | null
-  /** stage-pos-turno-y-foco: `false` mientras el turno del punto de venta está cerrado — el
-   * buscador sigue sirviendo para consultar precio (spec: "solo búsqueda/consulta de precio
-   * mientras el turno está cerrado"), pero "Agregar" queda deshabilitado por fila (nunca oculto:
-   * la columna "Acciones" no debe quedar vacía sin explicación). Por defecto `true` (app web
-   * normal, turno abierto) para no romper ningún llamador existente. */
-  puedeAgregar?: boolean
+  /** stage-pos-turno-y-foco (judgment-day ronda 1, T4: el motivo real, no un booleano genérico —
+   * "turno cerrado" y "todavía consultando el turno" son avisos distintos, nunca el mismo texto):
+   * definido ⇒ el buscador sigue sirviendo para consultar precio (spec: "solo búsqueda/consulta de
+   * precio mientras el turno está cerrado"), pero "Agregar" queda deshabilitado por fila (nunca
+   * oculto: la columna "Acciones" no debe quedar vacía sin explicación) con este mensaje como
+   * `title`. `undefined` (default) ⇒ "Agregar" habilitado — no rompe ningún llamador existente. */
+  motivoSinAgregar?: string
   onAgregar: (linea: Omit<LineaCarrito, 'cantidad'>, cantidad: number) => void
   onCerrar: () => void
 }
@@ -45,10 +46,11 @@ export type PropsModalDeBusquedaDeArticulos = {
 export function ModalDeBusquedaDeArticulos({
   idListaPrecio,
   idEmpresa,
-  puedeAgregar = true,
+  motivoSinAgregar,
   onAgregar,
   onCerrar,
 }: PropsModalDeBusquedaDeArticulos) {
+  const puedeAgregar = motivoSinAgregar === undefined
   const [termino, setTermino] = useState('')
   const [buscando, setBuscando] = useState(false)
   const [resultados, setResultados] = useState<ArticuloListado[] | null>(null)
@@ -226,7 +228,7 @@ export function ModalDeBusquedaDeArticulos({
                                 type="button"
                                 className="btn btn-sm btn-primary rounded-0"
                                 disabled={!puedeAgregar}
-                                title={puedeAgregar ? undefined : 'Turno cerrado: abrí un turno para vender.'}
+                                title={motivoSinAgregar}
                                 onClick={() => agregar(a)}
                               >
                                 Agregar

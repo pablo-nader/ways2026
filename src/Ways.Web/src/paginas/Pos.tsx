@@ -259,24 +259,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   const [errorEscaneo, setErrorEscaneo] = useState('')
   const tokenEscaneoRef = useRef(0)
   const inputEscaneoRef = useRef<HTMLInputElement>(null)
-  // stage-pos-turno-y-foco (fix real, verificado en navegador real — ver el efecto de foco más
-  // abajo): arranca en `true` a propósito, para que ESE MISMO efecto cubra también el foco
-  // inicial al entrar a la pantalla — reemplaza el atributo JSX `autoFocus` que tenía este input
-  // antes. Causa real encontrada: el `autoFocus` nativo (HTML/React) no hace nada cuando el
-  // documento todavía no tiene foco de ventana/SO en el momento del mount — confirmado a mano en
-  // Chrome real: `document.hasFocus()` da `false` justo después de una navegación dura, y en ese
-  // estado un `<input autoFocus>` NUNCA queda como `document.activeElement` (se queda en `body`
-  // indefinidamente, no es una carrera que se resuelva sola un instante después) — pero un
-  // `elemento.focus()` imperativo, llamado en el mismo momento, SÍ lo enfoca igual, con
-  // `document.hasFocus()` todavía en `false`. jsdom no reproduce esta restricción (cualquier
-  // mecanismo de foco "funciona" ahí sin importar si el documento "tiene foco de ventana"), así
-  // que un test en jsdom en verde nunca fue evidencia de que el `autoFocus` nativo funcionara en
-  // la app real — el mismo tipo de brecha que la regla 12 de react-async-state ya documenta para
-  // la restauración de foco, acá aplica también a la ADQUISICIÓN inicial. Mutación que lo prueba:
-  // arrancar este ref en `false` (como antes) reabre el hueco — el test de "autofocus al entrar"
-  // pasa a depender otra vez del `autoFocus` nativo que este comentario documenta como no
-  // confiable.
-  const focoPendienteRef = useRef(true)
+  // Gatillos EXPLÍCITOS de foco (escaneo exitoso, cerrar/agregar del buscador) — el efecto que lo
+  // consume (más abajo) siempre gana, sin mirar dónde está el foco actual: son reacciones directas
+  // a una acción del propio cajero sobre ESTE input. El foco inicial / al desbloquear el turno usa
+  // un mecanismo aparte (ver el efecto "foco neutral" más abajo) que si respeta un foco ajeno.
+  const focoPendienteRef = useRef(false)
 
   // stage-pos-buscador-articulos: modal de búsqueda por nombre (F2, botón "Buscar" junto al de
   // código) — se abre solo con la venta libre operable (nunca bajo `?idPresupuesto=`, ni con el
@@ -319,6 +306,27 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   const [cargandoTurno, setCargandoTurno] = useState(false)
   const [errorTurno, setErrorTurno] = useState('')
   const generacionTurnoRef = useRef(0)
+
+  // judgment-day ronda 1 (T2): "Cerrar caja" vuelve a consultar el turno abierto ANTES de navegar
+  // (ver `irACerrarCaja`) — estado propio, separado de `cargandoTurno`/`errorTurno` (regla 14: un
+  // slot de estado tiene un solo dueño; esta consulta la dispara el click, no el mount/reintentar).
+  const [verificandoCierre, setVerificandoCierre] = useState(false)
+  const verificandoCierreRef = useRef(false)
+  const [avisoCerrarCaja, setAvisoCerrarCaja] = useState('')
+
+  // Re-judgment (WARNING, juez A): `irACerrarCaja` hace un `await` real — si el cajero navega
+  // fuera de esta pantalla (u otra cosa la desmonta) antes de que resuelva, ni el `setState` ni,
+  // sobre todo, la NAVEGACIÓN posterior deben dispararse contra una pantalla que ya no está. Un
+  // guard de generación no alcanza acá (la respuesta sigue siendo la más reciente, el problema es
+  // que ya no hay a dónde aplicarla) — se necesita un ref de "sigue montado", seteado en `false` en
+  // la limpieza del efecto de montaje.
+  const montadoRef = useRef(true)
+  useEffect(() => {
+    montadoRef.current = true
+    return () => {
+      montadoRef.current = false
+    }
+  }, [])
 
   const [ventaEmitida, setVentaEmitida] = useState<{ comprobante: ComprobanteEmitido; cliente: ClienteListado } | null>(null)
 
@@ -492,9 +500,47 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     }
   }, [puntoVentaSeleccionada])
 
-  // stage-pos-turno-y-foco: consulta el turno abierto del punto de venta — mismo endpoint y
-  // criterio de generación que `PantallaCaja` en Caja.tsx (react-async-state regla 2). Nunca
-  // corre bajo `?idPresupuesto=` (el banner/gate de turno es una noción del camino libre).
+  /**
+   * Consulta el turno abierto del punto de venta — mismo endpoint y criterio de generación que
+   * `PantallaCaja` en Caja.tsx (react-async-state regla 2). Extraída a función (en vez de vivir
+   * solo dentro del efecto de abajo) para que "Reintentar" (judgment-day ronda 1, T1, CRITICAL)
+   * pueda volver a dispararla con el mismo camino — sin esto, un `GET .../abierto` que falla deja
+   * `bloqueadoPorTurno` en `true` para siempre (ni "Abrir turno" ni "Cerrar caja" se renderizan
+   * porque el ternario del badge solo muestra el aviso de error) y el safety-net del 409 nunca es
+   * alcanzable, sin ninguna forma de recuperarse salvo recargar la página entera — en el shell de
+   * escritorio, sin selector de punto de venta, ni eso.
+   */
+  function consultarTurno(idPuntoVenta: number) {
+    const miGeneracion = (generacionTurnoRef.current += 1)
+    setCargandoTurno(true)
+    setErrorTurno('')
+
+    // Se retorna la promesa (en vez de tratarla como fire-and-forget) para que `reintentarTurno`
+    // pueda liberar su guarda de reentrancia recién cuando esta corrida específica termina.
+    return clienteDeCaja
+      .obtenerAbierto(idPuntoVenta)
+      .then((t) => {
+        if (generacionTurnoRef.current !== miGeneracion) return
+        setTurno(t)
+        // Re-judgment (WARNING, ambos jueces): un `avisoCerrarCaja` viejo ("El turno ya fue
+        // cerrado.") no debe sobrevivir a una consulta exitosa posterior — mount o "Reintentar" —
+        // que confirma el turno abierto de nuevo; ese aviso es del click anterior, no de este.
+        if (t) setAvisoCerrarCaja('')
+      })
+      .catch((e) => {
+        if (generacionTurnoRef.current !== miGeneracion) return
+        setTurno(null)
+        setErrorTurno(
+          e instanceof ErrorApi ? e.message : 'No se pudo consultar el turno abierto de este punto de venta.',
+        )
+      })
+      .finally(() => {
+        if (generacionTurnoRef.current !== miGeneracion) return
+        setCargandoTurno(false)
+      })
+  }
+
+  // Nunca corre bajo `?idPresupuesto=` (el banner/gate de turno es una noción del camino libre).
   useEffect(() => {
     if (modoPresupuesto || !puntoVentaSeleccionada) {
       setTurno(null)
@@ -502,34 +548,31 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       setErrorTurno('')
       return
     }
-
-    const miGeneracion = (generacionTurnoRef.current += 1)
-    let vigente = true
-    setCargandoTurno(true)
-    setErrorTurno('')
-
-    clienteDeCaja
-      .obtenerAbierto(puntoVentaSeleccionada.id)
-      .then((t) => {
-        if (!vigente || generacionTurnoRef.current !== miGeneracion) return
-        setTurno(t)
-      })
-      .catch((e) => {
-        if (!vigente || generacionTurnoRef.current !== miGeneracion) return
-        setTurno(null)
-        setErrorTurno(
-          e instanceof ErrorApi ? e.message : 'No se pudo consultar el turno abierto de este punto de venta.',
-        )
-      })
-      .finally(() => {
-        if (!vigente || generacionTurnoRef.current !== miGeneracion) return
-        setCargandoTurno(false)
-      })
-
-    return () => {
-      vigente = false
-    }
+    consultarTurno(puntoVentaSeleccionada.id)
+    // `consultarTurno` no es estable entre renders (cierra sobre estado/props del componente),
+    // pero su identidad no importa acá: el efecto solo necesita dispararse cuando cambian sus
+    // precondiciones reales (`modoPresupuesto`/el punto de venta), nunca por una referencia nueva
+    // de la propia función — mismo criterio que el resto de los efectos de esta pantalla que
+    // llaman a un helper declarado en el cuerpo del componente.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modoPresupuesto, puntoVentaSeleccionada])
+
+  /** "Reintentar" del aviso de error de turno — vuelve a consultar con el mismo camino que el
+   * mount (mismo guard de generación: una respuesta vieja en vuelo desde antes nunca pisa la de
+   * este reintento). El botón queda `disabled` mientras `cargandoTurno` es `true`, pero eso solo
+   * cubre el render — react-async-state regla 11: la guarda de reentrancia real es un `ref`, no el
+   * estado (`cargandoTurno` no se actualiza hasta el próximo render, así que dos clicks en el
+   * mismo tick pasarían los dos sin esto), liberado en el `finally` SIN gatear por generación (se
+   * libera siempre, la regla 11 lo pide explícito). */
+  const reintentandoTurnoRef = useRef(false)
+  function reintentarTurno() {
+    if (reintentandoTurnoRef.current) return
+    if (!puntoVentaSeleccionada) return
+    reintentandoTurnoRef.current = true
+    consultarTurno(puntoVentaSeleccionada.id).finally(() => {
+      reintentandoTurnoRef.current = false
+    })
+  }
 
   /** El turno recién confirmado (apertura propia, autocuración del gate, o el 409 safety-net) es
    * la fuente más autoritativa posible: bumpear la generación invalida cualquier `GET …/abierto`
@@ -539,18 +582,59 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     setErrorTurno('')
     setCargandoTurno(false)
     setTurno(nuevoTurno)
+    // Re-judgment (WARNING, ambos jueces): mismo criterio que en `consultarTurno` — "Abrir turno"
+    // (gate propio o safety-net del 409) confirma un turno abierto nuevo, así que cualquier aviso
+    // de "El turno ya fue cerrado." de un click anterior de "Cerrar caja" queda obsoleto.
+    setAvisoCerrarCaja('')
   }
 
-  /** "Cerrar caja" de "Datos de la venta" — navega a `CierreDeCaja` con el `idTurno` real, nunca
-   * a ciegas. `alIrACerrarCaja` es el seam del shell de escritorio (ruta `/cerrar-caja`, distinta
-   * de la ruta libre `/caja/cierre` de la app web); sin el prop, navega con `useNavigate` como
-   * siempre. */
-  function irACerrarCaja() {
-    if (!turno) return
-    if (alIrACerrarCaja) {
-      alIrACerrarCaja(turno.id)
-    } else {
-      navigate(`/caja/cierre?idTurno=${turno.id}`)
+  /**
+   * "Cerrar caja" de "Datos de la venta" — vuelve a consultar el turno abierto ANTES de navegar
+   * (judgment-day ronda 1, T2, WARNING: el `turno.id` que ya tiene el estado pudo quedar viejo —
+   * otra pestaña/cajero cerró la caja mientras esta pantalla seguía mostrando "Turno abierto" — el
+   * shell anterior hacía esta misma consulta fresca en el click, este reemplazo no debía perder
+   * esa garantía). `alIrACerrarCaja` es el seam del shell de escritorio (ruta `/cerrar-caja`,
+   * distinta de la ruta libre `/caja/cierre` de la app web); sin el prop, navega con `useNavigate`
+   * como siempre. Nunca navega con un id potencialmente viejo: si la consulta ya no encuentra
+   * turno, actualiza el badge a "cerrado" en vez de navegar a ciegas.
+   */
+  async function irACerrarCaja() {
+    // regla 9/11: guarda de reentrancia de primera línea, liberada siempre en el `finally` sin
+    // gate de generación (un doble click no debe disparar dos consultas).
+    if (verificandoCierreRef.current) return
+    if (!puntoVentaSeleccionada) return
+
+    verificandoCierreRef.current = true
+    setVerificandoCierre(true)
+    setAvisoCerrarCaja('')
+    const miGeneracion = (generacionTurnoRef.current += 1)
+
+    try {
+      const turnoReal = await clienteDeCaja.obtenerAbierto(puntoVentaSeleccionada.id)
+      // Re-judgment (WARNING, juez A): si la pantalla ya se desmontó mientras el `await` estaba en
+      // vuelo, ni un `setState` ni, sobre todo, la navegación posterior deben dispararse — se
+      // chequea ANTES que la generación (y antes de cualquier otra cosa) a propósito.
+      if (!montadoRef.current) return
+      if (generacionTurnoRef.current !== miGeneracion) return
+
+      if (!turnoReal) {
+        setTurno(null)
+        setAvisoCerrarCaja('El turno ya fue cerrado.')
+        return
+      }
+
+      if (alIrACerrarCaja) {
+        alIrACerrarCaja(turnoReal.id)
+      } else {
+        navigate(`/caja/cierre?idTurno=${turnoReal.id}`)
+      }
+    } catch (e) {
+      if (!montadoRef.current) return
+      if (generacionTurnoRef.current !== miGeneracion) return
+      setAvisoCerrarCaja(e instanceof ErrorApi ? e.message : 'No se pudo verificar el turno abierto.')
+    } finally {
+      verificandoCierreRef.current = false
+      if (montadoRef.current) setVerificandoCierre(false)
     }
   }
 
@@ -566,6 +650,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   // ACÁ (antes del efecto de foco, que lo necesita en su guard) y no más abajo junto a
   // `precondicionesListas` — el orden importa, es una const de módulo del cuerpo del componente.
   const bloqueadoPorTurno = !modoPresupuesto && puntoVentaSeleccionada !== null && turno === null
+
+  // judgment-day ronda 1 (T4): mensaje real para "Agregar" del buscador — `bloqueadoPorTurno`
+  // cubre TANTO "todavía consultando" como "confirmado cerrado" (mismo comentario de arriba), pero
+  // son avisos distintos para el cajero; acá se separan con `cargandoTurno`.
+  const motivoSinAgregarEnBuscador = !bloqueadoPorTurno
+    ? undefined
+    : cargandoTurno
+      ? 'Consultando turno…'
+      : 'Turno cerrado: abrí un turno para vender.'
 
   // react-async-state regla 2/3/4: cada mutación del carrito (o un cambio de cliente/punto de
   // venta, de los que depende el lote) dispara una nueva resolución de precios; una respuesta
@@ -861,24 +954,47 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
-  // no debe dejarlo enfocado ni operable durante el checkout. Con `focoPendienteRef` arrancando en
-  // `true` (ver su declaración más arriba), esta misma corrida cubre TAMBIÉN el foco inicial al
-  // entrar a la pantalla — un solo mecanismo para las dos necesidades, en vez de un `autoFocus`
-  // nativo que no es confiable en un mount real (ver el comentario del ref).
+  // no debe dejarlo enfocado ni operable durante el checkout. Gatillo EXPLÍCITO
+  // (`focoPendienteRef`, seteado por `escanear()`/`agregarDesdeBusqueda()`/`cerrarBuscador()`):
+  // siempre gana, nunca mira dónde está el foco actual — son reacciones directas a una acción del
+  // cajero sobre este mismo input.
   //
   // `bloqueadoPorTurno` es parte del guard por la MISMA razón que `escaneando`/`cobrando`: el
   // input está `disabled` mientras es `true` (turno todavía cargando o confirmado cerrado) y un
-  // elemento deshabilitado no puede recibir foco — sin este conjunct, el pedido de foco inicial se
-  // consumía en el primer commit (turno todavía en `null`, recién arrancando la consulta) contra
-  // un input ya deshabilitado, un no-op silencioso que dejaba el pedido perdido para siempre (el
-  // `focoPendienteRef.current = false` ya lo había apagado) — encontrado reproduciendo en un
-  // navegador real: la consulta de turno resuelve casi al instante, así que el efecto corría
-  // ANTES de que `bloqueadoPorTurno` pasara a `false`, y nunca se reintentaba. Con el conjunct acá,
-  // el efecto vuelve a correr cuando `bloqueadoPorTurno` cambia y recién ahí consume el pedido.
+  // elemento deshabilitado no puede recibir foco — sin este conjunct, un pedido explícito que
+  // coincidiera con el turno todavía resolviendo se consumía contra un input ya deshabilitado (un
+  // no-op silencioso, el pedido quedaba perdido para siempre). Con el conjunct acá, el efecto
+  // vuelve a correr cuando `bloqueadoPorTurno` cambia y recién ahí consume el pedido.
   useEffect(() => {
     if (!focoPendienteRef.current) return
     if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno) return
     focoPendienteRef.current = false
+    inputEscaneoRef.current?.focus()
+  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno])
+
+  /**
+   * Foco NEUTRAL — mount inicial (reemplaza el `autoFocus` nativo, no confiable en un mount real:
+   * ver abajo) y desbloqueo del turno (judgment-day ronda 1, T3, WARNING). A diferencia del efecto
+   * de arriba, este NUNCA le saca el foco a un control que el cajero eligió a propósito mientras
+   * el turno todavía cargaba (ej. clickear "Buscar artículo") — solo enfoca el input de código si
+   * el foco actual es neutral (`body`/`null`) o ya es el propio input. No consume ningún "pedido":
+   * se reevalúa en cada corrida relevante, siempre de forma idempotente (enfocar un elemento ya
+   * enfocado no hace nada).
+   *
+   * Causa real del foco inicial roto, encontrada reproduciendo en un navegador real (no en un
+   * test): el `autoFocus` nativo (HTML/React) no hace nada cuando el documento todavía no tiene
+   * foco de ventana/SO en el momento del mount — confirmado a mano en Chrome real:
+   * `document.hasFocus()` da `false` justo después de una navegación dura, y en ese estado un
+   * `<input autoFocus>` NUNCA queda como `document.activeElement` (se queda en `body`
+   * indefinidamente) — pero un `elemento.focus()` imperativo, llamado en el mismo momento, SÍ lo
+   * enfoca igual. jsdom no reproduce esta restricción, así que un test en jsdom en verde nunca fue
+   * evidencia de que el `autoFocus` nativo funcionara en la app real (react-async-state regla 12,
+   * extendida de "restaurar foco" a "adquirir foco por primera vez").
+   */
+  useEffect(() => {
+    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno) return
+    const activo = document.activeElement
+    if (activo !== document.body && activo !== null && activo !== inputEscaneoRef.current) return
     inputEscaneoRef.current?.focus()
   }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno])
 
@@ -1359,14 +1475,34 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                 {cargandoTurno ? (
                   <span className="text-muted">Consultando…</span>
                 ) : errorTurno ? (
-                  <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorTurno}</div>
+                  // judgment-day ronda 1 (T1, CRITICAL): sin "Reintentar" acá, un error de red
+                  // dejaba `bloqueadoPorTurno` en `true` para siempre — ni "Abrir turno" ni
+                  // "Cerrar caja" se renderizan en este ternario, así que la única salida era
+                  // recargar la página entera (imposible en el shell de escritorio, sin selector
+                  // de punto de venta que provoque un remount).
+                  <div className="alert alert-danger rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
+                    <span>{errorTurno}</span>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-danger rounded-0"
+                      disabled={cargandoTurno}
+                      onClick={reintentarTurno}
+                    >
+                      Reintentar
+                    </button>
+                  </div>
                 ) : (
                   <div className="d-flex justify-content-between align-items-center">
                     {turno ? (
                       <>
                         <span className="badge bg-success">Turno abierto</span>
-                        <button type="button" className="btn btn-outline-danger btn-sm rounded-0" onClick={irACerrarCaja}>
-                          Cerrar caja
+                        <button
+                          type="button"
+                          className="btn btn-outline-danger btn-sm rounded-0"
+                          disabled={verificandoCierre}
+                          onClick={() => void irACerrarCaja()}
+                        >
+                          {verificandoCierre ? 'Verificando…' : 'Cerrar caja'}
                         </button>
                       </>
                     ) : (
@@ -1378,6 +1514,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                       </>
                     )}
                   </div>
+                )}
+                {/* judgment-day ronda 1 (T2): aviso propio de la consulta fresca de "Cerrar caja"
+                    — nunca comparte slot con `errorTurno` (regla 14), esa consulta es del mount/
+                    reintentar, no del click. */}
+                {avisoCerrarCaja && (
+                  <div className="alert alert-warning rounded-0 py-1 px-2 small mt-2">{avisoCerrarCaja}</div>
                 )}
               </div>
             )}
@@ -1554,7 +1696,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
         <ModalDeBusquedaDeArticulos
           idListaPrecio={clienteSeleccionado?.idListaPrecio ?? null}
           idEmpresa={puntoVentaSeleccionada?.idEmpresa ?? null}
-          puedeAgregar={!bloqueadoPorTurno}
+          motivoSinAgregar={motivoSinAgregarEnBuscador}
           onAgregar={agregarDesdeBusqueda}
           onCerrar={cerrarBuscador}
         />
