@@ -1,6 +1,5 @@
 using System.Data;
 using System.Data.Common;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Ways.Application.Abstracciones;
@@ -71,8 +70,6 @@ public class ServicioDeCuentaCorriente(
             throw new ErrorDominio("referencia_invalida", $"No existe el medio de pago {idsMedioFaltantes[0]}.", 400);
         }
 
-        var vueltoMaximo = await ResolverParametroAsync(ParametroConocido.VueltoMaximo, puntoVenta.IdEmpresa, puntoVenta.Id, ct);
-
         var pagosAValidar = pagos
             .Select(p =>
             {
@@ -83,7 +80,7 @@ public class ServicioDeCuentaCorriente(
             })
             .ToList();
 
-        var importeAplicado = ValidadorDePagoACuenta.Validar(pagosAValidar, vueltoMaximo);
+        var importeAplicado = ValidadorDePagoACuenta.Validar(pagosAValidar);
 
         // Misma corrección que ServicioDeVentas.EmitirAsync: el número se reserva y COMITEA en su
         // propia transacción, ANTES de la que escribe el resto — "se consume aunque falle el
@@ -365,18 +362,6 @@ public class ServicioDeCuentaCorriente(
             // es un bug de aprovisionamiento, no un caso de negocio alcanzable (mismo criterio
             // que el Consumidor Final de ServicioDeVentas.ResolverClienteAsync).
             ?? throw new InvalidOperationException("El tenant actual no tiene el tipo de comprobante RC sembrado.");
-
-    private async Task<decimal> ResolverParametroAsync(
-        ParametroConocido conocido, int idEmpresa, int idPuntoVenta, CancellationToken ct)
-    {
-        var candidatos = await db.Parametros
-            .Where(p => p.Clave == conocido.Clave && p.IdEmpresa == idEmpresa
-                && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
-            .ToListAsync(ct);
-
-        var valorJson = ResolucionDeParametros.Resolver(conocido.Clave, candidatos, idPuntoVenta);
-        return JsonSerializer.Deserialize<decimal>(valorJson);
-    }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)
     {

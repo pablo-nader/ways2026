@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
-import { api, ErrorApi } from '../api/cliente'
+import { ErrorApi } from '../api/cliente'
 import { clienteDeClientes } from '../api/clientes'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import {
@@ -33,7 +33,6 @@ import type {
   MedioPagoAlta,
   MedioPagoListado,
   MovimientoDeCuentaCorriente,
-  ParametroResuelto,
   PuntoVentaListado,
   ResultadoDeReliquidacion,
 } from '../api/tipos'
@@ -280,10 +279,6 @@ function ModalPagoACuenta({ idCliente, puntosVenta, medios, header, onCerrar, on
     () => puntosVenta.find((p) => p.id === leerPuntoVentaGuardado())?.id ?? puntosVenta[0].id,
   )
 
-  const [parametros, setParametros] = useState<{ vueltoMaximo: number } | null>(null)
-  const [errorParametros, setErrorParametros] = useState('')
-  const generacionParametrosRef = useRef(0)
-
   const proximaFilaIdRef = useRef(1)
   const [filas, setFilas] = useState<FilaPagoACuenta[]>(() => [filaPagoACuentaVacia(proximaFilaIdRef.current++)])
   const [observaciones, setObservaciones] = useState('')
@@ -299,42 +294,6 @@ function ModalPagoACuenta({ idCliente, puntosVenta, medios, header, onCerrar, on
     for (const m of medios) indice[m.id] = m
     return indice
   }, [medios])
-
-  // regla 2: cada cambio de punto de venta dispara una nueva resolución de vuelto_maximo — una
-  // respuesta desactualizada nunca puede pisar la más reciente.
-  useEffect(() => {
-    // El botón de pago no puede correr con el vuelto_maximo del PV anterior mientras se resuelve
-    // el nuevo — se limpia ANTES de cualquier chequeo, no solo en la rama sin PV.
-    setParametros(null)
-
-    const puntoVentaSeleccionado = puntosVenta.find((p) => p.id === idPuntoVenta) ?? null
-    if (!puntoVentaSeleccionado) {
-      setErrorParametros('')
-      return
-    }
-
-    const miGeneracion = (generacionParametrosRef.current += 1)
-    let vigente = true
-
-    api
-      .get<ParametroResuelto>(
-        `/parametros/vuelto_maximo?idEmpresa=${puntoVentaSeleccionado.idEmpresa}&idPuntoVenta=${puntoVentaSeleccionado.id}`,
-      )
-      .then((valor) => {
-        if (!vigente || generacionParametrosRef.current !== miGeneracion) return
-        setParametros({ vueltoMaximo: Number(valor.valor) })
-        setErrorParametros('')
-      })
-      .catch((e) => {
-        if (!vigente || generacionParametrosRef.current !== miGeneracion) return
-        setParametros(null)
-        setErrorParametros(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los parámetros de pago.')
-      })
-
-    return () => {
-      vigente = false
-    }
-  }, [idPuntoVenta, puntosVenta])
 
   function cambiarPuntoVenta(id: number) {
     if (registrandoRef.current) return
@@ -367,12 +326,7 @@ function ModalPagoACuenta({ idCliente, puntosVenta, medios, header, onCerrar, on
     // regla 9: guard de reentrancia de primera línea.
     if (registrandoRef.current) return
 
-    if (!parametros) {
-      setError('No se pudieron cargar los parámetros de pago.')
-      return
-    }
-
-    const rechazo = validarPagoACuentaLocal({ pagos: pagosCalculo, vueltoMaximo: parametros.vueltoMaximo })
+    const rechazo = validarPagoACuentaLocal({ pagos: pagosCalculo })
     if (rechazo) {
       setError(rechazo.mensaje)
       return
@@ -417,8 +371,6 @@ function ModalPagoACuenta({ idCliente, puntosVenta, medios, header, onCerrar, on
                 </div>
                 <div className="modal-body">
                   {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
-                  {errorParametros && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorParametros}</div>}
-
                   <div className="mb-3" style={{ maxWidth: 320 }}>
                     <label className="form-label" htmlFor="cc-pago-punto-venta">
                       Punto de venta
@@ -560,7 +512,7 @@ function ModalPagoACuenta({ idCliente, puntosVenta, medios, header, onCerrar, on
                   <button
                     type="button"
                     className="btn btn-primary rounded-0"
-                    disabled={registrando || !parametros || pagosCalculo.length === 0}
+                    disabled={registrando || pagosCalculo.length === 0}
                     onClick={registrarPago}
                   >
                     {registrando ? 'Registrando…' : 'Registrar pago'}

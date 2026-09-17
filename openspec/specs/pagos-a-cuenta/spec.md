@@ -104,8 +104,10 @@ and update `Cliente.Saldo` by the same amount via the same
 
 An RC payment MUST NOT be rejected merely because it exceeds `Cliente.Saldo`;
 `Cliente.Saldo` MAY become negative (saldo a favor) after the movement.
-Vuelto on an RC's efectivo medio, if given, MUST still respect
-`vuelto_maximo` through `ValidadorDePagos`, independent of the overpayment.
+Vuelto on an RC's efectivo medio, if given, MUST still be justified by the
+banknote rule (owner decision, 2026-09-16 — `BilletesArgentinos.EsVueltoJustificado`
+through `ValidadorDePagoACuenta`; `vuelto_maximo` no longer governs this),
+independent of the overpayment.
 
 #### Scenario: Paying more than the outstanding saldo produces saldo a favor
 - GIVEN `Cliente.Saldo = 100`
