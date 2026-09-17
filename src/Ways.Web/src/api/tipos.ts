@@ -868,6 +868,22 @@ export type TicketDeTurno = {
   total: number
 }
 
+/** Fila de `GET /api/ventas/por-turno/{idTurno}` — espejo de
+ * `Ways.Application.Ventas.VentaDeTurnoListado` (pantalla "Ventas del turno" del POS de
+ * escritorio). A diferencia de `TicketDeTurno`, SÍ incluye anuladas y trae `nombreCliente`/
+ * `mediosDePago` — ver el doc-comment del record del lado del servidor. */
+export type VentaDeTurnoListado = {
+  id: number
+  numero: number
+  numeroVisible: string
+  estado: EstadoComprobante
+  fecha: string
+  idCliente: number
+  nombreCliente: string
+  total: number
+  mediosDePago: string[]
+}
+
 /** Un gasto del turno dentro de `DetalleDeTurno.gastos` — espejo de
  * `Ways.Application.Gastos.GastoListado`. */
 export type GastoDeTurno = {

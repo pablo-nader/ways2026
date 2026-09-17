@@ -15,6 +15,7 @@ import { AuthContext } from '../auth/AuthContext'
 import { CajaZ } from '../paginas/CajaZ'
 import { CierreDeCaja } from '../paginas/CierreDeCaja'
 import { Pos } from '../paginas/Pos'
+import { VentasDelTurno } from '../paginas/VentasDelTurno'
 import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFijo'
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
 import { reporteZ, ticketDeVenta } from '../impresion/plantillas'
@@ -205,6 +206,9 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
               <Link className="btn btn-success rounded-0" to="/vender">
                 Vender
               </Link>
+              <Link className="btn btn-outline-light rounded-0" to="/ventas-del-turno">
+                Ventas del turno
+              </Link>
               <button
                 type="button"
                 className="btn btn-outline-light rounded-0"
@@ -262,6 +266,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
           <main className="flex-grow-1">
             <Routes>
               <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} />} />
+              <Route path="/ventas-del-turno" element={<VentasDelTurno />} />
               <Route
                 path="/cerrar-caja"
                 element={

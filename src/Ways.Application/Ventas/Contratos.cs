@@ -126,3 +126,23 @@ public sealed record ComprobanteListado(
 /// <c>Ways.Application.Usuarios.PaginaDe&lt;T&gt;</c>, redeclarado acá porque ese genérico vive en
 /// un namespace de un ABM no relacionado (evita un acoplamiento cruzado innecesario).</summary>
 public sealed record PaginaDeVentas(IReadOnlyList<ComprobanteListado> Items, int Total, int Pagina, int Tamanio);
+
+/// <summary>Fila de <c>GET /api/ventas/por-turno/{idTurno}</c> (pantalla "Ventas del turno" del POS
+/// de escritorio) — a diferencia de <see cref="ComprobanteListado"/>, que deliberadamente omite
+/// cliente/medios de pago para evitar el N+1 en un listado paginado sin cota, esta fila SÍ los
+/// lleva: el conjunto de ventas de UN turno es acotado por diseño (mismo criterio que
+/// <c>LectorDeLineasDelTurno</c>), así que el batch extra (dos consultas indexadas, nunca N+1) es
+/// barato, y la pantalla necesita reconciliar sin abrir cada comprobante uno por uno. Incluye
+/// <see cref="EstadoComprobante.Anulado"/> a propósito — a diferencia de
+/// <c>LectorDeLineasDelTurno.LeerTicketsAsync</c>, acá el objetivo es justamente poder ver que una
+/// anulación surtió efecto.</summary>
+public sealed record VentaDeTurnoListado(
+    int Id,
+    long Numero,
+    string NumeroVisible,
+    EstadoComprobante Estado,
+    DateTimeOffset Fecha,
+    int IdCliente,
+    string NombreCliente,
+    decimal Total,
+    IReadOnlyList<string> MediosDePago);
