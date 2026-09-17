@@ -1,0 +1,123 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f2f4f7;
+  color: #1f2933;
+}
+
+.tarjeta {
+  width: 100%;
+  max-width: 30rem;
+  background: #ffffff;
+  border-radius: 0.75rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  padding: 2rem 2.25rem;
+  box-sizing: border-box;
+}
+
+h1 {
+  font-size: 1.35rem;
+  margin: 0 0 0.35rem;
+}
+
+.subtitulo {
+  margin: 0 0 1.5rem;
+  color: #52606d;
+  font-size: 0.92rem;
+}
+
+label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 1rem 0 0.35rem;
+}
+
+input,
+select {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #cbd2d9;
+  border-radius: 0.4rem;
+  font-size: 0.95rem;
+  box-sizing: border-box;
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid #2f6fed;
+  outline-offset: 1px;
+}
+
+.ayuda {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+  color: #7b8794;
+}
+
+.acciones {
+  margin-top: 1.75rem;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+button {
+  border: none;
+  border-radius: 0.4rem;
+  padding: 0.6rem 1.1rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+button#boton-guardar {
+  background: #2f6fed;
+  color: #fff;
+}
+
+button#boton-guardar:hover {
+  background: #2559c7;
+}
+
+button.secundario {
+  background: #eef1f5;
+  color: #1f2933;
+}
+
+button.secundario:hover {
+  background: #e1e6ec;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.mensaje {
+  min-height: 1.2rem;
+  margin: 1rem 0 0;
+  font-size: 0.85rem;
+}
+
+.mensaje.error {
+  color: #c0392b;
+}
+
+.mensaje.ok {
+  color: #1e824c;
+}
+
+.pie {
+  margin-top: 1.5rem;
+  font-size: 0.72rem;
+  color: #9aa5b1;
+  text-align: right;
+}

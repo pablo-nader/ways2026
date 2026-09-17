@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-imprimir-prueba"
+description = "Enables the imprimir_prueba command without any pre-configured scope."
+commands.allow = ["imprimir_prueba"]
+
+[[permission]]
+identifier = "deny-imprimir-prueba"
+description = "Denies the imprimir_prueba command without any pre-configured scope."
+commands.deny = ["imprimir_prueba"]

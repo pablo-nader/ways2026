@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "local-capability",
+  "description": "Permisos para la pagina local de configuracion",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-guardar-configuracion",
+    "allow-leer-configuracion",
+    "allow-imprimir-prueba",
+    "allow-listar-impresoras",
+    "allow-listar-impresoras-con-detalle",
+    "allow-impresora-predeterminada-de-windows",
+    "allow-impresora-predeterminada-detallada",
+    "allow-imprimir-raw",
+    "allow-abrir-configuracion",
+    "allow-info-app"
+  ]
+}

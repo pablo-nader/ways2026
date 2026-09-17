@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Configuracion - Ways POS</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="tarjeta">
+      <h1>Configuracion de Ways POS</h1>
+      <p class="subtitulo">
+        Complete estos datos una sola vez para conectar esta caja con su
+        empresa.
+      </p>
+
+      <form id="formulario-configuracion" novalidate>
+        <label for="url-servidor">URL del servidor</label>
+        <input
+          type="text"
+          id="url-servidor"
+          name="url-servidor"
+          placeholder="https://empresa.aipos.site"
+          autocomplete="off"
+          required
+        />
+        <p class="ayuda">
+          Por ejemplo: <code>https://empresa.aipos.site</code>
+        </p>
+
+        <label for="impresora">Impresora de tickets</label>
+        <select id="impresora" name="impresora">
+          <option value="">Impresora predeterminada de Windows</option>
+        </select>
+
+        <div class="acciones">
+          <button type="button" id="boton-imprimir-prueba" class="secundario">
+            Imprimir prueba
+          </button>
+          <button type="submit" id="boton-guardar">Guardar y continuar</button>
+        </div>
+      </form>
+
+      <p id="mensaje" class="mensaje" role="status" aria-live="polite"></p>
+
+      <footer id="pie-version" class="pie"></footer>
+    </main>
+
+    <script src="setup.js"></script>
+  </body>
+</html>

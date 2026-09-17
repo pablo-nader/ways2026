@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-impresora-predeterminada-de-windows"
+description = "Enables the impresora_predeterminada_de_windows command without any pre-configured scope."
+commands.allow = ["impresora_predeterminada_de_windows"]
+
+[[permission]]
+identifier = "deny-impresora-predeterminada-de-windows"
+description = "Denies the impresora_predeterminada_de_windows command without any pre-configured scope."
+commands.deny = ["impresora_predeterminada_de_windows"]
