@@ -149,6 +149,7 @@ function ModalAjusteDeProveedor({ idProveedor, puntosVenta, saldoActual, onCerra
                   className="form-control rounded-0"
                   valor={importe}
                   disabled={registrando}
+                  admiteNegativos
                   onChange={setImporte}
                 />
                 <div className="form-text">

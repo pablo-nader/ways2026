@@ -694,6 +694,7 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
                   className="form-control rounded-0"
                   valor={importe}
                   disabled={registrando}
+                  admiteNegativos
                   onChange={setImporte}
                 />
                 <div className="form-text">

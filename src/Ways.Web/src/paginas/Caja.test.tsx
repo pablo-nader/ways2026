@@ -168,7 +168,7 @@ describe('Caja — apertura', () => {
     await waitFor(() => expect(screen.getByText('$ 640,00')).toBeInTheDocument())
   })
 
-  it('un fondo inicial negativo se rechaza localmente, sin disparar el POST', async () => {
+  it('el campo de fondo inicial no admite negativos (CampoImporte sin admiteNegativos): el "-" tipeado se descarta', async () => {
     mockearRutasBase((ruta) => {
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(null)
       return undefined
@@ -178,6 +178,22 @@ describe('Caja — apertura', () => {
     await screen.findByText('No hay un turno abierto en este punto de venta.')
 
     await userEvent.type(screen.getByLabelText('Fondo inicial'), '-10')
+
+    // El "-" nunca llega a tipearse: no hace falta enviar el formulario para comprobar que el
+    // importe nunca puede quedar negativo, la barrera ya está en el propio campo.
+    expect(screen.getByLabelText('Fondo inicial')).toHaveValue('10')
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/caja/turnos')).toHaveLength(0)
+  })
+
+  it('un fondo inicial vacío se rechaza localmente, sin disparar el POST (validación de respaldo, más allá del propio campo)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(null)
+      return undefined
+    })
+
+    render(<Caja />, { wrapper: MemoryRouter })
+    await screen.findByText('No hay un turno abierto en este punto de venta.')
+
     await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
 
     expect(await screen.findByText('El fondo inicial tiene que ser un número mayor o igual a 0.')).toBeInTheDocument()

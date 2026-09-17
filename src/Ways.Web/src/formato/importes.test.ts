@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatearImporte, parsearImporte } from './importes'
+import { estaEnRangoSoportado, formatearImporte, parsearImporte, redondearImporte } from './importes'
 
 describe('formatearImporte', () => {
   const casos: Array<[number, string]> = [
@@ -81,6 +81,80 @@ describe('formatearImporte', () => {
     // motores ICU cuya locale es-AR define `minimumGroupingDigits >= 2` — este test falla
     // en ese escenario y vuelve a pasar al revertir a `agruparMiles`.
     expect(formatearImporte(1234)).toBe('1.234,00')
+  })
+
+  describe('magnitudes grandes (regresión: el epsilon multiplicativo desbordaba acá)', () => {
+    // `Math.round(abs * factor * (1 + Number.EPSILON))` corregía el ruido de `1.005 * 100` pero
+    // con `valor = 1e14` el mismo truco agregaba un error de +2 (`100.000.000.000.000,02` en vez
+    // de `,00`) — el error crece con la magnitud porque el epsilon se aplica MULTIPLICADO por
+    // `valor * factor`, no de forma acotada. El redondeo actual opera sobre la representación
+    // decimal exacta (`toString()` + BigInt), así que es correcto en cualquier magnitud por
+    // debajo del corte a notación exponencial (~1e21), muy por encima de lo que este archivo
+    // documenta como soportado (`LIMITE_IMPORTE_SOPORTADO`).
+    const casosDeMagnitud: Array<[number, string]> = [
+      [1e14, '100.000.000.000.000,00'],
+      [9e13 + 0.01, '90.000.000.000.000,02'],
+      [123456789012.345, '123.456.789.012,35'],
+    ]
+
+    it.each(casosDeMagnitud)('%s formatea exacto, sin ruido de punto flotante: "%s"', (valor, esperado) => {
+      expect(formatearImporte(valor)).toBe(esperado)
+    })
+
+    it('mutation evidence: con el epsilon multiplicativo, 1e14 dejaba de dar ",00" — ver nota', () => {
+      // Documenta la mutación ejecutada manualmente: al reemplazar el redondeo actual por
+      // `Math.round(Math.abs(valor) * factor * (1 + Number.EPSILON))`, `formatearImporte(1e14)`
+      // pasa a devolver "100.000.000.000.000,02" (el epsilon multiplicado por un valor de esa
+      // magnitud ya no es despreciable) — este test falla en ese escenario y vuelve a pasar al
+      // revertir al redondeo basado en la representación decimal exacta.
+      expect(formatearImporte(1e14)).toBe('100.000.000.000.000,00')
+    })
+  })
+})
+
+describe('redondearImporte', () => {
+  it.each([
+    [1.005, 1.01],
+    [2.675, 2.68],
+    [1.255, 1.26],
+    [-1.005, -1.01],
+    [0.0049, 0],
+    [9999.995, 10000],
+    [1e14, 1e14],
+    [9e13 + 0.01, 9e13 + 0.01],
+    [123456789012.345, 123456789012.35],
+  ])('redondea %s a %s', (valor, esperado) => {
+    expect(redondearImporte(valor)).toBe(esperado)
+  })
+
+  it('es la MISMA fuente que usa formatearImporte — nunca puede divergir de lo que se muestra', () => {
+    for (const valor of [1.005, 2.675, 9999.995, 123456789012.345]) {
+      const redondeado = redondearImporte(valor)
+      expect(formatearImporte(redondeado)).toBe(formatearImporte(valor))
+    }
+  })
+
+  it('NaN y no finitos devuelven NaN', () => {
+    expect(Number.isNaN(redondearImporte(Number.NaN))).toBe(true)
+    expect(Number.isNaN(redondearImporte(Number.POSITIVE_INFINITY))).toBe(true)
+  })
+
+  it('respeta `decimales`', () => {
+    expect(redondearImporte(1234.5, 0)).toBe(1235)
+    expect(redondearImporte(1234.5678, 3)).toBe(1234.568)
+  })
+})
+
+describe('estaEnRangoSoportado', () => {
+  it('true dentro de MAX_SAFE_INTEGER / 10**decimales', () => {
+    expect(estaEnRangoSoportado(Number.MAX_SAFE_INTEGER / 100)).toBe(true)
+    expect(estaEnRangoSoportado(1234.56)).toBe(true)
+  })
+
+  it('false más allá de MAX_SAFE_INTEGER / 10**decimales, o para NaN/Infinity', () => {
+    expect(estaEnRangoSoportado(Number.MAX_SAFE_INTEGER)).toBe(false)
+    expect(estaEnRangoSoportado(Number.NaN)).toBe(false)
+    expect(estaEnRangoSoportado(Number.POSITIVE_INFINITY)).toBe(false)
   })
 })
 
