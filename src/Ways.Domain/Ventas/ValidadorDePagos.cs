@@ -29,9 +29,9 @@ public readonly record struct PagoAValidar(
 /// legacy/parametrizado: ver docs/01 §B6 nota de paridad) ya NO compara el vuelto contra un
 /// techo configurado — <see cref="BilletesArgentinos.EsVueltoJustificado"/> valida en cambio que
 /// el efectivo entregado sea representable con billetes argentinos válidos, todos estrictamente
-/// mayores al vuelto. <c>vuelto_maximo</c> sigue existiendo como parámetro, pero solo para
-/// <see cref="CuentaCorriente.ValidadorDePagoACuenta"/> (pago a cuenta corriente, un flujo
-/// distinto de esta venta en efectivo).
+/// mayores al vuelto. <see cref="CuentaCorriente.ValidadorDePagoACuenta"/> (pago a cuenta
+/// corriente) aplica la misma regla de billetes (decisión del dueño, 2026-09-16) —
+/// <c>vuelto_maximo</c> ya no lo consume ningún validador del proyecto.
 ///
 /// El orden es OBSERVABLE (spec: "a payload violating rules 2 and 6 reports 2") — cada regla
 /// corta la validación en el primer rechazo, nunca acumula errores.

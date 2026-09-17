@@ -253,6 +253,80 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         Assert.Equal(0, await db.ComprobantesVenta.CountAsync());
     }
 
+    // ---- vuelto_no_justificado (decisión del dueño, 2026-09-16 — reemplaza vuelto_maximo para
+    // pagos a cuenta, mismo criterio que ValidadorDePagos para ventas en efectivo) ------------
+
+    [Fact]
+    public async Task RcConVueltoFormableConBilletesEsAceptada()
+    {
+        // Mismo ejemplo del dueño que ValidadorDePagoACuentaTests: entrega 10000, vuelto 4500,
+        // un solo billete de 10000 (> 4500) alcanza. Antes, un vuelto_maximo restrictivo hubiera
+        // rechazado esto directamente.
+        var ctx = await PrepararAsync(nameof(RcConVueltoFormableConBilletesEsAceptada));
+        await AbrirTurnoAsync(ctx);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente RC vuelto formable");
+
+        var solicitud = new SolicitudDePagoACuenta(
+            ctx.IdPuntoVenta, [new PagoDeCuenta(ctx.IdMedioEfectivo, 10000m, null, 4500m)], null);
+        var respuesta = await RegistrarPagoAsync(ctx, idCliente, solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+
+        // importeAplicado = 10000 - 4500 = 5500 (legacy parity, cuenta-corriente.php:11).
+        Assert.Equal(5500m, emitido.Total);
+    }
+
+    [Fact]
+    public async Task RcConVueltoNoFormableConBilletesEsRechazada()
+    {
+        // Entrega 30000, vuelto 24500 — ningún billete (máximo 20000) es estrictamente mayor a
+        // 24500, así que no es formable con billetes reales.
+        var ctx = await PrepararAsync(nameof(RcConVueltoNoFormableConBilletesEsRechazada));
+        await AbrirTurnoAsync(ctx);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente RC vuelto no formable");
+
+        var solicitud = new SolicitudDePagoACuenta(
+            ctx.IdPuntoVenta, [new PagoDeCuenta(ctx.IdMedioEfectivo, 30000m, null, 24500m)], null);
+        var respuesta = await RegistrarPagoAsync(ctx, idCliente, solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo);
+        Assert.Equal("vuelto_no_justificado", problema.GetProperty("codigo").GetString());
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.ComprobantesVenta.CountAsync());
+    }
+
+    [Fact]
+    public async Task RcConUnMedioElectronicoQueAdmiteVueltoNoCuentaSuImporteComoEfectivo()
+    {
+        // Config atípica de catálogo: el medio Tarjeta (Electronico) de este fixture tiene
+        // AdmiteVuelto=false, así que para ejercer esta regla necesitamos habilitarlo — mismo
+        // caso límite que ValidadorDePagoACuentaTests.
+        // ElImporteDeUnMedioElectronicoQueAdmiteVueltoNoCuentaComoEfectivoParaLaRegla5.
+        var ctx = await PrepararAsync(nameof(RcConUnMedioElectronicoQueAdmiteVueltoNoCuentaSuImporteComoEfectivo));
+        await AbrirTurnoAsync(ctx);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente RC electronico admite vuelto");
+
+        await using (var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant)))
+        {
+            var medioTarjeta = await db.MediosPago.SingleAsync(m => m.Id == ctx.IdMedioTarjeta);
+            medioTarjeta.AdmiteVuelto = true;
+            await db.SaveChangesAsync();
+        }
+
+        var solicitud = new SolicitudDePagoACuenta(
+            ctx.IdPuntoVenta, [new PagoDeCuenta(ctx.IdMedioTarjeta, 10000m, "OP-1", 4500m)], null);
+        var respuesta = await RegistrarPagoAsync(ctx, idCliente, solicitud);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = JsonSerializer.Deserialize<JsonElement>(cuerpo);
+        Assert.Equal("vuelto_no_justificado", problema.GetProperty("codigo").GetString());
+    }
+
     [Fact]
     public async Task RcParaConsumidorFinalEsRechazada()
     {
@@ -683,12 +757,15 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
             ]);
 
         // Presupuesto constante — independiente de la cantidad de medios (design: Transactions —
-        // "Read budget"). 8 consultas EF/SaveChanges visibles (cliente, punto de venta, turno,
-        // tipo RC, medios de pago, vuelto_maximo, INSERT comprobante, INSERT pagos); el "≤ 7" del
-        // design no lista la resolución del tipo de comprobante 'RC' en su "fuera" — deviation
-        // documentada en el resumen de retorno del apply, la propiedad que importa (constante,
-        // no escala con la cantidad de medios) queda probada igual.
-        Assert.Equal(8, consultasUnMedio);
+        // "Read budget"). 7 consultas EF/SaveChanges visibles (cliente, punto de venta, turno,
+        // tipo RC, medios de pago, INSERT comprobante, INSERT pagos); el "≤ 7" del design no
+        // lista la resolución del tipo de comprobante 'RC' en su "fuera" — deviation documentada
+        // en el resumen de retorno del apply, la propiedad que importa (constante, no escala con
+        // la cantidad de medios) queda probada igual. Antes eran 8: la resolución de
+        // `vuelto_maximo` se sacó de acá, decisión del dueño 2026-09-16 (ver
+        // ValidadorDePagoACuenta) — el vuelto ahora se valida con la regla de billetes, sin
+        // consultar ningún parámetro.
+        Assert.Equal(7, consultasUnMedio);
         Assert.Equal(consultasUnMedio, consultasTresMedios);
     }
 

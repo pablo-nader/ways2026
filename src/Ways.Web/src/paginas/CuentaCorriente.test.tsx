@@ -13,7 +13,6 @@ import type {
   EstadoDeCuenta,
   MedioPagoListado,
   MovimientoDeCuentaCorriente,
-  ParametroResuelto,
   PuntoVentaListado,
   ResultadoDeReliquidacion,
   UsuarioAutenticado,
@@ -210,11 +209,11 @@ function renderPantalla(idCliente: number | string = 5, state?: { cliente: Clien
 }
 
 /** Rutas comunes a toda la pantalla (cliente + medios de pago + puntos de venta + estado de
- * cuenta + vuelto_maximo + preview de reliquidación) — un override toma prioridad sobre el
- * default para que un test pueda reemplazar cualquiera de estas rutas base. `GET /clientes/:id`
- * cubre el fetch de identidad cuando no llega `location.state` (Fix 2: único camino del Vendedor /
- * cualquier refresh). El preview de reliquidación se chequea ANTES que el catch-all de
- * `/cuenta-corriente` — su ruta también contiene ese substring. */
+ * cuenta + preview de reliquidación) — un override toma prioridad sobre el default para que un
+ * test pueda reemplazar cualquiera de estas rutas base. `GET /clientes/:id` cubre el fetch de
+ * identidad cuando no llega `location.state` (Fix 2: único camino del Vendedor / cualquier
+ * refresh). El preview de reliquidación se chequea ANTES que el catch-all de `/cuenta-corriente`
+ * — su ruta también contiene ese substring. */
 function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> | undefined) {
   apiGetMock.mockImplementation((ruta: string) => {
     const propia = sobrescribirGet?.(ruta)
@@ -222,9 +221,6 @@ function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> |
     if (/^\/clientes\/\d+$/.test(ruta)) return Promise.resolve<ClienteListado>(clienteFixture())
     if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
     if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaCentro])
-    if (ruta.startsWith('/parametros/vuelto_maximo')) {
-      return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
-    }
     if (ruta.includes('/cuenta-corriente/reliquidacion')) {
       return Promise.resolve<ResultadoDeReliquidacion>(resultadoReliquidacionNoOpFixture())
     }
@@ -234,7 +230,7 @@ function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> |
 }
 
 /** Abre el modal de pago y completa una fila válida (Efectivo, importe dado) — espera a que
- * "Registrar pago" esté habilitado (vuelto_maximo ya resuelto). */
+ * "Registrar pago" esté habilitado (fila con medio + importe cargados). */
 async function abrirModalYCompletarFila(importe = '500') {
   renderPantalla()
   await screen.findByText('$ 500,00')

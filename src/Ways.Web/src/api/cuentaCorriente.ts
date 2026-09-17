@@ -8,6 +8,7 @@
  * `arqueo.ts`.
  */
 import { api } from './cliente'
+import { esVueltoJustificado } from './pagos'
 import type {
   ComportamientoMedioPago,
   ComprobanteEmitido,
@@ -206,13 +207,14 @@ export type RechazoDePagoACuenta = { codigo: string; mensaje: string }
 /**
  * Espejo pixel-a-pixel del orden de `ValidadorDePagoACuenta.Validar` (Ways.Domain.CuentaCorriente)
  * — corta en el primer rechazo, nunca acumula errores, mismos códigos de dominio. Nunca
- * autoritativo: solo guía al cajero antes de intentar el pago real.
+ * autoritativo: solo guía al cajero antes de intentar el pago real. La regla 5 (decisión del
+ * dueño, 2026-09-16) usa `esVueltoJustificado` (pagos.ts) — mismo criterio que la regla 3 de
+ * `validarPagosLocal`: `vuelto_maximo` ya no gobierna el vuelto de un pago a cuenta.
  */
 export function validarPagoACuentaLocal(params: {
   pagos: PagoACuentaParaCalculo[]
-  vueltoMaximo: number
 }): RechazoDePagoACuenta | null {
-  const { pagos, vueltoMaximo } = params
+  const { pagos } = params
 
   for (const pago of pagos) {
     if (pago.importe < 0) {
@@ -242,8 +244,14 @@ export function validarPagoACuentaLocal(params: {
   }
 
   const sumaVueltos = pagos.reduce((acumulado, p) => acumulado + p.vuelto, 0)
-  if (sumaVueltos > vueltoMaximo) {
-    return { codigo: 'vuelto_excedido', mensaje: 'El vuelto supera el máximo permitido.' }
+  const efectivoEntregado = redondear(
+    pagos.filter((p) => p.comportamiento === 'Efectivo').reduce((acumulado, p) => acumulado + p.importe, 0),
+  )
+  if (!esVueltoJustificado(efectivoEntregado, sumaVueltos)) {
+    return {
+      codigo: 'vuelto_no_justificado',
+      mensaje: `El vuelto de $${sumaVueltos} no se justifica con los billetes entregados.`,
+    }
   }
 
   for (const pago of pagos) {

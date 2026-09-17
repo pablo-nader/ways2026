@@ -15,6 +15,13 @@ namespace Ways.Domain.CuentaCorriente;
 /// es vacía acá porque no hay <c>total</c> independiente — <c>importeAplicado</c> se DERIVA de
 /// <c>Σ importe − Σ vuelto</c>, así que esa desigualdad se cumple siempre por construcción.
 ///
+/// La regla 5 (decisión del dueño, 2026-09-16 — mismo reemplazo que la regla 3 de
+/// <see cref="ValidadorDePagos"/>, ver docs/01 §B6 nota de paridad) ya NO compara el vuelto
+/// contra un <c>vuelto_maximo</c> parametrizado: <see cref="BilletesArgentinos.EsVueltoJustificado"/>
+/// valida en cambio que el efectivo entregado (Σ importe de los pagos cuyo Comportamiento es
+/// Efectivo) sea formable con billetes argentinos válidos, todos estrictamente mayores al
+/// vuelto. <c>vuelto_maximo</c> ya no lo consume ningún validador del proyecto.
+///
 /// El orden es OBSERVABLE, mismo contrato que <see cref="ValidadorDePagos"/>: cada regla corta la
 /// validación en el primer rechazo, nunca acumula errores.
 /// </summary>
@@ -22,11 +29,10 @@ public static class ValidadorDePagoACuenta
 {
     /// <param name="pagos">La mezcla de pagos pedida — ya resuelta contra su
     /// <see cref="Catalogos.MedioPago"/> (mismo shape que <see cref="ValidadorDePagos.Validar"/>).</param>
-    /// <param name="vueltoMaximo">Resuelto por <c>ServicioDeParametros</c> — nunca un literal.</param>
     /// <returns><c>importeAplicado = Σ importe − Σ vuelto</c> (legacy parity,
     /// <c>cuenta-corriente.php:11</c>) — la RC no tiene ningún campo de importe propio, este es el
     /// único lugar donde ese número existe.</returns>
-    public static decimal Validar(IReadOnlyList<PagoAValidar> pagos, decimal vueltoMaximo)
+    public static decimal Validar(IReadOnlyList<PagoAValidar> pagos)
     {
         // 1: Importe negativo — mismo motivo que la regla 0 de ValidadorDePagos, corta ANTES que
         // cualquier otra regla: sin esto, un Importe negativo podría manipular Σ importe sin que
@@ -76,12 +82,21 @@ public static class ValidadorDePagoACuenta
             }
         }
 
-        // 5: Σ vuelto > vuelto_maximo — mismo criterio que la regla 3 de ValidadorDePagos,
-        // parametrizado (nunca un literal).
+        // 5 (decisión del dueño, 2026-09-16): el vuelto ya no se compara contra un techo
+        // parametrizado — se valida que el efectivo entregado sea formable con billetes
+        // válidos, todos estrictamente mayores al vuelto declarado. Mismo criterio que la
+        // regla 3 de ValidadorDePagos: "efectivo entregado" es Σ importe de los pagos cuyo
+        // Comportamiento es Efectivo (billetes físicos reales) — a propósito NO "cuyo
+        // AdmiteVuelto es true", que es un flag de catálogo (ABM) no atado a Comportamiento.
         var sumaVueltos = pagos.Sum(p => p.Vuelto);
-        if (sumaVueltos > vueltoMaximo)
+        var efectivoEntregado = pagos
+            .Where(p => p.Comportamiento == ComportamientoMedioPago.Efectivo)
+            .Sum(p => p.Importe);
+        if (!BilletesArgentinos.EsVueltoJustificado(efectivoEntregado, sumaVueltos))
         {
-            throw new ErrorDominio("vuelto_excedido", "El vuelto supera el máximo permitido.", 400);
+            throw new ErrorDominio(
+                "vuelto_no_justificado",
+                $"El vuelto de ${sumaVueltos} no se justifica con los billetes entregados.", 400);
         }
 
         // 6: RequiereReferencia sin referencia — mismo criterio que la regla 7 de ValidadorDePagos.

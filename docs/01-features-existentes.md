@@ -142,10 +142,15 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 > pudiendo tener vuelto habilitado por la regla legacy de la fila 4, pero su importe nunca cuenta
 > como "billetes") — es representable con billetes argentinos válidos
 > (10/20/50/100/200/500/1000/2000/10000/20000), todos estrictamente mayores al vuelto — es decir,
-> el cliente nunca entregó un billete que no necesitaba. El parámetro `vuelto_maximo` sigue
-> existiendo y sigue siendo autoritativo para el pago a **cuenta corriente**
-> (`ValidadorDePagoACuenta`), un flujo distinto de esta venta; si el mismo reclamo aplica ahí, es
-> una decisión pendiente del dueño (no incluida en este cambio).
+> el cliente nunca entregó un billete que no necesitaba.
+>
+> **Actualización (decisión del dueño, 2026-09-16):** el mismo reclamo aplicaba al pago a
+> **cuenta corriente** (`ValidadorDePagoACuenta`) — se extendió la misma regla de billetes ahí
+> también (mismo criterio, mismo código `vuelto_no_justificado`). El parámetro `vuelto_maximo`
+> ya no lo consume ningún validador del proyecto; sigue existiendo en `ParametroConocido` y en
+> la pantalla de Parámetros (y en la base, para los tenants que ya tengan una fila) en espera de
+> una decisión explícita del dueño sobre si se elimina del todo (requiere aprobación de esquema/
+> seed, fuera del alcance de este cambio).
 
 Si pasa todo:
 1. Recorre las líneas y arma el string `articulos` (`barra/cant/desc/precio/total*…`).
@@ -498,6 +503,7 @@ un clon mal copiado que consulta `articulos` igual que `filtrarArticulo.php`.
 9. Las ventas fiadas se **reindexan a precio del día** al momento de pagar.
 10. Toda operación está scopeada por `id_punto_venta`.
 11. El stock se descuenta al cerrar la venta y se devuelve al anular.
-12. Tolerancia de pago: $10. Vuelto máximo: $20 (⚠ desviación deliberada para ventas en efectivo,
-    decisión del dueño 2026-09-16 — ver nota en §B6: reemplazado por la regla de billetes
-    formables; sigue vigente sin cambios para el pago a cuenta corriente).
+12. Tolerancia de pago: $10. Vuelto máximo: $20 (⚠ desviación deliberada, decisión del dueño
+    2026-09-16 — ver nota en §B6: reemplazado por la regla de billetes formables, tanto para
+    ventas en efectivo como para el pago a cuenta corriente; `vuelto_maximo` ya no lo consume
+    ningún validador).
