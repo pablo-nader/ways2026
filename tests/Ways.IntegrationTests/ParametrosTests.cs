@@ -91,8 +91,8 @@ public class ParametrosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
 
         // Sin ninguna fila todavía: resuelve al default declarado en ParametroConocido.
         var sinFilas = await cliente.GetFromJsonAsync<ParametroResuelto>(
-            $"/api/parametros/vuelto_maximo?idEmpresa={idEmpresa}&idPuntoVenta={idPuntoVenta}");
-        Assert.Equal(ParametroConocido.VueltoMaximo.ValorPorDefecto, sinFilas!.Valor);
+            $"/api/parametros/importe_adicional_recarga?idEmpresa={idEmpresa}&idPuntoVenta={idPuntoVenta}");
+        Assert.Equal(ParametroConocido.ImporteAdicionalRecarga.ValorPorDefecto, sinFilas!.Valor);
 
         // Fila de empresa (id_punto_venta NULL): gana sobre el default.
         var altaEmpresa = await cliente.PutAsJsonAsync(
@@ -170,6 +170,25 @@ public class ParametrosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixt
         var respuesta = await cliente.GetAsync($"/api/parametros/clave_inventada?idEmpresa={idEmpresa}");
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+    }
+
+    [Fact]
+    public async Task VueltoMaximoSeEliminoYAhoraSeComportaComoCualquierClaveDesconocida()
+    {
+        // Migración QuitarVueltoMaximo (decisión del dueño, 2026-09-16): vuelto_maximo dejó de
+        // estar en ParametroConocido, así que GET/PUT con esa clave tienen que devolver
+        // exactamente lo mismo que cualquier clave que nunca existió (parametro_desconocido, 400).
+        var (idEmpresa, idPuntoVenta, _, mail) =
+            await SembrarTenantConAdminAsync(nameof(VueltoMaximoSeEliminoYAhoraSeComportaComoCualquierClaveDesconocida));
+        using var cliente = await ClienteLogueadoAsync(mail);
+
+        var respuestaGet = await cliente.GetAsync(
+            $"/api/parametros/vuelto_maximo?idEmpresa={idEmpresa}&idPuntoVenta={idPuntoVenta}");
+        Assert.Equal(HttpStatusCode.BadRequest, respuestaGet.StatusCode);
+
+        var respuestaPut = await cliente.PutAsJsonAsync(
+            $"/api/parametros?idEmpresa={idEmpresa}", new ParametroAlta("vuelto_maximo", "20", null));
+        Assert.Equal(HttpStatusCode.BadRequest, respuestaPut.StatusCode);
     }
 
     [Fact]

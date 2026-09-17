@@ -1117,8 +1117,13 @@ parametros (                  -- [operativa a nivel punto de venta, con fallback
     id_parametro, id_punto_venta NULL,       -- NULL = default de la empresa
     clave citext, valor jsonb
 );
--- tolerancia_pago, vuelto_maximo, importe_adicional_recarga, slots_tickets_espera…
+-- tolerancia_pago, importe_adicional_recarga, slots_tickets_espera…
 ```
+
+> **`vuelto_maximo` eliminado (decisión del dueño, 2026-09-16):** dejó de ser consumido por
+> cualquier validador (reemplazado por la regla de billetes formables, PRs #205/#211) y se
+> eliminó del registro `ParametroConocido` y de cualquier fila remanente en `parametros`
+> (migración de datos `QuitarVueltoMaximo`, sin cambio de esquema).
 
 ---
 
