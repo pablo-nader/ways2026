@@ -21,9 +21,17 @@ public readonly record struct PagoAValidar(
 /// Valida la mezcla de pagos de un checkout (design decisión 5, Checkout Contract): pura,
 /// DB-free, mismo criterio que <see cref="Ofertas.ReglaDeOfertas"/>. Implementa el orden de
 /// rechazo del legacy B6 (parametrizado — <b>ningún literal <c>10</c>/<c>20</c> acá</b>,
-/// <see cref="ToleranciaPago"/>/<see cref="VueltoMaximo"/> siempre llegan como parámetro, nunca
-/// hardcodeados) más las dos reglas nuevas del proyecto (referencia obligatoria, vuelto máximo
-/// coherente con lo efectivamente pagado).
+/// <see cref="ToleranciaPago"/> siempre llega como parámetro, nunca hardcodeado) más las reglas
+/// nuevas del proyecto (referencia obligatoria, vuelto máximo coherente con lo efectivamente
+/// pagado).
+///
+/// La regla 3 (decisión del dueño, 2026-09-16 — reemplaza el <c>vuelto_maximo</c> fijo del
+/// legacy/parametrizado: ver docs/01 §B6 nota de paridad) ya NO compara el vuelto contra un
+/// techo configurado — <see cref="BilletesArgentinos.EsVueltoJustificado"/> valida en cambio que
+/// el efectivo entregado sea representable con billetes argentinos válidos, todos estrictamente
+/// mayores al vuelto. <c>vuelto_maximo</c> sigue existiendo como parámetro, pero solo para
+/// <see cref="CuentaCorriente.ValidadorDePagoACuenta"/> (pago a cuenta corriente, un flujo
+/// distinto de esta venta en efectivo).
 ///
 /// El orden es OBSERVABLE (spec: "a payload violating rules 2 and 6 reports 2") — cada regla
 /// corta la validación en el primer rechazo, nunca acumula errores.
@@ -35,7 +43,6 @@ public static class ValidadorDePagos
     /// <param name="pagos">La mezcla de pagos pedida.</param>
     /// <param name="toleranciaPago">Resuelto por <c>ServicioDeParametros</c> (punto de venta >
     /// empresa > default) — nunca un literal.</param>
-    /// <param name="vueltoMaximo">Idem <paramref name="toleranciaPago"/>.</param>
     /// <param name="esConsumidorFinal"><c>Cliente.EsConsumidorFinal</c> del comprobante.</param>
     /// <param name="saldoCliente"><c>Cliente.Saldo</c> ANTES de este checkout.</param>
     /// <param name="limiteCredito"><c>Cliente.LimiteCredito</c>.</param>
@@ -45,7 +52,6 @@ public static class ValidadorDePagos
         decimal total,
         IReadOnlyList<PagoAValidar> pagos,
         decimal toleranciaPago,
-        decimal vueltoMaximo,
         bool esConsumidorFinal,
         decimal saldoCliente,
         decimal limiteCredito,
@@ -98,10 +104,16 @@ public static class ValidadorDePagos
                 "tolerancia_de_pago_superada", "El pago ingresado no cubre el total, ni siquiera con la tolerancia.", 400);
         }
 
-        // 3: Σ vuelto > vuelto_maximo.
-        if (sumaVueltos > vueltoMaximo)
+        // 3 (reescrita, decisión del dueño 2026-09-16): el vuelto ya no se compara contra un
+        // techo fijo — se valida que el efectivo entregado (Σ importe de los pagos que admiten
+        // vuelto, generaliza "efectivo" del mismo modo que la regla 4 de abajo) sea formable con
+        // billetes válidos, todos estrictamente mayores al vuelto declarado.
+        var efectivoEntregado = pagos.Where(p => p.AdmiteVuelto).Sum(p => p.Importe);
+        if (!BilletesArgentinos.EsVueltoJustificado(efectivoEntregado, sumaVueltos))
         {
-            throw new ErrorDominio("vuelto_excedido", "El vuelto supera el máximo permitido.", 400);
+            throw new ErrorDominio(
+                "vuelto_no_justificado",
+                $"El vuelto de ${sumaVueltos} no se justifica con los billetes entregados.", 400);
         }
 
         // 4: vuelto sobre un medio con AdmiteVuelto = false (generaliza "tarjetas" y "cuenta

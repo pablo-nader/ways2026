@@ -766,7 +766,6 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
           total: totalActual,
           pagos: pagosConVuelto,
           toleranciaPago: parametros.toleranciaPago,
-          vueltoMaximo: parametros.vueltoMaximo,
           esConsumidorFinal: clienteSeleccionado.esConsumidorFinal,
           saldoCliente: clienteSeleccionado.saldo,
           limiteCredito: clienteSeleccionado.limiteCredito,

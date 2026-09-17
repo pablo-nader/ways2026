@@ -565,9 +565,10 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Rechazo");
 
         // total = 100; tolerancia default = 10 ⇒ 100 - 10 = 90 es el piso aceptado sin vuelto.
-        // Con importe = 50 se viola la regla 2 (tolerancia) de entrada — un vuelto de 60 también
-        // violaría la regla 3 (vuelto_excedido, máximo default 20) si se llegara a evaluar, pero
-        // la regla 2 corta antes.
+        // Con importe = 50 se viola la regla 2 (tolerancia) de entrada — un vuelto de 60 sobre un
+        // efectivo entregado de apenas 50 también violaría la regla 3 (vuelto_no_justificado: 50
+        // ni siquiera alcanza para cubrir un vuelto de 60) si se llegara a evaluar, pero la
+        // regla 2 corta antes.
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null,
             [new LineaDeVenta(idArticulo, 1m, null)],
@@ -637,26 +638,31 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
-    public async Task ElToleranciaYVueltoMaximoResuelvenPorPuntoDeVentaAntesQuePorDefault()
+    public async Task ElParametroVueltoMaximoYaNoLimitaElVueltoDeUnaVentaEnEfectivo()
     {
-        var ctx = await PrepararAsync(nameof(ElToleranciaYVueltoMaximoResuelvenPorPuntoDeVentaAntesQuePorDefault));
-        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-parametro-pv", 50m);
+        // Decisión del dueño, 2026-09-16 (ver docs/01 §B6 nota de paridad y BilletesArgentinos):
+        // vuelto_maximo dejó de ser consumido por ValidadorDePagos para ventas en efectivo — un
+        // valor de punto de venta deliberadamente restrictivo (1) ya no puede rechazar un vuelto
+        // que sí es formable con billetes válidos. Este es también el ejemplo de ticket del
+        // dueño: total 5500, entrega 10000 -> vuelto 4500 (un solo billete de 10000 alcanza).
+        var ctx = await PrepararAsync(nameof(ElParametroVueltoMaximoYaNoLimitaElVueltoDeUnaVentaEnEfectivo));
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-parametro-pv", 5500m);
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente parametro PV");
 
         var altaParametro = await ctx.Admin.PutAsJsonAsync(
             $"/api/parametros?idEmpresa={ctx.IdEmpresa}",
-            new ParametroAlta("vuelto_maximo", "30", ctx.IdPuntoVenta));
+            new ParametroAlta("vuelto_maximo", "1", ctx.IdPuntoVenta));
         Assert.Equal(HttpStatusCode.OK, altaParametro.StatusCode);
 
-        // vuelto = 25 > default (20) pero <= el override de punto de venta (30).
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null,
             [new LineaDeVenta(idArticulo, 1m, null)],
-            [new PagoDeVenta(ctx.IdMedioEfectivo, 75m, null, 25m)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 10000m, null, 4500m)],
             null, null);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
-        Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
     }
 
     [Fact]
@@ -1014,9 +1020,17 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     /// <c>ResolucionDeParametros.Resolver</c> filtra por punto de venta pero NO por clave — sin
     /// el <c>Where</c> por clave, la fila de punto de venta de <c>tolerancia_pago</c> es la
     /// ÚNICA con <c>id_punto_venta</c> coincidente en todo el candidate set, así que "gana" la
-    /// resolución de <c>vuelto_maximo</c> Y de <c>lotes_habilitado</c> por igual — el vuelto
-    /// pedido acá (20, válido contra el <c>vuelto_maximo</c> real de 25) queda expuesto a esa
-    /// corrupción cruzada.
+    /// resolución de <c>vuelto_maximo</c> Y de <c>lotes_habilitado</c> por igual.
+    ///
+    /// <c>vuelto_maximo</c> ya no lo consume <see cref="Ways.Domain.Ventas.ValidadorDePagos"/>
+    /// para ventas en efectivo (decisión del dueño 2026-09-16, ver
+    /// <see cref="Ways.Domain.Ventas.BilletesArgentinos"/>) — <c>ResolverParametrosDeVentaAsync</c>
+    /// lo sigue resolviendo igual (misma query batcheada, sin costo extra) para no tocar este
+    /// target de mutación. El pago de este test se eligió formable con billetes (5500/10000/4500,
+    /// el ejemplo del dueño) para que la venta se acepte SIN depender de qué valor de
+    /// <c>vuelto_maximo</c> resuelva — lo que este test sigue probando es que la corrupción
+    /// cruzada de <c>lotes_habilitado</c> (deserializar el <c>tolerancia_pago</c> de la fila de
+    /// punto de venta, "15", como <c>bool</c>) no ocurre.
     ///
     /// Evidencia de mutación (mutation-proof-tests regla 2, apply de slice 2): con
     /// <c>.Where(p => p.Clave == c.Clave)</c> borrado de <c>ResolverParametrosDeVentaAsync</c>
@@ -1030,7 +1044,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     public async Task ElCheckoutResuelveVueltoMaximoDeEmpresaAunConUnaFilaDePuntoDeVentaDeOtraClave()
     {
         var ctx = await PrepararAsync(nameof(ElCheckoutResuelveVueltoMaximoDeEmpresaAunConUnaFilaDePuntoDeVentaDeOtraClave));
-        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-parametros-cruzados", 100m);
+        var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-parametros-cruzados", 5500m);
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente Parametros Cruzados", limiteCredito: 1_000_000m);
 
         var ahora = DateTimeOffset.UtcNow;
@@ -1058,7 +1072,7 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null,
             [new LineaDeVenta(idArticulo, 1m, null)],
-            [new PagoDeVenta(ctx.IdMedioEfectivo, 120m, null, 20m)],
+            [new PagoDeVenta(ctx.IdMedioEfectivo, 10000m, null, 4500m)],
             null, null);
 
         var respuesta = await ctx.Admin.PostAsJsonAsync("/api/ventas", solicitud);
@@ -1066,8 +1080,8 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
 
         var emitido = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
-        Assert.Equal(100m, emitido.Total);
-        Assert.Equal(20m, emitido.Pagos[0].Vuelto);
+        Assert.Equal(5500m, emitido.Total);
+        Assert.Equal(4500m, emitido.Pagos[0].Vuelto);
     }
 
     private async Task<int> EmitirYContarConsultasDeParametrosAsync(Contexto ctx, int idCliente)

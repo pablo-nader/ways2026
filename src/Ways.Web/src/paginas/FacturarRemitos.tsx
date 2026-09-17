@@ -232,7 +232,6 @@ export function FacturarRemitos() {
           total,
           pagos: pagosConVuelto,
           toleranciaPago: parametros.toleranciaPago,
-          vueltoMaximo: parametros.vueltoMaximo,
           esConsumidorFinal: clienteElegido.esConsumidorFinal,
           saldoCliente: clienteElegido.saldo,
           limiteCredito: clienteElegido.limiteCredito,

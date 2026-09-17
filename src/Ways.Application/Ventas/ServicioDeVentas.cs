@@ -181,8 +181,13 @@ public class ServicioDeVentas(
         // ServicioDeParametros.ResolverAsync — puntoVenta ya se resolvió arriba, así que
         // idEmpresa ya es de confianza). Reemplaza las 2 consultas separadas de antes de esta
         // etapa — 17 → 16 round trips (task 2.7). `lotesHabilitado` alimenta el plan FEFO de
-        // slice 7, inmediatamente abajo.
-        var (toleranciaPago, vueltoMaximo, lotesHabilitado) =
+        // slice 7, inmediatamente abajo. `vueltoMaximo` (segundo elemento, descartado) ya no lo
+        // consume ValidadorDePagos (decisión del dueño 2026-09-16, ver BilletesArgentinos) — se
+        // sigue resolviendo acá sin costo extra (misma query batcheada) para no tocar el target
+        // de mutación de design decisión 2 documentado en ResolverParametrosDeVentaAsync/
+        // VentasCheckoutTests; el parámetro sigue siendo autoritativo para
+        // ValidadorDePagoACuenta (pago a cuenta corriente).
+        var (toleranciaPago, _, lotesHabilitado) =
             await ResolverParametrosDeVentaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
 
         // stage-12 slice 7 (design: "Write site 1", decide phase) — decidir si hay línea
@@ -322,7 +327,7 @@ public class ServicioDeVentas(
             .ToList();
 
         ValidadorDePagos.Validar(
-            totales.Total, pagosAValidar, toleranciaPago, vueltoMaximo,
+            totales.Total, pagosAValidar, toleranciaPago,
             cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado);
 
         var pagosDelPlan = pagos
