@@ -78,6 +78,69 @@ export function consumoCuentaCorriente(pagos: { comportamiento: ComportamientoMe
   )
 }
 
+/** `Σ importe` de los pagos cuyo `comportamiento` es `Efectivo` (billetes físicos reales) — es
+ * el monto que `esVueltoJustificado` intenta formar con billetes. A propósito NO filtra por
+ * `admiteVuelto`: ese flag es configurable por medio (catálogo, ABM) y no está atado a
+ * `comportamiento` — un medio no-Efectivo podría en teoría tenerlo prendido (p. ej. una
+ * Transferencia mal configurada), y ese pago puede seguir teniendo vuelto habilitado por la
+ * regla 4 de `validarPagosLocal` (semántica legacy intacta), pero su importe nunca cuenta como
+ * "billetes" acá. */
+export function efectivoEntregado(pagos: { comportamiento: ComportamientoMedioPago; importe: number }[]): number {
+  return redondear(
+    pagos.filter((p) => p.comportamiento === 'Efectivo').reduce((acumulado, p) => acumulado + p.importe, 0),
+  )
+}
+
+/** Billetes argentinos válidos (decisión del dueño, 2026-09-16) — única fuente, espejo de
+ * `BilletesArgentinos.Denominaciones` (Ways.Domain.Ventas). */
+export const BILLETES_ARGENTINOS: readonly number[] = [10, 20, 50, 100, 200, 500, 1000, 2000, 10000, 20000]
+
+/** Techo del efectivo entregado que este cálculo acepta evaluar — espejo de
+ * `BilletesArgentinos.EfectivoMaximo`. */
+export const EFECTIVO_MAXIMO = 10_000_000
+
+/**
+ * Espejo pixel-a-pixel de `BilletesArgentinos.EsVueltoJustificado` (Ways.Domain.Ventas,
+ * decisión del dueño 2026-09-16 — reemplaza el `vuelto_maximo` fijo del legacy para ventas en
+ * efectivo): ¿el efectivo entregado puede formarse con billetes válidos, todos estrictamente
+ * mayores al vuelto? Un vuelto <= 0 siempre está justificado. El efectivo entregado tiene que
+ * ser un múltiplo entero del billete más chico ($10) — con centavos o sin ser múltiplo de 10,
+ * nunca es formable con billetes reales.
+ *
+ * DP acotada (coin-change reachability, oferta ilimitada por denominación) sobre
+ * `efectivoEntregado / 10` — `EFECTIVO_MAXIMO` acota el tamaño de la tabla.
+ */
+export function esVueltoJustificado(efectivoEntregadoTotal: number, vuelto: number): boolean {
+  if (vuelto <= 0) return true
+  if (efectivoEntregadoTotal <= 0 || efectivoEntregadoTotal > EFECTIVO_MAXIMO) return false
+  // No es múltiplo del billete más chico ($10) — cubre tanto centavos (5500.50 % 10 = 0.5 ≠ 0)
+  // como pesos enteros que no son múltiplo de 10 (5505 % 10 = 5): nunca formable con billetes.
+  if (efectivoEntregadoTotal % 10 !== 0) return false
+
+  // Mutation target (mutation-proof-tests): el filtro es "> vuelto", ESTRICTO — un billete que
+  // vale exactamente lo mismo que el vuelto no cuenta (el cliente no necesitaba entregarlo).
+  // Evidencia de mutación en pagos.test.ts (vuelto igual a un billete).
+  const unidadesDeDenominacionesValidas = Array.from(
+    new Set(BILLETES_ARGENTINOS.filter((billete) => billete > vuelto).map((billete) => billete / 10)),
+  )
+  if (unidadesDeDenominacionesValidas.length === 0) return false
+
+  const unidadesTotales = efectivoEntregadoTotal / 10
+  const alcanzable = new Array<boolean>(unidadesTotales + 1).fill(false)
+  alcanzable[0] = true
+
+  for (let unidad = 1; unidad <= unidadesTotales; unidad++) {
+    for (const unidadDeBillete of unidadesDeDenominacionesValidas) {
+      if (unidadDeBillete <= unidad && alcanzable[unidad - unidadDeBillete]) {
+        alcanzable[unidad] = true
+        break
+      }
+    }
+  }
+
+  return alcanzable[unidadesTotales]
+}
+
 /**
  * Convierte las filas del panel en pagos de cálculo, descartando las que el cajero todavía no
  * terminó de completar (sin medio elegido o sin un importe positivo) — una fila a medio tipear
@@ -162,13 +225,12 @@ export function validarPagosLocal(params: {
   total: number
   pagos: (PagoParaCalculo & { vuelto: number })[]
   toleranciaPago: number
-  vueltoMaximo: number
   esConsumidorFinal: boolean
   saldoCliente: number
   limiteCredito: number
   creditoIlimitado: boolean
 }): RechazoDePago | null {
-  const { total, pagos, toleranciaPago, vueltoMaximo, esConsumidorFinal, saldoCliente, limiteCredito, creditoIlimitado } = params
+  const { total, pagos, toleranciaPago, esConsumidorFinal, saldoCliente, limiteCredito, creditoIlimitado } = params
 
   for (const pago of pagos) {
     if (pago.importe < 0) {
@@ -196,8 +258,11 @@ export function validarPagosLocal(params: {
     }
   }
 
-  if (sumaVueltos > vueltoMaximo) {
-    return { codigo: 'vuelto_excedido', mensaje: 'El vuelto supera el máximo permitido.' }
+  if (!esVueltoJustificado(efectivoEntregado(pagos), sumaVueltos)) {
+    return {
+      codigo: 'vuelto_no_justificado',
+      mensaje: `El vuelto de $${sumaVueltos} no se justifica con los billetes entregados.`,
+    }
   }
 
   for (const pago of pagos) {

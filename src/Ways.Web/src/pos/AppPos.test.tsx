@@ -136,7 +136,6 @@ function mockearRutasComunes(sobrescribir?: (ruta: string) => Promise<unknown> |
     }
     if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
     if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
-    if (ruta.startsWith('/parametros/vuelto_maximo')) return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
     if (ruta === '/puntos-venta') return Promise.resolve<PuntoVentaListado[]>([puntoVentaFixture()])
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })

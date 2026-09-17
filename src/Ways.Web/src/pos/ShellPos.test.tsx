@@ -230,7 +230,6 @@ function mockearRutasDePos(sobrescribir?: (ruta: string) => Promise<unknown> | u
     }
     if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
     if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
-    if (ruta.startsWith('/parametros/vuelto_maximo')) return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
     if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve<ArticuloEscaneado>(articuloEscaneadoFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })

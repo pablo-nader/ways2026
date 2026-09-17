@@ -143,8 +143,11 @@ export function FacturarRemitos() {
   const total = totalDeRemitosElegidos(remitosElegidos)
   const todosElegidos = (remitos ?? []).length > 0 && seleccionados.length === (remitos ?? []).length
 
-  // ---- parámetros de pago (tolerancia/vuelto), por punto de venta — mismo criterio que Pos.tsx ----
-  const [parametros, setParametros] = useState<{ toleranciaPago: number; vueltoMaximo: number } | null>(null)
+  // ---- parámetros de pago (tolerancia), por punto de venta — mismo criterio que Pos.tsx.
+  // `vuelto_maximo` ya no se resuelve acá: dejó de gobernar el vuelto de ventas en efectivo
+  // (decisión del dueño 2026-09-16, ver Ways.Domain.Ventas.BilletesArgentinos) y mantener su
+  // fetch solo exponía la facturación a bloquearse si ese endpoint fallaba, sin usar el valor. ----
+  const [parametros, setParametros] = useState<{ toleranciaPago: number } | null>(null)
   const [errorParametros, setErrorParametros] = useState('')
   const generacionParametrosRef = useRef(0)
 
@@ -158,13 +161,11 @@ export function FacturarRemitos() {
     const generacion = (generacionParametrosRef.current += 1)
     let vigente = true
 
-    Promise.all([
-      api.get<ParametroResuelto>(`/parametros/tolerancia_pago?idEmpresa=${puntoVentaElegido.idEmpresa}&idPuntoVenta=${puntoVentaElegido.id}`),
-      api.get<ParametroResuelto>(`/parametros/vuelto_maximo?idEmpresa=${puntoVentaElegido.idEmpresa}&idPuntoVenta=${puntoVentaElegido.id}`),
-    ])
-      .then(([tolerancia, vuelto]) => {
+    api
+      .get<ParametroResuelto>(`/parametros/tolerancia_pago?idEmpresa=${puntoVentaElegido.idEmpresa}&idPuntoVenta=${puntoVentaElegido.id}`)
+      .then((tolerancia) => {
         if (!vigente || generacionParametrosRef.current !== generacion) return
-        setParametros({ toleranciaPago: Number(tolerancia.valor), vueltoMaximo: Number(vuelto.valor) })
+        setParametros({ toleranciaPago: Number(tolerancia.valor) })
         setErrorParametros('')
       })
       .catch((e) => {
@@ -232,7 +233,6 @@ export function FacturarRemitos() {
           total,
           pagos: pagosConVuelto,
           toleranciaPago: parametros.toleranciaPago,
-          vueltoMaximo: parametros.vueltoMaximo,
           esConsumidorFinal: clienteElegido.esConsumidorFinal,
           saldoCliente: clienteElegido.saldo,
           limiteCredito: clienteElegido.limiteCredito,

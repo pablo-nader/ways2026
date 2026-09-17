@@ -216,6 +216,6 @@ GET    /api/reportes/caja-virtual
 | 6 | SQL injection en todo | EF Core parametrizado |
 | 7 | Importes de cierre de caja editables desde el navegador | recalcular en el servidor, ignorar lo que mande el cliente |
 | 8 | Endpoints AJAX sin auth | todos autenticados |
-| 9 | Tolerancia $10 / vuelto $20 hardcodeados | configuración por punto de venta |
+| 9 | Tolerancia $10 / vuelto $20 hardcodeados | configuración por punto de venta (el vuelto $20 para ventas en efectivo se reemplazó, a su vez, por la regla de billetes formables — decisión del dueño 2026-09-16, ver docs/01 §B6/§I.12) |
 | 10 | IVA 21% hardcodeado en `ver-todos` | configuración |
 | 11 | Sin roles aplicados | autorización por endpoint |

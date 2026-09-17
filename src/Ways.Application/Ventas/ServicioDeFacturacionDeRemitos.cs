@@ -130,10 +130,10 @@ public class ServicioDeFacturacionDeRemitos(
             })
             .ToList();
 
-        var (toleranciaPago, vueltoMaximo) = await ResolverParametrosDeFacturacionAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
+        var toleranciaPago = await ResolverToleranciaDeFacturacionAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
 
         ValidadorDePagos.Validar(
-            total, pagosAValidar, toleranciaPago, vueltoMaximo,
+            total, pagosAValidar, toleranciaPago,
             cliente.EsConsumidorFinal, cliente.Saldo, cliente.LimiteCredito, cliente.CreditoIlimitado);
 
         // Turno SIEMPRE resuelto server-side (decisión 13 del proposal: la consolidación mueve
@@ -308,24 +308,20 @@ public class ServicioDeFacturacionDeRemitos(
             // alcanzable (mismo criterio que ResolverTipoRcAsync).
             ?? throw new InvalidOperationException("El tenant actual no tiene el tipo de comprobante TXR sembrado.");
 
-    private async Task<(decimal ToleranciaPago, decimal VueltoMaximo)> ResolverParametrosDeFacturacionAsync(
-        int idEmpresa, int idPuntoVenta, CancellationToken ct)
+    /// <summary>Antes resolvía <c>tolerancia_pago</c> + <c>vuelto_maximo</c> — <c>vuelto_maximo</c>
+    /// ya no lo consume <see cref="ValidadorDePagos"/> (decisión del dueño 2026-09-16, ver
+    /// <see cref="BilletesArgentinos"/>), así que esta facturación deja de resolverlo (sin
+    /// mutation-proof-test propio que dependiera de la mezcla de dos claves, a diferencia de
+    /// <c>ServicioDeVentas.ResolverParametrosDeVentaAsync</c>).</summary>
+    private async Task<decimal> ResolverToleranciaDeFacturacionAsync(int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
-        ParametroConocido[] conocidos = [ParametroConocido.ToleranciaPago, ParametroConocido.VueltoMaximo];
-        var claves = conocidos.Select(c => c.Clave).ToList();
-
         var candidatos = await db.Parametros
-            .Where(p => claves.Contains(p.Clave) && p.IdEmpresa == idEmpresa
+            .Where(p => p.Clave == ParametroConocido.ToleranciaPago.Clave && p.IdEmpresa == idEmpresa
                 && (p.IdPuntoVenta == null || p.IdPuntoVenta == idPuntoVenta))
             .ToListAsync(ct);
 
-        var resueltoPorClave = conocidos.ToDictionary(
-            c => c.Clave,
-            c => ResolucionDeParametros.Resolver(c.Clave, candidatos.Where(p => p.Clave == c.Clave).ToList(), idPuntoVenta));
-
-        return (
-            JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.ToleranciaPago.Clave]),
-            JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.VueltoMaximo.Clave]));
+        return JsonSerializer.Deserialize<decimal>(
+            ResolucionDeParametros.Resolver(ParametroConocido.ToleranciaPago.Clave, candidatos, idPuntoVenta));
     }
 
     private async Task<DbConnection> ObtenerConexionAbiertaAsync(CancellationToken ct)

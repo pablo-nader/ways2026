@@ -130,6 +130,23 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 | 5 | `c_corriente > 0 && vuelto > 0` | no se da vuelto si pagó con cuenta corriente |
 | 6 | `c_corriente + saldo_cliente > acuerdo_cliente` (y `acuerdo != -1`) | excede el crédito. `acuerdo = -1` = crédito ilimitado |
 
+> **Desviación deliberada (decisión del dueño, 2026-09-16):** la fila 3 de arriba (`vuelto
+> máximo`, $20 en el legacy, `vuelto_maximo` parametrizado en la app nueva hasta esta fecha)
+> impedía ventas legítimas — p. ej. un ticket de $5.500 pagado con un billete de $10.000 requiere
+> $4.500 de vuelto, muy por encima de cualquier techo fijo razonable. En la app nueva, para
+> **ventas en efectivo** (`ValidadorDePagos`, `Ways.Domain.Ventas.BilletesArgentinos`) esa regla
+> se reemplazó por: el vuelto es válido si el efectivo entregado — Σ importe de los pagos cuyo
+> **Comportamiento es Efectivo** (billetes físicos reales, nunca simplemente los que tengan el
+> flag configurable `AdmiteVuelto`, que es por medio de pago y no está atado al comportamiento:
+> un medio no-Efectivo con `AdmiteVuelto=true` mal configurado, p. ej. una Transferencia, sigue
+> pudiendo tener vuelto habilitado por la regla legacy de la fila 4, pero su importe nunca cuenta
+> como "billetes") — es representable con billetes argentinos válidos
+> (10/20/50/100/200/500/1000/2000/10000/20000), todos estrictamente mayores al vuelto — es decir,
+> el cliente nunca entregó un billete que no necesitaba. El parámetro `vuelto_maximo` sigue
+> existiendo y sigue siendo autoritativo para el pago a **cuenta corriente**
+> (`ValidadorDePagoACuenta`), un flujo distinto de esta venta; si el mismo reclamo aplica ahí, es
+> una decisión pendiente del dueño (no incluida en este cambio).
+
 Si pasa todo:
 1. Recorre las líneas y arma el string `articulos` (`barra/cant/desc/precio/total*…`).
 2. Acumula el importe por área en `c1..c6` (1=N/A, 2=Almacén, 3=Verdulería, 4=Cigarrillos, 5=Carga Virtual, 6=Rotisería).
@@ -481,4 +498,6 @@ un clon mal copiado que consulta `articulos` igual que `filtrarArticulo.php`.
 9. Las ventas fiadas se **reindexan a precio del día** al momento de pagar.
 10. Toda operación está scopeada por `id_punto_venta`.
 11. El stock se descuenta al cerrar la venta y se devuelve al anular.
-12. Tolerancia de pago: $10. Vuelto máximo: $20.
+12. Tolerancia de pago: $10. Vuelto máximo: $20 (⚠ desviación deliberada para ventas en efectivo,
+    decisión del dueño 2026-09-16 — ver nota en §B6: reemplazado por la regla de billetes
+    formables; sigue vigente sin cambios para el pago a cuenta corriente).
