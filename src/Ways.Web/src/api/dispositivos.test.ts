@@ -4,13 +4,14 @@ import { establecerTokenDeSesionBearer, tokenDeSesionBearerActual, VENTANA_SESIO
 
 const apiGetMock = vi.fn()
 const apiPostMock = vi.fn()
+const apiDeleteMock = vi.fn()
 
 vi.mock('./cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
     post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown?])),
     put: vi.fn(),
-    delete: vi.fn(),
+    delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
 }))
 
@@ -137,5 +138,17 @@ describe('clienteDeDispositivos', () => {
 
     expect(resultado).toBe(usuario)
     expect(tokenDeSesionBearerActual()).toBe('token-de-sesion')
+  })
+
+  it('listar pide GET /dispositivos', () => {
+    apiGetMock.mockResolvedValue([])
+    void clienteDeDispositivos.listar()
+    expect(apiGetMock).toHaveBeenCalledWith('/dispositivos')
+  })
+
+  it('revocar pide DELETE /dispositivos/{id}', () => {
+    apiDeleteMock.mockResolvedValue(undefined)
+    void clienteDeDispositivos.revocar(42)
+    expect(apiDeleteMock).toHaveBeenCalledWith('/dispositivos/42')
   })
 })
