@@ -50,9 +50,11 @@ public static class BilletesArgentinos
             return false;
         }
 
-        if (efectivoEntregado % 1m != 0m || efectivoEntregado % 10m != 0m)
+        if (efectivoEntregado % 10m != 0m)
         {
-            // Tiene centavos, o no es múltiplo del billete más chico: no formable con billetes.
+            // No es múltiplo del billete más chico ($10) — cubre tanto centavos (p. ej. 5500.50 %
+            // 10 = 0.50 ≠ 0) como pesos enteros que no son múltiplo de 10 (p. ej. 5505 % 10 = 5):
+            // en ningún caso es formable con billetes reales.
             return false;
         }
 

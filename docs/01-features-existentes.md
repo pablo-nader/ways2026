@@ -135,12 +135,17 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 > impedía ventas legítimas — p. ej. un ticket de $5.500 pagado con un billete de $10.000 requiere
 > $4.500 de vuelto, muy por encima de cualquier techo fijo razonable. En la app nueva, para
 > **ventas en efectivo** (`ValidadorDePagos`, `Ways.Domain.Ventas.BilletesArgentinos`) esa regla
-> se reemplazó por: el vuelto es válido si el efectivo entregado es representable con billetes
-> argentinos válidos (10/20/50/100/200/500/1000/2000/10000/20000), todos estrictamente mayores al
-> vuelto — es decir, el cliente nunca entregó un billete que no necesitaba. El parámetro
-> `vuelto_maximo` sigue existiendo y sigue siendo autoritativo para el pago a **cuenta
-> corriente** (`ValidadorDePagoACuenta`), un flujo distinto de esta venta; si el mismo reclamo
-> aplica ahí, es una decisión pendiente del dueño (no incluida en este cambio).
+> se reemplazó por: el vuelto es válido si el efectivo entregado — Σ importe de los pagos cuyo
+> **Comportamiento es Efectivo** (billetes físicos reales, nunca simplemente los que tengan el
+> flag configurable `AdmiteVuelto`, que es por medio de pago y no está atado al comportamiento:
+> un medio no-Efectivo con `AdmiteVuelto=true` mal configurado, p. ej. una Transferencia, sigue
+> pudiendo tener vuelto habilitado por la regla legacy de la fila 4, pero su importe nunca cuenta
+> como "billetes") — es representable con billetes argentinos válidos
+> (10/20/50/100/200/500/1000/2000/10000/20000), todos estrictamente mayores al vuelto — es decir,
+> el cliente nunca entregó un billete que no necesitaba. El parámetro `vuelto_maximo` sigue
+> existiendo y sigue siendo autoritativo para el pago a **cuenta corriente**
+> (`ValidadorDePagoACuenta`), un flujo distinto de esta venta; si el mismo reclamo aplica ahí, es
+> una decisión pendiente del dueño (no incluida en este cambio).
 
 Si pasa todo:
 1. Recorre las líneas y arma el string `articulos` (`barra/cant/desc/precio/total*…`).

@@ -133,7 +133,6 @@ function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> |
     if (ruta === '/clientes') return Promise.resolve({ items: [clienteFixture()], total: 1, pagina: 1, tamanio: 25 })
     if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioFixture()])
     if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve({ clave: 'tolerancia_pago', valor: '0' } satisfies ParametroResuelto)
-    if (ruta.startsWith('/parametros/vuelto_maximo')) return Promise.resolve({ clave: 'vuelto_maximo', valor: '0' } satisfies ParametroResuelto)
     const propia = sobrescribirGet?.(ruta)
     if (propia) return propia
     if (ruta.startsWith('/remitos?')) return Promise.resolve(paginaFixture())
@@ -267,7 +266,6 @@ describe('FacturarRemitos — guard de stale en cargarRemitos (mutation-proof-te
         return Promise.resolve({ items: [clienteFixture(), clienteFixture({ id: 2, numero: 2, nombre: 'Cliente B' })], total: 2, pagina: 1, tamanio: 25 })
       if (ruta === '/catalogos/medios-pago') return Promise.resolve([medioFixture()])
       if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve({ clave: 'tolerancia_pago', valor: '0' } satisfies ParametroResuelto)
-      if (ruta.startsWith('/parametros/vuelto_maximo')) return Promise.resolve({ clave: 'vuelto_maximo', valor: '0' } satisfies ParametroResuelto)
       // Cliente A (id 1): el fetch de sus remitos queda en vuelo — se resuelve MÁS TARDE, DESPUÉS
       // de que el cambio a Cliente B ya haya recargado.
       if (ruta.startsWith('/remitos?') && ruta.includes('idCliente=1')) {

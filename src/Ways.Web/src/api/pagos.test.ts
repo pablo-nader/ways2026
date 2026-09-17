@@ -93,16 +93,23 @@ describe('pagos — consumoCuentaCorriente', () => {
 })
 
 describe('pagos — efectivoEntregado', () => {
-  it('suma solo los pagos que admiten vuelto', () => {
+  it('suma solo los pagos cuyo comportamiento es Efectivo', () => {
     const pagos = [
-      pagoFixture({ admiteVuelto: true, importe: 100 }),
-      pagoFixture({ admiteVuelto: false, importe: 50 }),
+      pagoFixture({ comportamiento: 'Efectivo', importe: 100 }),
+      pagoFixture({ comportamiento: 'Electronico', importe: 50 }),
     ]
     expect(efectivoEntregado(pagos)).toBe(100)
   })
 
-  it('da 0 cuando ningún pago admite vuelto', () => {
-    expect(efectivoEntregado([pagoFixture({ admiteVuelto: false })])).toBe(0)
+  it('da 0 cuando ningún pago es Efectivo', () => {
+    expect(efectivoEntregado([pagoFixture({ comportamiento: 'CuentaCorriente' })])).toBe(0)
+  })
+
+  it('ignora un medio no-Efectivo aunque admita vuelto por configuración de catálogo', () => {
+    // admiteVuelto es un flag por medio (ABM), no está atado a comportamiento — una Transferencia
+    // podría tenerlo prendido, pero nunca es "billetes físicos".
+    const pagos = [pagoFixture({ comportamiento: 'Electronico', admiteVuelto: true, importe: 9900 })]
+    expect(efectivoEntregado(pagos)).toBe(0)
   })
 })
 
@@ -312,8 +319,28 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
   })
 
   it('regla 3: sin ningún pago que admita vuelto, un vuelto > 0 nunca es justificado', () => {
-    const pagos = [{ ...pagoFixture({ importe: 100, admiteVuelto: false }), vuelto: 30 }]
+    const pagos = [
+      { ...pagoFixture({ comportamiento: 'Electronico', importe: 100, admiteVuelto: false }), vuelto: 30 },
+    ]
     expect(validarPagosLocal({ ...base, total: 70, pagos })?.codigo).toBe('vuelto_no_justificado')
+  })
+
+  it('regla 3: solo el efectivo cuenta como billetes, aunque una Transferencia admita vuelto por configuración', () => {
+    // Efectivo entregado REAL: solo 100 (comportamiento Efectivo). La Transferencia aporta 9900
+    // y carga el vuelto de 4500 a mano — su medio tiene admiteVuelto=true (config de catálogo
+    // atípica: ese flag es por medio, no está atado a comportamiento), pero una transferencia no
+    // es un billete físico. Σ importe total (100+9900=10000) SÍ sería formable contra un vuelto
+    // de 4500 (un billete de 10000) si se contara por error el importe de la Transferencia como
+    // "billetes" — la regla 3 tiene que rechazar igual, porque el efectivo real (100) no alcanza.
+    //
+    // Mutation-proof-tests: si `efectivoEntregado` volviera a filtrar por `admiteVuelto` en vez
+    // de `comportamiento === 'Efectivo'`, este test pasaría a aceptar la venta (falso negativo).
+    // Evidencia de mutación: ver reporte de la tarea (mutado y revertido en pagos.ts).
+    const pagos = [
+      { ...pagoFixture({ idFila: 1, comportamiento: 'Efectivo', admiteVuelto: true, importe: 100 }), vuelto: 0 },
+      { ...pagoFixture({ idFila: 2, comportamiento: 'Electronico', admiteVuelto: true, importe: 9900 }), vuelto: 4500 },
+    ]
+    expect(validarPagosLocal({ ...base, total: 5500, pagos })?.codigo).toBe('vuelto_no_justificado')
   })
 
   it('regla 4: vuelto sobre un medio que no admite vuelto', () => {
@@ -321,8 +348,8 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
     // un vuelto de 20 a mano -> la regla 3 no corta (200 es formable contra un vuelto de 20), la
     // que corta es la 4.
     const pagos = [
-      { ...pagoFixture({ idFila: 1, importe: 200, admiteVuelto: true }), vuelto: 0 },
-      { ...pagoFixture({ idFila: 2, importe: 120, admiteVuelto: false }), vuelto: 20 },
+      { ...pagoFixture({ idFila: 1, comportamiento: 'Efectivo', importe: 200, admiteVuelto: true }), vuelto: 0 },
+      { ...pagoFixture({ idFila: 2, comportamiento: 'Electronico', importe: 120, admiteVuelto: false }), vuelto: 20 },
     ]
     expect(validarPagosLocal({ ...base, total: 300, pagos })?.codigo).toBe('medio_no_admite_vuelto')
   })

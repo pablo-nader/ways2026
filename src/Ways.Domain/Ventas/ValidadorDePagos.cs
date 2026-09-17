@@ -105,10 +105,18 @@ public static class ValidadorDePagos
         }
 
         // 3 (reescrita, decisión del dueño 2026-09-16): el vuelto ya no se compara contra un
-        // techo fijo — se valida que el efectivo entregado (Σ importe de los pagos que admiten
-        // vuelto, generaliza "efectivo" del mismo modo que la regla 4 de abajo) sea formable con
-        // billetes válidos, todos estrictamente mayores al vuelto declarado.
-        var efectivoEntregado = pagos.Where(p => p.AdmiteVuelto).Sum(p => p.Importe);
+        // techo fijo — se valida que el efectivo entregado sea formable con billetes válidos,
+        // todos estrictamente mayores al vuelto declarado. "Efectivo entregado" es Σ importe de
+        // los pagos cuyo Comportamiento es Efectivo (billetes físicos reales) — a propósito NO
+        // "cuyo AdmiteVuelto es true": AdmiteVuelto es un flag configurable por medio (catálogo,
+        // ABM), no está atado a Comportamiento, y en teoría podría estar prendido en un medio
+        // NO efectivo (p. ej. una Transferencia mal configurada). Un pago así puede seguir
+        // teniendo vuelto habilitado por la regla 4 de abajo (semántica legacy intacta, sin
+        // cambios), pero su importe nunca cuenta como "billetes" acá — nadie entregó billetes
+        // físicos por una transferencia.
+        var efectivoEntregado = pagos
+            .Where(p => p.Comportamiento == ComportamientoMedioPago.Efectivo)
+            .Sum(p => p.Importe);
         if (!BilletesArgentinos.EsVueltoJustificado(efectivoEntregado, sumaVueltos))
         {
             throw new ErrorDominio(

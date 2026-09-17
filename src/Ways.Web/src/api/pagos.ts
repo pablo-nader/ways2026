@@ -78,11 +78,17 @@ export function consumoCuentaCorriente(pagos: { comportamiento: ComportamientoMe
   )
 }
 
-/** `Σ importe` de los pagos que admiten vuelto (generaliza "efectivo", mismo criterio que la
- * regla 4 de `validarPagosLocal`) — es el monto que `esVueltoJustificado` intenta formar con
- * billetes. */
-export function efectivoEntregado(pagos: { admiteVuelto: boolean; importe: number }[]): number {
-  return redondear(pagos.filter((p) => p.admiteVuelto).reduce((acumulado, p) => acumulado + p.importe, 0))
+/** `Σ importe` de los pagos cuyo `comportamiento` es `Efectivo` (billetes físicos reales) — es
+ * el monto que `esVueltoJustificado` intenta formar con billetes. A propósito NO filtra por
+ * `admiteVuelto`: ese flag es configurable por medio (catálogo, ABM) y no está atado a
+ * `comportamiento` — un medio no-Efectivo podría en teoría tenerlo prendido (p. ej. una
+ * Transferencia mal configurada), y ese pago puede seguir teniendo vuelto habilitado por la
+ * regla 4 de `validarPagosLocal` (semántica legacy intacta), pero su importe nunca cuenta como
+ * "billetes" acá. */
+export function efectivoEntregado(pagos: { comportamiento: ComportamientoMedioPago; importe: number }[]): number {
+  return redondear(
+    pagos.filter((p) => p.comportamiento === 'Efectivo').reduce((acumulado, p) => acumulado + p.importe, 0),
+  )
 }
 
 /** Billetes argentinos válidos (decisión del dueño, 2026-09-16) — única fuente, espejo de
@@ -107,7 +113,9 @@ export const EFECTIVO_MAXIMO = 10_000_000
 export function esVueltoJustificado(efectivoEntregadoTotal: number, vuelto: number): boolean {
   if (vuelto <= 0) return true
   if (efectivoEntregadoTotal <= 0 || efectivoEntregadoTotal > EFECTIVO_MAXIMO) return false
-  if (!Number.isInteger(efectivoEntregadoTotal) || efectivoEntregadoTotal % 10 !== 0) return false
+  // No es múltiplo del billete más chico ($10) — cubre tanto centavos (5500.50 % 10 = 0.5 ≠ 0)
+  // como pesos enteros que no son múltiplo de 10 (5505 % 10 = 5): nunca formable con billetes.
+  if (efectivoEntregadoTotal % 10 !== 0) return false
 
   // Mutation target (mutation-proof-tests): el filtro es "> vuelto", ESTRICTO — un billete que
   // vale exactamente lo mismo que el vuelto no cuenta (el cliente no necesitaba entregarlo).

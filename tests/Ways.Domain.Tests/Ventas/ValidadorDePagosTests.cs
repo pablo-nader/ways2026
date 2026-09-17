@@ -21,6 +21,14 @@ public class ValidadorDePagosTests
     private static PagoAValidar CuentaCorriente(decimal importe) =>
         new(3, ComportamientoMedioPago.CuentaCorriente, AdmiteVuelto: false, RequiereReferencia: false, importe, 0m, null);
 
+    /// <summary>Simula una configuración de catálogo atípica pero posible: `AdmiteVuelto` es un
+    /// flag por medio (ABM), no atado a `Comportamiento` — un Admin podría prender `AdmiteVuelto`
+    /// en un medio Electronico (p. ej. "Transferencia"). La regla 3 tiene que seguir ignorando su
+    /// importe como "billetes" aunque este flag esté prendido (solo billetes físicos reales
+    /// cuentan); la regla 4 sí lo trata como cualquier medio con `AdmiteVuelto = true`.</summary>
+    private static PagoAValidar TransferenciaQueAdmiteVuelto(decimal importe, decimal vuelto = 0m) =>
+        new(5, ComportamientoMedioPago.Electronico, AdmiteVuelto: true, RequiereReferencia: false, importe, vuelto, null);
+
     private static void Validar(
         decimal total,
         IReadOnlyList<PagoAValidar> pagos,
@@ -243,6 +251,28 @@ public class ValidadorDePagosTests
         // vuelto > 0 -> no hay nada de donde "formarlo".
         var excepcion = Assert.Throws<ErrorDominio>(() =>
             Validar(70m, [Tarjeta(100m, vuelto: 30m)]));
+        Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
+    }
+
+    [Fact]
+    public void SoloElEfectivoCuentaComoBilletesAunqueUnaTransferenciaAdmitaVueltoPorConfiguracion()
+    {
+        // Efectivo entregado REAL: solo 100 (Comportamiento = Efectivo). La Transferencia aporta
+        // 9900 y carga el vuelto de 4500 a mano — su medio tiene AdmiteVuelto = true (config de
+        // catálogo atípica), pero una transferencia no es un billete físico. Σ importe total
+        // (100 + 9900 = 10000) SÍ sería formable contra un vuelto de 4500 (un billete de 10000)
+        // si se contara por error el importe de la Transferencia como "billetes" — la regla 3
+        // tiene que rechazar igual, porque el efectivo real (100) nunca alcanza.
+        //
+        // Mutation-proof-tests: si la regla 3 volviera a filtrar por `AdmiteVuelto` en vez de
+        // `Comportamiento == Efectivo`, este test pasaría a aceptar la venta (falso negativo).
+        // Evidencia de mutación: revertido el filtro a `p.AdmiteVuelto` en
+        // ValidadorDePagos.Validar, este test corrió y dio verde INCORRECTO (no tiró excepción) —
+        // confirmando que sin el filtro por Comportamiento la venta se aceptaba mal. Revertido a
+        // `Comportamiento == Efectivo`, vuelve a tirar `vuelto_no_justificado` (rojo esperado acá,
+        // que es el comportamiento correcto). Ver reporte de la tarea.
+        var excepcion = Assert.Throws<ErrorDominio>(() =>
+            Validar(5500m, [Efectivo(100m), TransferenciaQueAdmiteVuelto(9900m, vuelto: 4500m)]));
         Assert.Equal("vuelto_no_justificado", excepcion.Codigo);
     }
 

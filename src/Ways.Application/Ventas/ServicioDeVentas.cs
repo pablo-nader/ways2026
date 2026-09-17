@@ -175,19 +175,16 @@ public class ServicioDeVentas(
                 "El presupuesto está inconsistente con sus items; no se puede convertir.", 409);
         }
 
-        // 1 consulta batcheada (stage-12, design decisión 2 / spec parametros-operativos: "A
-        // Single Batched Query Resolves All Three Keys"): tolerancia_pago + vuelto_maximo +
-        // lotes_habilitado, resueltas directo (sin el pre-chequeo de pertenencia de
+        // 1 consulta batcheada (stage-12, design decisión 2): tolerancia_pago + lotes_habilitado,
+        // resueltas directo (sin el pre-chequeo de pertenencia de
         // ServicioDeParametros.ResolverAsync — puntoVenta ya se resolvió arriba, así que
-        // idEmpresa ya es de confianza). Reemplaza las 2 consultas separadas de antes de esta
-        // etapa — 17 → 16 round trips (task 2.7). `lotesHabilitado` alimenta el plan FEFO de
-        // slice 7, inmediatamente abajo. `vueltoMaximo` (segundo elemento, descartado) ya no lo
-        // consume ValidadorDePagos (decisión del dueño 2026-09-16, ver BilletesArgentinos) — se
-        // sigue resolviendo acá sin costo extra (misma query batcheada) para no tocar el target
-        // de mutación de design decisión 2 documentado en ResolverParametrosDeVentaAsync/
-        // VentasCheckoutTests; el parámetro sigue siendo autoritativo para
-        // ValidadorDePagoACuenta (pago a cuenta corriente).
-        var (toleranciaPago, _, lotesHabilitado) =
+        // idEmpresa ya es de confianza). `lotesHabilitado` alimenta el plan FEFO de slice 7,
+        // inmediatamente abajo. `vuelto_maximo` YA NO se resuelve acá (decisión del dueño
+        // 2026-09-16, ver BilletesArgentinos): dejó de ser consumido por ValidadorDePagos para
+        // ventas en efectivo, y no tiene sentido seguir pagando la fila extra sin usarla — sigue
+        // siendo autoritativo para ValidadorDePagoACuenta (pago a cuenta corriente), resuelto ahí
+        // por separado (ServicioDeCuentaCorriente).
+        var (toleranciaPago, lotesHabilitado) =
             await ResolverParametrosDeVentaAsync(puntoVenta.IdEmpresa, puntoVenta.Id, ct);
 
         // stage-12 slice 7 (design: "Write site 1", decide phase) — decidir si hay línea
@@ -1272,26 +1269,27 @@ public class ServicioDeVentas(
             ?? throw new InvalidOperationException("El tenant actual no tiene un Consumidor Final sembrado.");
     }
 
-    /// <summary>Las tres claves que el checkout necesita, en UNA sola query <c>WHERE clave IN
-    /// (...)</c> (stage-12, design decisión 2 / spec parametros-operativos: "ServicioDeVentas
-    /// Batches Its Parametro Reads Into One Query") — reemplaza las dos consultas separadas de
-    /// <c>tolerancia_pago</c>/<c>vuelto_maximo</c> de antes de esta etapa, agregando
-    /// <c>lotes_habilitado</c> sin sumar un tercer round trip.
+    /// <summary>Las claves que el checkout necesita, en UNA sola query <c>WHERE clave IN (...)</c>
+    /// (stage-12, design decisión 2). Antes resolvía también <c>vuelto_maximo</c> acá — dejó de
+    /// hacerlo (decisión del dueño 2026-09-16, ver BilletesArgentinos): ese parámetro ya no lo
+    /// consume <see cref="ValidadorDePagos"/> para ventas en efectivo, y sigue siendo autoritativo
+    /// solo para <see cref="CuentaCorriente.ValidadorDePagoACuenta"/> (resuelto aparte por
+    /// <c>ServicioDeCuentaCorriente</c>).
     ///
     /// <c>ResolucionDeParametros.Resolver</c> filtra los candidatos por punto de venta pero NO
     /// por clave (fue escrita para un candidate set de una sola clave) — pasarle el set
     /// multi-clave completo corrompería la resolución cruzada (una fila de <c>tolerancia_pago</c>
-    /// con el mismo <c>id_punto_venta</c> "gana" la resolución de <c>vuelto_maximo</c>). El
-    /// <c>Where(p => p.Clave == c.Clave)</c> de abajo es el target de mutación nombrado por el
+    /// con el mismo <c>id_punto_venta</c> "gana" la resolución de <c>lotes_habilitado</c> también).
+    /// El <c>Where(p => p.Clave == c.Clave)</c> de abajo es el target de mutación nombrado por el
     /// design (mutation-proof-tests): borrarlo tiene que tirar en rojo la prueba de
-    /// <c>VentasCheckoutTests</c> que mezcla una fila de punto de venta de
-    /// <c>tolerancia_pago</c> con una fila solo de empresa de <c>vuelto_maximo</c>. Evidencia de
-    /// mutación registrada en ese archivo, junto al test.</summary>
-    private async Task<(decimal ToleranciaPago, decimal VueltoMaximo, bool LotesHabilitado)> ResolverParametrosDeVentaAsync(
+    /// <c>VentasCheckoutTests</c> que mezcla una fila de punto de venta de <c>tolerancia_pago</c>
+    /// con una fila solo de empresa de <c>lotes_habilitado</c> (la corrupción se manifiesta como
+    /// un <c>JsonException</c> al deserializar el valor de <c>tolerancia_pago</c> como
+    /// <c>bool</c>). Evidencia de mutación registrada en ese archivo, junto al test.</summary>
+    private async Task<(decimal ToleranciaPago, bool LotesHabilitado)> ResolverParametrosDeVentaAsync(
         int idEmpresa, int idPuntoVenta, CancellationToken ct)
     {
-        ParametroConocido[] conocidos =
-            [ParametroConocido.ToleranciaPago, ParametroConocido.VueltoMaximo, ParametroConocido.LotesHabilitado];
+        ParametroConocido[] conocidos = [ParametroConocido.ToleranciaPago, ParametroConocido.LotesHabilitado];
         var claves = conocidos.Select(c => c.Clave).ToList();
 
         var candidatos = await db.Parametros
@@ -1308,7 +1306,6 @@ public class ServicioDeVentas(
 
         return (
             JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.ToleranciaPago.Clave]),
-            JsonSerializer.Deserialize<decimal>(resueltoPorClave[ParametroConocido.VueltoMaximo.Clave]),
             JsonSerializer.Deserialize<bool>(resueltoPorClave[ParametroConocido.LotesHabilitado.Clave]));
     }
 

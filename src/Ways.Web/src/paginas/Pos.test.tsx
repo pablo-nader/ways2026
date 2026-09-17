@@ -251,9 +251,6 @@ function rutaBaseDePos(ruta: string): Promise<unknown> | undefined {
   if (ruta.startsWith('/parametros/tolerancia_pago')) {
     return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
   }
-  if (ruta.startsWith('/parametros/vuelto_maximo')) {
-    return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
-  }
   return undefined
 }
 
@@ -893,7 +890,6 @@ describe('Pos — checkout', () => {
       if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve(articuloEscaneadoFixture())
       if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo, medioTarjeta, medioCuentaCorriente])
       if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
-      if (ruta.startsWith('/parametros/vuelto_maximo')) return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 

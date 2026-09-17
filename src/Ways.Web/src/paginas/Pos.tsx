@@ -249,7 +249,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
   const [errorMedios, setErrorMedios] = useState('')
 
-  const [parametros, setParametros] = useState<{ toleranciaPago: number; vueltoMaximo: number } | null>(null)
+  const [parametros, setParametros] = useState<{ toleranciaPago: number } | null>(null)
   const [errorParametros, setErrorParametros] = useState('')
   const generacionParametrosRef = useRef(0)
 
@@ -395,8 +395,11 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
   }, [modoPresupuesto])
 
   // react-async-state regla 2: cada cambio de punto de venta dispara la resolución de
-  // tolerancia_pago/vuelto_maximo (ADR-13: punto de venta > empresa > default) — una respuesta
-  // desactualizada nunca puede pisar la más reciente.
+  // tolerancia_pago (ADR-13: punto de venta > empresa > default) — una respuesta desactualizada
+  // nunca puede pisar la más reciente. `vuelto_maximo` ya no se resuelve acá: dejó de gobernar
+  // el vuelto de ventas en efectivo (decisión del dueño 2026-09-16, ver
+  // Ways.Domain.Ventas.BilletesArgentinos) y mantener su fetch solo exponía el cobro a bloquearse
+  // si ese endpoint fallaba, sin que el valor se usara para nada.
   useEffect(() => {
     if (!puntoVentaSeleccionada) {
       setParametros(null)
@@ -407,17 +410,13 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
     const generacion = (generacionParametrosRef.current += 1)
     let vigente = true
 
-    Promise.all([
-      api.get<ParametroResuelto>(
+    api
+      .get<ParametroResuelto>(
         `/parametros/tolerancia_pago?idEmpresa=${puntoVentaSeleccionada.idEmpresa}&idPuntoVenta=${puntoVentaSeleccionada.id}`,
-      ),
-      api.get<ParametroResuelto>(
-        `/parametros/vuelto_maximo?idEmpresa=${puntoVentaSeleccionada.idEmpresa}&idPuntoVenta=${puntoVentaSeleccionada.id}`,
-      ),
-    ])
-      .then(([tolerancia, vuelto]) => {
+      )
+      .then((tolerancia) => {
         if (!vigente || generacionParametrosRef.current !== generacion) return
-        setParametros({ toleranciaPago: Number(tolerancia.valor), vueltoMaximo: Number(vuelto.valor) })
+        setParametros({ toleranciaPago: Number(tolerancia.valor) })
         setErrorParametros('')
       })
       .catch((e) => {
