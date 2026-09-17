@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, Route, Routes, useNavigate } from 'react-router'
 import { clienteDeCaja } from '../api/caja'
 import type { DispositivoActual } from '../api/dispositivos'
@@ -17,7 +17,7 @@ import { CierreDeCaja } from '../paginas/CierreDeCaja'
 import { Pos } from '../paginas/Pos'
 import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFijo'
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
-import { ticketDeVenta } from '../impresion/plantillas'
+import { reporteZ, ticketDeVenta } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 
 type Props = {
@@ -52,6 +52,75 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
   const [buscandoTurno, setBuscandoTurno] = useState(false)
   const buscandoTurnoRef = useRef(false)
   const [errorTurno, setErrorTurno] = useState('')
+
+  // stage-desktop-pos (Fix judgment-day W1/W2, corregido en la ronda 2 — R2-1/R2-2): el shell es
+  // el ÚNICO dueño de la impresión de escritorio — tanto el ticket de venta como el reporte Z
+  // auto-impreso al cerrar caja pasan por acá. Una impresora física es un recurso serial: dos
+  // trabajos nunca pueden mandarse en simultáneo, así que se encolan (FIFO) y se procesan de a
+  // uno — un `imprimiendoRef` COMPARTIDO entre trabajos (la versión de la ronda 1) descartaba en
+  // silencio cualquier trabajo que llegara mientras otro estaba en vuelo, en vez de encolarlo.
+  // Cada trabajo tiene su propio id; una falla es un aviso propio de ESE id (react-async-state
+  // regla 14: "un slot de estado tiene un solo dueño") — un trabajo posterior exitoso o fallido
+  // nunca pisa el aviso de uno anterior. Los avisos viven fuera de `<Routes>` (sobreviven a la
+  // navegación de `alCerrarExitosamente` hacia la Caja Z).
+  type TrabajoDeImpresion = { id: number; descripcion: string; bytes: Uint8Array }
+  type AvisoDeImpresion = TrabajoDeImpresion & { mensaje: string; reintentando: boolean }
+
+  const [avisosDeImpresion, setAvisosDeImpresion] = useState<AvisoDeImpresion[]>([])
+  const proximoIdTrabajoRef = useRef(1)
+  const colaDeImpresionRef = useRef<TrabajoDeImpresion[]>([])
+  const procesandoColaRef = useRef(false)
+  // Guarda de desmontaje: el shell vive mientras dura la sesión, pero un trabajo pudiera resolver
+  // después de que el shell se desmonte (ej. cierre de sesión en vuelo) — ningún `setState` corre
+  // después de eso.
+  const montadoRef = useRef(true)
+  useEffect(() => {
+    montadoRef.current = true
+    return () => {
+      montadoRef.current = false
+    }
+  }, [])
+
+  async function procesarColaDeImpresion() {
+    if (procesandoColaRef.current) return
+    procesandoColaRef.current = true
+    try {
+      let trabajo: TrabajoDeImpresion | undefined
+      while ((trabajo = colaDeImpresionRef.current.shift())) {
+        const resultado = await imprimir(trabajo.bytes)
+        if (!montadoRef.current) continue
+        const trabajoActual = trabajo
+        setAvisosDeImpresion((prev) => {
+          const sinEsteId = prev.filter((a) => a.id !== trabajoActual.id)
+          if (resultado.ok) return sinEsteId
+          return [...sinEsteId, { ...trabajoActual, mensaje: resultado.mensaje, reintentando: false }]
+        })
+      }
+    } finally {
+      procesandoColaRef.current = false
+    }
+  }
+
+  /** Encola un trabajo de impresión (nunca lo descarta, aunque otro esté en vuelo) y dispara el
+   * procesamiento de la cola si no está corriendo ya. */
+  function encolarImpresion(descripcion: string, bytes: Uint8Array) {
+    colaDeImpresionRef.current.push({ id: proximoIdTrabajoRef.current++, descripcion, bytes })
+    void procesarColaDeImpresion()
+  }
+
+  /** "Reimprimir" de un aviso puntual — guarda de reentrancia POR aviso (react-async-state regla
+   * 11): un doble click en el mismo tick sobre el mismo aviso no encola dos reintentos, pero
+   * "Reimprimir" de OTRO aviso en simultáneo sigue andando. */
+  function reimprimir(aviso: AvisoDeImpresion) {
+    if (aviso.reintentando) return
+    setAvisosDeImpresion((prev) => prev.map((a) => (a.id === aviso.id ? { ...a, reintentando: true } : a)))
+    colaDeImpresionRef.current.push({ id: aviso.id, descripcion: aviso.descripcion, bytes: aviso.bytes })
+    void procesarColaDeImpresion()
+  }
+
+  function cerrarAviso(id: number) {
+    setAvisosDeImpresion((prev) => prev.filter((a) => a.id !== id))
+  }
 
   const contextoDeImpresion = useMemo<ContextoDeImpresion>(
     () => ({
@@ -115,10 +184,10 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
   }
 
   function alEmitirVenta(comprobante: ComprobanteEmitido, _cliente: ClienteListado, medios: MedioPagoListado[]) {
-    // No bloqueante y sin cambiar el resultado de la venta: si falla, `Pos.tsx` no se entera —
-    // esta pantalla no tiene hoy un lugar para un botón "Reimprimir" del ticket recién vendido,
-    // el ticket sigue disponible mientras `ventaEmitida` esté en pantalla (nueva venta lo limpia).
-    void imprimir(ticketDeVenta(comprobante, contextoDeImpresion, medios))
+    // No bloqueante y sin cambiar el resultado de la venta, que ya se confirmó en el servidor —
+    // una falla queda como su propio aviso persistente del shell + "Reimprimir", nunca silenciosa
+    // ni descartada por otro trabajo de impresión que esté (o quede) en vuelo.
+    encolarImpresion('el ticket de venta', ticketDeVenta(comprobante, contextoDeImpresion, medios))
   }
 
   return (
@@ -161,6 +230,35 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             </div>
           )}
 
+          {/* stage-desktop-pos (Fix judgment-day W1/W2, ronda 2 — R2-2): fuera de `<Routes>` a
+              propósito — sobreviven a la navegación de `alCerrarExitosamente` hacia la Caja Z (y
+              a cualquier otra navegación del shell). Un aviso por trabajo fallido (regla 14): el
+              de un trabajo nunca lo pisa ni lo borra el de otro. */}
+          {avisosDeImpresion.map((aviso) => (
+            <div
+              key={aviso.id}
+              role="alert"
+              className="alert alert-warning rounded-0 py-1 px-3 mb-0 d-flex justify-content-between align-items-center gap-2 d-print-none"
+            >
+              <span>
+                No se pudo imprimir {aviso.descripcion}: {aviso.mensaje}
+              </span>
+              <div className="d-flex gap-2">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-dark rounded-0"
+                  disabled={aviso.reintentando}
+                  onClick={() => reimprimir(aviso)}
+                >
+                  {aviso.reintentando ? 'Imprimiendo…' : 'Reimprimir'}
+                </button>
+                <button type="button" className="btn btn-sm btn-outline-dark rounded-0" onClick={() => cerrarAviso(aviso.id)}>
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          ))}
+
           <main className="flex-grow-1">
             <Routes>
               <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} />} />
@@ -169,8 +267,14 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
                 element={
                   <CierreDeCaja
                     rutaVolver="/vender"
-                    contextoDeImpresion={contextoDeImpresion}
-                    alCerrarExitosamente={(turno: TurnoConArqueos) => navegar(`/caja/turnos/${turno.id}/z`, { replace: true })}
+                    alCerrarExitosamente={(turno: TurnoConArqueos) => {
+                      // `CierreDeCaja` no recibe `contextoDeImpresion` acá a propósito: sin él no
+                      // auto-imprime ni muestra su propio "Reimprimir" (evita la doble impresión),
+                      // el shell imprime el reporte Z él mismo — mismo helper/cola que el ticket
+                      // de venta, con su propio aviso persistente si falla.
+                      encolarImpresion('el reporte Z', reporteZ(turno, contextoDeImpresion))
+                      navegar(`/caja/turnos/${turno.id}/z`, { replace: true })
+                    }}
                   />
                 }
               />

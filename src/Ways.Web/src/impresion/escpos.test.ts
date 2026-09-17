@@ -52,6 +52,36 @@ describe('dosColumnas', () => {
     const indiceImporte = linea.indexOf('$ 1,00')
     expect(linea[indiceImporte - 1]).toBe(' ')
   })
+
+  describe('límites de ancho (Fix judgment-day W3: nunca más de `ancho` caracteres)', () => {
+    it('con derecha de largo ancho-1 e izquierda no vacía, nunca excede ancho (regresión: el piso de relleno forzado a 1 sumaba una columna de más)', () => {
+      const derecha = '$'.repeat(COLUMNAS_FUENTE_A - 1)
+      const linea = dosColumnas('descripcion', derecha, COLUMNAS_FUENTE_A)
+      expect(linea).toHaveLength(COLUMNAS_FUENTE_A)
+      expect(linea.endsWith(derecha)).toBe(true)
+    })
+
+    it('con derecha de largo ancho-1 e izquierda vacía, nunca excede ancho', () => {
+      const derecha = '$'.repeat(COLUMNAS_FUENTE_A - 1)
+      const linea = dosColumnas('', derecha, COLUMNAS_FUENTE_A)
+      expect(linea).toHaveLength(COLUMNAS_FUENTE_A)
+      expect(linea.endsWith(derecha)).toBe(true)
+    })
+
+    it('con derecha de largo exactamente ancho, la línea es derecha tal cual (izquierda descartada)', () => {
+      const derecha = '$'.repeat(COLUMNAS_FUENTE_A)
+      const linea = dosColumnas('descripcion', derecha, COLUMNAS_FUENTE_A)
+      expect(linea).toHaveLength(COLUMNAS_FUENTE_A)
+      expect(linea).toBe(derecha)
+    })
+
+    it('con derecha más largo que ancho (ancho+5), se trunca a ancho — la izquierda nunca se cuela', () => {
+      const derecha = '$'.repeat(COLUMNAS_FUENTE_A + 5)
+      const linea = dosColumnas('descripcion', derecha, COLUMNAS_FUENTE_A)
+      expect(linea).toHaveLength(COLUMNAS_FUENTE_A)
+      expect(linea).toBe(derecha.slice(0, COLUMNAS_FUENTE_A))
+    })
+  })
 })
 
 describe('ConstructorDeTicket', () => {

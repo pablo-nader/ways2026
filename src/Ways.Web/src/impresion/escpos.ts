@@ -62,9 +62,13 @@ export function codificarCp858(texto: string): Uint8Array {
 export function dosColumnas(izquierda: string, derecha: string, ancho = COLUMNAS_FUENTE_A): string {
   if (derecha.length >= ancho) return derecha.slice(0, ancho)
 
-  const disponibleIzquierda = Math.max(ancho - derecha.length - 1, 1)
+  // Fix judgment-day W3: `disponibleIzquierda`/`relleno` nunca pueden forzar un mínimo de 1 — con
+  // `derecha` ocupando `ancho - 1` columnas (o más), ese piso artificial sumaba una columna de más
+  // (`izquierda` truncada a 1 char + 1 de relleno forzado + `derecha` = ancho + 1). Sin piso, el
+  // caso sin lugar para separador trunca `izquierda` a 0 chars y el resultado nunca excede `ancho`.
+  const disponibleIzquierda = Math.max(ancho - derecha.length - 1, 0)
   const izquierdaTruncada = izquierda.length > disponibleIzquierda ? izquierda.slice(0, disponibleIzquierda) : izquierda
-  const relleno = Math.max(ancho - izquierdaTruncada.length - derecha.length, 1)
+  const relleno = ancho - izquierdaTruncada.length - derecha.length
 
   return izquierdaTruncada + ' '.repeat(relleno) + derecha
 }
