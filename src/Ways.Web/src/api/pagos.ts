@@ -38,6 +38,20 @@ export function filaPagoVacia(id: number): FilaPago {
   return { id, idMedioPago: '', importe: '', referencia: '', vueltoManual: '' }
 }
 
+/** Id del medio de pago con `comportamiento === 'Efectivo'` — mismo criterio que
+ * `algunPagoEnEfectivo` (impresion/plantillas.ts) usa para el pulso del cajón. `''` si `medios`
+ * todavía no cargó o el tenant no tiene ningún medio en efectivo configurado. */
+export function idMedioEfectivo(medios: MedioPagoListado[] | null): number | '' {
+  return medios?.find((m) => m.comportamiento === 'Efectivo')?.id ?? ''
+}
+
+/** Fila de pago nueva con Efectivo preseleccionado cuando existe en `medios` (spec: el medio de
+ * pago por defecto de una fila nueva es Efectivo) — sin un medio Efectivo configurado se comporta
+ * exactamente como `filaPagoVacia` (ninguna preselección, el cajero elige a mano como siempre). */
+export function filaPagoInicial(id: number, medios: MedioPagoListado[] | null): FilaPago {
+  return { ...filaPagoVacia(id), idMedioPago: idMedioEfectivo(medios) }
+}
+
 /** `CuentaCorriente` nunca es una opción para el Consumidor Final (spec: comprobantes-venta /
  * Cuenta Corriente Payment Gating, "Consumidor Final cannot pay by cuenta corriente") — la UI
  * ya lo esconde/deshabilita, el servidor lo vuelve a rechazar igual. */

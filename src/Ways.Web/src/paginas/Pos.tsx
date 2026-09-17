@@ -11,9 +11,11 @@ import {
   aPagosDeVenta,
   calcularExcedente,
   calcularFaltante,
+  filaPagoInicial,
   filaPagoVacia,
   filasAPagosConVuelto,
   filasAPagosParaCalculo,
+  idMedioEfectivo,
   medioDisponibleParaCliente,
   sumarImportes,
   validarPagosLocal,
@@ -28,6 +30,7 @@ import type {
   ParametroResuelto,
   PresupuestoParaVenta,
   ResultadoDeResolucion,
+  TurnoResumen,
 } from '../api/tipos'
 import {
   aLineaDeCarritoDesdeEscaneo,
@@ -81,7 +84,7 @@ function etiquetaDeCampoFila(prefijo: string, medioDeFila: MedioPagoListado | nu
 
 type PropsPanelGateTurno = {
   idPuntoVenta: number
-  onAbierto: () => void
+  onAbierto: (turno: TurnoResumen) => void
 }
 
 /**
@@ -114,20 +117,32 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
     setError('')
 
     try {
-      await clienteDeCaja.abrir({
+      const turno = await clienteDeCaja.abrir({
         idPuntoVenta,
         fondoInicial: fondo,
         observaciones: observaciones.trim() === '' ? null : observaciones.trim(),
       })
-      onAbierto()
+      onAbierto(turno)
     } catch (e) {
       if (e instanceof ErrorApi && e.codigo === 'turno_ya_abierto') {
-        // Autocuración (mismo criterio que `FormularioApertura` en Caja.tsx): otra
-        // pestaña/cajero ganó la carrera de apertura entre que se abrió este gate y el click. El
-        // turno YA está abierto, así que la continuación de éxito es la correcta — reintentar
-        // solo repetiría el mismo 409. El carrito y los pagos siguen intactos, el cajero vuelve a
-        // apretar "Cobrar" a mano (react-async-state regla 9: ningún reintento automático).
-        onAbierto()
+        // Autocuración (mismo criterio que `FormularioApertura` en Caja.tsx, react-async-state
+        // regla 10 — el mismo self-heal replicado en ambos gemelos): otra pestaña/cajero ganó la
+        // carrera de apertura entre que se abrió este gate y el click. El turno YA está abierto,
+        // así que la continuación de éxito es la correcta — reintentar solo repetiría el mismo
+        // 409. Se vuelve a consultar el turno abierto real (esta rama nunca tuvo uno: el 409 no
+        // trae el turno en el body) para poder avisarle al llamador cuál es. El carrito y los
+        // pagos siguen intactos, el cajero vuelve a apretar "Cobrar" a mano (react-async-state
+        // regla 9: ningún reintento automático).
+        try {
+          const turnoReal = await clienteDeCaja.obtenerAbierto(idPuntoVenta)
+          if (turnoReal) {
+            onAbierto(turnoReal)
+          } else {
+            setError('El turno ya está abierto, pero no se pudo confirmar cuál — actualizá la página.')
+          }
+        } catch {
+          setError('El turno ya está abierto, pero no se pudo confirmar cuál — actualizá la página.')
+        }
       } else {
         setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir el turno.')
       }
@@ -198,6 +213,11 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
 type PropsPantallaPos = {
   idPresupuesto: number | null
   alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
+  /** stage-pos-turno-y-foco: seam de navegación de "Cerrar caja" — la app web y el shell de
+   * escritorio tienen rutas distintas para `CierreDeCaja` (`/caja/cierre` vs. `/cerrar-caja`).
+   * `undefined` (app web normal) navega a la ruta libre con `useNavigate`; el shell pasa su
+   * propia función para navegar a la suya. */
+  alIrACerrarCaja?: (idTurno: number) => void
 }
 
 /**
@@ -213,7 +233,7 @@ type PropsPantallaPos = {
  * (react-async-state regla 8) — ningún estado de una venta libre o de otro presupuesto sobrevive
  * al cambio de `?idPresupuesto=`, ni al cambio del punto de venta de la sesión.
  */
-function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
+function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantallaPos) {
   const modoPresupuesto = idPresupuesto !== null
   const navigate = useNavigate()
   const { puntoVenta: puntoVentaDeSesion, puntosVenta } = usePuntoVenta()
@@ -239,6 +259,10 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
   const [errorEscaneo, setErrorEscaneo] = useState('')
   const tokenEscaneoRef = useRef(0)
   const inputEscaneoRef = useRef<HTMLInputElement>(null)
+  // Gatillos EXPLÍCITOS de foco (escaneo exitoso, cerrar/agregar del buscador) — el efecto que lo
+  // consume (más abajo) siempre gana, sin mirar dónde está el foco actual: son reacciones directas
+  // a una acción del propio cajero sobre ESTE input. El foco inicial / al desbloquear el turno usa
+  // un mecanismo aparte (ver el efecto "foco neutral" más abajo) que si respeta un foco ajeno.
   const focoPendienteRef = useRef(false)
 
   // stage-pos-buscador-articulos: modal de búsqueda por nombre (F2, botón "Buscar" junto al de
@@ -254,7 +278,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
   const generacionParametrosRef = useRef(0)
 
   const proximaFilaPagoIdRef = useRef(1)
-  const [filasPago, setFilasPago] = useState<FilaPago[]>(() => [filaPagoVacia(proximaFilaPagoIdRef.current++)])
+  const [filasPago, setFilasPago] = useState<FilaPago[]>(() => [filaPagoInicial(proximaFilaPagoIdRef.current++, null)])
 
   // react-async-state regla 9: mientras el checkout está en vuelo, TODO lo que podría
   // superponerse (escaneo, edición de carrito, cliente, filas de pago) queda
@@ -270,6 +294,39 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
   // panel de cobro por la oferta de abrir turno en vez de un error crudo (design: Web
   // Composition — "Pos.tsx gate seam").
   const [gateTurno, setGateTurno] = useState(false)
+
+  // stage-pos-turno-y-foco: estado del turno del punto de venta, mostrado en "Datos de la venta"
+  // (badge + acción "Abrir turno"/"Cerrar caja") y usado para bloquear la venta libre mientras no
+  // hay un turno abierto (spec: "solo búsqueda/consulta de precio mientras el turno está
+  // cerrado"). `turno === null` cubre tanto "confirmado cerrado" como "todavía no se sabe"
+  // (cargando o la consulta falló) — nunca se habilita vender sin una confirmación positiva de
+  // turno abierto (fail-closed), mismo criterio que el resto de las precondiciones de "Cobrar".
+  // Nunca corre bajo `?idPresupuesto=` (esa venta ya viene congelada, sin escaneo/carrito propio).
+  const [turno, setTurno] = useState<TurnoResumen | null>(null)
+  const [cargandoTurno, setCargandoTurno] = useState(false)
+  const [errorTurno, setErrorTurno] = useState('')
+  const generacionTurnoRef = useRef(0)
+
+  // judgment-day ronda 1 (T2): "Cerrar caja" vuelve a consultar el turno abierto ANTES de navegar
+  // (ver `irACerrarCaja`) — estado propio, separado de `cargandoTurno`/`errorTurno` (regla 14: un
+  // slot de estado tiene un solo dueño; esta consulta la dispara el click, no el mount/reintentar).
+  const [verificandoCierre, setVerificandoCierre] = useState(false)
+  const verificandoCierreRef = useRef(false)
+  const [avisoCerrarCaja, setAvisoCerrarCaja] = useState('')
+
+  // Re-judgment (WARNING, juez A): `irACerrarCaja` hace un `await` real — si el cajero navega
+  // fuera de esta pantalla (u otra cosa la desmonta) antes de que resuelva, ni el `setState` ni,
+  // sobre todo, la NAVEGACIÓN posterior deben dispararse contra una pantalla que ya no está. Un
+  // guard de generación no alcanza acá (la respuesta sigue siendo la más reciente, el problema es
+  // que ya no hay a dónde aplicarla) — se necesita un ref de "sigue montado", seteado en `false` en
+  // la limpieza del efecto de montaje.
+  const montadoRef = useRef(true)
+  useEffect(() => {
+    montadoRef.current = true
+    return () => {
+      montadoRef.current = false
+    }
+  }, [])
 
   const [ventaEmitida, setVentaEmitida] = useState<{ comprobante: ComprobanteEmitido; cliente: ClienteListado } | null>(null)
 
@@ -394,6 +451,17 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
     // igual para dejar el efecto exhaustivo, nunca dispara una segunda corrida.
   }, [modoPresupuesto])
 
+  // stage-pos-turno-y-foco: `medios` todavía no cargó cuando se arma el estado inicial de
+  // `filasPago` (`filaPagoInicial(id, null)` más arriba nunca preselecciona nada) — apenas carga,
+  // se preselecciona Efectivo SOLO si la fila sigue intacta (una sola fila, sin medio elegido)
+  // para no pisar una elección que el cajero ya haya hecho mientras `medios` estaba en vuelo.
+  useEffect(() => {
+    if (medios === null) return
+    const idEfectivo = idMedioEfectivo(medios)
+    if (idEfectivo === '') return
+    setFilasPago((prev) => (prev.length === 1 && prev[0].idMedioPago === '' ? [{ ...prev[0], idMedioPago: idEfectivo }] : prev))
+  }, [medios])
+
   // react-async-state regla 2: cada cambio de punto de venta dispara la resolución de
   // tolerancia_pago (ADR-13: punto de venta > empresa > default) — una respuesta desactualizada
   // nunca puede pisar la más reciente. `vuelto_maximo` ya no se resuelve acá: dejó de gobernar
@@ -431,6 +499,166 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
       vigente = false
     }
   }, [puntoVentaSeleccionada])
+
+  /**
+   * Consulta el turno abierto del punto de venta — mismo endpoint y criterio de generación que
+   * `PantallaCaja` en Caja.tsx (react-async-state regla 2). Extraída a función (en vez de vivir
+   * solo dentro del efecto de abajo) para que "Reintentar" (judgment-day ronda 1, T1, CRITICAL)
+   * pueda volver a dispararla con el mismo camino — sin esto, un `GET .../abierto` que falla deja
+   * `bloqueadoPorTurno` en `true` para siempre (ni "Abrir turno" ni "Cerrar caja" se renderizan
+   * porque el ternario del badge solo muestra el aviso de error) y el safety-net del 409 nunca es
+   * alcanzable, sin ninguna forma de recuperarse salvo recargar la página entera — en el shell de
+   * escritorio, sin selector de punto de venta, ni eso.
+   */
+  function consultarTurno(idPuntoVenta: number) {
+    const miGeneracion = (generacionTurnoRef.current += 1)
+    setCargandoTurno(true)
+    setErrorTurno('')
+
+    // Se retorna la promesa (en vez de tratarla como fire-and-forget) para que `reintentarTurno`
+    // pueda liberar su guarda de reentrancia recién cuando esta corrida específica termina.
+    return clienteDeCaja
+      .obtenerAbierto(idPuntoVenta)
+      .then((t) => {
+        if (generacionTurnoRef.current !== miGeneracion) return
+        setTurno(t)
+        // Re-judgment (WARNING, ambos jueces): un `avisoCerrarCaja` viejo ("El turno ya fue
+        // cerrado.") no debe sobrevivir a una consulta exitosa posterior — mount o "Reintentar" —
+        // que confirma el turno abierto de nuevo; ese aviso es del click anterior, no de este.
+        if (t) setAvisoCerrarCaja('')
+      })
+      .catch((e) => {
+        if (generacionTurnoRef.current !== miGeneracion) return
+        setTurno(null)
+        setErrorTurno(
+          e instanceof ErrorApi ? e.message : 'No se pudo consultar el turno abierto de este punto de venta.',
+        )
+      })
+      .finally(() => {
+        if (generacionTurnoRef.current !== miGeneracion) return
+        setCargandoTurno(false)
+      })
+  }
+
+  // Nunca corre bajo `?idPresupuesto=` (el banner/gate de turno es una noción del camino libre).
+  useEffect(() => {
+    if (modoPresupuesto || !puntoVentaSeleccionada) {
+      setTurno(null)
+      setCargandoTurno(false)
+      setErrorTurno('')
+      return
+    }
+    consultarTurno(puntoVentaSeleccionada.id)
+    // `consultarTurno` no es estable entre renders (cierra sobre estado/props del componente),
+    // pero su identidad no importa acá: el efecto solo necesita dispararse cuando cambian sus
+    // precondiciones reales (`modoPresupuesto`/el punto de venta), nunca por una referencia nueva
+    // de la propia función — mismo criterio que el resto de los efectos de esta pantalla que
+    // llaman a un helper declarado en el cuerpo del componente.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modoPresupuesto, puntoVentaSeleccionada])
+
+  /** "Reintentar" del aviso de error de turno — vuelve a consultar con el mismo camino que el
+   * mount (mismo guard de generación: una respuesta vieja en vuelo desde antes nunca pisa la de
+   * este reintento). El botón queda `disabled` mientras `cargandoTurno` es `true`, pero eso solo
+   * cubre el render — react-async-state regla 11: la guarda de reentrancia real es un `ref`, no el
+   * estado (`cargandoTurno` no se actualiza hasta el próximo render, así que dos clicks en el
+   * mismo tick pasarían los dos sin esto), liberado en el `finally` SIN gatear por generación (se
+   * libera siempre, la regla 11 lo pide explícito). */
+  const reintentandoTurnoRef = useRef(false)
+  function reintentarTurno() {
+    if (reintentandoTurnoRef.current) return
+    if (!puntoVentaSeleccionada) return
+    reintentandoTurnoRef.current = true
+    consultarTurno(puntoVentaSeleccionada.id).finally(() => {
+      reintentandoTurnoRef.current = false
+    })
+  }
+
+  /** El turno recién confirmado (apertura propia, autocuración del gate, o el 409 safety-net) es
+   * la fuente más autoritativa posible: bumpear la generación invalida cualquier `GET …/abierto`
+   * que siguiera en vuelo desde antes (mismo criterio que `turnoAbierto` en Caja.tsx). */
+  function turnoConfirmadoAbierto(nuevoTurno: TurnoResumen) {
+    generacionTurnoRef.current += 1
+    setErrorTurno('')
+    setCargandoTurno(false)
+    setTurno(nuevoTurno)
+    // Re-judgment (WARNING, ambos jueces): mismo criterio que en `consultarTurno` — "Abrir turno"
+    // (gate propio o safety-net del 409) confirma un turno abierto nuevo, así que cualquier aviso
+    // de "El turno ya fue cerrado." de un click anterior de "Cerrar caja" queda obsoleto.
+    setAvisoCerrarCaja('')
+  }
+
+  /**
+   * "Cerrar caja" de "Datos de la venta" — vuelve a consultar el turno abierto ANTES de navegar
+   * (judgment-day ronda 1, T2, WARNING: el `turno.id` que ya tiene el estado pudo quedar viejo —
+   * otra pestaña/cajero cerró la caja mientras esta pantalla seguía mostrando "Turno abierto" — el
+   * shell anterior hacía esta misma consulta fresca en el click, este reemplazo no debía perder
+   * esa garantía). `alIrACerrarCaja` es el seam del shell de escritorio (ruta `/cerrar-caja`,
+   * distinta de la ruta libre `/caja/cierre` de la app web); sin el prop, navega con `useNavigate`
+   * como siempre. Nunca navega con un id potencialmente viejo: si la consulta ya no encuentra
+   * turno, actualiza el badge a "cerrado" en vez de navegar a ciegas.
+   */
+  async function irACerrarCaja() {
+    // regla 9/11: guarda de reentrancia de primera línea, liberada siempre en el `finally` sin
+    // gate de generación (un doble click no debe disparar dos consultas).
+    if (verificandoCierreRef.current) return
+    if (!puntoVentaSeleccionada) return
+
+    verificandoCierreRef.current = true
+    setVerificandoCierre(true)
+    setAvisoCerrarCaja('')
+    const miGeneracion = (generacionTurnoRef.current += 1)
+
+    try {
+      const turnoReal = await clienteDeCaja.obtenerAbierto(puntoVentaSeleccionada.id)
+      // Re-judgment (WARNING, juez A): si la pantalla ya se desmontó mientras el `await` estaba en
+      // vuelo, ni un `setState` ni, sobre todo, la navegación posterior deben dispararse — se
+      // chequea ANTES que la generación (y antes de cualquier otra cosa) a propósito.
+      if (!montadoRef.current) return
+      if (generacionTurnoRef.current !== miGeneracion) return
+
+      if (!turnoReal) {
+        setTurno(null)
+        setAvisoCerrarCaja('El turno ya fue cerrado.')
+        return
+      }
+
+      if (alIrACerrarCaja) {
+        alIrACerrarCaja(turnoReal.id)
+      } else {
+        navigate(`/caja/cierre?idTurno=${turnoReal.id}`)
+      }
+    } catch (e) {
+      if (!montadoRef.current) return
+      if (generacionTurnoRef.current !== miGeneracion) return
+      setAvisoCerrarCaja(e instanceof ErrorApi ? e.message : 'No se pudo verificar el turno abierto.')
+    } finally {
+      verificandoCierreRef.current = false
+      if (montadoRef.current) setVerificandoCierre(false)
+    }
+  }
+
+  // stage-pos-turno-y-foco: mientras no hay un turno CONFIRMADO abierto, la venta libre queda
+  // bloqueada (solo búsqueda/consulta de precio) — `turno === null` cubre tanto "confirmado
+  // cerrado" como "todavía no se sabe" (cargando o la consulta falló), fail-closed a propósito:
+  // nunca se habilita vender sin una confirmación positiva. No aplica bajo `?idPresupuesto=` (esa
+  // conversión tiene su propio gate de "Cobrar", el 409 turno_no_abierto la sigue cubriendo igual
+  // como safety net). Tampoco aplica SIN punto de venta de sesión: ese caso ya tenía su propio
+  // comportamiento preexistente (escanear sigue armando el carrito, "Cobrar" queda deshabilitado
+  // por la precondición de punto de venta) — el turno ni siquiera se consulta sin un PV (efecto de
+  // arriba), así que `turno` quedaría `null` para siempre y bloquearía sin necesidad. Declarado
+  // ACÁ (antes del efecto de foco, que lo necesita en su guard) y no más abajo junto a
+  // `precondicionesListas` — el orden importa, es una const de módulo del cuerpo del componente.
+  const bloqueadoPorTurno = !modoPresupuesto && puntoVentaSeleccionada !== null && turno === null
+
+  // judgment-day ronda 1 (T4): mensaje real para "Agregar" del buscador — `bloqueadoPorTurno`
+  // cubre TANTO "todavía consultando" como "confirmado cerrado" (mismo comentario de arriba), pero
+  // son avisos distintos para el cajero; acá se separan con `cargandoTurno`.
+  const motivoSinAgregarEnBuscador = !bloqueadoPorTurno
+    ? undefined
+    : cargandoTurno
+      ? 'Consultando turno…'
+      : 'Turno cerrado: abrí un turno para vender.'
 
   // react-async-state regla 2/3/4: cada mutación del carrito (o un cambio de cliente/punto de
   // venta, de los que depende el lote) dispara una nueva resolución de precios; una respuesta
@@ -726,13 +954,49 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
-  // no debe dejarlo enfocado ni operable durante el checkout.
+  // no debe dejarlo enfocado ni operable durante el checkout. Gatillo EXPLÍCITO
+  // (`focoPendienteRef`, seteado por `escanear()`/`agregarDesdeBusqueda()`/`cerrarBuscador()`):
+  // siempre gana, nunca mira dónde está el foco actual — son reacciones directas a una acción del
+  // cajero sobre este mismo input.
+  //
+  // `bloqueadoPorTurno` es parte del guard por la MISMA razón que `escaneando`/`cobrando`: el
+  // input está `disabled` mientras es `true` (turno todavía cargando o confirmado cerrado) y un
+  // elemento deshabilitado no puede recibir foco — sin este conjunct, un pedido explícito que
+  // coincidiera con el turno todavía resolviendo se consumía contra un input ya deshabilitado (un
+  // no-op silencioso, el pedido quedaba perdido para siempre). Con el conjunct acá, el efecto
+  // vuelve a correr cuando `bloqueadoPorTurno` cambia y recién ahí consume el pedido.
   useEffect(() => {
     if (!focoPendienteRef.current) return
-    if (escaneando || cobrando || buscadorAbierto) return
+    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno) return
     focoPendienteRef.current = false
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto])
+  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno])
+
+  /**
+   * Foco NEUTRAL — mount inicial (reemplaza el `autoFocus` nativo, no confiable en un mount real:
+   * ver abajo) y desbloqueo del turno (judgment-day ronda 1, T3, WARNING). A diferencia del efecto
+   * de arriba, este NUNCA le saca el foco a un control que el cajero eligió a propósito mientras
+   * el turno todavía cargaba (ej. clickear "Buscar artículo") — solo enfoca el input de código si
+   * el foco actual es neutral (`body`/`null`) o ya es el propio input. No consume ningún "pedido":
+   * se reevalúa en cada corrida relevante, siempre de forma idempotente (enfocar un elemento ya
+   * enfocado no hace nada).
+   *
+   * Causa real del foco inicial roto, encontrada reproduciendo en un navegador real (no en un
+   * test): el `autoFocus` nativo (HTML/React) no hace nada cuando el documento todavía no tiene
+   * foco de ventana/SO en el momento del mount — confirmado a mano en Chrome real:
+   * `document.hasFocus()` da `false` justo después de una navegación dura, y en ese estado un
+   * `<input autoFocus>` NUNCA queda como `document.activeElement` (se queda en `body`
+   * indefinidamente) — pero un `elemento.focus()` imperativo, llamado en el mismo momento, SÍ lo
+   * enfoca igual. jsdom no reproduce esta restricción, así que un test en jsdom en verde nunca fue
+   * evidencia de que el `autoFocus` nativo funcionara en la app real (react-async-state regla 12,
+   * extendida de "restaurar foco" a "adquirir foco por primera vez").
+   */
+  useEffect(() => {
+    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno) return
+    const activo = document.activeElement
+    if (activo !== document.body && activo !== null && activo !== inputEscaneoRef.current) return
+    inputEscaneoRef.current?.focus()
+  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno])
 
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
@@ -784,7 +1048,8 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
       errorMedios === '' &&
       parametros !== null &&
       errorParametros === ''
-    : lineas.length > 0 &&
+    : !bloqueadoPorTurno &&
+      lineas.length > 0 &&
       clienteSeleccionado !== null &&
       puntoVentaSeleccionada !== null &&
       medios !== null &&
@@ -849,7 +1114,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
       setLineas([])
       setPrecios({})
       setCantidadesEnEdicion({})
-      setFilasPago([filaPagoVacia(proximaFilaPagoIdRef.current++)])
+      setFilasPago([filaPagoInicial(proximaFilaPagoIdRef.current++, medios)])
       setEntradaEscaneo('')
       setTerminoCliente('')
     } catch (e) {
@@ -897,9 +1162,10 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
     return (
       <PanelGateTurno
         idPuntoVenta={puntoVentaSeleccionada.id}
-        onAbierto={() => {
+        onAbierto={(turnoAbierto) => {
           setGateTurno(false)
           setErrorCobro('')
+          turnoConfirmadoAbierto(turnoAbierto)
         }}
       />
     )
@@ -1016,6 +1282,13 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
       <div className="row g-3">
         <div className="col-lg-8">
           <Box titulo="Carrito">
+            {/* stage-pos-turno-y-foco: aviso claro de por qué escaneo/carrito/cliente/pagos están
+                deshabilitados — solo cuando el turno está CONFIRMADO cerrado (nunca mientras
+                todavía se está consultando, ni si la consulta falló: `errorTurno` tiene su propio
+                aviso en "Datos de la venta"). */}
+            {bloqueadoPorTurno && !cargandoTurno && errorTurno === '' && (
+              <div className="alert alert-warning rounded-0 py-1 px-2 small">Turno cerrado: abrí un turno para vender.</div>
+            )}
             {errorEscaneo && !modoPresupuesto && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorEscaneo}</div>}
             {avisoPrecios && !modoPresupuesto && (
               <div className="alert alert-warning rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
@@ -1040,12 +1313,16 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                   placeholder="Escanear o tipear un código (ej. 3*7790001234567)"
                   aria-label="Código escaneado"
                   value={entradaEscaneo}
-                  disabled={escaneando || cobrando}
+                  disabled={escaneando || cobrando || bloqueadoPorTurno}
                   onChange={(e) => setEntradaEscaneo(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), escanear())}
-                  autoFocus
                 />
-                <button type="button" className="btn btn-primary rounded-0" disabled={escaneando || cobrando} onClick={escanear}>
+                <button
+                  type="button"
+                  className="btn btn-primary rounded-0"
+                  disabled={escaneando || cobrando || bloqueadoPorTurno}
+                  onClick={escanear}
+                >
                   {escaneando ? 'Buscando…' : 'Agregar'}
                 </button>
                 {/* "Buscar artículo" en vez de "Buscar" a secas: ya existe un botón "Buscar" en el
@@ -1106,7 +1383,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                                 className="form-control form-control-sm rounded-0"
                                 aria-label={`Cantidad de ${l.nombre}`}
                                 value={textoCantidad(l)}
-                                disabled={cobrando}
+                                disabled={cobrando || bloqueadoPorTurno}
                                 onChange={(e) => cambiarCantidad(l.idArticulo, e.target.value)}
                                 onBlur={() => confirmarCantidad(l.idArticulo)}
                               />
@@ -1142,7 +1419,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                               <button
                                 type="button"
                                 className="btn btn-sm btn-outline-danger rounded-0"
-                                disabled={cobrando}
+                                disabled={cobrando || bloqueadoPorTurno}
                                 onClick={() => mutarCarrito({ tipo: 'quitarLinea', idArticulo: l.idArticulo })}
                               >
                                 Quitar
@@ -1166,7 +1443,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
               <button
                 type="button"
                 className="btn btn-outline-secondary btn-sm rounded-0"
-                disabled={cobrando}
+                disabled={cobrando || bloqueadoPorTurno}
                 onClick={() => mutarCarrito({ tipo: 'vaciar' })}
               >
                 Vaciar carrito
@@ -1187,6 +1464,66 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
               )}
             </div>
 
+            {/* stage-pos-turno-y-foco: estado del turno del punto de venta + acción directa —
+                "Abrir turno" (reutiliza el mismo `PanelGateTurno` del safety net de 409) cuando
+                está cerrado, "Cerrar caja" (navega con el `idTurno` real, nunca a ciegas) cuando
+                está abierto. Nunca se muestra bajo `?idPresupuesto=` (esa conversión no tiene
+                escaneo/carrito propio, el 409 la sigue cubriendo igual). */}
+            {!modoPresupuesto && puntoVentaSeleccionada && (
+              <div className="mb-3">
+                <div className="small text-muted">Turno</div>
+                {cargandoTurno ? (
+                  <span className="text-muted">Consultando…</span>
+                ) : errorTurno ? (
+                  // judgment-day ronda 1 (T1, CRITICAL): sin "Reintentar" acá, un error de red
+                  // dejaba `bloqueadoPorTurno` en `true` para siempre — ni "Abrir turno" ni
+                  // "Cerrar caja" se renderizan en este ternario, así que la única salida era
+                  // recargar la página entera (imposible en el shell de escritorio, sin selector
+                  // de punto de venta que provoque un remount).
+                  <div className="alert alert-danger rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
+                    <span>{errorTurno}</span>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-danger rounded-0"
+                      disabled={cargandoTurno}
+                      onClick={reintentarTurno}
+                    >
+                      Reintentar
+                    </button>
+                  </div>
+                ) : (
+                  <div className="d-flex justify-content-between align-items-center">
+                    {turno ? (
+                      <>
+                        <span className="badge bg-success">Turno abierto</span>
+                        <button
+                          type="button"
+                          className="btn btn-outline-danger btn-sm rounded-0"
+                          disabled={verificandoCierre}
+                          onClick={() => void irACerrarCaja()}
+                        >
+                          {verificandoCierre ? 'Verificando…' : 'Cerrar caja'}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="badge bg-secondary">Turno cerrado</span>
+                        <button type="button" className="btn btn-primary btn-sm rounded-0" onClick={() => setGateTurno(true)}>
+                          Abrir turno
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+                {/* judgment-day ronda 1 (T2): aviso propio de la consulta fresca de "Cerrar caja"
+                    — nunca comparte slot con `errorTurno` (regla 14), esa consulta es del mount/
+                    reintentar, no del click. */}
+                {avisoCerrarCaja && (
+                  <div className="alert alert-warning rounded-0 py-1 px-2 small mt-2">{avisoCerrarCaja}</div>
+                )}
+              </div>
+            )}
+
             {errorClientes && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorClientes}</div>}
 
             <div className="mb-2">
@@ -1197,7 +1534,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                 id="pos-cliente"
                 className="form-select rounded-0"
                 value={clienteSeleccionado?.id ?? ''}
-                disabled={cobrando || modoPresupuesto}
+                disabled={cobrando || modoPresupuesto || bloqueadoPorTurno}
                 onChange={(e) => cambiarCliente(Number(e.target.value))}
               >
                 {fusionarOpcionesCliente(opcionesClientes, clienteSeleccionado).map((c) => (
@@ -1216,14 +1553,14 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                   placeholder="Buscar otro cliente…"
                   aria-label="Buscar cliente"
                   value={terminoCliente}
-                  disabled={buscandoClientes || cobrando}
+                  disabled={buscandoClientes || cobrando || bloqueadoPorTurno}
                   onChange={(e) => setTerminoCliente(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscarClientes())}
                 />
                 <button
                   type="button"
                   className="btn btn-outline-primary rounded-0"
-                  disabled={buscandoClientes || cobrando}
+                  disabled={buscandoClientes || cobrando || bloqueadoPorTurno}
                   onClick={buscarClientes}
                 >
                   {buscandoClientes ? 'Buscando…' : 'Buscar'}
@@ -1265,7 +1602,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                       className="form-select form-select-sm rounded-0"
                       aria-label="Medio de pago"
                       value={fila.idMedioPago}
-                      disabled={cobrando || medios === null}
+                      disabled={cobrando || medios === null || bloqueadoPorTurno}
                       onChange={(e) => cambiarMedioDeFila(fila.id, e.target.value === '' ? '' : Number(e.target.value))}
                     >
                       <option value="">Elegir medio…</option>
@@ -1286,7 +1623,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                       className="form-control form-control-sm rounded-0"
                       aria-label={etiquetaDeCampoFila('Importe', medioDeFila, fila.id)}
                       value={fila.importe}
-                      disabled={cobrando}
+                      disabled={cobrando || bloqueadoPorTurno}
                       onChange={(e) => cambiarImporteDeFila(fila.id, e.target.value)}
                     />
                   </div>
@@ -1297,7 +1634,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                       aria-label={etiquetaDeCampoFila('Referencia', medioDeFila, fila.id)}
                       placeholder={medioDeFila?.requiereReferencia ? 'Referencia (requerida)' : 'Referencia'}
                       value={fila.referencia}
-                      disabled={cobrando || !medioDeFila?.requiereReferencia}
+                      disabled={cobrando || bloqueadoPorTurno || !medioDeFila?.requiereReferencia}
                       onChange={(e) => cambiarReferenciaDeFila(fila.id, e.target.value)}
                     />
                   </div>
@@ -1309,14 +1646,14 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
                       className="form-control form-control-sm rounded-0"
                       aria-label={etiquetaDeCampoFila('Vuelto', medioDeFila, fila.id)}
                       value={vueltoMostrado}
-                      disabled={cobrando || !medioDeFila?.admiteVuelto}
+                      disabled={cobrando || bloqueadoPorTurno || !medioDeFila?.admiteVuelto}
                       onChange={(e) => cambiarVueltoDeFila(fila.id, e.target.value)}
                     />
                     {filasPago.length > 1 && (
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-danger rounded-0"
-                        disabled={cobrando}
+                        disabled={cobrando || bloqueadoPorTurno}
                         aria-label="Quitar medio de pago"
                         onClick={() => quitarFilaPago(fila.id)}
                       >
@@ -1331,7 +1668,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
             <button
               type="button"
               className="btn btn-outline-secondary btn-sm rounded-0 mb-3"
-              disabled={cobrando}
+              disabled={cobrando || bloqueadoPorTurno}
               onClick={agregarFilaPago}
             >
               + Agregar medio de pago
@@ -1359,6 +1696,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
         <ModalDeBusquedaDeArticulos
           idListaPrecio={clienteSeleccionado?.idListaPrecio ?? null}
           idEmpresa={puntoVentaSeleccionada?.idEmpresa ?? null}
+          motivoSinAgregar={motivoSinAgregarEnBuscador}
           onAgregar={agregarDesdeBusqueda}
           onCerrar={cerrarBuscador}
         />
@@ -1376,9 +1714,10 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
  */
 type PropsPos = {
   alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
+  alIrACerrarCaja?: (idTurno: number) => void
 }
 
-export function Pos({ alEmitir }: PropsPos = {}) {
+export function Pos({ alEmitir, alIrACerrarCaja }: PropsPos = {}) {
   const [searchParams] = useSearchParams()
   const { puntoVenta } = usePuntoVenta()
   const crudo = searchParams.get('idPresupuesto')
@@ -1389,6 +1728,7 @@ export function Pos({ alEmitir }: PropsPos = {}) {
       key={`${idPresupuesto ?? 'libre'}:${puntoVenta?.id ?? 'sin-pv'}`}
       idPresupuesto={idPresupuesto}
       alEmitir={alEmitir}
+      alIrACerrarCaja={alIrACerrarCaja}
     />
   )
 }

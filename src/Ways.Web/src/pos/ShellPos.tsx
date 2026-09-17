@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, Route, Routes, useNavigate } from 'react-router'
-import { clienteDeCaja } from '../api/caja'
 import type { DispositivoActual } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
 import type {
@@ -32,27 +31,29 @@ type Props = {
 
 /**
  * Shell del POS de escritorio con sesión activa (stage-desktop-pos): header compacto (empresa, PV,
- * cajero, navegación) + las tres pantallas que reusa sin fork (`Pos`, `CierreDeCaja`, `CajaZ`).
+ * cajero, navegación) + las pantallas que reusa sin fork (`Pos`, `CierreDeCaja`, `CajaZ`,
+ * `VentasDelTurno`).
  *
  * El punto de venta lo fija el dispositivo — `ProveedorDePuntoVentaFijo`, nunca el
  * `PuertaDePuntoVenta` de elección manual de la app completa. La sesión se expone por el mismo
  * `AuthContext` que ya consumen `CajaZ`/`Layout` sin fork: acá se provee un valor propio (login del
  * dispositivo en vez de mail/password) en lugar de montar el `AuthProvider` de la app completa, que
  * no conoce `POST /auth/login-dispositivo`.
+ *
+ * stage-pos-turno-y-foco: el header YA NO tiene su propio botón "Cerrar caja" — vivía acá porque
+ * `Pos.tsx` no sabía nada del turno; ahora que la propia pantalla de venta (`/vender`, la ruta `*`
+ * de fallback) muestra el estado del turno y ofrece "Cerrar caja" con el `idTurno` ya resuelto,
+ * mantener el botón del header habría duplicado la misma consulta `GET …/abierto` en dos lugares —
+ * exactamente el tipo de gemelo que la regla 10 de `react-async-state` pide mantener en
+ * sincronía, evitado acá eliminando uno de los dos en vez de replicarlo. `alIrACerrarCaja` (seam
+ * de `Pos.tsx`) navega a la ruta propia del shell (`/cerrar-caja`, distinta de `/caja/cierre` de
+ * la app web) con el turno que la pantalla ya resolvió — nunca vuelve a golpear el endpoint.
  */
 export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: Props) {
   const navegar = useNavigate()
 
   const [cerrandoSesion, setCerrandoSesion] = useState(false)
   const cerrandoSesionRef = useRef(false)
-
-  // "Cerrar caja" no navega a ciegas: resuelve el turno ABIERTO del PV fijo primero (regla 9 de
-  // react-async-state — guarda de reentrancia de primera línea) y solo entonces navega con el
-  // `idTurno` real. Sin esto `CierreDeCaja` se monta sin `?idTurno=` y muestra un aviso genérico
-  // en vez de dejar cerrar la caja — el defecto que este seam existe para evitar.
-  const [buscandoTurno, setBuscandoTurno] = useState(false)
-  const buscandoTurnoRef = useRef(false)
-  const [errorTurno, setErrorTurno] = useState('')
 
   // stage-desktop-pos (Fix judgment-day W1/W2, corregido en la ronda 2 — R2-1/R2-2): el shell es
   // el ÚNICO dueño de la impresión de escritorio — tanto el ticket de venta como el reporte Z
@@ -163,27 +164,6 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     }
   }
 
-  async function irACerrarCaja() {
-    if (buscandoTurnoRef.current) return
-    buscandoTurnoRef.current = true
-    setBuscandoTurno(true)
-    setErrorTurno('')
-
-    try {
-      const turno = await clienteDeCaja.obtenerAbierto(puntoVenta.id)
-      if (!turno) {
-        setErrorTurno('No hay un turno abierto en este punto de venta.')
-        return
-      }
-      navegar(`/cerrar-caja?idTurno=${turno.id}`)
-    } catch (e) {
-      setErrorTurno(e instanceof ErrorApi ? e.message : 'No se pudo consultar el turno abierto.')
-    } finally {
-      buscandoTurnoRef.current = false
-      setBuscandoTurno(false)
-    }
-  }
-
   function alEmitirVenta(comprobante: ComprobanteEmitido, _cliente: ClienteListado, medios: MedioPagoListado[]) {
     // No bloqueante y sin cambiar el resultado de la venta, que ya se confirmó en el servidor —
     // una falla queda como su propio aviso persistente del shell + "Reimprimir", nunca silenciosa
@@ -209,14 +189,6 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
               <Link className="btn btn-outline-light rounded-0" to="/ventas-del-turno">
                 Ventas del turno
               </Link>
-              <button
-                type="button"
-                className="btn btn-outline-light rounded-0"
-                disabled={buscandoTurno}
-                onClick={() => void irACerrarCaja()}
-              >
-                {buscandoTurno ? 'Verificando…' : 'Cerrar caja'}
-              </button>
               {enEscritorio() && (
                 <button type="button" className="btn btn-outline-light rounded-0" onClick={() => void abrirConfiguracion()}>
                   Configuración
@@ -227,12 +199,6 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
               </button>
             </div>
           </header>
-
-          {errorTurno && (
-            <div role="alert" className="alert alert-warning rounded-0 py-1 px-3 mb-0 d-print-none">
-              {errorTurno}
-            </div>
-          )}
 
           {/* stage-desktop-pos (Fix judgment-day W1/W2, ronda 2 — R2-2): fuera de `<Routes>` a
               propósito — sobreviven a la navegación de `alCerrarExitosamente` hacia la Caja Z (y
@@ -265,7 +231,15 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
 
           <main className="flex-grow-1">
             <Routes>
-              <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} />} />
+              <Route
+                path="/vender"
+                element={
+                  <Pos
+                    alEmitir={alEmitirVenta}
+                    alIrACerrarCaja={(idTurno) => navegar(`/cerrar-caja?idTurno=${idTurno}`)}
+                  />
+                }
+              />
               <Route path="/ventas-del-turno" element={<VentasDelTurno />} />
               <Route
                 path="/cerrar-caja"

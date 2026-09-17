@@ -231,6 +231,10 @@ function mockearRutasDePos(sobrescribir?: (ruta: string) => Promise<unknown> | u
     if (ruta === '/catalogos/medios-pago') return Promise.resolve<MedioPagoListado[]>([medioEfectivo])
     if (ruta.startsWith('/parametros/tolerancia_pago')) return Promise.resolve<ParametroResuelto>({ clave: 'tolerancia_pago', valor: '10' })
     if (ruta.startsWith('/articulos/escaneo?entrada=')) return Promise.resolve<ArticuloEscaneado>(articuloEscaneadoFixture())
+    // stage-pos-turno-y-foco: turno ABIERTO por defecto — `Pos.tsx` lo consulta apenas monta
+    // (ya no es el header del shell quien lo resuelve al hacer click en "Cerrar caja"); los tests
+    // dedicados al turno cerrado sobrescriben esta ruta explícitamente.
+    if (ruta.startsWith('/caja/turnos/abierto')) return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
 }
@@ -317,8 +321,16 @@ describe('ShellPos', () => {
   })
 })
 
-describe('ShellPos — "Cerrar caja" resuelve el turno abierto antes de navegar (stage-desktop-pos)', () => {
-  it('con un turno abierto, navega a CierreDeCaja con su idTurno (nunca sin ?idTurno=)', async () => {
+describe('ShellPos — "Cerrar caja" vive en la pantalla de venta, no en el header (stage-pos-turno-y-foco)', () => {
+  /**
+   * stage-pos-turno-y-foco: el header YA NO tiene su propio botón "Cerrar caja" (ver el
+   * doc-comment de `ShellPos.tsx`) — la propia pantalla `/vender` (`Pos.tsx`) muestra el estado
+   * del turno y ofrece la acción, con el `idTurno` que ya resolvió al montar (nunca un GET
+   * disparado por el click). Este describe reemplaza al viejo "'Cerrar caja' resuelve el turno
+   * abierto antes de navegar", que probaba un mecanismo (`irACerrarCaja` del shell) que ya no
+   * existe.
+   */
+  it('con un turno abierto, la pantalla de venta ofrece "Cerrar caja" y navega a CierreDeCaja con su idTurno (nunca sin ?idTurno=)', async () => {
     mockearRutasDePos((ruta) => {
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
       if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture())
@@ -326,53 +338,21 @@ describe('ShellPos — "Cerrar caja" resuelve el turno abierto antes de navegar 
     })
     renderShell()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Cerrar caja' }))
+    expect(await screen.findByText('Turno abierto')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
 
     expect(await screen.findByText('Cierre de turno #501')).toBeInTheDocument()
     expect(apiGetMock).toHaveBeenCalledWith('/caja/turnos/abierto?idPuntoVenta=7')
   })
 
-  it('sin turno abierto (null), muestra el aviso en el shell y no navega', async () => {
+  it('sin turno abierto, el header no muestra "Cerrar caja" y la pantalla de venta ofrece "Abrir turno" en su lugar', async () => {
     mockearRutasDePos((ruta) => (ruta === '/caja/turnos/abierto?idPuntoVenta=7' ? Promise.resolve(null) : undefined))
     renderShell()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Cerrar caja' }))
-
-    expect(await screen.findByText('No hay un turno abierto en este punto de venta.')).toBeInTheDocument()
-    expect(screen.queryByText(/Cierre de turno/)).not.toBeInTheDocument()
-    // Sigue en /vender: el carrito del POS sigue montado.
-    expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
-  })
-
-  it('si falla la consulta del turno abierto, muestra el aviso de error', async () => {
-    mockearRutasDePos((ruta) =>
-      ruta === '/caja/turnos/abierto?idPuntoVenta=7'
-        ? Promise.reject(new Error('network error'))
-        : undefined,
-    )
-    renderShell()
-
-    await userEvent.click(await screen.findByRole('button', { name: 'Cerrar caja' }))
-
-    expect(await screen.findByText('No se pudo consultar el turno abierto.')).toBeInTheDocument()
-  })
-
-  it('doble click en "Cerrar caja" dispara una única consulta del turno abierto (react-async-state regla 9)', async () => {
-    let resolverAbierto: (turno: TurnoResumen | null) => void = () => {}
-    const pendiente = new Promise<TurnoResumen | null>((resolve) => {
-      resolverAbierto = resolve
-    })
-    mockearRutasDePos((ruta) => (ruta === '/caja/turnos/abierto?idPuntoVenta=7' ? pendiente : undefined))
-    renderShell()
-
-    const boton = await screen.findByRole('button', { name: 'Cerrar caja' })
-    fireEvent.click(boton)
-    fireEvent.click(boton)
-
-    resolverAbierto(null)
-    await screen.findByText('No hay un turno abierto en este punto de venta.')
-
-    expect(apiGetMock.mock.calls.filter((c) => c[0] === '/caja/turnos/abierto?idPuntoVenta=7')).toHaveLength(1)
+    expect(await screen.findByText('Turno cerrado')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cerrar caja' })).not.toBeInTheDocument()
+    expect(screen.getByText('Turno cerrado: abrí un turno para vender.')).toBeInTheDocument()
   })
 
   it('un cierre exitoso navega a la Caja Z (auto-impresión incluida) e imprime exactamente una vez', async () => {
@@ -522,7 +502,10 @@ describe('ShellPos — aviso persistente de impresión (Fix judgment-day W1/W2: 
     await completarVenta()
     expect(imprimirMock).toHaveBeenCalledTimes(1)
 
-    await userEvent.click(screen.getByRole('link', { name: 'Vender' }))
+    // La pantalla de venta queda mostrando el ticket (`ventaEmitida`) hasta "Nueva venta" — la
+    // acción "Cerrar caja" vive en el cuerpo normal de la pantalla (spec: una sola ubicación,
+    // nunca en el header), así que hace falta volver a él primero.
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Cerrar caja' }))
     await screen.findByText('Cierre de turno #501')
     await userEvent.type(await screen.findByLabelText('Declarado de Efectivo'), '640')
