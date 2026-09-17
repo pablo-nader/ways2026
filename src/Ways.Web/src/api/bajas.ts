@@ -21,7 +21,7 @@
 import { ErrorApi } from './cliente'
 
 /** El sujeto de la baja, tal como entra en la copia ("No se pudo dar de baja **el tenant**"). */
-export type SujetoDeBaja = 'el tenant' | 'la empresa' | 'el punto de venta' | 'el usuario'
+export type SujetoDeBaja = 'el tenant' | 'la empresa' | 'el punto de venta' | 'el usuario' | 'el equipo'
 
 /**
  * Los SEIS códigos de conflicto de la etapa 20, cada uno con su propia guía. Ninguna repite lo que
@@ -79,9 +79,12 @@ const CODIGO_RESULTADO_INCIERTO = 'resultado_incierto'
  *
  * Un error que no es `ErrorApi` (la red se cayó, el fetch explotó) no trae ni código ni mensaje
  * confiable y comparte la copia del resultado incierto: tampoco se sabe si el servidor commiteó.
+ *
+ * `accion` nombra la baja cuando la pantalla la llama de otra forma (la revocación de un equipo es
+ * una baja lógica con las mismas ramas de 404 y 5xx).
  */
-export function copiaDeFalloDeBaja(error: unknown, sujeto: SujetoDeBaja): string {
-  const encabezado = `No se pudo dar de baja ${sujeto}.`
+export function copiaDeFalloDeBaja(error: unknown, sujeto: SujetoDeBaja, accion = 'dar de baja'): string {
+  const encabezado = `No se pudo ${accion} ${sujeto}.`
 
   if (!(error instanceof ErrorApi)) return `${encabezado} ${COPIA_RESULTADO_INCIERTO}`
   if (error.estado === 404) return `${encabezado} ${COPIA_NO_ENCONTRADO}`
