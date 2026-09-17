@@ -165,10 +165,10 @@ describe('Caja — apertura', () => {
     const llamada = apiPostMock.mock.calls.find((c) => c[0] === '/caja/turnos')
     expect(llamada?.[1]).toEqual({ idPuntoVenta: 7, fondoInicial: 500, observaciones: 'apertura de prueba' })
 
-    await waitFor(() => expect(screen.getByText('$640,00')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 640,00')).toBeInTheDocument())
   })
 
-  it('un fondo inicial negativo se rechaza localmente, sin disparar el POST', async () => {
+  it('el campo de fondo inicial no admite negativos (CampoImporte sin admiteNegativos): el "-" tipeado se descarta', async () => {
     mockearRutasBase((ruta) => {
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(null)
       return undefined
@@ -178,9 +178,25 @@ describe('Caja — apertura', () => {
     await screen.findByText('No hay un turno abierto en este punto de venta.')
 
     await userEvent.type(screen.getByLabelText('Fondo inicial'), '-10')
+
+    // El "-" nunca llega a tipearse: no hace falta enviar el formulario para comprobar que el
+    // importe nunca puede quedar negativo, la barrera ya está en el propio campo.
+    expect(screen.getByLabelText('Fondo inicial')).toHaveValue('10')
+    expect(apiPostMock.mock.calls.filter((c) => c[0] === '/caja/turnos')).toHaveLength(0)
+  })
+
+  it('un fondo inicial vacío se rechaza localmente, sin disparar el POST (validación de respaldo, más allá del propio campo)', async () => {
+    mockearRutasBase((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen | null>(null)
+      return undefined
+    })
+
+    render(<Caja />, { wrapper: MemoryRouter })
+    await screen.findByText('No hay un turno abierto en este punto de venta.')
+
     await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
 
-    expect(await screen.findByText('El fondo inicial tiene que ser un número mayor o igual a 0.')).toBeInTheDocument()
+    expect(await screen.findByText('El fondo inicial es obligatorio.')).toBeInTheDocument()
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/caja/turnos')).toHaveLength(0)
   })
 
@@ -283,17 +299,17 @@ describe('Caja — movimientos', () => {
     await userEvent.type(screen.getByLabelText('Motivo'), 'retiro de prueba')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar movimiento' }))
 
-    await waitFor(() => expect(screen.getByText('$700,00')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 700,00')).toBeInTheDocument())
 
     // La respuesta lenta de la carga inicial (generación anterior) llega recién ahora, con datos
-    // viejos (distintos del fondo inicial del turno, $500,00, para no confundir el assert con el
-    // encabezado) — no puede pisar los $700,00 ya mostrados por el refetch posterior al movimiento.
+    // viejos (distintos del fondo inicial del turno, $ 500,00, para no confundir el assert con el
+    // encabezado) — no puede pisar los $ 700,00 ya mostrados por el refetch posterior al movimiento.
     await act(async () => {
       resolverResumenLento(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 640 }] }))
       await Promise.resolve()
     })
-    expect(screen.getByText('$700,00')).toBeInTheDocument()
-    expect(screen.queryByText('$640,00')).not.toBeInTheDocument()
+    expect(screen.getByText('$ 700,00')).toBeInTheDocument()
+    expect(screen.queryByText('$ 640,00')).not.toBeInTheDocument()
   })
 
   it('un motivo de menos de 5 caracteres se rechaza localmente, sin disparar el POST', async () => {
@@ -334,7 +350,7 @@ describe('Caja — movimientos', () => {
 
     await userEvent.selectOptions(screen.getByLabelText('Tipo de movimiento'), 'Apertura de cajón')
     expect(screen.getByLabelText('Importe')).toBeDisabled()
-    expect(screen.getByLabelText('Importe')).toHaveValue(0)
+    expect(screen.getByLabelText('Importe')).toHaveValue('0,00')
 
     await userEvent.type(screen.getByLabelText('Motivo'), 'conteo inicial de turno')
     await userEvent.click(screen.getByRole('button', { name: 'Registrar movimiento' }))
@@ -422,15 +438,15 @@ describe('Caja — movimientos', () => {
     // escritura) nunca llega, el refetch disparado tras la falla del movimiento cierra
     // "Calculando…" por su cuenta y trae el dato vigente.
     await waitFor(() => expect(screen.queryByText('Calculando…')).not.toBeInTheDocument())
-    await waitFor(() => expect(screen.getByText('$850,00')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 850,00')).toBeInTheDocument())
 
     // la respuesta huérfana de la carga inicial, si llega tarde, no debe pisar nada.
     await act(async () => {
       resolverResumenInicial(resumenFixture({ medios: [{ idMedioPago: 1, importeEsperado: 111 }] }))
       await Promise.resolve()
     })
-    expect(screen.getByText('$850,00')).toBeInTheDocument()
-    expect(screen.queryByText('$111,00')).not.toBeInTheDocument()
+    expect(screen.getByText('$ 850,00')).toBeInTheDocument()
+    expect(screen.queryByText('$ 111,00')).not.toBeInTheDocument()
   })
 })
 
@@ -483,7 +499,7 @@ describe('Caja — turno nuevo no hereda el estado del anterior (react-async-sta
 
     const { rerender } = render(<Caja />, { wrapper: MemoryRouter })
     await screen.findByText('Turno abierto')
-    await waitFor(() => expect(screen.getByText('$640,00')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 640,00')).toBeInTheDocument())
     expect(screen.getByText('Local Centro')).toBeInTheDocument()
 
     await userEvent.type(screen.getByLabelText('Motivo'), 'algo que no debería sobrevivir al cambio de turno')
@@ -493,8 +509,8 @@ describe('Caja — turno nuevo no hereda el estado del anterior (react-async-sta
 
     expect(screen.getByText('Local Norte')).toBeInTheDocument()
     expect(screen.queryByText('Local Centro')).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByText('$999,00')).toBeInTheDocument())
-    expect(screen.queryByText('$640,00')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('$ 999,00')).toBeInTheDocument())
+    expect(screen.queryByText('$ 640,00')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Motivo')).toHaveValue('')
   })
 })
@@ -569,21 +585,21 @@ describe('Caja — resumen D6 (follow-up "Resumen parcial D6-content enrichment"
     expect(screen.getByText('RC #3 · ' + new Date('2026-08-04T14:00:00Z').toLocaleString('es-AR'))).toBeInTheDocument()
 
     expect(screen.getByText('Almacén')).toBeInTheDocument()
-    expect(screen.getByText('$150,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 150,00')).toBeInTheDocument()
     expect(screen.getByText('Verdulería')).toBeInTheDocument()
-    expect(screen.getByText('$200,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 200,00')).toBeInTheDocument()
 
     expect(screen.getByText('Proveedores')).toBeInTheDocument()
-    expect(screen.getByText('$30,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 30,00')).toBeInTheDocument()
     expect(screen.getByText('Retiros')).toBeInTheDocument()
-    expect(screen.getByText('$40,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 40,00')).toBeInTheDocument()
 
     // egresos por área — bloque nuevo, incluye el bucket "Sin área".
     expect(screen.getByText('Por área')).toBeInTheDocument()
     expect(screen.getByText('Cigarrillos')).toBeInTheDocument()
-    expect(screen.getByText('$25,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 25,00')).toBeInTheDocument()
     expect(screen.getByText('Sin área')).toBeInTheDocument()
-    expect(screen.getByText('$15,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 15,00')).toBeInTheDocument()
   })
 
   it('un turno sin actividad muestra ceros, guiones y los avisos de "todavía no hay" en las cuatro secciones', async () => {

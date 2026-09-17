@@ -14,13 +14,14 @@ import {
   type TurnoResumen,
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
+import { formatearImporte } from '../formato/importes'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string): string {
@@ -40,7 +41,7 @@ type PropsFormularioApertura = {
  * fondo inicial + observaciones opcionales, `idPuntoVenta` siempre es el punto de venta de la
  * sesión, nunca un campo editable acá. */
 function FormularioApertura({ idPuntoVenta, onAbierto }: PropsFormularioApertura) {
-  const [fondoInicial, setFondoInicial] = useState('')
+  const [fondoInicial, setFondoInicial] = useState<number | null>(null)
   const [observaciones, setObservaciones] = useState('')
   const [abriendo, setAbriendo] = useState(false)
   const abriendoRef = useRef(false)
@@ -51,9 +52,10 @@ function FormularioApertura({ idPuntoVenta, onAbierto }: PropsFormularioApertura
     // mismo tick le gana al re-render que deshabilita el botón.
     if (abriendoRef.current) return
 
-    const fondo = Number(fondoInicial)
-    if (fondoInicial.trim() === '' || !Number.isFinite(fondo) || fondo < 0) {
-      setError('El fondo inicial tiene que ser un número mayor o igual a 0.')
+    // `fondoInicial < 0` es inalcanzable: `CampoImporte` de este campo no tiene
+    // `admiteNegativos`, así que nunca puede emitir un número negativo (judgment-day ronda 2).
+    if (fondoInicial === null) {
+      setError('El fondo inicial es obligatorio.')
       return
     }
 
@@ -64,7 +66,7 @@ function FormularioApertura({ idPuntoVenta, onAbierto }: PropsFormularioApertura
     try {
       const turno = await clienteDeCaja.abrir({
         idPuntoVenta,
-        fondoInicial: fondo,
+        fondoInicial,
         observaciones: observaciones.trim() === '' ? null : observaciones.trim(),
       })
       onAbierto(turno)
@@ -105,15 +107,12 @@ function FormularioApertura({ idPuntoVenta, onAbierto }: PropsFormularioApertura
           <label className="form-label" htmlFor="caja-fondo-inicial">
             Fondo inicial
           </label>
-          <input
+          <CampoImporte
             id="caja-fondo-inicial"
-            type="number"
-            step="0.01"
-            min="0"
             className="form-control rounded-0"
-            value={fondoInicial}
+            valor={fondoInicial}
             disabled={bloqueado}
-            onChange={(e) => setFondoInicial(e.target.value)}
+            onChange={setFondoInicial}
           />
         </div>
         <div className="col-md-5">
@@ -158,7 +157,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
   const generacionResumenRef = useRef(0)
 
   const [tipoMovimiento, setTipoMovimiento] = useState<TipoMovimientoCaja>('Retiro')
-  const [importeMovimiento, setImporteMovimiento] = useState('')
+  const [importeMovimiento, setImporteMovimiento] = useState<number | null>(null)
   const [motivoMovimiento, setMotivoMovimiento] = useState('')
   const [registrando, setRegistrando] = useState(false)
   const registrandoRef = useRef(false)
@@ -203,7 +202,7 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
     // regla 9: guard de reentrancia de primera línea.
     if (registrandoRef.current) return
 
-    const importeCandidato = tipoMovimiento === 'AperturaCajon' ? 0 : Number(importeMovimiento)
+    const importeCandidato = tipoMovimiento === 'AperturaCajon' ? 0 : (importeMovimiento ?? Number.NaN)
 
     if (!motivoValido(motivoMovimiento)) {
       setErrorMovimiento('El motivo tiene que tener al menos 5 caracteres.')
@@ -230,9 +229,9 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
     try {
       await clienteDeCaja.registrarMovimiento(
         turno.id,
-        aSolicitudDeMovimiento(tipoMovimiento, importeMovimiento, motivoMovimiento),
+        aSolicitudDeMovimiento(tipoMovimiento, importeMovimiento === null ? '' : String(importeMovimiento), motivoMovimiento),
       )
-      setImporteMovimiento('')
+      setImporteMovimiento(null)
       setMotivoMovimiento('')
     } catch (e) {
       setErrorMovimiento(e instanceof ErrorApi ? e.message : 'No se pudo registrar el movimiento.')
@@ -314,15 +313,12 @@ function PanelTurnoAbierto({ turno, medios, errorMedios }: PropsPanelTurnoAbiert
             <label className="form-label" htmlFor="caja-importe-movimiento">
               Importe
             </label>
-            <input
+            <CampoImporte
               id="caja-importe-movimiento"
-              type="number"
-              step="0.01"
-              min="0"
               className="form-control rounded-0"
-              value={tipoMovimiento === 'AperturaCajon' ? '0' : importeMovimiento}
+              valor={tipoMovimiento === 'AperturaCajon' ? 0 : importeMovimiento}
               disabled={registrando || tipoMovimiento === 'AperturaCajon'}
-              onChange={(e) => setImporteMovimiento(e.target.value)}
+              onChange={setImporteMovimiento}
             />
           </div>
 

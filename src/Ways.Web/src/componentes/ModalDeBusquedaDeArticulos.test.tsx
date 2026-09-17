@@ -195,7 +195,7 @@ describe('ModalDeBusquedaDeArticulos — motivoSinAgregar (stage-pos-turno-y-foc
     fireEvent.change(input, { target: { value: 'fa' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
-    expect(await screen.findByText('$200,00')).toBeInTheDocument()
+    expect(await screen.findByText('$ 200,00')).toBeInTheDocument()
     const boton = screen.getByRole('button', { name: 'Agregar' })
     expect(boton).toBeDisabled()
     expect(boton).toHaveAttribute('title', 'Turno cerrado: abrí un turno para vender.')

@@ -7,10 +7,10 @@ import type { AltaProveedor, CondicionFiscalListado, PaginaDe, ProveedorListado,
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
+import { formatearImporte } from '../formato/importes'
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 // ---- Panel de saldo de proveedor (stage-8-compras-transferencias-inventario, Slice 6, design:

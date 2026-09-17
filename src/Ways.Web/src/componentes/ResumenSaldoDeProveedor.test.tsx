@@ -74,7 +74,7 @@ describe('esSaldoAFavor', () => {
 describe('ResumenSaldoDeProveedor', () => {
   it('un saldo positivo muestra el importe, sin el callout de saldo a favor', () => {
     renderResumen(500)
-    expect(screen.getByText('$500,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 500,00')).toBeInTheDocument()
     expect(screen.queryByText('Saldo a favor.')).not.toBeInTheDocument()
   })
 
@@ -82,7 +82,7 @@ describe('ResumenSaldoDeProveedor', () => {
   // `ResumenSaldoDeProveedor.tsx` → borrarla → este test tiene que fallar.
   it('un saldo negativo muestra el importe con signo y el callout "Saldo a favor."', () => {
     renderResumen(-500)
-    expect(screen.getByText('-$500,00')).toBeInTheDocument()
+    expect(screen.getByText('-$ 500,00')).toBeInTheDocument()
     expect(screen.getByText('Saldo a favor.')).toBeInTheDocument()
   })
 

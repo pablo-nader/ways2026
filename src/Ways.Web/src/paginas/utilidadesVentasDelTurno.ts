@@ -5,9 +5,10 @@
  */
 import { ROL } from '../api/tipos'
 import type { EstadoComprobante, VentaDeTurnoListado } from '../api/tipos'
+import { formatearImporte } from '../formato/importes'
 
 export function formatearMoneda(valor: number): string {
-  return `$${valor.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 export function formatearFechaHora(iso: string): string {

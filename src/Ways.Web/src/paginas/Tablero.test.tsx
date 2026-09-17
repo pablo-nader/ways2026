@@ -307,14 +307,14 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     expect(screen.getByLabelText('Desde')).toHaveValue(rangoEsperado.desde)
     expect(screen.getByLabelText('Hasta')).toHaveValue(rangoEsperado.hasta)
 
-    expect(await screen.findByText('$1.000,00')).toBeInTheDocument() // ventas netas
-    expect(screen.getByText('$300,00')).toBeInTheDocument() // gastos
-    expect(screen.getByText('$250,00')).toBeInTheDocument() // ticket promedio
+    expect(await screen.findByText('$ 1.000,00')).toBeInTheDocument() // ventas netas
+    expect(screen.getByText('$ 300,00')).toBeInTheDocument() // gastos
+    expect(screen.getByText('$ 250,00')).toBeInTheDocument() // ticket promedio
     expect(screen.getByRole('img', { name: 'Serie de ventas netas por período' })).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'Serie de gastos por período' })).toBeInTheDocument()
   })
 
-  it('un ticket promedio null se muestra como "—", nunca como $0,00', async () => {
+  it('un ticket promedio null se muestra como "—", nunca como $ 0,00', async () => {
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/ventas/resumen?')) {
         return Promise.resolve(ventasFixture({ ticketPromedio: null, cantidadTx: 0 }))
@@ -325,12 +325,12 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
 
     await screen.findByText('Empresa Uno SA')
     expect(await screen.findByText('—')).toBeInTheDocument()
-    expect(screen.queryByText('$0,00')).not.toBeInTheDocument()
+    expect(screen.queryByText('$ 0,00')).not.toBeInTheDocument()
   })
 
   // Prueba la guarda `if (generacionRef.current !== miGeneracion) return` del `.then` de
   // `cargar` en Tablero.tsx (mutation-proof-tests): quitando esa línea este test falla
-  // (verificado — $1,00 de la respuesta obsoleta queda en pantalla en vez de $9.999,00),
+  // (verificado — $ 1,00 de la respuesta obsoleta queda en pantalla en vez de $ 9.999,00),
   // revertida vuelve a pasar.
   it('una respuesta desactualizada nunca pisa el rango ya cambiado (generación)', async () => {
     let resolverPrimeraVentas: (valor: ResumenDeVentas) => void = () => {}
@@ -355,13 +355,13 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     // Cambia "Hasta" ANTES de que la primera consulta (rango de 7 días por defecto) resuelva.
     fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
 
-    expect(await screen.findByText('$9.999,00')).toBeInTheDocument()
+    expect(await screen.findByText('$ 9.999,00')).toBeInTheDocument()
 
     // La primera respuesta, ahora obsoleta, resuelve tarde — no debe pisar el rango ya cambiado.
     resolverPrimeraVentas(ventasFixture({ netoVendido: 1 }))
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(screen.queryByText('$1,00')).not.toBeInTheDocument()
-    expect(screen.getByText('$9.999,00')).toBeInTheDocument()
+    expect(screen.queryByText('$ 1,00')).not.toBeInTheDocument()
+    expect(screen.getByText('$ 9.999,00')).toBeInTheDocument()
   })
 
   it('un error del servidor muestra un estado de reintento, no un crash', async () => {
@@ -385,7 +385,7 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     mockearRutasBase()
     fireEvent.click(botonReintentar)
 
-    expect(await screen.findByText('$1.000,00')).toBeInTheDocument()
+    expect(await screen.findByText('$ 1.000,00')).toBeInTheDocument()
     expect(screen.queryByText('No se pudo cargar el tablero.')).not.toBeInTheDocument()
   })
 
@@ -393,7 +393,7 @@ describe('Tablero — G1 parity (stage-10-agregacion-dashboard, Slice 7)', () =>
     mockearRutasBase()
     renderTableroProtegido()
 
-    expect(await screen.findByText('$1.000,00')).toBeInTheDocument()
+    expect(await screen.findByText('$ 1.000,00')).toBeInTheDocument()
     expect(screen.queryByText('Inicio (redirigido)')).not.toBeInTheDocument()
   })
 
@@ -479,9 +479,9 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
     await screen.findByText('PV #99') // idPuntoVenta 99 no está en el catálogo mockeado
 
     expect(screen.getByText('PV #99')).toBeInTheDocument()
-    expect(screen.getByText('$1.500,00')).toBeInTheDocument()
-    expect(screen.getByText('$700,00')).toBeInTheDocument()
-    expect(screen.getByText('$350,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 1.500,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 700,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 350,00')).toBeInTheDocument()
     expect(screen.getByText('—')).toBeInTheDocument() // fila con ticketPromedio: null
   })
 
@@ -497,7 +497,7 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
     await screen.findByText('Empresa Uno SA')
 
     expect(await screen.findByText('Vendedor #9')).toBeInTheDocument()
-    expect(screen.getByText('$800,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 800,00')).toBeInTheDocument()
     expect(screen.getByText('—')).toBeInTheDocument()
   })
 
@@ -513,7 +513,7 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
     await screen.findByText('Empresa Uno SA')
 
     expect(await screen.findByText('Medio #88')).toBeInTheDocument() // idMedioPago 88 no está en el catálogo mockeado
-    expect(screen.getByText('$1.200,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 1.200,00')).toBeInTheDocument()
   })
 
   it('el panel top artículos renderiza la tabla: descripción, cantidad y moneda', async () => {
@@ -524,7 +524,7 @@ describe('Tablero — Paneles de desglose por dimensión (stage-10-agregacion-da
 
     expect(await screen.findByText('Producto Estrella')).toBeInTheDocument()
     expect(screen.getByText('12')).toBeInTheDocument()
-    expect(screen.getByText('$2.400,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 2.400,00')).toBeInTheDocument()
   })
 
   // Independencia por panel (Judge B, ronda 1): un panel que falla no debe contaminar el
@@ -753,7 +753,7 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
 
     await screen.findByText('Rentabilidad')
     expect(await screen.findByText('Cobertura de costo: 100% de la venta con costo real considerado.')).toBeInTheDocument()
-    expect(screen.getByText('$400,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 400,00')).toBeInTheDocument()
     expect(screen.getByText('40.0%')).toBeInTheDocument()
   })
 
@@ -788,7 +788,7 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
     expect(await screen.findByText('15% estimado excluido, 5% de costo desconocido')).toBeInTheDocument()
   })
 
-  // Todo desconocido: coverage 0% conocida, banner nombra el 100% desconocido — nunca "$0,00" ni
+  // Todo desconocido: coverage 0% conocida, banner nombra el 100% desconocido — nunca "$ 0,00" ni
   // un margen a secas sin banner (spec: "a bare margin percentage MUST NOT be shown alone").
   it('un Admin ve el banner "100% de costo desconocido" cuando toda la venta es de costo desconocido', async () => {
     usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
@@ -830,7 +830,7 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
 
   // Judgment-day ronda 1 (Judge B, MINOR + Judge A, MAJOR): el test original solo afirmaba el
   // query param — nunca que la figura/banner en pantalla cambiara. Ahora la segunda respuesta trae
-  // una cifra y una cobertura DISTINTAS (margen $700/70%, 30% del período con costo estimado ahora
+  // una cifra y una cobertura DISTINTAS (margen $ 700/70%, 30% del período con costo estimado ahora
   // incluido) y el test asegura que la UI refleja esa respuesta, no la primera.
   it('el toggle "Incluir costos estimados" dispara un refetch y refleja la cifra/banner de la nueva respuesta', async () => {
     usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
@@ -863,7 +863,7 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
 
     await screen.findByText('Rentabilidad')
     expect(await screen.findByText('Cobertura de costo: 100% de la venta con costo real considerado.')).toBeInTheDocument()
-    expect(screen.getByText('$400,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 400,00')).toBeInTheDocument()
 
     fireEvent.click(screen.getByLabelText('Incluir costos estimados'))
 
@@ -881,9 +881,9 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
     // estimado incluido" → revertida la mutación → vuelve a pasar.
     expect(await screen.findByText('30% con costo estimado incluido')).toBeInTheDocument()
     expect(screen.queryByText('Cobertura de costo: 100% de la venta con costo real considerado.')).not.toBeInTheDocument()
-    expect(await screen.findByText('$700,00')).toBeInTheDocument()
+    expect(await screen.findByText('$ 700,00')).toBeInTheDocument()
     expect(screen.getByText('70.0%')).toBeInTheDocument()
-    expect(screen.queryByText('$400,00')).not.toBeInTheDocument()
+    expect(screen.queryByText('$ 400,00')).not.toBeInTheDocument()
   })
 
   // Judgment-day ronda 1 (Judge A, minor): un período sin ventas no tiene cobertura real que
@@ -945,8 +945,8 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
   // Judgment-day ronda 1 (Judge B, MAJOR): faltaba el test de generación del panel de rentabilidad
   // — mismo patrón que los cuatro paneles de desglose (Slice 8), la única entidad que no lo tenía
   // todavía. Mutación aplicada — quitada la guarda `if (generacionRef.current !== miGeneracion)
-  // return` del `.then` compartido en `usePanelDeReporte` → este test falló ($1,00 de la respuesta
-  // obsoleta pisó los $9.999,00 ya re-scopeados) → revertido → vuelve a pasar (misma mutación ya
+  // return` del `.then` compartido en `usePanelDeReporte` → este test falló ($ 1,00 de la respuesta
+  // obsoleta pisó los $ 9.999,00 ya re-scopeados) → revertido → vuelve a pasar (misma mutación ya
   // probada para los cuatro paneles hermanos; este panel es ahora el quinto consumidor del hook).
   it('el panel de rentabilidad descarta una respuesta obsoleta cuando "Hasta" cambia antes de que resuelva', async () => {
     usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
@@ -970,13 +970,13 @@ describe('Tablero — Panel de rentabilidad (stage-10-agregacion-dashboard, Slic
 
     fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-08-20' } })
 
-    expect(await screen.findByText('$9.999,00')).toBeInTheDocument()
+    expect(await screen.findByText('$ 9.999,00')).toBeInTheDocument()
 
     resolverPrimera(rentabilidadFixture({ margen: 1, margenPorcentaje: 1 }))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(screen.queryByText('$1,00')).not.toBeInTheDocument()
-    expect(screen.getByText('$9.999,00')).toBeInTheDocument()
+    expect(screen.queryByText('$ 1,00')).not.toBeInTheDocument()
+    expect(screen.getByText('$ 9.999,00')).toBeInTheDocument()
   })
 })
 
@@ -1020,16 +1020,16 @@ describe('Tablero — Card de comisiones, PROVISIONAL (stage-10-agregacion-dashb
     expect(screen.getByText('PROVISIONAL')).toBeInTheDocument()
     expect(await screen.findByText('Tasa aplicada: 5%')).toBeInTheDocument()
     expect(screen.getByText('Vendedor #42')).toBeInTheDocument()
-    expect(screen.getByText('$3.000,00')).toBeInTheDocument()
-    expect(screen.getByText('$150,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 3.000,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 150,00')).toBeInTheDocument()
   })
 
   // Hard constraint (droppable slice): tasa 0 (default) nunca renderiza una tabla de filas en
-  // $0,00 simulando datos — muestra un estado "desactivado" honesto en su lugar
+  // $ 0,00 simulando datos — muestra un estado "desactivado" honesto en su lugar
   // (mutation-proof-tests: mutación aplicada — reemplazada la rama `datos.comisionPorcentaje ===
   // 0` de `PanelDeComisiones` por `false` (fuerza siempre la tabla) → este test falló mostrando
-  // "$0,00" y "Vendedor #42" en vez del mensaje "desactivadas" → revertida → vuelve a pasar).
-  it('con tasa 0 (default) la card muestra un estado desactivado, nunca una tabla de comisiones en $0,00', async () => {
+  // "$ 0,00" y "Vendedor #42" en vez del mensaje "desactivadas" → revertida → vuelve a pasar).
+  it('con tasa 0 (default) la card muestra un estado desactivado, nunca una tabla de comisiones en $ 0,00', async () => {
     usuarioActual = usuarioFixture({ id: 2, usuario: 'admin', rolId: ROL.Admin, rol: 'Admin' })
     mockearRutasBase((ruta) => {
       if (ruta.startsWith('/reportes/comisiones?')) {
@@ -1045,7 +1045,7 @@ describe('Tablero — Card de comisiones, PROVISIONAL (stage-10-agregacion-dashb
     expect(screen.getByText('PROVISIONAL')).toBeInTheDocument()
     expect(await screen.findByText('Tasa aplicada: 0%')).toBeInTheDocument()
     expect(screen.getByText(/Comisiones desactivadas/)).toBeInTheDocument()
-    expect(screen.queryByText('$0,00')).not.toBeInTheDocument()
+    expect(screen.queryByText('$ 0,00')).not.toBeInTheDocument()
     expect(screen.queryByText('Vendedor #42')).not.toBeInTheDocument()
   })
 

@@ -5,6 +5,7 @@ import { clienteDeClientes } from '../api/clientes'
 import { clienteDeOfertas } from '../api/ofertas'
 import type { ArticuloEscaneado, ListaPrecioAsignable, ResultadoDeResolucion } from '../api/tipos'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
+import { formatearImporte } from '../formato/importes'
 
 const CLAVE_LISTA_PRECIO = 'ways.consultaPrecios.idListaPrecio'
 
@@ -34,8 +35,7 @@ function guardarNumeroSeleccionado(clave: string, id: number) {
 }
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 /**

@@ -94,7 +94,7 @@ function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): Punto
 }
 
 // `importe`/`saldoResultante` deliberadamente distintos del `saldo` del header (500) y entre sí
-// (mutation-proof-tests regla 11), para que ningún assert de "$500,00" choque con una fila.
+// (mutation-proof-tests regla 11), para que ningún assert de "$ 500,00" choque con una fila.
 function movimientoFixture(sobrescribir: Partial<MovimientoDeCuentaDeProveedor> = {}): MovimientoDeCuentaDeProveedor {
   return {
     idMovimiento: 1,
@@ -155,7 +155,7 @@ async function abrirModalDeAjuste() {
   mockearRutasBase()
   renderPantalla(1, { proveedor: proveedorFixture() })
 
-  await screen.findByText('$500,00')
+  await screen.findByText('$ 500,00')
   await userEvent.click(screen.getByRole('button', { name: 'Ajuste manual' }))
   await screen.findByText('Ajuste manual de cuenta corriente')
 }
@@ -165,7 +165,7 @@ describe('CuentaCorrienteDeProveedor — header y ledger', () => {
     mockearRutasBase()
     renderPantalla(1, { proveedor: proveedorFixture() })
 
-    expect(await screen.findByText('$500,00')).toBeInTheDocument()
+    expect(await screen.findByText('$ 500,00')).toBeInTheDocument()
     expect(screen.getByText('Compra')).toBeInTheDocument()
     expect(screen.getByText('Compra #10')).toBeInTheDocument()
     expect(screen.getByText(/Página 1 de 1/)).toBeInTheDocument()
@@ -185,8 +185,8 @@ describe('CuentaCorrienteDeProveedor — header y ledger', () => {
     })
     renderPantalla(1, { proveedor: proveedorFixture() })
 
-    expect(await screen.findByText('-$500,00 (saldo a favor)')).toBeInTheDocument()
-    expect(screen.getByText('-$200,00 (saldo a favor)')).toBeInTheDocument()
+    expect(await screen.findByText('-$ 500,00 (saldo a favor)')).toBeInTheDocument()
+    expect(screen.getByText('-$ 200,00 (saldo a favor)')).toBeInTheDocument()
   })
 
   it('un período sin movimientos muestra el estado vacío', async () => {
@@ -208,7 +208,7 @@ describe('CuentaCorrienteDeProveedor — gating de rol (Supervisor+Admin) para e
     mockearRutasBase()
     renderPantalla(1, { proveedor: proveedorFixture() })
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     expect(screen.queryByRole('button', { name: 'Ajuste manual' })).not.toBeInTheDocument()
   })
 
@@ -216,7 +216,7 @@ describe('CuentaCorrienteDeProveedor — gating de rol (Supervisor+Admin) para e
     mockearRutasBase()
     renderPantalla(1, { proveedor: proveedorFixture() })
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     expect(screen.getByRole('button', { name: 'Ajuste manual' })).toBeEnabled()
   })
 
@@ -225,7 +225,7 @@ describe('CuentaCorrienteDeProveedor — gating de rol (Supervisor+Admin) para e
     mockearRutasBase()
     renderPantalla(1, { proveedor: proveedorFixture() })
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     expect(screen.getByRole('button', { name: 'Ajuste manual' })).toBeEnabled()
   })
 })
@@ -253,7 +253,7 @@ describe('CuentaCorrienteDeProveedor — el ajuste NUNCA depende del fetch del n
 
     renderPantalla(1) // sin state: el link real no lo trajo
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     await screen.findByText(/No tiene permiso para ver este proveedor\./)
     const boton = screen.getByRole('button', { name: 'Ajuste manual' })
     expect(boton).toBeEnabled()
@@ -271,7 +271,7 @@ describe('CuentaCorrienteDeProveedor — el ajuste NUNCA depende del fetch del n
         detalle: 'motivo válido',
       }),
     )
-    expect(await screen.findByText('Ajuste registrado: -$50,00.')).toBeInTheDocument()
+    expect(await screen.findByText('Ajuste registrado: -$ 50,00.')).toBeInTheDocument()
   })
 
   it('un Supervisor sin location.state igual ve el fallback "Proveedor #id" en el título', async () => {
@@ -322,15 +322,15 @@ describe('CuentaCorrienteDeProveedor — filtros (react-async-state regla 2, mut
     // 2da: lo desactiva de nuevo — dispara una generación MÁS NUEVA, que resuelve rápido.
     await userEvent.click(screen.getByLabelText('Ver histórico completo'))
 
-    await waitFor(() => expect(screen.getByText('$999,00')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 999,00')).toBeInTheDocument())
 
     await act(async () => {
       resolverPrimera(paginaFixture({ items: [movimientoFixture({ idMovimiento: 2, importe: 777, saldoResultante: 888 })] }))
       await primeraPendiente
     })
-    expect(screen.getByText('$999,00')).toBeInTheDocument()
-    expect(screen.queryByText('$777,00')).not.toBeInTheDocument()
-    expect(screen.queryByText('$888,00')).not.toBeInTheDocument()
+    expect(screen.getByText('$ 999,00')).toBeInTheDocument()
+    expect(screen.queryByText('$ 777,00')).not.toBeInTheDocument()
+    expect(screen.queryByText('$ 888,00')).not.toBeInTheDocument()
   })
 })
 
@@ -339,7 +339,7 @@ describe('CuentaCorrienteDeProveedor — pager', () => {
     mockearRutasBase()
     renderPantalla(1, { proveedor: proveedorFixture() })
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled()
   })
@@ -391,7 +391,7 @@ describe('CuentaCorrienteDeProveedor — modal de ajuste manual', () => {
         detalle: 'nota de ajuste',
       }),
     )
-    expect(await screen.findByText('Ajuste registrado: -$200,00.')).toBeInTheDocument()
+    expect(await screen.findByText('Ajuste registrado: -$ 200,00.')).toBeInTheDocument()
     // el refetch corre tras el 201 — dos GET del ledger (montaje + refresco).
     await waitFor(() => {
       const llamadas = apiGetMock.mock.calls.filter((c: unknown[]) => (c[0] as string).includes('/cuenta-corriente?'))
@@ -461,7 +461,7 @@ describe('CuentaCorrienteDeProveedor — modal de ajuste manual', () => {
     )
 
     renderPantalla(1, { proveedor: proveedorFixture() })
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     await userEvent.click(screen.getByRole('button', { name: 'Ajuste manual' }))
     await screen.findByText('Ajuste manual de cuenta corriente')
 
@@ -471,7 +471,7 @@ describe('CuentaCorrienteDeProveedor — modal de ajuste manual', () => {
 
     // El ajuste 2xx se reporta como éxito (aviso visible) SIEMPRE — el refetch fallido es un
     // problema DISTINTO, visible aparte, nunca disfrazado de fallo del ajuste (regla 6).
-    expect(await screen.findByText('Ajuste registrado: -$200,00.')).toBeInTheDocument()
+    expect(await screen.findByText('Ajuste registrado: -$ 200,00.')).toBeInTheDocument()
     expect(await screen.findByText('falló el refresco')).toBeInTheDocument()
   })
 })

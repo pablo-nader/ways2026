@@ -18,6 +18,7 @@ import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
+import { formatearImporte } from '../formato/importes'
 
 const OPCIONES_ESTADO: { valor: EstadoCompra | ''; etiqueta: string }[] = [
   { valor: '', etiqueta: 'Todos' },
@@ -27,7 +28,7 @@ const OPCIONES_ESTADO: { valor: EstadoCompra | ''; etiqueta: string }[] = [
 ]
 
 function formatearMoneda(valor: number): string {
-  return `$${valor.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFecha(iso: string | null): string {

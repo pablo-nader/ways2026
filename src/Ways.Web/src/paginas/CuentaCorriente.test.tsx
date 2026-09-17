@@ -122,7 +122,7 @@ function puntoVentaFixture(sobrescribir: Partial<PuntoVentaListado> = {}): Punto
 }
 
 // `importe`/`saldoResultante` deliberadamente distintos del `saldo` del header (500) y entre sí,
-// para que ningún assert de "$500,00" choque con una fila de la tabla en los tests.
+// para que ningún assert de "$ 500,00" choque con una fila de la tabla en los tests.
 function movimientoFixture(sobrescribir: Partial<MovimientoDeCuentaCorriente> = {}): MovimientoDeCuentaCorriente {
   return {
     id: 1,
@@ -237,7 +237,7 @@ function mockearRutasBase(sobrescribirGet?: (ruta: string) => Promise<unknown> |
  * "Registrar pago" esté habilitado (vuelto_maximo ya resuelto). */
 async function abrirModalYCompletarFila(importe = '500') {
   renderPantalla()
-  await screen.findByText('$500,00')
+  await screen.findByText('$ 500,00')
   await userEvent.click(screen.getByRole('button', { name: 'Ingresar pago' }))
   await screen.findByText('Ingresar pago a cuenta')
   await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), 'Efectivo')
@@ -249,7 +249,7 @@ async function abrirModalYCompletarFila(importe = '500') {
  * default (ver `beforeEach`). */
 async function abrirModalAjuste() {
   renderPantalla()
-  await screen.findByText('$500,00')
+  await screen.findByText('$ 500,00')
   await userEvent.click(screen.getByRole('button', { name: 'Ajuste manual' }))
   await screen.findByText('Ajuste manual de cuenta corriente')
 }
@@ -257,7 +257,7 @@ async function abrirModalAjuste() {
 /** Abre el modal de reliquidación — el preview se dispara automáticamente al montar. */
 async function abrirModalReliquidacion() {
   renderPantalla()
-  await screen.findByText('$500,00')
+  await screen.findByText('$ 500,00')
   await userEvent.click(screen.getByRole('button', { name: 'Actualizar precios' }))
   await screen.findByText('Actualizar precios (reliquidación)')
 }
@@ -273,9 +273,9 @@ describe('CuentaCorriente — header y ledger', () => {
     mockearRutasBase()
     renderPantalla()
 
-    await screen.findByText('$500,00')
-    expect(screen.getByText('$5.000,00')).toBeInTheDocument()
-    expect(screen.getByText('$4.500,00')).toBeInTheDocument()
+    await screen.findByText('$ 500,00')
+    expect(screen.getByText('$ 5.000,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 4.500,00')).toBeInTheDocument()
   })
 
   it('crédito ilimitado muestra "Ilimitado" en límite y disponibilidad, nunca un número fabricado', async () => {
@@ -328,7 +328,7 @@ describe('CuentaCorriente — header y ledger', () => {
 
     renderPantalla(1, { cliente: cf })
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     expect(screen.getByRole('button', { name: 'Ingresar pago' })).toBeDisabled()
   })
 
@@ -350,7 +350,7 @@ describe('CuentaCorriente — header y ledger', () => {
 
     renderPantalla()
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     expect(await screen.findByText(/No se pudo confirmar el cliente\./)).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Ingresar pago' })).toBeDisabled())
   })
@@ -361,7 +361,7 @@ describe('CuentaCorriente — header y ledger', () => {
 
     renderPantalla()
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Ingresar pago' })).toBeDisabled())
     expect(screen.getByRole('button', { name: 'Ingresar pago' })).toHaveAttribute(
       'title',
@@ -375,7 +375,7 @@ describe('CuentaCorriente — filtros (react-async-state regla 2)', () => {
     mockearRutasBase()
     renderPantalla()
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
 
     const inputDesde = screen.getByLabelText('Desde') as HTMLInputElement
     const inputHasta = screen.getByLabelText('Hasta') as HTMLInputElement
@@ -392,7 +392,7 @@ describe('CuentaCorriente — filtros (react-async-state regla 2)', () => {
     mockearRutasBase()
     renderPantalla()
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     expect((screen.getByLabelText('Desde') as HTMLInputElement).value).not.toBe('')
 
     await userEvent.click(screen.getByLabelText('Ver histórico completo'))
@@ -438,7 +438,7 @@ describe('CuentaCorriente — filtros (react-async-state regla 2)', () => {
     // 2da: lo desactiva de nuevo — dispara una generación MÁS NUEVA, que resuelve rápido.
     await userEvent.click(screen.getByLabelText('Ver histórico completo'))
 
-    await waitFor(() => expect(screen.getByText('$999,00')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 999,00')).toBeInTheDocument())
 
     // La respuesta obsoleta (de la generación anterior) llega tarde con datos distintos — no
     // puede pisar lo que ya se muestra.
@@ -446,9 +446,9 @@ describe('CuentaCorriente — filtros (react-async-state regla 2)', () => {
       resolverSegunda(estadoFixture({ movimientos: [movimientoFixture({ id: 2, importe: 777, saldoResultante: 888 })] }))
       await Promise.resolve()
     })
-    expect(screen.getByText('$999,00')).toBeInTheDocument()
-    expect(screen.queryByText('$777,00')).not.toBeInTheDocument()
-    expect(screen.queryByText('$888,00')).not.toBeInTheDocument()
+    expect(screen.getByText('$ 999,00')).toBeInTheDocument()
+    expect(screen.queryByText('$ 777,00')).not.toBeInTheDocument()
+    expect(screen.queryByText('$ 888,00')).not.toBeInTheDocument()
   })
 })
 
@@ -464,7 +464,7 @@ describe('CuentaCorriente — modal de pago a cuenta', () => {
     })
 
     renderPantalla()
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     await userEvent.click(screen.getByRole('button', { name: 'Ingresar pago' }))
     await screen.findByText('Ingresar pago a cuenta')
 
@@ -578,7 +578,7 @@ describe('CuentaCorriente — gating de rol (Supervisor+Admin) para ajuste y rel
     mockearRutasBase()
     renderPantalla()
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     expect(screen.queryByRole('button', { name: 'Ajuste manual' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Actualizar precios' })).not.toBeInTheDocument()
     // el pago sigue disponible para cualquier rol — OperacionDePos, no SupervisionDeCuentaCorriente.
@@ -589,7 +589,7 @@ describe('CuentaCorriente — gating de rol (Supervisor+Admin) para ajuste y rel
     mockearRutasBase()
     renderPantalla()
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Ajuste manual' })).not.toBeDisabled())
     expect(screen.getByRole('button', { name: 'Actualizar precios' })).not.toBeDisabled()
   })
@@ -599,7 +599,7 @@ describe('CuentaCorriente — gating de rol (Supervisor+Admin) para ajuste y rel
     mockearRutasBase()
     renderPantalla()
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Ajuste manual' })).not.toBeDisabled())
     expect(screen.getByRole('button', { name: 'Actualizar precios' })).not.toBeDisabled()
   })
@@ -639,11 +639,11 @@ describe('CuentaCorriente — modal de ajuste manual', () => {
     await abrirModalAjuste()
 
     await userEvent.type(screen.getByLabelText('Importe'), '40')
-    expect(screen.getByText('Saldo resultante: $540,00')).toBeInTheDocument()
+    expect(screen.getByText('Saldo resultante: $ 540,00')).toBeInTheDocument()
 
     await userEvent.clear(screen.getByLabelText('Importe'))
     await userEvent.type(screen.getByLabelText('Importe'), '-50')
-    expect(screen.getByText('Saldo resultante: $450,00')).toBeInTheDocument()
+    expect(screen.getByText('Saldo resultante: $ 450,00')).toBeInTheDocument()
   })
 
   it('arma el cuerpo del POST con la forma exacta del contrato, detalle recortado, y refresca el ledger', async () => {
@@ -740,7 +740,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     await abrirModalReliquidacion()
 
     const dialogo = screen.getByRole('dialog')
-    expect(await within(dialogo).findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$40,00')
+    expect(await within(dialogo).findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$ 40,00')
     expect(within(dialogo).getByRole('button', { name: 'Ejecutar reliquidación' })).toBeDisabled()
 
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
@@ -792,7 +792,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$40,00')
+    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$ 40,00')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
@@ -819,7 +819,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$40,00')
+    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$ 40,00')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
 
     const boton = screen.getByRole('button', { name: 'Ejecutar reliquidación' })
@@ -851,7 +851,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$40,00')
+    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$ 40,00')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
@@ -877,7 +877,7 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     })
 
     await abrirModalReliquidacion()
-    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$40,00')
+    expect(await screen.findByTestId('cc-reliq-delta-estimado')).toHaveTextContent('$ 40,00')
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
@@ -911,8 +911,8 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     const dialogo = screen.getByRole('dialog')
     await within(dialogo).findByTestId('cc-reliq-delta-estimado')
 
-    expect(within(dialogo).getByText('Movimiento #1 — $40,00')).toBeInTheDocument()
-    expect(within(dialogo).getByText('Movimiento #2 — $0,00')).toBeInTheDocument()
+    expect(within(dialogo).getByText('Movimiento #1 — $ 40,00')).toBeInTheDocument()
+    expect(within(dialogo).getByText('Movimiento #2 — $ 0,00')).toBeInTheDocument()
     expect(within(dialogo).getByText('articulo_no_encontrado')).toBeInTheDocument()
   })
 
@@ -935,8 +935,8 @@ describe('CuentaCorriente — modal de reliquidación a precio del día', () => 
     await userEvent.click(screen.getByLabelText(/Confirmo que quiero actualizar los precios/))
     await userEvent.click(screen.getByRole('button', { name: 'Ejecutar reliquidación' }))
 
-    expect(await screen.findByText(/Precios actualizados: \$75,00/)).toBeInTheDocument()
-    expect(screen.queryByText(/Precios actualizados: \$40,00/)).not.toBeInTheDocument()
+    expect(await screen.findByText(/Precios actualizados: \$ 75,00/)).toBeInTheDocument()
+    expect(screen.queryByText(/Precios actualizados: \$ 40,00/)).not.toBeInTheDocument()
   })
 })
 
@@ -1014,7 +1014,7 @@ describe('CuentaCorriente — vista de impresión (Slice 8)', () => {
     usuarioActual = usuarioFixture({ usuario: 'cajera_ana' })
     renderPantalla()
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
 
     const inputDesde = screen.getByLabelText('Desde') as HTMLInputElement
     const inputHasta = screen.getByLabelText('Hasta') as HTMLInputElement
@@ -1027,7 +1027,7 @@ describe('CuentaCorriente — vista de impresión (Slice 8)', () => {
     mockearRutasBase()
     renderPantalla()
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
     expect(screen.getByText(/^Rango: \d{4}-\d{2}-\d{2} a \d{4}-\d{2}-\d{2}$/)).toBeInTheDocument()
 
     await userEvent.click(screen.getByLabelText('Ver histórico completo'))
@@ -1041,7 +1041,7 @@ describe('CuentaCorriente — vista de impresión (Slice 8)', () => {
     window.print = imprimirSpy
     renderPantalla()
 
-    await screen.findByText('$500,00')
+    await screen.findByText('$ 500,00')
 
     const botonImprimir = screen.getByRole('button', { name: 'Imprimir' })
     expect(botonImprimir).toHaveClass('d-print-none')

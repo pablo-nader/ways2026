@@ -94,7 +94,7 @@ describe('Proveedores — panel de saldo', () => {
     await usuario.click(screen.getByRole('button', { name: 'Ver saldo' }))
 
     expect(await screen.findByText('Saldo de Proveedor Uno SA')).toBeInTheDocument()
-    expect(screen.getByText('$2.000,00')).toBeInTheDocument()
+    expect(screen.getByText('$ 2.000,00')).toBeInTheDocument()
     expect(screen.getByText('0003-00012345')).toBeInTheDocument()
     expect(screen.getByText('Parcial')).toBeInTheDocument()
   })
@@ -115,7 +115,7 @@ describe('Proveedores — panel de saldo', () => {
     await screen.findByText('Proveedor Uno SA')
     await usuario.click(screen.getByRole('button', { name: 'Ver saldo' }))
 
-    expect(await screen.findByText('-$500,00')).toBeInTheDocument()
+    expect(await screen.findByText('-$ 500,00')).toBeInTheDocument()
     expect(screen.getByText('Saldo a favor.')).toBeInTheDocument()
     // la compra sigue impaga individualmente aunque el saldo total ya sea negativo — honesto, no invariante.
     expect(screen.getByText('Impaga')).toBeInTheDocument()

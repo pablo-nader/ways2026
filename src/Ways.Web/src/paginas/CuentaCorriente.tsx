@@ -40,7 +40,9 @@ import type {
 import { puedeSupervisarCuentaCorriente } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { formatearImporte } from '../formato/importes'
 
 const CLAVE_PUNTO_VENTA = 'ways.cuentaCorriente.idPuntoVenta'
 
@@ -65,8 +67,7 @@ function guardarPuntoVentaSeleccionado(id: number) {
 }
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string): string {
@@ -162,7 +163,7 @@ type PropsAperturaEnModal = { idPuntoVenta: number; onAbierto: () => void; onCan
  * NUNCA se reintenta solo (regla 9): el cajero vuelve a apretar «Registrar pago» a mano.
  */
 function PanelAperturaDeTurnoEnModal({ idPuntoVenta, onAbierto, onCancelar }: PropsAperturaEnModal) {
-  const [fondoInicial, setFondoInicial] = useState('')
+  const [fondoInicial, setFondoInicial] = useState<number | null>(null)
   const [observaciones, setObservaciones] = useState('')
   const [abriendo, setAbriendo] = useState(false)
   const abriendoRef = useRef(false)
@@ -172,9 +173,10 @@ function PanelAperturaDeTurnoEnModal({ idPuntoVenta, onAbierto, onCancelar }: Pr
     // regla 9: guard de reentrancia de primera línea.
     if (abriendoRef.current) return
 
-    const fondo = Number(fondoInicial)
-    if (fondoInicial.trim() === '' || !Number.isFinite(fondo) || fondo < 0) {
-      setError('El fondo inicial tiene que ser un número mayor o igual a 0.')
+    // `fondoInicial < 0` es inalcanzable: `CampoImporte` de este campo no tiene
+    // `admiteNegativos`, así que nunca puede emitir un número negativo (judgment-day ronda 2).
+    if (fondoInicial === null) {
+      setError('El fondo inicial es obligatorio.')
       return
     }
 
@@ -185,7 +187,7 @@ function PanelAperturaDeTurnoEnModal({ idPuntoVenta, onAbierto, onCancelar }: Pr
     try {
       await clienteDeCaja.abrir({
         idPuntoVenta,
-        fondoInicial: fondo,
+        fondoInicial,
         observaciones: observaciones.trim() === '' ? null : observaciones.trim(),
       })
       onAbierto()
@@ -221,15 +223,12 @@ function PanelAperturaDeTurnoEnModal({ idPuntoVenta, onAbierto, onCancelar }: Pr
             <label className="form-label" htmlFor="cc-gate-fondo-inicial">
               Fondo inicial
             </label>
-            <input
+            <CampoImporte
               id="cc-gate-fondo-inicial"
-              type="number"
-              step="0.01"
-              min="0"
               className="form-control rounded-0"
-              value={fondoInicial}
+              valor={fondoInicial}
               disabled={abriendo}
-              onChange={(e) => setFondoInicial(e.target.value)}
+              onChange={setFondoInicial}
             />
           </div>
           <div className="col-md-6">
@@ -599,7 +598,7 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
   const [idPuntoVenta, setIdPuntoVenta] = useState<number>(
     () => puntosVenta.find((p) => p.id === leerPuntoVentaGuardado())?.id ?? puntosVenta[0].id,
   )
-  const [importe, setImporte] = useState('')
+  const [importe, setImporte] = useState<number | null>(null)
   const [detalle, setDetalle] = useState('')
   // Fix 2 (mismo patrón que la reliquidación): un ajuste manual también modifica el saldo del
   // cliente de forma directa — la confirmación explícita evita que un click apurado dispare un
@@ -610,7 +609,7 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
   const registrandoRef = useRef(false)
   const [error, setError] = useState('')
 
-  const importeNumerico = importe.trim() === '' ? Number.NaN : Number(importe)
+  const importeNumerico = importe ?? Number.NaN
   const saldoResultante = Number.isFinite(importeNumerico) ? saldoResultanteDeAjuste(header.saldo, importeNumerico) : null
   const puedeRegistrar = !registrando && confirmado
 
@@ -692,14 +691,13 @@ function ModalAjusteDeCuenta({ idCliente, puntosVenta, header, onCerrar, onAntes
                 <label className="form-label" htmlFor="cc-ajuste-importe">
                   Importe
                 </label>
-                <input
+                <CampoImporte
                   id="cc-ajuste-importe"
-                  type="number"
-                  step="0.01"
                   className="form-control rounded-0"
-                  value={importe}
+                  valor={importe}
                   disabled={registrando}
-                  onChange={(e) => setImporte(e.target.value)}
+                  admiteNegativos
+                  onChange={setImporte}
                 />
                 <div className="form-text">
                   Positivo aumenta la deuda del cliente, negativo la reduce. Nunca puede ser cero.

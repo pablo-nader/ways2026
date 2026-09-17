@@ -168,8 +168,8 @@ describe('OrdenDeCompra — detalle (lectura)', () => {
     // valor discriminante — nunca un — genérico ni un 0 fabricado.
     expect(screen.getByText('2')).toBeInTheDocument() // Pendiente del artículo 10
     expect(screen.getByText('+12%')).toBeInTheDocument() // Desvio del artículo 10
-    expect(screen.getByText('$700,00')).toBeInTheDocument() // Total estimado
-    expect(screen.getByText('$560,00')).toBeInTheDocument() // Total real
+    expect(screen.getByText('$ 700,00')).toBeInTheDocument() // Total estimado
+    expect(screen.getByText('$ 560,00')).toBeInTheDocument() // Total real
     expect(screen.getByText('-20%')).toBeInTheDocument() // Desvío total
   })
 

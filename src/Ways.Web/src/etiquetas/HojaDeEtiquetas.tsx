@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import type { OfertaAplicada } from '../api/tipos'
 import type { DescriptorDeFormato } from './formatos'
+import { formatearImporte } from '../formato/importes'
 import '../estilos/etiquetas.css'
 
 /**
@@ -33,7 +34,7 @@ type Props = {
 }
 
 function formatearMoneda(valor: number): string {
-  return `$${valor.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 /** Geometría emitida como custom properties en mm sobre `.hoja-de-etiquetas` — la única

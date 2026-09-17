@@ -184,7 +184,7 @@ describe('ConsultaPrecios — las cuatro ramas de despliegue (guard enumeration)
     expect(apiPostMock).not.toHaveBeenCalled()
   })
 
-  it('artículo identificado sin precio vigente (PrecioOriginal null) muestra "consultá en caja" y JAMÁS $0', async () => {
+  it('artículo identificado sin precio vigente (PrecioOriginal null) muestra "consultá en caja" y JAMÁS $ 0', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/ofertas/resolver') {
         return Promise.resolve<ResultadoDeResolucion[]>([resolucionFixture({ precioOriginal: null, precioFinal: null })])
@@ -197,7 +197,7 @@ describe('ConsultaPrecios — las cuatro ramas de despliegue (guard enumeration)
 
     const bloque = await screen.findByTestId('resultado-sin-precio')
     expect(bloque).toHaveTextContent('Consultá en caja')
-    expect(bloque.textContent).not.toContain('$0')
+    expect(bloque.textContent).not.toContain('$ 0')
     expect(screen.queryByTestId('resultado-resuelto')).not.toBeInTheDocument()
   })
 
@@ -215,8 +215,8 @@ describe('ConsultaPrecios — las cuatro ramas de despliegue (guard enumeration)
     await escanear('7790001234567')
 
     await screen.findByTestId('resultado-resuelto')
-    expect(screen.getByTestId('precio-original-tachado')).toHaveTextContent('$150,00')
-    expect(screen.getByTestId('precio-final')).toHaveTextContent('$120,00')
+    expect(screen.getByTestId('precio-original-tachado')).toHaveTextContent('$ 150,00')
+    expect(screen.getByTestId('precio-final')).toHaveTextContent('$ 120,00')
   })
 
   it('artículo sin oferta muestra un único precio, sin tachado', async () => {
@@ -232,7 +232,7 @@ describe('ConsultaPrecios — las cuatro ramas de despliegue (guard enumeration)
 
     await screen.findByTestId('resultado-resuelto')
     expect(screen.queryByTestId('precio-original-tachado')).not.toBeInTheDocument()
-    expect(screen.getByTestId('precio-final')).toHaveTextContent('$100,00')
+    expect(screen.getByTestId('precio-final')).toHaveTextContent('$ 100,00')
   })
 })
 

@@ -12,6 +12,7 @@ import { clienteDeClientes } from '../api/clientes'
 import type { ClienteListado, EstadoRemito, PaginaDeRemitos, PuntoVentaListado, RemitoListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { formatearImporte } from '../formato/importes'
 
 const OPCIONES_ESTADO: { valor: EstadoRemito | ''; etiqueta: string }[] = [
   { valor: '', etiqueta: 'Todos' },
@@ -252,9 +253,7 @@ export function Remitos() {
                         <span className={`badge rounded-0 ${claseDeBadgeDeEstadoRemito(r.estado)}`}>{etiquetaDeEstadoRemito(r.estado)}</span>
                       </td>
                       <td>{formatearFecha(r.fechaEmision)}</td>
-                      <td className="text-end">
-                        ${r.total.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
+                      <td className="text-end">{formatearImporte(r.total, { simbolo: true })}</td>
                     </tr>
                   ))}
                   {pagina.items.length === 0 && (

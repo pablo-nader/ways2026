@@ -17,6 +17,7 @@ import { aSolicitudDeFacturacionDeRemitos, clienteDeRemitos, filtrosDeRemitosVac
 import type { ClienteListado, MedioPagoAlta, MedioPagoListado, ParametroResuelto, PuntoVentaListado, RemitoListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { formatearImporte } from '../formato/importes'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
 
@@ -26,8 +27,7 @@ function etiquetaDeCliente(c: ClienteListado): string {
 }
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 function etiquetaDeCampoFila(prefijo: string, medioDeFila: MedioPagoListado | null, idFila: number): string {

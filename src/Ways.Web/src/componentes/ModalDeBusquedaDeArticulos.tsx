@@ -4,6 +4,7 @@ import { ErrorApi } from '../api/cliente'
 import { clienteDeOfertas } from '../api/ofertas'
 import type { LineaCarrito } from '../api/carrito'
 import type { ArticuloListado, LineaDeResolucion, ResultadoDeResolucion } from '../api/tipos'
+import { formatearImporte } from '../formato/importes'
 
 /** Spec: "minimum 2 characters" — por debajo de este largo ni se debounce ni se dispara Enter. */
 const LARGO_MINIMO_DE_BUSQUEDA = 2
@@ -13,8 +14,7 @@ const DEMORA_DEBOUNCE_MS = 300
 const CANTIDAD_POR_DEFECTO = 1
 
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 export type PropsModalDeBusquedaDeArticulos = {

@@ -381,7 +381,7 @@ describe('CompraEditor — compra confirmada', () => {
 
     await screen.findByText('Fideos 500g')
     expect(screen.queryByLabelText('Costo unitario')).not.toBeInTheDocument()
-    expect(screen.getByText('$114,95')).toBeInTheDocument() // precio sugerido
+    expect(screen.getByText('$ 114,95')).toBeInTheDocument() // precio sugerido
     expect(screen.getByRole('button', { name: 'Anular compra' })).toBeInTheDocument()
   })
 
@@ -556,7 +556,7 @@ describe('CompraEditor — líneas incompletas', () => {
 
     renderEditor()
     await screen.findByDisplayValue('0003-00012345')
-    expect(screen.getByText('$1.149,50')).toBeInTheDocument()
+    expect(screen.getByText('$ 1.149,50')).toBeInTheDocument()
 
     await usuario.click(screen.getByRole('button', { name: '+ Agregar línea' }))
 
@@ -568,7 +568,7 @@ describe('CompraEditor — líneas incompletas', () => {
     await usuario.type(costo[1], '20')
 
     expect(await screen.findByText('1 línea(s) incompleta(s) — no se van a guardar.')).toBeInTheDocument()
-    expect(screen.getByText('$1.149,50')).toBeInTheDocument()
+    expect(screen.getByText('$ 1.149,50')).toBeInTheDocument()
   })
 })
 

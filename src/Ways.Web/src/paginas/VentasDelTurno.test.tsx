@@ -165,7 +165,7 @@ describe('VentasDelTurno — listado', () => {
     expect(screen.getByText('Anulada')).toBeInTheDocument()
 
     // Totales: solo cuenta la no anulada (regla bajo prueba de mutation-proof-tests).
-    expect(screen.getByText('1 venta(s) — total $100,00')).toBeInTheDocument()
+    expect(screen.getByText('1 venta(s) — total $ 100,00')).toBeInTheDocument()
   })
 
   it('no ofrece "Anular" sobre una fila ya anulada', async () => {
@@ -187,7 +187,7 @@ describe('VentasDelTurno — anulación', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
 
     // El modal nombra la venta y el total antes de confirmar.
-    expect(screen.getByText(/¿Anular la venta 0007-00000003 por \$200,00\?/)).toBeInTheDocument()
+    expect(screen.getByText(/¿Anular la venta 0007-00000003 por \$ 200,00\?/)).toBeInTheDocument()
 
     apiPostMock.mockResolvedValueOnce({ ...venta, estado: 'Anulado' })
     // El refresco posterior a la anulación reconsulta el listado.
@@ -201,7 +201,7 @@ describe('VentasDelTurno — anulación', () => {
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/ventas/3/anulacion'))
     await waitFor(() => expect(screen.getByText('Anulada')).toBeInTheDocument())
-    expect(screen.getByText('0 venta(s) — total $0,00')).toBeInTheDocument()
+    expect(screen.getByText('0 venta(s) — total $ 0,00')).toBeInTheDocument()
   })
 
   it('muestra el error inline cuando la anulación falla', async () => {

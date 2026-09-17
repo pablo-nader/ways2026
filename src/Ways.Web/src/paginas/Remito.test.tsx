@@ -170,7 +170,7 @@ describe('Remito — detalle (lectura)', () => {
 
     expect(await screen.findByText('Emitido')).toBeInTheDocument()
     expect(screen.getByText('Yerba mate 1kg')).toBeInTheDocument()
-    expect(screen.getAllByText('$200,00').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('$ 200,00').length).toBeGreaterThan(0)
   })
 })
 

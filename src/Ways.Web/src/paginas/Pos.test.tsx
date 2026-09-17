@@ -1241,7 +1241,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     fireEvent.change(dialogo.getByLabelText('Buscar artículo por nombre'), { target: { value: 'fa' } })
     fireEvent.keyDown(dialogo.getByLabelText('Buscar artículo por nombre'), { key: 'Enter' })
 
-    expect(await dialogo.findByText('$200,00')).toBeInTheDocument()
+    expect(await dialogo.findByText('$ 200,00')).toBeInTheDocument()
     const botonAgregar = dialogo.getByRole('button', { name: 'Agregar' })
     expect(botonAgregar).toBeDisabled()
 
@@ -2561,7 +2561,7 @@ describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-busc
     expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('/articulos?busqueda=fa'))
     expect(await dialogo.findByText('A0009')).toBeInTheDocument()
     expect(dialogo.getByText('Fanta 1.5L')).toBeInTheDocument()
-    expect(dialogo.getByText('$200,00')).toBeInTheDocument()
+    expect(dialogo.getByText('$ 200,00')).toBeInTheDocument()
   })
 
   it('Enter dispara la búsqueda de inmediato, sin esperar el debounce', async () => {
