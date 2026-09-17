@@ -1,0 +1,98 @@
+name: pos-escritorio-release
+
+on:
+  push:
+    tags:
+      - "pos-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag a publicar (ej. pos-v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: src/Ways.Desktop/package-lock.json
+
+      - name: Configurar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cachear el build de Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/Ways.Desktop/src-tauri
+
+      - name: Verificar que el tag coincide con tauri.conf.json
+        run: |
+          version_tag="${TAG#pos-v}"
+          version_conf="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [ "$version_tag" != "$version_conf" ]; then
+            echo "::error::El tag '$TAG' (versión $version_tag) no coincide con la versión de tauri.conf.json ($version_conf). Actualizá tauri.conf.json/Cargo.toml/package.json y volvé a taggear."
+            exit 1
+          fi
+          echo "version=$version_conf" >> "$GITHUB_ENV"
+        working-directory: src/Ways.Desktop
+
+      - name: Instalar dependencias
+        run: npm ci
+        working-directory: src/Ways.Desktop
+
+      - name: Compilar la app (Tauri build)
+        run: npm run build
+        working-directory: src/Ways.Desktop
+
+      - name: Preparar los assets del release
+        run: |
+          bundle_dir="src-tauri/target/release/bundle/nsis"
+          installer=$(ls "$bundle_dir"/*-setup.exe | head -n 1)
+          if [ -z "$installer" ]; then
+            echo "::error::No se encontró el instalador NSIS en $bundle_dir"
+            exit 1
+          fi
+          mkdir -p dist-release
+          cp "$installer" "dist-release/WaysPOS-setup.exe"
+          cp "$installer" "dist-release/WaysPOS-${version}-setup.exe"
+        working-directory: src/Ways.Desktop
+
+      - name: Publicar el GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notas="Ways POS ${version} para Windows (instalador NSIS, 64 bits). El instalador todavía no está firmado digitalmente: si Windows SmartScreen avisa, elegí \"Más información\" y luego \"Ejecutar de todas formas\"."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              "dist-release/WaysPOS-setup.exe" \
+              "dist-release/WaysPOS-${version}-setup.exe" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" \
+              "dist-release/WaysPOS-setup.exe" \
+              "dist-release/WaysPOS-${version}-setup.exe" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Ways POS ${version}" \
+              --notes "$notas" \
+              --latest
+          fi
+        working-directory: src/Ways.Desktop

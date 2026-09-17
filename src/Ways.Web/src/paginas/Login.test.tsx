@@ -125,4 +125,12 @@ describe('Login — destino después de ingresar', () => {
     expect(screen.getByPlaceholderText('Correo electrónico')).toHaveValue('vendedor@ways.test')
     expect(screen.getByRole('button', { name: 'Continuar' })).toBeEnabled()
   })
+
+  it('muestra el link a la descarga de la app de escritorio', async () => {
+    renderLogin()
+
+    expect(
+      await screen.findByRole('link', { name: 'Descargar la app de escritorio' }),
+    ).toHaveAttribute('href', '/descargar')
+  })
 })

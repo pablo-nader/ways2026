@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { useAuth } from '../auth/useAuth'
 import { ErrorApi } from '../api/cliente'
 import { puedeOperarPos } from '../api/tipos'
@@ -93,6 +93,12 @@ export function Login() {
             {enviando ? 'Ingresando…' : 'Continuar'}
           </button>
         </form>
+
+        <p className="text-center mt-3 mb-0">
+          <Link to="/descargar" className="text-muted small">
+            Descargar la app de escritorio
+          </Link>
+        </p>
       </div>
     </div>
   )

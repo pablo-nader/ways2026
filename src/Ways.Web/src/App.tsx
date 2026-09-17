@@ -17,6 +17,7 @@ import { ConsultaPrecios } from './paginas/ConsultaPrecios'
 import { ConteoDeInventario } from './paginas/ConteoDeInventario'
 import { CuentaCorriente } from './paginas/CuentaCorriente'
 import { CuentaCorrienteDeProveedor } from './paginas/CuentaCorrienteDeProveedor'
+import { Descargar } from './paginas/Descargar'
 import { Empresas } from './paginas/Empresas'
 import { Existencias } from './paginas/Existencias'
 import { HistoricoDeCajas } from './paginas/HistoricoDeCajas'
@@ -53,8 +54,9 @@ export function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          {/* Única ruta sin sesión. */}
+          {/* Rutas públicas, sin sesión. */}
           <Route path="/login" element={<Login />} />
+          <Route path="/descargar" element={<Descargar />} />
 
           <Route
             element={
