@@ -6,9 +6,9 @@ import { Pos } from './Pos'
 import { ErrorApi } from '../api/cliente'
 import type {
   ArticuloEscaneado,
+  ArticuloListado,
   ClienteListado,
   ComprobanteEmitido,
-  LoteListado,
   MedioPagoListado,
   PaginaDe,
   ParametroResuelto,
@@ -106,6 +106,32 @@ function clienteFixture(sobrescribir: Partial<ClienteListado> = {}): ClienteList
 
 function articuloEscaneadoFixture(sobrescribir: Partial<ArticuloEscaneado> = {}): ArticuloEscaneado {
   return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1, ...sobrescribir }
+}
+
+function articuloListadoFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloListado {
+  return {
+    id: 9,
+    codigoInterno: 'A0009',
+    nombre: 'Fanta 1.5L',
+    descripcion: null,
+    idArea: 1,
+    idCategoria: null,
+    idMarca: null,
+    idGrupo: null,
+    idProveedorHabitual: null,
+    idAlicuotaIva: 1,
+    unidadVenta: 'Unidad',
+    unidadesPorBulto: null,
+    esProducto: true,
+    costoLista: null,
+    descuentoProveedor: null,
+    costoNominal: null,
+    disponibleParaTodas: true,
+    idsEmpresas: [],
+    activo: true,
+    controlaLote: false,
+    ...sobrescribir,
+  }
 }
 
 function medioFixture(sobrescribir: Partial<MedioPagoListado> = {}): MedioPagoListado {
@@ -228,9 +254,6 @@ function rutaBaseDePos(ruta: string): Promise<unknown> | undefined {
   if (ruta.startsWith('/parametros/vuelto_maximo')) {
     return Promise.resolve<ParametroResuelto>({ clave: 'vuelto_maximo', valor: '20' })
   }
-  // stage-12-lotes-vencimientos (Slice 14): sin lotes por defecto — el camino feliz de la
-  // mayoría de los tests nunca abre el picker, pero cualquier click accidental no debe romper.
-  if (ruta.startsWith('/stock/lotes?')) return Promise.resolve<LoteListado[]>([])
   return undefined
 }
 
@@ -280,7 +303,7 @@ async function armarVentaLista() {
 }
 
 /** Deja el carrito con una sola línea de Coca Cola, sin pasar por el panel de pagos — punto de
- * partida de los tests del picker de lote y del remount por punto de venta. */
+ * partida de los tests de remount por punto de venta. */
 async function armarCarritoConUnaLinea() {
   const resultado = renderPos()
   await screen.findByRole('option', { name: /Consumidor Final/ })
@@ -1380,89 +1403,31 @@ describe('Pos — limpieza de ediciones en curso', () => {
   })
 })
 
-describe('Pos — picker de lote (stage-12-lotes-vencimientos, Slice 14, design decisión 19)', () => {
-  function loteFixture(sobrescribir: Partial<LoteListado> = {}): LoteListado {
-    return {
-      idLote: 1,
-      idArticulo: 1,
-      codigo: '2026-09-01',
-      fechaVencimiento: '2026-09-01',
-      esSinIdentificar: false,
-      cantidad: 5,
-      estado: 'Vigente',
-      sugerido: false,
-      ...sobrescribir,
-    }
-  }
+describe('Pos — sin selector de lote en el detalle del carrito (stage-pos-buscador-articulos)', () => {
+  /**
+   * Cláusula bajo prueba: el picker de lote inline ya no se renderiza en las líneas del carrito.
+   * Nunca fue exigido acá para que el checkout se acepte (`ServicioDeVentas` solo rechaza un
+   * `idLote` ausente en una línea de DEVOLUCIÓN, tipo NCX, signo -1 — esta pantalla emite
+   * siempre `codigoTipoComprobante: 'TX'`, signo +1, así que el camino feliz de FEFO automático
+   * de design decisión 19 cubre el 100% de sus ventas): quitar la columna nunca puede romper un
+   * checkout real. `SelectorDeLote` (y su columna "Lote") siguen existiendo — los usa
+   * `Remito.tsx` — este test prueba que `Pos.tsx` dejó de montarlo, no que el componente
+   * desapareció del repo.
+   */
+  it('la fila del carrito no muestra "Lote" ni el botón "Elegir lote", y el checkout igual se acepta', async () => {
+    await armarVentaLista()
 
-  it('el camino feliz nunca pide los lotes — el botón "Elegir lote" no dispara ningún fetch solo por aparecer', async () => {
-    await armarCarritoConUnaLinea()
+    expect(screen.queryByText('Lote')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Elegir lote' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Lote de /)).not.toBeInTheDocument()
 
-    expect(screen.getByRole('button', { name: 'Elegir lote' })).toBeInTheDocument()
-    expect(apiGetMock.mock.calls.some((call: unknown[]) => (call[0] as string).startsWith('/stock/lotes?'))).toBe(false)
-  })
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
-  it('preselecciona (resalta) el lote sugerido que manda el servidor — nunca lo recalcula', async () => {
-    // El sugerido va en el MEDIO de la lista, ni primero ni último: si "elegir el sugerido" y
-    // "elegir el último/primero" fueran indistinguibles, esta aserción no lo detectaría (judgment-day
-    // slice 14, MAJOR 2a — mutante "elegir el último" debe quedar RED contra este fixture).
-    mockearApiGet((ruta) =>
-      ruta.startsWith('/stock/lotes?')
-        ? Promise.resolve<LoteListado[]>([
-            loteFixture({ idLote: 1, codigo: '2026-09-01' }),
-            loteFixture({ idLote: 2, codigo: '2026-10-01', sugerido: true }),
-            loteFixture({ idLote: 3, codigo: '2026-11-01' }),
-          ])
-        : undefined,
-    )
-    await armarCarritoConUnaLinea()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Elegir lote' }))
-
-    expect(await screen.findByLabelText('Lote de Coca Cola 1L')).toHaveValue('2')
-  })
-
-  it('una lista de lotes vacía muestra el aviso de FEFO automático, sin picker', async () => {
-    mockearApiGet((ruta) => (ruta.startsWith('/stock/lotes?') ? Promise.resolve<LoteListado[]>([]) : undefined))
-    await armarCarritoConUnaLinea()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Elegir lote' }))
-
-    expect(await screen.findByText('Sin lotes registrados — FEFO automático.')).toBeInTheDocument()
-    expect(screen.queryByLabelText('Lote de Coca Cola 1L')).not.toBeInTheDocument()
-  })
-
-  it('doble click en "Elegir lote" dispara exactamente un fetch (el `disabled` nativo del botón es la defensa, no un ref)', async () => {
-    let resolverLotes: (valor: LoteListado[]) => void = () => {}
-    mockearApiGet((ruta) =>
-      ruta.startsWith('/stock/lotes?') ? new Promise((resolve) => (resolverLotes = resolve)) : undefined,
-    )
-    await armarCarritoConUnaLinea()
-
-    const boton = screen.getByRole('button', { name: 'Elegir lote' })
-    // `fireEvent.click` (a diferencia de `userEvent.click` con `await` de por medio) dispara los
-    // dos clicks en el mismo tick — pero el segundo no hace nada: React ya marcó el botón
-    // `disabled` en el primer render posterior al `setCargando(true)`, y ni JSDOM ni un navegador
-    // real despachan `click` sobre un elemento disabled. No hay guard de reentrancia por ref: el
-    // único fetch que se prueba acá es consecuencia del atributo nativo.
-    fireEvent.click(boton)
-    fireEvent.click(boton)
-
-    resolverLotes([loteFixture()])
-    await screen.findByLabelText('Lote de Coca Cola 1L')
-
-    const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/stock/lotes?'))
-    expect(llamadas).toHaveLength(1)
-  })
-
-  it('un fetch de lotes rechazado muestra "No se pudieron cargar los lotes."', async () => {
-    mockearApiGet((ruta) => (ruta.startsWith('/stock/lotes?') ? Promise.reject(new Error('boom')) : undefined))
-    await armarCarritoConUnaLinea()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Elegir lote' }))
-
-    expect(await screen.findByText('No se pudieron cargar los lotes.')).toBeInTheDocument()
-    expect(screen.queryByLabelText('Lote de Coca Cola 1L')).not.toBeInTheDocument()
+    expect(await screen.findByText(/Venta 0007-00000001/)).toBeInTheDocument()
+    const solicitud = apiPostMock.mock.calls.find((call: unknown[]) => call[0] === '/ventas')?.[1] as
+      | { lineas: { idLote: number | null }[] }
+      | undefined
+    expect(solicitud?.lineas.every((l) => l.idLote === null)).toBe(true)
   })
 })
 
@@ -1774,5 +1739,351 @@ describe('Pos — seam alEmitir (stage-desktop-pos)', () => {
     await screen.findByText('No se pudo registrar la venta.')
 
     expect(alEmitir).not.toHaveBeenCalled()
+  })
+})
+
+describe('Pos — foco del input de código (stage-pos-buscador-articulos)', () => {
+  it('el input de código tiene autofocus al entrar a la pantalla', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
+  })
+
+  it('el foco vuelve al input de código después de agregar por código', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    const inputCodigo = screen.getByLabelText('Código escaneado')
+
+    await userEvent.type(inputCodigo, '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    expect(inputCodigo).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: el conjunct `cobrando` del guard del efecto de foco pendiente (`if
+   * (escaneando || cobrando || buscadorAbierto) return`). Un click en "Cobrar" mientras un
+   * escaneo sigue en vuelo (regla 9 de react-async-state: nada puede quedar operable mientras el
+   * checkout está en curso) no debe dejar el input habilitado ni enfocado — recién cuando el
+   * checkout termina (acá, falla) el efecto vuelve a correr y recién ahí consume el pedido de
+   * foco pendiente. Evidencia de mutación (mutation-proof-tests regla 2): sacando `cobrando` de
+   * esa condición, el efecto consume el pedido de foco apenas el escaneo resuelve (con el
+   * checkout todavía en vuelo) — la aserción final falla, porque ya no queda ningún pedido
+   * pendiente para cuando el checkout realmente termina. Restaurada, vuelve a verde.
+   */
+  it('un escaneo en vuelo + click en "Cobrar": el input queda deshabilitado y sin foco durante el checkout, y recupera el foco recién cuando termina', async () => {
+    let resolverEscaneo: (articulo: ArticuloEscaneado) => void = () => {}
+    const escaneoPendiente = new Promise<ArticuloEscaneado>((resolve) => {
+      resolverEscaneo = resolve
+    })
+    let rechazarVenta: (error: unknown) => void = () => {}
+    const ventaPendiente = new Promise((_resolve, reject) => {
+      rechazarVenta = reject
+    })
+
+    await armarVentaLista()
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos/escaneo?entrada=')) return escaneoPendiente
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/ventas') return ventaPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    const inputCodigo = screen.getByLabelText('Código escaneado')
+    await userEvent.type(inputCodigo, '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/ })).toBeInTheDocument())
+
+    await act(async () => {
+      resolverEscaneo(articuloEscaneadoFixture())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(inputCodigo).toBeDisabled()
+    expect(inputCodigo).not.toHaveFocus()
+
+    await act(async () => {
+      rechazarVenta(new ErrorApi(400, 'error', 'No se pudo registrar la venta.'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await screen.findByText('No se pudo registrar la venta.')
+
+    expect(inputCodigo).not.toBeDisabled()
+    expect(inputCodigo).toHaveFocus()
+  })
+})
+
+describe('Pos — abrir/cerrar el buscador de artículos (stage-pos-buscador-articulos)', () => {
+  it('el botón "Buscar artículo" abre el modal', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Buscar artículo' })).toBeInTheDocument()
+  })
+
+  it('F2 abre el modal mientras la venta libre está activa', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    fireEvent.keyDown(document, { key: 'F2' })
+
+    expect(await screen.findByRole('dialog', { name: 'Buscar artículo' })).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el conjunct `cobrando` del guard de F2 (`if (modoPresupuesto ||
+   * cobrando || buscadorAbierto || gateTurno || ventaEmitida) return`). Con el checkout en
+   * vuelo, F2 no debe abrir nada — reabrir el buscador ahí violaría la regla 9 de
+   * react-async-state (todo lo que podría superponerse al checkout queda inerte).
+   */
+  it('F2 no abre el modal mientras el checkout está en vuelo', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/ventas') return new Promise(() => {})
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/ })).toBeInTheDocument())
+
+    fireEvent.keyDown(document, { key: 'F2' })
+
+    expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+  })
+
+  it('Escape cierra el modal y devuelve el foco al input de código', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    const inputCodigo = screen.getByLabelText('Código escaneado')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
+    await screen.findByRole('dialog', { name: 'Buscar artículo' })
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+    expect(inputCodigo).toHaveFocus()
+  })
+
+  it('el botón "Cerrar" (X) cierra el modal y devuelve el foco al input de código', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    const inputCodigo = screen.getByLabelText('Código escaneado')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
+    const dialogo = within(await screen.findByRole('dialog', { name: 'Buscar artículo' }))
+
+    await userEvent.click(dialogo.getByRole('button', { name: 'Cerrar' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+    expect(inputCodigo).toHaveFocus()
+  })
+})
+
+describe('Pos — búsqueda de artículos por nombre en el modal (stage-pos-buscador-articulos)', () => {
+  async function abrirBuscador() {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
+    return within(await screen.findByRole('dialog', { name: 'Buscar artículo' }))
+  }
+
+  it('con menos de 2 caracteres no dispara ninguna búsqueda', async () => {
+    const dialogo = await abrirBuscador()
+
+    fireEvent.change(dialogo.getByLabelText('Buscar artículo por nombre'), { target: { value: 'f' } })
+    fireEvent.keyDown(dialogo.getByLabelText('Buscar artículo por nombre'), { key: 'Enter' })
+    await Promise.resolve()
+
+    expect(apiGetMock).not.toHaveBeenCalledWith(expect.stringContaining('/articulos?busqueda='))
+  })
+
+  it('tipear 2+ caracteres busca por nombre tras el debounce (~300ms) y renderiza Código/Nombre/Precio', async () => {
+    const fanta = articuloListadoFixture()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos?busqueda=fa')) {
+        const pagina: PaginaDe<ArticuloListado> = { items: [fanta], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 9, idListaPrecio: 1, precioOriginal: 250, precioFinal: 200, descuentoUnitario: 50, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    const dialogo = await abrirBuscador()
+    const input = dialogo.getByLabelText('Buscar artículo por nombre')
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(input, { target: { value: 'fa' } })
+      expect(apiGetMock).not.toHaveBeenCalledWith(expect.stringContaining('/articulos?busqueda=fa'))
+      await vi.advanceTimersByTimeAsync(300)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('/articulos?busqueda=fa'))
+    expect(await dialogo.findByText('A0009')).toBeInTheDocument()
+    expect(dialogo.getByText('Fanta 1.5L')).toBeInTheDocument()
+    expect(dialogo.getByText('$200,00')).toBeInTheDocument()
+  })
+
+  it('Enter dispara la búsqueda de inmediato, sin esperar el debounce', async () => {
+    const fanta = articuloListadoFixture()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos?busqueda=fa')) {
+        const pagina: PaginaDe<ArticuloListado> = { items: [fanta], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') return Promise.resolve<ResultadoDeResolucion[]>([])
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    const dialogo = await abrirBuscador()
+    const input = dialogo.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'fa' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await dialogo.findByText('Fanta 1.5L')).toBeInTheDocument()
+  })
+
+  it('sin resultados muestra "Sin resultados"', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos?busqueda=')) {
+        const pagina: PaginaDe<ArticuloListado> = { items: [], total: 0, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    const dialogo = await abrirBuscador()
+    const input = dialogo.getByLabelText('Buscar artículo por nombre')
+    fireEvent.change(input, { target: { value: 'zzz' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await dialogo.findByText('Sin resultados')).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el guard `generacionRef.current !== generacion` que sigue a CADA
+   * `await` de `buscar()` (mutation-proof-tests regla 7). La primera búsqueda ("co") queda
+   * pendiente adrede; la segunda ("sp") resuelve antes y se muestra; recién ahí se libera la
+   * respuesta vieja — si el guard no existiera, pisaría los resultados ya mostrados. Evidencia de
+   * mutación: con el guard comentado, este test falla ("Fanta" aparece encima de "Sprite");
+   * restaurado, vuelve a verde — ver el reporte de la tarea.
+   */
+  it('una respuesta tardía de una búsqueda anterior no pisa los resultados de una búsqueda posterior (stale-response gating)', async () => {
+    let resolverPrimera: (pagina: PaginaDe<ArticuloListado>) => void = () => {}
+    const primeraPendiente = new Promise<PaginaDe<ArticuloListado>>((resolve) => {
+      resolverPrimera = resolve
+    })
+    const fanta = articuloListadoFixture({ id: 9, codigoInterno: 'A0009', nombre: 'Fanta 1.5L' })
+    const sprite = articuloListadoFixture({ id: 10, codigoInterno: 'A0010', nombre: 'Sprite 1.5L' })
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos?busqueda=co')) return primeraPendiente
+      if (ruta.startsWith('/articulos?busqueda=sp')) {
+        const pagina: PaginaDe<ArticuloListado> = { items: [sprite], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') return Promise.resolve<ResultadoDeResolucion[]>([])
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    const dialogo = await abrirBuscador()
+    const input = dialogo.getByLabelText('Buscar artículo por nombre')
+
+    fireEvent.change(input, { target: { value: 'co' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.change(input, { target: { value: 'sp' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await dialogo.findByText('Sprite 1.5L')).toBeInTheDocument()
+
+    await act(async () => {
+      resolverPrimera({ items: [fanta], total: 1, pagina: 1, tamanio: 25 })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(dialogo.getByText('Sprite 1.5L')).toBeInTheDocument()
+    expect(dialogo.queryByText('Fanta 1.5L')).not.toBeInTheDocument()
+  })
+
+  it('"Agregar" de una fila agrega la línea al carrito una sola vez, cierra el modal y devuelve el foco al input de código', async () => {
+    const fanta = articuloListadoFixture()
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos?busqueda=fa')) {
+        const pagina: PaginaDe<ArticuloListado> = { items: [fanta], total: 1, pagina: 1, tamanio: 25 }
+        return Promise.resolve(pagina)
+      }
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 9, idListaPrecio: 1, precioOriginal: 250, precioFinal: 200, descuentoUnitario: 50, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    const inputCodigo = screen.getByLabelText('Código escaneado')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
+    const dialogo = within(await screen.findByRole('dialog', { name: 'Buscar artículo' }))
+    fireEvent.change(dialogo.getByLabelText('Buscar artículo por nombre'), { target: { value: 'fa' } })
+    fireEvent.keyDown(dialogo.getByLabelText('Buscar artículo por nombre'), { key: 'Enter' })
+    const filaAgregar = await dialogo.findByRole('button', { name: 'Agregar' })
+
+    // react-async-state regla 11 (reentrancia por ref, no por estado): dos clicks sincrónicos en
+    // el mismo tick — el segundo no debe agregar una segunda línea antes de que React desmonte
+    // el modal.
+    fireEvent.click(filaAgregar)
+    fireEvent.click(filaAgregar)
+
+    expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+    expect(await screen.findByText('Fanta 1.5L')).toBeInTheDocument()
+    expect(screen.getByLabelText('Cantidad de Fanta 1.5L')).toHaveValue(1)
+    expect(inputCodigo).toHaveFocus()
   })
 })
