@@ -1750,11 +1750,6 @@ describe('Pos — foco del input de código (stage-pos-buscador-articulos)', () 
     expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
   })
 
-  /**
-   * Cláusula bajo prueba: `inputEscaneoRef.current?.focus()` al final de `escanear()`. Evidencia
-   * de mutación (mutation-proof-tests regla 2): comentada esa línea, este test falla (el input
-   * deja de tener foco tras agregar); restaurada, vuelve a verde — ver el reporte de la tarea.
-   */
   it('el foco vuelve al input de código después de agregar por código', async () => {
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
@@ -1764,6 +1759,71 @@ describe('Pos — foco del input de código (stage-pos-buscador-articulos)', () 
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
 
+    expect(inputCodigo).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: el conjunct `cobrando` del guard del efecto de foco pendiente (`if
+   * (escaneando || cobrando || buscadorAbierto) return`). Un click en "Cobrar" mientras un
+   * escaneo sigue en vuelo (regla 9 de react-async-state: nada puede quedar operable mientras el
+   * checkout está en curso) no debe dejar el input habilitado ni enfocado — recién cuando el
+   * checkout termina (acá, falla) el efecto vuelve a correr y recién ahí consume el pedido de
+   * foco pendiente. Evidencia de mutación (mutation-proof-tests regla 2): sacando `cobrando` de
+   * esa condición, el efecto consume el pedido de foco apenas el escaneo resuelve (con el
+   * checkout todavía en vuelo) — la aserción final falla, porque ya no queda ningún pedido
+   * pendiente para cuando el checkout realmente termina. Restaurada, vuelve a verde.
+   */
+  it('un escaneo en vuelo + click en "Cobrar": el input queda deshabilitado y sin foco durante el checkout, y recupera el foco recién cuando termina', async () => {
+    let resolverEscaneo: (articulo: ArticuloEscaneado) => void = () => {}
+    const escaneoPendiente = new Promise<ArticuloEscaneado>((resolve) => {
+      resolverEscaneo = resolve
+    })
+    let rechazarVenta: (error: unknown) => void = () => {}
+    const ventaPendiente = new Promise((_resolve, reject) => {
+      rechazarVenta = reject
+    })
+
+    await armarVentaLista()
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta.startsWith('/articulos/escaneo?entrada=')) return escaneoPendiente
+      return rutaBaseDePos(ruta) ?? Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/ventas') return ventaPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    const inputCodigo = screen.getByLabelText('Código escaneado')
+    await userEvent.type(inputCodigo, '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrando/ })).toBeInTheDocument())
+
+    await act(async () => {
+      resolverEscaneo(articuloEscaneadoFixture())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(inputCodigo).toBeDisabled()
+    expect(inputCodigo).not.toHaveFocus()
+
+    await act(async () => {
+      rechazarVenta(new ErrorApi(400, 'error', 'No se pudo registrar la venta.'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await screen.findByText('No se pudo registrar la venta.')
+
+    expect(inputCodigo).not.toBeDisabled()
     expect(inputCodigo).toHaveFocus()
   })
 })

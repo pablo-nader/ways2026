@@ -239,6 +239,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
   const [errorEscaneo, setErrorEscaneo] = useState('')
   const tokenEscaneoRef = useRef(0)
   const inputEscaneoRef = useRef<HTMLInputElement>(null)
+  const focoPendienteRef = useRef(false)
 
   // stage-pos-buscador-articulos: modal de búsqueda por nombre (F2, botón "Buscar" junto al de
   // código) — se abre solo con la venta libre operable (nunca bajo `?idPresupuesto=`, ni con el
@@ -610,16 +611,7 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
       const { linea, cantidad } = aLineaDeCarritoDesdeEscaneo(articulo)
       mutarCarrito({ tipo: 'escanear', linea, cantidad })
       setEntradaEscaneo('')
-      // spec pos-buscador-articulos ("focus returns after adding by code"): el input sigue
-      // montado (esta pantalla no se reemplaza al agregar), así que enfocarlo acá mismo alcanza —
-      // no hace falta un efecto pasivo. Pero React todavía no comiteó `escaneando: false` (recién
-      // lo hace el `finally`, más abajo): en el DOM el input sigue `disabled` de este render, y
-      // ni un navegador real ni jsdom enfocan un elemento disabled (a diferencia del "focus
-      // fixup" de DESenfocar uno ya enfocado al deshabilitarlo, que jsdom no implementa — regla
-      // 12). Se despeja la propiedad a mano antes de enfocar: coincide con el valor que React va
-      // a comitear en el próximo render (`escaneando` ya en `false`), así que no hay conflicto.
-      if (inputEscaneoRef.current) inputEscaneoRef.current.disabled = false
-      inputEscaneoRef.current?.focus()
+      focoPendienteRef.current = true
     } catch (e) {
       if (tokenEscaneoRef.current !== token) return
       setErrorEscaneo(e instanceof ErrorApi ? e.message : 'No se pudo resolver el código escaneado.')
@@ -646,20 +638,18 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
     }
   }
 
-  /** "Agregar" de una fila del buscador (F2 / botón "Buscar") — mismo camino que un código
-   * escaneado (`AccionCarrito` tipo `escanear`, spec: "adds that article to the sale exactly
-   * like entering its code does"): la resolución de precio/ofertas la sigue haciendo el mismo
-   * efecto de `lineas` de siempre, nunca este handler. Cierra el modal y devuelve el foco al
-   * input de código en el mismo evento síncrono (react-async-state regla 12). */
+  /** "Agregar" de una fila del buscador — mismo camino que un código escaneado (`AccionCarrito`
+   * tipo `escanear`): la resolución de precio/ofertas la sigue haciendo el efecto de `lineas` de
+   * siempre, nunca este handler. */
   function agregarDesdeBusqueda(linea: Omit<LineaCarrito, 'cantidad'>, cantidad: number) {
     mutarCarrito({ tipo: 'escanear', linea, cantidad })
     setBuscadorAbierto(false)
-    inputEscaneoRef.current?.focus()
+    focoPendienteRef.current = true
   }
 
   function cerrarBuscador() {
     setBuscadorAbierto(false)
-    inputEscaneoRef.current?.focus()
+    focoPendienteRef.current = true
   }
 
   function cambiarCliente(id: number) {
@@ -734,6 +724,16 @@ function PantallaPos({ idPresupuesto, alEmitir }: PropsPantallaPos) {
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
   }, [modoPresupuesto, cobrando, buscadorAbierto, gateTurno, ventaEmitida])
+
+  // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
+  // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
+  // no debe dejarlo enfocado ni operable durante el checkout.
+  useEffect(() => {
+    if (!focoPendienteRef.current) return
+    if (escaneando || cobrando || buscadorAbierto) return
+    focoPendienteRef.current = false
+    inputEscaneoRef.current?.focus()
+  }, [escaneando, cobrando, buscadorAbierto])
 
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
