@@ -41,6 +41,24 @@ public class BajasEstructuralesTests
     /// como receptor de un borrado físico.</summary>
     private static readonly string[] TablasDeOrganizacion = ["Tenants", "Empresas", "PuntosVenta", "Usuarios"];
 
+    /// <summary>
+    /// Los únicos archivos con derecho a contener <c>DELETE FROM</c>, congelados por ruta
+    /// (mismo criterio que <see cref="RemoveRangePermitidos"/>): un <c>DELETE FROM</c> nuevo en
+    /// cualquier OTRO archivo pone esta prueba en rojo y obliga a justificarlo acá.
+    ///
+    /// <c>QuitarVueltoMaximo</c> (decisión del dueño, 2026-09-16, gate de esquema/seed aprobado
+    /// explícitamente) es una migración de DATOS sobre <c>parametros</c> — una tabla de tenant
+    /// normal (RLS estándar, <c>Parametros</c> migration), no una de las cuatro tablas de
+    /// organización que este archivo protege. No es un carve-out de la propiedad B1: borra filas
+    /// de configuración obsoletas (<c>vuelto_maximo</c> dejó de ser un parámetro conocido), nunca
+    /// filas de <c>tenants</c>/<c>empresas</c>/<c>puntos_venta</c>/<c>usuarios</c> — verificado
+    /// abajo, no solo declarado.
+    /// </summary>
+    private static readonly string[] DeleteFromPermitidos =
+    [
+        Path.Combine("Ways.Infrastructure", "Persistencia", "Migraciones", "20260917025328_QuitarVueltoMaximo.cs"),
+    ];
+
     private static IReadOnlyList<(string Archivo, string Contenido)> LeerFuentesDeProduccion()
     {
         var src = Path.Combine(RaizDelRepositorio.Resolver(), "src");
@@ -108,9 +126,22 @@ public class BajasEstructuralesTests
             .Where(fuente => Regex.IsMatch(
                 fuente.Contenido, @"DELETE\s+FROM", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5)))
             .Select(fuente => fuente.Archivo)
+            .Order(StringComparer.Ordinal)
             .ToList();
 
-        Assert.Empty(conDeleteFrom);
+        Assert.Equal(DeleteFromPermitidos, conDeleteFrom);
+
+        // Defensa en profundidad: ninguno de los archivos permitidos toca de verdad una tabla de
+        // organización — la excepción es sobre el NOMBRE del archivo, no un cheque en blanco
+        // sobre su contenido.
+        var tablasFisicasDeOrganizacion = new[] { "tenants", "empresas", "puntos_venta", "usuarios" };
+        foreach (var archivo in conDeleteFrom)
+        {
+            var contenido = fuentes.Single(f => f.Archivo == archivo).Contenido;
+
+            Assert.All(tablasFisicasDeOrganizacion, tabla => Assert.DoesNotContain(
+                $"DELETE FROM {tabla}", contenido, StringComparison.OrdinalIgnoreCase));
+        }
 
         var receptores = ReceptoresDe(fuentes, @"db\.(\w+)\.RemoveRange\(");
 

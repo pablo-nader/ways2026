@@ -638,21 +638,24 @@ public class VentasCheckoutTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     }
 
     [Fact]
-    public async Task ElParametroVueltoMaximoYaNoLimitaElVueltoDeUnaVentaEnEfectivo()
+    public async Task ElVueltoDeUnaVentaEnEfectivoNoTieneTechoParametrizadoYaQueVueltoMaximoSeElimino()
     {
         // Decisión del dueño, 2026-09-16 (ver docs/01 §B6 nota de paridad y BilletesArgentinos):
-        // vuelto_maximo dejó de ser consumido por ValidadorDePagos para ventas en efectivo — un
-        // valor de punto de venta deliberadamente restrictivo (1) ya no puede rechazar un vuelto
-        // que sí es formable con billetes válidos. Este es también el ejemplo de ticket del
-        // dueño: total 5500, entrega 10000 -> vuelto 4500 (un solo billete de 10000 alcanza).
-        var ctx = await PrepararAsync(nameof(ElParametroVueltoMaximoYaNoLimitaElVueltoDeUnaVentaEnEfectivo));
+        // vuelto_maximo dejó de ser consumido por ValidadorDePagos para ventas en efectivo, y la
+        // migración QuitarVueltoMaximo lo sacó del todo de ParametroConocido — ya no existe
+        // ninguna clave que un PUT pueda usar para intentar poner un techo al vuelto. Este es el
+        // ejemplo de ticket del dueño: total 5500, entrega 10000 -> vuelto 4500 (un solo billete
+        // de 10000 alcanza), y tiene que pasar sin ninguna configuración de por medio.
+        var ctx = await PrepararAsync(nameof(ElVueltoDeUnaVentaEnEfectivoNoTieneTechoParametrizadoYaQueVueltoMaximoSeElimino));
         var idArticulo = await SembrarArticuloConPrecioAsync(ctx, "articulo-parametro-pv", 5500m);
         var (idCliente, _) = await SembrarClienteAsync(ctx, "Cliente parametro PV");
 
+        // vuelto_maximo ya no es una clave conocida (misma migración): intentar configurarlo
+        // se rechaza igual que cualquier clave inventada, nunca con un 200.
         var altaParametro = await ctx.Admin.PutAsJsonAsync(
             $"/api/parametros?idEmpresa={ctx.IdEmpresa}",
             new ParametroAlta("vuelto_maximo", "1", ctx.IdPuntoVenta));
-        Assert.Equal(HttpStatusCode.OK, altaParametro.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, altaParametro.StatusCode);
 
         var solicitud = new SolicitudDeVenta(
             ctx.IdPuntoVenta, idCliente, "TX", null,

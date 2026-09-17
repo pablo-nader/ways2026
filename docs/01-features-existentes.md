@@ -147,10 +147,14 @@ Además mantiene `$_SESSION['grupo'][id_grupo] = {cantidad, importe}` para las o
 > **Actualización (decisión del dueño, 2026-09-16):** el mismo reclamo aplicaba al pago a
 > **cuenta corriente** (`ValidadorDePagoACuenta`) — se extendió la misma regla de billetes ahí
 > también (mismo criterio, mismo código `vuelto_no_justificado`). El parámetro `vuelto_maximo`
-> ya no lo consume ningún validador del proyecto; sigue existiendo en `ParametroConocido` y en
-> la pantalla de Parámetros (y en la base, para los tenants que ya tengan una fila) en espera de
-> una decisión explícita del dueño sobre si se elimina del todo (requiere aprobación de esquema/
-> seed, fuera del alcance de este cambio).
+> ya no lo consume ningún validador del proyecto.
+>
+> **Eliminación (decisión del dueño, 2026-09-16):** con la aprobación explícita del dueño sobre
+> el gate de esquema/seed, `vuelto_maximo` se eliminó del todo — de `ParametroConocido`, de la
+> pantalla de Parámetros y de cualquier fila remanente en la base (migración
+> `QuitarVueltoMaximo`, `DELETE FROM parametros WHERE clave = 'vuelto_maximo'`). Un `GET`/`PUT`
+> con esa clave ahora se comporta igual que cualquier clave desconocida (400,
+> `parametro_desconocido`).
 
 Si pasa todo:
 1. Recorre las líneas y arma el string `articulos` (`barra/cant/desc/precio/total*…`).
@@ -503,7 +507,7 @@ un clon mal copiado que consulta `articulos` igual que `filtrarArticulo.php`.
 9. Las ventas fiadas se **reindexan a precio del día** al momento de pagar.
 10. Toda operación está scopeada por `id_punto_venta`.
 11. El stock se descuenta al cerrar la venta y se devuelve al anular.
-12. Tolerancia de pago: $10. Vuelto máximo: $20 (⚠ desviación deliberada, decisión del dueño
-    2026-09-16 — ver nota en §B6: reemplazado por la regla de billetes formables, tanto para
-    ventas en efectivo como para el pago a cuenta corriente; `vuelto_maximo` ya no lo consume
-    ningún validador).
+12. Tolerancia de pago: $10. Vuelto máximo: $20 en el legacy (⚠ desviación deliberada, decisión
+    del dueño 2026-09-16 — ver nota en §B6: reemplazado por la regla de billetes formables, tanto
+    para ventas en efectivo como para el pago a cuenta corriente). El parámetro `vuelto_maximo`
+    se eliminó del todo el 2026-09-16 (decisión del dueño, migración `QuitarVueltoMaximo`).

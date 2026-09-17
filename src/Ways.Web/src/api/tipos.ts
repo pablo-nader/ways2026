@@ -266,7 +266,6 @@ export const PARAMETROS_CONOCIDOS: {
   porDefecto: string
 }[] = [
   { clave: 'tolerancia_pago', etiqueta: 'Tolerancia de pago ($)', tipo: 'decimal', porDefecto: '10' },
-  { clave: 'vuelto_maximo', etiqueta: 'Vuelto máximo ($)', tipo: 'decimal', porDefecto: '20' },
   {
     clave: 'importe_adicional_recarga',
     etiqueta: 'Adicional por operación de recarga ($)',

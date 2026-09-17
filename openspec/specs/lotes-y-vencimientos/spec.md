@@ -415,8 +415,10 @@ baseline MUST be zero.
 
 #### Scenario: Module off issues one fewer parametro round-trip than the baseline
 - GIVEN `lotes_habilitado = false` for the empresa
-- WHEN checkout resolves `tolerancia_pago`, `vuelto_maximo` and
-  `lotes_habilitado`
+- WHEN checkout resolves `tolerancia_pago` and `lotes_habilitado`
+  (`vuelto_maximo` stopped being resolved here before this stage — owner
+  decision, 2026-09-16 — and was removed from `ParametroConocido` entirely by
+  the `QuitarVueltoMaximo` migration)
 - THEN exactly one batched `parametros` query (`WHERE clave IN (...)`)
   executes — one fewer round-trip than the pre-stage-12 baseline of two
   separate parametro queries
