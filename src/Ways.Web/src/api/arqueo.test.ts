@@ -17,24 +17,20 @@ describe('diferenciaPrevia', () => {
 })
 
 describe('conteoValido', () => {
-  it('rechaza un valor vacío', () => {
-    expect(conteoValido('')).toBe(false)
-  })
-
-  it('rechaza un valor no numérico', () => {
-    expect(conteoValido('abc')).toBe(false)
+  it('rechaza null (todavía no tipeó nada)', () => {
+    expect(conteoValido(null)).toBe(false)
   })
 
   it('rechaza un número negativo', () => {
-    expect(conteoValido('-1')).toBe(false)
+    expect(conteoValido(-1)).toBe(false)
   })
 
   it('acepta 0 (declarar nada es un acto deliberado, no un default)', () => {
-    expect(conteoValido('0')).toBe(true)
+    expect(conteoValido(0)).toBe(true)
   })
 
   it('acepta un número positivo', () => {
-    expect(conteoValido('640')).toBe(true)
+    expect(conteoValido(640)).toBe(true)
   })
 })
 
@@ -49,15 +45,15 @@ describe('conteosCompletos', () => {
   })
 
   it('false si falta el conteo de un medio', () => {
-    expect(conteosCompletos(medios, { 1: '640' })).toBe(false)
+    expect(conteosCompletos(medios, { 1: 640 })).toBe(false)
   })
 
-  it('false si el conteo de un medio es inválido', () => {
-    expect(conteosCompletos(medios, { 1: '640', 2: 'abc' })).toBe(false)
+  it('false si el conteo de un medio es null', () => {
+    expect(conteosCompletos(medios, { 1: 640, 2: null })).toBe(false)
   })
 
   it('true cuando todos los medios arqueables tienen un conteo válido', () => {
-    expect(conteosCompletos(medios, { 1: '640', 2: '0' })).toBe(true)
+    expect(conteosCompletos(medios, { 1: 640, 2: 0 })).toBe(true)
   })
 })
 
@@ -68,7 +64,7 @@ describe('aSolicitudDeCierre', () => {
   ]
 
   it('arma exactamente un conteo por medio arqueable, en el mismo orden', () => {
-    const solicitud = aSolicitudDeCierre(medios, { 1: '635', 2: '300' }, '')
+    const solicitud = aSolicitudDeCierre(medios, { 1: 635, 2: 300 }, '')
 
     expect(solicitud.conteos).toEqual([
       { idMedioPago: 1, importeDeclarado: 635 },
@@ -77,8 +73,8 @@ describe('aSolicitudDeCierre', () => {
   })
 
   it('recorta observaciones y las convierte a null si quedan vacías', () => {
-    expect(aSolicitudDeCierre(medios, { 1: '0', 2: '0' }, '   ').observaciones).toBeNull()
-    expect(aSolicitudDeCierre(medios, { 1: '0', 2: '0' }, '  turno tranquilo  ').observaciones).toBe(
+    expect(aSolicitudDeCierre(medios, { 1: 0, 2: 0 }, '   ').observaciones).toBeNull()
+    expect(aSolicitudDeCierre(medios, { 1: 0, 2: 0 }, '  turno tranquilo  ').observaciones).toBe(
       'turno tranquilo',
     )
   })

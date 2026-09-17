@@ -135,8 +135,10 @@ export type LineaDeCompraFormulario = {
   unidades: string
   bultos: string
   unidadesPorBulto: string
-  costoUnitario: string
-  descuento: string
+  /** `number | null` (`null` = "vacío") — mismo shape que emite `CampoImporte`. A diferencia de
+   * `unidades`/`bultos`/`unidadesPorBulto` (cantidades, no dinero), estos dos SÍ son importes. */
+  costoUnitario: number | null
+  descuento: number | null
   idAlicuotaIva: number | ''
   actualizaCosto: boolean
   /** stage-12-lotes-vencimientos (Slice 14): capturado del `ArticuloListado.controlaLote`
@@ -158,8 +160,8 @@ export function lineaDeCompraVacia(clave: number): LineaDeCompraFormulario {
     unidades: '',
     bultos: '',
     unidadesPorBulto: '',
-    costoUnitario: '',
-    descuento: '',
+    costoUnitario: null,
+    descuento: null,
     idAlicuotaIva: '',
     actualizaCosto: true,
     controlaLote: false,
@@ -180,8 +182,8 @@ export function itemAFormulario(clave: number, item: ItemDeCompra): LineaDeCompr
         : String(item.cantidad),
     bultos: item.bultos === null ? '' : String(item.bultos),
     unidadesPorBulto: item.unidadesPorBulto === null ? '' : String(item.unidadesPorBulto),
-    costoUnitario: String(item.costoUnitario),
-    descuento: String(item.descuento),
+    costoUnitario: item.costoUnitario,
+    descuento: item.descuento,
     idAlicuotaIva: item.idAlicuotaIva,
     actualizaCosto: item.actualizaCosto,
     // Heurística documentada arriba (`LineaDeCompraFormulario.controlaLote`): un dato de lote ya
@@ -206,7 +208,7 @@ export function lineaDesdeCoberturaDeOrden(clave: number, cobertura: CoberturaDe
     idArticulo: cobertura.idArticulo,
     descripcion: itemOriginal?.descripcion ?? `Artículo #${cobertura.idArticulo}`,
     unidades: String(cobertura.pendiente),
-    costoUnitario: cobertura.costoEstimado === null ? '' : String(cobertura.costoEstimado),
+    costoUnitario: cobertura.costoEstimado,
   }
 }
 
@@ -227,7 +229,7 @@ export function lineaCompletaParaEnvio(l: LineaDeCompraFormulario): boolean {
     l.idArticulo !== '' &&
     l.idAlicuotaIva !== '' &&
     l.unidades.trim() !== '' &&
-    l.costoUnitario.trim() !== '' &&
+    l.costoUnitario !== null &&
     (!l.controlaLote || l.fechaVencimiento.trim() !== '')
   )
 }
@@ -241,8 +243,8 @@ export function aLineaSolicitada(l: LineaDeCompraFormulario): LineaDeCompraSolic
     unidades: numero(l.unidades),
     bultos: numeroONulo(l.bultos),
     unidadesPorBulto: numeroONulo(l.unidadesPorBulto),
-    costoUnitario: numero(l.costoUnitario),
-    descuento: l.descuento.trim() === '' ? 0 : numero(l.descuento),
+    costoUnitario: l.costoUnitario ?? 0,
+    descuento: l.descuento ?? 0,
     idAlicuotaIva: Number(l.idAlicuotaIva),
     actualizaCosto: l.actualizaCosto,
     codigoLote: l.codigoLote.trim() === '' ? null : l.codigoLote.trim(),
@@ -313,8 +315,8 @@ export function lineaFormularioACalculo(
     unidades: numero(l.unidades),
     bultos: numero(l.bultos),
     unidadesPorBulto: numero(l.unidadesPorBulto),
-    costoUnitario: numero(l.costoUnitario),
-    descuento: numero(l.descuento),
+    costoUnitario: l.costoUnitario ?? 0,
+    descuento: l.descuento ?? 0,
     porcentajeIva: l.idAlicuotaIva === '' ? 0 : (porcentajePorAlicuota[l.idAlicuotaIva] ?? 0),
   }
 }

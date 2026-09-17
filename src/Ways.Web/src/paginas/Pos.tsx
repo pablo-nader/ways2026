@@ -42,8 +42,10 @@ import {
   previaDeLinea,
 } from '../api/ventas'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
+import { formatearImporte } from '../formato/importes'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 
 /** Piso de cantidad por línea, compartido entre el guard de edición y los atributos
@@ -63,12 +65,8 @@ function etiquetaDeCliente(c: ClienteListado): string {
   return `#${c.numero} — ${nombreCompleto}`
 }
 
-/** Formato monetario con signo correcto para negativos (`-$50,00`, nunca `$-50,00`) — incluye el
- * símbolo `$` para que ningún call-site tenga que prefijarlo a mano y arriesgarse a mal-ubicar
- * el signo. */
 function formatearMoneda(valor: number): string {
-  const signo = valor < 0 ? '-' : ''
-  return `${signo}$${Math.abs(valor).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return formatearImporte(valor, { simbolo: true })
 }
 
 function formatearFechaHora(iso: string): string {
@@ -96,7 +94,7 @@ type PropsPanelGateTurno = {
  * apretar "Cobrar" a mano, con el carrito y el panel de pagos intactos.
  */
 function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
-  const [fondoInicial, setFondoInicial] = useState('')
+  const [fondoInicial, setFondoInicial] = useState<number | null>(null)
   const [observaciones, setObservaciones] = useState('')
   const [abriendo, setAbriendo] = useState(false)
   const abriendoRef = useRef(false)
@@ -106,9 +104,11 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
     // regla 9 (react-async-state): guard de reentrancia de primera línea.
     if (abriendoRef.current) return
 
-    const fondo = Number(fondoInicial)
-    if (fondoInicial.trim() === '' || !Number.isFinite(fondo) || fondo < 0) {
-      setError('El fondo inicial tiene que ser un número mayor o igual a 0.')
+    // `fondoInicial < 0` es inalcanzable: `CampoImporte` de este campo no tiene
+    // `admiteNegativos`, así que nunca puede emitir un número negativo (mismo criterio que
+    // `PanelAperturaDeTurnoEnModal`, CuentaCorriente.tsx).
+    if (fondoInicial === null) {
+      setError('El fondo inicial es obligatorio.')
       return
     }
 
@@ -119,7 +119,7 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
     try {
       const turno = await clienteDeCaja.abrir({
         idPuntoVenta,
-        fondoInicial: fondo,
+        fondoInicial,
         observaciones: observaciones.trim() === '' ? null : observaciones.trim(),
       })
       onAbierto(turno)
@@ -168,15 +168,12 @@ function PanelGateTurno({ idPuntoVenta, onAbierto }: PropsPanelGateTurno) {
                 <label className="form-label" htmlFor="pos-gate-fondo-inicial">
                   Fondo inicial
                 </label>
-                <input
+                <CampoImporte
                   id="pos-gate-fondo-inicial"
-                  type="number"
-                  step="0.01"
-                  min="0"
                   className="form-control rounded-0"
-                  value={fondoInicial}
+                  valor={fondoInicial}
                   disabled={abriendo}
-                  onChange={(e) => setFondoInicial(e.target.value)}
+                  onChange={setFondoInicial}
                 />
               </div>
               <div className="col-md-5">
@@ -853,7 +850,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
         const medio = medioPorId[f.idMedioPago]
         if (medio?.comportamiento !== 'CuentaCorriente') return f
         cambio = true
-        return { ...f, idMedioPago: '' as const, vueltoManual: '' }
+        return { ...f, idMedioPago: '' as const, vueltoManual: null }
       })
       return cambio ? siguiente : prev
     })
@@ -1000,10 +997,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
 
   function cambiarMedioDeFila(id: number, idMedioPago: number | '') {
     if (cobrandoRef.current) return
-    setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, idMedioPago, vueltoManual: '' } : f)))
+    setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, idMedioPago, vueltoManual: null } : f)))
   }
 
-  function cambiarImporteDeFila(id: number, importe: string) {
+  function cambiarImporteDeFila(id: number, importe: number | null) {
     if (cobrandoRef.current) return
     setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, importe } : f)))
   }
@@ -1013,7 +1010,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, referencia } : f)))
   }
 
-  function cambiarVueltoDeFila(id: number, vueltoManual: string) {
+  function cambiarVueltoDeFila(id: number, vueltoManual: number | null) {
     if (cobrandoRef.current) return
     setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, vueltoManual } : f)))
   }
@@ -1256,7 +1253,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
    * diálogo. El input se ubica por `id` (armado con el mismo `fila.id` que ya identifica cada
    * fila unívocamente, ver `etiquetaDeCampoFila`) en vez de mantener un mapa de refs aparte. */
   function enfocarPrimeraFilaDePagoPendiente() {
-    const filaVacia = filasPago.find((f) => f.importe.trim() === '')
+    const filaVacia = filasPago.find((f) => f.importe === null)
     const idFila = (filaVacia ?? filasPago[0])?.id
     if (idFila === undefined) return
     document.getElementById(`pos-fila-pago-importe-${idFila}`)?.focus()
@@ -1887,7 +1884,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
             {filasPago.map((fila) => {
               const medioDeFila = fila.idMedioPago === '' ? null : (medioPorId[fila.idMedioPago] ?? null)
               const pagoDeFila = pagosConVuelto.find((p) => p.idFila === fila.id) ?? null
-              const vueltoMostrado = fila.vueltoManual !== '' ? fila.vueltoManual : String(pagoDeFila?.vuelto ?? 0)
+              const vueltoMostrado = fila.vueltoManual !== null ? fila.vueltoManual : (pagoDeFila?.vuelto ?? 0)
 
               return (
                 <div className="row g-2 mb-2 align-items-center" key={fila.id}>
@@ -1910,16 +1907,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                     </select>
                   </div>
                   <div className="col-3">
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
+                    <CampoImporte
                       id={`pos-fila-pago-importe-${fila.id}`}
                       className="form-control form-control-sm rounded-0"
                       aria-label={etiquetaDeCampoFila('Importe', medioDeFila, fila.id)}
-                      value={fila.importe}
+                      valor={fila.importe}
                       disabled={pantallaCobroInerte || bloqueadoPorTurno}
-                      onChange={(e) => cambiarImporteDeFila(fila.id, e.target.value)}
+                      onChange={(v) => cambiarImporteDeFila(fila.id, v)}
                     />
                   </div>
                   <div className="col-3">
@@ -1934,15 +1928,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                     />
                   </div>
                   <div className="col-2 d-flex align-items-center gap-1">
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
+                    <CampoImporte
                       className="form-control form-control-sm rounded-0"
                       aria-label={etiquetaDeCampoFila('Vuelto', medioDeFila, fila.id)}
-                      value={vueltoMostrado}
+                      valor={vueltoMostrado}
                       disabled={pantallaCobroInerte || bloqueadoPorTurno || !medioDeFila?.admiteVuelto}
-                      onChange={(e) => cambiarVueltoDeFila(fila.id, e.target.value)}
+                      onChange={(v) => cambiarVueltoDeFila(fila.id, v)}
                     />
                     {filasPago.length > 1 && (
                       <button

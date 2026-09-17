@@ -16,6 +16,7 @@ import {
 import { aSolicitudDeFacturacionDeRemitos, clienteDeRemitos, filtrosDeRemitosVacios, reducirSeleccionDeRemitos, totalDeRemitosElegidos } from '../api/remitos'
 import type { ClienteListado, MedioPagoAlta, MedioPagoListado, ParametroResuelto, PuntoVentaListado, RemitoListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
 
@@ -204,10 +205,10 @@ export function FacturarRemitos() {
 
   function cambiarMedioDeFila(id: number, idMedioPago: number | '') {
     if (ocupado) return
-    setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, idMedioPago, vueltoManual: '' } : f)))
+    setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, idMedioPago, vueltoManual: null } : f)))
   }
 
-  function cambiarImporteDeFila(id: number, importe: string) {
+  function cambiarImporteDeFila(id: number, importe: number | null) {
     if (ocupado) return
     setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, importe } : f)))
   }
@@ -217,7 +218,7 @@ export function FacturarRemitos() {
     setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, referencia } : f)))
   }
 
-  function cambiarVueltoDeFila(id: number, vueltoManual: string) {
+  function cambiarVueltoDeFila(id: number, vueltoManual: number | null) {
     if (ocupado) return
     setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, vueltoManual } : f)))
   }
@@ -428,7 +429,7 @@ export function FacturarRemitos() {
                         {filasPago.map((fila) => {
                           const medioDeFila = fila.idMedioPago === '' ? null : (medioPorId[fila.idMedioPago] ?? null)
                           const pagoDeFila = pagosConVuelto.find((p) => p.idFila === fila.id) ?? null
-                          const vueltoMostrado = fila.vueltoManual !== '' ? fila.vueltoManual : String(pagoDeFila?.vuelto ?? 0)
+                          const vueltoMostrado = fila.vueltoManual !== null ? fila.vueltoManual : (pagoDeFila?.vuelto ?? 0)
 
                           return (
                             <div className="row g-2 mb-2 align-items-center" key={fila.id}>
@@ -451,15 +452,12 @@ export function FacturarRemitos() {
                                 </select>
                               </div>
                               <div className="col-3">
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
+                                <CampoImporte
                                   className="form-control form-control-sm rounded-0"
                                   aria-label={etiquetaDeCampoFila('Importe', medioDeFila, fila.id)}
-                                  value={fila.importe}
+                                  valor={fila.importe}
                                   disabled={ocupado}
-                                  onChange={(e) => cambiarImporteDeFila(fila.id, e.target.value)}
+                                  onChange={(v) => cambiarImporteDeFila(fila.id, v)}
                                 />
                               </div>
                               <div className="col-3">
@@ -474,15 +472,12 @@ export function FacturarRemitos() {
                                 />
                               </div>
                               <div className="col-2 d-flex align-items-center gap-1">
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
+                                <CampoImporte
                                   className="form-control form-control-sm rounded-0"
                                   aria-label={etiquetaDeCampoFila('Vuelto', medioDeFila, fila.id)}
-                                  value={vueltoMostrado}
+                                  valor={vueltoMostrado}
                                   disabled={ocupado || !medioDeFila?.admiteVuelto}
-                                  onChange={(e) => cambiarVueltoDeFila(fila.id, e.target.value)}
+                                  onChange={(v) => cambiarVueltoDeFila(fila.id, v)}
                                 />
                                 {filasPago.length > 1 && (
                                   <button

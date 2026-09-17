@@ -24,8 +24,8 @@ function lineaFixture(sobrescribir: Partial<LineaDeCompraFormulario> = {}): Line
     unidades: '10',
     bultos: '',
     unidadesPorBulto: '',
-    costoUnitario: '100',
-    descuento: '50',
+    costoUnitario: 100,
+    descuento: 50,
     idAlicuotaIva: 3,
     actualizaCosto: true,
     controlaLote: false,
@@ -75,8 +75,8 @@ describe('lineaDeCompraVacia / itemAFormulario', () => {
       unidades: '',
       bultos: '',
       unidadesPorBulto: '',
-      costoUnitario: '',
-      descuento: '',
+      costoUnitario: null,
+      descuento: null,
       idAlicuotaIva: '',
       actualizaCosto: true,
       controlaLote: false,
@@ -131,7 +131,7 @@ describe('lineaCompletaParaEnvio', () => {
   })
 
   it('sin costo unitario tipeado no está completa', () => {
-    expect(lineaCompletaParaEnvio(lineaFixture({ costoUnitario: '' }))).toBe(false)
+    expect(lineaCompletaParaEnvio(lineaFixture({ costoUnitario: null }))).toBe(false)
   })
 
   it('un artículo que controla lote sin fecha de vencimiento no está completa (espejo del 400 lote_requerido del confirm)', () => {
@@ -164,8 +164,8 @@ describe('aLineaSolicitada', () => {
     })
   })
 
-  it('un descuento vacío se envía como 0, nunca NaN', () => {
-    expect(aLineaSolicitada(lineaFixture({ descuento: '' })).descuento).toBe(0)
+  it('un descuento null se envía como 0, nunca NaN', () => {
+    expect(aLineaSolicitada(lineaFixture({ descuento: null })).descuento).toBe(0)
   })
 
   it('bultos/unidadesPorBulto tipeados viajan como número', () => {

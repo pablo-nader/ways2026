@@ -6,6 +6,7 @@ import { clienteDeCatalogo } from '../api/catalogos'
 import { ErrorApi } from '../api/cliente'
 import type { MedioPagoAlta, MedioPagoListado, ResumenDeTurno, TurnoConArqueos } from '../api/tipos'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { formatearImporte } from '../formato/importes'
 
 const clienteMediosPago = clienteDeCatalogo<MedioPagoListado, MedioPagoAlta>('medios-pago')
@@ -62,7 +63,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
 
   // regla 1: un único record mutado SIEMPRE por updater funcional — ningún helper de acá lee el
   // estado del componente para armar el próximo valor.
-  const [conteos, setConteos] = useState<Record<number, string>>({})
+  const [conteos, setConteos] = useState<Record<number, number | null>>({})
   const [observaciones, setObservaciones] = useState('')
   const [confirmado, setConfirmado] = useState(false)
 
@@ -122,7 +123,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idTurnoValido])
 
-  function cambiarConteo(idMedioPago: number, valor: string) {
+  function cambiarConteo(idMedioPago: number, valor: number | null) {
     if (cerrandoRef.current) return
     setConteos((prev) => ({ ...prev, [idMedioPago]: valor }))
   }
@@ -304,7 +305,7 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                       </thead>
                       <tbody>
                         {resumen.medios.map((m) => {
-                          const valor = conteos[m.idMedioPago] ?? ''
+                          const valor = conteos[m.idMedioPago] ?? null
                           const nombreMedio = medioPorId[m.idMedioPago]?.nombre ?? `Medio #${m.idMedioPago}`
                           return (
                             <tr key={m.idMedioPago}>
@@ -316,21 +317,16 @@ export function CierreDeCaja({ rutaVolver = '/caja', alCerrarExitosamente }: Pro
                               </td>
                               <td className="text-end">{formatearMoneda(m.importeEsperado)}</td>
                               <td>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
+                                <CampoImporte
                                   className="form-control form-control-sm rounded-0"
                                   aria-label={`Declarado de ${nombreMedio}`}
-                                  value={valor}
+                                  valor={valor}
                                   disabled={cerrando}
-                                  onChange={(e) => cambiarConteo(m.idMedioPago, e.target.value)}
+                                  onChange={(v) => cambiarConteo(m.idMedioPago, v)}
                                 />
                               </td>
                               <td className="text-end">
-                                {conteoValido(valor)
-                                  ? formatearMoneda(diferenciaPrevia(m.importeEsperado, Number(valor)))
-                                  : '—'}
+                                {conteoValido(valor) ? formatearMoneda(diferenciaPrevia(m.importeEsperado, valor as number)) : '—'}
                               </td>
                             </tr>
                           )

@@ -36,6 +36,7 @@ import type {
 } from '../api/tipos'
 import { useAuth } from '../auth/useAuth'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
 
@@ -249,27 +250,22 @@ function FilaDeItem({ linea, alicuotas, disabled, discriminaIva, porcentajePorAl
         />
       </td>
       <td style={{ width: 110 }}>
-        <input
-          type="number"
-          step="0.0001"
-          min="0"
+        <CampoImporte
           className="form-control form-control-sm rounded-0"
           aria-label="Costo unitario"
-          value={linea.costoUnitario}
+          decimales={4}
+          valor={linea.costoUnitario}
           disabled={disabled}
-          onChange={(e) => onCambio(linea.clave, { costoUnitario: e.target.value })}
+          onChange={(v) => onCambio(linea.clave, { costoUnitario: v })}
         />
       </td>
       <td style={{ width: 100 }}>
-        <input
-          type="number"
-          step="0.01"
-          min="0"
+        <CampoImporte
           className={`form-control form-control-sm rounded-0 ${descuentoInvalido ? 'is-invalid' : ''}`}
           aria-label="Descuento"
-          value={linea.descuento}
+          valor={linea.descuento}
           disabled={disabled}
-          onChange={(e) => onCambio(linea.clave, { descuento: e.target.value })}
+          onChange={(v) => onCambio(linea.clave, { descuento: v })}
         />
         {descuentoInvalido && <div className="invalid-feedback">Mayor al bruto de la línea.</div>}
       </td>

@@ -192,17 +192,22 @@ describe('filasAPagosACuentaParaCalculo', () => {
   const medioPorId = { 1: medioFixture() }
 
   it('descarta una fila sin medio elegido', () => {
-    const filas: FilaPagoACuenta[] = [{ id: 1, idMedioPago: '', importe: '100', referencia: '', vuelto: '' }]
+    const filas: FilaPagoACuenta[] = [{ id: 1, idMedioPago: '', importe: 100, referencia: '', vuelto: null }]
     expect(filasAPagosACuentaParaCalculo(filas, medioPorId)).toEqual([])
   })
 
   it('descarta una fila sin importe positivo', () => {
-    const filas: FilaPagoACuenta[] = [{ id: 1, idMedioPago: 1, importe: '0', referencia: '', vuelto: '' }]
+    const filas: FilaPagoACuenta[] = [{ id: 1, idMedioPago: 1, importe: 0, referencia: '', vuelto: null }]
     expect(filasAPagosACuentaParaCalculo(filas, medioPorId)).toEqual([])
   })
 
-  it('una fila completa se convierte a pago de cálculo, vuelto vacío ⇒ 0', () => {
-    const filas: FilaPagoACuenta[] = [{ id: 1, idMedioPago: 1, importe: '500', referencia: '', vuelto: '' }]
+  it('descarta una fila con importe null', () => {
+    const filas: FilaPagoACuenta[] = [{ id: 1, idMedioPago: 1, importe: null, referencia: '', vuelto: null }]
+    expect(filasAPagosACuentaParaCalculo(filas, medioPorId)).toEqual([])
+  })
+
+  it('una fila completa se convierte a pago de cálculo, vuelto null ⇒ 0', () => {
+    const filas: FilaPagoACuenta[] = [{ id: 1, idMedioPago: 1, importe: 500, referencia: '', vuelto: null }]
     expect(filasAPagosACuentaParaCalculo(filas, medioPorId)).toEqual([
       {
         idFila: 1,
@@ -218,7 +223,7 @@ describe('filasAPagosACuentaParaCalculo', () => {
   })
 
   it('recorta la referencia y respeta el vuelto tipeado', () => {
-    const filas: FilaPagoACuenta[] = [{ id: 1, idMedioPago: 1, importe: '500', referencia: '  ref-1  ', vuelto: '20' }]
+    const filas: FilaPagoACuenta[] = [{ id: 1, idMedioPago: 1, importe: 500, referencia: '  ref-1  ', vuelto: 20 }]
     const resultado = filasAPagosACuentaParaCalculo(filas, medioPorId)
     expect(resultado[0].referencia).toBe('ref-1')
     expect(resultado[0].vuelto).toBe(20)
@@ -227,7 +232,7 @@ describe('filasAPagosACuentaParaCalculo', () => {
 
 describe('filaPagoACuentaVacia', () => {
   it('arma una fila vacía con el id dado', () => {
-    expect(filaPagoACuentaVacia(3)).toEqual({ id: 3, idMedioPago: '', importe: '', referencia: '', vuelto: '' })
+    expect(filaPagoACuentaVacia(3)).toEqual({ id: 3, idMedioPago: '', importe: null, referencia: '', vuelto: null })
   })
 })
 
