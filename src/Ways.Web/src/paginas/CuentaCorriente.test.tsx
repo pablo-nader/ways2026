@@ -564,7 +564,7 @@ describe('CuentaCorriente — modal de pago a cuenta', () => {
     // los datos del pago que ya se habían cargado en el modal siguen ahí — no se pierden al
     // recuperarse del gate de turno (el JSDoc de PanelAperturaDeTurnoEnModal lo promete).
     expect(screen.getByLabelText('Medio de pago')).toHaveValue('1')
-    expect(screen.getByLabelText('Importe')).toHaveValue(500)
+    expect(screen.getByLabelText('Importe')).toHaveValue('500,00')
   })
 })
 

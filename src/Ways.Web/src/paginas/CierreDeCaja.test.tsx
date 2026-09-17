@@ -292,7 +292,7 @@ describe('CierreDeCaja — checklist desactualizado tras un rechazo del servidor
 
     expect(await screen.findByText('Faltan medios por declarar.')).toBeInTheDocument()
     expect(await screen.findByLabelText('Declarado de Tarjeta')).toBeInTheDocument()
-    expect(screen.getByLabelText('Declarado de Efectivo')).toHaveValue(640)
+    expect(screen.getByLabelText('Declarado de Efectivo')).toHaveValue('640,00')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Finalizar cierre' })).toBeDisabled())
 
     await userEvent.type(screen.getByLabelText('Declarado de Tarjeta'), '300')

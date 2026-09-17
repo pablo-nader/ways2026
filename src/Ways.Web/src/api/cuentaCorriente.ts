@@ -147,10 +147,13 @@ export function medioFisicoParaPagoACuenta(medio: MedioPagoListado): boolean {
   return medio.comportamiento !== 'CuentaCorriente'
 }
 
-export type FilaPagoACuenta = { id: number; idMedioPago: number | ''; importe: string; referencia: string; vuelto: string }
+/** `importe`/`vuelto` son `number | null` (`null` = "vacío") — mismo shape que emite
+ * `CampoImporte` (ver `FilaPago`, pagos.ts). A diferencia de `FilaPago`, acá `vuelto` no tiene un
+ * sugerido derivado: el cajero lo tipea directo. */
+export type FilaPagoACuenta = { id: number; idMedioPago: number | ''; importe: number | null; referencia: string; vuelto: number | null }
 
 export function filaPagoACuentaVacia(id: number): FilaPagoACuenta {
-  return { id, idMedioPago: '', importe: '', referencia: '', vuelto: '' }
+  return { id, idMedioPago: '', importe: null, referencia: '', vuelto: null }
 }
 
 export type PagoACuentaParaCalculo = {
@@ -176,17 +179,15 @@ export function filasAPagosACuentaParaCalculo(
     if (fila.idMedioPago === '') continue
     const medio = medioPorId[fila.idMedioPago]
     if (!medio) continue
-    const importe = Number(fila.importe)
-    if (fila.importe.trim() === '' || !Number.isFinite(importe) || importe <= 0) continue
-    const vueltoCandidato = fila.vuelto.trim() === '' ? 0 : Number(fila.vuelto)
+    if (fila.importe === null || fila.importe <= 0) continue
     pagos.push({
       idFila: fila.id,
       idMedioPago: medio.id,
       comportamiento: medio.comportamiento,
       admiteVuelto: medio.admiteVuelto,
       requiereReferencia: medio.requiereReferencia,
-      importe,
-      vuelto: Number.isFinite(vueltoCandidato) ? vueltoCandidato : 0,
+      importe: fila.importe,
+      vuelto: fila.vuelto ?? 0,
       referencia: fila.referencia.trim() === '' ? null : fila.referencia.trim(),
     })
   }

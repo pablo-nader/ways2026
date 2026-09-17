@@ -185,29 +185,28 @@ describe('pagos — filasAPagosParaCalculo', () => {
   }
 
   it('descarta filas sin medio elegido', () => {
-    const filas: FilaPago[] = [{ id: 1, idMedioPago: '', importe: '100', referencia: '', vueltoManual: '' }]
+    const filas: FilaPago[] = [{ id: 1, idMedioPago: '', importe: 100, referencia: '', vueltoManual: null }]
     expect(filasAPagosParaCalculo(filas, medioPorId)).toEqual([])
   })
 
-  it('descarta filas con importe vacío, no numérico o <= 0', () => {
+  it('descarta filas con importe null, 0 o negativo', () => {
     const filas: FilaPago[] = [
-      { id: 1, idMedioPago: 1, importe: '', referencia: '', vueltoManual: '' },
-      { id: 2, idMedioPago: 1, importe: 'abc', referencia: '', vueltoManual: '' },
-      { id: 3, idMedioPago: 1, importe: '0', referencia: '', vueltoManual: '' },
-      { id: 4, idMedioPago: 1, importe: '-5', referencia: '', vueltoManual: '' },
+      { id: 1, idMedioPago: 1, importe: null, referencia: '', vueltoManual: null },
+      { id: 3, idMedioPago: 1, importe: 0, referencia: '', vueltoManual: null },
+      { id: 4, idMedioPago: 1, importe: -5, referencia: '', vueltoManual: null },
     ]
     expect(filasAPagosParaCalculo(filas, medioPorId)).toEqual([])
   })
 
   it('descarta filas cuyo medio no existe en el índice (catálogo todavía no cargó)', () => {
-    const filas: FilaPago[] = [{ id: 1, idMedioPago: 999, importe: '100', referencia: '', vueltoManual: '' }]
+    const filas: FilaPago[] = [{ id: 1, idMedioPago: 999, importe: 100, referencia: '', vueltoManual: null }]
     expect(filasAPagosParaCalculo(filas, medioPorId)).toEqual([])
   })
 
   it('mapea filas completas al shape de cálculo, con referencia vacía convertida a null', () => {
     const filas: FilaPago[] = [
-      { id: 1, idMedioPago: 1, importe: '80', referencia: '  ', vueltoManual: '' },
-      { id: 2, idMedioPago: 2, importe: '20', referencia: 'auth-123', vueltoManual: '' },
+      { id: 1, idMedioPago: 1, importe: 80, referencia: '  ', vueltoManual: null },
+      { id: 2, idMedioPago: 2, importe: 20, referencia: 'auth-123', vueltoManual: null },
     ]
     expect(filasAPagosParaCalculo(filas, medioPorId)).toEqual([
       { idFila: 1, idMedioPago: 1, comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false, importe: 80, referencia: null },
@@ -421,7 +420,7 @@ describe('pagos — validarPagosLocal (orden de rechazo, espejo de ValidadorDePa
 
 describe('pagos — filaPagoVacia', () => {
   it('arma una fila sin medio, importe, referencia ni vuelto manual', () => {
-    expect(filaPagoVacia(7)).toEqual({ id: 7, idMedioPago: '', importe: '', referencia: '', vueltoManual: '' })
+    expect(filaPagoVacia(7)).toEqual({ id: 7, idMedioPago: '', importe: null, referencia: '', vueltoManual: null })
   })
 })
 
@@ -445,7 +444,7 @@ describe('pagos — idMedioEfectivo', () => {
 describe('pagos — filaPagoInicial', () => {
   it('con un medio Efectivo configurado, preselecciona su id', () => {
     const efectivo = medioFixture({ id: 3, comportamiento: 'Efectivo' })
-    expect(filaPagoInicial(7, [efectivo])).toEqual({ id: 7, idMedioPago: 3, importe: '', referencia: '', vueltoManual: '' })
+    expect(filaPagoInicial(7, [efectivo])).toEqual({ id: 7, idMedioPago: 3, importe: null, referencia: '', vueltoManual: null })
   })
 
   it('sin medios cargados (null), se comporta igual que filaPagoVacia', () => {
@@ -460,23 +459,23 @@ describe('pagos — filaPagoInicial', () => {
 
 describe('pagos — vueltoDeFila', () => {
   it('un medio sin AdmiteVuelto nunca tiene vuelto, sin importar vueltoManual', () => {
-    const fila: FilaPago = { id: 1, idMedioPago: 1, importe: '120', referencia: '', vueltoManual: '99' }
+    const fila: FilaPago = { id: 1, idMedioPago: 1, importe: 120, referencia: '', vueltoManual: 99 }
     expect(vueltoDeFila(fila, false, 20)).toBe(0)
   })
 
-  it('sin tocar el campo (vueltoManual vacío), usa el sugerido', () => {
-    const fila: FilaPago = { id: 1, idMedioPago: 1, importe: '120', referencia: '', vueltoManual: '' }
+  it('sin tocar el campo (vueltoManual null), usa el sugerido', () => {
+    const fila: FilaPago = { id: 1, idMedioPago: 1, importe: 120, referencia: '', vueltoManual: null }
     expect(vueltoDeFila(fila, true, 20)).toBe(20)
   })
 
   it('con el campo tocado, usa el valor que tipeó el cajero', () => {
-    const fila: FilaPago = { id: 1, idMedioPago: 1, importe: '120', referencia: '', vueltoManual: '15' }
+    const fila: FilaPago = { id: 1, idMedioPago: 1, importe: 120, referencia: '', vueltoManual: 15 }
     expect(vueltoDeFila(fila, true, 20)).toBe(15)
   })
 
-  it('un vueltoManual no numérico cae al sugerido', () => {
-    const fila: FilaPago = { id: 1, idMedioPago: 1, importe: '120', referencia: '', vueltoManual: 'abc' }
-    expect(vueltoDeFila(fila, true, 20)).toBe(20)
+  it('un vueltoManual en 0 (tocado y borrado) se respeta tal cual, no cae al sugerido', () => {
+    const fila: FilaPago = { id: 1, idMedioPago: 1, importe: 120, referencia: '', vueltoManual: 0 }
+    expect(vueltoDeFila(fila, true, 20)).toBe(0)
   })
 })
 
@@ -487,7 +486,7 @@ describe('pagos — filasAPagosConVuelto', () => {
   }
 
   it('sin sobreescritura manual, usa el vuelto sugerido por fila', () => {
-    const filas: FilaPago[] = [{ id: 1, idMedioPago: 1, importe: '120', referencia: '', vueltoManual: '' }]
+    const filas: FilaPago[] = [{ id: 1, idMedioPago: 1, importe: 120, referencia: '', vueltoManual: null }]
     const resultado = filasAPagosConVuelto(filas, medioPorId, 100)
     expect(resultado).toEqual([
       { idFila: 1, idMedioPago: 1, comportamiento: 'Efectivo', admiteVuelto: true, requiereReferencia: false, importe: 120, referencia: null, vuelto: 20 },
@@ -495,13 +494,13 @@ describe('pagos — filasAPagosConVuelto', () => {
   })
 
   it('con sobreescritura manual sobre un medio que admite vuelto, la respeta', () => {
-    const filas: FilaPago[] = [{ id: 1, idMedioPago: 1, importe: '120', referencia: '', vueltoManual: '25' }]
+    const filas: FilaPago[] = [{ id: 1, idMedioPago: 1, importe: 120, referencia: '', vueltoManual: 25 }]
     const resultado = filasAPagosConVuelto(filas, medioPorId, 100)
     expect(resultado[0].vuelto).toBe(25)
   })
 
   it('una sobreescritura manual sobre un medio sin AdmiteVuelto se ignora, siempre queda en 0', () => {
-    const filas: FilaPago[] = [{ id: 1, idMedioPago: 2, importe: '100', referencia: 'auth', vueltoManual: '10' }]
+    const filas: FilaPago[] = [{ id: 1, idMedioPago: 2, importe: 100, referencia: 'auth', vueltoManual: 10 }]
     const resultado = filasAPagosConVuelto(filas, medioPorId, 100)
     expect(resultado[0].vuelto).toBe(0)
   })
@@ -512,8 +511,8 @@ describe('pagos — filasAPagosConVuelto', () => {
     // Antes de la corrección, un Map keyed por `idMedioPago` colapsaba ambas filas y las dos
     // terminaban resolviendo al `vueltoManual` de la ÚLTIMA fila registrada.
     const filas: FilaPago[] = [
-      { id: 1, idMedioPago: 1, importe: '80', referencia: '', vueltoManual: '' },
-      { id: 2, idMedioPago: 1, importe: '50', referencia: '', vueltoManual: '5' },
+      { id: 1, idMedioPago: 1, importe: 80, referencia: '', vueltoManual: null },
+      { id: 2, idMedioPago: 1, importe: 50, referencia: '', vueltoManual: 5 },
     ]
     const resultado = filasAPagosConVuelto(filas, medioPorId, 100)
 

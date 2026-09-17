@@ -794,7 +794,7 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
       expect((screen.getByLabelText('Punto de venta') as HTMLSelectElement).value).toBe('2')
     })
     expect(screen.getByLabelText('Unidades')).toHaveValue(2) // Pendiente, no Pedida
-    expect(screen.getByLabelText('Costo unitario')).toHaveValue(100) // CostoEstimado de la cobertura
+    expect(screen.getByLabelText('Costo unitario')).toHaveValue('100,0000') // CostoEstimado de la cobertura
   })
 
   it('excluye artículos con Pendiente = 0 (ya recibidos por completo)', async () => {
@@ -823,7 +823,7 @@ describe('CompraEditor — pre-carga desde una orden de compra (?idOrdenCompra=)
     renderEditorEnRuta('/compras/nueva?idOrdenCompra=30')
 
     await screen.findByText(/Vinculada a la orden de compra/)
-    expect(screen.getByLabelText('Costo unitario')).toHaveValue(null)
+    expect(screen.getByLabelText('Costo unitario')).toHaveValue('')
   })
 
   it('sin ?idOrdenCompra= no dispara ningún fetch a /ordenes-compra ni muestra el aviso de vínculo', async () => {

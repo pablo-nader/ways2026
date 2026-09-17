@@ -419,15 +419,12 @@ function ModalPagoACuenta({ idCliente, puntosVenta, medios, header, onCerrar, on
                           <label className="form-label" htmlFor={`cc-pago-importe-${fila.id}`}>
                             Importe
                           </label>
-                          <input
+                          <CampoImporte
                             id={`cc-pago-importe-${fila.id}`}
-                            type="number"
-                            step="0.01"
-                            min="0"
                             className="form-control rounded-0"
-                            value={fila.importe}
+                            valor={fila.importe}
                             disabled={registrando}
-                            onChange={(e) => actualizarFila(fila.id, { importe: e.target.value })}
+                            onChange={(v) => actualizarFila(fila.id, { importe: v })}
                           />
                         </div>
                         <div className="col-md-3">
@@ -447,15 +444,12 @@ function ModalPagoACuenta({ idCliente, puntosVenta, medios, header, onCerrar, on
                           <label className="form-label" htmlFor={`cc-pago-vuelto-${fila.id}`}>
                             Vuelto
                           </label>
-                          <input
+                          <CampoImporte
                             id={`cc-pago-vuelto-${fila.id}`}
-                            type="number"
-                            step="0.01"
-                            min="0"
                             className="form-control rounded-0"
-                            value={fila.vuelto}
+                            valor={fila.vuelto}
                             disabled={registrando || !medioDeFila?.admiteVuelto}
-                            onChange={(e) => actualizarFila(fila.id, { vuelto: e.target.value })}
+                            onChange={(v) => actualizarFila(fila.id, { vuelto: v })}
                           />
                         </div>
                         <div className="col-md-2">

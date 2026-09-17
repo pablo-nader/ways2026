@@ -22,20 +22,22 @@ export type PagoParaCalculo = {
   referencia: string | null
 }
 
-/** Fila del panel de pagos: estado controlado (texto), igual criterio que el resto de los
- * formularios de la pantalla. `vueltoManual` es la sobreescritura del cajero sobre el vuelto
- * sugerido (`''` ⇒ todavía no la tocó, se usa el sugerido) — solo aplica en medios con
- * `AdmiteVuelto`, un medio sin vuelto nunca tiene uno propio (`vueltoDeFila`). */
+/** Fila del panel de pagos: estado controlado, igual criterio que el resto de los formularios de
+ * la pantalla. `importe`/`vueltoManual` son `number | null` (`null` = "vacío") — el mismo shape
+ * que emite `CampoImporte`, así ningún call-site tiene que parsear texto a mano. `vueltoManual` es
+ * la sobreescritura del cajero sobre el vuelto sugerido (`null` ⇒ todavía no la tocó, se usa el
+ * sugerido) — solo aplica en medios con `AdmiteVuelto`, un medio sin vuelto nunca tiene uno propio
+ * (`vueltoDeFila`). */
 export type FilaPago = {
   id: number
   idMedioPago: number | ''
-  importe: string
+  importe: number | null
   referencia: string
-  vueltoManual: string
+  vueltoManual: number | null
 }
 
 export function filaPagoVacia(id: number): FilaPago {
-  return { id, idMedioPago: '', importe: '', referencia: '', vueltoManual: '' }
+  return { id, idMedioPago: '', importe: null, referencia: '', vueltoManual: null }
 }
 
 /** Id del medio de pago con `comportamiento === 'Efectivo'` — mismo criterio que
@@ -166,15 +168,14 @@ export function filasAPagosParaCalculo(filas: FilaPago[], medioPorId: Record<num
     if (fila.idMedioPago === '') continue
     const medio = medioPorId[fila.idMedioPago]
     if (!medio) continue
-    const importe = Number(fila.importe)
-    if (fila.importe.trim() === '' || !Number.isFinite(importe) || importe <= 0) continue
+    if (fila.importe === null || fila.importe <= 0) continue
     pagos.push({
       idFila: fila.id,
       idMedioPago: medio.id,
       comportamiento: medio.comportamiento,
       admiteVuelto: medio.admiteVuelto,
       requiereReferencia: medio.requiereReferencia,
-      importe,
+      importe: fila.importe,
       referencia: fila.referencia.trim() === '' ? null : fila.referencia.trim(),
     })
   }
@@ -196,12 +197,11 @@ export function calcularPagosConVuelto(pagos: PagoParaCalculo[], total: number):
 /** Vuelto final de una fila: lo que tipeó el cajero si tocó el campo (`vueltoManual`), si no el
  * sugerido — un medio sin `AdmiteVuelto` nunca tiene vuelto propio, sin importar lo que diga
  * `vueltoManual` (el input queda deshabilitado en pantalla para ese caso, esto es la defensa
- * equivalente del lado del cálculo). */
+ * equivalente del lado del cálculo). `vueltoManual` ya viene validado/redondeado por
+ * `CampoImporte` (nunca `NaN`) — `null` es la única forma de "no tocado". */
 export function vueltoDeFila(fila: FilaPago, admiteVuelto: boolean, sugerido: number): number {
   if (!admiteVuelto) return 0
-  if (fila.vueltoManual.trim() === '') return sugerido
-  const manual = Number(fila.vueltoManual)
-  return Number.isFinite(manual) ? manual : sugerido
+  return fila.vueltoManual === null ? sugerido : fila.vueltoManual
 }
 
 /**

@@ -312,7 +312,7 @@ beforeEach(() => {
   })
 })
 
-/** Deja el carrito con una línea de Coca Cola ($100, sin descuento) y el panel de pagos listo:
+/** Deja el carrito con una línea de Coca Cola ($ 100, sin descuento) y el panel de pagos listo:
  * medio Efectivo elegido, importe = total. Punto de partida de los tests de checkout. */
 async function armarVentaLista() {
   renderPos()
@@ -321,7 +321,7 @@ async function armarVentaLista() {
   await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
   await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
   await screen.findByText('Coca Cola 1L')
-  await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
 
   await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
   const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
@@ -342,7 +342,7 @@ async function armarCarritoConUnaLinea() {
 }
 
 describe('Pos — formato de moneda negativa (regresión, INFO recurrente desde slice 6)', () => {
-  it('un total negativo en el ticket antepone el signo al símbolo ($): "-$50,00", nunca "$-50,00"', async () => {
+  it('un total negativo en el ticket antepone el signo al símbolo ($): "-$ 50,00", nunca "$ -50,00"', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/ofertas/resolver') {
         const resultados: ResultadoDeResolucion[] = [
@@ -361,7 +361,7 @@ describe('Pos — formato de moneda negativa (regresión, INFO recurrente desde 
     await armarVentaLista()
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
-    expect(await screen.findByText(/Total: -\$50,00/)).toBeInTheDocument()
+    expect(await screen.findByText(/Total: -\$ 50,00/)).toBeInTheDocument()
   })
 })
 
@@ -574,12 +574,12 @@ describe('Pos — vista previa de precios', () => {
     await waitFor(() => expect(screen.getByLabelText('Cantidad de Coca Cola 1L')).toHaveValue(2))
 
     const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
-    await waitFor(() => expect(within(fila).getByText('$120,00')).toBeInTheDocument())
-    expect(within(fila).getByText('$100,00')).toBeInTheDocument()
-    expect(within(fila).getByText('$200,00')).toBeInTheDocument()
+    await waitFor(() => expect(within(fila).getByText('$ 120,00')).toBeInTheDocument())
+    expect(within(fila).getByText('$ 100,00')).toBeInTheDocument()
+    expect(within(fila).getByText('$ 200,00')).toBeInTheDocument()
     expect(within(fila).getByText('2x1 Gaseosas')).toBeInTheDocument()
 
-    await waitFor(() => expect(screen.getByText('$200,00', { selector: 'strong' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 200,00', { selector: 'strong' })).toBeInTheDocument())
   })
 
   it('una resolución rechazada muestra el aviso no bloqueante y el carrito sigue usable', async () => {
@@ -640,7 +640,7 @@ describe('Pos — vista previa de precios', () => {
 
     // Sin total confiable, el vuelto sugerido no puede ser el importe tendido completo — el
     // cajero no tocó el campo de vuelto, tiene que seguir mostrando 0.
-    expect(screen.getByLabelText('Vuelto de Efectivo (fila 1)')).toHaveValue(0)
+    expect(screen.getByLabelText('Vuelto de Efectivo (fila 1)')).toHaveValue('0,00')
 
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
@@ -680,7 +680,7 @@ describe('Pos — vista previa de precios', () => {
     await userEvent.type(entrada, '7790001234567')
     await userEvent.click(boton)
     await screen.findByText('Coca Cola 1L')
-    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
 
     // Segunda mutación (re-escaneo, suma cantidad sobre la misma línea): dispara una segunda
     // resolución que esta vez rechaza.
@@ -694,7 +694,7 @@ describe('Pos — vista previa de precios', () => {
 
     const filaTotalPrevio = screen.getByText('Total previo').closest('div') as HTMLElement
     await waitFor(() => expect(within(filaTotalPrevio).getByText('—')).toBeInTheDocument())
-    expect(screen.queryByText('$200,00', { selector: 'strong' })).not.toBeInTheDocument()
+    expect(screen.queryByText('$ 200,00', { selector: 'strong' })).not.toBeInTheDocument()
     expect(screen.getAllByText('se confirma al cobrar')).toHaveLength(2)
   })
 
@@ -732,7 +732,7 @@ describe('Pos — vista previa de precios', () => {
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
 
     const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
-    await waitFor(() => expect(within(fila).getByText('$90,00')).toBeInTheDocument())
+    await waitFor(() => expect(within(fila).getByText('$ 90,00')).toBeInTheDocument())
 
     await act(async () => {
       resolverPrimera([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }])
@@ -740,7 +740,7 @@ describe('Pos — vista previa de precios', () => {
       await Promise.resolve()
     })
 
-    expect(within(fila).getByText('$90,00')).toBeInTheDocument()
+    expect(within(fila).getByText('$ 90,00')).toBeInTheDocument()
   })
 })
 
@@ -893,7 +893,7 @@ describe('Pos — checkout', () => {
 
     expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
     expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
-    expect(screen.getByText(/Total: \$100,00/)).toBeInTheDocument()
+    expect(screen.getByText(/Total: \$ 100,00/)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
@@ -938,7 +938,7 @@ describe('Pos — checkout', () => {
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
-    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '100')
@@ -1069,7 +1069,7 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')).toHaveLength(1)
   })
 
-  it('un fondo inicial negativo en el panel del gate se rechaza localmente, sin disparar el POST de apertura', async () => {
+  it('un fondo inicial negativo en el panel del gate es inalcanzable — CampoImporte descarta el signo "-" sin admiteNegativos', async () => {
     await armarVentaLista()
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/ventas') {
@@ -1081,9 +1081,23 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
     await screen.findByText('No hay un turno abierto')
 
     await userEvent.type(screen.getByLabelText('Fondo inicial'), '-10')
+    expect(screen.getByLabelText('Fondo inicial')).toHaveValue('10')
+  })
+
+  it('un fondo inicial vacío en el panel del gate se rechaza localmente, sin disparar el POST de apertura', async () => {
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') {
+        return Promise.reject(new ErrorApi(409, 'turno_no_abierto', 'No hay un turno abierto en este punto de venta.'))
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByText('No hay un turno abierto')
+
     await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
 
-    expect(await screen.findByText('El fondo inicial tiene que ser un número mayor o igual a 0.')).toBeInTheDocument()
+    expect(await screen.findByText('El fondo inicial es obligatorio.')).toBeInTheDocument()
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/caja/turnos')).toHaveLength(0)
   })
 
@@ -1714,7 +1728,7 @@ describe('Pos — checkout: split de pago con el mismo medio', () => {
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
-    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '60')
@@ -1745,6 +1759,53 @@ describe('Pos — checkout: split de pago con el mismo medio', () => {
       { idMedioPago: medioEfectivo.id, importe: 60, referencia: null, vuelto: 0 },
       { idMedioPago: medioEfectivo.id, importe: 50, referencia: null, vuelto: 10 },
     ])
+  })
+})
+
+describe('Pos — CampoImporte en el panel de pagos: separador de miles y decimales con coma', () => {
+  it('tipear "10.000" (con separador de miles) en el importe se interpreta como 10000 — la vista se actualiza y el checkout envía el número correcto', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText('Importe de Efectivo (fila 1)')
+    await userEvent.type(importe, '10.000')
+    importe.blur()
+
+    await waitFor(() => expect(importe).toHaveValue('10.000,00'))
+    // Excedente = 10000 − 100 = 9900, con separador de miles en la vista previa de "Vuelto".
+    await waitFor(() => expect(screen.getByText('$ 9.900,00')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await waitFor(() => expect(apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')).toBe(true))
+    const llamadaVentas = apiPostMock.mock.calls.find((llamada) => llamada[0] === '/ventas')
+    const solicitud = llamadaVentas?.[1] as { pagos: { importe: number; vuelto: number }[] }
+    expect(solicitud.pagos[0].importe).toBe(10000)
+    expect(typeof solicitud.pagos[0].importe).toBe('number')
+  })
+
+  it('tipear "10000" (sin puntos) y "10000,5" (con decimales) en el importe también se interpretan correctamente', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText('Importe de Efectivo (fila 1)')
+
+    await userEvent.type(importe, '10000')
+    importe.blur()
+    await waitFor(() => expect(importe).toHaveValue('10.000,00'))
+
+    await userEvent.clear(importe)
+    await userEvent.type(importe, '10000,5')
+    importe.blur()
+    await waitFor(() => expect(importe).toHaveValue('10.000,50'))
   })
 })
 
@@ -2170,7 +2231,7 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     expect(screen.getByLabelText('Cliente')).toBeDisabled()
 
     // El total mostrado es el del presupuesto congelado, nunca uno recalculado por resolución.
-    expect(screen.getByText('$200,00', { selector: 'strong' })).toBeInTheDocument()
+    expect(screen.getByText('$ 200,00', { selector: 'strong' })).toBeInTheDocument()
 
     // Regla central de la tarea: ninguna resolución de precio bajo este modo.
     expect(apiPostMock).not.toHaveBeenCalledWith('/ofertas/resolver', expect.anything())
@@ -2298,7 +2359,7 @@ describe('Pos — seam alEmitir (stage-desktop-pos)', () => {
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
-    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '100')
@@ -2730,7 +2791,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
 
   /**
    * Cláusula bajo prueba: `pagosCubrenElTotal` (`faltante <= toleranciaPago`) — con
-   * `tolerancia_pago = 10` (mock base) y un importe de $50 contra un total de $100, falta $50,
+   * `tolerancia_pago = 10` (mock base) y un importe de $ 50 contra un total de $ 100, falta $ 50,
    * muy por encima de la tolerancia. Mutación aplicada manualmente: forzar la rama de "cubre el
    * total" a tomarse siempre (saltear el chequeo) → este test pasa a rojo (abre el diálogo en vez
    * de enfocar). Revertido, vuelve a verde — evidencia registrada en el informe de la tarea.
@@ -2741,7 +2802,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
-    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
     await userEvent.type(importe, '50')
@@ -2762,9 +2823,9 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     fireEvent.keyDown(document, { key: 'F9' })
 
     const dialogo = within(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' }))
-    expect(dialogo.getByText('Total: $100,00')).toBeInTheDocument()
-    expect(dialogo.getByText('Pagado: $100,00')).toBeInTheDocument()
-    expect(dialogo.getByText('Vuelto: $0,00')).toBeInTheDocument()
+    expect(dialogo.getByText('Total: $ 100,00')).toBeInTheDocument()
+    expect(dialogo.getByText('Pagado: $ 100,00')).toBeInTheDocument()
+    expect(dialogo.getByText('Vuelto: $ 0,00')).toBeInTheDocument()
   })
 
   /**
@@ -2963,7 +3024,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
-    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '50')
 
@@ -2986,7 +3047,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
     await screen.findByText('Coca Cola 1L')
-    await waitFor(() => expect(screen.getByText('$100,00', { selector: 'strong' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('$ 100,00', { selector: 'strong' })).toBeInTheDocument())
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
     await userEvent.type(await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`), '50')
     await userEvent.click(screen.getByRole('button', { name: '+ Agregar medio de pago' }))
@@ -3028,7 +3089,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeDisabled()
   })
 
-  it('K4: con la vista previa de precios fallida, el diálogo no inventa "$0,00" — muestra el aviso de total no disponible', async () => {
+  it('K4: con la vista previa de precios fallida, el diálogo no inventa "$ 0,00" — muestra el aviso de total no disponible', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/ofertas/resolver') return Promise.reject(new Error('falló la resolución'))
       if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture())
@@ -3051,7 +3112,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     const dialogo = within(await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' }))
     expect(dialogo.getByText(/Total no disponible/)).toBeInTheDocument()
     expect(dialogo.queryByText(/^Total: /)).not.toBeInTheDocument()
-    expect(dialogo.queryByText('$0,00')).not.toBeInTheDocument()
+    expect(dialogo.queryByText('$ 0,00')).not.toBeInTheDocument()
   })
 
   it('K5: los botones del diálogo exponen su atajo con aria-keyshortcuts', async () => {
