@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { ROL } from '../api/tipos'
 import type { VentaDeTurnoListado } from '../api/tipos'
-import { claseDeBadgeDeEstadoVenta, etiquetaDeEstadoVenta, formatearMoneda, puedeAnular, totalesDeVentas } from './utilidadesVentasDelTurno'
+import {
+  claseDeBadgeDeEstadoVenta,
+  etiquetaDeEstadoVenta,
+  formatearFechaHora,
+  formatearMoneda,
+  puedeAnular,
+  totalesDeVentas,
+} from './utilidadesVentasDelTurno'
 
 function ventaFixture(sobrescribir: Partial<VentaDeTurnoListado> = {}): VentaDeTurnoListado {
   return {
@@ -33,6 +40,13 @@ describe('etiquetaDeEstadoVenta / claseDeBadgeDeEstadoVenta', () => {
 describe('formatearMoneda', () => {
   it('formatea con separador de miles y dos decimales, es-AR', () => {
     expect(formatearMoneda(1234.5)).toBe('$1.234,50')
+  })
+})
+
+describe('formatearFechaHora', () => {
+  it('delega en toLocaleString("es-AR") — mismo criterio que Caja.test.tsx (independiente de la zona horaria del entorno)', () => {
+    const iso = '2026-09-16T12:05:00Z'
+    expect(formatearFechaHora(iso)).toBe(new Date(iso).toLocaleString('es-AR'))
   })
 })
 

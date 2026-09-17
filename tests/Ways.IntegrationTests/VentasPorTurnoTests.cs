@@ -90,7 +90,7 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     /// <summary>Comprobante + pagos sembrados directo (bypass <c>EmitirAsync</c>) — mismo criterio
     /// que <c>VentasTurnoWiringTests.SembrarPagoAsync</c>: el punto de estas pruebas es el listado,
     /// no el checkout.</summary>
-    private async Task<int> SembrarComprobanteAsync(
+    private async Task<(int Id, long Numero)> SembrarComprobanteAsync(
         Contexto ctx, int? idTurno, int idCliente, decimal total, EstadoComprobante estado,
         DateTimeOffset fecha, params int[] idsMedioPago)
     {
@@ -127,7 +127,7 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         }
         await db.SaveChangesAsync();
 
-        return comprobante.Id;
+        return (comprobante.Id, comprobante.Numero);
     }
 
     private async Task<(int Efectivo, int Tarjeta)> MediosDePagoAsync(Contexto ctx)
@@ -143,12 +143,21 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
     {
         var ctx = await PrepararAsync(nameof(ListaLasVentasDelTurnoNewestFirstIncluyendoAnuladasConClienteYMedios));
         var idTurno = await AbrirTurnoAsync(ctx);
-        var idCliente = await SembrarClienteAsync(ctx, "Cliente Reconciliación");
+        // Dos clientes DISTINTOS (no el mismo repetido en las dos filas) — mutation-proof-tests
+        // regla 12(b): cada campo proyectado se asertea por fila con un valor que discrimina esa
+        // fila de la otra, así un swap de columnas (ej. Total↔Subtotal, o un IdCliente pisado) no
+        // puede pasar por casualidad.
+        var idClienteUno = await SembrarClienteAsync(ctx, "Cliente Reconciliación Uno");
+        var idClienteDos = await SembrarClienteAsync(ctx, "Cliente Reconciliación Dos");
         var (efectivo, tarjeta) = await MediosDePagoAsync(ctx);
 
-        var t0 = DateTimeOffset.UtcNow.AddMinutes(-10);
-        var idPrimera = await SembrarComprobanteAsync(ctx, idTurno, idCliente, 100m, EstadoComprobante.Emitido, t0, efectivo);
-        var idSegunda = await SembrarComprobanteAsync(ctx, idTurno, idCliente, 200m, EstadoComprobante.Anulado, t0.AddMinutes(5), efectivo, tarjeta);
+        // Segundos exactos (sin sub-segundo): timestamptz de Postgres solo garantiza precisión de
+        // microsegundos, un DateTimeOffset.UtcNow con ticks sub-microsegundo podría no rendundar
+        // igual al volver — un valor redondo evita ese falso negativo en el Assert.Equal de Fecha.
+        var t0 = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
+        var t1 = t0.AddMinutes(5);
+        var primera = await SembrarComprobanteAsync(ctx, idTurno, idClienteUno, 100m, EstadoComprobante.Emitido, t0, efectivo);
+        var segunda = await SembrarComprobanteAsync(ctx, idTurno, idClienteDos, 200m, EstadoComprobante.Anulado, t1, efectivo, tarjeta);
 
         var respuesta = await ctx.Admin.GetAsync($"/api/ventas/por-turno/{idTurno}");
         var cuerpo = await respuesta.Content.ReadAsStringAsync();
@@ -157,14 +166,28 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var filas = JsonSerializer.Deserialize<List<VentaDeTurnoListado>>(cuerpo, OpcionesJson)!;
 
         Assert.Equal(2, filas.Count);
-        // newest-first: la anulada (más reciente) primero.
-        Assert.Equal(idSegunda, filas[0].Id);
+        // newest-first: la anulada (más reciente) primero. Cada campo proyectado de
+        // VentaDeTurnoListado se assertea explícito por fila (mutation-proof-tests regla 12(b)):
+        // un swap de Total↔Subtotal, un Numero/NumeroVisible desalineados, una Fecha hardcodeada
+        // o un IdCliente de la otra fila hacen fallar este bloque.
+        Assert.Equal(segunda.Id, filas[0].Id);
+        Assert.Equal(segunda.Numero, filas[0].Numero);
+        Assert.Equal(NumeroDeComprobante.Formatear(ctx.IdPuntoVenta, segunda.Numero), filas[0].NumeroVisible);
         Assert.Equal(EstadoComprobante.Anulado, filas[0].Estado);
-        Assert.Equal("Cliente Reconciliación", filas[0].NombreCliente);
+        Assert.Equal(t1, filas[0].Fecha);
+        Assert.Equal(idClienteDos, filas[0].IdCliente);
+        Assert.Equal("Cliente Reconciliación Dos", filas[0].NombreCliente);
+        Assert.Equal(200m, filas[0].Total);
         Assert.Equal(2, filas[0].MediosDePago.Count);
 
-        Assert.Equal(idPrimera, filas[1].Id);
+        Assert.Equal(primera.Id, filas[1].Id);
+        Assert.Equal(primera.Numero, filas[1].Numero);
+        Assert.Equal(NumeroDeComprobante.Formatear(ctx.IdPuntoVenta, primera.Numero), filas[1].NumeroVisible);
         Assert.Equal(EstadoComprobante.Emitido, filas[1].Estado);
+        Assert.Equal(t0, filas[1].Fecha);
+        Assert.Equal(idClienteUno, filas[1].IdCliente);
+        Assert.Equal("Cliente Reconciliación Uno", filas[1].NombreCliente);
+        Assert.Equal(100m, filas[1].Total);
         Assert.Single(filas[1].MediosDePago);
     }
 
@@ -176,7 +199,7 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         var (efectivo, _) = await MediosDePagoAsync(ctx);
 
         var idTurnoA = await AbrirTurnoAsync(ctx);
-        var idVentaTurnoA = await SembrarComprobanteAsync(
+        var (idVentaTurnoA, _) = await SembrarComprobanteAsync(
             ctx, idTurnoA, idCliente, 50m, EstadoComprobante.Emitido, DateTimeOffset.UtcNow, efectivo);
 
         // Turno A cerrado vía el endpoint real (no a mano): el punto de esta prueba es un
@@ -187,7 +210,7 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(HttpStatusCode.OK, respuestaCierre.StatusCode);
 
         var idTurnoB = await AbrirTurnoAsync(ctx);
-        var idVentaTurnoB = await SembrarComprobanteAsync(
+        var (idVentaTurnoB, _) = await SembrarComprobanteAsync(
             ctx, idTurnoB, idCliente, 75m, EstadoComprobante.Emitido, DateTimeOffset.UtcNow, efectivo);
 
         var respuesta = await ctx.Admin.GetAsync($"/api/ventas/por-turno/{idTurnoB}");

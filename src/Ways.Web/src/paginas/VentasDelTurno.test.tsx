@@ -221,6 +221,38 @@ describe('VentasDelTurno — anulación', () => {
     expect(screen.getByText('Emitida')).toBeInTheDocument()
   })
 
+  it('Cancelar después de un error de anulación limpia el aviso — no queda un banner huérfano', async () => {
+    const { ErrorApi } = await import('../api/cliente')
+    mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 10 })] })
+    render(<VentasDelTurno />)
+
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'turno_cerrado', 'El turno ya está cerrado.'))
+    await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
+    await screen.findByText('El turno ya está cerrado.')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByText('El turno ya está cerrado.')).not.toBeInTheDocument()
+  })
+
+  it('Escape después de un error de anulación también limpia el aviso', async () => {
+    const { ErrorApi } = await import('../api/cliente')
+    mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 11 })] })
+    render(<VentasDelTurno />)
+
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Anular' }))
+
+    apiPostMock.mockRejectedValueOnce(new ErrorApi(409, 'turno_cerrado', 'El turno ya está cerrado.'))
+    await userEvent.click(screen.getByRole('button', { name: 'Anular venta' }))
+    await screen.findByText('El turno ya está cerrado.')
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByText('El turno ya está cerrado.')).not.toBeInTheDocument()
+  })
+
   it('un 403 del servidor se traduce a un mensaje de permisos, no al texto crudo del servidor', async () => {
     const { ErrorApi } = await import('../api/cliente')
     mockearRutas({ turno: turnoFixture(), ventas: [ventaFixture({ id: 5 })] })

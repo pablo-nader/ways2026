@@ -120,6 +120,7 @@ export function VentasDelTurno() {
 
   function cancelarAnular() {
     setFilaAAnular(null)
+    setErrorAnular('')
   }
 
   async function confirmarAnular() {
