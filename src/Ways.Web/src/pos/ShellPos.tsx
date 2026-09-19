@@ -19,6 +19,7 @@ import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFi
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
 import { reporteZ, ticketDeVenta } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
+import { RanuraHeaderPosContext } from './RanuraHeaderPosContext'
 
 type Props = {
   dispositivo: DispositivoActual
@@ -54,6 +55,12 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
 
   const [cerrandoSesion, setCerrandoSesion] = useState(false)
   const cerrandoSesionRef = useRef(false)
+
+  // stage-pos-caja-en-cabecera: nodo del contenedor que reserva en el header para los controles
+  // de caja de `Pos.tsx` (ver `RanuraHeaderPosContext`) — `useState` (no un `useRef` solo) porque
+  // los consumidores del contexto necesitan volver a renderizar apenas el nodo existe, recién
+  // después del primer commit de este componente.
+  const [nodoRanuraHeader, setNodoRanuraHeader] = useState<HTMLDivElement | null>(null)
 
   // stage-desktop-pos (Fix judgment-day W1/W2, corregido en la ronda 2 — R2-1/R2-2): el shell es
   // el ÚNICO dueño de la impresión de escritorio — tanto el ticket de venta como el reporte Z
@@ -185,6 +192,10 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
   return (
     <AuthContext.Provider value={valorAuth}>
       <ProveedorDePuntoVentaFijo puntoVenta={puntoVenta}>
+        {/* stage-pos-caja-en-cabecera: envuelve el árbol existente sin reindentarlo, a propósito
+            (mantiene chico el diff de un archivo que otro trabajo en paralelo también toca, en las
+            rutas de más abajo) — `RanuraHeaderPosContext` solo agrega el `Provider` alrededor. */}
+        <RanuraHeaderPosContext.Provider value={nodoRanuraHeader}>
         <div className="d-flex flex-column min-vh-100">
           <header className="navbar navbar-dark bg-dark px-3 py-2 d-print-none">
             <div className="d-flex flex-column">
@@ -193,6 +204,11 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
                 PV {dispositivo.puntoVenta.numero} — {dispositivo.puntoVenta.nombre} · {usuario.usuario}
               </small>
             </div>
+            {/* stage-pos-caja-en-cabecera: contenedor vacío — `Pos.tsx` portalea acá el badge +
+                "Abrir caja"/"Cerrar caja" (ver `RanuraHeaderPosContext`). Nunca se renderiza nada
+                directamente en este `div`, así que el propio `ref` alcanza para saber si está
+                vacío o no en pantallas sin turno (ej. sin punto de venta). */}
+            <div className="d-flex align-items-center gap-2 flex-wrap" ref={setNodoRanuraHeader} />
             <div className="d-flex gap-2">
               <Link className="btn btn-success rounded-0" to="/vender">
                 Vender
@@ -273,6 +289,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             </Routes>
           </main>
         </div>
+        </RanuraHeaderPosContext.Provider>
       </ProveedorDePuntoVentaFijo>
     </AuthContext.Provider>
   )
