@@ -920,6 +920,58 @@ describe('Articulos — restauración de foco al cerrar el modal', () => {
   })
 })
 
+describe('Articulos — Baja de un artículo desde la grilla', () => {
+  /**
+   * Cláusula bajo prueba: el `setAviso` de `eliminar()` en `Articulos.tsx` y el bump de
+   * `pedidoDeRefresco` que le pide a `GrillaDeArticulos` refetchear. Mutation-proof-tests: borrar
+   * cualquiera de los dos deja este test sin ver el aviso o sin ver la fila actualizada tras el
+   * refresco (la fixture de la grilla cambia DESPUÉS de la Baja, así que solo el refresco real la
+   * revela).
+   */
+  it('una Baja exitosa muestra el aviso "dado de baja" y refresca la grilla con los datos nuevos', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    apiDeleteMock.mockResolvedValue(undefined)
+    renderArticulos()
+
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+
+    // Tras la Baja, el servidor ya no devuelve "Articulo Uno" — la única forma de verlo
+    // desaparecer es que la grilla haya vuelto a pedir el listado.
+    mockearApiGet({ grilla: paginaGrillaFixture([filaGrillaDos]) })
+
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Baja' }))
+
+    expect(await screen.findByText('Artículo "Articulo Uno" dado de baja.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Articulo Uno')).not.toBeInTheDocument())
+    expect(screen.getByText('Articulo Dos')).toBeInTheDocument()
+
+    confirmSpy.mockRestore()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `catch` de `eliminar()` en `Articulos.tsx` (`setError` con el mensaje
+   * de `ErrorApi`). Mutation-proof-tests: que ese `catch` no seteara `error` (o mostrara un mensaje
+   * genérico) haría fallar el `findByText` de abajo.
+   */
+  it('una Baja rechazada por el servidor muestra el error, sin aviso de éxito', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'articulo_en_uso', 'El artículo está en uso y no se puede dar de baja.'))
+    renderArticulos()
+
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Baja' }))
+
+    expect(await screen.findByText('El artículo está en uso y no se puede dar de baja.')).toBeInTheDocument()
+    expect(screen.queryByText(/dado de baja/)).not.toBeInTheDocument()
+    expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
+
+    confirmSpy.mockRestore()
+  })
+})
+
 describe('Articulos — Editar deshabilitado mientras la pantalla está ocupada', () => {
   /**
    * Cláusula bajo prueba: el `preventDefault` de `alClickearEditar` cuando `ocupado && esClicSimple`
