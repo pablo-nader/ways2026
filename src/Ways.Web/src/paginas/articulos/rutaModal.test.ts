@@ -33,4 +33,17 @@ describe('analizarRutaModal', () => {
   it('/articulos/create con un segmento extra no cuenta como crear válido', () => {
     expect(analizarRutaModal('/articulos/create/algo')).toEqual({ modo: null, idParam: null })
   })
+
+  /**
+   * Cláusula bajo prueba: `segmentos.length <= 2` en la rama 'edit' de `analizarRutaModal`.
+   * Mutation-proof-tests: sacar esa condición (aceptar 'edit' con cualquier cantidad de
+   * segmentos) hace fallar este test — `idParam` pasaría a ser '5' en vez de conteo nulo.
+   */
+  it('/articulos/edit/5/extra (un segmento de más) no cuenta como edición válida', () => {
+    expect(analizarRutaModal('/articulos/edit/5/extra')).toEqual({ modo: null, idParam: null })
+  })
+
+  it('/articulos/edit/5/ (barra final) sigue siendo una edición válida del id 5', () => {
+    expect(analizarRutaModal('/articulos/edit/5/')).toEqual({ modo: 'editar', idParam: '5' })
+  })
 })

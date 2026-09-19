@@ -15,6 +15,8 @@ export function analizarRutaModal(pathname: string): RutaModalDeArticulo {
   const segmentos = resto.split('/').filter(Boolean)
 
   if (segmentos[0] === 'create' && segmentos.length === 1) return { modo: 'crear', idParam: null }
-  if (segmentos[0] === 'edit') return { modo: 'editar', idParam: segmentos[1] ?? null }
+  // Igual que 'create': como máximo dos segmentos ('edit' + el id) — un tercer segmento
+  // (`/articulos/edit/5/extra`) no es una edición válida, no un id con sufijo ignorado.
+  if (segmentos[0] === 'edit' && segmentos.length <= 2) return { modo: 'editar', idParam: segmentos[1] ?? null }
   return { modo: null, idParam: null }
 }
