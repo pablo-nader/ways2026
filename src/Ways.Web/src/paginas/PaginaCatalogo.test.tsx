@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PaginaCatalogo } from './PaginaCatalogo'
@@ -323,31 +323,42 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     expect(screen.queryByText(/porque tiene artículos/)).not.toBeInTheDocument()
   })
 
-  /** Cláusula bajo prueba: el token acuñado al CONFIRMAR, no al abrir — ver `Empresas.test.tsx`. */
+  /**
+   * Cláusula bajo prueba: el token acuñado al CONFIRMAR, no al abrir la puerta — ver
+   * `Empresas.test.tsx`. El "incluir inactivos" NO sirve para acuñar una generación intermedia
+   * acá: el checkbox queda `disabled` en cuanto la puerta está abierta (`bloqueado`), así que un
+   * click no dispara nada. La única ventana real es la que usa `Empresas.test.tsx` (líneas
+   * 498-527): con el form de edición de OTRA fila todavía abierto (`bloqueado` lo deshabilita,
+   * pero el `<form>` sigue montado), `fireEvent.submit(form)` dispara `onSubmit` sin pasar por el
+   * botón deshabilitado, y `guardar()` acuña su propia generación mientras la puerta de baja de
+   * Adidas sigue abierta.
+   */
   it('una generación acuñada entre abrir la puerta y confirmar no se traga el 204', async () => {
     const usuario = userEvent.setup()
-    let cargas = 0
-    apiGetMock.mockImplementation(() => {
-      cargas += 1
-      if (cargas === 1) return Promise.resolve([marcaFixture(), marcaFixture({ id: 2, nombre: 'Adidas' })])
-
-      return Promise.resolve([marcaFixture({ id: 2, nombre: 'Adidas' })])
-    })
-    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    apiGetMock.mockResolvedValue([marcaFixture(), marcaFixture({ id: 2, nombre: 'Adidas' })])
+    apiPutMock.mockResolvedValue(undefined)
+    const { container } = render(<PaginaCatalogo definicion={descriptorMarcas} />)
     await screen.findByText('Nike')
 
-    await usuario.click(within(screen.getByRole('row', { name: /Nike/ })).getByRole('button', { name: 'Baja' }))
+    // Editar Nike y, sin cerrarlo, abrir la puerta de baja de Adidas: `bloqueado` sigue en false
+    // hasta que se abre la puerta, así que las dos conviven montadas.
+    await usuario.click(within(screen.getByRole('row', { name: /Nike/ })).getByRole('button', { name: 'Editar' }))
+    await usuario.click(within(screen.getByRole('row', { name: /Adidas/ })).getByRole('button', { name: 'Baja' }))
 
-    // Se acuña una generación intermedia disparando otra carga (toggle de "incluir inactivos"),
-    // ANTES de confirmar: el DELETE que sigue no puede perder su 204 por eso.
-    await usuario.click(screen.getByLabelText('Incluir inactivos'))
-    await screen.findByText('Adidas')
+    const form = container.querySelector('form')
+    if (!form) throw new Error('no hay formulario de edición abierto')
+    await act(async () => {
+      fireEvent.submit(form)
+    })
+    await screen.findByText('Se actualizó "Nike".')
+    expect(apiPutMock).toHaveBeenCalledTimes(1)
 
     await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
 
-    await screen.findByText('Se dio de baja "Nike".')
+    await screen.findByText('Se dio de baja "Adidas".')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+    expect(apiDeleteMock).toHaveBeenCalledWith('/catalogos/marcas/2')
   })
 
   it('la baja de la fila que se está editando se lleva también su formulario', async () => {
