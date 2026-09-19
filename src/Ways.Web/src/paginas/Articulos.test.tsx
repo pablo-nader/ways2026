@@ -12,9 +12,10 @@ import type {
   CategoriaListado,
   CondicionFiscalListado,
   EmpresaListado,
+  FilaDeGrillaDeArticulos,
   GrupoListado,
   MarcaListado,
-  PaginaDe,
+  PaginaDeGrillaDeArticulos,
   ProveedorListado,
 } from '../api/tipos'
 
@@ -67,12 +68,33 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
   }
 }
 
-function paginaFixture(items: ArticuloListado[]): PaginaDe<ArticuloListado> {
-  return { items, total: items.length, pagina: 1, tamanio: 20 }
-}
-
 const articuloUno = articuloFixture({ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno' })
 const articuloDos = articuloFixture({ id: 2, codigoInterno: 'A0002', nombre: 'Articulo Dos' })
+
+/** Fila de `GET /api/articulos/grilla` (articulos-grilla-web) — shape distinto del `ArticuloListado`
+ * de arriba (que sigue sirviendo el detalle por id, `/articulos/{id}`). */
+function filaGrillaFixture(sobrescribir: Partial<FilaDeGrillaDeArticulos> = {}): FilaDeGrillaDeArticulos {
+  return {
+    id: 1,
+    codigoInterno: 'A0001',
+    nombre: 'Articulo Uno',
+    precio: 100,
+    idProveedorHabitual: null,
+    proveedor: null,
+    activo: true,
+    ...sobrescribir,
+  }
+}
+
+function paginaGrillaFixture(
+  items: FilaDeGrillaDeArticulos[],
+  sobrescribir: Partial<PaginaDeGrillaDeArticulos> = {},
+): PaginaDeGrillaDeArticulos {
+  return { items, total: items.length, pagina: 1, tamanio: 25, nombreListaPrecio: 'General', ...sobrescribir }
+}
+
+const filaGrillaUno = filaGrillaFixture({ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno' })
+const filaGrillaDos = filaGrillaFixture({ id: 2, codigoInterno: 'A0002', nombre: 'Articulo Dos' })
 
 function areaFixture(sobrescribir: Partial<AreaListado> = {}): AreaListado {
   return { id: 1, nombre: 'Almacén', activo: true, idEmpresa: null, orden: 1, ...sobrescribir }
@@ -210,6 +232,8 @@ type CatalogosDeTest = {
   /** Override completo del fetch de detalle por id (p.ej. para simular una respuesta lenta que
    * llega tarde) — cuando está presente, gana sobre la resolución por defecto. */
   detalleImpl?: (id: number) => Promise<ArticuloListado>
+  /** Respuesta fija de `GET /api/articulos/grilla` — por defecto, las dos filas de siempre. */
+  grilla?: PaginaDeGrillaDeArticulos
   /** Override completo del fetch de áreas (p.ej. para simular un rechazo o una respuesta tardía)
    * — cuando está presente, gana sobre la resolución por defecto. */
   areasImpl?: () => Promise<{ id: number; nombre: string; activo: boolean }[]>
@@ -228,7 +252,9 @@ type CatalogosDeTest = {
 function mockearApiGet(catalogos: CatalogosDeTest = {}) {
   apiGetMock.mockImplementation((ruta: string) => {
     const articulos = catalogos.articulos ?? [articuloUno, articuloDos]
-    if (ruta === '/articulos') return Promise.resolve(paginaFixture(articulos))
+    if (ruta.startsWith('/articulos/grilla')) {
+      return Promise.resolve(catalogos.grilla ?? paginaGrillaFixture([filaGrillaUno, filaGrillaDos]))
+    }
     if (/^\/articulos\/\d+$/.test(ruta)) {
       const id = Number(ruta.split('/')[2])
       if (catalogos.detalleImpl) return catalogos.detalleImpl(id)
@@ -556,7 +582,7 @@ describe('Articulos — avisos de catálogos: visibles también dentro del modal
   it('un fallo al cargar las listas de precio muestra el aviso DENTRO del diálogo', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/catalogos/listas-precio') return Promise.reject(new Error('sin red'))
-      if (ruta === '/articulos') return Promise.resolve(paginaFixture([articuloUno, articuloDos]))
+      if (ruta.startsWith('/articulos/grilla')) return Promise.resolve(paginaGrillaFixture([filaGrillaUno, filaGrillaDos]))
       if (ruta === '/catalogos/areas') return Promise.resolve([{ id: 1, nombre: 'Almacén', activo: true }])
       if (ruta === '/catalogos/categorias') return Promise.resolve([])
       if (ruta === '/catalogos/marcas') return Promise.resolve([])
@@ -1061,13 +1087,13 @@ describe('Articulos — alta de un artículo nuevo', () => {
 describe('Articulos — cierre del modal', () => {
   it('cerrar sin cambios vuelve a /articulos sin volver a pedir el listado', async () => {
     await abrirFormularioNuevo()
-    const llamadasAlListadoAntes = apiGetMock.mock.calls.filter(([ruta]) => ruta === '/articulos').length
+    const llamadasAlListadoAntes = apiGetMock.mock.calls.filter(([ruta]) => (ruta as string).startsWith('/articulos/grilla')).length
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
-    const llamadasAlListadoDespues = apiGetMock.mock.calls.filter(([ruta]) => ruta === '/articulos').length
+    const llamadasAlListadoDespues = apiGetMock.mock.calls.filter(([ruta]) => (ruta as string).startsWith('/articulos/grilla')).length
     expect(llamadasAlListadoDespues).toBe(llamadasAlListadoAntes)
   })
 
@@ -1135,7 +1161,7 @@ describe('Articulos — confirmación al cerrar con cambios sin guardar', () => 
       empresas: [empresaFixture({ id: 1 }), empresaFixture({ id: 2, razonSocial: 'Empresa Dos SA' })],
     })
     apiGetMock.mockImplementation((ruta: string) => {
-      if (ruta === '/articulos') return Promise.resolve(paginaFixture([articuloUno, articuloDos]))
+      if (ruta.startsWith('/articulos/grilla')) return Promise.resolve(paginaGrillaFixture([filaGrillaUno, filaGrillaDos]))
       if (ruta === '/articulos/1')
         return Promise.resolve(articuloFixture({ id: 1, disponibleParaTodas: false, idsEmpresas: [1, 2] }))
       if (/^\/articulos\/\d+\/codigos-barra$/.test(ruta)) return Promise.resolve([])
@@ -1298,6 +1324,86 @@ describe('Articulos — restauración de foco al cerrar el modal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.getByRole('button', { name: 'Nuevo' })).toHaveFocus()
+  })
+})
+
+describe('Articulos — Baja de un artículo desde la grilla', () => {
+  /**
+   * Cláusula bajo prueba: el `setAviso` de `eliminar()` en `Articulos.tsx` y el bump de
+   * `pedidoDeRefresco` que le pide a `GrillaDeArticulos` refetchear. Mutation-proof-tests: borrar
+   * cualquiera de los dos deja este test sin ver el aviso o sin ver la fila actualizada tras el
+   * refresco (la fixture de la grilla cambia DESPUÉS de la Baja, así que solo el refresco real la
+   * revela).
+   */
+  it('una Baja exitosa muestra el aviso "dado de baja" y refresca la grilla con los datos nuevos', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    apiDeleteMock.mockResolvedValue(undefined)
+    renderArticulos()
+
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+
+    // Tras la Baja, el servidor ya no devuelve "Articulo Uno" — la única forma de verlo
+    // desaparecer es que la grilla haya vuelto a pedir el listado.
+    mockearApiGet({ grilla: paginaGrillaFixture([filaGrillaDos]) })
+
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Baja' }))
+
+    expect(await screen.findByText('Artículo "Articulo Uno" dado de baja.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Articulo Uno')).not.toBeInTheDocument())
+    expect(screen.getByText('Articulo Dos')).toBeInTheDocument()
+
+    confirmSpy.mockRestore()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `catch` de `eliminar()` en `Articulos.tsx` (`setError` con el mensaje
+   * de `ErrorApi`). Mutation-proof-tests: que ese `catch` no seteara `error` (o mostrara un mensaje
+   * genérico) haría fallar el `findByText` de abajo.
+   */
+  it('una Baja rechazada por el servidor muestra el error, sin aviso de éxito', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    apiDeleteMock.mockRejectedValue(new ErrorApi(409, 'articulo_en_uso', 'El artículo está en uso y no se puede dar de baja.'))
+    renderArticulos()
+
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Baja' }))
+
+    expect(await screen.findByText('El artículo está en uso y no se puede dar de baja.')).toBeInTheDocument()
+    expect(screen.queryByText(/dado de baja/)).not.toBeInTheDocument()
+    expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
+
+    confirmSpy.mockRestore()
+  })
+})
+
+describe('Articulos — un guardado exitoso refresca la grilla', () => {
+  /**
+   * Cláusula bajo prueba: el bump de `pedidoDeRefresco` en `guardar()` (Articulos.tsx), hermano del
+   * de `eliminar()` (mutation-proof-tests regla 15). El nombre que devuelve el PUT y el que devuelve
+   * el listado son distintos a propósito: solo un refresco real trae el del listado.
+   */
+  it('tras guardar una edición, la grilla vuelve a pedir el listado y muestra los datos nuevos', async () => {
+    mockearApiGet()
+    apiPutMock.mockResolvedValue(articuloFixture({ id: 1, nombre: 'Articulo Uno (editado)' }))
+    renderArticulos('/articulos/edit/1')
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    expect(await screen.findByText('Articulo Uno')).toBeInTheDocument()
+
+    mockearApiGet({
+      grilla: paginaGrillaFixture([
+        filaGrillaFixture({ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno Refrescado' }),
+        filaGrillaDos,
+      ]),
+    })
+
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Articulo Uno Refrescado')).toBeInTheDocument()
+    expect(screen.queryByText('Articulo Uno')).not.toBeInTheDocument()
   })
 })
 
@@ -2104,16 +2210,6 @@ describe('Articulos — catálogos inactivos en el formulario', () => {
       expect(cuerpo[idField]).toBe(2)
     },
   )
-
-  it('la grilla resuelve el nombre del área aunque esté inactiva (nombreDe ya no se limita a las activas)', async () => {
-    mockearApiGet({ areas: [areaFixture({ id: 1, nombre: 'Depósito viejo', activo: false })] })
-
-    renderArticulos()
-
-    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
-    if (!fila) throw new Error('No se encontró la fila del artículo')
-    expect(within(fila).getByText('Depósito viejo')).toBeInTheDocument()
-  })
 })
 
 // ---- el formulario nunca clasifica una referencia como "colgante" contra el catálogo del cliente
@@ -2205,7 +2301,7 @@ describe('Articulos — el formulario nunca clasifica una referencia como colgan
 
     apiGetMock.mockImplementation((ruta: string) => {
       const articulos = [articuloCompleto, articuloDos]
-      if (ruta === '/articulos') return Promise.resolve(paginaFixture(articulos))
+      if (ruta.startsWith('/articulos/grilla')) return Promise.resolve(paginaGrillaFixture([filaGrillaUno, filaGrillaDos]))
       if (/^\/articulos\/\d+$/.test(ruta)) {
         const id = Number(ruta.split('/')[2])
         return Promise.resolve(articulos.find((a) => a.id === id) ?? articulos[0])
