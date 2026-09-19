@@ -33,17 +33,38 @@ function encabezado(ticket: ConstructorDeTicket, contexto: ContextoDeImpresion):
     .lineaDeGuiones()
 }
 
+/** Opciones de `ticketDeVenta` — hoy solo `reimpresion` (stage-desktop-pos, "Ventas del turno"). */
+export type OpcionesDeTicketDeVenta = { reimpresion?: boolean }
+
 /**
  * Ticket de venta (`POST /api/ventas`) — NO es un comprobante fiscal: el flujo actual solo emite
  * tipo `TX`, así que el ticket lo dice explícitamente en vez de parecer una factura. `medios`
  * resuelve el `comportamiento` de cada pago (para el rótulo, no para el cajón — eso lo decide
  * `algunPagoEnEfectivo` aparte).
+ *
+ * `opciones.reimpresion` (stage-desktop-pos, acción "Reimprimir" de "Ventas del turno"): imprime
+ * una línea "REIMPRESION" bien visible para que una copia nunca se confunda con el original, y
+ * NUNCA pulsa el cajón de dinero aunque el comprobante tenga un pago en efectivo (decisión del
+ * dueño: reimprimir no es una venta nueva, abrir el cajón sin eso es un agujero de control de
+ * caja) — el resto del contenido queda igual.
  */
-export function ticketDeVenta(comprobante: ComprobanteEmitido, contexto: ContextoDeImpresion, medios: MedioPagoListado[]): Uint8Array {
+export function ticketDeVenta(
+  comprobante: ComprobanteEmitido,
+  contexto: ContextoDeImpresion,
+  medios: MedioPagoListado[],
+  opciones: OpcionesDeTicketDeVenta = {},
+): Uint8Array {
   const medioPorId = new Map(medios.map((m) => [m.id, m]))
   const ticket = new ConstructorDeTicket()
 
   encabezado(ticket, contexto)
+
+  if (opciones.reimpresion) {
+    // Sin tilde a propósito: mismo criterio que "COMPROBANTE NO VALIDO COMO FACTURA" de abajo —
+    // el ticket entero evita acentos en las líneas de aviso para no depender de que la tabla
+    // CP858 los tenga mapeados en el hardware real.
+    ticket.alinear('centro').negrita(true).linea('*** REIMPRESION ***').negrita(false)
+  }
 
   ticket
     .alinear('centro')
@@ -86,8 +107,11 @@ export function ticketDeVenta(comprobante: ComprobanteEmitido, contexto: Context
 
   // Pulso del cajón en el MISMO trabajo de impresión (nunca un segundo `imprimir` aparte): si
   // algún pago es en efectivo se abre antes del corte, para que el cajero lo encuentre abierto
-  // apenas termina de imprimirse el ticket.
-  if (algunPagoEnEfectivo(comprobante, medios)) {
+  // apenas termina de imprimirse el ticket. NUNCA en una reimpresión (decisión del dueño): abrir
+  // el cajón sin una venta nueva de por medio es un agujero de control de caja — una copia del
+  // ticket original no vuelve a mover dinero, así que no vuelve a pulsar el cajón aunque el pago
+  // original haya sido en efectivo.
+  if (!opciones.reimpresion && algunPagoEnEfectivo(comprobante, medios)) {
     ticket.abrirCajon()
   }
 

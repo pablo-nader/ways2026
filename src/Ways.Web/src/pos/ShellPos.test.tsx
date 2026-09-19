@@ -17,6 +17,7 @@ import type {
   TurnoConArqueos,
   TurnoResumen,
   UsuarioAutenticado,
+  VentaDeTurnoListado,
 } from '../api/tipos'
 import type { DispositivoActual } from '../api/dispositivos'
 
@@ -173,6 +174,22 @@ function turnoConArqueosFixture(): TurnoConArqueos {
 
 function articuloEscaneadoFixture(): ArticuloEscaneado {
   return { idArticulo: 1, codigoInterno: 'A0001', nombre: 'Coca Cola 1L', codigoBarra: '7790001234567', cantidad: 1 }
+}
+
+/** Fila de "Ventas del turno" para un `comprobante` ya emitido — mismos datos, la forma que
+ * espera `GET /api/ventas/por-turno/{idTurno}` (`ServicioDeVentas.ListarPorTurnoAsync`). */
+function ventaDeTurnoDesdeComprobante(comprobante: ComprobanteEmitido): VentaDeTurnoListado {
+  return {
+    id: comprobante.id,
+    numero: comprobante.numero,
+    numeroVisible: comprobante.numeroVisible,
+    estado: comprobante.estado,
+    fecha: comprobante.fecha,
+    idCliente: comprobante.idCliente,
+    nombreCliente: 'Consumidor Final',
+    total: comprobante.total,
+    mediosDePago: comprobante.pagos.map((p) => ({ idMedioPago: p.idMedioPago, nombre: medioEfectivo.nombre, importe: p.importe - p.vuelto })),
+  }
 }
 
 function comprobanteEmitidoFixture(): ComprobanteEmitido {
@@ -665,5 +682,28 @@ describe('ShellPos — cola FIFO de impresión (Fix judgment-day ronda 2: R2-1 n
 
     // 1 auto-impresión fallida + 1 reintento (el segundo click del mismo tick se gateó).
     expect(imprimirMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('ShellPos — "Reimprimir" de Ventas del turno pasa por la MISMA cola FIFO que el ticket de venta', () => {
+  it('encola el ticket con la marca de reimpresión y la descripción "la reimpresión del ticket <numero>"', async () => {
+    const comprobante = comprobanteEmitidoFixture()
+    mockearRutasDePos((ruta) => {
+      if (ruta.startsWith('/ventas/por-turno/')) return Promise.resolve<VentaDeTurnoListado[]>([ventaDeTurnoDesdeComprobante(comprobante)])
+      if (ruta === `/ventas/${comprobante.id}`) return Promise.resolve<ComprobanteEmitido>(comprobante)
+      return undefined
+    })
+    imprimirMock.mockResolvedValueOnce({ ok: false, motivo: 'error', mensaje: 'sin papel' })
+    renderShell()
+
+    await userEvent.click(await screen.findByRole('link', { name: 'Ventas del turno' }))
+    await screen.findByText('0007-00000001')
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir' }))
+
+    await waitFor(() => expect(imprimirMock).toHaveBeenCalledTimes(1))
+    expect(imprimirMock).toHaveBeenCalledWith(
+      ticketDeVenta(comprobante, CONTEXTO_DE_IMPRESION_SHELL, [medioEfectivo], { reimpresion: true }),
+    )
+    expect(await screen.findByText('No se pudo imprimir la reimpresión del ticket 0007-00000001: sin papel')).toBeInTheDocument()
   })
 })

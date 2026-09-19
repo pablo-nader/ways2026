@@ -102,11 +102,23 @@ describe('ticketDeVenta', () => {
     expect(Array.from(bytes.slice(-4))).toEqual([0x1d, 0x56, 0x42, 0x00])
   })
 
-  it('pulsa el cajón (ESC p 0 25 250) antes del corte cuando algún pago es en efectivo', () => {
+  it('ticket ORIGINAL (sin opciones): pulsa el cajón (ESC p 0 25 250) antes del corte cuando algún pago es en efectivo', () => {
     const comprobante = comprobanteFixture({ pagos: [{ idMedioPago: 1, importe: 1000, referencia: null, vuelto: 0 }] })
     const bytes = ticketDeVenta(comprobante, CONTEXTO, [medioFixture({ id: 1, comportamiento: 'Efectivo' })])
     // Cola exacta: abrirCajon (5) + avanzar(2) (2) + cortar (4) = 11 bytes.
     expect(Array.from(bytes.slice(-11))).toEqual([0x1b, 0x70, 0x00, 25, 250, 0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
+  })
+
+  it('REIMPRESION: nunca pulsa el cajón aunque algún pago sea en efectivo (decisión del dueño: reimprimir no es una venta nueva)', () => {
+    const comprobante = comprobanteFixture({ pagos: [{ idMedioPago: 1, importe: 1000, referencia: null, vuelto: 0 }] })
+    const bytes = ticketDeVenta(comprobante, CONTEXTO, [medioFixture({ id: 1, comportamiento: 'Efectivo' })], { reimpresion: true })
+
+    const contieneComandoDeCajon = Array.from(bytes).some(
+      (_, i) => bytes[i] === 0x1b && bytes[i + 1] === 0x70 && bytes[i + 2] === 0x00,
+    )
+    expect(contieneComandoDeCajon).toBe(false)
+    // Termina en avanzar(2) + cortar (6 bytes) directo, sin el pulso de cajón antes.
+    expect(Array.from(bytes.slice(-6))).toEqual([0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
   })
 
   it('nunca pulsa el cajón si todos los pagos son electrónicos/cuenta corriente', () => {
@@ -121,6 +133,27 @@ describe('ticketDeVenta', () => {
   it('empieza con ESC @ (inicializar) seguido de ESC t 19 (CP858)', () => {
     const bytes = ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()])
     expect(Array.from(bytes.slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x74, 19])
+  })
+
+  it('sin opciones (default), nunca incluye la línea de REIMPRESION', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()]))
+    expect(texto).not.toContain('REIMPRESION')
+  })
+
+  it('con { reimpresion: true } incluye una línea "REIMPRESION" bien visible, sin perder el resto del contenido', () => {
+    const reimpreso = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()], { reimpresion: true }))
+
+    expect(reimpreso).toContain('REIMPRESION')
+    // El resto del ticket sigue igual: el número, el ítem y el total no cambian.
+    expect(reimpreso).toContain('0001-00000001')
+    expect(reimpreso).toContain('2 x Coca Cola 1L')
+    expect(reimpreso).toContain('TOTAL')
+    expect(reimpreso).toContain('1.000,00')
+  })
+
+  it('la línea de REIMPRESION aparece ANTES del aviso de "no válido como factura"', () => {
+    const reimpreso = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()], { reimpresion: true }))
+    expect(reimpreso.indexOf('REIMPRESION')).toBeLessThan(reimpreso.indexOf('COMPROBANTE NO VALIDO COMO FACTURA'))
   })
 })
 

@@ -135,7 +135,11 @@ public sealed record PaginaDeVentas(IReadOnlyList<ComprobanteListado> Items, int
 /// barato, y la pantalla necesita reconciliar sin abrir cada comprobante uno por uno. Incluye
 /// <see cref="EstadoComprobante.Anulado"/> a propósito — a diferencia de
 /// <c>LectorDeLineasDelTurno.LeerTicketsAsync</c>, acá el objetivo es justamente poder ver que una
-/// anulación surtió efecto.</summary>
+/// anulación surtió efecto.
+///
+/// <see cref="MediosDePago"/> lleva el monto NETO por medio (ampliación "Ventas del turno" con
+/// totales por medio arriba de la tabla) — el front deriva el nombre y arma los totales a partir
+/// de esta única lista, nunca de una segunda fuente.</summary>
 public sealed record VentaDeTurnoListado(
     int Id,
     long Numero,
@@ -145,4 +149,11 @@ public sealed record VentaDeTurnoListado(
     int IdCliente,
     string NombreCliente,
     decimal Total,
-    IReadOnlyList<string> MediosDePago);
+    IReadOnlyList<MedioDeVentaNeto> MediosDePago);
+
+/// <summary>Monto neto cobrado por UN medio de pago dentro de una <see cref="VentaDeTurnoListado"/>
+/// — <c>Σ(Importe − Vuelto)</c> agrupado por <see cref="IdMedioPago"/> (nunca el importe bruto
+/// tecleado en caja: un pago en efectivo con vuelto solo suma lo que realmente quedó en la caja).
+/// Reemplaza el <c>IReadOnlyList&lt;string&gt;</c> anterior de solo nombres — la pantalla necesita
+/// el monto para totalizar por medio, no solo listar los nombres usados.</summary>
+public sealed record MedioDeVentaNeto(int IdMedioPago, string Nombre, decimal Importe);
