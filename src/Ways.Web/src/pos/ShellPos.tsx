@@ -171,6 +171,17 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     encolarImpresion('el ticket de venta', ticketDeVenta(comprobante, contextoDeImpresion, medios))
   }
 
+  /** "Reimprimir" de "Ventas del turno" (stage-desktop-pos): mismo dueño único de la impresión de
+   * escritorio que `alEmitirVenta` — pasa por la MISMA cola FIFO (`encolarImpresion`), nunca un
+   * segundo camino de impresión. `{ reimpresion: true }` marca el ticket para que nunca se
+   * confunda con el original. */
+  function alReimprimirVenta(comprobante: ComprobanteEmitido, medios: MedioPagoListado[]) {
+    encolarImpresion(
+      `la reimpresión del ticket ${comprobante.numeroVisible}`,
+      ticketDeVenta(comprobante, contextoDeImpresion, medios, { reimpresion: true }),
+    )
+  }
+
   return (
     <AuthContext.Provider value={valorAuth}>
       <ProveedorDePuntoVentaFijo puntoVenta={puntoVenta}>
@@ -240,7 +251,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
                   />
                 }
               />
-              <Route path="/ventas-del-turno" element={<VentasDelTurno />} />
+              <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
               <Route
                 path="/cerrar-caja"
                 element={
