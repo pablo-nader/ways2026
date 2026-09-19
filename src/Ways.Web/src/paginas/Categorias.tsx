@@ -9,7 +9,7 @@ import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 const PROFUNDIDAD_MAXIMA = 3
 
 const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
-const AVISO_REFRESCO_FALLIDO_BAJA = 'Se dio de baja, pero no se pudo actualizar la vista. Recargá la pantalla.'
+const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
 type Formulario = {
   id: number | null

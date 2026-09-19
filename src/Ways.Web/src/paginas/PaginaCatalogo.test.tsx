@@ -282,6 +282,28 @@ describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
   })
 
+  /** Cláusula bajo prueba: `AVISO_REFRESCO_FALLIDO_BAJA` — ver `Empresas.test.tsx`. Un DELETE que
+   * ya commiteó nunca se reporta como fallido, aunque el refresco posterior explote. */
+  it('un refresco fallido después de la baja no la reporta como fallida', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      if (cargas === 1) return Promise.resolve([marcaFixture()])
+
+      return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+    })
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    await screen.findByText('Nike')
+
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText(
+      'Se dio de baja "Nike". Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
+    )
+  })
+
   /**
    * Cláusula bajo prueba: la elección de copia por `codigo` vía `copiaDeFalloDeBaja`, con el
    * `sujetoDeBaja` del DESCRIPTOR (`la marca`), no un switch sobre `recurso`.

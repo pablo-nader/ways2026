@@ -175,6 +175,28 @@ describe('Categorias — baja lógica', () => {
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
   })
 
+  /** Cláusula bajo prueba: `AVISO_REFRESCO_FALLIDO_BAJA` — ver `Empresas.test.tsx`. Un DELETE que
+   * ya commiteó nunca se reporta como fallido, aunque el refresco posterior explote. */
+  it('un refresco fallido después de la baja no la reporta como fallida', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      if (cargas === 1) return Promise.resolve([categoriaFixture()])
+
+      return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+    })
+    render(<Categorias />)
+    await screen.findByText('Bebidas')
+
+    await usuario.click(bajaDe('Bebidas'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText(
+      'Se dio de baja "Bebidas". Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
+    )
+  })
+
   /** Cláusula bajo prueba: la elección de copia por `codigo` — `categoria_en_uso` es la que el
    * backend rinde cuando la categoría tiene subcategorías. */
   it('un 409 categoria_en_uso rinde el mensaje del servidor y la guía propia, y deja la puerta abierta', async () => {

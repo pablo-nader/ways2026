@@ -276,6 +276,30 @@ describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
     expect(apiDeleteMock).toHaveBeenCalledTimes(1)
   })
 
+  /** Cláusula bajo prueba: `AVISO_REFRESCO_FALLIDO_BAJA` — ver `Empresas.test.tsx`. Un DELETE que
+   * ya commiteó nunca se reporta como fallido, aunque el refresco posterior explote. */
+  it('un refresco fallido después de la baja no la reporta como fallida', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') return Promise.resolve([])
+      if (ruta !== '/proveedores') return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      cargas += 1
+      if (cargas === 1) return Promise.resolve(paginaFixture([proveedorFixture()]))
+
+      return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+    })
+    renderProveedores()
+    await screen.findByText('Proveedor Uno SA')
+
+    await usuario.click(bajaDe('Proveedor Uno SA'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText(
+      'Proveedor "Proveedor Uno SA" dado de baja. Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
+    )
+  })
+
   /** Cláusula bajo prueba: la elección de copia por `codigo` vía `copiaDeFalloDeBaja`, con el
    * sujeto `'el proveedor'`. */
   it('un 409 proveedor_en_uso rinde el mensaje del servidor y su guía, y deja la puerta abierta', async () => {
