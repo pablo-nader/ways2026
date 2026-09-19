@@ -333,7 +333,17 @@ type ResumenVentaFinalizada = {
   itemsVencidos: ItemVencidoResumen[]
 }
 
-type PropsVentaFinalizada = ResumenVentaFinalizada & { onCerrar: () => void }
+type PropsVentaFinalizada = ResumenVentaFinalizada & {
+  modoPresupuesto: boolean
+  onCerrar: () => void
+  /** Dispara el mismo camino que tipear en el input de código + Enter (`escanear`, con el código
+   * ya resuelto — nunca depende de que `entradaEscaneo` lo tenga). Nunca se invoca bajo
+   * `?idPresupuesto=` (ver `modoPresupuesto` más abajo). */
+  onEscanearCodigo: (codigo: string) => void
+  /** Deja un código sin escanear esperando en el input de código (F9/"Aceptar" con buffer no
+   * vacío) — nunca se invoca bajo `?idPresupuesto=`. */
+  onDejarCodigoEnInput: (codigo: string) => void
+}
 
 /**
  * Modal "Venta finalizada" (stage-pos-modales-de-cobro): reemplaza a la pantalla de resumen de
@@ -342,27 +352,102 @@ type PropsVentaFinalizada = ResumenVentaFinalizada & { onCerrar: () => void }
  * requiere ese paso extra. Mismo criterio de foco que `ConfirmacionDeCobro`: un solo control
  * focusable ("Aceptar"), autofocado al montar, Tab/Shift+Tab lo mantienen ahí (la pantalla de
  * atrás sigue con su navbar montada, así que sin esta trampa `aria-modal="true"` sería mentira
- * para tecnología asistiva — regla 13 de react-async-state). F9 también cierra: cableado en el
- * listener global de `PantallaPos` (`f9Ref`), que ignora `repeat` a propósito — un F9 todavía
- * sostenido desde la propia confirmación de cobro no debe cerrar este modal por accidente apenas
- * aparece.
+ * para tecnología asistiva — regla 13 de react-async-state).
+ *
+ * judgment-day ronda 0: con "Aceptar" autofocado, el Enter final de un código de barras leído por
+ * pistola (que termina en un Enter físico) activaba el botón por su cuenta — el código escaneado
+ * se perdía. `bufferRef` acumula cada tecla imprimible de una sola posición (sin Ctrl/Alt/Meta)
+ * mientras el modal está abierto (nada más tiene foco de texto acá): Enter cierra el modal Y
+ * dispara `onEscanearCodigo` con lo acumulado (mismo camino que tipear en el input + Enter,
+ * `N*código` incluido — es el mismo string, nunca se interpreta acá). F9 o "Aceptar" con buffer
+ * no vacío cierran SIN escanear: el texto queda esperando en el input de código
+ * (`onDejarCodigoEnInput`), nunca se pierde ni se envía a medias. Bajo `?idPresupuesto=` el
+ * buffer se descarta sin más — `onCerrar` navega afuera de esta pantalla, no queda ningún input
+ * al que devolvérselo.
+ *
+ * `evento.stopPropagation()` en cada rama (mismo criterio que `ConfirmacionDeCobro.atraparTab`):
+ * coordina esto con el listener global de F9 de `PantallaPos` (`f9Ref`) — mientras el foco esté
+ * adentro del modal (el trap de Tab lo garantiza), la tecla nunca llega a burbujear hasta
+ * `document`, así que ninguna tecla se maneja dos veces.
  */
-function VentaFinalizada({ numeroVisible, total, medios, vuelto, itemsVencidos, onCerrar }: PropsVentaFinalizada) {
+function VentaFinalizada({
+  numeroVisible,
+  total,
+  medios,
+  vuelto,
+  itemsVencidos,
+  modoPresupuesto,
+  onCerrar,
+  onEscanearCodigo,
+  onDejarCodigoEnInput,
+}: PropsVentaFinalizada) {
   const aceptarRef = useRef<HTMLButtonElement>(null)
+  const bufferEscaneoRef = useRef('')
 
   useEffect(() => {
     aceptarRef.current?.focus()
   }, [])
 
-  function atraparTab(evento: React.KeyboardEvent<HTMLDivElement>) {
-    if (evento.key !== 'Tab') return
-    evento.preventDefault()
-    aceptarRef.current?.focus()
+  /** F9 o clic en "Aceptar": cierra SIN escanear — si venía un código a medio tipear/escanear, se
+   * lo devuelve al input de código en vez de perderlo (nunca bajo `?idPresupuesto=`: no queda
+   * pantalla a la que devolvérselo). */
+  function cerrarSinEscanear() {
+    const codigo = bufferEscaneoRef.current
+    bufferEscaneoRef.current = ''
+    onCerrar()
+    if (!modoPresupuesto && codigo) onDejarCodigoEnInput(codigo)
+  }
+
+  function manejarTeclado(evento: React.KeyboardEvent<HTMLDivElement>) {
+    if (evento.key === 'Tab') {
+      evento.preventDefault()
+      evento.stopPropagation()
+      aceptarRef.current?.focus()
+      return
+    }
+
+    if (evento.key === 'Enter') {
+      // Sin este preventDefault, el propio Enter activaría por su cuenta "Aceptar" (ya
+      // autofocado) además de esta rama — el cierre se dispararía dos veces.
+      evento.preventDefault()
+      evento.stopPropagation()
+      const codigo = bufferEscaneoRef.current
+      bufferEscaneoRef.current = ''
+      onCerrar()
+      if (!modoPresupuesto && codigo) onEscanearCodigo(codigo)
+      return
+    }
+
+    if (evento.key === 'F9') {
+      // K2 (heredado de `ConfirmacionDeCobro`): un F9 sostenido no debe repetir el cierre.
+      if (evento.repeat) {
+        evento.preventDefault()
+        evento.stopPropagation()
+        return
+      }
+      evento.preventDefault()
+      evento.stopPropagation()
+      cerrarSinEscanear()
+      return
+    }
+
+    if (evento.key.length === 1 && !evento.ctrlKey && !evento.altKey && !evento.metaKey) {
+      evento.preventDefault()
+      evento.stopPropagation()
+      bufferEscaneoRef.current += evento.key
+    }
   }
 
   return (
     <>
-      <div className="modal d-block" tabIndex={-1} role="dialog" aria-modal="true" aria-label="Venta finalizada" onKeyDown={atraparTab}>
+      <div
+        className="modal d-block"
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Venta finalizada"
+        onKeyDown={manejarTeclado}
+      >
         <div className="modal-dialog modal-dialog-centered" role="document">
           <div className="modal-content rounded-0">
             <div className="modal-header">
@@ -405,7 +490,7 @@ function VentaFinalizada({ numeroVisible, total, medios, vuelto, itemsVencidos, 
               </p>
             </div>
             <div className="modal-footer">
-              <button ref={aceptarRef} type="button" className="btn btn-primary rounded-0" aria-keyshortcuts="F9" onClick={onCerrar}>
+              <button ref={aceptarRef} type="button" className="btn btn-primary rounded-0" aria-keyshortcuts="F9" onClick={cerrarSinEscanear}>
                 Aceptar <sup aria-hidden="true">(F9)</sup>
               </button>
             </div>
@@ -1047,9 +1132,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     })
   }
 
-  async function escanear() {
+  /** `codigoForzado` (stage-pos-modales-de-cobro): permite disparar el mismo camino de escaneo
+   * con un código que nunca pasó por `entradaEscaneo` — el buffer de teclado del modal "Venta
+   * finalizada" (ver `VentaFinalizada`). Sin argumento, se comporta exactamente como antes (lee
+   * `entradaEscaneo`, el camino del input de código + Enter/"Agregar"). */
+  async function escanear(codigoForzado?: string) {
     if (escaneando || cobrandoRef.current) return
-    const entrada = entradaEscaneo.trim()
+    const entrada = (codigoForzado ?? entradaEscaneo).trim()
     if (!entrada) return
 
     const token = (tokenEscaneoRef.current += 1)
@@ -1534,10 +1623,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       const m = f9Ref.current
       if (!m) return
 
-      // stage-pos-modales-de-cobro: el modal "Venta finalizada" también cierra con F9 —
-      // `repeat` sigue ignorado por la misma razón que en `confirmandoCobro` de abajo: un F9
-      // todavía sostenido desde la propia confirmación de cobro no debe alcanzar a cerrar ESTE
-      // modal por accidente apenas aparece.
+      // stage-pos-modales-de-cobro: respaldo del cierre por F9 del modal "Venta finalizada" — el
+      // dueño real es el propio `manejarTeclado` de `VentaFinalizada` (con su buffer de escaneo y
+      // su propio `evento.stopPropagation()`, judgment-day ronda 0), que intercepta la tecla ANTES
+      // de que llegue a burbujear hasta acá mientras el foco está adentro del modal. Esta rama
+      // solo se alcanza si esa condición no se cumplió (ej. un test que dispara el evento
+      // directo sobre `document`) — sin buffer que devolver, cierra sin más.
       if (m.ventaFinalizada) {
         if (evento.key !== 'F9') return
         if (evento.repeat) return
@@ -1697,7 +1788,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                   type="button"
                   className="btn btn-primary rounded-0"
                   disabled={escaneando || pantallaCobroInerte || bloqueadoPorTurno}
-                  onClick={escanear}
+                  onClick={() => void escanear()}
                 >
                   {escaneando ? 'Buscando…' : 'Agregar'}
                 </button>
@@ -2082,8 +2173,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       {/* stage-pos-atajos-cobro: SOLO F9 pasa por acá — clickear "Cobrar" con el mouse sigue
           cobrando de inmediato sin pedir confirmación, comportamiento preexistente. Se renderiza
           acá, fuera del panel "Datos de la venta" (stage-pos-modales-de-cobro): es un modal
-          centrado con su propio backdrop, nunca un bloque que agrande el panel. */}
-      {confirmandoCobro && (
+          centrado con su propio backdrop, nunca un bloque que agrande el panel.
+          `!ventaFinalizada` (judgment-day ronda 0): entre que `cobrar()` (llamado desde
+          `confirmarYcobrar`) setea `ventaFinalizada` y que ese mismo `confirmarYcobrar` recién
+          después vuelve `confirmandoCobro` a `false`, hay un render con los dos estados en
+          `true` a la vez — sin este conjunct, ambos modales se dibujaban superpuestos en ese
+          instante. */}
+      {confirmandoCobro && !ventaFinalizada && (
         <ConfirmacionDeCobro
           total={totalActual}
           pagado={sumarImportes(pagosConVuelto)}
@@ -2102,7 +2198,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
           medios={ventaFinalizada.medios}
           vuelto={ventaFinalizada.vuelto}
           itemsVencidos={ventaFinalizada.itemsVencidos}
+          modoPresupuesto={modoPresupuesto}
           onCerrar={cerrarVentaFinalizada}
+          onEscanearCodigo={(codigo) => void escanear(codigo)}
+          onDejarCodigoEnInput={setEntradaEscaneo}
         />
       )}
 
