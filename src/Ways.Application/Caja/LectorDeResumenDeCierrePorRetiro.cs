@@ -40,7 +40,21 @@ public class LectorDeResumenDeCierrePorRetiro(IWaysDbContext db, LectorDeMovimie
     /// <c>esperado − declarado</c>, positivo = faltante). Cuando el ancla no tiene fila en <see
     /// cref="ArqueoTurno"/> (sin ninguna actividad física de efectivo en el turno — spec: Arqueo
     /// Rows Only For Medios With Activity), no hay nada declarado ni esperado que comparar:
-    /// <c>Diferencia = 0</c>, tanto para el modo clásico como para el retiro.</summary>
+    /// <c>Diferencia = 0</c>, tanto para el modo clásico como para el retiro.
+    ///
+    /// judgment-day JD-E5a-2 (DB CHANGE GATE aprobado): el ancla es <see
+    /// cref="TurnoCaja.IdMedioPagoEfectivo"/>, PINEADO al cierre — nunca <see
+    /// cref="ResolvedorDeMedioDeCajaFisica.Resolver"/> re-resuelto contra el catálogo ACTUAL.
+    /// <c>MedioPago.Comportamiento</c> es editable después del hecho
+    /// (<c>PUT /api/catalogos/medios-pago/{id}</c>): sin el pin, un turno cerrado hace tiempo
+    /// puede terminar leyendo la fila de <c>arqueos_turno</c> equivocada (o ninguna, diferencia
+    /// fantasma <c>0</c>) si el medio efectivo cambió desde el cierre — mismo motivo por el que
+    /// <c>ventasEnEfectivoNetas</c>/<c>gastosEnEfectivo</c> (derivados por <see
+    /// cref="CalculadorDeCierrePorRetiro"/> a partir de este MISMO <c>idAncla</c>) también
+    /// quedarían mal derivados sin el pin. Solo cae al catálogo actual (<see
+    /// cref="ResolvedorDeMedioDeCajaFisica.Resolver"/>) para un turno LEGADO cerrado antes de esta
+    /// migración cuyo backfill no pudo resolver un único medio efectivo (columna todavía
+    /// <c>NULL</c>).</summary>
     public async Task<ResumenDeCierrePorRetiro> LeerAsync(TurnoCaja turno, CancellationToken ct = default)
     {
         var idEmpleadoCierre = turno.IdEmpleadoCierre
@@ -51,7 +65,7 @@ public class LectorDeResumenDeCierrePorRetiro(IWaysDbContext db, LectorDeMovimie
                 $"El turno {turno.Id} todavía no tiene fecha de cierre — LeerAsync exige un turno cerrado.");
 
         var insumos = await lector.LeerAsync(turno.Id, ct);
-        var idAncla = ResolvedorDeMedioDeCajaFisica.Resolver(insumos.Actividad);
+        var idAncla = turno.IdMedioPagoEfectivo ?? ResolvedorDeMedioDeCajaFisica.Resolver(insumos.Actividad);
         var arqueables = CalculadorDeArqueo.Calcular(insumos, idAncla);
         var resultado = CalculadorDeCierrePorRetiro.Calcular(insumos, idAncla, arqueables);
 

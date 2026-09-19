@@ -961,10 +961,34 @@ turnos_caja (                 -- [operativa]
     fecha_apertura timestamptz, fecha_cierre timestamptz NULL,
     fondo_inicial numeric(14,2) NOT NULL DEFAULT 0,     -- cambio con el que abre
     estado estado_turno,                     -- enum: abierto | cerrado
+    id_medio_pago_efectivo integer NULL,     -- ancla PINEADA al cierre, ver nota abajo
     observaciones
 );
 -- Un solo turno abierto por punto de venta: UNIQUE (id_punto_venta) WHERE estado = 'abierto'.
 -- El comprobante nace con el id_turno_caja abierto: se acabó el "cerrada = 0" implícito.
+
+> **Estado (judgment-day JD-E5a-2 en el cierre por retiro, DB CHANGE GATE ejercido y aprobado):
+> `turnos_caja.id_medio_pago_efectivo` implementada.** `ALTER TABLE turnos_caja ADD COLUMN
+> id_medio_pago_efectivo integer NULL` + `fk_turnos_caja_medio_pago_efectivo` compuesta MATCH
+> SIMPLE (mismo shape que `fk_arqueos_turno_medio_pago`, con `id_tenant`) +
+> `ix_turnos_caja_medio_pago_efectivo` + `ck_turnos_caja_medio_efectivo_solo_cerrado`
+> (`id_medio_pago_efectivo IS NULL OR estado = 'cerrado'`). Metadata-only en PG 11+ (columna
+> nullable sin default), sin table rewrite.
+>
+> `medios_pago.comportamiento` es editable después del hecho (`PUT
+> /api/catalogos/medios-pago/{id}`) — sin esta columna, el resumen de un cierre re-resolvía el
+> medio ancla (efectivo) contra el catálogo ACTUAL en cada lectura, y un turno cerrado hace
+> tiempo podía terminar leyendo la fila de `arqueos_turno` equivocada (o ninguna, diferencia
+> fantasma `0`) si el comportamiento cambió desde el cierre. Se fija UNA vez, en la MISMA
+> transacción de cierre, en los DOS modos (cierre clásico y cierre por retiro), inmediatamente
+> después de resolver el ancla — nunca vuelve a re-resolverse para ese turno.
+>
+> Backfill (migración `TurnosCajaMedioPagoEfectivo`): los turnos YA cerrados heredan el único
+> medio del tenant con `comportamiento = efectivo` cuando existe exactamente uno (mismo criterio
+> de resolución que `ResolvedorDeMedioDeCajaFisica.Resolver` — todas las filas del catálogo, sin
+> filtrar `activo`); si el tenant tiene cero o más de uno, el turno queda `NULL` a propósito
+> ("fail-closed, nunca adivinar", mismo criterio que el backfill de `id_remito`). El lector cae al
+> catálogo actual solo para ese caso legado (`NULL`).
 
 movimientos_caja (            -- [operativa]  — plata física fuera de la venta
     id_movimiento_caja, id_turno_caja,

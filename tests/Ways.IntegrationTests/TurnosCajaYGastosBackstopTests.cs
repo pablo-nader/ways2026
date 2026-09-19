@@ -149,6 +149,33 @@ public class TurnosCajaYGastosBackstopTests(WaysApiFixture fixture) : IClassFixt
         Assert.Equal("ck_turnos_caja_cierre_consistente", excepcion.ConstraintName);
     }
 
+    // ---- ck_turnos_caja_medio_efectivo_solo_cerrado (judgment-day JD-E5a-2) -------------------
+
+    /// <summary>Defensa en profundidad de <c>ServicioDeTurnos.InsertarArqueosYTesoreriaAsync</c>,
+    /// que SIEMPRE fija <c>id_medio_pago_efectivo</c> DESPUÉS del UPDATE guardado que transiciona
+    /// a <c>cerrado</c> — inalcanzable por operación normal, solo por un INSERT/UPDATE crudo que
+    /// intente pinear el ancla en un turno todavía abierto.</summary>
+    [Fact]
+    public async Task UnTurnoAbiertoConMedioPagoEfectivoFijadoViolaLaCheckDeMedioEfectivoSoloCerrado()
+    {
+        var p = await SembrarPrerequisitosAsync(nameof(UnTurnoAbiertoConMedioPagoEfectivoFijadoViolaLaCheckDeMedioEfectivoSoloCerrado));
+
+        await using var cruda = await fixture.AbrirConexionCrudaAsync("tenant", p.IdTenant);
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO turnos_caja (id_tenant, id_punto_venta, id_empleado_apertura, fecha_apertura, " +
+            "fondo_inicial, estado, id_medio_pago_efectivo, created_at, updated_at) " +
+            "VALUES ($1, $2, $3, now(), 0, 'abierto', $4, now(), now())";
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdEmpleado });
+        comando.Parameters.Add(new NpgsqlParameter { Value = p.IdMedioPago });
+
+        var excepcion = await Assert.ThrowsAsync<PostgresException>(() => comando.ExecuteNonQueryAsync());
+        Assert.Equal("23514", excepcion.SqlState);
+        Assert.Equal("ck_turnos_caja_medio_efectivo_solo_cerrado", excepcion.ConstraintName);
+    }
+
     // ---- ck_movimientos_caja_importe ---------------------------------------------------------
 
     [Fact]

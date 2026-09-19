@@ -260,11 +260,11 @@ public class ServicioDeTurnos(
         var lineas = CalculadorDeArqueo.Calcular(insumos, idAncla);
         ValidadorDeConteos.Validar(lineas, insumos.Actividad, solicitud.Conteos);
 
-        // 5/6. INSERT arqueos_turno + tesorería encadenada — statements compartidos con
-        // CerrarPorRetiroAsync, ver InsertarArqueosYTesoreriaAsync.
+        // 5/6/7. Fijar el ancla + INSERT arqueos_turno + tesorería encadenada — statements
+        // compartidos con CerrarPorRetiroAsync, ver InsertarArqueosYTesoreriaAsync.
         var declaradoPorMedio = solicitud.Conteos.ToDictionary(c => c.IdMedioPago, c => c.ImporteDeclarado);
         var arqueos = await InsertarArqueosYTesoreriaAsync(
-            idTenant, idTurnoCaja, idPuntoVenta.Value, idEmpleado, momento, insumos, lineas,
+            idTenant, idTurnoCaja, idPuntoVenta.Value, idEmpleado, momento, insumos, lineas, idAncla,
             l => declaradoPorMedio[l.IdMedioPago], ct);
 
         await transaccion.CommitAsync(ct);
@@ -359,11 +359,11 @@ public class ServicioDeTurnos(
         // con su propio esperado, porque no hay nada físico que contar en un medio no-efectivo).
         var lineas = CalculadorDeArqueo.Calcular(insumos, idAncla);
 
-        // 6/7. INSERT arqueos_turno + tesorería encadenada — mismos statements que el cierre
-        // clásico (InsertarArqueosYTesoreriaAsync), declarado = fondo inicial en el ancla, esperado
-        // en cualquier otro medio arqueable.
+        // 6/7/8. Fijar el ancla + INSERT arqueos_turno + tesorería encadenada — mismos statements
+        // que el cierre clásico (InsertarArqueosYTesoreriaAsync), declarado = fondo inicial en el
+        // ancla, esperado en cualquier otro medio arqueable.
         await InsertarArqueosYTesoreriaAsync(
-            idTenant, idTurnoCaja, idPuntoVenta.Value, idEmpleado, momento, insumos, lineas,
+            idTenant, idTurnoCaja, idPuntoVenta.Value, idEmpleado, momento, insumos, lineas, idAncla,
             l => l.IdMedioPago == idAncla ? insumos.FondoInicial : l.ImporteEsperado, ct);
 
         await transaccion.CommitAsync(ct);
@@ -371,19 +371,25 @@ public class ServicioDeTurnos(
         return await db.TurnosCaja.AsNoTracking().FirstAsync(t => t.Id == idTurnoCaja, ct);
     }
 
-    /// <summary>Statements 5/6 del cierre clásico (design: The Cierre Transaction) — compartidos
-    /// TAL CUAL por <see cref="EjecutarCierreAsync"/> y <see cref="EjecutarCierrePorRetiroAsync"/>:
-    /// INSERT de <c>arqueos_turno</c> (una fila por medio arqueable; <paramref name="declarar"/> es
-    /// la ÚNICA diferencia entre los dos modos — de dónde sale <c>ImporteDeclarado</c>) y la
-    /// tesorería encadenada (UN único movimiento tipo <c>retiro_caja</c>, inicio = final de la
-    /// última fila del mismo punto de venta, egreso = Σ gastos sobre TODOS los medios — design
-    /// decisión 9, paridad legacy). Debe llamarse DENTRO de la transacción ya abierta por el
-    /// llamador, después del UPDATE guardado (statement 1) y de derivar (statements 2-4).</summary>
+    /// <summary>Statements 5/6/7 del cierre clásico (design: The Cierre Transaction) —
+    /// compartidos TAL CUAL por <see cref="EjecutarCierreAsync"/> y <see
+    /// cref="EjecutarCierrePorRetiroAsync"/>: fijar <see cref="TurnoCaja.IdMedioPagoEfectivo"/>
+    /// (judgment-day JD-E5a-2 — el mismo <paramref name="idAncla"/> con el que se derivaron
+    /// <paramref name="lineas"/>, NUNCA re-resuelto después), INSERT de <c>arqueos_turno</c> (una
+    /// fila por medio arqueable; <paramref name="declarar"/> es la ÚNICA diferencia entre los dos
+    /// modos — de dónde sale <c>ImporteDeclarado</c>) y la tesorería encadenada (UN único
+    /// movimiento tipo <c>retiro_caja</c>, inicio = final de la última fila del mismo punto de
+    /// venta, egreso = Σ gastos sobre TODOS los medios — design decisión 9, paridad legacy). Debe
+    /// llamarse DENTRO de la transacción ya abierta por el llamador, después del UPDATE guardado
+    /// (statement 1, que YA transicionó <c>estado</c> a <c>cerrado</c> — satisface
+    /// <c>ck_turnos_caja_medio_efectivo_solo_cerrado</c>) y de derivar el ancla.</summary>
     private async Task<IReadOnlyList<ArqueoTurno>> InsertarArqueosYTesoreriaAsync(
         int idTenant, int idTurnoCaja, int idPuntoVenta, int idEmpleado, DateTimeOffset momento,
-        InsumosDeArqueo insumos, IReadOnlyList<LineaDeArqueo> lineas, Func<LineaDeArqueo, decimal> declarar,
-        CancellationToken ct)
+        InsumosDeArqueo insumos, IReadOnlyList<LineaDeArqueo> lineas, int idAncla,
+        Func<LineaDeArqueo, decimal> declarar, CancellationToken ct)
     {
+        await FijarMedioPagoEfectivoAsync(idTenant, idTurnoCaja, idAncla, ct);
+
         var arqueos = lineas
             .Select(l => new ArqueoTurno
             {
@@ -422,6 +428,30 @@ public class ServicioDeTurnos(
         await db.SaveChangesAsync(ct);
 
         return arqueos;
+    }
+
+    /// <summary>judgment-day JD-E5a-2 (DB CHANGE GATE aprobado): pinea <see
+    /// cref="TurnoCaja.IdMedioPagoEfectivo"/> UNA sola vez, al cierre — statement crudo, mismo
+    /// patrón ADO que <see cref="MarcarCerradoAsync"/>/<see
+    /// cref="ExigirTurnoAbiertoBajoLockAsync"/>. Sin <c>WHERE estado = 'cerrado'</c> explícito:
+    /// esta fila ya está bajo el lock EXCLUSIVO que el UPDATE guardado (statement 1) tomó y
+    /// todavía sostiene hasta el commit, así que ninguna otra transacción pudo haberla tocado
+    /// entremedio — el UPDATE guardado YA dejó <c>estado = 'cerrado'</c>, lo que satisface
+    /// <c>ck_turnos_caja_medio_efectivo_solo_cerrado</c> por construcción.</summary>
+    private async Task FijarMedioPagoEfectivoAsync(
+        int idTenant, int idTurnoCaja, int idMedioPagoEfectivo, CancellationToken ct)
+    {
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+        var transaccionCruda = db.Database.CurrentTransaction?.GetDbTransaction();
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = transaccionCruda;
+        comando.CommandText =
+            "UPDATE turnos_caja SET id_medio_pago_efectivo = $1 WHERE id_turno_caja = $2 AND id_tenant = $3";
+        ParametrosDeComando.Agregar(comando, idMedioPagoEfectivo);
+        ParametrosDeComando.Agregar(comando, idTurnoCaja);
+        ParametrosDeComando.Agregar(comando, idTenant);
+        await comando.ExecuteNonQueryAsync(ct);
     }
 
     /// <summary>Resumen de un cierre ya persistido (<c>GET …/resumen-de-cierre</c>) — reimpresión o

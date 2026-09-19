@@ -338,3 +338,84 @@ used in tests as an independent cross-check of the retiro-mode case.
   row (no pagos, gastos, fondo, retiro, or refuerzo touched it)
 - WHEN `GET .../resumen-de-cierre` is requested
 - THEN `diferencia = 0`
+
+### Requirement: The Cash Anchor Is Pinned At Close, Never Re-Resolved For A Closed Turno
+
+(judgment-day JD-E5a-2, DB CHANGE GATE ejercido y aprobado — a bug this
+same fix-round introduced: "Diferencia Is Read From The Persisted Anchor
+Arqueo" above still identified WHICH row is the anchor by re-resolving
+`ResolvedorDeMedioDeCajaFisica.Resolver` against the CURRENT medios_pago
+catalog on every read.) `medios_pago.comportamiento` is editable after the
+fact (`PUT /api/catalogos/medios-pago/{id}`) — a re-resolution can name a
+different medio as the anchor than the one the close actually used,
+reading the wrong `arqueos_turno` row (or none) and mis-deriving
+`ventasEnEfectivoNetas`/`gastosEnEfectivo` along with it.
+
+`turnos_caja.id_medio_pago_efectivo` MUST be set exactly once, inside the
+same close transaction, in BOTH close modes (classic cierre and cierre por
+retiro), immediately after the anchor is resolved for that close — never
+before (the anchor is only known once the turno's estado is already
+`cerrado`, so the same-transaction UPDATE that sets it MUST run after the
+guarded statement-1 UPDATE, never combined with it). `GET
+.../resumen-de-cierre` and the POST response it must match MUST use this
+PINNED id as the anchor for `diferencia`, `ventasEnEfectivoNetas`,
+`gastosEnEfectivo`, and the `arqueos_turno` lookup — never
+`ResolvedorDeMedioDeCajaFisica.Resolver` re-run against the live catalog,
+for any turno where the column is populated. A turno closed before this
+column existed (`id_medio_pago_efectivo IS NULL`) MUST fall back to
+`ResolvedorDeMedioDeCajaFisica.Resolver` against the current catalog — the
+only case where re-resolution is legitimate, because no pin exists to
+read.
+
+#### Scenario: A catalog edit after close does not move the already-closed turno's summary
+- GIVEN a turno closed by retiro with cash pagos, a fondo inicial, and a
+  closing retiro, whose `GET .../resumen-de-cierre` was read right after
+  closing
+- WHEN the medio that was the cash anchor is edited to
+  `comportamiento = electronico` and a different medio is edited to
+  `comportamiento = efectivo`
+- THEN a subsequent `GET .../resumen-de-cierre` for that same turno returns
+  the exact same `diferencia`, `ventasEnEfectivoNetas`, `gastosEnEfectivo`,
+  and `ventasPorMedio` as the read taken right after closing
+
+#### Scenario: A legacy turno with no pinned anchor falls back to the current catalog
+- GIVEN a turno closed before `id_medio_pago_efectivo` existed
+  (`id_medio_pago_efectivo IS NULL`) and the catalog unchanged since
+- WHEN `GET .../resumen-de-cierre` is requested
+- THEN the response is derived from `ResolvedorDeMedioDeCajaFisica.Resolver`
+  against the current catalog, identical to what a pin would have produced
+
+#### Scenario: The CHECK rejects pinning the anchor on an open turno
+- GIVEN a raw write that sets `id_medio_pago_efectivo` on a turno with
+  `estado = abierto`
+- WHEN it is attempted
+- THEN it is rejected by `ck_turnos_caja_medio_efectivo_solo_cerrado` with
+  SQLSTATE `23514`
+
+### Requirement: The Backfill Assigns The Anchor Only Where It Is Unambiguous
+
+The `TurnosCajaMedioPagoEfectivo` migration's backfill MUST set
+`id_medio_pago_efectivo` on an already-`cerrado` turno only when its tenant
+has exactly one `medios_pago` row with `comportamiento = efectivo` (over
+the full catalog, `activo` or not — same universe
+`ResolvedorDeMedioDeCajaFisica.Resolver` uses). A tenant with zero or more
+than one such medio MUST be left `NULL` — the backfill MUST NOT guess. An
+`abierto` turno MUST NEVER receive a value (the CHECK would reject it
+regardless).
+
+#### Scenario: A tenant with exactly one medio efectivo backfills its closed turnos
+- GIVEN a tenant with exactly one `medios_pago` row with
+  `comportamiento = efectivo`, and one turno `cerrado`
+- WHEN the migration's backfill runs
+- THEN that turno's `id_medio_pago_efectivo` equals that medio's id
+
+#### Scenario: A tenant with two medios efectivo is left NULL
+- GIVEN a tenant with two `medios_pago` rows with `comportamiento =
+  efectivo` (a misconfigured catalog), and one turno `cerrado`
+- WHEN the migration's backfill runs
+- THEN that turno's `id_medio_pago_efectivo` stays `NULL`
+
+#### Scenario: An open turno is never backfilled
+- GIVEN a tenant with exactly one medio efectivo and one turno `abierto`
+- WHEN the migration's backfill runs
+- THEN that turno's `id_medio_pago_efectivo` stays `NULL`
