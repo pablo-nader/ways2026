@@ -47,6 +47,13 @@ export type PropsModal = {
    * Escape/click en el fondo se ignoran — mismo criterio de "compuerta inerte mientras ocupado"
    * que el resto de las pantallas (react-async-state regla 13). */
   ocupado?: boolean
+  /** `false` cuando el llamador es el único dueño del foco al cerrar (p. ej. el POS lo devuelve
+   * siempre al input de código, y recién cuando ese input vuelve a estar habilitado): el modal no
+   * devuelve el foco al control que lo tenía antes de abrir. Se lee al montar. */
+  restaurarFoco?: boolean
+  /** Nombre accesible del botón de cerrar del header — distinto de "Cerrar" cuando el pie ya tiene
+   * un botón con ese nombre. */
+  etiquetaCerrar?: string
   onCerrar: () => void
 }
 
@@ -58,7 +65,16 @@ export type PropsModal = {
  * modal más arriba entre los que están abiertos en un momento dado — nunca un booleano "hay un
  * modal abierto" que no distinga cuál.
  */
-export function Modal({ titulo, children, pie, tamano, ocupado = false, onCerrar }: PropsModal) {
+export function Modal({
+  titulo,
+  children,
+  pie,
+  tamano,
+  ocupado = false,
+  restaurarFoco = true,
+  etiquetaCerrar = 'Cerrar',
+  onCerrar,
+}: PropsModal) {
   const idTitulo = useId()
   const idPropio = useId()
   const contenidoRef = useRef<HTMLDivElement>(null)
@@ -70,7 +86,9 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, onCerrar
   // pisado, y "el foco anterior" terminaría siendo el campo del propio modal en vez del control
   // real que lo abrió (bug real, encontrado con un select enfocado a mano antes de abrir un modal
   // cuyo contenido tenía un input con `autoFocus`: el select nunca recuperaba el foco al cerrar).
-  const [focoPrevio] = useState<HTMLElement | null>(() => document.activeElement as HTMLElement | null)
+  const [focoPrevio] = useState<HTMLElement | null>(() =>
+    restaurarFoco ? (document.activeElement as HTMLElement | null) : null,
+  )
   const [nivel, setNivel] = useState(0)
 
   // useLayoutEffect (no useEffect): el registro en la pila, el cálculo del nivel de apilado y el
@@ -171,7 +189,7 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, onCerrar
               <h5 className="modal-title" id={idTitulo}>
                 {titulo}
               </h5>
-              <button type="button" className="btn-close" aria-label="Cerrar" disabled={ocupado} onClick={onCerrar} />
+              <button type="button" className="btn-close" aria-label={etiquetaCerrar} disabled={ocupado} onClick={onCerrar} />
             </div>
             <div className="modal-body">{children}</div>
             {pie && <div className="modal-footer">{pie}</div>}

@@ -235,6 +235,10 @@ type PropsConfirmacionDeCobro = {
  * `ModalDeBusquedaDeArticulos`) en vez de vivir inline dentro del panel "Datos de la venta" — el
  * llamador ya no lo envuelve en ningún contenedor propio, así el panel nunca cambia de tamaño
  * cuando el diálogo aparece.
+ *
+ * No usa `Modal` a propósito: su Escape sumaría un segundo cierre al único listener de F9/F10/
+ * Escape de `PantallaPos`, su botón "Cerrar" rompería la alternancia exacta Finalizar↔Cancelar,
+ * y su devolución de foco competiría con la de `disparadorConfirmacionRef`.
  */
 function ConfirmacionDeCobro({ total, pagado, vuelto, previaFallida, ocupado, onFinalizar, onCancelar }: PropsConfirmacionDeCobro) {
   const finalizarRef = useRef<HTMLButtonElement>(null)
@@ -371,6 +375,10 @@ type PropsVentaFinalizada = ResumenVentaFinalizada & {
  * coordina esto con el listener global de F9 de `PantallaPos` (`f9Ref`) — mientras el foco esté
  * adentro del modal (el trap de Tab lo garantiza), la tecla nunca llega a burbujear hasta
  * `document`, así que ninguna tecla se maneja dos veces.
+ *
+ * No usa `Modal` a propósito: Escape no la cierra (solo Aceptar/Enter/F9), no tiene botón
+ * "Cerrar" ni cierre por fondo (ambos saltearían `cerrarSinEscanear` y el buffer), y el buffer
+ * necesita el keydown de todo el diálogo, que `Modal` no expone.
  */
 function VentaFinalizada({
   numeroVisible,

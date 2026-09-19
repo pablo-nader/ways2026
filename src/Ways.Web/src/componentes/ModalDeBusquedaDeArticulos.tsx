@@ -5,6 +5,7 @@ import { clienteDeOfertas } from '../api/ofertas'
 import type { LineaCarrito } from '../api/carrito'
 import type { ArticuloListado, LineaDeResolucion, ResultadoDeResolucion } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
+import { Modal } from './Modal'
 
 /** Spec: "minimum 2 characters" — por debajo de este largo ni se debounce ni se dispara Enter. */
 const LARGO_MINIMO_DE_BUSQUEDA = 2
@@ -42,6 +43,11 @@ export type PropsModalDeBusquedaDeArticulos = {
  * `onAgregar`): misma resolución de precio, mismas reglas de ofertas/stock/lote — el precio que
  * se ve acá es solo una vista previa a `cantidad = 1` (`ofertas/resolver`), la línea real la
  * resuelve el efecto de precios de `Pos.tsx` como a cualquier otra.
+ *
+ * Se monta sobre `Modal` (trampa de foco, Escape solo en el tope) con `restaurarFoco={false}`: el
+ * foco de vuelta es de `Pos.tsx`, que lo lleva al input de código recién cuando ese input vuelve a
+ * estar habilitado. Devolverlo antes al disparador lo dejaría en "Buscar artículo" mientras tanto,
+ * donde el Enter final de una pistola reabriría el buscador.
  */
 export function ModalDeBusquedaDeArticulos({
   idListaPrecio,
@@ -83,16 +89,6 @@ export function ModalDeBusquedaDeArticulos({
   useEffect(() => {
     inputBusquedaRef.current?.focus()
   }, [])
-
-  useEffect(() => {
-    function alTeclado(evento: KeyboardEvent) {
-      if (evento.key !== 'Escape') return
-      evento.preventDefault()
-      onCerrar()
-    }
-    document.addEventListener('keydown', alTeclado)
-    return () => document.removeEventListener('keydown', alTeclado)
-  }, [onCerrar])
 
   async function buscar(terminoBuscado: string) {
     const propio = terminoBuscado.trim()
@@ -162,89 +158,76 @@ export function ModalDeBusquedaDeArticulos({
   }
 
   return (
-    <>
-      <div className="modal d-block" tabIndex={-1} role="dialog" aria-modal="true" aria-label="Buscar artículo">
-        <div className="modal-dialog modal-lg" role="document">
-          <div className="modal-content rounded-0">
-            <div className="modal-header">
-              <h5 className="modal-title">Buscar artículo</h5>
-              <button type="button" className="btn-close" aria-label="Cerrar" onClick={onCerrar} />
-            </div>
-            <div className="modal-body">
-              <div className="input-group mb-3">
-                <input
-                  ref={inputBusquedaRef}
-                  type="search"
-                  className="form-control rounded-0"
-                  placeholder="Buscar por nombre…"
-                  aria-label="Buscar artículo por nombre"
-                  value={termino}
-                  onChange={(e) => cambiarTermino(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscarInmediato())}
-                />
-                <button type="button" className="btn btn-primary rounded-0" disabled={buscando} onClick={buscarInmediato}>
-                  {buscando ? 'Buscando…' : 'Buscar'}
-                </button>
-              </div>
-
-              {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
-
-              <div className="table-responsive">
-                <table className="table table-striped table-hover table-bordered align-middle">
-                  <thead>
-                    <tr>
-                      <th>Código</th>
-                      <th>Nombre</th>
-                      <th className="text-end">Precio</th>
-                      <th className="text-end">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {buscando && (
-                      <tr>
-                        <td colSpan={4} className="text-center text-muted py-3">
-                          Buscando…
-                        </td>
-                      </tr>
-                    )}
-                    {!buscando && resultados !== null && resultados.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="text-center text-muted py-3">
-                          Sin resultados
-                        </td>
-                      </tr>
-                    )}
-                    {!buscando &&
-                      resultados?.map((a) => {
-                        const resultado = precios[a.id]
-                        const precioTexto = resultado?.precioFinal != null ? formatearMoneda(resultado.precioFinal) : '—'
-                        return (
-                          <tr key={a.id}>
-                            <td>{a.codigoInterno}</td>
-                            <td>{a.nombre}</td>
-                            <td className="text-end">{precioTexto}</td>
-                            <td className="text-end">
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-primary rounded-0"
-                                disabled={!puedeAgregar}
-                                title={motivoSinAgregar}
-                                onClick={() => agregar(a)}
-                              >
-                                Agregar
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
+    <Modal titulo="Buscar artículo" tamano="lg" restaurarFoco={false} onCerrar={onCerrar}>
+      <div className="input-group mb-3">
+        <input
+          ref={inputBusquedaRef}
+          type="search"
+          className="form-control rounded-0"
+          placeholder="Buscar por nombre…"
+          aria-label="Buscar artículo por nombre"
+          value={termino}
+          onChange={(e) => cambiarTermino(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), buscarInmediato())}
+        />
+        <button type="button" className="btn btn-primary rounded-0" disabled={buscando} onClick={buscarInmediato}>
+          {buscando ? 'Buscando…' : 'Buscar'}
+        </button>
       </div>
-      <div className="modal-backdrop show" />
-    </>
+
+      {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
+
+      <div className="table-responsive">
+        <table className="table table-striped table-hover table-bordered align-middle">
+          <thead>
+            <tr>
+              <th>Código</th>
+              <th>Nombre</th>
+              <th className="text-end">Precio</th>
+              <th className="text-end">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {buscando && (
+              <tr>
+                <td colSpan={4} className="text-center text-muted py-3">
+                  Buscando…
+                </td>
+              </tr>
+            )}
+            {!buscando && resultados !== null && resultados.length === 0 && (
+              <tr>
+                <td colSpan={4} className="text-center text-muted py-3">
+                  Sin resultados
+                </td>
+              </tr>
+            )}
+            {!buscando &&
+              resultados?.map((a) => {
+                const resultado = precios[a.id]
+                const precioTexto = resultado?.precioFinal != null ? formatearMoneda(resultado.precioFinal) : '—'
+                return (
+                  <tr key={a.id}>
+                    <td>{a.codigoInterno}</td>
+                    <td>{a.nombre}</td>
+                    <td className="text-end">{precioTexto}</td>
+                    <td className="text-end">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-primary rounded-0"
+                        disabled={!puedeAgregar}
+                        title={motivoSinAgregar}
+                        onClick={() => agregar(a)}
+                      >
+                        Agregar
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
   )
 }

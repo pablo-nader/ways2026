@@ -1569,6 +1569,28 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     expect(screen.getByRole('dialog', { name: 'Buscar artículo' })).toBeInTheDocument()
   })
 
+  /**
+   * Cláusula bajo prueba: `restaurarFoco={false}` de `ModalDeBusquedaDeArticulos` sobre `Modal`.
+   * Con el input de código deshabilitado, el pedido de foco de `cerrarBuscador` queda pendiente;
+   * mientras tanto el foco no debe estacionarse en "Buscar artículo", donde el Enter de una pistola
+   * reabriría el buscador. Mutation-proof-tests: sin esa prop (`Modal` devolviendo el foco
+   * previo), el último `expect` falla con el foco de vuelta en "Buscar artículo".
+   */
+  it('con caja cerrada, cerrar el buscador no devuelve el foco a "Buscar artículo" (el foco de vuelta es de Pos)', async () => {
+    mockearTurnoCerrado()
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByText('Caja cerrada')
+    const botonBuscar = screen.getByRole('button', { name: 'Buscar artículo' })
+
+    await userEvent.click(botonBuscar)
+    await screen.findByRole('dialog', { name: 'Buscar artículo' })
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+    expect(botonBuscar).not.toHaveFocus()
+  })
+
   it('"Abrir caja" (reutiliza PanelGateTurno) abre el turno y habilita todo sin recargar la página, con el input de código enfocado', async () => {
     mockearTurnoCerrado()
     renderPos()
