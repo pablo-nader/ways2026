@@ -72,6 +72,18 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
       .grilla(filtros)
       .then((p) => {
         if (generacionRef.current !== generacion) return
+        // Una Baja puede vaciar la última página en curso: si el servidor todavía tiene artículos
+        // (`total > 0`) pero la página pedida quedó fuera de rango, se pide la última página válida
+        // en vez de mostrar "No hay artículos…" con una paginación inconsistente ("Página 2 de 1").
+        // Con `total === 0` no hay página válida a la que volver, así que se deja tal cual (sin esto
+        // se entraría en un loop pidiendo siempre la página 1 con resultado vacío).
+        if (p.total > 0) {
+          const ultimaPaginaValida = Math.max(1, Math.ceil(p.total / p.tamanio))
+          if (p.pagina > ultimaPaginaValida) {
+            setFiltros((prev) => (prev.pagina === ultimaPaginaValida ? prev : { ...prev, pagina: ultimaPaginaValida }))
+            return
+          }
+        }
         setPagina(p)
       })
       .catch((e) => {
@@ -165,15 +177,17 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
             <table className="table table-striped table-hover table-bordered align-middle">
               <thead>
                 <tr>
-                  <th>Código</th>
-                  <th>Nombre</th>
-                  <th>{tituloColumnaPrecio}</th>
-                  <th>Proveedor</th>
-                  <th>Estado</th>
-                  <th className="text-end">Acciones</th>
+                  <th scope="col">Código</th>
+                  <th scope="col">Nombre</th>
+                  <th scope="col">{tituloColumnaPrecio}</th>
+                  <th scope="col">Proveedor</th>
+                  <th scope="col">Estado</th>
+                  <th scope="col" className="text-end">
+                    Acciones
+                  </th>
                 </tr>
                 <tr>
-                  <th>
+                  <th scope="col">
                     <input
                       type="search"
                       className="form-control form-control-sm rounded-0"
@@ -182,7 +196,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       onChange={(e) => programarCambioDeTexto({ codigo: e.target.value })}
                     />
                   </th>
-                  <th>
+                  <th scope="col">
                     <input
                       type="search"
                       className="form-control form-control-sm rounded-0"
@@ -191,7 +205,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       onChange={(e) => programarCambioDeTexto({ nombre: e.target.value })}
                     />
                   </th>
-                  <th>
+                  <th scope="col">
                     <div className="d-flex gap-1">
                       <CampoImporte
                         aria-label="Precio desde"
@@ -211,7 +225,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       />
                     </div>
                   </th>
-                  <th>
+                  <th scope="col">
                     <select
                       className="form-select form-select-sm rounded-0"
                       aria-label="Filtrar por proveedor"
@@ -232,7 +246,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       ))}
                     </select>
                   </th>
-                  <th>
+                  <th scope="col">
                     <select
                       className="form-select form-select-sm rounded-0"
                       aria-label="Filtrar por estado"
@@ -247,7 +261,7 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
                       <option value="false">Inactivos</option>
                     </select>
                   </th>
-                  <th className="text-end">
+                  <th scope="col" className="text-end">
                     <button type="button" className="btn btn-sm btn-outline-secondary rounded-0" onClick={limpiarFiltros}>
                       Limpiar
                     </button>

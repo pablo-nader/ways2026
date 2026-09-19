@@ -561,3 +561,36 @@ describe('GrillaDeArticulos — carga sin pantallazo en blanco', () => {
     })
   })
 })
+
+describe('GrillaDeArticulos — página fuera de rango tras una Baja (GW1)', () => {
+  /**
+   * Cláusula bajo prueba: el clamp de `cargar` en `GrillaDeArticulos.tsx` — cuando `p.total > 0`
+   * y `p.pagina` quedó fuera de rango, pide la última página válida en vez de renderizar la
+   * respuesta tal cual. Mutation-proof-tests: sacar el clamp deja la grilla en "No hay artículos…"
+   * con "Página 2 de 1" — este test nunca vería "Articulo Uno" ni "Página 1 de 1".
+   */
+  it('tras dar de baja la única fila de la última página, la grilla cae a la última página válida con la fila restante', async () => {
+    mockearRutas(paginaFixture([filaFixture({ nombre: 'Articulo Uno' })], { total: 2, tamanio: 1, pagina: 1 }))
+    const { rerenderCon } = renderGrilla()
+    await screen.findByText('Articulo Uno')
+
+    mockearRutas(paginaFixture([filaFixture({ id: 2, nombre: 'Articulo Dos' })], { total: 2, tamanio: 1, pagina: 2 }))
+    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText('Articulo Dos')
+
+    // Simula el refresco pedido por el padre tras la Baja: el servidor sigue "en" la página 2
+    // pedida (ya no existe ningún artículo ahí) pero todavía tiene 1 artículo en total.
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (!ruta.startsWith('/articulos/grilla')) return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      if (ruta.includes('pagina=2')) return Promise.resolve(paginaFixture([], { total: 1, tamanio: 1, pagina: 2 }))
+      return Promise.resolve(paginaFixture([filaFixture({ nombre: 'Articulo Uno' })], { total: 1, tamanio: 1, pagina: 1 }))
+    })
+    rerenderCon({ pedidoDeRefresco: 1 })
+
+    await screen.findByText('Articulo Uno')
+    expect(screen.queryByText('Articulo Dos')).not.toBeInTheDocument()
+    expect(screen.queryByText('No hay artículos que coincidan con los filtros.')).not.toBeInTheDocument()
+    expect(screen.getByText(/Página 1 de 1/)).toBeInTheDocument()
+    expect(ultimaQuery()).toContain('pagina=1')
+  })
+})
