@@ -34,28 +34,16 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                 principalColumns: new[] { "id_medio_pago", "id_tenant" },
                 onDelete: ReferentialAction.Restrict);
 
-            // judgment-day JD-E5a-2 (DB CHANGE GATE aprobado): backfill de los turnos YA
-            // cerrados — mismo criterio de resolución que ResolvedorDeMedioDeCajaFisica.Resolver
-            // (TODAS las filas del catálogo, sin filtrar activo): el ancla es el único medio del
-            // tenant con comportamiento = efectivo cuando existe exactamente uno; si el tenant
-            // tiene cero o más de uno (catálogo mal configurado, o editado después del cierre),
-            // el turno queda NULL a propósito — "fail-closed, nunca adivinar", mismo criterio que
-            // el backfill de id_remito (docs/10 §Stock). Corre DESPUÉS de la CHECK/FK de arriba:
-            // solo toca turnos con estado = 'cerrado' (satisface la CHECK) y solo asigna ids que
-            // ya existen en medios_pago (satisface la FK) — nunca puede violar ninguna de las dos.
+            // Backfill de los turnos ya cerrados con el mismo criterio que
+            // ResolvedorDeMedioDeCajaFisica.Resolver: el ancla es el único medio del tenant con
+            // comportamiento = efectivo; con cero o más de uno el turno queda NULL (nunca se
+            // adivina). Corre después de la CHECK y la FK, así que no puede violarlas.
             //
-            // judgment-day ronda 2 (JD-E5a-2 escalado): turnos_caja corre bajo FORCE ROW LEVEL
-            // SECURITY y el rol de aplicación no tiene BYPASSRLS en Producción
-            // (InicializadorDeBaseDeDatos.VerificarRolSinBypassAsync) — un UPDATE plano solo
-            // vería las filas del tenant de la sesión que corre `dotnet ef database update` (o
-            // ninguna, si esa sesión no tiene contexto de tenant, que es el caso real:
-            // WaysDbContextFactory no registra el interceptor de tenant) y reportaría éxito sin
-            // haber tocado nada. Mismo patrón que el backfill de `CostoCongeladoEnVentaEtapa9`/
-            // `QuitarVueltoMaximo`: `SET LOCAL app.acceso = 'plataforma'` DENTRO del mismo bloque
-            // Sql(), nunca fuera de él, para que alcance todos los tenants en una sola pasada.
-            // Idempotente por construcción: solo toca filas con id_medio_pago_efectivo IS NULL
-            // (implícito en HAVING COUNT(*) = 1 + el criterio de fail-closed) y `estado =
-            // 'cerrado'`, así que una corrida repetida no cambia nada que ya esté poblado.
+            // turnos_caja corre bajo FORCE ROW LEVEL SECURITY y el rol de aplicación no tiene
+            // BYPASSRLS: `dotnet ef database update` (WaysDbContextFactory, sin interceptor de
+            // tenant) no vería ninguna fila y reportaría éxito. Por eso el SET LOCAL va dentro del
+            // mismo bloque Sql(), igual que en CostoCongeladoEnVentaEtapa9 y QuitarVueltoMaximo
+            // (skill rls-migration-backfills).
             migrationBuilder.Sql(
                 """
                 SET LOCAL app.acceso = 'plataforma';
