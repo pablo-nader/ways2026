@@ -152,6 +152,7 @@ export function FormularioArticulo({
   ocupado,
   bloqueadoPorCatalogos,
   onCambio,
+  actualizarFormulario,
   onGuardar,
   onCancelar,
   alDeEscribir,
@@ -174,6 +175,12 @@ export function FormularioArticulo({
   ocupado: boolean
   bloqueadoPorCatalogos: boolean
   onCambio: (f: Formulario) => void
+  /** Actualización funcional, para el completado de las altas rápidas (react-async-state regla
+   * 1): esos `onCreado` corren después de un `await` propio del mini-modal, así que un `valor`
+   * capturado por closure en el momento de abrirlo puede quedar desactualizado si mientras tanto
+   * el usuario tocó otro campo — o si otra alta rápida se completó primero. Construir siempre a
+   * partir del `previo` real evita que un alta tardía resucite ese snapshot viejo. */
+  actualizarFormulario: (actualizar: (previo: Formulario) => Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
   alDeEscribir: (enCurso: boolean) => void
@@ -209,7 +216,7 @@ export function FormularioArticulo({
   }
 
   return (
-    <div className="border p-3 mb-4 bg-white">
+    <div>
       <form
         autoComplete="off"
         onSubmit={(e) => {
@@ -223,10 +230,6 @@ export function FormularioArticulo({
             Se le mueve acá la clase de grilla de Bootstrap (antes en el form) para no romper el
             layout de columnas; border-0/p-0/m-0 neutralizan el estilo por defecto del fieldset. */}
         <fieldset disabled={ocupado} className="row g-3 border-0 p-0 m-0">
-          <div className="col-12">
-            <strong>{esNuevo ? 'Nuevo artículo' : `Editando artículo ${valor.codigoInterno}`}</strong>
-          </div>
-
           <div className="col-12">
             <strong className="text-muted small text-uppercase">Identificación</strong>
           </div>
@@ -639,7 +642,7 @@ export function FormularioArticulo({
               categorias={categorias}
               onCreado={(nueva) => {
                 onCategoriaCreada(nueva)
-                onCambio({ ...valor, idCategoria: nueva.id })
+                actualizarFormulario((previo) => ({ ...previo, idCategoria: nueva.id }))
                 setPadronRapidoAbierto(null)
               }}
               onCancelar={() => setPadronRapidoAbierto(null)}
@@ -649,7 +652,7 @@ export function FormularioArticulo({
             <AltaRapidaMarca
               onCreado={(nueva) => {
                 onMarcaCreada(nueva)
-                onCambio({ ...valor, idMarca: nueva.id })
+                actualizarFormulario((previo) => ({ ...previo, idMarca: nueva.id }))
                 setPadronRapidoAbierto(null)
               }}
               onCancelar={() => setPadronRapidoAbierto(null)}
@@ -659,7 +662,7 @@ export function FormularioArticulo({
             <AltaRapidaGrupo
               onCreado={(nuevo) => {
                 onGrupoCreada(nuevo)
-                onCambio({ ...valor, idGrupo: nuevo.id })
+                actualizarFormulario((previo) => ({ ...previo, idGrupo: nuevo.id }))
                 setPadronRapidoAbierto(null)
               }}
               onCancelar={() => setPadronRapidoAbierto(null)}
@@ -669,7 +672,7 @@ export function FormularioArticulo({
             <AltaRapidaProveedor
               onCreado={(nuevo) => {
                 onProveedorCreado(nuevo)
-                onCambio({ ...valor, idProveedorHabitual: nuevo.id })
+                actualizarFormulario((previo) => ({ ...previo, idProveedorHabitual: nuevo.id }))
                 setPadronRapidoAbierto(null)
               }}
               onCancelar={() => setPadronRapidoAbierto(null)}

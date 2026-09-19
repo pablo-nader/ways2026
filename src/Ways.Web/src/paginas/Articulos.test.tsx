@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Articulos } from './Articulos'
 import { ErrorApi } from '../api/cliente'
@@ -173,6 +174,9 @@ type CatalogosDeTest = {
   /** Override completo del fetch de condiciones fiscales (p.ej. para simular un rechazo seguido
    * de un reintento exitoso) — cuando está presente, gana sobre `condicionesFiscales`. */
   condicionesFiscalesImpl?: () => Promise<CondicionFiscalListado[]>
+  /** Override completo del fetch de detalle por id (p.ej. para simular una respuesta lenta que
+   * llega tarde) — cuando está presente, gana sobre la resolución por defecto. */
+  detalleImpl?: (id: number) => Promise<ArticuloListado>
 }
 
 /**
@@ -187,6 +191,7 @@ function mockearApiGet(catalogos: CatalogosDeTest = {}) {
     if (ruta === '/articulos') return Promise.resolve(paginaFixture([articuloUno, articuloDos]))
     if (/^\/articulos\/\d+$/.test(ruta)) {
       const id = Number(ruta.split('/')[2])
+      if (catalogos.detalleImpl) return catalogos.detalleImpl(id)
       return Promise.resolve([articuloUno, articuloDos].find((a) => a.id === id) ?? articuloUno)
     }
     if (/^\/articulos\/\d+\/codigos-barra$/.test(ruta)) return Promise.resolve([])
@@ -212,8 +217,24 @@ function mockearApiGet(catalogos: CatalogosDeTest = {}) {
   })
 }
 
+/**
+ * `Articulos` deriva el modo del modal de `useLocation().pathname` (ver `articulos/rutaModal.ts`)
+ * en vez de con `<Routes>` anidadas — se monta en una única entrada `/articulos/*`, igual que en
+ * `App.tsx`, para que React Router no la remonte al abrir/cerrar el modal ni al pasar de
+ * `/create` a `/edit/{id}` recién creado.
+ */
+function renderArticulos(rutaInicial = '/articulos') {
+  return render(
+    <MemoryRouter initialEntries={[rutaInicial]}>
+      <Routes>
+        <Route path="/articulos/*" element={<Articulos />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
 async function abrirFormularioNuevo() {
-  render(<Articulos />)
+  renderArticulos()
   await screen.findByText('Articulo Uno')
   await userEvent.click(screen.getByRole('button', { name: 'Nuevo' }))
   await screen.findByText('Nuevo artículo')
@@ -229,11 +250,11 @@ beforeEach(() => {
 
 describe('Articulos — reseteo de estado por artículo (key de FormularioArticulo)', () => {
   it('la sugerencia de precio calculada para un artículo no persiste al pasar a editar otro', async () => {
-    render(<Articulos />)
+    renderArticulos()
 
     const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
     if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
-    await userEvent.click(within(filaUno).getByRole('button', { name: 'Editar' }))
+    await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
 
     await screen.findByText('Editando artículo A0001')
     await userEvent.click(await screen.findByRole('button', { name: 'Calcular sugerencia de precio' }))
@@ -243,7 +264,7 @@ describe('Articulos — reseteo de estado por artículo (key de FormularioArticu
     // `key={formulario.id ?? 'nuevo'}` documentado junto a <FormularioArticulo>.
     const filaDos = screen.getByText('Articulo Dos').closest('tr')
     if (!filaDos) throw new Error('No se encontró la fila del artículo dos')
-    await userEvent.click(within(filaDos).getByRole('button', { name: 'Editar' }))
+    await userEvent.click(within(filaDos).getByRole('link', { name: 'Editar' }))
     await screen.findByText('Editando artículo A0002')
 
     await waitFor(() => {
@@ -256,11 +277,11 @@ describe('Articulos — reseteo de estado por artículo (key de FormularioArticu
 
 describe('Articulos — toggle controlaLote (coerción boolean, dto-contract-honesty)', () => {
   it('un artículo con controlaLote:false arranca con el checkbox destildado', async () => {
-    render(<Articulos />)
+    renderArticulos()
 
     const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
     if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
-    await userEvent.click(within(filaUno).getByRole('button', { name: 'Editar' }))
+    await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
 
     await screen.findByText('Editando artículo A0001')
     expect(screen.getByLabelText('Controla lote / vencimiento')).not.toBeChecked()
@@ -269,11 +290,11 @@ describe('Articulos — toggle controlaLote (coerción boolean, dto-contract-hon
   it('tildar el checkbox y guardar manda controlaLote:true — nunca un string ni "on"', async () => {
     mockearApiGet()
     apiPutMock.mockResolvedValue(articuloFixture({ id: 1, controlaLote: true }))
-    render(<Articulos />)
+    renderArticulos()
 
     const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
     if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
-    await userEvent.click(within(filaUno).getByRole('button', { name: 'Editar' }))
+    await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
 
     await screen.findByText('Editando artículo A0001')
     await userEvent.click(screen.getByLabelText('Controla lote / vencimiento'))
@@ -287,11 +308,11 @@ describe('Articulos — toggle controlaLote (coerción boolean, dto-contract-hon
   it('sin tocar el checkbox, guarda controlaLote:false — el valor previo del artículo, no un default inventado', async () => {
     mockearApiGet()
     apiPutMock.mockResolvedValue(articuloFixture({ id: 1, controlaLote: false }))
-    render(<Articulos />)
+    renderArticulos()
 
     const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
     if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
-    await userEvent.click(within(filaUno).getByRole('button', { name: 'Editar' }))
+    await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
 
     await screen.findByText('Editando artículo A0001')
     await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
@@ -329,22 +350,22 @@ describe('Articulos — alta rápida: cada botón "+" abre el modal correcto', (
     await userEvent.click(screen.getByRole('button', { name: 'Nueva categoría' }))
     let dialogo = screen.getByRole('dialog', { name: 'Nueva categoría' })
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('dialog')).toHaveLength(1)
 
     await userEvent.click(screen.getByRole('button', { name: 'Nueva marca' }))
     dialogo = screen.getByRole('dialog', { name: 'Nueva marca' })
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('dialog')).toHaveLength(1)
 
     await userEvent.click(screen.getByRole('button', { name: 'Nuevo grupo' }))
     dialogo = screen.getByRole('dialog', { name: 'Nuevo grupo' })
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('dialog')).toHaveLength(1)
 
     await userEvent.click(screen.getByRole('button', { name: 'Nuevo proveedor' }))
     dialogo = await screen.findByRole('dialog', { name: 'Nuevo proveedor' })
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('dialog')).toHaveLength(1)
   })
 })
 
@@ -365,7 +386,7 @@ describe('Articulos — alta rápida: alta exitosa inserta ordenado, selecciona 
     await userEvent.type(within(dialogo).getByLabelText('Nombre'), '  Mango  ')
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Crear' }))
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryAllByRole('dialog')).toHaveLength(1))
 
     expect(apiPostMock).toHaveBeenCalledWith('/catalogos/marcas', { nombre: 'Mango', idEmpresa: null, activo: true })
 
@@ -398,7 +419,7 @@ describe('Articulos — alta rápida: alta exitosa inserta ordenado, selecciona 
     await userEvent.selectOptions(within(dialogo).getByLabelText('Categoría padre'), '1')
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Crear' }))
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryAllByRole('dialog')).toHaveLength(1))
 
     expect(apiPostMock).toHaveBeenCalledWith('/catalogos/categorias', {
       nombre: 'Lácteos',
@@ -437,7 +458,7 @@ describe('Articulos — alta rápida: alta exitosa inserta ordenado, selecciona 
     await userEvent.type(within(dialogo).getByLabelText('Margen sugerido (%)'), '15.5')
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Crear' }))
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryAllByRole('dialog')).toHaveLength(1))
 
     expect(apiPostMock).toHaveBeenCalledWith('/catalogos/grupos', {
       nombre: 'Bebidas',
@@ -633,7 +654,7 @@ describe('Articulos — alta rápida de proveedor: etiqueta y orden en el select
     await userEvent.selectOptions(await within(dialogo).findByLabelText('Condición fiscal'), '7')
     await userEvent.click(within(dialogo).getByRole('button', { name: 'Crear' }))
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryAllByRole('dialog')).toHaveLength(1))
 
     expect(apiPostMock).toHaveBeenCalledWith('/proveedores', {
       razonSocial: 'Manzana Distribuciones',
@@ -660,5 +681,293 @@ describe('Articulos — alta rápida de proveedor: etiqueta y orden en el select
       'Zeta SA',
     ])
     expect(selectProveedor).toHaveValue('3')
+  })
+})
+
+// ---- articulos-en-modal: el alta/edición vive en un Modal gobernado por la URL ------------------
+
+describe('Articulos — rutas del modal', () => {
+  it('/articulos no muestra ningún modal', async () => {
+    renderArticulos('/articulos')
+    await screen.findByText('Articulo Uno')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('/articulos/create abre el modal de alta', async () => {
+    renderArticulos('/articulos/create')
+    await screen.findByText('Articulo Uno')
+    expect(await screen.findByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
+  })
+
+  it('/articulos/edit/1 pide el detalle y abre el modal de edición', async () => {
+    renderArticulos('/articulos/edit/1')
+    await screen.findByText('Articulo Uno')
+    expect(await screen.findByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
+    expect(apiGetMock).toHaveBeenCalledWith('/articulos/1')
+  })
+
+  it('el link "Editar" de cada fila apunta a /articulos/edit/{id}', async () => {
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    const filaDos = screen.getByText('Articulo Dos').closest('tr')
+    if (!filaUno || !filaDos) throw new Error('No se encontraron las filas')
+    expect(within(filaUno).getByRole('link', { name: 'Editar' })).toHaveAttribute('href', '/articulos/edit/1')
+    expect(within(filaDos).getByRole('link', { name: 'Editar' })).toHaveAttribute('href', '/articulos/edit/2')
+  })
+
+  it('un id no numérico en /articulos/edit/... muestra un error dentro del modal, sin crashear, con vuelta al listado', async () => {
+    renderArticulos('/articulos/edit/abc')
+    await screen.findByText('Articulo Uno')
+    expect(await screen.findByText('No se especificó un artículo válido.')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Volver al listado' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('un id numérico que el servidor rechaza (no encontrado) muestra el error del servidor, con vuelta al listado', async () => {
+    mockearApiGet({ detalleImpl: () => Promise.reject(new ErrorApi(404, 'no_encontrado', 'Artículo no encontrado.')) })
+    renderArticulos('/articulos/edit/999')
+    await screen.findByText('Articulo Uno')
+    expect(await screen.findByText('Artículo no encontrado.')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Volver al listado' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('Articulos — alta de un artículo nuevo', () => {
+  it('crear reemplaza la URL a /articulos/edit/{id} sin cerrar el modal, muestra el aviso y aparecen códigos de barra y precios', async () => {
+    mockearApiGet()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/articulos') return Promise.resolve(articuloFixture({ id: 5, codigoInterno: 'A0005', nombre: 'Nuevo Art' }))
+      return Promise.reject(new Error(`POST no esperado en el test: ${ruta}`))
+    })
+
+    await abrirFormularioNuevo()
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo Art')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Editando artículo A0005' })).toBeInTheDocument()
+    expect(screen.getByText(/creado con código interno A0005/)).toBeInTheDocument()
+    expect(screen.getByText('Códigos de barra')).toBeInTheDocument()
+    expect(screen.getByText('Precios por lista')).toBeInTheDocument()
+    // El cambio de URL (/articulos/create → /articulos/edit/5) no debe disparar un refetch del
+    // detalle recién creado: `formulario.id` ya coincide con el id de la URL.
+    expect(apiGetMock).not.toHaveBeenCalledWith('/articulos/5')
+    expect(apiPostMock).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * Cláusula bajo prueba: `{ replace: true }` en el `navigate` de `guardar()` (Articulos.tsx) tras
+   * un alta exitosa. Mutation-proof-tests: sacar `{ replace: true }` (navegación por `push`) deja
+   * `/articulos/create` alcanzable con "atrás" — el segundo `expect` de abajo pasaría a ver el
+   * modal de alta en blanco en vez del listado sin modal.
+   */
+  it('el alta reemplaza la entrada de historial: "atrás" desde la edición recién creada vuelve a /articulos, no a /articulos/create', async () => {
+    mockearApiGet()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/articulos') return Promise.resolve(articuloFixture({ id: 5, codigoInterno: 'A0005', nombre: 'Nuevo Art' }))
+      return Promise.reject(new Error(`POST no esperado en el test: ${ruta}`))
+    })
+
+    function ArnesConHistorial() {
+      const navigate = useNavigate()
+      return (
+        <>
+          <button type="button" onClick={() => navigate(-1)}>
+            Atrás
+          </button>
+          <Articulos />
+        </>
+      )
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/articulos']}>
+        <Routes>
+          <Route path="/articulos/*" element={<ArnesConHistorial />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Articulo Uno')
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo' }))
+    await screen.findByText('Nuevo artículo')
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Nuevo Art')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    await screen.findByRole('dialog', { name: 'Editando artículo A0005' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('Articulos — cierre del modal', () => {
+  it('cerrar sin cambios vuelve a /articulos sin volver a pedir el listado', async () => {
+    await abrirFormularioNuevo()
+    const llamadasAlListadoAntes = apiGetMock.mock.calls.filter(([ruta]) => ruta === '/articulos').length
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
+    const llamadasAlListadoDespues = apiGetMock.mock.calls.filter(([ruta]) => ruta === '/articulos').length
+    expect(llamadasAlListadoDespues).toBe(llamadasAlListadoAntes)
+  })
+
+  /**
+   * Cláusula bajo prueba: Escape en `Modal` solo actúa sobre el modal TOPE de la pila
+   * (`pilaDeModales`) — con el modal de artículo abajo y uno de alta rápida encima, Escape debe
+   * cerrar únicamente el de arriba.
+   */
+  it('Escape con un modal de alta rápida apilado encima cierra solo ese, el modal de artículo sigue abierto', async () => {
+    await abrirFormularioNuevo()
+    await userEvent.click(screen.getByRole('button', { name: 'Nueva marca' }))
+    expect(screen.getByRole('dialog', { name: 'Nueva marca' })).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog', { name: 'Nueva marca' })).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
+  })
+})
+
+describe('Articulos — confirmación al cerrar con cambios sin guardar', () => {
+  it('sin cambios, cerrar no pregunta nada', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await abrirFormularioNuevo()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
+  it('con cambios sin guardar, cancelar la confirmación mantiene el modal abierto con lo tipeado', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await abrirFormularioNuevo()
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Borrador sin guardar')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Borrador sin guardar')
+    confirmSpy.mockRestore()
+  })
+
+  it('con cambios sin guardar, aceptar la confirmación cierra el modal', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await abrirFormularioNuevo()
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Borrador descartado')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+})
+
+describe('Articulos — restauración de foco al cerrar el modal', () => {
+  it('cerrar devuelve el foco al link "Editar" que abrió la edición', async () => {
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    const linkEditar = within(filaUno).getByRole('link', { name: 'Editar' })
+
+    await userEvent.click(linkEditar)
+    await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(linkEditar).toHaveFocus()
+  })
+
+  it('abierto por URL directa (sin click previo), cerrar devuelve el foco al botón "Nuevo" de reserva', async () => {
+    renderArticulos('/articulos/edit/1')
+    await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.getByRole('button', { name: 'Nuevo' })).toHaveFocus()
+  })
+})
+
+describe('Articulos — Editar deshabilitado mientras la pantalla está ocupada', () => {
+  /**
+   * Cláusula bajo prueba: el `preventDefault` de `alClickearEditar` cuando `ocupado && esClicSimple`
+   * en `Articulos.tsx`. Mutation-proof-tests: comentar ese `preventDefault` hace que este test
+   * falle (el modal se abre igual con la Baja todavía en vuelo).
+   */
+  it('con una Baja en vuelo, un click simple en "Editar" no navega', async () => {
+    let resolverBaja: () => void = () => {}
+    const bajaEnVuelo = new Promise<void>((resolve) => {
+      resolverBaja = resolve
+    })
+    apiDeleteMock.mockReturnValue(bajaEnVuelo)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    await userEvent.click(within(filaUno).getByRole('button', { name: 'Baja' }))
+
+    await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolverBaja()
+      await bajaEnVuelo
+    })
+    vi.restoreAllMocks()
+  })
+})
+
+describe('Articulos — respuesta desactualizada del detalle al cambiar de edición', () => {
+  /**
+   * Harness mínimo: expone un botón que navega DIRECTO de una URL de edición a otra, sin pasar
+   * por /articulos — simula "atrás/adelante" del navegador entre dos ediciones ya abiertas.
+   */
+  function ArnesConNavegacionDirecta({ destino }: { destino: string }) {
+    const navigate = useNavigate()
+    return (
+      <>
+        <button type="button" onClick={() => navigate(destino)}>
+          Ir directo
+        </button>
+        <Articulos />
+      </>
+    )
+  }
+
+  it('al cambiar directamente de /articulos/edit/1 a /articulos/edit/2, una respuesta tardía del primero no pisa al segundo', async () => {
+    let resolverLento: (valor: ArticuloListado) => void = () => {}
+    const lento = new Promise<ArticuloListado>((resolve) => {
+      resolverLento = resolve
+    })
+    mockearApiGet({
+      detalleImpl: (id) => (id === 1 ? lento : Promise.resolve(articuloDos)),
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/articulos/edit/1']}>
+        <Routes>
+          <Route path="/articulos/*" element={<ArnesConNavegacionDirecta destino="/articulos/edit/2" />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Articulo Uno')
+    await userEvent.click(screen.getByRole('button', { name: 'Ir directo' }))
+    await screen.findByRole('dialog', { name: 'Editando artículo A0002' })
+
+    await act(async () => {
+      resolverLento(articuloUno)
+      await lento
+    })
+
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0002' })).toBeInTheDocument()
+    expect(screen.queryByText('Editando artículo A0001')).not.toBeInTheDocument()
   })
 })

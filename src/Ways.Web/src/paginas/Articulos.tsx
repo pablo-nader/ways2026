@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCatalogo, clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
@@ -22,12 +23,16 @@ import type {
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
-import { aAlta, aEdicion, aFormulario, formularioVacio, FormularioArticulo, type Formulario } from './articulos/FormularioArticulo'
+import { aAlta, aEdicion, aFormulario, formularioVacio, type Formulario } from './articulos/FormularioArticulo'
 import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
+import { ModalDeArticulo } from './articulos/ModalDeArticulo'
+import { analizarRutaModal } from './articulos/rutaModal'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 const clienteMarcas = clienteDeCatalogo<MarcaListado, MarcaAlta>('marcas')
 const clienteGrupos = clienteDeCatalogo<GrupoListado, GrupoAlta>('grupos')
+
+const MENSAJE_ID_INVALIDO = 'No se especificó un artículo válido.'
 
 /**
  * ABM dedicado de artículos (design decision 1: no la máquina genérica de catálogos) — la
@@ -35,8 +40,19 @@ const clienteGrupos = clienteDeCatalogo<GrupoListado, GrupoAlta>('grupos')
  * disponibilidad por empresa + precios por lista). El código de barras y el editor de precios
  * solo se habilitan una vez que el artículo tiene `id` persistido: ambos endpoints cuelgan de
  * `/api/articulos/{id}/...`, no existen antes del alta.
+ *
+ * articulos-en-modal: la grilla es lo único que se ve en `/articulos`; el alta/edición vive en un
+ * `Modal` gobernado por la URL (`/articulos/create`, `/articulos/edit/:id`). Montado en
+ * `/articulos/*` (App.tsx) como una única entrada de ruta — el modo del modal se deriva de
+ * `useLocation().pathname` con `analizarRutaModal` en vez de con `<Routes>` anidadas, para que
+ * React Router nunca remonte esta página (y con ella, la grilla) al abrir/cerrar el modal: React
+ * Router remonta al cambiar de ENTRADA de ruta, no al cambiar solo un param de la misma entrada.
  */
 export function Articulos() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { modo, idParam } = analizarRutaModal(location.pathname)
+
   const [pagina, setPagina] = useState<PaginaDe<ArticuloListado> | null>(null)
   const [areas, setAreas] = useState<AreaListado[]>([])
   const [categorias, setCategorias] = useState<CategoriaListado[]>([])
@@ -51,21 +67,34 @@ export function Articulos() {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
-  const [formulario, setFormulario] = useState<Formulario | null>(null)
-  const [guardando, setGuardando] = useState(false)
-  const [eliminando, setEliminando] = useState(false)
   const [erroresCatalogosRequeridos, setErroresCatalogosRequeridos] = useState<string[]>([])
   const [avisoListasPrecio, setAvisoListasPrecio] = useState('')
+  const [eliminando, setEliminando] = useState(false)
+  const cargaInicialHechaRef = useRef(false)
+  const generacionCargaRef = useRef(0)
+
+  // ---- estado del modal de alta/edición ----------------------------------------------------------
+  const [formulario, setFormulario] = useState<Formulario | null>(null)
+  const [claveFormulario, setClaveFormulario] = useState<number | 'nuevo'>('nuevo')
+  const [cargandoDetalle, setCargandoDetalle] = useState(false)
+  const [errorDetalle, setErrorDetalle] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [avisoGuardado, setAvisoGuardado] = useState('')
+  const [errorGuardado, setErrorGuardado] = useState('')
   const [escriturasHijas, setEscriturasHijas] = useState(0)
   const tokenEdicionRef = useRef(0)
-  const generacionCargaRef = useRef(0)
-  const cargaInicialHechaRef = useRef(false)
+  // Snapshot del formulario tal como quedó cargado/guardado por última vez — la base contra la que
+  // se compara para saber si hay cambios sin guardar al intentar cerrar (regla: confirmar antes de
+  // descartar, igual criterio que el `confirm()` de la Baja).
+  const formularioOriginalRef = useRef<Formulario | null>(null)
+  const refBotonNuevo = useRef<HTMLButtonElement>(null)
   const ocupado = guardando || eliminando || escriturasHijas > 0
 
-  // Token del fetch de edición en curso: solo protege contra la staleness del fetch de "Editar"
-  // (abrir otra fila mientras el detalle anterior sigue en vuelo). El "supersede" de una edición
-  // por otra acción durante un guardado ya no depende del token — mientras `ocupado` es true, los
-  // controles que podrían dispararlo (Nuevo, Editar, Baja) quedan deshabilitados.
+  // Token del fetch de edición en curso: protege contra la staleness del fetch de detalle (abrir
+  // otra edición, o cerrar, mientras el detalle anterior sigue en vuelo) y contra que la propia
+  // respuesta del guardado se aplique si mientras tanto se invalidó. El "supersede" de una edición
+  // por otra acción durante un guardado ya no depende del token — mientras `ocupado` es true, el
+  // modal queda inerte (no se puede cerrar) y Nuevo/Editar/Baja quedan deshabilitados en la grilla.
   function invalidarEdicionEnCurso(): number {
     return (tokenEdicionRef.current += 1)
   }
@@ -159,7 +188,7 @@ export function Articulos() {
   // Altas rápidas de padrones (Categoría/Marca/Grupo/Proveedor habitual) desde el propio
   // formulario de artículo: cada handler solo inserta el item nuevo en la lista ya ordenada — la
   // selección en el formulario y el cierre del modal los resuelve `FormularioArticulo`, que es
-  // quien tiene el `valor`/`onCambio` del artículo en edición.
+  // quien tiene el `valor`/`actualizarFormulario` del artículo en edición.
   function alCrearCategoria(nueva: CategoriaListado) {
     setCategorias((prev) => insertarOrdenadoPor(prev, nueva, (c) => c.nombre))
   }
@@ -176,39 +205,83 @@ export function Articulos() {
     setProveedores((prev) => insertarOrdenadoPor(prev, nuevo, etiquetaDeProveedor))
   }
 
-  async function abrirNuevo() {
-    if (ocupado) return
-    invalidarEdicionEnCurso()
-    setGuardando(false)
-    setFormulario({ ...formularioVacio(), idArea: areaPorDefecto, idAlicuotaIva: alicuotaPorDefecto })
-    setAviso('')
-    setError('')
+  function actualizarFormulario(actualizar: (previo: Formulario) => Formulario) {
+    setFormulario((prev) => (prev ? actualizar(prev) : prev))
   }
 
-  function cancelarEdicion() {
-    if (ocupado) return
+  async function abrirEdicion(idNumerico: number) {
+    setErrorDetalle('')
+    setCargandoDetalle(true)
+    setFormulario(null)
+    const token = invalidarEdicionEnCurso()
+    setClaveFormulario(idNumerico)
+    try {
+      // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
+      const detalle = await clienteDeArticulos.obtener(idNumerico)
+      if (tokenEdicionRef.current !== token) return
+      const cargado = aFormulario(detalle)
+      setFormulario(cargado)
+      formularioOriginalRef.current = cargado
+      setGuardando(false)
+      setAvisoGuardado('')
+      setErrorGuardado('')
+    } catch (e) {
+      if (tokenEdicionRef.current !== token) return
+      setFormulario(null)
+      formularioOriginalRef.current = null
+      setErrorDetalle(e instanceof ErrorApi ? e.message : 'No se pudo abrir el artículo.')
+    } finally {
+      if (tokenEdicionRef.current === token) setCargandoDetalle(false)
+    }
+  }
+
+  // Efecto de apertura: reacciona a la URL, no a clicks — así una edición abierta desde la grilla,
+  // desde una URL tipeada a mano o desde "atrás/adelante" del navegador pasan siempre por el mismo
+  // camino. Cuando `modo` pasa a null (URL vuelve a /articulos) se limpia todo el estado del modal
+  // para no arrastrar restos a la próxima apertura.
+  useEffect(() => {
+    if (modo === 'crear') {
+      invalidarEdicionEnCurso()
+      setGuardando(false)
+      setErrorDetalle('')
+      setAvisoGuardado('')
+      setErrorGuardado('')
+      setCargandoDetalle(false)
+      const nuevo = { ...formularioVacio(), idArea: areaPorDefecto, idAlicuotaIva: alicuotaPorDefecto }
+      setFormulario(nuevo)
+      formularioOriginalRef.current = nuevo
+      setClaveFormulario('nuevo')
+      return
+    }
+
+    if (modo === 'editar') {
+      const idNumerico = idParam !== null && /^\d+$/.test(idParam) ? Number(idParam) : null
+      if (idNumerico === null) {
+        invalidarEdicionEnCurso()
+        setFormulario(null)
+        formularioOriginalRef.current = null
+        setErrorDetalle(MENSAJE_ID_INVALIDO)
+        setCargandoDetalle(false)
+        return
+      }
+      // Ya cargado: pasa exactamente cuando `guardar()` acaba de crear este mismo artículo y
+      // reemplazó la URL a /articulos/edit/{id} — evita un refetch redundante que además pisaría
+      // el aviso de éxito recién puesto.
+      if (formulario?.id === idNumerico) return
+      void abrirEdicion(idNumerico)
+      return
+    }
+
     invalidarEdicionEnCurso()
     setGuardando(false)
     setFormulario(null)
-  }
-
-  async function abrirEdicion(a: ArticuloListado) {
-    if (ocupado) return
-    setError('')
-    const token = invalidarEdicionEnCurso()
-    try {
-      // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
-      const detalle = await clienteDeArticulos.obtener(a.id)
-      if (tokenEdicionRef.current !== token) return
-      setFormulario(aFormulario(detalle))
-      setGuardando(false)
-      setAviso('')
-    } catch (e) {
-      if (tokenEdicionRef.current !== token) return
-      setGuardando(false)
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo abrir el artículo.')
-    }
-  }
+    formularioOriginalRef.current = null
+    setErrorDetalle('')
+    setAvisoGuardado('')
+    setErrorGuardado('')
+    setCargandoDetalle(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo, idParam])
 
   async function guardar() {
     if (ocupado) return
@@ -216,21 +289,29 @@ export function Articulos() {
 
     const token = invalidarEdicionEnCurso()
     setGuardando(true)
-    setError('')
-    setAviso('')
+    setErrorGuardado('')
+    setAvisoGuardado('')
 
     try {
       if (formulario.id === null) {
         const creado = await clienteDeArticulos.crear(aAlta(formulario))
         if (tokenEdicionRef.current === token) {
-          setAviso(`Artículo "${formulario.nombre}" creado con código interno ${creado.codigoInterno}.`)
-          setFormulario(aFormulario(creado))
+          const cargado = aFormulario(creado)
+          setAvisoGuardado(`Artículo "${formulario.nombre}" creado con código interno ${creado.codigoInterno}.`)
+          setFormulario(cargado)
+          formularioOriginalRef.current = cargado
+          // History replace (no push): /articulos/create nunca queda alcanzable con "atrás" una
+          // vez que el alta se concretó — el modal sigue montado (misma entrada de ruta,
+          // `/articulos/*`), así que el aviso y el foco sobreviven al cambio de URL.
+          navigate(`/articulos/edit/${creado.id}`, { replace: true })
         }
       } else {
         const actualizado = await clienteDeArticulos.actualizar(formulario.id, aEdicion(formulario))
         if (tokenEdicionRef.current === token) {
-          setAviso(`Artículo "${formulario.nombre}" actualizado.`)
-          setFormulario(aFormulario(actualizado))
+          const cargado = aFormulario(actualizado)
+          setAvisoGuardado(`Artículo "${formulario.nombre}" actualizado.`)
+          setFormulario(cargado)
+          formularioOriginalRef.current = cargado
         }
       }
 
@@ -241,30 +322,61 @@ export function Articulos() {
         await cargar(busqueda, { relanzarError: true })
       } catch {
         if (tokenEdicionRef.current === token) {
-          setError('El artículo se guardó, pero no se pudo actualizar el listado. Volvé a buscar para verlo.')
+          setErrorGuardado('El artículo se guardó, pero no se pudo actualizar el listado. Volvé a buscar para verlo.')
         }
       }
     } catch (e) {
       if (tokenEdicionRef.current === token) {
-        setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+        setErrorGuardado(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
       }
     } finally {
       if (tokenEdicionRef.current === token) setGuardando(false)
     }
   }
 
+  function haySinGuardar(): boolean {
+    return (
+      formulario !== null &&
+      formularioOriginalRef.current !== null &&
+      JSON.stringify(formulario) !== JSON.stringify(formularioOriginalRef.current)
+    )
+  }
+
+  // Único punto de cierre: el botón "Cancelar" del formulario, el × del header, Escape y el click
+  // en el backdrop de `Modal` llegan todos acá (nunca `history.back()` — una pestaña nueva no tiene
+  // historial previo). `Modal` ya bloquea estos tres últimos mientras `ocupado`; el guard de acá
+  // cubre además el botón "Cancelar" del propio formulario.
+  function cerrarModal() {
+    if (ocupado) return
+    if (haySinGuardar() && !confirm('Hay cambios sin guardar en el artículo. ¿Descartarlos?')) return
+    navigate('/articulos', { replace: true })
+  }
+
+  function irACrear() {
+    if (ocupado) return
+    navigate('/articulos/create')
+  }
+
+  // Mientras `ocupado`, un click simple no navega (mismo criterio que el resto de la grilla), pero
+  // Ctrl/Cmd/Shift/click-del-medio SÍ deben abrir en una pestaña nueva sin importar el estado de
+  // ESTA pestaña: es un contexto de navegación completamente aparte, no puede pisar nada en vuelo
+  // acá. `aria-disabled` + opacidad son solo indicativos (no bloquean teclado ni lectores de
+  // pantalla): por eso el bloqueo real pasa por este `preventDefault`, no por CSS.
+  function alClickearEditar(evento: React.MouseEvent<HTMLAnchorElement>) {
+    const esClicSimple = evento.button === 0 && !evento.metaKey && !evento.ctrlKey && !evento.shiftKey && !evento.altKey
+    if (ocupado && esClicSimple) evento.preventDefault()
+  }
+
   async function eliminar(a: ArticuloListado) {
     if (ocupado) return
     if (!confirm(`¿Dar de baja el artículo "${a.nombre}"?`)) return
 
-    invalidarEdicionEnCurso()
     setError('')
     setAviso('')
     setEliminando(true)
     try {
       await clienteDeArticulos.eliminar(a.id)
       setAviso(`Artículo "${a.nombre}" dado de baja.`)
-      if (formulario?.id === a.id) setFormulario(null)
       try {
         await cargar(busqueda, { relanzarError: true })
       } catch {
@@ -295,10 +407,11 @@ export function Articulos() {
         Buscar
       </button>
       <button
+        ref={refBotonNuevo}
         type="button"
         className="btn btn-sm btn-success rounded-0 text-nowrap"
         disabled={ocupado}
-        onClick={abrirNuevo}
+        onClick={irACrear}
       >
         Nuevo
       </button>
@@ -317,37 +430,6 @@ export function Articulos() {
           </div>
         )}
         {avisoListasPrecio && <div className="alert alert-warning rounded-0">{avisoListasPrecio}</div>}
-
-        {formulario && (
-          <FormularioArticulo
-            // Clave por artículo (id, o 'nuevo' para el alta): sin esto React reutiliza la
-            // misma instancia del subárbol al pasar de "Editar" en una fila a otra sin
-            // cancelar, y filtra estado por-artículo entre medio (historial de precios,
-            // sugerencia de margen, códigos de barra cargados).
-            key={formulario.id ?? 'nuevo'}
-            valor={formulario}
-            areas={areas}
-            categorias={categorias}
-            marcas={marcas}
-            grupos={grupos}
-            proveedores={proveedores}
-            proveedoresTruncados={proveedoresTruncados}
-            alicuotasIva={alicuotasIva}
-            empresas={empresas}
-            listasPrecio={listasPrecio}
-            guardando={guardando}
-            ocupado={ocupado}
-            bloqueadoPorCatalogos={erroresCatalogosRequeridos.length > 0}
-            onCambio={setFormulario}
-            onGuardar={guardar}
-            onCancelar={cancelarEdicion}
-            alDeEscribir={alDeEscribir}
-            onCategoriaCreada={alCrearCategoria}
-            onMarcaCreada={alCrearMarca}
-            onGrupoCreada={alCrearGrupo}
-            onProveedorCreado={alCrearProveedor}
-          />
-        )}
 
         {cargando && !cargaInicialHechaRef.current ? (
           <Cargando />
@@ -379,14 +461,18 @@ export function Articulos() {
                       </span>
                     </td>
                     <td className="text-end text-nowrap">
-                      <button
-                        type="button"
+                      {/* <Link> real (no un botón con navigate): permite click-del-medio/Ctrl-click
+                          para abrir en pestaña nueva, con la navegación en ESTA pestaña bloqueada
+                          mientras `ocupado` — ver `alClickearEditar`. */}
+                      <Link
+                        to={`/articulos/edit/${a.id}`}
                         className="btn btn-sm btn-outline-primary rounded-0 me-1"
-                        disabled={ocupado}
-                        onClick={() => abrirEdicion(a)}
+                        style={ocupado ? { opacity: 0.65 } : undefined}
+                        aria-disabled={ocupado}
+                        onClick={alClickearEditar}
                       >
                         Editar
-                      </button>
+                      </Link>
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-danger rounded-0"
@@ -410,6 +496,39 @@ export function Articulos() {
           </div>
         )}
       </Box>
+
+      {modo && (
+        <ModalDeArticulo
+          clave={claveFormulario}
+          formulario={formulario}
+          cargandoDetalle={cargandoDetalle}
+          errorDetalle={errorDetalle}
+          guardando={guardando}
+          ocupado={ocupado}
+          avisoGuardado={avisoGuardado}
+          errorGuardado={errorGuardado}
+          bloqueadoPorCatalogos={erroresCatalogosRequeridos.length > 0}
+          areas={areas}
+          categorias={categorias}
+          marcas={marcas}
+          grupos={grupos}
+          proveedores={proveedores}
+          proveedoresTruncados={proveedoresTruncados}
+          alicuotasIva={alicuotasIva}
+          empresas={empresas}
+          listasPrecio={listasPrecio}
+          focoDeReserva={refBotonNuevo}
+          onCambio={setFormulario}
+          actualizarFormulario={actualizarFormulario}
+          onGuardar={guardar}
+          onCerrar={cerrarModal}
+          alDeEscribir={alDeEscribir}
+          onCategoriaCreada={alCrearCategoria}
+          onMarcaCreada={alCrearMarca}
+          onGrupoCreada={alCrearGrupo}
+          onProveedorCreado={alCrearProveedor}
+        />
+      )}
     </div>
   )
 }
