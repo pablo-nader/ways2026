@@ -3860,5 +3860,123 @@ describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage
 
       expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
     })
+
+    /**
+     * judgment-day ronda 0 (JD-E5b-1, CRITICAL): mientras el resultado del cierre es incierto
+     * (503 `resultado_incierto`), el modal "Efectivo a retirar" es la ÚNICA fuente de verdad
+     * pendiente de resolver — descartarlo con Escape, un click en el fondo o la "×" saltearía la
+     * reconciliación: si el cierre YA sucedió del lado del servidor, el comprobante nunca se
+     * imprime y el header sigue mintiendo "Caja abierta". La ÚNICA salida es "Reintentar".
+     *
+     * Evidencia de mutación (mutation-proof-tests regla 2): quitando temporalmente
+     * `|| cierreIncierto` del `ocupado` del `Modal` en `Pos.tsx`, este test pasó a FALLAR (el
+     * modal se cerraba con Escape); restaurado, vuelve a pasar.
+     */
+    it('mientras el cierre es incierto (503), el modal NO se puede descartar — ni Escape, ni el fondo, ni la "×" — la única salida es "Reintentar"', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      let cantidadDeCierres = 0
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        if (ruta === RUTA_CIERRE_POR_RETIRO) {
+          cantidadDeCierres += 1
+          return Promise.reject(new ErrorApi(503, 'resultado_incierto', 'No se pudo confirmar el resultado.'))
+        }
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      const modalConfirmar = within(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' }))
+      await userEvent.click(modalConfirmar.getByRole('button', { name: 'Sí' }))
+
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.type(modalMonto.getByLabelText('Monto'), '0')
+      await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+      await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+      const dialogo = await screen.findByRole('dialog', { name: 'Efectivo a retirar' })
+      await within(dialogo).findByRole('button', { name: 'Reintentar' })
+      expect(cantidadDeCierres).toBe(1)
+
+      // La "×": queda deshabilitada (Modal.tsx: `disabled={ocupado}`), un click no hace nada.
+      const botonCerrar = within(dialogo).getByRole('button', { name: 'Cerrar' })
+      expect(botonCerrar).toBeDisabled()
+      await userEvent.click(botonCerrar)
+      expect(await screen.findByRole('dialog', { name: 'Efectivo a retirar' })).toBeInTheDocument()
+
+      // Escape: `Modal.tsx` lo ignora mientras `ocupado`.
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(screen.getByRole('dialog', { name: 'Efectivo a retirar' })).toBeInTheDocument()
+
+      // Click en el fondo (el propio contenedor `role="dialog"`, nunca en su contenido interno —
+      // `Modal.alHacerClickEnElFondo` solo actúa cuando `evento.target === evento.currentTarget`).
+      fireEvent.click(dialogo)
+      expect(screen.getByRole('dialog', { name: 'Efectivo a retirar' })).toBeInTheDocument()
+
+      // Nada de esto reseteó el flujo ni volvió a postear el cierre.
+      expect(cantidadDeCierres).toBe(1)
+      expect(screen.getByText('Caja abierta')).toBeInTheDocument()
+      expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalledWith(
+        'el comprobante de cierre de turno',
+        expect.anything(),
+      )
+    })
+
+    /**
+     * judgment-day ronda 0 (JD-E5b-1, CRITICAL, segunda parte): tras resolver el modo incierto con
+     * un `409 turno_no_cerrado` (el cierre NO sucedió), "Cancelar" tiene que volver a funcionar —
+     * y `cierreIncierto` no puede quedar pegado en `true`: un "Cerrar caja" fresco después tiene
+     * que volver a mostrar el campo de monto, nunca quedarse mostrando solo "Reintentar" de un
+     * intento anterior ya resuelto.
+     */
+    it('tras Reintentar → 409 turno_no_cerrado, "Cancelar" funciona y un "Cerrar caja" fresco vuelve a mostrar el campo de monto', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        if (ruta === RUTA_CIERRE_POR_RETIRO) return Promise.reject(new ErrorApi(503, 'resultado_incierto', 'No se pudo confirmar el resultado.'))
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/caja/turnos/abierto')) return Promise.resolve(turnoAbiertoFixture())
+        if (ruta === RUTA_RESUMEN_DE_CIERRE) return Promise.reject(new ErrorApi(409, 'turno_no_cerrado', 'El turno sigue abierto.'))
+        return undefined
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      let modalConfirmar = within(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' }))
+      await userEvent.click(modalConfirmar.getByRole('button', { name: 'Sí' }))
+
+      let modalMonto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.type(modalMonto.getByLabelText('Monto'), '0')
+      await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+      await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+      const dialogoIncierto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.click(await dialogoIncierto.findByRole('button', { name: 'Reintentar' }))
+
+      const dialogoRecuperado = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await screen.findByText('El cierre no se confirmó — el turno sigue abierto. Podés reintentar.')
+
+      // "Cancelar" ya funciona de nuevo (el modo incierto quedó resuelto por el 409).
+      await userEvent.click(dialogoRecuperado.getByRole('button', { name: 'Cancelar' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(screen.getByText('Caja abierta')).toBeInTheDocument()
+
+      // Un "Cerrar caja" fresco vuelve a mostrar el campo de monto normal — `cierreIncierto` no
+      // quedó pegado en `true` del intento anterior.
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      modalConfirmar = within(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' }))
+      await userEvent.click(modalConfirmar.getByRole('button', { name: 'Sí' }))
+
+      modalMonto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      expect(modalMonto.getByLabelText('Monto')).toBeInTheDocument()
+      expect(modalMonto.getByRole('button', { name: 'Cancelar' })).toBeInTheDocument()
+      expect(modalMonto.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
+    })
   })
 })

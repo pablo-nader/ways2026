@@ -1148,13 +1148,22 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
   }
 
   /** Cancelar el monto — el cajón ya está abierto, pero el turno TODAVÍA no cerró (`cerrarPorRetiro`
-   * nunca se llamó): cancelar acá simplemente deja el turno abierto, como pide la spec. */
+   * nunca se llamó): cancelar acá simplemente deja el turno abierto, como pide la spec.
+   *
+   * judgment-day ronda 0 (JD-E5b-1, CRITICAL): NUNCA debe correr mientras `cierreIncierto` es
+   * `true` — el propio `Modal` ya lo bloquea (`ocupado` incluye `cierreIncierto`, ver el render
+   * más abajo), pero el guard de acá adentro es defensivo por si algún día algo más llega a
+   * invocar esta función directamente. `setCierreIncierto(false)` es parte del reset normal
+   * (no-op cuando ya es `false`, que es el 100% de las veces que este guard deja pasar) — así
+   * ningún camino de cancelación puede dejar `cierreIncierto` pegado en `true` para el próximo
+   * "Cerrar caja". */
   function cancelarMontoCierre() {
-    if (cerrandoPorRetiroRef.current || recuperandoCierreRef.current) return
+    if (cerrandoPorRetiroRef.current || recuperandoCierreRef.current || cierreIncierto) return
     setPasoCierre(null)
     setIdTurnoACerrar(null)
     setMontoCierre(null)
     setErrorCierrePorRetiro('')
+    setCierreIncierto(false)
   }
 
   /** Refresca el estado del turno a "cerrado" tras un cierre por retiro confirmado (por la propia
@@ -2668,7 +2677,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritori
       {pasoCierre === 'monto' && (
         <Modal
           titulo="Efectivo a retirar"
-          ocupado={cerrandoPorRetiro || recuperandoCierre}
+          // judgment-day ronda 0 (JD-E5b-1, CRITICAL): mientras `cierreIncierto` es `true`, el
+          // resultado real del cierre todavía no se sabe — la ÚNICA salida es "Reintentar"
+          // (`recuperarCierreIncierto`). `ocupado` acá bloquea la ×, Escape y el click en el
+          // fondo (ver `Modal.tsx`: los tres chequean `ocupado` antes de llamar `onCerrar`), así
+          // que ningún cierre "silencioso" del modal puede saltear la reconciliación — si el
+          // cierre ya sucedió del lado del servidor, descartar el modal sin pasar por
+          // `recuperarCierreIncierto` dejaría el comprobante sin imprimir y el header mintiendo
+          // "Caja abierta".
+          ocupado={cerrandoPorRetiro || recuperandoCierre || cierreIncierto}
           onCerrar={cancelarMontoCierre}
           pie={
             cierreIncierto ? (
