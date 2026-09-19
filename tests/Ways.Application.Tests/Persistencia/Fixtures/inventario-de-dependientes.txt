@@ -1,3 +1,9 @@
+Area | articulos | id_area,id_tenant | marcado
+Area | gastos | id_area,id_tenant | marcado
+Area | items_comprobante_venta | id_area,id_tenant | marcado
+Categoria | articulos | id_categoria,id_tenant | marcado
+Categoria | categorias | id_categoria_padre,id_tenant | marcado
+Categoria | ofertas | id_categoria,id_tenant | marcado
 Empresa | areas | id_empresa,id_tenant | marcado
 Empresa | articulos_empresas | id_empresa,id_tenant | sinmarca
 Empresa | categorias | id_empresa,id_tenant | marcado
@@ -29,6 +35,24 @@ Empresa | remitos via puntos_venta | id_punto_venta,id_tenant | marcado
 Empresa | stock via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | stock_lotes via puntos_venta | id_punto_venta,id_tenant | sinmarca
 Empresa | turnos_caja via puntos_venta | id_punto_venta,id_tenant | marcado
+Grupo | articulos | id_grupo,id_tenant | marcado
+Grupo | ofertas | id_grupo,id_tenant | marcado
+ListaPrecio | clientes | id_lista_precio,id_tenant | marcado
+ListaPrecio | items_comprobante_venta | id_lista_precio,id_tenant | marcado
+ListaPrecio | items_presupuesto | id_lista_precio,id_tenant | marcado
+ListaPrecio | items_remito | id_lista_precio,id_tenant | marcado
+ListaPrecio | listas_precio | id_lista_base | marcado
+ListaPrecio | ofertas_listas | id_lista_precio,id_tenant | sinmarca
+ListaPrecio | precios | id_lista_precio,id_tenant | marcado
+Marca | articulos | id_marca,id_tenant | marcado
+MedioPago | arqueos_turno | id_medio_pago,id_tenant | sinmarca
+MedioPago | gastos | id_medio_pago,id_tenant | marcado
+MedioPago | pagos_comprobante | id_medio_pago,id_tenant | marcado
+Proveedor | articulos | id_proveedor_habitual,id_tenant | marcado
+Proveedor | comprobantes_compra | id_proveedor,id_tenant | marcado
+Proveedor | gastos | id_proveedor,id_tenant | marcado
+Proveedor | movimientos_cuenta_corriente_proveedor | id_proveedor,id_tenant | sinmarca
+Proveedor | ordenes_compra | id_proveedor,id_tenant | marcado
 PuntoVenta | auditoria | id_punto_venta,id_tenant | excluido
 PuntoVenta | comprobantes_compra | id_punto_venta,id_tenant | marcado
 PuntoVenta | comprobantes_venta | id_punto_venta,id_tenant | marcado

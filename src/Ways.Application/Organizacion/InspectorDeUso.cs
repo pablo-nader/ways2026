@@ -47,6 +47,15 @@ namespace Ways.Application.Organizacion;
 /// seguro. REVERTIRLO cuesta: agregar ese conjunto por rama, dar vuelta el test de la tarea
 /// 4.11 y regenerar el golden N3. Registrado, no implementado.
 ///
+/// MODO REFERENCIA (fix/bajas-catalogos-guarda-de-uso) — <see cref="TablasQueReferencianAsync"/>
+/// reutiliza el mismo inventario y el mismo renderizador para una pregunta distinta: ¿existe AL
+/// MENOS UNA fila, sin importar cuándo se creó? Las bajas de catálogos de tenant y proveedores
+/// necesitan esa pregunta porque sus FKs son MUTABLES —un artículo creado en enero se puede
+/// reasignar a una marca creada en febrero—, así que el corte <c>created_at &gt; ancla</c> del
+/// modo de organización dejaría pasar esa reasignación sin bloquear. <see cref="RenderizarReferencias"/>
+/// es el mismo <c>UNION ALL</c> sin ese conjunto y sin <c>LIMIT 1</c>: devuelve TODAS las ramas
+/// que dispararon, no la primera, así que el guard puede nombrar cada tabla en uso.
+///
 /// EFECTO LATERAL B — RLS sigue aplicando porque vive en la conexión, así que NINGUNA rama
 /// agrega un conjunto de tenant POR ENCIMA de lo que ya declara su FK. La redacción anterior
 /// ("no se agrega ningún conjunto <c>id_tenant</c>") se leía como que el statement no menciona
@@ -110,38 +119,7 @@ public sealed class InspectorDeUso(IWaysDbContext db)
         var ramas = InventarioDeDependientes.Construir(db.Model, tipoAncla);
         var propiedades = InventarioDeDependientes.PropiedadesDeAncla(db.Model, tipoAncla);
 
-        // FALLA CERRADO, igual que Renderizar: un conjunto ejecutable vacío significa que el
-        // inventario no sabe nada de esta ancla, no que la entidad esté prístina. Devolver null
-        // acá sería afirmar lo segundo sin haber preguntado nada — la dirección que esta etapa
-        // no acepta.
-        if (ramas.Count == 0)
-        {
-            throw new InvalidOperationException(
-                $"El ancla {tipoAncla.Name} no tiene ninguna rama ejecutable, así que el " +
-                "inspector no puede afirmar que la entidad esté sin uso.");
-        }
-
-        if (valoresDeClave.Count != propiedades.Count)
-        {
-            throw new ArgumentException(
-                $"El ancla {tipoAncla.Name} necesita {propiedades.Count} valor(es) de clave " +
-                $"({string.Join(", ", propiedades)}) y se recibieron {valoresDeClave.Count}.",
-                nameof(valoresDeClave));
-        }
-
-        // Un null posicional no se puede ligar: llegaría a ParametrosDeComando.Agregar sin
-        // normalizar y reventaría con un error opaco de Npgsql. Se nombra el índice y la
-        // propiedad, igual que el desajuste de cuenta de arriba.
-        for (var i = 0; i < valoresDeClave.Count; i++)
-        {
-            if (valoresDeClave[i] is null)
-            {
-                throw new ArgumentException(
-                    $"El valor de clave en la posición {i} ({propiedades[i]}) del ancla " +
-                    $"{tipoAncla.Name} es null: el inspector no liga parámetros nulos.",
-                    nameof(valoresDeClave));
-            }
-        }
+        ValidarValoresDeClave(tipoAncla, ramas, propiedades, valoresDeClave);
 
         var conexion = await ObtenerConexionAbiertaAsync(ct);
 
@@ -163,11 +141,121 @@ public sealed class InspectorDeUso(IWaysDbContext db)
     }
 
     /// <summary>
+    /// MODO REFERENCIA (ver el doc-comment de la clase): existencia pura, sin el conjunto de
+    /// <c>created_at</c> y sin <c>LIMIT 1</c> — devuelve TODAS las ramas que dispararon, no la
+    /// primera, deduplicadas y en el orden del inventario (<see cref="RenderizarReferencias"/> no
+    /// ordena el statement: el orden lo impone este método en C#, leyendo el resultado completo y
+    /// filtrando la lista YA ORDENADA de etiquetas ejecutables por las que aparecieron en el
+    /// resultset — así el SQL emitido no depende de que Postgres preserve el orden de un
+    /// <c>UNION ALL</c> sin <c>ORDER BY</c>, que no es una garantía del motor).
+    /// </summary>
+    public async Task<IReadOnlyList<string>> TablasQueReferencianAsync(
+        Type tipoAncla,
+        IReadOnlyList<object> valoresDeClave,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(tipoAncla);
+        ArgumentNullException.ThrowIfNull(valoresDeClave);
+
+        var ramas = InventarioDeDependientes.Construir(db.Model, tipoAncla);
+        var propiedades = InventarioDeDependientes.PropiedadesDeAncla(db.Model, tipoAncla);
+
+        ValidarValoresDeClave(tipoAncla, ramas, propiedades, valoresDeClave);
+
+        var conexion = await ObtenerConexionAbiertaAsync(ct);
+
+        await using var comando = conexion.CreateCommand();
+        comando.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        comando.CommandText = RenderizarReferencias(ramas, propiedades);
+
+        foreach (var valor in valoresDeClave)
+        {
+            ParametrosDeComando.Agregar(comando, valor);
+        }
+
+        var etiquetasEnOrden = ramas
+            .Where(rama => rama.Clasificacion is not ClasificacionDeDependiente.Excluido)
+            .Select(rama => rama.Etiqueta)
+            .ToList();
+
+        var encontradas = new HashSet<string>(StringComparer.Ordinal);
+
+        await using var lector = await comando.ExecuteReaderAsync(ct);
+
+        while (await lector.ReadAsync(ct))
+        {
+            encontradas.Add(lector.GetString(0));
+        }
+
+        return [.. etiquetasEnOrden.Where(encontradas.Contains)];
+    }
+
+    /// <summary>
+    /// La validación compartida por los dos métodos de EJECUCIÓN (<see cref="PrimeraDependenciaEnUsoAsync"/>
+    /// y <see cref="TablasQueReferencianAsync"/>): falla cerrado si el ancla no tiene ninguna rama
+    /// ejecutable, si <paramref name="valoresDeClave"/> no trae la cuenta exacta que
+    /// <paramref name="propiedades"/> exige, o si algún valor posicional es <c>null</c> (llegaría
+    /// sin normalizar a <see cref="ParametrosDeComando.Agregar"/> y reventaría con un error opaco
+    /// de Npgsql).
+    /// </summary>
+    private static void ValidarValoresDeClave(
+        Type tipoAncla,
+        IReadOnlyList<RamaDeUso> ramas,
+        IReadOnlyList<string> propiedades,
+        IReadOnlyList<object> valoresDeClave)
+    {
+        // FALLA CERRADO, igual que Renderizar: un conjunto ejecutable vacío significa que el
+        // inventario no sabe nada de esta ancla, no que la entidad esté prístina. Devolver null
+        // (o una lista vacía) acá sería afirmar lo segundo sin haber preguntado nada — la
+        // dirección que esta etapa no acepta.
+        if (ramas.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"El ancla {tipoAncla.Name} no tiene ninguna rama ejecutable, así que el " +
+                "inspector no puede afirmar que la entidad esté sin uso.");
+        }
+
+        if (valoresDeClave.Count != propiedades.Count)
+        {
+            throw new ArgumentException(
+                $"El ancla {tipoAncla.Name} necesita {propiedades.Count} valor(es) de clave " +
+                $"({string.Join(", ", propiedades)}) y se recibieron {valoresDeClave.Count}.",
+                nameof(valoresDeClave));
+        }
+
+        for (var i = 0; i < valoresDeClave.Count; i++)
+        {
+            if (valoresDeClave[i] is null)
+            {
+                throw new ArgumentException(
+                    $"El valor de clave en la posición {i} ({propiedades[i]}) del ancla " +
+                    $"{tipoAncla.Name} es null: el inspector no liga parámetros nulos.",
+                    nameof(valoresDeClave));
+            }
+        }
+    }
+
+    /// <summary>
     /// Renderiza el statement. Público y estático porque es la superficie que testea la unidad
     /// de rendering sin base — el repo no usa <c>InternalsVisibleTo</c> en ningún lado (mismo
     /// criterio que <c>DesactivadorDeCertificadoFiscal</c>).
     /// </summary>
-    public static string Renderizar(IReadOnlyList<RamaDeUso> ramas, IReadOnlyList<string> propiedadesDeAncla)
+    public static string Renderizar(IReadOnlyList<RamaDeUso> ramas, IReadOnlyList<string> propiedadesDeAncla) =>
+        RenderizarUnion(ramas, propiedadesDeAncla, incluirConjuntoDeAncla: true, incluirLimite: true);
+
+    /// <summary>MODO REFERENCIA (ver el doc-comment de la clase): mismo <c>UNION ALL</c>, sin el
+    /// conjunto <c>created_at &gt; $n</c> de ninguna rama —ni siquiera las <c>Marcado</c>— y sin
+    /// <c>LIMIT 1</c> externo, así que <see cref="TablasQueReferencianAsync"/> puede leer TODAS las
+    /// ramas que dispararon.</summary>
+    public static string RenderizarReferencias(
+        IReadOnlyList<RamaDeUso> ramas, IReadOnlyList<string> propiedadesDeAncla) =>
+        RenderizarUnion(ramas, propiedadesDeAncla, incluirConjuntoDeAncla: false, incluirLimite: false);
+
+    private static string RenderizarUnion(
+        IReadOnlyList<RamaDeUso> ramas,
+        IReadOnlyList<string> propiedadesDeAncla,
+        bool incluirConjuntoDeAncla,
+        bool incluirLimite)
     {
         ArgumentNullException.ThrowIfNull(ramas);
         ArgumentNullException.ThrowIfNull(propiedadesDeAncla);
@@ -195,14 +283,21 @@ public sealed class InspectorDeUso(IWaysDbContext db)
             }
 
             primera = false;
-            sql.Append(RenderizarRama(rama, propiedadesDeAncla, indiceDelAncla));
+            sql.Append(RenderizarRama(rama, propiedadesDeAncla, indiceDelAncla, incluirConjuntoDeAncla));
         }
 
-        return sql.Append(") AS ramas LIMIT 1").ToString();
+        sql.Append(") AS ramas");
+
+        if (incluirLimite)
+        {
+            sql.Append(" LIMIT 1");
+        }
+
+        return sql.ToString();
     }
 
     private static string RenderizarRama(
-        RamaDeUso rama, IReadOnlyList<string> propiedadesDeAncla, int indiceDelAncla)
+        RamaDeUso rama, IReadOnlyList<string> propiedadesDeAncla, int indiceDelAncla, bool incluirConjuntoDeAncla)
     {
         var esquema = Identificador(rama.Esquema);
         var tabla = Identificador(rama.Tabla);
@@ -238,11 +333,13 @@ public sealed class InspectorDeUso(IWaysDbContext db)
                 .ToList();
         }
 
-        if (rama.UsaAncla)
+        if (incluirConjuntoDeAncla && rama.UsaAncla)
         {
             // ">" ESTRICTO: lo que creó el aprovisionamiento comparte el instante del ancla
             // (ServicioDeAprovisionamiento lee el reloj una sola vez) y no debe bloquear. Va
             // siempre sobre la HOJA, incluso con puente: es la fila que el cliente cargó.
+            // MODO REFERENCIA: incluirConjuntoDeAncla es SIEMPRE false — una FK mutable no tiene
+            // ningún instante contra el que cortar (ver el doc-comment de la clase).
             conjuntos.Add(
                 $"d.\"{InventarioDeDependientes.ColumnaDeMarcaTemporal}\" > ${indiceDelAncla}");
         }
@@ -272,7 +369,11 @@ public sealed class InspectorDeUso(IWaysDbContext db)
                 $"ancla ({string.Join(", ", propiedadesDeAncla)}).");
     }
 
-    private static string Identificador(string valor) =>
+    /// <summary><c>internal</c> y no <c>private</c> desde fix/bajas-catalogos-guarda-de-uso:
+    /// <c>GuardaDeReferencias.BloquearFilaAsync</c> valida con el MISMO patrón los identificadores
+    /// (esquema/tabla/columna) que arma a mano para su <c>SELECT ... FOR UPDATE</c> — una segunda
+    /// regex sería una segunda superficie que mantener sincronizada con esta.</summary>
+    internal static string Identificador(string valor) =>
         IdentificadorValido.IsMatch(valor)
             ? valor
             : throw new InvalidOperationException(
