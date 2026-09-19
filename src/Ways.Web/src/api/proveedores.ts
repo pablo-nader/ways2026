@@ -3,7 +3,7 @@
  * de catálogos (design decision 1) — mismo shape que `clientes.ts`.
  */
 import { api } from './cliente'
-import type { AltaProveedor, EdicionProveedor, PaginaDe, ProveedorListado } from './tipos'
+import type { AltaProveedor, EdicionProveedor, OpcionDeProveedor, PaginaDe, ProveedorListado } from './tipos'
 
 export const clienteDeProveedores = {
   listar: (busqueda: string, incluirEliminados: boolean) => {
@@ -13,6 +13,11 @@ export const clienteDeProveedores = {
     const cadena = parametros.toString()
     return api.get<PaginaDe<ProveedorListado>>(`/proveedores${cadena ? `?${cadena}` : ''}`)
   },
+  /** `GET /api/proveedores/opciones` (JD-A1, judgment-day, `Politicas.OperacionDePos`): proyección
+   * mínima para selectores fuera de la gestión de catálogo — mismo criterio de least-privilege
+   * que separa `saldo` del ABM completo. Nunca usar `listar` para poblar un selector accesible a
+   * un Vendedor: expone margen/cuit/datos de contacto. */
+  opciones: () => api.get<OpcionDeProveedor[]>('/proveedores/opciones'),
   /** `GET /api/proveedores/{id}` — resuelve la identidad de un proveedor sin pasar por el
    * listado (stage-15-cc-proveedores-ledger, Slice 6): único camino de `CuentaCorrienteDeProveedor`
    * cuando se llega por URL directa, sin `location.state` (mismo criterio que

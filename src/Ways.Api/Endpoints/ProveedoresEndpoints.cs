@@ -8,14 +8,9 @@ public static class ProveedoresEndpoints
 {
     public static IEndpointRouteBuilder MapearProveedores(this IEndpointRouteBuilder app)
     {
-        // stage-gastos-turno-carga-simple (web slice): el LISTADO pasa de GestionDeCatalogo a
-        // OperacionDePos — mismo criterio exacto que ClientesEndpoints (grupo en OperacionDePos,
-        // las escrituras apilan GestionDeCatalogo encima, AND que un admin siempre satisface). El
-        // selector opcional de proveedor del formulario de gastos del turno (POS) necesita poder
-        // listar; ObtenerAsync/CrearAsync/ActualizarAsync/EliminarAsync siguen Admin-only.
         var grupo = app.MapGroup("/api/proveedores")
             .WithTags("Proveedores")
-            .RequireAuthorization(Politicas.OperacionDePos);
+            .RequireAuthorization(Politicas.GestionDeCatalogo);
 
         grupo.MapGet("/", (
             ServicioDeProveedores servicio,
@@ -29,7 +24,6 @@ public static class ProveedoresEndpoints
 
         grupo.MapGet("/{id:int}", (ServicioDeProveedores servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))
-        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Obtiene un proveedor.");
 
         grupo.MapPost("/", async (
@@ -38,13 +32,11 @@ public static class ProveedoresEndpoints
             var creado = await servicio.CrearAsync(datos, ct);
             return Results.Created($"/api/proveedores/{creado.Id}", creado);
         })
-        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Crea un proveedor. El cuit, si se provee, es único por tenant.");
 
         grupo.MapPut("/{id:int}", (
             ServicioDeProveedores servicio, int id, EdicionProveedor datos, CancellationToken ct) =>
             servicio.ActualizarAsync(id, datos, ct))
-        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Actualiza un proveedor.");
 
         grupo.MapDelete("/{id:int}", async (
@@ -53,8 +45,21 @@ public static class ProveedoresEndpoints
             await servicio.EliminarAsync(id, ct);
             return Results.NoContent();
         })
-        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Baja lógica del proveedor.");
+
+        // JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple, que había movido
+        // TODO el grupo (incluida la proyección completa de ProveedorListado — margen, cuit,
+        // domicilio, contactos) a OperacionDePos para que el selector de proveedor del formulario
+        // de gastos pudiera listar. El listado admin-only vuelve al shape anterior; el selector
+        // usa la ruta mínima de abajo, mismo criterio de least-privilege que el saldo — mapeada
+        // TOP-LEVEL sobre `app`, nunca sobre `grupo`: apilarla ahí compondría con
+        // GestionDeCatalogo (AND) y dejaría afuera al Vendedor que el selector necesita habilitar.
+        app.MapGet("/api/proveedores/opciones", (
+            ServicioDeProveedores servicio, CancellationToken ct) =>
+            servicio.ListarOpcionesAsync(ct))
+        .WithTags("Proveedores")
+        .RequireAuthorization(Politicas.OperacionDePos)
+        .WithSummary("Proyección mínima (id, razón social, nombre de fantasía) de proveedores activos, para selectores fuera de la gestión de catálogo.");
 
         // stage-8-compras-transferencias-inventario (Slice 4, task 4.3, design: API Surface — el
         // trap de composición AND): mapeada TOP-LEVEL sobre `app`, nunca sobre `grupo` —

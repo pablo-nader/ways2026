@@ -339,7 +339,7 @@ describe('ShellPos', () => {
   it('"Gastos" navega a la pantalla de gastos del turno', async () => {
     mockearRutasDePos((ruta) => {
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
-      if (ruta === '/proveedores?tamanio=200') return Promise.resolve({ items: [], total: 0, pagina: 1, tamanio: 200 })
+      if (ruta === '/proveedores/opciones') return Promise.resolve([])
       if (ruta === '/caja/turnos/501/detalle') {
         return Promise.resolve({
           resumen: {

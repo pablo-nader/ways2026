@@ -500,6 +500,16 @@ export type AltaProveedor = {
 
 export type EdicionProveedor = AltaProveedor
 
+/** Espejo de `Ways.Application.Proveedores.OpcionDeProveedor` (JD-A1, judgment-day): proyección
+ * MÍNIMA para selectores que no requieren gestión de catálogo (`GET /api/proveedores/opciones`,
+ * `Politicas.OperacionDePos`) — nunca margen, cuit, datos de contacto ni otro campo sensible del
+ * `ProveedorListado` completo (que sigue exigiendo `GestionDeCatalogo`). */
+export type OpcionDeProveedor = {
+  id: number
+  razonSocial: string
+  nombreFantasia: string | null
+}
+
 // --- Artículos y precios (stage-3-articulos-y-precios) ---
 // Entidad dedicada, no la máquina genérica de catálogos (design decision 1): 14+ campos,
 // junction de disponibilidad, colección de códigos de barra — ninguno encaja en el shape

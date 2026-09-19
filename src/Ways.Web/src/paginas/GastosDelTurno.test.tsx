@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GastosDelTurno } from './GastosDelTurno'
-import type { DetalleDeTurno, GastoDeTurno, MedioPagoListado, ProveedorListado, PuntoVentaListado, TurnoResumen } from '../api/tipos'
+import type { DetalleDeTurno, GastoDeTurno, MedioPagoListado, OpcionDeProveedor, PuntoVentaListado, TurnoResumen } from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
 
 const apiGetMock = vi.fn()
@@ -94,24 +94,11 @@ const medioCuentaCorriente: MedioPagoListado = {
   recargoPorcentaje: null,
 }
 
-function proveedorFixture(sobrescribir: Partial<ProveedorListado> = {}): ProveedorListado {
+function proveedorFixture(sobrescribir: Partial<OpcionDeProveedor> = {}): OpcionDeProveedor {
   return {
     id: 1,
     razonSocial: 'Distribuidora Sur SRL',
     nombreFantasia: null,
-    cuit: null,
-    idCondicionFiscal: 1,
-    domicilio: null,
-    telefono: null,
-    email: null,
-    vendedor: null,
-    celularVendedor: null,
-    supervisor: null,
-    celularSupervisor: null,
-    margen: null,
-    observaciones: null,
-    activo: true,
-    idEmpresa: null,
     ...sobrescribir,
   }
 }
@@ -148,7 +135,7 @@ function detalleFixture(gastos: GastoDeTurno[] = []): DetalleDeTurno {
 function mockearRutas(opciones: {
   turno?: TurnoResumen | null
   medios?: MedioPagoListado[]
-  proveedores?: ProveedorListado[]
+  proveedores?: OpcionDeProveedor[]
   detalle?: DetalleDeTurno
   errorTurno?: unknown
   errorMedios?: unknown
@@ -164,9 +151,9 @@ function mockearRutas(opciones: {
       if (opciones.errorMedios) return Promise.reject(opciones.errorMedios)
       return Promise.resolve(opciones.medios ?? [medioEfectivo, medioCuentaCorriente])
     }
-    if (ruta === '/proveedores?tamanio=200') {
+    if (ruta === '/proveedores/opciones') {
       if (opciones.errorProveedores) return Promise.reject(opciones.errorProveedores)
-      return Promise.resolve({ items: opciones.proveedores ?? [proveedorFixture()], total: 1, pagina: 1, tamanio: 200 })
+      return Promise.resolve(opciones.proveedores ?? [proveedorFixture()])
     }
     if (ruta.startsWith('/caja/turnos/') && ruta.endsWith('/detalle')) {
       if (opciones.errorDetalle) return Promise.reject(opciones.errorDetalle)
@@ -309,6 +296,27 @@ describe('GastosDelTurno — alta', () => {
     expect(screen.getByLabelText('Observaciones (opcional)')).toHaveValue('')
     expect(screen.getByLabelText('Categoría')).toHaveValue('Otros')
     await screen.findByText('$ 500,00')
+  })
+
+  // RDD-W1 (judgment-day): cláusula bajo prueba: el `setAviso('')` movido ANTES de las
+  // validaciones client-side en `registrarGasto`. Mutación verificada (mutation-proof-tests):
+  // devolviendo ese `setAviso('')` a después de los `return` de validación, este test vuelve a
+  // ver "Gasto registrado." conviviendo con el error — restaurado el orden, vuelve a verde.
+  it('un segundo submit con el formulario vacío después de un alta exitosa limpia el aviso de éxito', async () => {
+    mockearRutas({ detalle: detalleFixture() })
+    apiPostMock.mockResolvedValueOnce({ id: 1 })
+    render(<GastosDelTurno />)
+
+    await completarFormulario()
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+    await screen.findByText('Gasto registrado.')
+
+    // `limpiarFormulario` dejó el importe en blanco: este segundo submit falla la validación
+    // client-side, sin llegar a pegarle al servidor.
+    await userEvent.click(screen.getByRole('button', { name: 'Registrar' }))
+
+    await screen.findByText('El importe tiene que ser mayor a 0.')
+    expect(screen.queryByText('Gasto registrado.')).not.toBeInTheDocument()
   })
 
   it('un error del servidor se muestra inline y el formulario no se limpia', async () => {

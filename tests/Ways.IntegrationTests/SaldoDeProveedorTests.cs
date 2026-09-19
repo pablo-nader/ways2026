@@ -31,15 +31,14 @@ namespace Ways.IntegrationTests;
 /// punta a punta (tasks 4.2, 4.3, 4.7, 4.8, 4.11, 4.12) — la matemática derivada, el estado de
 /// pago por-compra, el punto de entrada, la autorización (incluida la prueba de regresión de la
 /// AND-composition: un Vendedor tiene que poder leer el saldo pese a que
-/// <c>/api/proveedores</c> (obtener por id, alta, edición, baja) sigue siendo
-/// <c>GestionDeCatalogo</c>), el presupuesto de consultas y la prueba del arqueo byte-intacto
-/// (task 4.9). El backstop de esquema del proveedor referenciado (task 4.10) también vive acá —
-/// mismo agregado que el resto de esta slice.
+/// <c>/api/proveedores</c> es <c>GestionDeCatalogo</c>), el presupuesto de consultas y la prueba
+/// del arqueo byte-intacto (task 4.9). El backstop de esquema del proveedor referenciado (task
+/// 4.10) también vive acá — mismo agregado que el resto de esta slice.
 ///
-/// stage-gastos-turno-carga-simple (web slice): el LISTADO (<c>GET /api/proveedores</c>) pasó a
-/// <c>Politicas.OperacionDePos</c> (ver <c>ProveedoresEndpointsTests</c>) — la prueba de abajo que
-/// antes esperaba 403 ahí se actualizó a 200, el resto del ABM (obtener por id, alta, edición,
-/// baja) sigue Admin-only sin cambios.
+/// JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple — el LISTADO
+/// (<c>GET /api/proveedores</c>) vuelve a ser <c>GestionDeCatalogo</c> (ver
+/// <c>ProveedoresEndpointsTests</c>); el selector de proveedor del formulario de gastos usa la
+/// proyección mínima separada <c>GET /api/proveedores/opciones</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -372,17 +371,17 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
 
-    /// <summary>stage-gastos-turno-carga-simple (web slice): el listado pasó a
-    /// <c>OperacionDePos</c> (200 para el vendedor — el selector opcional de proveedor del
-    /// formulario de gastos del turno lo necesita), pero obtener por id sigue Admin-only, mismo
-    /// criterio que el saldo (siempre abierto, regresión de la AND-composition de arriba).</summary>
+    /// <summary>JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple — el listado
+    /// vuelve a ser Admin-only (200 ya no es lo esperado para el vendedor); obtener por id sigue
+    /// Admin-only sin cambios, y el saldo sigue siempre abierto (regresión de la AND-composition
+    /// de arriba, intacta).</summary>
     [Fact]
-    public async Task UnVendedorPuedeListarProveedoresYLeerElSaldoPeroNoObtenerPorId()
+    public async Task UnVendedorNoPuedeListarNiObtenerProveedoresPeroSiLeeElSaldo()
     {
-        var ctx = await PrepararAsync(nameof(UnVendedorPuedeListarProveedoresYLeerElSaldoPeroNoObtenerPorId));
+        var ctx = await PrepararAsync(nameof(UnVendedorNoPuedeListarNiObtenerProveedoresPeroSiLeeElSaldo));
 
         var listado = await ctx.Vendedor.GetAsync("/api/proveedores");
-        Assert.Equal(HttpStatusCode.OK, listado.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, listado.StatusCode);
 
         var detalle = await ctx.Vendedor.GetAsync($"/api/proveedores/{ctx.IdProveedor}");
         Assert.Equal(HttpStatusCode.Forbidden, detalle.StatusCode);

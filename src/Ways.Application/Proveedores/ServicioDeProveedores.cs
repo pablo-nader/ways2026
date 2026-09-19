@@ -73,6 +73,20 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, Gu
         return new PaginaDe<ProveedorListado>(items, total, pagina, tamanio);
     }
 
+    /// <summary>JD-A1 (judgment-day): fuente de <c>GET /api/proveedores/opciones</c>
+    /// (<c>Politicas.OperacionDePos</c>) — a diferencia de <see cref="ListarAsync"/>, filtra por
+    /// <see cref="Proveedor.Activo"/> (el selector del formulario de gastos no tiene que ofrecer
+    /// proveedores inactivos) y proyecta solo <see cref="OpcionDeProveedor"/>, nunca
+    /// <see cref="ProveedorListado"/> completo. La baja lógica y el alcance de tenant siguen
+    /// aplicados por los filtros globales de EF/RLS de <c>db.Proveedores</c>, igual que en
+    /// <see cref="ListarAsync"/> — acá no se llama <c>IgnoreQueryFilters</c>.</summary>
+    public async Task<List<OpcionDeProveedor>> ListarOpcionesAsync(CancellationToken ct = default) =>
+        await db.Proveedores
+            .Where(p => p.Activo)
+            .OrderBy(p => p.RazonSocial)
+            .Select(p => new OpcionDeProveedor(p.Id, p.RazonSocial, p.NombreFantasia))
+            .ToListAsync(ct);
+
     public async Task<ProveedorListado> ObtenerAsync(int id, CancellationToken ct = default)
     {
         var proveedor = await BuscarAsync(id, ct);

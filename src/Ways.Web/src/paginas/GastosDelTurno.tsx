@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { clienteDeCaja } from '../api/caja'
 import { clienteDeCatalogo } from '../api/catalogos'
-import { api, ErrorApi } from '../api/cliente'
+import { ErrorApi } from '../api/cliente'
 import { clienteDeGastos } from '../api/gastos'
+import { clienteDeProveedores } from '../api/proveedores'
 import { CATEGORIAS_GASTO } from '../api/tipos'
 import type {
   CategoriaGasto,
   DetalleDeTurno,
   MedioPagoAlta,
   MedioPagoListado,
-  PaginaDe,
-  ProveedorListado,
+  OpcionDeProveedor,
   TurnoResumen,
 } from '../api/tipos'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
@@ -67,7 +67,7 @@ export function GastosDelTurno() {
   const [medios, setMedios] = useState<MedioPagoListado[] | null>(null)
   const [errorMedios, setErrorMedios] = useState('')
 
-  const [proveedores, setProveedores] = useState<ProveedorListado[] | null>(null)
+  const [proveedores, setProveedores] = useState<OpcionDeProveedor[] | null>(null)
   const [errorProveedores, setErrorProveedores] = useState('')
 
   const [importe, setImporte] = useState<number | null>(null)
@@ -99,13 +99,14 @@ export function GastosDelTurno() {
         setErrorMedios(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los medios de pago. No se puede registrar el gasto.')
       })
 
-    // Mismo camino crudo que `Compras.tsx` (`clienteDeProveedores.listar` no acepta `tamanio`):
-    // hasta 200 proveedores activos del tenant para el selector opcional.
-    api
-      .get<PaginaDe<ProveedorListado>>('/proveedores?tamanio=200')
-      .then((pagina) => {
+    // JD-A1 (judgment-day): el selector opcional de proveedor NO puede pedir `clienteDeProveedores
+    // .listar` (Admin-only, expone margen/cuit/contacto) — usa la proyección mínima dedicada
+    // `GET /api/proveedores/opciones` (`Politicas.OperacionDePos`), ya filtrada a activos.
+    clienteDeProveedores
+      .opciones()
+      .then((opciones) => {
         if (!vigente) return
-        setProveedores(pagina.items)
+        setProveedores(opciones)
       })
       .catch((e) => {
         if (!vigente) return
@@ -187,6 +188,11 @@ export function GastosDelTurno() {
     if (guardandoRef.current) return
     if (!turno || !puntoVenta) return
 
+    // regla 14 (react-async-state): el aviso de éxito es un slot propio de ESTE submit — se
+    // limpia antes de las validaciones client-side para que un intento fallido nunca lo deje
+    // conviviendo con el error de validación (RDD-W1).
+    setAviso('')
+
     if (importe === null || importe <= 0) {
       setErrorGuardar('El importe tiene que ser mayor a 0.')
       return
@@ -199,7 +205,6 @@ export function GastosDelTurno() {
     guardandoRef.current = true
     setGuardando(true)
     setErrorGuardar('')
-    setAviso('')
 
     // regla 3: bumpea la generación ANTES de la escritura — cualquier carga de detalle en vuelo
     // desde antes de este alta queda obsoleta aunque su respuesta llegue después.

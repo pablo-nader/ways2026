@@ -16,13 +16,14 @@ namespace Ways.IntegrationTests;
 /// <c>ProveedoresEndpoints</c> punta a punta contra Postgres real — unicidad de <c>cuit</c>
 /// tenant-wide bajo concurrencia genuina (a diferencia de <c>ux_clientes_numero</c>, acá SÍ es
 /// un valor provisto por el cliente HTTP, sin contador atómico que serialice la carrera), ABM
-/// completo con la policy <c>GestionDeCatalogo</c> (admin-only) salvo el listado, y el 404
-/// uniforme cross-tenant (ADR-8).
+/// completo con la policy <c>GestionDeCatalogo</c> (admin-only), y el 404 uniforme cross-tenant
+/// (ADR-8).
 ///
-/// stage-gastos-turno-carga-simple (web slice): <c>GET /api/proveedores</c> (listado) pasa a
-/// <c>Politicas.OperacionDePos</c> — mismo criterio EXACTO que <c>ClientesEndpoints</c> — para que
-/// el selector opcional de proveedor del formulario de gastos del turno (POS) pueda listar. El
-/// resto del ABM (obtener por id, alta, edición, baja) sigue exclusivamente Admin-only.
+/// JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple, que había movido el
+/// LISTADO completo a <c>Politicas.OperacionDePos</c> para el selector de proveedor del
+/// formulario de gastos del turno — exponía margen/cuit/contacto a Vendedor. El selector ahora
+/// usa la proyección mínima <c>GET /api/proveedores/opciones</c>, cubierta en
+/// <c>OpcionesDeProveedorEndpointsTests</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ProveedoresEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -219,31 +220,21 @@ public class ProveedoresEndpointsTests(WaysApiFixture fixture) : IClassFixture<W
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
-    /// <summary>stage-gastos-turno-carga-simple (web slice): INVERSIÓN INTENCIONAL, mismo criterio
-    /// que <c>ClientesEndpointsTests.UnVendedorPuedeListarListasDePrecio</c> — el listado pasa a
-    /// <c>Politicas.OperacionDePos</c> (el selector opcional de proveedor del formulario de gastos
-    /// del turno lo necesita), pero la creación sigue rechazada (test de arriba).</summary>
+    /// <summary>JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple — el listado
+    /// vuelve a ser Admin-only, un Vendedor no puede leer <c>ProveedorListado</c> completo (margen,
+    /// cuit, contacto). El selector del formulario de gastos usa la ruta mínima separada
+    /// (<c>OpcionesDeProveedorEndpointsTests</c>).</summary>
     [Fact]
-    public async Task UnVendedorPuedeListarProveedoresPeroNoCrearlos()
+    public async Task UnVendedorNoPuedeListarProveedores()
     {
-        var (idCondicionFiscalCf, mailAdmin, passwordAdmin, idTenant) =
-            await AprovisionarTenantAsync(nameof(UnVendedorPuedeListarProveedoresPeroNoCrearlos));
-        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
-        var alta = await admin.PostAsJsonAsync(
-            "/api/proveedores", AltaValida(idCondicionFiscalCf, "Visible para el vendedor"));
-        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
-
-        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorPuedeListarProveedoresPeroNoCrearlos));
+        var (_, _, _, idTenant) =
+            await AprovisionarTenantAsync(nameof(UnVendedorNoPuedeListarProveedores));
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorNoPuedeListarProveedores));
         using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
 
-        var listado = await vendedor.GetAsync("/api/proveedores");
-        Assert.Equal(HttpStatusCode.OK, listado.StatusCode);
-        var pagina = await listado.Content.ReadFromJsonAsync<PaginaDe<ProveedorListado>>();
-        Assert.Contains(pagina!.Items, p => p.RazonSocial == "Visible para el vendedor");
+        var respuesta = await vendedor.GetAsync("/api/proveedores");
 
-        var intentoDeAlta = await vendedor.PostAsJsonAsync(
-            "/api/proveedores", AltaValida(idCondicionFiscalCf, "Intento de vendedor"));
-        Assert.Equal(HttpStatusCode.Forbidden, intentoDeAlta.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }
 
     /// <summary>Mismo criterio que el listado de arriba, para <c>GET /{id}</c>: sigue Admin-only
