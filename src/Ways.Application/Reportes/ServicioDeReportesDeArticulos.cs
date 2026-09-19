@@ -222,7 +222,14 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
     /// <c>sinArea</c> solo puede significar la baja lógica del área referenciada. La misma noción
     /// la aplica ya <see cref="ProyectarArticulosDeReporteAsync"/> vía <c>LEFT JOIN</c> contra los
     /// catálogos (filtrados por baja lógica) — este método existe para que el FILTRO vea lo mismo
-    /// que muestra la proyección.</summary>
+    /// que muestra la proyección.
+    ///
+    /// Cada guarda <c>id*</c> también exige que el id pedido esté en <c>idsDeXVisibles</c>
+    /// (dangling-fk-read-models regla 2): un id de baja lógica no matchea ninguna fila, nunca la
+    /// misma que devuelve <c>sin*</c> (judgment-day ronda 2). Para <c>idCategoria</c> esto incluye
+    /// la raíz de la expansión: un id de categoría no visible no matchea nada, ni siquiera vía
+    /// descendientes de una categoría hija cuyo padre haya quedado colgante — la decisión más
+    /// simple y consistente con las demás columnas.</summary>
     private async Task<IQueryable<Articulo>> ConstruirQueryDeArticulosAsync(
         int? idArea,
         bool sinArea,
@@ -245,9 +252,10 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         ExigirFiltroExclusivo(idProveedor, sinProveedor, "idProveedor", "sinProveedor");
 
         // Ids visibles de cada catálogo (ya filtrados por BajaLogica), buscados solo cuando hacen
-        // falta: la propia guarda sin* de la clasificación, o soloIncompletos (que necesita las
-        // cinco a la vez).
-        var idsDeAreasVisibles = sinArea || soloIncompletos
+        // falta: la propia guarda sin* de la clasificación, la guarda id* (dangling-fk-read-models
+        // regla 2 — un id pedido tiene que ser visible para matchear algo), o soloIncompletos (que
+        // necesita las cinco a la vez).
+        var idsDeAreasVisibles = idArea is not null || sinArea || soloIncompletos
             ? (await db.Areas.Select(x => x.Id).ToListAsync(ct)).ToHashSet()
             : null;
         // HashSet<int?> (no <int>): así el Where compara contra el FK nullable directo, sin
@@ -256,24 +264,28 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         // `id_x IS NULL` como verdadero ahí: cubre el FK null Y el FK colgante con la MISMA
         // comparación, sin un `a.IdX == null ||` extra (confirmado: sería código muerto, ninguna
         // mutación sobre él es detectable).
-        var idsDeCategoriasVisibles = sinCategoria || soloIncompletos
+        var idsDeCategoriasVisibles = idCategoria is not null || sinCategoria || soloIncompletos
             ? (await db.Categorias.Select(x => (int?)x.Id).ToListAsync(ct)).ToHashSet()
             : null;
-        var idsDeMarcasVisibles = sinMarca || soloIncompletos
+        var idsDeMarcasVisibles = idMarca is not null || sinMarca || soloIncompletos
             ? (await db.Marcas.Select(x => (int?)x.Id).ToListAsync(ct)).ToHashSet()
             : null;
-        var idsDeGruposVisibles = sinGrupo || soloIncompletos
+        var idsDeGruposVisibles = idGrupo is not null || sinGrupo || soloIncompletos
             ? (await db.Grupos.Select(x => (int?)x.Id).ToListAsync(ct)).ToHashSet()
             : null;
-        var idsDeProveedoresVisibles = sinProveedor || soloIncompletos
+        var idsDeProveedoresVisibles = idProveedor is not null || sinProveedor || soloIncompletos
             ? (await db.Proveedores.Select(x => (int?)x.Id).ToListAsync(ct)).ToHashSet()
             : null;
 
         var query = db.Articulos.AsQueryable();
 
+        // dangling-fk-read-models regla 2: un id pedido que ya no es visible (dado de baja lógica)
+        // no matchea ninguna fila — nunca la misma fila que sin<X>=true devuelve.
         if (idArea is { } idAreaValor)
         {
-            query = query.Where(a => a.IdArea == idAreaValor);
+            query = idsDeAreasVisibles!.Contains(idAreaValor)
+                ? query.Where(a => a.IdArea == idAreaValor)
+                : query.Where(a => false);
         }
         else if (sinArea)
         {
@@ -282,15 +294,25 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
 
         if (idCategoria is { } idCategoriaValor)
         {
-            // Una sola proyección id→id_padre de TODO el tenant, mismo criterio que
-            // ServicioDeArticulos.ListarAsync — la expansión de descendientes corre en memoria.
-            var padrePorCategoria = await db.Categorias
-                .Select(c => new { c.Id, c.IdCategoriaPadre })
-                .ToDictionaryAsync(c => c.Id, c => c.IdCategoriaPadre, ct);
+            // Mismo criterio que idArea: un id de categoría de baja lógica no matchea nada, ni
+            // siquiera vía la expansión de descendientes — una categoría hija cuyo padre ahora
+            // apunta a un id colgante no puede contar como resultado de un id que ya no existe.
+            if (!idsDeCategoriasVisibles!.Contains(idCategoriaValor))
+            {
+                query = query.Where(a => false);
+            }
+            else
+            {
+                // Una sola proyección id→id_padre de TODO el tenant, mismo criterio que
+                // ServicioDeArticulos.ListarAsync — la expansión de descendientes corre en memoria.
+                var padrePorCategoria = await db.Categorias
+                    .Select(c => new { c.Id, c.IdCategoriaPadre })
+                    .ToDictionaryAsync(c => c.Id, c => c.IdCategoriaPadre, ct);
 
-            var descendientes = CadenaDeCategorias.ConstruirDescendientes(idCategoriaValor, padrePorCategoria);
+                var descendientes = CadenaDeCategorias.ConstruirDescendientes(idCategoriaValor, padrePorCategoria);
 
-            query = query.Where(a => a.IdCategoria != null && descendientes.Contains(a.IdCategoria.Value));
+                query = query.Where(a => a.IdCategoria != null && descendientes.Contains(a.IdCategoria.Value));
+            }
         }
         else if (sinCategoria)
         {
@@ -299,7 +321,9 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
 
         if (idMarca is { } idMarcaValor)
         {
-            query = query.Where(a => a.IdMarca == idMarcaValor);
+            query = idsDeMarcasVisibles!.Contains(idMarcaValor)
+                ? query.Where(a => a.IdMarca == idMarcaValor)
+                : query.Where(a => false);
         }
         else if (sinMarca)
         {
@@ -308,7 +332,9 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
 
         if (idGrupo is { } idGrupoValor)
         {
-            query = query.Where(a => a.IdGrupo == idGrupoValor);
+            query = idsDeGruposVisibles!.Contains(idGrupoValor)
+                ? query.Where(a => a.IdGrupo == idGrupoValor)
+                : query.Where(a => false);
         }
         else if (sinGrupo)
         {
@@ -317,7 +343,9 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
 
         if (idProveedor is { } idProveedorValor)
         {
-            query = query.Where(a => a.IdProveedorHabitual == idProveedorValor);
+            query = idsDeProveedoresVisibles!.Contains(idProveedorValor)
+                ? query.Where(a => a.IdProveedorHabitual == idProveedorValor)
+                : query.Where(a => false);
         }
         else if (sinProveedor)
         {
