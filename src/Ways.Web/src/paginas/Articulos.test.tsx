@@ -5,6 +5,7 @@ import { Articulos } from './Articulos'
 import { ErrorApi } from '../api/cliente'
 import type {
   AlicuotaIvaListado,
+  AreaListado,
   ArticuloListado,
   CategoriaListado,
   CondicionFiscalListado,
@@ -69,6 +70,10 @@ function paginaFixture(items: ArticuloListado[]): PaginaDe<ArticuloListado> {
 
 const articuloUno = articuloFixture({ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno' })
 const articuloDos = articuloFixture({ id: 2, codigoInterno: 'A0002', nombre: 'Articulo Dos' })
+
+function areaFixture(sobrescribir: Partial<AreaListado> = {}): AreaListado {
+  return { id: 1, nombre: 'Almacén', activo: true, idEmpresa: null, orden: 1, ...sobrescribir }
+}
 
 function marcaFixture(sobrescribir: Partial<MarcaListado> = {}): MarcaListado {
   return { id: 1, nombre: 'Alfa', activo: true, idEmpresa: null, ...sobrescribir }
@@ -164,10 +169,17 @@ function casosAltaRapida(): CasoAltaRapida[] {
 }
 
 type CatalogosDeTest = {
+  /** Override del listado y del detalle de artículos — default: [articuloUno, articuloDos]. */
+  articulos?: ArticuloListado[]
+  areas?: AreaListado[]
   marcas?: MarcaListado[]
   grupos?: GrupoListado[]
   categorias?: CategoriaListado[]
   proveedores?: ProveedorListado[]
+  /** Override del `total` de la página de proveedores — default: `proveedores.length` (sin
+   * truncar). Un `total` mayor simula que el tenant tiene más proveedores que el tamaño de página
+   * pedido, y el `idProveedorHabitual` de un artículo puede caer fuera de esa página. */
+  proveedoresTotal?: number
   alicuotas?: AlicuotaIvaListado[]
   condicionesFiscales?: CondicionFiscalListado[]
   /** Override completo del fetch de condiciones fiscales (p.ej. para simular un rechazo seguido
@@ -184,21 +196,25 @@ type CatalogosDeTest = {
  */
 function mockearApiGet(catalogos: CatalogosDeTest = {}) {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/articulos') return Promise.resolve(paginaFixture([articuloUno, articuloDos]))
+    const articulos = catalogos.articulos ?? [articuloUno, articuloDos]
+    if (ruta === '/articulos') return Promise.resolve(paginaFixture(articulos))
     if (/^\/articulos\/\d+$/.test(ruta)) {
       const id = Number(ruta.split('/')[2])
-      return Promise.resolve([articuloUno, articuloDos].find((a) => a.id === id) ?? articuloUno)
+      return Promise.resolve(articulos.find((a) => a.id === id) ?? articulos[0])
     }
     if (/^\/articulos\/\d+\/codigos-barra$/.test(ruta)) return Promise.resolve([])
     if (/^\/articulos\/\d+\/precios$/.test(ruta)) return Promise.resolve([])
     if (/^\/articulos\/\d+\/sugerencia-precio$/.test(ruta)) return Promise.resolve({ precioSugerido: 55.5 })
-    if (ruta === '/catalogos/areas') return Promise.resolve([{ id: 1, nombre: 'Almacén', activo: true }])
-    if (ruta === '/catalogos/categorias') return Promise.resolve(catalogos.categorias ?? [])
-    if (ruta === '/catalogos/marcas') return Promise.resolve(catalogos.marcas ?? [])
-    if (ruta === '/catalogos/grupos') return Promise.resolve(catalogos.grupos ?? [])
+    // startsWith, no === : Articulos.tsx pide estos cuatro con `incluirInactivos=true` (fix/
+    // articulos-form-catalogos-inactivos) — el mock despacha por recurso sin importar el query
+    // string, igual que `/proveedores` ya hacía más abajo.
+    if (ruta.startsWith('/catalogos/areas')) return Promise.resolve(catalogos.areas ?? [areaFixture()])
+    if (ruta.startsWith('/catalogos/categorias')) return Promise.resolve(catalogos.categorias ?? [])
+    if (ruta.startsWith('/catalogos/marcas')) return Promise.resolve(catalogos.marcas ?? [])
+    if (ruta.startsWith('/catalogos/grupos')) return Promise.resolve(catalogos.grupos ?? [])
     if (ruta.startsWith('/proveedores')) {
       const items = catalogos.proveedores ?? []
-      return Promise.resolve({ items, total: items.length, pagina: 1, tamanio: 200 })
+      return Promise.resolve({ items, total: catalogos.proveedoresTotal ?? items.length, pagina: 1, tamanio: 200 })
     }
     if (ruta === '/catalogos-fiscales/alicuotas-iva')
       return Promise.resolve(catalogos.alicuotas ?? [{ id: 1, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true }])
@@ -660,5 +676,276 @@ describe('Articulos — alta rápida de proveedor: etiqueta y orden en el select
       'Zeta SA',
     ])
     expect(selectProveedor).toHaveValue('3')
+  })
+})
+
+// ---- catálogos inactivos en el formulario (fix/articulos-form-catalogos-inactivos) -------------
+// Un catálogo (área/categoría/marca/grupo) o proveedor referenciado por un artículo puede estar
+// desactivado (`activo: false`, la salida recomendada cuando la guarda de referencias rechaza el
+// borrado) — el select de edición lo ofrece igual, con el sufijo "(inactiva)"/"(inactivo)".
+
+describe('Articulos — catálogos inactivos en el formulario', () => {
+  it('en alta, el select de Marca no ofrece una marca inactiva', async () => {
+    mockearApiGet({
+      marcas: [marcaFixture({ id: 1, nombre: 'Alfa', activo: true }), marcaFixture({ id: 2, nombre: 'Beta', activo: false })],
+    })
+
+    await abrirFormularioNuevo()
+
+    const opciones = within(screen.getByLabelText('Marca'))
+      .getAllByRole('option')
+      .map((o) => o.textContent)
+    expect(opciones).toEqual(['Sin especificar', 'Alfa'])
+  })
+
+  it('en alta, el área por defecto es la primera ACTIVA — no la primera del arreglo, que puede ser inactiva', async () => {
+    mockearApiGet({
+      areas: [
+        areaFixture({ id: 1, nombre: 'Almacén viejo', activo: false }),
+        areaFixture({ id: 2, nombre: 'Depósito', activo: true }),
+      ],
+    })
+
+    await abrirFormularioNuevo()
+
+    expect(screen.getByLabelText('Área')).toHaveValue('2')
+  })
+
+  it('al editar un artículo con marca inactiva, la muestra seleccionada con el sufijo "(inactiva)" y guarda sin tocarla', async () => {
+    const conMarcaInactiva = articuloFixture({ id: 1, idMarca: 2 })
+    mockearApiGet({
+      articulos: [conMarcaInactiva, articuloDos],
+      marcas: [marcaFixture({ id: 1, nombre: 'Alfa', activo: true }), marcaFixture({ id: 2, nombre: 'Beta', activo: false })],
+    })
+    apiPutMock.mockResolvedValue(conMarcaInactiva)
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('button', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    const selectMarca = screen.getByLabelText('Marca') as HTMLSelectElement
+    expect(selectMarca).toHaveValue('2')
+    expect(within(selectMarca).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Sin especificar',
+      'Alfa',
+      'Beta (inactiva)',
+    ])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.idMarca).toBe(2)
+  })
+
+  it('al editar un artículo con área inactiva (obligatoria), la muestra seleccionada con el sufijo y permite guardar sin cambiarla', async () => {
+    const conAreaInactiva = articuloFixture({ id: 1, idArea: 2 })
+    mockearApiGet({
+      articulos: [conAreaInactiva, articuloDos],
+      areas: [
+        areaFixture({ id: 1, nombre: 'Almacén', activo: true }),
+        areaFixture({ id: 2, nombre: 'Depósito viejo', activo: false }),
+      ],
+    })
+    apiPutMock.mockResolvedValue(conAreaInactiva)
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('button', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    const selectArea = screen.getByLabelText('Área') as HTMLSelectElement
+    expect(selectArea).toHaveValue('2')
+    expect(within(selectArea).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Elegir…',
+      'Almacén',
+      'Depósito viejo (inactiva)',
+    ])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.idArea).toBe(2)
+  })
+
+  it('la grilla resuelve el nombre del área aunque esté inactiva (nombreDe ya no se limita a las activas)', async () => {
+    mockearApiGet({ areas: [areaFixture({ id: 1, nombre: 'Depósito viejo', activo: false })] })
+
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    expect(within(fila).getByText('Depósito viejo')).toBeInTheDocument()
+  })
+})
+
+// ---- el formulario nunca clasifica una referencia como "colgante" contra el catálogo del cliente
+// (F1, judgment-day round 1) ----------------------------------------------------------------------
+// `abrirEdicion` clasificaba un id ausente del listado (áreas/categorías/marcas/grupos/
+// proveedores) como baja lógica del catálogo y lo normalizaba a "sin asignar" — pero esa lista es
+// SIEMPRE estado de cliente: puede estar todavía cargando, haber fallado en silencio (marcas/
+// categorías/grupos/proveedores caen a `[]` sin aviso, ver el `useEffect` de carga), o venir
+// truncada (proveedores, `tamanio=200`). Cualquiera de los tres clasifica una referencia REAL como
+// colgante y el guardado sin tocar la pisa con `null` — pérdida silenciosa de datos válidos. El
+// servidor es la única autoridad: cada id viaja intacto y, si de verdad no existe,
+// `ServicioDeArticulos` lo rechaza con 400 `referencia_invalida` (`"No existe la marca {id}."`),
+// que esta pantalla ya muestra vía `ErrorApi.message` sin cerrar el formulario.
+describe('Articulos — el formulario nunca clasifica una referencia como colgante contra el catálogo del cliente', () => {
+  it('con un idMarca que no está en el catálogo cargado, guardar sin tocar el select reenvía el idMarca ORIGINAL en el PUT', async () => {
+    const conMarcaAusenteDelCatalogo = articuloFixture({ id: 1, idMarca: 999 })
+    mockearApiGet({
+      articulos: [conMarcaAusenteDelCatalogo, articuloDos],
+      marcas: [marcaFixture({ id: 1, nombre: 'Alfa', activo: true })],
+    })
+    apiPutMock.mockResolvedValue(conMarcaAusenteDelCatalogo)
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('button', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.idMarca).toBe(999)
+  })
+
+  it('si el servidor rechaza esa marca con 400 referencia_invalida, muestra el mensaje del servidor y el formulario sigue abierto', async () => {
+    const conMarcaAusenteDelCatalogo = articuloFixture({ id: 1, idMarca: 999 })
+    mockearApiGet({
+      articulos: [conMarcaAusenteDelCatalogo, articuloDos],
+      marcas: [marcaFixture({ id: 1, nombre: 'Alfa', activo: true })],
+    })
+    apiPutMock.mockRejectedValue(new ErrorApi(400, 'referencia_invalida', 'No existe la marca 999.'))
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('button', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('No existe la marca 999.')).toBeInTheDocument()
+    expect(screen.getByText('Editando artículo A0001')).toBeInTheDocument()
+  })
+
+  it('abrir Editar antes de que resuelvan los catálogos (carrera) no descarta ninguna referencia al guardar sin tocar', async () => {
+    // Valores todos DISTINTOS entre sí (mutation-proof-tests: una asignación cruzada entre campos
+    // tiene que poder detectarse) — ninguno con opción cargada en su select, a propósito: la
+    // prueba es que el guardado no depende en absoluto de qué haya (o no) en esas listas.
+    const articuloCompleto = articuloFixture({
+      id: 1,
+      idArea: 1,
+      idCategoria: 10,
+      idMarca: 20,
+      idGrupo: 30,
+      idProveedorHabitual: 40,
+    })
+
+    let resolverAreas: (v: unknown) => void = () => {}
+    let resolverCategorias: (v: unknown) => void = () => {}
+    let resolverMarcas: (v: unknown) => void = () => {}
+    let resolverGrupos: (v: unknown) => void = () => {}
+    let resolverProveedores: (v: unknown) => void = () => {}
+    const areasPendiente = new Promise((resolve) => {
+      resolverAreas = resolve
+    })
+    const categoriasPendiente = new Promise((resolve) => {
+      resolverCategorias = resolve
+    })
+    const marcasPendiente = new Promise((resolve) => {
+      resolverMarcas = resolve
+    })
+    const gruposPendiente = new Promise((resolve) => {
+      resolverGrupos = resolve
+    })
+    const proveedoresPendiente = new Promise((resolve) => {
+      resolverProveedores = resolve
+    })
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      const articulos = [articuloCompleto, articuloDos]
+      if (ruta === '/articulos') return Promise.resolve(paginaFixture(articulos))
+      if (/^\/articulos\/\d+$/.test(ruta)) {
+        const id = Number(ruta.split('/')[2])
+        return Promise.resolve(articulos.find((a) => a.id === id) ?? articulos[0])
+      }
+      if (/^\/articulos\/\d+\/codigos-barra$/.test(ruta)) return Promise.resolve([])
+      if (/^\/articulos\/\d+\/precios$/.test(ruta)) return Promise.resolve([])
+      if (/^\/articulos\/\d+\/sugerencia-precio$/.test(ruta)) return Promise.resolve({ precioSugerido: 55.5 })
+      // Colgados a propósito: no resuelven hasta que el test los libera, DESPUÉS de haber
+      // abierto la edición (que ya resolvió el detalle del artículo).
+      if (ruta.startsWith('/catalogos/areas')) return areasPendiente
+      if (ruta.startsWith('/catalogos/categorias')) return categoriasPendiente
+      if (ruta.startsWith('/catalogos/marcas')) return marcasPendiente
+      if (ruta.startsWith('/catalogos/grupos')) return gruposPendiente
+      if (ruta.startsWith('/proveedores')) return proveedoresPendiente
+      if (ruta === '/catalogos-fiscales/alicuotas-iva')
+        return Promise.resolve([{ id: 1, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true }])
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') return Promise.resolve([condicionFiscalFixture()])
+      if (ruta === '/empresas') return Promise.resolve([])
+      if (ruta === '/catalogos/listas-precio') return Promise.resolve([])
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    apiPutMock.mockResolvedValue(articuloCompleto)
+
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('button', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    // Los catálogos siguen sin resolver acá adentro. mutation-proof-tests regla 7: resolver DENTRO
+    // de `act` y esperar la MISMA promesa que el componente espera, para que `setAreas`/etc. (que
+    // se engancharon primero, en el mount) ya hayan corrido antes de seguir — un `waitFor` de
+    // afuera podría pasar en el primer tick, antes de que el efecto tardío aplique.
+    await act(async () => {
+      resolverAreas([areaFixture({ id: 1 })])
+      resolverCategorias([])
+      resolverMarcas([])
+      resolverGrupos([])
+      resolverProveedores({ items: [], total: 0, pagina: 1, tamanio: 200 })
+      await Promise.all([areasPendiente, categoriasPendiente, marcasPendiente, gruposPendiente, proveedoresPendiente])
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.idArea).toBe(1)
+    expect(cuerpo.idCategoria).toBe(10)
+    expect(cuerpo.idMarca).toBe(20)
+    expect(cuerpo.idGrupo).toBe(30)
+    expect(cuerpo.idProveedorHabitual).toBe(40)
+  })
+
+  it('un proveedor habitual ausente de la página truncada de proveedores (total > items) conserva su id al guardar sin tocar', async () => {
+    const conProveedorTruncado = articuloFixture({ id: 1, idProveedorHabitual: 555 })
+    mockearApiGet({
+      articulos: [conProveedorTruncado, articuloDos],
+      proveedores: [proveedorFixture({ id: 1, razonSocial: 'Alfa SA' })],
+      proveedoresTotal: 250,
+    })
+    apiPutMock.mockResolvedValue(conProveedorTruncado)
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('button', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.idProveedorHabitual).toBe(555)
   })
 })
