@@ -38,6 +38,12 @@ public class EscriturasSinReintentoEstructuralesTests
     {
         { "Ways.Application/Clientes/ServicioDeClientes.cs", "CrearAsync" },
         { "Ways.Application/Articulos/ServicioDeArticulos.cs", "CrearAsync" },
+
+        // fix/articulos-lock-referencias: ActualizarAsync pasó a abrir transacción explícita para
+        // envolver los 5 chequeos de referencia lockeados (GuardaDeReferencias.BloquearSiEstaVivaAsync)
+        // junto con el UPDATE que los usa — un commit ambiguo reintentado releería el artículo con
+        // datos ya actualizados por el intento anterior, mismo riesgo que ServicioDeCatalogo.EliminarAsync.
+        { "Ways.Application/Articulos/ServicioDeArticulos.cs", "ActualizarAsync" },
         { "Ways.Application/Usuarios/ServicioDeUsuarios.cs", "CrearAsync" },
         { "Ways.Application/Precios/ServicioDePrecios.cs", "AbrirNuevoPrecioAsync" },
         { "Ways.Application/Fiscal/ServicioDeCertificados.cs", "RegistrarAsync" },
