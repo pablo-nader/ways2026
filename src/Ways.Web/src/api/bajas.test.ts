@@ -177,6 +177,119 @@ describe('copiaDeFalloDeBaja — la copia se elige por código', () => {
   })
 })
 
+// fix/web-bajas-catalogos: guarda de referencias de catálogos de tenant y proveedores.
+
+/** Los SIETE `*_en_uso` de catálogos/proveedores más los DOS propios de listas de precio, en el
+ * orden en que el backend los declara (`ServicioDeAreas`, `ServicioDeMarcas`, `ServicioDeGrupos`,
+ * `ServicioDeMediosPago`, `ServicioDeCategorias`, `ServicioDeListasPrecio`, `ServicioDeProveedores`). */
+const NUEVE_CODIGOS_DE_CATALOGOS_Y_PROVEEDORES = [
+  'area_en_uso',
+  'categoria_en_uso',
+  'marca_en_uso',
+  'grupo_en_uso',
+  'medio_pago_en_uso',
+  'lista_precio_en_uso',
+  'proveedor_en_uso',
+  'lista_default_no_se_puede_eliminar',
+  'lista_referenciada_como_base',
+] as const
+
+describe('copiaDeFalloDeBaja — códigos de catálogos de tenant y proveedores (fix/web-bajas-catalogos)', () => {
+  /**
+   * Cláusula bajo prueba: el `GUIA_POR_CODIGO` para cada uno de los nueve códigos nuevos. Con una
+   * entrada faltante o compartida, dos de los nueve rendirían el mismo texto y el operador no
+   * sabría qué acción corresponde (reasignar/desactivar vs. resolver el estado default/base de la
+   * lista). Pairwise-distintas entre sí, no solo respecto de las seis de la etapa 20.
+   */
+  it('los nueve códigos rinden nueve copias distintas entre sí', () => {
+    const copias = NUEVE_CODIGOS_DE_CATALOGOS_Y_PROVEEDORES.map((codigo) =>
+      copiaDeFalloDeBaja(new ErrorApi(409, codigo, 'mensaje del servidor'), 'la marca'),
+    )
+
+    expect(new Set(copias).size).toBe(NUEVE_CODIGOS_DE_CATALOGOS_Y_PROVEEDORES.length)
+  })
+
+  it('marca_en_uso antepone el mensaje del servidor —que nombra la tabla que bloquea— a su guía', () => {
+    const copia = copiaDeFalloDeBaja(
+      new ErrorApi(409, 'marca_en_uso', 'No se puede dar de baja la marca porque tiene artículos.'),
+      'la marca',
+    )
+
+    expect(copia).toContain('No se puede dar de baja la marca porque tiene artículos.')
+    expect(copia).toContain('Reasigná esos datos o desactivá la marca para que no se ofrezca más.')
+  })
+
+  it('categoria_en_uso rinde su propia guía, distinta de la de marca_en_uso', () => {
+    const copia = copiaDeFalloDeBaja(
+      new ErrorApi(409, 'categoria_en_uso', 'No se puede dar de baja la categoría porque tiene subcategorías.'),
+      'la categoría',
+    )
+
+    expect(copia).toContain('porque tiene subcategorías')
+    expect(copia).toContain('Reasigná esos datos o desactivá la categoría para que no se ofrezca más.')
+  })
+
+  it('proveedor_en_uso rinde la guía de reasignar/desactivar el proveedor', () => {
+    const copia = copiaDeFalloDeBaja(
+      new ErrorApi(409, 'proveedor_en_uso', 'No se puede dar de baja el proveedor porque tiene compras.'),
+      'el proveedor',
+    )
+
+    expect(copia).toBe(
+      'No se puede dar de baja el proveedor porque tiene compras. Reasigná esos datos o desactivá el proveedor '
+        + 'para que no se ofrezca más.',
+    )
+  })
+
+  /**
+   * Cláusula bajo prueba: `lista_default_no_se_puede_eliminar` es un mínimo estructural (no se
+   * puede quedar sin lista default), no un `*_en_uso` — su guía manda a resolver el estado default,
+   * no a reasignar artículos.
+   */
+  it('lista_default_no_se_puede_eliminar manda a asignar el default a otra lista', () => {
+    const copia = copiaDeFalloDeBaja(
+      new ErrorApi(409, 'lista_default_no_se_puede_eliminar', 'No se puede eliminar la lista default.'),
+      'la lista de precios',
+    )
+
+    expect(copia).toBe(
+      'No se puede eliminar la lista default. Asigná el estado default a otra lista primero.',
+    )
+  })
+
+  /** Cláusula bajo prueba: `lista_referenciada_como_base`, la OTRA guarda estructural de listas de
+   * precio — desactivar la base de listas derivadas activas, no reasignar artículos. */
+  it('lista_referenciada_como_base manda a desactivar o cambiar la base de las derivadas', () => {
+    const copia = copiaDeFalloDeBaja(
+      new ErrorApi(
+        409,
+        'lista_referenciada_como_base',
+        'No se puede desactivar una lista referenciada como base por una lista derivada activa.',
+      ),
+      'la lista de precios',
+    )
+
+    expect(copia).toBe(
+      'No se puede desactivar una lista referenciada como base por una lista derivada activa. Desactivá o cambiá '
+        + 'la base de las listas derivadas primero.',
+    )
+  })
+
+  /** Mismo contrato que las seis de la etapa 20: cambiar el mensaje no cambia la guía elegida. */
+  it('cambiar el mensaje del servidor no cambia la guía de grupo_en_uso', () => {
+    const conMensajeLargo = copiaDeFalloDeBaja(
+      new ErrorApi(409, 'grupo_en_uso', 'No se puede dar de baja el grupo porque tiene 5 artículos.'),
+      'el grupo',
+    )
+    const conMensajeDegradado = copiaDeFalloDeBaja(new ErrorApi(409, 'grupo_en_uso', 'Conflicto.'), 'el grupo')
+
+    const guia = 'Reasigná esos datos o desactivá el grupo para que no se ofrezca más.'
+    expect(conMensajeLargo).toContain(guia)
+    expect(conMensajeDegradado).toContain(guia)
+    expect(conMensajeLargo).not.toBe(conMensajeDegradado)
+  })
+})
+
 describe('arrastreDeTenant', () => {
   /** Contadores pairwise-distintos: con valores iguales, intercambiar dos líneas no se vería. */
   it('nombra las tres familias de hijos con su cantidad', () => {
