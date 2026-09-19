@@ -575,6 +575,50 @@ export type EdicionArticulo = Omit<AltaArticulo, 'codigoInterno'>
 export type CodigoBarraListado = { id: number; idArticulo: number; codigo: string; activo: boolean }
 export type AltaCodigoBarra = { codigo: string }
 
+// --- Grilla de artículos con filtros por columna (feat: articulos-grilla-web) ---
+// Espejo de `GET /api/articulos/grilla`: reemplaza la búsqueda libre + primera página fija de
+// `listar` por filtro multi-columna con paginación real. `idProveedor`/`sinProveedor` son
+// mutuamente excluyentes (mandar ambos es 400 `filtro_proveedor_ambiguo` del lado del servidor).
+
+/** `activo: null` viaja como filtro OMITIDO ("todos") — a diferencia de `ArticuloListado.activo`,
+ * que nunca es nullable porque ahí es el estado de una fila ya conocida, no un filtro. */
+export type FiltrosDeGrillaDeArticulos = {
+  codigo: string
+  nombre: string
+  precioDesde: number | null
+  precioHasta: number | null
+  idProveedor: number | null
+  sinProveedor: boolean
+  activo: boolean | null
+  pagina: number
+  tamanio: number
+}
+
+/** Fila de `GET /api/articulos/grilla` — `precio` es el vigente en la lista de precio DEFAULT del
+ * tenant (nunca una lista a elección) y `proveedor` ya llega como la etiqueta de display (nombre
+ * de fantasía si lo hay, si no razón social) — nunca se recalcula acá, a diferencia de
+ * `etiquetaDeProveedor` que solo aplica a `ProveedorListado` completo (selects del formulario). */
+export type FilaDeGrillaDeArticulos = {
+  id: number
+  codigoInterno: string
+  nombre: string
+  precio: number | null
+  idProveedorHabitual: number | null
+  proveedor: string | null
+  activo: boolean
+}
+
+/** `nombreListaPrecio: null` cuando el tenant no tiene lista de precio default configurada — en
+ * ese caso todo `precio` de `items` viaja `null` y el filtro de precio queda deshabilitado en la
+ * UI (no tiene contra qué lista comparar). */
+export type PaginaDeGrillaDeArticulos = {
+  items: FilaDeGrillaDeArticulos[]
+  total: number
+  pagina: number
+  tamanio: number
+  nombreListaPrecio: string | null
+}
+
 /** `precioSugerido: null` cuando no hay costo base ni margen suficientes para calcular una
  * sugerencia — nunca se aplica sola (spec: Margin-Based Price Suggestion, "requires explicit
  * apply"). */

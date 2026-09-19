@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router'
+import { useLocation, useNavigate } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCatalogo, clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
 import { clienteDeOrganizacion } from '../api/organizacion'
 import { clienteDePrecios } from '../api/precios'
-import { UNIDADES_VENTA } from '../api/tipos'
 import type {
   AlicuotaIvaListado,
   AreaAlta,
   AreaListado,
-  ArticuloListado,
   CategoriaListado,
   EmpresaListado,
+  FilaDeGrillaDeArticulos,
   GrupoAlta,
   GrupoListado,
   ListaPrecioListado,
@@ -22,8 +21,8 @@ import type {
   ProveedorListado,
 } from '../api/tipos'
 import { Box } from '../componentes/Box'
-import { Cargando } from '../componentes/Cargando'
 import { aAlta, aEdicion, aFormulario, formularioVacio, type Formulario } from './articulos/FormularioArticulo'
+import { GrillaDeArticulos } from './articulos/GrillaDeArticulos'
 import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { ModalDeArticulo } from './articulos/ModalDeArticulo'
 import { analizarRutaModal } from './articulos/rutaModal'
@@ -53,7 +52,6 @@ export function Articulos() {
   const navigate = useNavigate()
   const { modo, idParam } = analizarRutaModal(location.pathname)
 
-  const [pagina, setPagina] = useState<PaginaDe<ArticuloListado> | null>(null)
   const [areas, setAreas] = useState<AreaListado[]>([])
   const [categorias, setCategorias] = useState<CategoriaListado[]>([])
   const [marcas, setMarcas] = useState<MarcaListado[]>([])
@@ -63,15 +61,18 @@ export function Articulos() {
   const [alicuotasIva, setAlicuotasIva] = useState<AlicuotaIvaListado[]>([])
   const [empresas, setEmpresas] = useState<EmpresaListado[]>([])
   const [listasPrecio, setListasPrecio] = useState<ListaPrecioListado[]>([])
-  const [busqueda, setBusqueda] = useState('')
-  const [cargando, setCargando] = useState(true)
+  // Banners de la Baja únicamente (articulos-grilla-web: el error de CARGA del listado ahora vive
+  // dentro de `GrillaDeArticulos`, con su propio banner — regla 14 de react-async-state, un slot
+  // de estado por fuente).
   const [error, setError] = useState('')
   const [aviso, setAviso] = useState('')
   const [erroresCatalogosRequeridos, setErroresCatalogosRequeridos] = useState<string[]>([])
   const [avisoListasPrecio, setAvisoListasPrecio] = useState('')
   const [eliminando, setEliminando] = useState(false)
-  const cargaInicialHechaRef = useRef(false)
-  const generacionCargaRef = useRef(0)
+  // Bump tras guardar/dar de baja: le pide a la grilla un refresco manteniendo sus propios
+  // filtros/página — la página no espera ni conoce el resultado de ese refresco (ver el
+  // doc-comment de `GrillaDeArticulos`).
+  const [pedidoDeRefresco, setPedidoDeRefresco] = useState(0)
 
   // ---- estado del modal de alta/edición ----------------------------------------------------------
   const [formulario, setFormulario] = useState<Formulario | null>(null)
@@ -110,31 +111,7 @@ export function Articulos() {
     setErroresCatalogosRequeridos((prev) => (prev.includes(mensaje) ? prev : [...prev, mensaje]))
   }
 
-  const cargar = useCallback(async (termino: string, opciones?: { relanzarError?: boolean }) => {
-    // Generación: mount, búsqueda y los refrescos post-guardado/post-baja pueden solaparse — sin
-    // esto, la respuesta que llega tarde pisa el estado con datos desactualizados.
-    const generacion = (generacionCargaRef.current += 1)
-    setCargando(true)
-    setError('')
-    try {
-      const p = await clienteDeArticulos.listar(termino, false)
-      if (generacionCargaRef.current !== generacion) return
-      setPagina(p)
-    } catch (e) {
-      if (generacionCargaRef.current === generacion) {
-        setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los artículos.')
-      }
-      if (opciones?.relanzarError && generacionCargaRef.current === generacion) throw e
-    } finally {
-      if (generacionCargaRef.current === generacion) {
-        setCargando(false)
-        cargaInicialHechaRef.current = true
-      }
-    }
-  }, [])
-
   useEffect(() => {
-    void cargar('')
     clienteAreas
       .listar(false)
       .then(setAreas)
@@ -180,7 +157,7 @@ export function Articulos() {
           'No se pudieron cargar las listas de precio: el editor de precios no está disponible. Recargá la página para reintentar.',
         )
       })
-  }, [cargar])
+  }, [])
 
   const areaPorDefecto = areas[0]?.id ?? ''
   const alicuotaPorDefecto = elegirAlicuotaPorDefecto(alicuotasIva)
@@ -315,16 +292,13 @@ export function Articulos() {
         }
       }
 
-      // El refresco de la tabla no pertenece al token de edición: la fila afectada debe
-      // quedar al día sin importar si el formulario abierto ahora es otro. El guardado ya tuvo
-      // éxito acá, así que un fallo de este refresco es solo de vista, no de guardado.
-      try {
-        await cargar(busqueda, { relanzarError: true })
-      } catch {
-        if (tokenEdicionRef.current === token) {
-          setErrorGuardado('El artículo se guardó, pero no se pudo actualizar el listado. Volvé a buscar para verlo.')
-        }
-      }
+      // El refresco de la grilla no pertenece al token de edición: la fila afectada debe quedar
+      // al día sin importar si el formulario abierto ahora es otro. El guardado ya tuvo éxito
+      // acá — un bump de `pedidoDeRefresco` solo PIDE el refresco, `GrillaDeArticulos` es dueña
+      // de ejecutarlo y de reportar su propio fallo con su propio banner (react-async-state
+      // regla 6/14: el guardado ya confirmado nunca se reporta como fallido por un refresco de
+      // vista ajeno).
+      setPedidoDeRefresco((n) => n + 1)
     } catch (e) {
       if (tokenEdicionRef.current === token) {
         setErrorGuardado(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
@@ -357,17 +331,7 @@ export function Articulos() {
     navigate('/articulos/create')
   }
 
-  // Mientras `ocupado`, un click simple no navega (mismo criterio que el resto de la grilla), pero
-  // Ctrl/Cmd/Shift/click-del-medio SÍ deben abrir en una pestaña nueva sin importar el estado de
-  // ESTA pestaña: es un contexto de navegación completamente aparte, no puede pisar nada en vuelo
-  // acá. `aria-disabled` + opacidad son solo indicativos (no bloquean teclado ni lectores de
-  // pantalla): por eso el bloqueo real pasa por este `preventDefault`, no por CSS.
-  function alClickearEditar(evento: React.MouseEvent<HTMLAnchorElement>) {
-    const esClicSimple = evento.button === 0 && !evento.metaKey && !evento.ctrlKey && !evento.shiftKey && !evento.altKey
-    if (ocupado && esClicSimple) evento.preventDefault()
-  }
-
-  async function eliminar(a: ArticuloListado) {
+  async function eliminar(a: FilaDeGrillaDeArticulos) {
     if (ocupado) return
     if (!confirm(`¿Dar de baja el artículo "${a.nombre}"?`)) return
 
@@ -377,11 +341,9 @@ export function Articulos() {
     try {
       await clienteDeArticulos.eliminar(a.id)
       setAviso(`Artículo "${a.nombre}" dado de baja.`)
-      try {
-        await cargar(busqueda, { relanzarError: true })
-      } catch {
-        setError('El artículo se dio de baja, pero no se pudo actualizar el listado. Volvé a buscar para verlo.')
-      }
+      // Igual criterio que `guardar()`: la baja ya se confirmó acá, el refresco de la grilla es
+      // un pedido aparte que `GrillaDeArticulos` resuelve (y reporta) por su cuenta.
+      setPedidoDeRefresco((n) => n + 1)
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja.')
     } finally {
@@ -389,23 +351,8 @@ export function Articulos() {
     }
   }
 
-  function nombreDe(lista: { id: number; nombre: string }[], id: number | null) {
-    return lista.find((x) => x.id === id)?.nombre ?? '—'
-  }
-
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
-      <input
-        type="search"
-        className="form-control form-control-sm rounded-0"
-        placeholder="Buscar por nombre, código interno o código de barras…"
-        value={busqueda}
-        onChange={(e) => setBusqueda(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && cargar(busqueda)}
-      />
-      <button type="button" className="btn btn-sm btn-outline-light rounded-0" onClick={() => cargar(busqueda)}>
-        Buscar
-      </button>
       <button
         ref={refBotonNuevo}
         type="button"
@@ -431,70 +378,7 @@ export function Articulos() {
         )}
         {avisoListasPrecio && <div className="alert alert-warning rounded-0">{avisoListasPrecio}</div>}
 
-        {cargando && !cargaInicialHechaRef.current ? (
-          <Cargando />
-        ) : (
-          <div className="table-responsive">
-            <table className="table table-striped table-hover table-bordered align-middle">
-              <thead>
-                <tr>
-                  <th>Código</th>
-                  <th>Nombre</th>
-                  <th>Área</th>
-                  <th>Unidad de venta</th>
-                  <th>Disponibilidad</th>
-                  <th>Estado</th>
-                  <th className="text-end">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagina?.items.map((a) => (
-                  <tr key={a.id}>
-                    <td>{a.codigoInterno}</td>
-                    <td>{a.nombre}</td>
-                    <td>{nombreDe(areas, a.idArea)}</td>
-                    <td>{UNIDADES_VENTA.find((u) => u.valor === a.unidadVenta)?.etiqueta ?? a.unidadVenta}</td>
-                    <td>{a.disponibleParaTodas ? 'Todas las empresas' : 'Subconjunto'}</td>
-                    <td>
-                      <span className={`badge rounded-0 ${a.activo ? 'text-bg-success' : 'text-bg-secondary'}`}>
-                        {a.activo ? 'Activo' : 'Inactivo'}
-                      </span>
-                    </td>
-                    <td className="text-end text-nowrap">
-                      {/* <Link> real (no un botón con navigate): permite click-del-medio/Ctrl-click
-                          para abrir en pestaña nueva, con la navegación en ESTA pestaña bloqueada
-                          mientras `ocupado` — ver `alClickearEditar`. */}
-                      <Link
-                        to={`/articulos/edit/${a.id}`}
-                        className="btn btn-sm btn-outline-primary rounded-0 me-1"
-                        style={ocupado ? { opacity: 0.65 } : undefined}
-                        aria-disabled={ocupado}
-                        onClick={alClickearEditar}
-                      >
-                        Editar
-                      </Link>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-danger rounded-0"
-                        disabled={ocupado}
-                        onClick={() => eliminar(a)}
-                      >
-                        Baja
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {pagina !== null && pagina.items.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="text-center text-muted py-4">
-                      No hay artículos que coincidan con la búsqueda.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <GrillaDeArticulos proveedores={proveedores} ocupado={ocupado} pedidoDeRefresco={pedidoDeRefresco} onEliminar={eliminar} />
       </Box>
 
       {modo && (

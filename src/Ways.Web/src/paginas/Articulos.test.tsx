@@ -9,9 +9,10 @@ import type {
   ArticuloListado,
   CategoriaListado,
   CondicionFiscalListado,
+  FilaDeGrillaDeArticulos,
   GrupoListado,
   MarcaListado,
-  PaginaDe,
+  PaginaDeGrillaDeArticulos,
   ProveedorListado,
 } from '../api/tipos'
 
@@ -64,12 +65,33 @@ function articuloFixture(sobrescribir: Partial<ArticuloListado> = {}): ArticuloL
   }
 }
 
-function paginaFixture(items: ArticuloListado[]): PaginaDe<ArticuloListado> {
-  return { items, total: items.length, pagina: 1, tamanio: 20 }
-}
-
 const articuloUno = articuloFixture({ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno' })
 const articuloDos = articuloFixture({ id: 2, codigoInterno: 'A0002', nombre: 'Articulo Dos' })
+
+/** Fila de `GET /api/articulos/grilla` (articulos-grilla-web) — shape distinto del `ArticuloListado`
+ * de arriba (que sigue sirviendo el detalle por id, `/articulos/{id}`). */
+function filaGrillaFixture(sobrescribir: Partial<FilaDeGrillaDeArticulos> = {}): FilaDeGrillaDeArticulos {
+  return {
+    id: 1,
+    codigoInterno: 'A0001',
+    nombre: 'Articulo Uno',
+    precio: 100,
+    idProveedorHabitual: null,
+    proveedor: null,
+    activo: true,
+    ...sobrescribir,
+  }
+}
+
+function paginaGrillaFixture(
+  items: FilaDeGrillaDeArticulos[],
+  sobrescribir: Partial<PaginaDeGrillaDeArticulos> = {},
+): PaginaDeGrillaDeArticulos {
+  return { items, total: items.length, pagina: 1, tamanio: 25, nombreListaPrecio: 'General', ...sobrescribir }
+}
+
+const filaGrillaUno = filaGrillaFixture({ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno' })
+const filaGrillaDos = filaGrillaFixture({ id: 2, codigoInterno: 'A0002', nombre: 'Articulo Dos' })
 
 function marcaFixture(sobrescribir: Partial<MarcaListado> = {}): MarcaListado {
   return { id: 1, nombre: 'Alfa', activo: true, idEmpresa: null, ...sobrescribir }
@@ -177,6 +199,8 @@ type CatalogosDeTest = {
   /** Override completo del fetch de detalle por id (p.ej. para simular una respuesta lenta que
    * llega tarde) — cuando está presente, gana sobre la resolución por defecto. */
   detalleImpl?: (id: number) => Promise<ArticuloListado>
+  /** Respuesta fija de `GET /api/articulos/grilla` — por defecto, las dos filas de siempre. */
+  grilla?: PaginaDeGrillaDeArticulos
 }
 
 /**
@@ -188,7 +212,9 @@ type CatalogosDeTest = {
  */
 function mockearApiGet(catalogos: CatalogosDeTest = {}) {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/articulos') return Promise.resolve(paginaFixture([articuloUno, articuloDos]))
+    if (ruta.startsWith('/articulos/grilla')) {
+      return Promise.resolve(catalogos.grilla ?? paginaGrillaFixture([filaGrillaUno, filaGrillaDos]))
+    }
     if (/^\/articulos\/\d+$/.test(ruta)) {
       const id = Number(ruta.split('/')[2])
       if (catalogos.detalleImpl) return catalogos.detalleImpl(id)
@@ -806,13 +832,13 @@ describe('Articulos — alta de un artículo nuevo', () => {
 describe('Articulos — cierre del modal', () => {
   it('cerrar sin cambios vuelve a /articulos sin volver a pedir el listado', async () => {
     await abrirFormularioNuevo()
-    const llamadasAlListadoAntes = apiGetMock.mock.calls.filter(([ruta]) => ruta === '/articulos').length
+    const llamadasAlListadoAntes = apiGetMock.mock.calls.filter(([ruta]) => (ruta as string).startsWith('/articulos/grilla')).length
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
-    const llamadasAlListadoDespues = apiGetMock.mock.calls.filter(([ruta]) => ruta === '/articulos').length
+    const llamadasAlListadoDespues = apiGetMock.mock.calls.filter(([ruta]) => (ruta as string).startsWith('/articulos/grilla')).length
     expect(llamadasAlListadoDespues).toBe(llamadasAlListadoAntes)
   })
 

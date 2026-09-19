@@ -11,9 +11,47 @@ import type {
   ArticuloListado,
   CodigoBarraListado,
   EdicionArticulo,
+  FiltrosDeGrillaDeArticulos,
   PaginaDe,
+  PaginaDeGrillaDeArticulos,
   SugerenciaDePrecio,
 } from './tipos'
+
+export function filtrosDeGrillaDeArticulosVacios(): FiltrosDeGrillaDeArticulos {
+  return {
+    codigo: '',
+    nombre: '',
+    precioDesde: null,
+    precioHasta: null,
+    idProveedor: null,
+    sinProveedor: false,
+    activo: null,
+    pagina: 1,
+    tamanio: 25,
+  }
+}
+
+/** Query de `GET /api/articulos/grilla` (feat: articulos-grilla-web): omite cada filtro vacío/no
+ * aplicado — nunca manda `codigo`/`nombre` en blanco ni un precio `null`. `idProveedor` y
+ * `sinProveedor` son mutuamente excluyentes en el servidor (400 `filtro_proveedor_ambiguo` si
+ * viajan los dos): acá `sinProveedor` gana cuando el llamador seteó ambos, para que esta capa
+ * nunca sea la que dispare esa ambigüedad. */
+export function construirQueryDeGrillaDeArticulos(filtros: FiltrosDeGrillaDeArticulos): string {
+  const parametros = new URLSearchParams()
+  if (filtros.codigo.trim()) parametros.set('codigo', filtros.codigo.trim())
+  if (filtros.nombre.trim()) parametros.set('nombre', filtros.nombre.trim())
+  if (filtros.precioDesde !== null) parametros.set('precioDesde', String(filtros.precioDesde))
+  if (filtros.precioHasta !== null) parametros.set('precioHasta', String(filtros.precioHasta))
+  if (filtros.sinProveedor) {
+    parametros.set('sinProveedor', 'true')
+  } else if (filtros.idProveedor !== null) {
+    parametros.set('idProveedor', String(filtros.idProveedor))
+  }
+  if (filtros.activo !== null) parametros.set('activo', String(filtros.activo))
+  parametros.set('pagina', String(filtros.pagina))
+  parametros.set('tamanio', String(filtros.tamanio))
+  return `?${parametros.toString()}`
+}
 
 export const clienteDeArticulos = {
   listar: (busqueda: string, incluirEliminados: boolean) => {
@@ -26,6 +64,11 @@ export const clienteDeArticulos = {
   /** El listado paginado no completa `idsEmpresas` (evita el N+1) — antes de editar hay que
    * pedir el detalle puntual para no perder el subconjunto real de empresas. */
   obtener: (id: number) => api.get<ArticuloListado>(`/articulos/${id}`),
+  /** Grilla con filtro multi-columna y paginación real (feat: articulos-grilla-web) — reemplaza
+   * `listar` como fuente de `GrillaDeArticulos.tsx`; `listar` sigue viva para otras pantallas
+   * (buscador del POS, alta rápida). */
+  grilla: (filtros: FiltrosDeGrillaDeArticulos) =>
+    api.get<PaginaDeGrillaDeArticulos>(`/articulos/grilla${construirQueryDeGrillaDeArticulos(filtros)}`),
   crear: (datos: AltaArticulo) => api.post<ArticuloListado>('/articulos', datos),
   actualizar: (id: number, datos: EdicionArticulo) => api.put<ArticuloListado>(`/articulos/${id}`, datos),
   eliminar: (id: number) => api.delete(`/articulos/${id}`),
