@@ -170,6 +170,19 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         return articulo.Id;
     }
 
+    /// <summary>Área adicional creada dentro del propio test (fuera de las dos de
+    /// <see cref="Contexto"/>) — usada cuando el test necesita dar de baja un área SIN afectar los
+    /// artículos que ya referencian <c>IdAreaA</c>/<c>IdAreaB</c> de otros casos.</summary>
+    private async Task<int> CrearAreaAsync(Contexto ctx, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        var area = new Area { IdTenant = ctx.IdTenant, Nombre = nombre, Orden = 99, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Areas.Add(area);
+        await db.SaveChangesAsync();
+        return area.Id;
+    }
+
     // ---- baja lógica de catálogos (sin guarda de uso — bug de fondo de este reporte) --------------
 
     private async Task DarDeBajaAreaAsync(Contexto ctx, int id)
@@ -967,9 +980,12 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
     /// <summary>Nombra el objetivo de mutación (mutation-proof-tests regla 6/8): el call site de
     /// <c>ExportacionDeReportes.De(IReadOnlyList&lt;ArticuloDeReporte&gt;, ContextoDeExportacion)</c>
-    /// dentro de <c>/articulos/export</c>. Dos filas con TODOS los campos distintos — una totalmente
-    /// clasificada, otra sin ninguna clasificación — con las OCHO columnas comparadas contra el
-    /// workbook, más el header exacto (regla 8: el header es lo que ata cada celda a su columna).</summary>
+    /// dentro de <c>/articulos/export</c>. Tres filas con TODOS los campos distintos — una
+    /// totalmente clasificada, otra sin ninguna clasificación, y una con el área dada de baja
+    /// lógica (judgment-day ronda 2: ninguna fila de este fixture ejercía el área <c>null</c>,
+    /// dejando <c>Área</c> como la única columna comparada con un <c>Assert.Equal</c> no
+    /// null-safe) — con las OCHO columnas comparadas contra el workbook, más el header exacto
+    /// (regla 8: el header es lo que ata cada celda a su columna).</summary>
     [Fact]
     public async Task ElExportEsIgualAlEndpointJsonParaTodasLasColumnas()
     {
@@ -979,8 +995,12 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
             idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorConFantasia, activo: true);
         await SembrarArticuloAsync(ctx, "Fideos guiseros 500g", idArea: ctx.IdAreaB, activo: false);
 
+        var idAreaDeBaja = await CrearAreaAsync(ctx, "Freezer");
+        await SembrarArticuloAsync(ctx, "Yerba mate 500g", idArea: idAreaDeBaja, activo: true);
+        await DarDeBajaAreaAsync(ctx, idAreaDeBaja);
+
         var pagina = await ListarAsync(ctx.Admin);
-        Assert.Equal(2, pagina.Items.Count);
+        Assert.Equal(3, pagina.Items.Count);
 
         var exportRespuesta = await ctx.Admin.GetAsync("/api/reportes/articulos/export?formato=xlsx");
         var cuerpoError = exportRespuesta.IsSuccessStatusCode ? string.Empty : await exportRespuesta.Content.ReadAsStringAsync();
@@ -1002,7 +1022,7 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
             var fila = hoja.Row(primeraFilaDeDatos + i);
             Assert.Equal(esperado.CodigoInterno, fila.Cell(1).GetString());
             Assert.Equal(esperado.Nombre, fila.Cell(2).GetString());
-            Assert.Equal(esperado.Area, fila.Cell(3).GetString());
+            AssertCeldaTextoNullable(fila.Cell(3), esperado.Area);
             AssertCeldaTextoNullable(fila.Cell(4), esperado.Categoria);
             AssertCeldaTextoNullable(fila.Cell(5), esperado.Marca);
             AssertCeldaTextoNullable(fila.Cell(6), esperado.Grupo);
@@ -1024,6 +1044,98 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         }
 
         Assert.Equal(esperado, celda.GetString());
+    }
+
+    // ---- export: reenvío de cada filtro (mutation-proof-tests) --------------------------------------
+
+    /// <summary>Nombra el objetivo de mutación: el reenvío de CADA parámetro de filtro desde el
+    /// handler de <c>/articulos/export</c> hacia <c>ListarArticulosParaExportacionAsync</c>
+    /// (<c>ReportesEndpoints.cs</c>) — un handler que ignorara un parámetro y lo reemplazara por su
+    /// default (p.ej. <c>sinArea=false</c> hardcodeado, ignorando la query string) sobrevivía a
+    /// toda la suite, porque ningún test comparaba el export FILTRADO contra el listado FILTRADO
+    /// con la misma query string (judgment-day ronda 2). Fixture discriminante de 6 artículos donde
+    /// cada uno de los doce parámetros angosta el conjunto sin vaciarlo ni devolverlo completo, y el
+    /// export de cada filtro se compara contra el listado del MISMO filtro, código por código y en
+    /// el mismo orden (mismo <c>OrderBy(a =&gt; a.Nombre).ThenBy(a =&gt; a.Id)</c> de ambos
+    /// lados).</summary>
+    [Fact]
+    public async Task CadaFiltroDelExportCoincideConElListadoYAngostaElConjunto()
+    {
+        var ctx = await PrepararAsync(nameof(CadaFiltroDelExportCoincideConElListadoYAngostaElConjunto));
+
+        await SembrarArticuloAsync(
+            ctx, "articulo-completo-1", idArea: ctx.IdAreaA, idCategoria: ctx.IdCategoriaPadre,
+            idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorConFantasia, activo: true);
+        await SembrarArticuloAsync(
+            ctx, "articulo-completo-2", idArea: ctx.IdAreaA, idCategoria: ctx.IdCategoriaHija,
+            idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorConFantasia, activo: true);
+        await SembrarArticuloAsync(
+            ctx, "articulo-otra-area", idArea: ctx.IdAreaB, idCategoria: ctx.IdCategoriaOtra,
+            idMarca: ctx.IdMarcaB, idGrupo: ctx.IdGrupoB, idProveedorHabitual: ctx.IdProveedorSinFantasia, activo: true);
+        await SembrarArticuloAsync(ctx, "articulo-incompleto", idArea: ctx.IdAreaA, activo: true);
+
+        var idAreaDeBaja = await CrearAreaAsync(ctx, "Depósito");
+        await SembrarArticuloAsync(
+            ctx, "articulo-area-de-baja", idArea: idAreaDeBaja, idCategoria: ctx.IdCategoriaPadre,
+            idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorConFantasia, activo: true);
+        await DarDeBajaAreaAsync(ctx, idAreaDeBaja);
+
+        await SembrarArticuloAsync(
+            ctx, "articulo-inactivo", idArea: ctx.IdAreaA, idCategoria: ctx.IdCategoriaPadre,
+            idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorConFantasia, activo: false);
+
+        var sinFiltro = await ListarAsync(ctx.Admin);
+        Assert.Equal(6, sinFiltro.Total);
+
+        var casos = new (string Nombre, string Query)[]
+        {
+            ("idArea", ConstruirQuery(idArea: ctx.IdAreaA)),
+            ("sinArea", ConstruirQuery(sinArea: true)),
+            ("idCategoria", ConstruirQuery(idCategoria: ctx.IdCategoriaPadre)),
+            ("sinCategoria", ConstruirQuery(sinCategoria: true)),
+            ("idMarca", ConstruirQuery(idMarca: ctx.IdMarcaA)),
+            ("sinMarca", ConstruirQuery(sinMarca: true)),
+            ("idGrupo", ConstruirQuery(idGrupo: ctx.IdGrupoA)),
+            ("sinGrupo", ConstruirQuery(sinGrupo: true)),
+            ("idProveedor", ConstruirQuery(idProveedor: ctx.IdProveedorConFantasia)),
+            ("sinProveedor", ConstruirQuery(sinProveedor: true)),
+            ("soloIncompletos", ConstruirQuery(soloIncompletos: true)),
+            ("activo", ConstruirQuery(activo: true)),
+        };
+
+        foreach (var (nombre, query) in casos)
+        {
+            var pagina = await ListarAsync(ctx.Admin, query);
+            Assert.True(
+                pagina.Items.Count < sinFiltro.Total,
+                $"{nombre}: no angostó el conjunto ({pagina.Items.Count} de {sinFiltro.Total}).");
+
+            var exportRespuesta = await ctx.Admin.GetAsync($"/api/reportes/articulos/export{query}&formato=xlsx");
+            var cuerpoError = exportRespuesta.IsSuccessStatusCode ? string.Empty : await exportRespuesta.Content.ReadAsStringAsync();
+            Assert.True(exportRespuesta.StatusCode == HttpStatusCode.OK, $"{nombre}: {cuerpoError}");
+
+            using var libro = new XLWorkbook(new MemoryStream(await exportRespuesta.Content.ReadAsByteArrayAsync()));
+            var codigosExport = LeerCodigosDelExport(libro.Worksheets.First());
+            var codigosEsperados = pagina.Items.Select(f => f.CodigoInterno).ToList();
+
+            Assert.True(
+                codigosExport.SequenceEqual(codigosEsperados),
+                $"{nombre}: export [{string.Join(',', codigosExport)}] != listado [{string.Join(',', codigosEsperados)}].");
+        }
+    }
+
+    private static List<string> LeerCodigosDelExport(IXLWorksheet hoja)
+    {
+        const int primeraFilaDeDatos = 7;
+        var codigos = new List<string>();
+        var fila = primeraFilaDeDatos;
+        while (!hoja.Row(fila).IsEmpty())
+        {
+            codigos.Add(hoja.Cell(fila, 1).GetString());
+            fila++;
+        }
+
+        return codigos;
     }
 
     // ---- export: formato no soportado ------------------------------------------------------------------
