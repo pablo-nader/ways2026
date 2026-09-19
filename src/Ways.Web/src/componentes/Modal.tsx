@@ -62,7 +62,15 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, onCerrar
   const idTitulo = useId()
   const idPropio = useId()
   const contenidoRef = useRef<HTMLDivElement>(null)
-  const focoPrevioRef = useRef<HTMLElement | null>(null)
+  // Capturado con el inicializador perezoso de `useState` — corre durante el RENDER, antes de
+  // cualquier commit. Es a propósito que NO sea un `useLayoutEffect`: React aplica `autoFocus` de
+  // los hijos (si el contenido del modal tiene un campo con esa prop) durante la fase de mutación
+  // del MISMO commit de montaje, que corre ANTES que cualquier layout effect — para cuando un
+  // `useLayoutEffect` de acá llegara a leer `document.activeElement`, ese autoFocus ya lo habría
+  // pisado, y "el foco anterior" terminaría siendo el campo del propio modal en vez del control
+  // real que lo abrió (bug real, encontrado con un select enfocado a mano antes de abrir un modal
+  // cuyo contenido tenía un input con `autoFocus`: el select nunca recuperaba el foco al cerrar).
+  const [focoPrevio] = useState<HTMLElement | null>(() => document.activeElement as HTMLElement | null)
   const [nivel, setNivel] = useState(0)
 
   // useLayoutEffect (no useEffect): el registro en la pila, el cálculo del nivel de apilado y el
@@ -71,8 +79,6 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, onCerrar
   // layout effects corren en orden de declaración: el primero empuja a la pila antes de que el
   // segundo lea su longitud, así que el nivel siempre sale bien incluso montados juntos.
   useLayoutEffect(() => {
-    focoPrevioRef.current = document.activeElement as HTMLElement | null
-
     const nivelPropio = pilaDeModales.length
     pilaDeModales.push(idPropio)
     setNivel(nivelPropio)
@@ -94,7 +100,7 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, onCerrar
       modalesAbiertos -= 1
       if (modalesAbiertos === 0) document.body.classList.remove('modal-open')
 
-      if (esAlcanzable(focoPrevioRef.current)) focoPrevioRef.current.focus()
+      if (esAlcanzable(focoPrevio)) focoPrevio.focus()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

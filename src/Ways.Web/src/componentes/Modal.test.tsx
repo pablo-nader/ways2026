@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Modal } from './Modal'
 
@@ -109,6 +109,56 @@ describe('Modal — foco', () => {
 
     // El primer focusable de todo el modal es el botón "Cerrar" del header (antes que "Nombre").
     expect(screen.getByRole('button', { name: 'Cerrar' })).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: el "foco previo" se captura con el inicializador perezoso de `useState`
+   * (durante el RENDER), no dentro del `useLayoutEffect` de montaje. Bug real encontrado armando
+   * este componente: un consumidor enfoca a mano OTRO control (p. ej. un select) antes de abrir el
+   * modal, pero si el CONTENIDO del modal tiene un campo con `autoFocus`, React se lo enfoca
+   * durante la fase de mutación del mismo commit — ANTES que cualquier `useLayoutEffect` llegue a
+   * correr. Capturar el foco previo en un `useLayoutEffect` (en vez de durante el render) lo hace
+   * leer el propio campo `autoFocus` del modal como "foco anterior", y el select nunca lo
+   * recupera al cerrar. Mutation-proof-tests: cambiar `useState(() => document.activeElement)`
+   * por un `useLayoutEffect` que hace la misma asignación reproduce esta falla (el segundo
+   * `expect` de este test pasa a fallar, devolviendo el foco al input en vez de al select).
+   */
+  it('con un select enfocado a mano antes de abrir, y un autoFocus DENTRO del modal, el cierre devuelve el foco al select — no al campo autoFocus', () => {
+    function Arnes() {
+      const [abierto, setAbierto] = useState(false)
+      const refSelect = useRef<HTMLSelectElement>(null)
+      return (
+        <>
+          <select ref={refSelect} aria-label="externo">
+            <option value="a">a</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => {
+              refSelect.current?.focus()
+              setAbierto(true)
+            }}
+          >
+            Abrir
+          </button>
+          {abierto && (
+            <Modal titulo="Nueva marca" onCerrar={() => setAbierto(false)}>
+              <input aria-label="Nombre" autoFocus />
+            </Modal>
+          )}
+        </>
+      )
+    }
+
+    render(<Arnes />)
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir' }))
+
+    // El autoFocus del contenido gana la apertura (comportamiento esperado, ver el comentario de
+    // Modal.tsx) — la prueba real es qué pasa al CERRAR.
+    expect(screen.getByLabelText('Nombre')).toHaveFocus()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+    expect(screen.getByLabelText('externo')).toHaveFocus()
   })
 
   it('devuelve el foco al elemento que lo tenía antes de abrir, al cerrar', () => {
