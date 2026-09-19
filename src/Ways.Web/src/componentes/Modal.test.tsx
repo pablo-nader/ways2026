@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Modal } from './Modal'
 
@@ -186,6 +186,89 @@ describe('Modal — foco', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
 
     expect(disparador).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: `focoPrevio !== document.body` en la condición del cleanup de
+   * `Modal.tsx`. Sin ese descarte explícito, `esAlcanzable(document.body)` es `true` (body está
+   * conectado, no está deshabilitado) y el cleanup restaura el foco ahí en vez de usar
+   * `focoDeReserva` — mutation-proof-tests: reemplazar la condición por solo
+   * `esAlcanzable(focoPrevio)` hace fallar el `expect` de abajo (el de reserva nunca recibe foco).
+   */
+  it('abierto sin disparador (URL directa / pestaña nueva), al cerrar devuelve el foco al destino de reserva, no a body', () => {
+    function Arnes() {
+      // Arranca cerrado y se abre solo via efecto (nunca por un click) — igual que una URL
+      // directa a /articulos/edit/5 abre el modal sin que nada lo haya clickeado: el ref del
+      // botón de reserva ya quedó adjuntado en el commit anterior, así que su `.current` no es
+      // `null` cuando el modal lee la prop, y `document.activeElement` sigue siendo `body`.
+      const [abierto, setAbierto] = useState(false)
+      const refReserva = useRef<HTMLButtonElement>(null)
+      useEffect(() => {
+        setAbierto(true)
+      }, [])
+      return (
+        <>
+          <button ref={refReserva} type="button">
+            Nuevo
+          </button>
+          {abierto && (
+            <Modal titulo="Nueva marca" focoDeReserva={refReserva.current} onCerrar={() => setAbierto(false)}>
+              <button type="button">Guardar</button>
+            </Modal>
+          )}
+        </>
+      )
+    }
+
+    render(<Arnes />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+
+    expect(screen.getByRole('button', { name: 'Nuevo' })).toHaveFocus()
+  })
+
+  it('con el disparador ya fuera del documento al cerrar (se re-renderizó afuera), devuelve el foco al destino de reserva', () => {
+    function Arnes() {
+      const [abierto, setAbierto] = useState(false)
+      const [disparadorPresente, setDisparadorPresente] = useState(true)
+      const refReserva = useRef<HTMLButtonElement>(null)
+      return (
+        <>
+          <button ref={refReserva} type="button">
+            Nuevo
+          </button>
+          {disparadorPresente && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.currentTarget.focus()
+                setAbierto(true)
+              }}
+            >
+              Editar
+            </button>
+          )}
+          {abierto && (
+            <Modal titulo="Nueva marca" focoDeReserva={refReserva.current} onCerrar={() => setAbierto(false)}>
+              <button type="button" onClick={() => setDisparadorPresente(false)}>
+                Quitar disparador
+              </button>
+            </Modal>
+          )}
+        </>
+      )
+    }
+
+    render(<Arnes />)
+    fireEvent.click(screen.getByRole('button', { name: 'Editar' }))
+    // Simula que la fila que tenía el disparador desapareció de la grilla (p. ej. un refresco en
+    // curso) mientras el modal seguía abierto.
+    fireEvent.click(screen.getByRole('button', { name: 'Quitar disparador' }))
+    expect(screen.queryByRole('button', { name: 'Editar' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+
+    expect(screen.getByRole('button', { name: 'Nuevo' })).toHaveFocus()
   })
 })
 
