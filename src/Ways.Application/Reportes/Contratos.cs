@@ -57,6 +57,24 @@ public sealed record ArticuloTop(int IdArticulo, string Descripcion, decimal Can
 /// <c>/rentabilidad</c>, bajo <c>LecturaDeRentabilidad</c>.</summary>
 public sealed record TopArticulos(
     DateOnly Desde, DateOnly Hasta, string ZonaHoraria, IReadOnlyList<ArticuloTop> Articulos);
+
+/// <summary>Fila de <c>GET /api/reportes/articulos</c> (reporte de completitud de catálogo) — a
+/// diferencia de <see cref="ArticuloTop"/>/<see cref="FilaExistencia"/>, no hay ninguna figura de
+/// venta ni de stock: es el catálogo actual con sus cinco clasificaciones resueltas a nombre en
+/// una sola proyección (design: "All names from one SQL projection, no N+1"), para que un admin
+/// vea de un vistazo qué artículos quedaron a medio cargar. <see cref="Area"/>/
+/// <see cref="Categoria"/>/<see cref="Marca"/>/<see cref="Grupo"/>/<see cref="Proveedor"/> son
+/// <c>null</c> cuando el artículo no tiene esa clasificación asignada O cuando el FK apunta a una
+/// fila dada de baja lógica (invisible, pero todavía presente en la columna: los catálogos y
+/// proveedores se eliminan sin guarda de uso) — nunca una cadena "Sin asignar" del lado del
+/// servidor, esa etiqueta es responsabilidad de la UI. <see cref="Area"/> es la única de las
+/// cinco con FK obligatorio (nunca <c>null</c> en <c>articulos</c>), así que acá solo puede ser
+/// <c>null</c> por la baja lógica del área referenciada. <see cref="Proveedor"/> es
+/// <c>NombreFantasia</c> cuando no es nulo/vacío, si no <c>RazonSocial</c> — mismo criterio hacia
+/// el que el resto de la app está migrando.</summary>
+public sealed record ArticuloDeReporte(
+    int Id, string CodigoInterno, string Nombre, string? Area,
+    string? Categoria, string? Marca, string? Grupo, string? Proveedor, bool Activo);
 /// <summary>Desglose de margen por artículo dentro de un período de rentabilidad (stage-10 slice
 /// 4). Agrupa por <c>id_articulo</c> pero etiqueta con la <see cref="Descripcion"/> snapshot de la
 /// línea (design decisión 10: nunca re-join contra <c>articulos</c>) — <c>IdArticulo</c> es

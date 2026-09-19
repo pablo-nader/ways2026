@@ -81,6 +81,24 @@ public static class CajaEndpoints
             Results.Ok(await servicio.CerrarAsync(id, solicitud, ct)))
         .WithSummary("Cierre de turno: deriva el arqueo, lo persiste y encadena la tesorería — irreversible.");
 
+        // etapa 5 (cierre por retiro, práctica del dueño): el cuerpo SOLO trae el retiro de cierre
+        // (un movimiento, nunca un total de ventas ni un conteo) — el resto (esperados, ventas por
+        // medio, diferencia) lo deriva el servidor. Mismo grupo/política que /cierre, misma
+        // atomicidad e irreversibilidad (spec arqueo-de-cierre: Cierre Por Retiro).
+        grupo.MapPost("/{id:int}/cierre-por-retiro", async (
+            ServicioDeTurnos servicio, int id, SolicitudDeCierrePorRetiro solicitud, CancellationToken ct) =>
+            Results.Ok(await servicio.CerrarPorRetiroAsync(id, solicitud, ct)))
+        .WithSummary(
+            "Cierre por retiro: el cajero retira el efectivo contado y deja el fondo inicial — irreversible.");
+
+        // Reimpresión / recuperación tras una falla de red ambigua sobre un cierre YA persistido —
+        // sirve para cualquier turno cerrado, por retiro o por el cierre clásico (ver el
+        // doc-comment de ServicioDeTurnos.ObtenerResumenDeCierreAsync).
+        grupo.MapGet("/{id:int}/resumen-de-cierre", async (
+            ServicioDeTurnos servicio, int id, CancellationToken ct) =>
+            Results.Ok(await servicio.ObtenerResumenDeCierreAsync(id, ct)))
+        .WithSummary("Resumen de un cierre ya persistido — reimpresión / recuperación tras una falla de red ambigua.");
+
         // stage-11-exportacion-reportes, Slice 5a (design "The load-bearing refinement of the
         // proposal is where the caja detail lives": la ruta MOVIÓ acá desde
         // /api/reportes/cajas/{id} para que OperacionDePos se herede por co-locación en vez de

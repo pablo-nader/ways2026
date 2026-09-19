@@ -5,6 +5,7 @@ import type {
   FiltrosDeHistoricoDeCajas,
   FiltrosDeRentabilidad,
   FiltrosDeReporte,
+  FiltrosDeReporteDeArticulos,
   FiltrosDeTesoreria,
   FiltrosDeTopArticulos,
 } from './reportes'
@@ -21,8 +22,10 @@ const {
   construirQueryDeBreakdownConPv,
   construirQueryDeHistoricoDeCajas,
   construirQueryDeReporte,
+  construirQueryDeReporteDeArticulos,
   construirQueryDeTesoreria,
   filtrosDeHistoricoDeCajasVacios,
+  filtrosDeReporteDeArticulosVacios,
   rangoUltimosSieteDias,
   rutasDeExportacion,
 } = await import('./reportes')
@@ -60,6 +63,12 @@ function filtrosHistoricoDeCajasFixture(sobrescribir: Partial<FiltrosDeHistorico
 
 function filtrosTesoreriaFixture(sobrescribir: Partial<FiltrosDeTesoreria> = {}): FiltrosDeTesoreria {
   return { idPuntoVenta: 7, desde: '2026-08-05', hasta: '2026-08-11', pagina: 1, tamanio: 25, ...sobrescribir }
+}
+
+function filtrosReporteDeArticulosFixture(
+  sobrescribir: Partial<FiltrosDeReporteDeArticulos> = {},
+): FiltrosDeReporteDeArticulos {
+  return { ...filtrosDeReporteDeArticulosVacios(), ...sobrescribir }
 }
 
 // ---- construirQueryDeHistoricoDeCajas / construirQueryDeTesoreria: mismo patrón de offset
@@ -245,6 +254,134 @@ describe('clienteDeReportes.historicoDeCajas / clienteDeReportes.tesoreria', () 
     await clienteDeReportes.tesoreria(filtrosTesoreriaFixture())
 
     expect(apiGetMock).toHaveBeenCalledWith(expect.stringMatching(/^\/reportes\/tesoreria\?idPuntoVenta=7/))
+  })
+})
+
+describe('construirQueryDeReporteDeArticulos', () => {
+  it('sin ningún filtro seteado, solo manda pagina/tamanio', () => {
+    const query = construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture())
+
+    expect(query).toBe('?pagina=1&tamanio=25')
+  })
+
+  it('agrega idArea y omite sinArea (mutuamente excluyentes del lado del backend)', () => {
+    const query = construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ idArea: 3 }))
+
+    expect(query).toContain('idArea=3')
+    expect(query).not.toContain('sinArea')
+  })
+
+  it('agrega sinArea=true cuando está tildado, sin idArea', () => {
+    const query = construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ sinArea: true }))
+
+    expect(query).toContain('sinArea=true')
+    expect(query).not.toContain('idArea=')
+  })
+
+  it('agrega idCategoria y omite sinCategoria (mutuamente excluyentes del lado del backend)', () => {
+    const query = construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ idCategoria: 5 }))
+
+    expect(query).toContain('idCategoria=5')
+    expect(query).not.toContain('sinCategoria')
+  })
+
+  it('agrega sinCategoria=true cuando está tildado, sin idCategoria', () => {
+    const query = construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ sinCategoria: true }))
+
+    expect(query).toContain('sinCategoria=true')
+    expect(query).not.toContain('idCategoria=')
+  })
+
+  it('agrega idMarca/sinMarca, idGrupo/sinGrupo e idProveedor/sinProveedor igual que categoría', () => {
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ idMarca: 1 }))).toContain('idMarca=1')
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ sinMarca: true }))).toContain('sinMarca=true')
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ idGrupo: 2 }))).toContain('idGrupo=2')
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ sinGrupo: true }))).toContain('sinGrupo=true')
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ idProveedor: 9 }))).toContain('idProveedor=9')
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ sinProveedor: true }))).toContain('sinProveedor=true')
+  })
+
+  it('agrega soloIncompletos solo cuando está tildado', () => {
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture())).not.toContain('soloIncompletos')
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ soloIncompletos: true }))).toContain(
+      'soloIncompletos=true',
+    )
+  })
+
+  it('agrega activo solo cuando no es null, con su valor real (true o false)', () => {
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture())).not.toContain('activo')
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ activo: true }))).toContain('activo=true')
+    expect(construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ activo: false }))).toContain('activo=false')
+  })
+
+  it('siempre manda pagina/tamanio, incluso con filtros', () => {
+    const query = construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ idArea: 3, pagina: 2, tamanio: 10 }))
+
+    expect(query).toContain('pagina=2')
+    expect(query).toContain('tamanio=10')
+  })
+
+  it('filtrosDeReporteDeArticulosVacios arranca sin ningún filtro, página 1, tamaño 25', () => {
+    const filtros = filtrosDeReporteDeArticulosVacios()
+
+    expect(filtros).toEqual({
+      idArea: null,
+      sinArea: false,
+      idCategoria: null,
+      sinCategoria: false,
+      idMarca: null,
+      sinMarca: false,
+      idGrupo: null,
+      sinGrupo: false,
+      idProveedor: null,
+      sinProveedor: false,
+      soloIncompletos: false,
+      activo: null,
+      pagina: 1,
+      tamanio: 25,
+    })
+  })
+})
+
+describe('clienteDeReportes.articulos', () => {
+  it('pega contra /reportes/articulos con el query armado por construirQueryDeReporteDeArticulos', async () => {
+    apiGetMock.mockClear()
+    await clienteDeReportes.articulos(filtrosReporteDeArticulosFixture({ idArea: 3 }))
+
+    expect(apiGetMock).toHaveBeenCalledWith('/reportes/articulos?idArea=3&pagina=1&tamanio=25')
+  })
+})
+
+describe('rutasDeExportacion.articulos — lección del proyecto: la ruta de descarga tiene que usar EXACTAMENTE los mismos filtros que el listado', () => {
+  it('sin ningún filtro, la ruta queda solo con formato=xlsx', () => {
+    const ruta = rutasDeExportacion.articulos(filtrosReporteDeArticulosFixture())
+
+    expect(ruta).toBe('/reportes/articulos/export?formato=xlsx')
+  })
+
+  it('nunca manda pagina/tamanio (el export no pagina)', () => {
+    const ruta = rutasDeExportacion.articulos(filtrosReporteDeArticulosFixture({ pagina: 3, tamanio: 50 }))
+
+    expect(ruta).not.toContain('pagina')
+    expect(ruta).not.toContain('tamanio')
+  })
+
+  it('propaga cada filtro seteado igual que el listado', () => {
+    const filtros = filtrosReporteDeArticulosFixture({
+      idArea: 3,
+      sinCategoria: true,
+      idMarca: 1,
+      idGrupo: 2,
+      sinProveedor: true,
+      soloIncompletos: true,
+      activo: true,
+    })
+
+    const ruta = rutasDeExportacion.articulos(filtros)
+
+    expect(ruta).toBe(
+      '/reportes/articulos/export?idArea=3&sinCategoria=true&idMarca=1&idGrupo=2&sinProveedor=true&soloIncompletos=true&activo=true&formato=xlsx',
+    )
   })
 })
 

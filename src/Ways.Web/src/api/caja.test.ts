@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
 const apiGetMock = vi.fn(() => Promise.resolve(undefined))
+const apiPostMock = vi.fn(() => Promise.resolve(undefined))
 
 vi.mock('./cliente', () => ({
-  api: { get: (...args: unknown[]) => apiGetMock(...(args as [])) },
+  api: {
+    get: (...args: unknown[]) => apiGetMock(...(args as [])),
+    post: (...args: unknown[]) => apiPostMock(...(args as [])),
+  },
 }))
 
 const { aSolicitudDeMovimiento, clienteDeCaja, importeValidoParaTipo, motivoValido, rutasDeExportacionDeCaja } = await import('./caja')
@@ -89,5 +93,37 @@ describe('clienteDeCaja.obtenerDetalle', () => {
 describe('rutasDeExportacionDeCaja.detalleDeTurno', () => {
   it('arma la ruta del export sibling con formato=xlsx', () => {
     expect(rutasDeExportacionDeCaja.detalleDeTurno(412)).toBe('/caja/turnos/412/detalle/export?formato=xlsx')
+  })
+})
+
+// ---- etapa 5 (cierre por retiro): clienteDeCaja.cerrarPorRetiro + obtenerResumenDeCierre -----
+
+describe('clienteDeCaja.cerrarPorRetiro', () => {
+  it('pega contra POST /caja/turnos/{id}/cierre-por-retiro con el cuerpo tal cual', async () => {
+    apiPostMock.mockClear()
+    const solicitud = { importeRetirado: 200, observaciones: 'Cierre por retiro de prueba' }
+
+    await clienteDeCaja.cerrarPorRetiro(412, solicitud)
+
+    expect(apiPostMock).toHaveBeenCalledWith('/caja/turnos/412/cierre-por-retiro', solicitud)
+  })
+
+  it('deja pasar un importe 0 tal cual, sin transformarlo', async () => {
+    apiPostMock.mockClear()
+    const solicitud = { importeRetirado: 0, observaciones: null }
+
+    await clienteDeCaja.cerrarPorRetiro(7, solicitud)
+
+    expect(apiPostMock).toHaveBeenCalledWith('/caja/turnos/7/cierre-por-retiro', solicitud)
+  })
+})
+
+describe('clienteDeCaja.obtenerResumenDeCierre', () => {
+  it('pega contra GET /caja/turnos/{id}/resumen-de-cierre', async () => {
+    apiGetMock.mockClear()
+
+    await clienteDeCaja.obtenerResumenDeCierre(412)
+
+    expect(apiGetMock).toHaveBeenCalledWith('/caja/turnos/412/resumen-de-cierre')
   })
 })

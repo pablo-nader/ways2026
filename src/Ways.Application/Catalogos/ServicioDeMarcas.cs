@@ -1,13 +1,18 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Domain.Catalogos;
 
 namespace Ways.Application.Catalogos;
 
-public class ServicioDeMarcas(IWaysDbContext db, IRelojDelSistema reloj)
-    : ServicioDeCatalogo<Marca, MarcaListado, MarcaAlta>(db, reloj)
+public class ServicioDeMarcas(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
+    : ServicioDeCatalogo<Marca, MarcaListado, MarcaAlta>(db, reloj, guarda)
 {
     protected override DbSet<Marca> Conjunto => Db.Marcas;
+
+    protected override string CodigoEnUso => "marca_en_uso";
+
+    protected override string SujetoDeBaja => "la marca";
 
     protected override MarcaListado Proyectar(Marca entidad) =>
         new(entidad.Id, entidad.Nombre, entidad.Activo, entidad.IdEmpresa);

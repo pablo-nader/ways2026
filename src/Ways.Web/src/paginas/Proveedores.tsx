@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ErrorApi } from '../api/cliente'
+import { copiaDeFalloDeBaja } from '../api/bajas'
 import { clienteDeCatalogosFiscales } from '../api/catalogos'
 import { claseDeBadgeDeEstadoPago, clienteDeCompras, etiquetaDeEstadoPago } from '../api/compras'
 import { clienteDeProveedores } from '../api/proveedores'
 import type { AltaProveedor, CondicionFiscalListado, PaginaDe, ProveedorListado, SaldoDeProveedor } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { ResumenSaldoDeProveedor } from '../componentes/ResumenSaldoDeProveedor'
 import { formatearImporte } from '../formato/importes'
+
+const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
@@ -18,9 +23,9 @@ function formatearMoneda(valor: number): string {
 // Montado con `key={idProveedor}` desde el padre (react-async-state regla 8): cambiar de
 // proveedor remonta el panel entero, sin arrastrar el saldo del anterior mientras carga el nuevo.
 
-type PropsPanelSaldo = { proveedor: ProveedorListado; onCerrar: () => void }
+type PropsPanelSaldo = { proveedor: ProveedorListado; bloqueado: boolean; onCerrar: () => void }
 
-function PanelSaldoDeProveedor({ proveedor, onCerrar }: PropsPanelSaldo) {
+function PanelSaldoDeProveedor({ proveedor, bloqueado, onCerrar }: PropsPanelSaldo) {
   const [saldo, setSaldo] = useState<SaldoDeProveedor | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -52,7 +57,12 @@ function PanelSaldoDeProveedor({ proveedor, onCerrar }: PropsPanelSaldo) {
     <div className="border p-3 mb-4 bg-white">
       <div className="d-flex justify-content-between align-items-start mb-2">
         <strong>Saldo de {proveedor.razonSocial}</strong>
-        <button type="button" className="btn btn-sm btn-outline-secondary rounded-0" onClick={onCerrar}>
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-secondary rounded-0"
+          onClick={onCerrar}
+          disabled={bloqueado}
+        >
           Cerrar
         </button>
       </div>
@@ -196,6 +206,11 @@ function aAlta(f: Formulario): AltaProveedor {
  * ABM dedicado de proveedores (design decision 1: no la máquina genérica de catálogos) —
  * mismo shape que `Clientes.tsx`, sin fila protegida (proveedores no tiene equivalente al
  * Consumidor Final).
+ *
+ * La baja (fix/web-bajas-catalogos) sigue el mismo patrón que `Empresas.tsx`/`PaginaCatalogo.tsx`
+ * (`react-async-state` regla 10): puerta modal (`ConfirmacionDeBaja`), token de generación +
+ * `ocupadoRef` de re-entrancia compartidos entre guardado y baja, `bloqueado` deja inerte toda la
+ * pantalla mientras cualquiera de las dos está en vuelo.
  */
 export function Proveedores() {
   const [pagina, setPagina] = useState<PaginaDe<ProveedorListado> | null>(null)
@@ -207,64 +222,143 @@ export function Proveedores() {
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [proveedorSaldo, setProveedorSaldo] = useState<ProveedorListado | null>(null)
+  /** Baja pendiente de confirmación: ver `Empresas.tsx`. */
+  const [baja, setBaja] = useState<ProveedorListado | null>(null)
+  /** Id del proveedor cuya baja está en vuelo (distinto de `guardando`, que cubre alta/edición). */
+  const [ocupadoBaja, setOcupadoBaja] = useState<number | null>(null)
+  const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
 
-  const cargar = useCallback(async (termino: string) => {
+  /** Contrato de invalidación compartido por guardar y por la baja: ver `Empresas.tsx`. */
+  const generacion = useRef(0)
+  /** Espejo síncrono de "hay una escritura en vuelo" — la ÚNICA guarda de re-entrancia válida. */
+  const ocupadoRef = useRef(false)
+
+  const cargar = useCallback(async (token: number, termino: string, propagar = false) => {
     setCargando(true)
-    setError('')
     try {
-      setPagina(await clienteDeProveedores.listar(termino, false))
+      const resultado = await clienteDeProveedores.listar(termino, false)
+      if (generacion.current !== token) return
+      setPagina(resultado)
+      setError('')
     } catch (e) {
+      if (generacion.current !== token) return
+      if (propagar) throw e
       setError(e instanceof ErrorApi ? e.message : 'No se pudieron cargar los proveedores.')
     } finally {
-      setCargando(false)
+      if (generacion.current === token) setCargando(false)
     }
   }, [])
 
   useEffect(() => {
-    void cargar('')
+    void cargar(++generacion.current, '')
     clienteDeCatalogosFiscales.condicionesFiscales().then(setCondiciones).catch(() => setCondiciones([]))
   }, [cargar])
 
-  async function guardar() {
-    if (!formulario) return
+  /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
+   * commiteó nunca se reporta como fallida (`react-async-state` regla 6). */
+  async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
+    if (generacion.current !== token) return
 
+    setAviso(mensajeOk)
+    try {
+      await cargar(token, busqueda, true)
+    } catch {
+      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+    }
+  }
+
+  async function guardar() {
+    if (!formulario || ocupadoRef.current) return
+
+    const datos = formulario
+    const token = ++generacion.current
+    ocupadoRef.current = true
     setGuardando(true)
     setError('')
     setAviso('')
-
     try {
-      const datos = aAlta(formulario)
+      try {
+        const alta = aAlta(datos)
+        if (datos.id === null) {
+          await clienteDeProveedores.crear(alta)
+        } else {
+          await clienteDeProveedores.actualizar(datos.id, alta)
+        }
+      } catch (e) {
+        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
-      if (formulario.id === null) {
-        await clienteDeProveedores.crear(datos)
-        setAviso(`Proveedor "${formulario.razonSocial}" creado.`)
-      } else {
-        await clienteDeProveedores.actualizar(formulario.id, datos)
-        setAviso(`Proveedor "${formulario.razonSocial}" actualizado.`)
+        return
       }
 
+      if (generacion.current !== token) return
+
       setFormulario(null)
-      await cargar(busqueda)
-    } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+      await refrescarTrasEscribir(
+        token,
+        datos.id === null
+          ? `Proveedor "${datos.razonSocial}" creado.`
+          : `Proveedor "${datos.razonSocial}" actualizado.`,
+        AVISO_REFRESCO_FALLIDO,
+      )
     } finally {
+      ocupadoRef.current = false
       setGuardando(false)
     }
   }
 
-  async function eliminar(p: ProveedorListado) {
-    if (!confirm(`¿Dar de baja al proveedor "${p.razonSocial}"?`)) return
+  /** Ver `Empresas.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma
+   * re-entrancia. Abrir NO acuña generación: no hay escritura todavía. */
+  function pedirBaja(p: ProveedorListado, disparador: HTMLElement | null) {
+    if (ocupadoRef.current) return
 
+    setDisparadorDeLaPuerta(disparador)
+    setBaja(p)
+    setError('')
+    setAviso('')
+  }
+
+  function cancelarBaja() {
+    if (ocupadoRef.current) return
+
+    setDisparadorDeLaPuerta(null)
+    setBaja(null)
+    setError('')
+    setAviso('')
+  }
+
+  async function confirmarBaja() {
+    if (!baja || ocupadoRef.current) return
+
+    const p = baja
+    const token = ++generacion.current
+    ocupadoRef.current = true
+    setOcupadoBaja(p.id)
     setError('')
     setAviso('')
     try {
-      await clienteDeProveedores.eliminar(p.id)
-      setAviso(`Proveedor "${p.razonSocial}" dado de baja.`)
-      await cargar(busqueda)
-    } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo dar de baja.')
+      try {
+        await clienteDeProveedores.eliminar(p.id)
+      } catch (e) {
+        setError(copiaDeFalloDeBaja(e, 'el proveedor'))
+
+        return
+      }
+
+      setBaja(null)
+      // La baja del proveedor que se está editando o cuyo saldo está a la vista se lleva también
+      // ese panel: dejarlo abierto ofrecía guardar/consultar sobre una entidad que ya no existe.
+      setFormulario((prev) => (prev?.id === p.id ? null : prev))
+      setProveedorSaldo((prev) => (prev?.id === p.id ? null : prev))
+      await refrescarTrasEscribir(token, `Proveedor "${p.razonSocial}" dado de baja.`, AVISO_REFRESCO_FALLIDO_BAJA)
+    } finally {
+      ocupadoRef.current = false
+      setOcupadoBaja(null)
     }
   }
+
+  /** La puerta abierta o cualquier escritura en vuelo bloquean la pantalla entera: ver
+   * `Empresas.tsx`. */
+  const bloqueado = guardando || ocupadoBaja !== null || baja !== null
 
   const herramientas = (
     <nav className="p-2 d-flex gap-2">
@@ -274,12 +368,14 @@ export function Proveedores() {
         placeholder="Buscar por razón social, nombre de fantasía o CUIT…"
         value={busqueda}
         onChange={(e) => setBusqueda(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && cargar(busqueda)}
+        onKeyDown={(e) => e.key === 'Enter' && cargar(++generacion.current, busqueda)}
+        disabled={bloqueado}
       />
       <button
         type="button"
         className="btn btn-sm btn-outline-light rounded-0"
-        onClick={() => cargar(busqueda)}
+        onClick={() => cargar(++generacion.current, busqueda)}
+        disabled={bloqueado}
       >
         Buscar
       </button>
@@ -291,6 +387,7 @@ export function Proveedores() {
           setAviso('')
           setError('')
         }}
+        disabled={bloqueado}
       >
         Nuevo
       </button>
@@ -303,11 +400,22 @@ export function Proveedores() {
         {error && <div className="alert alert-danger rounded-0">{error}</div>}
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
 
+        {baja && (
+          <ConfirmacionDeBaja
+            titulo={`el proveedor "${baja.razonSocial}"`}
+            ocupado={ocupadoBaja !== null}
+            disparador={disparadorDeLaPuerta}
+            onConfirmar={confirmarBaja}
+            onCancelar={cancelarBaja}
+          />
+        )}
+
         {formulario && (
           <FormularioProveedor
             valor={formulario}
             condiciones={condiciones}
             guardando={guardando}
+            bloqueado={bloqueado}
             onCambio={setFormulario}
             onGuardar={guardar}
             onCancelar={() => setFormulario(null)}
@@ -315,7 +423,12 @@ export function Proveedores() {
         )}
 
         {proveedorSaldo && (
-          <PanelSaldoDeProveedor key={proveedorSaldo.id} proveedor={proveedorSaldo} onCerrar={() => setProveedorSaldo(null)} />
+          <PanelSaldoDeProveedor
+            key={proveedorSaldo.id}
+            proveedor={proveedorSaldo}
+            bloqueado={bloqueado}
+            onCerrar={() => setProveedorSaldo(null)}
+          />
         )}
 
         {cargando ? (
@@ -355,6 +468,7 @@ export function Proveedores() {
                         type="button"
                         className="btn btn-sm btn-outline-secondary rounded-0 me-1"
                         onClick={() => setProveedorSaldo(p)}
+                        disabled={bloqueado}
                       >
                         Ver saldo
                       </button>
@@ -366,13 +480,15 @@ export function Proveedores() {
                           setAviso('')
                           setError('')
                         }}
+                        disabled={bloqueado}
                       >
                         Editar
                       </button>
                       <button
                         type="button"
                         className="btn btn-sm btn-outline-danger rounded-0"
-                        onClick={() => eliminar(p)}
+                        onClick={(evento) => pedirBaja(p, evento.currentTarget)}
+                        disabled={bloqueado}
                       >
                         Baja
                       </button>
@@ -399,6 +515,7 @@ function FormularioProveedor({
   valor,
   condiciones,
   guardando,
+  bloqueado,
   onCambio,
   onGuardar,
   onCancelar,
@@ -406,6 +523,7 @@ function FormularioProveedor({
   valor: Formulario
   condiciones: CondicionFiscalListado[]
   guardando: boolean
+  bloqueado: boolean
   onCambio: (f: Formulario) => void
   onGuardar: () => void
   onCancelar: () => void
@@ -439,6 +557,7 @@ function FormularioProveedor({
           maxLength={150}
           value={valor.razonSocial}
           onChange={(e) => onCambio({ ...valor, razonSocial: e.target.value })}
+          disabled={bloqueado}
           required
         />
       </div>
@@ -453,6 +572,7 @@ function FormularioProveedor({
           maxLength={150}
           value={valor.nombreFantasia}
           onChange={(e) => onCambio({ ...valor, nombreFantasia: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -466,6 +586,7 @@ function FormularioProveedor({
           maxLength={13}
           value={valor.cuit}
           onChange={(e) => onCambio({ ...valor, cuit: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -478,6 +599,7 @@ function FormularioProveedor({
           className="form-select rounded-0"
           value={valor.idCondicionFiscal}
           onChange={(e) => onCambio({ ...valor, idCondicionFiscal: Number(e.target.value) })}
+          disabled={bloqueado}
           required
         >
           <option value="" disabled>
@@ -505,6 +627,7 @@ function FormularioProveedor({
           maxLength={255}
           value={valor.domicilio}
           onChange={(e) => onCambio({ ...valor, domicilio: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -518,6 +641,7 @@ function FormularioProveedor({
           maxLength={50}
           value={valor.telefono}
           onChange={(e) => onCambio({ ...valor, telefono: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -532,6 +656,7 @@ function FormularioProveedor({
           maxLength={255}
           value={valor.email}
           onChange={(e) => onCambio({ ...valor, email: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -547,6 +672,7 @@ function FormularioProveedor({
           className="form-control rounded-0"
           value={valor.margen}
           onChange={(e) => onCambio({ ...valor, margen: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -560,6 +686,7 @@ function FormularioProveedor({
           maxLength={150}
           value={valor.vendedor}
           onChange={(e) => onCambio({ ...valor, vendedor: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -573,6 +700,7 @@ function FormularioProveedor({
           maxLength={50}
           value={valor.celularVendedor}
           onChange={(e) => onCambio({ ...valor, celularVendedor: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -586,6 +714,7 @@ function FormularioProveedor({
           maxLength={150}
           value={valor.supervisor}
           onChange={(e) => onCambio({ ...valor, supervisor: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -599,6 +728,7 @@ function FormularioProveedor({
           maxLength={50}
           value={valor.celularSupervisor}
           onChange={(e) => onCambio({ ...valor, celularSupervisor: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -612,6 +742,7 @@ function FormularioProveedor({
           rows={2}
           value={valor.observaciones}
           onChange={(e) => onCambio({ ...valor, observaciones: e.target.value })}
+          disabled={bloqueado}
         />
       </div>
 
@@ -623,6 +754,7 @@ function FormularioProveedor({
             className="form-check-input rounded-0"
             checked={valor.activo}
             onChange={(e) => onCambio({ ...valor, activo: e.target.checked })}
+            disabled={bloqueado}
           />
           <label className="form-check-label" htmlFor="p-activo">
             Activo
@@ -631,14 +763,14 @@ function FormularioProveedor({
       </div>
 
       <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success rounded-0" disabled={guardando}>
+        <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
         <button
           type="button"
           className="btn btn-outline-secondary rounded-0"
           onClick={onCancelar}
-          disabled={guardando}
+          disabled={bloqueado}
         >
           Cancelar
         </button>

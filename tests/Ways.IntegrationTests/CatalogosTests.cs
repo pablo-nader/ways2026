@@ -236,14 +236,24 @@ public class CatalogosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
     [Fact]
     public async Task CrearUnaCategoriaBajoUnPadreDadoDeBajaDevuelve400()
     {
-        // El padre existente con hijos previos a la baja queda como está (comportamiento
-        // actual, documentado acá, no cambia): lo que se rechaza es un alta NUEVA que
-        // intente colgarse de un id ya dado de baja.
+        // fix/bajas-catalogos-guarda-de-uso: el padre ya NO se puede dar de baja
+        // mientras algo lo referencie — GuardaDeReferencias, y OD4 hace que hasta una
+        // hija YA dada de baja lo siga bloqueando, así que borrar la hija no alcanza para
+        // volver a dejar al padre pristino. Lo que sí lo deja pristino es RECOLGAR la hija de
+        // otro lado (PUT con id_categoria_padre null): ahí el padre deja de tener CUALQUIER
+        // fila que lo referencie, viva o dada de baja. Esto reemplaza el comentario anterior
+        // ("comportamiento actual, no cambia"), que documentaba justo lo opuesto; lo que este
+        // test prueba sigue siendo lo mismo: un alta NUEVA rechaza colgarse de un id ya dado
+        // de baja.
         var (_, mail) = await SembrarTenantConAdminAsync(nameof(CrearUnaCategoriaBajoUnPadreDadoDeBajaDevuelve400));
         using var cliente = await ClienteLogueadoAsync(mail);
 
         var padre = await CrearCategoriaAsync(cliente, "Bebidas", null);
-        await CrearCategoriaAsync(cliente, "Gaseosas", padre.Id);
+        var hija = await CrearCategoriaAsync(cliente, "Gaseosas", padre.Id);
+
+        var recuelgue = await cliente.PutAsJsonAsync(
+            $"/api/catalogos/categorias/{hija.Id}", new CategoriaAlta("Gaseosas", null, 1, null));
+        Assert.Equal(HttpStatusCode.OK, recuelgue.StatusCode);
 
         var baja = await cliente.DeleteAsync($"/api/catalogos/categorias/{padre.Id}");
         Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);

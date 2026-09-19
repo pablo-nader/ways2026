@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { descriptorListasPrecio } from './catalogos'
+import {
+  descriptorAreas,
+  descriptorCategorias,
+  descriptorGrupos,
+  descriptorListasPrecio,
+  descriptorMarcas,
+  descriptorMediosPago,
+} from './catalogos'
 import type { ListaPrecioListado } from './tipos'
 
 function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrecioListado {
@@ -15,6 +22,21 @@ function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrec
     ...sobrescribir,
   }
 }
+
+// fix/web-bajas-catalogos: cada descriptor tiene que nombrar su propio sujeto de baja, con el
+// MISMO texto que el `SujetoDeBaja` del servicio del catálogo del lado del servidor
+// (`ServicioDeAreas`, `ServicioDeMarcas`, etc.) — si no coinciden, la puerta de confirmación y la
+// copia del 409 nombran la entidad distinto.
+describe('sujetoDeBaja de cada descriptor de catálogo', () => {
+  it('nombra cada catálogo con el artículo correcto, igual que el servicio del servidor', () => {
+    expect(descriptorAreas.sujetoDeBaja).toBe('el área')
+    expect(descriptorMarcas.sujetoDeBaja).toBe('la marca')
+    expect(descriptorGrupos.sujetoDeBaja).toBe('el grupo')
+    expect(descriptorMediosPago.sujetoDeBaja).toBe('el medio de pago')
+    expect(descriptorCategorias.sujetoDeBaja).toBe('la categoría')
+    expect(descriptorListasPrecio.sujetoDeBaja).toBe('la lista de precios')
+  })
+})
 
 describe('descriptorListasPrecio.aAlta', () => {
   it('fuerza idListaBase y porcentaje a null en modo Fija aunque el formulario tenga valores residuales', () => {

@@ -2,9 +2,11 @@ using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Ways.Application.Organizacion;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Clientes;
 using Ways.Domain.Common;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
 using Ways.Infrastructure.Persistencia;
@@ -25,7 +27,11 @@ namespace Ways.Application.Tests.Persistencia;
 public class InventarioDeDependientesTests
 {
     private static readonly Type[] Anclas =
-        [typeof(Tenant), typeof(Empresa), typeof(PuntoVenta), typeof(Usuario)];
+    [
+        typeof(Tenant), typeof(Empresa), typeof(PuntoVenta), typeof(Usuario),
+        typeof(Area), typeof(Categoria), typeof(Marca), typeof(Grupo), typeof(MedioPago),
+        typeof(ListaPrecio), typeof(Proveedor)
+    ];
 
     private static WaysDbContext CrearContexto()
     {
@@ -47,18 +53,27 @@ public class InventarioDeDependientesTests
     // ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// N1, primera mitad: <c>Construir</c> no tira para ninguna de las cuatro anclas. Las tres
-    /// imposibilidades mecánicas (tipo sin tabla mapeada, tipo <c>Marcado</c> sin
-    /// <c>created_at</c> resoluble, clave principal no legible desde el ancla) tiran
-    /// <see cref="InvalidOperationException"/> NOMBRANDO el tipo y la FK, y esta prueba es quien
-    /// las ejecuta en CI — para que sean fallas de build y nunca un 500 sobre un intento de baja.
+    /// N1, primera mitad: <c>Construir</c> no tira para ninguna de las once anclas (las cuatro de
+    /// organización, más las siete de fix/bajas-catalogos-guarda-de-uso: los 6 catálogos de
+    /// tenant y proveedores). Las tres imposibilidades mecánicas (tipo sin tabla mapeada, tipo
+    /// <c>Marcado</c> sin <c>created_at</c> resoluble, clave principal no legible desde el ancla)
+    /// tiran <see cref="InvalidOperationException"/> NOMBRANDO el tipo y la FK, y esta prueba es
+    /// quien las ejecuta en CI — para que sean fallas de build y nunca un 500 sobre un intento de
+    /// baja.
     /// </summary>
     [Theory]
     [InlineData(typeof(Tenant))]
     [InlineData(typeof(Empresa))]
     [InlineData(typeof(PuntoVenta))]
     [InlineData(typeof(Usuario))]
-    public void N1_ConstruirNoTiraParaNingunaDeLasCuatroAnclas(Type ancla)
+    [InlineData(typeof(Area))]
+    [InlineData(typeof(Categoria))]
+    [InlineData(typeof(Marca))]
+    [InlineData(typeof(Grupo))]
+    [InlineData(typeof(MedioPago))]
+    [InlineData(typeof(ListaPrecio))]
+    [InlineData(typeof(Proveedor))]
+    public void N1_ConstruirNoTiraParaNingunaDeLasOnceAnclas(Type ancla)
     {
         using var db = CrearContexto();
 
@@ -83,6 +98,13 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(Empresa))]
     [InlineData(typeof(PuntoVenta))]
     [InlineData(typeof(Usuario))]
+    [InlineData(typeof(Area))]
+    [InlineData(typeof(Categoria))]
+    [InlineData(typeof(Marca))]
+    [InlineData(typeof(Grupo))]
+    [InlineData(typeof(MedioPago))]
+    [InlineData(typeof(ListaPrecio))]
+    [InlineData(typeof(Proveedor))]
     public void N1_NingunaFkSeCaeEnSilencioYLosCarveOutsNoEjecutan(Type ancla)
     {
         using var db = CrearContexto();
@@ -139,6 +161,13 @@ public class InventarioDeDependientesTests
     [InlineData(typeof(Empresa))]
     [InlineData(typeof(PuntoVenta))]
     [InlineData(typeof(Usuario))]
+    [InlineData(typeof(Area))]
+    [InlineData(typeof(Categoria))]
+    [InlineData(typeof(Marca))]
+    [InlineData(typeof(Grupo))]
+    [InlineData(typeof(MedioPago))]
+    [InlineData(typeof(ListaPrecio))]
+    [InlineData(typeof(Proveedor))]
     public void N2_UsaAnclaEquivaleAEntidadBaseConColumnaCreatedAt(Type ancla)
     {
         using var db = CrearContexto();

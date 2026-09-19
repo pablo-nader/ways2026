@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
+using Ways.Application.Organizacion;
 using Ways.Application.Proveedores;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
@@ -16,6 +18,16 @@ namespace Ways.Application.Tests.Proveedores;
 /// completo: no hay contador atómico ni <c>Database.BeginTransactionAsync</c> de por medio
 /// (design.md: proveedores no reusa <c>AsignadorDeNumeroCliente</c>), así que el INSERT +
 /// <c>SaveChangesAsync</c> corre sin problema contra InMemory.
+///
+/// <see cref="ServicioDeProveedores.EliminarAsync"/> DEJÓ de cubrirse acá desde
+/// fix/bajas-catalogos-guarda-de-uso: ahora abre <c>Database.BeginTransactionAsync</c> y
+/// <c>GuardaDeReferencias.BloquearFilaAsync</c> emite ADO crudo (<c>SELECT ... FOR UPDATE</c>) —
+/// mismo "transaction-blocked-provider caveat" que ya documentan
+/// <c>ServicioDeOfertasTests</c>/<c>ServicioDeListasPrecioTests</c>. Su cobertura completa (guard
+/// de referencias, lock, 204/404) vive en <c>BajasDeCatalogosTests</c>
+/// (<c>Ways.IntegrationTests</c>, Postgres real). Donde este archivo necesita un proveedor YA
+/// dado de baja como dato de siembra (no como comportamiento bajo prueba), lo marca directo con
+/// <see cref="MarcarComoEliminadoAsync"/>, sin pasar por el servicio.
 /// </summary>
 public class ServicioDeProveedoresTests
 {
@@ -29,8 +41,26 @@ public class ServicioDeProveedoresTests
     private static WaysDbContext CrearContexto(string nombreDeBase, ITenantActual tenantActual) =>
         new(new DbContextOptionsBuilder<WaysDbContext>().UseInMemoryDatabase(nombreDeBase).Options, tenantActual);
 
-    private static ServicioDeProveedores CrearServicio(string nombreDeBase, int idTenant) =>
-        new(CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)), new RelojFijo(Ahora));
+    private static ServicioDeProveedores CrearServicio(string nombreDeBase, int idTenant)
+    {
+        var contexto = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        return new ServicioDeProveedores(
+            contexto, new RelojFijo(Ahora), new GuardaDeReferencias(contexto, new InspectorDeUso(contexto)));
+    }
+
+    /// <summary>Siembra una baja lógica sin pasar por <see cref="ServicioDeProveedores.EliminarAsync"/>
+    /// (ver el doc-comment de la clase): esta suite es InMemory y ese método ahora necesita una
+    /// transacción real.</summary>
+    private static async Task MarcarComoEliminadoAsync(string nombreDeBase, int idProveedor)
+    {
+        await using var siembra = CrearContexto(nombreDeBase, TenantActualFijo.Plataforma);
+
+        var proveedor = await siembra.Proveedores.FirstAsync(p => p.Id == idProveedor);
+        proveedor.DeletedAt = Ahora;
+        proveedor.UpdatedAt = Ahora;
+
+        await siembra.SaveChangesAsync();
+    }
 
     private static async Task<int> SembrarCondicionFiscalAsync(string nombreDeBase)
     {
@@ -192,7 +222,7 @@ public class ServicioDeProveedoresTests
         var servicio = CrearServicio(nombreDeBase, idTenant: 1);
 
         var original = await servicio.CrearAsync(AltaValida(idCondicionFiscal, cuit: "30712345678"));
-        await servicio.EliminarAsync(original.Id);
+        await MarcarComoEliminadoAsync(nombreDeBase, original.Id);
 
         var nuevo = await servicio.CrearAsync(
             AltaValida(idCondicionFiscal, razonSocial: "Reemplazo SA", cuit: "30712345678"));
@@ -361,19 +391,8 @@ public class ServicioDeProveedoresTests
         Assert.Equal(409, error.EstadoHttp);
     }
 
-    [Fact]
-    public async Task EliminarUnProveedorFunciona()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var idCondicionFiscal = await SembrarCondicionFiscalAsync(nombreDeBase);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-        var creado = await servicio.CrearAsync(AltaValida(idCondicionFiscal));
-
-        await servicio.EliminarAsync(creado.Id);
-
-        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ObtenerAsync(creado.Id));
-        Assert.Equal("no_encontrado", error.Codigo);
-    }
+    // EliminarUnProveedorFunciona se movió a BajasDeCatalogosTests (Ways.IntegrationTests): ver
+    // el doc-comment de la clase.
 
     /// <summary>ADR-8: mismo 404 para "no existe" y "es de otro tenant" — el filtro de EF ya
     /// deja invisible la fila de otro tenant antes de que el servicio decida nada.</summary>

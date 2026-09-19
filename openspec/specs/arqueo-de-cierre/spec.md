@@ -24,10 +24,14 @@ totals). The same derivation powers the live resumen parcial.
 
 ### Requirement: Cierre Payload Carries Only Declared Counts
 
-The cierre request contract MUST accept only `(id_medio_pago,
-importe_declarado)` pairs — no field for a total, a subtotal, or an expected
-amount MUST exist anywhere in the request shape. `importe_esperado` MUST
-always be computed server-side from the ledgers, never accepted as input.
+The classic cierre (`POST /api/caja/turnos/{id}/cierre`) request contract
+MUST accept only `(id_medio_pago, importe_declarado)` pairs — no field for a
+total, a subtotal, or an expected amount MUST exist anywhere in the request
+shape. `importe_esperado` MUST always be computed server-side from the
+ledgers, never accepted as input. Cierre Por Retiro (below) is a SECOND
+close mode with its own, narrower contract — it carries no declared counts
+at all, only the closing withdrawal amount, which is itself never a total
+(see Cierre Por Retiro Payload Carries Only The Withdrawal Amount).
 
 #### Scenario: A cierre request with only declared counts is accepted
 - GIVEN a cierre request listing `importe_declarado` per medio with activity
@@ -152,3 +156,266 @@ gain a compra-specific branch, term, or formula.
 - WHEN both versions are compared
 - THEN they are byte-identical — no new branch or term was introduced for
   compra-linked gastos
+
+## Cierre Por Retiro
+
+A second close mode (`POST /api/caja/turnos/{id}/cierre-por-retiro`),
+alongside the classic cierre above, structurally matching the owner's actual
+practice: the cashier withdraws the counted cash and LEAVES the fondo
+inicial in the drawer — nothing is counted at close. Both modes write
+`arqueos_turno`/`movimientos_tesoreria` identically and are equally
+irreversible; only how `importe_declarado` is sourced differs. The classic
+cierre remains the web/arqueo mode (counted declarations) and is untouched
+by this section.
+
+### Requirement: Cierre Por Retiro Payload Carries Only The Withdrawal Amount
+
+The cierre-por-retiro request contract MUST accept only
+`(importe_retirado, observaciones?)` — `importe_retirado` is a MOVEMENT
+amount (what the cashier physically takes out), never a total of sales, a
+subtotal, or an expected/declared amount. No per-medio field MUST exist
+anywhere in this request shape. `importe_retirado` MUST be `>= 0`; a
+negative value MUST be rejected with `400 importe_retirado_invalido` before
+reaching the database.
+
+#### Scenario: A cierre-por-retiro request with only the withdrawal amount is accepted
+- GIVEN a cierre-por-retiro request with `importeRetirado = 200`
+- WHEN it is submitted
+- THEN it is accepted and processed
+
+#### Scenario: No request shape accepts a total or a per-medio count
+- GIVEN the cierre-por-retiro endpoint's request contract
+- WHEN it is inspected
+- THEN it contains no `total`, `esperado`, `declarado`, or per-medio field —
+  only the withdrawal amount and an optional observaciones
+
+#### Scenario: A negative withdrawal amount is rejected
+- GIVEN a cierre-por-retiro request with `importeRetirado = -1`
+- WHEN it is validated
+- THEN it is rejected with `400 importe_retirado_invalido` and the turno
+  stays open
+
+### Requirement: Cierre Por Retiro Declares The Fondo At The Anchor And The Esperado Elsewhere
+
+`importe_esperado` per medio MUST be derived by the exact same formula as
+the classic cierre (Importe Esperado Derivation Per Medio, above) — there is
+no second formula. `importe_declarado` MUST be sourced by the server,
+never the client: for the cash anchor medio (`ResolvedorDeMedioDeCajaFisica`),
+`importe_declarado = fondo_inicial` (it physically stays in the drawer); for
+every other arqueable medio, `importe_declarado = importe_esperado` (there
+is nothing physical to count on a non-cash medio).
+
+#### Scenario: The anchor is declared with the fondo inicial
+- GIVEN a turno with `fondo_inicial = 500` and cash sales
+- WHEN it closes by retiro
+- THEN the cash anchor's `arqueos_turno` row has `importe_declarado = 500`
+
+#### Scenario: A non-cash medio is declared with its own esperado
+- GIVEN a turno with tarjeta sales of `300` and no tarjeta gastos
+- WHEN it closes by retiro
+- THEN the tarjeta `arqueos_turno` row has `importe_declarado = 300 =
+  importe_esperado`, so its `diferencia` is always `0`
+
+### Requirement: If Withdrawn, The Closing Retiro Is Inserted Before Deriving And Counts As Retiro/Ingreso
+
+When `importe_retirado > 0`, the transaction MUST insert one
+`movimientos_caja` row (`tipo = retiro`, `motivo = "Retiro de cierre de
+turno"`, the closing employee) BEFORE reading the derivation's insumos, so
+it is included in `SUM(movimientos_caja retiro)` exactly like any other
+retiro of the turno — it reduces the anchor's `importe_esperado` and is
+counted in the chained `movimientos_tesoreria` row's `ingreso`, same as the
+classic cierre's tesorería chaining. When `importe_retirado = 0`, no
+`movimientos_caja` row MUST be inserted (a physical retiro of `0` is not a
+movement — it also could not satisfy `ck_movimientos_caja_importe`, which
+requires `> 0` for `tipo <> apertura_cajon`).
+
+#### Scenario: A positive withdrawal is inserted before deriving and reduces the anchor's esperado
+- GIVEN a turno with `fondo_inicial = 500`, cash pagos of `1000`, and
+  `importeRetirado = 200`
+- WHEN it closes by retiro
+- THEN a `movimientos_caja` row of `tipo = retiro, importe = 200` exists for
+  the turno, and the anchor's `importe_esperado` includes `-200` from it
+
+#### Scenario: A zero withdrawal inserts no movimiento
+- GIVEN a cierre-por-retiro request with `importeRetirado = 0`
+- WHEN it is processed
+- THEN no new `movimientos_caja` row exists for the turno beyond whatever
+  existed before the request
+
+### Requirement: Cierre Por Retiro Is One Atomic, Irreversible Transaction Reusing The Cierre Lock
+
+Cierre por retiro MUST run as a single transaction with the same statement-1
+lock as the classic cierre (the guarded `UPDATE turnos_caja ... WHERE estado
+= 'abierto'`, first statement, held to commit): 404 if the turno does not
+exist, `409 turno_ya_cerrado` if it exists but is not `abierto`. It reuses
+the classic cierre's arqueo-insertion and tesorería-chaining statements
+verbatim (only the source of `importe_declarado` differs — see above). Any
+failure at any step MUST roll back the entire transaction, leaving the
+turno open with no partial `movimientos_caja`/`arqueos_turno`/
+`movimientos_tesoreria` rows. No reapertura or arqueo-edit endpoint MUST
+exist for this mode either.
+
+#### Scenario: Closing an already-closed turno by retiro is rejected
+- GIVEN a turno with `estado = cerrado`
+- WHEN a cierre-por-retiro is requested for that turno
+- THEN it is rejected with `409 turno_ya_cerrado`
+
+#### Scenario: A failed cierre-por-retiro leaves the turno open with no side effects
+- GIVEN a cierre-por-retiro whose arqueo insert fails
+- WHEN the transaction aborts
+- THEN the turno is still `abierto`, no `arqueos_turno` rows exist, the
+  closing `movimientos_caja` retiro (if any) does not exist, and no
+  `movimientos_tesoreria` row exists
+
+### Requirement: Resumen De Cierre Is Available For Any Closed Turno, By Either Mode
+
+`GET /api/caja/turnos/{id}/resumen-de-cierre` MUST return the same
+derived summary for any `cerrado` turno regardless of which endpoint closed
+it (classic cierre or cierre-por-retiro) — the derivation does not depend on
+the close mode. It MUST be rejected with `409 turno_no_cerrado` while the
+turno is still `abierto`, and with `404` if the turno does not exist or
+belongs to another tenant. Its response MUST be identical to what
+`POST .../cierre-por-retiro` returned for that same turno — this is what
+lets a client reprint or recover after an ambiguous network failure on the
+POST.
+
+#### Scenario: The resumen is rejected before the turno closes
+- GIVEN an open turno
+- WHEN `GET .../resumen-de-cierre` is requested
+- THEN it is rejected with `409 turno_no_cerrado`
+
+#### Scenario: The resumen after closing matches what the POST returned
+- GIVEN a turno just closed by `POST .../cierre-por-retiro`
+- WHEN `GET .../resumen-de-cierre` is requested right after
+- THEN every field of the response is identical to the POST's response
+
+### Requirement: Diferencia Is Read From The Persisted Anchor Arqueo, For Any Close Mode
+
+(judgment-day JD-E5a-1 — previously stated as a formula-based "invariant";
+the formula fabricated a wrong figure for a classic close, see below.) The
+cierre-por-retiro/resumen-de-cierre response's `diferencia` MUST be read
+from the ALREADY-PERSISTED `arqueos_turno` row for the cash anchor medio,
+never computed from a formula over `totalRetiros`/`ventasEnEfectivoNetas`/
+`gastosEnEfectivo`/`refuerzos`: `diferencia = -arqueo.diferencia = declarado
+− esperado` (positive = sobrante, negative = faltante — the sign OPPOSITE
+of `arqueo.diferencia`, which persists `esperado − declarado`, positive =
+faltante). This MUST hold identically for a turno closed by the classic
+cierre (`importe_declarado` is whatever the cashier counted, an arbitrary
+value) and for one closed by retiro (`importe_declarado = fondo_inicial`) —
+there is exactly one source for this field, read from the row, never two
+formulas for the two modes. When the cash anchor has no `arqueos_turno` row
+for the turno (no physical cash activity at all, per Arqueo Rows Only For
+Medios With Activity), `diferencia` MUST be `0` — nothing was declared and
+nothing was expected, so no discrepancy exists.
+
+A formula over the summary's own aggregate fields (`totalRetiros −
+(ventasEnEfectivoNetas − gastosEnEfectivo + refuerzos)`) is ONLY equal to
+this persisted value when the anchor was declared with the fondo inicial —
+true for a cierre-por-retiro close, never guaranteed for a classic close.
+That formula MUST NOT be used to compute the response; it may still be
+used in tests as an independent cross-check of the retiro-mode case.
+
+#### Scenario: A classic close's diferencia is the cashier's real declared count, not the retiro formula
+- GIVEN a turno with `fondo_inicial = 500`, cash pagos of `1000`, no
+  gastos/retiros/refuerzos, closed via the CLASSIC cierre with a declared
+  cash count of `1400` (neither the fondo nor the derived esperado of
+  `1500`)
+- WHEN `GET .../resumen-de-cierre` is requested
+- THEN `diferencia = 1400 − 1500 = -100` (a `100` faltante) — matching the
+  persisted `arqueos_turno` row's `importe_declarado − importe_esperado`,
+  never the retiro-mode formula (which would wrongly yield `-1000` here)
+
+#### Scenario: The retiro-mode response diferencia is the negative of the anchor's persisted diferencia
+- GIVEN a closed-by-retiro turno with cash pagos, gastos, a fondo inicial,
+  and a closing retiro
+- WHEN the response and the persisted `arqueos_turno` row for the cash
+  anchor are compared
+- THEN `response.diferencia == -(arqueo.importeEsperado -
+  arqueo.importeDeclarado)`
+
+#### Scenario: No cash activity yields a zero diferencia
+- GIVEN a closed turno where the cash anchor medio has no `arqueos_turno`
+  row (no pagos, gastos, fondo, retiro, or refuerzo touched it)
+- WHEN `GET .../resumen-de-cierre` is requested
+- THEN `diferencia = 0`
+
+### Requirement: The Cash Anchor Is Pinned At Close, Never Re-Resolved For A Closed Turno
+
+(judgment-day JD-E5a-2, DB CHANGE GATE ejercido y aprobado — a bug this
+same fix-round introduced: "Diferencia Is Read From The Persisted Anchor
+Arqueo" above still identified WHICH row is the anchor by re-resolving
+`ResolvedorDeMedioDeCajaFisica.Resolver` against the CURRENT medios_pago
+catalog on every read.) `medios_pago.comportamiento` is editable after the
+fact (`PUT /api/catalogos/medios-pago/{id}`) — a re-resolution can name a
+different medio as the anchor than the one the close actually used,
+reading the wrong `arqueos_turno` row (or none) and mis-deriving
+`ventasEnEfectivoNetas`/`gastosEnEfectivo` along with it.
+
+`turnos_caja.id_medio_pago_efectivo` MUST be set exactly once, inside the
+same close transaction, in BOTH close modes (classic cierre and cierre por
+retiro), immediately after the anchor is resolved for that close — never
+before (the anchor is only known once the turno's estado is already
+`cerrado`, so the same-transaction UPDATE that sets it MUST run after the
+guarded statement-1 UPDATE, never combined with it). `GET
+.../resumen-de-cierre` and the POST response it must match MUST use this
+PINNED id as the anchor for `diferencia`, `ventasEnEfectivoNetas`,
+`gastosEnEfectivo`, and the `arqueos_turno` lookup — never
+`ResolvedorDeMedioDeCajaFisica.Resolver` re-run against the live catalog,
+for any turno where the column is populated. A turno closed before this
+column existed (`id_medio_pago_efectivo IS NULL`) MUST fall back to
+`ResolvedorDeMedioDeCajaFisica.Resolver` against the current catalog — the
+only case where re-resolution is legitimate, because no pin exists to
+read.
+
+#### Scenario: A catalog edit after close does not move the already-closed turno's summary
+- GIVEN a turno closed by retiro with cash pagos, a fondo inicial, and a
+  closing retiro, whose `GET .../resumen-de-cierre` was read right after
+  closing
+- WHEN the medio that was the cash anchor is edited to
+  `comportamiento = electronico` and a different medio is edited to
+  `comportamiento = efectivo`
+- THEN a subsequent `GET .../resumen-de-cierre` for that same turno returns
+  the exact same `diferencia`, `ventasEnEfectivoNetas`, `gastosEnEfectivo`,
+  and `ventasPorMedio` as the read taken right after closing
+
+#### Scenario: A legacy turno with no pinned anchor falls back to the current catalog
+- GIVEN a turno closed before `id_medio_pago_efectivo` existed
+  (`id_medio_pago_efectivo IS NULL`) and the catalog unchanged since
+- WHEN `GET .../resumen-de-cierre` is requested
+- THEN the response is derived from `ResolvedorDeMedioDeCajaFisica.Resolver`
+  against the current catalog, identical to what a pin would have produced
+
+#### Scenario: The CHECK rejects pinning the anchor on an open turno
+- GIVEN a raw write that sets `id_medio_pago_efectivo` on a turno with
+  `estado = abierto`
+- WHEN it is attempted
+- THEN it is rejected by `ck_turnos_caja_medio_efectivo_solo_cerrado` with
+  SQLSTATE `23514`
+
+### Requirement: The Backfill Assigns The Anchor Only Where It Is Unambiguous
+
+The `TurnosCajaMedioPagoEfectivo` migration's backfill MUST set
+`id_medio_pago_efectivo` on an already-`cerrado` turno only when its tenant
+has exactly one `medios_pago` row with `comportamiento = efectivo` (over
+the full catalog, `activo` or not — same universe
+`ResolvedorDeMedioDeCajaFisica.Resolver` uses). A tenant with zero or more
+than one such medio MUST be left `NULL` — the backfill MUST NOT guess. An
+`abierto` turno MUST NEVER receive a value (the CHECK would reject it
+regardless).
+
+#### Scenario: A tenant with exactly one medio efectivo backfills its closed turnos
+- GIVEN a tenant with exactly one `medios_pago` row with
+  `comportamiento = efectivo`, and one turno `cerrado`
+- WHEN the migration's backfill runs
+- THEN that turno's `id_medio_pago_efectivo` equals that medio's id
+
+#### Scenario: A tenant with two medios efectivo is left NULL
+- GIVEN a tenant with two `medios_pago` rows with `comportamiento =
+  efectivo` (a misconfigured catalog), and one turno `cerrado`
+- WHEN the migration's backfill runs
+- THEN that turno's `id_medio_pago_efectivo` stays `NULL`
+
+#### Scenario: An open turno is never backfilled
+- GIVEN a tenant with exactly one medio efectivo and one turno `abierto`
+- WHEN the migration's backfill runs
+- THEN that turno's `id_medio_pago_efectivo` stays `NULL`

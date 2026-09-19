@@ -7,9 +7,11 @@
  */
 import { api } from './cliente'
 import type {
+  ArticuloDeReporte,
   Comisiones,
   Existencias,
   Granularidad,
+  PaginaDe,
   PaginaDeHistoricoDeCajas,
   PaginaDeMovimientosTesoreria,
   Rentabilidad,
@@ -135,6 +137,8 @@ export const clienteDeReportes = {
   /** stage-13-stock-inteligente (Slice 7): tile de Tablero, mismo criterio que `vencimientosResumen`. */
   reposicionResumen: (idPuntoVenta: number) =>
     api.get<ResumenDeReposicion>(`/reportes/stock/reposicion/resumen?idPuntoVenta=${idPuntoVenta}`),
+  articulos: (filtros: FiltrosDeReporteDeArticulos) =>
+    api.get<PaginaDe<ArticuloDeReporte>>(`/reportes/articulos${construirQueryDeReporteDeArticulos(filtros)}`),
 }
 
 // ---- Offset local para desde/hasta de /cajas y /tesoreria (stage-11-exportacion-reportes,
@@ -249,6 +253,86 @@ export const rutasDeExportacion = {
    * ruta no tiene export (`ReportesEndpoints.cs`). */
   reposicion: (idPuntoVenta: number, dias: number | null) =>
     `/reportes/stock/reposicion/export?idPuntoVenta=${idPuntoVenta}${dias !== null ? `&dias=${dias}` : ''}&formato=xlsx`,
+  /** Reusa el mismo builder de alcance que `clienteDeReportes.articulos` (sin `pagina`/`tamanio`,
+   * el export no pagina) — un builder separado desincronizó una vez la descarga del listado
+   * (lección del proyecto), así que acá se reconstruye el query completo y se le recorta la
+   * paginación en vez de reimplementar los filtros. */
+  articulos: (filtros: FiltrosDeReporteDeArticulos) => {
+    const query = construirQueryDeAlcanceDeArticulos(filtros)
+    const separador = query === '' ? '?' : `${query}&`
+    return `/reportes/articulos/export${separador}formato=xlsx`
+  },
+}
+
+/** Filtro de `GET /api/reportes/articulos` — reporte de completitud de catálogo (owner: "sin
+ * proveedor, sin marca, sin categoría, sin grupo"). Tenant-wide: sin `idEmpresa`/`idPuntoVenta`,
+ * a diferencia de todo el resto de `FiltrosDe*` de este módulo. */
+export type FiltrosDeReporteDeArticulos = {
+  idArea: number | null
+  sinArea: boolean
+  idCategoria: number | null
+  sinCategoria: boolean
+  idMarca: number | null
+  sinMarca: boolean
+  idGrupo: number | null
+  sinGrupo: boolean
+  idProveedor: number | null
+  sinProveedor: boolean
+  soloIncompletos: boolean
+  activo: boolean | null
+  pagina: number
+  tamanio: number
+}
+
+export function filtrosDeReporteDeArticulosVacios(): FiltrosDeReporteDeArticulos {
+  return {
+    idArea: null,
+    sinArea: false,
+    idCategoria: null,
+    sinCategoria: false,
+    idMarca: null,
+    sinMarca: false,
+    idGrupo: null,
+    sinGrupo: false,
+    idProveedor: null,
+    sinProveedor: false,
+    soloIncompletos: false,
+    activo: null,
+    pagina: 1,
+    tamanio: 25,
+  }
+}
+
+/** ÚNICO builder de filtros de `/reportes/articulos` (dto-contract-honesty: cada parámetro solo
+ * viaja si el backend lo lee) — usado por el listado (que le suma `pagina`/`tamanio`) Y por el
+ * export (que lo usa tal cual, sin paginar). Cada par `id`/`sin` es mutuamente excluyente del
+ * lado del backend (400 `filtro_incompatible`); acá simplemente se agrega el que esté seteado. */
+function construirQueryDeAlcanceDeArticulos(
+  filtros: Omit<FiltrosDeReporteDeArticulos, 'pagina' | 'tamanio'>,
+): string {
+  const parametros = new URLSearchParams()
+  if (filtros.idArea !== null) parametros.set('idArea', String(filtros.idArea))
+  if (filtros.sinArea) parametros.set('sinArea', 'true')
+  if (filtros.idCategoria !== null) parametros.set('idCategoria', String(filtros.idCategoria))
+  if (filtros.sinCategoria) parametros.set('sinCategoria', 'true')
+  if (filtros.idMarca !== null) parametros.set('idMarca', String(filtros.idMarca))
+  if (filtros.sinMarca) parametros.set('sinMarca', 'true')
+  if (filtros.idGrupo !== null) parametros.set('idGrupo', String(filtros.idGrupo))
+  if (filtros.sinGrupo) parametros.set('sinGrupo', 'true')
+  if (filtros.idProveedor !== null) parametros.set('idProveedor', String(filtros.idProveedor))
+  if (filtros.sinProveedor) parametros.set('sinProveedor', 'true')
+  if (filtros.soloIncompletos) parametros.set('soloIncompletos', 'true')
+  if (filtros.activo !== null) parametros.set('activo', String(filtros.activo))
+  const query = parametros.toString()
+  return query === '' ? '' : `?${query}`
+}
+
+export function construirQueryDeReporteDeArticulos(filtros: FiltrosDeReporteDeArticulos): string {
+  const alcance = construirQueryDeAlcanceDeArticulos(filtros)
+  const parametros = new URLSearchParams(alcance === '' ? '' : alcance.slice(1))
+  parametros.set('pagina', String(filtros.pagina))
+  parametros.set('tamanio', String(filtros.tamanio))
+  return `?${parametros.toString()}`
 }
 
 function aFechaIso(fecha: Date): string {

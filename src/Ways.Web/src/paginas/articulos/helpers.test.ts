@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ordenarProveedoresPorEtiqueta } from './helpers'
-import type { AlicuotaIvaListado, ProveedorListado } from '../../api/tipos'
+import {
+  elegirAlicuotaPorDefecto,
+  etiquetaDeProveedor,
+  insertarOrdenadoPor,
+  opcionesConValorActual,
+  ordenarProveedoresPorEtiqueta,
+} from './helpers'
+import type { AlicuotaIvaListado, MarcaListado, ProveedorListado } from '../../api/tipos'
 
 function alicuotaFixture(sobrescribir: Partial<AlicuotaIvaListado> = {}): AlicuotaIvaListado {
   return { id: 1, nombre: 'IVA', porcentaje: 21, codigoAfip: 5, activo: true, ...sobrescribir }
+}
+
+function marcaFixture(sobrescribir: Partial<MarcaListado> = {}): MarcaListado {
+  return { id: 1, nombre: 'Alfa', activo: true, idEmpresa: null, ...sobrescribir }
 }
 
 function proveedorFixture(sobrescribir: Partial<ProveedorListado> = {}): ProveedorListado {
@@ -157,5 +167,51 @@ describe('insertarOrdenadoPor', () => {
     const lista = [{ nombre: 'Bebidas' }]
     insertarOrdenadoPor(lista, { nombre: 'Almacén' }, clave)
     expect(lista).toEqual([{ nombre: 'Bebidas' }])
+  })
+})
+
+// ---- opcionesConValorActual --------------------------------------------------------------------
+// Cláusula bajo prueba: `item.activo || item.id === idActual` en helpers.ts — sin la mitad
+// `item.activo`, el alta ofrecería inactivas; sin `item.id === idActual`, la edición perdería el
+// valor actual del artículo cuando está inactivo (mutation-proof-tests).
+
+describe('opcionesConValorActual', () => {
+  it('en alta (idActual vacío), ofrece solo las activas', () => {
+    const listado = [
+      marcaFixture({ id: 1, nombre: 'Activa', activo: true }),
+      marcaFixture({ id: 2, nombre: 'Inactiva', activo: false }),
+    ]
+
+    expect(opcionesConValorActual(listado, '').map((m) => m.id)).toEqual([1])
+  })
+
+  it('en edición, incluye el valor actual del artículo aunque esté inactivo', () => {
+    const listado = [
+      marcaFixture({ id: 1, nombre: 'Activa', activo: true }),
+      marcaFixture({ id: 2, nombre: 'Inactiva actual', activo: false }),
+    ]
+
+    expect(opcionesConValorActual(listado, 2).map((m) => m.id)).toEqual([1, 2])
+  })
+
+  it('en edición, NO ofrece una inactiva que no sea el valor actual del artículo', () => {
+    const listado = [
+      marcaFixture({ id: 1, nombre: 'Activa', activo: true }),
+      marcaFixture({ id: 2, nombre: 'Inactiva actual', activo: false }),
+      marcaFixture({ id: 3, nombre: 'Inactiva ajena', activo: false }),
+    ]
+
+    // idActual = 2: la marca 3 es inactiva y de OTRO artículo — nunca debe aparecer.
+    expect(opcionesConValorActual(listado, 2).map((m) => m.id)).toEqual([1, 2])
+  })
+
+  it('con un idActual que no existe en el listado, da lo mismo que sin valor actual — nunca inventa una opción fantasma', () => {
+    const listado = [marcaFixture({ id: 1, nombre: 'Activa', activo: true }), marcaFixture({ id: 2, nombre: 'Inactiva', activo: false })]
+
+    // 999: ninguna marca del listado (que puede venir incompleto — cargando, fallido, truncado)
+    // tiene ese id. El helper solo arma opciones para el render: no suma una opción para el 999,
+    // pero eso no dice nada sobre si el valor es válido — eso lo decide el servidor al guardar.
+    expect(opcionesConValorActual(listado, 999)).toEqual(opcionesConValorActual(listado, ''))
+    expect(opcionesConValorActual(listado, 999).map((m) => m.id)).toEqual([1])
   })
 })

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
+using Ways.Application.Bajas;
 using Ways.Application.Etiquetas;
 using Ways.Application.Ofertas;
 using Ways.Application.Organizacion;
@@ -308,7 +309,9 @@ public class EtiquetasEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
 
         var servicioDePrecios = new ServicioDePrecios(db, reloj, contexto);
         var servicioDeOfertas = new ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
-        var servicioDeArticulos = new ServicioDeArticulos(db, reloj, contexto, new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto));
+        var servicioDeArticulos = new ServicioDeArticulos(
+            db, reloj, contexto, new Ways.Application.Stock.ServicioDeLotes(db, reloj, contexto),
+            new GuardaDeReferencias(db, new InspectorDeUso(db)));
         var servicioDeEtiquetas = new ServicioDeEtiquetas(db, reloj, servicioDeArticulos, servicioDeOfertas);
 
         return (servicioDeEtiquetas, contador);

@@ -11,6 +11,7 @@ import type {
   AreaAlta,
   AreaListado,
   ArticuloListado,
+  CategoriaAlta,
   CategoriaListado,
   EmpresaListado,
   GrupoAlta,
@@ -30,6 +31,7 @@ import { ModalDeArticulo } from './articulos/ModalDeArticulo'
 import { analizarRutaModal, type ModoModalDeArticulo } from './articulos/rutaModal'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
+const clienteCategorias = clienteDeCatalogo<CategoriaListado, CategoriaAlta>('categorias')
 const clienteMarcas = clienteDeCatalogo<MarcaListado, MarcaAlta>('marcas')
 const clienteGrupos = clienteDeCatalogo<GrupoListado, GrupoAlta>('grupos')
 
@@ -169,19 +171,26 @@ export function Articulos() {
 
   useEffect(() => {
     void cargar('')
+    // incluirInactivos: true en los cuatro — un artículo existente puede referenciar un área/
+    // categoría/marca/grupo ya desactivada (la baja lógica es hoy la salida recomendada cuando la
+    // guarda de referencias rechaza el borrado, fix/articulos-form-catalogos-inactivos) y el
+    // select de edición necesita esa opción para poder mostrarla y guardarla sin tocarla. El alta
+    // solo ofrece las activas: `opcionesConValorActual` filtra en el render, no acá.
     clienteAreas
-      .listar(false)
+      .listar(true)
       .then(setAreas)
       .catch(() => {
         setAreas([])
         agregarErrorCatalogoRequerido('No se pudieron cargar las áreas.')
       })
-    api.get<CategoriaListado[]>('/catalogos/categorias').then(setCategorias).catch(() => setCategorias([]))
-    clienteMarcas.listar(false).then(setMarcas).catch(() => setMarcas([]))
-    clienteGrupos.listar(false).then(setGrupos).catch(() => setGrupos([]))
+    clienteCategorias.listar(true).then(setCategorias).catch(() => setCategorias([]))
+    clienteMarcas.listar(true).then(setMarcas).catch(() => setMarcas([]))
+    clienteGrupos.listar(true).then(setGrupos).catch(() => setGrupos([]))
     // tamanio grande a propósito: es un selector de referencia, no un listado paginado. Si el
     // tenant tiene más proveedores que el clamp del servidor, avisamos que la lista quedó
-    // truncada en vez de esconder el resto en silencio.
+    // truncada en vez de esconder el resto en silencio. Sin `incluirInactivos` acá: a diferencia
+    // de los catálogos genéricos, `ServicioDeProveedores.ListarAsync` no filtra por `Activo` (solo
+    // por `incluirEliminados`, la baja lógica) — ya trae activos e inactivos por default.
     api
       .get<PaginaDe<ProveedorListado>>('/proveedores?tamanio=200')
       .then((p) => {
@@ -216,10 +225,14 @@ export function Articulos() {
       })
   }, [cargar])
 
-  // Ternario (no `??`): sin `noUncheckedIndexedAccess`, TS ve `areas[0]` como no-nullable y
-  // simplifica `areas[0]?.id ?? ''` al tipo `number` a secas (nunca agrega la rama `''`) — el
-  // efecto de defaults de más abajo (M5) necesita el `''` en el tipo para poder comparar contra él.
-  const areaPorDefecto: number | '' = areas.length > 0 ? areas[0].id : ''
+  // `areas` trae activas e inactivas (incluirInactivos: true, fix/articulos-form-catalogos-
+  // inactivos) — el default de un artículo NUEVO tiene que ser la primera ACTIVA, nunca la primera
+  // del array tal cual (el servidor ordena por nombre, no por estado, así que una inactiva puede
+  // quedar primera alfabéticamente). Anotación explícita de tipo: sin `noUncheckedIndexedAccess`,
+  // el efecto de defaults tardíos de más abajo (M5) necesita el `''` en el tipo para poder comparar
+  // contra él, aunque `Array.prototype.find` ya sea `T | undefined`.
+  const primeraAreaActiva = areas.find((a) => a.activo)
+  const areaPorDefecto: number | '' = primeraAreaActiva ? primeraAreaActiva.id : ''
   const alicuotaPorDefecto = elegirAlicuotaPorDefecto(alicuotasIva)
 
   // Altas rápidas de padrones (Categoría/Marca/Grupo/Proveedor habitual) desde el propio
@@ -254,6 +267,13 @@ export function Articulos() {
     setClaveFormulario(idNumerico)
     try {
       // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
+      //
+      // El servidor es la autoridad sobre qué referencia es válida — nunca se clasifica acá
+      // contra el estado (cliente) de los catálogos, que puede estar cargando, haber fallado en
+      // silencio, o venir truncado (proveedores). Cada id viaja tal cual al formulario; si ya no
+      // existe, el guardado sin tocar lo reenvía intacto y el servidor lo rechaza con 400
+      // `referencia_invalida` (`ServicioDeArticulos`), que este modal ya muestra vía
+      // `ErrorApi.message`.
       const detalle = await clienteDeArticulos.obtener(idNumerico)
       if (tokenEdicionRef.current !== token) return
       const cargado = aFormulario(detalle)

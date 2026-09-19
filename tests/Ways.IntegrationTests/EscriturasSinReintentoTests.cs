@@ -9,6 +9,7 @@ using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
 using Ways.Application.Auditoria;
+using Ways.Application.Bajas;
 using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
 using Ways.Application.Fiscal;
@@ -265,7 +266,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         await using (var db = ContextoConReintentos(s, interceptor))
         {
             var servicio = new ServicioDeArticulos(
-                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)));
+                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
+                new GuardaDeReferencias(db, new InspectorDeUso(db)));
             var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.CrearAsync(datos));
             AfirmarFallaSinReintento(error, interceptor);
         }
@@ -275,7 +277,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         await using (var db = ContextoConReintentos(s))
         {
             await new ServicioDeArticulos(
-                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)))
+                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
+                new GuardaDeReferencias(db, new InspectorDeUso(db)))
                 .CrearAsync(datos);
         }
 
@@ -287,6 +290,58 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         await using var db = ContextoDePlataforma();
         return await db.Articulos.IgnoreQueryFilters()
             .CountAsync(a => a.IdTenant == idTenant && a.Nombre == nombre);
+    }
+
+    // ---- 2b. articulos (edición): fix/articulos-lock-referencias, ActualizarAsync pasó a abrir --
+    // transacción explícita para envolver los 5 chequeos de referencia lockeados junto con el
+    // UPDATE que los usa. El interceptor rompe el UPDATE de articulos (ClaseDeSentencia.Update,
+    // no Insert): una edición no inserta nada.
+
+    [Fact]
+    public async Task LaEdicionDeArticuloNoSeReintentaYElArticuloQuedaSinCambios()
+    {
+        var s = await AprovisionarAsync("sin-reintento-edicion-articulos");
+        var idArticulo = await SembrarArticuloAsync(s, "Artículo antes de editar");
+
+        var datos = new EdicionArticulo(
+            Nombre: "Artículo editado", Descripcion: null, IdArea: s.IdArea, IdCategoria: null, IdMarca: null,
+            IdGrupo: null, IdProveedorHabitual: null, IdAlicuotaIva: s.IdAlicuotaIva, UnidadVenta: UnidadVenta.Unidad,
+            UnidadesPorBulto: null, EsProducto: true, CostoLista: null, DescuentoProveedor: null, CostoNominal: null,
+            DisponibleParaTodas: true, IdsEmpresas: null, Activo: true, ControlaLote: false);
+
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("articulos", SqlStateTransitorio, ClaseDeSentencia.Update);
+
+        await using (var db = ContextoConReintentos(s, interceptor))
+        {
+            var servicio = new ServicioDeArticulos(
+                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
+                new GuardaDeReferencias(db, new InspectorDeUso(db)));
+            var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.ActualizarAsync(idArticulo, datos));
+            AfirmarFallaSinReintento(error, interceptor);
+        }
+
+        // Sin cambios: el fallo transitorio abortó la transacción entera, nunca dejó un UPDATE a
+        // medio aplicar.
+        Assert.Equal("Artículo antes de editar", await NombreDeArticuloAsync(idArticulo));
+
+        await using (var db = ContextoConReintentos(s))
+        {
+            await new ServicioDeArticulos(
+                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
+                new GuardaDeReferencias(db, new InspectorDeUso(db)))
+                .ActualizarAsync(idArticulo, datos);
+        }
+
+        Assert.Equal("Artículo editado", await NombreDeArticuloAsync(idArticulo));
+    }
+
+    private async Task<string> NombreDeArticuloAsync(int idArticulo)
+    {
+        await using var db = ContextoDePlataforma();
+        return await db.Articulos.IgnoreQueryFilters()
+            .Where(a => a.Id == idArticulo)
+            .Select(a => a.Nombre)
+            .SingleAsync();
     }
 
     // ---- 3. usuarios: la fila de AUDITORÍA es la que se duplicaba -----------------------------
@@ -400,6 +455,9 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
     private static ServicioDePrecios ServicioDePreciosSobre(WaysDbContext db, Sembrado s) =>
         new(db, Reloj(), ContextoAdmin(s), new ServicioDeAuditoria(db, Reloj(), ContextoAdmin(s)));
 
+    private static ServicioDeListasPrecio ServicioDeListasPrecioSobre(WaysDbContext db) =>
+        new(db, Reloj(), new GuardaDeReferencias(db, new InspectorDeUso(db)));
+
     private async Task<int> ContarPreciosAsync(int idArticulo)
     {
         await using var db = ContextoDePlataforma();
@@ -425,7 +483,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         await using (var db = ContextoConReintentos(s, interceptor))
         {
             var error = await Assert.ThrowsAnyAsync<Exception>(
-                () => new ServicioDeListasPrecio(db, Reloj()).CrearAsync(datos));
+                () => ServicioDeListasPrecioSobre(db).CrearAsync(datos));
             AfirmarFallaSinReintento(error, interceptor);
         }
 
@@ -436,7 +494,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
 
         await using (var db = ContextoConReintentos(s))
         {
-            await new ServicioDeListasPrecio(db, Reloj()).CrearAsync(datos);
+            await ServicioDeListasPrecioSobre(db).CrearAsync(datos);
         }
 
         Assert.Equal(1, await ContarListasAsync(s.IdTenant, nombre));
@@ -507,7 +565,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         int idOtraLista;
         await using (var db = ContextoConReintentos(s))
         {
-            idOtraLista = (await new ServicioDeListasPrecio(db, Reloj()).CrearAsync(new ListaPrecioAlta(
+            idOtraLista = (await ServicioDeListasPrecioSobre(db).CrearAsync(new ListaPrecioAlta(
                 Nombre: $"Lista secundaria {Guid.NewGuid().ToString("N")[..8]}", IdEmpresa: null,
                 EsDefault: false, Modo: ModoLista.Fija, IdListaBase: null, Porcentaje: null))).Id;
         }
@@ -1019,8 +1077,10 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         var contexto = ContextoAdmin(s);
         var precios = new ServicioDePrecios(db, reloj, contexto);
         var ofertas = new ServicioDeOfertas(db, reloj, contexto, precios);
+        var lectorDeTurno = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
         var turnos = new Ways.Application.Caja.ServicioDeTurnos(
-            db, reloj, contexto, new Ways.Application.Caja.LectorDeMovimientosDelTurno(db));
+            db, reloj, contexto, lectorDeTurno,
+            new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeTurno));
         var lotes = new ServicioDeLotes(db, reloj, contexto);
 
         return new ServicioDeVentas(db, reloj, contexto, ofertas, turnos, lotes);

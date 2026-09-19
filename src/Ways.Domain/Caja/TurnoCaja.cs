@@ -35,4 +35,18 @@ public class TurnoCaja : EntidadTenant
     public EstadoTurno Estado { get; set; } = EstadoTurno.Abierto;
 
     public string? Observaciones { get; set; }
+
+    /// <summary>judgment-day JD-E5a-2 (DB CHANGE GATE aprobado): el medio ancla (<c>Comportamiento
+    /// = efectivo</c>) PINEADO al momento del cierre, poblado solo al cerrar
+    /// (<c>ck_turnos_caja_medio_efectivo_solo_cerrado</c>) — en LOS DOS modos, <c>CerrarAsync</c>
+    /// y <c>CerrarPorRetiroAsync</c>. <c>MedioPago.Comportamiento</c> es editable después del
+    /// hecho (<c>PUT /api/catalogos/medios-pago/{id}</c>): sin esta columna,
+    /// <c>ResolvedorDeMedioDeCajaFisica.Resolver</c> re-resuelve el ancla contra el catálogo
+    /// ACTUAL cada vez, y un turno cerrado hace tiempo puede terminar leyendo la fila de
+    /// <c>arqueos_turno</c> equivocada (o ninguna) si el comportamiento cambió desde entonces.
+    /// <c>NULL</c> en un turno cerrado antes de esta migración (backfill: el único medio efectivo
+    /// del tenant si existía exactamente uno, si no queda <c>NULL</c> —
+    /// <c>Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro</c> cae al catálogo actual solo
+    /// en ese caso legado).</summary>
+    public int? IdMedioPagoEfectivo { get; set; }
 }

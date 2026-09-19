@@ -628,6 +628,10 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .HasColumnType("integer")
                         .HasColumnName("id_empleado_cierre");
 
+                    b.Property<int?>("IdMedioPagoEfectivo")
+                        .HasColumnType("integer")
+                        .HasColumnName("id_medio_pago_efectivo");
+
                     b.Property<int>("IdPuntoVenta")
                         .HasColumnType("integer")
                         .HasColumnName("id_punto_venta");
@@ -664,6 +668,9 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                     b.HasIndex("IdTenant")
                         .HasDatabaseName("ix_turnos_caja_tenant");
 
+                    b.HasIndex("IdMedioPagoEfectivo", "IdTenant")
+                        .HasDatabaseName("ix_turnos_caja_medio_pago_efectivo");
+
                     b.HasIndex("IdPuntoVenta", "IdTenant", "FechaApertura")
                         .HasDatabaseName("ix_turnos_caja_punto_venta_fecha");
 
@@ -672,6 +679,8 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                             t.HasCheckConstraint("ck_turnos_caja_cierre_consistente", "(estado = 'abierto' AND fecha_cierre IS NULL AND id_empleado_cierre IS NULL) OR (estado = 'cerrado' AND fecha_cierre IS NOT NULL AND id_empleado_cierre IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_turnos_caja_fondo_inicial_no_negativo", "fondo_inicial >= 0");
+
+                            t.HasCheckConstraint("ck_turnos_caja_medio_efectivo_solo_cerrado", "id_medio_pago_efectivo IS NULL OR estado = 'cerrado'");
                         });
                 });
 
@@ -4516,6 +4525,13 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_turnos_caja_tenant");
+
+                    b.HasOne("Ways.Domain.Catalogos.MedioPago", null)
+                        .WithMany()
+                        .HasForeignKey("IdMedioPagoEfectivo", "IdTenant")
+                        .HasPrincipalKey("Id", "IdTenant")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_turnos_caja_medio_pago_efectivo");
 
                     b.HasOne("Ways.Domain.Organizacion.PuntoVenta", null)
                         .WithMany()

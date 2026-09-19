@@ -832,6 +832,59 @@ export type LineaDeArqueoResumen = {
  * payload del comprobante Z) — mismos campos planos que `TurnoResumen` más `arqueos`. */
 export type TurnoConArqueos = TurnoResumen & { arqueos: LineaDeArqueoResumen[] }
 
+// --- Cierre por retiro (etapa 5): segundo modo de cierre — el cajero retira el efectivo
+// contado y deja el fondo inicial en el cajón, nada se cuenta. Espejo de
+// `Ways.Application.Caja.Contratos` (spec arqueo-de-cierre: Cierre Por Retiro). El cierre
+// clásico de arriba (`SolicitudDeCierre`/`TurnoConArqueos`) queda intacto — es el modo web/arqueo.
+
+/** Cuerpo de `POST /api/caja/turnos/{id}/cierre-por-retiro` — `importeRetirado` es un
+ * MOVIMIENTO (lo que el cajero se lleva), nunca un total de ventas ni un conteo por medio
+ * (spec: Cierre Por Retiro Payload Carries Only The Withdrawal Amount). `>= 0`; `0` es válido
+ * y no genera ningún movimiento de retiro. */
+export type SolicitudDeCierrePorRetiro = { importeRetirado: number; observaciones: string | null }
+
+/** Punto de venta de `ResumenDeCierrePorRetiro` — `numero` es el mismo valor que `id` (no hay
+ * una columna de numeración operativa separada, ver el doc-comment del lado del servidor). */
+export type PuntoVentaDeCierre = { id: number; numero: number; nombre: string }
+
+/** Una fila de `ResumenDeCierrePorRetiro.ventasPorMedio` — ventas netas de vuelto por medio
+ * (nunca de gastos), nombre ya resuelto. */
+export type VentaPorMedio = { idMedioPago: number; nombre: string; importe: number }
+
+/** Una fila de `ResumenDeCierrePorRetiro.retiros` — TODOS los retiros del turno, incluido el
+ * de cierre, con el nombre del empleado ya resuelto. */
+export type RetiroDeCierre = { fecha: string; importe: number; motivo: string; empleado: string }
+
+/** Respuesta de `POST /api/caja/turnos/{id}/cierre-por-retiro` y de
+ * `GET /api/caja/turnos/{id}/resumen-de-cierre` (reimpresión / recuperación tras una falla de
+ * red ambigua sobre un turno ya cerrado, por cualquiera de los dos modos de cierre — las dos
+ * rutas devuelven exactamente lo mismo).
+ *
+ * `diferencia` (judgment-day JD-E5a-1) se LEE de la fila ya persistida de `arqueos_turno` para
+ * el medio ancla: `diferencia = -arqueo.diferencia = declarado - esperado` (positivo = sobrante,
+ * negativo = faltante — el signo OPUESTO al de `arqueo.diferencia`, que persiste
+ * `esperado - declarado`). NUNCA una fórmula sobre `totalRetiros`/`ventasEnEfectivoNetas`/
+ * `gastosEnEfectivo`/`refuerzos`: esa fórmula solo vale cuando el ancla se declaró con
+ * `fondoInicial` (cierto en el modo retiro, nunca en el clásico). Sin actividad física de
+ * efectivo en el turno (el ancla sin fila en `arqueos_turno`), `diferencia = 0`. */
+export type ResumenDeCierrePorRetiro = {
+  idTurnoCaja: number
+  puntoVenta: PuntoVentaDeCierre
+  fechaApertura: string
+  fechaCierre: string
+  vendedor: string
+  empleadoCierre: string
+  fondoInicial: number
+  ventasPorMedio: VentaPorMedio[]
+  totalVentas: number
+  retiros: RetiroDeCierre[]
+  totalRetiros: number
+  ventasEnEfectivoNetas: number
+  gastosEnEfectivo: number
+  refuerzos: number
+  diferencia: number
+}
+
 // --- Histórico de cajas (G2) y detalle de turno (stage-11-exportacion-reportes, Slice 5a/5b,
 // Slices 6a/6b web): espejo de `Ways.Application.Caja.Contratos` — turnos cerrados con totales
 // ya sumados de sus `arqueos_turno` persistidos (nunca re-derivados) y el detalle del turno
@@ -867,6 +920,11 @@ export type TicketDeTurno = {
   total: number
 }
 
+/** Monto neto cobrado por UN medio de pago dentro de una `VentaDeTurnoListado` — espejo de
+ * `MedioDeVentaNeto`. `importe` ya es neto de vuelto (`Σ importe − Σ vuelto` agrupado por medio),
+ * nunca lo que tecleó el cajero en caja. */
+export type MedioDeVentaNeto = { idMedioPago: number; nombre: string; importe: number }
+
 /** Fila de `GET /api/ventas/por-turno/{idTurno}` — espejo de
  * `Ways.Application.Ventas.VentaDeTurnoListado` (pantalla "Ventas del turno" del POS de
  * escritorio). A diferencia de `TicketDeTurno`, SÍ incluye anuladas y trae `nombreCliente`/
@@ -880,7 +938,7 @@ export type VentaDeTurnoListado = {
   idCliente: number
   nombreCliente: string
   total: number
-  mediosDePago: string[]
+  mediosDePago: MedioDeVentaNeto[]
 }
 
 /** Un gasto del turno dentro de `DetalleDeTurno.gastos` — espejo de
@@ -1684,6 +1742,23 @@ export type TopArticulos = {
   hasta: string
   zonaHoraria: string
   articulos: ArticuloTop[]
+}
+
+/** Fila de `GET /api/reportes/articulos` (reporte de completitud de catálogo) — espejo de
+ * `ArticuloDeReporte`. `area`/`categoria`/`marca`/`grupo`/`proveedor` son `null` cuando el
+ * artículo no tiene esa clasificación asignada, o cuando el FK apunta a una fila dada de baja
+ * lógica; la UI decide cómo mostrar el hueco ("Sin asignar"), nunca el servidor. `proveedor` ya
+ * viene resuelto como nombre de fantasía (o razón social si no tiene). */
+export type ArticuloDeReporte = {
+  id: number
+  codigoInterno: string
+  nombre: string
+  area: string | null
+  categoria: string | null
+  marca: string | null
+  grupo: string | null
+  proveedor: string | null
+  activo: boolean
 }
 
 /** Cobertura del costo de un período de rentabilidad (stage-9-costo-congelado, tres estados:

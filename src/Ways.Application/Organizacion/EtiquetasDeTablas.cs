@@ -60,6 +60,7 @@ public static class EtiquetasDeTablas
             ["movimientos_stock"] = "movimientos de stock",
             ["movimientos_tesoreria"] = "movimientos de tesorería",
             ["ofertas"] = "ofertas",
+            ["ofertas_listas"] = "ofertas",
             ["ordenes_compra"] = "órdenes de compra",
             ["pagos_comprobante"] = "pagos",
             ["parametros"] = "parámetros",

@@ -21,7 +21,7 @@ import { AltaRapidaMarca } from './AltaRapidaMarca'
 import { AltaRapidaProveedor } from './AltaRapidaProveedor'
 import { EditorDePrecios } from './EditorDePrecios'
 import { GestorDeCodigosBarra } from './GestorDeCodigosBarra'
-import { etiquetaDeProveedor } from './helpers'
+import { etiquetaDeProveedor, opcionesConValorActual } from './helpers'
 
 export type Formulario = {
   id: number | null
@@ -342,9 +342,10 @@ export function FormularioArticulo({
               <option value="" disabled>
                 Elegir…
               </option>
-              {areas.map((a) => (
+              {opcionesConValorActual(areas, valor.idArea).map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.nombre}
+                  {!a.activo ? ' (inactiva)' : ''}
                 </option>
               ))}
             </select>
@@ -363,9 +364,10 @@ export function FormularioArticulo({
                 onChange={(e) => onCambio({ ...valor, idCategoria: e.target.value === '' ? '' : Number(e.target.value) })}
               >
                 <option value="">Sin especificar</option>
-                {categorias.map((c) => (
+                {opcionesConValorActual(categorias, valor.idCategoria).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.nombre}
+                    {!c.activo ? ' (inactiva)' : ''}
                   </option>
                 ))}
               </select>
@@ -394,9 +396,10 @@ export function FormularioArticulo({
                 onChange={(e) => onCambio({ ...valor, idMarca: e.target.value === '' ? '' : Number(e.target.value) })}
               >
                 <option value="">Sin especificar</option>
-                {marcas.map((m) => (
+                {opcionesConValorActual(marcas, valor.idMarca).map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.nombre}
+                    {!m.activo ? ' (inactiva)' : ''}
                   </option>
                 ))}
               </select>
@@ -425,10 +428,11 @@ export function FormularioArticulo({
                 onChange={(e) => onCambio({ ...valor, idGrupo: e.target.value === '' ? '' : Number(e.target.value) })}
               >
                 <option value="">Sin especificar</option>
-                {grupos.map((g) => (
+                {opcionesConValorActual(grupos, valor.idGrupo).map((g) => (
                   <option key={g.id} value={g.id}>
                     {g.nombre}
                     {g.margen !== null ? ` (margen ${g.margen}%)` : ''}
+                    {!g.activo ? ' (inactivo)' : ''}
                   </option>
                 ))}
               </select>
@@ -459,9 +463,10 @@ export function FormularioArticulo({
                 }
               >
                 <option value="">Sin especificar</option>
-                {proveedores.map((p) => (
+                {opcionesConValorActual(proveedores, valor.idProveedorHabitual).map((p) => (
                   <option key={p.id} value={p.id}>
                     {etiquetaDeProveedor(p)}
+                    {!p.activo ? ' (inactivo)' : ''}
                   </option>
                 ))}
               </select>
@@ -639,7 +644,11 @@ export function FormularioArticulo({
               propagación (ver el comentario en cada `AltaRapida*`). */}
           {padronRapidoAbierto === 'categoria' && (
             <AltaRapidaCategoria
-              categorias={categorias}
+              // Filtrado acá, no en `AltaRapidaCategoria` (que ofrece la lista "tal cual" por
+              // contrato, ver su doc-comment): `categorias` en este formulario trae activas e
+              // inactivas (incluirInactivos: true) para el select de artículo, pero una categoría
+              // nueva nunca debería poder quedar parentada bajo una ya desactivada.
+              categorias={categorias.filter((c) => c.activo)}
               onCreado={(nueva) => {
                 onCategoriaCreada(nueva)
                 actualizarFormulario((previo) => ({ ...previo, idCategoria: nueva.id }))

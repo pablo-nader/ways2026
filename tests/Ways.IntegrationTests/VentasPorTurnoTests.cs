@@ -89,10 +89,24 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
 
     /// <summary>Comprobante + pagos sembrados directo (bypass <c>EmitirAsync</c>) — mismo criterio
     /// que <c>VentasTurnoWiringTests.SembrarPagoAsync</c>: el punto de estas pruebas es el listado,
-    /// no el checkout.</summary>
+    /// no el checkout. Reparte <paramref name="total"/> en partes iguales entre
+    /// <paramref name="idsMedioPago"/>, sin vuelto — para un pago con vuelto explícito, ver
+    /// <see cref="SembrarComprobanteConPagosAsync"/>.</summary>
     private async Task<(int Id, long Numero)> SembrarComprobanteAsync(
         Contexto ctx, int? idTurno, int idCliente, decimal total, EstadoComprobante estado,
         DateTimeOffset fecha, params int[] idsMedioPago)
+    {
+        var pagos = idsMedioPago.Select(id => (IdMedioPago: id, Importe: total / idsMedioPago.Length, Vuelto: 0m)).ToArray();
+        return await SembrarComprobanteConPagosAsync(ctx, idTurno, idCliente, total, estado, fecha, pagos);
+    }
+
+    /// <summary>Igual que <see cref="SembrarComprobanteAsync"/> pero con control explícito de
+    /// importe/vuelto por pago — necesario para probar el neto (<c>Σimporte − Σvuelto</c>) de
+    /// <see cref="MedioDeVentaNeto"/>, que un reparto en partes iguales con vuelto siempre 0 no
+    /// puede discriminar del importe bruto.</summary>
+    private async Task<(int Id, long Numero)> SembrarComprobanteConPagosAsync(
+        Contexto ctx, int? idTurno, int idCliente, decimal total, EstadoComprobante estado,
+        DateTimeOffset fecha, params (int IdMedioPago, decimal Importe, decimal Vuelto)[] pagos)
     {
         await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
         var ahora = DateTimeOffset.UtcNow;
@@ -117,12 +131,12 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         db.ComprobantesVenta.Add(comprobante);
         await db.SaveChangesAsync();
 
-        foreach (var idMedioPago in idsMedioPago)
+        foreach (var (idMedioPago, importe, vuelto) in pagos)
         {
             db.PagosComprobante.Add(new PagoComprobante
             {
                 IdTenant = ctx.IdTenant, IdComprobanteVenta = comprobante.Id, IdMedioPago = idMedioPago,
-                Importe = total / idsMedioPago.Length, Vuelto = 0m, CreatedAt = ahora, UpdatedAt = ahora
+                Importe = importe, Vuelto = vuelto, CreatedAt = ahora, UpdatedAt = ahora
             });
         }
         await db.SaveChangesAsync();
@@ -178,7 +192,15 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(idClienteDos, filas[0].IdCliente);
         Assert.Equal("Cliente Reconciliación Dos", filas[0].NombreCliente);
         Assert.Equal(200m, filas[0].Total);
+        // MedioDeVentaNeto también se assertea campo por campo (mutation-proof-tests regla 12(b)):
+        // dos medios DISTINTOS con el mismo importe (200 repartido en partes iguales) — un swap de
+        // IdMedioPago↔Nombre entre ambos no lo detectaría un simple Count, sí el Single por id.
         Assert.Equal(2, filas[0].MediosDePago.Count);
+        var medioEfectivoDeSegunda = filas[0].MediosDePago.Single(m => m.IdMedioPago == efectivo);
+        Assert.Equal(100m, medioEfectivoDeSegunda.Importe);
+        var medioTarjetaDeSegunda = filas[0].MediosDePago.Single(m => m.IdMedioPago == tarjeta);
+        Assert.Equal(100m, medioTarjetaDeSegunda.Importe);
+        Assert.NotEqual(medioEfectivoDeSegunda.Nombre, medioTarjetaDeSegunda.Nombre);
 
         Assert.Equal(primera.Id, filas[1].Id);
         Assert.Equal(primera.Numero, filas[1].Numero);
@@ -188,7 +210,44 @@ public class VentasPorTurnoTests(WaysApiFixture fixture) : IClassFixture<WaysApi
         Assert.Equal(idClienteUno, filas[1].IdCliente);
         Assert.Equal("Cliente Reconciliación Uno", filas[1].NombreCliente);
         Assert.Equal(100m, filas[1].Total);
-        Assert.Single(filas[1].MediosDePago);
+        var medioDePrimera = Assert.Single(filas[1].MediosDePago);
+        Assert.Equal(efectivo, medioDePrimera.IdMedioPago);
+        Assert.Equal(100m, medioDePrimera.Importe);
+        Assert.Equal(medioEfectivoDeSegunda.Nombre, medioDePrimera.Nombre);
+    }
+
+    /// <summary>Neto por medio (<c>Σimporte − Σvuelto</c> agrupado por <c>idMedioPago</c>) — la
+    /// única forma de discriminar esta clausula del importe bruto es un pago con vuelto > 0 que
+    /// además comparte medio con otro pago del mismo comprobante (mutation-proof-tests: un solo
+    /// pago en efectivo con vuelto también probaría el resta, pero no el agrupado — acá se
+    /// combinan los dos, dos pagos en efectivo con vuelto distinto de cero en cada uno).</summary>
+    [Fact]
+    public async Task CadaMedioDePagoLlevaElMontoNetoImporteMenosVueltoAgrupadoPorMedio()
+    {
+        var ctx = await PrepararAsync(nameof(CadaMedioDePagoLlevaElMontoNetoImporteMenosVueltoAgrupadoPorMedio));
+        var idTurno = await AbrirTurnoAsync(ctx);
+        var idCliente = await SembrarClienteAsync(ctx, "Cliente Neto De Medios");
+        var (efectivo, tarjeta) = await MediosDePagoAsync(ctx);
+
+        var (idComprobante, _) = await SembrarComprobanteConPagosAsync(
+            ctx, idTurno, idCliente, 1000m, EstadoComprobante.Emitido, DateTimeOffset.UtcNow,
+            (efectivo, 400m, 20m), (efectivo, 200m, 10m), (tarjeta, 430m, 0m));
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/ventas/por-turno/{idTurno}");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+
+        var fila = Assert.Single(JsonSerializer.Deserialize<List<VentaDeTurnoListado>>(cuerpo, OpcionesJson)!);
+        Assert.Equal(idComprobante, fila.Id);
+
+        // Un único medio "Efectivo" en la respuesta (los dos pagos del mismo medio se consolidan),
+        // neto = (400 - 20) + (200 - 10) = 570 — nunca 600 (la suma bruta de importes).
+        Assert.Equal(2, fila.MediosDePago.Count);
+        var medioEfectivo = fila.MediosDePago.Single(m => m.IdMedioPago == efectivo);
+        Assert.Equal(570m, medioEfectivo.Importe);
+
+        var medioTarjeta = fila.MediosDePago.Single(m => m.IdMedioPago == tarjeta);
+        Assert.Equal(430m, medioTarjeta.Importe);
     }
 
     [Fact]

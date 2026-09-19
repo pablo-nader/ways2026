@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
 using Ways.Application.Organizacion;
 using Ways.Application.Usuarios; // PaginaDe<T>, SolicitudDeLogin
@@ -508,6 +509,85 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         Assert.Equal([idEmpresa], detalleTrasPut!.IdsEmpresas);
     }
 
+    /// <summary>Movido desde <c>ServicioDeArticulosTests.EditarUnArticuloFunciona</c>
+    /// (fix/articulos-lock-referencias): <c>ActualizarAsync</c> ahora abre transacción explícita
+    /// (envuelve los 5 chequeos de referencia lockeados de <c>GuardaDeReferencias</c>), fuera del
+    /// alcance del proveedor InMemory. Cubre la edición de campos básicos.</summary>
+    [Fact]
+    public async Task EditarActualizaCamposBasicosDelArticulo()
+    {
+        var (_, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(EditarActualizaCamposBasicosDelArticulo));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+
+        var creado = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+        var edicion = EdicionDesde(creado) with { Nombre = "Nombre Editado" };
+
+        var respuesta = await admin.PutAsJsonAsync($"/api/articulos/{creado.Id}", edicion);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var editado = await respuesta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson);
+        Assert.Equal("Nombre Editado", editado!.Nombre);
+    }
+
+    /// <summary>Movido desde <c>ServicioDeArticulosTests.EditarConDisponibleParaTodasFalseConSubsetFunciona</c>
+    /// (fix/articulos-lock-referencias) — mismo motivo que <c>EditarActualizaCamposBasicosDelArticulo</c>.
+    /// Spec: Explicit subset excludes other empresas — afirma el estado PERSISTIDO (lectura
+    /// independiente de <c>articulos_empresas</c>), no solo el eco del PUT.</summary>
+    [Fact]
+    public async Task EditarConSubsetDeEmpresasPersisteElSubconjunto()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(EditarConSubsetDeEmpresasPersisteElSubconjunto));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var idEmpresa = await SembrarEmpresaAsync(idTenant, nameof(EditarConSubsetDeEmpresasPersisteElSubconjunto));
+
+        var creado = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+        var edicion = EdicionDesde(creado) with { DisponibleParaTodas = false, IdsEmpresas = [idEmpresa] };
+
+        var respuesta = await admin.PutAsJsonAsync($"/api/articulos/{creado.Id}", edicion);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var editado = await respuesta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson);
+        Assert.False(editado!.DisponibleParaTodas);
+        Assert.Equal([idEmpresa], editado.IdsEmpresas);
+
+        await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var filas = await lectura.ArticulosEmpresas.Where(ae => ae.IdArticulo == creado.Id).ToListAsync();
+        Assert.Single(filas);
+        Assert.Equal(idEmpresa, filas[0].IdEmpresa);
+    }
+
+    /// <summary>Movido desde <c>ServicioDeArticulosTests.EditarConIdsEmpresasDuplicadosInsertaUnaSolaFila</c>
+    /// (fix/articulos-lock-referencias) — mismo motivo que las de arriba. judgment-day ronda 1
+    /// (item 3): un payload con un id repetido no debe generar dos filas de subset ni ningún
+    /// error — <c>.Distinct()</c> corre antes de validar/insertar.</summary>
+    [Fact]
+    public async Task EditarConIdsEmpresasDuplicadosPersisteUnaSolaFila()
+    {
+        var (idTenant, idArea, idAlicuotaIva, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(EditarConIdsEmpresasDuplicadosPersisteUnaSolaFila));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var idEmpresa = await SembrarEmpresaAsync(idTenant, nameof(EditarConIdsEmpresasDuplicadosPersisteUnaSolaFila));
+
+        var creado = await CrearArticuloAsync(admin, idArea, idAlicuotaIva);
+        var edicion = EdicionDesde(creado) with
+        {
+            DisponibleParaTodas = false,
+            IdsEmpresas = [idEmpresa, idEmpresa]
+        };
+
+        var respuesta = await admin.PutAsJsonAsync($"/api/articulos/{creado.Id}", edicion);
+        Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
+
+        var editado = await respuesta.Content.ReadFromJsonAsync<ArticuloListado>(OpcionesJson);
+        Assert.Equal([idEmpresa], editado!.IdsEmpresas);
+
+        await using var lectura = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var filas = await lectura.ArticulosEmpresas.Where(ae => ae.IdArticulo == creado.Id).ToListAsync();
+        Assert.Single(filas);
+    }
+
     /// <summary>Spec: Cross-tenant empresa reference is blocked.</summary>
     [Fact]
     public async Task CrearConEmpresaDeOtroTenantEnElSubsetDevuelve400()
@@ -561,6 +641,28 @@ public class ArticulosEndpointsTests(WaysApiFixture fixture) : IClassFixture<Way
         using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
 
         var respuesta = await admin.PostAsJsonAsync("/api/articulos", AltaValida(idArea: 999_999, idAlicuotaIva));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("referencia_invalida", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Movido desde <c>ServicioDeArticulosTests.CrearConIdAreaDeOtroTenantEsRechazado</c>
+    /// (fix/articulos-lock-referencias): el chequeo de área ahora corre DENTRO de la transacción
+    /// explícita de <c>CrearAsync</c>, fuera del alcance del proveedor InMemory — mismo criterio
+    /// que <c>CrearConIdCategoriaDeOtroTenantDevuelve400</c> de abajo. El filtro de EF (+ RLS por
+    /// debajo) ya deja afuera un área de otro tenant, así que da el mismo 400 que "no existe".</summary>
+    [Fact]
+    public async Task CrearConIdAreaDeOtroTenantDevuelve400()
+    {
+        var (_, _, idAlicuotaIvaA, mailAdminA, passwordAdminA) =
+            await AprovisionarTenantAsync(nameof(CrearConIdAreaDeOtroTenantDevuelve400) + "-A");
+        var (_, idAreaB, _, _, _) =
+            await AprovisionarTenantAsync(nameof(CrearConIdAreaDeOtroTenantDevuelve400) + "-B");
+
+        using var adminA = await ClienteLogueadoAsync(mailAdminA, passwordAdminA);
+        var alta = AltaValida(idAreaB, idAlicuotaIvaA);
+        var respuesta = await adminA.PostAsJsonAsync("/api/articulos", alta);
 
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();

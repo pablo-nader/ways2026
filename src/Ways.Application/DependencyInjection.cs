@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
 using Ways.Application.Auditoria;
+using Ways.Application.Bajas;
 using Ways.Application.Caja;
 using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
@@ -60,6 +61,11 @@ public static class DependencyInjection
         services.AddScoped<ServicioDePrecios>();
         services.AddScoped<ServicioDeOfertas>();
 
+        // stage-articulos-grilla-api: GET /api/articulos/grilla — compone ServicioDePrecios
+        // (mismo criterio que ServicioDeEtiquetas más abajo), registrado junto al resto de
+        // Articulos.
+        services.AddScoped<ServicioDeGrillaDeArticulos>();
+
         // stage-18-etiquetas-y-consulta, Slice 2 (task 2.23): compone ServicioDeArticulos
         // (selección por filtro) + ServicioDeOfertas (precio/ofertas) — registrado después de
         // ambos, aunque el orden de AddScoped no importa para la resolución de DI.
@@ -76,6 +82,9 @@ public static class DependencyInjection
         // enrichment) es un lector HERMANO, solo consumido por ServicioDeResumenDeTurno.
         services.AddScoped<LectorDeMovimientosDelTurno>();
         services.AddScoped<LectorDeContenidoDeResumen>();
+        // etapa 5 (cierre por retiro): armador compartido por ServicioDeTurnos.CerrarPorRetiroAsync
+        // y ObtenerResumenDeCierreAsync — ver su doc-comment.
+        services.AddScoped<LectorDeResumenDeCierrePorRetiro>();
         services.AddScoped<ServicioDeTurnos>();
         services.AddScoped<ServicioDeResumenDeTurno>();
         services.AddScoped<ServicioDeGastos>();
@@ -98,6 +107,11 @@ public static class DependencyInjection
         // poder revisarlo por sus propios méritos antes de que algo pueda invocarlo. La slice 4 lo
         // cablea. InventarioDeDependientes es estático y puro: no tiene ciclo de vida que registrar.
         services.AddScoped<InspectorDeUso>();
+
+        // fix/bajas-catalogos-guarda-de-uso: el guard de referencias de los catálogos de
+        // tenant y proveedores — reusa InspectorDeUso en modo referencia (sin corte por
+        // created_at, ver el doc-comment de GuardaDeReferencias).
+        services.AddScoped<GuardaDeReferencias>();
 
         // stage-8-compras-transferencias-inventario, Slice 2: el ciclo de vida entero de la
         // compra — reusa ServicioDePrecios (AplicarPrecioSugeridoAsync), nunca
