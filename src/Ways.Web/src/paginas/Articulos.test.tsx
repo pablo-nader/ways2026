@@ -1301,3 +1301,55 @@ describe('Articulos — cerrar una edición abierta por URL directa reemplaza la
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
+
+// ---- el token de edición también gatea el catch de abrirEdicion (M7) ---------------------------
+
+describe('Articulos — el catch de abrirEdicion respeta el token de edición en curso (M7)', () => {
+  function ArnesConNavegacionDirecta({ destino }: { destino: string }) {
+    const navigate = useNavigate()
+    return (
+      <>
+        <button type="button" onClick={() => navigate(destino)}>
+          Ir directo
+        </button>
+        <Articulos />
+      </>
+    )
+  }
+
+  /**
+   * Cláusula bajo prueba: `if (tokenEdicionRef.current !== token) return` en la rama `catch` de
+   * `abrirEdicion` (Articulos.tsx). Mutation-proof-tests: sacar ese guard hace fallar los dos
+   * `expect` de abajo — el rechazo tardío del primer detalle pisaría el segundo, ya cargado, con
+   * el error "no encontrado".
+   */
+  it('un 404 tardío del primer edit no pisa al segundo, ya cargado', async () => {
+    let rechazarLento: (error: unknown) => void = () => {}
+    const lento = new Promise<ArticuloListado>((_resolve, reject) => {
+      rechazarLento = reject
+    })
+    mockearApiGet({
+      detalleImpl: (id) => (id === 1 ? lento : Promise.resolve(articuloDos)),
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/articulos/edit/1']}>
+        <Routes>
+          <Route path="/articulos/*" element={<ArnesConNavegacionDirecta destino="/articulos/edit/2" />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Articulo Uno')
+    await userEvent.click(screen.getByRole('button', { name: 'Ir directo' }))
+    await screen.findByRole('dialog', { name: 'Editando artículo A0002' })
+
+    await act(async () => {
+      rechazarLento(new ErrorApi(404, 'no_encontrado', 'Artículo no encontrado.'))
+      await lento.catch(() => {})
+    })
+
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0002' })).toBeInTheDocument()
+    expect(screen.queryByText('Artículo no encontrado.')).not.toBeInTheDocument()
+  })
+})
