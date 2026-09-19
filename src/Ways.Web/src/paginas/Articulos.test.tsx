@@ -419,6 +419,51 @@ describe('Articulos — defaults de Área/Alícuota de IVA cuando los catálogos
   })
 })
 
+// ---- avisos de catálogos requeridos/listas de precio, también visibles DENTRO del modal --------
+
+describe('Articulos — avisos de catálogos: visibles también dentro del modal', () => {
+  /**
+   * Cláusula bajo prueba: el bloque `erroresCatalogosRequeridos` renderizado en
+   * `ModalDeArticulo.tsx`. Mutation-proof-tests: sacar ese bloque hace fallar este test (el aviso
+   * solo quedaría en la grilla, tapada por el backdrop del modal).
+   */
+  it('un catálogo requerido que falla muestra el aviso DENTRO del diálogo, no solo en la grilla', async () => {
+    mockearApiGet({ areasImpl: () => Promise.reject(new Error('sin red')) })
+
+    await abrirFormularioNuevo()
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo artículo' })
+
+    expect(await within(dialogo).findByText(/No se pudieron cargar las áreas\./)).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el bloque `avisoListasPrecio` renderizado en `ModalDeArticulo.tsx`.
+   * Mutation-proof-tests: sacar ese bloque hace fallar este test.
+   */
+  it('un fallo al cargar las listas de precio muestra el aviso DENTRO del diálogo', async () => {
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/catalogos/listas-precio') return Promise.reject(new Error('sin red'))
+      if (ruta === '/articulos') return Promise.resolve(paginaFixture([articuloUno, articuloDos]))
+      if (ruta === '/catalogos/areas') return Promise.resolve([{ id: 1, nombre: 'Almacén', activo: true }])
+      if (ruta === '/catalogos/categorias') return Promise.resolve([])
+      if (ruta === '/catalogos/marcas') return Promise.resolve([])
+      if (ruta === '/catalogos/grupos') return Promise.resolve([])
+      if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [], total: 0, pagina: 1, tamanio: 200 })
+      if (ruta === '/catalogos-fiscales/alicuotas-iva')
+        return Promise.resolve([{ id: 1, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true }])
+      if (ruta === '/empresas') return Promise.resolve([])
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await abrirFormularioNuevo()
+    const dialogo = screen.getByRole('dialog', { name: 'Nuevo artículo' })
+
+    expect(
+      await within(dialogo).findByText(/No se pudieron cargar las listas de precio/),
+    ).toBeInTheDocument()
+  })
+})
+
 // ---- alta rápida de padrones desde el formulario de artículo ------------------------------------
 
 describe('Articulos — alta rápida: cada botón "+" abre el modal correcto', () => {

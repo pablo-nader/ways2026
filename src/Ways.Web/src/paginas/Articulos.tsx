@@ -530,6 +530,8 @@ export function Articulos() {
           avisoGuardado={avisoGuardado}
           errorGuardado={errorGuardado}
           bloqueadoPorCatalogos={erroresCatalogosRequeridos.length > 0}
+          erroresCatalogosRequeridos={erroresCatalogosRequeridos}
+          avisoListasPrecio={avisoListasPrecio}
           areas={areas}
           categorias={categorias}
           marcas={marcas}
