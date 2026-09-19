@@ -192,3 +192,63 @@ public sealed record MovimientoTesoreriaListado(
 /// <see cref="PaginaDeHistoricoDeCajas"/>.</summary>
 public sealed record PaginaDeMovimientosTesoreria(
     IReadOnlyList<MovimientoTesoreriaListado> Items, int Total, int Pagina, int Tamanio);
+
+// ---- cierre por retiro (práctica del dueño: retira el efectivo contado y deja el fondo inicial
+// en el cajón; nada se cuenta al cierre — spec arqueo-de-cierre: Cierre Por Retiro) ----
+
+/// <summary>Cuerpo de <c>POST /api/caja/turnos/{id}/cierre-por-retiro</c> — <see
+/// cref="ImporteRetirado"/> es un MOVIMIENTO (lo que el cajero se lleva), nunca un total de
+/// ventas ni un conteo (spec: No Request Shape Accepts A Total, mismo criterio extendido a este
+/// segundo modo de cierre): todo lo demás (esperados, ventas por medio, diferencia) lo deriva el
+/// servidor. <c>&gt;= 0</c> — un retiro físico nunca puede ser negativo; <c>0</c> es válido (el
+/// cajero no retira nada y dejó todo en el cajón) y en ese caso NO se inserta ningún
+/// <see cref="MovimientoCaja"/> (dto-contract-honesty: el campo sigue teniendo un único destino,
+/// la RAMA condicional de <c>ServicioDeTurnos.CerrarPorRetiroAsync</c>, nunca queda aceptado y
+/// descartado).</summary>
+public sealed record SolicitudDeCierrePorRetiro(decimal ImporteRetirado, string? Observaciones);
+
+/// <summary>Punto de venta de <see cref="ResumenDeCierrePorRetiro"/>. <see cref="Numero"/> es el
+/// MISMO valor que <see cref="Id"/> — <see cref="Ways.Domain.Organizacion.PuntoVenta"/> no tiene
+/// una columna de numeración operativa separada de su id (solo <c>NumeroFiscal</c>, un concepto
+/// distinto de AFIP/ARCA, opcional); es el mismo id que
+/// <see cref="Ways.Domain.Ventas.NumeroDeComprobante.Formatear"/> ya usa como componente
+/// "número de punto de venta" del ticket (p.ej. <c>0004-00000012</c>). Se exponen los dos nombres
+/// para que el consumidor no tenga que conocer esa equivalencia.</summary>
+public sealed record PuntoVentaDeCierre(int Id, int Numero, string Nombre);
+
+/// <summary>Una fila de <see cref="ResumenDeCierrePorRetiro.VentasPorMedio"/> — ventas netas de
+/// vuelto por medio (nunca de gastos), con el nombre ya resuelto
+/// (<see cref="Ways.Domain.Caja.CalculadorDeCierrePorRetiro"/> es puro y solo conoce ids).</summary>
+public sealed record VentaPorMedio(int IdMedioPago, string Nombre, decimal Importe);
+
+/// <summary>Una fila de <see cref="ResumenDeCierrePorRetiro.Retiros"/> — TODOS los retiros del
+/// turno, incluido el de cierre (si <see cref="SolicitudDeCierrePorRetiro.ImporteRetirado"/> fue
+/// mayor a cero), con el nombre del empleado ya resuelto.</summary>
+public sealed record RetiroDeCierre(DateTimeOffset Fecha, decimal Importe, string Motivo, string Empleado);
+
+/// <summary>Respuesta de <c>POST /api/caja/turnos/{id}/cierre-por-retiro</c> y de
+/// <c>GET /api/caja/turnos/{id}/resumen-de-cierre</c> (reimpresión / recuperación tras una falla
+/// de red ambigua sobre un turno YA cerrado — las dos rutas llaman a la MISMA
+/// <c>LectorDeResumenDeCierrePorRetiro</c>, así que son bit-a-bit la misma construcción). Todos
+/// los campos son derivados server-side; nombres ya resueltos (nunca ids sueltos que el cliente
+/// tenga que resolver aparte). <see cref="Diferencia"/> = <see cref="TotalRetiros"/> − (<see
+/// cref="VentasEnEfectivoNetas"/> − <see cref="GastosEnEfectivo"/> + <see cref="Refuerzos"/>) —
+/// invariante: es exactamente el negativo de la <c>Diferencia</c> que <c>arqueos_turno</c>
+/// persiste para el medio ancla, porque ese medio se declara con <see cref="FondoInicial"/> (spec:
+/// arqueo-de-cierre, Cierre Por Retiro).</summary>
+public sealed record ResumenDeCierrePorRetiro(
+    int IdTurnoCaja,
+    PuntoVentaDeCierre PuntoVenta,
+    DateTimeOffset FechaApertura,
+    DateTimeOffset FechaCierre,
+    string Vendedor,
+    string EmpleadoCierre,
+    decimal FondoInicial,
+    IReadOnlyList<VentaPorMedio> VentasPorMedio,
+    decimal TotalVentas,
+    IReadOnlyList<RetiroDeCierre> Retiros,
+    decimal TotalRetiros,
+    decimal VentasEnEfectivoNetas,
+    decimal GastosEnEfectivo,
+    decimal Refuerzos,
+    decimal Diferencia);

@@ -16,10 +16,15 @@ namespace Ways.Application.Caja;
 /// (checkout) reutilizan (tasks.md, Orchestrator Decision 3), evitando tres copias del mismo
 /// <c>409 turno_no_abierto</c>; <see cref="ExigirTurnoAbiertoBajoLockAsync"/> (Slice 4, task
 /// 4.17) es el mismo tipo de pieza compartida para el guard <c>FOR SHARE</c> — reusado por
-/// <c>ServicioDeGastos.RegistrarAsync</c>.
+/// <c>ServicioDeGastos.RegistrarAsync</c>. <see cref="CerrarPorRetiroAsync"/> (etapa 5, "cierre por
+/// retiro") es el segundo modo de cierre — práctica del dueño: el cajero retira el efectivo
+/// contado y DEJA el fondo inicial en el cajón, nada se cuenta — y reusa
+/// <see cref="InsertarArqueosYTesoreriaAsync"/>, el mismo statement 5/6 que <see
+/// cref="EjecutarCierreAsync"/> (spec arqueo-de-cierre: Cierre Por Retiro).
 /// </summary>
 public class ServicioDeTurnos(
-    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, LectorDeMovimientosDelTurno lector)
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, LectorDeMovimientosDelTurno lector,
+    LectorDeResumenDeCierrePorRetiro lectorDeResumenDeCierrePorRetiro)
 {
     /// <summary>Apertura (design decisión 7): INSERT llano detrás de <c>ux_turnos_caja_abierto
     /// (id_punto_venta) WHERE estado = 'abierto'</c> — sin lectura previa, sin advisory lock. La
@@ -255,9 +260,130 @@ public class ServicioDeTurnos(
         var lineas = CalculadorDeArqueo.Calcular(insumos, idAncla);
         ValidadorDeConteos.Validar(lineas, insumos.Actividad, solicitud.Conteos);
 
-        // 5. INSERT arqueos_turno — una fila por medio arqueable; Diferencia la calcula la
-        // columna GENERATED (design decisión 6), nunca se asigna acá.
+        // 5/6. INSERT arqueos_turno + tesorería encadenada — statements compartidos con
+        // CerrarPorRetiroAsync, ver InsertarArqueosYTesoreriaAsync.
         var declaradoPorMedio = solicitud.Conteos.ToDictionary(c => c.IdMedioPago, c => c.ImporteDeclarado);
+        var arqueos = await InsertarArqueosYTesoreriaAsync(
+            idTenant, idTurnoCaja, idPuntoVenta.Value, idEmpleado, momento, insumos, lineas,
+            l => declaradoPorMedio[l.IdMedioPago], ct);
+
+        await transaccion.CommitAsync(ct);
+
+        var turno = await db.TurnosCaja.AsNoTracking().FirstAsync(t => t.Id == idTurnoCaja, ct);
+        return ProyectarConArqueos(turno, arqueos);
+    }
+
+    /// <summary>Cierre por retiro (etapa 5, práctica del dueño): el cajero retira el efectivo
+    /// contado y DEJA el fondo inicial en el cajón — nada se cuenta al cierre. Mismo orden de
+    /// statements y mismas garantías de lock/carrera que <see cref="EjecutarCierreAsync"/> (design:
+    /// The Cierre Transaction; spec arqueo-de-cierre: Cierre Por Retiro — Is Atomic And Reuses The
+    /// Cierre Lock): el UPDATE guardado va PRIMERO, y el retiro de cierre (si lo hay) se inserta
+    /// DESPUÉS de ganar ese lock exclusivo y ANTES de derivar, así que <see
+    /// cref="LectorDeMovimientosDelTurno"/> ya lo ve como parte de <c>insumos.Retiros</c> — cuenta
+    /// como retiro/ingreso de tesorería igual que cualquier otro (spec: "the closing withdrawal
+    /// counts as retiro/ingreso"). <see cref="FabricaDeEstrategiaSinReintento"/> por el mismo motivo
+    /// que <see cref="CerrarAsync"/>: manual, raro, sin clave de idempotencia — un commit ambiguo
+    /// tiene que llegar como <c>503 resultado_incierto</c> (ef-retry-safe-writes regla 4), nunca
+    /// como un reintento silencioso que duplique el retiro de cierre.</summary>
+    public async Task<ResumenDeCierrePorRetiro> CerrarPorRetiroAsync(
+        int idTurnoCaja, SolicitudDeCierrePorRetiro solicitud, CancellationToken ct = default)
+    {
+        if (solicitud.ImporteRetirado < 0)
+        {
+            throw new ErrorDominio(
+                "importe_retirado_invalido", "El importe retirado no puede ser negativo.", 400);
+        }
+
+        var idTenant = ExigirTenantDeLaSesion();
+        var idEmpleado = contexto.UsuarioId;
+        var momento = reloj.Ahora;
+
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
+        var turno = await estrategia.ExecuteAsync(async () =>
+            await EjecutarCierrePorRetiroAsync(idTurnoCaja, idTenant, idEmpleado, momento, solicitud, ct));
+
+        return await lectorDeResumenDeCierrePorRetiro.LeerAsync(turno, ct);
+    }
+
+    private async Task<TurnoCaja> EjecutarCierrePorRetiroAsync(
+        int idTurnoCaja, int idTenant, int idEmpleado, DateTimeOffset momento, SolicitudDeCierrePorRetiro solicitud,
+        CancellationToken ct)
+    {
+        await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+        // 1. Mismo UPDATE guardado que el cierre clásico — mismo lock, mismos 404/409.
+        var observacionesCierre = string.IsNullOrWhiteSpace(solicitud.Observaciones)
+            ? null
+            : solicitud.Observaciones.Trim();
+        var idPuntoVenta = await MarcarCerradoAsync(idTenant, idTurnoCaja, idEmpleado, momento, observacionesCierre, ct);
+        if (idPuntoVenta is null)
+        {
+            var existe = await db.TurnosCaja.AnyAsync(t => t.Id == idTurnoCaja, ct);
+            if (!existe)
+            {
+                throw ErrorDominio.NoEncontrado($"No existe el turno {idTurnoCaja}.");
+            }
+
+            throw new ErrorDominio("turno_ya_cerrado", "El turno ya está cerrado.", 409);
+        }
+
+        // 2. El retiro de cierre, SI lo hay — ANTES de derivar, para que insumos.Retiros ya lo
+        // cuente (spec: "insert a MovimientoCaja Retiro ... BEFORE deriving"). Importe 0 no
+        // inserta nada: ck_movimientos_caja_importe exige > 0 para tipo <> apertura_cajon, y un
+        // cajero que no retira nada no generó ningún movimiento físico.
+        if (solicitud.ImporteRetirado > 0)
+        {
+            db.MovimientosCaja.Add(new MovimientoCaja
+            {
+                IdTenant = idTenant,
+                IdTurnoCaja = idTurnoCaja,
+                Tipo = TipoMovimientoCaja.Retiro,
+                Importe = solicitud.ImporteRetirado,
+                Motivo = "Retiro de cierre de turno",
+                IdEmpleado = idEmpleado,
+                CreadoEl = momento
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        // 3. Insumos de la derivación — mismo lector, mismas 7 consultas; ya ve el retiro de
+        // cierre recién insertado (misma transacción/conexión).
+        var insumos = await lector.LeerAsync(idTurnoCaja, ct);
+
+        // 4. Ancla — puro, 409 caja_sin_medio_efectivo_unico si no es único.
+        var idAncla = ResolvedorDeMedioDeCajaFisica.Resolver(insumos.Actividad);
+
+        // 5. Cálculo (misma fórmula que el cierre clásico) — SIN ValidadorDeConteos: acá no hay
+        // conteos del cliente que validar, el servidor declara los dos únicos valores posibles
+        // (design: el ancla se declara con el fondo inicial porque se queda en el cajón; el resto,
+        // con su propio esperado, porque no hay nada físico que contar en un medio no-efectivo).
+        var lineas = CalculadorDeArqueo.Calcular(insumos, idAncla);
+
+        // 6/7. INSERT arqueos_turno + tesorería encadenada — mismos statements que el cierre
+        // clásico (InsertarArqueosYTesoreriaAsync), declarado = fondo inicial en el ancla, esperado
+        // en cualquier otro medio arqueable.
+        await InsertarArqueosYTesoreriaAsync(
+            idTenant, idTurnoCaja, idPuntoVenta.Value, idEmpleado, momento, insumos, lineas,
+            l => l.IdMedioPago == idAncla ? insumos.FondoInicial : l.ImporteEsperado, ct);
+
+        await transaccion.CommitAsync(ct);
+
+        return await db.TurnosCaja.AsNoTracking().FirstAsync(t => t.Id == idTurnoCaja, ct);
+    }
+
+    /// <summary>Statements 5/6 del cierre clásico (design: The Cierre Transaction) — compartidos
+    /// TAL CUAL por <see cref="EjecutarCierreAsync"/> y <see cref="EjecutarCierrePorRetiroAsync"/>:
+    /// INSERT de <c>arqueos_turno</c> (una fila por medio arqueable; <paramref name="declarar"/> es
+    /// la ÚNICA diferencia entre los dos modos — de dónde sale <c>ImporteDeclarado</c>) y la
+    /// tesorería encadenada (UN único movimiento tipo <c>retiro_caja</c>, inicio = final de la
+    /// última fila del mismo punto de venta, egreso = Σ gastos sobre TODOS los medios — design
+    /// decisión 9, paridad legacy). Debe llamarse DENTRO de la transacción ya abierta por el
+    /// llamador, después del UPDATE guardado (statement 1) y de derivar (statements 2-4).</summary>
+    private async Task<IReadOnlyList<ArqueoTurno>> InsertarArqueosYTesoreriaAsync(
+        int idTenant, int idTurnoCaja, int idPuntoVenta, int idEmpleado, DateTimeOffset momento,
+        InsumosDeArqueo insumos, IReadOnlyList<LineaDeArqueo> lineas, Func<LineaDeArqueo, decimal> declarar,
+        CancellationToken ct)
+    {
         var arqueos = lineas
             .Select(l => new ArqueoTurno
             {
@@ -265,18 +391,15 @@ public class ServicioDeTurnos(
                 IdTurnoCaja = idTurnoCaja,
                 IdMedioPago = l.IdMedioPago,
                 ImporteEsperado = l.ImporteEsperado,
-                ImporteDeclarado = declaradoPorMedio[l.IdMedioPago]
+                ImporteDeclarado = declarar(l)
             })
             .ToList();
         db.ArqueosTurno.AddRange(arqueos);
         await db.SaveChangesAsync(ct);
 
-        // 6. Tesorería encadenada — UN único movimiento (tipo retiro_caja), inicio = final de la
-        // última fila del mismo punto de venta (0 si no hay), egreso = Σ gastos sobre TODOS los
-        // medios (design decisión 9, paridad legacy).
         var totalGastos = insumos.Actividad.Sum(a => a.Gastos);
         var inicio = await db.MovimientosTesoreria
-            .Where(m => m.IdPuntoVenta == idPuntoVenta.Value)
+            .Where(m => m.IdPuntoVenta == idPuntoVenta)
             .OrderByDescending(m => m.Id)
             .Select(m => m.Final)
             .FirstOrDefaultAsync(ct);
@@ -285,7 +408,7 @@ public class ServicioDeTurnos(
         db.MovimientosTesoreria.Add(new MovimientoTesoreria
         {
             IdTenant = idTenant,
-            IdPuntoVenta = idPuntoVenta.Value,
+            IdPuntoVenta = idPuntoVenta,
             Fecha = momento,
             Tipo = TipoMovimientoTesoreria.RetiroCaja,
             IdTurnoCaja = idTurnoCaja,
@@ -298,10 +421,25 @@ public class ServicioDeTurnos(
         });
         await db.SaveChangesAsync(ct);
 
-        await transaccion.CommitAsync(ct);
+        return arqueos;
+    }
 
-        var turno = await db.TurnosCaja.AsNoTracking().FirstAsync(t => t.Id == idTurnoCaja, ct);
-        return ProyectarConArqueos(turno, arqueos);
+    /// <summary>Resumen de un cierre ya persistido (<c>GET …/resumen-de-cierre</c>) — reimpresión o
+    /// recuperación tras una falla de red ambigua sobre <see cref="CerrarPorRetiroAsync"/>: sirve
+    /// para CUALQUIER turno cerrado (por retiro o por el cierre clásico), porque la derivación no
+    /// depende de qué endpoint lo cerró. <c>404</c> ADR-8 si no existe/es de otro tenant; <c>409
+    /// turno_no_cerrado</c> si todavía está abierto.</summary>
+    public async Task<ResumenDeCierrePorRetiro> ObtenerResumenDeCierreAsync(int idTurnoCaja, CancellationToken ct = default)
+    {
+        var turno = await db.TurnosCaja.AsNoTracking().FirstOrDefaultAsync(t => t.Id == idTurnoCaja, ct)
+            ?? throw ErrorDominio.NoEncontrado($"No existe el turno {idTurnoCaja}.");
+
+        if (turno.Estado != EstadoTurno.Cerrado)
+        {
+            throw new ErrorDominio("turno_no_cerrado", "El turno todavía no está cerrado.", 409);
+        }
+
+        return await lectorDeResumenDeCierrePorRetiro.LeerAsync(turno, ct);
     }
 
     /// <summary>Design: The Cierre Transaction, statement 1 — único punto de transición de

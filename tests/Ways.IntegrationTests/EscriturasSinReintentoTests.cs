@@ -1023,8 +1023,10 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         var contexto = ContextoAdmin(s);
         var precios = new ServicioDePrecios(db, reloj, contexto);
         var ofertas = new ServicioDeOfertas(db, reloj, contexto, precios);
+        var lectorDeTurno = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
         var turnos = new Ways.Application.Caja.ServicioDeTurnos(
-            db, reloj, contexto, new Ways.Application.Caja.LectorDeMovimientosDelTurno(db));
+            db, reloj, contexto, lectorDeTurno,
+            new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeTurno));
         var lotes = new ServicioDeLotes(db, reloj, contexto);
 
         return new ServicioDeVentas(db, reloj, contexto, ofertas, turnos, lotes);
