@@ -5,6 +5,7 @@ import { Articulos } from './Articulos'
 import { ErrorApi } from '../api/cliente'
 import type {
   AlicuotaIvaListado,
+  AreaListado,
   ArticuloListado,
   CategoriaListado,
   CondicionFiscalListado,
@@ -69,6 +70,10 @@ function paginaFixture(items: ArticuloListado[]): PaginaDe<ArticuloListado> {
 
 const articuloUno = articuloFixture({ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno' })
 const articuloDos = articuloFixture({ id: 2, codigoInterno: 'A0002', nombre: 'Articulo Dos' })
+
+function areaFixture(sobrescribir: Partial<AreaListado> = {}): AreaListado {
+  return { id: 1, nombre: 'Almacén', activo: true, idEmpresa: null, orden: 1, ...sobrescribir }
+}
 
 function marcaFixture(sobrescribir: Partial<MarcaListado> = {}): MarcaListado {
   return { id: 1, nombre: 'Alfa', activo: true, idEmpresa: null, ...sobrescribir }
@@ -164,6 +169,9 @@ function casosAltaRapida(): CasoAltaRapida[] {
 }
 
 type CatalogosDeTest = {
+  /** Override del listado y del detalle de artículos — default: [articuloUno, articuloDos]. */
+  articulos?: ArticuloListado[]
+  areas?: AreaListado[]
   marcas?: MarcaListado[]
   grupos?: GrupoListado[]
   categorias?: CategoriaListado[]
@@ -184,18 +192,22 @@ type CatalogosDeTest = {
  */
 function mockearApiGet(catalogos: CatalogosDeTest = {}) {
   apiGetMock.mockImplementation((ruta: string) => {
-    if (ruta === '/articulos') return Promise.resolve(paginaFixture([articuloUno, articuloDos]))
+    const articulos = catalogos.articulos ?? [articuloUno, articuloDos]
+    if (ruta === '/articulos') return Promise.resolve(paginaFixture(articulos))
     if (/^\/articulos\/\d+$/.test(ruta)) {
       const id = Number(ruta.split('/')[2])
-      return Promise.resolve([articuloUno, articuloDos].find((a) => a.id === id) ?? articuloUno)
+      return Promise.resolve(articulos.find((a) => a.id === id) ?? articulos[0])
     }
     if (/^\/articulos\/\d+\/codigos-barra$/.test(ruta)) return Promise.resolve([])
     if (/^\/articulos\/\d+\/precios$/.test(ruta)) return Promise.resolve([])
     if (/^\/articulos\/\d+\/sugerencia-precio$/.test(ruta)) return Promise.resolve({ precioSugerido: 55.5 })
-    if (ruta === '/catalogos/areas') return Promise.resolve([{ id: 1, nombre: 'Almacén', activo: true }])
-    if (ruta === '/catalogos/categorias') return Promise.resolve(catalogos.categorias ?? [])
-    if (ruta === '/catalogos/marcas') return Promise.resolve(catalogos.marcas ?? [])
-    if (ruta === '/catalogos/grupos') return Promise.resolve(catalogos.grupos ?? [])
+    // startsWith, no === : Articulos.tsx pide estos cuatro con `incluirInactivos=true` (fix/
+    // articulos-form-catalogos-inactivos) — el mock despacha por recurso sin importar el query
+    // string, igual que `/proveedores` ya hacía más abajo.
+    if (ruta.startsWith('/catalogos/areas')) return Promise.resolve(catalogos.areas ?? [areaFixture()])
+    if (ruta.startsWith('/catalogos/categorias')) return Promise.resolve(catalogos.categorias ?? [])
+    if (ruta.startsWith('/catalogos/marcas')) return Promise.resolve(catalogos.marcas ?? [])
+    if (ruta.startsWith('/catalogos/grupos')) return Promise.resolve(catalogos.grupos ?? [])
     if (ruta.startsWith('/proveedores')) {
       const items = catalogos.proveedores ?? []
       return Promise.resolve({ items, total: items.length, pagina: 1, tamanio: 200 })
@@ -660,5 +672,161 @@ describe('Articulos — alta rápida de proveedor: etiqueta y orden en el select
       'Zeta SA',
     ])
     expect(selectProveedor).toHaveValue('3')
+  })
+})
+
+// ---- catálogos inactivos y FK colgantes en el formulario (fix/articulos-form-catalogos-inactivos) ----
+// Un catálogo (área/categoría/marca/grupo) o proveedor referenciado por un artículo puede estar
+// desactivado (`activo: false`, la salida recomendada cuando la guarda de referencias rechaza el
+// borrado) o, en datos legado de antes de esa guarda, dado de baja lógica (ya no aparece en el
+// listado en absoluto — dangling-fk-read-models). El formulario tiene que distinguir los dos casos:
+// inactivo pero visible se ofrece igual (con sufijo) en edición; colgante se trata como "sin
+// asignar".
+
+describe('Articulos — catálogos inactivos en el formulario', () => {
+  it('en alta, el select de Marca no ofrece una marca inactiva', async () => {
+    mockearApiGet({
+      marcas: [marcaFixture({ id: 1, nombre: 'Alfa', activo: true }), marcaFixture({ id: 2, nombre: 'Beta', activo: false })],
+    })
+
+    await abrirFormularioNuevo()
+
+    const opciones = within(screen.getByLabelText('Marca'))
+      .getAllByRole('option')
+      .map((o) => o.textContent)
+    expect(opciones).toEqual(['Sin especificar', 'Alfa'])
+  })
+
+  it('en alta, el área por defecto es la primera ACTIVA — no la primera del arreglo, que puede ser inactiva', async () => {
+    mockearApiGet({
+      areas: [
+        areaFixture({ id: 1, nombre: 'Almacén viejo', activo: false }),
+        areaFixture({ id: 2, nombre: 'Depósito', activo: true }),
+      ],
+    })
+
+    await abrirFormularioNuevo()
+
+    expect(screen.getByLabelText('Área')).toHaveValue('2')
+  })
+
+  it('al editar un artículo con marca inactiva, la muestra seleccionada con el sufijo "(inactiva)" y guarda sin tocarla', async () => {
+    const conMarcaInactiva = articuloFixture({ id: 1, idMarca: 2 })
+    mockearApiGet({
+      articulos: [conMarcaInactiva, articuloDos],
+      marcas: [marcaFixture({ id: 1, nombre: 'Alfa', activo: true }), marcaFixture({ id: 2, nombre: 'Beta', activo: false })],
+    })
+    apiPutMock.mockResolvedValue(conMarcaInactiva)
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('button', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    const selectMarca = screen.getByLabelText('Marca') as HTMLSelectElement
+    expect(selectMarca).toHaveValue('2')
+    expect(within(selectMarca).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Sin especificar',
+      'Alfa',
+      'Beta (inactiva)',
+    ])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.idMarca).toBe(2)
+  })
+
+  it('al editar un artículo con área inactiva (obligatoria), la muestra seleccionada con el sufijo y permite guardar sin cambiarla', async () => {
+    const conAreaInactiva = articuloFixture({ id: 1, idArea: 2 })
+    mockearApiGet({
+      articulos: [conAreaInactiva, articuloDos],
+      areas: [
+        areaFixture({ id: 1, nombre: 'Almacén', activo: true }),
+        areaFixture({ id: 2, nombre: 'Depósito viejo', activo: false }),
+      ],
+    })
+    apiPutMock.mockResolvedValue(conAreaInactiva)
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('button', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    const selectArea = screen.getByLabelText('Área') as HTMLSelectElement
+    expect(selectArea).toHaveValue('2')
+    expect(within(selectArea).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Elegir…',
+      'Almacén',
+      'Depósito viejo (inactiva)',
+    ])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.idArea).toBe(2)
+  })
+
+  it('la grilla resuelve el nombre del área aunque esté inactiva (nombreDe ya no se limita a las activas)', async () => {
+    mockearApiGet({ areas: [areaFixture({ id: 1, nombre: 'Depósito viejo', activo: false })] })
+
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    expect(within(fila).getByText('Depósito viejo')).toBeInTheDocument()
+  })
+})
+
+describe('Articulos — FK colgante hacia un catálogo dado de baja lógica (legado, dangling-fk-read-models)', () => {
+  it('con un idMarca que ya no existe en el catálogo, el formulario la trata como "sin asignar" y guarda idMarca: null', async () => {
+    const conMarcaColgante = articuloFixture({ id: 1, idMarca: 999 })
+    mockearApiGet({
+      articulos: [conMarcaColgante, articuloDos],
+      marcas: [marcaFixture({ id: 1, nombre: 'Alfa', activo: true })],
+    })
+    apiPutMock.mockResolvedValue(conMarcaColgante)
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('button', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    const selectMarca = screen.getByLabelText('Marca') as HTMLSelectElement
+    expect(selectMarca).toHaveValue('')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cuerpo.idMarca).toBeNull()
+  })
+
+  it('con un idArea que ya no existe en el catálogo, el formulario deja el select sin elegir — sin crashear', async () => {
+    const conAreaColgante = articuloFixture({ id: 1, idArea: 999 })
+    mockearApiGet({
+      articulos: [conAreaColgante, articuloDos],
+      areas: [areaFixture({ id: 1, nombre: 'Almacén', activo: true })],
+    })
+    render(<Articulos />)
+
+    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!fila) throw new Error('No se encontró la fila del artículo')
+    await userEvent.click(within(fila).getByRole('button', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    const selectArea = screen.getByLabelText('Área') as HTMLSelectElement
+    expect(selectArea).toHaveValue('')
+    expect(within(selectArea).getAllByRole('option').map((o) => o.textContent)).toEqual(['Elegir…', 'Almacén'])
+
+    // required + value === '' (placeholder disabled): el navegador bloquea el submit nativo antes
+    // de que llegue al handler — no debería dispararse ningún POST/PUT igual.
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+    expect(apiPutMock).not.toHaveBeenCalled()
   })
 })

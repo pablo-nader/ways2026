@@ -49,3 +49,18 @@ export function insertarOrdenadoPor<T>(lista: T[], nuevo: T, clave: (item: T) =>
   const indice = lista.findIndex((item) => clave(item).localeCompare(etiquetaNueva, 'es', { sensitivity: 'base' }) > 0)
   return indice === -1 ? [...lista, nuevo] : [...lista.slice(0, indice), nuevo, ...lista.slice(indice)]
 }
+
+/**
+ * Opciones de un select de catálogo/proveedor en el formulario de artículo (dangling-fk-read-models
+ * + fix/articulos-form-catalogos-inactivos): en alta (`idActual` en `''`), solo las activas; en
+ * edición, además la que tiene actualmente el artículo aunque esté inactiva — nunca otra inactiva,
+ * y nunca un id que ya no exista en el listado. Un `idActual` que no matchea ningún item (baja
+ * lógica del catálogo referenciado: FK colgante) da el mismo resultado que `''` — el llamador es
+ * quien decide qué mostrar para "sin asignar", este helper nunca inventa una opción fantasma.
+ */
+export function opcionesConValorActual<T extends { id: number; activo: boolean }>(
+  listado: T[],
+  idActual: number | '',
+): T[] {
+  return listado.filter((item) => item.activo || item.id === idActual)
+}

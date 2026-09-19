@@ -11,6 +11,7 @@ import type {
   AreaAlta,
   AreaListado,
   ArticuloListado,
+  CategoriaAlta,
   CategoriaListado,
   CodigoBarraListado,
   EdicionArticulo,
@@ -34,7 +35,13 @@ import { AltaRapidaCategoria } from './articulos/AltaRapidaCategoria'
 import { AltaRapidaGrupo } from './articulos/AltaRapidaGrupo'
 import { AltaRapidaMarca } from './articulos/AltaRapidaMarca'
 import { AltaRapidaProveedor } from './articulos/AltaRapidaProveedor'
-import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
+import {
+  elegirAlicuotaPorDefecto,
+  etiquetaDeProveedor,
+  insertarOrdenadoPor,
+  opcionesConValorActual,
+  ordenarProveedoresPorEtiqueta,
+} from './articulos/helpers'
 
 type Formulario = {
   id: number | null
@@ -109,6 +116,42 @@ function aFormulario(a: ArticuloListado): Formulario {
   }
 }
 
+type CatalogosDelFormulario = {
+  areas: AreaListado[]
+  categorias: CategoriaListado[]
+  marcas: MarcaListado[]
+  grupos: GrupoListado[]
+  proveedores: ProveedorListado[]
+}
+
+function idVisibleEnListado(listado: { id: number }[], id: number | ''): boolean {
+  return id !== '' && listado.some((item) => item.id === id)
+}
+
+/**
+ * Normaliza las referencias de un artículo recién abierto para editar contra los catálogos YA
+ * cargados: un id que no aparece en el listado (ni activo ni inactivo) es una baja lógica del
+ * catálogo referenciado — FK colgante, legado de antes de la guarda de referencias
+ * (dangling-fk-read-models) — y se trata como "sin asignar" (`''`), nunca se reenvía tal cual al
+ * guardar. Un id INACTIVO pero todavía visible en el listado se deja intacto: eso lo resuelve
+ * `opcionesConValorActual` en el render, con su sufijo. Para `idArea` (obligatorio) el resultado
+ * `''` deja seleccionado el placeholder "Elegir…" — el usuario tiene que elegir una antes de poder
+ * guardar (el `required` del select, con el respaldo de un 400 claro del servidor si igual llega
+ * un 0).
+ */
+function sinReferenciasColgantes(f: Formulario, catalogos: CatalogosDelFormulario): Formulario {
+  return {
+    ...f,
+    idArea: idVisibleEnListado(catalogos.areas, f.idArea) ? f.idArea : '',
+    idCategoria: idVisibleEnListado(catalogos.categorias, f.idCategoria) ? f.idCategoria : '',
+    idMarca: idVisibleEnListado(catalogos.marcas, f.idMarca) ? f.idMarca : '',
+    idGrupo: idVisibleEnListado(catalogos.grupos, f.idGrupo) ? f.idGrupo : '',
+    idProveedorHabitual: idVisibleEnListado(catalogos.proveedores, f.idProveedorHabitual)
+      ? f.idProveedorHabitual
+      : '',
+  }
+}
+
 function aVacioNulo(valor: string): string | null {
   const limpio = valor.trim()
   return limpio === '' ? null : limpio
@@ -151,6 +194,7 @@ function aEdicion(f: Formulario): EdicionArticulo {
 }
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
+const clienteCategorias = clienteDeCatalogo<CategoriaListado, CategoriaAlta>('categorias')
 const clienteMarcas = clienteDeCatalogo<MarcaListado, MarcaAlta>('marcas')
 const clienteGrupos = clienteDeCatalogo<GrupoListado, GrupoAlta>('grupos')
 
@@ -231,19 +275,26 @@ export function Articulos() {
 
   useEffect(() => {
     void cargar('')
+    // incluirInactivos: true en los cuatro — un artículo existente puede referenciar un área/
+    // categoría/marca/grupo ya desactivada (la baja lógica es hoy la salida recomendada cuando la
+    // guarda de referencias rechaza el borrado, fix/articulos-form-catalogos-inactivos) y el
+    // select de edición necesita esa opción para poder mostrarla y guardarla sin tocarla. El alta
+    // solo ofrece las activas: `opcionesConValorActual` filtra en el render, no acá.
     clienteAreas
-      .listar(false)
+      .listar(true)
       .then(setAreas)
       .catch(() => {
         setAreas([])
         agregarErrorCatalogoRequerido('No se pudieron cargar las áreas.')
       })
-    api.get<CategoriaListado[]>('/catalogos/categorias').then(setCategorias).catch(() => setCategorias([]))
-    clienteMarcas.listar(false).then(setMarcas).catch(() => setMarcas([]))
-    clienteGrupos.listar(false).then(setGrupos).catch(() => setGrupos([]))
+    clienteCategorias.listar(true).then(setCategorias).catch(() => setCategorias([]))
+    clienteMarcas.listar(true).then(setMarcas).catch(() => setMarcas([]))
+    clienteGrupos.listar(true).then(setGrupos).catch(() => setGrupos([]))
     // tamanio grande a propósito: es un selector de referencia, no un listado paginado. Si el
     // tenant tiene más proveedores que el clamp del servidor, avisamos que la lista quedó
-    // truncada en vez de esconder el resto en silencio.
+    // truncada en vez de esconder el resto en silencio. Sin `incluirInactivos` acá: a diferencia
+    // de los catálogos genéricos, `ServicioDeProveedores.ListarAsync` no filtra por `Activo` (solo
+    // por `incluirEliminados`, la baja lógica) — ya trae activos e inactivos por default.
     api
       .get<PaginaDe<ProveedorListado>>('/proveedores?tamanio=200')
       .then((p) => {
@@ -278,7 +329,10 @@ export function Articulos() {
       })
   }, [cargar])
 
-  const areaPorDefecto = areas[0]?.id ?? ''
+  // `areas` ahora trae activas e inactivas (incluirInactivos: true) — el default de un artículo
+  // NUEVO tiene que ser la primera ACTIVA, nunca `areas[0]` tal cual (el servidor ordena por
+  // nombre, no por estado, así que una inactiva puede quedar primera alfabéticamente).
+  const areaPorDefecto = areas.find((a) => a.activo)?.id ?? ''
   const alicuotaPorDefecto = elegirAlicuotaPorDefecto(alicuotasIva)
 
   // Altas rápidas de padrones (Categoría/Marca/Grupo/Proveedor habitual) desde el propio
@@ -325,7 +379,7 @@ export function Articulos() {
       // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
       const detalle = await clienteDeArticulos.obtener(a.id)
       if (tokenEdicionRef.current !== token) return
-      setFormulario(aFormulario(detalle))
+      setFormulario(sinReferenciasColgantes(aFormulario(detalle), { areas, categorias, marcas, grupos, proveedores }))
       setGuardando(false)
       setAviso('')
     } catch (e) {
@@ -741,9 +795,10 @@ function FormularioArticulo({
               <option value="" disabled>
                 Elegir…
               </option>
-              {areas.map((a) => (
+              {opcionesConValorActual(areas, valor.idArea).map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.nombre}
+                  {!a.activo ? ' (inactiva)' : ''}
                 </option>
               ))}
             </select>
@@ -762,9 +817,10 @@ function FormularioArticulo({
                 onChange={(e) => onCambio({ ...valor, idCategoria: e.target.value === '' ? '' : Number(e.target.value) })}
               >
                 <option value="">Sin especificar</option>
-                {categorias.map((c) => (
+                {opcionesConValorActual(categorias, valor.idCategoria).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.nombre}
+                    {!c.activo ? ' (inactiva)' : ''}
                   </option>
                 ))}
               </select>
@@ -793,9 +849,10 @@ function FormularioArticulo({
                 onChange={(e) => onCambio({ ...valor, idMarca: e.target.value === '' ? '' : Number(e.target.value) })}
               >
                 <option value="">Sin especificar</option>
-                {marcas.map((m) => (
+                {opcionesConValorActual(marcas, valor.idMarca).map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.nombre}
+                    {!m.activo ? ' (inactiva)' : ''}
                   </option>
                 ))}
               </select>
@@ -824,10 +881,11 @@ function FormularioArticulo({
                 onChange={(e) => onCambio({ ...valor, idGrupo: e.target.value === '' ? '' : Number(e.target.value) })}
               >
                 <option value="">Sin especificar</option>
-                {grupos.map((g) => (
+                {opcionesConValorActual(grupos, valor.idGrupo).map((g) => (
                   <option key={g.id} value={g.id}>
                     {g.nombre}
                     {g.margen !== null ? ` (margen ${g.margen}%)` : ''}
+                    {!g.activo ? ' (inactivo)' : ''}
                   </option>
                 ))}
               </select>
@@ -858,9 +916,10 @@ function FormularioArticulo({
                 }
               >
                 <option value="">Sin especificar</option>
-                {proveedores.map((p) => (
+                {opcionesConValorActual(proveedores, valor.idProveedorHabitual).map((p) => (
                   <option key={p.id} value={p.id}>
                     {etiquetaDeProveedor(p)}
+                    {!p.activo ? ' (inactivo)' : ''}
                   </option>
                 ))}
               </select>
@@ -1038,7 +1097,11 @@ function FormularioArticulo({
               propagación (ver el comentario en cada `AltaRapida*`). */}
           {padronRapidoAbierto === 'categoria' && (
             <AltaRapidaCategoria
-              categorias={categorias}
+              // Filtrado acá, no en `AltaRapidaCategoria` (que ofrece la lista "tal cual" por
+              // contrato, ver su doc-comment): `categorias` en esta pantalla ahora trae activas e
+              // inactivas (incluirInactivos: true) para el select de artículo, pero una categoría
+              // nueva nunca debería poder quedar parentada bajo una ya desactivada.
+              categorias={categorias.filter((c) => c.activo)}
               onCreado={(nueva) => {
                 onCategoriaCreada(nueva)
                 onCambio({ ...valor, idCategoria: nueva.id })
