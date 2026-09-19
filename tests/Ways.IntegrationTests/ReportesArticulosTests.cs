@@ -1,8 +1,10 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Organizacion;
@@ -13,6 +15,7 @@ using Ways.Domain.Catalogos;
 using Ways.Domain.Proveedores;
 using Ways.Domain.Usuarios;
 using Ways.Infrastructure.Multitenancy;
+using Ways.Infrastructure.Persistencia;
 
 namespace Ways.IntegrationTests;
 
@@ -167,14 +170,57 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         return articulo.Id;
     }
 
+    // ---- baja lógica de catálogos (sin guarda de uso — bug de fondo de este reporte) --------------
+
+    private async Task DarDeBajaAreaAsync(Contexto ctx, int id)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var area = await db.Areas.SingleAsync(a => a.Id == id);
+        area.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
+    private async Task DarDeBajaCategoriaAsync(Contexto ctx, int id)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var categoria = await db.Categorias.SingleAsync(c => c.Id == id);
+        categoria.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
+    private async Task DarDeBajaMarcaAsync(Contexto ctx, int id)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var marca = await db.Marcas.SingleAsync(m => m.Id == id);
+        marca.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
+    private async Task DarDeBajaGrupoAsync(Contexto ctx, int id)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var grupo = await db.Grupos.SingleAsync(g => g.Id == id);
+        grupo.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
+    private async Task DarDeBajaProveedorAsync(Contexto ctx, int id)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var proveedor = await db.Proveedores.SingleAsync(p => p.Id == id);
+        proveedor.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
     private static string ConstruirQuery(
-        int? idArea = null, int? idCategoria = null, bool? sinCategoria = null, int? idMarca = null,
-        bool? sinMarca = null, int? idGrupo = null, bool? sinGrupo = null, int? idProveedor = null,
-        bool? sinProveedor = null, bool? soloIncompletos = null, bool? activo = null, int? pagina = null,
-        int? tamanio = null)
+        int? idArea = null, bool? sinArea = null, int? idCategoria = null, bool? sinCategoria = null,
+        int? idMarca = null, bool? sinMarca = null, int? idGrupo = null, bool? sinGrupo = null,
+        int? idProveedor = null, bool? sinProveedor = null, bool? soloIncompletos = null, bool? activo = null,
+        int? pagina = null, int? tamanio = null)
     {
         var partes = new List<string>();
         if (idArea is { } a) partes.Add($"idArea={a}");
+        if (sinArea is { } sa) partes.Add($"sinArea={sa}");
         if (idCategoria is { } c) partes.Add($"idCategoria={c}");
         if (sinCategoria is { } sc) partes.Add($"sinCategoria={sc}");
         if (idMarca is { } m) partes.Add($"idMarca={m}");
@@ -214,6 +260,39 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         var fila = Assert.Single(pagina.Items);
         Assert.Equal("articulo-area-a", fila.Nombre);
         Assert.Equal("Almacén", fila.Area);
+    }
+
+    [Fact]
+    public async Task IdAreaYSinAreaJuntosDevuelven400()
+    {
+        var ctx = await PrepararAsync(nameof(IdAreaYSinAreaJuntosDevuelven400));
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/reportes/articulos{ConstruirQuery(idArea: ctx.IdAreaA, sinArea: true)}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("filtro_incompatible", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Nombra la cláusula: <c>!idsDeAreasVisibles.Contains(a.IdArea)</c> en
+    /// <c>ConstruirQueryDeArticulosAsync</c>. <c>IdArea</c> es NOT NULL en <c>articulos</c>
+    /// (doc 10 §3) — la única forma de que un artículo quede "sin área" es que el área a la que
+    /// apunta haya sido dada de baja lógica SIN guarda de uso (bug de fondo de este reporte,
+    /// judgment-day ronda 1). Con la cláusula reducida a <c>a.IdArea == null</c> (comparación
+    /// siempre falsa sobre una columna NOT NULL) este test falla: 0 resultados en vez de 1.</summary>
+    [Fact]
+    public async Task SinAreaDevuelveSoloArticulosConAreaDadaDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(SinAreaDevuelveSoloArticulosConAreaDadaDeBaja));
+        await SembrarArticuloAsync(ctx, "con-area-vigente", idArea: ctx.IdAreaA);
+        await SembrarArticuloAsync(ctx, "con-area-dada-de-baja", idArea: ctx.IdAreaB);
+        await DarDeBajaAreaAsync(ctx, ctx.IdAreaB);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(sinArea: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("con-area-dada-de-baja", fila.Nombre);
+        Assert.Null(fila.Area);
     }
 
     // ---- categoría: expansión de descendientes -----------------------------------------------------
@@ -264,6 +343,27 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal("filtro_incompatible", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>Nombra la cláusula: el segundo disyunto de <c>a.IdCategoria == null ||
+    /// !idsDeCategoriasVisibles.Contains(...)</c>. Sin él (solo el chequeo de <c>null</c>, como
+    /// antes del fix), un artículo con <c>IdCategoria</c> apuntando a una categoría dada de baja
+    /// lógica SIN guarda de uso no aparece bajo <c>sinCategoria=true</c> pese a que la proyección
+    /// ya lo muestra como "Sin asignar" (LEFT JOIN + filtro BajaLogica) — inconsistencia de fondo
+    /// de este reporte (judgment-day ronda 1).</summary>
+    [Fact]
+    public async Task SinCategoriaTambienIncluyeUnArticuloConCategoriaDadaDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(SinCategoriaTambienIncluyeUnArticuloConCategoriaDadaDeBaja));
+        await SembrarArticuloAsync(ctx, "con-categoria-vigente", idCategoria: ctx.IdCategoriaPadre);
+        await SembrarArticuloAsync(ctx, "con-categoria-dada-de-baja", idCategoria: ctx.IdCategoriaOtra);
+        await DarDeBajaCategoriaAsync(ctx, ctx.IdCategoriaOtra);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(sinCategoria: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("con-categoria-dada-de-baja", fila.Nombre);
+        Assert.Null(fila.Categoria);
+    }
+
     // ---- marca ------------------------------------------------------------------------------------
 
     /// <summary>Nombra la cláusula: <c>a.IdMarca == idMarcaValor</c>.</summary>
@@ -307,6 +407,23 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal("filtro_incompatible", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>Mismo objetivo de mutación que <c>SinCategoriaTambienIncluyeUnArticuloConCategoriaDadaDeBaja</c>,
+    /// aplicado a marca.</summary>
+    [Fact]
+    public async Task SinMarcaTambienIncluyeUnArticuloConMarcaDadaDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(SinMarcaTambienIncluyeUnArticuloConMarcaDadaDeBaja));
+        await SembrarArticuloAsync(ctx, "con-marca-vigente", idMarca: ctx.IdMarcaA);
+        await SembrarArticuloAsync(ctx, "con-marca-dada-de-baja", idMarca: ctx.IdMarcaB);
+        await DarDeBajaMarcaAsync(ctx, ctx.IdMarcaB);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(sinMarca: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("con-marca-dada-de-baja", fila.Nombre);
+        Assert.Null(fila.Marca);
+    }
+
     // ---- grupo --------------------------------------------------------------------------------------
 
     /// <summary>Nombra la cláusula: <c>a.IdGrupo == idGrupoValor</c>.</summary>
@@ -348,6 +465,23 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("filtro_incompatible", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Mismo objetivo de mutación que <c>SinCategoriaTambienIncluyeUnArticuloConCategoriaDadaDeBaja</c>,
+    /// aplicado a grupo.</summary>
+    [Fact]
+    public async Task SinGrupoTambienIncluyeUnArticuloConGrupoDadoDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(SinGrupoTambienIncluyeUnArticuloConGrupoDadoDeBaja));
+        await SembrarArticuloAsync(ctx, "con-grupo-vigente", idGrupo: ctx.IdGrupoA);
+        await SembrarArticuloAsync(ctx, "con-grupo-dado-de-baja", idGrupo: ctx.IdGrupoB);
+        await DarDeBajaGrupoAsync(ctx, ctx.IdGrupoB);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(sinGrupo: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("con-grupo-dado-de-baja", fila.Nombre);
+        Assert.Null(fila.Grupo);
     }
 
     // ---- proveedor habitual -------------------------------------------------------------------------
@@ -394,6 +528,23 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal("filtro_incompatible", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>Mismo objetivo de mutación que <c>SinCategoriaTambienIncluyeUnArticuloConCategoriaDadaDeBaja</c>,
+    /// aplicado a proveedor habitual.</summary>
+    [Fact]
+    public async Task SinProveedorTambienIncluyeUnArticuloConProveedorDadoDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(SinProveedorTambienIncluyeUnArticuloConProveedorDadoDeBaja));
+        await SembrarArticuloAsync(ctx, "con-proveedor-vigente", idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await SembrarArticuloAsync(ctx, "con-proveedor-dado-de-baja", idProveedorHabitual: ctx.IdProveedorSinFantasia);
+        await DarDeBajaProveedorAsync(ctx, ctx.IdProveedorSinFantasia);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(sinProveedor: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("con-proveedor-dado-de-baja", fila.Nombre);
+        Assert.Null(fila.Proveedor);
+    }
+
     // ---- etiqueta de proveedor: NombreFantasia > RazonSocial -----------------------------------------
 
     [Fact]
@@ -421,12 +572,19 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         Assert.Equal("Distribuidora Tres SA", Assert.Single(pagina.Items).Proveedor);
     }
 
-    // ---- soloIncompletos: OR de las cuatro ausencias -------------------------------------------------
+    // ---- soloIncompletos: OR de las cinco ausencias -------------------------------------------------
+    //
+    // mutation-proof-tests regla 3 (enumerar los conjuncts): CADA disyunto del OR de
+    // ConstruirQueryDeArticulosAsync necesita su propio test — cubrir uno (acá, proveedor) no dice
+    // nada de sus vecinos. Cada test siembra un artículo COMPLETO (las cinco clasificaciones
+    // asignadas y vigentes) que NUNCA debe aparecer, más un artículo al que le falta SOLO la
+    // clasificación bajo prueba. Categoría/marca/grupo/proveedor tienen dos variantes (FK null Y FK
+    // colgante hacia una fila dada de baja lógica); área, al ser NOT NULL en articulos, solo tiene
+    // la variante de FK colgante.
 
-    /// <summary>Nombra la cláusula: el <c>||</c> de <c>ConstruirQueryDeArticulosAsync</c> — un
-    /// artículo al que le falta UNA sola de las cuatro clasificaciones (acá, proveedor) ya tiene
-    /// que aparecer. Si la cláusula fuera un <c>&amp;&amp;</c> (las cuatro ausentes a la vez), este
-    /// artículo (con categoría/marca/grupo asignados) no aparecería y el test fallaría.</summary>
+    /// <summary>Nombra el disyunto de proveedor (FK null). Si la cláusula fuera un
+    /// <c>&amp;&amp;</c> (las cinco ausentes a la vez), este artículo (con área/categoría/marca/
+    /// grupo asignados) no aparecería y el test fallaría.</summary>
     [Fact]
     public async Task SoloIncompletosIncluyeUnArticuloAlQueLeFaltaUnaSolaClasificacion()
     {
@@ -441,6 +599,161 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
         var fila = Assert.Single(pagina.Items);
         Assert.Equal("incompleto-sin-proveedor", fila.Nombre);
+    }
+
+    /// <summary>Nombra el disyunto de proveedor (FK colgante hacia un proveedor dado de baja
+    /// lógica) — la variante que el fix de judgment-day ronda 1 agrega.</summary>
+    [Fact]
+    public async Task SoloIncompletosIncluyeUnArticuloConProveedorDadoDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(SoloIncompletosIncluyeUnArticuloConProveedorDadoDeBaja));
+        await SembrarArticuloAsync(
+            ctx, "completo", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA,
+            idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await SembrarArticuloAsync(
+            ctx, "incompleto-proveedor-de-baja", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA,
+            idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorSinFantasia);
+        await DarDeBajaProveedorAsync(ctx, ctx.IdProveedorSinFantasia);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(soloIncompletos: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("incompleto-proveedor-de-baja", fila.Nombre);
+    }
+
+    /// <summary>Nombra el disyunto de área (única variante posible: FK colgante — <c>IdArea</c> es
+    /// NOT NULL). Sin este test, borrar <c>!idsDeAreasVisibles.Contains(a.IdArea) ||</c> entero del
+    /// OR sobrevive.</summary>
+    [Fact]
+    public async Task SoloIncompletosIncluyeUnArticuloAlQueLeFaltaSoloElArea()
+    {
+        var ctx = await PrepararAsync(nameof(SoloIncompletosIncluyeUnArticuloAlQueLeFaltaSoloElArea));
+        await SembrarArticuloAsync(
+            ctx, "completo", idArea: ctx.IdAreaA, idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA,
+            idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await SembrarArticuloAsync(
+            ctx, "incompleto-area-de-baja", idArea: ctx.IdAreaB, idCategoria: ctx.IdCategoriaPadre,
+            idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await DarDeBajaAreaAsync(ctx, ctx.IdAreaB);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(soloIncompletos: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("incompleto-area-de-baja", fila.Nombre);
+    }
+
+    /// <summary>Nombra el disyunto de categoría (FK null). Sin este test, borrar
+    /// <c>a.IdCategoria == null ||</c> del OR sobrevive (hallazgo de judgment-day ronda 1: 26/26
+    /// verdes con ese disyunto borrado).</summary>
+    [Fact]
+    public async Task SoloIncompletosIncluyeUnArticuloAlQueLeFaltaSoloLaCategoria()
+    {
+        var ctx = await PrepararAsync(nameof(SoloIncompletosIncluyeUnArticuloAlQueLeFaltaSoloLaCategoria));
+        await SembrarArticuloAsync(
+            ctx, "completo", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA,
+            idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await SembrarArticuloAsync(
+            ctx, "incompleto-sin-categoria", idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA,
+            idProveedorHabitual: ctx.IdProveedorConFantasia);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(soloIncompletos: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("incompleto-sin-categoria", fila.Nombre);
+    }
+
+    /// <summary>Nombra el disyunto de categoría (FK colgante hacia una categoría dada de baja
+    /// lógica).</summary>
+    [Fact]
+    public async Task SoloIncompletosIncluyeUnArticuloConCategoriaDadaDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(SoloIncompletosIncluyeUnArticuloConCategoriaDadaDeBaja));
+        await SembrarArticuloAsync(
+            ctx, "completo", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA,
+            idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await SembrarArticuloAsync(
+            ctx, "incompleto-categoria-de-baja", idCategoria: ctx.IdCategoriaOtra, idMarca: ctx.IdMarcaA,
+            idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await DarDeBajaCategoriaAsync(ctx, ctx.IdCategoriaOtra);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(soloIncompletos: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("incompleto-categoria-de-baja", fila.Nombre);
+    }
+
+    /// <summary>Nombra el disyunto de marca (FK null).</summary>
+    [Fact]
+    public async Task SoloIncompletosIncluyeUnArticuloAlQueLeFaltaSoloLaMarca()
+    {
+        var ctx = await PrepararAsync(nameof(SoloIncompletosIncluyeUnArticuloAlQueLeFaltaSoloLaMarca));
+        await SembrarArticuloAsync(
+            ctx, "completo", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA,
+            idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await SembrarArticuloAsync(
+            ctx, "incompleto-sin-marca", idCategoria: ctx.IdCategoriaPadre, idGrupo: ctx.IdGrupoA,
+            idProveedorHabitual: ctx.IdProveedorConFantasia);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(soloIncompletos: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("incompleto-sin-marca", fila.Nombre);
+    }
+
+    /// <summary>Nombra el disyunto de marca (FK colgante hacia una marca dada de baja lógica).</summary>
+    [Fact]
+    public async Task SoloIncompletosIncluyeUnArticuloConMarcaDadaDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(SoloIncompletosIncluyeUnArticuloConMarcaDadaDeBaja));
+        await SembrarArticuloAsync(
+            ctx, "completo", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA,
+            idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await SembrarArticuloAsync(
+            ctx, "incompleto-marca-de-baja", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaB,
+            idGrupo: ctx.IdGrupoA, idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await DarDeBajaMarcaAsync(ctx, ctx.IdMarcaB);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(soloIncompletos: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("incompleto-marca-de-baja", fila.Nombre);
+    }
+
+    /// <summary>Nombra el disyunto de grupo (FK null).</summary>
+    [Fact]
+    public async Task SoloIncompletosIncluyeUnArticuloAlQueLeFaltaSoloElGrupo()
+    {
+        var ctx = await PrepararAsync(nameof(SoloIncompletosIncluyeUnArticuloAlQueLeFaltaSoloElGrupo));
+        await SembrarArticuloAsync(
+            ctx, "completo", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA,
+            idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await SembrarArticuloAsync(
+            ctx, "incompleto-sin-grupo", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA,
+            idProveedorHabitual: ctx.IdProveedorConFantasia);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(soloIncompletos: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("incompleto-sin-grupo", fila.Nombre);
+    }
+
+    /// <summary>Nombra el disyunto de grupo (FK colgante hacia un grupo dado de baja lógica).</summary>
+    [Fact]
+    public async Task SoloIncompletosIncluyeUnArticuloConGrupoDadoDeBaja()
+    {
+        var ctx = await PrepararAsync(nameof(SoloIncompletosIncluyeUnArticuloConGrupoDadoDeBaja));
+        await SembrarArticuloAsync(
+            ctx, "completo", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA, idGrupo: ctx.IdGrupoA,
+            idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await SembrarArticuloAsync(
+            ctx, "incompleto-grupo-de-baja", idCategoria: ctx.IdCategoriaPadre, idMarca: ctx.IdMarcaA,
+            idGrupo: ctx.IdGrupoB, idProveedorHabitual: ctx.IdProveedorConFantasia);
+        await DarDeBajaGrupoAsync(ctx, ctx.IdGrupoB);
+
+        var pagina = await ListarAsync(ctx.Admin, ConstruirQuery(soloIncompletos: true));
+
+        var fila = Assert.Single(pagina.Items);
+        Assert.Equal("incompleto-grupo-de-baja", fila.Nombre);
     }
 
     // ---- activo ---------------------------------------------------------------------------------------
@@ -670,5 +983,135 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
             Assert.False(hoja.Row(primeraFilaDeDatos + i).IsEmpty());
         }
         Assert.True(hoja.Row(primeraFilaDeDatos + 3).IsEmpty());
+    }
+
+    // ---- export: backstop de carrera del `+1` (mutation-proof-tests) -----------------------------
+
+    /// <summary>
+    /// Simula la carrera que el <c>+1</c> de <c>.Take(topeDeFilas + 1)</c> existe para atrapar —
+    /// mismo patrón de rendezvous que <c>VentasListadoExportTests.
+    /// UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacion</c>, aplicado acá a
+    /// <c>articulos</c>: un <c>COUNT(*)</c> que ve <c>tope</c> filas (pasa el primer
+    /// <see cref="GuardaDeTope.Exigir"/>) seguido de una fila insertada ANTES de la lectura
+    /// <c>.Take(tope + 1)</c>. El <c>DbCommandInterceptor</c> intercepta la SEGUNDA sentencia que
+    /// toca <c>articulos</c> (la primera es el <c>COUNT(*)</c>) e inserta la fila extra justo antes
+    /// de dejarla correr. Sin el SEGUNDO <c>GuardaDeTope.Exigir</c> (el que corre sobre
+    /// <c>items.Count</c>, después de materializar), esta prueba pasaría de rechazar (400) a
+    /// aceptar (200) con un archivo de 4 filas por encima del tope de 3 — evidencia registrada en
+    /// el resumen de apply.
+    /// </summary>
+    [Fact]
+    public async Task UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacionDeArticulos()
+    {
+        var gate = new SemaphoreSlim(0, 1);
+        Contexto? ctxRef = null;
+
+        var interceptor = new InterceptorDeCarreraDeExportacionDeArticulos(async () =>
+        {
+            if (ctxRef is null)
+            {
+                return;
+            }
+
+            await SembrarArticuloAsync(ctxRef, "articulo-carrera-extra");
+            gate.Release();
+        });
+
+        using var factoryBajo = fixture.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                services.Configure<Ways.Application.Exportacion.OpcionesDeExportacion>(o => o.TopeDeFilas = 3);
+                services.AddDbContext<WaysDbContext>((_, options) => options.AddInterceptors(interceptor));
+            }));
+
+        var ctx = await PrepararAsync(nameof(UnaFilaInsertadaEntreElConteoYLaLecturaSigueRechazandoLaExportacionDeArticulos), factoryBajo);
+        ctxRef = ctx;
+
+        for (var i = 0; i < 3; i++)
+        {
+            await SembrarArticuloAsync(ctx, $"articulo-carrera-{i}");
+        }
+
+        var respuesta = await ctx.Admin.GetAsync("/api/reportes/articulos/export?formato=xlsx");
+
+        Assert.True(await gate.WaitAsync(TimeSpan.FromSeconds(10)), "El interceptor de carrera nunca insertó la fila extra.");
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("exportacion_demasiado_grande", problema.GetProperty("codigo").GetString());
+        Assert.Contains("tiene 4 filas", problema.GetProperty("title").GetString());
+    }
+
+    /// <summary>Retiene la SEGUNDA sentencia que toca <c>articulos</c> (la lectura
+    /// <c>.Take(tope + 1)</c> de <c>ProyectarArticulosDeReporteAsync</c> — la primera es el
+    /// <c>COUNT(*)</c> de <c>ConstruirQueryDeArticulosAsync</c>) e inyecta <paramref
+    /// name="alSegundaConsulta"/> antes de dejarla correr. Cubre tanto <c>ReaderExecutingAsync</c>
+    /// como <c>ScalarExecutingAsync</c>: si <c>CountAsync</c> se traduce a un escalar en vez de un
+    /// reader, el contador compartido sigue contando en orden.</summary>
+    private sealed class InterceptorDeCarreraDeExportacionDeArticulos(Func<Task> alSegundaConsulta) : DbCommandInterceptor
+    {
+        private int _coincidencias;
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            await ConsiderarAsync(command);
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override async ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
+            CancellationToken cancellationToken = default)
+        {
+            await ConsiderarAsync(command);
+            return await base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private async Task ConsiderarAsync(DbCommand command)
+        {
+            if (!command.CommandText.Contains("articulos", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (Interlocked.Increment(ref _coincidencias) == 2)
+            {
+                await alSegundaConsulta();
+            }
+        }
+    }
+
+    // ---- orden estable: Nombre, luego Id como desempate --------------------------------------------
+
+    /// <summary>Nombra la cláusula: <c>.ThenBy(a => a.Id)</c> del <c>OrderBy</c> que decide QUÉ
+    /// filas caen en cada página en <c>ListarArticulosAsync</c> (<c>query.OrderBy(a =>
+    /// a.Nombre).ThenBy(a => a.Id).Skip(...).Take(...)</c>). Confound descartado (mutation-proof-
+    /// tests regla 3): pedir las 60 filas empatadas en UNA sola página no discrimina nada — el
+    /// <c>orderby a.Nombre, a.Id</c> propio de <c>ProyectarArticulosDeReporteAsync</c> reordena
+    /// igual el resultado ya elegido, enmascarando cualquier desempate faltante en el paginado
+    /// (confirmado: la mutación sobrevive con <c>tamanio=100</c>, sin truncar). El test se
+    /// reubica DEBAJO de ese confound: dos páginas de 30 sobre 60 filas empatadas, de manera que
+    /// el desempate del PAGINADO decide qué 30 ids caen en cada una — el reorden de la proyección
+    /// ya no puede disimular una partición Skip/Take incorrecta. Confirmado corriendo la mutación
+    /// (quitar <c>.ThenBy(a => a.Id)</c> del paginado): este test pasa de FALLAR (páginas con ids
+    /// mezclados) a pasar al revertir.</summary>
+    [Fact]
+    public async Task ElOrdenEsPorNombreYLuegoPorIdComoDesempate()
+    {
+        var ctx = await PrepararAsync(nameof(ElOrdenEsPorNombreYLuegoPorIdComoDesempate));
+
+        var ids = new List<int>();
+        for (var i = 0; i < 60; i++)
+        {
+            ids.Add(await SembrarArticuloAsync(ctx, "Empate"));
+        }
+
+        var pagina1 = await ListarAsync(ctx.Admin, ConstruirQuery(pagina: 1, tamanio: 30));
+        var pagina2 = await ListarAsync(ctx.Admin, ConstruirQuery(pagina: 2, tamanio: 30));
+
+        Assert.Equal(60, pagina1.Total);
+        Assert.Equal(ids.Take(30).ToList(), pagina1.Items.Select(f => f.Id).ToList());
+        Assert.Equal(ids.Skip(30).Take(30).ToList(), pagina2.Items.Select(f => f.Id).ToList());
     }
 }

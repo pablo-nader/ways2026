@@ -126,12 +126,14 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
     public const int TamanioMaximoDePaginaDeArticulos = 200;
 
     /// <summary>Catálogo de artículos tenant-wide (sin <c>idEmpresa</c>/<c>idPuntoVenta</c>: los
-    /// artículos no tienen esa columna, doc 10 §3) con los nombres de sus cuatro clasificaciones
-    /// opcionales ya resueltos. <paramref name="soloIncompletos"/> es un OR de las cuatro
-    /// ausencias (spec del owner: "sin proveedor, sin marca, sin categoría, sin grupo") — un
-    /// artículo con UNA sola clasificación faltante ya aparece.</summary>
+    /// artículos no tienen esa columna, doc 10 §3) con los nombres de sus cinco clasificaciones ya
+    /// resueltos. <paramref name="soloIncompletos"/> es un OR de las cinco ausencias (spec del
+    /// owner: "sin proveedor, sin marca, sin categoría, sin grupo", extendido a área por la misma
+    /// noción de "efectivamente sin asignar" que sus pares) — un artículo con UNA sola
+    /// clasificación faltante ya aparece.</summary>
     public async Task<PaginaDe<ArticuloDeReporte>> ListarArticulosAsync(
         int? idArea,
+        bool sinArea,
         int? idCategoria,
         bool sinCategoria,
         int? idMarca,
@@ -150,7 +152,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         tamanio = Math.Clamp(tamanio, 1, TamanioMaximoDePaginaDeArticulos);
 
         var query = await ConstruirQueryDeArticulosAsync(
-            idArea, idCategoria, sinCategoria, idMarca, sinMarca, idGrupo, sinGrupo, idProveedor, sinProveedor,
+            idArea, sinArea, idCategoria, sinCategoria, idMarca, sinMarca, idGrupo, sinGrupo, idProveedor, sinProveedor,
             soloIncompletos, activo, ct);
 
         var total = await query.CountAsync(ct);
@@ -170,6 +172,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
     /// grande sin este método).</summary>
     public async Task<IReadOnlyList<ArticuloDeReporte>> ListarArticulosParaExportacionAsync(
         int? idArea,
+        bool sinArea,
         int? idCategoria,
         bool sinCategoria,
         int? idMarca,
@@ -184,7 +187,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         CancellationToken ct = default)
     {
         var query = await ConstruirQueryDeArticulosAsync(
-            idArea, idCategoria, sinCategoria, idMarca, sinMarca, idGrupo, sinGrupo, idProveedor, sinProveedor,
+            idArea, sinArea, idCategoria, sinCategoria, idMarca, sinMarca, idGrupo, sinGrupo, idProveedor, sinProveedor,
             soloIncompletos, activo, ct);
 
         var cantidad = await query.CountAsync(ct);
@@ -203,9 +206,26 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
     /// conjunct AND independiente (mismo criterio que <c>ServicioDeArticulos.ListarAsync</c>).
     /// <c>idCategoria</c> reusa <see cref="CadenaDeCategorias.ConstruirDescendientes"/> tal cual
     /// (<c>ServicioDeArticulos.ListarAsync:106-118</c>) — nunca una segunda expansión de
-    /// descendientes.</summary>
+    /// descendientes.
+    ///
+    /// Cada <c>sin*</c> y <c>soloIncompletos</c> comparten UNA sola noción de "efectivamente sin
+    /// asignar" (design decisión soft-delete-sin-guarda, stage 13 #12): el FK es <c>null</c> O
+    /// apunta a una fila dada de baja lógica — los catálogos y proveedores se eliminan sin guarda
+    /// de uso, así que un artículo puede quedar con un FK no nulo que ya no resuelve a ninguna fila
+    /// visible. La expresión <c>!idsVisibles.Contains(a.IdX.Value)</c> alcanza sola para las dos
+    /// mitades: la compensación de semántica de <c>null</c> que EF Core aplica por defecto (sin
+    /// <c>UseRelationalNulls</c>, no configurado en este proyecto) traduce
+    /// <c>NOT (columna = ANY(ids))</c> con <c>columna IS NULL</c> como verdadero — un
+    /// <c>a.IdX == null ||</c> explícito sería puro código muerto, nunca discriminable por ningún
+    /// test (confirmado corriendo la mutación: quitarlo no rompe ni el caso FK <c>null</c> ni el
+    /// caso FK colgante). <c>idArea</c> es la única columna NOT NULL de las cinco, así que
+    /// <c>sinArea</c> solo puede significar la baja lógica del área referenciada. La misma noción
+    /// la aplica ya <see cref="ProyectarArticulosDeReporteAsync"/> vía <c>LEFT JOIN</c> contra los
+    /// catálogos (filtrados por baja lógica) — este método existe para que el FILTRO vea lo mismo
+    /// que muestra la proyección.</summary>
     private async Task<IQueryable<Articulo>> ConstruirQueryDeArticulosAsync(
         int? idArea,
+        bool sinArea,
         int? idCategoria,
         bool sinCategoria,
         int? idMarca,
@@ -218,16 +238,46 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         bool? activo,
         CancellationToken ct)
     {
+        ExigirFiltroExclusivo(idArea, sinArea, "idArea", "sinArea");
         ExigirFiltroExclusivo(idCategoria, sinCategoria, "idCategoria", "sinCategoria");
         ExigirFiltroExclusivo(idMarca, sinMarca, "idMarca", "sinMarca");
         ExigirFiltroExclusivo(idGrupo, sinGrupo, "idGrupo", "sinGrupo");
         ExigirFiltroExclusivo(idProveedor, sinProveedor, "idProveedor", "sinProveedor");
+
+        // Ids visibles de cada catálogo (ya filtrados por BajaLogica), buscados solo cuando hacen
+        // falta: la propia guarda sin* de la clasificación, o soloIncompletos (que necesita las
+        // cinco a la vez).
+        var idsDeAreasVisibles = sinArea || soloIncompletos
+            ? (await db.Areas.Select(x => x.Id).ToListAsync(ct)).ToHashSet()
+            : null;
+        // HashSet<int?> (no <int>): así el Where compara contra el FK nullable directo, sin
+        // `.Value` — EF Core traduce `!idsVisibles.Contains(a.IdX)` a `NOT (id_x = ANY(ids))`, y su
+        // compensación de semántica de null (default, sin UseRelationalNulls) ya trata
+        // `id_x IS NULL` como verdadero ahí: cubre el FK null Y el FK colgante con la MISMA
+        // comparación, sin un `a.IdX == null ||` extra (confirmado: sería código muerto, ninguna
+        // mutación sobre él es detectable).
+        var idsDeCategoriasVisibles = sinCategoria || soloIncompletos
+            ? (await db.Categorias.Select(x => (int?)x.Id).ToListAsync(ct)).ToHashSet()
+            : null;
+        var idsDeMarcasVisibles = sinMarca || soloIncompletos
+            ? (await db.Marcas.Select(x => (int?)x.Id).ToListAsync(ct)).ToHashSet()
+            : null;
+        var idsDeGruposVisibles = sinGrupo || soloIncompletos
+            ? (await db.Grupos.Select(x => (int?)x.Id).ToListAsync(ct)).ToHashSet()
+            : null;
+        var idsDeProveedoresVisibles = sinProveedor || soloIncompletos
+            ? (await db.Proveedores.Select(x => (int?)x.Id).ToListAsync(ct)).ToHashSet()
+            : null;
 
         var query = db.Articulos.AsQueryable();
 
         if (idArea is { } idAreaValor)
         {
             query = query.Where(a => a.IdArea == idAreaValor);
+        }
+        else if (sinArea)
+        {
+            query = query.Where(a => !idsDeAreasVisibles!.Contains(a.IdArea));
         }
 
         if (idCategoria is { } idCategoriaValor)
@@ -244,7 +294,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         }
         else if (sinCategoria)
         {
-            query = query.Where(a => a.IdCategoria == null);
+            query = query.Where(a => !idsDeCategoriasVisibles!.Contains(a.IdCategoria));
         }
 
         if (idMarca is { } idMarcaValor)
@@ -253,7 +303,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         }
         else if (sinMarca)
         {
-            query = query.Where(a => a.IdMarca == null);
+            query = query.Where(a => !idsDeMarcasVisibles!.Contains(a.IdMarca));
         }
 
         if (idGrupo is { } idGrupoValor)
@@ -262,7 +312,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         }
         else if (sinGrupo)
         {
-            query = query.Where(a => a.IdGrupo == null);
+            query = query.Where(a => !idsDeGruposVisibles!.Contains(a.IdGrupo));
         }
 
         if (idProveedor is { } idProveedorValor)
@@ -271,13 +321,17 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         }
         else if (sinProveedor)
         {
-            query = query.Where(a => a.IdProveedorHabitual == null);
+            query = query.Where(a => !idsDeProveedoresVisibles!.Contains(a.IdProveedorHabitual));
         }
 
         if (soloIncompletos)
         {
             query = query.Where(a =>
-                a.IdCategoria == null || a.IdMarca == null || a.IdGrupo == null || a.IdProveedorHabitual == null);
+                !idsDeAreasVisibles!.Contains(a.IdArea)
+                || !idsDeCategoriasVisibles!.Contains(a.IdCategoria)
+                || !idsDeMarcasVisibles!.Contains(a.IdMarca)
+                || !idsDeGruposVisibles!.Contains(a.IdGrupo)
+                || !idsDeProveedoresVisibles!.Contains(a.IdProveedorHabitual));
         }
 
         if (activo is { } activoValor)
@@ -288,17 +342,22 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         return query;
     }
 
-    /// <summary>Una sola proyección con LEFT JOIN contra los cuatro catálogos opcionales + INNER
-    /// JOIN contra área (obligatoria) — todos los nombres salen de ACÁ, nunca de un lookup por fila
-    /// (design: "All names from one SQL projection, no N+1"), mismo patrón de
-    /// <c>into ... from ... DefaultIfEmpty()</c> que <c>ServicioDeReportesDeStock.
-    /// ConstruirQueryDeReposicion</c>. <see cref="Proveedor.NombreFantasia"/> gana sobre
+    /// <summary>Una sola proyección con LEFT JOIN contra los cinco catálogos — todos los nombres
+    /// salen de ACÁ, nunca de un lookup por fila (design: "All names from one SQL projection, no
+    /// N+1"), mismo patrón de <c>into ... from ... DefaultIfEmpty()</c> que
+    /// <c>ServicioDeReportesDeStock.ConstruirQueryDeReposicion</c>. Área usa LEFT JOIN igual que
+    /// las otras cuatro pese a que <c>IdArea</c> es NOT NULL en <c>articulos</c>: un área dada de
+    /// baja lógica deja de existir en <c>db.Areas</c> (filtro global BajaLogica), y un INNER JOIN
+    /// contra ella dropearía la fila del artículo entero — <c>total</c> (contado antes del join)
+    /// seguiría contándola, dejando un <c>total</c> mayor a <c>items.Count</c> (bug reproducido por
+    /// judgment-day, ronda 1). <see cref="Proveedor.NombreFantasia"/> gana sobre
     /// <see cref="Proveedor.RazonSocial"/> cuando no es nulo/vacío.</summary>
     private async Task<List<ArticuloDeReporte>> ProyectarArticulosDeReporteAsync(IQueryable<Articulo> query, CancellationToken ct)
     {
         var proyeccion =
             from a in query
-            join area in db.Areas on a.IdArea equals area.Id
+            join area in db.Areas on a.IdArea equals area.Id into areasUnidas
+            from area in areasUnidas.DefaultIfEmpty()
             join categoria in db.Categorias on a.IdCategoria equals categoria.Id into categoriasUnidas
             from categoria in categoriasUnidas.DefaultIfEmpty()
             join marca in db.Marcas on a.IdMarca equals marca.Id into marcasUnidas
@@ -312,7 +371,7 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
                 a.Id,
                 a.CodigoInterno,
                 a.Nombre,
-                area.Nombre,
+                area != null ? area.Nombre : null,
                 categoria != null ? categoria.Nombre : null,
                 marca != null ? marca.Nombre : null,
                 grupo != null ? grupo.Nombre : null,

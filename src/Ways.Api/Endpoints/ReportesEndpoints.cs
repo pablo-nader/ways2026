@@ -155,19 +155,20 @@ public static class ReportesEndpoints
         // categoría, sin grupo, para verlos de un vistazo"): tenant-wide, sin idEmpresa/
         // idPuntoVenta — los artículos no tienen esa columna (doc 10 §3), a diferencia de todo el
         // resto de /api/reportes/*. Gate heredado del grupo (LecturaDeReportes), sin política
-        // propia. Los cuatro pares id/sin son conjuncts AND independientes, cada uno con su propia
+        // propia. Los cinco pares id/sin son conjuncts AND independientes, cada uno con su propia
         // guarda de exclusividad mutua dentro del servicio (400 filtro_incompatible).
         grupo.MapGet("/articulos", (
-            ServicioDeReportesDeArticulos servicio, int? idArea, int? idCategoria, bool? sinCategoria,
+            ServicioDeReportesDeArticulos servicio, int? idArea, bool? sinArea, int? idCategoria, bool? sinCategoria,
             int? idMarca, bool? sinMarca, int? idGrupo, bool? sinGrupo, int? idProveedor, bool? sinProveedor,
             bool? soloIncompletos, bool? activo, int? pagina, int? tamanio, CancellationToken ct) =>
             servicio.ListarArticulosAsync(
-                idArea, idCategoria, sinCategoria ?? false, idMarca, sinMarca ?? false, idGrupo, sinGrupo ?? false,
-                idProveedor, sinProveedor ?? false, soloIncompletos ?? false, activo, pagina ?? 1, tamanio ?? 25, ct))
+                idArea, sinArea ?? false, idCategoria, sinCategoria ?? false, idMarca, sinMarca ?? false, idGrupo,
+                sinGrupo ?? false, idProveedor, sinProveedor ?? false, soloIncompletos ?? false, activo,
+                pagina ?? 1, tamanio ?? 25, ct))
         .WithSummary(
             "Catálogo de artículos con los nombres de área/categoría/marca/grupo/proveedor " +
             "habitual ya resueltos — soloIncompletos filtra a los que falta al menos una de las " +
-            "cuatro clasificaciones (OR).");
+            "cinco clasificaciones (OR).");
 
         // Sibling declarado inmediatamente después de su ruta fuente — hereda LecturaDeReportes por
         // co-locación. LISTADO (mismo shape que /cajas/export): el tope de filas lo exige el
@@ -177,15 +178,16 @@ public static class ReportesEndpoints
         grupo.MapGet("/articulos/export", async (
             ServicioDeReportesDeArticulos servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
             IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
-            int? idArea, int? idCategoria, bool? sinCategoria, int? idMarca, bool? sinMarca, int? idGrupo,
+            int? idArea, bool? sinArea, int? idCategoria, bool? sinCategoria, int? idMarca, bool? sinMarca, int? idGrupo,
             bool? sinGrupo, int? idProveedor, bool? sinProveedor, bool? soloIncompletos, bool? activo, string formato,
             CancellationToken ct) =>
         {
             FormatoDeExportacion.Parsear(formato);
 
             var filas = await servicio.ListarArticulosParaExportacionAsync(
-                idArea, idCategoria, sinCategoria ?? false, idMarca, sinMarca ?? false, idGrupo, sinGrupo ?? false,
-                idProveedor, sinProveedor ?? false, soloIncompletos ?? false, activo, opciones.Value.TopeDeFilas, ct);
+                idArea, sinArea ?? false, idCategoria, sinCategoria ?? false, idMarca, sinMarca ?? false, idGrupo,
+                sinGrupo ?? false, idProveedor, sinProveedor ?? false, soloIncompletos ?? false, activo,
+                opciones.Value.TopeDeFilas, ct);
 
             var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta: null, ct);
             var hoy = DateOnly.FromDateTime(
