@@ -1691,6 +1691,23 @@ export type TopArticulos = {
   articulos: ArticuloTop[]
 }
 
+/** Fila de `GET /api/reportes/articulos` (reporte de completitud de catálogo) — espejo de
+ * `ArticuloDeReporte`. `area`/`categoria`/`marca`/`grupo`/`proveedor` son `null` cuando el
+ * artículo no tiene esa clasificación asignada, o cuando el FK apunta a una fila dada de baja
+ * lógica; la UI decide cómo mostrar el hueco ("Sin asignar"), nunca el servidor. `proveedor` ya
+ * viene resuelto como nombre de fantasía (o razón social si no tiene). */
+export type ArticuloDeReporte = {
+  id: number
+  codigoInterno: string
+  nombre: string
+  area: string | null
+  categoria: string | null
+  marca: string | null
+  grupo: string | null
+  proveedor: string | null
+  activo: boolean
+}
+
 /** Cobertura del costo de un período de rentabilidad (stage-9-costo-congelado, tres estados:
  * real / estimado / desconocido) — espejo de `CoberturaDeCosto`. Viaja SIEMPRE en la respuesta de
  * `/rentabilidad` (spec rentabilidad-y-comisiones: NULL Cost Is Never Treated As Zero, And
