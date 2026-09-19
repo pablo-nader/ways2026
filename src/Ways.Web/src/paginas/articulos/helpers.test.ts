@@ -103,16 +103,8 @@ describe('ordenarProveedoresPorEtiqueta', () => {
     expect(ordenados.map((p) => p.id)).toEqual([2, 1, 3])
   })
 
-  // Cláusula bajo prueba: los argumentos `'es', { sensitivity: 'base' }` de `localeCompare` en
-  // `ordenarProveedoresPorEtiqueta` (mutation-proof-tests). Verificado con `node -e` en este
-  // entorno: el locale por defecto de Node/ICU acá resuelve a `es-ES` (`Intl.Collator().resolvedOptions().locale`),
-  // así que un fixture Ñ/N/O ('Oso'/'Ñandú'/'Nube') NO discrimina sacar el locale — el resultado es
-  // idéntico con o sin argumentos. El fixture que sí distingue el caso real de este código es uno
-  // que dependa de la SENSIBILIDAD (`sensitivity: 'base'`), no del locale: dos etiquetas que
-  // difieren solo en mayúscula/minúscula comparan IGUAL (0) con `sensitivity: 'base'` — el sort
-  // estable conserva el orden de entrada — pero comparan DISTINTO con la sensibilidad por defecto
-  // (`'variant'`, case-sensible), que reordena. Mutación comprobada: sacar los dos argumentos
-  // cambia el resultado de este test de `[1, 2]` a `[2, 1]`.
+  // Con `sensitivity: 'base'` las dos etiquetas comparan igual y el sort estable conserva el orden
+  // de entrada; con la sensibilidad por defecto (case-sensible) se invierten.
   it('con dos etiquetas que difieren solo en mayúscula/minúscula, conserva el orden de entrada (sensitivity: base) — sin el argumento, el orden se invierte', () => {
     const mayuscula = proveedorFixture({ id: 1, razonSocial: 'Ana', nombreFantasia: null })
     const minuscula = proveedorFixture({ id: 2, razonSocial: 'ana', nombreFantasia: null })
@@ -120,6 +112,17 @@ describe('ordenarProveedoresPorEtiqueta', () => {
     const ordenados = ordenarProveedoresPorEtiqueta([mayuscula, minuscula])
 
     expect(ordenados.map((p) => p.id)).toEqual([1, 2])
+  })
+
+  // En la intercalación española la Ñ es una letra entre la N y la O; en otros locales (p. ej. `en`)
+  // se ordena como una N con diacrítico, antes de "Nube".
+  it('ordena la Ñ después de la N según la intercalación española', () => {
+    const conEnie = proveedorFixture({ id: 1, razonSocial: 'Ñu Distribuciones', nombreFantasia: null })
+    const conEne = proveedorFixture({ id: 2, razonSocial: 'Nube SA', nombreFantasia: null })
+
+    const ordenados = ordenarProveedoresPorEtiqueta([conEnie, conEne])
+
+    expect(ordenados.map((p) => p.id)).toEqual([2, 1])
   })
 })
 
