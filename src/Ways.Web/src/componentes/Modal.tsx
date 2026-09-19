@@ -43,10 +43,27 @@ export type PropsModal = {
   children: React.ReactNode
   pie?: React.ReactNode
   tamano?: TamanoDeModal
+  /** Opt-in a `modal-dialog-scrollable` de Bootstrap: header (y footer, si hay) quedan fijos y
+   * solo el `modal-body` scrollea — pensado para contenidos largos (p. ej. el formulario completo
+   * de artículo) donde fijar el título y la × es preferible a que todo el diálogo se desplace. */
+  desplazable?: boolean
   /** `true` mientras una escritura está en vuelo: el botón de cerrar queda deshabilitado y
    * Escape/click en el fondo se ignoran — mismo criterio de "compuerta inerte mientras ocupado"
    * que el resto de las pantallas (react-async-state regla 13). */
   ocupado?: boolean
+  /**
+   * Destino de foco de reserva para cuando el foco previo no sirve como restauración: no hubo un
+   * disparador real (URL directa, pestaña nueva) o ese disparador ya no está en el documento (se
+   * re-renderizó fuera). Mismo criterio que el `disparador`/fallback de `ConfirmacionDeBaja`, pero
+   * acá no se puede resolver mirando el DOM ancestro: el contenido del modal vive en un portal, así
+   * que no hay un `.closest('.box')` al que subir. El consumidor pasa explícitamente el `ref` de un
+   * elemento estable de la pantalla de fondo (p. ej. el botón "Nuevo" de una grilla) — un `RefObject`
+   * y no el elemento ya resuelto, a propósito: si el modal se abre en el MISMO commit en el que se
+   * monta ese elemento (p. ej. una URL directa a /articulos/edit/5, sin ningún click previo), su
+   * `.current` todavía es `null` en el momento en que ESTE componente lee la prop — leerlo recién en
+   * el cleanup (al cerrar, muchos renders después) lo encuentra siempre ya asignado.
+   */
+  focoDeReserva?: React.RefObject<HTMLElement | null> | null
   onCerrar: () => void
 }
 
@@ -58,7 +75,16 @@ export type PropsModal = {
  * modal más arriba entre los que están abiertos en un momento dado — nunca un booleano "hay un
  * modal abierto" que no distinga cuál.
  */
-export function Modal({ titulo, children, pie, tamano, ocupado = false, onCerrar }: PropsModal) {
+export function Modal({
+  titulo,
+  children,
+  pie,
+  tamano,
+  desplazable = false,
+  ocupado = false,
+  focoDeReserva = null,
+  onCerrar,
+}: PropsModal) {
   const idTitulo = useId()
   const idPropio = useId()
   const contenidoRef = useRef<HTMLDivElement>(null)
@@ -100,7 +126,22 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, onCerrar
       modalesAbiertos -= 1
       if (modalesAbiertos === 0) document.body.classList.remove('modal-open')
 
-      if (esAlcanzable(focoPrevio)) focoPrevio.focus()
+      // `document.body` nunca cuenta como foco previo "real": es lo que queda activo cuando el
+      // modal se abrió sin un disparador (URL directa, pestaña nueva) — restaurarlo ahí sería un
+      // no-op indistinguible de dejar el foco tirado. En ese caso, y en el de un disparador que ya
+      // no está en el documento (se re-renderizó fuera mientras el modal estaba abierto), se usa
+      // el destino de reserva del consumidor en vez de dejar el foco caído en `<body>`.
+      // A propósito: `focoDeReserva` es un ref del CONSUMIDOR (no un nodo que este componente
+      // monte/desmonte) apuntando a un elemento estable de la pantalla de fondo — leer `.current`
+      // recién acá, al cerrar, es justo lo que evita el problema que la regla previene (un valor
+      // capturado en el mount que ya cambió).
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const elementoDeReserva = focoDeReserva?.current ?? null
+      if (esAlcanzable(focoPrevio) && focoPrevio !== document.body) {
+        focoPrevio.focus()
+      } else if (esAlcanzable(elementoDeReserva)) {
+        elementoDeReserva.focus()
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -152,6 +193,9 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, onCerrar
   }
 
   const claseTamano = tamano ? CLASE_POR_TAMANO[tamano] : ''
+  const claseDialogo = ['modal-dialog', claseTamano, desplazable ? 'modal-dialog-scrollable' : '']
+    .filter(Boolean)
+    .join(' ')
 
   return createPortal(
     <>
@@ -165,7 +209,7 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, onCerrar
         onKeyDown={atraparTab}
         onClick={alHacerClickEnElFondo}
       >
-        <div className={`modal-dialog ${claseTamano}`.trim()} role="document">
+        <div className={claseDialogo} role="document">
           <div className="modal-content rounded-0" ref={contenidoRef}>
             <div className="modal-header">
               <h5 className="modal-title" id={idTitulo}>

@@ -284,9 +284,14 @@ export function App() {
             />
 
             {/* Entidad dedicada (stage-3-articulos-y-precios, design decision 1): árbol
-                propio, no la máquina genérica de catálogos — mismo criterio que /clientes. */}
+                propio, no la máquina genérica de catálogos — mismo criterio que /clientes.
+                articulos-en-modal: "/*" (no "/articulos" a secas) para que /create y /edit/:id
+                sigan resolviendo a esta MISMA entrada de ruta — Articulos.tsx deriva el modo del
+                modal de `useLocation().pathname` (ver `articulos/rutaModal.ts`), nunca con
+                <Routes> anidadas, así que ni la grilla ni su estado se remontan al abrir/cerrar
+                el modal o al pasar de /create a /edit/{id} recién creado. */}
             <Route
-              path="/articulos"
+              path="/articulos/*"
               element={
                 <RutaProtegida rolesPermitidos={[ROL.Admin]}>
                   <Articulos />
