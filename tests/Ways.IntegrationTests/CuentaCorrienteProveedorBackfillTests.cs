@@ -170,16 +170,34 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         db.MediosPago.Add(medioPago);
         await db.SaveChangesAsync();
 
-        var turno = new TurnoCaja
-        {
-            IdTenant = tenant.Id, IdPuntoVenta = puntoVenta.Id, IdEmpleadoApertura = usuario.Id,
-            FechaApertura = ahora, FondoInicial = 0m, Estado = EstadoTurno.Abierto,
-            CreatedAt = ahora, UpdatedAt = ahora
-        };
-        db.TurnosCaja.Add(turno);
-        await db.SaveChangesAsync();
+        var idTurnoCaja = await SembrarTurnoPreMigracionAsync(conexionCruda, tenant.Id, puntoVenta.Id, usuario.Id);
 
-        return new Entorno(tenant.Id, puntoVenta.Id, usuario.Id, condicionFiscal.Id, tipoComprobanteCompra.Id, medioPago.Id, turno.Id);
+        return new Entorno(tenant.Id, puntoVenta.Id, usuario.Id, condicionFiscal.Id, tipoComprobanteCompra.Id, medioPago.Id, idTurnoCaja);
+    }
+
+    /// <summary>Misma trampa ya documentada en <see cref="SembrarProveedorPreMigracionAsync"/> y
+    /// <see cref="SembrarCompraAsync"/>, ahora sobre caja: <c>turnos_caja.id_medio_pago_efectivo</c>
+    /// NO existe todavía en el esquema pre-migración (<see cref="MigracionAnterior"/> se detiene
+    /// ANTES de <c>TurnosCajaMedioPagoEfectivo</c>) — INSERT crudo con la lista de columnas de
+    /// ANTES de esa migración, nunca vía EF (que, con el modelo HEAD, incluiría la columna nueva
+    /// en el INSERT y rompería contra el esquema viejo con <c>42703</c>).
+    /// <para>El turno es pura estructura de soporte de la fixture: <c>gastos.id_turno_caja</c> es
+    /// NOT NULL con FK compuesta, así que sin una fila de turno no se puede sembrar ningún gasto —
+    /// el backfill bajo prueba no lee <c>turnos_caja</c> en ningún statement.</para></summary>
+    private static async Task<int> SembrarTurnoPreMigracionAsync(
+        NpgsqlConnection cruda, int idTenant, int idPuntoVenta, int idEmpleadoApertura)
+    {
+        await using var comando = cruda.CreateCommand();
+        comando.CommandText =
+            "INSERT INTO turnos_caja " +
+            "(id_tenant, id_punto_venta, id_empleado_apertura, fecha_apertura, fondo_inicial, estado, " +
+            " created_at, updated_at) " +
+            "VALUES ($1, $2, $3, now(), 0, 'abierto'::estado_turno, now(), now()) " +
+            "RETURNING id_turno_caja";
+        comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta });
+        comando.Parameters.Add(new NpgsqlParameter { Value = idEmpleadoApertura });
+        return (int)(await comando.ExecuteScalarAsync())!;
     }
 
     /// <summary>Proveedores.Saldo NO existe todavía en el esquema pre-migración — INSERT crudo
