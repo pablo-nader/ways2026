@@ -8,9 +8,14 @@ public static class ProveedoresEndpoints
 {
     public static IEndpointRouteBuilder MapearProveedores(this IEndpointRouteBuilder app)
     {
+        // stage-gastos-turno-carga-simple (web slice): el LISTADO pasa de GestionDeCatalogo a
+        // OperacionDePos — mismo criterio exacto que ClientesEndpoints (grupo en OperacionDePos,
+        // las escrituras apilan GestionDeCatalogo encima, AND que un admin siempre satisface). El
+        // selector opcional de proveedor del formulario de gastos del turno (POS) necesita poder
+        // listar; ObtenerAsync/CrearAsync/ActualizarAsync/EliminarAsync siguen Admin-only.
         var grupo = app.MapGroup("/api/proveedores")
             .WithTags("Proveedores")
-            .RequireAuthorization(Politicas.GestionDeCatalogo);
+            .RequireAuthorization(Politicas.OperacionDePos);
 
         grupo.MapGet("/", (
             ServicioDeProveedores servicio,
@@ -24,6 +29,7 @@ public static class ProveedoresEndpoints
 
         grupo.MapGet("/{id:int}", (ServicioDeProveedores servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Obtiene un proveedor.");
 
         grupo.MapPost("/", async (
@@ -32,11 +38,13 @@ public static class ProveedoresEndpoints
             var creado = await servicio.CrearAsync(datos, ct);
             return Results.Created($"/api/proveedores/{creado.Id}", creado);
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Crea un proveedor. El cuit, si se provee, es único por tenant.");
 
         grupo.MapPut("/{id:int}", (
             ServicioDeProveedores servicio, int id, EdicionProveedor datos, CancellationToken ct) =>
             servicio.ActualizarAsync(id, datos, ct))
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Actualiza un proveedor.");
 
         grupo.MapDelete("/{id:int}", async (
@@ -45,6 +53,7 @@ public static class ProveedoresEndpoints
             await servicio.EliminarAsync(id, ct);
             return Results.NoContent();
         })
+        .RequireAuthorization(Politicas.GestionDeCatalogo)
         .WithSummary("Baja lógica del proveedor.");
 
         // stage-8-compras-transferencias-inventario (Slice 4, task 4.3, design: API Surface — el

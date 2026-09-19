@@ -159,6 +159,28 @@ public class GastosEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Assert.Equal("gasto_importe_invalido", problema.GetProperty("codigo").GetString());
     }
 
+    // ---- concepto obligatorio (mutation-proof-tests: ExigirConceptoValido) -----------------------
+
+    /// <summary>Cláusula bajo prueba: <c>ServicioDeGastos.ExigirConceptoValido</c>. Mutación
+    /// verificada (mutation-proof-tests): comentando el cuerpo del guard, este test pasa a
+    /// recibir 201 en vez del 400 esperado; restaurado el guard, vuelve a verde.</summary>
+    [Fact]
+    public async Task UnGastoConConceptoEnBlancoSeRechazaAntesDeLlegarALaBaseDeDatos()
+    {
+        var ctx = await PrepararAsync(nameof(UnGastoConConceptoEnBlancoSeRechazaAntesDeLlegarALaBaseDeDatos));
+        await AbrirTurnoAsync(ctx.Admin, ctx.IdPuntoVenta);
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/gastos",
+            new SolicitudDeGasto(
+                ctx.IdPuntoVenta, CategoriaGasto.Otros, null, null, "   ", null,
+                ctx.IdMedioPago, null, 100m));
+
+        Assert.Equal(HttpStatusCode.BadRequest, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("gasto_concepto_requerido", problema.GetProperty("codigo").GetString());
+    }
+
     // ---- pre-checks de FK: referencias inválidas nunca llegan como 500 --------------------------
 
     [Fact]

@@ -1004,6 +1004,43 @@ export type DetalleDeTurno = {
   gastos: GastoDeTurno[]
 }
 
+// --- Gastos del turno (stage-gastos-turno-carga-simple, POS): alta contra el turno abierto —
+// espejo de `Ways.Application.Gastos.Contratos`.
+
+/** Cuerpo de `POST /api/gastos` — espejo de `Ways.Application.Gastos.SolicitudDeGasto`. Sin
+ * `idTurnoCaja`: el servidor lo resuelve del `idPuntoVenta` (spec: Gasto Requires An Open
+ * Turno), nunca viaja en el cuerpo. */
+export type SolicitudDeGasto = {
+  idPuntoVenta: number
+  categoria: CategoriaGasto
+  idProveedor: number | null
+  idArea: number | null
+  concepto: string
+  detalle: string | null
+  idMedioPago: number
+  numeroFactura: string | null
+  importe: number
+  idComprobanteCompra: number | null
+}
+
+/** Respuesta de `POST /api/gastos` — espejo de `Ways.Application.Gastos.GastoRegistrado`. */
+export type GastoRegistrado = {
+  id: number
+  idTurnoCaja: number
+  idPuntoVenta: number
+  fecha: string
+  categoria: CategoriaGasto
+  idProveedor: number | null
+  idArea: number | null
+  concepto: string
+  detalle: string | null
+  idMedioPago: number
+  numeroFactura: string | null
+  importe: number
+  idEmpleado: number
+  idComprobanteCompra: number | null
+}
+
 // --- Tesorería (G3): libro encadenado (stage-11-exportacion-reportes, Slice 7) — espejo de
 // `Ways.Application.Caja.Contratos`. `inicio`/`final` ya vienen calculados y persistidos al
 // cierre (design decisión 6 de stage-6-turnos-caja); este contrato solo los transporta.
