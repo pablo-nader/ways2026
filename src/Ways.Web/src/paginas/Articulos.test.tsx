@@ -1261,3 +1261,43 @@ describe('Articulos — respuesta desactualizada del detalle al cambiar de edici
     expect(screen.queryByText('Editando artículo A0001')).not.toBeInTheDocument()
   })
 })
+
+// ---- cierre del modal reemplaza la entrada de historial, también en una edición entrada por URL directa (M6) --
+
+describe('Articulos — cerrar una edición abierta por URL directa reemplaza la entrada de historial (M6)', () => {
+  function ArnesConHistorial() {
+    const navigate = useNavigate()
+    return (
+      <>
+        <button type="button" onClick={() => navigate(-1)}>
+          Atrás
+        </button>
+        <Articulos />
+      </>
+    )
+  }
+
+  /**
+   * Cláusula bajo prueba: `{ replace: true }` en el `navigate` de `cerrarModal` (Articulos.tsx).
+   * Mutation-proof-tests: sacar `{ replace: true }` (navegación por `push`) hace fallar el
+   * `expect` de abajo — con push, "atrás" desde /articulos vuelve a /articulos/edit/1 y resucita
+   * el modal.
+   */
+  it('entrar directo a /articulos/edit/1 y cerrar: "atrás" no resucita el modal', async () => {
+    render(
+      <MemoryRouter initialEntries={['/articulos', '/articulos/edit/1']} initialIndex={1}>
+        <Routes>
+          <Route path="/articulos/*" element={<ArnesConHistorial />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
