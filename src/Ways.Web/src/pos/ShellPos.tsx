@@ -1,23 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, Navigate, Route, Routes, useNavigate } from 'react-router'
+import { Link, Navigate, Route, Routes } from 'react-router'
 import type { DispositivoActual } from '../api/dispositivos'
 import { api, ErrorApi } from '../api/cliente'
-import type {
-  ClienteListado,
-  ComprobanteEmitido,
-  MedioPagoListado,
-  PuntoVentaListado,
-  TurnoConArqueos,
-  UsuarioAutenticado,
-} from '../api/tipos'
+import type { ClienteListado, ComprobanteEmitido, MedioPagoListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { AuthContext } from '../auth/AuthContext'
 import { CajaZ } from '../paginas/CajaZ'
-import { CierreDeCaja } from '../paginas/CierreDeCaja'
 import { Pos } from '../paginas/Pos'
+import type { CajaDeEscritorio } from '../paginas/Pos'
 import { VentasDelTurno } from '../paginas/VentasDelTurno'
 import { ProveedorDePuntoVentaFijo } from '../puntoVenta/ProveedorDePuntoVentaFijo'
 import { abrirConfiguracion, enEscritorio, imprimir } from '../impresion/impresora'
-import { reporteZ, ticketDeVenta } from '../impresion/plantillas'
+import { ticketDeVenta } from '../impresion/plantillas'
 import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { RanuraHeaderPosContext } from './RanuraHeaderPosContext'
 
@@ -32,8 +25,7 @@ type Props = {
 
 /**
  * Shell del POS de escritorio con sesión activa (stage-desktop-pos): header compacto (empresa, PV,
- * cajero, navegación) + las pantallas que reusa sin fork (`Pos`, `CierreDeCaja`, `CajaZ`,
- * `VentasDelTurno`).
+ * cajero, navegación) + las pantallas que reusa sin fork (`Pos`, `CajaZ`, `VentasDelTurno`).
  *
  * El punto de venta lo fija el dispositivo — `ProveedorDePuntoVentaFijo`, nunca el
  * `PuertaDePuntoVenta` de elección manual de la app completa. La sesión se expone por el mismo
@@ -46,13 +38,19 @@ type Props = {
  * de fallback) muestra el estado del turno y ofrece "Cerrar caja" con el `idTurno` ya resuelto,
  * mantener el botón del header habría duplicado la misma consulta `GET …/abierto` en dos lugares —
  * exactamente el tipo de gemelo que la regla 10 de `react-async-state` pide mantener en
- * sincronía, evitado acá eliminando uno de los dos en vez de replicarlo. `alIrACerrarCaja` (seam
- * de `Pos.tsx`) navega a la ruta propia del shell (`/cerrar-caja`, distinta de `/caja/cierre` de
- * la app web) con el turno que la pantalla ya resolvió — nunca vuelve a golpear el endpoint.
+ * sincronía, evitado acá eliminando uno de los dos en vez de replicarlo.
+ *
+ * stage-pos-retiros-y-cierre-por-retiro (etapa 5): "Cerrar caja" del escritorio dejó de navegar a
+ * `CierreDeCaja` (la ruta `/cerrar-caja` y su reporte Z auto-impreso se quitaron enteros — código
+ * muerto una vez que `Pos.tsx` resuelve el cierre por retiro en la misma pantalla) — ahora se
+ * resuelve íntegro dentro de `Pos.tsx` vía el seam `cajaDeEscritorio` (contexto de impresión +
+ * `encolarImpresion`, la MISMA cola FIFO que ya usa el ticket de venta): confirmar apertura de
+ * cajón, contar el efectivo y `POST cierre-por-retiro`, sin abandonar `/vender`. `CierreDeCaja`
+ * sigue viva para la app web (ruta `/caja/cierre`, sin cambios) — este shell simplemente dejó de
+ * montarla. `CajaZ` (`/caja/turnos/:id/z`) se mantiene montada por si hace falta más adelante,
+ * aunque ningún control de este shell navega ahí hoy.
  */
 export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: Props) {
-  const navegar = useNavigate()
-
   const [cerrandoSesion, setCerrandoSesion] = useState(false)
   const cerrandoSesionRef = useRef(false)
 
@@ -139,6 +137,11 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
     }),
     [dispositivo, usuario],
   )
+
+  /** stage-pos-retiros-y-cierre-por-retiro (etapa 5): seam de `Pos.tsx` para "Retirar" y "Cerrar
+   * caja" por retiro — el mismo `contexto` y la MISMA `encolarImpresion` (cola FIFO) que ya usa el
+   * ticket de venta; `Pos.tsx` arma los bytes de cada ticket propio con sus propias plantillas. */
+  const cajaDeEscritorio: CajaDeEscritorio = { contexto: contextoDeImpresion, encolarImpresion }
 
   const valorAuth = useMemo(
     () => ({
@@ -258,32 +261,8 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
 
           <main className="flex-grow-1">
             <Routes>
-              <Route
-                path="/vender"
-                element={
-                  <Pos
-                    alEmitir={alEmitirVenta}
-                    alIrACerrarCaja={(idTurno) => navegar(`/cerrar-caja?idTurno=${idTurno}`)}
-                  />
-                }
-              />
+              <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} />} />
               <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
-              <Route
-                path="/cerrar-caja"
-                element={
-                  <CierreDeCaja
-                    rutaVolver="/vender"
-                    alCerrarExitosamente={(turno: TurnoConArqueos) => {
-                      // `CierreDeCaja` no recibe `contextoDeImpresion` acá a propósito: sin él no
-                      // auto-imprime ni muestra su propio "Reimprimir" (evita la doble impresión),
-                      // el shell imprime el reporte Z él mismo — mismo helper/cola que el ticket
-                      // de venta, con su propio aviso persistente si falla.
-                      encolarImpresion('el reporte Z', reporteZ(turno, contextoDeImpresion))
-                      navegar(`/caja/turnos/${turno.id}/z`, { replace: true })
-                    }}
-                  />
-                }
-              />
               <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
               <Route path="*" element={<Navigate to="/vender" replace />} />
             </Routes>
