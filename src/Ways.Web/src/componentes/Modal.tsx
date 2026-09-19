@@ -52,10 +52,14 @@ export type PropsModal = {
    * disparador real (URL directa, pestaña nueva) o ese disparador ya no está en el documento (se
    * re-renderizó fuera). Mismo criterio que el `disparador`/fallback de `ConfirmacionDeBaja`, pero
    * acá no se puede resolver mirando el DOM ancestro: el contenido del modal vive en un portal, así
-   * que no hay un `.closest('.box')` al que subir. El consumidor pasa explícitamente un elemento
-   * estable de la pantalla de fondo (p. ej. el botón "Nuevo" de una grilla).
+   * que no hay un `.closest('.box')` al que subir. El consumidor pasa explícitamente el `ref` de un
+   * elemento estable de la pantalla de fondo (p. ej. el botón "Nuevo" de una grilla) — un `RefObject`
+   * y no el elemento ya resuelto, a propósito: si el modal se abre en el MISMO commit en el que se
+   * monta ese elemento (p. ej. una URL directa a /articulos/edit/5, sin ningún click previo), su
+   * `.current` todavía es `null` en el momento en que ESTE componente lee la prop — leerlo recién en
+   * el cleanup (al cerrar, muchos renders después) lo encuentra siempre ya asignado.
    */
-  focoDeReserva?: HTMLElement | null
+  focoDeReserva?: React.RefObject<HTMLElement | null> | null
   onCerrar: () => void
 }
 
@@ -114,10 +118,16 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, focoDeRe
       // no-op indistinguible de dejar el foco tirado. En ese caso, y en el de un disparador que ya
       // no está en el documento (se re-renderizó fuera mientras el modal estaba abierto), se usa
       // el destino de reserva del consumidor en vez de dejar el foco caído en `<body>`.
+      // A propósito: `focoDeReserva` es un ref del CONSUMIDOR (no un nodo que este componente
+      // monte/desmonte) apuntando a un elemento estable de la pantalla de fondo — leer `.current`
+      // recién acá, al cerrar, es justo lo que evita el problema que la regla previene (un valor
+      // capturado en el mount que ya cambió).
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const elementoDeReserva = focoDeReserva?.current ?? null
       if (esAlcanzable(focoPrevio) && focoPrevio !== document.body) {
         focoPrevio.focus()
-      } else if (esAlcanzable(focoDeReserva)) {
-        focoDeReserva.focus()
+      } else if (esAlcanzable(elementoDeReserva)) {
+        elementoDeReserva.focus()
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

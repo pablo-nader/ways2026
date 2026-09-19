@@ -197,10 +197,10 @@ describe('Modal — foco', () => {
    */
   it('abierto sin disparador (URL directa / pestaña nueva), al cerrar devuelve el foco al destino de reserva, no a body', () => {
     function Arnes() {
-      // Arranca cerrado y se abre solo via efecto (nunca por un click) — igual que una URL
-      // directa a /articulos/edit/5 abre el modal sin que nada lo haya clickeado: el ref del
-      // botón de reserva ya quedó adjuntado en el commit anterior, así que su `.current` no es
-      // `null` cuando el modal lee la prop, y `document.activeElement` sigue siendo `body`.
+      // Arranca cerrado y se abre solo vía efecto (nunca por un click) — igual que una URL
+      // directa a /articulos/edit/5 abre el modal sin que nada lo haya clickeado: `document.
+      // activeElement` sigue siendo `body`. `focoDeReserva` recibe el `RefObject` (no `.current`
+      // ya resuelto) justamente para no depender de en qué commit exacto se adjuntó el ref.
       const [abierto, setAbierto] = useState(false)
       const refReserva = useRef<HTMLButtonElement>(null)
       useEffect(() => {
@@ -212,7 +212,7 @@ describe('Modal — foco', () => {
             Nuevo
           </button>
           {abierto && (
-            <Modal titulo="Nueva marca" focoDeReserva={refReserva.current} onCerrar={() => setAbierto(false)}>
+            <Modal titulo="Nueva marca" focoDeReserva={refReserva} onCerrar={() => setAbierto(false)}>
               <button type="button">Guardar</button>
             </Modal>
           )}
@@ -249,7 +249,7 @@ describe('Modal — foco', () => {
             </button>
           )}
           {abierto && (
-            <Modal titulo="Nueva marca" focoDeReserva={refReserva.current} onCerrar={() => setAbierto(false)}>
+            <Modal titulo="Nueva marca" focoDeReserva={refReserva} onCerrar={() => setAbierto(false)}>
               <button type="button" onClick={() => setDisparadorPresente(false)}>
                 Quitar disparador
               </button>
