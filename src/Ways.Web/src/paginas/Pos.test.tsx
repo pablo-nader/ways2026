@@ -2198,11 +2198,67 @@ describe('Pos — sin selector de lote en el detalle del carrito (stage-pos-busc
   })
 })
 
-// El warning "⚠ Lote vencido" (design decisión 12: "Expired Lot Sale Warns, Never Blocks") vivía
-// en la vieja pantalla de resumen de ticket, eliminada por stage-pos-modales-de-cobro: el modal
-// "Venta finalizada" que la reemplaza solo muestra total, medios aplicados y vuelto (nunca el
-// detalle de items). El flag `loteVencido` en sí sigue cubierto donde importa de verdad — el
-// ticket físico ESC/POS (`impresion/plantillas.test.ts`, `pos/ShellPos.test.tsx`).
+describe('Pos — modal "Venta finalizada": aviso de lote vencido (design decisión 12: "Expired Lot Sale Warns, Never Blocks")', () => {
+  /**
+   * Cláusula bajo prueba: el predicado `item.loteVencido` en el `.filter()` que arma
+   * `itemsVencidos` (`Pos.tsx`, dentro de `cobrar()`). Mutación aplicada manualmente: cambiar el
+   * filtro a `.filter(() => false)` → este test pasa a rojo (el aviso no aparece con un item
+   * vencido en la respuesta). Revertido, vuelve a verde — evidencia registrada en el informe de
+   * la tarea.
+   */
+  it('un item emitido con loteVencido: true muestra el aviso "⚠ Se vendió un lote vencido" en el modal "Venta finalizada", con la descripción y el código de lote', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/ventas') {
+        return Promise.resolve(
+          comprobanteEmitidoFixture({
+            items: [
+              {
+                orden: 1,
+                idArticulo: 1,
+                descripcion: 'Coca Cola 1L',
+                codigoBarra: '7790001234567',
+                idArea: 1,
+                idListaPrecio: 1,
+                idOferta: null,
+                idAlicuotaIva: 1,
+                porcentajeIva: 21,
+                cantidad: 1,
+                precioUnitario: 100,
+                descuento: 0,
+                total: 100,
+                idLote: 2,
+                codigoLote: '2026-01-01',
+                loteVencido: true,
+              },
+            ],
+          }),
+        )
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    const modal = within(await screen.findByRole('dialog', { name: 'Venta finalizada' }))
+    expect(modal.getByText('⚠ Se vendió un lote vencido')).toBeInTheDocument()
+    expect(modal.getByText(/Coca Cola 1L.*Lote 2026-01-01/)).toBeInTheDocument()
+  })
+
+  it('con todos los items sin loteVencido, el modal "Venta finalizada" no muestra ningún aviso de lote vencido', async () => {
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    const modal = within(await screen.findByRole('dialog', { name: 'Venta finalizada' }))
+    expect(modal.queryByText('⚠ Se vendió un lote vencido')).not.toBeInTheDocument()
+  })
+})
 
 describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, Slice 7, design: Web composition)', () => {
   function presupuestoParaVentaFixture(sobrescribir: Partial<PresupuestoParaVenta> = {}): PresupuestoParaVenta {

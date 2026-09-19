@@ -312,17 +312,25 @@ function ConfirmacionDeCobro({ total, pagado, vuelto, previaFallida, ocupado, on
  * modal "Venta finalizada" (nombre + importe) — nunca el `MedioPagoListado` completo. */
 type ResumenDeMedioAplicado = { nombre: string; importe: number }
 
+/** Un item emitido cuyo lote venció (`ItemEmitido.loteVencido`) — solo lo que necesita el aviso
+ * del modal para identificarlo (descripción + código de lote cuando está disponible). */
+type ItemVencidoResumen = { descripcion: string; codigoLote: string | null }
+
 /** Datos que necesita el modal "Venta finalizada" tras un cobro exitoso (stage-pos-modales-de-
  * cobro) — reemplaza a la vieja pantalla de resumen completa. El carrito y el panel de pagos ya
  * quedaron reseteados para cuando este estado se setea (ver `cobrar()`): acá solo sobrevive lo
  * que el modal muestra. `vuelto` sale de `sumarVueltos(comprobante.pagos)` — la respuesta del
  * servidor, nunca un recálculo local (mismo criterio que el resto de la pantalla: "el servidor
- * es la autoridad final del total"). */
+ * es la autoridad final del total"). `itemsVencidos` espeja `ItemEmitido.loteVencido` — spec
+ * comprobantes-venta, "Expired Lot Sale Warns, Never Blocks": "The response MUST carry a warning
+ * flag identifying the expired line so the POS can display it prominently" — vacío en el 100% de
+ * las ventas sin ningún lote vencido, lo único que llena este aviso. */
 type ResumenVentaFinalizada = {
   numeroVisible: string
   total: number
   medios: ResumenDeMedioAplicado[]
   vuelto: number
+  itemsVencidos: ItemVencidoResumen[]
 }
 
 type PropsVentaFinalizada = ResumenVentaFinalizada & { onCerrar: () => void }
@@ -339,7 +347,7 @@ type PropsVentaFinalizada = ResumenVentaFinalizada & { onCerrar: () => void }
  * sostenido desde la propia confirmación de cobro no debe cerrar este modal por accidente apenas
  * aparece.
  */
-function VentaFinalizada({ numeroVisible, total, medios, vuelto, onCerrar }: PropsVentaFinalizada) {
+function VentaFinalizada({ numeroVisible, total, medios, vuelto, itemsVencidos, onCerrar }: PropsVentaFinalizada) {
   const aceptarRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -361,6 +369,23 @@ function VentaFinalizada({ numeroVisible, total, medios, vuelto, onCerrar }: Pro
               <h5 className="modal-title">Venta finalizada</h5>
             </div>
             <div className="modal-body text-center">
+              {/* design decisión 12 ("Expired Lot Sale Warns, Never Blocks"): nunca bloquea la
+                  venta — solo la última chance de que el operador se entere de que salió un lote
+                  vencido, ahora que la vieja pantalla de resumen con el detalle de items ya no
+                  existe. */}
+              {itemsVencidos.length > 0 && (
+                <div className="alert alert-danger rounded-0 text-start mb-3">
+                  <strong>⚠ Se vendió un lote vencido</strong>
+                  <ul className="mb-0 mt-1">
+                    {itemsVencidos.map((item, indice) => (
+                      <li key={indice}>
+                        {item.descripcion}
+                        {item.codigoLote && ` — Lote ${item.codigoLote}`}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <p className="text-muted small mb-3">Venta {numeroVisible}</p>
               <p className="fs-4 mb-3">
                 <strong>Total: {formatearMoneda(total)}</strong>
@@ -1336,6 +1361,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
           importe: pago.importe,
         })),
         vuelto: sumarVueltos(emitido.pagos),
+        itemsVencidos: emitido.items
+          .filter((item) => item.loteVencido)
+          .map((item) => ({ descripcion: item.descripcion, codigoLote: item.codigoLote })),
       })
       // stage-desktop-pos: `puedeCobrar`/`precondicionesListas` ya exigieron `medios !== null`
       // para llegar hasta acá — el seam nunca dispara con la lista todavía sin cargar.
@@ -2073,6 +2101,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
           total={ventaFinalizada.total}
           medios={ventaFinalizada.medios}
           vuelto={ventaFinalizada.vuelto}
+          itemsVencidos={ventaFinalizada.itemsVencidos}
           onCerrar={cerrarVentaFinalizada}
         />
       )}
