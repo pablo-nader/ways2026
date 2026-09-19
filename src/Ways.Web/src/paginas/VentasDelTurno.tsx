@@ -47,6 +47,10 @@ function mensajeDeErrorReimprimir(e: unknown): string {
 
 type PropsModalDetalle = {
   comprobante: ComprobanteEmitido | null
+  /** `ComprobanteEmitido` no lleva el nombre del cliente (solo `idCliente`) — se toma de la fila
+   * ya cargada del listado (`ventaEnDetalle.nombreCliente`), disponible desde que se abre el
+   * modal, sin esperar el `GET /api/ventas/{id}`. */
+  nombreCliente: string | undefined
   cargando: boolean
   error: string
   medios: MedioPagoListado[]
@@ -77,6 +81,7 @@ function esAlcanzable(elemento: HTMLElement | null): elemento is HTMLElement {
  */
 function ModalDetalleDeVenta({
   comprobante,
+  nombreCliente,
   cargando,
   error,
   medios,
@@ -126,6 +131,8 @@ function ModalDetalleDeVenta({
                   <dl className="row mb-3">
                     <dt className="col-3">Fecha</dt>
                     <dd className="col-9">{formatearFechaHora(comprobante.fecha)}</dd>
+                    <dt className="col-3">Cliente</dt>
+                    <dd className="col-9">{nombreCliente ?? '—'}</dd>
                     <dt className="col-3">Estado</dt>
                     <dd className="col-9">
                       <span className={`badge rounded-0 ${claseDeBadgeDeEstadoVenta(comprobante.estado)}`}>
@@ -697,6 +704,7 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
             {idDetalle !== null && (
               <ModalDetalleDeVenta
                 comprobante={comprobanteDetalle}
+                nombreCliente={ventaEnDetalle?.nombreCliente}
                 cargando={cargandoDetalle}
                 error={errorDetalle}
                 medios={medios}

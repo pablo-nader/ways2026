@@ -609,7 +609,7 @@ describe('VentasDelTurno — respuestas obsoletas', () => {
 
 describe('VentasDelTurno — detalle de venta', () => {
   it('abre el modal, carga el detalle y lo muestra: número, fecha, cliente, estado, ítems, pagos y totales', async () => {
-    const venta = ventaFixture({ id: 20, numeroVisible: '0007-00000020' })
+    const venta = ventaFixture({ id: 20, numeroVisible: '0007-00000020', nombreCliente: 'Juan Pérez' })
     const comprobante = comprobanteFixture({ id: 20, numeroVisible: '0007-00000020' })
     mockearRutas({ turno: turnoFixture(), ventas: [venta], medios: [medioEfectivo], comprobantes: { 20: comprobante } })
     render(<VentasDelTurno />)
@@ -618,6 +618,9 @@ describe('VentasDelTurno — detalle de venta', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
 
     const dialog = await screen.findByRole('dialog', { name: /Detalle de la venta 0007-00000020/ })
+    // `ComprobanteEmitido` no trae el nombre del cliente (solo `idCliente`) — sale de la fila del
+    // listado ya cargada, no de un segundo fetch.
+    expect(within(dialog).getByText('Juan Pérez')).toBeInTheDocument()
     expect(within(dialog).getByText('Coca Cola 1L')).toBeInTheDocument()
     expect(within(dialog).getByText('Efectivo')).toBeInTheDocument()
     // El total del comprobante aparece en el pie del modal.
