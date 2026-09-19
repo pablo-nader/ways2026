@@ -102,6 +102,25 @@ describe('ordenarProveedoresPorEtiqueta', () => {
 
     expect(ordenados.map((p) => p.id)).toEqual([2, 1, 3])
   })
+
+  // Cláusula bajo prueba: los argumentos `'es', { sensitivity: 'base' }` de `localeCompare` en
+  // `ordenarProveedoresPorEtiqueta` (mutation-proof-tests). Verificado con `node -e` en este
+  // entorno: el locale por defecto de Node/ICU acá resuelve a `es-ES` (`Intl.Collator().resolvedOptions().locale`),
+  // así que un fixture Ñ/N/O ('Oso'/'Ñandú'/'Nube') NO discrimina sacar el locale — el resultado es
+  // idéntico con o sin argumentos. El fixture que sí distingue el caso real de este código es uno
+  // que dependa de la SENSIBILIDAD (`sensitivity: 'base'`), no del locale: dos etiquetas que
+  // difieren solo en mayúscula/minúscula comparan IGUAL (0) con `sensitivity: 'base'` — el sort
+  // estable conserva el orden de entrada — pero comparan DISTINTO con la sensibilidad por defecto
+  // (`'variant'`, case-sensible), que reordena. Mutación comprobada: sacar los dos argumentos
+  // cambia el resultado de este test de `[1, 2]` a `[2, 1]`.
+  it('con dos etiquetas que difieren solo en mayúscula/minúscula, conserva el orden de entrada (sensitivity: base) — sin el argumento, el orden se invierte', () => {
+    const mayuscula = proveedorFixture({ id: 1, razonSocial: 'Ana', nombreFantasia: null })
+    const minuscula = proveedorFixture({ id: 2, razonSocial: 'ana', nombreFantasia: null })
+
+    const ordenados = ordenarProveedoresPorEtiqueta([mayuscula, minuscula])
+
+    expect(ordenados.map((p) => p.id)).toEqual([1, 2])
+  })
 })
 
 // ---- insertarOrdenadoPor ------------------------------------------------------------------------
