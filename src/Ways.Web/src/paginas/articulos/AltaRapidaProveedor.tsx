@@ -20,6 +20,7 @@ type Props = {
  */
 export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
   const [condiciones, setCondiciones] = useState<CondicionFiscalListado[] | null>(null)
+  const [cargandoCondiciones, setCargandoCondiciones] = useState(true)
   const [errorCondiciones, setErrorCondiciones] = useState('')
   const [razonSocial, setRazonSocial] = useState('')
   const [nombreFantasia, setNombreFantasia] = useState('')
@@ -27,20 +28,36 @@ export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
   const bloqueadoRef = useRef(false)
+  // Token de la carga de condiciones fiscales: "Reintentar" invalida cualquier carga anterior en
+  // vuelo, y el desmontaje invalida la última — sin esto una respuesta tardía de un intento previo
+  // podía pisar el resultado de un reintento posterior (react-async-state regla 2/3).
+  const tokenCondicionesRef = useRef(0)
 
-  useEffect(() => {
-    let vigente = true
+  function cargarCondicionesFiscales() {
+    const token = (tokenCondicionesRef.current += 1)
+    setCargandoCondiciones(true)
+    setErrorCondiciones('')
     clienteDeCatalogosFiscales
       .condicionesFiscales()
       .then((lista) => {
-        if (vigente) setCondiciones(lista)
+        if (tokenCondicionesRef.current !== token) return
+        setCondiciones(lista)
       })
       .catch(() => {
-        if (vigente) setErrorCondiciones('No se pudieron cargar las condiciones fiscales.')
+        if (tokenCondicionesRef.current !== token) return
+        setErrorCondiciones('No se pudieron cargar las condiciones fiscales.')
       })
+      .finally(() => {
+        if (tokenCondicionesRef.current === token) setCargandoCondiciones(false)
+      })
+  }
+
+  useEffect(() => {
+    cargarCondicionesFiscales()
     return () => {
-      vigente = false
+      tokenCondicionesRef.current += 1
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function guardar(evento: React.FormEvent<HTMLFormElement>) {
@@ -80,7 +97,19 @@ export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
   return (
     <Modal titulo="Nuevo proveedor" ocupado={guardando} onCerrar={onCancelar}>
       <form onSubmit={guardar}>
-        {errorCondiciones && <div className="alert alert-warning rounded-0 py-1 px-2 small">{errorCondiciones}</div>}
+        {errorCondiciones && (
+          <div className="alert alert-warning rounded-0 py-1 px-2 small d-flex justify-content-between align-items-center gap-2">
+            <span>{errorCondiciones}</span>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-secondary rounded-0"
+              onClick={cargarCondicionesFiscales}
+              disabled={cargandoCondiciones}
+            >
+              Reintentar
+            </button>
+          </div>
+        )}
         {error && <div className="alert alert-danger rounded-0 py-1 px-2 small">{error}</div>}
 
         <div className="mb-3">
@@ -118,7 +147,7 @@ export function AltaRapidaProveedor({ onCreado, onCancelar }: Props) {
             Condición fiscal
           </label>
           {condiciones === null ? (
-            <Cargando texto="Cargando condiciones fiscales…" />
+            errorCondiciones ? null : <Cargando texto="Cargando condiciones fiscales…" />
           ) : (
             <select
               id="alta-rapida-proveedor-condicion-fiscal"

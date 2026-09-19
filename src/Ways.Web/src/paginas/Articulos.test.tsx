@@ -115,6 +115,9 @@ type CatalogosDeTest = {
   proveedores?: ProveedorListado[]
   alicuotas?: AlicuotaIvaListado[]
   condicionesFiscales?: CondicionFiscalListado[]
+  /** Override completo del fetch de condiciones fiscales (p.ej. para simular un rechazo seguido
+   * de un reintento exitoso) — cuando está presente, gana sobre `condicionesFiscales`. */
+  condicionesFiscalesImpl?: () => Promise<CondicionFiscalListado[]>
 }
 
 /**
@@ -145,7 +148,9 @@ function mockearApiGet(catalogos: CatalogosDeTest = {}) {
     if (ruta === '/catalogos-fiscales/alicuotas-iva')
       return Promise.resolve(catalogos.alicuotas ?? [{ id: 1, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true }])
     if (ruta === '/catalogos-fiscales/condiciones-fiscales')
-      return Promise.resolve(catalogos.condicionesFiscales ?? [condicionFiscalFixture()])
+      return catalogos.condicionesFiscalesImpl
+        ? catalogos.condicionesFiscalesImpl()
+        : Promise.resolve(catalogos.condicionesFiscales ?? [condicionFiscalFixture()])
     if (ruta === '/empresas') return Promise.resolve([])
     if (ruta === '/catalogos/listas-precio') return Promise.resolve([])
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
@@ -337,6 +342,44 @@ describe('Articulos — alta rápida: error del servidor mantiene el modal abier
     expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Duplicado')
     expect(within(dialogo).getByLabelText('Margen sugerido (%)')).toHaveValue(15)
     expect(screen.getByRole('dialog', { name: 'Nuevo grupo' })).toBeInTheDocument()
+  })
+})
+
+describe('Articulos — alta rápida de proveedor: falla el catálogo de condiciones fiscales', () => {
+  it('un fetch rechazado no deja un spinner infinito, muestra el error y deshabilita "Crear"; "Reintentar" recarga y habilita el alta', async () => {
+    let intentos = 0
+    mockearApiGet({
+      condicionesFiscalesImpl: () => {
+        intentos += 1
+        return intentos === 1
+          ? Promise.reject(new Error('falla de red'))
+          : Promise.resolve([condicionFiscalFixture({ id: 7, nombre: 'Responsable Inscripto' })])
+      },
+    })
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/proveedores') return Promise.resolve(proveedorFixture({ id: 9, razonSocial: 'Nueva SA' }))
+      return Promise.reject(new Error(`POST no esperado en el test: ${ruta}`))
+    })
+
+    await abrirFormularioNuevo()
+    await userEvent.click(screen.getByRole('button', { name: 'Nuevo proveedor' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo proveedor' })
+
+    await within(dialogo).findByText('No se pudieron cargar las condiciones fiscales.')
+    expect(within(dialogo).queryByText('Cargando condiciones fiscales…')).not.toBeInTheDocument()
+    expect(within(dialogo).getByRole('button', { name: 'Crear' })).toBeDisabled()
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Reintentar' }))
+
+    expect(within(dialogo).queryByText('No se pudieron cargar las condiciones fiscales.')).not.toBeInTheDocument()
+    const selectCondicion = await within(dialogo).findByLabelText('Condición fiscal')
+    expect(within(dialogo).getByRole('button', { name: 'Crear' })).toBeEnabled()
+
+    await userEvent.type(within(dialogo).getByLabelText('Razón social'), 'Nueva SA')
+    await userEvent.selectOptions(selectCondicion, '7')
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Crear' }))
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith('/proveedores', expect.objectContaining({ idCondicionFiscal: 7 })))
   })
 })
 
