@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ShellPos } from './ShellPos'
+import { ErrorApi } from '../api/cliente'
 import { ROL } from '../api/tipos'
 import { reporteZ, ticketDeVenta } from '../impresion/plantillas'
 import type {
@@ -338,16 +339,15 @@ describe('ShellPos', () => {
   })
 })
 
-describe('ShellPos — "Cerrar caja" vive en la pantalla de venta, no en el header (stage-pos-turno-y-foco)', () => {
+describe('ShellPos — los controles de caja viven en el header, portaleados desde Pos.tsx (stage-pos-caja-en-cabecera)', () => {
   /**
-   * stage-pos-turno-y-foco: el header YA NO tiene su propio botón "Cerrar caja" (ver el
-   * doc-comment de `ShellPos.tsx`) — la propia pantalla `/vender` (`Pos.tsx`) muestra el estado
-   * del turno y ofrece la acción, con el `idTurno` que ya resolvió al montar (nunca un GET
-   * disparado por el click). Este describe reemplaza al viejo "'Cerrar caja' resuelve el turno
-   * abierto antes de navegar", que probaba un mecanismo (`irACerrarCaja` del shell) que ya no
-   * existe.
+   * stage-pos-caja-en-cabecera: la acción de caja se mueve del panel lateral de `Pos.tsx` al
+   * header oscuro del shell — `ShellPos` reserva un contenedor vacío ahí y `Pos.tsx` portalea sus
+   * controles (badge + "Abrir caja"/"Cerrar caja", lógica de turno intacta) vía
+   * `RanuraHeaderPosContext` (ver el doc-comment de `ShellPos.tsx`). Este describe reemplaza al
+   * viejo "'Cerrar caja' vive en la pantalla de venta, no en el header" (etapa anterior).
    */
-  it('con un turno abierto, la pantalla de venta ofrece "Cerrar caja" y navega a CierreDeCaja con su idTurno (nunca sin ?idTurno=)', async () => {
+  it('con un turno abierto, el header (banner) muestra "Caja abierta" y "Cerrar caja", que navega a CierreDeCaja con su idTurno (nunca sin ?idTurno=)', async () => {
     mockearRutasDePos((ruta) => {
       if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
       if (ruta === '/caja/turnos/501/resumen') return Promise.resolve<ResumenDeTurno>(resumenFixture())
@@ -355,21 +355,62 @@ describe('ShellPos — "Cerrar caja" vive en la pantalla de venta, no en el head
     })
     renderShell()
 
-    expect(await screen.findByText('Turno abierto')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+    // `Box.tsx` también renderiza su propio `<header>` (título de cada caja), así que el header
+    // del shell se ubica por contenido (el nombre de la empresa, único ahí) en vez de por rol —
+    // con varios `<header>` en pantalla, `getByRole('banner')` es ambiguo (`dom-accessibility-api`
+    // no aplica la regla contextual de "banner solo fuera de main/article/etc.").
+    const banner = (await screen.findByText('Almacén Demo')).closest('header') as HTMLElement
+    expect(await within(banner).findByText('Caja abierta')).toBeInTheDocument()
+    await userEvent.click(within(banner).getByRole('button', { name: 'Cerrar caja' }))
 
     expect(await screen.findByText('Cierre de turno #501')).toBeInTheDocument()
     expect(apiGetMock).toHaveBeenCalledWith('/caja/turnos/abierto?idPuntoVenta=7')
   })
 
-  it('sin turno abierto, el header no muestra "Cerrar caja" y la pantalla de venta ofrece "Abrir turno" en su lugar', async () => {
+  it('sin turno abierto, el header (banner) muestra "Caja cerrada" y "Abrir caja" (nunca "Cerrar caja"), y la pantalla de venta sigue con su propio aviso', async () => {
     mockearRutasDePos((ruta) => (ruta === '/caja/turnos/abierto?idPuntoVenta=7' ? Promise.resolve(null) : undefined))
     renderShell()
 
-    expect(await screen.findByText('Turno cerrado')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Cerrar caja' })).not.toBeInTheDocument()
-    expect(screen.getByText('Turno cerrado: abrí un turno para vender.')).toBeInTheDocument()
+    const banner = (await screen.findByText('Almacén Demo')).closest('header') as HTMLElement
+    expect(await within(banner).findByText('Caja cerrada')).toBeInTheDocument()
+    expect(within(banner).getByRole('button', { name: 'Abrir caja' })).toBeInTheDocument()
+    expect(within(banner).queryByRole('button', { name: 'Cerrar caja' })).not.toBeInTheDocument()
+    expect(screen.getByText('Caja cerrada: abrí la caja para vender.')).toBeInTheDocument()
+  })
+
+  it('un 409 turno_no_abierto durante el cobro apaga "Caja abierta"/"Cerrar caja" del header mientras el gate está arriba (judgment-day JD-E2-1)', async () => {
+    mockearRutasDePos()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        return Promise.resolve([{ idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] }])
+      }
+      if (ruta === '/ventas') {
+        return Promise.reject(new ErrorApi(409, 'turno_no_abierto', 'No hay un turno abierto en este punto de venta.'))
+      }
+      return Promise.resolve(undefined)
+    })
+    renderShell()
+
+    const banner = (await screen.findByText('Almacén Demo')).closest('header') as HTMLElement
+    await within(banner).findByText('Caja abierta')
+
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
+    await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
+    await screen.findByText('Coca Cola 1L')
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText('Importe de Efectivo (fila 1)')
+    await userEvent.type(importe, '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await screen.findByText('No hay un turno abierto')
+    // El 409 es la confirmación más autoritativa de que el turno está cerrado — el header nunca
+    // puede seguir mostrando "Caja abierta"/"Cerrar caja" habilitado mientras el propio gate dice
+    // que no hay turno abierto.
+    expect(within(banner).queryByText('Caja abierta')).not.toBeInTheDocument()
+    expect(within(banner).queryByRole('button', { name: 'Cerrar caja' })).not.toBeInTheDocument()
+    expect(within(banner).getByText('Caja cerrada')).toBeInTheDocument()
   })
 
   it('un cierre exitoso navega a la Caja Z (auto-impresión incluida) e imprime exactamente una vez', async () => {
