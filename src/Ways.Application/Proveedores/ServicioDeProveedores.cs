@@ -21,7 +21,7 @@ namespace Ways.Application.Proveedores;
 /// esto también significa que, a diferencia de <c>ServicioDeClientes</c>, el alta completa SÍ es
 /// testeable con el proveedor InMemory (ver <c>ServicioDeProveedoresTests</c>).
 ///
-/// <see cref="EliminarAsync"/> (fix/bajas-catalogos-guarda-de-uso, PR 1) SÍ abre transacción
+/// <see cref="EliminarAsync"/> (fix/bajas-catalogos-guarda-de-uso) SÍ abre transacción
 /// explícita, a diferencia del resto de este servicio: la baja necesita el lock de
 /// <see cref="GuardaDeReferencias.BloquearFilaAsync{T}"/> tomado ANTES de releer la fila — mismo
 /// criterio que <see cref="Catalogos.ServicioDeCatalogo{T,TListado,TAlta}.EliminarAsync"/>, que

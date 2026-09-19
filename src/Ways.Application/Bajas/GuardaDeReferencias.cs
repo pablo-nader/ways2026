@@ -14,7 +14,7 @@ namespace Ways.Application.Bajas;
 /// listas de precio) y de proveedores: la política que el dueño del producto aprobó es que una
 /// baja SOLO procede si NINGUNA fila referencia la entidad, sin importar si esa fila fue creada
 /// antes o después que la entidad, y sin importar si esa fila referenciante ya está dada de baja
-/// lógicamente (OD4 — sigue KEPT acá, <see cref="InspectorDeUso"/> no emite <c>deleted_at</c> en
+/// lógicamente (OD4 se mantiene: <see cref="InspectorDeUso"/> no emite <c>deleted_at</c> en
 /// ninguna rama, ni siquiera en modo referencia).
 ///
 /// POR QUÉ NO ES <see cref="InspectorDeUso.PrimeraDependenciaEnUsoAsync"/>: ese método (modo
@@ -36,13 +36,12 @@ namespace Ways.Application.Bajas;
 /// Sin el lock, las dos transacciones podrían entrelazarse de forma que ninguna de las dos viera a
 /// la otra y las dos comitearan: un artículo referenciando una marca borrada.
 ///
-/// RESIDUAL CONOCIDO, documentado acá porque es el único guard de esta corrección (fix/bajas-
-/// catalogos-guarda-de-uso, PR 1): un escritor cuyo PRE-CHEQUEO de existencia de la fila padre
-/// corrió ANTES de que esta baja tomara el lock, y cuyo INSERT/UPDATE corre DESPUÉS de que esta
-/// baja lo soltó (post-commit), puede seguir comiteando una referencia a la fila recién borrada —
-/// su chequeo de FK espera el lock y después pasa, porque la fila todavía existe físicamente (baja
-/// lógica). Cerrar esto en los escritores (un <c>SELECT ... FOR KEY SHARE</c> explícito antes del
-/// pre-chequeo) es un PR aparte, sobre los escritores de artículos primero.
+/// RESIDUAL CONOCIDO: un escritor cuyo pre-chequeo de existencia (filtrado, sin lock) corrió
+/// ANTES del commit de esta baja, y cuyo INSERT/UPDATE llega DESPUÉS de que esta baja tomó el
+/// lock, puede comitear una referencia a la fila recién dada de baja: su chequeo de FK espera el
+/// lock y después pasa, porque la fila sigue existiendo físicamente. Se cierra del lado del
+/// escritor, con un <c>SELECT ... WHERE deleted_at IS NULL FOR KEY SHARE</c> dentro de su
+/// transacción en lugar del pre-chequeo.
 /// </summary>
 public sealed class GuardaDeReferencias(IWaysDbContext db, InspectorDeUso inspector)
 {

@@ -15,7 +15,7 @@ namespace Ways.Application.Catalogos;
 /// propias (<see cref="AplicarPropios"/>) — <c>Nombre</c>/<c>Activo</c>/<c>IdEmpresa</c> ya
 /// están cubiertos acá porque viven en <see cref="CatalogoSimple"/>.
 ///
-/// <see cref="EliminarAsync"/> (fix/bajas-catalogos-guarda-de-uso, PR 1): la baja lógica exige
+/// <see cref="EliminarAsync"/> (fix/bajas-catalogos-guarda-de-uso): la baja lógica exige
 /// además que NINGUNA fila referencie la entidad (política aprobada por el dueño del producto).
 /// El guard corre bajo <see cref="FabricaDeEstrategiaSinReintento"/> —una baja lógica es la baja
 /// más un 404 falso, mismo criterio que <c>ServicioDeOfertas.EliminarAsync</c>— y bajo

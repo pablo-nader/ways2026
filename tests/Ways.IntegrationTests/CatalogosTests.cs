@@ -236,8 +236,8 @@ public class CatalogosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixtu
     [Fact]
     public async Task CrearUnaCategoriaBajoUnPadreDadoDeBajaDevuelve400()
     {
-        // fix/bajas-catalogos-guarda-de-uso (PR 1): el padre ya NO se puede dar de baja
-        // mientras algo lo referencie — GuardaDeReferencias, y OD4 (KEPT) hace que hasta una
+        // fix/bajas-catalogos-guarda-de-uso: el padre ya NO se puede dar de baja
+        // mientras algo lo referencie — GuardaDeReferencias, y OD4 hace que hasta una
         // hija YA dada de baja lo siga bloqueando, así que borrar la hija no alcanza para
         // volver a dejar al padre pristino. Lo que sí lo deja pristino es RECOLGAR la hija de
         // otro lado (PUT con id_categoria_padre null): ahí el padre deja de tener CUALQUIER

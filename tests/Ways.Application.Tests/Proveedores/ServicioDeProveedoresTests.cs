@@ -20,7 +20,7 @@ namespace Ways.Application.Tests.Proveedores;
 /// <c>SaveChangesAsync</c> corre sin problema contra InMemory.
 ///
 /// <see cref="ServicioDeProveedores.EliminarAsync"/> DEJÓ de cubrirse acá desde
-/// fix/bajas-catalogos-guarda-de-uso (PR 1): ahora abre <c>Database.BeginTransactionAsync</c> y
+/// fix/bajas-catalogos-guarda-de-uso: ahora abre <c>Database.BeginTransactionAsync</c> y
 /// <c>GuardaDeReferencias.BloquearFilaAsync</c> emite ADO crudo (<c>SELECT ... FOR UPDATE</c>) —
 /// mismo "transaction-blocked-provider caveat" que ya documentan
 /// <c>ServicioDeOfertasTests</c>/<c>ServicioDeListasPrecioTests</c>. Su cobertura completa (guard

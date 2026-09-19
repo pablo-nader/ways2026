@@ -21,7 +21,7 @@ using Ways.Infrastructure.Persistencia;
 namespace Ways.IntegrationTests;
 
 /// <summary>
-/// fix/bajas-catalogos-guarda-de-uso, PR 1: el guard de <c>GuardaDeReferencias</c> sobre los 6
+/// fix/bajas-catalogos-guarda-de-uso: el guard de <c>GuardaDeReferencias</c> sobre los 6
 /// catálogos de tenant (áreas, categorías, marcas, grupos, medios de pago, listas de precio) y
 /// proveedores, contra Postgres real y sobre <c>ways_app</c> (RLS aplicado) — mismo criterio que
 /// <c>BajasDeOrganizacionTests</c>, del que reusa el patrón de siembra/lectura.

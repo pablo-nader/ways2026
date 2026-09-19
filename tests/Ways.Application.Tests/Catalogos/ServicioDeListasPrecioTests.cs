@@ -26,7 +26,7 @@ namespace Ways.Application.Tests.Catalogos;
 ///
 /// <see cref="ServicioDeListasPrecio.EliminarAsync"/> (heredado de
 /// <c>ServicioDeCatalogo{T,TListado,TAlta}</c>) TAMBIÉN dejó de cubrirse acá desde
-/// fix/bajas-catalogos-guarda-de-uso (PR 1), mismo caveat: ahora abre su propia transacción y
+/// fix/bajas-catalogos-guarda-de-uso, mismo caveat: ahora abre su propia transacción y
 /// <c>GuardaDeReferencias.BloquearFilaAsync</c> emite ADO crudo. Sus tres casos —lista default,
 /// dependiente activo, baja limpia— se prueban contra Postgres real en
 /// <c>BajasDeCatalogosTests</c> (Ways.IntegrationTests).

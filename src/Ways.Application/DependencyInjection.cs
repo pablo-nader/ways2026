@@ -105,7 +105,7 @@ public static class DependencyInjection
         // cablea. InventarioDeDependientes es estático y puro: no tiene ciclo de vida que registrar.
         services.AddScoped<InspectorDeUso>();
 
-        // fix/bajas-catalogos-guarda-de-uso, PR 1: el guard de referencias de los catálogos de
+        // fix/bajas-catalogos-guarda-de-uso: el guard de referencias de los catálogos de
         // tenant y proveedores — reusa InspectorDeUso en modo referencia (sin corte por
         // created_at, ver el doc-comment de GuardaDeReferencias).
         services.AddScoped<GuardaDeReferencias>();

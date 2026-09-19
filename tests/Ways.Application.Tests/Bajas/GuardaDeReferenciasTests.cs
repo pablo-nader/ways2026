@@ -4,7 +4,7 @@ using Ways.Application.Organizacion;
 namespace Ways.Application.Tests.Bajas;
 
 /// <summary>
-/// fix/bajas-catalogos-guarda-de-uso, PR 1: <see cref="GuardaDeReferencias.ComponerMensaje"/> es
+/// fix/bajas-catalogos-guarda-de-uso: <see cref="GuardaDeReferencias.ComponerMensaje"/> es
 /// pura (sin base) — la reglas de join en castellano, el override por etiqueta propia y el
 /// dedupe corren enteros en memoria. El resto de <see cref="GuardaDeReferencias"/> (el lock de
 /// fila y la llamada a <c>InspectorDeUso.TablasQueReferencianAsync</c>) necesita Postgres real y
