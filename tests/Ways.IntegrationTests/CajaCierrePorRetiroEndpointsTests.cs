@@ -389,6 +389,81 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
         }
     }
 
+    // ---- judgment-day JD-E5a-1: diferencia viene del arqueo persistido, nunca de una fórmula ----
+
+    /// <summary>LA CLÁUSULA que este fix corrige. Antes de JD-E5a-1, <c>resumen-de-cierre</c>
+    /// calculaba <c>diferencia</c> con la fórmula del modo retiro (<c>totalRetiros −
+    /// (ventasEfectivoNetas − gastosEfectivo + refuerzos)</c>), que asume que el ancla se declaró
+    /// con el fondo inicial. Sobre un cierre CLÁSICO eso es falso: el cajero declara lo que
+    /// realmente contó. Con los números exactos del hallazgo — fondo 500, ventas efectivo 1000,
+    /// sin gastos/retiros/refuerzos, conteo declarado 1400 (ni el fondo ni el esperado) — la
+    /// fórmula vieja daba <c>-1000</c> (el negativo del fondo); el valor correcto, leído de la fila
+    /// YA PERSISTIDA de <c>arqueos_turno</c>, es <c>declarado − esperado = 1400 − 1500 = -100</c>.
+    ///
+    /// Mutation-proof-tests: se corrió la mutación de verdad — revertir
+    /// <c>LectorDeResumenDeCierrePorRetiro.LeerAsync</c> para que use
+    /// <c>resultado.Diferencia</c> de <c>CalculadorDeCierrePorRetiro</c> (reintroduciendo el campo
+    /// y la fórmula vieja) en vez de leer la fila de <c>arqueos_turno</c> hace fallar esta prueba
+    /// (esperado <c>-100</c>, obtenido <c>-1000</c>); revertido después de confirmar el fallo, la
+    /// suite vuelve a quedar verde. La prueba de modo retiro
+    /// (<see cref="ElCierrePorRetiroDeclaraElFondoEnElAnclaYElEsperadoEnElRestoYPersisteLaTesoreria"/>)
+    /// sigue en verde porque ahí SÍ coinciden fórmula y fila persistida (declarado = fondo).</summary>
+    [Fact]
+    public async Task ElResumenDeCierreDeUnCierreClasicoUsaElDeclaradoRealDelCajeroNoLaFormulaDelModoRetiro()
+    {
+        var ctx = await PrepararAsync(nameof(ElResumenDeCierreDeUnCierreClasicoUsaElDeclaradoRealDelCajeroNoLaFormulaDelModoRetiro));
+        var turno = await AbrirTurnoAsync(ctx, fondoInicial: 500m);
+        await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, importe: 1000m);
+
+        // esperado(ancla) = 1000 - 0 + 500 + 0 - 0 - 0 = 1500. El cajero cuenta 1400 — ni el fondo
+        // (500) ni el esperado (1500) — así que ninguna fórmula que asuma uno de esos dos puede
+        // adivinarlo.
+        var solicitudDeCierre = new SolicitudDeCierre([new ConteoDeclarado(ctx.IdMedioEfectivo, 1400m)], null);
+        var cierre = await ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre", solicitudDeCierre);
+        var cuerpoDeCierre = await cierre.Content.ReadAsStringAsync();
+        Assert.True(cierre.StatusCode == HttpStatusCode.OK, cuerpoDeCierre);
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/caja/turnos/{turno.Id}/resumen-de-cierre");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        var resumen = JsonSerializer.Deserialize<ResumenDeCierrePorRetiro>(cuerpo, OpcionesJson)!;
+
+        // declarado(1400) - esperado(1500) = -100: un faltante de 100, NUNCA -1000 (la fórmula
+        // vieja calculaba -(totalRetiros(0) - (1000 - 0 + 0)) = -1000, un número que no tiene
+        // ninguna relación con lo que el cajero realmente declaró).
+        Assert.Equal(-100m, resumen.Diferencia);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var arqueoAncla = await db.ArqueosTurno.SingleAsync(a => a.IdTurnoCaja == turno.Id && a.IdMedioPago == ctx.IdMedioEfectivo);
+        Assert.Equal(1500m, arqueoAncla.ImporteEsperado);
+        Assert.Equal(1400m, arqueoAncla.ImporteDeclarado);
+        Assert.Equal(100m, arqueoAncla.Diferencia);
+        Assert.Equal(-arqueoAncla.Diferencia, resumen.Diferencia);
+    }
+
+    /// <summary>Caso sin actividad física de efectivo: el ancla no tiene fila en
+    /// <c>arqueos_turno</c> — <c>diferencia</c> tiene que ser <c>0</c> (nada declarado, nada
+    /// esperado, ninguna discrepancia posible), nunca una excepción ni un valor arbitrario.</summary>
+    [Fact]
+    public async Task ElResumenDeCierreSinNingunaActividadFisicaDeEfectivoDaDiferenciaCero()
+    {
+        var ctx = await PrepararAsync(nameof(ElResumenDeCierreSinNingunaActividadFisicaDeEfectivoDaDiferenciaCero));
+        var turno = await AbrirTurnoAsync(ctx); // fondo 0, sin ningún pago/gasto/movimiento.
+
+        var cierre = await ctx.Admin.PostAsJsonAsync($"/api/caja/turnos/{turno.Id}/cierre", new SolicitudDeCierre([], null));
+        Assert.Equal(HttpStatusCode.OK, cierre.StatusCode);
+
+        var respuesta = await ctx.Admin.GetAsync($"/api/caja/turnos/{turno.Id}/resumen-de-cierre");
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.OK, cuerpo);
+        var resumen = JsonSerializer.Deserialize<ResumenDeCierrePorRetiro>(cuerpo, OpcionesJson)!;
+
+        Assert.Equal(0m, resumen.Diferencia);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        Assert.Equal(0, await db.ArqueosTurno.CountAsync(a => a.IdTurnoCaja == turno.Id));
+    }
+
     [Fact]
     public async Task CerrarPorRetiroUnTurnoDeOtroTenantDevuelve404()
     {

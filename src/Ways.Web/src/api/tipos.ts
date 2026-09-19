@@ -857,9 +857,16 @@ export type RetiroDeCierre = { fecha: string; importe: number; motivo: string; e
 
 /** Respuesta de `POST /api/caja/turnos/{id}/cierre-por-retiro` y de
  * `GET /api/caja/turnos/{id}/resumen-de-cierre` (reimpresión / recuperación tras una falla de
- * red ambigua sobre un turno ya cerrado — las dos rutas devuelven exactamente lo mismo).
- * `diferencia = totalRetiros - (ventasEnEfectivoNetas - gastosEnEfectivo + refuerzos)`: el
- * negativo de la `diferencia` que `arqueos_turno` persiste para el medio ancla. */
+ * red ambigua sobre un turno ya cerrado, por cualquiera de los dos modos de cierre — las dos
+ * rutas devuelven exactamente lo mismo).
+ *
+ * `diferencia` (judgment-day JD-E5a-1) se LEE de la fila ya persistida de `arqueos_turno` para
+ * el medio ancla: `diferencia = -arqueo.diferencia = declarado - esperado` (positivo = sobrante,
+ * negativo = faltante — el signo OPUESTO al de `arqueo.diferencia`, que persiste
+ * `esperado - declarado`). NUNCA una fórmula sobre `totalRetiros`/`ventasEnEfectivoNetas`/
+ * `gastosEnEfectivo`/`refuerzos`: esa fórmula solo vale cuando el ancla se declaró con
+ * `fondoInicial` (cierto en el modo retiro, nunca en el clásico). Sin actividad física de
+ * efectivo en el turno (el ancla sin fila en `arqueos_turno`), `diferencia = 0`. */
 export type ResumenDeCierrePorRetiro = {
   idTurnoCaja: number
   puntoVenta: PuntoVentaDeCierre

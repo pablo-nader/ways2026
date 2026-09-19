@@ -228,14 +228,20 @@ public sealed record RetiroDeCierre(DateTimeOffset Fecha, decimal Importe, strin
 
 /// <summary>Respuesta de <c>POST /api/caja/turnos/{id}/cierre-por-retiro</c> y de
 /// <c>GET /api/caja/turnos/{id}/resumen-de-cierre</c> (reimpresión / recuperación tras una falla
-/// de red ambigua sobre un turno YA cerrado — las dos rutas llaman a la MISMA
-/// <c>LectorDeResumenDeCierrePorRetiro</c>, así que son bit-a-bit la misma construcción). Todos
-/// los campos son derivados server-side; nombres ya resueltos (nunca ids sueltos que el cliente
-/// tenga que resolver aparte). <see cref="Diferencia"/> = <see cref="TotalRetiros"/> − (<see
-/// cref="VentasEnEfectivoNetas"/> − <see cref="GastosEnEfectivo"/> + <see cref="Refuerzos"/>) —
-/// invariante: es exactamente el negativo de la <c>Diferencia</c> que <c>arqueos_turno</c>
-/// persiste para el medio ancla, porque ese medio se declara con <see cref="FondoInicial"/> (spec:
-/// arqueo-de-cierre, Cierre Por Retiro).</summary>
+/// de red ambigua sobre un turno YA cerrado, por CUALQUIERA de los dos modos de cierre — las dos
+/// rutas llaman a la MISMA <c>LectorDeResumenDeCierrePorRetiro</c>, así que son bit-a-bit la misma
+/// construcción). Todos los campos son derivados server-side; nombres ya resueltos (nunca ids
+/// sueltos que el cliente tenga que resolver aparte).
+///
+/// <see cref="Diferencia"/> (judgment-day JD-E5a-1) se LEE de la fila YA PERSISTIDA de <see
+/// cref="Ways.Domain.Caja.ArqueoTurno"/> para el medio ancla: <c>Diferencia = −arqueo.Diferencia =
+/// declarado − esperado</c> (positivo = sobrante, negativo = faltante — el signo OPUESTO al de
+/// <c>ArqueoTurno.Diferencia</c>, que persiste <c>esperado − declarado</c>). NUNCA una fórmula
+/// sobre <see cref="TotalRetiros"/>/<see cref="VentasEnEfectivoNetas"/>/<see
+/// cref="GastosEnEfectivo"/>/<see cref="Refuerzos"/>: esa fórmula solo vale cuando el ancla se
+/// declaró con <see cref="FondoInicial"/> (cierto en el modo retiro, NUNCA en el clásico, donde el
+/// cajero declara lo que realmente contó). Cuando el ancla no tiene fila en <c>arqueos_turno</c>
+/// (sin actividad física de efectivo en el turno), <c>Diferencia = 0</c>.</summary>
 public sealed record ResumenDeCierrePorRetiro(
     int IdTurnoCaja,
     PuntoVentaDeCierre PuntoVenta,

@@ -11,6 +11,15 @@ public sealed record LineaDeVentaPorMedio(int IdMedioPago, decimal Importe);
 /// <c>Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro</c> combina con nombres (medio,
 /// punto de venta, empleados) para armar <c>ResumenDeCierrePorRetiro</c>. Nunca toca base de
 /// datos ni el catálogo de medios — esos son responsabilidad del armador de Application.
+///
+/// SIN <c>Diferencia</c> a propósito (judgment-day JD-E5a-1): estos campos solo dependen de la
+/// ACTIVIDAD del turno (pagos, gastos, retiros, refuerzos), nunca de lo que el cajero declaró, así
+/// que valen igual sin importar qué endpoint cerró el turno. <c>Diferencia</c> SÍ depende de lo
+/// declarado — que es el fondo inicial en el modo retiro, pero el conteo real del cajero en el
+/// modo clásico — así que no tiene una fórmula única y NO puede vivir acá: <see
+/// cref="Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro"/> la lee directo de la fila YA
+/// PERSISTIDA de <c>arqueos_turno</c> para el medio ancla, la única fuente que conoce lo
+/// verdaderamente declarado en cualquiera de los dos modos.
 /// </summary>
 public sealed record ResultadoDeCierrePorRetiro(
     IReadOnlyList<LineaDeVentaPorMedio> VentasPorMedio,
@@ -18,8 +27,7 @@ public sealed record ResultadoDeCierrePorRetiro(
     decimal VentasEnEfectivoNetas,
     decimal GastosEnEfectivo,
     decimal Refuerzos,
-    decimal TotalRetiros,
-    decimal Diferencia);
+    decimal TotalRetiros);
 
 /// <summary>
 /// Cierre por retiro (práctica del dueño: el cajero retira el efectivo contado y DEJA el fondo
@@ -37,12 +45,12 @@ public sealed record ResultadoDeCierrePorRetiro(
 /// (<see cref="ResultadoDeCierrePorRetiro.GastosEnEfectivo"/>/<see
 /// cref="ResultadoDeCierrePorRetiro.Refuerzos"/>/<see cref="ResultadoDeCierrePorRetiro.TotalRetiros"/>).
 ///
-/// La invariante que ata este cálculo al arqueo persistido: cuando el ancla se declara con el
-/// fondo inicial (lo que <c>ServicioDeTurnos.CerrarPorRetiroAsync</c> hace), <see
-/// cref="ResultadoDeCierrePorRetiro.Diferencia"/> es exactamente <c>−(esperado(ancla) −
-/// fondo_inicial)</c>, es decir el negativo de la diferencia que <c>arqueos_turno</c> persiste
-/// para el medio ancla — la prueba de esa identidad vive en
-/// <c>CalculadorDeCierrePorRetiroTests</c> (mutation-proof-tests).
+/// NO calcula <c>Diferencia</c> (ver el doc-comment de <see cref="ResultadoDeCierrePorRetiro"/>) —
+/// antes de judgment-day JD-E5a-1 esta clase la derivaba como <c>retiros − (ventasEfectivoNetas −
+/// gastosEfectivo + refuerzos)</c>, una fórmula que solo es correcta cuando el ancla se declaró con
+/// el fondo inicial (modo retiro). Sobre un cierre CLÁSICO (el cajero declara lo que contó, un
+/// número arbitrario) esa fórmula fabricaba un número que no tenía nada que ver con lo persistido
+/// en <c>arqueos_turno</c>.
 /// </summary>
 public static class CalculadorDeCierrePorRetiro
 {
@@ -60,15 +68,13 @@ public static class CalculadorDeCierrePorRetiro
 
         var totalVentas = ventasPorMedio.Sum(v => v.Importe);
         // Del ANCLA directo sobre insumos (no de ventasPorMedio): tiene que valer aunque el
-        // ancla no haya quedado arqueable (sin fila en el arqueo persistido) — la invariante de
-        // la diferencia no puede depender de eso.
+        // ancla no haya quedado arqueable (sin fila en el arqueo persistido).
         var ventasEnEfectivoNetas = PagosDe(insumos, idMedioAncla) - vueltosTotales;
         var gastosEnEfectivo = GastosDe(insumos, idMedioAncla);
-        var diferencia = insumos.Retiros - (ventasEnEfectivoNetas - gastosEnEfectivo + insumos.Refuerzos);
 
         return new ResultadoDeCierrePorRetiro(
             ventasPorMedio, totalVentas, ventasEnEfectivoNetas, gastosEnEfectivo, insumos.Refuerzos,
-            insumos.Retiros, diferencia);
+            insumos.Retiros);
     }
 
     private static decimal PagosDe(InsumosDeArqueo insumos, int idMedioPago) =>

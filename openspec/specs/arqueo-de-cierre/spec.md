@@ -289,17 +289,52 @@ POST.
 - WHEN `GET .../resumen-de-cierre` is requested right after
 - THEN every field of the response is identical to the POST's response
 
-### Requirement: The Diferencia Invariant Ties The Retiro Summary To The Persisted Arqueo
+### Requirement: Diferencia Is Read From The Persisted Anchor Arqueo, For Any Close Mode
 
-The cierre-por-retiro response's `diferencia` (`totalRetiros −
-(ventasEnEfectivoNetas − gastosEnEfectivo + refuerzos)`) MUST equal the
-negative of the `diferencia` that `arqueos_turno` persists for the cash
-anchor medio, because that medio is declared with the fondo inicial.
+(judgment-day JD-E5a-1 — previously stated as a formula-based "invariant";
+the formula fabricated a wrong figure for a classic close, see below.) The
+cierre-por-retiro/resumen-de-cierre response's `diferencia` MUST be read
+from the ALREADY-PERSISTED `arqueos_turno` row for the cash anchor medio,
+never computed from a formula over `totalRetiros`/`ventasEnEfectivoNetas`/
+`gastosEnEfectivo`/`refuerzos`: `diferencia = -arqueo.diferencia = declarado
+− esperado` (positive = sobrante, negative = faltante — the sign OPPOSITE
+of `arqueo.diferencia`, which persists `esperado − declarado`, positive =
+faltante). This MUST hold identically for a turno closed by the classic
+cierre (`importe_declarado` is whatever the cashier counted, an arbitrary
+value) and for one closed by retiro (`importe_declarado = fondo_inicial`) —
+there is exactly one source for this field, read from the row, never two
+formulas for the two modes. When the cash anchor has no `arqueos_turno` row
+for the turno (no physical cash activity at all, per Arqueo Rows Only For
+Medios With Activity), `diferencia` MUST be `0` — nothing was declared and
+nothing was expected, so no discrepancy exists.
 
-#### Scenario: The response diferencia is the negative of the anchor's persisted diferencia
+A formula over the summary's own aggregate fields (`totalRetiros −
+(ventasEnEfectivoNetas − gastosEnEfectivo + refuerzos)`) is ONLY equal to
+this persisted value when the anchor was declared with the fondo inicial —
+true for a cierre-por-retiro close, never guaranteed for a classic close.
+That formula MUST NOT be used to compute the response; it may still be
+used in tests as an independent cross-check of the retiro-mode case.
+
+#### Scenario: A classic close's diferencia is the cashier's real declared count, not the retiro formula
+- GIVEN a turno with `fondo_inicial = 500`, cash pagos of `1000`, no
+  gastos/retiros/refuerzos, closed via the CLASSIC cierre with a declared
+  cash count of `1400` (neither the fondo nor the derived esperado of
+  `1500`)
+- WHEN `GET .../resumen-de-cierre` is requested
+- THEN `diferencia = 1400 − 1500 = -100` (a `100` faltante) — matching the
+  persisted `arqueos_turno` row's `importe_declarado − importe_esperado`,
+  never the retiro-mode formula (which would wrongly yield `-1000` here)
+
+#### Scenario: The retiro-mode response diferencia is the negative of the anchor's persisted diferencia
 - GIVEN a closed-by-retiro turno with cash pagos, gastos, a fondo inicial,
   and a closing retiro
 - WHEN the response and the persisted `arqueos_turno` row for the cash
   anchor are compared
 - THEN `response.diferencia == -(arqueo.importeEsperado -
   arqueo.importeDeclarado)`
+
+#### Scenario: No cash activity yields a zero diferencia
+- GIVEN a closed turno where the cash anchor medio has no `arqueos_turno`
+  row (no pagos, gastos, fondo, retiro, or refuerzo touched it)
+- WHEN `GET .../resumen-de-cierre` is requested
+- THEN `diferencia = 0`

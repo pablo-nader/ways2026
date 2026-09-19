@@ -9,21 +9,38 @@ namespace Ways.Application.Caja;
 /// cref="CalculadorDeCierrePorRetiro"/> (que a su vez reusa <see cref="LectorDeMovimientosDelTurno"/>
 /// + <see cref="CalculadorDeArqueo"/>, la MISMA derivación que el cierre clásico — spec: Resumen
 /// Parcial Uses The Same Derivation As Cierre, extendida acá) con las lecturas de nombres (medios,
-/// punto de venta, empleados) y el listado de retiros del turno.
+/// punto de venta, empleados), el listado de retiros del turno y — judgment-day JD-E5a-1 — la
+/// <c>Diferencia</c> ya PERSISTIDA en <c>arqueos_turno</c> para el medio ancla.
+///
+/// <see cref="ResumenDeCierrePorRetiro.Diferencia"/> NUNCA sale de <see
+/// cref="CalculadorDeCierrePorRetiro"/>: esa fórmula asume que el ancla se declaró con el fondo
+/// inicial, cierto solo en el modo retiro. Sobre un cierre CLÁSICO el cajero declara lo que
+/// realmente contó — un número arbitrario que ninguna fórmula puede adivinar — así que la única
+/// fuente honesta es la fila que <c>ServicioDeTurnos</c> ya escribió al cerrar. Ver el
+/// doc-comment de <see cref="LeerAsync"/> para el signo y el caso sin actividad de efectivo.
 ///
 /// Compartida TAL CUAL por <c>ServicioDeTurnos.CerrarPorRetiroAsync</c> (justo después del commit)
 /// y por <c>ServicioDeTurnos.ObtenerResumenDeCierreAsync</c> (<c>GET …/resumen-de-cierre</c>, sobre
-/// un turno YA cerrado — reimpresión / recuperación tras una falla de red ambigua): las dos rutas
-/// llaman a este mismo método sobre el mismo <paramref name="turno"/> ya persistido, así que la
+/// un turno YA cerrado — reimpresión / recuperación tras una falla de red ambigua, por CUALQUIERA
+/// de los dos modos de cierre): las dos rutas llaman a este mismo método sobre el mismo <paramref
+/// name="turno"/> ya persistido, leyendo la MISMA fila de <c>arqueos_turno</c>, así que la
 /// respuesta del POST y la del GET son bit-a-bit la misma construcción — nunca dos fórmulas.
 ///
 /// El turno tiene que estar cerrado (<see cref="TurnoCaja.FechaCierre"/>/<see
 /// cref="TurnoCaja.IdEmpleadoCierre"/> no nulos) — el llamador lo garantiza: el POST recién llama
-/// acá después de que <c>MarcarCerradoAsync</c> comiteó, y el GET lo exige antes de llamar
-/// (<c>409 turno_no_cerrado</c> si no).
+/// acá después de que <c>MarcarCerradoAsync</c> comiteó (y de que el INSERT de <c>arqueos_turno</c>
+/// también comiteó, en la MISMA transacción), y el GET lo exige antes de llamar (<c>409
+/// turno_no_cerrado</c> si no).
 /// </summary>
 public class LectorDeResumenDeCierrePorRetiro(IWaysDbContext db, LectorDeMovimientosDelTurno lector)
 {
+    /// <summary><see cref="ResumenDeCierrePorRetiro.Diferencia"/> = <c>−arqueo.Diferencia</c> =
+    /// <c>declarado − esperado</c> del medio ancla (positivo = sobrante, negativo = faltante — el
+    /// signo OPUESTO al de <see cref="Ways.Domain.Caja.ArqueoTurno.Diferencia"/>, que persiste
+    /// <c>esperado − declarado</c>, positivo = faltante). Cuando el ancla no tiene fila en <see
+    /// cref="ArqueoTurno"/> (sin ninguna actividad física de efectivo en el turno — spec: Arqueo
+    /// Rows Only For Medios With Activity), no hay nada declarado ni esperado que comparar:
+    /// <c>Diferencia = 0</c>, tanto para el modo clásico como para el retiro.</summary>
     public async Task<ResumenDeCierrePorRetiro> LeerAsync(TurnoCaja turno, CancellationToken ct = default)
     {
         var idEmpleadoCierre = turno.IdEmpleadoCierre
@@ -37,6 +54,16 @@ public class LectorDeResumenDeCierrePorRetiro(IWaysDbContext db, LectorDeMovimie
         var idAncla = ResolvedorDeMedioDeCajaFisica.Resolver(insumos.Actividad);
         var arqueables = CalculadorDeArqueo.Calcular(insumos, idAncla);
         var resultado = CalculadorDeCierrePorRetiro.Calcular(insumos, idAncla, arqueables);
+
+        // judgment-day JD-E5a-1: la ÚNICA fuente de Diferencia — nunca una fórmula. ux_arqueos_turno_medio
+        // garantiza a lo sumo una fila por (turno, medio), así que SingleOrDefaultAsync nunca revienta
+        // por duplicados; el cast a decimal? es lo que distingue "sin fila" (null) de "fila con
+        // Diferencia = 0" (0m), que son casos distintos pero producen la misma Diferencia acá.
+        var diferenciaDelArqueoDelAncla = await db.ArqueosTurno
+            .Where(a => a.IdTurnoCaja == turno.Id && a.IdMedioPago == idAncla)
+            .Select(a => (decimal?)a.Diferencia)
+            .SingleOrDefaultAsync(ct);
+        var diferencia = -(diferenciaDelArqueoDelAncla ?? 0m);
 
         // Retiros del turno — TODOS, incluido el de cierre (ya persistido por
         // CerrarPorRetiroAsync antes de derivar), ordenados por fecha para un listado estable.
@@ -97,6 +124,6 @@ public class LectorDeResumenDeCierrePorRetiro(IWaysDbContext db, LectorDeMovimie
             resultado.VentasEnEfectivoNetas,
             resultado.GastosEnEfectivo,
             resultado.Refuerzos,
-            resultado.Diferencia);
+            diferencia);
     }
 }
