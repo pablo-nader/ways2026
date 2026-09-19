@@ -1939,18 +1939,119 @@ describe('Articulos — rechazar una salida por Atrás/Adelante vuelve a la entr
 // borrado) — el select de edición lo ofrece igual, con el sufijo "(inactiva)"/"(inactivo)".
 
 describe('Articulos — catálogos inactivos en el formulario', () => {
-  it('en alta, el select de Marca no ofrece una marca inactiva', async () => {
-    mockearApiGet({
-      marcas: [marcaFixture({ id: 1, nombre: 'Alfa', activo: true }), marcaFixture({ id: 2, nombre: 'Beta', activo: false })],
-    })
+  /**
+   * Casos de los CINCO selects que ofrecen catálogos con opciones inactivas (Área, Categoría,
+   * Marca, Grupo, Proveedor habitual). Comparten `opcionesConValorActual` y el sufijo
+   * "(inactiva)"/"(inactivo)" en `FormularioArticulo.tsx`, pero cada uno es un call site propio
+   * (mutation-proof-tests regla 15: una cláusula replicada en varios siblings necesita un kill por
+   * sibling — sacar el helper o el sufijo de UNO solo no afecta a los demás).
+   */
+  type CasoCatalogoInactivo = {
+    selectLabel: string
+    sufijo: string
+    opcionVacia: string
+    idField: 'idArea' | 'idCategoria' | 'idMarca' | 'idGrupo' | 'idProveedorHabitual'
+    etiquetaActiva: string
+    etiquetaInactiva: string
+    mockCatalogo: () => Partial<CatalogosDeTest>
+  }
 
-    await abrirFormularioNuevo()
+  function conReferencia(idField: CasoCatalogoInactivo['idField'], id: number): Partial<ArticuloListado> {
+    switch (idField) {
+      case 'idArea':
+        return { idArea: id }
+      case 'idCategoria':
+        return { idCategoria: id }
+      case 'idMarca':
+        return { idMarca: id }
+      case 'idGrupo':
+        return { idGrupo: id }
+      case 'idProveedorHabitual':
+        return { idProveedorHabitual: id }
+      default:
+        throw new Error(`idField no soportado: ${idField as string}`)
+    }
+  }
 
-    const opciones = within(screen.getByLabelText('Marca'))
-      .getAllByRole('option')
-      .map((o) => o.textContent)
-    expect(opciones).toEqual(['Sin especificar', 'Alfa'])
-  })
+  function casosCatalogosInactivos(): CasoCatalogoInactivo[] {
+    return [
+      {
+        selectLabel: 'Área',
+        sufijo: ' (inactiva)',
+        opcionVacia: 'Elegir…',
+        idField: 'idArea',
+        etiquetaActiva: 'Almacén',
+        etiquetaInactiva: 'Depósito',
+        mockCatalogo: () => ({
+          areas: [areaFixture({ id: 1, nombre: 'Almacén', activo: true }), areaFixture({ id: 2, nombre: 'Depósito', activo: false })],
+        }),
+      },
+      {
+        selectLabel: 'Categoría',
+        sufijo: ' (inactiva)',
+        opcionVacia: 'Sin especificar',
+        idField: 'idCategoria',
+        etiquetaActiva: 'Bebidas',
+        etiquetaInactiva: 'Lácteos',
+        mockCatalogo: () => ({
+          categorias: [
+            categoriaFixture({ id: 1, nombre: 'Bebidas', activo: true }),
+            categoriaFixture({ id: 2, nombre: 'Lácteos', activo: false }),
+          ],
+        }),
+      },
+      {
+        selectLabel: 'Marca',
+        sufijo: ' (inactiva)',
+        opcionVacia: 'Sin especificar',
+        idField: 'idMarca',
+        etiquetaActiva: 'Alfa',
+        etiquetaInactiva: 'Beta',
+        mockCatalogo: () => ({
+          marcas: [marcaFixture({ id: 1, nombre: 'Alfa', activo: true }), marcaFixture({ id: 2, nombre: 'Beta', activo: false })],
+        }),
+      },
+      {
+        selectLabel: 'Grupo',
+        sufijo: ' (inactivo)',
+        opcionVacia: 'Sin especificar',
+        idField: 'idGrupo',
+        etiquetaActiva: 'Almacén',
+        etiquetaInactiva: 'Limpieza',
+        mockCatalogo: () => ({
+          grupos: [grupoFixture({ id: 1, nombre: 'Almacén', activo: true }), grupoFixture({ id: 2, nombre: 'Limpieza', activo: false })],
+        }),
+      },
+      {
+        selectLabel: 'Proveedor habitual',
+        sufijo: ' (inactivo)',
+        opcionVacia: 'Sin especificar',
+        idField: 'idProveedorHabitual',
+        etiquetaActiva: 'Alfa SA',
+        etiquetaInactiva: 'Beta SA',
+        mockCatalogo: () => ({
+          proveedores: [
+            proveedorFixture({ id: 1, razonSocial: 'Alfa SA', activo: true }),
+            proveedorFixture({ id: 2, razonSocial: 'Beta SA', activo: false }),
+          ],
+        }),
+      },
+    ]
+  }
+
+  it.each(casosCatalogosInactivos())(
+    'en alta, el select de $selectLabel no ofrece una opción inactiva',
+    async ({ selectLabel, opcionVacia, etiquetaActiva, mockCatalogo }) => {
+      mockearApiGet(mockCatalogo())
+
+      await abrirFormularioNuevo()
+
+      const opciones = within(screen.getByLabelText(selectLabel))
+        .getAllByRole('option')
+        .map((o) => o.textContent)
+      expect(opciones).toEqual([opcionVacia, etiquetaActiva])
+    },
+  )
 
   it('en alta, el área por defecto es la primera ACTIVA — no la primera del arreglo, que puede ser inactiva', async () => {
     mockearApiGet({
@@ -1965,66 +2066,44 @@ describe('Articulos — catálogos inactivos en el formulario', () => {
     expect(screen.getByLabelText('Área')).toHaveValue('2')
   })
 
-  it('al editar un artículo con marca inactiva, la muestra seleccionada con el sufijo "(inactiva)" y guarda sin tocarla', async () => {
-    const conMarcaInactiva = articuloFixture({ id: 1, idMarca: 2 })
-    mockearApiGet({
-      articulos: [conMarcaInactiva, articuloDos],
-      marcas: [marcaFixture({ id: 1, nombre: 'Alfa', activo: true }), marcaFixture({ id: 2, nombre: 'Beta', activo: false })],
-    })
-    apiPutMock.mockResolvedValue(conMarcaInactiva)
-    renderArticulos()
+  /**
+   * Cláusula bajo prueba: el sufijo "(inactiva)"/"(inactivo)" de cada uno de los cinco selects y,
+   * de paso (mutation-proof-tests regla 3), `listar(true)` de área/categoría/marca/grupo — si
+   * alguno pasara a `listar(false)`, el mock (que discrimina el mismo query string, ver
+   * `mockearApiGet`) dejaría de devolver la referencia inactiva y este mismo caso fallaría antes de
+   * llegar al assert del sufijo (el select quedaría sin ninguna opción con ese valor).
+   */
+  it.each(casosCatalogosInactivos())(
+    'al editar un artículo cuya referencia de $selectLabel está inactiva, la muestra con el sufijo y la mantiene seleccionada',
+    async ({ selectLabel, sufijo, opcionVacia, idField, etiquetaActiva, etiquetaInactiva, mockCatalogo }) => {
+      const conReferenciaInactiva = articuloFixture({ id: 1, ...conReferencia(idField, 2) })
+      mockearApiGet({
+        articulos: [conReferenciaInactiva, articuloDos],
+        ...mockCatalogo(),
+      })
+      apiPutMock.mockResolvedValue(conReferenciaInactiva)
+      renderArticulos()
 
-    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
-    if (!fila) throw new Error('No se encontró la fila del artículo')
-    await userEvent.click(within(fila).getByRole('link', { name: 'Editar' }))
-    await screen.findByText('Editando artículo A0001')
+      const fila = (await screen.findByText('Articulo Uno')).closest('tr')
+      if (!fila) throw new Error('No se encontró la fila del artículo')
+      await userEvent.click(within(fila).getByRole('link', { name: 'Editar' }))
+      await screen.findByText('Editando artículo A0001')
 
-    const selectMarca = screen.getByLabelText('Marca') as HTMLSelectElement
-    expect(selectMarca).toHaveValue('2')
-    expect(within(selectMarca).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Sin especificar',
-      'Alfa',
-      'Beta (inactiva)',
-    ])
+      const select = screen.getByLabelText(selectLabel) as HTMLSelectElement
+      expect(select).toHaveValue('2')
+      expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual([
+        opcionVacia,
+        etiquetaActiva,
+        `${etiquetaInactiva}${sufijo}`,
+      ])
 
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
 
-    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
-    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
-    expect(cuerpo.idMarca).toBe(2)
-  })
-
-  it('al editar un artículo con área inactiva (obligatoria), la muestra seleccionada con el sufijo y permite guardar sin cambiarla', async () => {
-    const conAreaInactiva = articuloFixture({ id: 1, idArea: 2 })
-    mockearApiGet({
-      articulos: [conAreaInactiva, articuloDos],
-      areas: [
-        areaFixture({ id: 1, nombre: 'Almacén', activo: true }),
-        areaFixture({ id: 2, nombre: 'Depósito viejo', activo: false }),
-      ],
-    })
-    apiPutMock.mockResolvedValue(conAreaInactiva)
-    renderArticulos()
-
-    const fila = (await screen.findByText('Articulo Uno')).closest('tr')
-    if (!fila) throw new Error('No se encontró la fila del artículo')
-    await userEvent.click(within(fila).getByRole('link', { name: 'Editar' }))
-    await screen.findByText('Editando artículo A0001')
-
-    const selectArea = screen.getByLabelText('Área') as HTMLSelectElement
-    expect(selectArea).toHaveValue('2')
-    expect(within(selectArea).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Elegir…',
-      'Almacén',
-      'Depósito viejo (inactiva)',
-    ])
-
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
-
-    await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
-    const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
-    expect(cuerpo.idArea).toBe(2)
-  })
+      await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+      const [, cuerpo] = apiPutMock.mock.calls[0] as [string, Record<string, unknown>]
+      expect(cuerpo[idField]).toBe(2)
+    },
+  )
 
   it('la grilla resuelve el nombre del área aunque esté inactiva (nombreDe ya no se limita a las activas)', async () => {
     mockearApiGet({ areas: [areaFixture({ id: 1, nombre: 'Depósito viejo', activo: false })] })
