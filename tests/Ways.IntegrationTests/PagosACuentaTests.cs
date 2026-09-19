@@ -728,7 +728,8 @@ public class PagosACuentaTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
         var reloj = new RelojFijo(DateTimeOffset.UtcNow);
         var contexto = new ContextoFijo(ctx.IdTenant, usuarioId: ctx.IdEmpleadoAdmin);
         var lector = new LectorDeMovimientosDelTurno(db);
-        var servicioDeTurnos = new ServicioDeTurnos(db, reloj, contexto, lector);
+        var servicioDeTurnos = new ServicioDeTurnos(
+            db, reloj, contexto, lector, new LectorDeResumenDeCierrePorRetiro(db, lector));
         var servicio = new ServicioDeCuentaCorriente(db, reloj, contexto, servicioDeTurnos);
 
         var emitido = await servicio.RegistrarPagoAsync(idCliente, new SolicitudDePagoACuenta(ctx.IdPuntoVenta, pagos, null));

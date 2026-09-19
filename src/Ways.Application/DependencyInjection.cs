@@ -82,6 +82,9 @@ public static class DependencyInjection
         // enrichment) es un lector HERMANO, solo consumido por ServicioDeResumenDeTurno.
         services.AddScoped<LectorDeMovimientosDelTurno>();
         services.AddScoped<LectorDeContenidoDeResumen>();
+        // etapa 5 (cierre por retiro): armador compartido por ServicioDeTurnos.CerrarPorRetiroAsync
+        // y ObtenerResumenDeCierreAsync — ver su doc-comment.
+        services.AddScoped<LectorDeResumenDeCierrePorRetiro>();
         services.AddScoped<ServicioDeTurnos>();
         services.AddScoped<ServicioDeResumenDeTurno>();
         services.AddScoped<ServicioDeGastos>();

@@ -192,3 +192,69 @@ public sealed record MovimientoTesoreriaListado(
 /// <see cref="PaginaDeHistoricoDeCajas"/>.</summary>
 public sealed record PaginaDeMovimientosTesoreria(
     IReadOnlyList<MovimientoTesoreriaListado> Items, int Total, int Pagina, int Tamanio);
+
+// ---- cierre por retiro (práctica del dueño: retira el efectivo contado y deja el fondo inicial
+// en el cajón; nada se cuenta al cierre — spec arqueo-de-cierre: Cierre Por Retiro) ----
+
+/// <summary>Cuerpo de <c>POST /api/caja/turnos/{id}/cierre-por-retiro</c> — <see
+/// cref="ImporteRetirado"/> es un MOVIMIENTO (lo que el cajero se lleva), nunca un total de
+/// ventas ni un conteo (spec: No Request Shape Accepts A Total, mismo criterio extendido a este
+/// segundo modo de cierre): todo lo demás (esperados, ventas por medio, diferencia) lo deriva el
+/// servidor. <c>&gt;= 0</c> — un retiro físico nunca puede ser negativo; <c>0</c> es válido (el
+/// cajero no retira nada y dejó todo en el cajón) y en ese caso NO se inserta ningún
+/// <see cref="MovimientoCaja"/> (dto-contract-honesty: el campo sigue teniendo un único destino,
+/// la RAMA condicional de <c>ServicioDeTurnos.CerrarPorRetiroAsync</c>, nunca queda aceptado y
+/// descartado).</summary>
+public sealed record SolicitudDeCierrePorRetiro(decimal ImporteRetirado, string? Observaciones);
+
+/// <summary>Punto de venta de <see cref="ResumenDeCierrePorRetiro"/>. <see cref="Numero"/> es el
+/// MISMO valor que <see cref="Id"/> — <see cref="Ways.Domain.Organizacion.PuntoVenta"/> no tiene
+/// una columna de numeración operativa separada de su id (solo <c>NumeroFiscal</c>, un concepto
+/// distinto de AFIP/ARCA, opcional); es el mismo id que
+/// <see cref="Ways.Domain.Ventas.NumeroDeComprobante.Formatear"/> ya usa como componente
+/// "número de punto de venta" del ticket (p.ej. <c>0004-00000012</c>). Se exponen los dos nombres
+/// para que el consumidor no tenga que conocer esa equivalencia.</summary>
+public sealed record PuntoVentaDeCierre(int Id, int Numero, string Nombre);
+
+/// <summary>Una fila de <see cref="ResumenDeCierrePorRetiro.VentasPorMedio"/> — ventas netas de
+/// vuelto por medio (nunca de gastos), con el nombre ya resuelto
+/// (<see cref="Ways.Domain.Caja.CalculadorDeCierrePorRetiro"/> es puro y solo conoce ids).</summary>
+public sealed record VentaPorMedio(int IdMedioPago, string Nombre, decimal Importe);
+
+/// <summary>Una fila de <see cref="ResumenDeCierrePorRetiro.Retiros"/> — TODOS los retiros del
+/// turno, incluido el de cierre (si <see cref="SolicitudDeCierrePorRetiro.ImporteRetirado"/> fue
+/// mayor a cero), con el nombre del empleado ya resuelto.</summary>
+public sealed record RetiroDeCierre(DateTimeOffset Fecha, decimal Importe, string Motivo, string Empleado);
+
+/// <summary>Respuesta de <c>POST /api/caja/turnos/{id}/cierre-por-retiro</c> y de
+/// <c>GET /api/caja/turnos/{id}/resumen-de-cierre</c> (reimpresión / recuperación tras una falla
+/// de red ambigua sobre un turno YA cerrado, por CUALQUIERA de los dos modos de cierre — las dos
+/// rutas llaman a la MISMA <c>LectorDeResumenDeCierrePorRetiro</c>, así que son bit-a-bit la misma
+/// construcción). Todos los campos son derivados server-side; nombres ya resueltos (nunca ids
+/// sueltos que el cliente tenga que resolver aparte).
+///
+/// <see cref="Diferencia"/> (judgment-day JD-E5a-1) se LEE de la fila YA PERSISTIDA de <see
+/// cref="Ways.Domain.Caja.ArqueoTurno"/> para el medio ancla: <c>Diferencia = −arqueo.Diferencia =
+/// declarado − esperado</c> (positivo = sobrante, negativo = faltante — el signo OPUESTO al de
+/// <c>ArqueoTurno.Diferencia</c>, que persiste <c>esperado − declarado</c>). NUNCA una fórmula
+/// sobre <see cref="TotalRetiros"/>/<see cref="VentasEnEfectivoNetas"/>/<see
+/// cref="GastosEnEfectivo"/>/<see cref="Refuerzos"/>: esa fórmula solo vale cuando el ancla se
+/// declaró con <see cref="FondoInicial"/> (cierto en el modo retiro, NUNCA en el clásico, donde el
+/// cajero declara lo que realmente contó). Cuando el ancla no tiene fila en <c>arqueos_turno</c>
+/// (sin actividad física de efectivo en el turno), <c>Diferencia = 0</c>.</summary>
+public sealed record ResumenDeCierrePorRetiro(
+    int IdTurnoCaja,
+    PuntoVentaDeCierre PuntoVenta,
+    DateTimeOffset FechaApertura,
+    DateTimeOffset FechaCierre,
+    string Vendedor,
+    string EmpleadoCierre,
+    decimal FondoInicial,
+    IReadOnlyList<VentaPorMedio> VentasPorMedio,
+    decimal TotalVentas,
+    IReadOnlyList<RetiroDeCierre> Retiros,
+    decimal TotalRetiros,
+    decimal VentasEnEfectivoNetas,
+    decimal GastosEnEfectivo,
+    decimal Refuerzos,
+    decimal Diferencia);

@@ -48,6 +48,7 @@ Marca | articulos | id_marca,id_tenant | marcado
 MedioPago | arqueos_turno | id_medio_pago,id_tenant | sinmarca
 MedioPago | gastos | id_medio_pago,id_tenant | marcado
 MedioPago | pagos_comprobante | id_medio_pago,id_tenant | marcado
+MedioPago | turnos_caja | id_medio_pago_efectivo,id_tenant | marcado
 Proveedor | articulos | id_proveedor_habitual,id_tenant | marcado
 Proveedor | comprobantes_compra | id_proveedor,id_tenant | marcado
 Proveedor | gastos | id_proveedor,id_tenant | marcado
