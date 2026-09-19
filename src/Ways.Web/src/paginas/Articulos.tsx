@@ -182,7 +182,10 @@ export function Articulos() {
       })
   }, [cargar])
 
-  const areaPorDefecto = areas[0]?.id ?? ''
+  // Ternario (no `??`): sin `noUncheckedIndexedAccess`, TS ve `areas[0]` como no-nullable y
+  // simplifica `areas[0]?.id ?? ''` al tipo `number` a secas (nunca agrega la rama `''`) — el
+  // efecto de defaults de más abajo (M5) necesita el `''` en el tipo para poder comparar contra él.
+  const areaPorDefecto: number | '' = areas.length > 0 ? areas[0].id : ''
   const alicuotaPorDefecto = elegirAlicuotaPorDefecto(alicuotasIva)
 
   // Altas rápidas de padrones (Categoría/Marca/Grupo/Proveedor habitual) desde el propio
@@ -282,6 +285,25 @@ export function Articulos() {
     setCargandoDetalle(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modo, idParam])
+
+  // Los defaults de Área/Alícuota de IVA de un alta se calculan en el efecto de arriba, pero ese
+  // efecto solo corre al ENTRAR a 'crear' — una navegación directa a /articulos/create antes de que
+  // esos catálogos resuelvan deja ambos campos en '' para siempre (el efecto no vuelve a correr
+  // cuando las listas llegan tarde). Este efecto completa esos dos campos SOLO si siguen en '' en
+  // el momento en que el catálogo respectivo llega — nunca pisa una elección ya hecha por el
+  // usuario, y sincroniza `formularioOriginalRef` para que el auto-completado no dispare un falso
+  // "hay cambios sin guardar" (M2/M3).
+  useEffect(() => {
+    if (modo !== 'crear' || formulario === null || formulario.id !== null) return
+    const idArea = formulario.idArea === '' && areaPorDefecto !== '' ? areaPorDefecto : formulario.idArea
+    const idAlicuotaIva =
+      formulario.idAlicuotaIva === '' && alicuotaPorDefecto !== '' ? alicuotaPorDefecto : formulario.idAlicuotaIva
+    if (idArea === formulario.idArea && idAlicuotaIva === formulario.idAlicuotaIva) return
+    const actualizado = { ...formulario, idArea, idAlicuotaIva }
+    setFormulario(actualizado)
+    formularioOriginalRef.current = actualizado
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo, areaPorDefecto, alicuotaPorDefecto])
 
   async function guardar() {
     if (ocupado) return

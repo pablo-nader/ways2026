@@ -177,6 +177,12 @@ type CatalogosDeTest = {
   /** Override completo del fetch de detalle por id (p.ej. para simular una respuesta lenta que
    * llega tarde) — cuando está presente, gana sobre la resolución por defecto. */
   detalleImpl?: (id: number) => Promise<ArticuloListado>
+  /** Override completo del fetch de áreas (p.ej. para simular un rechazo o una respuesta tardía)
+   * — cuando está presente, gana sobre la resolución por defecto. */
+  areasImpl?: () => Promise<{ id: number; nombre: string; activo: boolean }[]>
+  /** Override completo del fetch de alícuotas de IVA (p.ej. para simular una respuesta tardía) —
+   * cuando está presente, gana sobre la resolución por defecto. */
+  alicuotasImpl?: () => Promise<AlicuotaIvaListado[]>
 }
 
 /**
@@ -197,7 +203,8 @@ function mockearApiGet(catalogos: CatalogosDeTest = {}) {
     if (/^\/articulos\/\d+\/codigos-barra$/.test(ruta)) return Promise.resolve([])
     if (/^\/articulos\/\d+\/precios$/.test(ruta)) return Promise.resolve([])
     if (/^\/articulos\/\d+\/sugerencia-precio$/.test(ruta)) return Promise.resolve({ precioSugerido: 55.5 })
-    if (ruta === '/catalogos/areas') return Promise.resolve([{ id: 1, nombre: 'Almacén', activo: true }])
+    if (ruta === '/catalogos/areas')
+      return catalogos.areasImpl ? catalogos.areasImpl() : Promise.resolve([{ id: 1, nombre: 'Almacén', activo: true }])
     if (ruta === '/catalogos/categorias') return Promise.resolve(catalogos.categorias ?? [])
     if (ruta === '/catalogos/marcas') return Promise.resolve(catalogos.marcas ?? [])
     if (ruta === '/catalogos/grupos') return Promise.resolve(catalogos.grupos ?? [])
@@ -206,7 +213,9 @@ function mockearApiGet(catalogos: CatalogosDeTest = {}) {
       return Promise.resolve({ items, total: items.length, pagina: 1, tamanio: 200 })
     }
     if (ruta === '/catalogos-fiscales/alicuotas-iva')
-      return Promise.resolve(catalogos.alicuotas ?? [{ id: 1, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true }])
+      return catalogos.alicuotasImpl
+        ? catalogos.alicuotasImpl()
+        : Promise.resolve(catalogos.alicuotas ?? [{ id: 1, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true }])
     if (ruta === '/catalogos-fiscales/condiciones-fiscales')
       return catalogos.condicionesFiscalesImpl
         ? catalogos.condicionesFiscalesImpl()
@@ -337,6 +346,76 @@ describe('Articulos — alícuota de IVA por defecto de un artículo nuevo', () 
     await abrirFormularioNuevo()
 
     expect(screen.getByLabelText('Alícuota de IVA')).toHaveValue('20')
+  })
+})
+
+// ---- defaults de Área/Alícuota de IVA cuando los catálogos resuelven DESPUÉS de abrir el alta ---
+
+describe('Articulos — defaults de Área/Alícuota de IVA cuando los catálogos llegan tarde (M5)', () => {
+  /**
+   * Cláusula bajo prueba: el efecto de `Articulos.tsx` que completa `idArea`/`idAlicuotaIva`
+   * cuando el catálogo respectivo resuelve DESPUÉS de haber entrado a 'crear'. Mutation-proof-
+   * tests: sacar ese efecto (o su `useEffect`) hace fallar este test — ambos campos quedarían en
+   * '' para siempre pese a que los catálogos ya llegaron.
+   */
+  it('/articulos/create abierta con los catálogos pendientes recibe los defaults apenas resuelven', async () => {
+    let resolverAreas: (valor: { id: number; nombre: string; activo: boolean }[]) => void = () => {}
+    let resolverAlicuotas: (valor: AlicuotaIvaListado[]) => void = () => {}
+    const areasPendientes = new Promise<{ id: number; nombre: string; activo: boolean }[]>((resolve) => {
+      resolverAreas = resolve
+    })
+    const alicuotasPendientes = new Promise<AlicuotaIvaListado[]>((resolve) => {
+      resolverAlicuotas = resolve
+    })
+    mockearApiGet({ areasImpl: () => areasPendientes, alicuotasImpl: () => alicuotasPendientes })
+
+    renderArticulos('/articulos/create')
+    await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+
+    expect(screen.getByLabelText('Área')).toHaveValue('')
+    expect(screen.getByLabelText('Alícuota de IVA')).toHaveValue('')
+
+    await act(async () => {
+      resolverAreas([{ id: 7, nombre: 'Almacén', activo: true }])
+      resolverAlicuotas([{ id: 20, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true }])
+      await Promise.all([areasPendientes, alicuotasPendientes])
+    })
+
+    expect(screen.getByLabelText('Área')).toHaveValue('7')
+    expect(screen.getByLabelText('Alícuota de IVA')).toHaveValue('20')
+  })
+
+  /**
+   * Cláusula bajo prueba: el guard `formulario.idAlicuotaIva === ''` del mismo efecto — "nunca
+   * pisa una elección ya hecha por el usuario". Mutation-proof-tests: sacar ese guard (aplicar
+   * siempre el default) hace fallar el último `expect` (la alícuota elegida a mano pasaría a 20).
+   */
+  it('un valor elegido antes de que el catálogo resuelva no se pisa con su default', async () => {
+    let resolverAreas: (valor: { id: number; nombre: string; activo: boolean }[]) => void = () => {}
+    const areasPendientes = new Promise<{ id: number; nombre: string; activo: boolean }[]>((resolve) => {
+      resolverAreas = resolve
+    })
+    mockearApiGet({
+      areasImpl: () => areasPendientes,
+      alicuotas: [
+        { id: 10, nombre: 'IVA 27%', porcentaje: 27, codigoAfip: 6, activo: true },
+        { id: 20, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true },
+      ],
+    })
+
+    renderArticulos('/articulos/create')
+    await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+    // Alícuota ya cargada (no depende de `areasPendientes`): el usuario elige la 27%, no la del
+    // default (21%), ANTES de que el área resuelva.
+    await userEvent.selectOptions(screen.getByLabelText('Alícuota de IVA'), '10')
+
+    await act(async () => {
+      resolverAreas([{ id: 7, nombre: 'Almacén', activo: true }])
+      await areasPendientes
+    })
+
+    expect(screen.getByLabelText('Área')).toHaveValue('7')
+    expect(screen.getByLabelText('Alícuota de IVA')).toHaveValue('10')
   })
 })
 
