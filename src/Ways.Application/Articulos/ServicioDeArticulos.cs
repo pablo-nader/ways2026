@@ -1,12 +1,15 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Application.Stock;
 using Ways.Application.Usuarios;
 using Ways.Domain.Articulos;
+using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 using Ways.Domain.Ofertas;
 using Ways.Domain.Precios;
+using Ways.Domain.Proveedores;
 
 namespace Ways.Application.Articulos;
 
@@ -23,21 +26,33 @@ namespace Ways.Application.Articulos;
 ///
 /// El alta abre transacción (mismo patrón que <see cref="Clientes.ServicioDeClientes.CrearAsync"/>)
 /// porque puede necesitar <see cref="AsignadorDeCodigoInternoArticulo"/> — a diferencia de
-/// <see cref="Proveedores.ServicioDeProveedores"/>, que nunca la necesita. La edición NO abre
-/// transacción (el <c>codigo_interno</c> no es editable, ver <see cref="EdicionArticulo"/>):
-/// mismo motivo por el que <c>ServicioDeArticulosTests</c> sí puede cubrir
-/// <see cref="ActualizarAsync"/> completo contra el proveedor InMemory, a diferencia de
-/// <see cref="CrearAsync"/> (mismo "transaction-blocked-provider caveat" que
-/// <c>ServicioDeClientesTests</c>).
+/// <see cref="Proveedores.ServicioDeProveedores"/>, que nunca la necesita.
+///
+/// fix/articulos-lock-referencias: la edición TAMBIÉN abre transacción desde este fix (antes no
+/// la necesitaba: el <c>codigo_interno</c> no es editable, ver <see cref="EdicionArticulo"/>) —
+/// <see cref="ActualizarAsync"/> pasó a compartir el mismo "transaction-blocked-provider caveat"
+/// que <see cref="CrearAsync"/>: <c>ServicioDeArticulosTests</c> ya no cubre su round-trip
+/// persistido completo contra el proveedor InMemory (movido a <c>ArticulosEndpointsTests</c>,
+/// Postgres real, mismo criterio que <c>ServicioDeOfertasTests</c>/<c>OfertasEndpointsTests</c>).
+///
+/// Los 5 chequeos de referencia de catálogo (área/categoría/marca/grupo/proveedor habitual)
+/// corren DENTRO de esa transacción, bajo <see cref="GuardaDeReferencias.BloquearSiEstaVivaAsync{T}"/>
+/// en vez del pre-chequeo <c>AnyAsync</c> filtrado de antes: cierra, del lado de este escritor, el
+/// residual documentado en <see cref="GuardaDeReferencias"/> (una baja de catálogo que gana la
+/// carrera contra un alta/edición de artículo en vuelo ya no puede comitear una referencia
+/// colgante). <see cref="ExigirAlicuotaIvaValidaAsync"/> queda afuera de este cambio (catálogo
+/// global <c>[global]</c>, sin baja lógica de tenant que este fix necesite cerrar).
 ///
 /// stage-12-lotes-vencimientos, Slice 4 (design: Reconciliation triggers): un flip de
 /// <see cref="Articulo.ControlaLote"/> <c>false → true</c> en <see cref="ActualizarAsync"/>
 /// dispara <see cref="ServicioDeLotes.ReconciliarAsync"/> — primera escritura de dominio de
 /// stock que hace un ABM de catálogo (flagged for the owner, no bloqueante, design: Open
-/// Questions).
+/// Questions). Sigue corriendo DESPUÉS del commit de la transacción de edición, nunca adentro
+/// (contrato de fallo parcial documentado en <see cref="ActualizarAsync"/>).
 /// </summary>
 public class ServicioDeArticulos(
-    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes)
+    IWaysDbContext db, IRelojDelSistema reloj, IContextoDeUsuario contexto, ServicioDeLotes servicioDeLotes,
+    GuardaDeReferencias guarda)
 {
     /// <summary>stage-18-etiquetas-y-consulta, Slice 2 (task 2.4; design.md:60, decisión 9): el
     /// tope de paginado/selección — YA existía como el literal <c>200</c> del clamp de abajo, la
@@ -167,11 +182,6 @@ public class ServicioDeArticulos(
         ExigirCostoValido(datos.CostoNominal, "costo_nominal");
         ExigirDescuentoProveedorValido(datos.DescuentoProveedor);
 
-        await ExigirAreaValidaAsync(datos.IdArea, ct);
-        await ExigirCategoriaValidaAsync(datos.IdCategoria, ct);
-        await ExigirMarcaValidaAsync(datos.IdMarca, ct);
-        await ExigirGrupoValidoAsync(datos.IdGrupo, ct);
-        await ExigirProveedorHabitualValidoAsync(datos.IdProveedorHabitual, ct);
         await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
 
         // judgment-day ronda 1 (item 3): .Distinct() ANTES de validar/insertar — un duplicado
@@ -206,6 +216,16 @@ public class ServicioDeArticulos(
         return await estrategia.ExecuteAsync(async () =>
         {
             await using var transaccion = await db.Database.BeginTransactionAsync(ct);
+
+            // fix/articulos-lock-referencias: primeras sentencias del lambda — bajo el lock de
+            // GuardaDeReferencias.BloquearSiEstaVivaAsync, no el pre-chequeo AnyAsync filtrado de
+            // antes (ver el doc-comment de la clase). Mismo orden área → categoría → marca →
+            // grupo → proveedor que tenían los pre-chequeos, mismo código/mensaje de error.
+            await ExigirAreaValidaAsync(datos.IdArea, ct);
+            await ExigirCategoriaValidaAsync(datos.IdCategoria, ct);
+            await ExigirMarcaValidaAsync(datos.IdMarca, ct);
+            await ExigirGrupoValidoAsync(datos.IdGrupo, ct);
+            await ExigirProveedorHabitualValidoAsync(datos.IdProveedorHabitual, ct);
 
             var codigoFinal = codigoInterno;
             if (codigoFinal is null)
@@ -272,11 +292,6 @@ public class ServicioDeArticulos(
         ExigirCostoValido(datos.CostoNominal, "costo_nominal");
         ExigirDescuentoProveedorValido(datos.DescuentoProveedor);
 
-        await ExigirAreaValidaAsync(datos.IdArea, ct);
-        await ExigirCategoriaValidaAsync(datos.IdCategoria, ct);
-        await ExigirMarcaValidaAsync(datos.IdMarca, ct);
-        await ExigirGrupoValidoAsync(datos.IdGrupo, ct);
-        await ExigirProveedorHabitualValidoAsync(datos.IdProveedorHabitual, ct);
         await ExigirAlicuotaIvaValidaAsync(datos.IdAlicuotaIva, ct);
 
         // judgment-day ronda 1 (item 3): mismo dedup que CrearAsync, antes de validar/insertar.
@@ -297,55 +312,81 @@ public class ServicioDeArticulos(
         var idTenant = ExigirTenantDeLaSesion();
 
         // Task 4.2 (design: Reconciliation triggers): capturado ANTES de sobrescribir el campo —
-        // es el único momento en que "antes" y "después" conviven en memoria.
+        // es el único momento en que "antes" y "después" conviven en memoria. Se lee acá, afuera
+        // de la transacción de abajo: es un valor en memoria del articulo ya cargado, no hace
+        // falta ninguna consulta nueva, y ReconciliarAsync corre DESPUÉS del commit (ver más
+        // abajo) así que tiene que sobrevivir a la ejecución del lambda.
         var controlaLoteAnterior = articulo.ControlaLote;
 
-        articulo.Nombre = nombre;
-        articulo.Descripcion = descripcion;
-        articulo.IdArea = datos.IdArea;
-        articulo.IdCategoria = datos.IdCategoria;
-        articulo.IdMarca = datos.IdMarca;
-        articulo.IdGrupo = datos.IdGrupo;
-        articulo.IdProveedorHabitual = datos.IdProveedorHabitual;
-        articulo.IdAlicuotaIva = datos.IdAlicuotaIva;
-        articulo.UnidadVenta = datos.UnidadVenta;
-        articulo.UnidadesPorBulto = datos.UnidadesPorBulto;
-        articulo.EsProducto = datos.EsProducto;
-        articulo.CostoLista = datos.CostoLista;
-        articulo.DescuentoProveedor = datos.DescuentoProveedor;
-        articulo.CostoNominal = datos.CostoNominal;
-        articulo.DisponibleParaTodas = datos.DisponibleParaTodas;
-        articulo.Activo = datos.Activo;
-        articulo.ControlaLote = datos.ControlaLote;
-        articulo.UpdatedAt = reloj.Ahora;
+        // fix/articulos-lock-referencias (ef-retry-safe-writes, forma (b)): de acá hasta el
+        // SaveChangesAsync corre sin reintento, dentro de una transacción explícita — antes esta
+        // escritura no abría ninguna (el codigo_interno no es editable), pero ahora necesita
+        // envolver los 5 chequeos de referencia LOCKEADOS (GuardaDeReferencias.BloquearSiEstaVivaAsync,
+        // ver el doc-comment de la clase) en la misma transacción que el UPDATE que los usa. Sin
+        // reintento por el mismo motivo que ServicioDeCatalogo.EliminarAsync: un commit ambiguo
+        // reintentado releería el artículo (BuscarAsync corrió arriba, antes de este bloque) con
+        // datos potencialmente ya actualizados por el propio intento anterior, mismo riesgo que
+        // duplicar filas de ArticulosEmpresas.
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
-        // Reemplaza el subconjunto entero (INSERT/DELETE físico, sin historial que preservar —
-        // ArticuloEmpresa es PK-only, task 1.4): más simple que calcular un delta, y el
-        // volumen esperado por artículo es bajo (subconjunto de empresas de UN tenant).
-        var filasActuales = await db.ArticulosEmpresas.Where(ae => ae.IdArticulo == id).ToListAsync(ct);
-        db.ArticulosEmpresas.RemoveRange(filasActuales);
-
-        if (!datos.DisponibleParaTodas && idsEmpresas is { Count: > 0 })
+        await estrategia.ExecuteAsync(async () =>
         {
-            AgregarFilasDeSubset(id, idTenant, idsEmpresas);
-        }
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-        await db.SaveChangesAsync(ct);
+            await ExigirAreaValidaAsync(datos.IdArea, ct);
+            await ExigirCategoriaValidaAsync(datos.IdCategoria, ct);
+            await ExigirMarcaValidaAsync(datos.IdMarca, ct);
+            await ExigirGrupoValidoAsync(datos.IdGrupo, ct);
+            await ExigirProveedorHabitualValidoAsync(datos.IdProveedorHabitual, ct);
+
+            articulo.Nombre = nombre;
+            articulo.Descripcion = descripcion;
+            articulo.IdArea = datos.IdArea;
+            articulo.IdCategoria = datos.IdCategoria;
+            articulo.IdMarca = datos.IdMarca;
+            articulo.IdGrupo = datos.IdGrupo;
+            articulo.IdProveedorHabitual = datos.IdProveedorHabitual;
+            articulo.IdAlicuotaIva = datos.IdAlicuotaIva;
+            articulo.UnidadVenta = datos.UnidadVenta;
+            articulo.UnidadesPorBulto = datos.UnidadesPorBulto;
+            articulo.EsProducto = datos.EsProducto;
+            articulo.CostoLista = datos.CostoLista;
+            articulo.DescuentoProveedor = datos.DescuentoProveedor;
+            articulo.CostoNominal = datos.CostoNominal;
+            articulo.DisponibleParaTodas = datos.DisponibleParaTodas;
+            articulo.Activo = datos.Activo;
+            articulo.ControlaLote = datos.ControlaLote;
+            articulo.UpdatedAt = reloj.Ahora;
+
+            // Reemplaza el subconjunto entero (INSERT/DELETE físico, sin historial que preservar —
+            // ArticuloEmpresa es PK-only, task 1.4): más simple que calcular un delta, y el
+            // volumen esperado por artículo es bajo (subconjunto de empresas de UN tenant).
+            var filasActuales = await db.ArticulosEmpresas.Where(ae => ae.IdArticulo == id).ToListAsync(ct);
+            db.ArticulosEmpresas.RemoveRange(filasActuales);
+
+            if (!datos.DisponibleParaTodas && idsEmpresas is { Count: > 0 })
+            {
+                AgregarFilasDeSubset(id, idTenant, idsEmpresas);
+            }
+
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+        });
 
         // Task 4.2 (design: Reconciliation triggers — "articulos.controla_lote flipped false →
         // true"): alcance = ese artículo, todas las PV (ReconciliarAsync ya filtra a las de
         // empresas con lotes_habilitado efectivo). Un flip a false no reconcilia nada (spec: "the
         // false → true transition... a flip to false reconciles nothing").
         //
-        // Contrato de fallo parcial (diseño aceptado, sin transacción ambiente entre el
-        // SaveChangesAsync de arriba y este ReconciliarAsync): el flip de controla_lote ya quedó
-        // COMMITEADO antes de este punto. Si ReconciliarAsync falla a mitad de camino (algunos
-        // pares (artículo, PV) ya reconciliados, otros no), el request devuelve un 500 genérico y
-        // el flip queda commiteado con reconciliación incompleta. No hay rollback del flip ni
-        // señal adicional que distinga "reconciliación completa" de "parcial" — la recuperación es
-        // el self-healing por construcción de ReconciliarParAsync (residuo recomputado desde el
-        // estado actual en la próxima corrida) o un POST manual a
-        // /api/stock/lotes/reconciliacion sobre el mismo alcance.
+        // Contrato de fallo parcial (diseño aceptado, sin transacción ambiente entre el commit de
+        // arriba y este ReconciliarAsync): el flip de controla_lote ya quedó COMMITEADO antes de
+        // este punto. Si ReconciliarAsync falla a mitad de camino (algunos pares (artículo, PV) ya
+        // reconciliados, otros no), el request devuelve un 500 genérico y el flip queda commiteado
+        // con reconciliación incompleta. No hay rollback del flip ni señal adicional que distinga
+        // "reconciliación completa" de "parcial" — la recuperación es el self-healing por
+        // construcción de ReconciliarParAsync (residuo recomputado desde el estado actual en la
+        // próxima corrida) o un POST manual a /api/stock/lotes/reconciliacion sobre el mismo
+        // alcance.
         if (!controlaLoteAnterior && datos.ControlaLote)
         {
             await servicioDeLotes.ReconciliarAsync(articulo.Id, idPuntoVenta: null, ct);
@@ -555,12 +596,15 @@ public class ServicioDeArticulos(
         }
     }
 
-    /// <summary>db-error-backstops: pre-chequeo de existencia tenant-scoped antes del INSERT —
-    /// el backstop real sigue siendo <c>fk_articulos_area</c> (compuesta, 23503 → 400
-    /// <c>referencia_invalida</c>, genérico desde la Slice 1).</summary>
+    /// <summary>fix/articulos-lock-referencias: reemplaza el pre-chequeo <c>AnyAsync</c>
+    /// filtrado (sin lock) por <see cref="GuardaDeReferencias.BloquearSiEstaVivaAsync{T}"/>,
+    /// dentro de la transacción de escritura — cierra, del lado de este escritor, el residual
+    /// documentado en <see cref="GuardaDeReferencias"/> (ver su doc-comment para el porqué del
+    /// <c>FOR KEY SHARE</c>). El backstop real sigue siendo <c>fk_articulos_area</c> (compuesta,
+    /// 23503 → 400 <c>referencia_invalida</c>, genérico desde la Slice 1).</summary>
     private async Task ExigirAreaValidaAsync(int id, CancellationToken ct)
     {
-        if (!await db.Areas.AnyAsync(a => a.Id == id, ct))
+        if (!await guarda.BloquearSiEstaVivaAsync<Area>(id, ct))
         {
             throw new ErrorDominio("referencia_invalida", $"No existe el área {id}.", 400);
         }
@@ -576,7 +620,7 @@ public class ServicioDeArticulos(
             return;
         }
 
-        if (!await db.Categorias.AnyAsync(c => c.Id == id, ct))
+        if (!await guarda.BloquearSiEstaVivaAsync<Categoria>(id.Value, ct))
         {
             throw new ErrorDominio("referencia_invalida", $"No existe la categoría {id}.", 400);
         }
@@ -591,7 +635,7 @@ public class ServicioDeArticulos(
             return;
         }
 
-        if (!await db.Marcas.AnyAsync(m => m.Id == id, ct))
+        if (!await guarda.BloquearSiEstaVivaAsync<Marca>(id.Value, ct))
         {
             throw new ErrorDominio("referencia_invalida", $"No existe la marca {id}.", 400);
         }
@@ -606,7 +650,7 @@ public class ServicioDeArticulos(
             return;
         }
 
-        if (!await db.Grupos.AnyAsync(g => g.Id == id, ct))
+        if (!await guarda.BloquearSiEstaVivaAsync<Grupo>(id.Value, ct))
         {
             throw new ErrorDominio("referencia_invalida", $"No existe el grupo {id}.", 400);
         }
@@ -621,7 +665,7 @@ public class ServicioDeArticulos(
             return;
         }
 
-        if (!await db.Proveedores.AnyAsync(p => p.Id == id, ct))
+        if (!await guarda.BloquearSiEstaVivaAsync<Proveedor>(id.Value, ct))
         {
             throw new ErrorDominio("referencia_invalida", $"No existe el proveedor {id}.", 400);
         }

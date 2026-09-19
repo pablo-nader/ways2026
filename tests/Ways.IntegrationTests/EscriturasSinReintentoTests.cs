@@ -266,7 +266,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         await using (var db = ContextoConReintentos(s, interceptor))
         {
             var servicio = new ServicioDeArticulos(
-                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)));
+                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
+                new GuardaDeReferencias(db, new InspectorDeUso(db)));
             var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.CrearAsync(datos));
             AfirmarFallaSinReintento(error, interceptor);
         }
@@ -276,7 +277,8 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         await using (var db = ContextoConReintentos(s))
         {
             await new ServicioDeArticulos(
-                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)))
+                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
+                new GuardaDeReferencias(db, new InspectorDeUso(db)))
                 .CrearAsync(datos);
         }
 
@@ -288,6 +290,58 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         await using var db = ContextoDePlataforma();
         return await db.Articulos.IgnoreQueryFilters()
             .CountAsync(a => a.IdTenant == idTenant && a.Nombre == nombre);
+    }
+
+    // ---- 2b. articulos (edición): fix/articulos-lock-referencias, ActualizarAsync pasó a abrir --
+    // transacción explícita para envolver los 5 chequeos de referencia lockeados junto con el
+    // UPDATE que los usa. El interceptor rompe el UPDATE de articulos (ClaseDeSentencia.Update,
+    // no Insert): una edición no inserta nada.
+
+    [Fact]
+    public async Task LaEdicionDeArticuloNoSeReintentaYElArticuloQuedaSinCambios()
+    {
+        var s = await AprovisionarAsync("sin-reintento-edicion-articulos");
+        var idArticulo = await SembrarArticuloAsync(s, "Artículo antes de editar");
+
+        var datos = new EdicionArticulo(
+            Nombre: "Artículo editado", Descripcion: null, IdArea: s.IdArea, IdCategoria: null, IdMarca: null,
+            IdGrupo: null, IdProveedorHabitual: null, IdAlicuotaIva: s.IdAlicuotaIva, UnidadVenta: UnidadVenta.Unidad,
+            UnidadesPorBulto: null, EsProducto: true, CostoLista: null, DescuentoProveedor: null, CostoNominal: null,
+            DisponibleParaTodas: true, IdsEmpresas: null, Activo: true, ControlaLote: false);
+
+        var interceptor = new InterceptorQueRompeLaPrimeraEscritura("articulos", SqlStateTransitorio, ClaseDeSentencia.Update);
+
+        await using (var db = ContextoConReintentos(s, interceptor))
+        {
+            var servicio = new ServicioDeArticulos(
+                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
+                new GuardaDeReferencias(db, new InspectorDeUso(db)));
+            var error = await Assert.ThrowsAnyAsync<Exception>(() => servicio.ActualizarAsync(idArticulo, datos));
+            AfirmarFallaSinReintento(error, interceptor);
+        }
+
+        // Sin cambios: el fallo transitorio abortó la transacción entera, nunca dejó un UPDATE a
+        // medio aplicar.
+        Assert.Equal("Artículo antes de editar", await NombreDeArticuloAsync(idArticulo));
+
+        await using (var db = ContextoConReintentos(s))
+        {
+            await new ServicioDeArticulos(
+                db, Reloj(), ContextoAdmin(s), new ServicioDeLotes(db, Reloj(), ContextoAdmin(s)),
+                new GuardaDeReferencias(db, new InspectorDeUso(db)))
+                .ActualizarAsync(idArticulo, datos);
+        }
+
+        Assert.Equal("Artículo editado", await NombreDeArticuloAsync(idArticulo));
+    }
+
+    private async Task<string> NombreDeArticuloAsync(int idArticulo)
+    {
+        await using var db = ContextoDePlataforma();
+        return await db.Articulos.IgnoreQueryFilters()
+            .Where(a => a.Id == idArticulo)
+            .Select(a => a.Nombre)
+            .SingleAsync();
     }
 
     // ---- 3. usuarios: la fila de AUDITORÍA es la que se duplicaba -----------------------------

@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
+using Ways.Application.Bajas;
+using Ways.Application.Organizacion;
 using Ways.Application.Stock;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
@@ -25,8 +27,18 @@ namespace Ways.Application.Tests.Articulos;
 /// de punta a punta (incl. autogeneración de <c>codigo_interno</c>) se prueba contra Postgres
 /// real en <c>ArticulosEndpointsTests</c> (Ways.IntegrationTests).
 ///
-/// <see cref="ServicioDeArticulos.ActualizarAsync"/> SÍ abre sin transacción (el
-/// <c>codigo_interno</c> no es editable) — se cubre completo acá.
+/// <see cref="ServicioDeArticulos.ActualizarAsync"/> TAMPOCO se cubre completo acá desde
+/// fix/articulos-lock-referencias: ahora también abre <c>Database.BeginTransactionAsync</c> para
+/// envolver los 5 chequeos de referencia lockeados (<see cref="GuardaDeReferencias.BloquearSiEstaVivaAsync{T}"/>)
+/// junto con el UPDATE que los usa — mismo "transaction-blocked-provider caveat" que
+/// <see cref="ServicioDeArticulos.CrearAsync"/> de arriba (antes no aplicaba: el
+/// <c>codigo_interno</c> no es editable). Las tres pruebas de round-trip que vivían acá (edición
+/// básica de campos, subset de empresas persistido, de-dup de <c>IdsEmpresas</c> repetidos) se
+/// movieron a <c>ArticulosEndpointsTests</c> (Ways.IntegrationTests, Postgres real) — ver
+/// <c>EditarActualizaCamposBasicosDelArticulo</c>, <c>EditarConSubsetDeEmpresasPersisteElSubconjunto</c>
+/// y <c>EditarConIdsEmpresasDuplicadosPersisteUnaSolaFila</c>. Las validaciones que corren ANTES
+/// de abrir esa transacción (los chequeos en memoria, <c>ReglaDeArticulos</c>, el pre-chequeo de
+/// empresas) siguen alcanzables acá y NO se movieron.
 /// </summary>
 public class ServicioDeArticulosTests
 {
@@ -60,7 +72,9 @@ public class ServicioDeArticulosTests
         // InMemory provider, que NO soporta BeginTransactionAsync (doc-comment de la clase),
         // nunca llega a ese camino acá. El disparador real (con Stock) se prueba en
         // ReconciliacionTests (Ways.IntegrationTests), contra Postgres.
-        return new ServicioDeArticulos(db, reloj, contexto, new ServicioDeLotes(db, reloj, contexto));
+        return new ServicioDeArticulos(
+            db, reloj, contexto, new ServicioDeLotes(db, reloj, contexto),
+            new GuardaDeReferencias(db, new InspectorDeUso(db)));
     }
 
     private static async Task<(int IdArea, int IdAlicuotaIva)> SembrarCatalogosAsync(string nombreDeBase, int idTenant)
@@ -197,40 +211,14 @@ public class ServicioDeArticulosTests
         Assert.Equal(400, error.EstadoHttp);
     }
 
-    /// <summary>Spec: Invalid clasificador or alicuota reference maps to 400 (pre-chequeo de
-    /// servicio, adelanta el mismo código que el backstop 23503).</summary>
-    [Fact]
-    public async Task CrearConIdAreaInexistenteEsRechazado()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (_, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        var datos = AltaValida(idArea: 999_999, idAlicuotaIva);
-
-        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
-
-        Assert.Equal("referencia_invalida", error.Codigo);
-        Assert.Equal(400, error.EstadoHttp);
-    }
-
-    /// <summary>El filtro de EF ya deja afuera un área de OTRO tenant, así que da el mismo 400
-    /// que "no existe" — misma paridad que <c>ServicioDeClientesTests.CrearConIdListaPrecioDeOtroTenantEsRechazado</c>.</summary>
-    [Fact]
-    public async Task CrearConIdAreaDeOtroTenantEsRechazado()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (_, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
-        var (idAreaDeOtroTenant, _) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 2);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        var datos = AltaValida(idAreaDeOtroTenant, idAlicuotaIva);
-
-        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.CrearAsync(datos));
-
-        Assert.Equal("referencia_invalida", error.Codigo);
-        Assert.Equal(400, error.EstadoHttp);
-    }
+    // CrearConIdAreaInexistenteEsRechazado y CrearConIdAreaDeOtroTenantEsRechazado se retiraron
+    // de acá desde fix/articulos-lock-referencias: los 5 chequeos de referencia lockeados de
+    // CrearAsync (área incluida) ahora corren DENTRO de la transacción explícita, fuera del
+    // alcance del proveedor InMemory — mismo "transaction-blocked-provider caveat" del resto de
+    // CrearAsync (ver el doc-comment de la clase). La primera ya estaba duplicada por
+    // ArticulosEndpointsTests.CrearConIdAreaInexistenteDevuelve400 (Postgres real), así que se
+    // retira sin reemplazo; la segunda se movió a
+    // ArticulosEndpointsTests.CrearConIdAreaDeOtroTenantDevuelve400.
 
     [Fact]
     public async Task CrearConIdAlicuotaIvaInexistenteEsRechazado()
@@ -323,19 +311,8 @@ public class ServicioDeArticulosTests
         Assert.Equal(404, error.EstadoHttp);
     }
 
-    [Fact]
-    public async Task EditarUnArticuloFunciona()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (idArea, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
-        var articulo = await SembrarArticuloAsync(nombreDeBase, idTenant: 1, idArea, idAlicuotaIva);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        var editado = await servicio.ActualizarAsync(
-            articulo.Id, EdicionValida(idArea, idAlicuotaIva, nombre: "Nombre Editado"));
-
-        Assert.Equal("Nombre Editado", editado.Nombre);
-    }
+    // EditarUnArticuloFunciona se movió a ArticulosEndpointsTests.EditarActualizaCamposBasicosDelArticulo
+    // (Postgres real) — ver el doc-comment de la clase.
 
     /// <summary>Spec: Restricting availability requires at least one subset row — a través del
     /// camino real de edición (true -&gt; false sin subset).</summary>
@@ -423,58 +400,11 @@ public class ServicioDeArticulosTests
         Assert.Equal(idEmpresa, filas[0].IdEmpresa);
     }
 
-    /// <summary>Spec: Explicit subset excludes other empresas — la edición sí persiste el
-    /// subconjunto cuando viene con al menos una fila.</summary>
-    [Fact]
-    public async Task EditarConDisponibleParaTodasFalseConSubsetFunciona()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (idArea, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
-        var idEmpresa = await SembrarEmpresaAsync(nombreDeBase, idTenant: 1);
-        var articulo = await SembrarArticuloAsync(
-            nombreDeBase, idTenant: 1, idArea, idAlicuotaIva, disponibleParaTodas: true);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
+    // EditarConDisponibleParaTodasFalseConSubsetFunciona se movió a
+    // ArticulosEndpointsTests.EditarConSubsetDeEmpresasPersisteElSubconjunto (Postgres real).
 
-        var datos = EdicionValida(idArea, idAlicuotaIva) with { DisponibleParaTodas = false, IdsEmpresas = [idEmpresa] };
-
-        var editado = await servicio.ActualizarAsync(articulo.Id, datos);
-
-        Assert.False(editado.DisponibleParaTodas);
-        Assert.Equal([idEmpresa], editado.IdsEmpresas);
-
-        await using var lectura = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, 1));
-        var filas = await lectura.ArticulosEmpresas.Where(ae => ae.IdArticulo == articulo.Id).ToListAsync();
-        Assert.Single(filas);
-        Assert.Equal(idEmpresa, filas[0].IdEmpresa);
-    }
-
-    /// <summary>judgment-day ronda 1 (item 3): un payload con un id repetido no debe generar
-    /// dos filas de subset ni ningún error — <c>.Distinct()</c> corre antes de validar/
-    /// insertar.</summary>
-    [Fact]
-    public async Task EditarConIdsEmpresasDuplicadosInsertaUnaSolaFila()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var (idArea, idAlicuotaIva) = await SembrarCatalogosAsync(nombreDeBase, idTenant: 1);
-        var idEmpresa = await SembrarEmpresaAsync(nombreDeBase, idTenant: 1);
-        var articulo = await SembrarArticuloAsync(
-            nombreDeBase, idTenant: 1, idArea, idAlicuotaIva, disponibleParaTodas: true);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        var datos = EdicionValida(idArea, idAlicuotaIva) with
-        {
-            DisponibleParaTodas = false,
-            IdsEmpresas = [idEmpresa, idEmpresa]
-        };
-
-        var editado = await servicio.ActualizarAsync(articulo.Id, datos);
-
-        Assert.Equal([idEmpresa], editado.IdsEmpresas);
-
-        await using var lectura = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, 1));
-        var filas = await lectura.ArticulosEmpresas.Where(ae => ae.IdArticulo == articulo.Id).ToListAsync();
-        Assert.Single(filas);
-    }
+    // EditarConIdsEmpresasDuplicadosInsertaUnaSolaFila se movió a
+    // ArticulosEndpointsTests.EditarConIdsEmpresasDuplicadosPersisteUnaSolaFila (Postgres real).
 
     /// <summary>judgment-day ronda 1 (item 2): el detalle de un artículo restringido expone su
     /// subset actual, para que un cliente pueda armar un PUT de no-op sin perder las filas.</summary>
