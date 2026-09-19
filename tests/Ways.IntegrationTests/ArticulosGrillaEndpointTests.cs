@@ -149,6 +149,15 @@ public class ArticulosGrillaEndpointTests(WaysApiFixture fixture) : IClassFixtur
         return proveedor.Id;
     }
 
+    private async Task EstamparBajaDeProveedorAsync(int idProveedor)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+
+        var proveedor = await db.Proveedores.SingleAsync(p => p.Id == idProveedor);
+        proveedor.DeletedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
     private async Task SembrarPrecioAsync(int idTenant, int idArticulo, int idListaPrecio, decimal monto)
     {
         await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
@@ -625,10 +634,12 @@ public class ArticulosGrillaEndpointTests(WaysApiFixture fixture) : IClassFixtur
         var idProveedor = await SembrarProveedorAsync(idTenant, idCondicionFiscalCf, "De Baja SA");
         var articulo = await SembrarArticuloAsync(idTenant, "ConProveedorDeBaja", idArea, idAlicuotaIva, idProveedor);
 
-        // Baja lógica REAL (endpoint DELETE), no un DeletedAt sembrado a mano: prueba el camino
-        // que un operador realmente dispara.
+        // El endpoint DELETE ya rechaza un proveedor referenciado (proveedor_en_uso), así que la
+        // FK colgante se reproduce estampando deleted_at: es el dato que dejaron las bajas previas
+        // a la guarda de referencias, y la grilla tiene que seguir tratándolo como "sin proveedor".
         var baja = await admin.DeleteAsync($"/api/proveedores/{idProveedor}");
-        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, baja.StatusCode);
+        await EstamparBajaDeProveedorAsync(idProveedor);
 
         var conSinProveedor = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>(
             UrlGrilla("sinProveedor=true&tamanio=50"), OpcionesJson);

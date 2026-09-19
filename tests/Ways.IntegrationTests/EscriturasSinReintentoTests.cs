@@ -9,6 +9,7 @@ using Npgsql;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
 using Ways.Application.Auditoria;
+using Ways.Application.Bajas;
 using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
 using Ways.Application.Fiscal;
@@ -400,6 +401,9 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
     private static ServicioDePrecios ServicioDePreciosSobre(WaysDbContext db, Sembrado s) =>
         new(db, Reloj(), ContextoAdmin(s), new ServicioDeAuditoria(db, Reloj(), ContextoAdmin(s)));
 
+    private static ServicioDeListasPrecio ServicioDeListasPrecioSobre(WaysDbContext db) =>
+        new(db, Reloj(), new GuardaDeReferencias(db, new InspectorDeUso(db)));
+
     private async Task<int> ContarPreciosAsync(int idArticulo)
     {
         await using var db = ContextoDePlataforma();
@@ -425,7 +429,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         await using (var db = ContextoConReintentos(s, interceptor))
         {
             var error = await Assert.ThrowsAnyAsync<Exception>(
-                () => new ServicioDeListasPrecio(db, Reloj()).CrearAsync(datos));
+                () => ServicioDeListasPrecioSobre(db).CrearAsync(datos));
             AfirmarFallaSinReintento(error, interceptor);
         }
 
@@ -436,7 +440,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
 
         await using (var db = ContextoConReintentos(s))
         {
-            await new ServicioDeListasPrecio(db, Reloj()).CrearAsync(datos);
+            await ServicioDeListasPrecioSobre(db).CrearAsync(datos);
         }
 
         Assert.Equal(1, await ContarListasAsync(s.IdTenant, nombre));
@@ -507,7 +511,7 @@ public class EscriturasSinReintentoTests(WaysApiFixture fixture) : IClassFixture
         int idOtraLista;
         await using (var db = ContextoConReintentos(s))
         {
-            idOtraLista = (await new ServicioDeListasPrecio(db, Reloj()).CrearAsync(new ListaPrecioAlta(
+            idOtraLista = (await ServicioDeListasPrecioSobre(db).CrearAsync(new ListaPrecioAlta(
                 Nombre: $"Lista secundaria {Guid.NewGuid().ToString("N")[..8]}", IdEmpresa: null,
                 EsDefault: false, Modo: ModoLista.Fija, IdListaBase: null, Porcentaje: null))).Id;
         }

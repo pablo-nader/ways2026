@@ -500,7 +500,7 @@ public class InspectorDeUsoTests
     }
 
     // =============================================================================================
-    // MODO REFERENCIA (fix/bajas-catalogos-guarda-de-uso, PR 1): RenderizarReferencias.
+    // MODO REFERENCIA (fix/bajas-catalogos-guarda-de-uso): RenderizarReferencias.
     // =============================================================================================
 
     /// <summary>

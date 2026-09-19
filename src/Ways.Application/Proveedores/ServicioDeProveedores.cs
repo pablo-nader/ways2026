@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Application.Usuarios;
 using Ways.Domain.Common;
 using Ways.Domain.Proveedores;
@@ -19,8 +20,15 @@ namespace Ways.Application.Proveedores;
 /// (pre-chequeo de disponibilidad + INSERT, sin <c>AsignadorDeNumeroCliente</c> de por medio) —
 /// esto también significa que, a diferencia de <c>ServicioDeClientes</c>, el alta completa SÍ es
 /// testeable con el proveedor InMemory (ver <c>ServicioDeProveedoresTests</c>).
+///
+/// <see cref="EliminarAsync"/> (fix/bajas-catalogos-guarda-de-uso) SÍ abre transacción
+/// explícita, a diferencia del resto de este servicio: la baja necesita el lock de
+/// <see cref="GuardaDeReferencias.BloquearFilaAsync{T}"/> tomado ANTES de releer la fila — mismo
+/// criterio que <see cref="Catalogos.ServicioDeCatalogo{T,TListado,TAlta}.EliminarAsync"/>, que
+/// no reutiliza porque <see cref="Proveedor"/> no extiende <c>CatalogoSimple</c> (design decision
+/// 1 de arriba).
 /// </summary>
-public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj)
+public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
 {
     public async Task<PaginaDe<ProveedorListado>> ListarAsync(
         string? busqueda = null,
@@ -171,16 +179,32 @@ public class ServicioDeProveedores(IWaysDbContext db, IRelojDelSistema reloj)
 
     /// <summary>Baja lógica: escribe <c>deleted_at</c>, no borra la fila. Sin guard de fila
     /// protegida (a diferencia de <c>ServicioDeClientes.EliminarAsync</c>) — proveedores no
-    /// tiene un equivalente al Consumidor Final.</summary>
+    /// tiene un equivalente al Consumidor Final. Desde fix/bajas-catalogos-guarda-de-uso, SÍ
+    /// exige que ninguna fila lo referencie (ver el doc-comment de la clase y el de
+    /// <see cref="GuardaDeReferencias"/> — mismo shape sin reintento + lock antes de la carga que
+    /// <c>ServicioDeCatalogo{T,TListado,TAlta}.EliminarAsync</c>).</summary>
     public async Task EliminarAsync(int id, CancellationToken ct = default)
     {
-        var proveedor = await BuscarAsync(id, ct);
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
-        var ahora = reloj.Ahora;
-        proveedor.DeletedAt = ahora;
-        proveedor.UpdatedAt = ahora;
+        await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-        await db.SaveChangesAsync(ct);
+            await guarda.BloquearFilaAsync<Proveedor>(id, ct);
+
+            var proveedor = await BuscarAsync(id, ct);
+
+            await guarda.ExigirSinReferenciasAsync(
+                proveedor, "proveedor_en_uso", "el proveedor", etiquetasPropias: null, ct);
+
+            var ahora = reloj.Ahora;
+            proveedor.DeletedAt = ahora;
+            proveedor.UpdatedAt = ahora;
+
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+        });
     }
 
     private async Task<Proveedor> BuscarAsync(int id, CancellationToken ct) =>

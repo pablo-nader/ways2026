@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Ways.Application.Abstracciones;
 using Ways.Application.Articulos;
 using Ways.Application.Auditoria;
+using Ways.Application.Bajas;
 using Ways.Application.Caja;
 using Ways.Application.Catalogos;
 using Ways.Application.Clientes;
@@ -103,6 +104,11 @@ public static class DependencyInjection
         // poder revisarlo por sus propios méritos antes de que algo pueda invocarlo. La slice 4 lo
         // cablea. InventarioDeDependientes es estático y puro: no tiene ciclo de vida que registrar.
         services.AddScoped<InspectorDeUso>();
+
+        // fix/bajas-catalogos-guarda-de-uso: el guard de referencias de los catálogos de
+        // tenant y proveedores — reusa InspectorDeUso en modo referencia (sin corte por
+        // created_at, ver el doc-comment de GuardaDeReferencias).
+        services.AddScoped<GuardaDeReferencias>();
 
         // stage-8-compras-transferencias-inventario, Slice 2: el ciclo de vida entero de la
         // compra — reusa ServicioDePrecios (AplicarPrecioSugeridoAsync), nunca

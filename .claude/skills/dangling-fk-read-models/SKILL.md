@@ -36,9 +36,13 @@ join then disagree.
    counts them — and in exports it ships fewer rows than the count-first cap checked.
 4. **Mandatory FKs are not exempt.** A required FK (e.g. `id_area`) can still dangle after
    a soft delete without usage guard; the row must still be returned.
-5. **Test with a REAL soft delete** (the DELETE endpoint or the service), never by
-   inserting a bogus id: the fixture must leave the FK non-null and the target invisible.
-   One test per dimension covering projection + `sin<X>` + `id<X>` + completeness.
+5. **Test with a REAL soft delete of a real row**, never by inserting a bogus id: the
+   fixture must leave the FK non-null and the target invisible. Since
+   `GuardaDeReferencias` (áreas, categorías, marcas, grupos, medios de pago, listas de
+   precio, proveedores), the DELETE endpoint REJECTS a referenced row with 409
+   `<x>_en_uso` — so stamp `DeletedAt` directly on the existing row (that is the legacy
+   data the read path must still survive). One test per dimension covering projection +
+   `sin<X>` + `id<X>` + completeness.
 
 ## Decision Gate
 

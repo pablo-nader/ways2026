@@ -183,7 +183,7 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
         return area.Id;
     }
 
-    // ---- baja lógica de catálogos (sin guarda de uso — bug de fondo de este reporte) --------------
+    // ---- baja lógica estampada: la guarda de referencias rechaza la baja por endpoint -----------
 
     private async Task DarDeBajaAreaAsync(Contexto ctx, int id)
     {
@@ -310,19 +310,20 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
 
     /// <summary>dangling-fk-read-models regla 2: nombra la cláusula
     /// <c>idsDeAreasVisibles.Contains(idAreaValor)</c> que decide si <c>idArea</c> matchea algo.
-    /// El área se da de baja a través del endpoint HTTP real (regla 5 del mismo skill), nunca por
-    /// un update directo — deja el FK del artículo intacto y el área invisible. Sin la guarda de
+    /// El endpoint DELETE rechaza el área referenciada (area_en_uso), así que la baja se estampa
+    /// sobre la fila real (regla 5 del mismo skill): deja el FK del artículo intacto y el área invisible. Sin la guarda de
     /// visibilidad (código previo al fix), <c>idArea=&lt;id de baja&gt;</c> devolvía la misma fila
     /// que <c>sinArea=true</c>.</summary>
     [Fact]
-    public async Task IdAreaConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila()
+    public async Task IdAreaConUnIdDadoDeBajaNoMatcheaNingunaFila()
     {
-        var ctx = await PrepararAsync(nameof(IdAreaConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila));
+        var ctx = await PrepararAsync(nameof(IdAreaConUnIdDadoDeBajaNoMatcheaNingunaFila));
         await SembrarArticuloAsync(ctx, "con-area-vigente", idArea: ctx.IdAreaA);
         await SembrarArticuloAsync(ctx, "con-area-de-baja", idArea: ctx.IdAreaB);
 
         var baja = await ctx.Admin.DeleteAsync($"/api/catalogos/areas/{ctx.IdAreaB}");
-        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, baja.StatusCode);
+        await DarDeBajaAreaAsync(ctx, ctx.IdAreaB);
 
         var porIdDeBaja = await ListarAsync(ctx.Admin, ConstruirQuery(idArea: ctx.IdAreaB));
         Assert.Empty(porIdDeBaja.Items);
@@ -404,18 +405,19 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
     }
 
     /// <summary>Mismo objetivo de mutación que
-    /// <c>IdAreaConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila</c>, aplicado a categoría:
+    /// <c>IdAreaConUnIdDadoDeBajaNoMatcheaNingunaFila</c>, aplicado a categoría:
     /// nombra <c>idsDeCategoriasVisibles.Contains(idCategoriaValor)</c>, la guarda de raíz que se
     /// evalúa ANTES de expandir descendientes.</summary>
     [Fact]
-    public async Task IdCategoriaConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila()
+    public async Task IdCategoriaConUnIdDadoDeBajaNoMatcheaNingunaFila()
     {
-        var ctx = await PrepararAsync(nameof(IdCategoriaConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila));
+        var ctx = await PrepararAsync(nameof(IdCategoriaConUnIdDadoDeBajaNoMatcheaNingunaFila));
         await SembrarArticuloAsync(ctx, "con-categoria-vigente", idCategoria: ctx.IdCategoriaPadre);
         await SembrarArticuloAsync(ctx, "con-categoria-de-baja", idCategoria: ctx.IdCategoriaOtra);
 
         var baja = await ctx.Admin.DeleteAsync($"/api/catalogos/categorias/{ctx.IdCategoriaOtra}");
-        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, baja.StatusCode);
+        await DarDeBajaCategoriaAsync(ctx, ctx.IdCategoriaOtra);
 
         var porIdDeBaja = await ListarAsync(ctx.Admin, ConstruirQuery(idCategoria: ctx.IdCategoriaOtra));
         Assert.Empty(porIdDeBaja.Items);
@@ -488,16 +490,17 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
     }
 
     /// <summary>Mismo objetivo de mutación que
-    /// <c>IdAreaConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila</c>, aplicado a marca.</summary>
+    /// <c>IdAreaConUnIdDadoDeBajaNoMatcheaNingunaFila</c>, aplicado a marca.</summary>
     [Fact]
-    public async Task IdMarcaConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila()
+    public async Task IdMarcaConUnIdDadoDeBajaNoMatcheaNingunaFila()
     {
-        var ctx = await PrepararAsync(nameof(IdMarcaConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila));
+        var ctx = await PrepararAsync(nameof(IdMarcaConUnIdDadoDeBajaNoMatcheaNingunaFila));
         await SembrarArticuloAsync(ctx, "con-marca-vigente", idMarca: ctx.IdMarcaA);
         await SembrarArticuloAsync(ctx, "con-marca-de-baja", idMarca: ctx.IdMarcaB);
 
         var baja = await ctx.Admin.DeleteAsync($"/api/catalogos/marcas/{ctx.IdMarcaB}");
-        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, baja.StatusCode);
+        await DarDeBajaMarcaAsync(ctx, ctx.IdMarcaB);
 
         var porIdDeBaja = await ListarAsync(ctx.Admin, ConstruirQuery(idMarca: ctx.IdMarcaB));
         Assert.Empty(porIdDeBaja.Items);
@@ -570,16 +573,17 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
     }
 
     /// <summary>Mismo objetivo de mutación que
-    /// <c>IdAreaConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila</c>, aplicado a grupo.</summary>
+    /// <c>IdAreaConUnIdDadoDeBajaNoMatcheaNingunaFila</c>, aplicado a grupo.</summary>
     [Fact]
-    public async Task IdGrupoConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila()
+    public async Task IdGrupoConUnIdDadoDeBajaNoMatcheaNingunaFila()
     {
-        var ctx = await PrepararAsync(nameof(IdGrupoConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila));
+        var ctx = await PrepararAsync(nameof(IdGrupoConUnIdDadoDeBajaNoMatcheaNingunaFila));
         await SembrarArticuloAsync(ctx, "con-grupo-vigente", idGrupo: ctx.IdGrupoA);
         await SembrarArticuloAsync(ctx, "con-grupo-de-baja", idGrupo: ctx.IdGrupoB);
 
         var baja = await ctx.Admin.DeleteAsync($"/api/catalogos/grupos/{ctx.IdGrupoB}");
-        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, baja.StatusCode);
+        await DarDeBajaGrupoAsync(ctx, ctx.IdGrupoB);
 
         var porIdDeBaja = await ListarAsync(ctx.Admin, ConstruirQuery(idGrupo: ctx.IdGrupoB));
         Assert.Empty(porIdDeBaja.Items);
@@ -653,17 +657,18 @@ public class ReportesArticulosTests(WaysApiFixture fixture) : IClassFixture<Ways
     }
 
     /// <summary>Mismo objetivo de mutación que
-    /// <c>IdAreaConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila</c>, aplicado a proveedor
+    /// <c>IdAreaConUnIdDadoDeBajaNoMatcheaNingunaFila</c>, aplicado a proveedor
     /// habitual — <c>DELETE /api/proveedores/{id}</c>, no el catálogo compartido.</summary>
     [Fact]
-    public async Task IdProveedorConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila()
+    public async Task IdProveedorConUnIdDadoDeBajaNoMatcheaNingunaFila()
     {
-        var ctx = await PrepararAsync(nameof(IdProveedorConUnIdDadoDeBajaPorElEndpointRealNoMatcheaNingunaFila));
+        var ctx = await PrepararAsync(nameof(IdProveedorConUnIdDadoDeBajaNoMatcheaNingunaFila));
         await SembrarArticuloAsync(ctx, "con-proveedor-vigente", idProveedorHabitual: ctx.IdProveedorConFantasia);
         await SembrarArticuloAsync(ctx, "con-proveedor-de-baja", idProveedorHabitual: ctx.IdProveedorSinFantasia);
 
         var baja = await ctx.Admin.DeleteAsync($"/api/proveedores/{ctx.IdProveedorSinFantasia}");
-        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, baja.StatusCode);
+        await DarDeBajaProveedorAsync(ctx, ctx.IdProveedorSinFantasia);
 
         var porIdDeBaja = await ListarAsync(ctx.Admin, ConstruirQuery(idProveedor: ctx.IdProveedorSinFantasia));
         Assert.Empty(porIdDeBaja.Items);
