@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { Proveedores } from './Proveedores'
+import { ErrorApi } from '../api/cliente'
 import type { PaginaDe, ProveedorListado, SaldoDeProveedor } from '../api/tipos'
 
 function renderProveedores() {
@@ -10,13 +11,16 @@ function renderProveedores() {
 }
 
 const apiGetMock = vi.fn()
+const apiPostMock = vi.fn()
+const apiPutMock = vi.fn()
+const apiDeleteMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
   api: {
     get: (...args: unknown[]) => apiGetMock(...(args as [string])),
-    post: vi.fn(),
-    put: vi.fn(),
-    delete: vi.fn(),
+    post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
+    delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
   },
   ErrorApi: class ErrorApiMock extends Error {
     estado: number
@@ -67,6 +71,9 @@ function mockearRutasBase(sobrescribir?: (ruta: string) => Promise<unknown> | un
 
 beforeEach(() => {
   apiGetMock.mockReset()
+  apiPostMock.mockReset()
+  apiPutMock.mockReset()
+  apiDeleteMock.mockReset()
 })
 
 describe('Proveedores — listado', () => {
@@ -144,6 +151,225 @@ describe('Proveedores — panel de saldo', () => {
     await screen.findByText('Saldo de Proveedor Uno SA')
 
     await usuario.click(screen.getByRole('button', { name: 'Cerrar' }))
+    expect(screen.queryByText('Saldo de Proveedor Uno SA')).not.toBeInTheDocument()
+  })
+})
+
+// fix/web-bajas-catalogos: la baja de un proveedor reusa `ConfirmacionDeBaja` + `copiaDeFalloDeBaja`,
+// mismo patrón que `Empresas.test.tsx`/`PaginaCatalogo.test.tsx` (`react-async-state` regla 10).
+
+function bajaDe(razonSocial: string) {
+  return within(screen.getByRole('row', { name: new RegExp(razonSocial) })).getByRole('button', { name: 'Baja' })
+}
+
+describe('Proveedores — baja lógica (fix/web-bajas-catalogos)', () => {
+  beforeEach(() => {
+    apiDeleteMock.mockResolvedValue(undefined)
+  })
+
+  it('el botón de baja no llama a la API hasta que se confirma', async () => {
+    const usuario = userEvent.setup()
+    mockearRutasBase()
+    renderProveedores()
+
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(bajaDe('Proveedor Uno SA'))
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toHaveTextContent(
+      '¿Dar de baja el proveedor "Proveedor Uno SA"?',
+    )
+
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+    await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
+    expect(apiDeleteMock).toHaveBeenCalledWith('/proveedores/1')
+  })
+
+  it('cancelar cierra la puerta y no llama nunca a la API', async () => {
+    const usuario = userEvent.setup()
+    mockearRutasBase()
+    renderProveedores()
+
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(bajaDe('Proveedor Uno SA'))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+  })
+
+  /** Cláusula bajo prueba: `ocupadoRef`, la guarda de re-entrancia del mismo tick. */
+  it('un segundo click sobre la confirmación en vuelo se descarta', async () => {
+    mockearRutasBase()
+    apiDeleteMock.mockImplementation(() => new Promise<void>(() => {}))
+    renderProveedores()
+
+    await screen.findByText('Proveedor Uno SA')
+    await userEvent.setup().click(bajaDe('Proveedor Uno SA'))
+    const confirmar = screen.getByRole('button', { name: 'Confirmar baja' })
+    await act(async () => {
+      confirmar.click()
+      confirmar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  /** Cláusula bajo prueba: la ventana inerte completa (`bloqueado`) — ver `Empresas.test.tsx`. */
+  it('durante el DELETE y su refresco no queda ninguna acción alcanzable', async () => {
+    const usuario = userEvent.setup()
+    let resolverDelete!: () => void
+    let resolverRefresco!: (pagina: PaginaDe<ProveedorListado>) => void
+
+    const otro = proveedorFixture({ id: 2, razonSocial: 'Proveedor Dos SA' })
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') return Promise.resolve([])
+      if (ruta !== '/proveedores') return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      cargas += 1
+      if (cargas === 1) return Promise.resolve(paginaFixture([proveedorFixture(), otro]))
+
+      return new Promise<PaginaDe<ProveedorListado>>((resolver) => {
+        resolverRefresco = resolver
+      })
+    })
+    apiDeleteMock.mockImplementation(
+      () =>
+        new Promise<void>((resolver) => {
+          resolverDelete = resolver
+        }),
+    )
+
+    renderProveedores()
+    await screen.findByText('Proveedor Uno SA')
+
+    await usuario.click(bajaDe('Proveedor Uno SA'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    expect(screen.getByRole('button', { name: 'Dando de baja…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Nuevo' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Buscar' })).toBeDisabled()
+    for (const boton of [
+      ...screen.getAllByRole('button', { name: 'Editar' }),
+      ...screen.getAllByRole('button', { name: 'Baja' }),
+      ...screen.getAllByRole('button', { name: 'Ver saldo' }),
+    ]) {
+      expect(boton).toBeDisabled()
+    }
+
+    await act(async () => {
+      resolverDelete()
+      await Promise.resolve()
+    })
+
+    await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+
+    await act(async () => {
+      resolverRefresco(paginaFixture([otro]))
+      await Promise.resolve()
+    })
+
+    await screen.findByText('Proveedor Dos SA')
+    expect(screen.queryByText('Proveedor Uno SA')).not.toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  /** Cláusula bajo prueba: `AVISO_REFRESCO_FALLIDO_BAJA` — ver `Empresas.test.tsx`. Un DELETE que
+   * ya commiteó nunca se reporta como fallido, aunque el refresco posterior explote. */
+  it('un refresco fallido después de la baja no la reporta como fallida', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/catalogos-fiscales/condiciones-fiscales') return Promise.resolve([])
+      if (ruta !== '/proveedores') return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      cargas += 1
+      if (cargas === 1) return Promise.resolve(paginaFixture([proveedorFixture()]))
+
+      return Promise.reject(new ErrorApi(500, 'error_interno', 'Se cayó.'))
+    })
+    renderProveedores()
+    await screen.findByText('Proveedor Uno SA')
+
+    await usuario.click(bajaDe('Proveedor Uno SA'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText(
+      'Proveedor "Proveedor Uno SA" dado de baja. Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.',
+    )
+  })
+
+  /** Cláusula bajo prueba: la elección de copia por `codigo` vía `copiaDeFalloDeBaja`, con el
+   * sujeto `'el proveedor'`. */
+  it('un 409 proveedor_en_uso rinde el mensaje del servidor y su guía, y deja la puerta abierta', async () => {
+    const usuario = userEvent.setup()
+    mockearRutasBase()
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(409, 'proveedor_en_uso', 'No se puede dar de baja el proveedor porque tiene compras.'),
+    )
+    renderProveedores()
+
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(bajaDe('Proveedor Uno SA'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText(/porque tiene compras/)
+    expect(screen.getByText(/Reasigná esos datos o desactivá el proveedor/)).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: el `setError('')` de `cancelarBaja` — ver `Empresas.test.tsx`. */
+  it('cancelar después de un rechazo se lleva el motivo con la puerta', async () => {
+    const usuario = userEvent.setup()
+    mockearRutasBase()
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(409, 'proveedor_en_uso', 'No se puede dar de baja el proveedor porque tiene compras.'),
+    )
+    renderProveedores()
+
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(bajaDe('Proveedor Uno SA'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+    await screen.findByText(/porque tiene compras/)
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText(/porque tiene compras/)).not.toBeInTheDocument()
+  })
+
+  it('la baja del proveedor que se está editando se lleva también su formulario', async () => {
+    const usuario = userEvent.setup()
+    mockearRutasBase()
+    renderProveedores()
+
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    expect(screen.getByText('Editando proveedor 1')).toBeInTheDocument()
+
+    await usuario.click(bajaDe('Proveedor Uno SA'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
+    expect(screen.queryByText('Editando proveedor 1')).not.toBeInTheDocument()
+  })
+
+  it('la baja del proveedor cuyo saldo está a la vista cierra también ese panel', async () => {
+    const usuario = userEvent.setup()
+    mockearRutasBase((ruta) =>
+      ruta === '/proveedores/1/saldo' ? Promise.resolve({ idProveedor: 1, saldo: 0, compras: [] }) : undefined,
+    )
+    renderProveedores()
+
+    await screen.findByText('Proveedor Uno SA')
+    await usuario.click(screen.getByRole('button', { name: 'Ver saldo' }))
+    await screen.findByText('Saldo de Proveedor Uno SA')
+
+    await usuario.click(bajaDe('Proveedor Uno SA'))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText('Proveedor "Proveedor Uno SA" dado de baja.')
     expect(screen.queryByText('Saldo de Proveedor Uno SA')).not.toBeInTheDocument()
   })
 })

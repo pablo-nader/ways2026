@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import { NavigationType, useLocation, useNavigate, useNavigationType } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCatalogo, clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
@@ -9,6 +9,7 @@ import type {
   AlicuotaIvaListado,
   AreaAlta,
   AreaListado,
+  CategoriaAlta,
   CategoriaListado,
   EmpresaListado,
   FilaDeGrillaDeArticulos,
@@ -24,14 +25,35 @@ import { Box } from '../componentes/Box'
 import { aAlta, aEdicion, aFormulario, formularioVacio, type Formulario } from './articulos/FormularioArticulo'
 import { GrillaDeArticulos } from './articulos/GrillaDeArticulos'
 import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
+import { desplazamientoHaciaLaAnterior, HISTORIAL_SIN_OBSERVAR, registrarEntrada } from './articulos/historialObservado'
 import { ModalDeArticulo } from './articulos/ModalDeArticulo'
-import { analizarRutaModal } from './articulos/rutaModal'
+import { analizarRutaModal, type ModoModalDeArticulo } from './articulos/rutaModal'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
+const clienteCategorias = clienteDeCatalogo<CategoriaListado, CategoriaAlta>('categorias')
 const clienteMarcas = clienteDeCatalogo<MarcaListado, MarcaAlta>('marcas')
 const clienteGrupos = clienteDeCatalogo<GrupoListado, GrupoAlta>('grupos')
 
 const MENSAJE_ID_INVALIDO = 'No se especificó un artículo válido.'
+const MENSAJE_CONFIRMAR_DESCARTE = 'Hay cambios sin guardar en el artículo. ¿Descartarlos?'
+
+/** Identidad del modal actualmente comprometido en pantalla: `null` (cerrado), `'nuevo'` (alta) o
+ * el id numérico de la edición en curso — nunca el `modo`/`idParam` crudos de la URL, que pueden
+ * apuntar a un id inválido sin formulario cargado. Se usa para distinguir "la URL cambió pero
+ * seguimos en el mismo modal" (p. ej. tras cancelar un intento de salida) de una salida real. */
+type DestinoModal = 'nuevo' | number | 'invalido' | null
+
+function destinoDeRuta(modo: ModoModalDeArticulo | null, idParam: string | null): DestinoModal {
+  if (modo === 'crear') return 'nuevo'
+  if (modo === 'editar') return idParam !== null && /^\d+$/.test(idParam) ? Number(idParam) : 'invalido'
+  return null
+}
+
+function rutaDeDestino(destino: DestinoModal): string {
+  if (destino === 'nuevo') return '/articulos/create'
+  if (typeof destino === 'number') return `/articulos/edit/${destino}`
+  return '/articulos'
+}
 
 /**
  * ABM dedicado de artículos (design decision 1: no la máquina genérica de catálogos) — la
@@ -50,6 +72,7 @@ const MENSAJE_ID_INVALIDO = 'No se especificó un artículo válido.'
 export function Articulos() {
   const location = useLocation()
   const navigate = useNavigate()
+  const navigationType = useNavigationType()
   const { modo, idParam } = analizarRutaModal(location.pathname)
 
   const [areas, setAreas] = useState<AreaListado[]>([])
@@ -88,6 +111,19 @@ export function Articulos() {
   // se compara para saber si hay cambios sin guardar al intentar cerrar (regla: confirmar antes de
   // descartar, igual criterio que el `confirm()` de la Baja).
   const formularioOriginalRef = useRef<Formulario | null>(null)
+  // Identidad del modal ya comprometida (ver `DestinoModal`) — la compuerta de confirmación del
+  // efecto de apertura la compara contra el destino que la URL pide ahora, para distinguir "salir
+  // de verdad" de "la URL volvió sola al mismo modal" (p. ej. tras cancelar esa misma salida).
+  // `destinoMostrado` es su espejo en estado y es lo ÚNICO que decide si el modal se renderiza: el
+  // pathname en vivo puede adelantarse a la decisión (Atrás/Adelante commitean la URL antes de que
+  // el efecto pregunte), y renderizar desde él desmontaría el modal — y con él el estado propio de
+  // los hijos (código de barras tipeado, alta rápida abierta) — aunque después se cancele la salida.
+  // Ref y estado se actualizan siempre juntos, solo cuando la salida o apertura ya quedó decidida.
+  const destinoModalRef = useRef<DestinoModal>(null)
+  const [destinoMostrado, setDestinoMostrado] = useState<DestinoModal>(null)
+  // Posición relativa de las entradas del historial vistas, para deshacer un Atrás/Adelante
+  // rechazado volviendo a la entrada del modal (ver `historialObservado`).
+  const historialRef = useRef(HISTORIAL_SIN_OBSERVAR)
   const refBotonNuevo = useRef<HTMLButtonElement>(null)
   const ocupado = guardando || eliminando || escriturasHijas > 0
 
@@ -112,19 +148,26 @@ export function Articulos() {
   }
 
   useEffect(() => {
+    // incluirInactivos: true en los cuatro — un artículo existente puede referenciar un área/
+    // categoría/marca/grupo ya desactivada (la baja lógica es hoy la salida recomendada cuando la
+    // guarda de referencias rechaza el borrado, fix/articulos-form-catalogos-inactivos) y el
+    // select de edición necesita esa opción para poder mostrarla y guardarla sin tocarla. El alta
+    // solo ofrece las activas: `opcionesConValorActual` filtra en el render, no acá.
     clienteAreas
-      .listar(false)
+      .listar(true)
       .then(setAreas)
       .catch(() => {
         setAreas([])
         agregarErrorCatalogoRequerido('No se pudieron cargar las áreas.')
       })
-    api.get<CategoriaListado[]>('/catalogos/categorias').then(setCategorias).catch(() => setCategorias([]))
-    clienteMarcas.listar(false).then(setMarcas).catch(() => setMarcas([]))
-    clienteGrupos.listar(false).then(setGrupos).catch(() => setGrupos([]))
+    clienteCategorias.listar(true).then(setCategorias).catch(() => setCategorias([]))
+    clienteMarcas.listar(true).then(setMarcas).catch(() => setMarcas([]))
+    clienteGrupos.listar(true).then(setGrupos).catch(() => setGrupos([]))
     // tamanio grande a propósito: es un selector de referencia, no un listado paginado. Si el
     // tenant tiene más proveedores que el clamp del servidor, avisamos que la lista quedó
-    // truncada en vez de esconder el resto en silencio.
+    // truncada en vez de esconder el resto en silencio. Sin `incluirInactivos` acá: a diferencia
+    // de los catálogos genéricos, `ServicioDeProveedores.ListarAsync` no filtra por `Activo` (solo
+    // por `incluirEliminados`, la baja lógica) — ya trae activos e inactivos por default.
     api
       .get<PaginaDe<ProveedorListado>>('/proveedores?tamanio=200')
       .then((p) => {
@@ -159,7 +202,14 @@ export function Articulos() {
       })
   }, [])
 
-  const areaPorDefecto = areas[0]?.id ?? ''
+  // `areas` trae activas e inactivas (incluirInactivos: true, fix/articulos-form-catalogos-
+  // inactivos) — el default de un artículo NUEVO tiene que ser la primera ACTIVA, nunca la primera
+  // del array tal cual (el servidor ordena por nombre, no por estado, así que una inactiva puede
+  // quedar primera alfabéticamente). Anotación explícita de tipo: sin `noUncheckedIndexedAccess`,
+  // el efecto de defaults tardíos de más abajo (M5) necesita el `''` en el tipo para poder comparar
+  // contra él, aunque `Array.prototype.find` ya sea `T | undefined`.
+  const primeraAreaActiva = areas.find((a) => a.activo)
+  const areaPorDefecto: number | '' = primeraAreaActiva ? primeraAreaActiva.id : ''
   const alicuotaPorDefecto = elegirAlicuotaPorDefecto(alicuotasIva)
 
   // Altas rápidas de padrones (Categoría/Marca/Grupo/Proveedor habitual) desde el propio
@@ -194,6 +244,13 @@ export function Articulos() {
     setClaveFormulario(idNumerico)
     try {
       // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
+      //
+      // El servidor es la autoridad sobre qué referencia es válida — nunca se clasifica acá
+      // contra el estado (cliente) de los catálogos, que puede estar cargando, haber fallado en
+      // silencio, o venir truncado (proveedores). Cada id viaja tal cual al formulario; si ya no
+      // existe, el guardado sin tocar lo reenvía intacto y el servidor lo rechaza con 400
+      // `referencia_invalida` (`ServicioDeArticulos`), que este modal ya muestra vía
+      // `ErrorApi.message`.
       const detalle = await clienteDeArticulos.obtener(idNumerico)
       if (tokenEdicionRef.current !== token) return
       const cargado = aFormulario(detalle)
@@ -212,11 +269,70 @@ export function Articulos() {
     }
   }
 
+  // Vuelve al estado "sin modal": compromete el destino nulo (desmonta el modal) y limpia todo el
+  // estado del formulario para no arrastrar restos a la próxima apertura. Lo usan el efecto de
+  // apertura (salida aceptada por URL) y `cerrarModal` (salida aceptada por click) — en este último
+  // caso, comprometerlo ANTES de navegar es lo que evita que el efecto vuelva a preguntar.
+  function descartarModal() {
+    destinoModalRef.current = null
+    setDestinoMostrado(null)
+    invalidarEdicionEnCurso()
+    setGuardando(false)
+    setFormulario(null)
+    formularioOriginalRef.current = null
+    setErrorDetalle('')
+    setAvisoGuardado('')
+    setErrorGuardado('')
+    setCargandoDetalle(false)
+  }
+
+  // Declarado antes del efecto de apertura a propósito: React corre los efectos en orden de
+  // declaración, así que cuando ese efecto decide una salida la entrada nueva ya quedó registrada.
+  useEffect(() => {
+    historialRef.current = registrarEntrada(historialRef.current, location.key, navigationType)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key])
+
   // Efecto de apertura: reacciona a la URL, no a clicks — así una edición abierta desde la grilla,
   // desde una URL tipeada a mano o desde "atrás/adelante" del navegador pasan siempre por el mismo
   // camino. Cuando `modo` pasa a null (URL vuelve a /articulos) se limpia todo el estado del modal
   // para no arrastrar restos a la próxima apertura.
   useEffect(() => {
+    const destino = destinoDeRuta(modo, idParam)
+
+    // Ya estamos en este destino: tras cancelar un intento de salir (unas líneas más abajo se navegó
+    // de vuelta a esta misma URL), o tras un `cerrarModal` que ya comprometió el cierre antes de
+    // navegar. No hay nada que resetear ni que preguntar — evita reaplicar el bloque de abajo (que
+    // en 'crear' pisaría el borrador con un formulario en blanco nuevo).
+    if (destino === destinoModalRef.current) return
+
+    // La URL se fue de un modal con cambios sin guardar sin pasar por `cerrarModal` (Atrás/Adelante
+    // del navegador, o un link a otra edición): la URL nueva ya está commiteada, pero el modal sigue
+    // montado porque se renderiza desde `destinoMostrado`, que todavía no cambió. Si cancela, se
+    // vuelve a la URL del modal actual y las mismas instancias siguen vivas (formulario e hijos
+    // intactos); si acepta, se sigue de largo y el bloque de abajo compromete el destino nuevo.
+    if (destinoModalRef.current !== null && haySinGuardar()) {
+      if (!confirm(MENSAJE_CONFIRMAR_DESCARTE)) {
+        // Un POP se deshace MOVIÉNDOSE a la entrada anterior, la del modal: un `replace` pisaría la
+        // entrada a la que llegó el POP (p. ej. la de la grilla) y Atrás ya no la encontraría. Si
+        // esa entrada es anterior al montaje de esta pantalla (p. ej. tras recargar), no tiene
+        // posición conocida y se reemplaza igual. Un PUSH/REPLACE sí se deshace con `replace`:
+        // reescribe solo la entrada que esa misma navegación acaba de crear o de pisar.
+        const desplazamiento = navigationType === NavigationType.Pop ? desplazamientoHaciaLaAnterior(historialRef.current) : null
+        if (desplazamiento === null) navigate(rutaDeDestino(destinoModalRef.current), { replace: true })
+        else navigate(desplazamiento)
+        return
+      }
+    }
+
+    if (destino === null) {
+      descartarModal()
+      return
+    }
+
+    destinoModalRef.current = destino
+    setDestinoMostrado(destino)
+
     if (modo === 'crear') {
       invalidarEdicionEnCurso()
       setGuardando(false)
@@ -246,19 +362,28 @@ export function Articulos() {
       // el aviso de éxito recién puesto.
       if (formulario?.id === idNumerico) return
       void abrirEdicion(idNumerico)
-      return
     }
-
-    invalidarEdicionEnCurso()
-    setGuardando(false)
-    setFormulario(null)
-    formularioOriginalRef.current = null
-    setErrorDetalle('')
-    setAvisoGuardado('')
-    setErrorGuardado('')
-    setCargandoDetalle(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modo, idParam])
+
+  // Los defaults de Área/Alícuota de IVA de un alta se calculan en el efecto de arriba, pero ese
+  // efecto solo corre al ENTRAR a 'crear' — una navegación directa a /articulos/create antes de que
+  // esos catálogos resuelvan deja ambos campos en '' para siempre (el efecto no vuelve a correr
+  // cuando las listas llegan tarde). Este efecto completa esos dos campos SOLO si siguen en '' en
+  // el momento en que el catálogo respectivo llega — nunca pisa una elección ya hecha por el
+  // usuario — y aplica a `formularioOriginalRef` SOLO los campos que completó, para que el
+  // auto-completado no dispare un falso "hay cambios sin guardar" (M2/M3) sin convertir en
+  // "guardado" lo que el usuario ya hubiera tipeado en otros campos antes de que llegaran.
+  useEffect(() => {
+    if (modo !== 'crear' || formulario === null || formulario.id !== null) return
+    const completados: Partial<Pick<Formulario, 'idArea' | 'idAlicuotaIva'>> = {}
+    if (formulario.idArea === '' && areaPorDefecto !== '') completados.idArea = areaPorDefecto
+    if (formulario.idAlicuotaIva === '' && alicuotaPorDefecto !== '') completados.idAlicuotaIva = alicuotaPorDefecto
+    if (Object.keys(completados).length === 0) return
+    setFormulario({ ...formulario, ...completados })
+    if (formularioOriginalRef.current) formularioOriginalRef.current = { ...formularioOriginalRef.current, ...completados }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo, areaPorDefecto, alicuotaPorDefecto])
 
   async function guardar() {
     if (ocupado) return
@@ -308,21 +433,49 @@ export function Articulos() {
     }
   }
 
+  // `idsEmpresas` es el único campo cuya REPRESENTACIÓN puede cambiar sin que haya un cambio real:
+  // destildar y volver a tildar una empresa lo reordena (filter + append al final), así que dos
+  // formularios con el mismo conjunto de empresas pueden serializar distinto — comparar ordenado
+  // evita el falso positivo de "cambios sin guardar".
+  function normalizarParaComparar(f: Formulario) {
+    return { ...f, idsEmpresas: [...f.idsEmpresas].sort((a, b) => a - b) }
+  }
+
   function haySinGuardar(): boolean {
     return (
       formulario !== null &&
       formularioOriginalRef.current !== null &&
-      JSON.stringify(formulario) !== JSON.stringify(formularioOriginalRef.current)
+      JSON.stringify(normalizarParaComparar(formulario)) !== JSON.stringify(normalizarParaComparar(formularioOriginalRef.current))
     )
   }
+
+  // Recarga/cierre de PESTAÑA (no navegación SPA — esa la cubren `cerrarModal` y el efecto de apertura):
+  // el listener se registra/desregistra según haya o no cambios sin guardar, nunca queda pegado.
+  // `formulario` alcanza como dependencia: `formularioOriginalRef.current` siempre se asigna en el
+  // mismo tick que `setFormulario` (nunca solo), así que `haySinGuardar()` ya lee el par correcto
+  // en cada corrida de este efecto.
+  useEffect(() => {
+    if (!haySinGuardar()) return
+    function alIntentarSalir(evento: BeforeUnloadEvent) {
+      evento.preventDefault()
+      evento.returnValue = ''
+    }
+    window.addEventListener('beforeunload', alIntentarSalir)
+    return () => window.removeEventListener('beforeunload', alIntentarSalir)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formulario])
 
   // Único punto de cierre: el botón "Cancelar" del formulario, el × del header, Escape y el click
   // en el backdrop de `Modal` llegan todos acá (nunca `history.back()` — una pestaña nueva no tiene
   // historial previo). `Modal` ya bloquea estos tres últimos mientras `ocupado`; el guard de acá
-  // cubre además el botón "Cancelar" del propio formulario.
+  // cubre además el botón "Cancelar" del propio formulario. Con cambios sin guardar se pregunta
+  // ACÁ, antes de navegar: si cancela no se toca ni la URL ni el modal (los hijos conservan su
+  // estado); si acepta, `descartarModal()` compromete el cierre antes del `navigate`, así el efecto
+  // de apertura encuentra el destino nulo ya aplicado y no vuelve a preguntar.
   function cerrarModal() {
     if (ocupado) return
-    if (haySinGuardar() && !confirm('Hay cambios sin guardar en el artículo. ¿Descartarlos?')) return
+    if (haySinGuardar() && !confirm(MENSAJE_CONFIRMAR_DESCARTE)) return
+    descartarModal()
     navigate('/articulos', { replace: true })
   }
 
@@ -381,7 +534,7 @@ export function Articulos() {
         <GrillaDeArticulos proveedores={proveedores} ocupado={ocupado} pedidoDeRefresco={pedidoDeRefresco} onEliminar={eliminar} />
       </Box>
 
-      {modo && (
+      {destinoMostrado !== null && (
         <ModalDeArticulo
           clave={claveFormulario}
           formulario={formulario}
@@ -392,6 +545,8 @@ export function Articulos() {
           avisoGuardado={avisoGuardado}
           errorGuardado={errorGuardado}
           bloqueadoPorCatalogos={erroresCatalogosRequeridos.length > 0}
+          erroresCatalogosRequeridos={erroresCatalogosRequeridos}
+          avisoListasPrecio={avisoListasPrecio}
           areas={areas}
           categorias={categorias}
           marcas={marcas}

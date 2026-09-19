@@ -318,6 +318,35 @@ describe('Modal — inerte mientras ocupado', () => {
   })
 })
 
+/**
+ * Cláusula bajo prueba: `desplazable` agrega `modal-dialog-scrollable` — sin el prop (o con la
+ * clase hardcodeada afuera de la condición) el body largo del modal no queda scrolleable con el
+ * header fijo. Mutation-proof-tests: sacar `desplazable ? 'modal-dialog-scrollable' : ''` (dejar
+ * la clase fija) hace fallar el primer `expect` de abajo; hardcodearla siempre puesta hace fallar
+ * el segundo.
+ */
+describe('Modal — opt-in a diálogo con scroll (desplazable)', () => {
+  it('sin la prop, no tiene la clase modal-dialog-scrollable', () => {
+    render(
+      <Modal titulo="Nueva marca" onCerrar={() => {}}>
+        <p>contenido</p>
+      </Modal>,
+    )
+
+    expect(screen.getByRole('document')).not.toHaveClass('modal-dialog-scrollable')
+  })
+
+  it('con desplazable, el modal-dialog tiene la clase modal-dialog-scrollable', () => {
+    render(
+      <Modal titulo="Nueva marca" desplazable onCerrar={() => {}}>
+        <p>contenido</p>
+      </Modal>,
+    )
+
+    expect(screen.getByRole('document')).toHaveClass('modal-dialog-scrollable')
+  })
+})
+
 describe('Modal — clase modal-open en <body>', () => {
   it('se agrega al abrir el primer modal y se quita recién al cerrar el último', () => {
     function Arnes() {

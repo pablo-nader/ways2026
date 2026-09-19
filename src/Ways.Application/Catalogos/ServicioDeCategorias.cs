@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 
@@ -25,8 +26,9 @@ namespace Ways.Application.Catalogos;
 /// ADR-4) en vez de tirar un error: el síntoma es "siempre ve 0 filas", no una excepción, lo
 /// que lo hizo bastante más difícil de encontrar que un fallo ruidoso.
 /// </summary>
-public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITenantActual tenantActual)
-    : ServicioDeCatalogo<Categoria, CategoriaListado, CategoriaAlta>(db, reloj)
+public class ServicioDeCategorias(
+    IWaysDbContext db, IRelojDelSistema reloj, ITenantActual tenantActual, GuardaDeReferencias guarda)
+    : ServicioDeCatalogo<Categoria, CategoriaListado, CategoriaAlta>(db, reloj, guarda)
 {
     // "nivelDelPadre" en la convención de ReglaDeCategorias.ValidarProfundidad es la
     // profundidad 1-indexada del padre elegido (1 = padre raíz, 2 = padre hijo de una raíz…),
@@ -84,6 +86,16 @@ public class ServicioDeCategorias(IWaysDbContext db, IRelojDelSistema reloj, ITe
         """;
 
     protected override DbSet<Categoria> Conjunto => Db.Categorias;
+
+    protected override string CodigoEnUso => "categoria_en_uso";
+
+    protected override string SujetoDeBaja => "la categoría";
+
+    /// <summary>La rama genérica <c>categorias</c> (una categoría hija referencia a esta por
+    /// <c>id_categoria_padre</c>) se redacta como "subcategorías": "tiene categorías" sonaría a
+    /// que la entidad ES una categoría más, no que tiene HIJAS.</summary>
+    protected override IReadOnlyDictionary<string, string>? EtiquetasDeReferencias { get; } =
+        new Dictionary<string, string>(StringComparer.Ordinal) { ["categorias"] = "subcategorías" };
 
     protected override CategoriaListado Proyectar(Categoria entidad) => new(
         entidad.Id, entidad.Nombre, entidad.Activo, entidad.IdEmpresa, entidad.Orden, entidad.IdCategoriaPadre);

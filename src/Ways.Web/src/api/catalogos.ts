@@ -9,6 +9,7 @@
  * empresa por tenant en esta etapa, es una UX correcta sin ese selector.
  */
 import { api } from './cliente'
+import type { SujetoDeBaja } from './bajas'
 import type {
   AlicuotaIvaListado,
   AreaAlta,
@@ -66,6 +67,12 @@ export type DescriptorDeCatalogo<TListado extends CatalogoListado, TAlta> = {
   aValores: (item: TListado) => Record<string, ValorDeCampo>
   /** Arma el contrato de alta/edición a partir de los campos comunes + los propios. */
   aAlta: (nombre: string, activo: boolean, valores: Record<string, ValorDeCampo>) => TAlta
+  /** Sujeto de la baja para `copiaDeFalloDeBaja`/`ConfirmacionDeBaja` (`fix/web-bajas-catalogos`):
+   * mismo texto que el `SujetoDeBaja` del servicio del catálogo del lado del servidor, para que
+   * la puerta de confirmación y la copia del 409 nombren la entidad igual. Campo del descriptor
+   * y no un `switch` en `PaginaCatalogo` sobre `recurso` — un catálogo nuevo que olvide declararlo
+   * no compila. */
+  sujetoDeBaja: SujetoDeBaja
 }
 
 export function clienteDeCatalogo<TListado, TAlta>(recurso: string) {
@@ -103,6 +110,7 @@ export const descriptorAreas: DescriptorDeCatalogo<AreaListado, AreaAlta> = {
     activo,
     orden: numeroOVacio(valores.orden) ?? 1,
   }),
+  sujetoDeBaja: 'el área',
 }
 
 export const descriptorMarcas: DescriptorDeCatalogo<MarcaListado, MarcaAlta> = {
@@ -113,6 +121,7 @@ export const descriptorMarcas: DescriptorDeCatalogo<MarcaListado, MarcaAlta> = {
   valoresPorDefecto: {},
   aValores: () => ({}),
   aAlta: (nombre, activo) => ({ nombre, idEmpresa: null, activo }),
+  sujetoDeBaja: 'la marca',
 }
 
 export const descriptorGrupos: DescriptorDeCatalogo<GrupoListado, GrupoAlta> = {
@@ -135,6 +144,7 @@ export const descriptorGrupos: DescriptorDeCatalogo<GrupoListado, GrupoAlta> = {
     activo,
     margen: numeroOVacio(valores.margen),
   }),
+  sujetoDeBaja: 'el grupo',
 }
 
 export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoListado, MedioPagoAlta> = {
@@ -179,6 +189,7 @@ export const descriptorMediosPago: DescriptorDeCatalogo<MedioPagoListado, MedioP
     requiereReferencia: Boolean(valores.requiereReferencia),
     recargoPorcentaje: numeroOVacio(valores.recargoPorcentaje),
   }),
+  sujetoDeBaja: 'el medio de pago',
 }
 
 /** Registro de los 4 catálogos que pasan por la máquina genérica — `categorias` es el escape
@@ -203,6 +214,7 @@ export const descriptorCategorias: DescriptorDeCatalogo<CategoriaListado, Catego
   valoresPorDefecto: {},
   aValores: () => ({}),
   aAlta: (nombre, activo) => ({ nombre, idEmpresa: null, activo, orden: 1, idCategoriaPadre: null }),
+  sujetoDeBaja: 'la categoría',
 }
 
 /**
@@ -268,6 +280,7 @@ export const descriptorListasPrecio: DescriptorDeCatalogo<ListaPrecioListado, Li
       porcentaje: esDerivada ? numeroOVacio(valores.porcentaje) : null,
     }
   },
+  sujetoDeBaja: 'la lista de precios',
 }
 
 // --- Catálogos fiscales (globales, solo lectura — ADR-11, gate #4) ---

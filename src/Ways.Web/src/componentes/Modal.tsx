@@ -43,6 +43,10 @@ export type PropsModal = {
   children: React.ReactNode
   pie?: React.ReactNode
   tamano?: TamanoDeModal
+  /** Opt-in a `modal-dialog-scrollable` de Bootstrap: header (y footer, si hay) quedan fijos y
+   * solo el `modal-body` scrollea — pensado para contenidos largos (p. ej. el formulario completo
+   * de artículo) donde fijar el título y la × es preferible a que todo el diálogo se desplace. */
+  desplazable?: boolean
   /** `true` mientras una escritura está en vuelo: el botón de cerrar queda deshabilitado y
    * Escape/click en el fondo se ignoran — mismo criterio de "compuerta inerte mientras ocupado"
    * que el resto de las pantallas (react-async-state regla 13). */
@@ -71,7 +75,16 @@ export type PropsModal = {
  * modal más arriba entre los que están abiertos en un momento dado — nunca un booleano "hay un
  * modal abierto" que no distinga cuál.
  */
-export function Modal({ titulo, children, pie, tamano, ocupado = false, focoDeReserva = null, onCerrar }: PropsModal) {
+export function Modal({
+  titulo,
+  children,
+  pie,
+  tamano,
+  desplazable = false,
+  ocupado = false,
+  focoDeReserva = null,
+  onCerrar,
+}: PropsModal) {
   const idTitulo = useId()
   const idPropio = useId()
   const contenidoRef = useRef<HTMLDivElement>(null)
@@ -180,6 +193,9 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, focoDeRe
   }
 
   const claseTamano = tamano ? CLASE_POR_TAMANO[tamano] : ''
+  const claseDialogo = ['modal-dialog', claseTamano, desplazable ? 'modal-dialog-scrollable' : '']
+    .filter(Boolean)
+    .join(' ')
 
   return createPortal(
     <>
@@ -193,7 +209,7 @@ export function Modal({ titulo, children, pie, tamano, ocupado = false, focoDeRe
         onKeyDown={atraparTab}
         onClick={alHacerClickEnElFondo}
       >
-        <div className={`modal-dialog ${claseTamano}`.trim()} role="document">
+        <div className={claseDialogo} role="document">
           <div className="modal-content rounded-0" ref={contenidoRef}>
             <div className="modal-header">
               <h5 className="modal-title" id={idTitulo}>

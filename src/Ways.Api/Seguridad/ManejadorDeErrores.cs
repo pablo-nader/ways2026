@@ -859,6 +859,16 @@ public class ManejadorDeErrores(
                     "El turno quedó en un estado de cierre inconsistente.",
                     "turno_cierre_inconsistente"),
 
+            // judgment-day JD-E5a-2 (DB CHANGE GATE aprobado): ck_turnos_caja_medio_efectivo_solo_cerrado
+            // — defensa en profundidad de ServicioDeTurnos.InsertarArqueosYTesoreriaAsync, que
+            // SIEMPRE fija id_medio_pago_efectivo después del UPDATE guardado que transiciona a
+            // 'cerrado' (nunca antes). Inalcanzable por operación normal — backstop de una
+            // escritura cruda/fuera de banda que intente pinear el ancla en un turno abierto.
+            "ck_turnos_caja_medio_efectivo_solo_cerrado" =>
+                (StatusCodes.Status400BadRequest,
+                    "El medio de pago efectivo del cierre solo puede fijarse en un turno cerrado.",
+                    "medio_efectivo_solo_en_cierre"),
+
             "ck_movimientos_caja_importe" =>
                 (StatusCodes.Status400BadRequest,
                     "El importe del movimiento de caja no es válido para ese tipo.",

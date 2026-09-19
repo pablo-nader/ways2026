@@ -498,4 +498,86 @@ public class InspectorDeUsoTests
         Assert.Contains("posición 0", error.Message);
         Assert.Contains("Id", error.Message);
     }
+
+    // =============================================================================================
+    // MODO REFERENCIA (fix/bajas-catalogos-guarda-de-uso): RenderizarReferencias.
+    // =============================================================================================
+
+    /// <summary>
+    /// Cláusula: <c>RenderizarReferencias</c> NUNCA emite el conjunto <c>created_at &gt; $n</c>,
+    /// NI SIQUIERA sobre una rama <c>Marcado</c> — a diferencia de <c>Renderizar</c>, que sí lo
+    /// hace para esas mismas ramas (ver <see cref="UnaRamaMarcadaLlevaElConjuntoDeAnclaConMayorEstricto"/>).
+    /// Una FK de catálogo es MUTABLE (el doc-comment de <c>GuardaDeReferencias</c> lo explica): el
+    /// corte temporal del modo organización dejaría pasar una reasignación posterior sin bloquear.
+    /// </summary>
+    [Fact]
+    public void RenderizarReferenciasNoLlevaElConjuntoDeAnclaNiSiquieraEnUnaRamaMarcada()
+    {
+        using var db = CrearContexto();
+
+        var ramas = InventarioDeDependientes.Construir(db.Model, typeof(PuntoVenta));
+        var propiedades = InventarioDeDependientes.PropiedadesDeAncla(db.Model, typeof(PuntoVenta));
+
+        // Si esto no fuera cierto la prueba no probaría nada: comprobantes_venta es Marcado.
+        Assert.Contains(ramas, rama => rama.UsaAncla);
+
+        var sql = InspectorDeUso.RenderizarReferencias(ramas, propiedades);
+
+        Assert.DoesNotContain("created_at", sql);
+        Assert.Contains(
+            "SELECT 'comprobantes_venta' AS tabla WHERE EXISTS (SELECT 1 FROM " +
+            "\"public\".\"comprobantes_venta\" d WHERE d.\"id_punto_venta\" = $1 AND " +
+            "d.\"id_tenant\" = $2)",
+            sql);
+    }
+
+    /// <summary>
+    /// Cláusula: <c>RenderizarReferencias</c> NUNCA emite <c>LIMIT</c> — devuelve TODAS las ramas
+    /// que dispararon, no la primera, así que <c>GuardaDeReferencias</c> puede nombrar cada tabla
+    /// en uso en el mismo mensaje.
+    /// </summary>
+    [Theory]
+    [InlineData(typeof(Tenant))]
+    [InlineData(typeof(Empresa))]
+    [InlineData(typeof(PuntoVenta))]
+    [InlineData(typeof(Usuario))]
+    public void RenderizarReferenciasNuncaEmiteLimit(Type ancla)
+    {
+        using var db = CrearContexto();
+
+        var ramas = InventarioDeDependientes.Construir(db.Model, ancla);
+        var propiedades = InventarioDeDependientes.PropiedadesDeAncla(db.Model, ancla);
+
+        var sql = InspectorDeUso.RenderizarReferencias(ramas, propiedades);
+
+        Assert.DoesNotContain("LIMIT", sql);
+        Assert.StartsWith("SELECT tabla FROM (SELECT ", sql);
+        Assert.EndsWith(") AS ramas", sql);
+    }
+
+    /// <summary>
+    /// Cláusula: una rama <c>SinMarca</c> (sin conjunto de ancla en ninguno de los dos modos) rinde
+    /// EL MISMO fragmento de SQL bajo <c>Renderizar</c> y bajo <c>RenderizarReferencias</c> —
+    /// mismas comillas, mismos <c>$n</c>. La única diferencia entre los dos modos es el conjunto
+    /// de ancla de las ramas <c>Marcado</c> y el <c>LIMIT</c> externo, nunca el resto del
+    /// statement.
+    /// </summary>
+    [Fact]
+    public void UnaRamaSinMarcaRindeElMismoFragmentoEnLosDosModos()
+    {
+        using var db = CrearContexto();
+
+        var ramas = InventarioDeDependientes.Construir(db.Model, typeof(PuntoVenta));
+        var propiedades = InventarioDeDependientes.PropiedadesDeAncla(db.Model, typeof(PuntoVenta));
+
+        var conAncla = InspectorDeUso.Renderizar(ramas, propiedades);
+        var sinAncla = InspectorDeUso.RenderizarReferencias(ramas, propiedades);
+
+        const string ramaSinMarca =
+            "SELECT 'stock' AS tabla WHERE EXISTS (SELECT 1 FROM \"public\".\"stock\" d " +
+            "WHERE d.\"id_punto_venta\" = $1 AND d.\"id_tenant\" = $2)";
+
+        Assert.Contains(ramaSinMarca, conAncla);
+        Assert.Contains(ramaSinMarca, sinAncla);
+    }
 }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 
@@ -34,10 +35,20 @@ namespace Ways.Application.Catalogos;
 /// Autorización: <c>Politicas.GestionDeCatalogo</c>, igual que el resto de los catálogos de
 /// tenant (aplicada en <c>CatalogosEndpoints.MapearCatalogo</c>, no acá).
 /// </summary>
-public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj)
-    : ServicioDeCatalogo<ListaPrecio, ListaPrecioListado, ListaPrecioAlta>(db, reloj)
+public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
+    : ServicioDeCatalogo<ListaPrecio, ListaPrecioListado, ListaPrecioAlta>(db, reloj, guarda)
 {
     protected override DbSet<ListaPrecio> Conjunto => Db.ListasPrecio;
+
+    protected override string CodigoEnUso => "lista_precio_en_uso";
+
+    protected override string SujetoDeBaja => "la lista de precios";
+
+    /// <summary>La rama genérica <c>listas_precio</c> (una lista derivada referencia a esta por
+    /// <c>id_lista_base</c>, pero YA INACTIVA — la activa la bloquea antes, en
+    /// <see cref="ValidarBajaAsync"/>, con su propio código) se redacta como "listas derivadas".</summary>
+    protected override IReadOnlyDictionary<string, string>? EtiquetasDeReferencias { get; } =
+        new Dictionary<string, string>(StringComparer.Ordinal) { ["listas_precio"] = "listas derivadas" };
 
     protected override ListaPrecioListado Proyectar(ListaPrecio entidad) => new(
         entidad.Id, entidad.Nombre, entidad.Activo, entidad.IdEmpresa,
@@ -161,21 +172,22 @@ public class ServicioDeListasPrecio(IWaysDbContext db, IRelojDelSistema reloj)
     /// Mismo criterio de "fila protegida" que <c>ReglaDeClientes.ValidarNoConsumidorFinal</c>,
     /// aplicado acá al estado <c>EsDefault</c> en vez de a una fila fija por convención
     /// (<c>numero = 1</c>) — cualquier lista puede llegar a ser la protegida, no solo
-    /// "General".</summary>
-    public override async Task EliminarAsync(int id, CancellationToken ct = default)
+    /// "General".
+    ///
+    /// fix/bajas-catalogos-guarda-de-uso: estas dos guardas eran el cuerpo de un
+    /// <c>EliminarAsync</c> propio; ahora corren DENTRO de <see cref="ServicioDeCatalogo{T,TL,TA}.EliminarAsync"/>,
+    /// bajo el lock de fila y ANTES del guard de referencias genérico — mismos códigos, mismo
+    /// orden.</summary>
+    protected override async Task ValidarBajaAsync(ListaPrecio entidad, CancellationToken ct)
     {
-        var actual = await BuscarAsync(id, ct);
-
-        if (actual.EsDefault)
+        if (entidad.EsDefault)
         {
             throw ErrorDominio.Conflicto(
                 "lista_default_no_se_puede_eliminar",
                 "No se puede eliminar la lista default; asigná el estado default a otra lista primero.");
         }
 
-        await ExigirSinDependientesActivosAsync(id, ct);
-
-        await base.EliminarAsync(id, ct);
+        await ExigirSinDependientesActivosAsync(entidad.Id, ct);
     }
 
     /// <summary>Spec: "Derivada Mode Resolution And Validation" + orchestrator decision 2

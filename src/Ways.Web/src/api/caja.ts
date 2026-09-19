@@ -9,9 +9,11 @@ import { api } from './cliente'
 import type {
   DetalleDeTurno,
   MovimientoRegistrado,
+  ResumenDeCierrePorRetiro,
   ResumenDeTurno,
   SolicitudDeApertura,
   SolicitudDeCierre,
+  SolicitudDeCierrePorRetiro,
   SolicitudDeMovimiento,
   TipoMovimientoCaja,
   TurnoConArqueos,
@@ -39,6 +41,18 @@ export const clienteDeCaja = {
    * Declared Counts). */
   cerrar: (idTurnoCaja: number, solicitud: SolicitudDeCierre) =>
     api.post<TurnoConArqueos>(`/caja/turnos/${idTurnoCaja}/cierre`, solicitud),
+  /** `POST /api/caja/turnos/{id}/cierre-por-retiro` (etapa 5, práctica del dueño) —
+   * irreversible: el cajero retira el efectivo contado y deja el fondo inicial en el cajón, nada
+   * se cuenta. El cuerpo SOLO trae el retiro de cierre (spec: Cierre Por Retiro Payload Carries
+   * Only The Withdrawal Amount) — todo lo demás lo deriva el servidor. */
+  cerrarPorRetiro: (idTurnoCaja: number, solicitud: SolicitudDeCierrePorRetiro) =>
+    api.post<ResumenDeCierrePorRetiro>(`/caja/turnos/${idTurnoCaja}/cierre-por-retiro`, solicitud),
+  /** `GET /api/caja/turnos/{id}/resumen-de-cierre` — reimpresión / recuperación tras una falla de
+   * red ambigua sobre un cierre ya persistido (cualquiera de los dos modos, spec: Resumen De
+   * Cierre Is Available For Any Closed Turno, By Either Mode); `409 turno_no_cerrado` si el turno
+   * sigue abierto. */
+  obtenerResumenDeCierre: (idTurnoCaja: number) =>
+    api.get<ResumenDeCierrePorRetiro>(`/caja/turnos/${idTurnoCaja}/resumen-de-cierre`),
   /** `GET /api/caja/turnos/{id}/detalle` (stage-11-exportacion-reportes, Slice 5a/6b, spec
    * historico-de-cajas: G2 Detail Reuses ResumenDeTurno Plus Ticket And Gasto Listings) — el
    * Z-report: mismo `ResumenDeTurno` que `/resumen` más los tickets y gastos del turno. Mismo

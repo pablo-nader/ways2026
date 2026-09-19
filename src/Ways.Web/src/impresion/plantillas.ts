@@ -2,8 +2,8 @@
  * Plantillas de ticket ESC/POS (stage-desktop-pos) sobre `ConstructorDeTicket` — puras, sin I/O:
  * reciben los datos ya resueltos por la pantalla y devuelven los bytes listos para `impresora.imprimir`.
  */
-import { ConstructorDeTicket } from './escpos'
-import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, TurnoConArqueos } from '../api/tipos'
+import { COLUMNAS_FUENTE_A, ConstructorDeTicket } from './escpos'
+import type { ComprobanteEmitido, DetalleDeTurno, MedioPagoListado, ResumenDeCierrePorRetiro, TurnoConArqueos } from '../api/tipos'
 import { formatearImporte } from '../formato/importes'
 
 /** Mismos datos que ya conoce el shell del POS de escritorio al momento de imprimir — nunca se
@@ -21,6 +21,12 @@ function formatearFechaHora(iso: string): string {
   return new Date(iso).toLocaleString('es-AR')
 }
 
+/** Solo hora:minuto — usado en el detalle de retiros del ticket de cierre, donde la fecha ya
+ * está dada por la propia jornada del turno y repetirla en cada fila sería ruido. */
+function formatearHora(iso: string): string {
+  return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
 function encabezado(ticket: ConstructorDeTicket, contexto: ContextoDeImpresion): void {
   ticket
     .inicializar()
@@ -33,17 +39,38 @@ function encabezado(ticket: ConstructorDeTicket, contexto: ContextoDeImpresion):
     .lineaDeGuiones()
 }
 
+/** Opciones de `ticketDeVenta` — hoy solo `reimpresion` (stage-desktop-pos, "Ventas del turno"). */
+export type OpcionesDeTicketDeVenta = { reimpresion?: boolean }
+
 /**
  * Ticket de venta (`POST /api/ventas`) — NO es un comprobante fiscal: el flujo actual solo emite
  * tipo `TX`, así que el ticket lo dice explícitamente en vez de parecer una factura. `medios`
  * resuelve el `comportamiento` de cada pago (para el rótulo, no para el cajón — eso lo decide
  * `algunPagoEnEfectivo` aparte).
+ *
+ * `opciones.reimpresion` (stage-desktop-pos, acción "Reimprimir" de "Ventas del turno"): imprime
+ * una línea "REIMPRESION" bien visible para que una copia nunca se confunda con el original, y
+ * NUNCA pulsa el cajón de dinero aunque el comprobante tenga un pago en efectivo (decisión del
+ * dueño: reimprimir no es una venta nueva, abrir el cajón sin eso es un agujero de control de
+ * caja) — el resto del contenido queda igual.
  */
-export function ticketDeVenta(comprobante: ComprobanteEmitido, contexto: ContextoDeImpresion, medios: MedioPagoListado[]): Uint8Array {
+export function ticketDeVenta(
+  comprobante: ComprobanteEmitido,
+  contexto: ContextoDeImpresion,
+  medios: MedioPagoListado[],
+  opciones: OpcionesDeTicketDeVenta = {},
+): Uint8Array {
   const medioPorId = new Map(medios.map((m) => [m.id, m]))
   const ticket = new ConstructorDeTicket()
 
   encabezado(ticket, contexto)
+
+  if (opciones.reimpresion) {
+    // Sin tilde a propósito: mismo criterio que "COMPROBANTE NO VALIDO COMO FACTURA" de abajo —
+    // el ticket entero evita acentos en las líneas de aviso para no depender de que la tabla
+    // CP858 los tenga mapeados en el hardware real.
+    ticket.alinear('centro').negrita(true).linea('*** REIMPRESION ***').negrita(false)
+  }
 
   ticket
     .alinear('centro')
@@ -86,8 +113,11 @@ export function ticketDeVenta(comprobante: ComprobanteEmitido, contexto: Context
 
   // Pulso del cajón en el MISMO trabajo de impresión (nunca un segundo `imprimir` aparte): si
   // algún pago es en efectivo se abre antes del corte, para que el cajero lo encuentre abierto
-  // apenas termina de imprimirse el ticket.
-  if (algunPagoEnEfectivo(comprobante, medios)) {
+  // apenas termina de imprimirse el ticket. NUNCA en una reimpresión (decisión del dueño): abrir
+  // el cajón sin una venta nueva de por medio es un agujero de control de caja — una copia del
+  // ticket original no vuelve a mover dinero, así que no vuelve a pulsar el cajón aunque el pago
+  // original haya sido en efectivo.
+  if (!opciones.reimpresion && algunPagoEnEfectivo(comprobante, medios)) {
     ticket.abrirCajon()
   }
 
@@ -150,6 +180,132 @@ export function reporteZ(datos: TurnoConArqueos | DetalleDeTurno, contexto: Cont
   }
 
   ticket.lineaDeGuiones().linea(`Cajero: ${contexto.cajero}`)
+  ticket.avanzar(2).cortar()
+
+  return ticket.bytes()
+}
+
+/**
+ * "Ticket en blanco" (stage-pos-retiros-y-cierre-por-retiro, etapa 5): el único propósito es
+ * pulsar el cajón — el dueño lo llama así porque no imprime nada legible. Únicamente `ESC @`
+ * (para dejar el firmware en un estado conocido) seguido de `ESC p` (`abrirCajon`): sin
+ * `codificarPagina`, sin texto, sin avance de papel ni corte — abrir el cajón para contar/retirar
+ * NUNCA debe gastar papel. Se emite en su propio trabajo de impresión, ANTES de que el cajero
+ * cuente nada — nunca en el mismo trabajo que un ticket con contenido.
+ */
+export function pulsoDeCajon(): Uint8Array {
+  return new ConstructorDeTicket().inicializar().abrirCajon().bytes()
+}
+
+/** Datos que ya resolvió la pantalla para el ticket "RETIRO DE EFECTIVO" — `vendedor` es siempre
+ * `contexto.cajero` (quien opera la caja en el momento del retiro), nunca se vuelve a pedir acá. */
+export type DatosTicketRetiro = { fecha: string; importe: number }
+
+/**
+ * Ticket "RETIRO DE EFECTIVO" (stage-pos-retiros-y-cierre-por-retiro, etapa 5): comprobante interno
+ * del retiro de efectivo a mitad de turno — encabezado + fecha/hora + importe + vendedor + una
+ * línea de firma. NUNCA pulsa el cajón (`abrirCajon`, ver judgment-day del ticket de venta): el
+ * cajón para este retiro ya se abrió en su propio trabajo previo (`pulsoDeCajon`), volver a
+ * pulsarlo acá sería un segundo pulso sin motivo.
+ */
+export function ticketRetiroDeEfectivo(datos: DatosTicketRetiro, contexto: ContextoDeImpresion): Uint8Array {
+  const ticket = new ConstructorDeTicket()
+  encabezado(ticket, contexto)
+
+  ticket
+    .alinear('centro')
+    .negrita(true)
+    .linea('RETIRO DE EFECTIVO')
+    .negrita(false)
+    .alinear('izquierda')
+    .linea(`Fecha: ${formatearFechaHora(datos.fecha)}`)
+    .lineaDeGuiones()
+
+  ticket.tamanioDoble(true).negrita(true)
+  ticket.lineaDeColumnas('Importe', formatearMoneda(datos.importe))
+  ticket.tamanioDoble(false).negrita(false)
+
+  ticket.lineaDeGuiones().linea(`Vendedor: ${contexto.cajero}`)
+
+  ticket.avanzar(3).linea('_'.repeat(COLUMNAS_FUENTE_A)).alinear('centro').linea('Firma')
+
+  ticket.avanzar(2).cortar()
+
+  return ticket.bytes()
+}
+
+/**
+ * Ticket "CIERRE DE TURNO" (stage-pos-retiros-y-cierre-por-retiro, etapa 5, cierre por retiro): el
+ * comprobante que el cajero se lleva al cerrar el turno retirando el efectivo contado — todo el
+ * contenido sale de `ResumenDeCierrePorRetiro`, la MISMA derivación que ya persistió el servidor
+ * (nunca un recálculo local). NUNCA pulsa el cajón: para este cierre el cajón ya se abrió en su
+ * propio trabajo previo (`pulsoDeCajon`, antes de que el cajero cuente el efectivo a retirar).
+ *
+ * `gastosEnEfectivo`/`refuerzos` solo se imprimen si son `!== 0` (spec del dueño: una línea en
+ * cero es ruido en un ticket que ya es largo). `diferencia` se rotula "Sobrante"/"Faltante"/"Sin
+ * diferencia" según el signo — se imprime el VALOR ABSOLUTO junto al rótulo: un "Faltante:
+ * -$100,00" sería un signo negativo redundante con la propia palabra "Faltante" (el rótulo ya dice
+ * la dirección, mostrar el importe crudo con signo duplicaría la información y podría leerse como
+ * una resta más).
+ */
+export function cierreDeTurno(resumen: ResumenDeCierrePorRetiro, contexto: ContextoDeImpresion): Uint8Array {
+  const ticket = new ConstructorDeTicket()
+  encabezado(ticket, contexto)
+
+  ticket.alinear('centro').negrita(true).linea('CIERRE DE TURNO').negrita(false).alinear('izquierda')
+
+  ticket
+    .linea(`Turno #${resumen.idTurnoCaja}`)
+    .linea(`Apertura: ${formatearFechaHora(resumen.fechaApertura)}`)
+    .linea(`Cierre: ${formatearFechaHora(resumen.fechaCierre)}`)
+    .linea(`Vendedor: ${resumen.vendedor}`)
+
+  // Solo si quien cerró es distinto de quien abrió — repetir el mismo nombre dos veces es ruido.
+  if (resumen.empleadoCierre !== resumen.vendedor) {
+    ticket.linea(`Cerrado por: ${resumen.empleadoCierre}`)
+  }
+
+  ticket.lineaDeGuiones()
+
+  ticket.linea('Ventas por medio de pago:')
+  for (const venta of resumen.ventasPorMedio) {
+    ticket.lineaDeColumnas(venta.nombre, formatearMoneda(venta.importe))
+  }
+  if (resumen.ventasPorMedio.length === 0) {
+    ticket.linea('Sin ventas en el turno.')
+  }
+  ticket.negrita(true).lineaDeColumnas('Total ventas', formatearMoneda(resumen.totalVentas)).negrita(false)
+
+  ticket.lineaDeGuiones()
+
+  ticket.linea('Retiros:')
+  for (const retiro of resumen.retiros) {
+    ticket.lineaDeColumnas(formatearHora(retiro.fecha), formatearMoneda(retiro.importe))
+    ticket.linea(`  ${retiro.motivo} (${retiro.empleado})`)
+  }
+  if (resumen.retiros.length === 0) {
+    ticket.linea('Sin retiros en el turno.')
+  }
+  ticket.negrita(true).lineaDeColumnas('Total retiros', formatearMoneda(resumen.totalRetiros)).negrita(false)
+
+  ticket.lineaDeGuiones()
+  ticket.lineaDeColumnas('Ventas en efectivo', formatearMoneda(resumen.ventasEnEfectivoNetas))
+  if (resumen.gastosEnEfectivo !== 0) {
+    ticket.lineaDeColumnas('Gastos en efectivo', formatearMoneda(resumen.gastosEnEfectivo))
+  }
+  if (resumen.refuerzos !== 0) {
+    ticket.lineaDeColumnas('Refuerzos', formatearMoneda(resumen.refuerzos))
+  }
+
+  ticket.lineaDeGuiones()
+  const rotuloDiferencia = resumen.diferencia > 0 ? 'Sobrante' : resumen.diferencia < 0 ? 'Faltante' : 'Sin diferencia'
+  ticket.tamanioDoble(true).negrita(true)
+  ticket.lineaDeColumnas(rotuloDiferencia, formatearMoneda(Math.abs(resumen.diferencia)))
+  ticket.tamanioDoble(false).negrita(false)
+
+  ticket.lineaDeGuiones()
+  ticket.lineaDeColumnas('Fondo inicial (queda en caja)', formatearMoneda(resumen.fondoInicial))
+
   ticket.avanzar(2).cortar()
 
   return ticket.bytes()

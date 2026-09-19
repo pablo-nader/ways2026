@@ -20,15 +20,33 @@
  */
 import { ErrorApi } from './cliente'
 
-/** El sujeto de la baja, tal como entra en la copia ("No se pudo dar de baja **el tenant**"). */
-export type SujetoDeBaja = 'el tenant' | 'la empresa' | 'el punto de venta' | 'el usuario'
+/** El sujeto de la baja, tal como entra en la copia ("No se pudo dar de baja **el tenant**").
+ * Los siete últimos son los de `fix/web-bajas-catalogos`: catálogos de tenant + proveedores,
+ * mismo texto que `SujetoDeBaja` del lado del servidor (`ServicioDeAreas`, `ServicioDeMarcas`,
+ * etc.) para que la copia del 409 y la puerta de confirmación nombren la entidad igual. */
+export type SujetoDeBaja =
+  | 'el tenant'
+  | 'la empresa'
+  | 'el punto de venta'
+  | 'el usuario'
+  | 'el área'
+  | 'la categoría'
+  | 'la marca'
+  | 'el grupo'
+  | 'el medio de pago'
+  | 'la lista de precios'
+  | 'el proveedor'
 
 /**
- * Los SEIS códigos de conflicto de la etapa 20, cada uno con su propia guía. Ninguna repite lo que
- * el mensaje del servidor ya dice: las cuatro de uso indican qué hacer con los datos que bloquean,
- * y las dos de mínimo estructural indican DÓNDE se hace la baja que sí corresponde.
+ * Los códigos de conflicto de baja, cada uno con su propia guía. Nace con los SEIS de la etapa 20
+ * (las cuatro de uso indican qué hacer con los datos que bloquean, las dos de mínimo estructural
+ * indican DÓNDE se hace la baja que sí corresponde) y suma los de `fix/web-bajas-catalogos`: los
+ * SIETE `*_en_uso` de catálogos de tenant y proveedores (misma familia que las cuatro de la
+ * etapa 20 — reasignar o desactivar en vez de borrar) y los DOS propios de listas de precio
+ * (`lista_default_no_se_puede_eliminar`, `lista_referenciada_como_base`), que ya existían del
+ * lado del servidor (`ServicioDeListasPrecio`) pero no tenían guía acá.
  *
- * Congelado a propósito y sin `Record<CodigoConocido, …>`: si el servidor sumara un séptimo código,
+ * Congelado a propósito y sin `Record<CodigoConocido, …>`: si el servidor sumara un código nuevo,
  * cae por el fallback genérico —que igual rinde el mensaje— en vez de romper el build.
  *
  * Es un `Map` y no un objeto literal porque el `codigo` viene del SERVIDOR: sobre un objeto,
@@ -43,6 +61,15 @@ const GUIA_POR_CODIGO: ReadonlyMap<string, string> = new Map([
   ['usuario_en_uso', 'Reasigná o dá de baja esas operaciones antes de eliminar la cuenta.'],
   ['ultima_empresa_del_tenant', 'La baja del tenant se hace desde la pantalla de Tenants.'],
   ['ultimo_punto_venta_de_la_empresa', 'La baja de la empresa se hace desde la pantalla de Empresas.'],
+  ['area_en_uso', 'Reasigná esos datos o desactivá el área para que no se ofrezca más.'],
+  ['categoria_en_uso', 'Reasigná esos datos o desactivá la categoría para que no se ofrezca más.'],
+  ['marca_en_uso', 'Reasigná esos datos o desactivá la marca para que no se ofrezca más.'],
+  ['grupo_en_uso', 'Reasigná esos datos o desactivá el grupo para que no se ofrezca más.'],
+  ['medio_pago_en_uso', 'Reasigná esos datos o desactivá el medio de pago para que no se ofrezca más.'],
+  ['lista_precio_en_uso', 'Reasigná esos datos o desactivá la lista de precios para que no se ofrezca más.'],
+  ['proveedor_en_uso', 'Reasigná esos datos o desactivá el proveedor para que no se ofrezca más.'],
+  ['lista_default_no_se_puede_eliminar', 'Asigná el estado default a otra lista primero.'],
+  ['lista_referenciada_como_base', 'Desactivá o cambiá la base de las listas derivadas primero.'],
 ])
 
 /**

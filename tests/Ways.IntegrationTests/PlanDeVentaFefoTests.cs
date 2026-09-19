@@ -426,7 +426,9 @@ public class PlanDeVentaFefoTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         var servicioDePrecios = new Ways.Application.Precios.ServicioDePrecios(db, reloj, contexto);
         var servicioDeOfertas = new ServicioDeOfertas(db, reloj, contexto, servicioDePrecios);
         var lectorDeMovimientos = new Ways.Application.Caja.LectorDeMovimientosDelTurno(db);
-        var servicioDeTurnos = new Ways.Application.Caja.ServicioDeTurnos(db, reloj, contexto, lectorDeMovimientos);
+        var servicioDeTurnos = new Ways.Application.Caja.ServicioDeTurnos(
+            db, reloj, contexto, lectorDeMovimientos,
+            new Ways.Application.Caja.LectorDeResumenDeCierrePorRetiro(db, lectorDeMovimientos));
         var servicioDeLotes = new ServicioDeLotes(db, reloj, contexto);
         var servicioDeVentas = new ServicioDeVentas(db, reloj, contexto, servicioDeOfertas, servicioDeTurnos, servicioDeLotes);
 

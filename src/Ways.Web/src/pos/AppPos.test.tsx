@@ -200,9 +200,10 @@ describe('AppPos — máquina de estados del POS de escritorio (stage-desktop-po
     expect(await screen.findByRole('link', { name: 'Vender' })).toBeInTheDocument()
     expect(screen.getByText('Almacén Demo')).toBeInTheDocument()
     expect(screen.getByText(/PV 1 — Local Centro · jperez/)).toBeInTheDocument()
-    // Prueba que el PV fijo llegó de verdad a `Pos.tsx` vía `usePuntoVenta()`: el encabezado del
-    // panel de pagos muestra el nombre del punto de venta resuelto (`puntoVentaFixture().nombre`).
-    expect(await screen.findByText('Local Centro', { selector: 'strong' })).toBeInTheDocument()
+    // Prueba que el PV fijo llegó de verdad a `Pos.tsx` vía `usePuntoVenta()`: el efecto de
+    // parámetros de pago consulta el `idEmpresa`/`idPuntoVenta` del PV RESUELTO
+    // (`puntoVentaFixture()`, id 7 / idEmpresa 3), nunca uno sintético armado desde el dispositivo.
+    await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/parametros/tolerancia_pago?idEmpresa=3&idPuntoVenta=7'))
   })
 
   it('un dispositivo revocado entre la carga y el login (dispositivo_no_vinculado) vuelve a la pantalla de vinculación', async () => {

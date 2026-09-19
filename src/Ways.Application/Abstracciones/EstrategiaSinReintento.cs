@@ -9,7 +9,8 @@ namespace Ways.Application.Abstracciones;
 /// natural que un reintento pueda usar para no duplicar: las altas de
 /// clientes/artículos/usuarios/precios/listas de precio/ofertas/certificados fiscales, el
 /// aprovisionamiento de un tenant, el backfill de <c>InicializadorDeBaseDeDatos</c>, las bajas de
-/// organización/usuario/oferta y las operaciones manuales <c>ServicioDeStock.AjustarAsync</c> /
+/// organización/usuario/oferta/catálogos de tenant/proveedores (fix/bajas-catalogos-guarda-de-uso)
+/// y las operaciones manuales <c>ServicioDeStock.AjustarAsync</c> /
 /// <c>ServicioDeVentas.AnularAsync</c>. Sobre todas ellas, <c>EnableRetryOnFailure</c> (global,
 /// <c>DependencyInjection</c>) reintentaría la transacción entera tras un commit ambiguo — el
 /// servidor comitea pero el ACK no llega antes de que se corte la conexión — y duplicaría filas en

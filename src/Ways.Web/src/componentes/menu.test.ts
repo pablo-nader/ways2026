@@ -92,6 +92,7 @@ const REPORTES: Resumen = {
         ['Existencias', '/reportes/existencias'],
         ['Vencimientos', '/reportes/stock/vencimientos'],
         ['Reposición', '/reportes/stock/reposicion'],
+        ['Artículos', '/reportes/articulos'],
       ],
     },
   ],

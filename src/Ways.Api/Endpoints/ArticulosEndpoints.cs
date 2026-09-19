@@ -39,6 +39,30 @@ public static class ArticulosEndpoints
             servicio.ResolverAsync(entrada, ct))
         .WithSummary("Resuelve un código escaneado (codigo_interno o codigos_barra) a su artículo.");
 
+        // stage-articulos-grilla-api: grilla del back-office con filtros por columna (Código,
+        // Nombre, Precio, Proveedor, Estado) — segmento literal, no colisiona con "/{id:int}" de
+        // abajo. Mismo read policy que "/" (hereda Politicas.OperacionDePos del grupo): esta
+        // grilla es Admin-only en el front, pero el contrato de la API no lo restringe más que
+        // el listado existente.
+        grupo.MapGet("/grilla", (
+            ServicioDeGrillaDeArticulos servicio,
+            string? codigo,
+            string? nombre,
+            decimal? precioDesde,
+            decimal? precioHasta,
+            int? idProveedor,
+            bool? sinProveedor,
+            bool? activo,
+            int? pagina,
+            int? tamanio,
+            CancellationToken ct) =>
+            servicio.ListarAsync(
+                codigo, nombre, precioDesde, precioHasta, idProveedor, sinProveedor ?? false, activo,
+                pagina ?? 1, tamanio ?? 25, ct))
+        .WithSummary(
+            "Lista artículos para la grilla del back-office: precio de la lista default del tenant, "
+                + "proveedor habitual y estado, con filtros por columna.");
+
         grupo.MapGet("/{id:int}", (ServicioDeArticulos servicio, int id, CancellationToken ct) =>
             servicio.ObtenerAsync(id, ct))
         .WithSummary("Obtiene un artículo.");

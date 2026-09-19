@@ -38,6 +38,12 @@ public class EscriturasSinReintentoEstructuralesTests
     {
         { "Ways.Application/Clientes/ServicioDeClientes.cs", "CrearAsync" },
         { "Ways.Application/Articulos/ServicioDeArticulos.cs", "CrearAsync" },
+
+        // fix/articulos-lock-referencias: ActualizarAsync pasó a abrir transacción explícita para
+        // envolver los 5 chequeos de referencia lockeados (GuardaDeReferencias.BloquearSiEstaVivaAsync)
+        // junto con el UPDATE que los usa — un commit ambiguo reintentado releería el artículo con
+        // datos ya actualizados por el intento anterior, mismo riesgo que ServicioDeCatalogo.EliminarAsync.
+        { "Ways.Application/Articulos/ServicioDeArticulos.cs", "ActualizarAsync" },
         { "Ways.Application/Usuarios/ServicioDeUsuarios.cs", "CrearAsync" },
         { "Ways.Application/Precios/ServicioDePrecios.cs", "AbrirNuevoPrecioAsync" },
         { "Ways.Application/Fiscal/ServicioDeCertificados.cs", "RegistrarAsync" },
@@ -62,6 +68,17 @@ public class EscriturasSinReintentoEstructuralesTests
         // ListaPrecio y Cliente dentro de un lambda reintentable, con el número de Consumidor
         // Final re-sorteado por intento: duplicado SILENCIOSO, ningún índice único lo frena.
         { "Ways.Infrastructure/Persistencia/InicializadorDeBaseDeDatos.cs", "BackfillDeClientesYListasPrecioAsync" },
+
+        // fix/bajas-catalogos-guarda-de-uso: la baja lógica de los 6 catálogos de tenant
+        // (áreas/categorías/marcas/grupos/medios de pago/listas de precio) comparte este único
+        // método en la base genérica — un reintento sobre un commit ambiguo volvería a leer la
+        // fila por BuscarAsync, que filtra la baja lógica, y respondería 404 a una baja que sí
+        // tuvo éxito, mismo criterio que ServicioDeOfertas.EliminarAsync.
+        { "Ways.Application/Catalogos/ServicioDeCatalogo.cs", "EliminarAsync" },
+
+        // fix/bajas-catalogos-guarda-de-uso: misma razón que la baja de catálogos, para
+        // proveedores (entidad dedicada, no extiende ServicioDeCatalogo).
+        { "Ways.Application/Proveedores/ServicioDeProveedores.cs", "EliminarAsync" },
     };
 
     /// <summary>

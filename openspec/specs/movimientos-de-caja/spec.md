@@ -70,13 +70,33 @@ inventing a new rule.
 
 ### Requirement: Movimiento Requires An Open Turno
 
-Every movimiento_caja write MUST resolve the punto de venta's open turno
-server-side and fail with `409 turno_no_abierto` when none exists.
+Every movimiento_caja write reachable through `POST
+/api/caja/turnos/{id}/movimientos` MUST resolve the turno server-side and
+fail with `409 turno_no_abierto` when it is not `abierto`.
+
+The ONE documented exception: the closing withdrawal that
+`POST /api/caja/turnos/{id}/cierre-por-retiro` inserts (spec
+arqueo-de-cierre: Cierre Por Retiro) is written by the SAME atomic
+transaction that transitions the turno to `cerrado` — it is never reachable
+through the movimientos endpoint, carries no client-supplied `idTurnoCaja`
+either, and is inserted immediately after that transaction's own
+statement-1 lock, deliberately AFTER the turno's estado has already flipped
+within that same transaction. This is not a second write path a client can
+reach with an arbitrary turno id; it is the cierre-por-retiro transaction's
+own internal step.
 
 #### Scenario: Movimiento rejected with no open turno
 - GIVEN punto de venta 7 has no open turno
 - WHEN a retiro is requested for punto de venta 7
 - THEN it is rejected with `409 turno_no_abierto`
+
+#### Scenario: The cierre-por-retiro closing withdrawal is not blocked by this requirement
+- GIVEN a turno closing by retiro with `importeRetirado = 200`
+- WHEN the cierre-por-retiro transaction inserts the closing
+  `movimientos_caja` row
+- THEN it succeeds even though the turno's estado already reads `cerrado`
+  within that same transaction — this write never goes through `POST
+  .../movimientos` and is not a counter-example to the requirement above
 
 ### Requirement: Movimiento Authorization
 
