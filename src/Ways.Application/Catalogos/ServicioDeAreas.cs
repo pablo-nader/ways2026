@@ -1,13 +1,18 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Domain.Catalogos;
 
 namespace Ways.Application.Catalogos;
 
-public class ServicioDeAreas(IWaysDbContext db, IRelojDelSistema reloj)
-    : ServicioDeCatalogo<Area, AreaListado, AreaAlta>(db, reloj)
+public class ServicioDeAreas(IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
+    : ServicioDeCatalogo<Area, AreaListado, AreaAlta>(db, reloj, guarda)
 {
     protected override DbSet<Area> Conjunto => Db.Areas;
+
+    protected override string CodigoEnUso => "area_en_uso";
+
+    protected override string SujetoDeBaja => "el área";
 
     protected override AreaListado Proyectar(Area entidad) =>
         new(entidad.Id, entidad.Nombre, entidad.Activo, entidad.IdEmpresa, entidad.Orden);

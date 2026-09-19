@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Application.Catalogos;
+using Ways.Application.Organizacion;
 using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
@@ -21,6 +23,13 @@ namespace Ways.Application.Tests.Catalogos;
 /// contra Postgres real en <c>ListasPrecioEndpointsTests</c> (Ways.IntegrationTests). Todas las
 /// validaciones de este archivo corren ANTES de esa transacción (o nunca la abren, porque
 /// rechazan antes de llegar a la rama de intercambio), así que sí son alcanzables acá.
+///
+/// <see cref="ServicioDeListasPrecio.EliminarAsync"/> (heredado de
+/// <c>ServicioDeCatalogo{T,TListado,TAlta}</c>) TAMBIÉN dejó de cubrirse acá desde
+/// fix/bajas-catalogos-guarda-de-uso (PR 1), mismo caveat: ahora abre su propia transacción y
+/// <c>GuardaDeReferencias.BloquearFilaAsync</c> emite ADO crudo. Sus tres casos —lista default,
+/// dependiente activo, baja limpia— se prueban contra Postgres real en
+/// <c>BajasDeCatalogosTests</c> (Ways.IntegrationTests).
 /// </summary>
 public class ServicioDeListasPrecioTests
 {
@@ -34,8 +43,12 @@ public class ServicioDeListasPrecioTests
     private static WaysDbContext CrearContexto(string nombreDeBase, ITenantActual tenantActual) =>
         new(new DbContextOptionsBuilder<WaysDbContext>().UseInMemoryDatabase(nombreDeBase).Options, tenantActual);
 
-    private static ServicioDeListasPrecio CrearServicio(string nombreDeBase, int idTenant) =>
-        new(CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, idTenant)), new RelojFijo(Ahora));
+    private static ServicioDeListasPrecio CrearServicio(string nombreDeBase, int idTenant)
+    {
+        var contexto = CrearContexto(nombreDeBase, new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        return new ServicioDeListasPrecio(
+            contexto, new RelojFijo(Ahora), new GuardaDeReferencias(contexto, new InspectorDeUso(contexto)));
+    }
 
     private static async Task<int> SembrarListaFijaAsync(
         string nombreDeBase, int idTenant, string nombre = "General", bool esDefault = false, bool activo = true)
@@ -364,44 +377,8 @@ public class ServicioDeListasPrecioTests
     }
 
     // ---- baja lógica: fila default protegida --------------------------------------------------
-
-    [Fact]
-    public async Task EliminarListaDefaultEsRechazada()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var idLista = await SembrarListaFijaAsync(nombreDeBase, idTenant: 1, esDefault: true);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EliminarAsync(idLista));
-
-        Assert.Equal("lista_default_no_se_puede_eliminar", error.Codigo);
-        Assert.Equal(409, error.EstadoHttp);
-    }
-
-    [Fact]
-    public async Task EliminarConDependienteActivoEsRechazada()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var idBase = await SembrarListaFijaAsync(nombreDeBase, idTenant: 1);
-        await SembrarListaDerivadaAsync(nombreDeBase, idTenant: 1, idBase);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.EliminarAsync(idBase));
-
-        Assert.Equal("lista_referenciada_como_base", error.Codigo);
-        Assert.Equal(409, error.EstadoHttp);
-    }
-
-    [Fact]
-    public async Task EliminarSinDependientesEsPermitida()
-    {
-        var nombreDeBase = Guid.NewGuid().ToString();
-        var idLista = await SembrarListaFijaAsync(nombreDeBase, idTenant: 1);
-        var servicio = CrearServicio(nombreDeBase, idTenant: 1);
-
-        await servicio.EliminarAsync(idLista);
-
-        var error = await Assert.ThrowsAsync<ErrorDominio>(() => servicio.ObtenerAsync(idLista));
-        Assert.Equal("no_encontrado", error.Codigo);
-    }
+    //
+    // EliminarListaDefaultEsRechazada / EliminarConDependienteActivoEsRechazada /
+    // EliminarSinDependientesEsPermitida se movieron a BajasDeCatalogosTests
+    // (Ways.IntegrationTests): ver el doc-comment de la clase.
 }

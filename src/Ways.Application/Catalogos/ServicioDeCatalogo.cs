@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Bajas;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
 
@@ -13,8 +14,17 @@ namespace Ways.Application.Catalogos;
 /// proyectarlo a su DTO de listado (<see cref="Proyectar"/>) y cómo aplicar sus columnas
 /// propias (<see cref="AplicarPropios"/>) — <c>Nombre</c>/<c>Activo</c>/<c>IdEmpresa</c> ya
 /// están cubiertos acá porque viven en <see cref="CatalogoSimple"/>.
+///
+/// <see cref="EliminarAsync"/> (fix/bajas-catalogos-guarda-de-uso, PR 1): la baja lógica exige
+/// además que NINGUNA fila referencie la entidad (política aprobada por el dueño del producto).
+/// El guard corre bajo <see cref="FabricaDeEstrategiaSinReintento"/> —una baja lógica es la baja
+/// más un 404 falso, mismo criterio que <c>ServicioDeOfertas.EliminarAsync</c>— y bajo
+/// <see cref="GuardaDeReferencias.BloquearFilaAsync{T}"/> tomado ANTES de releer la entidad: ver
+/// el doc-comment de <see cref="GuardaDeReferencias"/> para el porqué del lock y su residual
+/// conocido.
 /// </summary>
-public abstract class ServicioDeCatalogo<T, TListado, TAlta>(IWaysDbContext db, IRelojDelSistema reloj)
+public abstract class ServicioDeCatalogo<T, TListado, TAlta>(
+    IWaysDbContext db, IRelojDelSistema reloj, GuardaDeReferencias guarda)
     where T : CatalogoSimple
     where TListado : ListadoDeCatalogo
     where TAlta : AltaDeCatalogo
@@ -48,6 +58,27 @@ public abstract class ServicioDeCatalogo<T, TListado, TAlta>(IWaysDbContext db, 
     /// <see cref="CatalogoSimple"/> tiene que decidir explícitamente cómo mapearlo — un
     /// catálogo sin columnas propias (p.ej. <c>marcas</c>) puede dejar el cuerpo vacío.</summary>
     protected abstract void AplicarPropios(T entidad, TAlta datos);
+
+    /// <summary>Código de dominio del 409 cuando <see cref="GuardaDeReferencias"/> encuentra al
+    /// menos una fila referenciante (p.ej. <c>area_en_uso</c>).</summary>
+    protected abstract string CodigoEnUso { get; }
+
+    /// <summary>El sujeto en castellano para el mensaje del 409 (p.ej. "el área") — mismo
+    /// idioma que <c>ServicioDeOrganizacion.ExigirSinUsoAsync</c>.</summary>
+    protected abstract string SujetoDeBaja { get; }
+
+    /// <summary>Etiquetas propias por tabla referenciante, cuando la genérica de
+    /// <see cref="Organizacion.EtiquetasDeTablas"/> no alcanza para este catálogo (p.ej.
+    /// <c>categorias</c> → "subcategorías" para <c>ServicioDeCategorias</c>). <c>null</c> por
+    /// defecto: la mayoría de los catálogos no lo necesita.</summary>
+    protected virtual IReadOnlyDictionary<string, string>? EtiquetasDeReferencias => null;
+
+    /// <summary>Validación propia de la baja, ejecutada BAJO EL LOCK de
+    /// <see cref="GuardaDeReferencias.BloquearFilaAsync{T}"/> y ANTES del guard de referencias
+    /// (p.ej. <c>ServicioDeListasPrecio</c>: la lista default no se puede eliminar, la que sirve
+    /// de base activa tampoco). Sin cuerpo por defecto: la mayoría de los catálogos no agrega
+    /// nada acá.</summary>
+    protected virtual Task ValidarBajaAsync(T entidad, CancellationToken ct) => Task.CompletedTask;
 
     public virtual async Task<IReadOnlyList<TListado>> ListarAsync(
         bool incluirInactivos = false, CancellationToken ct = default)
@@ -102,15 +133,48 @@ public abstract class ServicioDeCatalogo<T, TListado, TAlta>(IWaysDbContext db, 
         return Proyectar(entidad);
     }
 
-    /// <summary>Baja lógica: escribe <c>deleted_at</c>, no borra la fila.</summary>
-    public virtual async Task EliminarAsync(int id, CancellationToken ct = default)
+    /// <summary>Baja lógica: escribe <c>deleted_at</c>, no borra la fila — y solo si NINGUNA fila
+    /// referencia la entidad (ver el doc-comment de la clase y el de
+    /// <see cref="GuardaDeReferencias"/>).
+    ///
+    /// Sin reintento (ef-retry-safe-writes, forma (b)): tras un commit ambiguo el reintento
+    /// volvería a leer la fila por <see cref="BuscarAsync"/>, que filtra la baja lógica, y
+    /// respondería 404 a una baja que en verdad tuvo éxito — mismo criterio que
+    /// <c>ServicioDeOfertas.EliminarAsync</c>.
+    ///
+    /// El LOCK se toma ANTES de cargar la entidad (nunca al revés): cargarla primero serviría el
+    /// valor STALE del identity map de EF y, más importante, es el orden que convierte una baja
+    /// concurrente ganadora en un 404 limpio en vez de una segunda escritura sobre una fila ya
+    /// dada de baja.
+    ///
+    /// No <c>virtual</c> a propósito: los puntos de extensión de la baja son
+    /// <see cref="CodigoEnUso"/>/<see cref="SujetoDeBaja"/>/<see cref="EtiquetasDeReferencias"/>/
+    /// <see cref="ValidarBajaAsync"/>, nunca este método — <c>ServicioDeListasPrecio</c> ya no
+    /// tiene su propio <c>EliminarAsync</c> (movió sus dos guardas a <see cref="ValidarBajaAsync"/>
+    /// para que corrieran bajo el mismo lock).</summary>
+    public async Task EliminarAsync(int id, CancellationToken ct = default)
     {
-        var entidad = await BuscarAsync(id, ct);
+        var estrategia = FabricaDeEstrategiaSinReintento.CrearEstrategiaSinReintento(db);
 
-        entidad.DeletedAt = reloj.Ahora;
-        entidad.UpdatedAt = reloj.Ahora;
+        await estrategia.ExecuteAsync(async () =>
+        {
+            await using var transaccion = await db.Database.BeginTransactionAsync(ct);
 
-        await db.SaveChangesAsync(ct);
+            await guarda.BloquearFilaAsync<T>(id, ct);
+
+            var entidad = await BuscarAsync(id, ct);
+
+            await ValidarBajaAsync(entidad, ct);
+            await guarda.ExigirSinReferenciasAsync(
+                entidad, CodigoEnUso, SujetoDeBaja, EtiquetasDeReferencias, ct);
+
+            var ahora = reloj.Ahora;
+            entidad.DeletedAt = ahora;
+            entidad.UpdatedAt = ahora;
+
+            await db.SaveChangesAsync(ct);
+            await transaccion.CommitAsync(ct);
+        });
     }
 
     protected async Task<T> BuscarAsync(int id, CancellationToken ct) =>

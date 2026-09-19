@@ -1370,7 +1370,15 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
     ///
     /// El fixture es deliberadamente fino: la categoría y la oferta se crean EN el instante del
     /// ancla (no bloquean, son ramas Marcado), y la única fila que bloquea es
-    /// <c>ofertas_listas</c> — sin marca temporal y sin etiqueta en el diccionario.
+    /// <c>numeraciones_comprobante</c> — sin marca temporal y sin etiqueta en el diccionario.
+    ///
+    /// <c>ofertas_listas</c> DEJÓ de servir para este fixture (fix/bajas-catalogos-guarda-de-uso):
+    /// ahora tiene etiqueta propia ("ofertas") porque una lista de precios targeteada por una
+    /// oferta activa es justo el caso que <c>ServicioDeListasPrecio.EliminarAsync</c> necesita
+    /// poder nombrar. <c>numeraciones_comprobante</c> hereda el rol de "tabla mecánica sin
+    /// etiqueta" — se inserta con SQL crudo porque <c>WaysDbContext</c> rechaza cualquier escritura
+    /// de esa entidad vía <c>SaveChangesAsync</c> (su único escritor legítimo es
+    /// <c>AsignadorDeNumeroComprobante</c>).
     /// </summary>
     [Fact]
     public async Task UnaTablaSinEtiquetaRindeElCodigoExactoYDegradaSoloElMensaje()
@@ -1403,16 +1411,10 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
             db.Ofertas.Add(oferta);
             await db.SaveChangesAsync();
 
-            var idLista = await db.ListasPrecio
-                .Where(l => l.IdTenant == sembrado.IdTenant).Select(l => l.Id).FirstAsync();
+            const string tipoComprobante = "TX";
 
-            db.OfertasListas.Add(new Ways.Domain.Ofertas.OfertaLista
-            {
-                IdOferta = oferta.Id,
-                IdListaPrecio = idLista,
-                IdTenant = sembrado.IdTenant
-            });
-            await db.SaveChangesAsync();
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"INSERT INTO numeraciones_comprobante (id_tenant, id_punto_venta, tipo_comprobante, proximo_numero) VALUES ({sembrado.IdTenant}, {sembrado.IdPuntoVenta}, {tipoComprobante}, 1)");
         }
 
         using var root = await ClienteComoRootAsync();
@@ -1421,7 +1423,7 @@ public class BajasDeOrganizacionTests(WaysApiFixture fixture, ITestOutputHelper 
 
         Assert.Equal("tenant_en_uso", codigo);
         Assert.Contains(EtiquetasDeTablas.Generica, mensaje, StringComparison.Ordinal);
-        Assert.DoesNotContain("ofertas_listas", mensaje, StringComparison.Ordinal);
+        Assert.DoesNotContain("numeraciones_comprobante", mensaje, StringComparison.Ordinal);
     }
 
     // =========================================================================================
