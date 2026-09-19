@@ -1055,6 +1055,111 @@ describe('Articulos — confirmación al cerrar con cambios sin guardar', () => 
   })
 })
 
+// ---- Atrás/Adelante del navegador con cambios sin guardar (M2) ---------------------------------
+
+describe('Articulos — Atrás del navegador con cambios sin guardar (M2)', () => {
+  /**
+   * Cláusula bajo prueba: la compuerta de confirmación del efecto de apertura de `Articulos.tsx`
+   * (`destinoModalRef.current !== null && haySinGuardar()`). Mutation-proof-tests: sacarla hace
+   * fallar el primer `expect` de cada test de abajo (POP descarta en silencio); revertida, verde.
+   */
+  function ArnesConHistorial() {
+    const navigate = useNavigate()
+    return (
+      <>
+        <button type="button" onClick={() => navigate(-1)}>
+          Atrás
+        </button>
+        <Articulos />
+      </>
+    )
+  }
+
+  function renderConHistorial() {
+    return render(
+      <MemoryRouter initialEntries={['/articulos', '/articulos/edit/1']} initialIndex={1}>
+        <Routes>
+          <Route path="/articulos/*" element={<ArnesConHistorial />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('POP (Atrás) con el formulario sucio pregunta antes de salir; cancelar mantiene lo tipeado y la URL en la edición', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderConHistorial()
+    await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    await userEvent.type(screen.getByLabelText('Nombre'), ' (editado)')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
+    confirmSpy.mockRestore()
+  })
+
+  it('POP (Atrás) con el formulario sucio, aceptando la confirmación, cierra el modal', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderConHistorial()
+    await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    await userEvent.type(screen.getByLabelText('Nombre'), ' (editado)')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  it('POP (Atrás) con el formulario limpio no pregunta nada', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderConHistorial()
+    await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+})
+
+describe('Articulos — beforeunload (recarga/cierre de pestaña) mientras hay cambios sin guardar (M2)', () => {
+  /**
+   * Cláusula bajo prueba: el `useEffect` de `beforeunload` de `Articulos.tsx` — se registra SOLO
+   * mientras `haySinGuardar()` es true. Mutation-proof-tests: registrar el listener siempre (sin el
+   * guard `if (!haySinGuardar()) return`) hace fallar el primer `expect`; no registrarlo nunca hace
+   * fallar el segundo.
+   */
+  it('previene la salida solo mientras el formulario tiene cambios sin guardar', async () => {
+    await abrirFormularioNuevo()
+
+    const eventoLimpio = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(eventoLimpio)
+    expect(eventoLimpio.defaultPrevented).toBe(false)
+
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Borrador')
+
+    const eventoSucio = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(eventoSucio)
+    expect(eventoSucio.defaultPrevented).toBe(true)
+  })
+
+  it('deja de prevenir la salida una vez que el formulario vuelve a estar limpio (modal cerrado)', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await abrirFormularioNuevo()
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Borrador')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    const evento = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(evento)
+    expect(evento.defaultPrevented).toBe(false)
+    confirmSpy.mockRestore()
+  })
+})
+
 describe('Articulos — restauración de foco al cerrar el modal', () => {
   it('cerrar devuelve el foco al link "Editar" que abrió la edición', async () => {
     renderArticulos()

@@ -26,13 +26,32 @@ import { Cargando } from '../componentes/Cargando'
 import { aAlta, aEdicion, aFormulario, formularioVacio, type Formulario } from './articulos/FormularioArticulo'
 import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 import { ModalDeArticulo } from './articulos/ModalDeArticulo'
-import { analizarRutaModal } from './articulos/rutaModal'
+import { analizarRutaModal, type ModoModalDeArticulo } from './articulos/rutaModal'
 
 const clienteAreas = clienteDeCatalogo<AreaListado, AreaAlta>('areas')
 const clienteMarcas = clienteDeCatalogo<MarcaListado, MarcaAlta>('marcas')
 const clienteGrupos = clienteDeCatalogo<GrupoListado, GrupoAlta>('grupos')
 
 const MENSAJE_ID_INVALIDO = 'No se especificó un artículo válido.'
+const MENSAJE_CONFIRMAR_DESCARTE = 'Hay cambios sin guardar en el artículo. ¿Descartarlos?'
+
+/** Identidad del modal actualmente comprometido en pantalla: `null` (cerrado), `'nuevo'` (alta) o
+ * el id numérico de la edición en curso — nunca el `modo`/`idParam` crudos de la URL, que pueden
+ * apuntar a un id inválido sin formulario cargado. Se usa para distinguir "la URL cambió pero
+ * seguimos en el mismo modal" (p. ej. tras cancelar un intento de salida) de una salida real. */
+type DestinoModal = 'nuevo' | number | 'invalido' | null
+
+function destinoDeRuta(modo: ModoModalDeArticulo | null, idParam: string | null): DestinoModal {
+  if (modo === 'crear') return 'nuevo'
+  if (modo === 'editar') return idParam !== null && /^\d+$/.test(idParam) ? Number(idParam) : 'invalido'
+  return null
+}
+
+function rutaDeDestino(destino: DestinoModal): string {
+  if (destino === 'nuevo') return '/articulos/create'
+  if (typeof destino === 'number') return `/articulos/edit/${destino}`
+  return '/articulos'
+}
 
 /**
  * ABM dedicado de artículos (design decision 1: no la máquina genérica de catálogos) — la
@@ -87,6 +106,10 @@ export function Articulos() {
   // se compara para saber si hay cambios sin guardar al intentar cerrar (regla: confirmar antes de
   // descartar, igual criterio que el `confirm()` de la Baja).
   const formularioOriginalRef = useRef<Formulario | null>(null)
+  // Identidad del modal ya comprometida (ver `DestinoModal`) — la compuerta de confirmación del
+  // efecto de apertura la compara contra el destino que la URL pide ahora, para distinguir "salir
+  // de verdad" de "la URL volvió sola al mismo modal" (p. ej. tras cancelar esa misma salida).
+  const destinoModalRef = useRef<DestinoModal>(null)
   const refBotonNuevo = useRef<HTMLButtonElement>(null)
   const ocupado = guardando || eliminando || escriturasHijas > 0
 
@@ -243,6 +266,27 @@ export function Articulos() {
   // camino. Cuando `modo` pasa a null (URL vuelve a /articulos) se limpia todo el estado del modal
   // para no arrastrar restos a la próxima apertura.
   useEffect(() => {
+    const destino = destinoDeRuta(modo, idParam)
+
+    // Ya estamos en este destino (p. ej. tras cancelar un intento de salir, unas líneas más abajo
+    // se navegó de vuelta a esta misma URL): no hay nada que resetear, evita reaplicar el bloque de
+    // abajo (que en 'crear' pisaría el borrador con un formulario en blanco nuevo).
+    if (destino === destinoModalRef.current) return
+
+    // La URL se está yendo de un modal con cambios sin guardar (Atrás/Adelante del navegador, o
+    // cualquier otra navegación que no pasó por `cerrarModal` — p. ej. un link a otra edición):
+    // mismo criterio de confirmación que el cierre por click, pero acá se dispara por el cambio de
+    // ubicación en sí. Si cancela, se revierte la navegación (vuelta a la URL del modal actual) sin
+    // tocar el estado; si acepta, se sigue de largo y el bloque de abajo aplica el reset real.
+    if (destinoModalRef.current !== null && haySinGuardar()) {
+      if (!confirm(MENSAJE_CONFIRMAR_DESCARTE)) {
+        navigate(rutaDeDestino(destinoModalRef.current), { replace: true })
+        return
+      }
+    }
+
+    destinoModalRef.current = destino
+
     if (modo === 'crear') {
       invalidarEdicionEnCurso()
       setGuardando(false)
@@ -372,13 +416,31 @@ export function Articulos() {
     )
   }
 
+  // Recarga/cierre de PESTAÑA (no navegación SPA — esa la cubre el efecto de apertura de arriba):
+  // el listener se registra/desregistra según haya o no cambios sin guardar, nunca queda pegado.
+  // `formulario` alcanza como dependencia: `formularioOriginalRef.current` siempre se asigna en el
+  // mismo tick que `setFormulario` (nunca solo), así que `haySinGuardar()` ya lee el par correcto
+  // en cada corrida de este efecto.
+  useEffect(() => {
+    if (!haySinGuardar()) return
+    function alIntentarSalir(evento: BeforeUnloadEvent) {
+      evento.preventDefault()
+      evento.returnValue = ''
+    }
+    window.addEventListener('beforeunload', alIntentarSalir)
+    return () => window.removeEventListener('beforeunload', alIntentarSalir)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formulario])
+
   // Único punto de cierre: el botón "Cancelar" del formulario, el × del header, Escape y el click
   // en el backdrop de `Modal` llegan todos acá (nunca `history.back()` — una pestaña nueva no tiene
   // historial previo). `Modal` ya bloquea estos tres últimos mientras `ocupado`; el guard de acá
-  // cubre además el botón "Cancelar" del propio formulario.
+  // cubre además el botón "Cancelar" del propio formulario. La confirmación de "cambios sin
+  // guardar" NO vive acá: el efecto de apertura la aplica de forma uniforme a TODA salida del
+  // modal (click, Atrás/Adelante del navegador, o un link a otra edición) — este `navigate` es
+  // solo el disparador, no el punto de decisión.
   function cerrarModal() {
     if (ocupado) return
-    if (haySinGuardar() && !confirm('Hay cambios sin guardar en el artículo. ¿Descartarlos?')) return
     navigate('/articulos', { replace: true })
   }
 
