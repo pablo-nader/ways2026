@@ -190,11 +190,15 @@ describe('GrillaDeArticulos — header de precio y su lista', () => {
    * `GrillaDeArticulos.tsx`. Mutation-proof-tests: hardcodear el título a `'Precio'` sin importar
    * `nombreListaPrecio` hace fallar el primer `expect`.
    */
-  it('muestra el nombre de la lista de precio default en el header', async () => {
+  it('muestra el nombre de la lista de precio default en el header y habilita el filtro de precio', async () => {
     mockearRutas(paginaFixture([filaFixture()], { nombreListaPrecio: 'Mayorista' }))
     renderGrilla()
     await screen.findByText('Articulo Uno')
     expect(screen.getByText('Precio (Mayorista)')).toBeInTheDocument()
+    // Cláusula bajo prueba: `precioDeshabilitado` en `GrillaDeArticulos.tsx`. Mutation-proof-tests:
+    // hardcodear `precioDeshabilitado = true` hace fallar estos dos `toBeEnabled()`.
+    expect(screen.getByLabelText('Precio desde')).toBeEnabled()
+    expect(screen.getByLabelText('Precio hasta')).toBeEnabled()
   })
 
   it('sin lista de precio default, el header cae a "Precio" y el filtro de precio se deshabilita', async () => {
@@ -245,7 +249,9 @@ describe('GrillaDeArticulos — filtros de texto (debounce)', () => {
     vi.useFakeTimers()
     try {
       fireEvent.change(screen.getByLabelText('Filtrar por nombre'), { target: { value: 'Coca' } })
-      await vi.advanceTimersByTimeAsync(300)
+      await vi.advanceTimersByTimeAsync(200)
+      expect(apiGetMock).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(100)
     } finally {
       vi.useRealTimers()
     }
@@ -258,11 +264,17 @@ describe('GrillaDeArticulos — filtros de texto (debounce)', () => {
     renderGrilla()
     await screen.findByText('Articulo Uno')
     apiGetMock.mockClear()
+    // Cláusula bajo prueba adicional: `precioDeshabilitado` — si el campo estuviera deshabilitado,
+    // el `fireEvent.change` de abajo lo pasaría por alto igual (bypasea `disabled`), así que se
+    // afirma habilitado ANTES de tipear.
+    expect(screen.getByLabelText('Precio desde')).toBeEnabled()
 
     vi.useFakeTimers()
     try {
       fireEvent.change(screen.getByLabelText('Precio desde'), { target: { value: '10' } })
-      await vi.advanceTimersByTimeAsync(300)
+      await vi.advanceTimersByTimeAsync(200)
+      expect(apiGetMock).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(100)
     } finally {
       vi.useRealTimers()
     }
@@ -310,9 +322,16 @@ describe('GrillaDeArticulos — filtros inmediatos (selects)', () => {
     await screen.findByText('Articulo Uno')
     apiGetMock.mockClear()
 
-    await userEvent.selectOptions(screen.getByLabelText('Filtrar por proveedor'), String(proveedorAlfa.id))
-
-    await waitFor(() => expect(ultimaQuery()).toContain(`idProveedor=${proveedorAlfa.id}`))
+    // Cláusula bajo prueba: `cambiarFiltroInmediato` NO pasa por `programarCambioDeTexto`
+    // (sin debounce). `fireEvent.change` + assert sincrónico (sin avanzar ningún timer ni usar
+    // `waitFor`) es lo único que distingue esto de un debounce de 300ms silenciosamente agregado.
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(screen.getByLabelText('Filtrar por proveedor'), { target: { value: String(proveedorAlfa.id) } })
+      expect(ultimaQuery()).toContain(`idProveedor=${proveedorAlfa.id}`)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('"Sin proveedor" manda sinProveedor=true, nunca idProveedor', async () => {
@@ -335,10 +354,15 @@ describe('GrillaDeArticulos — filtros inmediatos (selects)', () => {
     await screen.findByText('Articulo Uno')
     apiGetMock.mockClear()
 
-    await userEvent.selectOptions(screen.getByLabelText('Filtrar por estado'), 'false')
-
-    await waitFor(() => expect(ultimaQuery()).toContain('activo=false'))
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(screen.getByLabelText('Filtrar por estado'), { target: { value: 'false' } })
+      expect(ultimaQuery()).toContain('activo=false')
+    } finally {
+      vi.useRealTimers()
+    }
   })
+
 })
 
 describe('GrillaDeArticulos — reseteo de página', () => {
@@ -367,6 +391,40 @@ describe('GrillaDeArticulos — reseteo de página', () => {
 
     await waitFor(() => expect(ultimaQuery()).toContain('pagina=1'))
   })
+
+  /**
+   * Cláusula bajo prueba: `pagina: 1` en el commit del debounce (`programarCambioDeTexto`) —
+   * distinto código de `cambiarFiltroInmediato` de arriba. Mutation-proof-tests: sacar el reseteo
+   * de página SOLO en el commit debounced (dejando el de los selects intacto) sobreviviría a la
+   * prueba de arriba, que nunca tipea texto desde la página 2.
+   */
+  it('tipear un filtro de texto (debounced) desde la página 2 también resetea la página a 1', async () => {
+    const paginaUno = paginaFixture(
+      Array.from({ length: 2 }, (_, i) => filaFixture({ id: i + 1, codigoInterno: `A000${i}`, nombre: `Art ${i}` })),
+      { total: 4, tamanio: 2, pagina: 1 },
+    )
+    mockearRutas(paginaUno)
+    renderGrilla()
+    await screen.findByText('Art 0')
+
+    mockearRutas(paginaFixture([filaFixture({ id: 9, nombre: 'Art 9' })], { total: 4, tamanio: 2, pagina: 2 }))
+    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText('Art 9')
+    expect(ultimaQuery()).toContain('pagina=2')
+
+    apiGetMock.mockClear()
+    mockearRutas(paginaFixture([filaFixture({ nombre: 'Articulo Uno' })]))
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(screen.getByLabelText('Filtrar por código'), { target: { value: 'A00' } })
+      await vi.advanceTimersByTimeAsync(300)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    await waitFor(() => expect(ultimaQuery()).toContain('pagina=1'))
+  })
 })
 
 describe('GrillaDeArticulos — Limpiar', () => {
@@ -384,12 +442,21 @@ describe('GrillaDeArticulos — Limpiar', () => {
     await userEvent.selectOptions(screen.getByLabelText('Filtrar por proveedor'), String(proveedorAlfa.id))
     await waitFor(() => expect(ultimaQuery()).toContain('idProveedor='))
 
+    apiGetMock.mockClear()
     vi.useFakeTimers()
     try {
       fireEvent.change(screen.getByLabelText('Filtrar por código'), { target: { value: 'A001' } })
       // Debounce todavía en vuelo: Limpiar tiene que cancelarlo, no solo pisarlo con el próximo commit.
       fireEvent.click(screen.getByRole('button', { name: 'Limpiar' }))
-      await vi.advanceTimersByTimeAsync(400)
+      // Avances finos (no un único salto de 400ms): si `clearTimeout` faltara, el debounce
+      // abandonado de "A001" reviviría DESPUÉS del commit de Limpiar — un solo
+      // `advanceTimersByTimeAsync(400)` puede coalescer ambos efectos en un solo flush de React y
+      // esconder el orden real. Se avanza hasta justo antes de los 300ms, se confirma que todavía
+      // no volvió a pedirse `codigo=`, y recién ahí se cruza el umbral del debounce abandonado.
+      await vi.advanceTimersByTimeAsync(299)
+      expect(ultimaQuery()).not.toContain('codigo=')
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.advanceTimersByTimeAsync(100)
     } finally {
       vi.useRealTimers()
     }
@@ -424,6 +491,13 @@ describe('GrillaDeArticulos — paginación', () => {
     mockearRutas(paginaFixture([filaFixture()], { total: 60, tamanio: 25, pagina: 1 }))
     renderGrilla()
     await screen.findByText('Articulo Uno')
+
+    // Sale de la página 1 ANTES de cambiar el tamaño: si `cambiarTamanio` no reseteara `pagina`,
+    // esta prueba (a diferencia de una que arrancara y se quedara en la página 1) lo detecta.
+    mockearRutas(paginaFixture([filaFixture({ id: 9, nombre: 'Art 9' })], { total: 60, tamanio: 25, pagina: 2 }))
+    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText('Art 9')
+
     apiGetMock.mockClear()
     mockearRutas(paginaFixture([filaFixture()], { total: 60, tamanio: 50, pagina: 1 }))
 
@@ -433,6 +507,59 @@ describe('GrillaDeArticulos — paginación', () => {
       expect(ultimaQuery()).toContain('tamanio=50')
       expect(ultimaQuery()).toContain('pagina=1')
     })
+  })
+
+  /**
+   * Cláusula bajo prueba: `Math.max(1, prev.pagina + delta)` en `cambiarPagina`. Mutation-proof-
+   * tests: sacar el `Math.max(1, …)` deja pasar `pagina=0` cuando dos clicks sincrónicos en
+   * "Anterior" ocurren en el mismo tick (el segundo click ve el mismo `pagina.pagina` de la
+   * respuesta todavía en 2, porque el botón no se re-deshabilita hasta el próximo render).
+   */
+  it('dos clicks sincrónicos en "Anterior" desde la página 2 nunca piden pagina=0', async () => {
+    // Arranca REALMENTE en la página 1 (el fixture inicial coincide con `filtros.pagina`, el
+    // estado interno que `cambiarPagina` incrementa/decrementa) y navega a la página 2 con un
+    // click real de "Siguiente" — así `filtros.pagina` interno queda en 2 de verdad, no solo la
+    // etiqueta mostrada.
+    mockearRutas(paginaFixture([filaFixture()], { total: 50, tamanio: 25, pagina: 1 }))
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+
+    mockearRutas(paginaFixture([filaFixture()], { total: 50, tamanio: 25, pagina: 2 }))
+    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await waitFor(() => expect(ultimaQuery()).toContain('pagina=2'))
+
+    apiGetMock.mockClear()
+    mockearRutas(paginaFixture([filaFixture()], { total: 50, tamanio: 25, pagina: 1 }))
+
+    const botonAnterior = screen.getByRole('button', { name: 'Anterior' })
+    act(() => {
+      fireEvent.click(botonAnterior)
+      fireEvent.click(botonAnterior)
+    })
+
+    await waitFor(() => expect(ultimaQuery()).toContain('pagina=1'))
+    expect(ultimaQuery()).not.toContain('pagina=0')
+  })
+
+  /**
+   * Cláusula bajo prueba: `|| cargando` en el `disabled` de "Anterior"/"Siguiente". Mutation-
+   * proof-tests: sacar ese `|| cargando` deja habilitados ambos botones en una página intermedia
+   * mientras hay una consulta en vuelo — acá se fuerza esa combinación (página 2 de 3, fetch
+   * pendiente) donde ninguna otra condición (`pagina.pagina <= 1` / `>= totalPaginas`) explica el
+   * disabled.
+   */
+  it('con una consulta pendiente, "Anterior" y "Siguiente" quedan deshabilitados por cargando', async () => {
+    mockearRutas(paginaFixture([filaFixture()], { total: 75, tamanio: 25, pagina: 2 }))
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+    expect(screen.getByRole('button', { name: 'Anterior' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Siguiente' })).toBeEnabled()
+
+    mockearRutas(() => new Promise(() => {}))
+    await userEvent.selectOptions(screen.getByLabelText('Filtrar por estado'), 'true')
+
+    expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled()
   })
 })
 
@@ -465,6 +592,81 @@ describe('GrillaDeArticulos — respuesta desactualizada (generación)', () => {
 
     expect(screen.queryByText('Respuesta vieja')).not.toBeInTheDocument()
     expect(screen.getByText('Filtro nuevo')).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el gateo de generación en el `.catch` de `cargar` (no solo en el
+   * `.then`). Mutation-proof-tests: sacar el `if (generacionRef.current !== generacion) return`
+   * del `.catch` deja que una petición SUPERADA, que rechaza DESPUÉS de que la más nueva ya
+   * resolvió, pise la pantalla con su propio error.
+   */
+  it('una petición superada que rechaza después de que la más nueva ya resolvió no muestra su error', async () => {
+    let rechazarPrimera: (error: unknown) => void = () => {}
+    const primera = new Promise<PaginaDeGrillaDeArticulos>((_resolve, reject) => {
+      rechazarPrimera = reject
+    })
+    let llamadas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (!ruta.startsWith('/articulos/grilla')) return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      llamadas += 1
+      if (llamadas === 1) return Promise.resolve(paginaFixture([filaFixture({ nombre: 'Carga inicial' })]))
+      if (llamadas === 2) return primera
+      return Promise.resolve(paginaFixture([filaFixture({ id: 2, nombre: 'Filtro nuevo' })]))
+    })
+
+    renderGrilla()
+    await screen.findByText('Carga inicial')
+
+    await userEvent.selectOptions(screen.getByLabelText('Filtrar por estado'), 'true')
+    await userEvent.selectOptions(screen.getByLabelText('Filtrar por estado'), 'false')
+    await screen.findByText('Filtro nuevo')
+
+    await act(async () => {
+      rechazarPrimera(new ErrorApi(500, 'error', 'Error viejo que no debería verse.'))
+      await primera.catch(() => {})
+    })
+
+    expect(screen.queryByText('Error viejo que no debería verse.')).not.toBeInTheDocument()
+    expect(screen.getByText('Filtro nuevo')).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el gateo de generación en el `.finally` de `cargar`. Mutation-proof-
+   * tests: sacar el `if (generacionRef.current !== generacion) return` del `.finally` hace que,
+   * al asentarse una petición SUPERADA, `cargando` se apague igual — reactivando la paginación
+   * aunque la petición VIGENTE siga pendiente.
+   */
+  it('el finally de una petición superada no reactiva la paginación mientras la vigente sigue pendiente', async () => {
+    let resolverPrimera: (valor: PaginaDeGrillaDeArticulos) => void = () => {}
+    const primera = new Promise<PaginaDeGrillaDeArticulos>((resolve) => {
+      resolverPrimera = resolve
+    })
+    const segundaPendiente = new Promise<PaginaDeGrillaDeArticulos>(() => {})
+    let llamadas = 0
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (!ruta.startsWith('/articulos/grilla')) return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      llamadas += 1
+      if (llamadas === 1) return Promise.resolve(paginaFixture([filaFixture()], { total: 50, tamanio: 25, pagina: 1 }))
+      if (llamadas === 2) return primera
+      return segundaPendiente
+    })
+
+    renderGrilla()
+    await screen.findByText('Articulo Uno')
+    expect(screen.getByRole('button', { name: 'Siguiente' })).toBeEnabled()
+
+    await userEvent.selectOptions(screen.getByLabelText('Filtrar por estado'), 'true')
+    await userEvent.selectOptions(screen.getByLabelText('Filtrar por estado'), 'false')
+
+    // La petición VIGENTE (la 3ra, `segundaPendiente`) sigue en vuelo cuando la SUPERADA
+    // (la 2da, `primera`) recién ahora se resuelve.
+    await act(async () => {
+      resolverPrimera(paginaFixture([filaFixture({ id: 9, nombre: 'Respuesta superada' })], { total: 50, tamanio: 25, pagina: 1 }))
+      await primera
+    })
+
+    expect(screen.queryByText('Respuesta superada')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled()
   })
 })
 
