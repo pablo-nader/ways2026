@@ -1692,6 +1692,9 @@ describe('Articulos — rechazar una salida por Atrás/Adelante vuelve a la entr
         <button type="button" onClick={() => navigate(1)}>
           Adelante
         </button>
+        <button type="button" onClick={() => navigate(-2)}>
+          Atrás dos
+        </button>
         <button type="button" onClick={() => navigate('/articulos/edit/2')}>
           Ir a la edición 2
         </button>
@@ -1830,6 +1833,35 @@ describe('Articulos — rechazar una salida por Atrás/Adelante vuelve a la entr
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
     expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
+  })
+
+  // Un POP que salta dos entradas (menú de historial del navegador) se deshace con el desplazamiento
+  // completo, no con su signo: con ±1 aterrizaría en la edición 1 en vez de volver a la 2.
+  it('un Atrás que salta dos entradas, rechazado, vuelve a la edición 2 sin pisar la 1 ni la grilla', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true)
+    await abrirEdicionUnoDesdeLaGrilla()
+    await userEvent.click(screen.getByRole('button', { name: 'Ir a la edición 2' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0002' })
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás dos' }))
+    await act(async () => {})
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Ubicación: /articulos/edit/2')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0002' })).toBe(dialogo)
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Articulo Dos (editado)')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await act(async () => {})
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
   })
 
   /**
