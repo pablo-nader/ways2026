@@ -3,7 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pos } from './Pos'
+import type { CajaDeEscritorio } from './Pos'
 import { ErrorApi } from '../api/cliente'
+import { cierreDeTurno, pulsoDeCajon } from '../impresion/plantillas'
 import type {
   ArticuloEscaneado,
   ArticuloListado,
@@ -15,6 +17,7 @@ import type {
   PresupuestoParaVenta,
   PuntoVentaListado,
   ResultadoDeResolucion,
+  ResumenDeCierrePorRetiro,
   TurnoResumen,
 } from '../api/tipos'
 import type { EstadoDePuntoVenta } from '../puntoVenta/PuntoVentaContext'
@@ -3445,5 +3448,417 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
 
     expect(dialogo.getByRole('button', { name: /Finalizar/ })).toHaveAttribute('aria-keyshortcuts', 'F9')
     expect(dialogo.getByRole('button', { name: /Cancelar/ })).toHaveAttribute('aria-keyshortcuts', 'F10')
+  })
+})
+
+describe('Pos — seam cajaDeEscritorio: Retirar y Cerrar caja por retiro (stage-pos-retiros-y-cierre-por-retiro, etapa 5)', () => {
+  function cajaDeEscritorioFixture(): CajaDeEscritorio {
+    return {
+      contexto: { empresa: 'Almacén Demo', puntoVenta: 'PV 7 — Local Centro', cajero: 'jperez' },
+      encolarImpresion: vi.fn(),
+    }
+  }
+
+  function renderPosDeEscritorio(cajaDeEscritorio: CajaDeEscritorio) {
+    return render(
+      <MemoryRouter initialEntries={['/pos']}>
+        <Routes>
+          <Route path="/pos" element={<Pos cajaDeEscritorio={cajaDeEscritorio} />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  async function entrarConTurnoAbierto(cajaDeEscritorio: CajaDeEscritorio) {
+    renderPosDeEscritorio(cajaDeEscritorio)
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByText('Caja abierta')
+  }
+
+  function resumenCierreFixture(sobrescribir: Partial<ResumenDeCierrePorRetiro> = {}): ResumenDeCierrePorRetiro {
+    return {
+      idTurnoCaja: turnoAbiertoFixture().id,
+      puntoVenta: { id: 7, numero: 7, nombre: 'Local Centro' },
+      fechaApertura: '2026-09-19T09:00:00-03:00',
+      fechaCierre: '2026-09-19T18:00:00-03:00',
+      vendedor: 'jperez',
+      empleadoCierre: 'jperez',
+      fondoInicial: 500,
+      ventasPorMedio: [{ idMedioPago: 1, nombre: 'Efectivo', importe: 1000 }],
+      totalVentas: 1000,
+      retiros: [],
+      totalRetiros: 0,
+      ventasEnEfectivoNetas: 1000,
+      gastosEnEfectivo: 0,
+      refuerzos: 0,
+      diferencia: 0,
+      ...sobrescribir,
+    }
+  }
+
+  const RUTA_MOVIMIENTOS = `/caja/turnos/${turnoAbiertoFixture().id}/movimientos`
+  const RUTA_CIERRE_POR_RETIRO = `/caja/turnos/${turnoAbiertoFixture().id}/cierre-por-retiro`
+  const RUTA_RESUMEN_DE_CIERRE = `/caja/turnos/${turnoAbiertoFixture().id}/resumen-de-cierre`
+
+  describe('Retirar', () => {
+    it('web (sin cajaDeEscritorio): "Retirar" no existe aunque el turno esté abierto', async () => {
+      renderPos()
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Caja abierta')
+
+      expect(screen.queryByRole('button', { name: 'Retirar' })).not.toBeInTheDocument()
+    })
+
+    it('con el turno cerrado, "Retirar" tampoco aparece', async () => {
+      mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
+      renderPosDeEscritorio(cajaDeEscritorioFixture())
+      await screen.findByRole('option', { name: /Consumidor Final/ })
+      await screen.findByText('Caja cerrada')
+
+      expect(screen.queryByRole('button', { name: 'Retirar' })).not.toBeInTheDocument()
+    })
+
+    it('feliz: orden exacto — POST de auditoría → pulso de cajón → modal de monto → POST de retiro → ticket', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      const eventos: string[] = []
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          const { tipo } = cuerpo as { tipo: string }
+          eventos.push(`POST movimientos:${tipo}`)
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      vi.mocked(cajaDeEscritorio.encolarImpresion).mockImplementation((descripcion) => {
+        eventos.push(`imprime:${descripcion}`)
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Retirar' }))
+
+      const modalApertura = within(await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' }))
+      await userEvent.click(modalApertura.getByRole('button', { name: 'Sí' }))
+
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Monto retirado' }))
+      await userEvent.type(modalMonto.getByLabelText('Monto'), '5000')
+      await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+      await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+      expect(eventos).toEqual([
+        'POST movimientos:AperturaCajon',
+        'imprime:la apertura de cajón',
+        'POST movimientos:Retiro',
+        'imprime:el ticket de retiro',
+      ])
+
+      const cuerpoApertura = apiPostMock.mock.calls.find((c) => c[0] === RUTA_MOVIMIENTOS)?.[1] as {
+        tipo: string
+        importe: number
+        motivo: string
+      }
+      expect(cuerpoApertura).toEqual({ tipo: 'AperturaCajon', importe: 0, motivo: 'Apertura de cajón para retiro' })
+
+      const cuerpoRetiro = apiPostMock.mock.calls.filter((c) => c[0] === RUTA_MOVIMIENTOS)[1][1] as {
+        tipo: string
+        importe: number
+        motivo: string
+      }
+      expect(cuerpoRetiro).toEqual({ tipo: 'Retiro', importe: 5000, motivo: 'Retiro de efectivo' })
+
+      expect(vi.mocked(cajaDeEscritorio.encolarImpresion).mock.calls[0][1]).toEqual(pulsoDeCajon())
+
+      expect(await screen.findByText('Retiro registrado.')).toBeInTheDocument()
+    })
+
+    it('el POST de auditoría falla: NUNCA pulsa el cajón, muestra el error y no abre el modal de monto', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === RUTA_MOVIMIENTOS) return Promise.reject(new ErrorApi(500, 'error', 'No se pudo registrar el movimiento.'))
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Retirar' }))
+      const modalApertura = within(await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' }))
+      await userEvent.click(modalApertura.getByRole('button', { name: 'Sí' }))
+
+      expect(await modalApertura.findByText('No se pudo registrar el movimiento.')).toBeInTheDocument()
+      expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
+      expect(screen.queryByRole('dialog', { name: 'Monto retirado' })).not.toBeInTheDocument()
+    })
+
+    it('"No" del primer modal: no hace ningún POST ni encola nada', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Retirar' }))
+      const modalApertura = within(await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' }))
+      await userEvent.click(modalApertura.getByRole('button', { name: 'No' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(apiPostMock.mock.calls.some((c) => c[0] === RUTA_MOVIMIENTOS)).toBe(false)
+      expect(cajaDeEscritorio.encolarImpresion).not.toHaveBeenCalled()
+    })
+
+    it('cancelar el modal de monto: el cajón ya quedó abierto (auditado) pero NO se registra ningún Retiro', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      apiPostMock.mockImplementation((ruta: string) =>
+        ruta === RUTA_MOVIMIENTOS
+          ? Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, tipo: 'AperturaCajon', importe: 0, motivo: 'x', idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+          : Promise.reject(new Error(`ruta no mockeada en el test: ${RUTA_MOVIMIENTOS}`)),
+      )
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Retirar' }))
+      const modalApertura = within(await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' }))
+      await userEvent.click(modalApertura.getByRole('button', { name: 'Sí' }))
+
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Monto retirado' }))
+      await userEvent.click(modalMonto.getByRole('button', { name: 'Cancelar' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      // Un solo POST (la apertura) — cancelar el monto nunca dispara el POST de Retiro.
+      expect(apiPostMock.mock.calls.filter((c) => c[0] === RUTA_MOVIMIENTOS)).toHaveLength(1)
+      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(1)
+    })
+
+    it('validación: "Confirmar" queda deshabilitado con el monto vacío o en 0', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      apiPostMock.mockResolvedValue({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, tipo: 'AperturaCajon', importe: 0, motivo: 'x', idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Retirar' }))
+      const modalApertura = within(await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' }))
+      await userEvent.click(modalApertura.getByRole('button', { name: 'Sí' }))
+
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Monto retirado' }))
+      expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeDisabled()
+
+      await userEvent.type(modalMonto.getByLabelText('Monto'), '0')
+      expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeDisabled()
+    })
+
+    /** react-async-state regla 9/11: guarda de reentrancia por `ref`, no por el estado del render —
+     * dos clicks sincrónicos en "Sí" en el mismo tick no deben duplicar el POST de auditoría. */
+    it('doble click en "Sí" en el mismo tick dispara un único POST de auditoría', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      let cantidadDePosts = 0
+      apiPostMock.mockImplementation((ruta: string) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          cantidadDePosts += 1
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, tipo: 'AperturaCajon', importe: 0, motivo: 'x', idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Retirar' }))
+      const boton = (await screen.findByRole('dialog', { name: '¿Querés retirar efectivo?' })).querySelector(
+        'button.btn-primary',
+      ) as HTMLButtonElement
+
+      fireEvent.click(boton)
+      fireEvent.click(boton)
+
+      await screen.findByRole('dialog', { name: 'Monto retirado' })
+      expect(cantidadDePosts).toBe(1)
+    })
+  })
+
+  describe('Cerrar caja por retiro', () => {
+    it('feliz: header pasa a "Caja cerrada", nunca navega (sigue en la pantalla de venta), encola apertura + ticket de cierre', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      const resumen = resumenCierreFixture()
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        if (ruta === RUTA_CIERRE_POR_RETIRO) return Promise.resolve(resumen)
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+
+      const modalConfirmar = within(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' }))
+      await userEvent.click(modalConfirmar.getByRole('button', { name: 'Sí' }))
+
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.type(modalMonto.getByLabelText('Monto'), '0')
+      await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+      await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
+      // Nunca navegó — sigue siendo la pantalla de venta (nunca "Cierre de turno …", el placeholder
+      // de la ruta `/caja/cierre` clásica).
+      expect(screen.queryByText(/Cierre de turno/)).not.toBeInTheDocument()
+
+      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledTimes(2)
+      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenNthCalledWith(1, 'la apertura de cajón', pulsoDeCajon())
+      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenNthCalledWith(
+        2,
+        'el comprobante de cierre de turno',
+        cierreDeTurno(resumen, cajaDeEscritorio.contexto),
+      )
+
+      const cuerpoCierre = apiPostMock.mock.calls.find((c) => c[0] === RUTA_CIERRE_POR_RETIRO)?.[1]
+      expect(cuerpoCierre).toEqual({ importeRetirado: 0, observaciones: null })
+    })
+
+    it('cancelar el modal de monto: el turno sigue abierto', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) =>
+        ruta === RUTA_MOVIMIENTOS
+          ? Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+          : Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`)),
+      )
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      const modalConfirmar = within(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' }))
+      await userEvent.click(modalConfirmar.getByRole('button', { name: 'Sí' }))
+
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.click(modalMonto.getByRole('button', { name: 'Cancelar' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(screen.getByText('Caja abierta')).toBeInTheDocument()
+      expect(apiPostMock.mock.calls.some((c) => c[0] === RUTA_CIERRE_POR_RETIRO)).toBe(false)
+    })
+
+    it('doble click en "Confirmar" dispara un único POST de cierre por retiro', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      let cantidadDeCierres = 0
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        if (ruta === RUTA_CIERRE_POR_RETIRO) {
+          cantidadDeCierres += 1
+          return Promise.resolve(resumenCierreFixture())
+        }
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      const modalConfirmar = within(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' }))
+      await userEvent.click(modalConfirmar.getByRole('button', { name: 'Sí' }))
+
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.type(modalMonto.getByLabelText('Monto'), '0')
+      await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+      const boton = modalMonto.getByRole('button', { name: 'Confirmar' })
+      fireEvent.click(boton)
+      fireEvent.click(boton)
+
+      await waitFor(() => expect(screen.getByText('Caja cerrada')).toBeInTheDocument())
+      expect(cantidadDeCierres).toBe(1)
+    })
+
+    /**
+     * Cláusula bajo prueba: un 503 `resultado_incierto` (o una falla de red) NUNCA vuelve a
+     * postear `cerrarPorRetiro` — "Reintentar" solo consulta `obtenerResumenDeCierre`
+     * (idempotente). Con un resumen disponible, el cierre SÍ sucedió: se completa igual que un
+     * 2xx directo.
+     */
+    it('503 resultado_incierto: "Reintentar" consulta el resumen — si existe, completa el cierre SIN volver a postear', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      const resumen = resumenCierreFixture()
+      let cantidadDeCierres = 0
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        if (ruta === RUTA_CIERRE_POR_RETIRO) {
+          cantidadDeCierres += 1
+          return Promise.reject(new ErrorApi(503, 'resultado_incierto', 'No se pudo confirmar el resultado.'))
+        }
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/caja/turnos/abierto')) return Promise.resolve(turnoAbiertoFixture())
+        if (ruta === RUTA_RESUMEN_DE_CIERRE) return Promise.resolve(resumen)
+        return undefined
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      const modalConfirmar = within(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' }))
+      await userEvent.click(modalConfirmar.getByRole('button', { name: 'Sí' }))
+
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.type(modalMonto.getByLabelText('Monto'), '0')
+      await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+      await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+      const dialogoIncierto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.click(await dialogoIncierto.findByRole('button', { name: 'Reintentar' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
+      expect(cantidadDeCierres).toBe(1)
+      expect(cajaDeEscritorio.encolarImpresion).toHaveBeenCalledWith(
+        'el comprobante de cierre de turno',
+        cierreDeTurno(resumen, cajaDeEscritorio.contexto),
+      )
+    })
+
+    it('503 resultado_incierto seguido de 409 turno_no_cerrado: el cierre NO sucedió — sale del modo incierto y permite reintentar', async () => {
+      const cajaDeEscritorio = cajaDeEscritorioFixture()
+      let cantidadDeCierres = 0
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        if (ruta === RUTA_CIERRE_POR_RETIRO) {
+          cantidadDeCierres += 1
+          return Promise.reject(new ErrorApi(503, 'resultado_incierto', 'No se pudo confirmar el resultado.'))
+        }
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      mockearApiGet((ruta) => {
+        if (ruta.startsWith('/caja/turnos/abierto')) return Promise.resolve(turnoAbiertoFixture())
+        if (ruta === RUTA_RESUMEN_DE_CIERRE) return Promise.reject(new ErrorApi(409, 'turno_no_cerrado', 'El turno sigue abierto.'))
+        return undefined
+      })
+
+      await entrarConTurnoAbierto(cajaDeEscritorio)
+      await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
+      const modalConfirmar = within(await screen.findByRole('dialog', { name: '¿Querés cerrar el turno?' }))
+      await userEvent.click(modalConfirmar.getByRole('button', { name: 'Sí' }))
+
+      const modalMonto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.type(modalMonto.getByLabelText('Monto'), '0')
+      await waitFor(() => expect(modalMonto.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+      await userEvent.click(modalMonto.getByRole('button', { name: 'Confirmar' }))
+
+      const dialogoIncierto = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await userEvent.click(await dialogoIncierto.findByRole('button', { name: 'Reintentar' }))
+
+      // Vuelve a mostrar el campo de monto y "Confirmar" (salió del modo incierto) — el turno
+      // sigue abierto, nunca se completó el cierre.
+      const dialogoRecuperado = within(await screen.findByRole('dialog', { name: 'Efectivo a retirar' }))
+      await screen.findByText('El cierre no se confirmó — el turno sigue abierto. Podés reintentar.')
+      expect(dialogoRecuperado.getByRole('button', { name: 'Confirmar' })).toBeInTheDocument()
+      expect(screen.getByText('Caja abierta')).toBeInTheDocument()
+      expect(cantidadDeCierres).toBe(1)
+
+      // Un reintento explícito desde acá SÍ puede volver a postear — es una confirmación nueva.
+      apiPostMock.mockImplementation((ruta: string, cuerpo?: unknown) => {
+        if (ruta === RUTA_MOVIMIENTOS) {
+          return Promise.resolve({ id: 1, idTurnoCaja: turnoAbiertoFixture().id, ...(cuerpo as object), idEmpleado: 3, creadoEl: '2026-09-19T12:00:00Z' })
+        }
+        if (ruta === RUTA_CIERRE_POR_RETIRO) return Promise.resolve(resumenCierreFixture())
+        return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+      })
+      await userEvent.type(dialogoRecuperado.getByLabelText('Monto'), '0')
+      await waitFor(() => expect(dialogoRecuperado.getByRole('button', { name: 'Confirmar' })).toBeEnabled())
+      await userEvent.click(dialogoRecuperado.getByRole('button', { name: 'Confirmar' }))
+
+      expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
+    })
   })
 })
