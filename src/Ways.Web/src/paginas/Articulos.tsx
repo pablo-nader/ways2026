@@ -355,17 +355,17 @@ export function Articulos() {
   // esos catálogos resuelvan deja ambos campos en '' para siempre (el efecto no vuelve a correr
   // cuando las listas llegan tarde). Este efecto completa esos dos campos SOLO si siguen en '' en
   // el momento en que el catálogo respectivo llega — nunca pisa una elección ya hecha por el
-  // usuario, y sincroniza `formularioOriginalRef` para que el auto-completado no dispare un falso
-  // "hay cambios sin guardar" (M2/M3).
+  // usuario — y aplica a `formularioOriginalRef` SOLO los campos que completó, para que el
+  // auto-completado no dispare un falso "hay cambios sin guardar" (M2/M3) sin convertir en
+  // "guardado" lo que el usuario ya hubiera tipeado en otros campos antes de que llegaran.
   useEffect(() => {
     if (modo !== 'crear' || formulario === null || formulario.id !== null) return
-    const idArea = formulario.idArea === '' && areaPorDefecto !== '' ? areaPorDefecto : formulario.idArea
-    const idAlicuotaIva =
-      formulario.idAlicuotaIva === '' && alicuotaPorDefecto !== '' ? alicuotaPorDefecto : formulario.idAlicuotaIva
-    if (idArea === formulario.idArea && idAlicuotaIva === formulario.idAlicuotaIva) return
-    const actualizado = { ...formulario, idArea, idAlicuotaIva }
-    setFormulario(actualizado)
-    formularioOriginalRef.current = actualizado
+    const completados: Partial<Pick<Formulario, 'idArea' | 'idAlicuotaIva'>> = {}
+    if (formulario.idArea === '' && areaPorDefecto !== '') completados.idArea = areaPorDefecto
+    if (formulario.idAlicuotaIva === '' && alicuotaPorDefecto !== '') completados.idAlicuotaIva = alicuotaPorDefecto
+    if (Object.keys(completados).length === 0) return
+    setFormulario({ ...formulario, ...completados })
+    if (formularioOriginalRef.current) formularioOriginalRef.current = { ...formularioOriginalRef.current, ...completados }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modo, areaPorDefecto, alicuotaPorDefecto])
 

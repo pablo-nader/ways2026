@@ -440,6 +440,75 @@ describe('Articulos — defaults de Área/Alícuota de IVA cuando los catálogos
   })
 })
 
+describe('Articulos — los defaults tardíos de Área/Alícuota solo tocan esos campos de la base limpia (N2)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** Abre /articulos/create con áreas y alícuotas pendientes; devuelve cómo resolverlas juntas. */
+  async function abrirAltaConCatalogosPendientes() {
+    let resolverAreas: (valor: { id: number; nombre: string; activo: boolean }[]) => void = () => {}
+    let resolverAlicuotas: (valor: AlicuotaIvaListado[]) => void = () => {}
+    const areasPendientes = new Promise<{ id: number; nombre: string; activo: boolean }[]>((resolve) => {
+      resolverAreas = resolve
+    })
+    const alicuotasPendientes = new Promise<AlicuotaIvaListado[]>((resolve) => {
+      resolverAlicuotas = resolve
+    })
+    mockearApiGet({ areasImpl: () => areasPendientes, alicuotasImpl: () => alicuotasPendientes })
+
+    renderArticulos('/articulos/create')
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+
+    async function resolverCatalogos() {
+      await act(async () => {
+        resolverAreas([{ id: 7, nombre: 'Almacén', activo: true }])
+        resolverAlicuotas([{ id: 20, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true }])
+        await Promise.all([areasPendientes, alicuotasPendientes])
+      })
+      expect(screen.getByLabelText('Área')).toHaveValue('7')
+      expect(screen.getByLabelText('Alícuota de IVA')).toHaveValue('20')
+    }
+
+    return { dialogo, resolverCatalogos }
+  }
+
+  /**
+   * Cláusula bajo prueba: la base limpia (`formularioOriginalRef`) recibe SOLO los campos que el
+   * efecto de defaults completó, no el formulario entero. Mutation-proof-tests: volver a copiar el
+   * formulario completo a la base hace fallar el `expect` del `confirm` — el Nombre tipeado antes de
+   * que llegaran los catálogos pasaría a contar como "guardado" y se descartaría sin preguntar.
+   */
+  it('lo tipeado antes de que lleguen los catálogos sigue contando como cambio sin guardar', async () => {
+    const { dialogo, resolverCatalogos } = await abrirAltaConCatalogosPendientes()
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), 'Borrador temprano')
+    await resolverCatalogos()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog', { name: 'Nuevo artículo' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Borrador temprano')
+  })
+
+  /**
+   * Cláusula bajo prueba: el parche de `idArea` e `idAlicuotaIva` sobre la base limpia en el mismo
+   * efecto. Mutation-proof-tests: sacar ese parche (o uno solo de sus dos campos) hace fallar el
+   * `expect` del `confirm` — el auto-completado dejaría un falso "hay cambios sin guardar".
+   */
+  it('sin tocar nada, el auto-completado de los defaults no deja cambios sin guardar', async () => {
+    const { dialogo, resolverCatalogos } = await abrirAltaConCatalogosPendientes()
+    await resolverCatalogos()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Cancelar' }))
+
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
 // ---- avisos de catálogos requeridos/listas de precio, también visibles DENTRO del modal --------
 
 describe('Articulos — avisos de catálogos: visibles también dentro del modal', () => {
