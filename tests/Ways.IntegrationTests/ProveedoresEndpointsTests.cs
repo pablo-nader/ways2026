@@ -18,6 +18,12 @@ namespace Ways.IntegrationTests;
 /// un valor provisto por el cliente HTTP, sin contador atómico que serialice la carrera), ABM
 /// completo con la policy <c>GestionDeCatalogo</c> (admin-only), y el 404 uniforme cross-tenant
 /// (ADR-8).
+///
+/// JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple, que había movido el
+/// LISTADO completo a <c>Politicas.OperacionDePos</c> para el selector de proveedor del
+/// formulario de gastos del turno — exponía margen/cuit/contacto a Vendedor. El selector ahora
+/// usa la proyección mínima <c>GET /api/proveedores/opciones</c>, cubierta en
+/// <c>OpcionesDeProveedorEndpointsTests</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class ProveedoresEndpointsTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -210,6 +216,43 @@ public class ProveedoresEndpointsTests(WaysApiFixture fixture) : IClassFixture<W
 
         var respuesta = await vendedor.PostAsJsonAsync(
             "/api/proveedores", AltaValida(idCondicionFiscalCf, "Intento de vendedor"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    /// <summary>JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple — el listado
+    /// vuelve a ser Admin-only, un Vendedor no puede leer <c>ProveedorListado</c> completo (margen,
+    /// cuit, contacto). El selector del formulario de gastos usa la ruta mínima separada
+    /// (<c>OpcionesDeProveedorEndpointsTests</c>).</summary>
+    [Fact]
+    public async Task UnVendedorNoPuedeListarProveedores()
+    {
+        var (_, _, _, idTenant) =
+            await AprovisionarTenantAsync(nameof(UnVendedorNoPuedeListarProveedores));
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorNoPuedeListarProveedores));
+        using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
+
+        var respuesta = await vendedor.GetAsync("/api/proveedores");
+
+        Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
+    }
+
+    /// <summary>Mismo criterio que el listado de arriba, para <c>GET /{id}</c>: sigue Admin-only
+    /// (nunca se movió a <c>OperacionDePos</c>) — solo el listado se abrió.</summary>
+    [Fact]
+    public async Task UnVendedorNoPuedeObtenerUnProveedorPorId()
+    {
+        var (idCondicionFiscalCf, mailAdmin, passwordAdmin, idTenant) =
+            await AprovisionarTenantAsync(nameof(UnVendedorNoPuedeObtenerUnProveedorPorId));
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin);
+        var alta = await admin.PostAsJsonAsync(
+            "/api/proveedores", AltaValida(idCondicionFiscalCf, "Solo admin lo obtiene"));
+        var creado = await alta.Content.ReadFromJsonAsync<ProveedorListado>();
+
+        var mailVendedor = await SembrarVendedorAsync(idTenant, nameof(UnVendedorNoPuedeObtenerUnProveedorPorId));
+        using var vendedor = await ClienteLogueadoAsync(mailVendedor, PasswordVendedor);
+
+        var respuesta = await vendedor.GetAsync($"/api/proveedores/{creado!.Id}");
 
         Assert.Equal(HttpStatusCode.Forbidden, respuesta.StatusCode);
     }

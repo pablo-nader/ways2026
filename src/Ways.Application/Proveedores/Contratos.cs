@@ -38,6 +38,13 @@ public record AltaProveedor(
     int? IdEmpresa = null,
     bool Activo = true);
 
+/// <summary>JD-A1 (judgment-day): proyección MÍNIMA para selectores fuera de la gestión de
+/// catálogo (<c>GET /api/proveedores/opciones</c>, <c>Politicas.OperacionDePos</c>) — nunca
+/// <see cref="ProveedorListado.Margen"/>, <see cref="ProveedorListado.Cuit"/> ni ningún otro
+/// dato de contacto/negocio; el listado completo sigue exigiendo
+/// <c>Politicas.GestionDeCatalogo</c>.</summary>
+public record OpcionDeProveedor(int Id, string RazonSocial, string? NombreFantasia);
+
 public record EdicionProveedor(
     string RazonSocial,
     string? NombreFantasia,

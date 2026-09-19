@@ -5,6 +5,7 @@ import { api, ErrorApi } from '../api/cliente'
 import type { ClienteListado, ComprobanteEmitido, MedioPagoListado, PuntoVentaListado, UsuarioAutenticado } from '../api/tipos'
 import { AuthContext } from '../auth/AuthContext'
 import { CajaZ } from '../paginas/CajaZ'
+import { GastosDelTurno } from '../paginas/GastosDelTurno'
 import { Pos } from '../paginas/Pos'
 import type { CajaDeEscritorio } from '../paginas/Pos'
 import { VentasDelTurno } from '../paginas/VentasDelTurno'
@@ -219,6 +220,9 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
               <Link className="btn btn-outline-light rounded-0" to="/ventas-del-turno">
                 Ventas del turno
               </Link>
+              <Link className="btn btn-outline-light rounded-0" to="/gastos-del-turno">
+                Gastos
+              </Link>
               {enEscritorio() && (
                 <button type="button" className="btn btn-outline-light rounded-0" onClick={() => void abrirConfiguracion()}>
                   Configuración
@@ -263,6 +267,7 @@ export function ShellPos({ dispositivo, usuario, puntoVenta, alCerrarSesion }: P
             <Routes>
               <Route path="/vender" element={<Pos alEmitir={alEmitirVenta} cajaDeEscritorio={cajaDeEscritorio} />} />
               <Route path="/ventas-del-turno" element={<VentasDelTurno alReimprimir={alReimprimirVenta} />} />
+              <Route path="/gastos-del-turno" element={<GastosDelTurno />} />
               <Route path="/caja/turnos/:id/z" element={<CajaZ contextoDeImpresion={contextoDeImpresion} />} />
               <Route path="*" element={<Navigate to="/vender" replace />} />
             </Routes>

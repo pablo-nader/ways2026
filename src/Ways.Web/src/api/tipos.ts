@@ -500,6 +500,16 @@ export type AltaProveedor = {
 
 export type EdicionProveedor = AltaProveedor
 
+/** Espejo de `Ways.Application.Proveedores.OpcionDeProveedor` (JD-A1, judgment-day): proyección
+ * MÍNIMA para selectores que no requieren gestión de catálogo (`GET /api/proveedores/opciones`,
+ * `Politicas.OperacionDePos`) — nunca margen, cuit, datos de contacto ni otro campo sensible del
+ * `ProveedorListado` completo (que sigue exigiendo `GestionDeCatalogo`). */
+export type OpcionDeProveedor = {
+  id: number
+  razonSocial: string
+  nombreFantasia: string | null
+}
+
 // --- Artículos y precios (stage-3-articulos-y-precios) ---
 // Entidad dedicada, no la máquina genérica de catálogos (design decision 1): 14+ campos,
 // junction de disponibilidad, colección de códigos de barra — ninguno encaja en el shape
@@ -1002,6 +1012,43 @@ export type DetalleDeTurno = {
   resumen: ResumenDeTurno
   tickets: TicketDeTurno[]
   gastos: GastoDeTurno[]
+}
+
+// --- Gastos del turno (stage-gastos-turno-carga-simple, POS): alta contra el turno abierto —
+// espejo de `Ways.Application.Gastos.Contratos`.
+
+/** Cuerpo de `POST /api/gastos` — espejo de `Ways.Application.Gastos.SolicitudDeGasto`. Sin
+ * `idTurnoCaja`: el servidor lo resuelve del `idPuntoVenta` (spec: Gasto Requires An Open
+ * Turno), nunca viaja en el cuerpo. */
+export type SolicitudDeGasto = {
+  idPuntoVenta: number
+  categoria: CategoriaGasto
+  idProveedor: number | null
+  idArea: number | null
+  concepto: string
+  detalle: string | null
+  idMedioPago: number
+  numeroFactura: string | null
+  importe: number
+  idComprobanteCompra: number | null
+}
+
+/** Respuesta de `POST /api/gastos` — espejo de `Ways.Application.Gastos.GastoRegistrado`. */
+export type GastoRegistrado = {
+  id: number
+  idTurnoCaja: number
+  idPuntoVenta: number
+  fecha: string
+  categoria: CategoriaGasto
+  idProveedor: number | null
+  idArea: number | null
+  concepto: string
+  detalle: string | null
+  idMedioPago: number
+  numeroFactura: string | null
+  importe: number
+  idEmpleado: number
+  idComprobanteCompra: number | null
 }
 
 // --- Tesorería (G3): libro encadenado (stage-11-exportacion-reportes, Slice 7) — espejo de

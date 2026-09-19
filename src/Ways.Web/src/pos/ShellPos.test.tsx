@@ -336,6 +336,36 @@ describe('ShellPos', () => {
     expect(abrirConfiguracionMock).toHaveBeenCalledTimes(1)
   })
 
+  it('"Gastos" navega a la pantalla de gastos del turno', async () => {
+    mockearRutasDePos((ruta) => {
+      if (ruta === '/caja/turnos/abierto?idPuntoVenta=7') return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
+      if (ruta === '/proveedores/opciones') return Promise.resolve([])
+      if (ruta === '/caja/turnos/501/detalle') {
+        return Promise.resolve({
+          resumen: {
+            idTurnoCaja: 501,
+            idMedioAncla: 1,
+            medios: [],
+            cantidadTickets: 0,
+            primerTicket: null,
+            ultimoTicket: null,
+            ingresosPorArea: [],
+            egresos: { porCategoria: [], porArea: [], retiros: 0 },
+          },
+          tickets: [],
+          gastos: [],
+        })
+      }
+      return undefined
+    })
+    renderShell()
+
+    await userEvent.click(await screen.findByRole('link', { name: 'Gastos' }))
+
+    expect(await screen.findByText('Gastos del turno')).toBeInTheDocument()
+    expect(await screen.findByText('Este turno todavía no tiene gastos.')).toBeInTheDocument()
+  })
+
   it('"Cerrar sesión" llama a POST /auth/logout y avisa alCerrarSesion', async () => {
     const alCerrarSesion = vi.fn()
     render(

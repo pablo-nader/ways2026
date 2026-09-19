@@ -38,6 +38,7 @@ public class ServicioDeGastos(
         var momento = reloj.Ahora;
 
         ExigirImporteValido(solicitud.Importe);
+        ExigirConceptoValido(solicitud.Concepto);
         // spec: gastos / A Comprobante Compra Link Requires Categoria Proveedor — "rejected
         // before reaching the database": chequeo de dominio puro, ANTES de cualquier consulta.
         ExigirCategoriaCoherenteConLaCompra(solicitud.Categoria, solicitud.IdComprobanteCompra);
@@ -105,6 +106,20 @@ public class ServicioDeGastos(
         if (importe <= 0m)
         {
             throw new ErrorDominio("gasto_importe_invalido", "El importe del gasto tiene que ser positivo.", 400);
+        }
+    }
+
+    /// <summary>stage-gastos-turno-carga-simple (web slice — Ways.Web va a mandar
+    /// <c>concepto = observaciones.trim() || "Gasto del turno"</c>, así que un blanco/espacios
+    /// nunca debería llegar desde el POS, pero el contrato HTTP no lo impide): chequeo de dominio
+    /// puro, ANTES de cualquier consulta, mismo criterio que <see cref="ExigirImporteValido"/> —
+    /// nunca dejar que un <c>concepto</c> en blanco/espacios llegue a persistirse.</summary>
+    private static void ExigirConceptoValido(string concepto)
+    {
+        if (string.IsNullOrWhiteSpace(concepto))
+        {
+            throw new ErrorDominio(
+                "gasto_concepto_requerido", "El concepto del gasto es obligatorio.", 400);
         }
     }
 

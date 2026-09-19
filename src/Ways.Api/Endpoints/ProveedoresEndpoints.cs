@@ -47,6 +47,20 @@ public static class ProveedoresEndpoints
         })
         .WithSummary("Baja lógica del proveedor.");
 
+        // JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple, que había movido
+        // TODO el grupo (incluida la proyección completa de ProveedorListado — margen, cuit,
+        // domicilio, contactos) a OperacionDePos para que el selector de proveedor del formulario
+        // de gastos pudiera listar. El listado admin-only vuelve al shape anterior; el selector
+        // usa la ruta mínima de abajo, mismo criterio de least-privilege que el saldo — mapeada
+        // TOP-LEVEL sobre `app`, nunca sobre `grupo`: apilarla ahí compondría con
+        // GestionDeCatalogo (AND) y dejaría afuera al Vendedor que el selector necesita habilitar.
+        app.MapGet("/api/proveedores/opciones", (
+            ServicioDeProveedores servicio, CancellationToken ct) =>
+            servicio.ListarOpcionesAsync(ct))
+        .WithTags("Proveedores")
+        .RequireAuthorization(Politicas.OperacionDePos)
+        .WithSummary("Proyección mínima (id, razón social, nombre de fantasía) de proveedores activos, para selectores fuera de la gestión de catálogo.");
+
         // stage-8-compras-transferencias-inventario (Slice 4, task 4.3, design: API Surface — el
         // trap de composición AND): mapeada TOP-LEVEL sobre `app`, nunca sobre `grupo` —
         // apilarla ahí compondría con GestionDeCatalogo (AND) y dejaría la lectura Admin-only,

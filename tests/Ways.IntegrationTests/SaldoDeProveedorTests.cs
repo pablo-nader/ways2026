@@ -34,6 +34,11 @@ namespace Ways.IntegrationTests;
 /// <c>/api/proveedores</c> es <c>GestionDeCatalogo</c>), el presupuesto de consultas y la prueba
 /// del arqueo byte-intacto (task 4.9). El backstop de esquema del proveedor referenciado (task
 /// 4.10) también vive acá — mismo agregado que el resto de esta slice.
+///
+/// JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple — el LISTADO
+/// (<c>GET /api/proveedores</c>) vuelve a ser <c>GestionDeCatalogo</c> (ver
+/// <c>ProveedoresEndpointsTests</c>); el selector de proveedor del formulario de gastos usa la
+/// proyección mínima separada <c>GET /api/proveedores/opciones</c>.
 /// </summary>
 [Collection("Ways.IntegrationTests secuencial")]
 public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysApiFixture>
@@ -366,13 +371,20 @@ public class SaldoDeProveedorTests(WaysApiFixture fixture) : IClassFixture<WaysA
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
     }
 
+    /// <summary>JD-A1 (judgment-day): reversión de stage-gastos-turno-carga-simple — el listado
+    /// vuelve a ser Admin-only (200 ya no es lo esperado para el vendedor); obtener por id sigue
+    /// Admin-only sin cambios, y el saldo sigue siempre abierto (regresión de la AND-composition
+    /// de arriba, intacta).</summary>
     [Fact]
-    public async Task UnVendedorEsRechazadoDelAbmDeProveedoresPeroNoDelSaldo()
+    public async Task UnVendedorNoPuedeListarNiObtenerProveedoresPeroSiLeeElSaldo()
     {
-        var ctx = await PrepararAsync(nameof(UnVendedorEsRechazadoDelAbmDeProveedoresPeroNoDelSaldo));
+        var ctx = await PrepararAsync(nameof(UnVendedorNoPuedeListarNiObtenerProveedoresPeroSiLeeElSaldo));
 
         var listado = await ctx.Vendedor.GetAsync("/api/proveedores");
         Assert.Equal(HttpStatusCode.Forbidden, listado.StatusCode);
+
+        var detalle = await ctx.Vendedor.GetAsync($"/api/proveedores/{ctx.IdProveedor}");
+        Assert.Equal(HttpStatusCode.Forbidden, detalle.StatusCode);
 
         var saldo = await ctx.Vendedor.GetAsync($"/api/proveedores/{ctx.IdProveedor}/saldo");
         Assert.Equal(HttpStatusCode.OK, saldo.StatusCode);
