@@ -1454,6 +1454,14 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
     await screen.findByText('No hay un turno abierto')
 
+    // judgment-day JD-E2-1 (CRITICAL): mientras el gate está arriba, la franja/header nunca puede
+    // seguir mostrando "Caja abierta" ni un "Cerrar caja" habilitado — contradiría al propio gate
+    // ("No hay un turno abierto"). El 409 es la confirmación más autoritativa de que el turno está
+    // cerrado, así que acá tiene que verse "Caja cerrada".
+    expect(screen.queryByText('Caja abierta')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cerrar caja' })).not.toBeInTheDocument()
+    expect(screen.getByText('Caja cerrada')).toBeInTheDocument()
+
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/caja/turnos') return Promise.resolve(turnoAbiertoFixture({ id: 999 }))
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))

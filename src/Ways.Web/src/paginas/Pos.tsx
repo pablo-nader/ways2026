@@ -1548,6 +1548,16 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       // stage-6-turnos-caja (Slice 7): el gate seam reemplaza el panel entero, no un aviso más
       // — reintentar el checkout sin turno abierto solo repetiría el mismo 409.
       if (e instanceof ErrorApi && e.codigo === 'turno_no_abierto') {
+        // judgment-day JD-E2-1 (CRITICAL): el 409 es la confirmación más autoritativa posible de
+        // que el turno está cerrado — sin este reset, `turno` seguía en su último valor
+        // confirmado ("abierto"), así que `controlesTurno`/`franjaDeCaja` (header/franja)
+        // contradecía al propio gate que se abre acá abajo: "Caja abierta" y un "Cerrar caja"
+        // habilitado a la vista mientras `PanelGateTurno` decía "No hay un turno abierto". Mismo
+        // criterio que `turnoConfirmadoAbierto`: bumpear la generación invalida cualquier `GET
+        // …/abierto` en vuelo desde antes (ej. un "Cerrar caja" concurrente) que pudiera pisar
+        // este reset con un "abierto" stale.
+        generacionTurnoRef.current += 1
+        setTurno(null)
         setGateTurno(true)
       } else {
         setErrorCobro(e instanceof ErrorApi ? e.message : 'No se pudo registrar la venta.')
