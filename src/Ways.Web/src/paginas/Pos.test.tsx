@@ -377,13 +377,41 @@ describe('Pos — formato de moneda negativa (regresión, INFO recurrente desde 
 })
 
 describe('Pos — carga inicial', () => {
-  it('selecciona el Consumidor Final por defecto y muestra el punto de venta de la sesión', async () => {
+  it('selecciona el Consumidor Final por defecto', async () => {
     renderPos()
 
     expect(await screen.findByRole('option', { name: /Consumidor Final/ })).toBeInTheDocument()
     expect(screen.getByLabelText('Cliente')).toHaveValue(String(consumidorFinal.id))
-    expect(screen.getByText('Local Centro')).toBeInTheDocument()
     expect(screen.queryByLabelText('Punto de venta')).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — franja de caja en la app web (stage-pos-caja-en-cabecera)', () => {
+  it('la franja (arriba del carrito) muestra el estado de caja; "Datos de la venta" ya no tiene la línea de punto de venta ni el bloque de turno', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByText('Caja abierta')
+
+    expect(screen.queryByText('Punto de venta:')).not.toBeInTheDocument()
+
+    const panelDatos = screen.getByText('Datos de la venta').closest('.box') as HTMLElement
+    expect(within(panelDatos).queryByText('Caja abierta')).not.toBeInTheDocument()
+    expect(within(panelDatos).queryByRole('button', { name: 'Cerrar caja' })).not.toBeInTheDocument()
+
+    // La franja vive en un contenedor propio, antes del carrito ("Datos de la venta" no la tiene).
+    const franja = screen.getByText('Caja abierta').closest('.container-fluid') as HTMLElement
+    expect(within(franja).getByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
+    expect(franja).not.toBe(panelDatos)
+  })
+
+  it('con la caja cerrada, la franja muestra "Abrir caja" y el aviso del carrito sigue apareciendo', async () => {
+    mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+
+    expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Abrir caja' })).toBeInTheDocument()
+    expect(screen.getByText('Caja cerrada: abrí la caja para vender.')).toBeInTheDocument()
   })
 })
 
@@ -395,17 +423,15 @@ describe('Pos — punto de venta de sesión (react-async-state regla 8)', () => 
    * 2): con el `key` reducido a `idPresupuesto ?? 'libre'`, este test falla ("Coca Cola 1L" sigue
    * en el carrito); restaurado, vuelve a verde.
    */
-  it('un cambio del punto de venta de sesión remonta la pantalla: el carrito se vacía y se muestra el nombre nuevo', async () => {
+  it('un cambio del punto de venta de sesión remonta la pantalla: el carrito se vacía', async () => {
     const puntoVentaNorte = puntoVentaFixture({ id: 8, nombre: 'Sucursal Norte' })
     estadoDePuntoVenta.puntosVenta = [puntoVentaCentro, puntoVentaNorte]
     const { rerender } = await armarCarritoConUnaLinea()
-    expect(screen.getByText('Local Centro')).toBeInTheDocument()
+    expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
 
     estadoDePuntoVenta.puntoVenta = puntoVentaNorte
     rerender(arbolDePos())
 
-    expect(screen.getByText('Sucursal Norte')).toBeInTheDocument()
-    expect(screen.queryByText('Local Centro')).not.toBeInTheDocument()
     expect(screen.queryByText('Coca Cola 1L')).not.toBeInTheDocument()
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
 
@@ -423,7 +449,6 @@ describe('Pos — punto de venta de sesión (react-async-state regla 8)', () => 
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
     expect(screen.getByText('Sin puntos de venta disponibles')).toBeInTheDocument()
-    expect(screen.queryByText('Local Centro')).not.toBeInTheDocument()
 
     await userEvent.type(screen.getByLabelText('Código escaneado'), '7790001234567')
     await userEvent.click(screen.getByRole('button', { name: 'Agregar' }))
@@ -649,10 +674,6 @@ describe('Pos — vista previa de precios', () => {
     await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 1)'), '500')
     await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
 
-    // Sin total confiable, el vuelto sugerido no puede ser el importe tendido completo — el
-    // cajero no tocó el campo de vuelto, tiene que seguir mostrando 0.
-    expect(screen.getByLabelText('Vuelto de Efectivo (fila 1)')).toHaveValue('0,00')
-
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
     await waitFor(() => expect(apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')).toBe(true))
@@ -875,24 +896,63 @@ describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
     expect(await screen.findByRole('option', { name: medioCuentaCorriente.nombre })).toBeInTheDocument()
   })
 
-  it('el input de vuelto está deshabilitado para un medio sin AdmiteVuelto', async () => {
-    renderPos()
-    await screen.findByRole('option', { name: /Consumidor Final/ })
-    await screen.findByRole('option', { name: medioTarjeta.nombre })
-
-    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioTarjeta.nombre)
-
-    expect(screen.getByLabelText(`Vuelto de ${medioTarjeta.nombre} (fila 1)`)).toBeDisabled()
-  })
-
-  it('el input de vuelto queda habilitado para un medio con AdmiteVuelto', async () => {
+  it('no hay ningún input de vuelto en el panel de pagos (etapa 2: se saca el override manual)', async () => {
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
     await screen.findByRole('option', { name: medioEfectivo.nombre })
 
     await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
 
-    expect(screen.getByLabelText(`Vuelto de ${medioEfectivo.nombre} (fila 1)`)).toBeEnabled()
+    expect(screen.queryByLabelText(/^Vuelto de/)).not.toBeInTheDocument()
+  })
+})
+
+describe('Pos — panel de pagos: referencia solo para el medio que la requiere', () => {
+  it('la referencia queda oculta para un medio que no la requiere (Efectivo)', async () => {
+    renderPos()
+    await screen.findByRole('option', { name: /Consumidor Final/ })
+    await screen.findByRole('option', { name: medioEfectivo.nombre })
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+
+    expect(screen.queryByLabelText(`Referencia de ${medioEfectivo.nombre} (fila 1)`)).not.toBeInTheDocument()
+  })
+
+  it('la referencia aparece para el medio que la requiere (Tarjeta), con el placeholder "requerida", y el checkout la envía', async () => {
+    await armarCarritoConUnaLinea()
+    await screen.findByRole('option', { name: medioTarjeta.nombre })
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioTarjeta.nombre)
+    expect(screen.queryByLabelText(`Referencia de ${medioEfectivo.nombre} (fila 1)`)).not.toBeInTheDocument()
+
+    const referencia = await screen.findByLabelText(`Referencia de ${medioTarjeta.nombre} (fila 1)`)
+    expect(referencia).toHaveAttribute('placeholder', 'Referencia (requerida)')
+    await userEvent.type(referencia, 'auth-999')
+
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioTarjeta.nombre} (fila 1)`), '100')
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    await waitFor(() => expect(apiPostMock.mock.calls.some((llamada) => llamada[0] === '/ventas')).toBe(true))
+    const llamadaVentas = apiPostMock.mock.calls.find((llamada) => llamada[0] === '/ventas')
+    const solicitud = llamadaVentas?.[1] as {
+      pagos: { idMedioPago: number; importe: number; referencia: string | null; vuelto: number }[]
+    }
+
+    expect(solicitud.pagos).toEqual([{ idMedioPago: medioTarjeta.id, importe: 100, referencia: 'auth-999', vuelto: 0 }])
+  })
+
+  it('sin cargar la referencia requerida, la validación local rechaza el cobro (Cobrar sigue deshabilitado)', async () => {
+    await armarCarritoConUnaLinea()
+    await screen.findByRole('option', { name: medioTarjeta.nombre })
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioTarjeta.nombre)
+    await userEvent.type(await screen.findByLabelText(`Importe de ${medioTarjeta.nombre} (fila 1)`), '100')
+
+    await waitFor(() =>
+      expect(screen.getByText('Este medio de pago requiere una referencia.')).toBeInTheDocument(),
+    )
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
   })
 })
 
@@ -1381,9 +1441,9 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
     expect(apiPostMock.mock.calls.filter((c) => c[0] === '/ventas')).toHaveLength(1)
   })
 
-  it('el 409 también refresca el badge de turno de "Datos de la venta" (deja de mostrar "Turno abierto" y vuelve a mostrarlo tras reabrir)', async () => {
+  it('el 409 también refresca el badge de caja de la franja/header (deja de mostrar "Caja abierta" y vuelve a mostrarlo tras reabrir)', async () => {
     await armarVentaLista()
-    expect(screen.getByText('Turno abierto')).toBeInTheDocument()
+    expect(screen.getByText('Caja abierta')).toBeInTheDocument()
 
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/ventas') {
@@ -1402,7 +1462,7 @@ describe('Pos — gate seam de turno de caja (stage-6-turnos-caja, Slice 7)', ()
     await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
 
     await screen.findByRole('button', { name: /Cobrar/ })
-    expect(screen.getByText('Turno abierto')).toBeInTheDocument()
+    expect(screen.getByText('Caja abierta')).toBeInTheDocument()
   })
 })
 
@@ -1414,19 +1474,19 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     })
   }
 
-  it('turno confirmado abierto: badge "Turno abierto" y acción "Cerrar caja"', async () => {
+  it('turno confirmado abierto: badge "Caja abierta" y acción "Cerrar caja"', async () => {
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
-    expect(await screen.findByText('Turno abierto')).toBeInTheDocument()
+    expect(await screen.findByText('Caja abierta')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Cerrar caja' })).toBeInTheDocument()
-    expect(screen.queryByText('Turno cerrado: abrí un turno para vender.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Caja cerrada: abrí la caja para vender.')).not.toBeInTheDocument()
   })
 
   it('"Cerrar caja" navega a /caja/cierre con el idTurno real', async () => {
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
-    await screen.findByText('Turno abierto')
+    await screen.findByText('Caja abierta')
 
     await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
 
@@ -1435,14 +1495,14 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     expect(await screen.findByText(`Cierre de turno ${turnoAbiertoFixture().id}`)).toBeInTheDocument()
   })
 
-  it('turno confirmado cerrado: badge "Turno cerrado", aviso claro y solo la búsqueda de artículos queda operable', async () => {
+  it('turno confirmado cerrado: badge "Caja cerrada", aviso claro y solo la búsqueda de artículos queda operable', async () => {
     mockearTurnoCerrado()
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
-    expect(await screen.findByText('Turno cerrado')).toBeInTheDocument()
-    expect(screen.getByText('Turno cerrado: abrí un turno para vender.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeInTheDocument()
+    expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
+    expect(screen.getByText('Caja cerrada: abrí la caja para vender.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Abrir caja' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Cerrar caja' })).not.toBeInTheDocument()
 
     // Escaneo/agregar y edición de carrito: deshabilitados.
@@ -1482,7 +1542,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
 
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
-    await screen.findByText('Turno cerrado')
+    await screen.findByText('Caja cerrada')
 
     await userEvent.click(screen.getByRole('button', { name: 'Buscar artículo' }))
     const dialogo = within(await screen.findByRole('dialog', { name: 'Buscar artículo' }))
@@ -1501,11 +1561,11 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     expect(screen.getByRole('dialog', { name: 'Buscar artículo' })).toBeInTheDocument()
   })
 
-  it('"Abrir turno" (reutiliza PanelGateTurno) abre el turno y habilita todo sin recargar la página, con el input de código enfocado', async () => {
+  it('"Abrir caja" (reutiliza PanelGateTurno) abre el turno y habilita todo sin recargar la página, con el input de código enfocado', async () => {
     mockearTurnoCerrado()
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
-    await screen.findByText('Turno cerrado')
+    await screen.findByText('Caja cerrada')
     expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
 
     apiPostMock.mockImplementation((ruta: string) => {
@@ -1513,12 +1573,12 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
       return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
     })
 
-    await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Abrir caja' }))
     await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
     await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
 
-    await screen.findByText('Turno abierto')
-    expect(screen.queryByText('Turno cerrado: abrí un turno para vender.')).not.toBeInTheDocument()
+    await screen.findByText('Caja abierta')
+    expect(screen.queryByText('Caja cerrada: abrí la caja para vender.')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toBeEnabled())
     expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
     expect(screen.getByRole('button', { name: 'Agregar' })).toBeEnabled()
@@ -1571,7 +1631,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     mockearTurnoCerrado()
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
-    await screen.findByText('Turno cerrado')
+    await screen.findByText('Caja cerrada')
 
     expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
   })
@@ -1634,7 +1694,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
     estadoDePuntoVenta.puntoVenta = puntoVentaFixture()
     rerender(arbolDePos())
     await waitFor(() => expect(cantidadDeConsultas).toBe(2))
-    await screen.findByText('Turno abierto')
+    await screen.findByText('Caja abierta')
 
     await act(async () => {
       resolverPrimera(null)
@@ -1644,8 +1704,8 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
 
     // La respuesta vieja ("turno cerrado") no debe pisar el turno ya confirmado por la corrida
     // más reciente.
-    expect(screen.getByText('Turno abierto')).toBeInTheDocument()
-    expect(screen.queryByText('Turno cerrado: abrí un turno para vender.')).not.toBeInTheDocument()
+    expect(screen.getByText('Caja abierta')).toBeInTheDocument()
+    expect(screen.queryByText('Caja cerrada: abrí la caja para vender.')).not.toBeInTheDocument()
   })
 
   describe('judgment-day ronda 1 — T1 (CRITICAL): "Reintentar" cuando falla la consulta del turno', () => {
@@ -1658,14 +1718,14 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
 
       expect(await screen.findByText('No se pudo consultar el turno abierto de este punto de venta.')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Reintentar' })).toBeInTheDocument()
-      // Sin esto, ni "Abrir turno" ni "Cerrar caja" existen y `bloqueadoPorTurno` queda en `true`
+      // Sin esto, ni "Abrir caja" ni "Cerrar caja" existen y `bloqueadoPorTurno` queda en `true`
       // para siempre — el propio ternario del badge solo renderiza el aviso de error.
-      expect(screen.queryByRole('button', { name: 'Abrir turno' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Abrir caja' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Cerrar caja' })).not.toBeInTheDocument()
       expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
     })
 
-    it('"Reintentar" con éxito habilita la venta (badge "Turno abierto", input de código habilitado)', async () => {
+    it('"Reintentar" con éxito habilita la venta (badge "Caja abierta", input de código habilitado)', async () => {
       let cantidadDeConsultas = 0
       mockearApiGet((ruta) => {
         if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
@@ -1679,7 +1739,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
 
       await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
 
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
       expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
       await waitFor(() => expect(screen.getByLabelText('Código escaneado')).toBeEnabled())
     })
@@ -1721,7 +1781,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
         resolverSegunda(turnoAbiertoFixture())
         await Promise.resolve()
       })
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
       // Un solo reintento nuevo además de la consulta original del mount (que fue la que falló).
       expect(cantidadDeConsultas).toBe(2)
     })
@@ -1739,7 +1799,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
       })
       renderPos()
       await screen.findByRole('option', { name: /Consumidor Final/ })
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
 
@@ -1760,7 +1820,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
       })
       renderPos()
       await screen.findByRole('option', { name: /Consumidor Final/ })
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
 
@@ -1781,13 +1841,13 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
       })
       renderPos()
       await screen.findByRole('option', { name: /Consumidor Final/ })
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
 
       expect(await screen.findByText('El turno ya fue cerrado.')).toBeInTheDocument()
-      expect(await screen.findByText('Turno cerrado')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeInTheDocument()
+      expect(await screen.findByText('Caja cerrada')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Abrir caja' })).toBeInTheDocument()
       expect(screen.queryByText(/Cierre de turno/)).not.toBeInTheDocument()
     })
 
@@ -1802,13 +1862,13 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
       })
       renderPos()
       await screen.findByRole('option', { name: /Consumidor Final/ })
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
 
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
 
       expect(await screen.findByText('No se pudo verificar el turno abierto.')).toBeInTheDocument()
       // El badge de turno sigue "abierto" (esta consulta es propia del click, no del mount/reintentar).
-      expect(screen.getByText('Turno abierto')).toBeInTheDocument()
+      expect(screen.getByText('Caja abierta')).toBeInTheDocument()
       expect(screen.queryByText(/Cierre de turno/)).not.toBeInTheDocument()
     })
 
@@ -1821,7 +1881,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
       })
       renderPos()
       await screen.findByRole('option', { name: /Consumidor Final/ })
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
       const boton = screen.getByRole('button', { name: 'Cerrar caja' })
 
       fireEvent.click(boton)
@@ -1834,30 +1894,30 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
   })
 
   describe('re-judgment ronda 2 — warnings', () => {
-    it('"El turno ya fue cerrado." desaparece apenas se abre un turno de nuevo (Abrir turno)', async () => {
+    it('"El turno ya fue cerrado." desaparece apenas se abre un turno de nuevo (Abrir caja)', async () => {
       mockearApiGet((ruta) => {
         if (!ruta.startsWith('/caja/turnos/abierto')) return undefined
         return Promise.resolve<TurnoResumen>(turnoAbiertoFixture())
       })
       renderPos()
       await screen.findByRole('option', { name: /Consumidor Final/ })
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
 
       // "Cerrar caja" encuentra que ya no hay turno (cerrado por otra pestaña mientras tanto).
       mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
       expect(await screen.findByText('El turno ya fue cerrado.')).toBeInTheDocument()
-      await screen.findByText('Turno cerrado')
+      await screen.findByText('Caja cerrada')
 
       apiPostMock.mockImplementation((ruta: string) => {
         if (ruta === '/caja/turnos') return Promise.resolve(turnoAbiertoFixture({ id: 8080 }))
         return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
       })
-      await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Abrir caja' }))
       await userEvent.type(screen.getByLabelText('Fondo inicial'), '500')
       await userEvent.click(screen.getByRole('button', { name: 'Abrir turno' }))
 
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
       expect(screen.queryByText('El turno ya fue cerrado.')).not.toBeInTheDocument()
     })
 
@@ -1871,7 +1931,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
       mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(turnoAbiertoFixture()) : undefined))
       const { rerender } = renderPos()
       await screen.findByRole('option', { name: /Consumidor Final/ })
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
 
       mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? Promise.resolve(null) : undefined))
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
@@ -1882,7 +1942,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
       rerender(arbolDePos())
 
       await waitFor(() => expect(screen.queryByText('El turno ya fue cerrado.')).not.toBeInTheDocument())
-      expect(screen.getByText('Turno abierto')).toBeInTheDocument()
+      expect(screen.getByText('Caja abierta')).toBeInTheDocument()
     })
 
     /**
@@ -1908,7 +1968,7 @@ describe('Pos — estado del turno del punto de venta (stage-pos-turno-y-foco)',
         </MemoryRouter>,
       )
       await screen.findByRole('option', { name: /Consumidor Final/ })
-      await screen.findByText('Turno abierto')
+      await screen.findByText('Caja abierta')
 
       mockearApiGet((ruta) => (ruta.startsWith('/caja/turnos/abierto') ? consultaPendiente : undefined))
       await userEvent.click(screen.getByRole('button', { name: 'Cerrar caja' }))
@@ -1953,7 +2013,7 @@ describe('Pos — medio de pago por defecto: Efectivo (stage-pos-turno-y-foco)',
 })
 
 describe('Pos — checkout: split de pago con el mismo medio', () => {
-  it('dos filas de Efectivo (split de pago) no colapsan: cada una envía su propio importe y vuelto', async () => {
+  it('dos filas de Efectivo (split de pago) no colapsan: cada una envía su propio importe, el vuelto auto-calculado se lo lleva la primera', async () => {
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
 
@@ -1969,15 +2029,9 @@ describe('Pos — checkout: split de pago con el mismo medio', () => {
     await userEvent.selectOptions(screen.getAllByLabelText('Medio de pago')[1], medioEfectivo.nombre)
     await userEvent.type(await screen.findByLabelText('Importe de Efectivo (fila 2)'), '50')
 
-    // Con ambos importes cargados (60 + 50 = 110 sobre un total de 100), el excedente es 10 y el
-    // sugerido por defecto se lo lleva íntegro la fila 1 (la primera que admite vuelto) — recién
-    // acá, contra un valor sugerido ya no-cero, la sobreescritura manual de la fila 1 a "0" es un
-    // cambio real de valor (dispara el evento); si se sobrescribiera antes, con el sugerido
-    // todavía en 0, el input ya mostraría "0" y React no dispararía `onChange` por no detectar
-    // una diferencia real.
-    fireEvent.change(screen.getByLabelText('Vuelto de Efectivo (fila 1)'), { target: { value: '0' } })
-    fireEvent.change(screen.getByLabelText('Vuelto de Efectivo (fila 2)'), { target: { value: '10' } })
-
+    // Con ambos importes cargados (60 + 50 = 110 sobre un total de 100), el excedente es 10 — sin
+    // ningún override manual (la etapa 2 sacó ese input), el sugerido se lo lleva íntegro la fila
+    // 1 (la primera que admite vuelto, `calcularPagosConVuelto`), nunca la fila 2.
     await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
@@ -1988,8 +2042,8 @@ describe('Pos — checkout: split de pago con el mismo medio', () => {
     }
 
     expect(solicitud.pagos).toEqual([
-      { idMedioPago: medioEfectivo.id, importe: 60, referencia: null, vuelto: 0 },
-      { idMedioPago: medioEfectivo.id, importe: 50, referencia: null, vuelto: 10 },
+      { idMedioPago: medioEfectivo.id, importe: 60, referencia: null, vuelto: 10 },
+      { idMedioPago: medioEfectivo.id, importe: 50, referencia: null, vuelto: 0 },
     ])
   })
 })
@@ -2458,10 +2512,7 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     expect(screen.queryByRole('button', { name: 'Quitar' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Vaciar carrito' })).not.toBeInTheDocument()
 
-    // El punto de venta lo fija el presupuesto (texto de solo lectura, nunca el de la sesión) y
-    // el cliente queda deshabilitado.
-    expect(await screen.findByText('Local Centro')).toBeInTheDocument()
-    expect(screen.queryByText('Sucursal Norte')).not.toBeInTheDocument()
+    // El cliente lo trae el presupuesto por id, queda deshabilitado (solo lectura).
     await waitFor(() => expect(screen.getByLabelText('Cliente')).toHaveValue(String(otroCliente.id)))
     expect(screen.getByLabelText('Cliente')).toBeDisabled()
 
@@ -3231,7 +3282,7 @@ describe('Pos — atajo de teclado F9 para cobrar (stage-pos-atajos-cobro)', () 
     })
     renderPos()
     await screen.findByRole('option', { name: /Consumidor Final/ })
-    await screen.findByText('Turno cerrado')
+    await screen.findByText('Caja cerrada')
 
     fireEvent.keyDown(document, { key: 'F9' })
 
