@@ -1379,6 +1379,34 @@ describe('Articulos — Baja de un artículo desde la grilla', () => {
   })
 })
 
+describe('Articulos — un guardado exitoso refresca la grilla', () => {
+  /**
+   * Cláusula bajo prueba: el bump de `pedidoDeRefresco` en `guardar()` (Articulos.tsx), hermano del
+   * de `eliminar()` (mutation-proof-tests regla 15). El nombre que devuelve el PUT y el que devuelve
+   * el listado son distintos a propósito: solo un refresco real trae el del listado.
+   */
+  it('tras guardar una edición, la grilla vuelve a pedir el listado y muestra los datos nuevos', async () => {
+    mockearApiGet()
+    apiPutMock.mockResolvedValue(articuloFixture({ id: 1, nombre: 'Articulo Uno (editado)' }))
+    renderArticulos('/articulos/edit/1')
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    expect(await screen.findByText('Articulo Uno')).toBeInTheDocument()
+
+    mockearApiGet({
+      grilla: paginaGrillaFixture([
+        filaGrillaFixture({ id: 1, codigoInterno: 'A0001', nombre: 'Articulo Uno Refrescado' }),
+        filaGrillaDos,
+      ]),
+    })
+
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Articulo Uno Refrescado')).toBeInTheDocument()
+    expect(screen.queryByText('Articulo Uno')).not.toBeInTheDocument()
+  })
+})
+
 describe('Articulos — Editar deshabilitado mientras la pantalla está ocupada', () => {
   /**
    * Cláusula bajo prueba: el `preventDefault` de `alClickearEditar` cuando `ocupado && esClicSimple`
