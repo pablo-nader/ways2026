@@ -145,6 +145,14 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
 
     // ---- feliz camino: cash+tarjeta, vuelto, retiro intra-turno, gasto en efectivo, refuerzo ----
 
+    /// <summary>Mutation-proof-tests: se corrió la mutación de verdad sobre la cláusula "fondo
+    /// declarado" de <c>ServicioDeTurnos.EjecutarCierrePorRetiroAsync</c> — cambiar
+    /// <c>l =&gt; l.IdMedioPago == idAncla ? insumos.FondoInicial : l.ImporteEsperado</c> por
+    /// <c>l =&gt; l.ImporteEsperado</c> (declarar el esperado también en el ancla) hizo fallar esta
+    /// prueba (esperado <c>500</c>, obtenido <c>1150</c>, la línea
+    /// <c>Assert.Equal(500m, arqueoEfectivo.ImporteDeclarado)</c>) y también
+    /// <c>ConImporteRetiradoEnCeroNoSeInsertaNingunMovimientoDeRetiro</c>; revertido después de
+    /// confirmar el fallo, la suite vuelve a quedar verde.</summary>
     [Fact]
     public async Task ElCierrePorRetiroDeclaraElFondoEnElAnclaYElEsperadoEnElRestoYPersisteLaTesoreria()
     {
