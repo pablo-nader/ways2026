@@ -1661,3 +1661,201 @@ describe('Articulos — rechazar la salida no remonta el modal ni pierde estado 
     expect(screen.getByText('Ubicación: /articulos/edit/2')).toBeInTheDocument()
   })
 })
+
+// ---- rechazar un Atrás/Adelante se deshace moviéndose en el historial, sin pisar entradas (H1) --
+
+describe('Articulos — rechazar una salida por Atrás/Adelante vuelve a la entrada del modal sin pisar la de llegada (H1)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  let recorrido: string[] = []
+  beforeEach(() => {
+    recorrido = []
+  })
+
+  function Ubicacion() {
+    const { pathname } = useLocation()
+    useEffect(() => {
+      recorrido.push(pathname)
+    }, [pathname])
+    return <p>Ubicación: {pathname}</p>
+  }
+
+  function ArnesConHistorial() {
+    const navigate = useNavigate()
+    return (
+      <>
+        <button type="button" onClick={() => navigate(-1)}>
+          Atrás
+        </button>
+        <button type="button" onClick={() => navigate(1)}>
+          Adelante
+        </button>
+        <button type="button" onClick={() => navigate('/articulos/edit/2')}>
+          Ir a la edición 2
+        </button>
+        <Ubicacion />
+        <Articulos />
+      </>
+    )
+  }
+
+  function renderDesde(ruta: string) {
+    return render(
+      <MemoryRouter initialEntries={[ruta]}>
+        <Routes>
+          <Route path="/articulos/*" element={<ArnesConHistorial />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  function llamadasA(ruta: string) {
+    return apiGetMock.mock.calls.filter(([r]) => r === ruta).length
+  }
+
+  /** Abre la edición 1 con el link "Editar" de la grilla, como el usuario: la pantalla ve pasar la
+   * entrada de la grilla y la de la edición. Un `initialIndex` sobre entradas previas montaría la
+   * pantalla directo en el modal, con la entrada de llegada sin posición conocida. */
+  async function abrirEdicionUnoDesdeLaGrilla() {
+    renderDesde('/articulos')
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
+    return screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+  }
+
+  /**
+   * Cláusula bajo prueba: `navigate(desplazamiento)` al rechazar una salida por POP (Articulos.tsx).
+   * Mutation-proof-tests: volver al `replace` pisa la entrada de la grilla con la de la edición y el
+   * segundo Atrás ya no llega a /articulos; invertir el signo del desplazamiento deja la URL en
+   * /articulos con el modal montado.
+   */
+  it('Atrás rechazado vuelve a la edición con el mismo diálogo y lo tipeado; el siguiente Atrás aceptado llega a la grilla', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true)
+    const dialogo = await abrirEdicionUnoDesdeLaGrilla()
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+    await userEvent.type(within(dialogo).getByPlaceholderText('Código de barras'), '7790001')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await act(async () => {})
+
+    expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBe(dialogo)
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
+    expect(within(dialogo).getByPlaceholderText('Código de barras')).toHaveValue('7790001')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await act(async () => {})
+
+    expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
+  })
+
+  it('tras rechazar un Atrás, otro Atrás aceptado pregunta una sola vez más y termina en /articulos', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true)
+    const dialogo = await abrirEdicionUnoDesdeLaGrilla()
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await act(async () => {})
+
+    // Volver a la entrada del modal no es otra salida: no vuelve a preguntar.
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await act(async () => {})
+
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(recorrido).toEqual(['/articulos', '/articulos/edit/1', '/articulos', '/articulos/edit/1', '/articulos'])
+    expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
+  })
+
+  it('Adelante rechazado vuelve a la edición 1; el siguiente Adelante aceptado carga la edición 2, que sigue en el historial', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true)
+    renderDesde('/articulos/edit/1')
+    await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    await userEvent.click(screen.getByRole('button', { name: 'Ir a la edición 2' }))
+    await screen.findByRole('dialog', { name: 'Editando artículo A0002' })
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    expect(confirmSpy).not.toHaveBeenCalled()
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Adelante' }))
+    await act(async () => {})
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBe(dialogo)
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Adelante' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Editando artículo A0002' })).toBeInTheDocument()
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Dos')
+    expect(screen.getByText('Ubicación: /articulos/edit/2')).toBeInTheDocument()
+  })
+
+  it('con tres entradas, Atrás rechazado desde la edición 2 no pisa la edición 1: Atrás aceptado la carga y otro Atrás llega a la grilla', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true)
+    await abrirEdicionUnoDesdeLaGrilla()
+    await userEvent.click(screen.getByRole('button', { name: 'Ir a la edición 2' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0002' })
+    expect(confirmSpy).not.toHaveBeenCalled()
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await act(async () => {})
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Ubicación: /articulos/edit/2')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0002' })).toBe(dialogo)
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Articulo Dos (editado)')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Editando artículo A0001' })).toBeInTheDocument()
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Uno')
+    expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+    await act(async () => {})
+
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
+    expect(screen.getByText('Articulo Uno')).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: el `replace` para una salida que NO es POP (Articulos.tsx). Rechazar un
+   * PUSH reescribe la entrada que ese PUSH acaba de crear, así que la edición rechazada no queda
+   * como entrada "adelante". Mutation-proof-tests: deshacer también el PUSH moviéndose
+   * (`navigate(-1)`) la deja alcanzable y Adelante vuelve a preguntar por ella.
+   */
+  it('rechazar un link a otra edición no deja esa edición alcanzable con Adelante', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const dialogo = await abrirEdicionUnoDesdeLaGrilla()
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ir a la edición 2' }))
+    await act(async () => {})
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Adelante' }))
+    await act(async () => {})
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0001' })).toBe(dialogo)
+    expect(within(dialogo).getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
+    expect(llamadasA('/articulos/2')).toBe(0)
+  })
+})

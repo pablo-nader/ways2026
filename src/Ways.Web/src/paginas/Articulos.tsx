@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router'
+import { Link, NavigationType, useLocation, useNavigate, useNavigationType } from 'react-router'
 import { clienteDeArticulos } from '../api/articulos'
 import { clienteDeCatalogo, clienteDeCatalogosFiscales } from '../api/catalogos'
 import { api, ErrorApi } from '../api/cliente'
@@ -25,6 +25,7 @@ import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
 import { aAlta, aEdicion, aFormulario, formularioVacio, type Formulario } from './articulos/FormularioArticulo'
 import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
+import { desplazamientoHaciaLaAnterior, HISTORIAL_SIN_OBSERVAR, registrarEntrada } from './articulos/historialObservado'
 import { ModalDeArticulo } from './articulos/ModalDeArticulo'
 import { analizarRutaModal, type ModoModalDeArticulo } from './articulos/rutaModal'
 
@@ -70,6 +71,7 @@ function rutaDeDestino(destino: DestinoModal): string {
 export function Articulos() {
   const location = useLocation()
   const navigate = useNavigate()
+  const navigationType = useNavigationType()
   const { modo, idParam } = analizarRutaModal(location.pathname)
 
   const [pagina, setPagina] = useState<PaginaDe<ArticuloListado> | null>(null)
@@ -116,6 +118,9 @@ export function Articulos() {
   // Ref y estado se actualizan siempre juntos, solo cuando la salida o apertura ya quedó decidida.
   const destinoModalRef = useRef<DestinoModal>(null)
   const [destinoMostrado, setDestinoMostrado] = useState<DestinoModal>(null)
+  // Posición relativa de las entradas del historial vistas, para deshacer un Atrás/Adelante
+  // rechazado volviendo a la entrada del modal (ver `historialObservado`).
+  const historialRef = useRef(HISTORIAL_SIN_OBSERVAR)
   const refBotonNuevo = useRef<HTMLButtonElement>(null)
   const ocupado = guardando || eliminando || escriturasHijas > 0
 
@@ -284,6 +289,13 @@ export function Articulos() {
     setCargandoDetalle(false)
   }
 
+  // Declarado antes del efecto de apertura a propósito: React corre los efectos en orden de
+  // declaración, así que cuando ese efecto decide una salida la entrada nueva ya quedó registrada.
+  useEffect(() => {
+    historialRef.current = registrarEntrada(historialRef.current, location.key, navigationType)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key])
+
   // Efecto de apertura: reacciona a la URL, no a clicks — así una edición abierta desde la grilla,
   // desde una URL tipeada a mano o desde "atrás/adelante" del navegador pasan siempre por el mismo
   // camino. Cuando `modo` pasa a null (URL vuelve a /articulos) se limpia todo el estado del modal
@@ -300,11 +312,18 @@ export function Articulos() {
     // La URL se fue de un modal con cambios sin guardar sin pasar por `cerrarModal` (Atrás/Adelante
     // del navegador, o un link a otra edición): la URL nueva ya está commiteada, pero el modal sigue
     // montado porque se renderiza desde `destinoMostrado`, que todavía no cambió. Si cancela, se
-    // restaura la URL del modal actual y las mismas instancias siguen vivas (formulario e hijos
+    // vuelve a la URL del modal actual y las mismas instancias siguen vivas (formulario e hijos
     // intactos); si acepta, se sigue de largo y el bloque de abajo compromete el destino nuevo.
     if (destinoModalRef.current !== null && haySinGuardar()) {
       if (!confirm(MENSAJE_CONFIRMAR_DESCARTE)) {
-        navigate(rutaDeDestino(destinoModalRef.current), { replace: true })
+        // Un POP se deshace MOVIÉNDOSE a la entrada anterior, la del modal: un `replace` pisaría la
+        // entrada a la que llegó el POP (p. ej. la de la grilla) y Atrás ya no la encontraría. Si
+        // esa entrada es anterior al montaje de esta pantalla (p. ej. tras recargar), no tiene
+        // posición conocida y se reemplaza igual. Un PUSH/REPLACE sí se deshace con `replace`:
+        // reescribe solo la entrada que esa misma navegación acaba de crear o de pisar.
+        const desplazamiento = navigationType === NavigationType.Pop ? desplazamientoHaciaLaAnterior(historialRef.current) : null
+        if (desplazamiento === null) navigate(rutaDeDestino(destinoModalRef.current), { replace: true })
+        else navigate(desplazamiento)
         return
       }
     }
