@@ -828,6 +828,43 @@ describe('GrillaDeArticulos — página fuera de rango tras una Baja (GW1)', () 
   })
 
   /**
+   * Cláusula bajo prueba: `ultimaPaginaValida` en el clamp de `cargar` (GW14) — con esta fixture
+   * la página válida real es 3, no 1. Mutation-proof-tests: un mutante que reemplace la fórmula por
+   * un `1` fijo pediría `pagina=1` (con datos de la página 3 disfrazados) en vez de `pagina=3`.
+   */
+  it('el clamp pide la última página válida real (no la fija a 1) cuando el total baja pero sigue habiendo varias páginas', async () => {
+    const respuestaSegunPagina = (pagina: number, total: number) =>
+      paginaFixture([filaFixture({ id: pagina, nombre: `Item pagina ${pagina}` })], { total, tamanio: 10, pagina })
+
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (!ruta.startsWith('/articulos/grilla')) return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      const coincidencia = /pagina=(\d+)/.exec(ruta)
+      const pagina = coincidencia ? Number(coincidencia[1]) : 1
+      return Promise.resolve(respuestaSegunPagina(pagina, 50))
+    })
+    const { rerenderCon } = renderGrilla()
+    await screen.findByText('Item pagina 1')
+
+    for (let i = 2; i <= 5; i++) {
+      await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
+      await screen.findByText(`Item pagina ${i}`)
+    }
+    expect(ultimaQuery()).toContain('pagina=5')
+
+    // El refresco del padre encuentra que el total bajó a 30 (3 páginas de 10 en curso).
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (!ruta.startsWith('/articulos/grilla')) return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      if (ruta.includes('pagina=5')) return Promise.resolve(respuestaSegunPagina(5, 30))
+      return Promise.resolve(respuestaSegunPagina(3, 30))
+    })
+    rerenderCon({ pedidoDeRefresco: 2 })
+
+    await waitFor(() => expect(ultimaQuery()).toContain('pagina=3'))
+    expect(await screen.findByText('Item pagina 3')).toBeInTheDocument()
+    expect(screen.getByText(/Página 3 de 3/)).toBeInTheDocument()
+  })
+
+  /**
    * Cláusula bajo prueba: el `if (!seProgramoClamp) setCargando(false)` del `.finally` de `cargar`
    * (GW15). Mutation-proof-tests: sacar ese guard apaga `cargando` apenas llega la respuesta que
    * dispara el clamp — este test observa el instante EXACTO en que esa respuesta ya se resolvió
@@ -877,5 +914,22 @@ describe('GrillaDeArticulos — página fuera de rango tras una Baja (GW1)', () 
     expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled()
     const tbody = container.querySelector('tbody')
     expect(tbody).toHaveStyle({ opacity: '0.6' })
+  })
+})
+
+describe('GrillaDeArticulos — accesibilidad de headers (GW16)', () => {
+  /**
+   * Cláusula bajo prueba: `scope="col"` en cada `<th>` del `<thead>` (ambas filas: títulos y
+   * filtros). Mutation-proof-tests: sacar el atributo de cualquier header lo dejaría sin `scope`,
+   * y este test fallaría porque exige exactamente 12 headers con `scope="col"`.
+   */
+  it('todas las celdas de header (ambas filas) tienen scope="col"', async () => {
+    mockearRutas(paginaFixture([filaFixture()]))
+    const { container } = renderGrilla()
+    await screen.findByText('Articulo Uno')
+
+    const headers = container.querySelectorAll('thead th')
+    expect(headers.length).toBe(12)
+    headers.forEach((th) => expect(th).toHaveAttribute('scope', 'col'))
   })
 })
