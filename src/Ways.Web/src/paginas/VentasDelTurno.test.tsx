@@ -369,6 +369,48 @@ describe('VentasDelTurno — filtros', () => {
     expect(screen.queryByText('0007-00000002')).not.toBeInTheDocument()
   })
 
+  // JD-E1-1 (judgment-day ronda 0): los campos de total son `CampoImporte`, el mismo componente
+  // que Pos/CierreDeCaja — nunca un `<input type="number">` con `Number(e.target.value)`, que
+  // interpreta "1.500" como 1.5 (parsea el "." como decimal) y rechaza "150,50" (NaN). Estos dos
+  // tests pasan por el COMPONENTE (tipeo real, no el helper puro) — mutation-proof-tests: volver
+  // a `Number(...)` los hace fallar (evidencia registrada en el reporte de la tarea).
+  it('el filtro de total interpreta "1.500" como mil quinientos (formato es-AR del proyecto), nunca como 1,5', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      ventas: [
+        ventaFixture({ id: 1, numeroVisible: '0007-00000001', total: 1499 }),
+        ventaFixture({ id: 2, numeroVisible: '0007-00000002', total: 1500 }),
+      ],
+    })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+
+    await userEvent.type(screen.getByLabelText('Total mínimo'), '1.500')
+
+    // Con `Number('1.500') === 1.5` (el bug original) las DOS filas pasarían el filtro — acá la
+    // de 1499 queda afuera y la de 1500 (el límite exacto) adentro.
+    expect(screen.queryByText('0007-00000001')).not.toBeInTheDocument()
+    expect(screen.getByText('0007-00000002')).toBeInTheDocument()
+  })
+
+  it('el filtro de total acepta coma decimal ("150,50")', async () => {
+    mockearRutas({
+      turno: turnoFixture(),
+      ventas: [
+        ventaFixture({ id: 1, numeroVisible: '0007-00000001', total: 150 }),
+        ventaFixture({ id: 2, numeroVisible: '0007-00000002', total: 151 }),
+      ],
+    })
+    render(<VentasDelTurno />)
+    await screen.findByText('0007-00000001')
+
+    await userEvent.type(screen.getByLabelText('Total máximo'), '150,50')
+
+    // Con `Number('150,50')` (NaN, el bug original) el filtro no habría excluido nada.
+    expect(screen.getByText('0007-00000001')).toBeInTheDocument()
+    expect(screen.queryByText('0007-00000002')).not.toBeInTheDocument()
+  })
+
   it('filtra por medio de pago (select con los medios presentes en el turno)', async () => {
     mockearRutas({ turno: turnoFixture(), ventas: ventasDeFiltro() })
     render(<VentasDelTurno />)

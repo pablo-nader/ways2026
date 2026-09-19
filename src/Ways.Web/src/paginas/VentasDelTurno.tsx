@@ -8,6 +8,7 @@ import type { ComprobanteEmitido, MedioPagoAlta, MedioPagoListado, TurnoResumen,
 import { useAuth } from '../auth/useAuth'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 import { Box } from '../componentes/Box'
+import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import {
@@ -555,25 +556,19 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
                     </th>
                     <th>
                       <div className="d-flex gap-1">
-                        <input
-                          type="number"
+                        <CampoImporte
                           className="form-control form-control-sm rounded-0"
                           aria-label="Total mínimo"
                           placeholder="Mín."
-                          value={filtros.totalMinimo ?? ''}
-                          onChange={(e) =>
-                            setFiltros((prev) => ({ ...prev, totalMinimo: e.target.value === '' ? null : Number(e.target.value) }))
-                          }
+                          valor={filtros.totalMinimo}
+                          onChange={(valor) => setFiltros((prev) => ({ ...prev, totalMinimo: valor }))}
                         />
-                        <input
-                          type="number"
+                        <CampoImporte
                           className="form-control form-control-sm rounded-0"
                           aria-label="Total máximo"
                           placeholder="Máx."
-                          value={filtros.totalMaximo ?? ''}
-                          onChange={(e) =>
-                            setFiltros((prev) => ({ ...prev, totalMaximo: e.target.value === '' ? null : Number(e.target.value) }))
-                          }
+                          valor={filtros.totalMaximo}
+                          onChange={(valor) => setFiltros((prev) => ({ ...prev, totalMaximo: valor }))}
                         />
                       </div>
                     </th>
