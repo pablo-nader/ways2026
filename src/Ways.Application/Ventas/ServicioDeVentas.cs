@@ -662,7 +662,7 @@ public class ServicioDeVentas(
 
         var pagos = await db.PagosComprobante.AsNoTracking()
             .Where(p => idsComprobante.Contains(p.IdComprobanteVenta))
-            .Select(p => new { p.IdComprobanteVenta, p.IdMedioPago })
+            .Select(p => new { p.IdComprobanteVenta, p.IdMedioPago, p.Importe, p.Vuelto })
             .ToListAsync(ct);
 
         var idsMedioPago = pagos.Select(p => p.IdMedioPago).Distinct().ToList();
@@ -670,20 +670,28 @@ public class ServicioDeVentas(
             .Where(m => idsMedioPago.Contains(m.Id))
             .ToDictionaryAsync(m => m.Id, m => m.Nombre, ct);
 
+        // Agrupado por (comprobante, medio) — nunca solo por comprobante: dos pagos del MISMO medio
+        // en el mismo comprobante (ej. dos tramos en efectivo) se consolidan en un único monto neto,
+        // en vez de aparecer como dos filas separadas o (peor) pisarse entre sí. El neto es
+        // Σimporte − Σvuelto DEL GRUPO, no por pago individual — un vuelto que superase el importe
+        // de un pago puntual pero se compensa con otro pago del mismo medio sigue neteando bien.
         var mediosPorComprobante = pagos
             .GroupBy(p => p.IdComprobanteVenta)
             .ToDictionary(
                 g => g.Key,
-                g => (IReadOnlyList<string>)g
-                    .Select(p => nombrePorMedioPago.GetValueOrDefault(p.IdMedioPago, "?"))
-                    .Distinct()
+                g => (IReadOnlyList<MedioDeVentaNeto>)g
+                    .GroupBy(p => p.IdMedioPago)
+                    .Select(gm => new MedioDeVentaNeto(
+                        gm.Key,
+                        nombrePorMedioPago.GetValueOrDefault(gm.Key, "?"),
+                        gm.Sum(p => p.Importe - p.Vuelto)))
                     .ToList());
 
         return crudos
             .Select(c => new VentaDeTurnoListado(
                 c.Id, c.Numero, NumeroDeComprobante.Formatear(c.IdPuntoVenta, c.Numero), c.Estado, c.Fecha,
                 c.IdCliente, nombrePorCliente.GetValueOrDefault(c.IdCliente, "-"), c.Total,
-                mediosPorComprobante.GetValueOrDefault(c.Id, (IReadOnlyList<string>)[])))
+                mediosPorComprobante.GetValueOrDefault(c.Id, (IReadOnlyList<MedioDeVentaNeto>)[])))
             .ToList();
     }
 

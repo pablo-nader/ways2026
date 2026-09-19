@@ -867,6 +867,11 @@ export type TicketDeTurno = {
   total: number
 }
 
+/** Monto neto cobrado por UN medio de pago dentro de una `VentaDeTurnoListado` — espejo de
+ * `MedioDeVentaNeto`. `importe` ya es neto de vuelto (`Σ importe − Σ vuelto` agrupado por medio),
+ * nunca lo que tecleó el cajero en caja. */
+export type MedioDeVentaNeto = { idMedioPago: number; nombre: string; importe: number }
+
 /** Fila de `GET /api/ventas/por-turno/{idTurno}` — espejo de
  * `Ways.Application.Ventas.VentaDeTurnoListado` (pantalla "Ventas del turno" del POS de
  * escritorio). A diferencia de `TicketDeTurno`, SÍ incluye anuladas y trae `nombreCliente`/
@@ -880,7 +885,7 @@ export type VentaDeTurnoListado = {
   idCliente: number
   nombreCliente: string
   total: number
-  mediosDePago: string[]
+  mediosDePago: MedioDeVentaNeto[]
 }
 
 /** Un gasto del turno dentro de `DetalleDeTurno.gastos` — espejo de
