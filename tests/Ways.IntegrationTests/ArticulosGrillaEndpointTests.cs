@@ -167,6 +167,39 @@ public class ArticulosGrillaEndpointTests(WaysApiFixture fixture) : IClassFixtur
         await db.SaveChangesAsync();
     }
 
+    private async Task<int> SembrarEmpresaAsync(int idTenant, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var empresa = new Empresa { IdTenant = idTenant, RazonSocial = nombre, CreatedAt = ahora, UpdatedAt = ahora };
+        db.Empresas.Add(empresa);
+        await db.SaveChangesAsync();
+
+        return empresa.Id;
+    }
+
+    /// <summary>Lista default PROPIA de una empresa (<c>ux_listas_precio_default_empresa</c>) —
+    /// coexiste con la default COMPARTIDA sin chocar (son dos índices únicos parciales
+    /// distintos): usada para probar que la resolución de precio de esta grilla (que no tiene
+    /// <c>idEmpresa</c>) ignora esta lista y usa la compartida.</summary>
+    private async Task<(int Id, string Nombre)> SembrarListaPrecioDefaultDeEmpresaAsync(
+        int idTenant, int idEmpresa, string nombre)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(TenantActualFijo.Plataforma);
+        var ahora = DateTimeOffset.UtcNow;
+
+        var lista = new ListaPrecio
+        {
+            IdTenant = idTenant, IdEmpresa = idEmpresa, Nombre = nombre, EsDefault = true,
+            Modo = ModoLista.Fija, Activo = true, CreatedAt = ahora, UpdatedAt = ahora
+        };
+        db.ListasPrecio.Add(lista);
+        await db.SaveChangesAsync();
+
+        return (lista.Id, lista.Nombre);
+    }
+
     /// <summary>Desmarca la default compartida actual (la "General" del aprovisionamiento) y
     /// promueve una lista DERIVADA nueva en su lugar — dos <c>SaveChangesAsync</c> secuenciales
     /// (no simultáneos) para no chocar contra <c>ux_listas_precio_default_compartido</c>, mismo
@@ -363,6 +396,30 @@ public class ArticulosGrillaEndpointTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal(conPrecio, Assert.Single(pagina.Items).Id);
     }
 
+    // ---- artículo sin precio nunca matchea un filtro `precioHasta` solo (rama independiente de la
+    // de `precioDesde` en `CumpleFiltroDePrecio`) --------------------------------------------------
+
+    [Fact]
+    public async Task ArticuloSinPrecioNuncaMatcheaUnFiltroDePrecioHastaSolo()
+    {
+        var (idTenant, idArea, idAlicuotaIva, _, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(ArticuloSinPrecioNuncaMatcheaUnFiltroDePrecioHastaSolo), fixture, fixture);
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin, fixture);
+
+        var conPrecio = await SembrarArticuloAsync(idTenant, "ConPrecio", idArea, idAlicuotaIva);
+        await SembrarPrecioAsync(idTenant, conPrecio, idListaGeneral, 50m);
+        await SembrarArticuloAsync(idTenant, "SinPrecio", idArea, idAlicuotaIva);
+
+        // precioHasta muy laxo: si el guard de "sin precio" de la rama `precioHasta` se rompiera,
+        // el artículo sin precio pasaría igual (un límite alto no lo filtraría por valor).
+        var pagina = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>(
+            UrlGrilla("precioHasta=999999&tamanio=50"), OpcionesJson);
+
+        Assert.NotNull(pagina);
+        Assert.Equal(1, pagina!.Total);
+        Assert.Equal(conPrecio, Assert.Single(pagina.Items).Id);
+    }
+
     // ---- sin lista default: precio null en todas las filas, y el filtro de precio da vacío --------
 
     [Fact]
@@ -440,6 +497,50 @@ public class ArticulosGrillaEndpointTests(WaysApiFixture fixture) : IClassFixtur
         var fila = Assert.Single(pagina.Items);
         Assert.Equal(220m, fila.Precio); // 200 * 1.10, ResolvedorDePrecios.ResolverPrecioDerivado
         _ = idDerivada;
+    }
+
+    // ---- BuscarListaDefaultAsync: SOLO la default COMPARTIDA (id_empresa IS NULL) cuenta, nunca
+    // la de una empresa (mutation target: `l.IdEmpresa == null`). Diseño deliberado: la default de
+    // empresa queda como ÚNICO candidato `EsDefault=true` del tenant (compartida desmarcada, mismo
+    // helper que "sin lista default") — con AMBAS marcadas default a la vez, un `FirstOrDefaultAsync`
+    // sin ORDER BY es ambiguo entre 2 filas y el resultado depende del plan/orden físico de
+    // Postgres, no del clause bajo prueba (confirmado corriendo la mutación con las dos default:
+    // sobrevivió 27/27 — Postgres devolvió la compartida por casualidad de orden, no por el
+    // filtro). Con un solo candidato posible bajo la mutación, la discriminación es 0-filas
+    // (correcto) contra 1-fila (mutante), sin depender de ningún orden. --------------------------
+
+    [Fact]
+    public async Task LaGrillaIgnoraUnaListaDefaultDeEmpresaYNuncaLeResuelvePrecio()
+    {
+        var (idTenant, idArea, idAlicuotaIva, _, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(
+                nameof(LaGrillaIgnoraUnaListaDefaultDeEmpresaYNuncaLeResuelvePrecio), fixture, fixture);
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin, fixture);
+
+        var idEmpresa = await SembrarEmpresaAsync(idTenant, "Empresa 1");
+        var (idListaEmpresa, _) = await SembrarListaPrecioDefaultDeEmpresaAsync(
+            idTenant, idEmpresa, "Lista De La Empresa");
+
+        var articulo = await SembrarArticuloAsync(idTenant, "Articulo", idArea, idAlicuotaIva);
+        await SembrarPrecioAsync(idTenant, articulo, idListaGeneral, 100m);
+        // Precio en la lista de LA EMPRESA para el MISMO artículo — si el `Where` perdiera el
+        // `IdEmpresa == null`, la grilla (que no tiene idEmpresa) resolvería ESTE precio en vez de
+        // devolver null.
+        await SembrarPrecioAsync(idTenant, articulo, idListaEmpresa, 999m);
+        await QuitarLaListaDefaultAsync(idTenant); // deja la de empresa como ÚNICO EsDefault=true
+
+        try
+        {
+            var pagina = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>(UrlGrilla("tamanio=50"), OpcionesJson);
+
+            Assert.NotNull(pagina);
+            Assert.Null(pagina!.NombreListaPrecio);
+            Assert.Null(Assert.Single(pagina.Items).Precio);
+        }
+        finally
+        {
+            await RestaurarLaListaDefaultAsync(idListaGeneral);
+        }
     }
 
     // ---- sinProveedor (mutation target: `a.IdProveedorHabitual == null`) ---------------------------
@@ -606,6 +707,38 @@ public class ArticulosGrillaEndpointTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal("Comercial SA", porId[articuloFantasiaBlanco].Proveedor);
     }
 
+    // ---- integridad de la fila: TODOS los campos posicionales de ArticuloGrillaFila con valores
+    // pairwise-distintos (mutation-proof-tests regla 12b) — CodigoInterno/Nombre nunca se
+    // afirmaban por valor: un swap entre ambos en Proyectar sobrevivía sin que ningún test lo note.
+
+    [Fact]
+    public async Task LaFilaProyectaTodosLosCamposConSusValoresReales()
+    {
+        var (idTenant, idArea, idAlicuotaIva, idCondicionFiscalCf, idListaGeneral, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(LaFilaProyectaTodosLosCamposConSusValoresReales), fixture, fixture);
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin, fixture);
+
+        var idProveedor = await SembrarProveedorAsync(
+            idTenant, idCondicionFiscalCf, "Razon Social Distinta", "Fantasia Distinta");
+        var idArticulo = await SembrarArticuloAsync(
+            idTenant, "Nombre Distinto Del Codigo", idArea, idAlicuotaIva, idProveedor,
+            activo: false, codigoInterno: "COD-DISTINTO-999");
+        await SembrarPrecioAsync(idTenant, idArticulo, idListaGeneral, 123.45m);
+
+        var pagina = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>(
+            UrlGrilla("activo=false&tamanio=50"), OpcionesJson);
+
+        Assert.NotNull(pagina);
+        var fila = Assert.Single(pagina!.Items);
+        Assert.Equal(idArticulo, fila.Id);
+        Assert.Equal("COD-DISTINTO-999", fila.CodigoInterno);
+        Assert.Equal("Nombre Distinto Del Codigo", fila.Nombre);
+        Assert.Equal(123.45m, fila.Precio);
+        Assert.Equal(idProveedor, fila.IdProveedorHabitual);
+        Assert.Equal("Fantasia Distinta", fila.Proveedor);
+        Assert.False(fila.Activo);
+    }
+
     // ---- soft-delete: siempre excluido --------------------------------------------------------------
 
     [Fact]
@@ -766,6 +899,46 @@ public class ArticulosGrillaEndpointTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal(HttpStatusCode.OK, respuesta.StatusCode);
         var pagina = await respuesta.Content.ReadFromJsonAsync<PaginaDeArticulosGrilla>(OpcionesJson);
         Assert.Equal(3, pagina!.Total);
+        // Camino CON filtro de precio: `NombreListaPrecio` también viaja acá, no solo en el
+        // camino sin filtro.
+        Assert.Equal("General", pagina.NombreListaPrecio);
+    }
+
+    // ---- tamanio/pagina: clamp (mutation target: `Math.Clamp`/`Math.Max` en ListarAsync) -----------
+
+    [Fact]
+    public async Task TamanioPorEncimaDeDoscientosSeTopeaEnDoscientos()
+    {
+        var (idTenant, idArea, idAlicuotaIva, _, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(TamanioPorEncimaDeDoscientosSeTopeaEnDoscientos), fixture, fixture);
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin, fixture);
+
+        await SembrarArticuloAsync(idTenant, "Articulo", idArea, idAlicuotaIva);
+
+        var pagina = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>(UrlGrilla("tamanio=500"), OpcionesJson);
+
+        Assert.NotNull(pagina);
+        Assert.Equal(200, pagina!.Tamanio);
+    }
+
+    [Fact]
+    public async Task PaginaCeroSeTrataComoLaPrimera()
+    {
+        var (idTenant, idArea, idAlicuotaIva, _, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(nameof(PaginaCeroSeTrataComoLaPrimera), fixture, fixture);
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin, fixture);
+
+        await SembrarArticuloAsync(idTenant, "Articulo", idArea, idAlicuotaIva);
+
+        var paginaConCero = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>(
+            UrlGrilla("tamanio=50&pagina=0"), OpcionesJson);
+        var paginaConUno = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>(
+            UrlGrilla("tamanio=50&pagina=1"), OpcionesJson);
+
+        Assert.NotNull(paginaConCero);
+        Assert.Equal(1, paginaConCero!.Pagina);
+        Assert.Equal(
+            paginaConUno!.Items.Select(i => i.Id).ToList(), paginaConCero.Items.Select(i => i.Id).ToList());
     }
 
     // ---- aislamiento de tenant: los artículos/proveedores de otro tenant nunca aparecen -------------
