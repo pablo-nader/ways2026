@@ -43,8 +43,10 @@ export type OpcionesDeTicketDeVenta = { reimpresion?: boolean }
  * `algunPagoEnEfectivo` aparte).
  *
  * `opciones.reimpresion` (stage-desktop-pos, acción "Reimprimir" de "Ventas del turno"): imprime
- * una línea "REIMPRESION" bien visible para que una copia nunca se confunda con el original —
- * mismos datos, ningún otro cambio de contenido.
+ * una línea "REIMPRESION" bien visible para que una copia nunca se confunda con el original, y
+ * NUNCA pulsa el cajón de dinero aunque el comprobante tenga un pago en efectivo (decisión del
+ * dueño: reimprimir no es una venta nueva, abrir el cajón sin eso es un agujero de control de
+ * caja) — el resto del contenido queda igual.
  */
 export function ticketDeVenta(
   comprobante: ComprobanteEmitido,
@@ -105,8 +107,11 @@ export function ticketDeVenta(
 
   // Pulso del cajón en el MISMO trabajo de impresión (nunca un segundo `imprimir` aparte): si
   // algún pago es en efectivo se abre antes del corte, para que el cajero lo encuentre abierto
-  // apenas termina de imprimirse el ticket.
-  if (algunPagoEnEfectivo(comprobante, medios)) {
+  // apenas termina de imprimirse el ticket. NUNCA en una reimpresión (decisión del dueño): abrir
+  // el cajón sin una venta nueva de por medio es un agujero de control de caja — una copia del
+  // ticket original no vuelve a mover dinero, así que no vuelve a pulsar el cajón aunque el pago
+  // original haya sido en efectivo.
+  if (!opciones.reimpresion && algunPagoEnEfectivo(comprobante, medios)) {
     ticket.abrirCajon()
   }
 

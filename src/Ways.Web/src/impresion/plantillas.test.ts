@@ -102,11 +102,23 @@ describe('ticketDeVenta', () => {
     expect(Array.from(bytes.slice(-4))).toEqual([0x1d, 0x56, 0x42, 0x00])
   })
 
-  it('pulsa el cajón (ESC p 0 25 250) antes del corte cuando algún pago es en efectivo', () => {
+  it('ticket ORIGINAL (sin opciones): pulsa el cajón (ESC p 0 25 250) antes del corte cuando algún pago es en efectivo', () => {
     const comprobante = comprobanteFixture({ pagos: [{ idMedioPago: 1, importe: 1000, referencia: null, vuelto: 0 }] })
     const bytes = ticketDeVenta(comprobante, CONTEXTO, [medioFixture({ id: 1, comportamiento: 'Efectivo' })])
     // Cola exacta: abrirCajon (5) + avanzar(2) (2) + cortar (4) = 11 bytes.
     expect(Array.from(bytes.slice(-11))).toEqual([0x1b, 0x70, 0x00, 25, 250, 0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
+  })
+
+  it('REIMPRESION: nunca pulsa el cajón aunque algún pago sea en efectivo (decisión del dueño: reimprimir no es una venta nueva)', () => {
+    const comprobante = comprobanteFixture({ pagos: [{ idMedioPago: 1, importe: 1000, referencia: null, vuelto: 0 }] })
+    const bytes = ticketDeVenta(comprobante, CONTEXTO, [medioFixture({ id: 1, comportamiento: 'Efectivo' })], { reimpresion: true })
+
+    const contieneComandoDeCajon = Array.from(bytes).some(
+      (_, i) => bytes[i] === 0x1b && bytes[i + 1] === 0x70 && bytes[i + 2] === 0x00,
+    )
+    expect(contieneComandoDeCajon).toBe(false)
+    // Termina en avanzar(2) + cortar (6 bytes) directo, sin el pulso de cajón antes.
+    expect(Array.from(bytes.slice(-6))).toEqual([0x0a, 0x0a, 0x1d, 0x56, 0x42, 0x00])
   })
 
   it('nunca pulsa el cajón si todos los pagos son electrónicos/cuenta corriente', () => {
