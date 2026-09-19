@@ -30,6 +30,11 @@ import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { formatearImporte } from '../formato/importes'
+import { AltaRapidaCategoria } from './articulos/AltaRapidaCategoria'
+import { AltaRapidaGrupo } from './articulos/AltaRapidaGrupo'
+import { AltaRapidaMarca } from './articulos/AltaRapidaMarca'
+import { AltaRapidaProveedor } from './articulos/AltaRapidaProveedor'
+import { elegirAlicuotaPorDefecto, etiquetaDeProveedor, insertarOrdenadoPor, ordenarProveedoresPorEtiqueta } from './articulos/helpers'
 
 type Formulario = {
   id: number | null
@@ -242,7 +247,9 @@ export function Articulos() {
     api
       .get<PaginaDe<ProveedorListado>>('/proveedores?tamanio=200')
       .then((p) => {
-        setProveedores(p.items)
+        // Pre-ordenado por la MISMA etiqueta que el select muestra (nombre de fantasía o razón
+        // social, nunca la razón social cruda) — el alta rápida inserta manteniendo este orden.
+        setProveedores(ordenarProveedoresPorEtiqueta(p.items))
         setProveedoresTruncados(p.total > p.items.length)
       })
       .catch(() => setProveedores([]))
@@ -272,7 +279,27 @@ export function Articulos() {
   }, [cargar])
 
   const areaPorDefecto = areas[0]?.id ?? ''
-  const alicuotaPorDefecto = alicuotasIva[0]?.id ?? ''
+  const alicuotaPorDefecto = elegirAlicuotaPorDefecto(alicuotasIva)
+
+  // Altas rápidas de padrones (Categoría/Marca/Grupo/Proveedor habitual) desde el propio
+  // formulario de artículo: cada handler solo inserta el item nuevo en la lista ya ordenada — la
+  // selección en el formulario y el cierre del modal los resuelve `FormularioArticulo`, que es
+  // quien tiene el `valor`/`onCambio` del artículo en edición.
+  function alCrearCategoria(nueva: CategoriaListado) {
+    setCategorias((prev) => insertarOrdenadoPor(prev, nueva, (c) => c.nombre))
+  }
+
+  function alCrearMarca(nueva: MarcaListado) {
+    setMarcas((prev) => insertarOrdenadoPor(prev, nueva, (m) => m.nombre))
+  }
+
+  function alCrearGrupo(nuevo: GrupoListado) {
+    setGrupos((prev) => insertarOrdenadoPor(prev, nuevo, (g) => g.nombre))
+  }
+
+  function alCrearProveedor(nuevo: ProveedorListado) {
+    setProveedores((prev) => insertarOrdenadoPor(prev, nuevo, etiquetaDeProveedor))
+  }
 
   async function abrirNuevo() {
     if (ocupado) return
@@ -440,6 +467,10 @@ export function Articulos() {
             onGuardar={guardar}
             onCancelar={cancelarEdicion}
             alDeEscribir={alDeEscribir}
+            onCategoriaCreada={alCrearCategoria}
+            onMarcaCreada={alCrearMarca}
+            onGrupoCreada={alCrearGrupo}
+            onProveedorCreado={alCrearProveedor}
           />
         )}
 
@@ -526,6 +557,10 @@ function FormularioArticulo({
   onGuardar,
   onCancelar,
   alDeEscribir,
+  onCategoriaCreada,
+  onMarcaCreada,
+  onGrupoCreada,
+  onProveedorCreado,
 }: {
   valor: Formulario
   areas: AreaListado[]
@@ -544,8 +579,28 @@ function FormularioArticulo({
   onGuardar: () => void
   onCancelar: () => void
   alDeEscribir: (enCurso: boolean) => void
+  onCategoriaCreada: (categoria: CategoriaListado) => void
+  onMarcaCreada: (marca: MarcaListado) => void
+  onGrupoCreada: (grupo: GrupoListado) => void
+  onProveedorCreado: (proveedor: ProveedorListado) => void
 }) {
   const esNuevo = valor.id === null
+  // Alta rápida de padrones (Categoría/Marca/Grupo/Proveedor habitual): un solo estado porque solo
+  // puede haber una abierta a la vez (cada "+" descarta cualquier otra). Los refs son el destino
+  // de foco al abrir — enfocarlos ANTES de montar el modal hace que `Modal` los capture como el
+  // foco previo y se lo devuelva solo al cerrar (éxito o cancelación), sin lógica extra.
+  const [padronRapidoAbierto, setPadronRapidoAbierto] = useState<'categoria' | 'marca' | 'grupo' | 'proveedor' | null>(
+    null,
+  )
+  const refSelectCategoria = useRef<HTMLSelectElement>(null)
+  const refSelectMarca = useRef<HTMLSelectElement>(null)
+  const refSelectGrupo = useRef<HTMLSelectElement>(null)
+  const refSelectProveedor = useRef<HTMLSelectElement>(null)
+
+  function abrirAltaRapida(padron: 'categoria' | 'marca' | 'grupo' | 'proveedor', select: HTMLSelectElement | null) {
+    select?.focus()
+    setPadronRapidoAbierto(padron)
+  }
 
   function alternarEmpresa(id: number) {
     const yaEsta = valor.idsEmpresas.includes(id)
@@ -698,80 +753,127 @@ function FormularioArticulo({
             <label className="form-label" htmlFor="art-categoria">
               Categoría
             </label>
-            <select
-              id="art-categoria"
-              className="form-select rounded-0"
-              value={valor.idCategoria}
-              onChange={(e) => onCambio({ ...valor, idCategoria: e.target.value === '' ? '' : Number(e.target.value) })}
-            >
-              <option value="">Sin especificar</option>
-              {categorias.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nombre}
-                </option>
-              ))}
-            </select>
+            <div className="input-group">
+              <select
+                id="art-categoria"
+                ref={refSelectCategoria}
+                className="form-select rounded-0"
+                value={valor.idCategoria}
+                onChange={(e) => onCambio({ ...valor, idCategoria: e.target.value === '' ? '' : Number(e.target.value) })}
+              >
+                <option value="">Sin especificar</option>
+                {categorias.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn btn-outline-secondary rounded-0"
+                aria-label="Nueva categoría"
+                disabled={ocupado}
+                onClick={() => abrirAltaRapida('categoria', refSelectCategoria.current)}
+              >
+                +
+              </button>
+            </div>
           </div>
 
           <div className="col-md-3">
             <label className="form-label" htmlFor="art-marca">
               Marca
             </label>
-            <select
-              id="art-marca"
-              className="form-select rounded-0"
-              value={valor.idMarca}
-              onChange={(e) => onCambio({ ...valor, idMarca: e.target.value === '' ? '' : Number(e.target.value) })}
-            >
-              <option value="">Sin especificar</option>
-              {marcas.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.nombre}
-                </option>
-              ))}
-            </select>
+            <div className="input-group">
+              <select
+                id="art-marca"
+                ref={refSelectMarca}
+                className="form-select rounded-0"
+                value={valor.idMarca}
+                onChange={(e) => onCambio({ ...valor, idMarca: e.target.value === '' ? '' : Number(e.target.value) })}
+              >
+                <option value="">Sin especificar</option>
+                {marcas.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.nombre}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn btn-outline-secondary rounded-0"
+                aria-label="Nueva marca"
+                disabled={ocupado}
+                onClick={() => abrirAltaRapida('marca', refSelectMarca.current)}
+              >
+                +
+              </button>
+            </div>
           </div>
 
           <div className="col-md-3">
             <label className="form-label" htmlFor="art-grupo">
               Grupo
             </label>
-            <select
-              id="art-grupo"
-              className="form-select rounded-0"
-              value={valor.idGrupo}
-              onChange={(e) => onCambio({ ...valor, idGrupo: e.target.value === '' ? '' : Number(e.target.value) })}
-            >
-              <option value="">Sin especificar</option>
-              {grupos.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.nombre}
-                  {g.margen !== null ? ` (margen ${g.margen}%)` : ''}
-                </option>
-              ))}
-            </select>
+            <div className="input-group">
+              <select
+                id="art-grupo"
+                ref={refSelectGrupo}
+                className="form-select rounded-0"
+                value={valor.idGrupo}
+                onChange={(e) => onCambio({ ...valor, idGrupo: e.target.value === '' ? '' : Number(e.target.value) })}
+              >
+                <option value="">Sin especificar</option>
+                {grupos.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.nombre}
+                    {g.margen !== null ? ` (margen ${g.margen}%)` : ''}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn btn-outline-secondary rounded-0"
+                aria-label="Nuevo grupo"
+                disabled={ocupado}
+                onClick={() => abrirAltaRapida('grupo', refSelectGrupo.current)}
+              >
+                +
+              </button>
+            </div>
           </div>
 
           <div className="col-md-4">
             <label className="form-label" htmlFor="art-proveedor-habitual">
               Proveedor habitual
             </label>
-            <select
-              id="art-proveedor-habitual"
-              className="form-select rounded-0"
-              value={valor.idProveedorHabitual}
-              onChange={(e) =>
-                onCambio({ ...valor, idProveedorHabitual: e.target.value === '' ? '' : Number(e.target.value) })
-              }
-            >
-              <option value="">Sin especificar</option>
-              {proveedores.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.razonSocial}
-                  {p.nombreFantasia ? ` (${p.nombreFantasia})` : ''}
-                </option>
-              ))}
-            </select>
+            <div className="input-group">
+              <select
+                id="art-proveedor-habitual"
+                ref={refSelectProveedor}
+                className="form-select rounded-0"
+                value={valor.idProveedorHabitual}
+                onChange={(e) =>
+                  onCambio({ ...valor, idProveedorHabitual: e.target.value === '' ? '' : Number(e.target.value) })
+                }
+              >
+                <option value="">Sin especificar</option>
+                {proveedores.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {etiquetaDeProveedor(p)}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn btn-outline-secondary rounded-0"
+                aria-label="Nuevo proveedor"
+                disabled={ocupado}
+                onClick={() => abrirAltaRapida('proveedor', refSelectProveedor.current)}
+              >
+                +
+              </button>
+            </div>
             {proveedoresTruncados && (
               <div className="form-text">Se muestran solo los primeros 200 proveedores.</div>
             )}
@@ -928,6 +1030,53 @@ function FormularioArticulo({
               Cancelar
             </button>
           </div>
+
+          {/* Los cuatro modales de alta rápida se renderizan ACÁ ADENTRO del <form> a propósito
+              (aunque `Modal` los saque del DOM vía createPortal): React sigue propagando sus
+              eventos sintéticos por el árbol de COMPONENTES, no por el DOM físico, así que el
+              submit de cada mini-formulario burbujearía hasta este <form> si no cortara la
+              propagación (ver el comentario en cada `AltaRapida*`). */}
+          {padronRapidoAbierto === 'categoria' && (
+            <AltaRapidaCategoria
+              categorias={categorias}
+              onCreado={(nueva) => {
+                onCategoriaCreada(nueva)
+                onCambio({ ...valor, idCategoria: nueva.id })
+                setPadronRapidoAbierto(null)
+              }}
+              onCancelar={() => setPadronRapidoAbierto(null)}
+            />
+          )}
+          {padronRapidoAbierto === 'marca' && (
+            <AltaRapidaMarca
+              onCreado={(nueva) => {
+                onMarcaCreada(nueva)
+                onCambio({ ...valor, idMarca: nueva.id })
+                setPadronRapidoAbierto(null)
+              }}
+              onCancelar={() => setPadronRapidoAbierto(null)}
+            />
+          )}
+          {padronRapidoAbierto === 'grupo' && (
+            <AltaRapidaGrupo
+              onCreado={(nuevo) => {
+                onGrupoCreada(nuevo)
+                onCambio({ ...valor, idGrupo: nuevo.id })
+                setPadronRapidoAbierto(null)
+              }}
+              onCancelar={() => setPadronRapidoAbierto(null)}
+            />
+          )}
+          {padronRapidoAbierto === 'proveedor' && (
+            <AltaRapidaProveedor
+              onCreado={(nuevo) => {
+                onProveedorCreado(nuevo)
+                onCambio({ ...valor, idProveedorHabitual: nuevo.id })
+                setPadronRapidoAbierto(null)
+              }}
+              onCancelar={() => setPadronRapidoAbierto(null)}
+            />
+          )}
         </fieldset>
       </form>
 
