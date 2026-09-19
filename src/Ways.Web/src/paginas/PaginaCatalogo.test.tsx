@@ -1,17 +1,34 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PaginaCatalogo } from './PaginaCatalogo'
 import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
-import { descriptorListasPrecio } from '../api/catalogos'
+import { descriptorMarcas, descriptorListasPrecio } from '../api/catalogos'
 import type { DescriptorDeCatalogo } from '../api/catalogos'
-import type { CatalogoListado, ListaPrecioListado } from '../api/tipos'
+import { ErrorApi } from '../api/cliente'
+import type { CatalogoListado, ListaPrecioListado, MarcaListado } from '../api/tipos'
 
 const apiGetMock = vi.fn()
+const apiPostMock = vi.fn()
+const apiPutMock = vi.fn()
+const apiDeleteMock = vi.fn()
 
 vi.mock('../api/cliente', () => ({
-  api: { get: (...args: unknown[]) => apiGetMock(...(args as [string])) },
-  ErrorApi: class ErrorApiMock extends Error {},
+  api: {
+    get: (...args: unknown[]) => apiGetMock(...(args as [string])),
+    post: (...args: unknown[]) => apiPostMock(...(args as [string, unknown])),
+    put: (...args: unknown[]) => apiPutMock(...(args as [string, unknown])),
+    delete: (...args: unknown[]) => apiDeleteMock(...(args as [string])),
+  },
+  ErrorApi: class ErrorApiMock extends Error {
+    estado: number
+    codigo: string
+    constructor(estado: number, codigo: string, mensaje: string) {
+      super(mensaje)
+      this.estado = estado
+      this.codigo = codigo
+    }
+  },
 }))
 
 function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrecioListado {
@@ -30,6 +47,9 @@ function listaFixture(sobrescribir: Partial<ListaPrecioListado> = {}): ListaPrec
 
 beforeEach(() => {
   apiGetMock.mockReset()
+  apiPostMock.mockReset()
+  apiPutMock.mockReset()
+  apiDeleteMock.mockReset()
 })
 
 describe('PaginaCatalogo — visibilidad condicional de idListaBase/porcentaje', () => {
@@ -105,6 +125,7 @@ describe('PaginaCatalogo — fallback de opción faltante acotado a opcionesDesd
     // que ya no se usa ese listado como fuente de la opción faltante de un select estático.
     aValores: () => ({ estado: '3' }),
     aAlta: (nombre, activo) => ({ nombre, idEmpresa: null, activo, estado: 'activo' }),
+    sujetoDeBaja: 'el área',
   }
 
   it('un select de opciones estáticas cuyo valor no está entre las opciones NO recibe una opción de fallback', async () => {
@@ -138,5 +159,210 @@ describe('etiquetaParaValorFaltante', () => {
 
   it('devuelve "<nombre> (inactiva)" cuando el item existe y está inactivo', () => {
     expect(etiquetaParaValorFaltante('2', items)).toBe('Inactiva (inactiva)')
+  })
+})
+
+// fix/web-bajas-catalogos: la baja de un catálogo reusa `ConfirmacionDeBaja` + `copiaDeFalloDeBaja`,
+// mismo patrón que `Empresas.test.tsx` (`react-async-state` regla 10). Se ejercita con
+// `descriptorMarcas` (sin campos propios) por ser el más simple de los que pasan por la máquina
+// genérica.
+
+function marcaFixture(sobrescribir: Partial<MarcaListado> = {}): MarcaListado {
+  return { id: 1, nombre: 'Nike', activo: true, idEmpresa: null, ...sobrescribir }
+}
+
+describe('PaginaCatalogo — baja lógica (fix/web-bajas-catalogos)', () => {
+  beforeEach(() => {
+    apiDeleteMock.mockResolvedValue(undefined)
+  })
+
+  it('el botón de baja no llama a la API hasta que se confirma', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await screen.findByText('Nike')
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toHaveTextContent(
+      '¿Dar de baja la marca "Nike"?',
+    )
+
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+    await screen.findByText('Se dio de baja "Nike".')
+    expect(apiDeleteMock).toHaveBeenCalledWith('/catalogos/marcas/1')
+  })
+
+  it('cancelar cierra la puerta y no llama nunca a la API', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await screen.findByText('Nike')
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).not.toHaveBeenCalled()
+  })
+
+  /** Cláusula bajo prueba: `ocupadoRef`, la guarda de re-entrancia del mismo tick. */
+  it('un segundo click sobre la confirmación en vuelo se descarta', async () => {
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    apiDeleteMock.mockImplementation(() => new Promise<void>(() => {}))
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await screen.findByText('Nike')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Baja' }))
+    const confirmar = screen.getByRole('button', { name: 'Confirmar baja' })
+    await act(async () => {
+      confirmar.click()
+      confirmar.click()
+      await Promise.resolve()
+    })
+
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  /** Cláusula bajo prueba: la ventana inerte completa — ver el test gemelo de `Empresas.test.tsx`. */
+  it('durante el DELETE y su refresco no queda ninguna acción alcanzable', async () => {
+    const usuario = userEvent.setup()
+    let resolverDelete!: () => void
+    let resolverRefresco!: (items: MarcaListado[]) => void
+
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      if (cargas === 1) return Promise.resolve([marcaFixture(), marcaFixture({ id: 2, nombre: 'Adidas' })])
+
+      return new Promise<MarcaListado[]>((resolver) => {
+        resolverRefresco = resolver
+      })
+    })
+    apiDeleteMock.mockImplementation(
+      () =>
+        new Promise<void>((resolver) => {
+          resolverDelete = resolver
+        }),
+    )
+
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    await screen.findByText('Nike')
+
+    await usuario.click(within(screen.getByRole('row', { name: /Nike/ })).getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    expect(screen.getByRole('button', { name: 'Dando de baja…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Nuevo' })).toBeDisabled()
+    expect(screen.getByLabelText('Incluir inactivos')).toBeDisabled()
+    for (const boton of [
+      ...screen.getAllByRole('button', { name: 'Editar' }),
+      ...screen.getAllByRole('button', { name: 'Baja' }),
+    ]) {
+      expect(boton).toBeDisabled()
+    }
+
+    await act(async () => {
+      resolverDelete()
+      await Promise.resolve()
+    })
+
+    await screen.findByText('Se dio de baja "Nike".')
+    expect(screen.getByText('Cargando…')).toBeInTheDocument()
+
+    await act(async () => {
+      resolverRefresco([marcaFixture({ id: 2, nombre: 'Adidas' })])
+      await Promise.resolve()
+    })
+
+    await screen.findByText('Adidas')
+    expect(screen.queryByText('Nike')).not.toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * Cláusula bajo prueba: la elección de copia por `codigo` vía `copiaDeFalloDeBaja`, con el
+   * `sujetoDeBaja` del DESCRIPTOR (`la marca`), no un switch sobre `recurso`.
+   */
+  it('un 409 marca_en_uso rinde el mensaje del servidor y la guía de la marca, y deja la puerta abierta', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(409, 'marca_en_uso', 'No se puede dar de baja la marca porque tiene artículos.'),
+    )
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await screen.findByText('Nike')
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText(/porque tiene artículos/)
+    expect(screen.getByText(/Reasigná esos datos o desactivá la marca/)).toBeInTheDocument()
+    expect(screen.getByRole('alertdialog', { name: 'Confirmar baja' })).toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: el `setError('')` de `cancelarBaja` — ver `Empresas.test.tsx`. */
+  it('cancelar después de un rechazo se lleva el motivo con la puerta', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    apiDeleteMock.mockRejectedValue(
+      new ErrorApi(409, 'marca_en_uso', 'No se puede dar de baja la marca porque tiene artículos.'),
+    )
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await screen.findByText('Nike')
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+    await screen.findByText(/porque tiene artículos/)
+
+    await usuario.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByText(/porque tiene artículos/)).not.toBeInTheDocument()
+  })
+
+  /** Cláusula bajo prueba: el token acuñado al CONFIRMAR, no al abrir — ver `Empresas.test.tsx`. */
+  it('una generación acuñada entre abrir la puerta y confirmar no se traga el 204', async () => {
+    const usuario = userEvent.setup()
+    let cargas = 0
+    apiGetMock.mockImplementation(() => {
+      cargas += 1
+      if (cargas === 1) return Promise.resolve([marcaFixture(), marcaFixture({ id: 2, nombre: 'Adidas' })])
+
+      return Promise.resolve([marcaFixture({ id: 2, nombre: 'Adidas' })])
+    })
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+    await screen.findByText('Nike')
+
+    await usuario.click(within(screen.getByRole('row', { name: /Nike/ })).getByRole('button', { name: 'Baja' }))
+
+    // Se acuña una generación intermedia disparando otra carga (toggle de "incluir inactivos"),
+    // ANTES de confirmar: el DELETE que sigue no puede perder su 204 por eso.
+    await usuario.click(screen.getByLabelText('Incluir inactivos'))
+    await screen.findByText('Adidas')
+
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText('Se dio de baja "Nike".')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(apiDeleteMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('la baja de la fila que se está editando se lleva también su formulario', async () => {
+    const usuario = userEvent.setup()
+    apiGetMock.mockResolvedValue([marcaFixture()])
+    render(<PaginaCatalogo definicion={descriptorMarcas} />)
+
+    await screen.findByText('Nike')
+    await usuario.click(screen.getByRole('button', { name: 'Editar' }))
+    expect(screen.getByText('Editando marca 1')).toBeInTheDocument()
+
+    await usuario.click(screen.getByRole('button', { name: 'Baja' }))
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar baja' }))
+
+    await screen.findByText('Se dio de baja "Nike".')
+    expect(screen.queryByText('Editando marca 1')).not.toBeInTheDocument()
   })
 })
