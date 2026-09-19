@@ -92,7 +92,7 @@ export function ModalDeArticulo({
     formulario === null ? 'Artículo' : formulario.id === null ? 'Nuevo artículo' : `Editando artículo ${formulario.codigoInterno}`
 
   return (
-    <Modal titulo={titulo} tamano="xl" ocupado={ocupado} focoDeReserva={focoDeReserva} onCerrar={onCerrar}>
+    <Modal titulo={titulo} tamano="xl" desplazable ocupado={ocupado} focoDeReserva={focoDeReserva} onCerrar={onCerrar}>
       {errorDetalle ? (
         <>
           <div className="alert alert-danger rounded-0">{errorDetalle}</div>
