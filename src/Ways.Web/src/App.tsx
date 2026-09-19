@@ -37,6 +37,7 @@ import { PuntosVenta } from './paginas/PuntosVenta'
 import { FacturarRemitos } from './paginas/FacturarRemitos'
 import { Remito } from './paginas/Remito'
 import { Remitos } from './paginas/Remitos'
+import { ReporteDeArticulos } from './paginas/ReporteDeArticulos'
 import { Reposicion } from './paginas/Reposicion'
 import { RutaCatalogo } from './paginas/RutaCatalogo'
 import { Tablero } from './paginas/Tablero'
@@ -183,6 +184,18 @@ export function App() {
                 /reportes/existencias (Politicas.LecturaDeReportes) — vista de gestión sobre
                 lotes con saldo positivo, no el picker del POS (Politicas.OperacionDePos de
                 GET /api/stock/lotes). */}
+            {/* Reporte de completitud de catálogo (owner: "artículos sin proveedor, sin marca,
+                sin categoría, sin grupo"): mismo gate que /reportes/existencias
+                (Politicas.LecturaDeReportes) — vista de gestión, tenant-wide (sin idEmpresa/
+                idPuntoVenta: los artículos no tienen esa columna). */}
+            <Route
+              path="/reportes/articulos"
+              element={
+                <RutaProtegida rolesPermitidos={[ROL.Supervisor, ROL.Admin]}>
+                  <ReporteDeArticulos />
+                </RutaProtegida>
+              }
+            />
             <Route
               path="/reportes/stock/vencimientos"
               element={
