@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ErrorApi } from '../api/cliente'
+import { copiaDeFalloDeBaja } from '../api/bajas'
 import type { CampoDescriptor, DescriptorDeCatalogo, ValorDeCampo } from '../api/catalogos'
 import type { CatalogoListado } from '../api/tipos'
 import { Box } from '../componentes/Box'
 import { Cargando } from '../componentes/Cargando'
+import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
 import { etiquetaParaValorFaltante } from './etiquetaParaValorFaltante'
 
 type Formulario = {
@@ -13,11 +15,20 @@ type Formulario = {
   valores: Record<string, ValorDeCampo>
 }
 
+const AVISO_REFRESCO_FALLIDO = 'Se guardó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+const AVISO_REFRESCO_FALLIDO_BAJA = 'Se eliminó, pero no se pudo actualizar la vista. Recargá la pantalla.'
+
 /**
  * ABM genérico de un catálogo de tenant (ADR-11): el descriptor define qué campos propios
  * tiene además de `nombre`/`activo` (comunes a los 5) — esta pantalla no sabe nada de un
  * catálogo en particular. `categorias` no pasa por acá: es el escape hatch (árbol + regla de
  * profundidad, `Categorias.tsx`).
+ *
+ * La baja (fix/web-bajas-catalogos) sigue el mismo patrón que `Empresas.tsx`/`Tenants.tsx`
+ * (`react-async-state` regla 10): puerta modal (`ConfirmacionDeBaja`), token de generación +
+ * `ocupadoRef` de re-entrancia COMPARTIDOS entre el guardado y la baja —solo una escritura puede
+ * estar en vuelo a la vez, sea alta/edición o baja— y `bloqueado` deja inerte toda la pantalla
+ * mientras cualquiera de las dos está en vuelo.
  */
 export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   definicion,
@@ -31,81 +42,174 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
   const [aviso, setAviso] = useState('')
   const [formulario, setFormulario] = useState<Formulario | null>(null)
   const [guardando, setGuardando] = useState(false)
+  /** Baja pendiente de confirmación: ver `Empresas.tsx`. La puerta es MODAL —`bloqueado` deja
+   * inerte el resto de la pantalla mientras está abierta— y NO acuña token: eso lo hace la
+   * escritura, al confirmar. */
+  const [baja, setBaja] = useState<TListado | null>(null)
+  /** Id del item cuya baja está en vuelo (distinto de `guardando`, que cubre alta/edición). */
+  const [ocupadoBaja, setOcupadoBaja] = useState<number | null>(null)
+  /** Control que abrió la puerta, capturado en el `onClick` y no dentro de la puerta: ver
+   * `ConfirmacionDeBaja.tsx`. */
+  const [disparadorDeLaPuerta, setDisparadorDeLaPuerta] = useState<HTMLElement | null>(null)
 
-  const { recurso, titulo, tituloSingular, campos, valoresPorDefecto, aValores, aAlta } = definicion
+  /** Contrato de invalidación compartido por guardar y por la baja: ver `Empresas.tsx`. */
+  const generacion = useRef(0)
+  /** Espejo síncrono de "hay una escritura en vuelo" (alta/edición O baja) — la ÚNICA guarda de
+   * re-entrancia válida (`react-async-state` regla 11): dos clicks del mismo tick leen el mismo
+   * render, así que el estado los deja pasar a los dos. */
+  const ocupadoRef = useRef(false)
+
+  const { recurso, titulo, tituloSingular, campos, valoresPorDefecto, aValores, aAlta, sujetoDeBaja } = definicion
 
   const cargar = useCallback(
-    async (conInactivos: boolean) => {
+    async (token: number, conInactivos: boolean, propagar = false) => {
       setCargando(true)
-      setError('')
       try {
         const parametros = conInactivos ? '?incluirInactivos=true' : ''
-        setItems(await api.get<TListado[]>(`/catalogos/${recurso}${parametros}`))
+        const filas = await api.get<TListado[]>(`/catalogos/${recurso}${parametros}`)
+        if (generacion.current !== token) return
+        setItems(filas)
+        setError('')
       } catch (e) {
+        if (generacion.current !== token) return
+        if (propagar) throw e
         setError(e instanceof ErrorApi ? e.message : `No se pudo cargar ${titulo.toLowerCase()}.`)
       } finally {
-        setCargando(false)
+        if (generacion.current === token) setCargando(false)
       }
     },
     [recurso, titulo],
   )
 
   useEffect(() => {
-    void cargar(incluirInactivos)
+    void cargar(++generacion.current, incluirInactivos)
   }, [cargar, incluirInactivos])
 
+  /** El refresco post-escritura va fuera del try/catch de la escritura: una escritura que ya
+   * commiteó nunca se reporta como fallida (`react-async-state` regla 6). NO apaga la escritura:
+   * de eso se ocupa el `finally` ungated de cada escritura. */
+  async function refrescarTrasEscribir(token: number, mensajeOk: string, avisoDeFallo: string) {
+    if (generacion.current !== token) return
+
+    setAviso(mensajeOk)
+    try {
+      await cargar(token, incluirInactivos, true)
+    } catch {
+      if (generacion.current === token) setAviso(`${mensajeOk} ${avisoDeFallo}`)
+    }
+  }
+
   function abrirNuevo() {
+    if (ocupadoRef.current) return
+
     setFormulario({ id: null, nombre: '', activo: true, valores: { ...valoresPorDefecto } })
     setAviso('')
     setError('')
   }
 
   function abrirEdicion(item: TListado) {
+    if (ocupadoRef.current) return
+
     setFormulario({ id: item.id, nombre: item.nombre, activo: item.activo, valores: aValores(item) })
     setAviso('')
     setError('')
   }
 
   async function guardar() {
-    if (!formulario) return
+    if (!formulario || ocupadoRef.current) return
 
+    const datos = formulario
+    const token = ++generacion.current
+    ocupadoRef.current = true
     setGuardando(true)
     setError('')
     setAviso('')
-
     try {
-      const datos = aAlta(formulario.nombre, formulario.activo, formulario.valores)
+      try {
+        const alta = aAlta(datos.nombre, datos.activo, datos.valores)
+        if (datos.id === null) {
+          await api.post(`/catalogos/${recurso}`, alta)
+        } else {
+          await api.put(`/catalogos/${recurso}/${datos.id}`, alta)
+        }
+      } catch (e) {
+        if (generacion.current === token) setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
 
-      if (formulario.id === null) {
-        await api.post(`/catalogos/${recurso}`, datos)
-        setAviso(`Se creó "${formulario.nombre}".`)
-      } else {
-        await api.put(`/catalogos/${recurso}/${formulario.id}`, datos)
-        setAviso(`Se actualizó "${formulario.nombre}".`)
+        return
       }
 
+      if (generacion.current !== token) return
+
       setFormulario(null)
-      await cargar(incluirInactivos)
-    } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo guardar.')
+      await refrescarTrasEscribir(
+        token,
+        datos.id === null ? `Se creó "${datos.nombre}".` : `Se actualizó "${datos.nombre}".`,
+        AVISO_REFRESCO_FALLIDO,
+      )
     } finally {
+      ocupadoRef.current = false
       setGuardando(false)
     }
   }
 
-  async function eliminar(item: TListado) {
-    if (!confirm(`¿Dar de baja "${item.nombre}"?`)) return
+  /** Ver `Empresas.tsx`: mismo patrón de puerta, mismo contrato de invalidación, misma
+   * re-entrancia. Abrir NO acuña generación: no hay escritura todavía. */
+  function pedirBaja(item: TListado, disparador: HTMLElement | null) {
+    if (ocupadoRef.current) return
 
+    setDisparadorDeLaPuerta(disparador)
+    setBaja(item)
+    setError('')
+    setAviso('')
+  }
+
+  /** Cancelar no supersede nada: solo cierra la puerta. Por eso no acuña generación y limpia los
+   * dos avisos, en simetría con la apertura. */
+  function cancelarBaja() {
+    if (ocupadoRef.current) return
+
+    setDisparadorDeLaPuerta(null)
+    setBaja(null)
+    setError('')
+    setAviso('')
+  }
+
+  async function confirmarBaja() {
+    if (!baja || ocupadoRef.current) return
+
+    // El token se acuña ACÁ, primera sentencia síncrona de la escritura (`react-async-state`
+    // regla 2).
+    const item = baja
+    const token = ++generacion.current
+    ocupadoRef.current = true
+    setOcupadoBaja(item.id)
     setError('')
     setAviso('')
     try {
-      await api.delete(`/catalogos/${recurso}/${item.id}`)
-      setAviso(`"${item.nombre}" se dio de baja.`)
-      await cargar(incluirInactivos)
-    } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : 'No se pudo completar la acción.')
+      try {
+        await api.delete(`/catalogos/${recurso}/${item.id}`)
+      } catch (e) {
+        // Un rechazo SIEMPRE se rinde, con la puerta abierta al lado del motivo.
+        setError(copiaDeFalloDeBaja(e, sujetoDeBaja))
+
+        return
+      }
+
+      // Un 204 SIEMPRE cierra la puerta y refresca; la generación solo gobierna el REFRESCO.
+      setBaja(null)
+      // La baja del item que se está editando se lleva también su formulario: dejarlo abierto
+      // ofrecía guardar sobre una entidad que ya no existe, y el PUT moría en 404.
+      setFormulario((prev) => (prev?.id === item.id ? null : prev))
+      await refrescarTrasEscribir(token, `Se dio de baja "${item.nombre}".`, AVISO_REFRESCO_FALLIDO_BAJA)
+    } finally {
+      ocupadoRef.current = false
+      setOcupadoBaja(null)
     }
   }
+
+  /** La puerta abierta o cualquier escritura en vuelo bloquean la pantalla entera: ver
+   * `Empresas.tsx`. */
+  const bloqueado = guardando || ocupadoBaja !== null || baja !== null
 
   const columnasExtra = campos.filter((c) => c.columnaEnListado)
 
@@ -118,12 +222,18 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
           type="checkbox"
           checked={incluirInactivos}
           onChange={(e) => setIncluirInactivos(e.target.checked)}
+          disabled={bloqueado}
         />
         <label className="form-check-label text-light small" htmlFor="incluir-inactivos">
           Incluir inactivos
         </label>
       </div>
-      <button type="button" className="btn btn-sm btn-success rounded-0 text-nowrap" onClick={abrirNuevo}>
+      <button
+        type="button"
+        className="btn btn-sm btn-success rounded-0 text-nowrap"
+        onClick={abrirNuevo}
+        disabled={bloqueado}
+      >
         Nuevo
       </button>
     </nav>
@@ -135,12 +245,23 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
         {error && <div className="alert alert-danger rounded-0">{error}</div>}
         {aviso && <div className="alert alert-success rounded-0">{aviso}</div>}
 
+        {baja && (
+          <ConfirmacionDeBaja
+            titulo={`${sujetoDeBaja} "${baja.nombre}"`}
+            ocupado={ocupadoBaja !== null}
+            disparador={disparadorDeLaPuerta}
+            onConfirmar={confirmarBaja}
+            onCancelar={cancelarBaja}
+          />
+        )}
+
         {formulario && (
           <FormularioCatalogo
             valor={formulario}
             campos={campos}
             tituloSingular={tituloSingular}
             guardando={guardando}
+            bloqueado={bloqueado}
             items={items}
             onCambio={setFormulario}
             onGuardar={guardar}
@@ -184,6 +305,7 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
                           type="button"
                           className="btn btn-sm btn-outline-primary rounded-0 me-1"
                           onClick={() => abrirEdicion(item)}
+                          disabled={bloqueado}
                         >
                           Editar
                         </button>
@@ -191,7 +313,8 @@ export function PaginaCatalogo<TListado extends CatalogoListado, TAlta>({
                           <button
                             type="button"
                             className="btn btn-sm btn-outline-danger rounded-0"
-                            onClick={() => eliminar(item)}
+                            onClick={(evento) => pedirBaja(item, evento.currentTarget)}
+                            disabled={bloqueado}
                           >
                             Baja
                           </button>
@@ -229,6 +352,7 @@ function FormularioCatalogo({
   campos,
   tituloSingular,
   guardando,
+  bloqueado,
   items,
   onCambio,
   onGuardar,
@@ -238,6 +362,7 @@ function FormularioCatalogo({
   campos: CampoDescriptor[]
   tituloSingular: string
   guardando: boolean
+  bloqueado: boolean
   items: unknown[]
   onCambio: (f: Formulario) => void
   onGuardar: () => void
@@ -273,6 +398,7 @@ function FormularioCatalogo({
           maxLength={150}
           value={valor.nombre}
           onChange={(e) => onCambio({ ...valor, nombre: e.target.value })}
+          disabled={bloqueado}
           required
         />
       </div>
@@ -301,6 +427,7 @@ function FormularioCatalogo({
                   className="form-check-input"
                   checked={Boolean(valor.valores[campo.clave])}
                   onChange={(e) => cambiarValorPropio(campo.clave, e.target.checked)}
+                  disabled={bloqueado}
                 />
               </div>
             ) : campo.tipo === 'select' ? (
@@ -309,6 +436,7 @@ function FormularioCatalogo({
                 className="form-select rounded-0"
                 value={valorActual}
                 onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
+                disabled={bloqueado}
                 required={campo.requerido}
               >
                 {valorActual === '' && <option value="">— Elegí una opción —</option>}
@@ -329,6 +457,7 @@ function FormularioCatalogo({
                 className="form-control rounded-0"
                 value={valorActual}
                 onChange={(e) => cambiarValorPropio(campo.clave, e.target.value)}
+                disabled={bloqueado}
                 required={campo.requerido}
               />
             )}
@@ -345,6 +474,7 @@ function FormularioCatalogo({
           className="form-select rounded-0"
           value={valor.activo ? 'activo' : 'inactivo'}
           onChange={(e) => onCambio({ ...valor, activo: e.target.value === 'activo' })}
+          disabled={bloqueado}
         >
           <option value="activo">Activo</option>
           <option value="inactivo">Inactivo</option>
@@ -352,14 +482,14 @@ function FormularioCatalogo({
       </div>
 
       <div className="col-12 d-flex gap-2">
-        <button type="submit" className="btn btn-success rounded-0" disabled={guardando}>
+        <button type="submit" className="btn btn-success rounded-0" disabled={bloqueado}>
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
         <button
           type="button"
           className="btn btn-outline-secondary rounded-0"
           onClick={onCancelar}
-          disabled={guardando}
+          disabled={bloqueado}
         >
           Cancelar
         </button>
