@@ -122,6 +122,27 @@ describe('ticketDeVenta', () => {
     const bytes = ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()])
     expect(Array.from(bytes.slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x74, 19])
   })
+
+  it('sin opciones (default), nunca incluye la línea de REIMPRESION', () => {
+    const texto = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()]))
+    expect(texto).not.toContain('REIMPRESION')
+  })
+
+  it('con { reimpresion: true } incluye una línea "REIMPRESION" bien visible, sin perder el resto del contenido', () => {
+    const reimpreso = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()], { reimpresion: true }))
+
+    expect(reimpreso).toContain('REIMPRESION')
+    // El resto del ticket sigue igual: el número, el ítem y el total no cambian.
+    expect(reimpreso).toContain('0001-00000001')
+    expect(reimpreso).toContain('2 x Coca Cola 1L')
+    expect(reimpreso).toContain('TOTAL')
+    expect(reimpreso).toContain('1.000,00')
+  })
+
+  it('la línea de REIMPRESION aparece ANTES del aviso de "no válido como factura"', () => {
+    const reimpreso = textoPlano(ticketDeVenta(comprobanteFixture(), CONTEXTO, [medioFixture()], { reimpresion: true }))
+    expect(reimpreso.indexOf('REIMPRESION')).toBeLessThan(reimpreso.indexOf('COMPROBANTE NO VALIDO COMO FACTURA'))
+  })
 })
 
 describe('algunPagoEnEfectivo', () => {

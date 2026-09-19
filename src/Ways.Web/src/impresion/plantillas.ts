@@ -33,17 +33,36 @@ function encabezado(ticket: ConstructorDeTicket, contexto: ContextoDeImpresion):
     .lineaDeGuiones()
 }
 
+/** Opciones de `ticketDeVenta` — hoy solo `reimpresion` (stage-desktop-pos, "Ventas del turno"). */
+export type OpcionesDeTicketDeVenta = { reimpresion?: boolean }
+
 /**
  * Ticket de venta (`POST /api/ventas`) — NO es un comprobante fiscal: el flujo actual solo emite
  * tipo `TX`, así que el ticket lo dice explícitamente en vez de parecer una factura. `medios`
  * resuelve el `comportamiento` de cada pago (para el rótulo, no para el cajón — eso lo decide
  * `algunPagoEnEfectivo` aparte).
+ *
+ * `opciones.reimpresion` (stage-desktop-pos, acción "Reimprimir" de "Ventas del turno"): imprime
+ * una línea "REIMPRESION" bien visible para que una copia nunca se confunda con el original —
+ * mismos datos, ningún otro cambio de contenido.
  */
-export function ticketDeVenta(comprobante: ComprobanteEmitido, contexto: ContextoDeImpresion, medios: MedioPagoListado[]): Uint8Array {
+export function ticketDeVenta(
+  comprobante: ComprobanteEmitido,
+  contexto: ContextoDeImpresion,
+  medios: MedioPagoListado[],
+  opciones: OpcionesDeTicketDeVenta = {},
+): Uint8Array {
   const medioPorId = new Map(medios.map((m) => [m.id, m]))
   const ticket = new ConstructorDeTicket()
 
   encabezado(ticket, contexto)
+
+  if (opciones.reimpresion) {
+    // Sin tilde a propósito: mismo criterio que "COMPROBANTE NO VALIDO COMO FACTURA" de abajo —
+    // el ticket entero evita acentos en las líneas de aviso para no depender de que la tabla
+    // CP858 los tenga mapeados en el hardware real.
+    ticket.alinear('centro').negrita(true).linea('*** REIMPRESION ***').negrita(false)
+  }
 
   ticket
     .alinear('centro')
