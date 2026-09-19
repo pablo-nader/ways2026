@@ -94,3 +94,40 @@ public record CodigoBarraListado(int Id, int IdArticulo, string Codigo, bool Act
 /// <c>precios</c> row por sí sola. <c>null</c> cuando no hay costo base o margen suficientes
 /// para calcular una sugerencia (ver <see cref="Domain.Precios.SugeridorDePrecio.Sugerir"/>).</summary>
 public record SugerenciaDePrecio(decimal? PrecioSugerido);
+
+/// <summary>Fila de <c>GET /api/articulos/grilla</c> (back-office, grilla con filtros por
+/// columna) — contrato DISTINTO de <see cref="ArticuloListado"/>: agrega <see cref="Precio"/>
+/// (lista default del tenant) y <see cref="Proveedor"/> (etiqueta ya resuelta), que ese listado
+/// no calcula, y omite el resto de los ~15 campos de edición que esta grilla no muestra.
+/// <see cref="Precio"/> es <c>null</c> cuando el artículo no tiene un precio vigente resuelto en
+/// la lista default (o cuando el tenant no tiene lista default, ver
+/// <see cref="PaginaDeArticulosGrilla.NombreListaPrecio"/>). <see cref="IdProveedorHabitual"/> y
+/// <see cref="Proveedor"/> viajan juntos: ambos <c>null</c> cuando el artículo no tiene proveedor
+/// habitual O el que tiene es una fila invisible (baja lógica, FK colgante) — un id colgante
+/// nunca se expone (mismo criterio que los filtros <c>idProveedor</c>/<c>sinProveedor</c> del
+/// servicio, que tampoco lo matchean/lo tratan como "sin proveedor"). <see cref="Proveedor"/> es
+/// el <c>NombreFantasia</c> del proveedor habitual cuando no es nulo/blanco, si no su
+/// <c>RazonSocial</c>.</summary>
+public record ArticuloGrillaFila(
+    int Id,
+    string CodigoInterno,
+    string Nombre,
+    decimal? Precio,
+    int? IdProveedorHabitual,
+    string? Proveedor,
+    bool Activo);
+
+/// <summary>Respuesta de <c>GET /api/articulos/grilla</c> — mismo shape que
+/// <c>Usuarios.PaginaDe&lt;T&gt;</c> (<c>Items</c>/<c>Total</c>/<c>Pagina</c>/<c>Tamanio</c>)
+/// más <see cref="NombreListaPrecio"/>, agregado como campo propio en vez de extender el genérico
+/// compartido por más de una decena de listados — mismo criterio que
+/// <c>Ventas.ContratosDeRemito.PaginaDeRemitos</c>/<c>Caja.Contratos.PaginaDeTurnos</c> (un
+/// listado con una necesidad propia define su propio sobre, nunca modifica el contrato
+/// compartido). <c>NombreListaPrecio</c> es el nombre de la lista default DEL TENANT (alcance
+/// compartido, <c>id_empresa IS NULL</c> — esta grilla no tiene <c>idEmpresa</c>, a diferencia de
+/// <c>GET /api/articulos</c>) a la que pertenece <see cref="ArticuloGrillaFila.Precio"/> de TODAS
+/// las filas (para que el grid pueda titular la columna, p.ej. "Precio (General)"); <c>null</c>
+/// cuando el tenant no tiene una lista default compartida — en ese caso el precio de cada fila
+/// también es <c>null</c>, nunca se resuelve sin lista default.</summary>
+public sealed record PaginaDeArticulosGrilla(
+    IReadOnlyList<ArticuloGrillaFila> Items, int Total, int Pagina, int Tamanio, string? NombreListaPrecio);

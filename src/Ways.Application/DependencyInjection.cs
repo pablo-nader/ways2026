@@ -60,6 +60,11 @@ public static class DependencyInjection
         services.AddScoped<ServicioDePrecios>();
         services.AddScoped<ServicioDeOfertas>();
 
+        // stage-articulos-grilla-api: GET /api/articulos/grilla — compone ServicioDePrecios
+        // (mismo criterio que ServicioDeEtiquetas más abajo), registrado junto al resto de
+        // Articulos.
+        services.AddScoped<ServicioDeGrillaDeArticulos>();
+
         // stage-18-etiquetas-y-consulta, Slice 2 (task 2.23): compone ServicioDeArticulos
         // (selección por filtro) + ServicioDeOfertas (precio/ofertas) — registrado después de
         // ambos, aunque el orden de AddScoped no importa para la resolución de DI.
