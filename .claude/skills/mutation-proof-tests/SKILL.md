@@ -4,7 +4,7 @@ description: "Trigger: writing a test whose PURPOSE is to prove one specific cla
 license: Apache-2.0
 metadata:
   author: ways-project
-  version: "1.1"
+  version: "1.2"
 ---
 
 ## Activation Contract
@@ -82,6 +82,10 @@ so deleting the clause under test changes nothing the test can see.
    hasn't flushed yet — proving nothing. Resolve the stale promise INSIDE `act`
    (awaiting it) and assert synchronously after the flush. (Occurrence: CajaZ stale
    test, stage 11 — survived its own strengthening until the flush was forced.)
+   The same applies to identity/absence assertions after a navigation: a "same
+   instance, not remounted" check run one commit too early passes under the remount
+   mutant — flush with `await act(async () => {})` first. (Second occurrence:
+   2026-09-19, articles modal round 2.)
 
 8. **A workbook equality test also asserts the HEADER row — the header is what
    binds a cell to its column.** Reading data cells by position from
@@ -194,6 +198,21 @@ so deleting the clause under test changes nothing the test can see.
    (Stage 17 slice 5 target 47; same family as the stage-12 inclusive-boundary
    decision 13 — vencido = `fecha < hoy` STRICT.)
 
+15. **A clause replicated across siblings needs one kill PER sibling — one
+   representative test proves only itself.** When the same clause lives in N places
+   (four quick-create forms, five "Sin X" selects, twelve export params, the
+   `.then`/`.catch`/`.finally` branches of one generation gate, three debounced text
+   filters), deleting it from any sibling other than the tested one survives. List the
+   siblings and drive them with `it.each`/`describe.each` (or a parameterized
+   `[Theory]`); mutate at least two non-representative siblings to prove the fan-out.
+   Timing clauses have the same trap: a test that only `waitFor`s the eventual request
+   passes with the debounce deleted or with an "immediate" select routed through the
+   timer — assert the intermediate state (not requested yet / requested without
+   advancing timers). (2026-09-19, articles slices: stopPropagation and the
+   double-submit guard proven only for Marca; "Sin X" wiring only for Categoría;
+   `soloIncompletos` only for proveedor; 9 of 12 export params; the stale gate only on
+   `.then`; debounce only on Código — every one a SURVIVED mutant in judgment-day.)
+
 ## Decision Gate
 
 | Situation | Action |
@@ -205,4 +224,5 @@ so deleting the clause under test changes nothing the test can see.
 | Test proves a lock/write ORDER | Single-resource races are blind (rule 13) — structural nets: ledger order + `pg_locks` |
 | Clause compares against a date | Fixture row ON the boundary under a pinned clock (rule 14) |
 | Guarded UPDATE with several conjuncts | Enumerate them; one kill per conjunct (rule 3) |
+| Same clause in N sibling components/params/branches | Parameterize over all siblings; mutate a non-representative one (rule 15) |
 | Cannot name the clause under test | Ordinary coverage — this skill does not apply |
