@@ -294,4 +294,157 @@ public class TurnosCajaMedioPagoEfectivoMigracionTests(WaysApiFixture fixture) :
             await EliminarBaseAsync(cadenaAdmin, nombreBase);
         }
     }
+
+    // ---- judgment-day ronda 2 (JD-E5a-2 escalado): el backfill SOLO alcanza todos los tenants
+    // bajo RLS real gracias al SET LOCAL app.acceso = 'plataforma' dentro del mismo bloque Sql() ----
+
+    private const string RolApp = "ways_app";
+    private const string PasswordApp = "ways_app_password";
+
+    /// <summary>Extrae el ÚNICO bloque <c>"""..."""</c> del <c>Sql()</c> de backfill DIRECTO del
+    /// archivo `.cs` de la migración — nunca una copia escrita a mano en el test (misma lección
+    /// que <c>CuentaCorrienteProveedorBackfillTests.LeerStatementsDelBackfillDesdeElArchivoDeLaMigracion</c>:
+    /// una copia hardcodeada ejecuta el SQL CORRECTO sin importar lo que la migración de verdad
+    /// diga, y no detecta una mutación real del archivo).</summary>
+    private static string LeerBloqueDeBackfillDesdeElArchivoDeLaMigracion()
+    {
+        var rutaMigracion = Path.Combine(
+            Path.GetDirectoryName(RutaDeEsteArchivo())!,
+            "..", "..", "src", "Ways.Infrastructure", "Persistencia", "Migraciones",
+            "20260919185344_TurnosCajaMedioPagoEfectivo.cs");
+
+        Assert.True(File.Exists(rutaMigracion), $"No se encontró la migración en {rutaMigracion}");
+
+        var fuente = File.ReadAllText(rutaMigracion);
+        const string delimitador = "\"\"\"";
+
+        var inicio = fuente.IndexOf(delimitador, StringComparison.Ordinal);
+        var finApertura = inicio + delimitador.Length;
+        var fin = fuente.IndexOf(delimitador, finApertura, StringComparison.Ordinal);
+        var bloque = fuente[finApertura..fin].Trim();
+
+        Assert.Contains("UPDATE turnos_caja", bloque);
+        return bloque;
+    }
+
+    private static string RutaDeEsteArchivo([System.Runtime.CompilerServices.CallerFilePath] string ruta = "") => ruta;
+
+    /// <summary>
+    /// LA CLÁUSULA (judgment-day ronda 2, JD-E5a-2 escalado): <c>turnos_caja</c> corre bajo FORCE
+    /// ROW LEVEL SECURITY (misma migración <c>TurnosCaja</c> que la creó) y el camino real de
+    /// <c>dotnet ef database update</c> (<c>WaysDbContextFactory</c>) NO registra
+    /// <c>InterceptorDeContextoDeTenant</c> — así que, sin un <c>SET LOCAL app.acceso =
+    /// 'plataforma'</c> DENTRO del mismo bloque <c>Sql()</c>, el backfill corre con los GUCs de
+    /// RLS vacíos y actualiza CERO filas, reportando éxito igual.
+    ///
+    /// Reproduce ese camino de verdad: una conexión autenticada como <c>ways_app</c> (rol
+    /// <c>NOSUPERUSER NOBYPASSRLS</c>, el mismo que <see cref="WaysApiFixture"/> crea) sin
+    /// ningún GUC seteado desde afuera, ejecutando el bloque de backfill EXTRAÍDO del archivo
+    /// real de la migración — nunca la conexión <c>ways_owner</c> (superuser, bypassea RLS
+    /// siempre) que el resto de esta clase usa para migrar/sembrar: esa conexión no prueba nada
+    /// de RLS, es la misma "carryover weakness" que
+    /// <c>CuentaCorrienteProveedorBackfillTests.ElTextoFuenteDeLaMigracionOrdenaRlsDespuesDelBackfillTarget11</c>
+    /// ya documenta.
+    ///
+    /// <c>ways_app</c> no es DUEÑO de las tablas en esta base dedicada (a diferencia de
+    /// Producción, ADR-5, donde el rol de aplicación sí lo es) — se le otorgan a mano los mismos
+    /// GRANTs de datos que <c>WaysApiFixture.CrearRolDeAplicacionAsync</c> ya le da sobre la base
+    /// principal de la fixture; no necesita privilegios de DDL porque el backfill es un UPDATE.
+    ///
+    /// Mutation-proof-tests: se corrió la mutación de verdad — sacar la línea <c>SET LOCAL
+    /// app.acceso = 'plataforma';</c> del archivo real de la migración hace fallar esta prueba
+    /// (0 filas afectadas en vez de 1, el turno queda en <c>NULL</c>); revertido después de
+    /// confirmar el fallo, la suite vuelve a quedar verde.
+    /// </summary>
+    [Fact]
+    public async Task ElBackfillAlcanzaElTenantBajoRlsRealSoloGraciasAlSetLocalDePlataforma()
+    {
+        var nombreBase = $"ways_jde5a2rls_{Guid.NewGuid():N}";
+        var cadenaAdmin = new NpgsqlConnectionStringBuilder(fixture.OwnerConnectionString) { Database = "postgres" }.ConnectionString;
+        var cadenaOwner = new NpgsqlConnectionStringBuilder(fixture.OwnerConnectionString) { Database = nombreBase }.ConnectionString;
+        var cadenaWaysApp = new NpgsqlConnectionStringBuilder(fixture.OwnerConnectionString)
+        {
+            Database = nombreBase, Username = RolApp, Password = PasswordApp
+        }.ConnectionString;
+
+        await using (var admin = new NpgsqlConnection(cadenaAdmin))
+        {
+            await admin.OpenAsync();
+            await using var crear = admin.CreateCommand();
+            crear.CommandText = $"CREATE DATABASE \"{nombreBase}\"";
+            await crear.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            var opciones = ConstruirOpciones(cadenaOwner);
+
+            // Migra TODO como owner (superuser en el testcontainer) — arma el esquema completo
+            // (columna/índice/CHECK/FK incluidos). El backfill que corre ACÁ es bajo superuser y
+            // no prueba nada de RLS por sí solo; lo que prueba RLS de verdad es reejecutar el
+            // mismo bloque más abajo, bajo ways_app, sobre una fila sembrada DESPUÉS de este
+            // paso (así que sigue en NULL cuando llega ahí).
+            await using (var db = new WaysDbContext(opciones, TenantActualFijo.Plataforma))
+            {
+                var migrador = db.Database.GetInfrastructure().GetRequiredService<IMigrator>();
+                await migrador.MigrateAsync();
+            }
+
+            await using (var owner = new NpgsqlConnection(cadenaOwner))
+            {
+                await owner.OpenAsync();
+                await using var comando = owner.CreateCommand();
+                comando.CommandText =
+                    $"""
+                    GRANT USAGE, CREATE ON SCHEMA public TO {RolApp};
+                    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {RolApp};
+                    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {RolApp};
+                    """;
+                await comando.ExecuteNonQueryAsync();
+            }
+
+            int idTenant, idPuntoVenta, idEmpleado, idMedioEfectivo;
+            await using (var db2 = new WaysDbContext(opciones, TenantActualFijo.Plataforma))
+            {
+                var t = await SembrarEntornoAsync(db2, "rls");
+                idTenant = t.IdTenant;
+                idPuntoVenta = t.IdPuntoVenta;
+                idEmpleado = t.IdEmpleado;
+                idMedioEfectivo = await SembrarMedioPagoAsync(db2, idTenant, "Efectivo", ComportamientoMedioPago.Efectivo);
+            }
+
+            int idTurnoCerrado;
+            await using (var owner = new NpgsqlConnection(cadenaOwner))
+            {
+                await owner.OpenAsync();
+                // Sembrada DESPUÉS de la corrida-como-owner de arriba — arranca en NULL, que es
+                // justo el punto de partida que esta prueba necesita.
+                idTurnoCerrado = await SembrarTurnoPreMigracionAsync(owner, idTenant, idPuntoVenta, idEmpleado, 0m, cerrado: true);
+                Assert.Null(await LeerAnclaAsync(owner, idTurnoCerrado));
+            }
+
+            var bloqueDeBackfill = LeerBloqueDeBackfillDesdeElArchivoDeLaMigracion();
+
+            // LA CLÁUSULA: reejecuta el backfill EXACTO (leído del archivo real, con su propio
+            // SET LOCAL como primera sentencia del mismo batch) sobre una conexión ways_app
+            // fresca — sin interceptor de tenant, sin ningún GUC seteado desde afuera.
+            await using (var comoWaysApp = new NpgsqlConnection(cadenaWaysApp))
+            {
+                await comoWaysApp.OpenAsync();
+                await using var comando = comoWaysApp.CreateCommand();
+                comando.CommandText = bloqueDeBackfill;
+                await comando.ExecuteNonQueryAsync();
+            }
+
+            await using (var owner = new NpgsqlConnection(cadenaOwner))
+            {
+                await owner.OpenAsync();
+                Assert.Equal(idMedioEfectivo, await LeerAnclaAsync(owner, idTurnoCerrado));
+            }
+        }
+        finally
+        {
+            await EliminarBaseAsync(cadenaAdmin, nombreBase);
+        }
+    }
 }

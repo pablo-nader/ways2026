@@ -43,8 +43,23 @@ namespace Ways.Infrastructure.Persistencia.Migraciones
             // el backfill de id_remito (docs/10 §Stock). Corre DESPUÉS de la CHECK/FK de arriba:
             // solo toca turnos con estado = 'cerrado' (satisface la CHECK) y solo asigna ids que
             // ya existen en medios_pago (satisface la FK) — nunca puede violar ninguna de las dos.
+            //
+            // judgment-day ronda 2 (JD-E5a-2 escalado): turnos_caja corre bajo FORCE ROW LEVEL
+            // SECURITY y el rol de aplicación no tiene BYPASSRLS en Producción
+            // (InicializadorDeBaseDeDatos.VerificarRolSinBypassAsync) — un UPDATE plano solo
+            // vería las filas del tenant de la sesión que corre `dotnet ef database update` (o
+            // ninguna, si esa sesión no tiene contexto de tenant, que es el caso real:
+            // WaysDbContextFactory no registra el interceptor de tenant) y reportaría éxito sin
+            // haber tocado nada. Mismo patrón que el backfill de `CostoCongeladoEnVentaEtapa9`/
+            // `QuitarVueltoMaximo`: `SET LOCAL app.acceso = 'plataforma'` DENTRO del mismo bloque
+            // Sql(), nunca fuera de él, para que alcance todos los tenants en una sola pasada.
+            // Idempotente por construcción: solo toca filas con id_medio_pago_efectivo IS NULL
+            // (implícito en HAVING COUNT(*) = 1 + el criterio de fail-closed) y `estado =
+            // 'cerrado'`, así que una corrida repetida no cambia nada que ya esté poblado.
             migrationBuilder.Sql(
                 """
+                SET LOCAL app.acceso = 'plataforma';
+
                 UPDATE turnos_caja t
                 SET id_medio_pago_efectivo = ancla.id_medio_pago
                 FROM (
