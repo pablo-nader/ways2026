@@ -32,6 +32,26 @@ describe('Modal — estructura y accesibilidad', () => {
     expect(onCerrar).toHaveBeenCalledTimes(1)
   })
 
+  it('etiquetaCerrar reemplaza el nombre accesible del botón de cerrar (sin chocar con un "Cerrar" del pie)', () => {
+    render(
+      <Modal
+        titulo="Detalle"
+        etiquetaCerrar="Cerrar detalle"
+        pie={
+          <button type="button" onClick={() => {}}>
+            Cerrar
+          </button>
+        }
+        onCerrar={() => {}}
+      >
+        <p>contenido</p>
+      </Modal>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Cerrar detalle' })).toHaveClass('btn-close')
+    expect(screen.getAllByRole('button', { name: 'Cerrar' })).toHaveLength(1)
+  })
+
   it('clickear el fondo (fuera del diálogo) dispara onCerrar', () => {
     const onCerrar = vi.fn()
     render(
@@ -186,6 +206,39 @@ describe('Modal — foco', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
 
     expect(disparador).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: `restaurarFoco ? document.activeElement : null` en el inicializador de
+   * `focoPrevio`. Mutation-proof-tests: con el inicializador reducido a `document.activeElement`
+   * (ignorando la prop), el disparador recupera el foco al cerrar y el primer `expect` falla.
+   */
+  it('con restaurarFoco={false}, el cierre NO devuelve el foco al disparador — el llamador es su dueño', () => {
+    function Arnes() {
+      const [abierto, setAbierto] = useState(false)
+      return (
+        <>
+          <button type="button" onClick={() => setAbierto(true)}>
+            Abrir
+          </button>
+          {abierto && (
+            <Modal titulo="Nueva marca" restaurarFoco={false} onCerrar={() => setAbierto(false)}>
+              <button type="button">Guardar</button>
+            </Modal>
+          )}
+        </>
+      )
+    }
+
+    render(<Arnes />)
+    const disparador = screen.getByRole('button', { name: 'Abrir' })
+    disparador.focus()
+    fireEvent.click(disparador)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+
+    expect(disparador).not.toHaveFocus()
+    expect(document.body).toHaveFocus()
   })
 })
 

@@ -767,6 +767,29 @@ describe('VentasDelTurno — detalle de venta', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  /**
+   * Sobre `Modal`: al abrir, el foco entra al diálogo (el disparador queda deshabilitado detrás del
+   * fondo) y Tab no escapa. Mutation-proof-tests: con el markup inline anterior, el foco se queda
+   * en "Detalle" y el primer `expect` falla.
+   */
+  it('al abrir, el foco entra al modal ("Cerrar detalle") y Tab desde el último control vuelve adentro', async () => {
+    const venta = ventaFixture({ id: 27, numeroVisible: '0007-00000027' })
+    const comprobante = comprobanteFixture({ id: 27, numeroVisible: '0007-00000027' })
+    mockearRutas({ turno: turnoFixture(), ventas: [venta], medios: [medioEfectivo], comprobantes: { 27: comprobante } })
+    render(<VentasDelTurno />)
+
+    await screen.findByText('0007-00000027')
+    await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
+    await screen.findByRole('dialog', { name: /0007-00000027/ })
+
+    const cerrarDetalle = screen.getByRole('button', { name: 'Cerrar detalle' })
+    expect(cerrarDetalle).toHaveFocus()
+
+    screen.getByRole('button', { name: 'Cerrar' }).focus()
+    await userEvent.tab()
+    expect(cerrarDetalle).toHaveFocus()
+  })
+
   it('una respuesta de detalle desactualizada nunca pisa el detalle ya cerrado ni el de otra venta', async () => {
     const ventaA = ventaFixture({ id: 30, numeroVisible: '0007-00000030' })
     const ventaB = ventaFixture({ id: 31, numeroVisible: '0007-00000031' })
