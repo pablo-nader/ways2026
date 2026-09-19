@@ -109,7 +109,13 @@ export function Articulos() {
   // Identidad del modal ya comprometida (ver `DestinoModal`) — la compuerta de confirmación del
   // efecto de apertura la compara contra el destino que la URL pide ahora, para distinguir "salir
   // de verdad" de "la URL volvió sola al mismo modal" (p. ej. tras cancelar esa misma salida).
+  // `destinoMostrado` es su espejo en estado y es lo ÚNICO que decide si el modal se renderiza: el
+  // pathname en vivo puede adelantarse a la decisión (Atrás/Adelante commitean la URL antes de que
+  // el efecto pregunte), y renderizar desde él desmontaría el modal — y con él el estado propio de
+  // los hijos (código de barras tipeado, alta rápida abierta) — aunque después se cancele la salida.
+  // Ref y estado se actualizan siempre juntos, solo cuando la salida o apertura ya quedó decidida.
   const destinoModalRef = useRef<DestinoModal>(null)
+  const [destinoMostrado, setDestinoMostrado] = useState<DestinoModal>(null)
   const refBotonNuevo = useRef<HTMLButtonElement>(null)
   const ocupado = guardando || eliminando || escriturasHijas > 0
 
@@ -261,6 +267,23 @@ export function Articulos() {
     }
   }
 
+  // Vuelve al estado "sin modal": compromete el destino nulo (desmonta el modal) y limpia todo el
+  // estado del formulario para no arrastrar restos a la próxima apertura. Lo usan el efecto de
+  // apertura (salida aceptada por URL) y `cerrarModal` (salida aceptada por click) — en este último
+  // caso, comprometerlo ANTES de navegar es lo que evita que el efecto vuelva a preguntar.
+  function descartarModal() {
+    destinoModalRef.current = null
+    setDestinoMostrado(null)
+    invalidarEdicionEnCurso()
+    setGuardando(false)
+    setFormulario(null)
+    formularioOriginalRef.current = null
+    setErrorDetalle('')
+    setAvisoGuardado('')
+    setErrorGuardado('')
+    setCargandoDetalle(false)
+  }
+
   // Efecto de apertura: reacciona a la URL, no a clicks — así una edición abierta desde la grilla,
   // desde una URL tipeada a mano o desde "atrás/adelante" del navegador pasan siempre por el mismo
   // camino. Cuando `modo` pasa a null (URL vuelve a /articulos) se limpia todo el estado del modal
@@ -268,16 +291,17 @@ export function Articulos() {
   useEffect(() => {
     const destino = destinoDeRuta(modo, idParam)
 
-    // Ya estamos en este destino (p. ej. tras cancelar un intento de salir, unas líneas más abajo
-    // se navegó de vuelta a esta misma URL): no hay nada que resetear, evita reaplicar el bloque de
-    // abajo (que en 'crear' pisaría el borrador con un formulario en blanco nuevo).
+    // Ya estamos en este destino: tras cancelar un intento de salir (unas líneas más abajo se navegó
+    // de vuelta a esta misma URL), o tras un `cerrarModal` que ya comprometió el cierre antes de
+    // navegar. No hay nada que resetear ni que preguntar — evita reaplicar el bloque de abajo (que
+    // en 'crear' pisaría el borrador con un formulario en blanco nuevo).
     if (destino === destinoModalRef.current) return
 
-    // La URL se está yendo de un modal con cambios sin guardar (Atrás/Adelante del navegador, o
-    // cualquier otra navegación que no pasó por `cerrarModal` — p. ej. un link a otra edición):
-    // mismo criterio de confirmación que el cierre por click, pero acá se dispara por el cambio de
-    // ubicación en sí. Si cancela, se revierte la navegación (vuelta a la URL del modal actual) sin
-    // tocar el estado; si acepta, se sigue de largo y el bloque de abajo aplica el reset real.
+    // La URL se fue de un modal con cambios sin guardar sin pasar por `cerrarModal` (Atrás/Adelante
+    // del navegador, o un link a otra edición): la URL nueva ya está commiteada, pero el modal sigue
+    // montado porque se renderiza desde `destinoMostrado`, que todavía no cambió. Si cancela, se
+    // restaura la URL del modal actual y las mismas instancias siguen vivas (formulario e hijos
+    // intactos); si acepta, se sigue de largo y el bloque de abajo compromete el destino nuevo.
     if (destinoModalRef.current !== null && haySinGuardar()) {
       if (!confirm(MENSAJE_CONFIRMAR_DESCARTE)) {
         navigate(rutaDeDestino(destinoModalRef.current), { replace: true })
@@ -285,7 +309,13 @@ export function Articulos() {
       }
     }
 
+    if (destino === null) {
+      descartarModal()
+      return
+    }
+
     destinoModalRef.current = destino
+    setDestinoMostrado(destino)
 
     if (modo === 'crear') {
       invalidarEdicionEnCurso()
@@ -316,17 +346,7 @@ export function Articulos() {
       // el aviso de éxito recién puesto.
       if (formulario?.id === idNumerico) return
       void abrirEdicion(idNumerico)
-      return
     }
-
-    invalidarEdicionEnCurso()
-    setGuardando(false)
-    setFormulario(null)
-    formularioOriginalRef.current = null
-    setErrorDetalle('')
-    setAvisoGuardado('')
-    setErrorGuardado('')
-    setCargandoDetalle(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modo, idParam])
 
@@ -416,7 +436,7 @@ export function Articulos() {
     )
   }
 
-  // Recarga/cierre de PESTAÑA (no navegación SPA — esa la cubre el efecto de apertura de arriba):
+  // Recarga/cierre de PESTAÑA (no navegación SPA — esa la cubren `cerrarModal` y el efecto de apertura):
   // el listener se registra/desregistra según haya o no cambios sin guardar, nunca queda pegado.
   // `formulario` alcanza como dependencia: `formularioOriginalRef.current` siempre se asigna en el
   // mismo tick que `setFormulario` (nunca solo), así que `haySinGuardar()` ya lee el par correcto
@@ -435,12 +455,14 @@ export function Articulos() {
   // Único punto de cierre: el botón "Cancelar" del formulario, el × del header, Escape y el click
   // en el backdrop de `Modal` llegan todos acá (nunca `history.back()` — una pestaña nueva no tiene
   // historial previo). `Modal` ya bloquea estos tres últimos mientras `ocupado`; el guard de acá
-  // cubre además el botón "Cancelar" del propio formulario. La confirmación de "cambios sin
-  // guardar" NO vive acá: el efecto de apertura la aplica de forma uniforme a TODA salida del
-  // modal (click, Atrás/Adelante del navegador, o un link a otra edición) — este `navigate` es
-  // solo el disparador, no el punto de decisión.
+  // cubre además el botón "Cancelar" del propio formulario. Con cambios sin guardar se pregunta
+  // ACÁ, antes de navegar: si cancela no se toca ni la URL ni el modal (los hijos conservan su
+  // estado); si acepta, `descartarModal()` compromete el cierre antes del `navigate`, así el efecto
+  // de apertura encuentra el destino nulo ya aplicado y no vuelve a preguntar.
   function cerrarModal() {
     if (ocupado) return
+    if (haySinGuardar() && !confirm(MENSAJE_CONFIRMAR_DESCARTE)) return
+    descartarModal()
     navigate('/articulos', { replace: true })
   }
 
@@ -589,7 +611,7 @@ export function Articulos() {
         )}
       </Box>
 
-      {modo && (
+      {destinoMostrado !== null && (
         <ModalDeArticulo
           clave={claveFormulario}
           formulario={formulario}

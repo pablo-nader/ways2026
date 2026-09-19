@@ -1,7 +1,8 @@
+import { StrictMode, useEffect } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Articulos } from './Articulos'
 import { ErrorApi } from '../api/cliente'
 import type {
@@ -1403,4 +1404,191 @@ describe('Articulos — el alta rápida completa el formulario por actualizació
       expect(within(dialogoArticulo).getByLabelText(selectLabel)).toHaveValue('9')
     },
   )
+})
+
+// ---- la decisión de salir se toma ANTES de desmontar el modal (N1) -----------------------------
+
+describe('Articulos — rechazar la salida no remonta el modal ni pierde estado de los hijos (N1)', () => {
+  // Restaurar en `afterEach` (no al final de cada test): un `expect` que falla antes del restore
+  // dejaría el spy de `confirm` vivo y sus llamadas se sumarían en los tests siguientes.
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  // Cada pathname commiteado, en orden: la URL final restaurada no alcanza para probar que un
+  // cierre rechazado nunca navegó (ida y vuelta por /articulos deja la misma URL al final).
+  let recorrido: string[] = []
+  beforeEach(() => {
+    recorrido = []
+  })
+
+  function Ubicacion() {
+    const { pathname } = useLocation()
+    useEffect(() => {
+      recorrido.push(pathname)
+    }, [pathname])
+    return <p>Ubicación: {pathname}</p>
+  }
+
+  function ArnesConHistorial() {
+    const navigate = useNavigate()
+    return (
+      <>
+        <button type="button" onClick={() => navigate(-1)}>
+          Atrás
+        </button>
+        <button type="button" onClick={() => navigate('/articulos/edit/2')}>
+          Ir a la edición 2
+        </button>
+        <Ubicacion />
+        <Articulos />
+      </>
+    )
+  }
+
+  function renderConHistorial({ estricto = false, entradas = ['/articulos', '/articulos/edit/1'] } = {}) {
+    const arbol = (
+      <MemoryRouter initialEntries={entradas} initialIndex={entradas.length - 1}>
+        <Routes>
+          <Route path="/articulos/*" element={<ArnesConHistorial />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    return render(estricto ? <StrictMode>{arbol}</StrictMode> : arbol)
+  }
+
+  function llamadasA(ruta: string) {
+    return apiGetMock.mock.calls.filter(([r]) => r === ruta).length
+  }
+
+  /** Deja la edición 1 sucia en el formulario (Nombre) Y en un hijo con estado propio
+   * (`GestorDeCodigosBarra`: el código tipeado vive solo en ese componente, nunca en `Articulos`). */
+  async function ensuciarEdicionUno() {
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+    await userEvent.type(within(dialogo).getByPlaceholderText('Código de barras'), '7790001')
+    await waitFor(() => expect(llamadasA('/articulos/1/codigos-barra')).toBe(1))
+  }
+
+  /**
+   * Cláusula bajo prueba: el `confirm` de `cerrarModal` ANTES del `navigate` (Articulos.tsx).
+   * Mutation-proof-tests: devolverle la decisión al efecto de apertura (navegar primero) hace
+   * fallar `recorrido` — la URL pasa por /articulos antes de volver. Con el render todavía atado al
+   * pathname en vivo, además, el modal se remonta: el código tipeado se pierde y los códigos de
+   * barra se piden dos veces.
+   */
+  it('Cancelar con cambios sin guardar pregunta antes de navegar: rechazar conserva lo tipeado en el formulario y en los hijos', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderConHistorial()
+    await ensuciarEdicionUno()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(recorrido).toEqual(['/articulos/edit/1'])
+    expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
+    expect(screen.getByPlaceholderText('Código de barras')).toHaveValue('7790001')
+    expect(llamadasA('/articulos/1/codigos-barra')).toBe(1)
+  })
+
+  /**
+   * Cláusula bajo prueba: el render del modal gobernado por el destino COMPROMETIDO
+   * (`destinoMostrado`), no por el pathname en vivo. Mutation-proof-tests: volver a `{modo && ...}`
+   * desmonta el modal apenas la URL de POP se commitea — el código tipeado se pierde y los códigos
+   * de barra se piden dos veces aunque la URL termine restaurada.
+   */
+  it('POP (Atrás) con cambios sin guardar: rechazar restaura la URL sin desmontar el modal', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderConHistorial()
+    await ensuciarEdicionUno()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Uno (editado)')
+    expect(screen.getByPlaceholderText('Código de barras')).toHaveValue('7790001')
+    expect(llamadasA('/articulos/1/codigos-barra')).toBe(1)
+  })
+
+  /**
+   * Cláusula bajo prueba: `descartarModal()` en `cerrarModal` antes del `navigate` — deja
+   * comprometido el destino nulo para que el efecto de apertura no vuelva a preguntar.
+   * Mutation-proof-tests: sacarlo (solo navegar) hace que el efecto vea una salida de un modal
+   * sucio y pregunte por segunda vez.
+   */
+  it('Cancelar con cambios sin guardar, aceptando, cierra con una sola pregunta y deja la URL en /articulos', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderConHistorial()
+    await ensuciarEdicionUno()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
+  })
+
+  /**
+   * Cláusula bajo prueba: la confirmación de una salida por URL vive en el efecto de apertura (una
+   * corrida por cambio de `[modo, idParam]`), nunca en el render. Mutation-proof-tests: evaluar el
+   * `confirm` durante el render hace que StrictMode lo duplique (pregunta dos veces); el test sin
+   * StrictMode de arriba sigue verde con ese mutante, este no.
+   */
+  it('bajo StrictMode, una salida por POP pregunta exactamente una vez y rechazarla no vuelve a pedir los hijos', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderConHistorial({ estricto: true })
+    const dialogo = await screen.findByRole('dialog', { name: 'Editando artículo A0001' })
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), ' (editado)')
+    await userEvent.type(within(dialogo).getByPlaceholderText('Código de barras'), '7790001')
+    const llamadasAntes = llamadasA('/articulos/1/codigos-barra')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Ubicación: /articulos/edit/1')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Código de barras')).toHaveValue('7790001')
+    expect(llamadasA('/articulos/1/codigos-barra')).toBe(llamadasAntes)
+  })
+
+  it('alta → guardar pasa a /articulos/edit/{id} sin preguntar ni remontar el modal, y luego Atrás tampoco pregunta', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/articulos') return Promise.resolve(articuloFixture({ id: 5, codigoInterno: 'A0005', nombre: 'Nuevo Art' }))
+      return Promise.reject(new Error(`POST no esperado en el test: ${ruta}`))
+    })
+    renderConHistorial({ entradas: ['/articulos', '/articulos/create'] })
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuevo artículo' })
+    await userEvent.type(within(dialogo).getByLabelText('Nombre'), 'Nuevo Art')
+
+    await userEvent.click(within(dialogo).getByRole('button', { name: 'Guardar' }))
+
+    expect(await screen.findByText('Ubicación: /articulos/edit/5')).toBeInTheDocument()
+    // Vacía los efectos del commit de la URL y el render que disparen ANTES de comparar: la URL
+    // nueva aparece un commit antes de que el efecto de apertura comprometa el destino.
+    await act(async () => {})
+    expect(screen.getByText(/creado con código interno A0005/)).toBeInTheDocument()
+    // Mismo nodo de diálogo: el modal nunca se desmontó en el paso de /create a /edit/5.
+    expect(screen.getByRole('dialog', { name: 'Editando artículo A0005' })).toBe(dialogo)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Ubicación: /articulos')).toBeInTheDocument()
+  })
+
+  it('de /articulos/edit/1 con cambios a /articulos/edit/2, aceptando, carga la edición 2', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderConHistorial()
+    await ensuciarEdicionUno()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ir a la edición 2' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Editando artículo A0002' })).toBeInTheDocument()
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Articulo Dos')
+    expect(screen.getByText('Ubicación: /articulos/edit/2')).toBeInTheDocument()
+  })
 })
