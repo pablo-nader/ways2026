@@ -151,6 +151,58 @@ public static class ReportesEndpoints
         })
         .WithSummary("Export XLSX de /articulos/top: mismos parámetros y figuras.");
 
+        // Reporte de completitud de catálogo (owner: "artículos sin proveedor, sin marca, sin
+        // categoría, sin grupo, para verlos de un vistazo"): tenant-wide, sin idEmpresa/
+        // idPuntoVenta — los artículos no tienen esa columna (doc 10 §3), a diferencia de todo el
+        // resto de /api/reportes/*. Gate heredado del grupo (LecturaDeReportes), sin política
+        // propia. Los cuatro pares id/sin son conjuncts AND independientes, cada uno con su propia
+        // guarda de exclusividad mutua dentro del servicio (400 filtro_incompatible).
+        grupo.MapGet("/articulos", (
+            ServicioDeReportesDeArticulos servicio, int? idArea, int? idCategoria, bool? sinCategoria,
+            int? idMarca, bool? sinMarca, int? idGrupo, bool? sinGrupo, int? idProveedor, bool? sinProveedor,
+            bool? soloIncompletos, bool? activo, int? pagina, int? tamanio, CancellationToken ct) =>
+            servicio.ListarArticulosAsync(
+                idArea, idCategoria, sinCategoria ?? false, idMarca, sinMarca ?? false, idGrupo, sinGrupo ?? false,
+                idProveedor, sinProveedor ?? false, soloIncompletos ?? false, activo, pagina ?? 1, tamanio ?? 25, ct))
+        .WithSummary(
+            "Catálogo de artículos con los nombres de área/categoría/marca/grupo/proveedor " +
+            "habitual ya resueltos — soloIncompletos filtra a los que falta al menos una de las " +
+            "cuatro clasificaciones (OR).");
+
+        // Sibling declarado inmediatamente después de su ruta fuente — hereda LecturaDeReportes por
+        // co-locación. LISTADO (mismo shape que /cajas/export): el tope de filas lo exige el
+        // servicio (Contar → rechazar → Take(tope + 1)) antes de volver acá. Sin idPuntoVenta que
+        // resolver: AlcanceDeListadoHttp.ResolverAsync(idPuntoVenta: null) devuelve directamente
+        // ("Todas", ZonaPorDefecto) sin consultar PuntosVenta — mismo atajo que un reporte sin PV.
+        grupo.MapGet("/articulos/export", async (
+            ServicioDeReportesDeArticulos servicio, IExportadorDeTabla exportador, IOptions<OpcionesDeExportacion> opciones,
+            IContextoDeUsuario usuario, IRelojDelSistema reloj, ServicioDeParametros parametros, IWaysDbContext db,
+            int? idArea, int? idCategoria, bool? sinCategoria, int? idMarca, bool? sinMarca, int? idGrupo,
+            bool? sinGrupo, int? idProveedor, bool? sinProveedor, bool? soloIncompletos, bool? activo, string formato,
+            CancellationToken ct) =>
+        {
+            FormatoDeExportacion.Parsear(formato);
+
+            var filas = await servicio.ListarArticulosParaExportacionAsync(
+                idArea, idCategoria, sinCategoria ?? false, idMarca, sinMarca ?? false, idGrupo, sinGrupo ?? false,
+                idProveedor, sinProveedor ?? false, soloIncompletos ?? false, activo, opciones.Value.TopeDeFilas, ct);
+
+            var (empresa, zonaId) = await AlcanceDeListadoHttp.ResolverAsync(db, parametros, idPuntoVenta: null, ct);
+            var hoy = DateOnly.FromDateTime(
+                TimeZoneInfo.ConvertTime(reloj.Ahora, TimeZoneInfo.FindSystemTimeZoneById(zonaId)).Date);
+
+            var ctx = ContextoDeExportacionHttp.Construir(usuario, reloj, empresa, puntoVenta: null, hoy, hoy, zonaId);
+            var tabla = ExportacionDeReportes.De(filas, ctx);
+
+            var bytes = exportador.Generar(tabla);
+            var nombre = NombreDeArchivo.Construir("articulos", "todos", hoy, hoy);
+
+            return ResultadoDeExportacion.Archivo(bytes, exportador.TipoDeContenido, nombre);
+        })
+        .WithSummary(
+            "Export XLSX de /articulos: mismos filtros y figuras, tope de filas exigido antes de " +
+            "generar el archivo.");
+
         // stage-10-agregacion-dashboard, Slice 4 (design decisión 7): apila LecturaDeRentabilidad
         // sobre LecturaDeReportes — ASP.NET Core compone políticas con AND, mismo criterio que
         // StockEndpoints ("/ajustes" apilando GestionDeCatalogo sobre OperacionDePos).

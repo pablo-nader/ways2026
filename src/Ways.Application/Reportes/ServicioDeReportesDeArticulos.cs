@@ -1,9 +1,13 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ways.Application.Abstracciones;
+using Ways.Application.Exportacion;
 using Ways.Application.Parametros;
+using Ways.Application.Usuarios;
+using Ways.Domain.Articulos;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Common;
+using Ways.Domain.Ofertas;
 using Ways.Domain.Reportes;
 using Ways.Domain.Ventas;
 
@@ -115,5 +119,219 @@ public class ServicioDeReportesDeArticulos(IWaysDbContext db, ServicioDeParametr
         var resuelto = await parametros.ResolverAsync(ParametroConocido.ZonaHoraria.Clave, idEmpresa, idPuntoVenta, ct);
         var zonaId = JsonSerializer.Deserialize<string>(resuelto.Valor)!;
         return (zonaId, TimeZoneInfo.FindSystemTimeZoneById(zonaId));
+    }
+
+    // ---- GET /api/reportes/articulos (reporte de completitud de catálogo) ------------------------
+
+    public const int TamanioMaximoDePaginaDeArticulos = 200;
+
+    /// <summary>Catálogo de artículos tenant-wide (sin <c>idEmpresa</c>/<c>idPuntoVenta</c>: los
+    /// artículos no tienen esa columna, doc 10 §3) con los nombres de sus cuatro clasificaciones
+    /// opcionales ya resueltos. <paramref name="soloIncompletos"/> es un OR de las cuatro
+    /// ausencias (spec del owner: "sin proveedor, sin marca, sin categoría, sin grupo") — un
+    /// artículo con UNA sola clasificación faltante ya aparece.</summary>
+    public async Task<PaginaDe<ArticuloDeReporte>> ListarArticulosAsync(
+        int? idArea,
+        int? idCategoria,
+        bool sinCategoria,
+        int? idMarca,
+        bool sinMarca,
+        int? idGrupo,
+        bool sinGrupo,
+        int? idProveedor,
+        bool sinProveedor,
+        bool soloIncompletos,
+        bool? activo,
+        int pagina = 1,
+        int tamanio = 25,
+        CancellationToken ct = default)
+    {
+        pagina = Math.Max(pagina, 1);
+        tamanio = Math.Clamp(tamanio, 1, TamanioMaximoDePaginaDeArticulos);
+
+        var query = await ConstruirQueryDeArticulosAsync(
+            idArea, idCategoria, sinCategoria, idMarca, sinMarca, idGrupo, sinGrupo, idProveedor, sinProveedor,
+            soloIncompletos, activo, ct);
+
+        var total = await query.CountAsync(ct);
+
+        var paginaDeArticulos = query.OrderBy(a => a.Nombre).ThenBy(a => a.Id).Skip((pagina - 1) * tamanio).Take(tamanio);
+        var items = await ProyectarArticulosDeReporteAsync(paginaDeArticulos, ct);
+
+        return new PaginaDe<ArticuloDeReporte>(items, total, pagina, tamanio);
+    }
+
+    /// <summary>Export sibling — mismo patrón Contar → rechazar → <c>Take(tope + 1)</c> → rechazar
+    /// que <see cref="Caja.ServicioDeHistoricoDeCajas.ListarCierresParaExportacionAsync"/>, reusando
+    /// <see cref="ConstruirQueryDeArticulosAsync"/> tal cual — nunca una segunda declaración del
+    /// filtro (un catálogo de artículos no es acotado como un punto de venta o un medio de pago, así
+    /// que el paginado de <see cref="ListarArticulosAsync"/> (tope duro de
+    /// <see cref="TamanioMaximoDePaginaDeArticulos"/>) truncaría en silencio una exportación más
+    /// grande sin este método).</summary>
+    public async Task<IReadOnlyList<ArticuloDeReporte>> ListarArticulosParaExportacionAsync(
+        int? idArea,
+        int? idCategoria,
+        bool sinCategoria,
+        int? idMarca,
+        bool sinMarca,
+        int? idGrupo,
+        bool sinGrupo,
+        int? idProveedor,
+        bool sinProveedor,
+        bool soloIncompletos,
+        bool? activo,
+        int topeDeFilas,
+        CancellationToken ct = default)
+    {
+        var query = await ConstruirQueryDeArticulosAsync(
+            idArea, idCategoria, sinCategoria, idMarca, sinMarca, idGrupo, sinGrupo, idProveedor, sinProveedor,
+            soloIncompletos, activo, ct);
+
+        var cantidad = await query.CountAsync(ct);
+        GuardaDeTope.Exigir(cantidad, topeDeFilas);
+
+        var recorte = query.OrderBy(a => a.Nombre).ThenBy(a => a.Id).Take(topeDeFilas + 1);
+        var items = await ProyectarArticulosDeReporteAsync(recorte, ct);
+
+        GuardaDeTope.Exigir(items.Count, topeDeFilas);
+
+        return items;
+    }
+
+    /// <summary>Filtro compartido de <see cref="ListarArticulosAsync"/> y
+    /// <see cref="ListarArticulosParaExportacionAsync"/> — cada guarda <c>id</c>/<c>sin</c> es un
+    /// conjunct AND independiente (mismo criterio que <c>ServicioDeArticulos.ListarAsync</c>).
+    /// <c>idCategoria</c> reusa <see cref="CadenaDeCategorias.ConstruirDescendientes"/> tal cual
+    /// (<c>ServicioDeArticulos.ListarAsync:106-118</c>) — nunca una segunda expansión de
+    /// descendientes.</summary>
+    private async Task<IQueryable<Articulo>> ConstruirQueryDeArticulosAsync(
+        int? idArea,
+        int? idCategoria,
+        bool sinCategoria,
+        int? idMarca,
+        bool sinMarca,
+        int? idGrupo,
+        bool sinGrupo,
+        int? idProveedor,
+        bool sinProveedor,
+        bool soloIncompletos,
+        bool? activo,
+        CancellationToken ct)
+    {
+        ExigirFiltroExclusivo(idCategoria, sinCategoria, "idCategoria", "sinCategoria");
+        ExigirFiltroExclusivo(idMarca, sinMarca, "idMarca", "sinMarca");
+        ExigirFiltroExclusivo(idGrupo, sinGrupo, "idGrupo", "sinGrupo");
+        ExigirFiltroExclusivo(idProveedor, sinProveedor, "idProveedor", "sinProveedor");
+
+        var query = db.Articulos.AsQueryable();
+
+        if (idArea is { } idAreaValor)
+        {
+            query = query.Where(a => a.IdArea == idAreaValor);
+        }
+
+        if (idCategoria is { } idCategoriaValor)
+        {
+            // Una sola proyección id→id_padre de TODO el tenant, mismo criterio que
+            // ServicioDeArticulos.ListarAsync — la expansión de descendientes corre en memoria.
+            var padrePorCategoria = await db.Categorias
+                .Select(c => new { c.Id, c.IdCategoriaPadre })
+                .ToDictionaryAsync(c => c.Id, c => c.IdCategoriaPadre, ct);
+
+            var descendientes = CadenaDeCategorias.ConstruirDescendientes(idCategoriaValor, padrePorCategoria);
+
+            query = query.Where(a => a.IdCategoria != null && descendientes.Contains(a.IdCategoria.Value));
+        }
+        else if (sinCategoria)
+        {
+            query = query.Where(a => a.IdCategoria == null);
+        }
+
+        if (idMarca is { } idMarcaValor)
+        {
+            query = query.Where(a => a.IdMarca == idMarcaValor);
+        }
+        else if (sinMarca)
+        {
+            query = query.Where(a => a.IdMarca == null);
+        }
+
+        if (idGrupo is { } idGrupoValor)
+        {
+            query = query.Where(a => a.IdGrupo == idGrupoValor);
+        }
+        else if (sinGrupo)
+        {
+            query = query.Where(a => a.IdGrupo == null);
+        }
+
+        if (idProveedor is { } idProveedorValor)
+        {
+            query = query.Where(a => a.IdProveedorHabitual == idProveedorValor);
+        }
+        else if (sinProveedor)
+        {
+            query = query.Where(a => a.IdProveedorHabitual == null);
+        }
+
+        if (soloIncompletos)
+        {
+            query = query.Where(a =>
+                a.IdCategoria == null || a.IdMarca == null || a.IdGrupo == null || a.IdProveedorHabitual == null);
+        }
+
+        if (activo is { } activoValor)
+        {
+            query = query.Where(a => a.Activo == activoValor);
+        }
+
+        return query;
+    }
+
+    /// <summary>Una sola proyección con LEFT JOIN contra los cuatro catálogos opcionales + INNER
+    /// JOIN contra área (obligatoria) — todos los nombres salen de ACÁ, nunca de un lookup por fila
+    /// (design: "All names from one SQL projection, no N+1"), mismo patrón de
+    /// <c>into ... from ... DefaultIfEmpty()</c> que <c>ServicioDeReportesDeStock.
+    /// ConstruirQueryDeReposicion</c>. <see cref="Proveedor.NombreFantasia"/> gana sobre
+    /// <see cref="Proveedor.RazonSocial"/> cuando no es nulo/vacío.</summary>
+    private async Task<List<ArticuloDeReporte>> ProyectarArticulosDeReporteAsync(IQueryable<Articulo> query, CancellationToken ct)
+    {
+        var proyeccion =
+            from a in query
+            join area in db.Areas on a.IdArea equals area.Id
+            join categoria in db.Categorias on a.IdCategoria equals categoria.Id into categoriasUnidas
+            from categoria in categoriasUnidas.DefaultIfEmpty()
+            join marca in db.Marcas on a.IdMarca equals marca.Id into marcasUnidas
+            from marca in marcasUnidas.DefaultIfEmpty()
+            join grupo in db.Grupos on a.IdGrupo equals grupo.Id into gruposUnidos
+            from grupo in gruposUnidos.DefaultIfEmpty()
+            join proveedor in db.Proveedores on a.IdProveedorHabitual equals proveedor.Id into proveedoresUnidos
+            from proveedor in proveedoresUnidos.DefaultIfEmpty()
+            orderby a.Nombre, a.Id
+            select new ArticuloDeReporte(
+                a.Id,
+                a.CodigoInterno,
+                a.Nombre,
+                area.Nombre,
+                categoria != null ? categoria.Nombre : null,
+                marca != null ? marca.Nombre : null,
+                grupo != null ? grupo.Nombre : null,
+                proveedor != null
+                    ? (!string.IsNullOrWhiteSpace(proveedor.NombreFantasia) ? proveedor.NombreFantasia : proveedor.RazonSocial)
+                    : null,
+                a.Activo);
+
+        return await proyeccion.ToListAsync(ct);
+    }
+
+    private static void ExigirFiltroExclusivo(int? id, bool sin, string nombreId, string nombreSin)
+    {
+        if (id is not null && sin)
+        {
+            throw new ErrorDominio(
+                "filtro_incompatible",
+                $"No podés combinar {nombreId} con {nombreSin} en la misma consulta.",
+                400);
+        }
     }
 }

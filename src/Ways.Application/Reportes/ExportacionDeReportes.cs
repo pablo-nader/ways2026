@@ -142,6 +142,42 @@ public static class ExportacionDeReportes
                 ])
                 .ToList());
 
+    private static readonly IReadOnlyList<ColumnaExportable> ColumnasArticulosDeReporte =
+    [
+        new ColumnaExportable("Código", TipoDeColumna.Texto),
+        new ColumnaExportable("Nombre", TipoDeColumna.Texto),
+        new ColumnaExportable("Área", TipoDeColumna.Texto),
+        new ColumnaExportable("Categoría", TipoDeColumna.Texto),
+        new ColumnaExportable("Marca", TipoDeColumna.Texto),
+        new ColumnaExportable("Grupo", TipoDeColumna.Texto),
+        new ColumnaExportable("Proveedor", TipoDeColumna.Texto),
+        new ColumnaExportable("Activo", TipoDeColumna.Texto)
+    ];
+
+    /// <summary>Export sibling de <c>GET /api/reportes/articulos</c> — LISTADO (no agregado): el
+    /// tope de filas ya lo exigió <c>ServicioDeReportesDeArticulos.ListarArticulosParaExportacionAsync</c>
+    /// (Contar → rechazar → <c>Take(tope + 1)</c>) antes de llegar acá. Sin fila de totales — un
+    /// catálogo de artículos no tiene una figura agregada con significado propio. <c>Activo</c> se
+    /// escribe como texto "Sí"/"No": <see cref="TipoDeColumna"/> no tiene un tipo booleano, mismo
+    /// criterio con el que el resto de los mappers escriben un estado como texto
+    /// (<c>Estado.ToString()</c> en <see cref="Existencias"/>/<see cref="Vencimientos"/>).</summary>
+    public static TablaExportable De(IReadOnlyList<ArticuloDeReporte> filas, ContextoDeExportacion ctx) =>
+        new(
+            "Artículos", ctx, ColumnasArticulosDeReporte,
+            filas
+                .Select(a => (IReadOnlyList<Celda>)
+                [
+                    Celda.Texto(a.CodigoInterno),
+                    Celda.Texto(a.Nombre),
+                    Celda.Texto(a.Area),
+                    Celda.Texto(a.Categoria),
+                    Celda.Texto(a.Marca),
+                    Celda.Texto(a.Grupo),
+                    Celda.Texto(a.Proveedor),
+                    Celda.Texto(a.Activo ? "Sí" : "No")
+                ])
+                .ToList());
+
     private static readonly IReadOnlyList<ColumnaExportable> ColumnasComprasPorProveedor =
     [
         new ColumnaExportable("Proveedor", TipoDeColumna.Texto),
