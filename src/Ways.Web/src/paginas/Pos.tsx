@@ -32,6 +32,7 @@ import type {
   ParametroResuelto,
   PresupuestoParaVenta,
   ResultadoDeResolucion,
+  ResumenDeCierrePorRetiro,
   TurnoResumen,
 } from '../api/tipos'
 import {
@@ -46,8 +47,11 @@ import {
 import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
+import { Modal } from '../componentes/Modal'
 import { ModalDeBusquedaDeArticulos } from '../componentes/ModalDeBusquedaDeArticulos'
 import { formatearImporte } from '../formato/importes'
+import { cierreDeTurno, pulsoDeCajon, ticketRetiroDeEfectivo } from '../impresion/plantillas'
+import type { ContextoDeImpresion } from '../impresion/plantillas'
 import { RanuraHeaderPosContext } from '../pos/RanuraHeaderPosContext'
 import { usePuntoVenta } from '../puntoVenta/usePuntoVenta'
 
@@ -512,11 +516,28 @@ function VentaFinalizada({
 type PropsPantallaPos = {
   idPresupuesto: number | null
   alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
-  /** stage-pos-turno-y-foco: seam de navegación de "Cerrar caja" — la app web y el shell de
-   * escritorio tienen rutas distintas para `CierreDeCaja` (`/caja/cierre` vs. `/cerrar-caja`).
-   * `undefined` (app web normal) navega a la ruta libre con `useNavigate`; el shell pasa su
-   * propia función para navegar a la suya. */
+  /** stage-pos-turno-y-foco: seam de navegación de "Cerrar caja" — la app web navega a la ruta
+   * libre `/caja/cierre` con `useNavigate` (comportamiento sin cambios, "camino viejo"). El shell
+   * de escritorio dejó de pasar esto (stage-pos-retiros-y-cierre-por-retiro, etapa 5): con
+   * `cajaDeEscritorio` presente, "Cerrar caja" nunca navega — ver ese prop. Queda como seam
+   * genérico por si algún día hace falta una navegación custom sin el resto del comportamiento
+   * de escritorio. */
   alIrACerrarCaja?: (idTurno: number) => void
+  /** stage-pos-retiros-y-cierre-por-retiro (etapa 5): seam opcional, SOLO el POS de escritorio lo
+   * pasa (`ShellPos.tsx`) — habilita "Retirar" en los controles de turno y reemplaza "Cerrar caja"
+   * por el cierre por retiro (modales en esta misma pantalla, sin navegar) en vez de la
+   * navegación clásica a `CierreDeCaja`. `contexto`/`encolarImpresion` son exactamente los que ya
+   * arma/expone `ShellPos` para el ticket de venta — esta pantalla arma los bytes de cada ticket
+   * propio (pulso de cajón, retiro, cierre) con las plantillas de `impresion/plantillas.ts` y los
+   * entrega a la MISMA cola FIFO, nunca un segundo camino de impresión. `undefined` en la app web
+   * (bajo `Layout.tsx`) deja el comportamiento intacto: sin "Retirar", "Cerrar caja" sigue el
+   * camino viejo de arriba. */
+  cajaDeEscritorio?: CajaDeEscritorio
+}
+
+export type CajaDeEscritorio = {
+  contexto: ContextoDeImpresion
+  encolarImpresion: (descripcion: string, bytes: Uint8Array) => void
 }
 
 /**
@@ -532,7 +553,7 @@ type PropsPantallaPos = {
  * (react-async-state regla 8) — ningún estado de una venta libre o de otro presupuesto sobrevive
  * al cambio de `?idPresupuesto=`, ni al cambio del punto de venta de la sesión.
  */
-function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantallaPos) {
+function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja, cajaDeEscritorio }: PropsPantallaPos) {
   const modoPresupuesto = idPresupuesto !== null
   const navigate = useNavigate()
   const { puntoVenta: puntoVentaDeSesion, puntosVenta } = usePuntoVenta()
@@ -638,6 +659,40 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       montadoRef.current = false
     }
   }, [])
+
+  // stage-pos-retiros-y-cierre-por-retiro (etapa 5, desktop-only vía `cajaDeEscritorio`): flujo
+  // "Retirar" — confirmar apertura de cajón (con su propio POST de auditoría `AperturaCajon`) y
+  // recién después el monto a retirar (POST `Retiro`). `pasoRetiro` es el único dueño de "hay un
+  // modal de este flujo abierto" — nunca dos booleanos separados que podrían desincronizarse.
+  const [pasoRetiro, setPasoRetiro] = useState<'confirmarApertura' | 'monto' | null>(null)
+  const [registrandoAperturaRetiro, setRegistrandoAperturaRetiro] = useState(false)
+  const registrandoAperturaRetiroRef = useRef(false)
+  const [errorAperturaRetiro, setErrorAperturaRetiro] = useState('')
+  const [montoRetiro, setMontoRetiro] = useState<number | null>(null)
+  const [registrandoRetiro, setRegistrandoRetiro] = useState(false)
+  const registrandoRetiroRef = useRef(false)
+  const [errorRetiro, setErrorRetiro] = useState('')
+  const [avisoRetiroOk, setAvisoRetiroOk] = useState('')
+
+  // stage-pos-retiros-y-cierre-por-retiro (etapa 5, desktop-only): flujo "Cerrar caja" por
+  // retiro — mismo criterio de "un solo dueño" que `pasoRetiro`. `idTurnoACerrar` es el turno que
+  // `irACerrarCaja` ya reconfirmó fresco (nunca el `turno.id` potencialmente viejo del estado).
+  const [pasoCierre, setPasoCierre] = useState<'confirmar' | 'monto' | null>(null)
+  const [idTurnoACerrar, setIdTurnoACerrar] = useState<number | null>(null)
+  const [registrandoAperturaCierre, setRegistrandoAperturaCierre] = useState(false)
+  const registrandoAperturaCierreRef = useRef(false)
+  const [errorAperturaCierre, setErrorAperturaCierre] = useState('')
+  const [montoCierre, setMontoCierre] = useState<number | null>(null)
+  const [cerrandoPorRetiro, setCerrandoPorRetiro] = useState(false)
+  const cerrandoPorRetiroRef = useRef(false)
+  const [errorCierrePorRetiro, setErrorCierrePorRetiro] = useState('')
+  // `true` desde que `cerrarPorRetiro` devuelve un 503 `resultado_incierto` (o una falla de red)
+  // hasta que se confirma el resultado real — mientras está en `true`, un reintento SOLO vuelve a
+  // consultar `obtenerResumenDeCierre` (lectura, idempotente), NUNCA vuelve a postear
+  // `cerrarPorRetiro` — el cierre ya pudo haber sucedido del lado del servidor.
+  const [cierreIncierto, setCierreIncierto] = useState(false)
+  const [recuperandoCierre, setRecuperandoCierre] = useState(false)
+  const recuperandoCierreRef = useRef(false)
 
   // stage-pos-modales-de-cobro: reemplaza a la vieja pantalla de resumen completa — un cobro
   // exitoso ya no reemplaza toda la pantalla ni espera un click en "Nueva venta", solo muestra
@@ -903,14 +958,14 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   }
 
   /**
-   * "Cerrar caja" de "Datos de la venta" — vuelve a consultar el turno abierto ANTES de navegar
-   * (judgment-day ronda 1, T2, WARNING: el `turno.id` que ya tiene el estado pudo quedar viejo —
-   * otra pestaña/cajero cerró la caja mientras esta pantalla seguía mostrando "Turno abierto" — el
-   * shell anterior hacía esta misma consulta fresca en el click, este reemplazo no debía perder
-   * esa garantía). `alIrACerrarCaja` es el seam del shell de escritorio (ruta `/cerrar-caja`,
-   * distinta de la ruta libre `/caja/cierre` de la app web); sin el prop, navega con `useNavigate`
-   * como siempre. Nunca navega con un id potencialmente viejo: si la consulta ya no encuentra
-   * turno, actualiza el badge a "cerrado" en vez de navegar a ciegas.
+   * "Cerrar caja" de "Datos de la venta" — vuelve a consultar el turno abierto ANTES de hacer
+   * cualquier otra cosa (judgment-day ronda 1, T2, WARNING: el `turno.id` que ya tiene el estado
+   * pudo quedar viejo — otra pestaña/cajero cerró la caja mientras esta pantalla seguía mostrando
+   * "Turno abierto"). Con `cajaDeEscritorio` (stage-pos-retiros-y-cierre-por-retiro, etapa 5):
+   * abre el flujo de cierre por retiro EN ESTA MISMA pantalla (nunca navega). Sin él,
+   * `alIrACerrarCaja` es el seam viejo del shell de escritorio; sin ninguno de los dos, navega con
+   * `useNavigate` como siempre (camino web). Nunca actúa con un id potencialmente viejo: si la
+   * consulta ya no encuentra turno, actualiza el badge a "cerrado" en vez de seguir a ciegas.
    */
   async function irACerrarCaja() {
     // regla 9/11: guarda de reentrancia de primera línea, liberada siempre en el `finally` sin
@@ -937,7 +992,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
         return
       }
 
-      if (alIrACerrarCaja) {
+      if (cajaDeEscritorio) {
+        setIdTurnoACerrar(turnoReal.id)
+        setPasoCierre('confirmar')
+      } else if (alIrACerrarCaja) {
         alIrACerrarCaja(turnoReal.id)
       } else {
         navigate(`/caja/cierre?idTurno=${turnoReal.id}`)
@@ -951,6 +1009,267 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       if (montadoRef.current) setVerificandoCierre(false)
     }
   }
+
+  // --- stage-pos-retiros-y-cierre-por-retiro (etapa 5, desktop-only): flujo "Retirar" ---
+
+  /** Abre el primer modal del flujo "Retirar" — botón propio de los controles de turno, visible
+   * solo con `cajaDeEscritorio` y un turno abierto (ver `controlesTurno`). */
+  function abrirRetiro() {
+    setErrorAperturaRetiro('')
+    setAvisoRetiroOk('')
+    setPasoRetiro('confirmarApertura')
+  }
+
+  /** "No" del primer modal, o Escape/backdrop/"X" (`Modal.onCerrar`) — nada se auditó todavía. */
+  function cancelarRetiro() {
+    if (registrandoAperturaRetiroRef.current) return
+    setPasoRetiro(null)
+  }
+
+  /**
+   * "Sí" — registra la apertura de cajón de auditoría (`AperturaCajon`, importe 0) y SOLO si esa
+   * escritura confirma, encola el pulso de cajón. Si el POST de auditoría falla, el cajón NUNCA se
+   * abre (spec del dueño): se muestra el error en el mismo modal y el cajero puede reintentar o
+   * cancelar.
+   */
+  async function confirmarAperturaParaRetiro() {
+    if (registrandoAperturaRetiroRef.current) return
+    if (!turno || !cajaDeEscritorio) return
+
+    registrandoAperturaRetiroRef.current = true
+    setRegistrandoAperturaRetiro(true)
+    setErrorAperturaRetiro('')
+
+    try {
+      await clienteDeCaja.registrarMovimiento(turno.id, {
+        tipo: 'AperturaCajon',
+        importe: 0,
+        motivo: 'Apertura de cajón para retiro',
+      })
+      if (!montadoRef.current) return
+      cajaDeEscritorio.encolarImpresion('la apertura de cajón', pulsoDeCajon())
+      setPasoRetiro('monto')
+    } catch (e) {
+      if (!montadoRef.current) return
+      setErrorAperturaRetiro(e instanceof ErrorApi ? e.message : 'No se pudo registrar la apertura de cajón.')
+    } finally {
+      registrandoAperturaRetiroRef.current = false
+      if (montadoRef.current) setRegistrandoAperturaRetiro(false)
+    }
+  }
+
+  /** Cancelar el monto — el cajón ya está abierto (spec del dueño: eso ya quedó auditado), así que
+   * cancelar acá es seguro: solo descarta el monto sin registrar ningún `Retiro`. */
+  function cancelarMontoRetiro() {
+    if (registrandoRetiroRef.current) return
+    setPasoRetiro(null)
+    setMontoRetiro(null)
+    setErrorRetiro('')
+  }
+
+  /** Confirmar el monto — registra el `Retiro` real y encola su ticket. NUNCA vuelve a pulsar el
+   * cajón (ya se pulsó en `confirmarAperturaParaRetiro`). */
+  async function confirmarMontoRetiro() {
+    if (registrandoRetiroRef.current) return
+    if (!turno || !cajaDeEscritorio) return
+    if (montoRetiro === null || montoRetiro <= 0) return
+
+    registrandoRetiroRef.current = true
+    setRegistrandoRetiro(true)
+    setErrorRetiro('')
+
+    try {
+      await clienteDeCaja.registrarMovimiento(turno.id, {
+        tipo: 'Retiro',
+        importe: montoRetiro,
+        motivo: 'Retiro de efectivo',
+      })
+      if (!montadoRef.current) return
+      cajaDeEscritorio.encolarImpresion(
+        'el ticket de retiro',
+        ticketRetiroDeEfectivo({ fecha: new Date().toISOString(), importe: montoRetiro }, cajaDeEscritorio.contexto),
+      )
+      setPasoRetiro(null)
+      setMontoRetiro(null)
+      setAvisoRetiroOk('Retiro registrado.')
+    } catch (e) {
+      if (!montadoRef.current) return
+      setErrorRetiro(e instanceof ErrorApi ? e.message : 'No se pudo registrar el retiro.')
+    } finally {
+      registrandoRetiroRef.current = false
+      if (montadoRef.current) setRegistrandoRetiro(false)
+    }
+  }
+
+  // El aviso de éxito es efímero — desaparece solo a los pocos segundos, o de inmediato si el
+  // cajero arranca otro "Retirar" (`abrirRetiro` ya lo limpia). El timer se limpia en cada corrida
+  // (incluido el desmontaje) para no setear estado después de que la pantalla ya no está.
+  useEffect(() => {
+    if (avisoRetiroOk === '') return
+    const idTimeout = setTimeout(() => setAvisoRetiroOk(''), 4000)
+    return () => clearTimeout(idTimeout)
+  }, [avisoRetiroOk])
+
+  // --- stage-pos-retiros-y-cierre-por-retiro (etapa 5, desktop-only): flujo "Cerrar caja" ---
+
+  /** "No" del primer modal, o Escape/backdrop/"X" — el turno sigue abierto, nada cambió. */
+  function cancelarConfirmarCierre() {
+    if (registrandoAperturaCierreRef.current) return
+    setPasoCierre(null)
+    setIdTurnoACerrar(null)
+  }
+
+  /** "Sí" — mismo criterio que `confirmarAperturaParaRetiro`: solo encola el pulso de cajón si el
+   * POST de auditoría confirma. */
+  async function confirmarAperturaParaCierre() {
+    if (registrandoAperturaCierreRef.current) return
+    if (idTurnoACerrar === null || !cajaDeEscritorio) return
+
+    registrandoAperturaCierreRef.current = true
+    setRegistrandoAperturaCierre(true)
+    setErrorAperturaCierre('')
+
+    try {
+      await clienteDeCaja.registrarMovimiento(idTurnoACerrar, {
+        tipo: 'AperturaCajon',
+        importe: 0,
+        motivo: 'Apertura de cajón para cierre',
+      })
+      if (!montadoRef.current) return
+      cajaDeEscritorio.encolarImpresion('la apertura de cajón', pulsoDeCajon())
+      setPasoCierre('monto')
+    } catch (e) {
+      if (!montadoRef.current) return
+      setErrorAperturaCierre(e instanceof ErrorApi ? e.message : 'No se pudo registrar la apertura de cajón.')
+    } finally {
+      registrandoAperturaCierreRef.current = false
+      if (montadoRef.current) setRegistrandoAperturaCierre(false)
+    }
+  }
+
+  /** Cancelar el monto — el cajón ya está abierto, pero el turno TODAVÍA no cerró (`cerrarPorRetiro`
+   * nunca se llamó): cancelar acá simplemente deja el turno abierto, como pide la spec.
+   *
+   * judgment-day ronda 0 (JD-E5b-1, CRITICAL): NUNCA debe correr mientras `cierreIncierto` es
+   * `true` — el propio `Modal` ya lo bloquea (`ocupado` incluye `cierreIncierto`, ver el render
+   * más abajo), pero el guard de acá adentro es defensivo por si algún día algo más llega a
+   * invocar esta función directamente. `setCierreIncierto(false)` es parte del reset normal
+   * (no-op cuando ya es `false`, que es el 100% de las veces que este guard deja pasar) — así
+   * ningún camino de cancelación puede dejar `cierreIncierto` pegado en `true` para el próximo
+   * "Cerrar caja". */
+  function cancelarMontoCierre() {
+    if (cerrandoPorRetiroRef.current || recuperandoCierreRef.current || cierreIncierto) return
+    setPasoCierre(null)
+    setIdTurnoACerrar(null)
+    setMontoCierre(null)
+    setErrorCierrePorRetiro('')
+    setCierreIncierto(false)
+  }
+
+  /** Refresca el estado del turno a "cerrado" tras un cierre por retiro confirmado (por la propia
+   * respuesta 2xx o por la recuperación de un resultado incierto) — mismo criterio que
+   * `turnoConfirmadoAbierto`: bumpear la generación invalida cualquier `GET …/abierto` en vuelo
+   * desde antes. */
+  function turnoConfirmadoCerrado() {
+    generacionTurnoRef.current += 1
+    setErrorTurno('')
+    setCargandoTurno(false)
+    setTurno(null)
+    setAvisoCerrarCaja('')
+  }
+
+  /** Cierra el flujo completo tras un cierre confirmado (2xx directo o recuperado tras un
+   * resultado incierto) — encola el ticket, refresca el turno a "cerrado" y limpia todo el estado
+   * del flujo. Nunca navega: el cajero se queda en la pantalla de venta, ahora bloqueada como
+   * cualquier turno cerrado. */
+  function cierreConfirmado(resumen: ResumenDeCierrePorRetiro) {
+    if (!cajaDeEscritorio) return
+    cajaDeEscritorio.encolarImpresion('el comprobante de cierre de turno', cierreDeTurno(resumen, cajaDeEscritorio.contexto))
+    turnoConfirmadoCerrado()
+    setPasoCierre(null)
+    setIdTurnoACerrar(null)
+    setMontoCierre(null)
+    setCierreIncierto(false)
+    setErrorCierrePorRetiro('')
+  }
+
+  /**
+   * Confirmar el monto — llama `cerrarPorRetiro` UNA sola vez por click. Un 503
+   * `resultado_incierto` o una falla de red (no es `ErrorApi`: `fetch` la tira como excepción
+   * cruda) entra en modo "cierre incierto" (`recuperarCierreIncierto`, abajo) — nunca vuelve a
+   * postear el cierre desde acá adentro.
+   */
+  async function confirmarCierrePorRetiro() {
+    if (cerrandoPorRetiroRef.current) return
+    if (idTurnoACerrar === null || montoCierre === null || !cajaDeEscritorio) return
+
+    cerrandoPorRetiroRef.current = true
+    setCerrandoPorRetiro(true)
+    setErrorCierrePorRetiro('')
+
+    try {
+      const resumen = await clienteDeCaja.cerrarPorRetiro(idTurnoACerrar, {
+        importeRetirado: montoCierre,
+        observaciones: null,
+      })
+      if (!montadoRef.current) return
+      cierreConfirmado(resumen)
+    } catch (e) {
+      if (!montadoRef.current) return
+      const resultadoIncierto = e instanceof ErrorApi ? e.codigo === 'resultado_incierto' && e.estado === 503 : true
+      if (resultadoIncierto) {
+        setCierreIncierto(true)
+        setErrorCierrePorRetiro(
+          'No se pudo confirmar si el cierre se registró. Estamos verificando — no se va a reintentar el cierre solo.',
+        )
+      } else {
+        setErrorCierrePorRetiro(e instanceof ErrorApi ? e.message : 'No se pudo cerrar el turno.')
+      }
+    } finally {
+      cerrandoPorRetiroRef.current = false
+      if (montadoRef.current) setCerrandoPorRetiro(false)
+    }
+  }
+
+  /**
+   * "Reintentar" bajo `cierreIncierto` — SOLO consulta `obtenerResumenDeCierre` (lectura
+   * idempotente), nunca vuelve a postear `cerrarPorRetiro` (spec: "Never call cerrarPorRetiro
+   * twice for one confirmation"). Tres desenlaces: (a) hay resumen — el cierre sí sucedió, se
+   * completa igual que un 2xx directo; (b) `409 turno_no_cerrado` — el cierre NO sucedió, sale del
+   * modo incierto y vuelve a habilitar "Confirmar" (un click ahí SÍ puede volver a postear, es una
+   * confirmación nueva); (c) cualquier otra falla (incluida otra ambigua) — sigue incierto, el
+   * cajero puede volver a apretar "Reintentar".
+   */
+  async function recuperarCierreIncierto() {
+    if (recuperandoCierreRef.current) return
+    if (idTurnoACerrar === null) return
+
+    recuperandoCierreRef.current = true
+    setRecuperandoCierre(true)
+
+    try {
+      const resumen = await clienteDeCaja.obtenerResumenDeCierre(idTurnoACerrar)
+      if (!montadoRef.current) return
+      cierreConfirmado(resumen)
+    } catch (e) {
+      if (!montadoRef.current) return
+      if (e instanceof ErrorApi && e.codigo === 'turno_no_cerrado') {
+        setCierreIncierto(false)
+        setErrorCierrePorRetiro('El cierre no se confirmó — el turno sigue abierto. Podés reintentar.')
+      } else {
+        setErrorCierrePorRetiro('Todavía no se pudo confirmar el cierre. Reintentá en unos segundos.')
+      }
+    } finally {
+      recuperandoCierreRef.current = false
+      if (montadoRef.current) setRecuperandoCierre(false)
+    }
+  }
+
+  // stage-pos-retiros-y-cierre-por-retiro (etapa 5): mientras cualquiera de los dos flujos de
+  // arriba tiene un modal abierto (o una escritura propia en vuelo — ninguno de los dos limpia
+  // `pasoRetiro`/`pasoCierre` hasta que la operación termina), la pantalla de venta entera queda
+  // tan inerte como durante el propio checkout — se suma a `pantallaCobroInerte` más abajo.
+  const cajaDeEscritorioOcupada = pasoRetiro !== null || pasoCierre !== null
 
   // stage-pos-turno-y-foco: mientras no hay un turno CONFIRMADO abierto, la venta libre queda
   // bloqueada (solo búsqueda/consulta de precio) — `turno === null` cubre tanto "confirmado
@@ -1143,7 +1462,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
    * finalizada" (ver `VentaFinalizada`). Sin argumento, se comporta exactamente como antes (lee
    * `entradaEscaneo`, el camino del input de código + Enter/"Agregar"). */
   async function escanear(codigoForzado?: string) {
-    if (escaneando || cobrandoRef.current) return
+    if (escaneando || cobrandoRef.current || cajaDeEscritorioOcupada) return
     const entrada = (codigoForzado ?? entradaEscaneo).trim()
     if (!entrada) return
 
@@ -1258,12 +1577,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'F2') return
       if (modoPresupuesto || cobrando || buscadorAbierto || gateTurno || ventaFinalizada || confirmandoCobro) return
+      // stage-pos-retiros-y-cierre-por-retiro (etapa 5): tampoco con un modal de "Retirar"/"Cerrar
+      // caja" por retiro abierto.
+      if (cajaDeEscritorioOcupada) return
       evento.preventDefault()
       setBuscadorAbierto(true)
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, cobrando, buscadorAbierto, gateTurno, ventaFinalizada, confirmandoCobro])
+  }, [modoPresupuesto, cobrando, buscadorAbierto, gateTurno, ventaFinalizada, confirmandoCobro, cajaDeEscritorioOcupada])
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
@@ -1280,10 +1602,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   // vuelve a correr cuando `bloqueadoPorTurno` cambia y recién ahí consume el pedido.
   useEffect(() => {
     if (!focoPendienteRef.current) return
-    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro || ventaFinalizada) return
+    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro || ventaFinalizada || cajaDeEscritorioOcupada)
+      return
     focoPendienteRef.current = false
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada])
+  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
 
   /**
    * Foco NEUTRAL — mount inicial (reemplaza el `autoFocus` nativo, no confiable en un mount real:
@@ -1305,11 +1628,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
    * extendida de "restaurar foco" a "adquirir foco por primera vez").
    */
   useEffect(() => {
-    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro || ventaFinalizada) return
+    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro || ventaFinalizada || cajaDeEscritorioOcupada)
+      return
     const activo = document.activeElement
     if (activo !== document.body && activo !== null && activo !== inputEscaneoRef.current) return
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada])
+  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada, cajaDeEscritorioOcupada])
 
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
@@ -1396,7 +1720,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   // sigue siendo la MISMA pantalla detrás (ya no una pantalla de resumen aparte que la
   // reemplazaba), así que sin este conjunct el cajero podría escanear o volver a cobrar con el
   // modal todavía abierto.
-  const pantallaCobroInerte = cobrando || confirmandoCobro || ventaFinalizada !== null
+  //
+  // stage-pos-retiros-y-cierre-por-retiro (etapa 5): mismo criterio para "Retirar"/"Cerrar caja"
+  // por retiro — cualquiera de los dos con un modal abierto declara la pantalla entera inerte.
+  const pantallaCobroInerte = cobrando || confirmandoCobro || ventaFinalizada !== null || cajaDeEscritorioOcupada
 
   /**
    * stage-pos-caja-en-cabecera: acción primaria de caja (badge + "Abrir caja"/"Cerrar caja",
@@ -1442,6 +1769,18 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                   >
                     {verificandoCierre ? 'Verificando…' : 'Cerrar caja'}
                   </button>
+                  {/* stage-pos-retiros-y-cierre-por-retiro (etapa 5): solo el POS de escritorio
+                      (`cajaDeEscritorio` presente) — la app web no tiene cajón ni impresora. */}
+                  {cajaDeEscritorio && (
+                    <button
+                      type="button"
+                      className="btn btn-outline-warning btn-sm rounded-0"
+                      disabled={pantallaCobroInerte}
+                      onClick={abrirRetiro}
+                    >
+                      Retirar
+                    </button>
+                  )}
                 </>
               ) : (
                 <>
@@ -1452,6 +1791,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                 </>
               )}
               {avisoCerrarCaja && <span className="alert alert-warning rounded-0 py-1 px-2 small mb-0">{avisoCerrarCaja}</span>}
+              {avisoRetiroOk && <span className="alert alert-success rounded-0 py-1 px-2 small mb-0">{avisoRetiroOk}</span>}
             </>
           )}
         </div>
@@ -1676,6 +2016,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     ventaFinalizada: boolean
     buscadorAbierto: boolean
     gateTurno: boolean
+    cajaDeEscritorioOcupada: boolean
     modoPresupuesto: boolean
     presupuestoCargado: boolean
     precondicionesListas: boolean
@@ -1693,6 +2034,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       ventaFinalizada: ventaFinalizada !== null,
       buscadorAbierto,
       gateTurno,
+      cajaDeEscritorioOcupada,
       modoPresupuesto,
       presupuestoCargado: presupuesto !== null,
       precondicionesListas,
@@ -1747,7 +2089,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
 
       if (evento.key !== 'F9') return
       if (evento.repeat) return
-      if (m.buscadorAbierto || m.gateTurno) return
+      if (m.buscadorAbierto || m.gateTurno || m.cajaDeEscritorioOcupada) return
       if (m.modoPresupuesto && !m.presupuestoCargado) return
       if (cobrandoRef.current) return
       evento.preventDefault()
@@ -2235,6 +2577,160 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
           onCerrar={cerrarBuscador}
         />
       )}
+
+      {/* stage-pos-retiros-y-cierre-por-retiro (etapa 5, desktop-only): flujo "Retirar" — dos
+          modales apilables en secuencia, nunca los dos a la vez (`pasoRetiro` es el único dueño). */}
+      {pasoRetiro === 'confirmarApertura' && (
+        <Modal
+          titulo="¿Querés retirar efectivo?"
+          ocupado={registrandoAperturaRetiro}
+          onCerrar={cancelarRetiro}
+          pie={
+            <>
+              <button type="button" className="btn btn-outline-secondary rounded-0" disabled={registrandoAperturaRetiro} onClick={cancelarRetiro}>
+                No
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary rounded-0"
+                disabled={registrandoAperturaRetiro}
+                onClick={() => void confirmarAperturaParaRetiro()}
+              >
+                {registrandoAperturaRetiro ? 'Abriendo…' : 'Sí'}
+              </button>
+            </>
+          }
+        >
+          {errorAperturaRetiro && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorAperturaRetiro}</div>}
+          <p className="mb-0">Se va a abrir el cajón para contar el retiro.</p>
+        </Modal>
+      )}
+
+      {pasoRetiro === 'monto' && (
+        <Modal
+          titulo="Monto retirado"
+          ocupado={registrandoRetiro}
+          onCerrar={cancelarMontoRetiro}
+          pie={
+            <>
+              <button type="button" className="btn btn-outline-secondary rounded-0" disabled={registrandoRetiro} onClick={cancelarMontoRetiro}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary rounded-0"
+                disabled={registrandoRetiro || montoRetiro === null || montoRetiro <= 0}
+                onClick={() => void confirmarMontoRetiro()}
+              >
+                {registrandoRetiro ? 'Registrando…' : 'Confirmar'}
+              </button>
+            </>
+          }
+        >
+          {errorRetiro && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorRetiro}</div>}
+          <label className="form-label" htmlFor="pos-retiro-monto">
+            Monto
+          </label>
+          <CampoImporte
+            id="pos-retiro-monto"
+            className="form-control rounded-0"
+            valor={montoRetiro}
+            disabled={registrandoRetiro}
+            onChange={setMontoRetiro}
+          />
+        </Modal>
+      )}
+
+      {/* stage-pos-retiros-y-cierre-por-retiro (etapa 5, desktop-only): flujo "Cerrar caja" por
+          retiro — mismo criterio de dos modales apilables que "Retirar". */}
+      {pasoCierre === 'confirmar' && (
+        <Modal
+          titulo="¿Querés cerrar el turno?"
+          ocupado={registrandoAperturaCierre}
+          onCerrar={cancelarConfirmarCierre}
+          pie={
+            <>
+              <button
+                type="button"
+                className="btn btn-outline-secondary rounded-0"
+                disabled={registrandoAperturaCierre}
+                onClick={cancelarConfirmarCierre}
+              >
+                No
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary rounded-0"
+                disabled={registrandoAperturaCierre}
+                onClick={() => void confirmarAperturaParaCierre()}
+              >
+                {registrandoAperturaCierre ? 'Abriendo…' : 'Sí'}
+              </button>
+            </>
+          }
+        >
+          {errorAperturaCierre && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorAperturaCierre}</div>}
+          <p className="mb-0">Se va a abrir el cajón para contar el efectivo a retirar.</p>
+        </Modal>
+      )}
+
+      {pasoCierre === 'monto' && (
+        <Modal
+          titulo="Efectivo a retirar"
+          // judgment-day ronda 0 (JD-E5b-1, CRITICAL): mientras `cierreIncierto` es `true`, el
+          // resultado real del cierre todavía no se sabe — la ÚNICA salida es "Reintentar"
+          // (`recuperarCierreIncierto`). `ocupado` acá bloquea la ×, Escape y el click en el
+          // fondo (ver `Modal.tsx`: los tres chequean `ocupado` antes de llamar `onCerrar`), así
+          // que ningún cierre "silencioso" del modal puede saltear la reconciliación — si el
+          // cierre ya sucedió del lado del servidor, descartar el modal sin pasar por
+          // `recuperarCierreIncierto` dejaría el comprobante sin imprimir y el header mintiendo
+          // "Caja abierta".
+          ocupado={cerrandoPorRetiro || recuperandoCierre || cierreIncierto}
+          onCerrar={cancelarMontoCierre}
+          pie={
+            cierreIncierto ? (
+              <button
+                type="button"
+                className="btn btn-primary rounded-0"
+                disabled={recuperandoCierre}
+                onClick={() => void recuperarCierreIncierto()}
+              >
+                {recuperandoCierre ? 'Verificando…' : 'Reintentar'}
+              </button>
+            ) : (
+              <>
+                <button type="button" className="btn btn-outline-secondary rounded-0" disabled={cerrandoPorRetiro} onClick={cancelarMontoCierre}>
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger rounded-0"
+                  disabled={cerrandoPorRetiro || montoCierre === null}
+                  onClick={() => void confirmarCierrePorRetiro()}
+                >
+                  {cerrandoPorRetiro ? 'Cerrando…' : 'Confirmar'}
+                </button>
+              </>
+            )
+          }
+        >
+          {errorCierrePorRetiro && <div className="alert alert-danger rounded-0 py-1 px-2 small">{errorCierrePorRetiro}</div>}
+          {!cierreIncierto && (
+            <>
+              <label className="form-label" htmlFor="pos-cierre-monto">
+                Monto
+              </label>
+              <CampoImporte
+                id="pos-cierre-monto"
+                className="form-control rounded-0"
+                valor={montoCierre}
+                disabled={cerrandoPorRetiro}
+                onChange={setMontoCierre}
+              />
+            </>
+          )}
+        </Modal>
+      )}
       </div>
     </>
   )
@@ -2250,9 +2746,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
 type PropsPos = {
   alEmitir?: (comprobante: ComprobanteEmitido, cliente: ClienteListado, medios: MedioPagoListado[]) => void
   alIrACerrarCaja?: (idTurno: number) => void
+  cajaDeEscritorio?: CajaDeEscritorio
 }
 
-export function Pos({ alEmitir, alIrACerrarCaja }: PropsPos = {}) {
+export function Pos({ alEmitir, alIrACerrarCaja, cajaDeEscritorio }: PropsPos = {}) {
   const [searchParams] = useSearchParams()
   const { puntoVenta } = usePuntoVenta()
   const crudo = searchParams.get('idPresupuesto')
@@ -2264,6 +2761,7 @@ export function Pos({ alEmitir, alIrACerrarCaja }: PropsPos = {}) {
       idPresupuesto={idPresupuesto}
       alEmitir={alEmitir}
       alIrACerrarCaja={alIrACerrarCaja}
+      cajaDeEscritorio={cajaDeEscritorio}
     />
   )
 }
