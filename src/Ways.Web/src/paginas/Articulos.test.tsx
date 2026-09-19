@@ -133,6 +133,8 @@ type CasoAltaRapida = {
   ruta: string
   completar: (dialogo: HTMLElement) => Promise<void>
   respuesta: () => unknown
+  /** Select del formulario de artículo que el alta rápida debe dejar seleccionado (M8). */
+  selectLabel: string
 }
 
 function casosAltaRapida(): CasoAltaRapida[] {
@@ -145,6 +147,7 @@ function casosAltaRapida(): CasoAltaRapida[] {
         await userEvent.type(within(dialogo).getByLabelText('Nombre'), 'Nueva')
       },
       respuesta: () => marcaFixture({ id: 9, nombre: 'Nueva' }),
+      selectLabel: 'Marca',
     },
     {
       padron: 'categoría',
@@ -154,6 +157,7 @@ function casosAltaRapida(): CasoAltaRapida[] {
         await userEvent.type(within(dialogo).getByLabelText('Nombre'), 'Nueva')
       },
       respuesta: () => categoriaFixture({ id: 9, nombre: 'Nueva' }),
+      selectLabel: 'Categoría',
     },
     {
       padron: 'grupo',
@@ -163,6 +167,7 @@ function casosAltaRapida(): CasoAltaRapida[] {
         await userEvent.type(within(dialogo).getByLabelText('Nombre'), 'Nueva')
       },
       respuesta: () => grupoFixture({ id: 9, nombre: 'Nueva' }),
+      selectLabel: 'Grupo',
     },
     {
       padron: 'proveedor',
@@ -173,6 +178,7 @@ function casosAltaRapida(): CasoAltaRapida[] {
         await userEvent.selectOptions(await within(dialogo).findByLabelText('Condición fiscal'), '1')
       },
       respuesta: () => proveedorFixture({ id: 9, razonSocial: 'Nueva' }),
+      selectLabel: 'Proveedor habitual',
     },
   ]
 }
@@ -1352,4 +1358,49 @@ describe('Articulos — el catch de abrirEdicion respeta el token de edición en
     expect(screen.getByRole('dialog', { name: 'Editando artículo A0002' })).toBeInTheDocument()
     expect(screen.queryByText('Artículo no encontrado.')).not.toBeInTheDocument()
   })
+})
+
+// ---- el completado del alta rápida es una actualización funcional, no por closure (M8) ---------
+
+describe('Articulos — el alta rápida completa el formulario por actualización funcional, no por closure (M8)', () => {
+  /**
+   * Cláusula bajo prueba: `actualizarFormulario((previo) => ({ ...previo, idX: nuevo.id }))` en
+   * cada `onCreado` de `FormularioArticulo.tsx` (react-async-state regla 1). Mutation-proof-tests:
+   * reemplazar por `onCambio({ ...valor, idX: nuevo.id })` (closure del `valor` de render, capturado
+   * ANTES del await del alta rápida) hace fallar el primer `expect` de abajo — el Nombre tipeado
+   * MIENTRAS el POST estaba pendiente se pierde, pisado por el `valor` viejo.
+   */
+  it.each(casosAltaRapida())(
+    'crear un $padron con el POST pendiente: tipear en Nombre mientras tanto sobrevive al resolver, y el padrón queda seleccionado',
+    async ({ boton, ruta, completar, respuesta, selectLabel }) => {
+      mockearApiGet()
+      let resolver: (valor: unknown) => void = () => {}
+      const pendiente = new Promise((resolve) => {
+        resolver = resolve
+      })
+      apiPostMock.mockImplementation((r: string) => {
+        if (r === ruta) return pendiente
+        return Promise.reject(new Error(`POST no esperado en el test: ${r}`))
+      })
+
+      await abrirFormularioNuevo()
+      const dialogoArticulo = screen.getByRole('dialog', { name: 'Nuevo artículo' })
+      await userEvent.click(screen.getByRole('button', { name: boton }))
+      const dialogoAlta = await screen.findByRole('dialog', { name: boton })
+      await completar(dialogoAlta)
+      await userEvent.click(within(dialogoAlta).getByRole('button', { name: 'Crear' }))
+
+      // El POST queda pendiente: tipear en el Nombre del artículo ANTES de que resuelva.
+      await userEvent.type(within(dialogoArticulo).getByLabelText('Nombre'), 'Tocado mientras tanto')
+
+      await act(async () => {
+        resolver(respuesta())
+        await pendiente
+      })
+      await waitFor(() => expect(screen.queryAllByRole('dialog')).toHaveLength(1))
+
+      expect(within(dialogoArticulo).getByLabelText('Nombre')).toHaveValue('Tocado mientras tanto')
+      expect(within(dialogoArticulo).getByLabelText(selectLabel)).toHaveValue('9')
+    },
+  )
 })
