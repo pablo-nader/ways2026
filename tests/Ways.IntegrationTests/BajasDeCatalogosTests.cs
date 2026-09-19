@@ -247,6 +247,36 @@ public class BajasDeCatalogosTests(WaysApiFixture fixture) : IClassFixture<WaysA
         await db.SaveChangesAsync();
     }
 
+    /// <summary>judgment-day (rebase de feat/caja-cierre-por-retiro sobre fix/bajas-catalogos-guarda-de-uso):
+    /// turno YA cerrado con <c>IdMedioPagoEfectivo</c> pineado — el ancla que
+    /// <c>ServicioDeTurnos.InsertarArqueosYTesoreriaAsync</c> fija al cerrar (los dos modos de
+    /// cierre). Sembrado directo por EF, no por el flujo de cierre completo — mismo criterio que
+    /// <see cref="SembrarArqueoAsync"/> para esta clase: <c>ck_turnos_caja_medio_efectivo_solo_cerrado</c>
+    /// se satisface porque el turno nace <c>Cerrado</c>.</summary>
+    private async Task<int> SembrarTurnoCerradoConMedioEfectivoAsync(
+        int idTenant, int idPuntoVenta, int idEmpleado, int idMedioPago, DateTimeOffset instante)
+    {
+        await using var db = ContextoDelTenant(idTenant);
+        var turno = new TurnoCaja
+        {
+            IdTenant = idTenant,
+            IdPuntoVenta = idPuntoVenta,
+            IdEmpleadoApertura = idEmpleado,
+            IdEmpleadoCierre = idEmpleado,
+            FechaApertura = instante,
+            FechaCierre = instante,
+            FondoInicial = 0m,
+            Estado = EstadoTurno.Cerrado,
+            IdMedioPagoEfectivo = idMedioPago,
+            CreatedAt = instante,
+            UpdatedAt = instante
+        };
+        db.TurnosCaja.Add(turno);
+        await db.SaveChangesAsync();
+
+        return turno.Id;
+    }
+
     private async Task<int> SembrarClienteAsync(int idTenant, int idListaPrecio, DateTimeOffset instante)
     {
         var idCondicionFiscal = await IdDeCondicionFiscalAsync();
@@ -417,6 +447,35 @@ public class BajasDeCatalogosTests(WaysApiFixture fixture) : IClassFixture<WaysA
             await admin.DeleteAsync($"/api/catalogos/medios-pago/{referenciado.Id}"));
         Assert.Equal("medio_pago_en_uso", codigo);
         Assert.Contains("arqueos de caja", mensaje, StringComparison.Ordinal);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync($"/api/catalogos/medios-pago/{pristino.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync($"/api/catalogos/medios-pago/{pristino.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync($"/api/catalogos/medios-pago/{referenciado.Id}")).StatusCode);
+    }
+
+    /// <summary>La FK nueva de la etapa 5 (<c>fk_turnos_caja_medio_pago_efectivo</c>,
+    /// judgment-day JD-E5a-2): <c>turnos_caja</c> pasa a ser dependiente de <c>medios_pago</c>
+    /// desde <see cref="TurnoCaja.IdMedioPagoEfectivo"/>, el ancla que el cierre pinea. El guard
+    /// la descubre solo (recorrido de metadata de EF, <c>InventarioDeDependientes</c>) — esta
+    /// prueba es la contraparte de integración del golden N3 actualizado
+    /// (<c>Fixtures/inventario-de-dependientes.txt</c>): confirma que bloquea de punta a punta,
+    /// no solo que aparece en el inventario.</summary>
+    [Fact]
+    public async Task UnMedioDePagoReferenciadoPorElAnclaPineadaDeUnTurnoCerradoBloqueaYUnaHermanaPristinaSeEliminaSinTocarLaBloqueada()
+    {
+        var s = await AprovisionarAsync("medio-pago-ancla-en-uso");
+        using var admin = await ClienteAdminAsync(s);
+        var ancla = DateTimeOffset.UtcNow;
+
+        var referenciado = await CrearMedioPagoAsync(admin, "Medio referenciado por cierre");
+        var pristino = await CrearMedioPagoAsync(admin, "Medio pristino de cierre");
+
+        await SembrarTurnoCerradoConMedioEfectivoAsync(s.IdTenant, s.IdPuntoVenta, s.IdAdmin, referenciado.Id, ancla);
+
+        var (codigo, mensaje) = await LeerConflictoAsync(
+            await admin.DeleteAsync($"/api/catalogos/medios-pago/{referenciado.Id}"));
+        Assert.Equal("medio_pago_en_uso", codigo);
+        Assert.Contains("turnos de caja", mensaje, StringComparison.Ordinal);
 
         Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync($"/api/catalogos/medios-pago/{pristino.Id}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync($"/api/catalogos/medios-pago/{pristino.Id}")).StatusCode);
