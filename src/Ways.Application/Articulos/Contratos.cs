@@ -101,10 +101,13 @@ public record SugerenciaDePrecio(decimal? PrecioSugerido);
 /// no calcula, y omite el resto de los ~15 campos de edición que esta grilla no muestra.
 /// <see cref="Precio"/> es <c>null</c> cuando el artículo no tiene un precio vigente resuelto en
 /// la lista default (o cuando el tenant no tiene lista default, ver
-/// <see cref="PaginaDeArticulosGrilla.NombreListaPrecio"/>). <see cref="Proveedor"/> es el
-/// <c>NombreFantasia</c> del proveedor habitual cuando no es nulo/blanco, si no su
-/// <c>RazonSocial</c> — <c>null</c> cuando el artículo no tiene proveedor habitual o el que
-/// tiene es una fila invisible (baja lógica, FK colgante).</summary>
+/// <see cref="PaginaDeArticulosGrilla.NombreListaPrecio"/>). <see cref="IdProveedorHabitual"/> y
+/// <see cref="Proveedor"/> viajan juntos: ambos <c>null</c> cuando el artículo no tiene proveedor
+/// habitual O el que tiene es una fila invisible (baja lógica, FK colgante) — un id colgante
+/// nunca se expone (mismo criterio que los filtros <c>idProveedor</c>/<c>sinProveedor</c> del
+/// servicio, que tampoco lo matchean/lo tratan como "sin proveedor"). <see cref="Proveedor"/> es
+/// el <c>NombreFantasia</c> del proveedor habitual cuando no es nulo/blanco, si no su
+/// <c>RazonSocial</c>.</summary>
 public record ArticuloGrillaFila(
     int Id,
     string CodigoInterno,

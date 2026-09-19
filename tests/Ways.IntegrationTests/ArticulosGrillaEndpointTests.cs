@@ -511,6 +511,41 @@ public class ArticulosGrillaEndpointTests(WaysApiFixture fixture) : IClassFixtur
         Assert.Equal("filtro_proveedor_ambiguo", problema.GetProperty("codigo").GetString());
     }
 
+    // ---- proveedor de baja lógica: se trata igual que "sin proveedor" en TODA la grilla -----------
+
+    [Fact]
+    public async Task UnProveedorDeBajaLogicaSeTrataComoSinProveedorEnTodaLaGrilla()
+    {
+        var (idTenant, idArea, idAlicuotaIva, idCondicionFiscalCf, _, mailAdmin, passwordAdmin) =
+            await AprovisionarTenantAsync(
+                nameof(UnProveedorDeBajaLogicaSeTrataComoSinProveedorEnTodaLaGrilla), fixture, fixture);
+        using var admin = await ClienteLogueadoAsync(mailAdmin, passwordAdmin, fixture);
+
+        var idProveedor = await SembrarProveedorAsync(idTenant, idCondicionFiscalCf, "De Baja SA");
+        var articulo = await SembrarArticuloAsync(idTenant, "ConProveedorDeBaja", idArea, idAlicuotaIva, idProveedor);
+
+        // Baja lógica REAL (endpoint DELETE), no un DeletedAt sembrado a mano: prueba el camino
+        // que un operador realmente dispara.
+        var baja = await admin.DeleteAsync($"/api/proveedores/{idProveedor}");
+        Assert.Equal(HttpStatusCode.NoContent, baja.StatusCode);
+
+        var conSinProveedor = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>(
+            UrlGrilla("sinProveedor=true&tamanio=50"), OpcionesJson);
+        Assert.NotNull(conSinProveedor);
+        Assert.Equal(1, conSinProveedor!.Total);
+        var fila = Assert.Single(conSinProveedor.Items);
+        Assert.Equal(articulo, fila.Id);
+        Assert.Null(fila.Proveedor);
+        Assert.Null(fila.IdProveedorHabitual);
+
+        // El id colgante ya no matchea ningún artículo — sin este guard, `idProveedor=<id de baja>`
+        // seguiría encontrando el artículo.
+        var conIdProveedorColgante = await admin.GetFromJsonAsync<PaginaDeArticulosGrilla>(
+            UrlGrilla($"idProveedor={idProveedor}&tamanio=50"), OpcionesJson);
+        Assert.NotNull(conIdProveedorColgante);
+        Assert.Equal(0, conIdProveedorColgante!.Total);
+    }
+
     // ---- activo: true / false / null (mutation target: `a.Activo == activoValor`) ------------------
 
     [Fact]

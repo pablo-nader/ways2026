@@ -178,11 +178,16 @@ public class ServicioDeGrillaDeArticulos(
         string.IsNullOrWhiteSpace(nombreFantasia) ? razonSocial : nombreFantasia;
 
     /// <summary>Filtros de SQL (codigo/nombre/proveedor/activo) + el LEFT JOIN a
-    /// <c>proveedores</c> resuelto en la MISMA consulta (sin N+1) — un proveedor soft-eliminado o
-    /// una FK colgante quedan invisibles para <c>db.Proveedores</c> (filtro global de EF) y el
-    /// LEFT JOIN los proyecta como <c>null</c>, nunca revienta (<see cref="EtiquetaProveedor"/>
-    /// ya es null-safe). Orden estable (Nombre, luego Id) aplicado acá para que ambos caminos de
-    /// <see cref="ListarAsync"/> paginen sobre la misma secuencia.</summary>
+    /// <c>proveedores</c> resuelto en la MISMA consulta (sin N+1). Un proveedor soft-eliminado o
+    /// una FK colgante quedan invisibles para <c>db.Proveedores</c> (filtro global de EF) — esa
+    /// misma visibilidad decide TRES cosas, no solo la etiqueta (<see cref="EtiquetaProveedor"/>
+    /// ya es null-safe): <c>idProveedor</c> solo matchea un proveedor VISIBLE (un id colgante no
+    /// matchea nada), <c>sinProveedor</c> trata un FK colgante exactamente igual que un FK nulo,
+    /// y el <c>IdProveedorHabitual</c> proyectado en <see cref="FilaCandidata"/> es <c>null</c>
+    /// cuando el proveedor no es visible — para que la fila sea consistente consigo misma (un
+    /// proveedor de baja lógica queda invisible en TODA la grilla, no solo en la etiqueta). Orden
+    /// estable (Nombre, luego Id) aplicado acá para que ambos caminos de <see cref="ListarAsync"/>
+    /// paginen sobre la misma secuencia.</summary>
     private IQueryable<FilaCandidata> ConstruirQuery(
         string? codigo, string? nombre, int? idProveedor, bool sinProveedor, bool? activo)
     {
@@ -204,11 +209,14 @@ public class ServicioDeGrillaDeArticulos(
 
         if (idProveedor is { } idProveedorValor)
         {
-            query = query.Where(a => a.IdProveedorHabitual == idProveedorValor);
+            query = query.Where(a =>
+                a.IdProveedorHabitual == idProveedorValor
+                && db.Proveedores.Any(p => p.Id == a.IdProveedorHabitual));
         }
         else if (sinProveedor)
         {
-            query = query.Where(a => a.IdProveedorHabitual == null);
+            query = query.Where(a =>
+                a.IdProveedorHabitual == null || !db.Proveedores.Any(p => p.Id == a.IdProveedorHabitual));
         }
 
         if (activo is { } activoValor)
@@ -228,7 +236,7 @@ public class ServicioDeGrillaDeArticulos(
             from proveedor in proveedores.DefaultIfEmpty()
             orderby a.Nombre, a.Id
             select new FilaCandidata(
-                a.Id, a.CodigoInterno, a.Nombre, a.IdProveedorHabitual,
+                a.Id, a.CodigoInterno, a.Nombre, proveedor != null ? a.IdProveedorHabitual : null,
                 proveedor != null ? proveedor.NombreFantasia : null,
                 proveedor != null ? proveedor.RazonSocial : null,
                 a.Activo);
