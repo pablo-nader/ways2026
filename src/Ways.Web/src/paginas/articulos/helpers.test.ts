@@ -205,12 +205,12 @@ describe('opcionesConValorActual', () => {
     expect(opcionesConValorActual(listado, 2).map((m) => m.id)).toEqual([1, 2])
   })
 
-  it('con un idActual que no existe en el listado (baja lógica del catálogo referenciado), da lo mismo que sin valor actual', () => {
+  it('con un idActual que no existe en el listado, da lo mismo que sin valor actual — nunca inventa una opción fantasma', () => {
     const listado = [marcaFixture({ id: 1, nombre: 'Activa', activo: true }), marcaFixture({ id: 2, nombre: 'Inactiva', activo: false })]
 
-    // 999: FK colgante — ninguna marca visible tiene ese id (dangling-fk-read-models). El
-    // llamador es quien decide tratar esto como "sin asignar"; acá solo no debe inventar una
-    // opción fantasma para el 999.
+    // 999: ninguna marca del listado (que puede venir incompleto — cargando, fallido, truncado)
+    // tiene ese id. El helper solo arma opciones para el render: no suma una opción para el 999,
+    // pero eso no dice nada sobre si el valor es válido — eso lo decide el servidor al guardar.
     expect(opcionesConValorActual(listado, 999)).toEqual(opcionesConValorActual(listado, ''))
     expect(opcionesConValorActual(listado, 999).map((m) => m.id)).toEqual([1])
   })

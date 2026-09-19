@@ -51,12 +51,14 @@ export function insertarOrdenadoPor<T>(lista: T[], nuevo: T, clave: (item: T) =>
 }
 
 /**
- * Opciones de un select de catálogo/proveedor en el formulario de artículo (dangling-fk-read-models
- * + fix/articulos-form-catalogos-inactivos): en alta (`idActual` en `''`), solo las activas; en
- * edición, además la que tiene actualmente el artículo aunque esté inactiva — nunca otra inactiva,
- * y nunca un id que ya no exista en el listado. Un `idActual` que no matchea ningún item (baja
- * lógica del catálogo referenciado: FK colgante) da el mismo resultado que `''` — el llamador es
- * quien decide qué mostrar para "sin asignar", este helper nunca inventa una opción fantasma.
+ * Opciones de un select de catálogo/proveedor en el formulario de artículo
+ * (fix/articulos-form-catalogos-inactivos): en alta (`idActual` en `''`), solo las activas; en
+ * edición, además la que tiene actualmente el artículo aunque esté inactiva — nunca otra inactiva.
+ * Este helper solo arma OPCIONES para el render, nunca toca el valor del formulario: un
+ * `idActual` que no matchea ningún item del listado del CLIENTE (que puede estar cargando, haber
+ * fallado en silencio o venir truncada — nunca es la autoridad, ver `abrirEdicion`) simplemente no
+ * suma una opción fantasma para él — el valor real sigue viajando intacto al guardar, y es el
+ * servidor quien lo acepta o lo rechaza con 400 `referencia_invalida`.
  */
 export function opcionesConValorActual<T extends { id: number; activo: boolean }>(
   listado: T[],

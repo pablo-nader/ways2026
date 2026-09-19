@@ -116,42 +116,6 @@ function aFormulario(a: ArticuloListado): Formulario {
   }
 }
 
-type CatalogosDelFormulario = {
-  areas: AreaListado[]
-  categorias: CategoriaListado[]
-  marcas: MarcaListado[]
-  grupos: GrupoListado[]
-  proveedores: ProveedorListado[]
-}
-
-function idVisibleEnListado(listado: { id: number }[], id: number | ''): boolean {
-  return id !== '' && listado.some((item) => item.id === id)
-}
-
-/**
- * Normaliza las referencias de un artículo recién abierto para editar contra los catálogos YA
- * cargados: un id que no aparece en el listado (ni activo ni inactivo) es una baja lógica del
- * catálogo referenciado — FK colgante, legado de antes de la guarda de referencias
- * (dangling-fk-read-models) — y se trata como "sin asignar" (`''`), nunca se reenvía tal cual al
- * guardar. Un id INACTIVO pero todavía visible en el listado se deja intacto: eso lo resuelve
- * `opcionesConValorActual` en el render, con su sufijo. Para `idArea` (obligatorio) el resultado
- * `''` deja seleccionado el placeholder "Elegir…" — el usuario tiene que elegir una antes de poder
- * guardar (el `required` del select, con el respaldo de un 400 claro del servidor si igual llega
- * un 0).
- */
-function sinReferenciasColgantes(f: Formulario, catalogos: CatalogosDelFormulario): Formulario {
-  return {
-    ...f,
-    idArea: idVisibleEnListado(catalogos.areas, f.idArea) ? f.idArea : '',
-    idCategoria: idVisibleEnListado(catalogos.categorias, f.idCategoria) ? f.idCategoria : '',
-    idMarca: idVisibleEnListado(catalogos.marcas, f.idMarca) ? f.idMarca : '',
-    idGrupo: idVisibleEnListado(catalogos.grupos, f.idGrupo) ? f.idGrupo : '',
-    idProveedorHabitual: idVisibleEnListado(catalogos.proveedores, f.idProveedorHabitual)
-      ? f.idProveedorHabitual
-      : '',
-  }
-}
-
 function aVacioNulo(valor: string): string | null {
   const limpio = valor.trim()
   return limpio === '' ? null : limpio
@@ -377,9 +341,16 @@ export function Articulos() {
     const token = invalidarEdicionEnCurso()
     try {
       // El listado no completa idsEmpresas (evita el N+1) — el detalle sí.
+      //
+      // El servidor es la autoridad sobre qué referencia es válida — nunca se clasifica acá
+      // contra el estado (cliente) de los catálogos, que puede estar cargando, haber fallado en
+      // silencio, o venir truncado (proveedores). Cada id viaja tal cual al formulario; si ya no
+      // existe, el guardado sin tocar lo reenvía intacto y el servidor lo rechaza con 400
+      // `referencia_invalida` (`ServicioDeArticulos`), que esta pantalla ya muestra vía
+      // `ErrorApi.message`.
       const detalle = await clienteDeArticulos.obtener(a.id)
       if (tokenEdicionRef.current !== token) return
-      setFormulario(sinReferenciasColgantes(aFormulario(detalle), { areas, categorias, marcas, grupos, proveedores }))
+      setFormulario(aFormulario(detalle))
       setGuardando(false)
       setAviso('')
     } catch (e) {
