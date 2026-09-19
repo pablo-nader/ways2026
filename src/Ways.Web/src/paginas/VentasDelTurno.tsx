@@ -11,6 +11,7 @@ import { Box } from '../componentes/Box'
 import { CampoImporte } from '../componentes/CampoImporte'
 import { Cargando } from '../componentes/Cargando'
 import { ConfirmacionDeBaja } from '../componentes/ConfirmacionDeBaja'
+import { Modal } from '../componentes/Modal'
 import {
   FILTROS_VACIOS,
   claseDeBadgeDeEstadoVenta,
@@ -78,9 +79,9 @@ function esAlcanzable(elemento: HTMLElement | null): elemento is HTMLElement {
 }
 
 /**
- * Modal de detalle de una venta — mismo idioma de markup que `ModalDeBusquedaDeArticulos.tsx`
- * (`modal d-block` + `role="dialog" aria-modal="true"` + `modal-backdrop show`, sin JS de
- * Bootstrap): Escape/X/"Cerrar" cierran.
+ * Modal de detalle de una venta, montado sobre `Modal`: Escape/X/"Cerrar" cierran.
+ * `restaurarFoco={false}` porque el disparador sigue deshabilitado mientras corre la restauración
+ * de `Modal` (fase de layout del commit de cierre); la de acá corre después de ese commit.
  */
 function ModalDetalleDeVenta({
   comprobante,
@@ -95,16 +96,6 @@ function ModalDetalleDeVenta({
   onReimprimir,
   onCerrar,
 }: PropsModalDetalle) {
-  useEffect(() => {
-    function alTeclado(evento: KeyboardEvent) {
-      if (evento.key !== 'Escape') return
-      evento.preventDefault()
-      onCerrar()
-    }
-    document.addEventListener('keydown', alTeclado)
-    return () => document.removeEventListener('keydown', alTeclado)
-  }, [onCerrar])
-
   // Restaura el foco al desmontar (cierre por Escape/X/"Cerrar") — ver el doc-comment de
   // `disparador` arriba. Un efecto normal (no layout): el commit que quitó `disabled` del
   // disparador corre ANTES de este cleanup, nunca al revés.
@@ -117,114 +108,109 @@ function ModalDetalleDeVenta({
   const titulo = comprobante ? `Detalle de la venta ${comprobante.numeroVisible}` : 'Detalle de la venta'
 
   return (
-    <>
-      <div className="modal d-block" tabIndex={-1} role="dialog" aria-modal="true" aria-label={titulo}>
-        <div className="modal-dialog modal-lg" role="document">
-          <div className="modal-content rounded-0">
-            <div className="modal-header">
-              <h5 className="modal-title">{titulo}</h5>
-              <button type="button" className="btn-close" aria-label="Cerrar detalle" onClick={onCerrar} />
-            </div>
-            <div className="modal-body">
-              {cargando && <Cargando texto="Cargando detalle…" />}
-              {!cargando && error && <div className="alert alert-danger rounded-0">{error}</div>}
+    <Modal
+      titulo={titulo}
+      tamano="lg"
+      restaurarFoco={false}
+      etiquetaCerrar="Cerrar detalle"
+      onCerrar={onCerrar}
+      pie={
+        <>
+          {puedeReimprimirAca && (
+            <button
+              type="button"
+              className="btn btn-outline-secondary rounded-0"
+              disabled={cargando || reimprimiendo}
+              onClick={onReimprimir}
+            >
+              {reimprimiendo ? 'Reimprimiendo…' : 'Reimprimir'}
+            </button>
+          )}
+          <button type="button" className="btn btn-secondary rounded-0" onClick={onCerrar}>
+            Cerrar
+          </button>
+        </>
+      }
+    >
+      {cargando && <Cargando texto="Cargando detalle…" />}
+      {!cargando && error && <div className="alert alert-danger rounded-0">{error}</div>}
 
-              {!cargando && !error && comprobante && (
-                <>
-                  <dl className="row mb-3">
-                    <dt className="col-3">Fecha</dt>
-                    <dd className="col-9">{formatearFechaHora(comprobante.fecha)}</dd>
-                    <dt className="col-3">Cliente</dt>
-                    <dd className="col-9">{nombreCliente ?? '—'}</dd>
-                    <dt className="col-3">Estado</dt>
-                    <dd className="col-9">
-                      <span className={`badge rounded-0 ${claseDeBadgeDeEstadoVenta(comprobante.estado)}`}>
-                        {etiquetaDeEstadoVenta(comprobante.estado)}
-                      </span>
-                    </dd>
-                  </dl>
+      {!cargando && !error && comprobante && (
+        <>
+          <dl className="row mb-3">
+            <dt className="col-3">Fecha</dt>
+            <dd className="col-9">{formatearFechaHora(comprobante.fecha)}</dd>
+            <dt className="col-3">Cliente</dt>
+            <dd className="col-9">{nombreCliente ?? '—'}</dd>
+            <dt className="col-3">Estado</dt>
+            <dd className="col-9">
+              <span className={`badge rounded-0 ${claseDeBadgeDeEstadoVenta(comprobante.estado)}`}>
+                {etiquetaDeEstadoVenta(comprobante.estado)}
+              </span>
+            </dd>
+          </dl>
 
-                  <div className="table-responsive">
-                    <table className="table table-sm table-bordered align-middle">
-                      <thead>
-                        <tr>
-                          <th>Descripción</th>
-                          <th className="text-end">Cantidad</th>
-                          <th className="text-end">Precio unit.</th>
-                          <th className="text-end">Descuento</th>
-                          <th className="text-end">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {comprobante.items.map((item) => (
-                          <tr key={item.orden}>
-                            <td>
-                              {item.descripcion}
-                              {item.codigoLote && <span className="text-muted"> — Lote {item.codigoLote}</span>}
-                            </td>
-                            <td className="text-end">{item.cantidad}</td>
-                            <td className="text-end">{formatearMoneda(item.precioUnitario)}</td>
-                            <td className="text-end">{formatearMoneda(item.descuento)}</td>
-                            <td className="text-end">{formatearMoneda(item.total)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="table-responsive">
-                    <table className="table table-sm table-bordered align-middle">
-                      <thead>
-                        <tr>
-                          <th>Medio</th>
-                          <th className="text-end">Importe</th>
-                          <th>Referencia</th>
-                          <th className="text-end">Vuelto</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {comprobante.pagos.map((pago, indice) => (
-                          <tr key={`${pago.idMedioPago}-${indice}`}>
-                            <td>{nombreDeMedio(pago.idMedioPago, medios)}</td>
-                            <td className="text-end">{formatearMoneda(pago.importe)}</td>
-                            <td>{pago.referencia ?? '—'}</td>
-                            <td className="text-end">{pago.vuelto > 0 ? formatearMoneda(pago.vuelto) : '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="d-flex justify-content-end gap-4 small">
-                    <span>Subtotal: {formatearMoneda(comprobante.subtotal)}</span>
-                    <span>Descuento: {formatearMoneda(comprobante.descuentoTotal)}</span>
-                    <strong>Total: {formatearMoneda(comprobante.total)}</strong>
-                  </div>
-
-                  {errorReimprimir && <div className="alert alert-danger rounded-0 mt-3 mb-0 py-1 px-2 small">{errorReimprimir}</div>}
-                </>
-              )}
-            </div>
-            <div className="modal-footer">
-              {puedeReimprimirAca && (
-                <button
-                  type="button"
-                  className="btn btn-outline-secondary rounded-0"
-                  disabled={cargando || reimprimiendo}
-                  onClick={onReimprimir}
-                >
-                  {reimprimiendo ? 'Reimprimiendo…' : 'Reimprimir'}
-                </button>
-              )}
-              <button type="button" className="btn btn-secondary rounded-0" onClick={onCerrar}>
-                Cerrar
-              </button>
-            </div>
+          <div className="table-responsive">
+            <table className="table table-sm table-bordered align-middle">
+              <thead>
+                <tr>
+                  <th>Descripción</th>
+                  <th className="text-end">Cantidad</th>
+                  <th className="text-end">Precio unit.</th>
+                  <th className="text-end">Descuento</th>
+                  <th className="text-end">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comprobante.items.map((item) => (
+                  <tr key={item.orden}>
+                    <td>
+                      {item.descripcion}
+                      {item.codigoLote && <span className="text-muted"> — Lote {item.codigoLote}</span>}
+                    </td>
+                    <td className="text-end">{item.cantidad}</td>
+                    <td className="text-end">{formatearMoneda(item.precioUnitario)}</td>
+                    <td className="text-end">{formatearMoneda(item.descuento)}</td>
+                    <td className="text-end">{formatearMoneda(item.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      </div>
-      <div className="modal-backdrop show" />
-    </>
+
+          <div className="table-responsive">
+            <table className="table table-sm table-bordered align-middle">
+              <thead>
+                <tr>
+                  <th>Medio</th>
+                  <th className="text-end">Importe</th>
+                  <th>Referencia</th>
+                  <th className="text-end">Vuelto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comprobante.pagos.map((pago, indice) => (
+                  <tr key={`${pago.idMedioPago}-${indice}`}>
+                    <td>{nombreDeMedio(pago.idMedioPago, medios)}</td>
+                    <td className="text-end">{formatearMoneda(pago.importe)}</td>
+                    <td>{pago.referencia ?? '—'}</td>
+                    <td className="text-end">{pago.vuelto > 0 ? formatearMoneda(pago.vuelto) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="d-flex justify-content-end gap-4 small">
+            <span>Subtotal: {formatearMoneda(comprobante.subtotal)}</span>
+            <span>Descuento: {formatearMoneda(comprobante.descuentoTotal)}</span>
+            <strong>Total: {formatearMoneda(comprobante.total)}</strong>
+          </div>
+
+          {errorReimprimir && <div className="alert alert-danger rounded-0 mt-3 mb-0 py-1 px-2 small">{errorReimprimir}</div>}
+        </>
+      )}
+    </Modal>
   )
 }
 

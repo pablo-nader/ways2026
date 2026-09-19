@@ -32,6 +32,26 @@ describe('Modal — estructura y accesibilidad', () => {
     expect(onCerrar).toHaveBeenCalledTimes(1)
   })
 
+  it('etiquetaCerrar reemplaza el nombre accesible del botón de cerrar (sin chocar con un "Cerrar" del pie)', () => {
+    render(
+      <Modal
+        titulo="Detalle"
+        etiquetaCerrar="Cerrar detalle"
+        pie={
+          <button type="button" onClick={() => {}}>
+            Cerrar
+          </button>
+        }
+        onCerrar={() => {}}
+      >
+        <p>contenido</p>
+      </Modal>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Cerrar detalle' })).toHaveClass('btn-close')
+    expect(screen.getAllByRole('button', { name: 'Cerrar' })).toHaveLength(1)
+  })
+
   it('clickear el fondo (fuera del diálogo) dispara onCerrar', () => {
     const onCerrar = vi.fn()
     render(
@@ -269,6 +289,50 @@ describe('Modal — foco', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
 
     expect(screen.getByRole('button', { name: 'Nuevo' })).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: la guarda `if (!restaurarFoco) return` del cleanup de `Modal.tsx`, antes
+   * de cualquier restauración. Mutation-proof-tests: sacándola, el disparador recupera el foco al
+   * cerrar y falla el primer `expect`; dejándola cubrir solo `focoPrevio` (sin el destino de
+   * reserva), el foco termina en "Nuevo" y falla el segundo.
+   */
+  it('con restaurarFoco={false}, el cierre no toca el foco: ni el disparador ni el destino de reserva', () => {
+    function Arnes() {
+      const [abierto, setAbierto] = useState(false)
+      const refReserva = useRef<HTMLButtonElement>(null)
+      return (
+        <>
+          <button ref={refReserva} type="button">
+            Nuevo
+          </button>
+          <button type="button" onClick={() => setAbierto(true)}>
+            Abrir
+          </button>
+          {abierto && (
+            <Modal
+              titulo="Nueva marca"
+              restaurarFoco={false}
+              focoDeReserva={refReserva}
+              onCerrar={() => setAbierto(false)}
+            >
+              <button type="button">Guardar</button>
+            </Modal>
+          )}
+        </>
+      )
+    }
+
+    render(<Arnes />)
+    const disparador = screen.getByRole('button', { name: 'Abrir' })
+    disparador.focus()
+    fireEvent.click(disparador)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+
+    expect(disparador).not.toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Nuevo' })).not.toHaveFocus()
+    expect(document.body).toHaveFocus()
   })
 })
 

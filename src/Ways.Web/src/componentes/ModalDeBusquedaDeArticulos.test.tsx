@@ -176,6 +176,22 @@ describe('ModalDeBusquedaDeArticulos — foco al abrir (stage-pos-turno-y-foco)'
   })
 })
 
+/**
+ * `aria-modal="true"` exige una trampa de foco real (react-async-state regla 13). Mutation-proof-
+ * tests: con el markup inline anterior (sin `Modal`), el foco se queda en "Buscar" y este test falla.
+ */
+describe('ModalDeBusquedaDeArticulos — trampa de foco (sobre Modal)', () => {
+  it('Tab en el último control vuelve al primero ("Cerrar") en vez de escapar a la pantalla de atrás', () => {
+    render(<ModalDeBusquedaDeArticulos {...propsDe()} />)
+    const buscar = screen.getByRole('button', { name: 'Buscar' })
+
+    buscar.focus()
+    fireEvent.keyDown(buscar, { key: 'Tab' })
+
+    expect(screen.getByRole('button', { name: 'Cerrar' })).toHaveFocus()
+  })
+})
+
 describe('ModalDeBusquedaDeArticulos — motivoSinAgregar (stage-pos-turno-y-foco: turno cerrado, solo consulta)', () => {
   it('con motivoSinAgregar definido, el precio se muestra pero "Agregar" queda deshabilitado (con ese motivo como title) y no dispara onAgregar', async () => {
     apiGetMock.mockImplementation((ruta: string) =>

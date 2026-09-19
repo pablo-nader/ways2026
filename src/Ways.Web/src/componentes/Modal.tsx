@@ -64,6 +64,13 @@ export type PropsModal = {
    * el cleanup (al cerrar, muchos renders después) lo encuentra siempre ya asignado.
    */
   focoDeReserva?: React.RefObject<HTMLElement | null> | null
+  /** `false` cuando el llamador es el único dueño del foco al cerrar (p. ej. el POS lo devuelve
+   * siempre al input de código, y recién cuando ese input vuelve a estar habilitado): el modal no
+   * toca el foco al desmontar — ni el previo ni `focoDeReserva`. Se lee al montar. */
+  restaurarFoco?: boolean
+  /** Nombre accesible del botón de cerrar del header — distinto de "Cerrar" cuando el pie ya tiene
+   * un botón con ese nombre. */
+  etiquetaCerrar?: string
   onCerrar: () => void
 }
 
@@ -83,6 +90,8 @@ export function Modal({
   desplazable = false,
   ocupado = false,
   focoDeReserva = null,
+  restaurarFoco = true,
+  etiquetaCerrar = 'Cerrar',
   onCerrar,
 }: PropsModal) {
   const idTitulo = useId()
@@ -135,6 +144,10 @@ export function Modal({
       // monte/desmonte) apuntando a un elemento estable de la pantalla de fondo — leer `.current`
       // recién acá, al cerrar, es justo lo que evita el problema que la regla previene (un valor
       // capturado en el mount que ya cambió).
+      // Con `restaurarFoco={false}` no se toca ninguno de los dos destinos: el llamador es el
+      // único dueño del foco al cerrar (ver la prop).
+      if (!restaurarFoco) return
+
       // eslint-disable-next-line react-hooks/exhaustive-deps
       const elementoDeReserva = focoDeReserva?.current ?? null
       if (esAlcanzable(focoPrevio) && focoPrevio !== document.body) {
@@ -215,7 +228,7 @@ export function Modal({
               <h5 className="modal-title" id={idTitulo}>
                 {titulo}
               </h5>
-              <button type="button" className="btn-close" aria-label="Cerrar" disabled={ocupado} onClick={onCerrar} />
+              <button type="button" className="btn-close" aria-label={etiquetaCerrar} disabled={ocupado} onClick={onCerrar} />
             </div>
             <div className="modal-body">{children}</div>
             {pie && <div className="modal-footer">{pie}</div>}
