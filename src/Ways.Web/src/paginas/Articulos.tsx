@@ -356,11 +356,19 @@ export function Articulos() {
     }
   }
 
+  // `idsEmpresas` es el único campo cuya REPRESENTACIÓN puede cambiar sin que haya un cambio real:
+  // destildar y volver a tildar una empresa lo reordena (filter + append al final), así que dos
+  // formularios con el mismo conjunto de empresas pueden serializar distinto — comparar ordenado
+  // evita el falso positivo de "cambios sin guardar".
+  function normalizarParaComparar(f: Formulario) {
+    return { ...f, idsEmpresas: [...f.idsEmpresas].sort((a, b) => a - b) }
+  }
+
   function haySinGuardar(): boolean {
     return (
       formulario !== null &&
       formularioOriginalRef.current !== null &&
-      JSON.stringify(formulario) !== JSON.stringify(formularioOriginalRef.current)
+      JSON.stringify(normalizarParaComparar(formulario)) !== JSON.stringify(normalizarParaComparar(formularioOriginalRef.current))
     )
   }
 

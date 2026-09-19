@@ -9,6 +9,7 @@ import type {
   ArticuloListado,
   CategoriaListado,
   CondicionFiscalListado,
+  EmpresaListado,
   GrupoListado,
   MarcaListado,
   PaginaDe,
@@ -109,6 +110,18 @@ function condicionFiscalFixture(sobrescribir: Partial<CondicionFiscalListado> = 
   return { id: 1, codigo: 'RI', nombre: 'Responsable Inscripto', codigoAfip: 1, activo: true, ...sobrescribir }
 }
 
+function empresaFixture(sobrescribir: Partial<EmpresaListado> = {}): EmpresaListado {
+  return {
+    id: 1,
+    idTenant: 1,
+    razonSocial: 'Empresa Uno SA',
+    nombreFantasia: null,
+    cuit: null,
+    nombreTenant: null,
+    ...sobrescribir,
+  }
+}
+
 /**
  * Un caso por padrón (Marca/Categoría/Grupo/Proveedor habitual) para las pruebas que ejercitan
  * los CUATRO por igual (stopPropagation y bloqueadoRef, mutation-proof-tests) — cada uno completa
@@ -171,6 +184,7 @@ type CatalogosDeTest = {
   proveedores?: ProveedorListado[]
   alicuotas?: AlicuotaIvaListado[]
   condicionesFiscales?: CondicionFiscalListado[]
+  empresas?: EmpresaListado[]
   /** Override completo del fetch de condiciones fiscales (p.ej. para simular un rechazo seguido
    * de un reintento exitoso) — cuando está presente, gana sobre `condicionesFiscales`. */
   condicionesFiscalesImpl?: () => Promise<CondicionFiscalListado[]>
@@ -220,7 +234,7 @@ function mockearApiGet(catalogos: CatalogosDeTest = {}) {
       return catalogos.condicionesFiscalesImpl
         ? catalogos.condicionesFiscalesImpl()
         : Promise.resolve(catalogos.condicionesFiscales ?? [condicionFiscalFixture()])
-    if (ruta === '/empresas') return Promise.resolve([])
+    if (ruta === '/empresas') return Promise.resolve(catalogos.empresas ?? [])
     if (ruta === '/catalogos/listas-precio') return Promise.resolve([])
     return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
   })
@@ -990,6 +1004,53 @@ describe('Articulos — confirmación al cerrar con cambios sin guardar', () => 
 
     expect(confirmSpy).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  /**
+   * Cláusula bajo prueba: la normalización (orden) de `idsEmpresas` en `normalizarParaComparar`
+   * (Articulos.tsx). Mutation-proof-tests: comparar con `JSON.stringify` sin normalizar hace
+   * fallar este test — destildar y volver a tildar reordena el array (filter + append al final)
+   * aunque el conjunto final sea idéntico al original, y `confirm` pasaría a llamarse.
+   */
+  it('destildar y volver a tildar la misma empresa no deja "cambios sin guardar" (reordena idsEmpresas, no lo cambia)', async () => {
+    mockearApiGet({
+      empresas: [empresaFixture({ id: 1 }), empresaFixture({ id: 2, razonSocial: 'Empresa Dos SA' })],
+    })
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (ruta === '/articulos') return Promise.resolve(paginaFixture([articuloUno, articuloDos]))
+      if (ruta === '/articulos/1')
+        return Promise.resolve(articuloFixture({ id: 1, disponibleParaTodas: false, idsEmpresas: [1, 2] }))
+      if (/^\/articulos\/\d+\/codigos-barra$/.test(ruta)) return Promise.resolve([])
+      if (/^\/articulos\/\d+\/precios$/.test(ruta)) return Promise.resolve([])
+      if (ruta === '/catalogos/areas') return Promise.resolve([{ id: 1, nombre: 'Almacén', activo: true }])
+      if (ruta === '/catalogos/categorias') return Promise.resolve([])
+      if (ruta === '/catalogos/marcas') return Promise.resolve([])
+      if (ruta === '/catalogos/grupos') return Promise.resolve([])
+      if (ruta.startsWith('/proveedores')) return Promise.resolve({ items: [], total: 0, pagina: 1, tamanio: 200 })
+      if (ruta === '/catalogos-fiscales/alicuotas-iva')
+        return Promise.resolve([{ id: 1, nombre: 'IVA 21%', porcentaje: 21, codigoAfip: 5, activo: true }])
+      if (ruta === '/empresas')
+        return Promise.resolve([empresaFixture({ id: 1 }), empresaFixture({ id: 2, razonSocial: 'Empresa Dos SA' })])
+      if (ruta === '/catalogos/listas-precio') return Promise.resolve([])
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderArticulos()
+    const filaUno = (await screen.findByText('Articulo Uno')).closest('tr')
+    if (!filaUno) throw new Error('No se encontró la fila del artículo uno')
+    await userEvent.click(within(filaUno).getByRole('link', { name: 'Editar' }))
+    await screen.findByText('Editando artículo A0001')
+
+    // El artículo carga con idsEmpresas = [1, 2] (ambas ya tildadas). Destildar la empresa 1 y
+    // volver a tildarla reordena el array a [2, 1] — mismo conjunto, distinta representación.
+    await userEvent.click(screen.getByLabelText('Empresa Uno SA'))
+    await userEvent.click(screen.getByLabelText('Empresa Uno SA'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(confirmSpy).not.toHaveBeenCalled()
     confirmSpy.mockRestore()
   })
 })
