@@ -12,6 +12,7 @@ using Ways.Domain.Caja;
 using Ways.Domain.Catalogos;
 using Ways.Domain.Gastos;
 using Ways.Domain.Organizacion;
+using Ways.Domain.Usuarios;
 using Ways.Domain.Ventas;
 using Ways.Infrastructure.Multitenancy;
 
@@ -29,6 +30,7 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
 {
     private const string PasswordRoot = "root";
     private const string MailRoot = "test@test.com";
+    private const string PasswordVendedor = "una-contraseña-larga";
 
     private static readonly JsonSerializerOptions OpcionesJson = new()
     {
@@ -495,6 +497,50 @@ public class CajaCierrePorRetiroEndpointsTests(WaysApiFixture fixture) : IClassF
     }
 
     // ---- autorización -------------------------------------------------------------------------
+
+    private async Task<HttpClient> CrearVendedorAsync(Contexto ctx, string nombre)
+    {
+        var mailVendedor = $"{nombre.ToLowerInvariant()}-vendedor@ways.test";
+        var alta = await ctx.Admin.PostAsJsonAsync(
+            "/api/usuarios",
+            new CrearUsuario("vendedor-cierre", mailVendedor, (int)RolConocido.Vendedor, PasswordVendedor));
+        Assert.Equal(HttpStatusCode.Created, alta.StatusCode);
+
+        var vendedor = fixture.CreateClient();
+        var login = await vendedor.PostAsJsonAsync("/api/auth/login", new SolicitudDeLogin(mailVendedor, PasswordVendedor));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        return vendedor;
+    }
+
+    /// <summary>
+    /// judgment-day (jueces A y B, misma ocurrencia): la mitad POSITIVA del gate, sin la cual
+    /// apilarle <c>GestionDeCatalogo</c> a esta ruta es un mutante que sobrevive a TODA la suite.
+    /// <c>SuperficieDeAutorizacionTests</c> la saltea por estar en su allowlist; el test de rol
+    /// rechazado de acá abajo usa Root, que <c>GestionDeCatalogo</c> (solo Admin) tambien rechaza;
+    /// y el resto del archivo maneja el endpoint como Admin, que satisface las dos policies. Un
+    /// Vendedor perdería en silencio la operación que este modo existe para modelar (spec
+    /// turnos-de-caja: "Vendedor opens and closes a turno" — ambos modos de cierre por igual).
+    /// mutation-proof-tests regla 15: el hermano <c>/cierre</c> comparte el hueco, anotado como
+    /// seguimiento y no cerrado acá para no mezclar alcances.
+    /// </summary>
+    [Fact]
+    public async Task UnVendedorCierraSuTurnoPorRetiroYLeeElResumenDeCierre()
+    {
+        var ctx = await PrepararAsync(nameof(UnVendedorCierraSuTurnoPorRetiroYLeeElResumenDeCierre));
+        var turno = await AbrirTurnoAsync(ctx, fondoInicial: 500m);
+        await SembrarPagoAsync(ctx, turno.Id, ctx.IdMedioEfectivo, 300m);
+
+        using var vendedor = await CrearVendedorAsync(ctx, nameof(UnVendedorCierraSuTurnoPorRetiroYLeeElResumenDeCierre));
+
+        var cierre = await vendedor.PostAsJsonAsync(
+            $"/api/caja/turnos/{turno.Id}/cierre-por-retiro",
+            new SolicitudDeCierrePorRetiro(300m, "Cierre por retiro del vendedor"));
+        var cuerpoCierre = await cierre.Content.ReadAsStringAsync();
+        Assert.True(cierre.StatusCode == HttpStatusCode.OK, cuerpoCierre);
+
+        var resumen = await vendedor.GetAsync($"/api/caja/turnos/{turno.Id}/resumen-de-cierre");
+        Assert.Equal(HttpStatusCode.OK, resumen.StatusCode);
+    }
 
     [Fact]
     public async Task UnRolFueraDeOperacionDePosEsRechazadoDelCierrePorRetiroYDelResumenDeCierre()

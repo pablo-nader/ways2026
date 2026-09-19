@@ -67,8 +67,8 @@ public class SuperficieDeAutorizacionTests(WaysApiFixture fixture) : IClassFixtu
         // operación que este modo existe para modelar.
         ("POST", "/api/caja/turnos/{id:int}/cierre-por-retiro"),
         // stage-6-turnos-caja (Slice 3, task 3.2): captura de gasto — sin GestionDeCatalogo
-        // apilado, mismo criterio que los dos de arriba (spec: gastos / Gasto Authorization, un
-        // Vendedor tiene que poder registrar un gasto).
+        // apilado, mismo criterio que las rutas de caja de arriba (spec: gastos / Gasto
+        // Authorization, un Vendedor tiene que poder registrar un gasto).
         ("POST", "/api/gastos/"),
         // stage-8-compras-transferencias-inventario (Slice 2, task 2.7): las cinco rutas de
         // escritura de compras (crear/editar/confirmar/anular/aplicar-precios) SÍ apilan

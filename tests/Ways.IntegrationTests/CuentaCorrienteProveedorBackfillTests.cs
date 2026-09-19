@@ -170,7 +170,7 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
         db.MediosPago.Add(medioPago);
         await db.SaveChangesAsync();
 
-        var idTurnoCaja = await SembrarTurnoPreMigracionAsync(conexionCruda, tenant.Id, puntoVenta.Id, usuario.Id);
+        var idTurnoCaja = await SembrarTurnoPreMigracionAsync(conexionCruda, tenant.Id, puntoVenta.Id, usuario.Id, ahora);
 
         return new Entorno(tenant.Id, puntoVenta.Id, usuario.Id, condicionFiscal.Id, tipoComprobanteCompra.Id, medioPago.Id, idTurnoCaja);
     }
@@ -185,18 +185,19 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
     /// NOT NULL con FK compuesta, así que sin una fila de turno no se puede sembrar ningún gasto —
     /// el backfill bajo prueba no lee <c>turnos_caja</c> en ningún statement.</para></summary>
     private static async Task<int> SembrarTurnoPreMigracionAsync(
-        NpgsqlConnection cruda, int idTenant, int idPuntoVenta, int idEmpleadoApertura)
+        NpgsqlConnection cruda, int idTenant, int idPuntoVenta, int idEmpleadoApertura, DateTimeOffset ahora)
     {
         await using var comando = cruda.CreateCommand();
         comando.CommandText =
             "INSERT INTO turnos_caja " +
             "(id_tenant, id_punto_venta, id_empleado_apertura, fecha_apertura, fondo_inicial, estado, " +
             " created_at, updated_at) " +
-            "VALUES ($1, $2, $3, now(), 0, 'abierto'::estado_turno, now(), now()) " +
+            "VALUES ($1, $2, $3, $4, 0, 'abierto'::estado_turno, $4, $4) " +
             "RETURNING id_turno_caja";
         comando.Parameters.Add(new NpgsqlParameter { Value = idTenant });
         comando.Parameters.Add(new NpgsqlParameter { Value = idPuntoVenta });
         comando.Parameters.Add(new NpgsqlParameter { Value = idEmpleadoApertura });
+        comando.Parameters.Add(new NpgsqlParameter { Value = ahora });
         return (int)(await comando.ExecuteScalarAsync())!;
     }
 
@@ -456,7 +457,12 @@ public class CuentaCorrienteProveedorBackfillTests(WaysApiFixture fixture) : ICl
             await using (var db = new WaysDbContext(opciones, TenantActualFijo.Plataforma))
             {
                 var migrador = db.Database.GetInfrastructure().GetRequiredService<IMigrator>();
-                await migrador.MigrateAsync(); // aplica CuentaCorrienteDeProveedoresEtapa15, la única pendiente
+                // Aplica TODAS las pendientes, no solo la migración bajo prueba: desde
+            // CuentaCorrienteDeProveedoresEtapa15 hasta la última del repo. El backfill que este
+            // test mide es el de la primera, pero las de más arriba corren igual sobre la misma
+            // fixture — por eso cada siembra declara la lista de columnas del esquema al que migra
+            // (ver SembrarProveedorPreMigracionAsync y sus hermanas), y no el modelo de HEAD.
+            await migrador.MigrateAsync();
             }
 
             await using var verificacion = new NpgsqlConnection(f.CadenaNueva);
