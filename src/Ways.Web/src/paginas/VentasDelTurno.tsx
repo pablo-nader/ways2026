@@ -46,6 +46,8 @@ function mensajeDeErrorReimprimir(e: unknown): string {
   return e instanceof ErrorApi ? e.message : 'No se pudo obtener el comprobante para reimprimir.'
 }
 
+const MENSAJE_VENTA_ANULADA_NO_REIMPRIME = 'La venta fue anulada, no se puede reimprimir.'
+
 type PropsModalDetalle = {
   comprobante: ComprobanteEmitido | null
   /** `ComprobanteEmitido` no lleva el nombre del cliente (solo `idCliente`) — se toma de la fila
@@ -437,6 +439,13 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
 
   // ---- Reimprimir -----------------------------------------------------------------------------
 
+  /** JD-E1-2 (judgment-day ronda 0, CRITICAL confirmado por los dos jueces): SIEMPRE vuelve a
+   * pedir el comprobante — nunca reusa `comprobanteDetalle` ni ningún otro estado ya en pantalla.
+   * La venta pudo anularse DESPUÉS de que el listado o el detalle se cargaron; reimprimir contra
+   * ese estado viejo imprimiría un ticket de una venta que ya no es válida. Si la respuesta fresca
+   * dice `Anulado`, no se imprime nada: se refresca lo que la pantalla venía mostrando (la fila
+   * del listado y, si está abierto, el detalle) para que el botón de "Reimprimir" desaparezca, y
+   * se muestra un error explícito en vez de fallar en silencio. */
   async function reimprimirVenta(id: number) {
     if (!alReimprimir) return
     if (idsReimprimiendoRef.current.has(id)) return
@@ -449,7 +458,15 @@ export function VentasDelTurno({ alReimprimir }: Props = {}) {
     })
 
     try {
-      const comprobante = comprobanteDetalle && comprobanteDetalle.id === id ? comprobanteDetalle : await clienteDeVentas.obtener(id)
+      const comprobante = await clienteDeVentas.obtener(id)
+
+      if (comprobante.estado !== 'Emitido') {
+        setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, estado: comprobante.estado } : v)))
+        setComprobanteDetalle((prev) => (prev && prev.id === id ? comprobante : prev))
+        setErroresReimprimir((prev) => ({ ...prev, [id]: MENSAJE_VENTA_ANULADA_NO_REIMPRIME }))
+        return
+      }
+
       alReimprimir(comprobante, medios)
     } catch (e) {
       setErroresReimprimir((prev) => ({ ...prev, [id]: mensajeDeErrorReimprimir(e) }))

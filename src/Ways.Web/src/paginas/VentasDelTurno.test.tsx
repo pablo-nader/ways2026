@@ -858,7 +858,7 @@ describe('VentasDelTurno — reimprimir', () => {
     await waitFor(() => expect(alReimprimir).toHaveBeenCalledWith(comprobante, [medioEfectivo]))
   })
 
-  it('"Reimprimir" desde el modal de detalle reusa el comprobante ya cargado (sin un segundo GET)', async () => {
+  it('"Reimprimir" desde el modal de detalle SIEMPRE vuelve a pedir el comprobante (nunca reusa comprobanteDetalle) — JD-E1-2', async () => {
     const venta = ventaFixture({ id: 43, numeroVisible: '0007-00000043' })
     const comprobante = comprobanteFixture({ id: 43, numeroVisible: '0007-00000043' })
     mockearRutas({ turno: turnoFixture(), ventas: [venta], medios: [medioEfectivo], comprobantes: { 43: comprobante } })
@@ -876,8 +876,71 @@ describe('VentasDelTurno — reimprimir', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Reimprimir' }))
 
     await waitFor(() => expect(alReimprimir).toHaveBeenCalledWith(comprobante, [medioEfectivo]))
+    // La venta pudo anularse DESPUÉS de abrir el detalle — reusar `comprobanteDetalle` imprimiría
+    // un ticket de una venta ya no válida. Acá SÍ hay un segundo GET, con el detalle ya cargado.
     const cantidadDeGetsDespues = apiGetMock.mock.calls.filter(([ruta]) => ruta === '/ventas/43').length
-    expect(cantidadDeGetsDespues).toBe(cantidadDeGetsAntes)
+    expect(cantidadDeGetsDespues).toBe(cantidadDeGetsAntes + 1)
+  })
+
+  it('fila: si el listado dice Emitida pero el GET fresco dice Anulada, no imprime — muestra el error y la fila se refresca (el botón desaparece) — JD-E1-2', async () => {
+    const venta = ventaFixture({ id: 46, numeroVisible: '0007-00000046', estado: 'Emitido' })
+    const comprobanteAnuladoFresco = comprobanteFixture({ id: 46, numeroVisible: '0007-00000046', estado: 'Anulado' })
+    mockearRutas({
+      turno: turnoFixture(),
+      ventas: [venta],
+      medios: [medioEfectivo],
+      comprobantes: { 46: comprobanteAnuladoFresco },
+    })
+    const alReimprimir = vi.fn()
+    render(<VentasDelTurno alReimprimir={alReimprimir} />)
+
+    await screen.findByText('0007-00000046')
+    // Emitida en el listado — el botón "Reimprimir" está visible antes de la búsqueda fresca.
+    expect(screen.getByText('Emitida', { selector: 'span' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Reimprimir' }))
+
+    await screen.findByText('La venta fue anulada, no se puede reimprimir.')
+    expect(alReimprimir).not.toHaveBeenCalled()
+    // La fila se refresca con el estado real: el badge pasa a Anulada y "Reimprimir" desaparece.
+    expect(await screen.findByText('Anulada', { selector: 'span' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
+  })
+
+  it('modal: si el detalle ya cargado dice Emitida pero el GET fresco de "Reimprimir" dice Anulada, no imprime — el modal se refresca (badge y botón) — JD-E1-2', async () => {
+    const venta = ventaFixture({ id: 47, numeroVisible: '0007-00000047', estado: 'Emitido' })
+    const comprobanteEmitidoInicial = comprobanteFixture({ id: 47, numeroVisible: '0007-00000047', estado: 'Emitido' })
+    mockearRutas({
+      turno: turnoFixture(),
+      ventas: [venta],
+      medios: [medioEfectivo],
+      comprobantes: { 47: comprobanteEmitidoInicial },
+    })
+    const alReimprimir = vi.fn()
+    render(<VentasDelTurno alReimprimir={alReimprimir} />)
+
+    await screen.findByText('0007-00000047')
+    await userEvent.click(screen.getByRole('button', { name: 'Detalle' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Emitida', { selector: 'span' })).toBeInTheDocument()
+
+    // La venta se anula DESPUÉS de que el detalle ya cargó — el próximo GET (el de "Reimprimir")
+    // trae el estado real.
+    const comprobanteAnuladoFresco = comprobanteFixture({ id: 47, numeroVisible: '0007-00000047', estado: 'Anulado' })
+    mockearRutas({
+      turno: turnoFixture(),
+      ventas: [venta],
+      medios: [medioEfectivo],
+      comprobantes: { 47: comprobanteAnuladoFresco },
+    })
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Reimprimir' }))
+
+    await within(dialog).findByText('La venta fue anulada, no se puede reimprimir.')
+    expect(alReimprimir).not.toHaveBeenCalled()
+    // El modal se refresca con el comprobante real: el badge pasa a Anulada y "Reimprimir" ya no
+    // se ofrece (no tiene sentido reimprimir algo que se acaba de confirmar anulado).
+    expect(within(dialog).getByText('Anulada', { selector: 'span' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Reimprimir' })).not.toBeInTheDocument()
   })
 
   it('muestra la etiqueta "Reimprimiendo…" mientras busca el comprobante, y un error visible si falla', async () => {
