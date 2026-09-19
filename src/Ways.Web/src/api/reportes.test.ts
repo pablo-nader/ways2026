@@ -264,10 +264,18 @@ describe('construirQueryDeReporteDeArticulos', () => {
     expect(query).toBe('?pagina=1&tamanio=25')
   })
 
-  it('agrega idArea solo cuando está seteado', () => {
+  it('agrega idArea y omite sinArea (mutuamente excluyentes del lado del backend)', () => {
     const query = construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ idArea: 3 }))
 
     expect(query).toContain('idArea=3')
+    expect(query).not.toContain('sinArea')
+  })
+
+  it('agrega sinArea=true cuando está tildado, sin idArea', () => {
+    const query = construirQueryDeReporteDeArticulos(filtrosReporteDeArticulosFixture({ sinArea: true }))
+
+    expect(query).toContain('sinArea=true')
+    expect(query).not.toContain('idArea=')
   })
 
   it('agrega idCategoria y omite sinCategoria (mutuamente excluyentes del lado del backend)', () => {
@@ -318,6 +326,7 @@ describe('construirQueryDeReporteDeArticulos', () => {
 
     expect(filtros).toEqual({
       idArea: null,
+      sinArea: false,
       idCategoria: null,
       sinCategoria: false,
       idMarca: null,

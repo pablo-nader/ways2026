@@ -1692,14 +1692,15 @@ export type TopArticulos = {
 }
 
 /** Fila de `GET /api/reportes/articulos` (reporte de completitud de catálogo) — espejo de
- * `ArticuloDeReporte`. `categoria`/`marca`/`grupo`/`proveedor` son `null` cuando el artículo no
- * tiene esa clasificación asignada; la UI decide cómo mostrar el hueco ("Sin asignar"), nunca el
- * servidor. `proveedor` ya viene resuelto como nombre de fantasía (o razón social si no tiene). */
+ * `ArticuloDeReporte`. `area`/`categoria`/`marca`/`grupo`/`proveedor` son `null` cuando el
+ * artículo no tiene esa clasificación asignada, o cuando el FK apunta a una fila dada de baja
+ * lógica; la UI decide cómo mostrar el hueco ("Sin asignar"), nunca el servidor. `proveedor` ya
+ * viene resuelto como nombre de fantasía (o razón social si no tiene). */
 export type ArticuloDeReporte = {
   id: number
   codigoInterno: string
   nombre: string
-  area: string
+  area: string | null
   categoria: string | null
   marca: string | null
   grupo: string | null

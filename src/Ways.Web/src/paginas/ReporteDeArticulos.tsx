@@ -177,10 +177,16 @@ export function ReporteDeArticulos() {
             <select
               id="reporte-articulos-area"
               className="form-select rounded-0"
-              value={filtros.idArea ?? ''}
-              onChange={(e) => cambiarFiltro({ idArea: e.target.value === '' ? null : Number(e.target.value) })}
+              value={filtros.sinArea ? VALOR_SIN : (filtros.idArea ?? '')}
+              onChange={(e) => {
+                const valor = e.target.value
+                if (valor === VALOR_SIN) cambiarFiltro({ idArea: null, sinArea: true })
+                else if (valor === '') cambiarFiltro({ idArea: null, sinArea: false })
+                else cambiarFiltro({ idArea: Number(valor), sinArea: false })
+              }}
             >
               <option value="">Todas</option>
+              <option value={VALOR_SIN}>Sin área</option>
               {areas.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.nombre}
@@ -356,7 +362,9 @@ export function ReporteDeArticulos() {
                     <tr key={f.id}>
                       <td>{f.codigoInterno}</td>
                       <td>{f.nombre}</td>
-                      <td>{f.area}</td>
+                      <td>
+                        <CeldaOpcional valor={f.area} />
+                      </td>
                       <td>
                         <CeldaOpcional valor={f.categoria} />
                       </td>

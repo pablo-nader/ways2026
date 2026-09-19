@@ -269,6 +269,7 @@ export const rutasDeExportacion = {
  * a diferencia de todo el resto de `FiltrosDe*` de este módulo. */
 export type FiltrosDeReporteDeArticulos = {
   idArea: number | null
+  sinArea: boolean
   idCategoria: number | null
   sinCategoria: boolean
   idMarca: number | null
@@ -286,6 +287,7 @@ export type FiltrosDeReporteDeArticulos = {
 export function filtrosDeReporteDeArticulosVacios(): FiltrosDeReporteDeArticulos {
   return {
     idArea: null,
+    sinArea: false,
     idCategoria: null,
     sinCategoria: false,
     idMarca: null,
@@ -310,6 +312,7 @@ function construirQueryDeAlcanceDeArticulos(
 ): string {
   const parametros = new URLSearchParams()
   if (filtros.idArea !== null) parametros.set('idArea', String(filtros.idArea))
+  if (filtros.sinArea) parametros.set('sinArea', 'true')
   if (filtros.idCategoria !== null) parametros.set('idCategoria', String(filtros.idCategoria))
   if (filtros.sinCategoria) parametros.set('sinCategoria', 'true')
   if (filtros.idMarca !== null) parametros.set('idMarca', String(filtros.idMarca))

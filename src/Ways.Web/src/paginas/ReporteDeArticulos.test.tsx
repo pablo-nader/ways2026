@@ -197,11 +197,13 @@ describe('ReporteDeArticulos — listado', () => {
       proveedor: 'DistriUno',
       activo: true,
     })
+    // area: null simula un área dada de baja lógica sin guarda de uso (judgment-day ronda 1):
+    // la fila sigue existiendo, pero su clasificación de área ya no resuelve a ningún nombre.
     const filaIncompleta = filaFixture({
       id: 2,
       codigoInterno: 'COD-2',
       nombre: 'Fideos guiseros 500g',
-      area: 'Verdulería',
+      area: null,
       categoria: null,
       marca: null,
       grupo: null,
@@ -225,58 +227,60 @@ describe('ReporteDeArticulos — listado', () => {
 
     const filaDosDom = screen.getByRole('row', { name: /COD-2/ })
     expect(within(filaDosDom).getByText('Fideos guiseros 500g')).toBeInTheDocument()
-    expect(within(filaDosDom).getByText('Verdulería')).toBeInTheDocument()
-    expect(within(filaDosDom).getAllByText('Sin asignar')).toHaveLength(4)
+    expect(within(filaDosDom).getAllByText('Sin asignar')).toHaveLength(5)
     expect(within(filaDosDom).getByText('Inactivo')).toBeInTheDocument()
   })
 
-  it('cambiar el área dispara una nueva consulta con idArea', async () => {
-    mockearRutasBase()
-    const usuario = userEvent.setup()
-    renderReporte()
+  // mutation-proof-tests: un solo dimension (categoría) probado no dice nada de sus vecinos —
+  // cada una de las cinco clasificaciones tiene su propio par id/sin, con su propia guarda de
+  // exclusividad del lado del servidor; mutar el wiring de UNA (p.ej. "Sin marca" seteando
+  // sinCategoria) sobrevive si solo categoría está cubierta. Un solo caso paramétrico por
+  // dimensión cubre las dos ramas: elegir "Sin X" manda sinX=true sin idX, elegir un valor real
+  // manda idX sin sinX.
+  const dimensiones = [
+    { etiquetaCampo: 'Área', etiquetaSin: 'Sin área', paramSin: 'sinArea', paramId: 'idArea', etiquetaValorReal: 'Almacén', idEsperado: '1' },
+    { etiquetaCampo: 'Categoría', etiquetaSin: 'Sin categoría', paramSin: 'sinCategoria', paramId: 'idCategoria', etiquetaValorReal: 'Bebidas', idEsperado: '10' },
+    { etiquetaCampo: 'Marca', etiquetaSin: 'Sin marca', paramSin: 'sinMarca', paramId: 'idMarca', etiquetaValorReal: 'Marca A', idEsperado: '20' },
+    { etiquetaCampo: 'Grupo', etiquetaSin: 'Sin grupo', paramSin: 'sinGrupo', paramId: 'idGrupo', etiquetaValorReal: 'Grupo A', idEsperado: '30' },
+    { etiquetaCampo: 'Proveedor', etiquetaSin: 'Sin proveedor', paramSin: 'sinProveedor', paramId: 'idProveedor', etiquetaValorReal: 'DistriUno', idEsperado: '40' },
+  ]
 
-    await screen.findByText('COD-1')
-    apiGetMock.mockClear()
-    mockearRutasBase()
-    await usuario.selectOptions(screen.getByLabelText('Área'), '2')
+  describe.each(dimensiones)(
+    'filtro $etiquetaCampo',
+    ({ etiquetaCampo, etiquetaSin, paramSin, paramId, etiquetaValorReal, idEsperado }) => {
+      it(`elegir "${etiquetaSin}" manda ${paramSin}=true sin ${paramId}`, async () => {
+        mockearRutasBase()
+        const usuario = userEvent.setup()
+        renderReporte()
 
-    await waitFor(() => {
-      const llamadas = apiGetMock.mock.calls.filter((call: unknown[]) => (call[0] as string).startsWith('/reportes/articulos?'))
-      expect(llamadas.some((call: unknown[]) => (call[0] as string).includes('idArea=2'))).toBe(true)
-    })
-  })
+        await screen.findByText('COD-1')
+        apiGetMock.mockClear()
+        mockearRutasBase()
+        await usuario.selectOptions(screen.getByLabelText(etiquetaCampo), etiquetaSin)
 
-  it('elegir "Sin categoría" manda sinCategoria=true sin idCategoria', async () => {
-    mockearRutasBase()
-    const usuario = userEvent.setup()
-    renderReporte()
+        await waitFor(() => {
+          const llamadas = apiGetMock.mock.calls.map((call: unknown[]) => call[0] as string).filter((r) => r.startsWith('/reportes/articulos?'))
+          expect(llamadas.some((r) => r.includes(`${paramSin}=true`) && !r.includes(`${paramId}=`))).toBe(true)
+        })
+      })
 
-    await screen.findByText('COD-1')
-    apiGetMock.mockClear()
-    mockearRutasBase()
-    await usuario.selectOptions(screen.getByLabelText('Categoría'), 'Sin categoría')
+      it(`elegir un valor real de ${etiquetaCampo} manda ${paramId} sin ${paramSin}`, async () => {
+        mockearRutasBase()
+        const usuario = userEvent.setup()
+        renderReporte()
 
-    await waitFor(() => {
-      const llamadas = apiGetMock.mock.calls.map((call: unknown[]) => call[0] as string).filter((r) => r.startsWith('/reportes/articulos?'))
-      expect(llamadas.some((r) => r.includes('sinCategoria=true') && !r.includes('idCategoria='))).toBe(true)
-    })
-  })
+        await screen.findByText('COD-1')
+        apiGetMock.mockClear()
+        mockearRutasBase()
+        await usuario.selectOptions(screen.getByLabelText(etiquetaCampo), etiquetaValorReal)
 
-  it('elegir una categoría real manda idCategoria sin sinCategoria', async () => {
-    mockearRutasBase()
-    const usuario = userEvent.setup()
-    renderReporte()
-
-    await screen.findByText('COD-1')
-    apiGetMock.mockClear()
-    mockearRutasBase()
-    await usuario.selectOptions(screen.getByLabelText('Categoría'), 'Bebidas')
-
-    await waitFor(() => {
-      const llamadas = apiGetMock.mock.calls.map((call: unknown[]) => call[0] as string).filter((r) => r.startsWith('/reportes/articulos?'))
-      expect(llamadas.some((r) => r.includes('idCategoria=10') && !r.includes('sinCategoria'))).toBe(true)
-    })
-  })
+        await waitFor(() => {
+          const llamadas = apiGetMock.mock.calls.map((call: unknown[]) => call[0] as string).filter((r) => r.startsWith('/reportes/articulos?'))
+          expect(llamadas.some((r) => r.includes(`${paramId}=${idEsperado}`) && !r.includes(paramSin))).toBe(true)
+        })
+      })
+    },
+  )
 
   it('tildar "Solo incompletos" manda soloIncompletos=true', async () => {
     mockearRutasBase()
