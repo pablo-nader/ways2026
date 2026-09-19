@@ -66,23 +66,23 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
 
   const cargar = useCallback(() => {
     const generacion = (generacionRef.current += 1)
+    let seProgramoClamp = false
     setCargando(true)
     setError('')
     clienteDeArticulos
       .grilla(filtros)
       .then((p) => {
         if (generacionRef.current !== generacion) return
-        // Una Baja puede vaciar la última página en curso: si el servidor todavía tiene artículos
-        // (`total > 0`) pero la página pedida quedó fuera de rango, se pide la última página válida
-        // en vez de mostrar "No hay artículos…" con una paginación inconsistente ("Página 2 de 1").
-        // Con `total === 0` no hay página válida a la que volver, así que se deja tal cual (sin esto
-        // se entraría en un loop pidiendo siempre la página 1 con resultado vacío).
-        if (p.total > 0) {
-          const ultimaPaginaValida = Math.max(1, Math.ceil(p.total / p.tamanio))
-          if (p.pagina > ultimaPaginaValida) {
-            setFiltros((prev) => (prev.pagina === ultimaPaginaValida ? prev : { ...prev, pagina: ultimaPaginaValida }))
-            return
-          }
+        // Una Baja puede vaciar la última página en curso — incluso hasta `total === 0`, si era el
+        // único artículo restante — dejando la página pedida fuera de rango: se pide la última
+        // página válida en vez de mostrar "No hay artículos…" con una paginación inconsistente
+        // ("Página 2 de 1"). El clamp es autolimitante: la página 1 nunca supera
+        // `ultimaPaginaValida` (mínimo 1), así que no hay reintento infinito.
+        const ultimaPaginaValida = Math.max(1, Math.ceil(p.total / p.tamanio))
+        if (p.pagina > ultimaPaginaValida) {
+          seProgramoClamp = true
+          setFiltros((prev) => (prev.pagina === ultimaPaginaValida ? prev : { ...prev, pagina: ultimaPaginaValida }))
+          return
         }
         setPagina(p)
       })
@@ -92,7 +92,9 @@ export function GrillaDeArticulos({ proveedores, ocupado, pedidoDeRefresco, onEl
       })
       .finally(() => {
         if (generacionRef.current !== generacion) return
-        setCargando(false)
+        // Si se programó el refetch correctivo del clamp, la grilla sigue "cargando" hasta que esa
+        // segunda respuesta llegue — apagarlo acá dejaría la página vieja renderizada sin dimming.
+        if (!seProgramoClamp) setCargando(false)
         cargaInicialHechaRef.current = true
       })
   }, [filtros])

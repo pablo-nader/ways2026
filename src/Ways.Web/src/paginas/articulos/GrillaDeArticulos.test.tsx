@@ -795,4 +795,87 @@ describe('GrillaDeArticulos — página fuera de rango tras una Baja (GW1)', () 
     expect(screen.getByText(/Página 1 de 1/)).toBeInTheDocument()
     expect(ultimaQuery()).toContain('pagina=1')
   })
+
+  /**
+   * Cláusula bajo prueba: el clamp de `cargar` también actúa cuando `p.total === 0` (GW13).
+   * Mutation-proof-tests: el guard previo `if (p.total > 0)` dejaba pasar la respuesta tal cual
+   * cuando el total cae a 0 estando en una página > 1 — este test nunca vería "Página 1 de 1", solo
+   * "Página 2 de 1" con la tabla vacía.
+   */
+  it('un refresco que deja total en 0 estando en la página 2 también cae a la página 1 (nunca "2 de 1")', async () => {
+    mockearRutas(paginaFixture([filaFixture({ nombre: 'Articulo Uno' })], { total: 2, tamanio: 1, pagina: 1 }))
+    const { rerenderCon } = renderGrilla()
+    await screen.findByText('Articulo Uno')
+
+    mockearRutas(paginaFixture([filaFixture({ id: 2, nombre: 'Articulo Dos' })], { total: 2, tamanio: 1, pagina: 2 }))
+    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText('Articulo Dos')
+
+    // El refresco pedido por el padre encuentra que YA NO QUEDA NINGÚN artículo (total === 0).
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (!ruta.startsWith('/articulos/grilla')) return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      if (ruta.includes('pagina=2')) return Promise.resolve(paginaFixture([], { total: 0, tamanio: 1, pagina: 2 }))
+      return Promise.resolve(paginaFixture([], { total: 0, tamanio: 1, pagina: 1 }))
+    })
+    rerenderCon({ pedidoDeRefresco: 1 })
+
+    await waitFor(() => expect(ultimaQuery()).toContain('pagina=1'))
+    expect(await screen.findByText(/Página 1 de 1/)).toBeInTheDocument()
+    expect(screen.queryByText('Página 2 de 1')).not.toBeInTheDocument()
+
+    const llamadas = apiGetMock.mock.calls.filter((c: unknown[]) => (c[0] as string).startsWith('/articulos/grilla'))
+    expect(llamadas.length).toBeLessThanOrEqual(4)
+  })
+
+  /**
+   * Cláusula bajo prueba: el `if (!seProgramoClamp) setCargando(false)` del `.finally` de `cargar`
+   * (GW15). Mutation-proof-tests: sacar ese guard apaga `cargando` apenas llega la respuesta que
+   * dispara el clamp — este test observa el instante EXACTO en que esa respuesta ya se resolvió
+   * (microtasks del `.then`/`.finally` agotados) pero el refetch correctivo todavía no salió
+   * (requiere una vuelta de macrotask, vía el efecto pasivo que reacciona al cambio de `filtros`):
+   * ahí es donde el guard importa, antes de que el propio refetch correctivo vuelva a prender
+   * `cargando`. Sin el guard, "Anterior" aparece habilitado y sin dimming en ese instante.
+   */
+  it('en el instante entre la respuesta que clampea y el refetch correctivo, la grilla sigue en estado de carga', async () => {
+    mockearRutas(paginaFixture([filaFixture({ nombre: 'Articulo Uno' })], { total: 2, tamanio: 1, pagina: 1 }))
+    const { rerenderCon, container } = renderGrilla()
+    await screen.findByText('Articulo Uno')
+
+    mockearRutas(paginaFixture([filaFixture({ id: 2, nombre: 'Articulo Dos' })], { total: 2, tamanio: 1, pagina: 2 }))
+    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
+    await screen.findByText('Articulo Dos')
+
+    let resolverPrimera: (valor: PaginaDeGrillaDeArticulos) => void = () => {}
+    const primera = new Promise<PaginaDeGrillaDeArticulos>((resolve) => {
+      resolverPrimera = resolve
+    })
+    apiGetMock.mockImplementation((ruta: string) => {
+      if (!ruta.startsWith('/articulos/grilla')) return Promise.reject(new Error(`ruta no mockeada: ${ruta}`))
+      if (ruta.includes('pagina=2')) return primera
+      // El refetch correctivo (pagina=1) queda pendiente a propósito: lo que importa es el
+      // instante ANTERIOR a que siquiera se dispare.
+      return new Promise(() => {})
+    })
+    rerenderCon({ pedidoDeRefresco: 1 })
+
+    resolverPrimera(paginaFixture([], { total: 0, tamanio: 1, pagina: 2 }))
+    // Agota las microtasks del `.then`/`.catch`/`.finally` de `cargar` (la respuesta que clampea).
+    // React todavía no confirmó el render de este ciclo — commitear una actualización de estado
+    // pedida desde afuera de un handler de evento requiere cruzar una vuelta de macrotask.
+    for (let i = 0; i < 10; i++) {
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.resolve()
+    }
+
+    // Cruza UNA vuelta de macrotask: acá React confirma el render de la respuesta que clampea. El
+    // efecto pasivo que dispara el refetch correctivo (y volvería a prender `cargando`) todavía no
+    // corrió en este punto — es el único instante donde el guard hace una diferencia observable.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Todavía no se pidió la página correctiva: la última consulta emitida sigue siendo la 2.
+    expect(ultimaQuery()).toContain('pagina=2')
+    expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled()
+    const tbody = container.querySelector('tbody')
+    expect(tbody).toHaveStyle({ opacity: '0.6' })
+  })
 })
