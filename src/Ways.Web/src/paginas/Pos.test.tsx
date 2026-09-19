@@ -233,6 +233,16 @@ function escribirValorCrudo(input: HTMLInputElement, valor: string) {
   })
 }
 
+/** Simula un código leído por pistola (o tipeado a mano) con el modal "Venta finalizada" abierto
+ * — ningún input de texto tiene foco ahí (el foco está en "Aceptar"), así que el buffer del modal
+ * (`Pos.tsx`, `VentaFinalizada`) es lo único que puede juntar estos caracteres. Un `keydown` por
+ * carácter, sin `Enter` — el llamador lo agrega aparte para poder afirmar el estado justo antes. */
+function tipearEnDialogo(dialogo: HTMLElement, texto: string) {
+  for (const caracter of texto) {
+    fireEvent.keyDown(dialogo, { key: caracter })
+  }
+}
+
 const consumidorFinal = clienteFixture()
 const otroCliente = clienteFixture({ id: 2, numero: 2, nombre: 'Juan', apellido: 'Pérez', esConsumidorFinal: false })
 const puntoVentaCentro = puntoVentaFixture()
@@ -361,7 +371,8 @@ describe('Pos — formato de moneda negativa (regresión, INFO recurrente desde 
     await armarVentaLista()
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
-    expect(await screen.findByText(/Total: -\$ 50,00/)).toBeInTheDocument()
+    const modal = within(await screen.findByRole('dialog', { name: 'Venta finalizada' }))
+    expect(modal.getByText(/Total: -\$ 50,00/)).toBeInTheDocument()
   })
 })
 
@@ -886,33 +897,257 @@ describe('Pos — panel de pagos: cuenta corriente y vuelto', () => {
 })
 
 describe('Pos — checkout', () => {
-  it('un cobro exitoso muestra el ticket con el número emitido y resetea el carrito', async () => {
+  it('un cobro exitoso resetea el carrito de inmediato y muestra el modal "Venta finalizada" con el total — sin esperar ningún click', async () => {
     await armarVentaLista()
 
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
-    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
-    expect(screen.getByText('Coca Cola 1L')).toBeInTheDocument()
-    expect(screen.getByText(/Total: \$ 100,00/)).toBeInTheDocument()
+    const modal = within(await screen.findByRole('dialog', { name: 'Venta finalizada' }))
+    expect(modal.getByText('Venta 0007-00000001')).toBeInTheDocument()
+    expect(modal.getByText('Total: $ 100,00')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+    // El carrito ya se reseteó ANTES de que el cajero cierre el modal — a diferencia de la vieja
+    // pantalla de resumen, no hace falta ningún "Nueva venta" para volver a vender.
     expect(screen.getByText('Escaneá o tipeá un código para empezar la venta.')).toBeInTheDocument()
+
+    await userEvent.click(modal.getByRole('button', { name: 'Aceptar' }))
+    expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
   })
 
-  it('un texto de escaneo sin confirmar no sobrevive a la venta siguiente', async () => {
+  it('el modal "Venta finalizada" muestra cada medio de pago aplicado con su importe y el vuelto a entregar — desde la respuesta del servidor, nunca de lo que el cajero tipeó localmente', async () => {
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ofertas/resolver') {
+        const resultados: ResultadoDeResolucion[] = [
+          { idArticulo: 1, idListaPrecio: 1, precioOriginal: 100, precioFinal: 100, descuentoUnitario: 0, aplicadas: [] },
+        ]
+        return Promise.resolve(resultados)
+      }
+      if (ruta === '/ventas') {
+        // A propósito, distinto de lo que arma `armarVentaLista()` en el panel de pagos local
+        // (una sola fila de Efectivo por $ 100) — si el modal leyera de `pagosConVuelto` local en
+        // vez de `emitido.pagos`, este test lo detectaría.
+        return Promise.resolve(
+          comprobanteEmitidoFixture({
+            total: 150,
+            pagos: [
+              { idMedioPago: medioEfectivo.id, importe: 100, referencia: null, vuelto: 20 },
+              { idMedioPago: medioTarjeta.id, importe: 70, referencia: 'AUT123', vuelto: 0 },
+            ],
+          }),
+        )
+      }
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    const modal = within(await screen.findByRole('dialog', { name: 'Venta finalizada' }))
+    expect(modal.getByText('Total: $ 150,00')).toBeInTheDocument()
+    expect(modal.getByText('Efectivo: $ 100,00')).toBeInTheDocument()
+    expect(modal.getByText('Tarjeta: $ 70,00')).toBeInTheDocument()
+    expect(modal.getByText('Vuelto: $ 20,00')).toBeInTheDocument()
+  })
+
+  it('el modal "Venta finalizada" cierra con F9 y devuelve el foco al input de código', async () => {
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    fireEvent.keyDown(document, { key: 'F9' })
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument())
+    expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
+  })
+
+  /**
+   * Cláusula bajo prueba: `evento.repeat` en la rama de `ventaFinalizada` del listener de F9 — un
+   * F9 sostenido desde la propia confirmación de cobro (F9 que abrió "¿Finalizar venta?" y sigue
+   * físicamente apretado) no debe cerrar este modal por accidente apenas aparece. Mutación
+   * aplicada manualmente: sacar el `if (evento.repeat) return` de esa rama en `Pos.tsx` → este
+   * test pasa a rojo (el modal se cierra con el keydown repetido). Revertido, vuelve a verde —
+   * evidencia registrada en el informe de la tarea.
+   */
+  it('un F9 con repeat:true no cierra el modal "Venta finalizada"', async () => {
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    fireEvent.keyDown(document, { key: 'F9', repeat: true })
+
+    expect(screen.getByRole('dialog', { name: 'Venta finalizada' })).toBeInTheDocument()
+  })
+
+  it('mientras el modal "Venta finalizada" está abierto, F2 no abre el buscador y los controles de venta quedan deshabilitados', async () => {
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+    fireEvent.keyDown(document, { key: 'F2' })
+    expect(screen.queryByRole('dialog', { name: 'Buscar artículo' })).not.toBeInTheDocument()
+
+    expect(screen.getByLabelText('Código escaneado')).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Cobrar/ })).toBeDisabled()
+  })
+
+  it('mientras el modal "Venta finalizada" está abierto, Tab no escapa del botón "Aceptar" (trampa de foco)', async () => {
+    await armarVentaLista()
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Venta finalizada' })
+    const aceptar = within(dialogo).getByRole('button', { name: 'Aceptar' })
+
+    expect(aceptar).toHaveFocus()
+    fireEvent.keyDown(dialogo, { key: 'Tab' })
+    expect(aceptar).toHaveFocus()
+  })
+
+  describe('buffer de escaneo mientras el modal "Venta finalizada" está abierto (judgment-day ronda 0)', () => {
+    it('Enter con el buffer vacío simplemente cierra el modal y devuelve el foco al input de código — sin disparar ningún escaneo', async () => {
+      await armarVentaLista()
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Venta finalizada' })
+      // `armarVentaLista()` ya disparó su propio `GET /articulos/escaneo` para armar el carrito —
+      // se limpia acá para que la aserción de abajo mida solo lo que pasa DESPUÉS de este punto.
+      apiGetMock.mockClear()
+
+      fireEvent.keyDown(dialogo, { key: 'Enter' })
+
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument())
+      expect(screen.getByLabelText('Código escaneado')).toHaveFocus()
+      expect(apiGetMock.mock.calls.some(([ruta]) => String(ruta).startsWith('/articulos/escaneo'))).toBe(false)
+    })
+
+    /**
+     * Cláusula bajo prueba: `if (!modoPresupuesto && codigo) onEscanearCodigo(codigo)` en la rama
+     * de Enter de `manejarTeclado` (`Pos.tsx`, `VentaFinalizada`) — un código tipeado/escaneado
+     * con el modal abierto debe terminar escaneado a la venta nueva, nunca perdido. Mutación
+     * aplicada manualmente: comentar ese `if` (dejar solo `onCerrar()`) → este test pasa a rojo
+     * (cierra el modal pero no llega ningún `GET /articulos/escaneo`, "Coca Cola 1L" nunca
+     * aparece en el carrito). Revertido, vuelve a verde — evidencia registrada en el informe de
+     * la tarea.
+     */
+    it('tipear/escanear un código con el modal abierto y apretar Enter cierra el modal y escanea ese código en la venta nueva — una sola request', async () => {
+      await armarVentaLista()
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Venta finalizada' })
+      apiGetMock.mockClear()
+
+      tipearEnDialogo(dialogo, '7790001234567')
+      fireEvent.keyDown(dialogo, { key: 'Enter' })
+
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument())
+      await screen.findByText('Coca Cola 1L')
+      expect(apiGetMock).toHaveBeenCalledWith('/articulos/escaneo?entrada=7790001234567')
+      expect(apiGetMock.mock.calls.filter(([ruta]) => String(ruta).startsWith('/articulos/escaneo'))).toHaveLength(1)
+    })
+
+    it('un código con formato N*codigo tipeado en el buffer viaja tal cual (sin interpretarlo acá)', async () => {
+      await armarVentaLista()
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Venta finalizada' })
+
+      tipearEnDialogo(dialogo, '3*7790001234567')
+      fireEvent.keyDown(dialogo, { key: 'Enter' })
+
+      await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/articulos/escaneo?entrada=3*7790001234567'))
+    })
+
+    it('F9 con un código a medio tipear cierra el modal SIN escanearlo — el texto queda esperando en el input de código', async () => {
+      await armarVentaLista()
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Venta finalizada' })
+      apiGetMock.mockClear()
+
+      tipearEnDialogo(dialogo, '77900')
+      fireEvent.keyDown(dialogo, { key: 'F9' })
+
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument())
+      expect(screen.getByLabelText('Código escaneado')).toHaveValue('77900')
+      expect(apiGetMock.mock.calls.some(([ruta]) => String(ruta).startsWith('/articulos/escaneo'))).toBe(false)
+    })
+
+    it('clic en "Aceptar" con un código a medio tipear también lo deja esperando en el input de código, sin escanearlo', async () => {
+      await armarVentaLista()
+      await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+      const dialogo = await screen.findByRole('dialog', { name: 'Venta finalizada' })
+      apiGetMock.mockClear()
+
+      tipearEnDialogo(dialogo, '123')
+      await userEvent.click(within(dialogo).getByRole('button', { name: 'Aceptar' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument())
+      expect(screen.getByLabelText('Código escaneado')).toHaveValue('123')
+      expect(apiGetMock.mock.calls.some(([ruta]) => String(ruta).startsWith('/articulos/escaneo'))).toBe(false)
+    })
+  })
+
+  /**
+   * Cubre el guard `confirmandoCobro && !ventaFinalizada` de `Pos.tsx` (judgment-day ronda 0: sin
+   * él, `confirmarYcobrar` deja una ventana — entre que `cobrar()` setea `ventaFinalizada` y que
+   * la propia continuación de `confirmarYcobrar` vuelve `confirmandoCobro` a `false` — en la que
+   * ambos estados están en `true` a la vez). Intentado (mutation-proof-tests regla 2): sacar el
+   * `!ventaFinalizada` del guard NO tiñe este test de rojo — el batching automático de React 18
+   * colapsa ambas actualizaciones de estado en un único commit antes de cualquier punto
+   * observable en jsdom, así que la ventana transitoria que el guard previene no llega a
+   * manifestarse acá (confound, regla 3: no hay forma encontrada de esquivarlo con un test
+   * montado). Se conserva como cobertura estructural real del invariante (nunca coexisten en
+   * ningún punto observado) en vez de una prueba de mutación — mismo criterio que el test de
+   * `/para-venta` más abajo, que documenta explícitamente qué SÍ prueba.
+   */
+  it('la confirmación "¿Finalizar venta?" nunca coexiste en pantalla con el modal "Venta finalizada" (judgment-day ronda 0)', async () => {
+    let resolverCheckout: (comprobante: ComprobanteEmitido) => void = () => {}
+    const checkoutPendiente = new Promise<ComprobanteEmitido>((resolve) => {
+      resolverCheckout = resolve
+    })
+
+    await armarVentaLista()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') return checkoutPendiente
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    fireEvent.keyDown(document, { key: 'F9' })
+    await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
+    fireEvent.keyDown(document, { key: 'F9' })
+
+    await act(async () => {
+      resolverCheckout(comprobanteEmitidoFixture())
+    })
+
+    const hayConfirmacion = screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' }) !== null
+    const hayVentaFinalizada = screen.queryByRole('dialog', { name: 'Venta finalizada' }) !== null
+    // Nunca los dos a la vez, sea cual sea el estado en el que quedó esta corrida.
+    expect(hayConfirmacion && hayVentaFinalizada).toBe(false)
+
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Venta finalizada' })).toBeInTheDocument())
+    expect(screen.queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+  })
+
+  it('el diálogo "¿Finalizar venta?" (F9) es un modal fuera del panel "Datos de la venta", no un bloque inline que lo agranda', async () => {
+    await armarVentaLista()
+    const panelDatosDeLaVenta = screen.getByText('Datos de la venta').closest('.box') as HTMLElement
+
+    fireEvent.keyDown(document, { key: 'F9' })
+    const dialogo = await screen.findByRole('alertdialog', { name: '¿Finalizar venta?' })
+
+    expect(panelDatosDeLaVenta.contains(dialogo)).toBe(false)
+    expect(within(panelDatosDeLaVenta).queryByRole('alertdialog', { name: '¿Finalizar venta?' })).not.toBeInTheDocument()
+  })
+
+  it('un texto de escaneo sin confirmar no sobrevive al cobro — el carrito se resetea de inmediato, sin esperar el cierre del modal', async () => {
     await armarVentaLista()
     await userEvent.type(screen.getByLabelText('Código escaneado'), '111222333')
     await userEvent.type(screen.getByLabelText('Buscar cliente'), 'texto sin buscar')
 
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
-    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
 
-    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
     expect(screen.getByLabelText('Código escaneado')).toHaveValue('')
     expect(screen.getByLabelText('Buscar cliente')).toHaveValue('')
   })
 
-  it('nuevaVenta limpia el error de escaneo que haya quedado de antes de cobrar', async () => {
+  it('un cobro exitoso limpia el error de escaneo que haya quedado de antes de cobrar', async () => {
     apiGetMock.mockImplementation((ruta: string) => {
       if (ruta === '/clientes') {
         const pagina: PaginaDe<ClienteListado> = { items: [consumidorFinal], total: 1, pagina: 1, tamanio: 25 }
@@ -945,9 +1180,8 @@ describe('Pos — checkout', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
 
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
-    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
 
-    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
     expect(screen.queryByText('No se encontró un artículo activo para el código 999.')).not.toBeInTheDocument()
   })
 
@@ -1700,12 +1934,10 @@ describe('Pos — medio de pago por defecto: Efectivo (stage-pos-turno-y-foco)',
     await waitFor(() => expect(screen.getByLabelText('Medio de pago')).toHaveValue(String(medioEfectivo.id)))
   })
 
-  it('tras completar una venta, la fila de pago vuelve a preseleccionar Efectivo', async () => {
+  it('tras completar una venta, la fila de pago vuelve a preseleccionar Efectivo de inmediato (sin esperar el cierre del modal)', async () => {
     await armarVentaLista()
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
-    await screen.findByText('Venta 0007-00000001')
-
-    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+    await screen.findByRole('dialog', { name: 'Venta finalizada' })
 
     await waitFor(() => expect(screen.getByLabelText('Medio de pago')).toHaveValue(String(medioEfectivo.id)))
   })
@@ -2098,8 +2330,15 @@ describe('Pos — sin selector de lote en el detalle del carrito (stage-pos-busc
   })
 })
 
-describe('Pos — ticket: warning de lote vencido (design decisión 12: "Expired Lot Sale Warns, Never Blocks")', () => {
-  it('un item emitido con loteVencido: true muestra el warning "⚠ Lote vencido" en el ticket', async () => {
+describe('Pos — modal "Venta finalizada": aviso de lote vencido (design decisión 12: "Expired Lot Sale Warns, Never Blocks")', () => {
+  /**
+   * Cláusula bajo prueba: el predicado `item.loteVencido` en el `.filter()` que arma
+   * `itemsVencidos` (`Pos.tsx`, dentro de `cobrar()`). Mutación aplicada manualmente: cambiar el
+   * filtro a `.filter(() => false)` → este test pasa a rojo (el aviso no aparece con un item
+   * vencido en la respuesta). Revertido, vuelve a verde — evidencia registrada en el informe de
+   * la tarea.
+   */
+  it('un item emitido con loteVencido: true muestra el aviso "⚠ Se vendió un lote vencido" en el modal "Venta finalizada", con la descripción y el código de lote', async () => {
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/ofertas/resolver') {
         const resultados: ResultadoDeResolucion[] = [
@@ -2139,21 +2378,17 @@ describe('Pos — ticket: warning de lote vencido (design decisión 12: "Expired
     await armarVentaLista()
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
-    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
-    const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
-    expect(within(fila).getByText('⚠ Lote vencido')).toBeInTheDocument()
-    // El código de lote y el warning conviven en la misma fila del ticket (judgment-day, slice
-    // 14, MINOR 4 juez A) — el operador ve QUÉ lote venció, no solo QUE algo venció.
-    expect(within(fila).getByText('Lote 2026-01-01')).toBeInTheDocument()
+    const modal = within(await screen.findByRole('dialog', { name: 'Venta finalizada' }))
+    expect(modal.getByText('⚠ Se vendió un lote vencido')).toBeInTheDocument()
+    expect(modal.getByText(/Coca Cola 1L.*Lote 2026-01-01/)).toBeInTheDocument()
   })
 
-  it('un item emitido con loteVencido: false no muestra el warning', async () => {
+  it('con todos los items sin loteVencido, el modal "Venta finalizada" no muestra ningún aviso de lote vencido', async () => {
     await armarVentaLista()
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
 
-    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
-    const fila = screen.getByText('Coca Cola 1L').closest('tr') as HTMLElement
-    expect(within(fila).queryByText('⚠ Lote vencido')).not.toBeInTheDocument()
+    const modal = within(await screen.findByRole('dialog', { name: 'Venta finalizada' }))
+    expect(modal.queryByText('⚠ Se vendió un lote vencido')).not.toBeInTheDocument()
   })
 })
 
@@ -2260,7 +2495,7 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
     expect(llamada[1]).not.toHaveProperty('lineas')
   })
 
-  it('"Nueva venta" bajo `?idPresupuesto=` navega a `/pos` y remonta la pantalla entera: el ticket de la venta convertida NO queda pegado (judgment-day slice-7 ronda 1 juez B, MAJOR)', async () => {
+  it('"Aceptar" del modal "Venta finalizada" bajo `?idPresupuesto=` navega a `/pos` y remonta la pantalla entera: el ticket de la venta convertida NO queda pegado (judgment-day slice-7 ronda 1 juez B, MAJOR)', async () => {
     mockearApiGetPresupuesto()
     apiPostMock.mockImplementation((ruta: string) => {
       if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture({ idPresupuestoOrigen: 1, total: 200, subtotal: 200 }))
@@ -2276,16 +2511,45 @@ describe('Pos — conversión de presupuesto (stage-17-presupuestos-y-remitos, S
 
     await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
     await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
-    expect(await screen.findByText('Venta 0007-00000001')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+    const modal = within(await screen.findByRole('dialog', { name: 'Venta finalizada' }))
+    expect(modal.getByText('Venta 0007-00000001')).toBeInTheDocument()
 
-    // `nuevaVenta()` bajo `modoPresupuesto` navega a `/pos` en vez de resetear `ventaEmitida`
-    // localmente (react-async-state regla 8): la ruta pierde `?idPresupuesto=`, el `key` de
-    // `Pos()` pasa de `1` a `'libre'` y `PantallaPos` se remonta entera — sin ese remount, el
-    // ticket de la venta ya convertida quedaría pegado en pantalla para siempre.
-    await waitFor(() => expect(screen.queryByText('Venta 0007-00000001')).not.toBeInTheDocument())
+    await userEvent.click(modal.getByRole('button', { name: 'Aceptar' }))
+
+    // `cerrarVentaFinalizada()` bajo `modoPresupuesto` navega a `/pos` en vez de volver
+    // `ventaFinalizada` a `null` localmente (react-async-state regla 8): la ruta pierde
+    // `?idPresupuesto=`, el `key` de `Pos()` pasa de `1` a `'libre'` y `PantallaPos` se remonta
+    // entera — sin ese remount, el ticket de la venta ya convertida quedaría pegado en pantalla
+    // para siempre.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument())
     expect(await screen.findByLabelText('Código escaneado')).toBeInTheDocument()
+  })
+
+  it('bajo `?idPresupuesto=`, un código tipeado con el modal "Venta finalizada" abierto se descarta al cerrar — la pantalla ya navegó afuera, nunca se escanea', async () => {
+    mockearApiGetPresupuesto()
+    apiPostMock.mockImplementation((ruta: string) => {
+      if (ruta === '/ventas') return Promise.resolve(comprobanteEmitidoFixture({ idPresupuestoOrigen: 1, total: 200, subtotal: 200 }))
+      return Promise.reject(new Error(`ruta no mockeada en el test: ${ruta}`))
+    })
+
+    renderPos('/pos?idPresupuesto=1')
+    await screen.findByText('Coca Cola 1L')
+
+    await userEvent.selectOptions(screen.getByLabelText('Medio de pago'), medioEfectivo.nombre)
+    const importe = await screen.findByLabelText(`Importe de ${medioEfectivo.nombre} (fila 1)`)
+    await userEvent.type(importe, '200')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cobrar/ })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: /Cobrar/ }))
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Venta finalizada' })
+    tipearEnDialogo(dialogo, '7790001234567')
+    fireEvent.keyDown(dialogo, { key: 'Enter' })
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Venta finalizada' })).not.toBeInTheDocument())
+    expect(await screen.findByLabelText('Código escaneado')).toHaveValue('')
+    expect(apiGetMock.mock.calls.some(([ruta]) => String(ruta).startsWith('/articulos/escaneo'))).toBe(false)
   })
 
   /**
@@ -2516,7 +2780,7 @@ describe('Pos — abrir/cerrar el buscador de artículos (stage-pos-buscador-art
 
   /**
    * Cláusula bajo prueba: el conjunct `cobrando` del guard de F2 (`if (modoPresupuesto ||
-   * cobrando || buscadorAbierto || gateTurno || ventaEmitida) return`). Con el checkout en
+   * cobrando || buscadorAbierto || gateTurno || ventaFinalizada) return`). Con el checkout en
    * vuelo, F2 no debe abrir nada — reabrir el buscador ahí violaría la regla 9 de
    * react-async-state (todo lo que podría superponerse al checkout queda inerte).
    */

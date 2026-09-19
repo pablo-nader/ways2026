@@ -502,10 +502,10 @@ describe('ShellPos — aviso persistente de impresión (Fix judgment-day W1/W2: 
     await completarVenta()
     expect(imprimirMock).toHaveBeenCalledTimes(1)
 
-    // La pantalla de venta queda mostrando el ticket (`ventaEmitida`) hasta "Nueva venta" — la
-    // acción "Cerrar caja" vive en el cuerpo normal de la pantalla (spec: una sola ubicación,
-    // nunca en el header), así que hace falta volver a él primero.
-    await userEvent.click(screen.getByRole('button', { name: 'Nueva venta' }))
+    // El cobro exitoso muestra el modal "Venta finalizada" encima de la pantalla de venta (ya
+    // reseteada) — mientras está abierto, "Cerrar caja" queda inerte, así que hace falta
+    // cerrarlo con "Aceptar" primero (stage-pos-modales-de-cobro).
+    await userEvent.click(screen.getByRole('button', { name: 'Aceptar' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Cerrar caja' }))
     await screen.findByText('Cierre de turno #501')
     await userEvent.type(await screen.findByLabelText('Declarado de Efectivo'), '640')

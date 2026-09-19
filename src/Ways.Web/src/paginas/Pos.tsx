@@ -18,6 +18,7 @@ import {
   idMedioEfectivo,
   medioDisponibleParaCliente,
   sumarImportes,
+  sumarVueltos,
   validarPagosLocal,
   type FilaPago,
 } from '../api/pagos'
@@ -67,10 +68,6 @@ function etiquetaDeCliente(c: ClienteListado): string {
 
 function formatearMoneda(valor: number): string {
   return formatearImporte(valor, { simbolo: true })
-}
-
-function formatearFechaHora(iso: string): string {
-  return new Date(iso).toLocaleString('es-AR')
 }
 
 /** Etiqueta de un campo de una fila de pago: el nombre del medio solo no alcanza (dos filas
@@ -231,6 +228,11 @@ type PropsConfirmacionDeCobro = {
  * aria-modal="true"` sin una trampa real es mentira para tecnología asistiva (Tab podría escapar
  * a un control de `PantallaPos` que ya debería ser inalcanzable). Con exactamente dos controles
  * focusables, Tab y Shift+Tab hacen lo mismo: alternar al otro — no hace falta mirar `shiftKey`.
+ *
+ * stage-pos-modales-de-cobro: se renderiza como un modal centrado con backdrop (idioma de
+ * `ModalDeBusquedaDeArticulos`) en vez de vivir inline dentro del panel "Datos de la venta" — el
+ * llamador ya no lo envuelve en ningún contenedor propio, así el panel nunca cambia de tamaño
+ * cuando el diálogo aparece.
  */
 function ConfirmacionDeCobro({ total, pagado, vuelto, previaFallida, ocupado, onFinalizar, onCancelar }: PropsConfirmacionDeCobro) {
   const finalizarRef = useRef<HTMLButtonElement>(null)
@@ -249,50 +251,254 @@ function ConfirmacionDeCobro({ total, pagado, vuelto, previaFallida, ocupado, on
   }
 
   return (
-    <div
-      className="alert alert-info rounded-0"
-      role="alertdialog"
-      aria-modal="true"
-      aria-label="¿Finalizar venta?"
-      onKeyDown={atraparTab}
-    >
-      <p className="mb-2">
-        <strong>¿Finalizar venta?</strong>
-      </p>
-      {previaFallida ? (
-        <p className="mb-3">
-          Total no disponible (no se pudo calcular la previa) — se confirma recién al cobrar.
-        </p>
-      ) : (
-        <ul className="mb-3 list-unstyled">
-          <li>Total: {formatearMoneda(total)}</li>
-          <li>Pagado: {formatearMoneda(pagado)}</li>
-          <li>Vuelto: {formatearMoneda(vuelto)}</li>
-        </ul>
-      )}
-      <div className="d-flex gap-2">
-        <button
-          ref={finalizarRef}
-          type="button"
-          className="btn btn-success rounded-0"
-          disabled={ocupado}
-          aria-keyshortcuts="F9"
-          onClick={onFinalizar}
-        >
-          {ocupado ? 'Finalizando…' : 'Finalizar (F9)'}
-        </button>
-        <button
-          ref={cancelarRef}
-          type="button"
-          className="btn btn-outline-secondary rounded-0"
-          disabled={ocupado}
-          aria-keyshortcuts="F10"
-          onClick={onCancelar}
-        >
-          Cancelar (F10)
-        </button>
+    <>
+      <div
+        className="modal d-block"
+        tabIndex={-1}
+        role="alertdialog"
+        aria-modal="true"
+        aria-label="¿Finalizar venta?"
+        onKeyDown={atraparTab}
+      >
+        <div className="modal-dialog modal-dialog-centered" role="document">
+          <div className="modal-content rounded-0">
+            <div className="modal-body">
+              <p className="mb-2">
+                <strong>¿Finalizar venta?</strong>
+              </p>
+              {previaFallida ? (
+                <p className="mb-3">
+                  Total no disponible (no se pudo calcular la previa) — se confirma recién al cobrar.
+                </p>
+              ) : (
+                <ul className="mb-3 list-unstyled">
+                  <li>Total: {formatearMoneda(total)}</li>
+                  <li>Pagado: {formatearMoneda(pagado)}</li>
+                  <li>Vuelto: {formatearMoneda(vuelto)}</li>
+                </ul>
+              )}
+              <div className="d-flex gap-2">
+                <button
+                  ref={finalizarRef}
+                  type="button"
+                  className="btn btn-success rounded-0"
+                  disabled={ocupado}
+                  aria-keyshortcuts="F9"
+                  onClick={onFinalizar}
+                >
+                  {ocupado ? 'Finalizando…' : 'Finalizar (F9)'}
+                </button>
+                <button
+                  ref={cancelarRef}
+                  type="button"
+                  className="btn btn-outline-secondary rounded-0"
+                  disabled={ocupado}
+                  aria-keyshortcuts="F10"
+                  onClick={onCancelar}
+                >
+                  Cancelar (F10)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
+      <div className="modal-backdrop show" />
+    </>
+  )
+}
+
+/** Un medio de pago aplicado a la venta recién emitida, ya resuelto a lo único que necesita el
+ * modal "Venta finalizada" (nombre + importe) — nunca el `MedioPagoListado` completo. */
+type ResumenDeMedioAplicado = { nombre: string; importe: number }
+
+/** Un item emitido cuyo lote venció (`ItemEmitido.loteVencido`) — solo lo que necesita el aviso
+ * del modal para identificarlo (descripción + código de lote cuando está disponible). */
+type ItemVencidoResumen = { descripcion: string; codigoLote: string | null }
+
+/** Datos que necesita el modal "Venta finalizada" tras un cobro exitoso (stage-pos-modales-de-
+ * cobro) — reemplaza a la vieja pantalla de resumen completa. El carrito y el panel de pagos ya
+ * quedaron reseteados para cuando este estado se setea (ver `cobrar()`): acá solo sobrevive lo
+ * que el modal muestra. `vuelto` sale de `sumarVueltos(comprobante.pagos)` — la respuesta del
+ * servidor, nunca un recálculo local (mismo criterio que el resto de la pantalla: "el servidor
+ * es la autoridad final del total"). `itemsVencidos` espeja `ItemEmitido.loteVencido` — spec
+ * comprobantes-venta, "Expired Lot Sale Warns, Never Blocks": "The response MUST carry a warning
+ * flag identifying the expired line so the POS can display it prominently" — vacío en el 100% de
+ * las ventas sin ningún lote vencido, lo único que llena este aviso. */
+type ResumenVentaFinalizada = {
+  numeroVisible: string
+  total: number
+  medios: ResumenDeMedioAplicado[]
+  vuelto: number
+  itemsVencidos: ItemVencidoResumen[]
+}
+
+type PropsVentaFinalizada = ResumenVentaFinalizada & {
+  modoPresupuesto: boolean
+  onCerrar: () => void
+  /** Dispara el mismo camino que tipear en el input de código + Enter (`escanear`, con el código
+   * ya resuelto — nunca depende de que `entradaEscaneo` lo tenga). Nunca se invoca bajo
+   * `?idPresupuesto=` (ver `modoPresupuesto` más abajo). */
+  onEscanearCodigo: (codigo: string) => void
+  /** Deja un código sin escanear esperando en el input de código (F9/"Aceptar" con buffer no
+   * vacío) — nunca se invoca bajo `?idPresupuesto=`. */
+  onDejarCodigoEnInput: (codigo: string) => void
+}
+
+/**
+ * Modal "Venta finalizada" (stage-pos-modales-de-cobro): reemplaza a la pantalla de resumen de
+ * ticket completa que reemplazaba toda la pantalla hasta que el cajero apretaba "Nueva venta" —
+ * el carrito ya se reseteó para cuando este modal aparece (`cobrar()`), así que cerrarlo nunca
+ * requiere ese paso extra. Mismo criterio de foco que `ConfirmacionDeCobro`: un solo control
+ * focusable ("Aceptar"), autofocado al montar, Tab/Shift+Tab lo mantienen ahí (la pantalla de
+ * atrás sigue con su navbar montada, así que sin esta trampa `aria-modal="true"` sería mentira
+ * para tecnología asistiva — regla 13 de react-async-state).
+ *
+ * judgment-day ronda 0: con "Aceptar" autofocado, el Enter final de un código de barras leído por
+ * pistola (que termina en un Enter físico) activaba el botón por su cuenta — el código escaneado
+ * se perdía. `bufferRef` acumula cada tecla imprimible de una sola posición (sin Ctrl/Alt/Meta)
+ * mientras el modal está abierto (nada más tiene foco de texto acá): Enter cierra el modal Y
+ * dispara `onEscanearCodigo` con lo acumulado (mismo camino que tipear en el input + Enter,
+ * `N*código` incluido — es el mismo string, nunca se interpreta acá). F9 o "Aceptar" con buffer
+ * no vacío cierran SIN escanear: el texto queda esperando en el input de código
+ * (`onDejarCodigoEnInput`), nunca se pierde ni se envía a medias. Bajo `?idPresupuesto=` el
+ * buffer se descarta sin más — `onCerrar` navega afuera de esta pantalla, no queda ningún input
+ * al que devolvérselo.
+ *
+ * `evento.stopPropagation()` en cada rama (mismo criterio que `ConfirmacionDeCobro.atraparTab`):
+ * coordina esto con el listener global de F9 de `PantallaPos` (`f9Ref`) — mientras el foco esté
+ * adentro del modal (el trap de Tab lo garantiza), la tecla nunca llega a burbujear hasta
+ * `document`, así que ninguna tecla se maneja dos veces.
+ */
+function VentaFinalizada({
+  numeroVisible,
+  total,
+  medios,
+  vuelto,
+  itemsVencidos,
+  modoPresupuesto,
+  onCerrar,
+  onEscanearCodigo,
+  onDejarCodigoEnInput,
+}: PropsVentaFinalizada) {
+  const aceptarRef = useRef<HTMLButtonElement>(null)
+  const bufferEscaneoRef = useRef('')
+
+  useEffect(() => {
+    aceptarRef.current?.focus()
+  }, [])
+
+  /** F9 o clic en "Aceptar": cierra SIN escanear — si venía un código a medio tipear/escanear, se
+   * lo devuelve al input de código en vez de perderlo (nunca bajo `?idPresupuesto=`: no queda
+   * pantalla a la que devolvérselo). */
+  function cerrarSinEscanear() {
+    const codigo = bufferEscaneoRef.current
+    bufferEscaneoRef.current = ''
+    onCerrar()
+    if (!modoPresupuesto && codigo) onDejarCodigoEnInput(codigo)
+  }
+
+  function manejarTeclado(evento: React.KeyboardEvent<HTMLDivElement>) {
+    if (evento.key === 'Tab') {
+      evento.preventDefault()
+      evento.stopPropagation()
+      aceptarRef.current?.focus()
+      return
+    }
+
+    if (evento.key === 'Enter') {
+      // Sin este preventDefault, el propio Enter activaría por su cuenta "Aceptar" (ya
+      // autofocado) además de esta rama — el cierre se dispararía dos veces.
+      evento.preventDefault()
+      evento.stopPropagation()
+      const codigo = bufferEscaneoRef.current
+      bufferEscaneoRef.current = ''
+      onCerrar()
+      if (!modoPresupuesto && codigo) onEscanearCodigo(codigo)
+      return
+    }
+
+    if (evento.key === 'F9') {
+      // K2 (heredado de `ConfirmacionDeCobro`): un F9 sostenido no debe repetir el cierre.
+      if (evento.repeat) {
+        evento.preventDefault()
+        evento.stopPropagation()
+        return
+      }
+      evento.preventDefault()
+      evento.stopPropagation()
+      cerrarSinEscanear()
+      return
+    }
+
+    if (evento.key.length === 1 && !evento.ctrlKey && !evento.altKey && !evento.metaKey) {
+      evento.preventDefault()
+      evento.stopPropagation()
+      bufferEscaneoRef.current += evento.key
+    }
+  }
+
+  return (
+    <>
+      <div
+        className="modal d-block"
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Venta finalizada"
+        onKeyDown={manejarTeclado}
+      >
+        <div className="modal-dialog modal-dialog-centered" role="document">
+          <div className="modal-content rounded-0">
+            <div className="modal-header">
+              <h5 className="modal-title">Venta finalizada</h5>
+            </div>
+            <div className="modal-body text-center">
+              {/* design decisión 12 ("Expired Lot Sale Warns, Never Blocks"): nunca bloquea la
+                  venta — solo la última chance de que el operador se entere de que salió un lote
+                  vencido, ahora que la vieja pantalla de resumen con el detalle de items ya no
+                  existe. */}
+              {itemsVencidos.length > 0 && (
+                <div className="alert alert-danger rounded-0 text-start mb-3">
+                  <strong>⚠ Se vendió un lote vencido</strong>
+                  <ul className="mb-0 mt-1">
+                    {itemsVencidos.map((item, indice) => (
+                      <li key={indice}>
+                        {item.descripcion}
+                        {item.codigoLote && ` — Lote ${item.codigoLote}`}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p className="text-muted small mb-3">Venta {numeroVisible}</p>
+              <p className="fs-4 mb-3">
+                <strong>Total: {formatearMoneda(total)}</strong>
+              </p>
+              <div className="mb-3 text-start">
+                <div className="text-muted small mb-1">Medios de pago</div>
+                <ul className="list-unstyled mb-0">
+                  {medios.map((medio, indice) => (
+                    <li key={indice}>
+                      {medio.nombre}: {formatearMoneda(medio.importe)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <p className="fs-4 mb-0">
+                <strong>Vuelto: {formatearMoneda(vuelto)}</strong>
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button ref={aceptarRef} type="button" className="btn btn-primary rounded-0" aria-keyshortcuts="F9" onClick={cerrarSinEscanear}>
+                Aceptar <sup aria-hidden="true">(F9)</sup>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="modal-backdrop show" />
+    </>
   )
 }
 
@@ -427,7 +633,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     }
   }, [])
 
-  const [ventaEmitida, setVentaEmitida] = useState<{ comprobante: ComprobanteEmitido; cliente: ClienteListado } | null>(null)
+  // stage-pos-modales-de-cobro: reemplaza a la vieja pantalla de resumen completa — un cobro
+  // exitoso ya no reemplaza toda la pantalla ni espera un click en "Nueva venta", solo muestra
+  // este modal encima de una pantalla que ya se reseteó (ver `cobrar()`).
+  const [ventaFinalizada, setVentaFinalizada] = useState<ResumenVentaFinalizada | null>(null)
 
   // stage-17-presupuestos-y-remitos (Slice 7): el presupuesto congelado que gobierna esta venta
   // bajo `?idPresupuesto=` — `null` en el camino libre. `cargandoPresupuesto`/`errorPresupuesto`
@@ -923,9 +1132,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     })
   }
 
-  async function escanear() {
+  /** `codigoForzado` (stage-pos-modales-de-cobro): permite disparar el mismo camino de escaneo
+   * con un código que nunca pasó por `entradaEscaneo` — el buffer de teclado del modal "Venta
+   * finalizada" (ver `VentaFinalizada`). Sin argumento, se comporta exactamente como antes (lee
+   * `entradaEscaneo`, el camino del input de código + Enter/"Agregar"). */
+  async function escanear(codigoForzado?: string) {
     if (escaneando || cobrandoRef.current) return
-    const entrada = entradaEscaneo.trim()
+    const entrada = (codigoForzado ?? entradaEscaneo).trim()
     if (!entrada) return
 
     const token = (tokenEscaneoRef.current += 1)
@@ -1015,23 +1228,23 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     setFilasPago((prev) => prev.map((f) => (f.id === id ? { ...f, vueltoManual } : f)))
   }
 
-  // El resto del estado de la venta anterior (filas de pago, overrides de edición de cantidad,
-  // precios/aviso) ya queda limpio desde el propio éxito de `cobrar()` — acá solo falta
-  // `errorEscaneo`, que sobrevive a una venta completa si el cajero había escaneado mal un
-  // código antes de cobrar.
-  function nuevaVenta() {
-    if (cobrandoRef.current) return
-    // stage-17-presupuestos-y-remitos (Slice 7): el presupuesto que gobernó esta venta ya quedó
-    // `convertido` — "Nueva venta" navega a la ruta libre en vez de reabrir esta misma pantalla
-    // remontada (react-async-state regla 8: el `key` de `Pos()` es el propio `idPresupuesto`, un
-    // reset local acá dejaría el modo presupuesto pegado a una conversión ya consumida).
+  /**
+   * Cierra el modal "Venta finalizada" (clic en "Aceptar" o F9) — stage-pos-modales-de-cobro,
+   * reemplaza a la vieja `nuevaVenta()`. El resto del estado de la venta anterior (carrito,
+   * filas de pago, overrides de edición de cantidad, precios/aviso, error de escaneo) ya quedó
+   * limpio desde el propio éxito de `cobrar()`, así que acá solo falta cerrar el modal.
+   *
+   * stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el presupuesto que gobernó
+   * esta venta ya quedó `convertido` — cerrar navega a la ruta libre en vez de limpiar el estado
+   * local (react-async-state regla 8: el `key` de `Pos()` es el propio `idPresupuesto`, un reset
+   * local acá dejaría el modo presupuesto pegado a una conversión ya consumida).
+   */
+  function cerrarVentaFinalizada() {
     if (modoPresupuesto) {
       navigate('/pos', { replace: true })
       return
     }
-    setVentaEmitida(null)
-    setErrorCobro('')
-    setErrorEscaneo('')
+    setVentaFinalizada(null)
   }
 
   // F2 abre el buscador de artículos (spec pos-buscador-articulos) — solo con la venta libre
@@ -1043,13 +1256,13 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   useEffect(() => {
     function alTeclado(evento: KeyboardEvent) {
       if (evento.key !== 'F2') return
-      if (modoPresupuesto || cobrando || buscadorAbierto || gateTurno || ventaEmitida || confirmandoCobro) return
+      if (modoPresupuesto || cobrando || buscadorAbierto || gateTurno || ventaFinalizada || confirmandoCobro) return
       evento.preventDefault()
       setBuscadorAbierto(true)
     }
     document.addEventListener('keydown', alTeclado)
     return () => document.removeEventListener('keydown', alTeclado)
-  }, [modoPresupuesto, cobrando, buscadorAbierto, gateTurno, ventaEmitida, confirmandoCobro])
+  }, [modoPresupuesto, cobrando, buscadorAbierto, gateTurno, ventaFinalizada, confirmandoCobro])
 
   // Devuelve el foco al input de código recién cuando queda realmente habilitado (react-async-state
   // regla 9): un click en "Cobrar" mientras un escaneo o un agregado del buscador siguen en vuelo
@@ -1066,10 +1279,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   // vuelve a correr cuando `bloqueadoPorTurno` cambia y recién ahí consume el pedido.
   useEffect(() => {
     if (!focoPendienteRef.current) return
-    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro) return
+    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro || ventaFinalizada) return
     focoPendienteRef.current = false
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro])
+  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada])
 
   /**
    * Foco NEUTRAL — mount inicial (reemplaza el `autoFocus` nativo, no confiable en un mount real:
@@ -1091,11 +1304,11 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
    * extendida de "restaurar foco" a "adquirir foco por primera vez").
    */
   useEffect(() => {
-    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro) return
+    if (escaneando || cobrando || buscadorAbierto || bloqueadoPorTurno || confirmandoCobro || ventaFinalizada) return
     const activo = document.activeElement
     if (activo !== document.body && activo !== null && activo !== inputEscaneoRef.current) return
     inputEscaneoRef.current?.focus()
-  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro])
+  }, [escaneando, cobrando, buscadorAbierto, bloqueadoPorTurno, confirmandoCobro, ventaFinalizada])
 
   const subtotalPrevia = calcularSubtotalPrevia(lineas, precios)
   // stage-17-presupuestos-y-remitos (Slice 7): bajo `?idPresupuesto=` el total nunca sale de la
@@ -1179,7 +1392,12 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
   // mientras está abierta, el resto de los controles de venta libre quedan tan inertes como
   // durante el propio `cobrando`. Sin esto, el cajero podría editar el carrito o los pagos con el
   // diálogo abierto y terminar cobrando un total/vuelto distinto del que el diálogo mostró.
-  const pantallaCobroInerte = cobrando || confirmandoCobro
+  //
+  // stage-pos-modales-de-cobro: el modal "Venta finalizada" declara el mismo nivel de inercia —
+  // sigue siendo la MISMA pantalla detrás (ya no una pantalla de resumen aparte que la
+  // reemplazaba), así que sin este conjunct el cajero podría escanear o volver a cobrar con el
+  // modal todavía abierto.
+  const pantallaCobroInerte = cobrando || confirmandoCobro || ventaFinalizada !== null
 
   async function cobrar() {
     // react-async-state regla 9: guard de reentrancia de primera línea — un doble click en el
@@ -1221,7 +1439,21 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       const emitido = await clienteDeVentas.emitir(solicitud)
       if (generacionCobroRef.current !== miGeneracion) return
 
-      setVentaEmitida({ comprobante: emitido, cliente: clienteSeleccionado })
+      // stage-pos-modales-de-cobro: el modal "Venta finalizada" solo necesita lo que muestra —
+      // número, total, medios aplicados con su importe y el vuelto a entregar, todo desde la
+      // propia respuesta del servidor (nunca recalculado de `pagosConVuelto` local).
+      setVentaFinalizada({
+        numeroVisible: emitido.numeroVisible,
+        total: emitido.total,
+        medios: emitido.pagos.map((pago) => ({
+          nombre: medioPorId[pago.idMedioPago]?.nombre ?? `Medio #${pago.idMedioPago}`,
+          importe: pago.importe,
+        })),
+        vuelto: sumarVueltos(emitido.pagos),
+        itemsVencidos: emitido.items
+          .filter((item) => item.loteVencido)
+          .map((item) => ({ descripcion: item.descripcion, codigoLote: item.codigoLote })),
+      })
       // stage-desktop-pos: `puedeCobrar`/`precondicionesListas` ya exigieron `medios !== null`
       // para llegar hasta acá — el seam nunca dispara con la lista todavía sin cargar.
       alEmitir?.(emitido, clienteSeleccionado, medios ?? [])
@@ -1231,6 +1463,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       setFilasPago([filaPagoInicial(proximaFilaPagoIdRef.current++, medios)])
       setEntradaEscaneo('')
       setTerminoCliente('')
+      // El modal ya no depende de un click en "Nueva venta" para limpiar lo que queda de la
+      // venta anterior — el reset es parte del propio éxito de `cobrar()`.
+      setErrorEscaneo('')
     } catch (e) {
       if (generacionCobroRef.current !== miGeneracion) return
       // stage-6-turnos-caja (Slice 7): el gate seam reemplaza el panel entero, no un aviso más
@@ -1316,6 +1551,21 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     confirmandoCobroPrevioRef.current = confirmandoCobro
   }, [confirmandoCobro])
 
+  /** Devuelve el foco al input de código cuando el modal "Venta finalizada" TERMINA de cerrarse
+   * (clic en "Aceptar" o F9) — mismo criterio que `confirmandoCobroPrevioRef` de arriba, pero acá
+   * siempre va al input de código (nunca hay un control disparador que restaurar: el modal
+   * aparece solo del lado del servidor respondiendo, nunca de un control que el cajero eligió a
+   * propósito). Bajo `?idPresupuesto=`, `cerrarVentaFinalizada` navega afuera de esta pantalla en
+   * vez de volver `ventaFinalizada` a `null` — este efecto nunca llega a correr con esa
+   * transición bajo ese modo (la pantalla ya se desmontó). */
+  const ventaFinalizadaPrevioRef = useRef(false)
+  useEffect(() => {
+    if (ventaFinalizadaPrevioRef.current && !ventaFinalizada) {
+      inputEscaneoRef.current?.focus()
+    }
+    ventaFinalizadaPrevioRef.current = ventaFinalizada !== null
+  }, [ventaFinalizada])
+
   /**
    * judgment-day ronda 1 (K1, CRITICAL): el listener de F9 vivía en un efecto re-suscripto por
    * dependencias (`[confirmandoCobro, buscadorAbierto, ..., puedeCobrar]`) que NO incluía
@@ -1336,9 +1586,9 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
    */
   type SnapshotF9 = {
     confirmandoCobro: boolean
+    ventaFinalizada: boolean
     buscadorAbierto: boolean
     gateTurno: boolean
-    ventaEmitida: boolean
     modoPresupuesto: boolean
     presupuestoCargado: boolean
     precondicionesListas: boolean
@@ -1347,14 +1597,15 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     confirmarYcobrar: () => void
     cancelarConfirmacionDeCobro: () => void
     enfocarPrimeraFilaDePagoPendiente: () => void
+    cerrarVentaFinalizada: () => void
   }
   const f9Ref = useRef<SnapshotF9>(null)
   useLayoutEffect(() => {
     f9Ref.current = {
       confirmandoCobro,
+      ventaFinalizada: ventaFinalizada !== null,
       buscadorAbierto,
       gateTurno,
-      ventaEmitida: ventaEmitida !== null,
       modoPresupuesto,
       presupuestoCargado: presupuesto !== null,
       precondicionesListas,
@@ -1363,6 +1614,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
       confirmarYcobrar,
       cancelarConfirmacionDeCobro,
       enfocarPrimeraFilaDePagoPendiente,
+      cerrarVentaFinalizada,
     }
   })
 
@@ -1370,6 +1622,20 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
     function alTeclado(evento: KeyboardEvent) {
       const m = f9Ref.current
       if (!m) return
+
+      // stage-pos-modales-de-cobro: respaldo del cierre por F9 del modal "Venta finalizada" — el
+      // dueño real es el propio `manejarTeclado` de `VentaFinalizada` (con su buffer de escaneo y
+      // su propio `evento.stopPropagation()`, judgment-day ronda 0), que intercepta la tecla ANTES
+      // de que llegue a burbujear hasta acá mientras el foco está adentro del modal. Esta rama
+      // solo se alcanza si esa condición no se cumplió (ej. un test que dispara el evento
+      // directo sobre `document`) — sin buffer que devolver, cierra sin más.
+      if (m.ventaFinalizada) {
+        if (evento.key !== 'F9') return
+        if (evento.repeat) return
+        evento.preventDefault()
+        m.cerrarVentaFinalizada()
+        return
+      }
 
       if (m.confirmandoCobro) {
         if (evento.key === 'F9') {
@@ -1394,7 +1660,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
 
       if (evento.key !== 'F9') return
       if (evento.repeat) return
-      if (m.buscadorAbierto || m.gateTurno || m.ventaEmitida) return
+      if (m.buscadorAbierto || m.gateTurno) return
       if (m.modoPresupuesto && !m.presupuestoCargado) return
       if (cobrandoRef.current) return
       evento.preventDefault()
@@ -1455,92 +1721,6 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
           turnoConfirmadoAbierto(turnoAbierto)
         }}
       />
-    )
-  }
-
-  if (ventaEmitida) {
-    const { comprobante, cliente } = ventaEmitida
-    return (
-      <div className="container-fluid py-4" key={comprobante.id}>
-        <div className="row g-3">
-          <div className="col-12">
-            <Box titulo={`Venta ${comprobante.numeroVisible}`} variante="success">
-              <p className="text-muted mb-3">
-                {formatearFechaHora(comprobante.fecha)} — {etiquetaDeCliente(cliente)}
-              </p>
-
-              <div className="table-responsive">
-                <table className="table table-striped table-bordered align-middle">
-                  <thead>
-                    <tr>
-                      <th>Artículo</th>
-                      <th style={{ width: 100 }}>Cantidad</th>
-                      <th className="text-end">Precio unit.</th>
-                      <th className="text-end">Descuento</th>
-                      <th className="text-end">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {comprobante.items.map((item) => (
-                      <tr key={item.orden}>
-                        <td>
-                          {item.descripcion}
-                          {item.codigoLote && <div className="small text-muted">Lote {item.codigoLote}</div>}
-                          {item.loteVencido && (
-                            // Escalada visual deliberada (design decisión 12: "Expired Lot Sale
-                            // Warns, Never Blocks"): más fuerte que el hint pre-submit del picker
-                            // (`opcionDeLote`, texto plano "vencido" en el `<option>`) porque acá
-                            // la venta ya se emitió — es la última chance de que el operador se
-                            // entere, nunca un bloqueo.
-                            <div className="small text-danger fw-bold">⚠ Lote vencido</div>
-                          )}
-                        </td>
-                        <td>{item.cantidad}</td>
-                        <td className="text-end">{formatearMoneda(item.precioUnitario)}</td>
-                        <td className="text-end">
-                          {item.descuento > 0 ? (
-                            <span className="badge bg-success">-{formatearMoneda(item.descuento)}</span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className="text-end">{formatearMoneda(item.total)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="row g-3">
-                <div className="col-md-6">
-                  <h6>Pagos</h6>
-                  <ul className="list-unstyled mb-0">
-                    {comprobante.pagos.map((pago, indice) => (
-                      <li key={indice}>
-                        {medioPorId[pago.idMedioPago]?.nombre ?? `Medio #${pago.idMedioPago}`}:{' '}
-                        {formatearMoneda(pago.importe)}
-                        {pago.referencia && ` (ref. ${pago.referencia})`}
-                        {pago.vuelto > 0 && ` — vuelto ${formatearMoneda(pago.vuelto)}`}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="col-md-6 text-md-end">
-                  <div>Subtotal: {formatearMoneda(comprobante.subtotal)}</div>
-                  <div>Descuento: {formatearMoneda(comprobante.descuentoTotal)}</div>
-                  <div className="fs-5">
-                    <strong>Total: {formatearMoneda(comprobante.total)}</strong>
-                  </div>
-                </div>
-              </div>
-
-              <button type="button" className="btn btn-primary mt-4 rounded-0" onClick={nuevaVenta}>
-                Nueva venta
-              </button>
-            </Box>
-          </div>
-        </div>
-      </div>
     )
   }
 
@@ -1608,7 +1788,7 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
                   type="button"
                   className="btn btn-primary rounded-0"
                   disabled={escaneando || pantallaCobroInerte || bloqueadoPorTurno}
-                  onClick={escanear}
+                  onClick={() => void escanear()}
                 >
                   {escaneando ? 'Buscando…' : 'Agregar'}
                 </button>
@@ -1971,26 +2151,10 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
 
             {rechazoLocal && <div className="alert alert-warning rounded-0 py-1 px-2 small">{rechazoLocal.mensaje}</div>}
 
-            {/* stage-pos-atajos-cobro: SOLO F9 pasa por acá — clickear "Cobrar" con el mouse
-                sigue cobrando de inmediato sin pedir confirmación, comportamiento preexistente. */}
-            {confirmandoCobro && (
-              <div className="mb-3">
-                <ConfirmacionDeCobro
-                  total={totalActual}
-                  pagado={sumarImportes(pagosConVuelto)}
-                  vuelto={excedente}
-                  previaFallida={previaFallida}
-                  ocupado={cobrando}
-                  onFinalizar={confirmarYcobrar}
-                  onCancelar={cancelarConfirmacionDeCobro}
-                />
-              </div>
-            )}
-
             <button
               type="button"
               className="btn btn-success w-100 rounded-0"
-              disabled={!puedeCobrar || confirmandoCobro}
+              disabled={!puedeCobrar || confirmandoCobro || ventaFinalizada !== null}
               aria-keyshortcuts="F9"
               onClick={cobrar}
             >
@@ -2005,6 +2169,41 @@ function PantallaPos({ idPresupuesto, alEmitir, alIrACerrarCaja }: PropsPantalla
           </Box>
         </div>
       </div>
+
+      {/* stage-pos-atajos-cobro: SOLO F9 pasa por acá — clickear "Cobrar" con el mouse sigue
+          cobrando de inmediato sin pedir confirmación, comportamiento preexistente. Se renderiza
+          acá, fuera del panel "Datos de la venta" (stage-pos-modales-de-cobro): es un modal
+          centrado con su propio backdrop, nunca un bloque que agrande el panel.
+          `!ventaFinalizada` (judgment-day ronda 0): entre que `cobrar()` (llamado desde
+          `confirmarYcobrar`) setea `ventaFinalizada` y que ese mismo `confirmarYcobrar` recién
+          después vuelve `confirmandoCobro` a `false`, hay un render con los dos estados en
+          `true` a la vez — sin este conjunct, ambos modales se dibujaban superpuestos en ese
+          instante. */}
+      {confirmandoCobro && !ventaFinalizada && (
+        <ConfirmacionDeCobro
+          total={totalActual}
+          pagado={sumarImportes(pagosConVuelto)}
+          vuelto={excedente}
+          previaFallida={previaFallida}
+          ocupado={cobrando}
+          onFinalizar={confirmarYcobrar}
+          onCancelar={cancelarConfirmacionDeCobro}
+        />
+      )}
+
+      {ventaFinalizada && (
+        <VentaFinalizada
+          numeroVisible={ventaFinalizada.numeroVisible}
+          total={ventaFinalizada.total}
+          medios={ventaFinalizada.medios}
+          vuelto={ventaFinalizada.vuelto}
+          itemsVencidos={ventaFinalizada.itemsVencidos}
+          modoPresupuesto={modoPresupuesto}
+          onCerrar={cerrarVentaFinalizada}
+          onEscanearCodigo={(codigo) => void escanear(codigo)}
+          onDejarCodigoEnInput={setEntradaEscaneo}
+        />
+      )}
 
       {buscadorAbierto && !modoPresupuesto && (
         <ModalDeBusquedaDeArticulos
