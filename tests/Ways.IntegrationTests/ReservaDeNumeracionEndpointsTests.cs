@@ -81,6 +81,27 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
         return puntoVenta.Id;
     }
 
+    /// <summary>Inserta una fila de <c>reservas_numeracion</c> directo (bypass del endpoint de
+    /// reserva) — necesario para los tres tests de aislamiento de conjuntos de abajo: el endpoint
+    /// real (<c>ServicioDeReservasDeNumeracion.ReservarAsync</c>) exige
+    /// <c>PoliticaDeModoDePuntoVenta</c>, así que un dispositivo NUNCA puede terminar con una fila
+    /// viva para un punto de venta que no es el suyo (o, en el caso de tipo, no valida el código
+    /// contra <c>tipos_comprobante</c> como sí lo hace el endpoint) — la única forma de expresar
+    /// esos fixtures es escribiendo la tabla directo, igual que <c>AsignadorDeNumeroComprobante</c>
+    /// (SQL crudo, mismo criterio que <c>NumeracionesComprobanteBackstopTests</c>).</summary>
+    private async Task SembrarReservaDirectaAsync(
+        int idTenant, int idPuntoVenta, string tipoComprobante, int idDispositivo, long desde, long hasta)
+    {
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var ahora = DateTimeOffset.UtcNow;
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO reservas_numeracion
+                (id_tenant, id_punto_venta, tipo_comprobante, id_dispositivo, desde, hasta, created_at, updated_at)
+            VALUES ({idTenant}, {idPuntoVenta}, {tipoComprobante}, {idDispositivo}, {desde}, {hasta}, {ahora}, {ahora})
+            """);
+    }
+
     private static string ExtraerCookieDeDispositivo(HttpResponseMessage respuesta)
     {
         var prefijo = $"{CookieDispositivo}=";
@@ -213,9 +234,15 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
     /// <summary>Prueba el 403 observable, no una capa aislada: la política del endpoint
     /// (<c>Politicas.RequiereDispositivo</c>) y el chequeo de <c>ServicioDeReservasDeNumeracion.
     /// ReservarAsync</c> (<c>contexto.IdDispositivo ?? throw ... 403</c>, defensa en profundidad
-    /// deliberada) devuelven el MISMO 403 por separado — mutar cualquiera de las dos sola no pone
-    /// esta prueba en rojo, confirmado (no solo asumido). Ninguna prueba de esta suite aísla una
-    /// de la otra.</summary>
+    /// deliberada) devuelven el MISMO 403 por separado — las dos leen la MISMA claim
+    /// (<c>ContextoDeUsuarioHttp.IdDispositivo</c>), así que ningún actor real las hace discrepar:
+    /// mutar cualquiera de las dos sola no pone ESTA prueba en rojo, confirmado (no solo
+    /// asumido), y no hay forma de aislarlas a este nivel HTTP. Cada capa se prueba aislada
+    /// aparte, donde sí se puede: la guarda propia del servicio a nivel unitario, sin pasar por
+    /// ASP.NET Core (<c>ServicioDeReservasDeNumeracionTests
+    /// .ReservarSinClaimDeDispositivoEsProhibido</c>, Ways.Application.Tests); la policy del
+    /// endpoint, de forma estructural sobre el <c>EndpointDataSource</c> real
+    /// (<c>SuperficieDeAutorizacionTests.CadaRutaConPolicyAdicionalSobreSuGrupoLaApila</c>).</summary>
     [Fact]
     public async Task UnActorWebNoPuedeReservarUnBloque()
     {
@@ -459,6 +486,126 @@ public class ReservaDeNumeracionEndpointsTests(WaysApiFixture fixture) : IClassF
         var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("numero_preasignado_no_reservado", problema.GetProperty("codigo").GetString());
     }
+
+    // ---- Aislamiento de los TRES conjuntos de igualdad de ExigirNumeroPreasignadoPropioAsync --
+    // (judgment-day: solo AbandonadaAt y el rango tenían evidencia de mutación — IdDispositivo,
+    // IdPuntoVenta y TipoComprobante, los TRES conjuntos de aislamiento, no. mutation-proof-tests
+    // regla 3, "enumerar los conjuntos": cada test de abajo deja los otros cuatro conjuntos
+    // satisfechos y solo el suyo propio en desacuerdo, así que borrar CUALQUIER otra cláusula no
+    // lo pone en rojo — solo borrar la propia lo hace.
+
+    /// <summary>Aísla <c>r.IdDispositivo == idDispositivo</c> — la cláusula de aislamiento más
+    /// crítica de las tres: sin ella, cualquier dispositivo del tenant podría gastar el bloque
+    /// reservado de OTRO. Un punto de venta solo admite UN dispositivo activo a la vez
+    /// (<c>ux_dispositivos_punto_venta_activo</c>), así que el dispositivo A reserva un bloque
+    /// real vía el endpoint y se revoca (<c>DELETE /api/dispositivos/{id}</c> — baja lógica, no
+    /// toca <c>reservas_numeracion</c>: el bloque de A sigue VIGENTE); recién ahí el dispositivo B
+    /// puede vincularse al MISMO punto de venta e, incluso sin ninguna reserva propia, intenta
+    /// vender con un número que cae dentro del rango vigente de A. Punto de venta, tipo, vigencia
+    /// y rango coinciden igual — solo el dispositivo no. Mutación: borrar esta cláusula sola
+    /// convierte este 409 en un 201 (B emite con el número reservado de A). Confirmado — RED al
+    /// borrar la cláusula, GREEN al revertir.</summary>
+    [Fact]
+    public async Task UnDispositivoNoPuedeUsarUnNumeroDeLaReservaVigenteDeOtroDispositivo()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(UnDispositivoNoPuedeUsarUnNumeroDeLaReservaVigenteDeOtroDispositivo));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, idMedioEfectivo) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
+
+        var (dispositivoA, idDispositivoA) = await LoguearComoCajeroDeDispositivoAsync(
+            admin, idTenant, idPuntoVenta, "ajeno-a");
+        using (dispositivoA)
+        {
+            await dispositivoA.PostAsJsonAsync(
+                "/api/ventas/reservas-numeracion", new SolicitudDeReservaDeNumeracion(idPuntoVenta, "TX", 10));
+        }
+
+        var revocacion = await admin.DeleteAsync($"/api/dispositivos/{idDispositivoA}");
+        Assert.Equal(HttpStatusCode.NoContent, revocacion.StatusCode);
+
+        var (dispositivoB, _) = await LoguearComoCajeroDeDispositivoAsync(admin, idTenant, idPuntoVenta, "ajeno-b");
+        using var _b = dispositivoB;
+        admin.Dispose();
+
+        var respuesta = await dispositivoB.PostAsJsonAsync(
+            "/api/ventas",
+            SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, 100m, numeroPreasignado: 5));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("numero_preasignado_no_reservado", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Aísla <c>r.IdPuntoVenta == idPuntoVenta</c>. El MISMO dispositivo tiene una fila
+    /// viva, en rango, para el tipo correcto — pero de OTRO punto de venta. Esa combinación es
+    /// inalcanzable por el endpoint real de reserva (<c>PoliticaDeModoDePuntoVenta</c> nunca deja
+    /// a un dispositivo reservar contra un punto de venta que no es el suyo), así que la fila se
+    /// siembra directo (<see cref="SembrarReservaDirectaAsync"/>) — prueba la cláusula del SELECT,
+    /// no un camino de reserva real. Mutación: borrar esta cláusula sola convierte el 409 en 201.
+    /// Confirmado — RED al borrar la cláusula, GREEN al revertir.</summary>
+    [Fact]
+    public async Task UnDispositivoNoPuedeUsarUnNumeroDeUnaReservaVigenteDeOtroPuntoDeVenta()
+    {
+        var (admin, idTenant, idPuntoVentaPropio) = await AprovisionarComoAdminAsync(
+            nameof(UnDispositivoNoPuedeUsarUnNumeroDeUnaReservaVigenteDeOtroPuntoDeVenta));
+        var idPuntoVentaAjeno = await AgregarSegundoPuntoVentaAsync(idTenant, "Local ajeno", ModoPuntoVenta.Escritorio);
+        await AbrirTurnoAsync(idTenant, idPuntoVentaPropio);
+        var (idArticulo, idMedioEfectivo) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
+
+        var (cajero, idDispositivo) = await LoguearComoCajeroDeDispositivoAsync(
+            admin, idTenant, idPuntoVentaPropio, "pv-ajeno");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        await SembrarReservaDirectaAsync(idTenant, idPuntoVentaAjeno, "TX", idDispositivo, desde: 1, hasta: 10);
+
+        var respuesta = await cajero.PostAsJsonAsync(
+            "/api/ventas",
+            SolicitudDeServicio(idPuntoVentaPropio, idArticulo, idMedioEfectivo, 100m, numeroPreasignado: 5));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("numero_preasignado_no_reservado", problema.GetProperty("codigo").GetString());
+    }
+
+    /// <summary>Aísla <c>r.TipoComprobante == codigoTipoComprobante</c>. El MISMO dispositivo, el
+    /// MISMO punto de venta, una fila viva y en rango — pero para OTRO tipo de comprobante. La
+    /// fila se siembra directo (<see cref="SembrarReservaDirectaAsync"/>): el endpoint de reserva
+    /// nunca deja pasar un código no válido, y lo que esta cláusula verifica no es esa validación,
+    /// es la pertenencia. Mutación: borrar esta cláusula sola convierte el 409 en 201. Confirmado
+    /// — RED al borrar la cláusula, GREEN al revertir.</summary>
+    [Fact]
+    public async Task UnDispositivoNoPuedeUsarUnNumeroDeUnaReservaVigenteDeOtroTipoDeComprobante()
+    {
+        var (admin, idTenant, idPuntoVenta) = await AprovisionarComoAdminAsync(
+            nameof(UnDispositivoNoPuedeUsarUnNumeroDeUnaReservaVigenteDeOtroTipoDeComprobante));
+        await AbrirTurnoAsync(idTenant, idPuntoVenta);
+        var (idArticulo, idMedioEfectivo) = await SembrarServicioYMedioEfectivoAsync(idTenant, 100m);
+
+        var (cajero, idDispositivo) = await LoguearComoCajeroDeDispositivoAsync(
+            admin, idTenant, idPuntoVenta, "tipo-ajeno");
+        using var _cajero = cajero;
+        admin.Dispose();
+
+        await SembrarReservaDirectaAsync(idTenant, idPuntoVenta, "NCX", idDispositivo, desde: 1, hasta: 10);
+
+        var respuesta = await cajero.PostAsJsonAsync(
+            "/api/ventas", SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, 100m, numeroPreasignado: 5));
+
+        Assert.Equal(HttpStatusCode.Conflict, respuesta.StatusCode);
+        var problema = await respuesta.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("numero_preasignado_no_reservado", problema.GetProperty("codigo").GetString());
+    }
+
+    // ---- Cross-tenant: NO probado, ver el doc-comment de arriba ------------------------------
+    // No hay un cuarto test análogo para "la reserva pertenece a otro tenant": reservas_numeracion
+    // tiene RLS de tenant habilitado (migración 20260920105427_ReservaDeNumeracion,
+    // HabilitarRlsDeTenant) — un WaysDbContext scopeado al tenant del actor nunca puede LEER una
+    // fila de otro tenant, con o sin la cláusula IdDispositivo/IdPuntoVenta/TipoComprobante en el
+    // predicado C#. Ese caso sería sobredeterminado por RLS (mutation-proof-tests regla 1/3): un
+    // test así pasaría igual con las tres cláusulas de igualdad borradas, así que no probaría lo
+    // que su nombre diría que prueba (claims-match-code) — no se escribe.
 
     /// <summary>LOS DOS CONJUNTOS del rango, <c>numero &gt;= Desde</c> y <c>numero &lt;= Hasta</c>,
     /// cada uno aislado (mutation-proof-tests regla 3, "enumerar los conjuntos") — a diferencia de
