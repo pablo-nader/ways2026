@@ -220,7 +220,7 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
         var creada = await CrearBorradorDeCompraAsync(
             ctx,
             new SolicitudDeCompra(
-                ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, $"0001-{Guid.NewGuid():N}"[..8],
+                ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, DatosDePrueba.NumeroExternoUnico(),
                 DateOnly.FromDateTime(DateTime.UtcNow), null,
                 [new LineaDeCompraSolicitada(idArticulo ?? ctx.IdArticulo, "Item de recepción", cantidad, null, null, costoUnitario, 0m, ctx.IdAlicuotaIva21, false)],
                 idOrdenCompra));
@@ -399,7 +399,7 @@ public class OrdenesCompraLecturaTests(WaysApiFixture fixture) : IClassFixture<W
         var comprobanteBorrador = await CrearBorradorDeCompraAsync(
             ctx,
             new SolicitudDeCompra(
-                ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, $"0001-{Guid.NewGuid():N}"[..8],
+                ctx.IdProveedor, ctx.IdTipoCFB, ctx.IdPuntoVenta, DatosDePrueba.NumeroExternoUnico(),
                 DateOnly.FromDateTime(DateTime.UtcNow), null,
                 [new LineaDeCompraSolicitada(ctx.IdArticulo, "No confirmado", 9m, null, null, 999m, 0m, ctx.IdAlicuotaIva21, false)],
                 objetivo.Id));

@@ -187,7 +187,7 @@ public class OrdenesCompraCierreYAnulacionTests(WaysApiFixture fixture) : IClass
     private static SolicitudDeCompra SolicitudDeCompraSimple(
         Contexto ctx, decimal unidades, int? idOrdenCompra, int? idArticulo = null) =>
         new(
-            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, $"0001-{Guid.NewGuid():N}"[..8], DateOnly.FromDateTime(DateTime.UtcNow), null,
+            ctx.IdProveedor, ctx.IdTipoCFA, ctx.IdPuntoVenta, DatosDePrueba.NumeroExternoUnico(), DateOnly.FromDateTime(DateTime.UtcNow), null,
             [new LineaDeCompraSolicitada(idArticulo ?? ctx.IdArticulo, "Item de recepción", unidades, null, null, 100m, 0m, ctx.IdAlicuotaIva21, false)],
             idOrdenCompra);
 
@@ -419,7 +419,7 @@ public class OrdenesCompraCierreYAnulacionTests(WaysApiFixture fixture) : IClass
             var comprobante = new ComprobanteCompra
             {
                 IdTenant = ctx.IdTenant, IdProveedor = ctx.IdProveedor, IdTipoComprobante = ctx.IdTipoCFA,
-                NumeroExterno = $"0001-{Guid.NewGuid():N}"[..8], FechaComprobante = DateOnly.FromDateTime(DateTime.UtcNow),
+                NumeroExterno = DatosDePrueba.NumeroExternoUnico(), FechaComprobante = DateOnly.FromDateTime(DateTime.UtcNow),
                 FechaRecepcion = ahora, IdPuntoVenta = ctx.IdPuntoVenta, IdEmpleado = ctx.IdEmpleadoAdmin,
                 Subtotal = 1000m, DescuentoTotal = 0m, Total = 1000m, IvaTotal = 210m,
                 Estado = EstadoCompra.Confirmada, IdOrdenCompra = idOrden, CreatedAt = ahora, UpdatedAt = ahora
@@ -527,7 +527,7 @@ public class OrdenesCompraCierreYAnulacionTests(WaysApiFixture fixture) : IClass
             var comprobante = new ComprobanteCompra
             {
                 IdTenant = ctx.IdTenant, IdProveedor = ctx.IdProveedor, IdTipoComprobante = ctx.IdTipoCFA,
-                NumeroExterno = $"0001-{Guid.NewGuid():N}"[..8], FechaComprobante = DateOnly.FromDateTime(DateTime.UtcNow),
+                NumeroExterno = DatosDePrueba.NumeroExternoUnico(), FechaComprobante = DateOnly.FromDateTime(DateTime.UtcNow),
                 IdPuntoVenta = ctx.IdPuntoVenta, IdEmpleado = ctx.IdEmpleadoAdmin,
                 Subtotal = 1000m, DescuentoTotal = 0m, Total = 1000m, IvaTotal = 210m,
                 Estado = EstadoCompra.Borrador, IdOrdenCompra = creada.Id, CreatedAt = ahora, UpdatedAt = ahora

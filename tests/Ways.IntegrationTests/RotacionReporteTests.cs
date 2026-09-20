@@ -246,7 +246,7 @@ public class RotacionReporteTests(WaysApiFixture fixture) : IClassFixture<WaysAp
         Contexto ctx, int idProveedor, int idTipoCFA, int idArticulo, decimal unidades, decimal costoUnitario)
     {
         var solicitud = new SolicitudDeCompra(
-            idProveedor, idTipoCFA, ctx.IdPuntoVenta, $"0001-{Guid.NewGuid().ToString("N")[..8]}",
+            idProveedor, idTipoCFA, ctx.IdPuntoVenta, DatosDePrueba.NumeroExternoUnico(),
             DateOnly.FromDateTime(DateTime.UtcNow), null,
             [new LineaDeCompraSolicitada(idArticulo, "Item rotacion", unidades, null, null, costoUnitario, 0m, ctx.IdAlicuotaIva)]);
 
