@@ -1,5 +1,6 @@
 mod comandos;
 mod config;
+mod credencial;
 mod impresion;
 
 use tauri::ipc::CapabilityBuilder;
@@ -11,11 +12,26 @@ const IDENTIFICADOR_CAPACIDAD_REMOTA: &str = "pos-remoto";
 /// Permisos del subconjunto de comandos que la pagina remota (`/pos.html`)
 /// puede invocar. Se agregan en runtime, restringidos al origen exacto que
 /// el usuario configuro (ver `registrar_capacidad_remota`).
+///
+/// stage-desktop-pos, slice bearer: se agregaron `allow-guardar-credencial-de-dispositivo` y
+/// `allow-leer-credencial-de-dispositivo` a proposito y de forma MINIMA — son los unicos dos
+/// comandos nuevos que `/pos.html` (todavia remoto en este slice) necesita para persistir/leer
+/// el secreto de dispositivo (ver `comandos.rs`, `credencial.rs`). Nota honesta sobre el otro
+/// lado de la superficie: `capabilities/local.json` le otorga a la pagina LOCAL de configuracion
+/// los 11 comandos existentes en bloque (`core:default` + un `allow-*` por comando, sin
+/// distincion fina) — un allowlist correcto pero mas ancho del que esa pagina en rigor necesita.
+/// Funciona hoy porque la pagina local es de confianza (bundleada con la app) y porque el shell
+/// del POS sigue siendo remoto; la slice 3 (que va a mover `/pos.html` a una pagina LOCAL) tiene
+/// que separar ese bloque en capacidades mas finas antes de que la superficie local también
+/// incluya el POS — mezclar los dos en una sola capacidad local de 13 comandos en ese momento
+/// repetiria, a mayor escala, la misma laxitud que hoy es inocua.
 const PERMISOS_REMOTOS: &[&str] = &[
     "allow-imprimir-raw",
     "allow-listar-impresoras",
     "allow-abrir-configuracion",
     "allow-info-app",
+    "allow-guardar-credencial-de-dispositivo",
+    "allow-leer-credencial-de-dispositivo",
 ];
 
 pub fn ejecutar() {
@@ -46,6 +62,8 @@ pub fn ejecutar() {
             comandos::abrir_configuracion,
             comandos::volver_a_pos,
             comandos::info_app,
+            comandos::guardar_credencial_de_dispositivo,
+            comandos::leer_credencial_de_dispositivo,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

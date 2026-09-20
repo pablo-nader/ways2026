@@ -6,6 +6,7 @@ use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::config::{self, Configuracion};
+use crate::credencial;
 use crate::impresion;
 
 #[derive(Serialize)]
@@ -128,4 +129,22 @@ pub fn info_app(app: AppHandle) -> InfoApp {
         version: app.package_info().version.to_string(),
         impresora: configuracion.and_then(|c| c.impresora),
     }
+}
+
+/// Guarda el secreto de dispositivo (stage-desktop-pos, slice bearer) que devuelve UNA sola vez
+/// `POST /api/dispositivos` en su cuerpo de respuesta — la pagina de vinculacion lo entrega aca
+/// para que Rust lo persista en su propio archivo (`credencial::guardar`, nunca en
+/// `config.json`), en vez de guardarlo en `localStorage` del lado de JS.
+#[tauri::command]
+pub fn guardar_credencial_de_dispositivo(app: AppHandle, secreto: String) -> Result<(), String> {
+    credencial::guardar(&app, &secreto)
+}
+
+/// Devuelve el secreto de dispositivo guardado, si hay uno. La pagina lo usa para saber que este
+/// equipo ya esta vinculado sin depender de una llamada de red (ver `AppPos.tsx`) y para
+/// adjuntarlo como header en las dos superficies que lo resuelven del lado del servidor
+/// (`GET /dispositivos/actual`, `POST /auth/login-dispositivo`).
+#[tauri::command]
+pub fn leer_credencial_de_dispositivo(app: AppHandle) -> Option<String> {
+    credencial::leer(&app)
 }

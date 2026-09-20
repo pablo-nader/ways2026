@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-guardar-credencial-de-dispositivo"
+description = "Enables the guardar_credencial_de_dispositivo command without any pre-configured scope."
+commands.allow = ["guardar_credencial_de_dispositivo"]
+
+[[permission]]
+identifier = "deny-guardar-credencial-de-dispositivo"
+description = "Denies the guardar_credencial_de_dispositivo command without any pre-configured scope."
+commands.deny = ["guardar_credencial_de_dispositivo"]
