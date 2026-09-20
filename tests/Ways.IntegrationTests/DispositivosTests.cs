@@ -187,9 +187,13 @@ public class DispositivosTests(WaysApiFixture fixture) : IClassFixture<WaysApiFi
 
     /// <summary>judgment-day ronda 1 (hallazgo CRITICAL 4c): el guard de modo de
     /// <c>ServicioDeDispositivos.CrearAsync</c> (409 <c>punto_venta_modo_incompatible</c>) no
-    /// tenía NINGÚN test — ni el pre-chequeo best-effort ni el re-chequeo bajo lock que agregó el
-    /// hallazgo BLOCKER 1. Este test cubre los dos statements a la vez: un punto de venta Web es
-    /// el mismo que ve el pre-chequeo Y el que relee <c>BloquearYLeerModoDePuntoVentaAsync</c>.</summary>
+    /// tenía NINGÚN test. Este test cubre SOLO el pre-chequeo best-effort: con un punto de venta
+    /// que YA es Web al momento de leerlo, ese pre-chequeo lanza antes de que la transacción se
+    /// abra — el re-chequeo bajo <c>FOR UPDATE</c> de <c>BloquearYLeerModoDePuntoVentaAsync</c>
+    /// nunca se alcanza acá. La prueba de ESE statement es la rendezvous
+    /// <see cref="CrearDispositivoCuyaTransaccionYaArrancoCuandoElFlipDeModoComiteaSeRechazaBajoElRechequeo"/>,
+    /// que fuerza el flip de modo DESPUÉS del pre-chequeo, dentro de la ventana de la
+    /// transacción.</summary>
     [Fact]
     public async Task VincularUnDispositivoAUnPuntoVentaWebDaModoIncompatible()
     {

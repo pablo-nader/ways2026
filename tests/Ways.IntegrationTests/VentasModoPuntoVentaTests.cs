@@ -43,6 +43,15 @@ public class VentasModoPuntoVentaTests(WaysApiFixture fixture) : IClassFixture<W
     private const string PasswordCajero = "una-contraseña-de-cajero";
     private const string CookieDispositivo = "ways.dispositivo";
 
+    // Mismo motivo que VentasCheckoutTests.OpcionesJson: ReadFromJsonAsync<T>() sin opciones usa
+    // las opciones DEFAULT del lado cliente, que no traen JsonStringEnumConverter — ComprobanteEmitido.Estado
+    // revienta la deserialización sin esto.
+    private static readonly JsonSerializerOptions OpcionesJson = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
     private static SolicitudDeVenta SolicitudMinima(int idPuntoVenta) => new(
         idPuntoVenta, null, "TX", null, [new LineaDeVenta(1, 1m, null)], [], null, null);
 
@@ -289,7 +298,11 @@ public class VentasModoPuntoVentaTests(WaysApiFixture fixture) : IClassFixture<W
 
     /// <summary>judgment-day ronda 1 (hallazgo CRITICAL 4a): happy path — sin esto, un mutante que
     /// hiciera <c>ExigirModoCompatibleConElActorAsync</c>/<c>PoliticaDeModoDePuntoVenta</c> lanzar
-    /// SIEMPRE dejaba la suite entera en verde (solo había ramas de rechazo).</summary>
+    /// SIEMPRE dejaba la suite entera en verde (solo había ramas de rechazo).
+    ///
+    /// judgment-day ronda 2 (residual test-quality): un 201 solo no prueba que la venta haya
+    /// quedado escrita — se lee el cuerpo devuelto (identidad + total) y se relee la fila real de
+    /// <c>comprobantes_venta</c> por su id, mismo criterio que <c>VentasCheckoutTests</c>.</summary>
     [Fact]
     public async Task UnDispositivoPuedeVenderContraSuPropioPuntoVentaEscritorio()
     {
@@ -307,9 +320,22 @@ public class VentasModoPuntoVentaTests(WaysApiFixture fixture) : IClassFixture<W
             "/api/ventas", SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, precio));
 
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(idPuntoVenta, emitido.IdPuntoVenta);
+        Assert.Equal(precio, emitido.Total);
+        Assert.StartsWith($"{idPuntoVenta:D4}-", emitido.NumeroVisible);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var fila = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == emitido.Id);
+        Assert.NotNull(fila);
+        Assert.Equal(emitido.Numero, fila!.Numero);
+        Assert.Equal(precio, fila.Total);
     }
 
-    /// <summary>judgment-day ronda 1 (hallazgo CRITICAL 4a): happy path simétrico del lado Web.</summary>
+    /// <summary>judgment-day ronda 1 (hallazgo CRITICAL 4a): happy path simétrico del lado Web.
+    ///
+    /// judgment-day ronda 2 (residual test-quality): mismo criterio de aserciones que el happy
+    /// path de Escritorio de arriba — cuerpo devuelto + fila persistida.</summary>
     [Fact]
     public async Task UnActorWebPuedeVenderContraUnPuntoVentaWeb()
     {
@@ -325,5 +351,15 @@ public class VentasModoPuntoVentaTests(WaysApiFixture fixture) : IClassFixture<W
             "/api/ventas", SolicitudDeServicio(idPuntoVenta, idArticulo, idMedioEfectivo, precio));
 
         Assert.Equal(HttpStatusCode.Created, respuesta.StatusCode);
+        var emitido = (await respuesta.Content.ReadFromJsonAsync<ComprobanteEmitido>(OpcionesJson))!;
+        Assert.Equal(idPuntoVenta, emitido.IdPuntoVenta);
+        Assert.Equal(precio, emitido.Total);
+        Assert.StartsWith($"{idPuntoVenta:D4}-", emitido.NumeroVisible);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, idTenant));
+        var fila = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == emitido.Id);
+        Assert.NotNull(fila);
+        Assert.Equal(emitido.Numero, fila!.Numero);
+        Assert.Equal(precio, fila.Total);
     }
 }

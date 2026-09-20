@@ -241,6 +241,36 @@ public class ServicioDeFacturacionDeRemitosTests(WaysApiFixture fixture) : IClas
         Assert.Equal("punto_venta_modo_incompatible", problema.GetProperty("codigo").GetString());
     }
 
+    /// <summary>judgment-day ronda 2 (residual test-quality): contraparte happy-path del guard de
+    /// arriba — sin esto, un mutante que hiciera <c>PoliticaDeModoDePuntoVenta.ExigirCompatibleConElActorAsync</c>
+    /// lanzar SIEMPRE dejaba esta clase de tests en verde (solo había la rama de rechazo). El punto
+    /// de venta Web por default de <see cref="PrepararAsync"/> es la combinación COMPATIBLE con un
+    /// actor sin claim de dispositivo (mismo criterio que <c>VentasModoPuntoVentaTests.UnActorWebPuedeVenderContraUnPuntoVentaWeb</c>):
+    /// cuerpo devuelto (identidad + total) y fila real persistida en <c>comprobantes_venta</c>.</summary>
+    [Fact]
+    public async Task FacturarRemitosContraUnPuntoVentaWebDaCreatedYElTxrQuedaPersistido()
+    {
+        var ctx = await PrepararAsync(nameof(FacturarRemitosContraUnPuntoVentaWebDaCreatedYElTxrQuedaPersistido));
+        var idArticulo = await SembrarArticuloAsync(ctx, "Txr Modo Compatible", 120m);
+        await SembrarStockAgregadoAsync(ctx, idArticulo, 10m);
+        var remito = await CrearYEmitirRemitoAsync(ctx.Admin, SolicitudRemitoSimple(ctx, idArticulo, 1m));
+
+        var respuesta = await ctx.Admin.PostAsJsonAsync(
+            "/api/remitos/facturacion", SolicitudFacturacion(ctx, [remito.Id], remito.Total));
+        var cuerpo = await respuesta.Content.ReadAsStringAsync();
+        Assert.True(respuesta.StatusCode == HttpStatusCode.Created, cuerpo);
+        var txr = JsonSerializer.Deserialize<ComprobanteEmitido>(cuerpo, OpcionesJson)!;
+
+        Assert.Equal(ctx.IdPuntoVenta, txr.IdPuntoVenta);
+        Assert.Equal(remito.Total, txr.Total);
+
+        await using var db = fixture.CrearContextoDeAplicacion(new TenantActualFijo(ModoDeAcceso.Tenant, ctx.IdTenant));
+        var fila = await db.ComprobantesVenta.AsNoTracking().FirstOrDefaultAsync(c => c.Id == txr.Id);
+        Assert.NotNull(fila);
+        Assert.Equal(txr.Numero, fila!.Numero);
+        Assert.Equal(remito.Total, fila.Total);
+    }
+
     // =============================================================================================
     // task 6.13: consolidación básica — itemless, total == Σ headers, cero movimientos_stock
     // =============================================================================================
